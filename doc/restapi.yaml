@@ -1,0 +1,970 @@
+# This is the API of trash
+openapi: "3.0.3"
+info:
+  title: Trash API
+  description: Trash Rest API接口
+  version: "0.0.1"
+servers:
+  - url: http://localhost:19107/v0
+paths:
+  /stocks/simple:
+    get:
+      summary: stock's symbol and name
+      description: 获取所有股票的代码和名称
+      tags: 
+        - Stocks
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockList"
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /stocks/detail:
+    get:
+      summary: stock detail info
+      description: 当前时刻股票的信息
+      tags:
+        - Stocks
+      parameters:
+      - in: query
+        name: id
+        schema:
+          type: integer
+        description: 要获取的合约代码
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  price:
+                    type: number
+                    description: 价格
+                    example: 12.2
+                  volumn:
+                    type: integer
+                    description: 交易量
+                    example: 168
+  /index/quote:
+    get:
+      summary: get index info
+      description: 获取指数信息
+      tags: 
+        - Index
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: string
+          description: 要获取的指数代码
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  price:
+                    type: number
+                    description: 价格
+                  change:
+                    type: number
+                    description: 涨跌幅
+  /order/buy:
+    post:
+      summary: buy a contract
+      description: 购买合约
+      tags: 
+        - Order
+      requestBody:
+        description: 合约信息
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbol:
+                  type: string
+                  description: 合约代码
+                  example: 000001
+                count:
+                  type: integer
+                  description: 份数
+                  example: 100
+                price:
+                  type: array
+                  description: 价格
+                  items:
+                    type: number
+                    example: 12.3
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockList"
+  /simulate:
+    post:
+      summary: simulate a exchange
+      description: 交易所仿真
+      tags: 
+        - Simulate
+      requestBody:
+        description: 交易所信息
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  description: 交易所类型
+                  example: stock
+                enable:
+                  type: boolean
+                  description: 开启或关闭
+                  example: true
+      responses:
+        '200':
+          description: success or not
+  /risk/stoploss:
+    post:
+      summary: stoploss
+      description: 止损设置
+      tags: 
+        - Risk
+      requestBody:
+        description: 止损参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: integer
+                  description: 止损类型 (0-7)
+                  example: 0
+                email:
+                  type: string
+                  description: 止损提示的email地址
+                  example: webbery@wo.cn
+                target:
+                  type: array
+                  description: 标的信息
+                  items:
+                    type: object
+                    properties:
+                      price:
+                        type: number
+                        description: 止损提示的初始价格
+                        example: 48.41
+                      symbol:
+                        type: string
+                        description: 代码
+                        example: 001136
+                      type:
+                        type: string
+                        description: 代码类型
+                        example: AStock
+                      percent:
+                        type: number
+                        description: 止损百分比
+                        example: 0.05
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: 设置成功后返回的id
+                    example: 12
+    delete:
+      summary: stoploss
+      description: 删除设置的止损
+      tags: 
+        - Risk
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          description: 要删除的id
+      responses:
+        '200':
+          description: success
+    get:
+      summary: stoploss
+      description: 获取所有设置的止损
+      tags: 
+        - Risk
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StopLossList"
+  /risk/var:
+    post:
+      summary: run strategy for VaR
+      description: 计算策略的VaR
+      tags:
+        - Risk
+      requestBody:
+        description: 计算VaR的参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                start:
+                  type: string
+                  description: 回测开始时间
+                  example: "2010-01-01 00:00:00"
+                end:
+                  type: string
+                  description: 回测结束时间
+                  example: "2030-01-01 00:00:00"
+                portfolio:
+                  type: object
+                  description: 投资组合
+                  properties:
+                    strategy:
+                      type: string
+                      description: 策略名
+                      example: 'random'
+                    pool:
+                      type: array
+                      description: 代码池
+                      items:
+                        type: string
+                        description: 代码
+                        example: '000001'
+                    data_type:
+                      type: string
+                      description: 数据级别, day/5min/1min
+                      example: 'day'
+                confidence:
+                  type: number
+                  description: 置信度
+                  example: 0.99
+                days:
+                  type: integer
+                  description: 预测未来N天
+                  example: 10
+                capital:
+                  type: number
+                  description: 总本金
+                  example: 10000
+                commission:
+                  type: object
+                  description: 设置的佣金
+                  properties:
+                    type:
+                      type: string
+                      description: 佣金类型
+                      example: 'A股'
+                    slip:
+                      type: number
+                      description: 滑点
+                      example: 0.005
+                    min_price:
+                      type: number
+                      description: 最低交易费用
+                      example: 5
+                    trade_price:
+                      type: number
+                      description: 佣金比例
+                      example: 0.0001345
+                    tax:
+                      type: number
+                      description: 印花税, 0.1%
+                      example: 0.01
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: var的id
+                    example: 1
+                  var:
+                    type: number
+                    description: 损失
+                    example: 100000.0
+                  es:
+                    type: number
+                    description: 尾部损失
+                    example: 100000.0
+                  sharp:
+                    type: number
+                    description: 夏普率
+                    example: 1.2
+                  ops:
+                    type: array
+                    description: 买卖单信息
+                    items:
+                      type: object
+                      properties:
+                        symbol:
+                          type: string
+                          description: 代码
+                        datetime:
+                          type: integer
+                          description: 时间
+                        price:
+                          type: number
+                          description: 价格
+                        count:
+                          type: number
+                          description: 买卖数量
+                        long:
+                          type: boolean
+                          description: 买或卖
+                  profit:
+                    type: array
+                    description: 收益
+                    items:
+                      type: object
+                      properties:
+                        datetime:
+                          type: integer
+                          description: 时间
+                        value:
+                          type: number
+                          description: 收益
+    get:
+      summary: get strategy of history VaR
+      description: 获取历史计算出的策略的VaR
+      tags:
+        - Risk
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+            description: 佣金id
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      description: var的id
+                      example: 1
+  /risk/drawdown:
+    get:
+      summary: drawdown
+      description: 获取给定时间范围内的最大回撤
+      tags:
+        - Risk
+      parameters:
+        - in: query
+          name: range
+          schema:
+            type: integer
+            description: 0-近90天,1-指定时间开始
+            example: 0
+        - in: query
+          name: symbol
+          schema:
+            type: string
+            description: 多个合约或者指定的持仓
+            example: ap2501C2508,ap2502C2509
+        - in: query
+          name: datetime
+          schema:
+            type: integer
+            description: 可选, 当type=1时指定的时间,单位s
+            example: 1739174267836
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: number
+  /risk/factor/liquidity:
+    get:
+      summary: liquidity
+      description: 获取给定时间范围内的流动性风险因子
+      tags:
+        - Risk
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+            description: 多个合约或者指定的持仓
+            example: ap2501C2508,ap2502C2509
+        - in: query
+          name: datetime
+          schema:
+            type: integer
+            description: 可选, 当type=1时指定的时间,单位s
+            example: 1739174267836
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: number
+  /portfolio:
+    put:
+      summary: portfolio
+      description: 创建一个投资组合PH
+      tags: 
+        - Portfolio
+      requestBody:
+        description: 投资组合参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                total:
+                  type: number
+                  description: 总资产
+                  example: 100000
+                pool:
+                  type: array
+                  description: 池子
+                  items:
+                    type: string
+                    description: 代码
+                    example: "000001"
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: 设置成功后返回的id
+                    example: 121
+  /commission:
+    put:
+      summary: commission
+      description: 创建一个佣金
+      tags: 
+        - Commission
+      requestBody:
+        description: 佣金参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 给设置取的名称
+                min:
+                  type: number
+                  description: 单比交易最低佣金
+                value:
+                  type: number
+                  description: 单比交易佣金比例
+                tax:
+                  type: number
+                  description: 卖出税费
+                type:
+                  type: string
+                  description: 计算类型
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: integer
+                description: 设置成功后返回的id
+                example: 121
+    get:
+      summary: commission
+      description: 获取创建的佣金
+      tags: 
+        - Commission
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+            description: 佣金id
+            example: 12
+      responses:
+        '200':
+          description: success or not
+          content:
+            application/json:
+              schema:
+                type: array
+                description: 返回的佣金信息
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      description: 佣金的id
+                      example: 12
+                    name:
+                      type: string
+                      description: 给设置取的名称
+                    min:
+                      type: number
+                      description: 单比交易最低佣金
+                    value:
+                      type: number
+                      description: 单比交易佣金比例
+                    tax:
+                      type: number
+                      description: 卖出税费
+                    type:
+                      type: string
+                      description: 计算类型
+    delete:
+      summary: commission
+      description: 删除佣金
+      tags: 
+        - Commission
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          description: 要删除的佣金id
+      responses:
+        '200':
+          description: success or not
+  /strategy/metric:
+    get:
+      summary: metric
+      description: 获取策略的评价指标
+      tags: 
+        - Strategy
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          description: 要获取的策略id
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  annual:
+                    type: number
+                    description: 年化收益率
+                    example: 0
+                  backward:
+                    type: number
+                    description: 最大回测
+                    example: 0
+                  wintimes:
+                    type: integer
+                    description: 盈利次数
+                    example: 0
+                  failtimes:
+                    type: integer
+                    description: 亏损次数
+                    example: 0
+                  winrate:
+                    type: number
+                    description: 胜率
+                    example: 0
+                  plrate:
+                    type: number
+                    description: 盈亏比
+                    example: 0
+                  sharp:
+                    type: number
+                    description: 夏普比率
+                    example: 0
+                  starttime:
+                    type: string
+                    description: 策略开始运行的时间
+                    example: '2010/01/01 00:00:00'
+                  endtime:
+                    type: string
+                    description: 策略停止的时间
+                    example: '2020/01/01 00:00:00'
+  /strategy:
+    get:
+      summary: get all strategy name
+      description: 获取策略的名字
+      tags: 
+        - Strategy
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                  description: 策略的名字
+                  example: random
+    post:
+      summary: run a strategy
+      description: 部署指定的某个策略
+      tags: 
+        - Strategy
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 策略名称
+                  example: 'xgboost'
+                mode:
+                  type: int
+                  description: 模式, 0-训练模式, 1-(部署)实盘模式, 2-模拟盘模式
+                  example: 0
+                params:
+                  type: object
+                  description: 训练模式下的参数
+                  example: {}
+      responses:
+        '200':
+          description: success
+  /backtest:
+    post:
+      summary: test one strategy
+      description: 对某个策略做回测
+      tags: 
+        - Backtest
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 策略名称
+                  example: 'xgboost'
+                params:
+                  type: object
+                  description: 策略的参数
+                  example: {}
+      responses:
+        '200':
+          description: success
+  /predict/montecarlo:
+    post:
+      summary: predict price of asset
+      description: use monte carlo predict price
+      tags: 
+        - Predict
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                times:
+                  type: integer
+                  description: 参数
+                  example: 10000
+                symbol:
+                  type: string
+                  example: '513750'
+                type:
+                  type: integer
+                  description: 5min 1/day 2
+                  example: 2
+                start:
+                  type: integer
+                  example: 1711603292
+                N:
+                  type: integer
+                  example: 10
+                dt:
+                  type: integer
+                  description: 时间间隔(单位秒)
+                  example: 86400
+                reply:
+                  type: integer
+                  description: 返回模拟的路径数
+                  example: 30
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: simulation id 
+                  paths:
+                    type: array
+                    items:
+                      type: array
+                      description: a simulate path
+                      items:
+                        type: number
+                  expected:
+                    type: number
+                    description: expection of all path 
+  /predict/finity:
+    post:
+      summary: predict price of asset
+      description: use finity difference method to predict
+      tags: 
+        - Predict
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbols:
+                    type: string
+                    example: 111000,000001
+  /future/simple:
+    get:
+      summary: all future info
+      description: get future name and symbol
+      tags: 
+        - Future
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    symbol:
+                      type: string
+                      example: cffex2503
+                    name:
+                      type: string
+                    exchange:
+                      type: string
+                      example: xxx
+  /volatility:
+    get:
+      summary: volatility of symbol
+      description: get volatility of symbol
+      tags: 
+        - Volatility
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: symbol
+        - in: query
+          name: start
+          schema:
+            type: integer
+          description: start time
+        - in: query
+          name: end
+          schema:
+            type: integer
+          description: end time
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: number
+  /data/stock/quote:
+    get:
+      summary: query one stock data
+      description: 获取某只股票的行情数据,并保存在服务的路径下。时间截止到今日收盘，如果尚未收盘，时间截止到前一日
+      tags: 
+        - data
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: symbol
+        - in: query
+          name: dividend
+          schema:
+            type: integer
+          description: 除权方式, 0-不除权, 1-后复权, 2-前复权
+        - in: query
+          name: time
+          schema:
+            type: string
+          description: 时间间隔, 'd'-日级数据, '5'-5分钟级数据
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Quote"
+
+components:
+  schemas:
+    StockList:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int32
+          example: 0
+        status:
+          type: string
+          description: Order Status
+          example: success
+          enum:
+            - fail
+            - success
+        stocks:
+          type: array
+          description: stock list
+          items:
+            type: object
+            properties:
+              symbol:
+                type: string
+                example: '000002'
+              name:
+                type: string
+                example: '中国银行'
+      xml:
+        name: order
+    Quote:
+      type: object
+      properties:
+        datetime:
+          type: string
+          description: 时间
+          example: 2024/03/12 00:01:22
+        open:
+          type: number
+          description: 开盘价
+          example: 12.2
+        close:
+          type: number
+          description: 收盘价
+          example: 12.2
+        high:
+          type: number
+          description: 最高价
+          example: 12.2
+        low:
+          type: number
+          description: 最低价
+          example: 12.2
+        volumn:
+          type: number
+          description: 交易额
+          example: 12.2
+        turnover:
+          type: number
+          description: 换手率
+          example: 12.2
+    StopLossList:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int32
+          example: 33
+        type:
+          type: string
+          description: 止损类型
+          example: 'percentage'
+        porfolio:
+          type: array
+          description: 代码
+          items:
+            type: object
+            properties:
+              price:
+                type: number
+                description: 止损提示的初始价格
+                example: 48.41
+              symbol:
+                type: string
+                description: 代码
+                example: '001136'
+              type:
+                type: string
+                description: 代码类型
+                example: 'Astock'
+    Error:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 100000
+        msg:
+          type: string
+          example: error
+      xml:
+        name: customer
