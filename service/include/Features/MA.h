@@ -15,9 +15,12 @@ public:
 
     virtual const char* desc();
 
+    virtual FeatureType type() { return FeatureType::FT_EMA; }
+
     static constexpr StringView name() {
         return "EMA";
     }
+
 
 private:
     short _N = 12;

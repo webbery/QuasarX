@@ -5,6 +5,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <utility>
 #include <yas/serialize.hpp>
 #include "Bridge/exchange.h"
 #include "PortfolioSubsystem.h"
@@ -24,6 +25,8 @@
 // 1G for disk
 #define DEFAULT_DISK_CACHE_SIZE 1073741824
 #define DEFAULT_MAX_SYMBOLS     16
+
+#define DB_PREDICTION   "predict"
 
 bool BrokerSubSystem::Init(const char* dbpath, double principal) {
   _dbpath = dbpath;
@@ -252,7 +255,7 @@ void BrokerSubSystem::flush(MDB_txn* txn, MDB_dbi dbi) {
   auto broker = GetBrokers();
   SaveJson("broker", txn, dbi, broker);
   auto prediction = GetPrediction();
-  SaveJson("predict", txn, dbi, prediction);
+  SaveJson(DB_PREDICTION, txn, dbi, prediction);
 }
 
 double BrokerSubSystem::VaR(float confidence)
@@ -333,16 +336,75 @@ void BrokerSubSystem::SimulateStockMatch(double capital, const Order& order, Dea
   }
 }
 
-void BrokerSubSystem::PredictWithDays(int N, int op) {
-
+void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
+  auto current = Now();
+  auto next_date = ToString(current, "%Y-%m-%d");
+  auto pred = std::make_pair(next_date, op);
+  std::unique_lock<std::mutex> lck(_predMtx);
+  _symbolOperation[symb] = pred;
+  _predictions[symb].push_back(pred);
 }
 
-void BrokerSubSystem::InitPrediction(MDB_txn* txn, MDB_dbi) {
+bool BrokerSubSystem::GetNextPrediction(symbol_t symb, fixed_time_range& tr, int& op) {
+  auto cur = Now();
+  List<Pair<fixed_time_range, int>>* history = nullptr;
+  {
+    std::unique_lock<std::mutex> lck(_predMtx);
+    history = &_predictions[symb];
+  }
+  bool is_search = false;
+  for (auto ritr = history->rbegin(); ritr != history->rend(); ++ritr) {
+    if (ritr->first < cur)
+      break;
+    if (ritr->first == cur) {
+      is_search = true;
+      tr = ritr->first;
+      op = ritr->second;
+      break;
+    }
+  }
+  return is_search;
+}
 
+void BrokerSubSystem::InitPrediction(MDB_txn* txn, MDB_dbi dbi) {
+  String predictName(DB_PREDICTION);
+  auto jsn = LoadJson(predictName, txn, dbi);
+  if (jsn.empty())
+    return;
+
+  if (jsn.count(DB_PREDICTION)) {
+    /*
+     * [
+     *  {"000001": [["2025-5-24", 1], ...
+     *    ]
+     *  }
+     * ]
+     */
+    for (auto& item: jsn[DB_PREDICTION].items()) {
+      auto strSymbol = item.key();
+      auto symbol = to_symbol(strSymbol);
+      for (auto& prediction: item.value()) {
+        String pred = prediction[0];
+        int operation = prediction[1];
+        fixed_time_range tr(pred);
+        auto pr = std::make_pair(std::move(tr), operation);
+        _predictions[symbol].push_back(std::move(pr));
+      }
+    }
+  }
 }
 
 nlohmann::json BrokerSubSystem::GetPrediction() {
-
+  nlohmann::json prediction;
+  std::unique_lock<std::mutex> lck(_predMtx);
+  for (auto& pred: _predictions) {
+    auto strSymbol = get_symbol(pred.first);
+    for (auto& item: pred.second) {
+      auto pr = std::make_pair(to_string(item.first) , item.second);
+      prediction.emplace_back(std::move(pr));
+    }
+  }
+  return prediction;
 }
 
 // double VirtualBroker::Buy(const String& symbol, const Order& order) {

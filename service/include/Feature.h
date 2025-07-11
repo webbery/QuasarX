@@ -5,6 +5,14 @@
 class Server;
 struct QuoteInfo;
 
+enum class FeatureType: char {
+    FT_ATR,
+    FT_WMA,
+    FT_EMA,
+    FT_VWAP,
+    FT_COUNT,
+};
+
 class alignas(8) IFeature {
 public:
     virtual ~IFeature() {}
@@ -22,19 +30,16 @@ protected:
     static unsigned short _t;
 };
 
-enum class FeatureType: char {
-    FT_ATR,
-    FT_WMA,
-    FT_COUNT,
-};
 
 /**
  * 
  */
 class PrimitiveFeature: public IFeature {
 public:
+    virtual FeatureType type() = 0;
+
 protected:
-    FeatureType _type;
+    // static FeatureType _type;
 };
 
 template<typename... T>

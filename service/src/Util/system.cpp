@@ -20,6 +20,7 @@
 #include <fstream>
 #include "Util/log.h"
 #include "server.h"
+#include "DataSource.h"
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -276,6 +277,23 @@ bool ReadQuote(nng_socket& sock, QuoteInfo& quote, const Set<symbol_t>& filter) 
     if (filter.count(quote._symbol) == 0)
       return false;;
   }
+  return true;
+}
+
+bool ReadFeatures(nng_socket& sock, DataFeatures& features) {
+  char* buff = NULL;
+  size_t sz = 0;
+  int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
+  if (rv != 0) {
+      nng_free(buff, sz);
+      return false;
+  }
+  constexpr static std::size_t flags = yas::mem | yas::binary;
+  yas::shared_buffer buf;
+  buf.assign(buff, sz);
+  yas::load<flags>(buf, features);
+  nng_free(buff, sz);
+
   return true;
 }
 

@@ -23,8 +23,9 @@ public:
 
     virtual const char* desc();
 
-    virtual size_t id();
+    virtual FeatureType type() { return FeatureType::FT_ATR; }
     static constexpr StringView name();
+
 private:
     double tr(short index);
 private:

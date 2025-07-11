@@ -171,7 +171,9 @@ private:
 
     void Schedules(time_t t);
 
+    void UpdateQuoteQueryStatus(time_t);
 
+    void UpdateNextPrediction(time_t);
 private:
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
   // HTTPS

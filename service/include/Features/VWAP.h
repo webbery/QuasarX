@@ -15,6 +15,8 @@ public:
         return name().data();
     }
 
+    virtual FeatureType type() { return FeatureType::FT_VWAP; }
+    
     static constexpr StringView name() {
         return "VWAP";
     }

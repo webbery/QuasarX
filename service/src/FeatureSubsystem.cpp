@@ -36,10 +36,6 @@ ATRFeature::~ATRFeature() {
     if (_tr) delete[] _tr;
 }
 
-size_t ATRFeature::id() {
-
-}
-
 bool ATRFeature::plug(Server* handle, const String& account) {
     // load data
     auto& position = handle->GetPosition(account);
@@ -156,13 +152,13 @@ void FeatureSubsystem::run() {
             pFeats = &_pipelines[quote._symbol]._features;
         }
         
-        DataMessenger messenger;
-        messenger._features = pFeats->size();
+        DataFeatures messenger;
         messenger._symbols.emplace_back(quote._symbol);
         Vector<float> features(pFeats->size());
         int i = 0;
         for (auto& feat: *pFeats) {
             features[i] = feat->deal(quote);
+            messenger._features[i] = ((PrimitiveFeature*)feat)->type();
             ++i;
         }
         messenger._data = std::move(features);

@@ -1,10 +1,12 @@
 #include <chrono>
 #include "Util/datetime.h"
 #include "Util/string_algorithm.h"
+#include <cstdio>
 #include <sstream>
 #include <ctime>
 #include <iomanip>
 #include <string.h>
+#include <string>
 #include "Util/system.h"
 #include "Util/log.h"
 
@@ -29,7 +31,7 @@ time_t FromTick(const std::string& str) {
     return atoll(str.c_str());
 }
 
-std::string ToString(time_t t) {
+std::string ToString(time_t t, const char* fmt) {
     // 将 time_t 转换为 tm 结构
     std::tm *ltm = localtime(&t);
     
@@ -37,7 +39,7 @@ std::string ToString(time_t t) {
     char buffer[80] = {0};
     
     // 使用 strftime 格式化日期
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+    strftime(buffer, sizeof(buffer), fmt, ltm);
     return std::string(buffer, strlen(buffer));
 }
 
@@ -86,6 +88,41 @@ time_range::time_range(int start_hour, int start_min, int end_hour, int end_min)
 
 }
 
+fixed_time_range::fixed_time_range(const String& start, const String& end) {
+    std::tm tm = {};
+    std::istringstream ssStart(start);
+    ssStart >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    if (ssStart.fail()) {
+        perror("Date parsing failed!\n");
+        return ;
+    }
+    _start = std::mktime(&tm);
+    std::istringstream ssEnd(end);
+    ssEnd >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    if (ssEnd.fail()) {
+        perror("Date parsing failed!\n");
+        return ;
+    }
+    _end = std::mktime(&tm);
+}
+
+fixed_time_range::fixed_time_range(const String& date) {
+    std::tm tm = {};
+    std::istringstream ss(date);
+    ss >> std::get_time(&tm, "%Y-%m-%d");
+    if (ss.fail()) {
+        perror("Date parsing failed!\n");
+        return ;
+    }
+    _start = std::mktime(&tm);
+    
+    tm.tm_hour +=23;
+    tm.tm_min += 59;
+    tm.tm_sec += 59;
+    _end = std::mktime(&tm);
+}
+
+
 time_range::time_range():_start(-1), _end(-1) {}
 
 int time_range::ValidateAndConvert(int hour, int min, int sec) {
@@ -99,6 +136,10 @@ bool operator == (const time_range& o1, const time_range& o2) {
     return o1.Start() == o2.Start() && o1.End() == o2.End();
 }
 
+bool operator == (const fixed_time_range& o1, const fixed_time_range& o2) {
+    return o1.Start() == o2.Start() && o1.End() == o2.End();
+}
+
 bool time_range::operator == (time_t other) {
     return equal(other);
 }
@@ -106,7 +147,13 @@ bool time_range::operator == (time_t other) {
 bool time_range::operator == (time_t other) const {
     return equal(other);
 }
-    
+
+// String fixed_time_range::StartDate() const {
+// }
+
+// String fixed_time_range::EndDate() const {
+
+// }
 bool time_range::equal(time_t t) const {
     struct tm *timeinfo = localtime(&t);
     if (!timeinfo) return false; // 时间转换失败
@@ -124,6 +171,30 @@ bool time_range::equal(time_t t) const {
         return current_sec >= _start && current_sec <= _end;
     }
 }
+
+bool fixed_time_range::equal(time_t t) const {
+    return t > _start && t < _end;
+}
+
+bool fixed_time_range::operator > (time_t other) const {
+    return _start > other;
+}
+
+bool fixed_time_range::operator == (time_t other) const {
+    return equal(other);
+}
+
+bool fixed_time_range::operator < (time_t other) const {
+    return _end < other;
+}
+
+String to_string(const fixed_time_range& tr) {
+    auto start = tr.Start();
+    auto end = tr.End();
+    std::tm *ltm = localtime(&start);
+    return std::to_string(ltm->tm_year + 1900) + "-" + std::to_string(ltm->tm_mon + 1) + "-" + std::to_string(ltm->tm_mday);
+}
+
 UnorderedSet<time_range> GetWorkingRange(ExchangeName name) {
     UnorderedSet<time_range> result;
     switch (name) {

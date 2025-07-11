@@ -683,19 +683,24 @@ void Server::Timer()
 
         auto fut = std::async(std::launch::async,  [this]() {
             auto curr = Now();
-            auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
-            for (auto exchange: handler->GetExchanges()) {
-                if (exchange.second->IsWorking(curr)) {
-                    if (exchange.second->IsLogin()) {
-                        exchange.second->QueryQuotes();
-                    }
-                } else {
-                    exchange.second->StopQuery();
-                }
-            }
+            // 
+            UpdateQuoteQueryStatus(curr);
             Schedules(curr);
         });
         next_wake += interval;
+    }
+}
+
+void Server::UpdateQuoteQueryStatus(time_t curr) {
+    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
+    for (auto exchange: handler->GetExchanges()) {
+        if (exchange.second->IsWorking(curr)) {
+            if (exchange.second->IsLogin()) {
+                exchange.second->QueryQuotes();
+            }
+        } else {
+            exchange.second->StopQuery();
+        }
     }
 }
 

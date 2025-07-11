@@ -116,11 +116,11 @@ void AgentSubsystem::Start() {
             }
             yas::shared_buffer buf;
             buf.assign(buff, sz);
-            DataMessenger messenger;
+            DataFeatures messenger;
             yas::load<flags>(buf, messenger);
             nng_free(buff, sz);
             Vector<float> result;
-            agent->classify(messenger._data, messenger._symbols.size(), messenger._features, result);
+            agent->classify(messenger._data, messenger._symbols.size(), messenger._features.size(), result);
             Vector<Signal> signals;
             for (int i = 0; i < result.size(); ++i) {
                 Signal sig;
@@ -160,7 +160,7 @@ void AgentSubsystem::Train(const String& strategy) {
         }
         yas::shared_buffer buf;
         buf.assign(buff, sz);
-        DataMessenger messenger;
+        DataFeatures messenger;
         yas::load<flags>(buf, messenger);
         nng_free(buff, sz);
         return false;
