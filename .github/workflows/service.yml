@@ -60,7 +60,7 @@ jobs:
       # 配置CMake并编译
       - name: Configure and build
         run: |
-          mkdir build && cd build
+          mkdir service/build && cd service/build
           cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
           cmake --build . --config Release
 
