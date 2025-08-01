@@ -6,6 +6,7 @@
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Strategy.h"
 #include <limits>
+#include <string>
 #include "Features/VWAP.h"
 
 TraderSystem::TraderSystem(Server* handle, const String& dbpath): _server(handle) {
@@ -79,6 +80,7 @@ bool TraderSystem::StrategyBuy(symbol_t symbol, const DataFeatures& features) {
         order._order[0]._price = features._price;
         DealDetail dd;
         if (_virtualSystem->Buy(symbol, order, dd) == OrderStatus::All) {
+            _server->SendEmail("Buy " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
             return true;
         }
     }
@@ -100,6 +102,7 @@ bool TraderSystem::StrategySell(symbol_t symbol, const DataFeatures& features) {
         DealDetail dd;
         if (_virtualSystem->Sell(symbol, order, dd) == OrderStatus::All) {
             LOG("sell order: {}, result: {}", order, dd);
+            _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
             return true;
         }
     }

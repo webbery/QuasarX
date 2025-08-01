@@ -83,6 +83,10 @@ OrderStatus BrokerSubSystem::Sell(symbol_t symbol, const Order& order, DealDetai
   return OrderStatus::None;
 }
 
+double BrokerSubSystem::GetProfitLoss() {
+  return 0;
+}
+
 void BrokerSubSystem::SetStockCommission(const Commission& comm) {
   _stock = comm;
 }

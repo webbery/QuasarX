@@ -51,6 +51,8 @@ public:
 
   // 统计当前指标
   uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
+
+  double GetProfitLoss();
   
   const Asset& GetAsset(const String& symbol);
 
