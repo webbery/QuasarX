@@ -80,6 +80,7 @@ bool TraderSystem::StrategyBuy(symbol_t symbol, const DataFeatures& features) {
         order._order[0]._price = features._price;
         DealDetail dd;
         if (_virtualSystem->Buy(symbol, order, dd) == OrderStatus::All) {
+            LOG("buy order: {}, result: {}", order, dd);
             _server->SendEmail("Buy " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
             return true;
         }
