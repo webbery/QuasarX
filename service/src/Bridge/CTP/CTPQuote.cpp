@@ -6,7 +6,6 @@
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Bridge/exchange.h"
 #include "Util/datetime.h"
-#include "Util/log.h"
 #include "Util/system.h"
 #include "nng/nng.h"
 #include "nng/protocol/pubsub0/pub.h"
@@ -50,7 +49,7 @@ bool CTPQuote::IsLogin() {
   return _login_status;
 }
 
-QuoteInfo CTPQuote::GetQuote(const String& symbol)
+QuoteInfo CTPQuote::GetQuote(symbol_t symbol)
 {
   return QuoteInfo();
 }
@@ -127,7 +126,7 @@ void CTPQuote::OnRtnDepthMarketData(CThostFtdcDepthMarketDataField *pDepthMarket
   // time_t cur_tick;
   // time(&cur_tick);
   info._time = update_tick;
-  info._volumn = pDepthMarketData->Volume;
+  info._volume = pDepthMarketData->Volume;
   info._turnover = pDepthMarketData->Turnover;
 
   info._bidPrice[0] = GET_DOUBLE_VALUE(pDepthMarketData->BidPrice1);

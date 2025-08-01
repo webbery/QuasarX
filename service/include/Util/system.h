@@ -4,7 +4,10 @@
 #include "yas/binary_oarchive.hpp"
 #include <cstdint>
 #include <cstring>
+#ifdef __linux__
 #include <papi.h>
+#endif
+#include "fmt/core.h"
 
 #define URI_RAW_QUOTE   "inproc://URI_RAW_QUOTE"
 #define URI_SIM_QUOTE   "inproc://URI_SIM_QUOTE"// 仿真数据
@@ -15,12 +18,15 @@
 #define URI_FEATURE     "inproc://Feature"          // 输出特征
 #define URI_PREDICT     "inproc://Predict"          // 输出预测结果
 
+constexpr std::size_t flags = yas::mem|yas::binary;
+
 typedef std::tuple<std::string, double, double, double, double, double, double, double> StockRowInfo;
 
 std::string GetIP();
 
 bool RunCommand(const std::string& cmd);
 std::vector<StockRowInfo> ReadCSV(const std::string& csv, int last_N);
+std::string GetProgramPath();
 
 bool Subscribe(const std::string& uri, nng_socket& sock, short tick = 5000);
 
@@ -130,7 +136,39 @@ struct AccountPosition {
 
 Set<symbol_t> get_holds(const AccountPosition& account);
 
+#ifndef FMT_EXCHANGE_NAME
+#define FMT_EXCHANGE_NAME(type) case ExchangeName::type: return fmt::format_to(ctx.out(), #type)
+#endif
 
+template <>
+struct fmt::formatter<ExchangeName> {
+    // 解析格式说明符（可选）
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.begin(); // 简单情况直接返回
+    }
+
+    // 必须实现的格式化函数
+    template <typename FormatContext>
+    auto format(ExchangeName ex, FormatContext& ctx) const {
+        switch (ex) {
+        FMT_EXCHANGE_NAME(MT_Beijing);
+        FMT_EXCHANGE_NAME(MT_Shanghai);
+        FMT_EXCHANGE_NAME(MT_ShanghaiFuture);
+        FMT_EXCHANGE_NAME(MT_Shenzhen);
+        FMT_EXCHANGE_NAME(MT_Hongkong);
+        FMT_EXCHANGE_NAME(MT_Zhengzhou);
+        FMT_EXCHANGE_NAME(MT_Dalian);
+        FMT_EXCHANGE_NAME(MT_Zhongjin);
+        FMT_EXCHANGE_NAME(MT_Guangzhou);
+        FMT_EXCHANGE_NAME(MT_ShanghaiEng);
+        default:
+        return fmt::format_to(ctx.out(), "don't know how to convert type {}", (int)ex);
+        }
+        
+    }
+};
+
+#ifdef __linux__
 class CPUPerformanceMesure {
 public:
   CPUPerformanceMesure();
@@ -146,3 +184,4 @@ public:
 private:
   int EventSet = PAPI_NULL;
 };
+#endif

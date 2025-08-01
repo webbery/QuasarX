@@ -6,7 +6,6 @@
 #include "std_header.h"
 #include "xtp/xoms_api_struct.h"
 #include "Util/system.h"
-#include "Util/log.h"
 #include "xtp/xtp_api_data_type.h"
 
 using namespace std;
@@ -151,7 +150,10 @@ void XTPExchange::SetFilter(const QuoteFilter& filter) {
 void XTPExchange::QueryQuotes() {
     if (_filter._symbols.empty()) {
         if (m_pQuote->IsAllTickCapture()) {
-          _filter._symbols = m_pQuote->GetAllSymbols();
+          auto symbols = m_pQuote->GetAllSymbols();
+          for (auto& symb: symbols) {
+            _filter._symbols.insert(get_symbol(symb));
+          }
           // TODO: 补充ETF
           // _server->
           QueryQuotes();
@@ -170,8 +172,9 @@ void XTPExchange::QueryQuotes() {
         Array<Vector<String>, 4> symbols;
         Array<XTP_EXCHANGE_TYPE, 2> market_type{ XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SH, XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SZ };
 
-        for (auto& symbol : _filter._symbols) {
-            auto market = _server->GetExchange(symbol);
+        for (auto& name : _filter._symbols) {
+            // auto name = get_symbol(symbol);
+            auto market = _server->GetExchange(name);
             auto mt = XTP_EXCHANGE_TYPE::XTP_EXCHANGE_UNKNOWN;
             switch (market) {
             case ExchangeName::MT_Shanghai: mt = XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SH;
@@ -183,7 +186,7 @@ void XTPExchange::QueryQuotes() {
                 break;
             }
             markets[mt] += 1;;
-            symbols[mt - 1].push_back(symbol);
+            symbols[mt - 1].push_back(name);
         }
         for (auto& item : markets) {
             int index = item.first;
@@ -209,8 +212,9 @@ void XTPExchange::StopQuery() {
     Array<Vector<String>, 4> symbols;
     Array<XTP_EXCHANGE_TYPE, 2> market_type{ XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SH, XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SZ };
 
-    for (auto& symbol : _filter._symbols) {
-        auto market = _server->GetExchange(symbol);
+    for (auto& name : _filter._symbols) {
+        // auto name = get_symbol(symbol);
+        auto market = _server->GetExchange(name);
         auto mt = XTP_EXCHANGE_TYPE::XTP_EXCHANGE_UNKNOWN;
         switch (market) {
         case ExchangeName::MT_Shanghai: mt = XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SH;
@@ -222,7 +226,7 @@ void XTPExchange::StopQuery() {
             break;
         }
         markets[mt] += 1;;
-        symbols[mt - 1].push_back(symbol);
+        symbols[mt - 1].push_back(name);
     }
     for (auto& item : markets) {
         int index = item.first;
@@ -330,7 +334,7 @@ Order XTPExchange::GetOrder(const order_id& id) {
   return order;
 }
 
-QuoteInfo XTPExchange::GetQuote(const String& symbol)
+QuoteInfo XTPExchange::GetQuote(symbol_t symbol)
 {
   return m_pQuote->GetQuoteInfo(symbol);
 }

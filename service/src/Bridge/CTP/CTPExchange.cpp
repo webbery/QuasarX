@@ -2,7 +2,6 @@
 #include "Bridge/exchange.h"
 #include <cstring>
 #include <filesystem>
-#include "Util/log.h"
 #include "Util/system.h"
 
 #define BROKER_ID "9999"
@@ -147,7 +146,7 @@ OrderList CTPExchange::GetOrders(){
     return ol;
 }
 
-QuoteInfo CTPExchange::GetQuote(const String& symbol) {
+QuoteInfo CTPExchange::GetQuote(symbol_t symbol) {
   return _quote->GetQuote(symbol);
 }
 

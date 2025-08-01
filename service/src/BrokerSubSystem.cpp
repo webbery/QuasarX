@@ -10,13 +10,14 @@
 #include "Bridge/exchange.h"
 #include "PortfolioSubsystem.h"
 #include "Util/lmdb.h"
-#include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "json.hpp"
 #include "Util/system.h"
 #include "Risk/RiskMetric.h"
 #include "server.h"
 #include <boost/math/distributions/normal.hpp>
+#include "Handler/ExchangeHandler.h"
+#include "Strategy.h"
 
 #define ER(expr) {int rc = 0; CHECK((rc = (expr)) == MDB_SUCCESS, #expr);  }
 #define CHECK(test, msg) ((test) ? (void)0 : ((void)fprintf(stderr, \
@@ -64,24 +65,22 @@ MDB_dbi BrokerSubSystem::GetDBI(int portfolid_id, MDB_txn* txn) {
   return dbi;
 }
 
-double BrokerSubSystem::Buy(const String& symbol, const Order& order) {
+OrderStatus BrokerSubSystem::Buy(symbol_t symbol, const Order& order, DealDetail& detail) {
   DealInfo deal;
-  auto type = Server::GetContractType(symbol);
-  switch (type) {
-  case ContractType::AStock:
-    BuyStock(symbol, order, deal);
-    break;
-  default:
-  WARN("commission is not set");
-  break;
+  if (is_stock(symbol)) {
+    return BuyStock(symbol, order, deal);
   }
-
-  return 0;
+  WARN("commission is not set");
+  return OrderStatus::None;
 }
 
-double BrokerSubSystem::Sell(const String& symbol, const Order& order) {
+OrderStatus BrokerSubSystem::Sell(symbol_t symbol, const Order& order, DealDetail& detail) {
   // _orders[symbol].emplace_back(order);
-  return 0;
+  DealInfo deal;
+  if (is_stock(symbol)) {
+    return SellStock(symbol, order, deal);
+  }
+  return OrderStatus::None;
 }
 
 void BrokerSubSystem::SetStockCommission(const Commission& comm) {
@@ -156,8 +155,8 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
 
   for (auto& item: jsn) {
     String symbol = item["symbol"];
-
-    auto& trans = _trans[symbol];
+    auto symb = to_symbol(symbol);
+    auto& trans = _trans[symb];
     std::unique_lock<std::mutex> lock(trans._mtx);
   }
 }
@@ -166,7 +165,7 @@ nlohmann::json BrokerSubSystem::GetHistoryJson() {
   nlohmann::json jsn;
   for (auto& item: _trans) {
     nlohmann::json temp;
-    temp["symbol"] = item.first;
+    temp["symbol"] = get_symbol(item.first);
     std::unique_lock<std::mutex> lock(item.second._mtx);
     for (auto& trans: item.second._transactions) {
       nlohmann::json action;
@@ -281,20 +280,44 @@ const Asset& BrokerSubSystem::GetAsset(const String& symbol) {
   return _portfolio->_portfolios[_portfolio->Default()]._holds.at(id);
 }
 
-void BrokerSubSystem::BuyStock(const String& symbol, const Order& order, DealInfo& deal) {
+OrderStatus BrokerSubSystem::BuyStock(symbol_t symbol, const Order& order, DealInfo& deal) {
   double pos = _portfolio->Position();
-  double rest = _principal - pos;
+  double buy_price = 0;
   if (_handler) {
 
   } else {
     // 模拟盘
-    SimulateStockMatch(rest, order, deal);
+    buy_price = SimulateMatchStockBuyer(symbol, _principal, order, deal);
   }
   if (deal._deals.empty())
-    return;
+    return OrderStatus::None;
   
   // 更新portfolio
   _portfolio->Update(symbol, deal);
+  // 保存
+  Transaction data;
+  deal._direct = true;
+  data._deal = deal;
+  data._order = order;
+  auto& trans = _trans[symbol];
+  std::unique_lock<std::mutex> lock(trans._mtx);
+  trans._transactions.emplace_back(std::move(data));
+  return OrderStatus::All;
+}
+
+OrderStatus BrokerSubSystem::SellStock(symbol_t symbol, const Order& order, DealInfo& deal) {
+  double sell_price = 0;
+  if (_handler) {
+    sell_price = _handler->Sell(symbol, order, deal);
+  } else {
+    // 模拟盘
+    sell_price = SimulateMatchStockSeller(symbol, order, deal);
+  }
+  if (deal._deals.empty())
+    return OrderStatus::None;
+  // 更新portfolio
+  _portfolio->Update(symbol, deal);
+  deal._direct = false;
   // 保存
   Transaction data;
   data._deal = deal;
@@ -302,38 +325,61 @@ void BrokerSubSystem::BuyStock(const String& symbol, const Order& order, DealInf
   auto& trans = _trans[symbol];
   std::unique_lock<std::mutex> lock(trans._mtx);
   trans._transactions.emplace_back(std::move(data));
+  return OrderStatus::All;
 }
 
-void BrokerSubSystem::SimulateStockMatch(double capital, const Order& order, DealInfo& deal) {
+double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, DealInfo& deal) {
   // 一手数量
   constexpr short hand = 100;
   double min_value = hand * order._order.front()._price;
-  if (capital < min_value) {
-    return;
+  if (principal < min_value) {
+    return 0;
   }
 
-  int count = hand * order._number;
-
-  double mean = (order._order.front()._price + order._order.back()._price) / 2;
-  std::default_random_engine e;
-  std::normal_distribution<double> norm(mean, _slip);
-  // 滑点单价
-  auto value = norm(e);
-  double slip_price = value * count;
-  if (capital < slip_price) {
-    auto valid_count = std::lround(capital / value);
-    DealDetail alls;
-    alls._number = valid_count;
-    time(&alls._time);
-    alls._price = value;
-    deal._deals.emplace_back(std::move(alls));
-  } else {
-    DealDetail alls;
-    alls._number = order._number;
-    time(&alls._time);
-    alls._price = value;
-    deal._deals.emplace_back(std::move(alls));
+  auto number = order._number;
+  if (number == 0) {
+    auto lower_total_price = _stock._min / _stock._fee;
+    number = ceil(lower_total_price / order._order[0]._price);
   }
+  int count = number;
+
+  // 当前实盘价格
+  auto latest_quote = _exchange->GetQuote(symbol);
+  double price = latest_quote._close;
+  double total = count * price;
+  if (total > principal)
+    return 0;
+
+  // TODO: 模拟只能买入部分/不能买入的场景
+  
+  _principal -= total;
+
+  DealDetail dd;
+  dd._price = price;
+  dd._number = number;
+  dd._time = Now();
+  deal._deals.push_back(std::move(dd));
+  return price;
+}
+
+double BrokerSubSystem::SimulateMatchStockSeller(symbol_t symbol, const Order& order, DealInfo& deal) {
+  auto latest_quote = _exchange->GetQuote(symbol);
+  double price = latest_quote._close;
+  if (price == 0)
+    return price;
+  // TODO: 模拟卖出一部分/无法卖出的场景
+
+  // 全部卖出的场景
+  double total = order._number * price;
+  _principal += total;
+
+  DealDetail dd;
+  dd._price = price;
+  dd._number = order._number;
+  dd._time = Now();
+  deal._deals.push_back(std::move(dd));
+
+  return price;
 }
 
 void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
@@ -347,23 +393,38 @@ void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
 
 bool BrokerSubSystem::GetNextPrediction(symbol_t symb, fixed_time_range& tr, int& op) {
   auto cur = Now();
+  {
+    std::unique_lock<std::mutex> lck(_predMtx);
+    auto itr = _symbolOperation.find(symb);
+    if (itr == _symbolOperation.end())
+      return false;
+
+    if (itr->second.first == cur && (itr->second.second & (int)ContractOperator::Done) == 0) {
+      tr = itr->second.first;
+      op = itr->second.second;
+      return true;
+    }
+  }
+  return false;
+}
+
+void BrokerSubSystem::DoneForecast(symbol_t symb, int operation) {
   List<Pair<fixed_time_range, int>>* history = nullptr;
   {
     std::unique_lock<std::mutex> lck(_predMtx);
     history = &_predictions[symb];
+    _symbolOperation[symb].second |= (int)ContractOperator::Done;
   }
-  bool is_search = false;
+  auto cur = Now();
+  std::unique_lock<std::mutex> lck(_predMtx);
   for (auto ritr = history->rbegin(); ritr != history->rend(); ++ritr) {
     if (ritr->first < cur)
       break;
     if (ritr->first == cur) {
-      is_search = true;
-      tr = ritr->first;
-      op = ritr->second;
+      ritr->second |= (int)ContractOperator::Done;
       break;
     }
   }
-  return is_search;
 }
 
 void BrokerSubSystem::InitPrediction(MDB_txn* txn, MDB_dbi dbi) {

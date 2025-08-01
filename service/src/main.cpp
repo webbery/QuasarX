@@ -1,8 +1,5 @@
-#include "server.h"
 #include <memory_resource>
 #ifdef WIN32
-#include <windows.h>
-#include <dbghelp.h>
 #else
 #include <execinfo.h>
 #include <cxxabi.h>
@@ -10,27 +7,12 @@
 #include <getopt.h>
 #include <signal.h>
 #endif
+#include "server.h"
 #include "Util/string_algorithm.h"
-#include "DataFrame/DataFrame.h"
 #ifdef WIN32
 #define popen _popen
 #define pclose _pclose
 #endif
-
-std::string GetProgramPath() {
-#ifdef WIN32
-  TCHAR path[MAX_PATH] = {0};
-  if (GetModuleFileName(NULL, path, MAX_PATH) == 0) {
-    return "";
-  }
-  return path;
-#else
-    const std::size_t MAXBUFSIZE = 2048;
-    char buf[MAXBUFSIZE] = {'\0'};
-    auto size = readlink("/proc/self/exe", buf, MAXBUFSIZE);
-    return std::string(buf, size);
-#endif
-}
 
 #define CMD_RESULT_BUF_SIZE 2048
 
@@ -163,6 +145,12 @@ int main(int argc, char* argv[])
     hmdf::ThreadGranularity::set_optimum_thread_level();
     
     install_signal_handler();
+
+    // init log
+    auto log_name = ToString(Now()) + ".log";
+    FILE* fp = fopen(("log/" + log_name).c_str(), "w");
+    fmtlog::setLogFile(fp);
+
     Server server;
     // 加载配置
     if (argc == 2) {
@@ -177,5 +165,6 @@ int main(int argc, char* argv[])
     }
     
     server.Run();
+    fclose(fp);
     return 0;
 }

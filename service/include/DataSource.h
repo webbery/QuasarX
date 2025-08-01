@@ -7,8 +7,9 @@
 #include <yas/std_traits.hpp>
 
 struct DataFeatures {
-    Vector<FeatureType> _features;
-    Vector<symbol_t> _symbols;
+    Vector<size_t> _features;
+    symbol_t _symbol;
+    double _price;
     Vector<float> _data;
-    YAS_DEFINE_STRUCT_SERIALIZE("DataMessenger", _symbols, _features, _data);
+    YAS_DEFINE_STRUCT_SERIALIZE("DataMessenger", _symbol, _features, _price, _data);
 };

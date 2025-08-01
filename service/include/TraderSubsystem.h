@@ -1,4 +1,5 @@
 #pragma once
+#include "Util/datetime.h"
 #include "Util/system.h"
 #include "std_header.h"
 #include "Transfer.h"
@@ -19,10 +20,13 @@ public:
     void Start();
 
 private:
-    void StrategyBuy(symbol_t symbol, const DataFeatures& features);
+    bool StrategyBuy(symbol_t symbol, const DataFeatures& features);
 
-    void StrategySell();
+    bool StrategySell(symbol_t symbol, const DataFeatures& features);
 
+    bool StrategyShort(symbol_t symbol, const DataFeatures& features);
+
+    bool IsNearClose(symbol_t);
 private:
     nng_socket _real_recv;  // 实盘接收
     nng_socket _real_send;
@@ -36,4 +40,6 @@ private:
 
     // next operations for symbol
     Map<symbol_t, int> _operations;
+
+    Set<time_range> _stock_working_range;
 };

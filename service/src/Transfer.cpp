@@ -1,6 +1,6 @@
 #include "Transfer.h"
-#include "Util/log.h"
 #include "Util/system.h"
+#include <exception>
 
 ITransfer::ITransfer():_worker(nullptr), _running(true) {
 
@@ -18,15 +18,19 @@ void ITransfer::stop() {
 }
 
 void ITransfer::start(const String& name, const String& from, const String& to) {
-    _worker = new std::thread(&Transfer::run, this, name, from, to);
+    if (!to.empty()) {
+        _worker = new std::thread(static_cast<void (ITransfer::*)(const String&, const String&, const String&)>(&Transfer::run), this, name, from, to);
+    } else {
+        _worker = new std::thread(static_cast<void (ITransfer::*)(const String&, const String&)>(&Transfer::run), this, name, from);
+    }
 }
 
 void ITransfer::run(const String& name, const String& from, const String& to) {
-    if (!Subscribe(from, _send)) {
+    if (!Subscribe(from, _recv)) {
         WARN("subscribe {} fail.", from);
         return;
     }
-    if (!Publish(to, _recv)) {
+    if (!Publish(to, _send)) {
         WARN("publish {} fail.", to);
         return;
     }
@@ -40,10 +44,30 @@ void ITransfer::run(const String& name, const String& from, const String& to) {
     nng_close(_recv);
 }
 
+void ITransfer::run(const String& name, const String& from) {
+    if (!Subscribe(from, _recv)) {
+        WARN("subscribe {} fail.", from);
+        return;
+    }
+    
+    SetCurrentThreadName(name.c_str());
+    while (_running) {
+        if (!work(_recv, _send)) {
+            break;
+        }
+    }
+    nng_close(_send);
+}
+
 Transfer::Transfer(transfer_function func):_func(func) {
 
 }
 
 bool Transfer::work(nng_socket& from, nng_socket& to) {
-    return _func(from, to);
+    try {
+        return _func(from, to);
+    } catch (const std::exception& e) {
+        WARN("Transfer exception: {}", e.what());
+        return true;
+    }
 }

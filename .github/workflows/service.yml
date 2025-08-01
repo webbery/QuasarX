@@ -1,0 +1,69 @@
+name: Build Service
+on: [push] # 触发事件
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: /home/runner/work/ccache  # ccache 缓存目录
+    steps:
+      - name: Install GCC 13+ (C++23 support)
+        run: |
+          sudo apt update
+          sudo apt install -y g++-13
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
+
+      # 配置 ccache 编译缓存
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-xgboost
+          max-size: 1024M  # 限制缓存大小
+
+      # 4. 缓存 xgboost 的 build 目录（依赖缓存）
+      - name: Cache xgboost build
+        uses: actions/cache@v4
+        id: cache-xgboost
+        with:
+          path: |
+            xgboost/build
+            /usr/local/include/xgboost
+            /usr/local/lib/libxgboost.*
+          key: ${{ runner.os }}-xgboost-${{ hashFiles('**/CMakeLists.txt', '**/dmlc-core/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-xgboost-
+
+      - name: Install dependencies
+        if: steps.cache-xgboost.outputs.cache-hit != 'true'
+        run: |
+          sudo apt install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+
+      # 仅当缓存未命中时编译 xgboost
+      - name: Build xgboost (if cache miss)
+        if: steps.cache-xgboost.outputs.cache-hit != 'true'
+        run: |
+          git clone --recursive https://github.com/dmlc/xgboost
+          cd xgboost
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \  # 启用 ccache
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DUSE_CUDA=OFF
+            -DCMAKE_CXX_STANDARD=23
+          make -j$(nproc)
+          sudo make install
+
+      # 检出代码
+      - uses: actions/checkout@v4
+
+      # 配置CMake并编译
+      - name: Configure and build
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
+          cmake --build . --config Release
+
+      # 显示缓存统计（验证加速效果）
+      - name: Show ccache stats
+        run: ccache -s

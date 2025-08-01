@@ -29,8 +29,6 @@ private:
     String GetTypePath(symbol_t sym);
     
 private:
-    Server* _handle;
-
     nng_socket sock;
 
     std::thread* _main;

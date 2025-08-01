@@ -1,6 +1,5 @@
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Util/string_algorithm.h"
-#include "Util/log.h"
 
 namespace {
     static Map<String, char> object_code{

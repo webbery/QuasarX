@@ -18,7 +18,6 @@
 #endif
 #include <vector>
 #include <fstream>
-#include "Util/log.h"
 #include "server.h"
 #include "DataSource.h"
 
@@ -382,7 +381,7 @@ void SetCurrentThreadName(const char* name) {
 }
 
 namespace {
-  const Map<String, char> exchange_map{{"SZ", 0}, {"SH", 1}, {"BJ", 2}};
+  const Map<String, char> exchange_map{{"SZ", MT_Shenzhen}, {"SH", MT_Shanghai}, {"BJ", MT_Beijing}};
 }
 
 symbol_t to_symbol(const String& symbol, const String& exchange) {
@@ -402,13 +401,7 @@ symbol_t to_symbol(const String& symbol, const String& exchange) {
     break;
     default: break;
     }
-    auto exc = Server::GetExchange(symbol);
-    switch (exc) {
-    case ExchangeName::MT_Shanghai: id._exchange = 1; break;
-    case ExchangeName::MT_Shenzhen: id._exchange = 0; break;
-    case ExchangeName::MT_Beijing: id._exchange = 0; break;
-    default: WARN("not support exchange for {}", symbol); break;
-    }
+    id._exchange = Server::GetExchange(symbol);
   } else {
     id._type = contract_type::stock;
     id._exchange = exchange_map.at(exchange);
@@ -423,11 +416,18 @@ String get_symbol(const symbol_t& symbol) {
   }
   else if (symbol._type == contract_type::put || symbol._type == contract_type::call) {
     char buff[5] = {0};
-    sprintf(buff, "%02d%02d", symbol._year, symbol._month);
+    snprintf(buff, 5, "%02d%02d", symbol._year, symbol._month);
     char CP = (symbol._type == contract_type::put? 'P':'C');
     return CTPObjectName(symbol._opt) + buff + CP + std::to_string(symbol._price * 100);
   }
   else if (symbol._type != contract_type::put || symbol._type != contract_type::call) {
+    if (symbol._exchange == MT_Shenzhen || symbol._exchange == MT_Shanghai || symbol._exchange == MT_Beijing) {
+#define CHINA_STOCK_SIZE 7
+      char buff[CHINA_STOCK_SIZE] = {0};
+      snprintf(buff, CHINA_STOCK_SIZE, "%06d", symbol._symbol);
+      return String(buff, 6);
+    }
+    
     return std::to_string(symbol._symbol);
   }
   WARN("unknow symbol type: {}", (int)symbol._type);
@@ -464,7 +464,22 @@ Set<symbol_t> get_holds(const AccountPosition& account) {
   return holds;
 }
 
+std::string GetProgramPath() {
+#ifdef WIN32
+    TCHAR path[MAX_PATH] = { 0 };
+    if (GetModuleFileName(NULL, path, MAX_PATH) == 0) {
+        return "";
+    }
+    return path;
+#else
+    const std::size_t MAXBUFSIZE = 2048;
+    char buf[MAXBUFSIZE] = { '\0' };
+    auto size = readlink("/proc/self/exe", buf, MAXBUFSIZE);
+    return std::string(buf, size);
+#endif
+}
 
+#ifdef __linux__
 CPUPerformanceMesure::CPUPerformanceMesure() {
     int retval = PAPI_library_init(PAPI_VER_CURRENT);
     if (retval != PAPI_VER_CURRENT) {
@@ -505,3 +520,4 @@ CPUPerformanceMesure::~CPUPerformanceMesure() {
     PAPI_shutdown();
 }
 
+#endif

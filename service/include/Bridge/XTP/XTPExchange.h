@@ -36,7 +36,7 @@ public:
 
   Order GetOrder(const order_id& id);
 
-  QuoteInfo GetQuote(const String& symbol);
+  QuoteInfo GetQuote(symbol_t symbol);
 
   std::mutex& GetMutex(int request_id) { return _mtxs[request_id]; }
   std::condition_variable& GetCV(int request_id) { return _cvs[request_id]; }

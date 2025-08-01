@@ -4,7 +4,6 @@
 #include "json.hpp"
 #include "server.h"
 #include "Risk/StopLoss.h"
-#include "Util/log.h"
 #include "Util/system.h"
 #include <cstdlib>
 #include <mutex>

@@ -1,5 +1,4 @@
 #include "Bridge/CTP/CTPTrade.h"
-#include "Util/log.h"
 #include "Util/string_algorithm.h"
 
 CTPTrade::CTPTrade(CThostFtdcTraderApi* api):_conn_status(false) {

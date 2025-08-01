@@ -1,8 +1,7 @@
 #include "Handler/BackTestHandler.h"
-#include "Util/Strategy.h"
-#include "Util/log.h"
 #include "server.h"
 #include <filesystem>
+#include "Strategy.h"
 
 BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 

@@ -1,10 +1,11 @@
 #include "FeatureSubsystem.h"
 #include "DataSource.h"
 #include "StrategySubSystem.h"
-#include "Util/log.h"
 #include "Util/system.h"
 #include "json.hpp"
 #include "server.h"
+#include <cmath>
+#include <cstddef>
 #include <mutex>
 #include <thread>
 #include <immintrin.h>
@@ -26,14 +27,18 @@ const char* ATRFeature::desc() { return "ATR"; }
 ATRFeature::ATRFeature(const nlohmann::json& params):_sum(0) {
     try {
         _T = params["N"];
+        _tr.resize(_T);
     } catch(const nlohmann::json::exception& e) {
         WARN("ATRFeature exception: {}", e.what());
     }
 }
 
+size_t ATRFeature::id() {
+    return std::hash<StringView>()(name());
+}
+
 ATRFeature::~ATRFeature() {
     if (_close) delete[] _close;
-    if (_tr) delete[] _tr;
 }
 
 bool ATRFeature::plug(Server* handle, const String& account) {
@@ -44,12 +49,11 @@ bool ATRFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-double ATRFeature::deal(const QuoteInfo& quote) {
+double ATRFeature::deal(const QuoteInfo& quote, double extra) {
     _cnt += 1;
     if (_close == nullptr) {
         _close = new double[_T];
         _close[0] = quote._close;
-        _tr = new double[_T]{0};
         return nan("");
     }
     double prev_close = _close[_cur];
@@ -72,9 +76,7 @@ double ATRFeature::deal(const QuoteInfo& quote) {
 }
 
 FeatureSubsystem::FeatureSubsystem(Server* handle): _handle(handle), _thread(nullptr) {
-    for (auto mt: {MT_Shanghai, MT_Beijing, MT_Shenzhen}) {
-        _working_times[mt] = std::move(GetWorkingRange(mt));
-    }
+    
 }
 
 FeatureSubsystem::~FeatureSubsystem() {
@@ -95,28 +97,50 @@ void FeatureSubsystem::LoadConfig(const AgentStrategyInfo& config) {
         auto symb = to_symbol(symbol);
         symbols.insert(symb);
     }
-    _tasks[name] = symbols;
+    _tasks[name.data()] = symbols;
 
-    for (auto& node: config._features) {
+    for (auto node: config._features) {
         // TODO: 构建feature id，查找是否已经存在
-        IFeature* f = FeatureFactory::Create(node._type, node._params);
-        if (f) {
-            _features.push_back(f);
+        auto block = GenerateBlock(node);
+        if (block) {
             for (auto symb: symbols) {
                 PipelineInfo& pi = _pipelines[symb];
-                pi._features.push_back(f);
+                pi._gap = config._future;
+                pi._features.push_back(block);
             }
-        } else {
-            WARN("{} is not created", node._type);
         }
     }
 }
 
+FeatureSubsystem::FeatureBlock* FeatureSubsystem::GenerateBlock(FeatureNode* node) {
+    auto f = FeatureFactory::Create(node->_type, node->_params);
+    if (!f)
+        return nullptr;
+
+    auto block = new FeatureBlock;
+    block->_feature = f;
+    if (!node->_nexts.empty()) {
+        for (auto next: node->_nexts) {
+            auto next_block = GenerateBlock(next);
+            block->_nexts.insert(next_block);
+        }
+    }
+    return block;
+}
+
+void FeatureSubsystem::InitSecondLvlFeatures() {
+    auto f = FeatureFactory::Create(VWAPFeature::name(), nlohmann::json::parse("{\"N\":1}"));
+    _features.push_back(f);
+    for (auto& item: _pipelines) {
+        auto& pi = item.second;
+        pi._reals.push_back(f);
+    }
+}
+
 void FeatureSubsystem::run() {
-    String port = "inproc://Feature";
     nng_socket send_sock, recvsock;
-    if (!Publish(port, send_sock)) {
-        WARN("publish {} fail.", port);
+    if (!Publish(URI_FEATURE, send_sock)) {
+        WARN("publish {} fail.", URI_FEATURE);
         return;
     }
     // 默认接入的都是真实行情
@@ -125,7 +149,7 @@ void FeatureSubsystem::run() {
     //     source = URI_SIM_QUOTE;
     // }
     if (!Subscribe(source, recvsock)) {
-        WARN("subscribe {} fail.", port);
+        WARN("subscribe {} fail.", source);
         return;
     }
     SetCurrentThreadName("Feature");
@@ -136,37 +160,29 @@ void FeatureSubsystem::run() {
     }
     
     // 
-    static constexpr std::size_t flags = yas::mem|yas::binary;
+    
     while (!_handle->IsExit()) {
         QuoteInfo quote;
         if (!ReadQuote(recvsock, quote)) {
             continue;
         }
         
-        if (_pipelines.count(quote._symbol) == 0 || !is_open(quote._symbol, quote._time))
+        if (_pipelines.count(quote._symbol) == 0)
             continue;
         
         List<IFeature*>* pFeats = nullptr;
         {
             std::unique_lock<std::mutex> lock(_mtx);
-            pFeats = &_pipelines[quote._symbol]._features;
+            auto& pipeinfo = _pipelines[quote._symbol];
+            if (pipeinfo._gap != 0 && !_handle->IsOpen(quote._symbol, quote._time)) { // 日间策略
+                send_feature(send_sock, quote, pipeinfo._features);
+                continue;
+            } else { // 实时
+            }
+            pFeats = &pipeinfo._reals;
         }
         
-        DataFeatures messenger;
-        messenger._symbols.emplace_back(quote._symbol);
-        Vector<float> features(pFeats->size());
-        int i = 0;
-        for (auto& feat: *pFeats) {
-            features[i] = feat->deal(quote);
-            messenger._features[i] = ((PrimitiveFeature*)feat)->type();
-            ++i;
-        }
-        messenger._data = std::move(features);
-        // Send to next 
-        yas::shared_buffer buf = yas::save<flags>(messenger);
-        if (0 != nng_send(send_sock, buf.data.get(), buf.size, 0)) {
-            WARN("send features fail.");
-        }
+        send_feature(send_sock, quote, pFeats);
     }
 
     nng_close(send_sock);
@@ -175,15 +191,75 @@ void FeatureSubsystem::run() {
     recvsock.id = 0;
 }
 
-bool FeatureSubsystem::is_open(symbol_t symbol, time_t t) {
-    auto exc_type = Server::GetExchange(get_symbol(symbol));
-    auto& working = _working_times[exc_type];
-    for (auto& tr: working) {
-        if (tr == t) {
-            return true;
-        }
+void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, List<IFeature*>* pFeats) {
+    DataFeatures messenger;
+    messenger._symbol = quote._symbol;
+    Vector<float> features(pFeats->size());
+    Vector<size_t> types(pFeats->size());
+    int i = 0;
+    DEBUG_INFO("{}", quote);
+    for (auto& feat: *pFeats) {
+        double val = feat->deal(quote);
+        if (std::isnan(val))
+            continue;
+
+        features[i] = val;
+        types[i] = feat->id();
+        ++i;
     }
-    return false;
+    DEBUG_INFO("{}", features);
+    messenger._price = quote._close;
+    messenger._data = std::move(features);
+    messenger._features = std::move(types);
+    // Send to next 
+    yas::shared_buffer buf = yas::save<flags>(messenger);
+    if (0 != nng_send(s, buf.data.get(), buf.size, 0)) {
+        WARN("send features fail.");
+    }
+}
+
+void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const List<FeatureBlock*>& pFeats) {
+    DataFeatures messenger;
+    messenger._symbol = quote._symbol;
+    Vector<float> features(pFeats.size());
+    Vector<size_t> types(pFeats.size());
+    int i = 0;
+    for (auto& block: pFeats) {
+        double val = block->_feature->deal(quote);
+        types[i] = block->_feature->id();
+        if (std::isnan(val))
+            continue;
+
+        if (!block->_nexts.empty()) {
+            double dv = 0;
+            for (auto itr = block->_nexts.begin(); itr != block->_nexts.end(); ++itr) {
+                dv += recursive_feature(*itr, quote, val);
+            }
+            val += dv;
+        }
+        features[i] = val;
+        ++i;
+    }
+    messenger._price = quote._close;
+    messenger._data = std::move(features);
+    messenger._features = std::move(types);
+    // Send to next 
+    yas::shared_buffer buf = yas::save<flags>(messenger);
+    if (0 != nng_send(s, buf.data.get(), buf.size, 0)) {
+        WARN("send features fail.");
+    }
+}
+
+double FeatureSubsystem::recursive_feature(FeatureBlock* block, const QuoteInfo& quote, double cur) {
+    double val = block->_feature->deal(quote, cur);
+    for (auto next: block->_nexts) {
+        double dv = 0;
+        for (auto itr = block->_nexts.begin(); itr != block->_nexts.end(); ++itr) {
+            dv += recursive_feature(*itr, quote, val);
+        }
+        val += dv;
+    }
+    return val;
 }
 
 bool FeatureSubsystem::Start() {
@@ -206,6 +282,14 @@ bool FeatureSubsystem::Start(const String& name, bool is_simulate) {
 
 void FeatureSubsystem::Stop() {
     
+}
+
+Set<symbol_t> FeatureSubsystem::GetFeatureSymbols() {
+    Set<symbol_t> symbs;
+    for (auto& item: _pipelines) {
+        symbs.insert(item.first);
+    }
+    return symbs;
 }
 
 void FeatureSubsystem::Stop(const String& name) {

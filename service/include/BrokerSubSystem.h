@@ -1,8 +1,8 @@
 #pragma once
+#include "std_header.h"
 #include "Bridge/exchange.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
-#include "std_header.h"
 #include "Util/lmdb.h"
 #include "DataHandler.h"
 #include "json.hpp"
@@ -12,25 +12,17 @@
 #include <condition_variable>
 #include "PortfolioSubsystem.h"
 
-enum class ContractOperator: char {
-  Hold = 0,
-  Buy = 1,
-  Sell = 2,
-  Long = 4,
-  Short = 8,
-};
-
 class Broker {
 public:
   virtual ~Broker() {}
 
-  virtual double Buy(const String& symbol, const Order& order) = 0;
+  virtual OrderStatus Buy(symbol_t, const Order& order, DealDetail& detail) = 0;
 
-  virtual double Sell(const String& symbol, const Order& order) = 0;
+  virtual OrderStatus Sell(symbol_t, const Order& order, DealDetail& detail) = 0;
 
-  virtual double Put(const String& symbol, const Order& order)  {return 0; }
+  virtual double Put(symbol_t, const Order& order)  {return 0; }
 
-  virtual double Call(const String& symbol, const Order& order) {return 0; }
+  virtual double Call(symbol_t, const Order& order) {return 0; }
 
   virtual uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) = 0;
 
@@ -42,6 +34,9 @@ public:
   BrokerSubSystem(Server* server, ExchangeHandler* handler):_thread(nullptr), _exit(false) {
     _portfolio = server->GetPortforlioSubSystem();
     _handler = handler;
+    if (!_handler) {
+      _exchange = server->GetExchange(ExchangeType::EX_SIM);
+    }
   }
 
   virtual ~BrokerSubSystem() { Release(); }
@@ -50,9 +45,9 @@ public:
 
   void Release();
 
-  double Buy(const String& symbol, const Order& order);
+  OrderStatus Buy(symbol_t symbol, const Order& order, DealDetail& detail);
 
-  double Sell(const String& symbol, const Order& order);
+  OrderStatus Sell(symbol_t symbol, const Order& order, DealDetail& detail);
 
   // 统计当前指标
   uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
@@ -65,11 +60,14 @@ public:
   // 
   void PredictWithDays(symbol_t symb, int N, int op);
   bool GetNextPrediction(symbol_t symb, fixed_time_range& tr, int& op);
+  void DoneForecast(symbol_t symb, int operation);
 
 private:
-  void BuyStock(const String& symbol, const Order& order, DealInfo& deal);
+  OrderStatus BuyStock(symbol_t symbol, const Order& order, DealInfo& deal);
+  OrderStatus SellStock(symbol_t symbol, const Order& order, DealInfo& deal);
 
-  void SimulateStockMatch(double capital, const Order& order, DealInfo& deal);
+  double SimulateMatchStockBuyer(symbol_t symbol,double capital, const Order& order, DealInfo& deal);
+  double SimulateMatchStockSeller(symbol_t symbol, const Order& order, DealInfo& deal);
 private:
   void run();
 
@@ -96,12 +94,13 @@ private:
 private:
   PortfolioSubSystem* _portfolio;
   ExchangeHandler* _handler;
+  ExchangeInterface* _exchange;
   struct LockTransactions {
     List<Transaction> _transactions;
     std::mutex _mtx;
   };
 
-  Map<String, LockTransactions> _trans;
+  Map<symbol_t, LockTransactions> _trans;
 
   std::mutex _predMtx;
   Map<symbol_t, List<Pair<fixed_time_range, int>>> _predictions;

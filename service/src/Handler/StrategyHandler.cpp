@@ -4,7 +4,6 @@
 #include <limits>
 #include <yas/serialize.hpp>
 #include "DataHandler.h"
-#include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "nng/nng.h"

@@ -45,18 +45,18 @@ public:
 
   virtual void OnQueryAllTickersFullInfo(XTPQFI* ticker_info, XTPRI *error_info, bool is_last);
 
-  QuoteInfo GetQuoteInfo(const String& symbol);
+  QuoteInfo GetQuoteInfo(symbol_t symbol);
 
   bool IsAllTickCapture() {return _is_all;}
 
-  Set<String> GetAllSymbols();
+  Set<symbol_t> GetAllSymbols();
 private:
   void AddAndUpdateTicker(XTPQFI* ticker_info);
 
 private:
-  nng_socket sock;
+  nng_socket _sock;
   bool _is_all;
 
   std::mutex _mutex;
-  std::map<std::string, QuoteInfo> _tickers;
+  std::map<symbol_t, QuoteInfo> _tickers;
 };

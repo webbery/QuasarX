@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
@@ -12,12 +13,11 @@
 #include "Handler/TimerHandler.h"
 #include "HttpHandler.h"
 #include "PortfolioSubsystem.h"
-#include "Util/log.h"
 #include "Util/system.h"
-#include "json.hpp"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
 #include "csv.h"
+#include <fstream>
 #include <nng/protocol/reqrep0/rep.h>
 #include <nng/protocol/reqrep0/req.h>
 #include <nng/supplemental/util/platform.h>
@@ -39,6 +39,7 @@
 #include "TraderSubsystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
+#include "FeatureSubsystem.h"
 
 #define THREAD_URL  "inproc://thread"
 #define ERROR_RESPONSE  "not a valid request"
@@ -87,6 +88,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_INDEX           "/index/quote"
 #define API_MONTECARLO      "/predict/montecarlo"
 #define API_FINITE_DIFF     "/predict/finite_diff"
+#define API_PREDICT_OPR     "/predict/operation"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -104,7 +106,9 @@ std::map<time_t, float> Server::_inter_rates;
 Server::Server():_config(nullptr), _trade_exchange(nullptr), 
 _exit(false), _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
 _defaultPortfolio(1), _timer(nullptr), _riskSystem(nullptr), _traderSystem(nullptr) {
-
+    for (auto mt: {MT_Shanghai, MT_Beijing, MT_Shenzhen}) {
+        _working_times[mt] = std::move(GetWorkingRange(mt));
+    }
 }
 
 Server::~Server() {
@@ -116,6 +120,9 @@ Server::~Server() {
     if (_brokerSystem) {
         // _broker->Release();
         delete _brokerSystem;
+    }
+    if (_virtualSystem) {
+        delete _virtualSystem;
     }
     if (_portfolioSystem) {
         delete _portfolioSystem;
@@ -140,38 +147,20 @@ bool Server::Init(const char* config) {
 
     InitDatabase();
     InitHandlers();
-    
-    _strategySystem = new StrategySubSystem(this);
-    _strategySystem->Init();
     // _mode = mode;
     return true;
 }
 
 void Server::Run() {
-    // if (_mode == MODE_COMMAND) {
-    //   // TODO:启动定时器,按照配置的时间启动交易服务;测试直接运行
-    // //   int cnt = 0;
-    // //   for (auto ex : _exchanges) {
-    // //     if (!ex->Login()) {
-    // //         cnt++;
-    // //     }
-    // //   }
-    // //   if (cnt == _exchanges.size())
-    // //     return;
+    Regist();
+    auto port = _config->GetPort();
+    INFO("Start in port {}", port);
+    _svr.listen("0.0.0.0", port);
+    printf("Bye\n");
 
-    //   RunCammand();
-    //   printf("Bye\n");
-    // } else {
-        Regist();
-        auto port = _config->GetPort();
-        INFO("Start in port {}", port);
-        _svr.listen("0.0.0.0", port);
-        printf("Bye\n");
-
-        for (auto& item: _handlers) {
-            delete item.second;
-        }
-    // }
+    for (auto& item: _handlers) {
+        delete item.second;
+    }
 }
 
 void Server::Regist() {
@@ -255,6 +244,7 @@ void Server::InitDefault() {
         printf("default config `exchange` is not exist.\n");
         return;
     }
+    bool use_sim = false;
     for (auto& name: names) {
         auto exchange = _config->GetExchangeByName(name);
         if (exchange.empty()) {
@@ -264,25 +254,30 @@ void Server::InitDefault() {
         if (!exchanger->Use(name)) {
             return;
         }
+        if (exchange == "sim") {
+            use_sim = true;
+        }
     }
 
     StartTimer();
 
-    if (default_config.contains("record") && !default_config["record"].empty()) {
-        auto recorder = (RecordHandler*)_handlers[API_RECORD];
-        Set<String> symbols;
-        for (auto& item: default_config["record"]) {
-            if (item == "*") {
-                break;
+    if (!use_sim) { // 开启模拟数据的情况下，不记录数据
+        if (default_config.contains("record") && !default_config["record"].empty()) {
+            auto recorder = (RecordHandler*)_handlers[API_RECORD];
+            Set<String> symbols;
+            for (auto& item: default_config["record"]) {
+                if (item == "*") {
+                    break;
+                }
+                symbols.insert((String)item);
             }
-            symbols.insert((String)item);
+            if (!symbols.empty()) {
+                recorder->SetSymbols(symbols);
+            }
+            recorder->StartRecord(true);
         }
-        if (!symbols.empty()) {
-            recorder->SetSymbols(symbols);
-        }
-        recorder->StartRecord(true);
     }
-
+    
     String broker_name = default_config["broker"];
     auto broker = _config->GetBrokerByName(broker_name);
     if (broker.empty()) {
@@ -307,6 +302,10 @@ void Server::InitDefault() {
     auto real_path = dbpath + "/" + broker_name + ".db";
     _brokerSystem->Init(real_path.c_str());
 
+    _virtualSystem = new BrokerSubSystem(this, nullptr);
+    auto virt_path = dbpath + "/virtual.db";
+    _virtualSystem->Init(virt_path.c_str(), 1000000);
+
     // Risk system start
     _riskSystem = new RiskSubSystem(this);
     if (default_config.contains("risk")) {
@@ -314,18 +313,22 @@ void Server::InitDefault() {
     }
     _riskSystem->Start();
 
+    _strategySystem = new StrategySubSystem(this);
+
     _traderSystem = new TraderSystem(this, dbpath);
     if (default_config.contains("strategy")) {
         auto& strategies = default_config["strategy"];
         if (strategies.contains("sim")) {
             for (String name: strategies["sim"]) {
                 _traderSystem->SetupSimulation(name);
+                _strategySystem->SetupSimulation(name);
             }
         }
-        if (strategies.contains("real")) {
+        if (strategies.contains("real") && strategies["real"].size() != 0) { 
             INFO("to be implement of real ");
         }
     }
+    _strategySystem->Init();
     _traderSystem->Start();
 }
 
@@ -539,15 +542,15 @@ float Server::GetInterestRate(time_t datetime) {
     return itr->second;
 }
 
-bool Server::LoadDataBySymbol(const String& symbol, DataRightType right, DataFrequencyType freq) {
-    auto& dataCache = (right == DataRightType::None? _data: _hfqdata);
+bool Server::LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType freq) {
+    auto& dataCache = (right == StockAdjustType::None? _data: _hfqdata);
     if (dataCache.count(symbol)) {
         // TODO: 检查数据最后一天的时间是否是当天,如果不是,需要加载新的数据进来
         return true;
     }
     String path = _config->GetDatabasePath();
     auto type = GetContractType(symbol);
-    String contract = (right == DataRightType::None? "Astock": "A_hfq");
+    String contract = (right == StockAdjustType::None? "Astock": "A_hfq");
     String filename;
     try {
         auto& df = dataCache[symbol];
@@ -636,6 +639,66 @@ bool Server::LoadStock(DataFrame& df, const String& path) {
     return true;
 }
 
+bool Server::LoadStock(DataFrame& df, symbol_t symbol, int lastN) {
+    auto filename = get_symbol(symbol) + "_hist_data.csv";
+    String path = _config->GetDatabasePath();
+    path += "/Astock/" + filename;
+    double open, close, high, low, volumn, amount;
+
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        WARN("Can't open file: {}", path);
+        return false;
+    }
+    // 获取文件大小并初始化位置指针
+    std::streampos pos = file.tellg();
+    int newlineCount = 0;
+    char ch;
+    // 从文件末尾向前搜索换行符
+    while (pos > 0) {
+        pos -= 1;
+        file.seekg(pos, std::ios::beg); // 向前移动一个字节
+        file.get(ch);
+        
+        if (ch == '\n') {
+            if (++newlineCount == lastN) 
+                break; // 找到第n个换行符
+        }
+    }
+    // 如果未找到足够换行符，回到文件开头
+    
+    if (pos != 0) {
+        pos += 1;
+        file.seekg(pos); // 跳过找到的换行符
+    }
+    else file.seekg(0);
+
+    // 读取目标行内容
+    unsigned int index = 0;
+    std::string line;
+    while (std::getline(file, line)) {
+        // 处理换行符（\r\n）
+        if (!line.empty() && line.back() == '\n') 
+            line.pop_back();
+        
+        Vector<String> content;
+        split(line, content, ",");
+
+        auto t = FromStr(content[0]);
+        open = atof(content[1].c_str());
+        close = atof(content[2].c_str());
+        low = atof(content[3].c_str());
+        high = atof(content[4].c_str());
+        volumn = atof(content[5].c_str());
+        df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
+            std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn)
+        );
+        ++index;
+    }
+    file.close();
+    return true;
+}
+
 bool Server::LoadFuture(DataFrame& df, const String& path) {
     if (!std::filesystem::exists(path))
         return false;
@@ -683,12 +746,52 @@ void Server::Timer()
 
         auto fut = std::async(std::launch::async,  [this]() {
             auto curr = Now();
+            Schedules(curr);
             // 
             UpdateQuoteQueryStatus(curr);
-            Schedules(curr);
         });
         next_wake += interval;
     }
+}
+
+void Server::SendCloseFeatures() {
+    nng_socket send;
+    if (!Publish(URI_RAW_QUOTE, send)) {
+        WARN("regist SendCloseFeatures socket fail.");
+        return;
+    }
+    auto featureSystem = _strategySystem->GetFeatureSystem();
+    auto symbols = featureSystem->GetFeatureSymbols();
+    static constexpr std::size_t flags = yas::mem|yas::binary;
+    for (auto symbol: symbols) {
+        if (is_stock(symbol)) {
+            DataFrame df;
+            String path = _config->GetDatabasePath() + "/" + get_symbol(symbol) + "_hist_data.csv";
+            if (!LoadStock(df, path)) {
+                WARN("Load stock {} data fail.", get_symbol(symbol));
+                continue;
+            }
+            auto& close = df.get_column<double>("close");
+            if (close.empty())
+                continue;
+
+            QuoteInfo info;
+            info._symbol = symbol;
+            info._time = FromStr(df.get_column<String>("datetime").back());
+            info._open = df.get_column<double>("open").back();
+            info._high = df.get_column<double>("high").back();
+            info._volume = df.get_column<double>("volume").back();
+            info._close = close.back();
+            info._low = df.get_column<double>("low").back();
+            
+            yas::shared_buffer buf = yas::save<flags>(info);
+            if (0 != nng_send(send, buf.data.get(), buf.size, 0)) {
+                WARN("send daily close quote message fail.");
+                return;
+            }
+        }
+    }
+    nng_close(send);
 }
 
 void Server::UpdateQuoteQueryStatus(time_t curr) {
@@ -716,7 +819,8 @@ void Server::Schedules(time_t t) {
         daily_once = false;
         prev_day = ltm->tm_wday;
     }
-    if (!daily_once && ltm->tm_hour == 20 && ltm->tm_min == 0) { // 20:00 run once
+    auto time = _config->GetDailyTime();
+    if (!daily_once && ltm->tm_hour == time.first && ltm->tm_min == time.second) { // 20:00(default) run once
         daily_once = true;
         LOG("run once script");
         RunCommand("cd ../tools && python daily.py");
@@ -725,10 +829,13 @@ void Server::Schedules(time_t t) {
             // every week 6 run once
             RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
         }
+
+        // TODO: run daily forecast with newest data
+        SendCloseFeatures();
     }
 }
 
-std::shared_ptr<DataGroup> Server::PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, DataRightType right) {
+std::shared_ptr<DataGroup> Server::PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right) {
     Map<contract_type, List<String>> all_symbol;
     for (auto sym: symbols) {
         all_symbol[sym._type].emplace_back(get_symbol(sym));
@@ -743,7 +850,7 @@ std::shared_ptr<DataGroup> Server::PrepareData(const Set<symbol_t>& symbols, Dat
     return nullptr;
 }
 
-std::shared_ptr<DataGroup> Server::PrepareStockData(const List<String>& symbols, DataFrequencyType type, DataRightType right) {
+std::shared_ptr<DataGroup> Server::PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right) {
     for (auto& sym: symbols) {
         auto itr = _data.find(sym);
         DataFrame* curr_df = nullptr;
@@ -792,6 +899,7 @@ void Server::InitHandlers() {
     RegistHandler(API_STRATEGY, StrategyHandler);
     RegistHandler(API_INDEX, IndexHandler);
     RegistHandler(API_BACKTEST, BackTestHandler);
+    RegistHandler(API_PREDICT_OPR, PredictionHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     risk->doWork({});
@@ -809,3 +917,123 @@ Set<String> Server::GetAccounts() {
     return accs;
 }
 
+Vector<double> Server::GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust) {
+    Vector<double> ret;
+    if (is_stock(symbol)) {
+        DataFrame df;
+        LoadStock(df, symbol, N);
+        if (adjust == StockAdjustType::After) {
+
+        } else {
+            auto& close = df.get_column<double>("close");
+            int min_size = std::min((int)close.size(), N);
+            for (int i = min_size - 1; i >= 0; --i) {
+                ret.insert(ret.begin(), close[i]);
+            }
+        }
+    }
+    return ret;
+}
+
+bool Server::GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info) {
+    auto path = _config->GetDatabasePath();
+    path += "/dividend/" + get_symbol(symbol) + "_dividend.csv";
+    if (!std::filesystem::exists(path)) {
+        WARN("{} dividend info lost.", get_symbol(symbol));
+        return false;
+    }
+
+    std::ifstream ifs;
+    ifs.open(path.c_str());
+    if (!ifs.is_open())
+        return false;
+
+    
+    String line;
+    bool is_header = true;
+    // 1, 2, 3, 5, 6 - 送股,转增,派息,实施,登记日
+    while (std::getline(ifs, line)) {
+        if (line.empty())
+            break;
+        if (is_header) {
+            is_header = false;
+            continue;
+        }
+
+        Vector<String> content;
+        split(line, content, ",");
+        
+        DividendData data;
+        data._bonus = atof(content[1].c_str());
+        data._divd = atof(content[3].c_str());
+        data._transf = atof(content[2].c_str());
+        data._start = FromStr(content[5]);
+    }
+    ifs.close();
+    return true;
+}
+
+double Server::Adjust(symbol_t symbol, double org_price, time_t org_t) {
+    if (!is_stock(symbol))
+        return org_price;
+
+    Map<time_t, DividendData> dividends_info;
+    if (!GetDividendInfo(symbol, dividends_info)) {
+        return org_price;
+    }
+
+    auto litr = dividends_info.lower_bound(org_t);
+    for (auto itr = dividends_info.begin(); itr != litr; ++itr) {
+        org_price += itr->second._divd;
+    }
+    return org_price;
+}
+
+double Server::ResetPrice(symbol_t symbol, double adj_price, time_t adj_t) {
+    if (!is_stock(symbol))
+        return adj_price;
+
+    Map<time_t, DividendData> dividends_info;
+    if (!GetDividendInfo(symbol, dividends_info)) {
+        return adj_price;
+    }
+    auto litr = dividends_info.lower_bound(adj_t);
+    for (auto itr = dividends_info.begin(); itr != litr; ++itr) {
+        adj_price -= itr->second._divd;
+    }
+    return adj_price;
+}
+
+bool Server::IsOpen(symbol_t symbol, time_t t) {
+    auto exc_type = Server::GetExchange(get_symbol(symbol));
+    return IsOpen(exc_type, t);
+}
+
+bool Server::IsOpen(ExchangeName exchange, time_t t) {
+    auto& working = _working_times[exchange];
+    for (auto& tr: working) {
+        if (tr == t) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Server::SendEmail(const String& content) {
+    auto sender = _config->GetSMTPSender();
+    auto pwd = _config->GetSMTPPasswd();
+
+    String prefix = "python tool/mail.py ";
+    prefix += sender + " " + pwd;
+
+    String cmd = prefix + " " + _config->GetWarningAddr() + " \"" + content + "\"";
+    try {
+        return RunCommand(cmd);
+    } catch (const std::exception& e) {
+        WARN("send email fail: {}", e.what());
+        return false;
+    } catch (...) {
+        WARN("send email fail, unknow reason.");
+        return false;
+    }
+}

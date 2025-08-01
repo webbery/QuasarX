@@ -5,6 +5,8 @@
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
 #include "ql/math/matrix.hpp"
+#include "fmt/core.h"
+#include "Util/datetime.h"
 
 #define MAX_ORDER_SIZE  5
 
@@ -14,8 +16,21 @@ struct StockOrderDetail {
   YAS_DEFINE_STRUCT_SERIALIZE("StockOrderDetail", _time, _price);
 };
 
+enum class OrderType: char {
+    Market, // 市价单
+    Limit,  // 限价单
+};
+
+// 订单状态
+enum class OrderStatus {
+    All,
+    Part,
+    None,
+};
+
 struct Order {
-  int _number;
+  uint32_t _number; //
+  OrderType _type;
   Array<StockOrderDetail, MAX_ORDER_SIZE> _order;
 
   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _order);
@@ -29,6 +44,7 @@ struct DealDetail {
 };
 
 struct DealInfo {
+    bool _direct;   // true-买入/false-卖出
     List<DealDetail> _deals;
     YAS_DEFINE_STRUCT_SERIALIZE("DealInfo", _deals);
 };
@@ -36,6 +52,41 @@ struct DealInfo {
 struct Transaction {
     Order _order;
     DealInfo _deal;
+};
+
+template<>
+class fmt::formatter<Order>
+{
+public:
+    constexpr auto parse(auto & context) {
+        auto it = context.begin(), end = context.end();
+        return it;
+    }
+
+    auto format(const Order& order, auto &context) const {
+        String ot("Market");
+        return fmt::format_to(context.out(), "Order[TYPE:{} NUMNER:{}]", ot, order._number);
+    }
+};
+
+template<>
+class fmt::formatter<DealDetail>
+{
+public:
+    constexpr auto parse(auto& context) {
+        auto it = context.begin(), end = context.end();
+        return it;
+    }
+
+    auto format(const DealDetail& deal, auto &context) const {
+        return fmt::format_to(context.out(), "DealDetail[{} NUMBER:{} PRICE:{}]",
+            ToString(deal._time), deal._number, deal._price);
+    }
+};
+
+template<>
+class fmt::formatter<DealInfo>
+{
 };
 
 using OrderList = List<Order>;

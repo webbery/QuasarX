@@ -1,6 +1,6 @@
-#include "Util/Strategy.h"
-#include "Util/log.h"
+#include "Strategy.h"
 #include <cmath>
+#include "StrategySubSystem.h"
 
 AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     AgentStrategyInfo si;
@@ -10,23 +10,32 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     try {
         auto& strategy = content["strategy"];
         si._name = (String)strategy["name"];
-        si._level = (int)strategy["level"];
+        si._future = (int)strategy["level"];
         std::for_each(strategy["pool"].begin(), strategy["pool"].end(), [&si](auto&& item) {
             si._pool.emplace_back((String)item);
         });
         auto& nodes = content["nodes"];
+        Map<String, FeatureNode*> feature_map;
         for (auto& node: nodes) {
             String category = node["category"];
-            if (category == "feature") {
-                FeatureInfo fi;
-                fi._type = (String)node["type"];
+            if (category == "feature" || category == "normal") {
+                FeatureNode* fi = new FeatureNode;
+                fi->_type = (String)node["type"];
                 if (node.contains("params")) {
-                    fi._params = node["params"];
+                    fi->_params = node["params"];
                 }
-                si._features.emplace_back(std::move(fi));
+                if (category == "feature") {
+                    si._features.emplace_back(fi);
+                }
+                feature_map[(String)node["id"]] = fi;
             }
             else if (category == "agent") {
-                AgentInfo ai;
+                AgentNode ai;
+                if (node.contains("class_count")) {
+                    ai._classes = (int)node["class_count"];
+                } else {
+                    ai._classes = 0;
+                }
                 ai._type = agent_types[node["type"]];
                 if (ai._type == AgentType::Unknow) {
                     WARN("unsupport agent type: {}", (String)node["type"]);
@@ -37,10 +46,23 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
                 ai._modelpath = (String)node["model"];
                 si._agents.emplace_back(ai);
             }
+            else if (category == "strategy") {
+                if ((String)node["type"] == "interday") {
+                    si._strategy = StrategyType::ST_InterDay;
+                } else {
+                    si._strategy = StrategyType::ST_Unknow;
+                }
+            }
         }
         auto& edges = content["edges"];
         for (auto& edge: edges) {
-            // if ()
+            String from = edge["source"];
+            String to = edge["target"];
+            if (feature_map.count(from) == 0 || feature_map.count(to) == 0)
+                continue;
+            auto feat = feature_map[from];
+            auto next = feature_map[to];
+            feat->_nexts.insert(next);
         }
     } catch(const nlohmann::json::exception& e) {
         WARN("parse script fail: {}", e.what());

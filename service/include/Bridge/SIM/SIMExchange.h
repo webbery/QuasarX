@@ -36,14 +36,24 @@ public:
 
   virtual void StopQuery() {}
 
-  virtual QuoteInfo GetQuote(const String&) { return QuoteInfo();}
+  virtual QuoteInfo GetQuote(symbol_t) { return QuoteInfo();}
+
+private:
+  void Worker();
+
 protected:
   String _org_path;
   nng_socket _sock;
 
   Map<String, DataFrame> _csvs;
-  List<String> _headers;
+  Map<String, Vector<String>> _headers;
   Map<String, QuoteInfo> _rows;
 
   QuoteFilter _filter;
+
+  int _cur_index;
+  std::thread* _worker;
+
+  std::mutex _mx;
+  std::condition_variable _cv;
 };

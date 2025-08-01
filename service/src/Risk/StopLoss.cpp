@@ -1,5 +1,4 @@
 #include "Risk/StopLoss.h"
-#include "Util/log.h"
 #include <mutex>
 
 void SLPercentage::check(const Map<symbol_t, QuoteInfo>& infos, List<symbol_t>&& sells) {

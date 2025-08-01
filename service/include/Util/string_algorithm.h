@@ -42,12 +42,18 @@ void split(const String& str, Container& ret_, const char* sep) {
     pre = cur;
     if constexpr (std::is_same<int64_t, value_type>::value) {
       ret_.push_back(atol(token.c_str()));
+    }
+    else if constexpr(std::is_same<char, value_type>::value) {
+      ret_.push_back(atoi(token.c_str()));
     } else {
       ret_.push_back(token.c_str());
     }
   }
   if constexpr (std::is_same<int64_t, value_type>::value) {
     ret_.push_back(atol((str.substr(pre, str.size() - pre).c_str())));
+  }
+  else if constexpr(std::is_same<char, value_type>::value) {
+      ret_.push_back(atoi((str.substr(pre, str.size() - pre).c_str())));
   } else {
     ret_.push_back(str.substr(pre, str.size() - pre));
   }

@@ -1,6 +1,8 @@
 #include "config.h"
 #include <filesystem>
 #include <fstream>
+#include <utility>
+#include "Util/string_algorithm.h"
 
 using namespace std;
 
@@ -141,4 +143,19 @@ const nlohmann::json& ServerConfig::GetBrokerByName(const std::string& name) con
             return broker;
     }
     return brokers.front();
+}
+
+std::string ServerConfig::GetWarningAddr() {
+    std::string email = _config["server"]["notice"]["email"];
+    return email;
+}
+
+std::pair<char, char> ServerConfig::GetDailyTime() {
+    std::string daily = _config["server"]["default"]["daily"];
+    std::vector<char> info;
+    split(daily, info, ":");
+    if (info.size() != 2) {
+        return std::make_pair(20, 0);
+    }
+    return std::make_pair(info[0], info[1]);
 }

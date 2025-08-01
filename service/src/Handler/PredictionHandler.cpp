@@ -5,6 +5,7 @@
 #include <cmath>
 #include <ctime>
 #include <numeric>
+#include "BrokerSubSystem.h"
 
 void MonteCarloHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
@@ -109,4 +110,54 @@ void MonteCarloHandler::post(const httplib::Request& req, httplib::Response& res
 
 void FiniteDifferenceHandler::post(const httplib::Request& req, httplib::Response& res) {
     
+}
+
+void PredictionHandler::put(const httplib::Request& req, httplib::Response& res) {
+    // 设置预测值
+    auto params = nlohmann::json::parse(req.body);
+    String symbol = params["symbol"];
+    String datetime = params["datetime"];
+    int op = params["operation"];
+    int exchange = params["exchange"];
+    auto next_t = FromStr(datetime);
+    if (exchange == 0) {
+        auto virtualSystem = _server->GetVirtualSubSystem();
+        auto symb = to_symbol(symbol);
+        auto cur = Now();
+
+        auto t1 = std::chrono::system_clock::from_time_t(cur);
+        auto t2 = std::chrono::system_clock::from_time_t(next_t);
+
+        auto day1 = floor<std::chrono::days>(t1);
+        auto day2 = floor<std::chrono::days>(t2);
+
+        // 计算日期差并返回绝对值
+        auto N = duration_cast<std::chrono::days>(day2 - day1).count();
+        if (N < 0) {
+            WARN("day is {}", N);
+            return;
+        }
+        virtualSystem->PredictWithDays(symb, N, op);
+    }
+    res.status = 200;
+}
+
+void PredictionHandler::get(const httplib::Request& req, httplib::Response& res) {
+    // 获取预测值
+    auto params = nlohmann::json::parse(req.body);
+    int exchange = params["exchange"];
+    if (params.contains("symbol")) {
+
+    } else {
+        // 获取全部
+        if (exchange == 0) {
+            auto virtualSystem = _server->GetVirtualSubSystem();
+            // virtualSystem->
+        }
+    }
+}
+
+void PredictionHandler::del(const httplib::Request& req, httplib::Response& res) {
+    auto params = nlohmann::json::parse(req.body);
+
 }

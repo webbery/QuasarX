@@ -24,6 +24,9 @@ public:
 
   virtual void post(const httplib::Request& req, httplib::Response& res);
 
+  double Buy(symbol_t symbol, const Order& order, DealInfo& deals);
+  double Sell(symbol_t symbol, const Order& order, DealInfo& deals);
+  
 private:
   ExchangeInfo GetExchangeInfo(const char* name);
 
@@ -48,6 +51,7 @@ private:
     return true;
   }
 private:
+  bool _enableSimulation = false;
   Map<String, ExchangeInterface*> _exchanges;
   Map<ExchangeType, ExchangeInterface*> _type_excs;
 };

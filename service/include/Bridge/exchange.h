@@ -17,6 +17,7 @@
 enum ExchangeType {
     EX_XTP,
     EX_CTP,
+    EX_SIM,
     EX_Unknow
 };
 
@@ -62,7 +63,7 @@ struct QuoteInfo {
   double _open;
   double _close;
 
-  uint64_t _volumn;
+  uint64_t _volume;
   double _value;
   uint64_t _turnover;
 
@@ -79,15 +80,32 @@ struct QuoteInfo {
   char _confidence;// 置信度 0-100
 
   YAS_DEFINE_STRUCT_SERIALIZE("QuoteInfo", _symbol, _time, _open, _close,
-    _volumn, _value, _turnover, _high, _low, _bidPrice, _bidVolume, _askPrice, _askVolume,
+    _volume, _value, _turnover, _high, _low, _bidPrice, _bidVolume, _askPrice, _askVolume,
     _source, _confidence);
 };
+
+namespace fmt {
+  template <>
+  struct formatter<QuoteInfo> {
+      constexpr auto parse(format_parse_context& ctx) {
+          auto it = ctx.begin();
+          return it; // 返回解析结束位置
+      }
+
+      //
+      template <typename FormatContext>
+      auto format(const QuoteInfo& quote, FormatContext& ctx) const {
+          return format_to(ctx.out(), "Quote[symbol:{} open:{:.4f} close:{:.4f} high:{:.4f} low:{:.4f} volume:{}]",
+            get_symbol(quote._symbol), quote._open, quote._close, quote._high, quote._low, quote._volume);
+      }
+  };
+}
+
 
 class Server;
 
 struct QuoteFilter {
   Set<String> _symbols;
-  List<Pair<float, float>> _range;  // working time
 };
 
 class ExchangeInterface {
@@ -122,7 +140,7 @@ public:
 
   virtual void StopQuery() = 0;
 
-  virtual QuoteInfo GetQuote(const String& symbol) = 0;
+  virtual QuoteInfo GetQuote(symbol_t symbol) = 0;
 
   Server* GetHandle() { return _server; }
 

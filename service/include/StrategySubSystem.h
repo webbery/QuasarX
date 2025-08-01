@@ -9,24 +9,31 @@ class FeatureSubsystem;
 class AgentSubsystem;
 class Server;
 enum class DataFrequencyType;
+enum class StrategyType: char;
 
-struct FeatureInfo {
+struct FeatureNode {
     String _type;
     nlohmann::json _params;
+    Set<FeatureNode*> _nexts;   // 如果为空，说明输出到agent
 };
 
-struct AgentInfo {
+struct AgentNode {
     AgentType _type;
+    short _classes;     // if _classes is zero, it means that agent is a regression.
     String _modelpath;
     nlohmann::json _params;
 };
 
 struct AgentStrategyInfo {
+    char _future;    // N则表示预测第N天/0表示实时预测,交易执行器在第N天/实时执行
+    bool _virtual;
     String _name;
-    char _level;    // N则表示预测第N天/0表示实时预测,交易执行器在第N天/实时执行
     List<String> _pool;
-    List<FeatureInfo> _features;
-    List<AgentInfo> _agents;
+    List<FeatureNode*> _features;
+    List<AgentNode> _agents;
+    StrategyType _strategy;
+
+    ~AgentStrategyInfo();
 };
 
 /**
@@ -54,6 +61,10 @@ public:
     bool AddStrategy(const AgentStrategyInfo& info);
     
     void Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq);
+
+    void SetupSimulation(const String& name);
+
+    FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }
 private:
     AgentStrategyInfo ParseJsonScript(const String& content);
 
@@ -62,6 +73,7 @@ private:
     AgentSubsystem* _agentSystem;
 
     Set<String> _strategies;
+    Set<String> _virtualStrategies;
 
     Server* _handle;
 };

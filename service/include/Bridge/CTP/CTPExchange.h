@@ -37,7 +37,7 @@ public:
 
     virtual void StopQuery() {}
 
-    QuoteInfo GetQuote(const String& symbol);
+    QuoteInfo GetQuote(symbol_t symbol);
 
     const Commission& GetCommission(const symbol_t& symbol);
     /**

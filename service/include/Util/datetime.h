@@ -24,9 +24,12 @@ public:
     bool operator == (time_t);
     bool operator == (time_t) const;
 
+    bool operator < (const time_range&) const;
+
     int Start() const {return _start;}
     int End() const {return _end;}
 
+    bool near_end(time_t t, int thresold = 30);
 private:
     int ValidateAndConvert(int hour, int min, int sec);
     
@@ -87,4 +90,4 @@ bool operator == (const fixed_time_range&, const fixed_time_range&);
 
 
 enum ExchangeName: char;
-UnorderedSet<time_range> GetWorkingRange(ExchangeName);
+Set<time_range> GetWorkingRange(ExchangeName);

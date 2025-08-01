@@ -7,7 +7,6 @@
 #include "Bridge/exchange.h"
 #include <yas/serialize.hpp>
 #include "HttpHandler.h"
-#include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "server.h"
@@ -51,6 +50,7 @@ void RecordHandler::run() {
     constexpr std::size_t flags = yas::mem | yas::binary;
     Map<symbol_t, uint32_t> ticks;
     short rest_cnt = 0;
+    bool is_backup = false;
     while (!_close) {
         char* buff = NULL;
         size_t sz;
@@ -63,10 +63,15 @@ void RecordHandler::run() {
                 item.second.flush();
               }
             }
-            if (rest_cnt > 720) {
-              // 1个小时无更新
+            if (rest_cnt > 720 && !is_backup) {
+              // 1个小时无更新,刷新并备份到bak
+              auto data_path = _server->GetConfig().GetDatabasePath() + "/zh";
+              auto dst_path = _server->GetConfig().GetDatabasePath() + "/zh.backup";
+              if (RunCommand("cp -r " + data_path + " " + dst_path)) {
+                RunCommand("rm -rf " + data_path);
+              }
               // PackageData();
-              rest_cnt = 0;
+              is_backup = true;
             }
             continue;
         }
@@ -85,6 +90,7 @@ void RecordHandler::run() {
             }
         }
         rest_cnt = 0;
+        is_backup = false;
     }
     nng_close(sock);
     sock.id = 0;
@@ -134,12 +140,12 @@ std::fstream& RecordHandler::GetFileStream(const symbol_t& name) {
       
 
       fs.open(filepath, std::ios_base::app | std::ios_base::ate | std::ios_base::out);
-      String header("datetime,open,close,volumn,turnover,");
+      String header("datetime,open,close,high,low,volume,turnover,");
       for (int i = 0; i < 5; ++i) {
         header += "bid" + std::to_string(i+1) + ",";
         header += "ask" + std::to_string(i+1) + ",";
-        header += "ask_volumn" + std::to_string(i+1) + ",";
-        header += "bid_volumn" + std::to_string(i+1) + ",";
+        header += "ask_volume" + std::to_string(i+1) + ",";
+        header += "bid_volume" + std::to_string(i+1) + ",";
       }
       header += "\n";
       fs.write(header.c_str(), header.size());
@@ -168,7 +174,11 @@ void RecordHandler::WriteCSV(std::fstream& fs, const QuoteInfo& infos) {
   line += ",";
   line += std::format("{:.4f}", infos._close);
   line += ",";
-  line += std::format("{}", infos._volumn);
+  line += std::format("{:.4f}", infos._high);
+  line += ",";
+  line += std::format("{:.4f}", infos._low);
+  line += ",";
+  line += std::format("{}", infos._volume);
   line += ",";
   line += std::format("{}", infos._turnover);
   for (int i = 0; i < 5; ++i) {

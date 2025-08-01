@@ -22,7 +22,7 @@ public:
 
     bool HasQuote() { return _hasQuote;}
 
-    QuoteInfo GetQuote(const String& symbol);
+    QuoteInfo GetQuote(symbol_t symbol);
 
 protected:
     void OnFrontConnected();

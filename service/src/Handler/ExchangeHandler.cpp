@@ -46,6 +46,8 @@ bool ExchangeHandler::Use(const String& name) {
   }
   else if (ex_type == "sim") {
     ret = SwitchExchange<StockSimulation>(name);
+    et = ExchangeType::EX_SIM;
+    _enableSimulation = true;
   }
   if (ret) {
     auto ptr = _exchanges[name];
@@ -85,6 +87,9 @@ bool ExchangeHandler::Use(const String& name) {
 }
 
 ExchangeInterface* ExchangeHandler::GetExchangeByType(ExchangeType type) {
+  if (_enableSimulation) { // 模拟场景下强制返回仿真环境
+    return _type_excs[ExchangeType::EX_SIM];
+  }
   return _type_excs[type];
 }
 
@@ -119,6 +124,20 @@ ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
     handle._quote_port = atoi(quote_info[1].c_str());
   }
   return handle;
+}
+
+double ExchangeHandler::Buy(symbol_t symbol, const Order& order, DealInfo& deals) {
+  if (is_stock(symbol)) {
+
+  }
+  return 0;
+}
+
+double ExchangeHandler::Sell(symbol_t symbol, const Order& order, DealInfo& deals) {
+  if (is_stock(symbol)) {
+    
+  }
+  return 0;
 }
 
 void ExchangeHandler::post(const httplib::Request& req, httplib::Response& res) {

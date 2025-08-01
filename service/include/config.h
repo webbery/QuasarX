@@ -1,5 +1,6 @@
 #include "json.hpp"
 #include <cstdint>
+#include <utility>
 
 class ServerConfig {
 public:
@@ -37,6 +38,9 @@ public:
   std::string GetSMTPSender();
   std::string GetSMTPPasswd();
 
+  std::string GetWarningAddr();
+
+  std::pair<char, char> GetDailyTime();
 private:
   bool _status = false;
 

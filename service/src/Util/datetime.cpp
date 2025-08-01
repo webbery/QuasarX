@@ -8,7 +8,6 @@
 #include <string.h>
 #include <string>
 #include "Util/system.h"
-#include "Util/log.h"
 
 time_t FromStr(const std::string& dateString, const char* fmt) {
     // 初始化一个 tm 结构体来存储解析后的日期
@@ -148,12 +147,25 @@ bool time_range::operator == (time_t other) const {
     return equal(other);
 }
 
-// String fixed_time_range::StartDate() const {
-// }
+bool time_range::operator < (const time_range& other) const {
+    return _end < other._start;
+}
 
-// String fixed_time_range::EndDate() const {
+bool time_range::near_end(time_t t, int thresold) {
+    struct tm *timeinfo = localtime(&t);
+    if (!timeinfo) return false; // 时间转换失败
 
-// }
+    int end_time = _end - 60 * thresold;
+    int current_sec = timeinfo->tm_hour * 3600 + 
+                        timeinfo->tm_min * 60 + 
+                        timeinfo->tm_sec;
+    if (_start > _end) { // TODO:
+        return current_sec > end_time;
+    } else { [[likely]]
+        return current_sec > end_time;
+    }
+}
+
 bool time_range::equal(time_t t) const {
     struct tm *timeinfo = localtime(&t);
     if (!timeinfo) return false; // 时间转换失败
@@ -195,15 +207,15 @@ String to_string(const fixed_time_range& tr) {
     return std::to_string(ltm->tm_year + 1900) + "-" + std::to_string(ltm->tm_mon + 1) + "-" + std::to_string(ltm->tm_mday);
 }
 
-UnorderedSet<time_range> GetWorkingRange(ExchangeName name) {
-    UnorderedSet<time_range> result;
+Set<time_range> GetWorkingRange(ExchangeName name) {
+    Set<time_range> result;
     switch (name) {
     case MT_Shenzhen: case MT_Shanghai: case MT_Beijing:
         result.emplace(time_range{9, 30, 11, 30});
         result.emplace(time_range{13, 00, 15, 00});
     break;
     default:
-        WARN("not support time range for {}", name);
+        WARN("not support time range for {}", (int)name);
     break;
     }
     return result;

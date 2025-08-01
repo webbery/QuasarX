@@ -19,10 +19,6 @@ struct PortfolioInfo {
   double _principal;
   Set<String> _pools;
   
-  // the sigma of holding asset 
-  QuantLib::Matrix _sigma;
-  // the correlation matrix of holding asset
-  QuantLib::Matrix _corr;
 };
 
 class Server;
@@ -46,7 +42,7 @@ public:
 
   double Position() { return _position; }
 
-  void Update(const String& symbol, const DealInfo& deals);
+  void Update(symbol_t symbol, const DealInfo& deals);
 
   // A thread that decide how much contract to sell/buy after recieve buy/sell operator
   void Start();

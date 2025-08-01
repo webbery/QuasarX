@@ -1,5 +1,4 @@
 #include "Bridge/XTP/XTPQuote.h"
-#include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "xtp/xtp_quote_api.h"
 #include <cstdio>
@@ -10,14 +9,13 @@
 #include "Util/datetime.h"
 #include "Util/system.h"
 
-static constexpr std::size_t flags = yas::mem|yas::binary;
 XTPQuote::XTPQuote(QuoteApi* api): _is_all(false) {
-  sock.id = 0;
+  _sock.id = 0;
 }
 
 XTPQuote::~XTPQuote() {
-  if (sock.id != 0) {
-    nng_close(sock);
+  if (_sock.id != 0) {
+    nng_close(_sock);
   }
   // for (auto& item : _tickers) {
   //   if (item.second)
@@ -27,7 +25,7 @@ XTPQuote::~XTPQuote() {
 }
 
 bool XTPQuote::Init() {
-  return Publish(URI_RAW_QUOTE, sock);
+  return Publish(URI_RAW_QUOTE, _sock);
 }
 
 void XTPQuote::OnDisconnected(int reason) {
@@ -43,24 +41,26 @@ void XTPQuote::OnTickByTickLossRange(int begin_seq, int end_seq) {}
 void XTPQuote::OnUnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last) {}
 
 void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t bid1_count, int32_t max_bid1_count, int64_t ask1_qty[], int32_t ask1_count, int32_t max_ask1_count) {
-  QuoteInfo& info = _tickers[market_data->ticker];
+  symbol_t symb;
+  switch (market_data->exchange_id) {
+  case XTP_EXCHANGE_SH:
+    symb = to_symbol(market_data->ticker, "SH");
+    break;
+  case XTP_EXCHANGE_SZ:
+    symb = to_symbol(market_data->ticker, "SZ");
+    break;
+  default:
+    symb = to_symbol(market_data->ticker);
+    break;
+  }
+  QuoteInfo& info = _tickers[symb];
   {
     std::unique_lock<std::mutex> lock(_mutex);
     info._time = FromStr(std::to_string(market_data->data_time/1000), "%Y%m%d%H%M%S");
-    switch (market_data->exchange_id) {
-    case XTP_EXCHANGE_SH:
-      info._symbol = to_symbol(market_data->ticker, "SH");
-      break;
-    case XTP_EXCHANGE_SZ:
-      info._symbol = to_symbol(market_data->ticker, "SZ");
-      break;
-    default:
-      info._symbol = to_symbol(market_data->ticker);
-      break;
-    }
+    info._symbol = symb;
     info._open = market_data->open_price;
     info._close = market_data->last_price;
-    info._volumn = market_data->qty;
+    info._volume = market_data->qty;
     info._value = market_data->turnover;
     info._high = market_data->high_price;
     info._low = market_data->low_price;
@@ -75,7 +75,7 @@ void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t
     // }
   }
   yas::shared_buffer buf = yas::save<flags>(info);
-  if (0 != nng_send(sock, buf.data.get(), buf.size, 0)) {
+  if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
     printf("send quote message fail.\n");
     return;
   }
@@ -89,7 +89,7 @@ void XTPQuote::OnQueryAllTickersFullInfo(XTPQFI* ticker_info, XTPRI *error_info,
   }
 }
 
-QuoteInfo XTPQuote::GetQuoteInfo(const String& symbol)
+QuoteInfo XTPQuote::GetQuoteInfo(symbol_t symbol)
 {
   std::unique_lock<std::mutex> lock(_mutex);
   return _tickers[symbol];
@@ -98,31 +98,35 @@ QuoteInfo XTPQuote::GetQuoteInfo(const String& symbol)
 void XTPQuote::AddAndUpdateTicker(XTPQFI* ticker_info) {
   // auto itr = _tickers.find(ticker_info->ticker);
   // if (itr == _tickers.end()) {
-    auto symbol = format_symbol(ticker_info->ticker);
-    std::unique_lock<std::mutex> lock(_mutex);
-    QuoteInfo& info = _tickers[symbol];
+    auto str_symbol = format_symbol(ticker_info->ticker);
+    symbol_t symbol;
     switch (ticker_info->exchange_id) {
     case XTP_EXCHANGE_SH:
-      info._symbol = to_symbol(ticker_info->ticker, "SH");
+      symbol = to_symbol(ticker_info->ticker, "SH");
       break;
     case XTP_EXCHANGE_SZ:
-      info._symbol = to_symbol(ticker_info->ticker, "SZ");
+      symbol = to_symbol(ticker_info->ticker, "SZ");
       break;
     default:
-      info._symbol = to_symbol(ticker_info->ticker);
+      symbol = to_symbol(ticker_info->ticker);
       break;
     }
+    std::unique_lock<std::mutex> lock(_mutex);
+    QuoteInfo& info = _tickers[symbol];
+    info._symbol = symbol;
     info._time = Now();
     info._open = ticker_info->pre_close_price;
     info._close = ticker_info->pre_close_price;
-  // }
-  // else {
-
-  // }
+    
+    yas::shared_buffer buf = yas::save<flags>(info);
+    if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
+      printf("send quote message fail.\n");
+      return;
+    }
 }
 
-Set<String> XTPQuote::GetAllSymbols() {
-  Set<String> all_symbols;
+Set<symbol_t> XTPQuote::GetAllSymbols() {
+  Set<symbol_t> all_symbols;
   for (auto& item: _tickers) {
     all_symbols.insert(item.first);
   }

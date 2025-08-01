@@ -12,12 +12,13 @@ public:
     virtual bool work(nng_socket& from, nng_socket& to) = 0;
 
     void stop();
-    void start(const String& name, const String& from, const String& to);
+    void start(const String& name, const String& from, const String& to = "");
 
     bool is_running() { return _running; }
 
 private:
     void run(const String& name, const String& from, const String& to);
+    void run(const String& name, const String& from);
 
 private:
     std::thread* _worker;

@@ -1,5 +1,6 @@
 #pragma once
 #include "std_header.h"
+#include "Strategy.h"
 #include "Transfer.h"
 #include "xgboost/c_api.h"
 #include "json.hpp"
@@ -10,15 +11,16 @@ struct AgentStrategyInfo;
 
 class XGBoostAgent : public IAgent {
 public:
-    XGBoostAgent(const String& path, const nlohmann::json& params);
+    XGBoostAgent(const String& path, int classes, const nlohmann::json& params);
     ~XGBoostAgent();
 
-    virtual int classify(const Vector<float>& data, short n_samples, short n_features, Vector<float>& result);
+    virtual int classify(const DataFeatures& data, short n_samples, Vector<float>& result);
     virtual double predict();
 
     virtual void train(const Vector<float>& data, short n_samples, short n_features, const Vector<float>& label, unsigned int epoch);
 private:
-    BoosterHandle* _booster = nullptr;
+    BoosterHandle _booster;
+    short _classes;
     String _modelpath;
     nlohmann::json _params;
 };
@@ -28,7 +30,7 @@ public:
     AgentSubsystem(Server* handle);
     ~AgentSubsystem();
 
-    void LoadConfig(const AgentStrategyInfo& config);
+    bool LoadConfig(const AgentStrategyInfo& config);
 
     void Start();
 
@@ -42,8 +44,10 @@ private:
 
     struct PipelineInfo {
         IAgent* _agent = nullptr;
+        IStrategy* _strategy = nullptr;
         Transfer* _transfer = nullptr;
+        char _future = 0;
     };
 
-    Map<String, PipelineInfo> _pipelines;
+    Array<Map<String, PipelineInfo>, 2> _pipelines; // 0-virtual, 1- real 
 };

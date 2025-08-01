@@ -779,6 +779,36 @@ paths:
                   symbols:
                     type: string
                     example: 111000,000001
+  /predict/operation:
+    put:
+      summary: set prediction
+      description: 设置预测的操作
+      tags: 
+        - Predict
+      requestBody:
+        description: 预测参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbol:
+                  type: string
+                  description: symbol
+                  example: 000001
+                datetime:
+                  type: string
+                  description: YYYY-MM-DD
+                operation:
+                  type: integer
+                  description: 0-keep, 1-buy, 2-sell
+                exchange:
+                  type: integer
+                  description: 0-simulate, 1-xtp, 2-ctp
+      responses:
+        '200':
+          description: success
   /future/simple:
     get:
       summary: all future info

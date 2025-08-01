@@ -14,6 +14,10 @@ else(WIN32)
 #     GIT_TAG        1.10.5  # 指定版本号
 # )
 # FetchContent_MakeAvailable(cpr)
+
+if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+add_compile_definitions(_DEBUG)
+endif()
 endif(WIN32)
 
 #find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
@@ -25,9 +29,6 @@ include_directories(include third_party/include)
 if (WIN32)
 link_directories(${PROJECT_SOURCE_DIR}/third_party/libs/win)
 else(WIN32)
-if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-add_compile_definitions(_DEBUG)
-endif()
 link_directories(${PROJECT_SOURCE_DIR}/third_party/libs/unix ${PROJECT_BINARY_DIR}/_deps/curl-build/lib)
 endif(WIN32)
 
@@ -36,8 +37,8 @@ file(GLOB_RECURSE prj_files_cpp src/*.cpp src/*.c)
 add_executable(${PROJECT_NAME} ${prj_files_cpp})
 
 if (WIN32)
-set(DEBUG_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se nngd)
-set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se nng)
+set(DEBUG_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se nngd fmtlog-static)
+set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se nng fmtlog)
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
 #if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 target_link_libraries(${PROJECT_NAME} ${DEBUG_LINK_LIBS} )
@@ -50,7 +51,7 @@ add_compile_options(-Wl,-rpath=.)
 endif()
 
 target_link_libraries(${PROJECT_NAME} crypto QuantLib ssl curl -pthread SQLiteWrapper pugixml nng
-    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se parquet
+    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se parquet papi
 )
 
 endif(WIN32)
@@ -59,7 +60,7 @@ set(FMT_TEST OFF)
 set(FMT_DOC OFF) 
 add_subdirectory(third_party/fmt)
 add_subdirectory(third_party/DataFrame)
-target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame ta-lib xgboost papi)
+target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame ta-lib xgboost)
 
 # install(TARGETS ${PROJECT_NAME})
 # install(FILES

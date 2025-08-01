@@ -1,8 +1,6 @@
 #include "StrategySubSystem.h"
 #include "FeatureSubsystem.h"
 #include "AgentSubSystem.h"
-#include "Util/Strategy.h"
-#include "Util/log.h"
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>
@@ -10,6 +8,10 @@
 #define INIT_STRATEGY(classname) {\
     auto strategy = new classname();\
     _strategies[strategy->Name()] = strategy;\
+}
+
+AgentStrategyInfo::~AgentStrategyInfo() {
+    
 }
 
 StrategySubSystem::StrategySubSystem(Server* server)
@@ -48,9 +50,13 @@ void StrategySubSystem::Init() {
         if (strategy._pool.empty()) {
             continue;
         }
-
+        strategy._virtual = false;
+        if (_virtualStrategies.count(strategy._name)) {
+            strategy._virtual = true;
+        }
         AddStrategy(strategy);
     }
+    _featureSystem->InitSecondLvlFeatures();
     _featureSystem->Start();
     _agentSystem->Start();
 }
@@ -60,11 +66,15 @@ void StrategySubSystem::Release() {
 }
 
 List<String> StrategySubSystem::GetStrategyNames() {
-    //List<String> names;
-    //for (auto& item: _strategies) {
-    //    names.push_back(item.first);
-    //}
-    return  { _strategies.begin(), _strategies.end() };
+    List<String> names{ _strategies.begin(), _strategies.end() };
+    for (auto& n: _virtualStrategies) {
+        names.emplace_back(n.data());
+    }
+    return  names;
+}
+
+void StrategySubSystem::SetupSimulation(const String& name) {
+    _virtualStrategies.insert(name);
 }
 
 bool StrategySubSystem::HasStrategy(const String& name) {
@@ -94,9 +104,13 @@ bool StrategySubSystem::AddStrategy(const AgentStrategyInfo& info) {
         return false;
     }
 
-    _strategies.insert(info._name);
+    if (!_agentSystem->LoadConfig(info)) {
+        //LOG("load agent `{}` fail.", info._name);
+        return false;
+    }
     _featureSystem->LoadConfig(info);
-    _agentSystem->LoadConfig(info);
+    
+    _strategies.insert(info._name);
     return true;
 }
 

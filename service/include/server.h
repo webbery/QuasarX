@@ -1,9 +1,9 @@
 #pragma once
+#include "std_header.h"
 #include "DataHandler.h"
 #include "Handler/RiskHandler.h"
 #include "Util/system.h"
 #include "json.hpp"
-#include "std_header.h"
 #include "HttpHandler.h"
 #include "config.h"
 #include "Bridge/exchange.h"
@@ -66,7 +66,7 @@ enum class DataFrequencyType {
   Second,
 };
 
-enum class DataRightType {
+enum class StockAdjustType {
   None,
   After,
 };
@@ -107,10 +107,11 @@ public:
 
     bool IsReal() { return _is_real; }
 
-  std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, DataRightType right = DataRightType::None);
-  std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, DataRightType right = DataRightType::None);
+  std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
+  std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
 
   BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
+  BrokerSubSystem* GetVirtualSubSystem() { return _virtualSystem; }
 
   PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
   StrategySubSystem* GetStrategySystem() { return _strategySystem; }
@@ -126,10 +127,27 @@ public:
 
   Set<String> GetAccounts();
   
+  /**
+   * @brief Get the previous N day's close price
+   */
+  Vector<double> GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust);
+
+  /**
+   */
+  double Adjust(symbol_t symbol, double org_price, time_t org_t);
+
+  double ResetPrice(symbol_t symbol, double adj_price, time_t adj_t);
+
+  bool IsOpen(symbol_t symbol, time_t t);
+
+  bool IsOpen(ExchangeName exchange, time_t);
+
 public:
   void SetActiveExchange(ExchangeInterface* exchange) {
     _trade_exchange = exchange;
   }
+
+  bool SendEmail(const String& content);
 
 private:
     void Regist();
@@ -159,9 +177,13 @@ private:
     // 从配置中获取最大读取数据量
     int GetMaxPrepareCount();
 
-    bool LoadDataBySymbol(const String& symbol, DataRightType right, DataFrequencyType type = DataFrequencyType::Day);
+    bool LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType type = DataFrequencyType::Day);
 
     bool LoadStock(DataFrame& df, const String& path);
+    /**
+     * @brief load stock last N data
+     */
+    bool LoadStock(DataFrame& df, symbol_t symbol, int lastN);
 
     bool LoadFuture(DataFrame& df, const String& path);
 
@@ -174,6 +196,20 @@ private:
     void UpdateQuoteQueryStatus(time_t);
 
     void UpdateNextPrediction(time_t);
+
+    // 发送当日关注的合约的收盘信息作为特征
+    void SendCloseFeatures();
+private:
+    struct DividendData {
+        time_t _start;
+        double _recordPrice;
+        double _divd;
+        double _transf;
+        double _bonus;
+    };
+
+    bool GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info);
+
 private:
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
   // HTTPS
@@ -196,6 +232,7 @@ private:
   StrategySubSystem* _strategySystem;
   PortfolioSubSystem* _portfolioSystem;
   BrokerSubSystem* _brokerSystem; // 实盘
+  BrokerSubSystem* _virtualSystem; // 
   
   TraderSystem* _traderSystem;
   // 默认持仓id
@@ -213,4 +250,6 @@ private:
    * an account only have one holding
    */
   Map<String, AccountPosition> _account_positions;
+
+    Map<ExchangeName, Set<time_range>> _working_times;
 };
