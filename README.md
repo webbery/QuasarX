@@ -10,7 +10,9 @@ To be continue
 To be continue  
 
 ## Service  
-To be continue  
+QuantService support CTP/XTP SDK only currently.  
+### Dependency
+boost header, xgboost, tvm, 
 
 ## Client  
 To be continue  

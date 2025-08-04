@@ -31,6 +31,7 @@ link_directories(${PROJECT_SOURCE_DIR}/third_party/libs/win)
 else(WIN32)
 link_directories(${PROJECT_SOURCE_DIR}/third_party/libs/unix ${PROJECT_BINARY_DIR}/_deps/curl-build/lib)
 endif(WIN32)
+# find_package(mlpack REQUIRED)
 
 # file(GLOB_RECURSE prj_files_header include/*.h include/*.hpp)
 file(GLOB_RECURSE prj_files_cpp src/*.cpp src/*.c) 
