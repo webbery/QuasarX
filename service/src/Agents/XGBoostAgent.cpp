@@ -1,4 +1,5 @@
 #include "Agents/XGBoostAgent.h"
+#include <filesystem>
 
 XGBoostAgent::XGBoostAgent(const String& path, int classes, const nlohmann::json& params)
 :_modelpath(path), _params(params), _classes(classes) {

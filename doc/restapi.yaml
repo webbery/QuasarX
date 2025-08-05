@@ -782,7 +782,7 @@ paths:
   /predict/operation:
     put:
       summary: set prediction
-      description: 设置预测的操作
+      description: 设置预测的操作,即接下来某个时间内应该执行的操作
       tags: 
         - Predict
       requestBody:
