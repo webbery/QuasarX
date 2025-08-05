@@ -809,6 +809,25 @@ paths:
       responses:
         '200':
           description: success
+    get:
+      summary: get prediction
+      description: 获取预设置的操作
+      tags: 
+        - Predict
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: symbol
+      responses:
+        '200':
+          description: success
+    del:
+      summary: delete prediction
+      description: 删除预设置的操作
+      tags: 
+        - Predict
   /future/simple:
     get:
       summary: all future info

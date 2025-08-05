@@ -41,6 +41,8 @@ public:
 
   virtual void OnUnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last);
 
+  virtual void OnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last);
+
   virtual void OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t bid1_count, int32_t max_bid1_count, int64_t ask1_qty[], int32_t ask1_count, int32_t max_ask1_count);
 
   virtual void OnQueryAllTickersFullInfo(XTPQFI* ticker_info, XTPRI *error_info, bool is_last);

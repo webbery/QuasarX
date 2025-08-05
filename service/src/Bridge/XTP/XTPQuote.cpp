@@ -132,3 +132,9 @@ Set<symbol_t> XTPQuote::GetAllSymbols() {
   }
   return all_symbols;
 }
+
+void XTPQuote::OnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last) {
+  if (error_info) {
+    WARN("XTP OnSubMarketData: {} {}", error_info->error_id, error_info->error_msg);
+  }
+}

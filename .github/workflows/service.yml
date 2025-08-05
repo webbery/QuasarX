@@ -49,8 +49,7 @@ jobs:
           mkdir build && cd build
           cmake .. \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \  # 启用 ccache
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DUSE_CUDA=OFF
+            -DUSE_CUDA=OFF \
             -DCMAKE_CXX_STANDARD=23
           make -j$(nproc)
           sudo make install
@@ -67,7 +66,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tvm-
 
-      - name: Cache TVM build
+      - name: Build TVM
         if: steps.cache-tvm.outputs.cache-hit != 'true'
         run: |
           git clone --recursive https://github.com/apache/tvm
@@ -75,8 +74,7 @@ jobs:
           mkdir build && cd build
           cmake .. \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \  # 启用 ccache
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DUSE_CUDA=OFF
+            -DUSE_CUDA=OFF \
             -DCMAKE_CXX_STANDARD=23
           make -j$(nproc)
           sudo make install
