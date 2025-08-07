@@ -13,6 +13,7 @@
 #include "nng/nng.h"
 #include "Handler/TimerHandler.h"
 #include "StrategySubSystem.h"
+#include "Util/TickMap.h"
 
 #define HEADER_SIZE         2
 #define MAX_HISTORY_SIZE    32
@@ -134,7 +135,9 @@ public:
 
   /**
    */
-  double Adjust(symbol_t symbol, double org_price, time_t org_t);
+  double AdjustAfter(symbol_t symbol, double org_price, time_t org_t);
+  
+  double AdjustBefore(symbol_t symbol, double org_price, time_t org_t);
 
   double ResetPrice(symbol_t symbol, double adj_price, time_t adj_t);
 
@@ -243,6 +246,8 @@ private:
   Map<String, DataFrame> _hfqdata;
   List<String> _symbolCache;
   Map<int, DataFrame> _simulations;
+  // 除权出息信息
+  TickMap<symbol_t, Map<time_t, DividendData>> _dividends;
 
   std::thread* _timer;
 

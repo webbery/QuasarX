@@ -39,13 +39,11 @@ void TraderSystem::Start() {
             if (tr == current) {
                 // thread_local char 
                 if (op & (int)ContractOperator::Long) {
-                    DEBUG_INFO("Buy");
                     if (StrategyBuy(symb, dm)) {
                         _virtualSystem->DoneForecast(symb, op);
                     }
                 }
                 if (op & (int)ContractOperator::Sell) {
-                    DEBUG_INFO("Sell");
                     if (StrategySell(symb, dm)) {
                         _virtualSystem->DoneForecast(symb, op);
                     }
@@ -81,7 +79,7 @@ bool TraderSystem::StrategyBuy(symbol_t symbol, const DataFeatures& features) {
         DealDetail dd;
         if (_virtualSystem->Buy(symbol, order, dd) == OrderStatus::All) {
             LOG("buy order: {}, result: {}", order, dd);
-            _server->SendEmail("Buy " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
+            // _server->SendEmail("Buy " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
             return true;
         }
     }
@@ -103,7 +101,7 @@ bool TraderSystem::StrategySell(symbol_t symbol, const DataFeatures& features) {
         DealDetail dd;
         if (_virtualSystem->Sell(symbol, order, dd) == OrderStatus::All) {
             LOG("sell order: {}, result: {}", order, dd);
-            _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
+            // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
             return true;
         }
     }

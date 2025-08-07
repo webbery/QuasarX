@@ -8,6 +8,7 @@
 #include "json.hpp"
 #include "server.h"
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <condition_variable>
 #include "PortfolioSubsystem.h"
@@ -31,6 +32,8 @@ public:
 
 class BrokerSubSystem: public Broker {
 public:
+  using predictions_t = List<Pair<fixed_time_range, int>>;
+
   BrokerSubSystem(Server* server, ExchangeHandler* handler):_thread(nullptr), _exit(false) {
     _portfolio = server->GetPortforlioSubSystem();
     _handler = handler;
@@ -63,6 +66,11 @@ public:
   void PredictWithDays(symbol_t symb, int N, int op);
   bool GetNextPrediction(symbol_t symb, fixed_time_range& tr, int& op);
   void DoneForecast(symbol_t symb, int operation);
+
+  const predictions_t& QueryPredictionOfHistory(symbol_t symb);
+  const Map<symbol_t, predictions_t>& QueryPredictionOfHistory() { return _predictions; }
+
+  void DeletePrediction(symbol_t, int index);
 
 private:
   int BuyStock(symbol_t symbol, const Order& order, DealInfo& deal);
@@ -104,8 +112,8 @@ private:
 
   Map<symbol_t, LockTransactions> _trans;
 
-  std::mutex _predMtx;
-  Map<symbol_t, List<Pair<fixed_time_range, int>>> _predictions;
+  std::shared_mutex _predMtx;
+  Map<symbol_t, predictions_t> _predictions;
   Map<symbol_t, Pair<fixed_time_range, int>> _symbolOperation;
   
   Map<int, MDB_dbi> _dbis;

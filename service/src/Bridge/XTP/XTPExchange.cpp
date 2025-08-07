@@ -42,7 +42,7 @@ bool XTPExchange::Init(const ExchangeInfo& handle) {
           printf("NULL\n");
           return false;
       }
-      m_pQuote = new XTPQuote(m_pQuoteApi);
+      m_pQuote = new XTPQuote(m_pQuoteApi, this);
       m_pQuoteApi->RegisterSpi(m_pQuote);
       m_pQuoteApi->SetHeartBeatInterval(15);
     }
@@ -118,7 +118,7 @@ bool XTPExchange::Login() {
     WARN("login to quote server error, {} : {}", error_info->error_id, error_info->error_msg);
 		return 0;
 	}
-  if (!m_pQuote->Init()) {
+  if (m_session == 0 && !m_pQuote->Init()) {
     return 0;
   }
 

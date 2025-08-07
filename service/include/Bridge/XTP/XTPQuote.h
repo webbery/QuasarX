@@ -15,17 +15,11 @@ namespace XTP {
   }
 }
 
-// template<typename Ar>
-// void serialize(Ar &ar, std::map<std::string, TickerInfo> &m) {
-//     ar & YAS_OBJECT_NVP(
-//         "map",
-//         ("key", m)
-//     );
-// }
+class XTPExchange;
 
 class XTPQuote :public XTP::API::QuoteSpi {
 public:
-  XTPQuote(QuoteApi* api);
+  XTPQuote(QuoteApi* api, XTPExchange* exchange);
 
   bool Init();
 
@@ -56,9 +50,12 @@ private:
   void AddAndUpdateTicker(XTPQFI* ticker_info);
 
 private:
+  XTPExchange* _exchange;
+  
   nng_socket _sock;
   bool _is_all;
 
   std::mutex _mutex;
   std::map<symbol_t, QuoteInfo> _tickers;
+  Map<symbol_t, Pair<double, double>> _price_limits;
 };

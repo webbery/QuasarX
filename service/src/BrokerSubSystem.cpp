@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <random>
+#include <shared_mutex>
 #include <string>
 #include <utility>
 #include <yas/serialize.hpp>
@@ -390,7 +391,7 @@ void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
   auto current = Now();
   auto next_date = ToString(current, "%Y-%m-%d");
   auto pred = std::make_pair(next_date, op);
-  std::unique_lock<std::mutex> lck(_predMtx);
+  std::unique_lock<std::shared_mutex> lck(_predMtx);
   _symbolOperation[symb] = pred;
   _predictions[symb].push_back(pred);
 }
@@ -398,7 +399,7 @@ void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
 bool BrokerSubSystem::GetNextPrediction(symbol_t symb, fixed_time_range& tr, int& op) {
   auto cur = Now();
   {
-    std::unique_lock<std::mutex> lck(_predMtx);
+    std::shared_lock<std::shared_mutex> lck(_predMtx);
     auto itr = _symbolOperation.find(symb);
     if (itr == _symbolOperation.end())
       return false;
@@ -415,12 +416,12 @@ bool BrokerSubSystem::GetNextPrediction(symbol_t symb, fixed_time_range& tr, int
 void BrokerSubSystem::DoneForecast(symbol_t symb, int operation) {
   List<Pair<fixed_time_range, int>>* history = nullptr;
   {
-    std::unique_lock<std::mutex> lck(_predMtx);
+    std::shared_lock<std::shared_mutex> lck(_predMtx);
     history = &_predictions[symb];
     _symbolOperation[symb].second |= (int)ContractOperator::Done;
   }
   auto cur = Now();
-  std::unique_lock<std::mutex> lck(_predMtx);
+  std::shared_lock<std::shared_mutex> lck(_predMtx);
   for (auto ritr = history->rbegin(); ritr != history->rend(); ++ritr) {
     if (ritr->first < cur)
       break;
@@ -429,6 +430,25 @@ void BrokerSubSystem::DoneForecast(symbol_t symb, int operation) {
       break;
     }
   }
+}
+
+const BrokerSubSystem::predictions_t& BrokerSubSystem::QueryPredictionOfHistory(symbol_t symb) {
+  return _predictions[symb];
+}
+
+void BrokerSubSystem::DeletePrediction(symbol_t symbol, int index) {
+    std::unique_lock<std::shared_mutex> lck(_predMtx);
+    auto& preds = _predictions[symbol];
+    if (index + 1 == preds.size()) {
+      _symbolOperation.erase(symbol);
+    }
+    int i = 0;
+    for (auto itr = preds.begin(); itr != preds.end(); ++itr, ++i) {
+      if (i == index) {
+        preds.erase(itr);
+        break;
+      }
+    }
 }
 
 void BrokerSubSystem::InitPrediction(MDB_txn* txn, MDB_dbi dbi) {
@@ -461,7 +481,7 @@ void BrokerSubSystem::InitPrediction(MDB_txn* txn, MDB_dbi dbi) {
 
 nlohmann::json BrokerSubSystem::GetPrediction() {
   nlohmann::json prediction;
-  std::unique_lock<std::mutex> lck(_predMtx);
+  std::shared_lock<std::shared_mutex> lck(_predMtx);
   for (auto& pred: _predictions) {
     auto strSymbol = get_symbol(pred.first);
     for (auto& item: pred.second) {

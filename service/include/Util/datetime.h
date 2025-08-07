@@ -1,5 +1,6 @@
 #pragma once
 #include "std_header.h"
+#include <chrono>
 #include <utility>
 
 time_t FromStr(const String& str, const char* fmt = "%Y-%m-%d");
@@ -12,6 +13,8 @@ time_t Now();
 float Hour(const String& time);
 
 bool IsInTimeRange(time_t tick, char start_hour, char end_hour, char start_min, char end_min);
+
+std::chrono::time_point<std::chrono::system_clock> FromLocalTime(time_t t);
 
 class time_range {
 public:
@@ -47,7 +50,8 @@ public:
     
     fixed_time_range(const String& start, const String& end);
     fixed_time_range(const String& date);
-    String Date() const ;
+    // 返回首尾时间相同的部分
+    String DateTime() const ;
 
     time_t Start() const { return _start; }
     time_t End() const { return _end; }

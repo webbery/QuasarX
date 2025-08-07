@@ -1,5 +1,8 @@
 #pragma once
 #include "HttpHandler.h"
+#include "json.hpp"
+#include "Util/system.h"
+#include "Util/datetime.h"
 
 class MonteCarloHandler : public HttpHandler {
 public:
@@ -21,4 +24,7 @@ public:
     void put(const httplib::Request& req, httplib::Response& res);
     void get(const httplib::Request& req, httplib::Response& res);
     void del(const httplib::Request& req, httplib::Response& res);
+
+private:
+    nlohmann::json ConvertPrediction(symbol_t symbol, const List<Pair<fixed_time_range, int>>& predictions);
 };

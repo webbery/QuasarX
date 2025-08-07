@@ -7,6 +7,8 @@
 #include <condition_variable>
 
 class XTPExchange : public ExchangeInterface {
+  friend class XTPQuote;
+  friend class XTPTrade;
 public:
   XTPExchange(Server* server);
 

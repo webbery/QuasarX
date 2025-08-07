@@ -108,7 +108,7 @@ void AgentSubsystem::Start() {
                 }
                 
                 Vector<float> result;
-                if (-1 != agent->classify(messenger, 1, result)) {
+                if (-1 != agent->predict(messenger, result)) {
                     DEBUG_INFO("predict: {}", result[0]);
                     int op = strategy->generate(result);
                     // TODO: 保存第N天的操作

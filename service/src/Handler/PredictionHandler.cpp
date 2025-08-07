@@ -1,5 +1,4 @@
 #include "Handler/PredictionHandler.h"
-#include "json.hpp"
 #include "Algorithms/Random.h"
 #include "server.h"
 #include <cmath>
@@ -125,14 +124,10 @@ void PredictionHandler::put(const httplib::Request& req, httplib::Response& res)
         auto symb = to_symbol(symbol);
         auto cur = Now();
 
-        auto t1 = std::chrono::system_clock::from_time_t(cur);
-        auto t2 = std::chrono::system_clock::from_time_t(next_t);
-
-        auto day1 = floor<std::chrono::days>(t1);
-        auto day2 = floor<std::chrono::days>(t2);
-
+        std::tm local_tm1 = *std::localtime(&cur);
+        std::tm local_tm2 = *std::localtime(&next_t);
         // 计算日期差并返回绝对值
-        auto N = duration_cast<std::chrono::days>(day2 - day1).count();
+        auto N = local_tm2.tm_mday - local_tm1.tm_mday;
         if (N < 0) {
             WARN("day is {}", N);
             return;
@@ -146,18 +141,54 @@ void PredictionHandler::get(const httplib::Request& req, httplib::Response& res)
     // 获取预测值
     auto params = nlohmann::json::parse(req.body);
     int exchange = params["exchange"];
+    nlohmann::json result;
     if (params.contains("symbol")) {
-
+        String symbol = params["symbol"];
+        auto symb = to_symbol(symbol);
+        if (exchange == 0) {
+            auto virtualSystem = _server->GetVirtualSubSystem();
+            auto& predictions = virtualSystem->QueryPredictionOfHistory(symb);
+            nlohmann::json symbol_predictions = ConvertPrediction(symb, predictions);
+            result.emplace_back(std::move(symbol_predictions));
+        }
     } else {
         // 获取全部
         if (exchange == 0) {
             auto virtualSystem = _server->GetVirtualSubSystem();
-            // virtualSystem->
+            auto& predictions = virtualSystem->QueryPredictionOfHistory();
+            for (auto& item: predictions) {
+                auto symb = item.first;
+                nlohmann::json symbol_predictions = ConvertPrediction(symb, item.second);
+                result.emplace_back(std::move(symbol_predictions));
+            }
         }
     }
+    res.set_content(result.dump(), "application/json");
+    res.status = 200;
 }
 
 void PredictionHandler::del(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
+    String symbol = params["symbol"];
+    auto symb = to_symbol(symbol);
+    int index = params["index"];
+    int exchange = params["exchange"];
+    if (exchange == 0) {
+        auto virtualSystem = _server->GetVirtualSubSystem();
+        virtualSystem->DeletePrediction(symb, index);
+    } else {
+        // TODO:
+    }
+    res.status = 200;
+}
 
+nlohmann::json PredictionHandler::ConvertPrediction(symbol_t symbol, const List<Pair<fixed_time_range, int>>& predictions) {
+    nlohmann::json symbol_predictions;
+    symbol_predictions["symbol"] = get_symbol(symbol);
+    for (auto& ops: predictions) {
+        auto date = ops.first.DateTime();
+        auto op = ops.second;
+        symbol_predictions["predictions"].push_back({{"datetime", date}, {"opeartor", op}});
+    }
+    return symbol_predictions;
 }

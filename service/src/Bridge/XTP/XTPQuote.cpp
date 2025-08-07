@@ -8,8 +8,9 @@
 #include "yas/detail/type_traits/flags.hpp"
 #include "Util/datetime.h"
 #include "Util/system.h"
+#include "Bridge/XTP/XTPExchange.h"
 
-XTPQuote::XTPQuote(QuoteApi* api): _is_all(false) {
+XTPQuote::XTPQuote(QuoteApi* api, XTPExchange* exchange): _is_all(false), _exchange(exchange) {
   _sock.id = 0;
 }
 
@@ -30,6 +31,8 @@ bool XTPQuote::Init() {
 
 void XTPQuote::OnDisconnected(int reason) {
   INFO("XTP Disconnect: {}", reason);
+  _exchange->_login_status = false;
+  _exchange->Login();
 }
 
 void XTPQuote::OnError(XTPRI *error_info) {
@@ -41,13 +44,28 @@ void XTPQuote::OnTickByTickLossRange(int begin_seq, int end_seq) {}
 void XTPQuote::OnUnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last) {}
 
 void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t bid1_count, int32_t max_bid1_count, int64_t ask1_qty[], int32_t ask1_count, int32_t max_ask1_count) {
+  auto status = market_data->ticker_status;
+  if (status[1] == '0') {
+    return;
+  }
+
   symbol_t symb;
   if (strcmp("001318", market_data->ticker) == 0) {
     printf("recieve \n");
   }
+
+  if (XTP_MARKETDATA_V2_INDEX == market_data->data_type_v2) {
+    // 指数
+  }
+  else if (XTP_MARKETDATA_V2_ACTUAL == market_data->data_type_v2) {
+    // 
+  }
   switch (market_data->exchange_id) {
   case XTP_EXCHANGE_SH:
-    symb = to_symbol(market_data->ticker, "SH");
+      if (status[2] == '0')
+        return;
+
+      symb = to_symbol(market_data->ticker, "SH");
     break;
   case XTP_EXCHANGE_SZ:
     symb = to_symbol(market_data->ticker, "SZ");
@@ -56,6 +74,11 @@ void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t
     symb = to_symbol(market_data->ticker);
     break;
   }
+  auto& limit = _price_limits[symb];
+  // 过滤非法数据
+  if (limit.first > market_data->last_price || limit.second < market_data->last_price)
+    return;
+  
   QuoteInfo& info = _tickers[symb];
   {
     std::unique_lock<std::mutex> lock(_mutex);
@@ -67,7 +90,7 @@ void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t
     info._value = market_data->turnover;
     info._high = market_data->high_price;
     info._low = market_data->low_price;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 10; ++i) {
       info._bidPrice[i] = market_data->bid[i];
       info._askPrice[i] = market_data->ask[i];
       info._bidVolume[i] = market_data->bid_qty[i];
@@ -121,6 +144,8 @@ void XTPQuote::AddAndUpdateTicker(XTPQFI* ticker_info) {
     info._open = ticker_info->pre_close_price;
     info._close = ticker_info->pre_close_price;
     // info._volume = ticker_info->
+    _price_limits[symbol].first = ticker_info->lower_limit_price;
+    _price_limits[symbol].second = ticker_info->upper_limit_price;
     
     yas::shared_buffer buf = yas::save<flags>(info);
     if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
@@ -138,7 +163,7 @@ Set<symbol_t> XTPQuote::GetAllSymbols() {
 }
 
 void XTPQuote::OnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last) {
-  if (error_info) {
-    WARN("XTP OnSubMarketData: {} {}", error_info->error_id, error_info->error_msg);
+  if (error_info && error_info->error_id != 0) {
+    WARN("XTP OnSubMarketData[{}]: {} {}", ticker->ticker, error_info->error_id, error_info->error_msg);
   }
 }

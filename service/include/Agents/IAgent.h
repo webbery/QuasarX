@@ -20,8 +20,7 @@ struct Signal {
 class IAgent {
 public:
     virtual ~IAgent() {}
-    virtual int classify(const DataFeatures& data, short n_samples, Vector<float>& label) = 0;
-    virtual double predict() = 0;
+    virtual int predict(const DataFeatures& data, Vector<float>& result) = 0;
     virtual void train(const Vector<float>& data, short n_samples, short n_features, const Vector<float>& label, unsigned int epoch) = 0;
 
 protected:

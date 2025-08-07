@@ -84,11 +84,19 @@ jobs:
           make -j$(nproc)
           sudo make install
 
-      - name: build nng
+      - name: build third_party
         run: |
           git clone --recursive https://github.com/nanomsg/nng
           cd nng
           git checkout v1.11
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+          sudo make install
+
+          cd ..
+          git clone --recursive https://github.com/TA-Lib/ta-lib
+          cd ta-lib
           mkdir build && cd build
           cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
@@ -104,7 +112,6 @@ jobs:
         run: |
           git clone --recursive https://github.com/fmtlib/fmt service/third_party/fmt
           git clone --recursive https://github.com/hosseinmoein/DataFrame service/third_party/DataFrame
-
           mkdir service/build && cd service/build
           cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
           cmake --build . --config Release

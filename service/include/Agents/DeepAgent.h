@@ -7,8 +7,7 @@ public:
     DeepAgent(const String& path, int classes, const nlohmann::json& params);
     ~DeepAgent();
 
-    virtual int classify(const DataFeatures& data, short n_samples, Vector<float>& result);
-    virtual double predict();
+    virtual int predict(const DataFeatures& data, Vector<float>& result);
 
     virtual void train(const Vector<float>& data, short n_samples, short n_features, const Vector<float>& label, unsigned int epoch);
 private:
@@ -17,4 +16,5 @@ private:
     nlohmann::json _params;
 
     tvm::runtime::Module _module;
+    tvm::runtime::Module _model;
 };

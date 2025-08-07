@@ -27,7 +27,7 @@ bool EMAFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-double EMAFeature::deal(const QuoteInfo& quote, double extra) {
+feature_t EMAFeature::deal(const QuoteInfo& quote, double extra) {
     if (_prev == 0) {
         _prev = _alpha * quote._close;
         return _prev;
@@ -68,12 +68,12 @@ bool MACDFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-double MACDFeature::deal(const QuoteInfo& quote, double extra) {
+feature_t MACDFeature::deal(const QuoteInfo& quote, double extra) {
     auto itr = _symbolHistory.find(quote._symbol);
     if (itr == _symbolHistory.end()) {
         itr->second = _handle->GetDailyClosePrice(quote._symbol, _signalPeriod, StockAdjustType::None);
     }
-    double ret = quote._close;
+    feature_t ret = quote._close;
 
     Vector<double> slow, fast, signal;
     int outBegin, outEnd;

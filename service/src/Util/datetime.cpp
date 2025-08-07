@@ -45,10 +45,16 @@ std::string ToString(time_t t, const char* fmt) {
 time_t Now()
 {
   auto now = std::chrono::system_clock::now();
-  return std::chrono::system_clock::to_time_t(now);
-  /*std::string formatted_time = std::format("{%Y-%m-%d %H:%M:%S}", *std::localtime(&time_t_now));
-  return formatted_time;*/
+  auto utc_time = std::chrono::system_clock::to_time_t(now);
+
+  std::tm local_tm = *std::localtime(&utc_time);
+  return std::mktime(&local_tm);
 }
+
+// std::chrono::time_point<std::chrono::system_clock> FromLocalTime(time_t t) {
+//     std::tm local_tm = *std::localtime(&t);
+//     return std::chrono::system_clock::from_time_t(std::mktime(&local_tm));
+// }
 
 float Hour(const std::string& time) {
     float value = -1;
@@ -198,6 +204,31 @@ bool fixed_time_range::operator == (time_t other) const {
 
 bool fixed_time_range::operator < (time_t other) const {
     return _end < other;
+}
+
+String fixed_time_range::DateTime() const {
+    auto start = localtime(&_start);
+    auto end = localtime(&_end);
+    String ret;
+    if (start->tm_year == end->tm_year) {
+        ret += std::to_string(start->tm_year);
+    }
+    if (start->tm_mon == end->tm_mon) {
+        ret += "-" + std::to_string(start->tm_mon);
+    }
+    if (start->tm_mday == end->tm_mday) {
+        ret += "-" + std::to_string(start->tm_mday);
+    }
+    if (start->tm_hour == end->tm_hour) {
+        ret += " " + std::to_string(start->tm_mday);
+    }
+    if (start->tm_min == end->tm_min) {
+        ret += ":" + std::to_string(start->tm_min);
+    }
+    if (start->tm_sec == end->tm_sec) {
+        ret += ":" + std::to_string(start->tm_sec);
+    }
+    return ret;
 }
 
 String to_string(const fixed_time_range& tr) {

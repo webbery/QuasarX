@@ -16,8 +16,9 @@ bool ScalerNode::plug(Server* handle, const String& account) {
     return true;
 }
 
-double ScalerNode::deal(const QuoteInfo& quote, double extra) {
-
+feature_t ScalerNode::deal(const QuoteInfo& quote, double extra) {
+    feature_t f;
+    return f;
 }
 
 const char* ScalerNode::desc() {
