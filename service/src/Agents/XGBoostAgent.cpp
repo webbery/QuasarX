@@ -28,12 +28,12 @@ XGBoostAgent::XGBoostAgent(const String& path, int classes, const nlohmann::json
     }
 }
 
-int XGBoostAgent::classify(const DataFeatures& data, short n_samples, Vector<float>& result) {
+int XGBoostAgent::predict(const DataFeatures& data, Vector<float>& result) {
     if (is_valid(data))
         return -1;
 
     DMatrixHandle xgb = nullptr;
-    if (XGDMatrixCreateFromMat(data._data.data(), n_samples, _features.size(), 0.0f, &xgb)) {
+    if (XGDMatrixCreateFromMat(data._data.data(), 1, _features.size(), 0.0f, &xgb)) {
         FATAL("XGDMatrixCreateFromMat fail: {}", XGBGetLastError());
         return -1;
     }
@@ -52,10 +52,6 @@ int XGBoostAgent::classify(const DataFeatures& data, short n_samples, Vector<flo
     memcpy(&result[0], out_result, out_dim*sizeof(float));
     XGDMatrixFree(xgb);
 
-    return 0;
-}
-
-double XGBoostAgent::predict() {
     return 0;
 }
 

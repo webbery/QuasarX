@@ -7,8 +7,7 @@ public:
     XGBoostAgent(const String& path, int classes, const nlohmann::json& params);
     ~XGBoostAgent();
 
-    virtual int classify(const DataFeatures& data, short n_samples, Vector<float>& result);
-    virtual double predict();
+    virtual int predict(const DataFeatures& data, Vector<float>& result);
 
     virtual void train(const Vector<float>& data, short n_samples, short n_features, const Vector<float>& label, unsigned int epoch);
 private:

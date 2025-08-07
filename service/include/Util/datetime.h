@@ -1,5 +1,6 @@
 #pragma once
 #include "std_header.h"
+#include <chrono>
 #include <utility>
 
 time_t FromStr(const String& str, const char* fmt = "%Y-%m-%d");
@@ -12,6 +13,8 @@ time_t Now();
 float Hour(const String& time);
 
 bool IsInTimeRange(time_t tick, char start_hour, char end_hour, char start_min, char end_min);
+
+std::chrono::time_point<std::chrono::system_clock> FromLocalTime(time_t t);
 
 class time_range {
 public:

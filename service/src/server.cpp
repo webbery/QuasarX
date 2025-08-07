@@ -103,7 +103,7 @@ nng_socket req_sock;
 std::multimap<std::string, ContractInfo> Server::_markets;
 std::map<time_t, float> Server::_inter_rates;
 
-Server::Server():_config(nullptr), _trade_exchange(nullptr), 
+Server::Server():_config(nullptr), _trade_exchange(nullptr), _dividends(12*60*12),
 _exit(false), _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
 _defaultPortfolio(1), _timer(nullptr), _riskSystem(nullptr), _traderSystem(nullptr) {
     for (auto mt: {MT_Shanghai, MT_Beijing, MT_Shenzhen}) {
@@ -191,24 +191,16 @@ void Server::Regist() {
 
     REGIST_POST(API_EXHANGE);
 
-    _svr.Post(API_VERSION API_RECORD, [this](const httplib::Request& req, httplib::Response& res) {
-        LOG("Post /v0/record");
-        this->_handlers[API_RECORD]->post(req, res);
-        });
-    _svr.Delete(API_VERSION API_RECORD, [this](const httplib::Request& req, httplib::Response& res) {
-        LOG("Del /v0/record");
-        this->_handlers[API_RECORD]->del(req, res);
-        });
+    REGIST_PUT(API_PREDICT_OPR);
+    REGIST_GET(API_PREDICT_OPR);
+    REGIST_DEL(API_PREDICT_OPR);
 
-    _svr.Get(API_VERSION API_STOCK_DETAIL, [this](const httplib::Request& req, httplib::Response& res) {
-        LOG("Get " API_VERSION API_STOCK_DETAIL);
-        this->_handlers[API_STOCK_DETAIL]->get(req, res);
-        });
+    REGIST_POST(API_RECORD);
+    REGIST_DEL(API_RECORD);
 
-    _svr.Put(API_VERSION API_PORTFOLIO, [this](const httplib::Request& req, httplib::Response& res) {
-        LOG("Put " API_VERSION API_PORTFOLIO);
-        this->_handlers[API_PORTFOLIO]->put(req, res);
-        });
+    REGIST_GET(API_STOCK_DETAIL);
+
+    REGIST_PUT(API_PORTFOLIO);
 
     REGIST_GET(API_STRATEGY);
     REGIST_POST(API_STRATEGY);
@@ -749,6 +741,8 @@ void Server::Timer()
             Schedules(curr);
             // 
             UpdateQuoteQueryStatus(curr);
+            //
+            _dividends.Update();
         });
         next_wake += interval;
     }
@@ -973,19 +967,40 @@ bool Server::GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividen
     return true;
 }
 
-double Server::Adjust(symbol_t symbol, double org_price, time_t org_t) {
+double Server::AdjustAfter(symbol_t symbol, double org_price, time_t org_t) {
     if (!is_stock(symbol))
         return org_price;
 
-    Map<time_t, DividendData> dividends_info;
-    if (!GetDividendInfo(symbol, dividends_info)) {
-        return org_price;
+    if (!_dividends.Exist(symbol)) {
+        if (!GetDividendInfo(symbol, _dividends[symbol])) {
+            return org_price;
+        }
     }
 
+    Map<time_t, DividendData>& dividends_info = _dividends[symbol];
+    
     auto litr = dividends_info.lower_bound(org_t);
     for (auto itr = dividends_info.begin(); itr != litr; ++itr) {
         org_price += itr->second._divd;
     }
+    return org_price;
+}
+
+double Server::AdjustBefore(symbol_t symbol, double org_price, time_t org_t) {
+    if (!is_stock(symbol))
+        return org_price;
+
+    if (!_dividends.Exist(symbol)) {
+        if (!GetDividendInfo(symbol, _dividends[symbol])) {
+            return org_price;
+        }
+    }
+    Map<time_t, DividendData>& dividends_info = _dividends[symbol];
+    
+    for (auto itr = dividends_info.upper_bound(org_t); itr != dividends_info.end(); ++itr) {
+        org_price -= itr->second._divd;
+    }
+
     return org_price;
 }
 

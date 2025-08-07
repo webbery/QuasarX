@@ -125,14 +125,10 @@ void PredictionHandler::put(const httplib::Request& req, httplib::Response& res)
         auto symb = to_symbol(symbol);
         auto cur = Now();
 
-        auto t1 = std::chrono::system_clock::from_time_t(cur);
-        auto t2 = std::chrono::system_clock::from_time_t(next_t);
-
-        auto day1 = floor<std::chrono::days>(t1);
-        auto day2 = floor<std::chrono::days>(t2);
-
+        std::tm local_tm1 = *std::localtime(&cur);
+        std::tm local_tm2 = *std::localtime(&next_t);
         // 计算日期差并返回绝对值
-        auto N = duration_cast<std::chrono::days>(day2 - day1).count();
+        auto N = local_tm2.tm_mday - local_tm1.tm_mday;
         if (N < 0) {
             WARN("day is {}", N);
             return;

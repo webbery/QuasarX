@@ -10,6 +10,7 @@
 #include "BrokerSubSystem.h"
 #include "Strategy/Daily.h"
 #include "Agents/XGBoostAgent.h"
+#include "Agents/DeepAgent.h"
 
 AgentSubsystem::AgentSubsystem(Server* handle):_handle(handle) {
 
@@ -52,6 +53,9 @@ bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
         switch(agent._type) {
         case AgentType::XGBoost:
             setting._agent = new XGBoostAgent(model_path, agent._classes, agent._params);
+        break;
+        case AgentType::NeuralNetwork:
+            setting._agent = new DeepAgent(model_path, agent._classes, agent._params);
         break;
         default:
         WARN("can not create agent of type: {}", (int)agent._type);
@@ -101,7 +105,7 @@ void AgentSubsystem::Start() {
                 }
                 
                 Vector<float> result;
-                if (-1 != agent->classify(messenger, 1, result)) {
+                if (-1 != agent->predict(messenger, result)) {
                     DEBUG_INFO("predict: {}", result[0]);
                     int op = strategy->generate(result);
                     // TODO: 保存第N天的操作

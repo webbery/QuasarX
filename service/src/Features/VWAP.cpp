@@ -15,7 +15,7 @@ bool VWAPFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-double VWAPFeature::deal(const QuoteInfo& quote, double extra) {
+feature_t VWAPFeature::deal(const QuoteInfo& quote, double extra) {
     double price = (quote._high + quote._low + quote._close) / 3;
     _prices.emplace_back(price_info{ quote._time, price, quote._volume });
     auto front = &_prices.front();

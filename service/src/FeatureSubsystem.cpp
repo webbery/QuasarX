@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 #include <immintrin.h>
+#include <variant>
 #include "Features/MA.h"
 #include "Features/VWAP.h"
 
@@ -199,11 +200,19 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, List<
     int i = 0;
     DEBUG_INFO("{}", quote);
     for (auto& feat: *pFeats) {
-        double val = feat->deal(quote);
-        if (std::isnan(val))
-            continue;
+        auto val = feat->deal(quote);
+        std::visit([&features, i](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, double>) {
+                if (!std::isnan(arg)) {
+                    features[i] = arg;
+                }
+            }
+            else if constexpr (std::is_same_v<T, Vector<float>>) {
 
-        features[i] = val;
+            }
+        }, val);
+        
         types[i] = feat->id();
         ++i;
     }
@@ -225,19 +234,32 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const
     Vector<size_t> types(pFeats.size());
     int i = 0;
     for (auto& block: pFeats) {
-        double val = block->_feature->deal(quote);
+        auto val = block->_feature->deal(quote);
         types[i] = block->_feature->id();
-        if (std::isnan(val))
-            continue;
-
-        if (!block->_nexts.empty()) {
-            double dv = 0;
-            for (auto itr = block->_nexts.begin(); itr != block->_nexts.end(); ++itr) {
-                dv += recursive_feature(*itr, quote, val);
+        bool ret = std::visit([this, &features, i, block, &quote](auto&& arg)->bool {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, double>) {
+                if (std::isnan(arg)) {
+                    return false;
+                }
+                if (!block->_nexts.empty()) {
+                    double dv = 0;
+                    for (auto itr = block->_nexts.begin(); itr != block->_nexts.end(); ++itr) {
+                        dv += recursive_feature(*itr, quote, arg);
+                    }
+                    arg += dv;
+                }
+                features[i] = arg;
+                return true;
             }
-            val += dv;
+            else if constexpr (std::is_same_v<T, Vector<float>>) {
+                return true;
+            }
+        }, val);
+        if (!ret) {
+            continue;
         }
-        features[i] = val;
+        
         ++i;
     }
     messenger._price = quote._close;
@@ -251,15 +273,15 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const
 }
 
 double FeatureSubsystem::recursive_feature(FeatureBlock* block, const QuoteInfo& quote, double cur) {
-    double val = block->_feature->deal(quote, cur);
+    auto val = block->_feature->deal(quote, cur);
     for (auto next: block->_nexts) {
         double dv = 0;
         for (auto itr = block->_nexts.begin(); itr != block->_nexts.end(); ++itr) {
-            dv += recursive_feature(*itr, quote, val);
+            dv += recursive_feature(*itr, quote, std::get<double>(val));
         }
-        val += dv;
+        std::get<double>(val) += dv;
     }
-    return val;
+    return std::get<double>(val);
 }
 
 bool FeatureSubsystem::Start() {

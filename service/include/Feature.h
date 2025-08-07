@@ -2,6 +2,8 @@
 #include "std_header.h"
 #include "Util/log.h"
 #include "json.hpp"
+#include <tuple>
+#include <variant>
 
 class Server;
 struct QuoteInfo;
@@ -18,6 +20,8 @@ enum class FeatureType: char {
     FT_COUNT,
 };
 
+using feature_t = std::variant<double, Vector<float>>;
+
 class alignas(8) IFeature {
 public:
     virtual ~IFeature() {}
@@ -28,7 +32,7 @@ public:
 
     virtual bool plug(Server* handle, const String& account) = 0;
 
-    virtual double deal(const QuoteInfo& quote, double extra = 0) = 0;
+    virtual feature_t deal(const QuoteInfo& quote, double extra = 0) = 0;
 
     virtual const char* desc() = 0;
 

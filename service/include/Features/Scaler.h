@@ -10,7 +10,7 @@ public:
     
     virtual bool plug(Server* handle, const String& account);
 
-    virtual double deal(const QuoteInfo& quote, double extra = 0);
+    virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
 
     virtual const char* desc();
 
