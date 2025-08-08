@@ -14,7 +14,8 @@ jobs:
           sudo apt-get install -y g++-13 gcc-13
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
-
+          python -m pip install --upgrade pip
+          
       # 配置 ccache 编译缓存
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -38,7 +39,8 @@ jobs:
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
-          sudo apt install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+          pip install cython
 
       # 仅当缓存未命中时编译 xgboost
       - name: Build xgboost (if cache miss)
