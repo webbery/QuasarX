@@ -71,6 +71,7 @@ jobs:
           git clone --recursive https://github.com/apache/tvm
           cd tvm
           mkdir build && cd build
+          git checkout v0.21.0
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           sudo make install
@@ -92,6 +93,7 @@ jobs:
         run: |
           git clone --recursive https://github.com/lballabio/QuantLib
           cd QuantLib
+          git checkout v1.39
           mkdir build && cd build
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
