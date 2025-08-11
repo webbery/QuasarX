@@ -65,7 +65,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tvm-
 
-      - name: Cache TVM build
+      - name: build TVM (if cache miss)
         if: steps.cache-tvm.outputs.cache-hit != 'true'
         run: |
           git clone --recursive https://github.com/apache/tvm
