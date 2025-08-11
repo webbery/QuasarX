@@ -40,7 +40,7 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
-          pip install cython
+          sudo apt-get install cython3
 
       # 仅当缓存未命中时编译 xgboost
       - name: Build xgboost (if cache miss)
