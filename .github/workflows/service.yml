@@ -70,7 +70,7 @@ jobs:
         run: |
           git clone --recursive https://github.com/lballabio/QuantLib
           cd QuantLib
-          git checkout v1.39
+          git checkout v1.36
           mkdir build && cd build
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
@@ -95,7 +95,7 @@ jobs:
           cd tvm
           mkdir build && cd build
           git checkout v0.20.0
-          
+
           cp ../cmake/config.cmake .
           echo "set(CMAKE_BUILD_TYPE Release)" >> config.cmake
           echo "set(USE_LLVM \"llvm-config --ignore-libllvm --link-static\")" >> config.cmake
