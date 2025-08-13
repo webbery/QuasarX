@@ -53,29 +53,6 @@ jobs:
           make -j$(nproc)
           sudo make install
 
-      - name: Cache QuantLib
-        uses: actions/cache@v4
-        id: cache-QuantLib
-        with:
-          path: |
-            QuantLib/build
-            /usr/local/include/QuantLib
-            /usr/local/lib/libQuantLib*
-          key: ${{ runner.os }}-QuantLib-${{ hashFiles('**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-QuantLib-
-
-      - name: Build QuantLib (if cache miss)
-        if: steps.cache-QuantLib.outputs.cache-hit != 'true'
-        run: |
-          git clone --recursive https://github.com/lballabio/QuantLib
-          cd QuantLib
-          git checkout v1.32
-          mkdir build && cd build
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(nproc)
-          sudo make install
-
       - name: Cache TVM build
         uses: actions/cache@v4
         id: cache-tvm
