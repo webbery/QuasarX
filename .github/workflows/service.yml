@@ -14,7 +14,12 @@ jobs:
           sudo apt-get install -y g++-13 gcc-13
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
-          python -m pip install --upgrade pip
+          
+          wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+          bash miniconda.sh -b -p $HOME/miniconda
+          source $HOME/miniconda/bin/activate
+          conda init bash
+          conda create -n py312 python=3.12 -y
           
       # 配置 ccache 编译缓存
       - name: Setup ccache
@@ -40,6 +45,7 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+          conda activate py312
           sudo apt-get install cython
 
       # 仅当缓存未命中时编译 xgboost
@@ -68,12 +74,23 @@ jobs:
       - name: build TVM (if cache miss)
         if: steps.cache-tvm.outputs.cache-hit != 'true'
         run: |
+          conda activate py312
           git clone --recursive https://github.com/apache/tvm
           cd tvm
           mkdir build && cd build
           git checkout v0.20.0
 
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DUSE_OPENMP=ON -DCMAKE_CXX_STANDARD=23 ..
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DUSE_OPENMP=ON -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+          sudo make install
+
+      - name: build nng
+        run: |
+          git clone --recursive https://github.com/nanomsg/nng
+          cd nng
+          git checkout v1.11
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           sudo make install
 
