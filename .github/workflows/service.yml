@@ -45,8 +45,6 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
-          conda init
-          conda activate py312
           sudo apt-get install cython
           cython --version
 
@@ -76,8 +74,6 @@ jobs:
       - name: build TVM (if cache miss)
         if: steps.cache-tvm.outputs.cache-hit != 'true'
         run: |
-          conda init
-          conda activate py312
           git clone --recursive https://github.com/apache/tvm
           cd tvm
           mkdir build && cd build
