@@ -14,12 +14,7 @@ jobs:
           sudo apt-get install -y g++-13 gcc-13
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
-          
-          wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
-          bash miniconda.sh -b -p $HOME/miniconda
-          source $HOME/miniconda/bin/activate
-          conda init bash
-          conda create -n py312 python=3.12 -y
+          sudo apt-get install python3-pip
           
       # 配置 ccache 编译缓存
       - name: Setup ccache
@@ -45,8 +40,7 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
-          sudo apt-get install cython
-          cython --version
+          pip3 install cython
 
       # 仅当缓存未命中时编译 xgboost
       - name: Build xgboost (if cache miss)
