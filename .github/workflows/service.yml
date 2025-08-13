@@ -41,7 +41,7 @@ jobs:
         run: |
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
           sudo apt-get install cython3
-          sudo apt-get install -y clang-17 lld-17 llvm-17-dev
+          sudo apt-get install -y clang-18 lld-18 llvm-18-dev
 
       # 仅当缓存未命中时编译 xgboost
       - name: Build xgboost (if cache miss)
