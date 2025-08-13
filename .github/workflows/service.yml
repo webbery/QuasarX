@@ -70,7 +70,7 @@ jobs:
         run: |
           git clone --recursive https://github.com/lballabio/QuantLib
           cd QuantLib
-          git checkout v1.36
+          git checkout v1.35
           mkdir build && cd build
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
