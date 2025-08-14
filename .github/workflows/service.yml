@@ -3,18 +3,16 @@ on: [push] # 触发事件
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       CCACHE_DIR: /home/runner/work/ccache  # ccache 缓存目录
     steps:
-      - name: Install GCC 13+ (C++23 support)
-        run: |
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y g++-13 gcc-13
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
-          sudo apt-get install python3-pip
+      # - name: Install GCC 13+ (C++23 support)
+      #   run: |
+      #     sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+      #     sudo apt-get install -y g++-13 gcc-13
+      #     sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
+      #     sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
       
       - name: 设置 Python
         uses: actions/setup-python@v5
@@ -44,8 +42,10 @@ jobs:
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
+          sudo apt-get update
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
           python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools
           pip install cython
           cython --version
 
