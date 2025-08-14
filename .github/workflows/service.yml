@@ -15,7 +15,12 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
           sudo apt-get install python3-pip
-          
+      
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # 指定明确版本如 '3.12'
+
       # 配置 ccache 编译缓存
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -40,7 +45,9 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
-          pip3 install cython
+          python -m pip install --upgrade pip
+          pip install cython
+          cython --version
 
       # 仅当缓存未命中时编译 xgboost
       - name: Build xgboost (if cache miss)
