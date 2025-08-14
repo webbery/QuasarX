@@ -120,6 +120,7 @@ void XTPQuote::AddAndUpdateTicker(XTPQFI* ticker_info) {
     info._time = Now();
     info._open = ticker_info->pre_close_price;
     info._close = ticker_info->pre_close_price;
+    // info._volume = ticker_info->
     
     yas::shared_buffer buf = yas::save<flags>(info);
     if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {

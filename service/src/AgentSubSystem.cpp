@@ -10,6 +10,7 @@
 #include "BrokerSubSystem.h"
 #include "Strategy/Daily.h"
 #include "Agents/XGBoostAgent.h"
+#include "Agents/DeepAgent.h"
 
 AgentSubsystem::AgentSubsystem(Server* handle):_handle(handle) {
 

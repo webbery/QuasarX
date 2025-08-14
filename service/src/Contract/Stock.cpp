@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <list>
 #include "Util/string_algorithm.h"
-#include "eigen3/Eigen/Core"
+#include "Eigen/Core"
 
 Stock::Stock() {
 
