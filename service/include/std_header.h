@@ -71,4 +71,5 @@ using UnorderedSet = std::unordered_set<T, Args...>;
 #ifndef YEAR_DAY
 #define YEAR_DAY    252
 #endif
+#include "eigen3/Eigen/Core"
 #include "Util/log.h"

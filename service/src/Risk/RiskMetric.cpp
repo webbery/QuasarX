@@ -1,5 +1,4 @@
 #include "Risk/RiskMetric.h"
-#include "ql/math/matrix.hpp"
 #include <algorithm>
 #include <cassert>
 #include <boost/math/distributions.hpp>
@@ -16,7 +15,7 @@ RiskMetric::RiskMetric(float confidence, double freerate, const PortfolioInfo& p
     if (total == 0)
         return;
 
-    QuantLib::Matrix m(portfolio._holds.size(), 1);
+    Eigen::MatrixXd m(portfolio._holds.size(), 1);
     int r = 0;
     List<String> symbols;
     for (auto& item: portfolio._holds) {
@@ -26,7 +25,7 @@ RiskMetric::RiskMetric(float confidence, double freerate, const PortfolioInfo& p
         symbols.emplace_back(asset._symbol);
     }
     _weight.swap(m);
-    _correlation = group->Correlation(symbols);
+    // _correlation = group->Correlation(symbols);
     r = 0;
 
     for (auto& symbol: symbols) {

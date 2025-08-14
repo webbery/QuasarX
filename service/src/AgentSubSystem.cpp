@@ -53,14 +53,20 @@ bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
         case AgentType::XGBoost:
             setting._agent = new XGBoostAgent(model_path, agent._classes, agent._params);
         break;
+        case AgentType::NeuralNetwork:
+            setting._agent = new DeepAgent(model_path, agent._classes, agent._params);
+        break;
+        case AgentType::LinearRegression:
+        break;
         default:
         WARN("can not create agent of type: {}", (int)agent._type);
         break;
         }
     }
+    nlohmann::json params;
     switch (config._strategy) {
     case StrategyType::ST_InterDay:
-        setting._strategy = new DailyStrategy(_handle);
+        setting._strategy = new DailyStrategy(_handle, params);
     break;
     default:
         WARN("no support strategy {}", (int)config._strategy);

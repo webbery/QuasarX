@@ -42,6 +42,9 @@ void XTPQuote::OnUnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last)
 
 void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t bid1_count, int32_t max_bid1_count, int64_t ask1_qty[], int32_t ask1_count, int32_t max_ask1_count) {
   symbol_t symb;
+  if (strcmp("001318", market_data->ticker) == 0) {
+    printf("recieve \n");
+  }
   switch (market_data->exchange_id) {
   case XTP_EXCHANGE_SH:
     symb = to_symbol(market_data->ticker, "SH");

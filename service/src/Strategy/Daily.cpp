@@ -1,7 +1,7 @@
 #include "Strategy/Daily.h"
 #include "server.h"
 
-DailyStrategy::DailyStrategy(Server* handle): _handle(handle) {
+DailyStrategy::DailyStrategy(Server* handle, const nlohmann::json& params): _handle(handle) {
 
 }
 

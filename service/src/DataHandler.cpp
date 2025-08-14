@@ -37,28 +37,28 @@ size_t DataGroup::Size(const String& symbol) {
     return data->get_index().size();
 }
 
-QuantLib::Matrix DataGroup::Correlation(const List<String>& symbols) {
-    QuantLib::Matrix m(symbols.size(), symbols.size(), 0);
-    int row = 0;
-    for (auto itr = symbols.begin(); itr != symbols.end(); ++itr) {
-        auto frame1 = _frames[*itr];
-        auto close_data1 = frame1->get_column<double>("close");
-        auto second_itr = itr;
-        ++second_itr;
-        m(row, row) = 1.0;
-        int col = 0;
-        for (; second_itr != symbols.end(); ++second_itr) {
-            auto frame2 = _frames[*itr];
-            auto close_data2 = frame2->get_column<double>("close");
-            double coef = boost::math::tools::correlation_coefficient(close_data1, close_data2);
-            m(col, row) = coef;
-            m(row, col) = coef;
-            ++col;
-        }
-        ++row;
-    }
-    return m;
-}
+// Eigen::MatrixXd DataGroup::Correlation(const List<String>& symbols) {
+//     Eigen::MatrixXd m(symbols.size(), symbols.size(), 0);
+//     int row = 0;
+//     for (auto itr = symbols.begin(); itr != symbols.end(); ++itr) {
+//         auto frame1 = _frames[*itr];
+//         auto close_data1 = frame1->get_column<double>("close");
+//         auto second_itr = itr;
+//         ++second_itr;
+//         m(row, row) = 1.0;
+//         int col = 0;
+//         for (; second_itr != symbols.end(); ++second_itr) {
+//             auto frame2 = _frames[*itr];
+//             auto close_data2 = frame2->get_column<double>("close");
+//             double coef = boost::math::tools::correlation_coefficient(close_data1, close_data2);
+//             m(col, row) = coef;
+//             m(row, col) = coef;
+//             ++col;
+//         }
+//         ++row;
+//     }
+//     return m;
+// }
 
 Vector<double> DataGroup::Return(const String& symbol, int Nday) {
     auto itr = _frames.find(symbol);

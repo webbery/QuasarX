@@ -47,9 +47,14 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
                 si._agents.emplace_back(ai);
             }
             else if (category == "strategy") {
-                if ((String)node["type"] == "interday") {
+                auto type = (String)node["type"];
+                if (type == "interday") {
                     si._strategy = StrategyType::ST_InterDay;
-                } else {
+                }
+                else if (type == "intraday") {
+                    si._strategy = StrategyType::ST_IntraDay;
+                }
+                else {
                     si._strategy = StrategyType::ST_Unknow;
                 }
             }

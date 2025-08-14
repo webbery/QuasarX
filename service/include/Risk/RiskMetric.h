@@ -1,6 +1,5 @@
 #pragma once
 #include "std_header.h"
-#include "ql/math/matrix.hpp"
 #include "PortfolioSubsystem.h"
 #include "DataHandler.h"
 
@@ -28,6 +27,6 @@ private:
     double _freerate;
     double _mean;
     Vector<double> _sigma;
-    QuantLib::Matrix _weight;
-    QuantLib::Matrix _correlation;
+    Eigen::MatrixXd _weight;
+    Eigen::MatrixXd _correlation;
 };

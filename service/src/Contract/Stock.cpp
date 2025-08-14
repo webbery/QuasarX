@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <list>
 #include "Util/string_algorithm.h"
-#include <ql/quantlib.hpp>
+#include "eigen3/Eigen/Core"
 
 Stock::Stock() {
 
@@ -51,7 +51,7 @@ void Stock::CalculateReturnAndSTD(int N) {
     int count = 0;
     int max_idx = (N < 0 ? 0: std::max((int)item.second.size() - N, 0));
     int capcity = (N < 0 ? item.second.size() : N);
-    QuantLib::Array prices(capcity);
+    Eigen::ArrayXd prices(capcity);
     for (int i = (int)item.second.size() - 1; i >= max_idx; --i) {
       auto& row = item.second[i];
       // 使用收盘价计算
@@ -59,7 +59,7 @@ void Stock::CalculateReturnAndSTD(int N) {
       prices[i - max_idx] = open_price;
       count += 1;
     }
-    QuantLib::Array R(capcity - 1);
+    Eigen::ArrayXd  R(capcity - 1);
     double sum = 0;
     for (int i = 1; i < capcity; ++i) {
       double diff_price = prices[i] - prices[i - 1];
@@ -73,7 +73,8 @@ void Stock::CalculateReturnAndSTD(int N) {
     }
     double avg = sum / count;
     auto diff = R - avg;
-    auto square = QuantLib::DotProduct(diff, diff);
+    auto m = diff.matrix();
+    auto square = m.dot(m);
     double std = std::sqrt(square / (count - 1));
     _daily_r_std[item.first] = std::make_pair(avg, std);
   }

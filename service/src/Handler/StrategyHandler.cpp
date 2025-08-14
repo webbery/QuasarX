@@ -9,7 +9,6 @@
 #include "nng/nng.h"
 #include "server.h"
 #include "Bridge/exchange.h"
-#include <ql/methods/montecarlo/brownianbridge.hpp>
 #include "Risk/StopLoss.h"
 #include "StrategySubSystem.h"
 

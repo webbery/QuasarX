@@ -4,7 +4,6 @@
 #include <yas/serialize.hpp>
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
-#include "ql/math/matrix.hpp"
 #include "fmt/core.h"
 #include "Util/datetime.h"
 
@@ -22,10 +21,15 @@ enum class OrderType: char {
 };
 
 // 订单状态
-enum class OrderStatus {
-    All,
-    Part,
-    None,
+enum OrderStatus {
+    All = 1,
+    Part = 2,
+    None = 4,
+    Accept = 8,
+    Submmit = 16, // 已提交
+    Completed = 32,// 已成交
+    Margin = 64,  // 保证金不足
+    Rejected = 128
 };
 
 struct Order {
@@ -136,7 +140,7 @@ public:
 
     Vector<double> Return(const String& symbol, int Nday);
 
-    QuantLib::Matrix Correlation(const List<String>& symbols);
+    // Eigen::MatrixXd Correlation(const List<String>& symbols);
 
     size_t Size(const String& symbol);
 

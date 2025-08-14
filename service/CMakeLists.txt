@@ -50,8 +50,8 @@ if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
 endif()
 
-target_link_libraries(${PROJECT_NAME} crypto QuantLib ssl curl -pthread SQLiteWrapper pugixml nng
-    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se parquet papi tvm tvm_runtime
+target_link_libraries(${PROJECT_NAME} crypto ssl curl -pthread SQLiteWrapper pugixml nng
+    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se papi tvm tvm_runtime
 )
 
 endif(WIN32)

@@ -12,6 +12,10 @@
 #include "Features/MA.h"
 #include "Features/VWAP.h"
 
+#define REGIST_FEATURE(class_name, json_str) \
+    { auto f = FeatureFactory::Create(class_name::name(), nlohmann::json::parse(json_str));\
+      _features.push_back(f); }
+
 using FeatureFactory = TypeFactory<
     ATRFeature,
     EMAFeature,
@@ -49,7 +53,7 @@ bool ATRFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-double ATRFeature::deal(const QuoteInfo& quote, double extra) {
+feature_t ATRFeature::deal(const QuoteInfo& quote, double extra) {
     _cnt += 1;
     if (_close == nullptr) {
         _close = new double[_T];
@@ -129,11 +133,12 @@ FeatureSubsystem::FeatureBlock* FeatureSubsystem::GenerateBlock(FeatureNode* nod
 }
 
 void FeatureSubsystem::InitSecondLvlFeatures() {
-    auto f = FeatureFactory::Create(VWAPFeature::name(), nlohmann::json::parse("{\"N\":1}"));
-    _features.push_back(f);
-    for (auto& item: _pipelines) {
-        auto& pi = item.second;
-        pi._reals.push_back(f);
+    REGIST_FEATURE(VWAPFeature, "{\"N\":1}");
+    for (auto f: _features) {
+        for (auto& item: _pipelines) {
+            auto& pi = item.second;
+            pi._reals.push_back(f);
+        }
     }
 }
 
@@ -199,11 +204,19 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, List<
     int i = 0;
     DEBUG_INFO("{}", quote);
     for (auto& feat: *pFeats) {
-        double val = feat->deal(quote);
-        if (std::isnan(val))
-            continue;
-
-        features[i] = val;
+        auto val = feat->deal(quote);
+        std::visit([&features, i](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, double>) {
+                if (!std::isnan(arg)) {
+                    features[i] = arg;
+                }
+            }
+            else if constexpr (std::is_same_v<T, Vector<float>>) {
+                
+            }
+        }, val);
+        
         types[i] = feat->id();
         ++i;
     }

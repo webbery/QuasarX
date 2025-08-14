@@ -16,9 +16,9 @@ class Broker {
 public:
   virtual ~Broker() {}
 
-  virtual OrderStatus Buy(symbol_t, const Order& order, DealDetail& detail) = 0;
+  virtual int Buy(symbol_t, const Order& order, DealDetail& detail) = 0;
 
-  virtual OrderStatus Sell(symbol_t, const Order& order, DealDetail& detail) = 0;
+  virtual int Sell(symbol_t, const Order& order, DealDetail& detail) = 0;
 
   virtual double Put(symbol_t, const Order& order)  {return 0; }
 
@@ -45,9 +45,9 @@ public:
 
   void Release();
 
-  OrderStatus Buy(symbol_t symbol, const Order& order, DealDetail& detail);
+  int Buy(symbol_t symbol, const Order& order, DealDetail& detail);
 
-  OrderStatus Sell(symbol_t symbol, const Order& order, DealDetail& detail);
+  int Sell(symbol_t symbol, const Order& order, DealDetail& detail);
 
   // 统计当前指标
   uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
@@ -65,8 +65,8 @@ public:
   void DoneForecast(symbol_t symb, int operation);
 
 private:
-  OrderStatus BuyStock(symbol_t symbol, const Order& order, DealInfo& deal);
-  OrderStatus SellStock(symbol_t symbol, const Order& order, DealInfo& deal);
+  int BuyStock(symbol_t symbol, const Order& order, DealInfo& deal);
+  int SellStock(symbol_t symbol, const Order& order, DealInfo& deal);
 
   double SimulateMatchStockBuyer(symbol_t symbol,double capital, const Order& order, DealInfo& deal);
   double SimulateMatchStockSeller(symbol_t symbol, const Order& order, DealInfo& deal);

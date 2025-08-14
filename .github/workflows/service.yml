@@ -3,17 +3,21 @@ on: [push] # 触发事件
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       CCACHE_DIR: /home/runner/work/ccache  # ccache 缓存目录
     steps:
-      - name: Install GCC 13+ (C++23 support)
-        run: |
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y g++-13 gcc-13
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
+      # - name: Install GCC 13+ (C++23 support)
+      #   run: |
+      #     sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+      #     sudo apt-get install -y g++-13 gcc-13
+      #     sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
+      #     sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
+      
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # 指定明确版本如 '3.12'
 
       # 配置 ccache 编译缓存
       - name: Setup ccache
@@ -38,7 +42,12 @@ jobs:
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
-          sudo apt install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+          sudo apt-get update
+          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools
+          pip install cython
+          cython --version
 
       # 仅当缓存未命中时编译 xgboost
       - name: Build xgboost (if cache miss)
@@ -47,10 +56,7 @@ jobs:
           git clone --recursive https://github.com/dmlc/xgboost
           cd xgboost
           mkdir build && cd build
-          cmake .. \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \  # 启用 ccache
-            -DUSE_CUDA=OFF \
-            -DCMAKE_CXX_STANDARD=23
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           sudo make install
 
@@ -62,29 +68,43 @@ jobs:
             tvm/build
             /usr/local/include/tvm
             /usr/local/lib/libtvm*
-          key: ${{ runner.os }}-tvm-${{ hashFiles('**/CMakeLists.txt', '**/dmlc-core/CMakeLists.txt') }}
+          key: ${{ runner.os }}-tvm-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-tvm-
 
-      - name: Build TVM
+      - name: build TVM (if cache miss)
         if: steps.cache-tvm.outputs.cache-hit != 'true'
         run: |
           git clone --recursive https://github.com/apache/tvm
           cd tvm
           mkdir build && cd build
-          cmake .. \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \  # 启用 ccache
-            -DUSE_CUDA=OFF \
-            -DCMAKE_CXX_STANDARD=23
+          git checkout v0.20.0
+
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DUSE_OPENMP=ON -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+          sudo make install
+
+      - name: build nng
+        run: |
+          git clone --recursive https://github.com/nanomsg/nng
+          cd nng
+          git checkout v1.11
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           sudo make install
 
       # 检出代码
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       # 配置CMake并编译
       - name: Configure and build
         run: |
+          git clone --recursive https://github.com/fmtlib/fmt service/third_party/fmt
+          git clone --recursive https://github.com/hosseinmoein/DataFrame service/third_party/DataFrame
+
           mkdir service/build && cd service/build
           cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
           cmake --build . --config Release

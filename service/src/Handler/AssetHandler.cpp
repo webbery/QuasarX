@@ -1,5 +1,4 @@
 #include "Handler/AssetHandler.h"
-#include "Bridge/exchange.h"
 #include "tabulate/table.hpp"
 #include "Util/string_algorithm.h"
 #include <iostream>

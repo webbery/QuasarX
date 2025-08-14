@@ -65,7 +65,7 @@ MDB_dbi BrokerSubSystem::GetDBI(int portfolid_id, MDB_txn* txn) {
   return dbi;
 }
 
-OrderStatus BrokerSubSystem::Buy(symbol_t symbol, const Order& order, DealDetail& detail) {
+int BrokerSubSystem::Buy(symbol_t symbol, const Order& order, DealDetail& detail) {
   DealInfo deal;
   if (is_stock(symbol)) {
     return BuyStock(symbol, order, deal);
@@ -74,7 +74,7 @@ OrderStatus BrokerSubSystem::Buy(symbol_t symbol, const Order& order, DealDetail
   return OrderStatus::None;
 }
 
-OrderStatus BrokerSubSystem::Sell(symbol_t symbol, const Order& order, DealDetail& detail) {
+int BrokerSubSystem::Sell(symbol_t symbol, const Order& order, DealDetail& detail) {
   // _orders[symbol].emplace_back(order);
   DealInfo deal;
   if (is_stock(symbol)) {
@@ -284,7 +284,7 @@ const Asset& BrokerSubSystem::GetAsset(const String& symbol) {
   return _portfolio->_portfolios[_portfolio->Default()]._holds.at(id);
 }
 
-OrderStatus BrokerSubSystem::BuyStock(symbol_t symbol, const Order& order, DealInfo& deal) {
+int BrokerSubSystem::BuyStock(symbol_t symbol, const Order& order, DealInfo& deal) {
   double pos = _portfolio->Position();
   double buy_price = 0;
   if (_handler) {
@@ -306,10 +306,10 @@ OrderStatus BrokerSubSystem::BuyStock(symbol_t symbol, const Order& order, DealI
   auto& trans = _trans[symbol];
   std::unique_lock<std::mutex> lock(trans._mtx);
   trans._transactions.emplace_back(std::move(data));
-  return OrderStatus::All;
+  return OrderStatus::All|OrderStatus::Accept;
 }
 
-OrderStatus BrokerSubSystem::SellStock(symbol_t symbol, const Order& order, DealInfo& deal) {
+int BrokerSubSystem::SellStock(symbol_t symbol, const Order& order, DealInfo& deal) {
   double sell_price = 0;
   if (_handler) {
     sell_price = _handler->Sell(symbol, order, deal);
@@ -329,7 +329,7 @@ OrderStatus BrokerSubSystem::SellStock(symbol_t symbol, const Order& order, Deal
   auto& trans = _trans[symbol];
   std::unique_lock<std::mutex> lock(trans._mtx);
   trans._transactions.emplace_back(std::move(data));
-  return OrderStatus::All;
+  return OrderStatus::All|OrderStatus::Accept;
 }
 
 double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, DealInfo& deal) {

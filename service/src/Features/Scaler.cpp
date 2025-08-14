@@ -21,5 +21,5 @@ double ScalerNode::deal(const QuoteInfo& quote, double extra) {
 }
 
 const char* ScalerNode::desc() {
-
+    return ScalerNode::name().data();
 }

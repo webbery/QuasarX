@@ -5,6 +5,7 @@
 
 enum class AgentType: char {
     Unknow,
+    LinearRegression,
     XGBoost,
     Count
 };
