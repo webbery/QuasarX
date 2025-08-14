@@ -96,8 +96,8 @@ jobs:
 
       - name: build third party
         run: |
-          git clone --recursive https://github.com/fmtlib/fmt third_party/
-          git clone --recursive https://github.com/hosseinmoein/DataFrame third_party/
+          git clone --recursive https://github.com/fmtlib/fmt third_party/fmt
+          git clone --recursive https://github.com/hosseinmoein/DataFrame third_party/DataFrame
 
       # 检出代码
       - uses: actions/checkout@v4
