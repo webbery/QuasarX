@@ -94,8 +94,15 @@ jobs:
           make -j$(nproc)
           sudo make install
 
+      - name: build third party
+        run: |
+          git clone --recursive https://github.com/fmtlib/fmt third_party/
+          git clone --recursive https://github.com/hosseinmoein/DataFrame third_party/
+
       # 检出代码
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       # 配置CMake并编译
       - name: Configure and build
