@@ -1,6 +1,6 @@
 #pragma once
 #include "std_header.h"
-#include "DataHandler.h"
+#include "DataGroup.h"
 #include "Handler/RiskHandler.h"
 #include "Util/system.h"
 #include "json.hpp"
@@ -72,6 +72,12 @@ enum class StockAdjustType {
   After,
 };
 
+enum class RuningType {
+  Backtest,     // 本地回测模式
+  Simualtion,   // 券商模拟盘
+  Real,         // 实盘
+};
+
 class Position;
 class Broker;
 class Server {
@@ -106,13 +112,12 @@ public:
 
     HttpHandler* GetHandler(const String& name);
 
-    bool IsReal() { return _is_real; }
+    bool IsReal() { return _runType == RuningType::Real; }
 
   std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
   std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
 
   BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
-  BrokerSubSystem* GetVirtualSubSystem() { return _virtualSystem; }
 
   PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
   StrategySubSystem* GetStrategySystem() { return _strategySystem; }
@@ -222,7 +227,7 @@ private:
 #endif
 
   bool _exit;
-  bool _is_real = false;
+  RuningType _runType;
   int _defaultPortfolio;
 
   Map<String, HttpHandler*> _handlers;
@@ -234,8 +239,7 @@ private:
   RiskSubSystem* _riskSystem;
   StrategySubSystem* _strategySystem;
   PortfolioSubSystem* _portfolioSystem;
-  BrokerSubSystem* _brokerSystem; // 实盘
-  BrokerSubSystem* _virtualSystem; // 
+  BrokerSubSystem* _brokerSystem; //
   
   TraderSystem* _traderSystem;
   // 默认持仓id

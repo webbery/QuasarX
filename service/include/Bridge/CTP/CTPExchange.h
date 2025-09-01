@@ -19,15 +19,15 @@ public:
     virtual bool Login();
     virtual bool IsLogin();
 
-  virtual void SetFilter(const QuoteFilter& filter);
+    virtual void SetFilter(const QuoteFilter& filter);
 
     virtual AccountPosition GetPosition();
 
     virtual AccountAsset GetAsset();
     
-    virtual bool AddOrder(const String& symbol, Order& order);
+    virtual order_id AddOrder(const symbol_t& symbol, OrderContext* order);
 
-    virtual bool UpdateOrder(order_id id);
+    virtual void OnOrderReport(order_id id, const TradeReport& report);
 
     virtual bool CancelOrder(order_id id);
 

@@ -3,6 +3,7 @@
 #include "Util/string_algorithm.h"
 #include "nng/protocol/pubsub0/sub.h"
 #include "nng/protocol/pubsub0/pub.h"
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 #ifdef WIN32
@@ -521,3 +522,43 @@ CPUPerformanceMesure::~CPUPerformanceMesure() {
 }
 
 #endif
+
+#ifdef __USE_CUDA__
+size_t getNbBytes(nvinfer1::DataType t, int64_t vol) noexcept
+{
+    switch (t)
+    {
+    case nvinfer1::DataType::kINT64: return 8 * vol;
+    case nvinfer1::DataType::kINT32:
+    case nvinfer1::DataType::kFLOAT: return 4 * vol;
+    case nvinfer1::DataType::kBF16:
+    case nvinfer1::DataType::kHALF: return 2 * vol;
+    case nvinfer1::DataType::kBOOL:
+    case nvinfer1::DataType::kUINT8:
+    case nvinfer1::DataType::kINT8: return vol;
+    case nvinfer1::DataType::kFP8:
+#if CUDA_VERSION < 11060
+        assert(false && "FP8 is not supported");
+#else
+        return vol;
+#endif
+    case nvinfer1::DataType::kINT4:
+    case nvinfer1::DataType::kFP4: return (vol + 1) / 2;
+    }
+    assert(false && "Unknown element type");
+}
+
+int64_t volume(nvinfer1::Dims const& dims, int32_t start, int32_t stop)
+{
+    assert(start >= 0);
+    assert(start <= stop);
+    assert(stop <= dims.nbDims);
+    assert(std::all_of(dims.d + start, dims.d + stop, [](int32_t x) { return x >= 0; }));
+    return std::accumulate(dims.d + start, dims.d + stop, int64_t{1}, std::multiplies<int64_t>{});
+}
+
+int64_t volume(nvinfer1::Dims const& d)
+{
+    return std::accumulate(d.d, d.d + d.nbDims, int64_t{1}, std::multiplies<int64_t>{});
+}
+#endif // __USE_CUDA__

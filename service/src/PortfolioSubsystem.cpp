@@ -53,7 +53,7 @@ void PortfolioSubSystem::ErasePortfolio(int id) {
   _portfolios.erase(id);
 }
 
-void PortfolioSubSystem::Update(symbol_t symbol, const DealInfo& deals) {
+void PortfolioSubSystem::Update(symbol_t symbol, const TradeInfo& deals) {
   auto& portfolio = _portfolios[_default];
   auto itr = portfolio._holds.find(symbol);
   if (itr == portfolio._holds.end()) {

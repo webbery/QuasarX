@@ -129,12 +129,12 @@ AccountAsset CTPExchange::GetAsset(){
     return aas;
 }
 
-bool CTPExchange::AddOrder(const String& symbol, Order& order){
-    return true;
+order_id CTPExchange::AddOrder(const symbol_t& symbol, OrderContext* order){
+    return order_id{0};
 }
 
-bool CTPExchange::UpdateOrder(order_id id){
-    return true;
+void CTPExchange::OnOrderReport(order_id id, const TradeReport& report) {
+
 }
 
 bool CTPExchange::CancelOrder(order_id id){

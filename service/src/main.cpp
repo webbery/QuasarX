@@ -147,7 +147,7 @@ int main(int argc, char* argv[])
     install_signal_handler();
 
     // init log
-    auto log_name = ToString(Now()) + ".log";
+    auto log_name = ToString(Now(), "%Y%m%d%H%M%S") + ".log";
     FILE* fp = fopen(("log/" + log_name).c_str(), "w");
     fmtlog::setLogFile(fp);
 

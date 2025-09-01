@@ -119,21 +119,19 @@ void PredictionHandler::put(const httplib::Request& req, httplib::Response& res)
     int op = params["operation"];
     int exchange = params["exchange"];
     auto next_t = FromStr(datetime);
-    if (exchange == 0) {
-        auto virtualSystem = _server->GetVirtualSubSystem();
-        auto symb = to_symbol(symbol);
-        auto cur = Now();
+    auto broker = _server->GetBrokerSubSystem();
+    auto symb = to_symbol(symbol);
+    auto cur = Now();
 
-        std::tm local_tm1 = *std::localtime(&cur);
-        std::tm local_tm2 = *std::localtime(&next_t);
-        // 计算日期差并返回绝对值
-        auto N = local_tm2.tm_mday - local_tm1.tm_mday;
-        if (N < 0) {
-            WARN("day is {}", N);
-            return;
-        }
-        virtualSystem->PredictWithDays(symb, N, op);
+    std::tm local_tm1 = *std::localtime(&cur);
+    std::tm local_tm2 = *std::localtime(&next_t);
+    // 计算日期差并返回绝对值
+    auto N = local_tm2.tm_mday - local_tm1.tm_mday;
+    if (N < 0) {
+        WARN("day is {}", N);
+        return;
     }
+    broker->PredictWithDays(symb, N, op);
     res.status = 200;
 }
 
@@ -142,20 +140,19 @@ void PredictionHandler::get(const httplib::Request& req, httplib::Response& res)
     auto params = nlohmann::json::parse(req.body);
     int exchange = params["exchange"];
     nlohmann::json result;
+    auto broker = _server->GetBrokerSubSystem();
     if (params.contains("symbol")) {
         String symbol = params["symbol"];
         auto symb = to_symbol(symbol);
         if (exchange == 0) {
-            auto virtualSystem = _server->GetVirtualSubSystem();
-            auto& predictions = virtualSystem->QueryPredictionOfHistory(symb);
+            auto& predictions = broker->QueryPredictionOfHistory(symb);
             nlohmann::json symbol_predictions = ConvertPrediction(symb, predictions);
             result.emplace_back(std::move(symbol_predictions));
         }
     } else {
         // 获取全部
         if (exchange == 0) {
-            auto virtualSystem = _server->GetVirtualSubSystem();
-            auto& predictions = virtualSystem->QueryPredictionOfHistory();
+            auto& predictions = broker->QueryPredictionOfHistory();
             for (auto& item: predictions) {
                 auto symb = item.first;
                 nlohmann::json symbol_predictions = ConvertPrediction(symb, item.second);
@@ -173,9 +170,9 @@ void PredictionHandler::del(const httplib::Request& req, httplib::Response& res)
     auto symb = to_symbol(symbol);
     int index = params["index"];
     int exchange = params["exchange"];
+    auto broker = _server->GetBrokerSubSystem();
     if (exchange == 0) {
-        auto virtualSystem = _server->GetVirtualSubSystem();
-        virtualSystem->DeletePrediction(symb, index);
+        broker->DeletePrediction(symb, index);
     } else {
         // TODO:
     }

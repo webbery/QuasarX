@@ -28,9 +28,9 @@ public:
 
   AccountAsset GetAsset();
 
-  bool AddOrder(const String& symbol, Order& order);
+  order_id AddOrder(const symbol_t& symbol, OrderContext* order);
 
-  bool UpdateOrder(order_id id);
+  void OnOrderReport(order_id id, const TradeReport& report);
 
   bool CancelOrder(order_id id);
   
@@ -50,6 +50,7 @@ public:
 private:
   bool _requested: 1;
   bool _login_status: 1;
+  bool _quote_inited: 1;
 
   XTP::API::QuoteApi* m_pQuoteApi;
   XTP::API::TraderApi* m_pTradeApi;
@@ -63,7 +64,8 @@ private:
   std::map<int, std::condition_variable> _cvs;
   std::map<int, std::mutex> _mtxs;
 
-  std::map<uint64_t, XTPOrderInsertInfo*> _orders;
+  using concurrent_order_map = ConcurrentMap<uint64_t, Pair<XTPOrderInsertInfo*, OrderContext*>>;
+  concurrent_order_map _orders;
 
   QuoteFilter _filter;
 

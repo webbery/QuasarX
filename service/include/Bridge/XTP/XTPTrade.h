@@ -26,13 +26,11 @@ public:
 
   AccountAsset GetAsset();
 
-  void Order();
-
   void CancelOrder();
 
   OrderList GetOrders();
 
-  struct Order GetOrder(order_id id);
+  Order GetOrder(order_id id);
 
 private:
   XTPExchange* _exchange;

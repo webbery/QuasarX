@@ -693,7 +693,7 @@ paths:
               properties:
                 name:
                   type: string
-                  description: 策略名称
+                  description: 策略名称,对应于script文件夹下的文件名
                   example: 'xgboost'
                 params:
                   type: object
@@ -929,28 +929,12 @@ paths:
                 type: array
                 items:
                   type: number
-  /data/stock/quote:
+  /data/sync:
     get:
-      summary: query one stock data
-      description: 获取某只股票的行情数据,并保存在服务的路径下。时间截止到今日收盘，如果尚未收盘，时间截止到前一日
+      summary: sync data
+      description: 同步服务保存的数据，同步完成后清空当前服务保存的数据
       tags: 
-        - data
-      parameters:
-        - in: query
-          name: symbol
-          schema:
-            type: string
-          description: symbol
-        - in: query
-          name: dividend
-          schema:
-            type: integer
-          description: 除权方式, 0-不除权, 1-后复权, 2-前复权
-        - in: query
-          name: time
-          schema:
-            type: string
-          description: 时间间隔, 'd'-日级数据, '5'-5分钟级数据
+        - Data
       responses:
         '200':
           description: success

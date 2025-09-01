@@ -52,22 +52,22 @@
 
 #define REGIST_GET(api_name) \
 _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Get " API_VERSION api_name);\
+    INFO("Get " API_VERSION api_name);\
     this->_handlers[api_name]->get(req, res);\
 })
 #define REGIST_PUT(api_name) \
 _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Put " API_VERSION api_name);\
+    INFO("Put " API_VERSION api_name);\
     this->_handlers[api_name]->put(req, res);\
 })
 #define REGIST_POST(api_name) \
 _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Post " API_VERSION api_name);\
+    INFO("Post " API_VERSION api_name);\
     this->_handlers[api_name]->post(req, res);\
 })
 #define REGIST_DEL(api_name) \
 _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Del " API_VERSION api_name);\
+    INFO("Del " API_VERSION api_name);\
     this->_handlers[api_name]->del(req, res);\
 })
 
@@ -89,6 +89,9 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_MONTECARLO      "/predict/montecarlo"
 #define API_FINITE_DIFF     "/predict/finite_diff"
 #define API_PREDICT_OPR     "/predict/operation"
+#define API_ORDER_BUY       "/order/buy"
+#define API_ORDER_SELL      "/order/sell"
+#define API_DATA_SYNC       "/data/sync"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -109,10 +112,10 @@ _defaultPortfolio(1), _timer(nullptr), _riskSystem(nullptr), _traderSystem(nullp
     for (auto mt: {MT_Shanghai, MT_Beijing, MT_Shenzhen}) {
         _working_times[mt] = std::move(GetWorkingRange(mt));
     }
+    _runType = RuningType::Simualtion;
 }
 
 Server::~Server() {
-    _exit = true;
     if (_timer) {
         _timer->join();
         delete _timer;
@@ -120,9 +123,6 @@ Server::~Server() {
     if (_brokerSystem) {
         // _broker->Release();
         delete _brokerSystem;
-    }
-    if (_virtualSystem) {
-        delete _virtualSystem;
     }
     if (_portfolioSystem) {
         delete _portfolioSystem;
@@ -156,6 +156,7 @@ void Server::Run() {
     auto port = _config->GetPort();
     INFO("Start in port {}", port);
     _svr.listen("0.0.0.0", port);
+    _exit = true;
     printf("Bye\n");
 
     for (auto& item: _handlers) {
@@ -204,6 +205,9 @@ void Server::Regist() {
 
     REGIST_GET(API_STRATEGY);
     REGIST_POST(API_STRATEGY);
+
+    REGIST_POST(API_ORDER_BUY);
+    REGIST_POST(API_ORDER_SELL);
 }
 
 bool Server::InitDatabase() {
@@ -246,12 +250,12 @@ void Server::InitDefault() {
         if (!exchanger->Use(name)) {
             return;
         }
-        if (exchange == "sim") {
+        if ((String)exchange["api"] == "sim") {
             use_sim = true;
+            _runType = RuningType::Backtest;
+            break;
         }
     }
-
-    StartTimer();
 
     if (!use_sim) { // 开启模拟数据的情况下，不记录数据
         if (default_config.contains("record") && !default_config["record"].empty()) {
@@ -286,17 +290,15 @@ void Server::InitDefault() {
     }
     _portfolioSystem->Start();
 
-    _brokerSystem = new BrokerSubSystem(this, (ExchangeHandler*)_handlers[API_EXHANGE]);
+    _brokerSystem = new BrokerSubSystem(this, use_sim);
     String dbpath = broker["db"];
     if (!std::filesystem::exists(dbpath)) {
         std::filesystem::create_directories(dbpath);
     }
-    auto real_path = dbpath + "/" + broker_name + ".db";
-    _brokerSystem->Init(real_path.c_str());
 
-    _virtualSystem = new BrokerSubSystem(this, nullptr);
-    auto virt_path = dbpath + "/virtual.db";
-    _virtualSystem->Init(virt_path.c_str(), 1000000);
+    auto& exchagnes = ((ExchangeHandler*)_handlers[API_EXHANGE])->GetExchangesWithType();
+
+    _brokerSystem->Init(broker, exchagnes, 1000000);
 
     // Risk system start
     _riskSystem = new RiskSubSystem(this);
@@ -322,6 +324,8 @@ void Server::InitDefault() {
     }
     _strategySystem->Init();
     _traderSystem->Start();
+
+    StartTimer();
 }
 
 bool Server::InitMarket(const std::string& path) {
@@ -731,20 +735,35 @@ void Server::Timer()
     using TimePoint = Clock::time_point;
     Duration interval(std::chrono::seconds(5));
     TimePoint next_wake = Clock::now() + interval;
-    while(!_exit) {
-        std::this_thread::sleep_until(next_wake);
-        if (_exit)
-            return;
+    if (_runType == RuningType::Backtest) {
+        while(!_exit) {
+            auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
+            for (auto exchange: handler->GetExchanges()) {
+                if (exchange.second->IsLogin()) {
+                    exchange.second->QueryQuotes();
+                    next_wake = Clock::now() + interval;
+                } else {
+                    std::this_thread::sleep_until(next_wake);
+                    next_wake += interval;
+                }
+            }
+        }
+    } else {
+        while(!_exit) {
+            std::this_thread::sleep_until(next_wake);
+            if (_exit)
+                return;
 
-        auto fut = std::async(std::launch::async,  [this]() {
-            auto curr = Now();
-            Schedules(curr);
-            // 
-            UpdateQuoteQueryStatus(curr);
-            //
-            _dividends.Update();
-        });
-        next_wake += interval;
+            auto fut = std::async(std::launch::async,  [this]() {
+                auto curr = Now();
+                Schedules(curr);
+                // 
+                UpdateQuoteQueryStatus(curr);
+                //
+                _dividends.Update();
+            });
+            next_wake += interval;
+        }
     }
 }
 
@@ -894,6 +913,8 @@ void Server::InitHandlers() {
     RegistHandler(API_INDEX, IndexHandler);
     RegistHandler(API_BACKTEST, BackTestHandler);
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
+    RegistHandler(API_ORDER_BUY, OrderBuyHandler);
+    RegistHandler(API_ORDER_SELL, OrderSellHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     risk->doWork({});
@@ -1020,11 +1041,17 @@ double Server::ResetPrice(symbol_t symbol, double adj_price, time_t adj_t) {
 }
 
 bool Server::IsOpen(symbol_t symbol, time_t t) {
+    if (_runType == RuningType::Backtest)
+        return true;
+
     auto exc_type = Server::GetExchange(get_symbol(symbol));
     return IsOpen(exc_type, t);
 }
 
 bool Server::IsOpen(ExchangeName exchange, time_t t) {
+    if (_runType == RuningType::Backtest)
+        return true;
+    
     auto& working = _working_times[exchange];
     for (auto& tr: working) {
         if (tr == t) {

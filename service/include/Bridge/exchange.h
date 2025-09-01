@@ -7,7 +7,14 @@
 #include <yas/serialize.hpp>
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
-#include "DataHandler.h"
+#include "DataGroup.h"
+#include <boost/unordered/concurrent_flat_map.hpp>
+
+template <typename K, typename V>
+using ConcurrentMap = boost::concurrent_flat_map<K, V>;
+
+// 每只合约每秒最大总订单数
+#define MAX_ORDER_PER_SECOND    16
 
 #define REQUEST_POSITION      1
 #define REQUEST_ASSET         2
@@ -128,12 +135,12 @@ public:
 
   virtual AccountAsset GetAsset() = 0;
   
-  virtual bool AddOrder(const String& symbol, Order& order) = 0;
+  virtual order_id AddOrder(const symbol_t& symbol, OrderContext* order) = 0;
 
-  virtual bool UpdateOrder(order_id id) = 0;
+  virtual void OnOrderReport(order_id id, const TradeReport& report) = 0;
 
   virtual bool CancelOrder(order_id id) = 0;
-
+  // 获取当前尚未完成的所有订单
   virtual OrderList GetOrders() = 0;
 
   virtual void QueryQuotes() = 0;

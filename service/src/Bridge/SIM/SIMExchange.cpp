@@ -4,6 +4,7 @@
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
+#include "boost/lockfree/queue.hpp"
 #include "std_header.h"
 #include <chrono>
 #include <condition_variable>
@@ -14,11 +15,13 @@
 #include <memory_resource>
 #include <numeric>
 #include <thread>
+#include <utility>
 #include "yas/detail/type_traits/flags.hpp"
 #include "server.h"
 
 StockSimulation::StockSimulation(Server* server)
-  :ExchangeInterface(server),_cur_index(0), _worker(nullptr)
+  :ExchangeInterface(server),_cur_index(0), _worker(nullptr), _cur_id(0)
+  ,_finish(false)
 {
 
 }
@@ -40,15 +43,19 @@ bool StockSimulation::Release() {
     delete _worker;
     _worker = nullptr;
   }
+  _orders.visit_all([](auto&& item) {
+      delete item.second;
+      });
   return true;
 }
 
 bool StockSimulation::Login(){
+    _finish = false;
     return true;
 }
 
 bool StockSimulation::IsLogin() {
-  return true;
+  return !_finish;
 }
 
 AccountPosition StockSimulation::GetPosition(){
@@ -61,13 +68,35 @@ AccountAsset StockSimulation::GetAsset(){
     return ass;
 }
 
-bool StockSimulation::AddOrder(const String& symbol, Order& order){
-  
-    return true;
+order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
+    OrderInfo info;
+    info._id = ++_cur_id;
+    info._order = order;
+    _reports.emplace(info._id, order);
+    // _orders.try_emplace_or_visit(symbol, info, [](auto&){
+      
+    // });
+    if (_orders.count(symbol) == 0) {
+        std::pair<symbol_t, boost::lockfree::queue<OrderInfo>*> pr;
+        pr.first = symbol;
+        pr.second = new boost::lockfree::queue<OrderInfo>(MAX_ORDER_PER_SECOND);
+        pr.second->push(info);
+       _orders.emplace(std::move(pr));
+    }
+    else {
+        _orders.visit(symbol, [&info](auto&& item) {
+            item.second->push(info);
+            });
+    }
+    return order_id{ info._id };
 }
 
-bool StockSimulation::UpdateOrder(order_id id){
-    return true;
+void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
+    _reports.visit(id._id, [&report](auto&& value) {
+        value.second->_trades._reports.emplace_back(std::move(report));
+        value.second->_flag.store(true);
+        value.second->_promise.set_value(true);
+        });
 }
 
 bool StockSimulation::CancelOrder(order_id id){
@@ -177,6 +206,7 @@ void StockSimulation::Worker() {
       auto symbol = to_symbol(df.first);
       auto num = df.second.get_index().size();
       if (_cur_index >= num) {
+        _finish = true;
         _cur_index = 0;
       }
       QuoteInfo info;
@@ -187,14 +217,30 @@ void StockSimulation::Worker() {
       info._low = low[_cur_index];
       info._volume = volume[_cur_index];
       info._time = datetime[_cur_index];
-      // DEBUG_INFO("sim send {}", info);
+      
       yas::shared_buffer buf = yas::save<flags>(info);
       if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
-        printf("send quote message fail.\n");
+        printf("send quote message e fail.\n");
         return;
       }
+       _orders.visit(symbol, [&info, &symbol, this] (auto&& que) {
+         OrderInfo oif;
+         while (que.second->pop(oif)) {
+           TradeReport report = OrderMatch(oif._order->_order, info);
+           oif._order->_trades._symbol = symbol;
+           OnOrderReport(order_id{ oif._id }, report);
+         }
+       });
     }
     ++_cur_index;
   }
   nng_close(_sock);
 }
+
+TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quote)
+{
+    TradeReport report;
+    report._price = quote._close;
+    return report;
+}
+

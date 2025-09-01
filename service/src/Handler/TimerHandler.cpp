@@ -63,11 +63,12 @@ void RecordHandler::run() {
                 item.second.flush();
               }
             }
-            if (rest_cnt > 720 && !is_backup) {
+            if (!is_backup) {
+            // if (rest_cnt > 720 && !is_backup) {
               // 1个小时无更新,刷新并备份到bak
               auto data_path = _server->GetConfig().GetDatabasePath() + "/zh";
               auto dst_path = _server->GetConfig().GetDatabasePath() + "/zh.backup";
-              if (RunCommand("cp -r " + data_path + " " + dst_path)) {
+              if (MergeBackup(data_path, dst_path)) {
                 RunCommand("rm -rf " + data_path);
               }
               // PackageData();
@@ -198,4 +199,80 @@ void RecordHandler::WriteCSV(std::fstream& fs, const QuoteInfo& infos) {
   
   line += "\n";
   fs.write(line.c_str(), line.size());
+}
+
+bool RecordHandler::MergeBackup(const String& src, const String& dst) {
+  std::filesystem::path src_root(src);
+  std::filesystem::path dst_root(src);
+  for (auto& entry: std::filesystem::recursive_directory_iterator(src_root)) {
+    if (entry.is_directory()) {
+      if (!std::filesystem::exists(dst_root / entry)) {
+        std::filesystem::create_directories(dst_root / entry);
+      }
+      MergeBackup(dst_root / entry, dst_root / entry);
+    }
+    else if (entry.is_regular_file()) {
+      if (!MergeCSV(src_root/entry, dst_root/entry))
+        return false;
+    }
+  }
+  return true;
+}
+
+bool RecordHandler::MergeCSV(const String& src, const String& dst) {
+  std::ifstream ifs;
+  ifs.open(src.c_str(), std::ifstream::in);
+
+  if (!ifs.is_open()) {
+    return false;
+  }
+
+  std::fstream ofs;
+  ofs.open(dst.c_str(), std::ios::app|std::ios::ate);
+  if (!ofs.is_open()) {
+    ifs.close();
+    return false;
+  }
+
+  auto lambda_readLines = []<typename FS>(FS& ifs, List<String>& lines) {
+    String line;
+    while (std::getline(ifs, line)) {
+      if (line.empty())
+        break;
+      if (line.find("date") != String::npos)
+        continue;
+
+      lines.emplace_back(std::move(line));
+    }
+  };
+  // 定位到ofs末尾行
+  List<String> new_lines, org_lines;
+  lambda_readLines(ifs, new_lines);
+  lambda_readLines(ofs, org_lines);
+  time_t last_t = 0;
+  if (org_lines.empty()) {
+
+  } else {
+    auto& last_line = org_lines.back();
+    List<String> last_info;
+    split(last_line, last_info, ",");
+    last_t = FromStr(last_info.front());
+  }
+  
+  List<String> append_lines;
+  for (auto& line: new_lines) {
+    List<String> info;
+    split(new_lines.front(), info, ",");
+    auto t = FromStr(info.front());
+    if (t > last_t) {
+      append_lines.emplace_back(std::move(line));
+    }
+  }
+  for (auto& line: append_lines) {
+    ofs.write(line.c_str(), line.size());
+  }
+
+  ifs.close();
+  ofs.close();
+  return true;
 }

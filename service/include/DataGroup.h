@@ -1,18 +1,20 @@
 #pragma once
 #include "std_header.h"
 #include "DataFrame/DataFrame.h"
+#include <future>
 #include <yas/serialize.hpp>
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
 #include "fmt/core.h"
 #include "Util/datetime.h"
+#include "Util/system.h"
 
 #define MAX_ORDER_SIZE  5
+// 2级行情
+#define MAX_ORDER_SIZE_LVL2  10
 
 struct StockOrderDetail {
-  time_t _time;
   double _price;
-  YAS_DEFINE_STRUCT_SERIALIZE("StockOrderDetail", _time, _price);
 };
 
 enum class OrderType: char {
@@ -21,7 +23,7 @@ enum class OrderType: char {
 };
 
 // 订单状态
-enum OrderStatus {
+enum OrderStatus: short {
     All = 1,
     Part = 2,
     None = 4,
@@ -35,27 +37,66 @@ enum OrderStatus {
 struct Order {
   uint32_t _number; //
   OrderType _type;
+  OrderStatus _status;
+  // 买卖方向: 0 买入, 1 卖出
+  char _side;
+  time_t _time;
   Array<StockOrderDetail, MAX_ORDER_SIZE> _order;
 
-  YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _order);
+//   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _type, _status, _order);
 };
 
-struct DealDetail {
-    int _number;
+enum class DealStatus: char {
+    Success,
+    Fail,
+    NetInterrupt,
+};
+
+struct TradeReport {
+    int _quantity;
+    DealStatus _status;
+    // 成交价格
     double _price;
+    // 成交时间
     time_t _time;
-    YAS_DEFINE_STRUCT_SERIALIZE("DealDetail", _number, _price, _time);
+    // 成交总额
+    double _trade_amount;
+    //成交编号，深交所唯一，上交所每笔交易唯一，当发现2笔成交回报拥有相同的exec_id，则可以认为此笔交易自成交
+    char _exec_id[18];
+    // 成交类型
+    char _type;
+    // 交易员代码
+    char _trader_code[7];
+    // YAS_DEFINE_STRUCT_SERIALIZE("DealDetail", _number, _status, _price, _time);
 };
 
-struct DealInfo {
-    bool _direct;   // true-买入/false-卖出
-    List<DealDetail> _deals;
-    YAS_DEFINE_STRUCT_SERIALIZE("DealInfo", _deals);
+struct TradeInfo {
+    symbol_t _symbol;
+    List<TradeReport> _reports;
+    // YAS_DEFINE_STRUCT_SERIALIZE("DealInfo", _deals);
 };
 
 struct Transaction {
     Order _order;
-    DealInfo _deal;
+    TradeInfo _deal;
+};
+
+struct OrderContext {
+  symbol_t _symbol;
+  Order _order;
+  // 订单交易结果
+  TradeInfo _trades;
+  // 订单结束标志
+  std::atomic_bool _flag = false;
+
+  std::promise<bool> _promise;
+  std::function<void (Order&)> _callback;
+
+  void Update(Order& order) {
+    if (_callback) {
+      _callback(order);
+    }
+  }
 };
 
 template<>
@@ -74,7 +115,7 @@ public:
 };
 
 template<>
-class fmt::formatter<DealDetail>
+class fmt::formatter<TradeReport>
 {
 public:
     constexpr auto parse(auto& context) {
@@ -82,15 +123,25 @@ public:
         return it;
     }
 
-    auto format(const DealDetail& deal, auto &context) const {
-        return fmt::format_to(context.out(), "DealDetail[{} NUMBER:{} PRICE:{}]",
-            ToString(deal._time), deal._number, deal._price);
+    auto format(const TradeReport& deal, auto &context) const {
+        return fmt::format_to(context.out(), "TradeReport[{} NUMBER:{} PRICE:{}]",
+            ToString(deal._time), deal._quantity, deal._price);
     }
 };
 
 template<>
-class fmt::formatter<DealInfo>
+class fmt::formatter<TradeInfo>
 {
+public:
+    constexpr auto parse(auto& context) {
+        auto it = context.begin(), end = context.end();
+        return it;
+    }
+
+    auto format(const TradeInfo& info, auto& context) const {
+        return fmt::format_to(context.out(), "TradeInfo[{} :{}]",
+            get_symbol(info._symbol), info._reports);
+    }
 };
 
 using OrderList = List<Order>;

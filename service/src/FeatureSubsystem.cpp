@@ -102,7 +102,7 @@ void FeatureSubsystem::LoadConfig(const AgentStrategyInfo& config) {
         auto symb = to_symbol(symbol);
         symbols.insert(symb);
     }
-    _tasks[name.data()] = symbols;
+    _tasks[name] = symbols;
 
     for (auto node: config._features) {
         // TODO: 构建feature id，查找是否已经存在
@@ -122,6 +122,7 @@ FeatureSubsystem::FeatureBlock* FeatureSubsystem::GenerateBlock(FeatureNode* nod
     if (!f)
         return nullptr;
 
+    f->plug(_handle, "");
     auto block = new FeatureBlock;
     block->_feature = f;
     if (!node->_nexts.empty()) {
@@ -159,12 +160,6 @@ void FeatureSubsystem::run() {
         return;
     }
     SetCurrentThreadName("Feature");
-    for (auto& item: _pipelines) {
-        for (auto& feat: _features) {
-            feat->plug(_handle, "");
-        }
-    }
-    
     // 
     
     while (!_handle->IsExit()) {
@@ -173,8 +168,11 @@ void FeatureSubsystem::run() {
             continue;
         }
         
-        if (_pipelines.count(quote._symbol) == 0)
-            continue;
+        {
+            std::unique_lock<std::mutex> lock(_mtx);
+            if (_pipelines.count(quote._symbol) == 0)
+                continue;
+        }
         
         List<IFeature*>* pFeats = nullptr;
         {
@@ -335,3 +333,32 @@ void FeatureSubsystem::AddPipeline(const String& name, const List<IFeature*>& fe
     std::unique_lock<std::mutex> lock(_mtx);
     
 }
+
+void FeatureSubsystem::DeleteBlock(FeatureBlock* block) {
+    if (block->_nexts.empty()) {
+        delete block;
+    } else {
+        for (auto ptr: block->_nexts) {
+            DeleteBlock(ptr);
+        }
+        block->_nexts.clear();
+    }
+}
+
+void FeatureSubsystem::ErasePipeline(const String& name) {
+    auto& symbols = _tasks[name];
+    for (auto symbol: symbols) {
+        std::unique_lock<std::mutex> lock(_mtx);
+        PipelineInfo& pi = _pipelines[symbol];
+        if (!pi._features.empty()) {
+            for (auto ptr: pi._features) {
+                DeleteBlock(ptr);
+            }
+            pi._features.clear();
+        }
+        // IFeature 不删除
+        _pipelines.erase(symbol);
+    }
+    _tasks.erase(name);
+}
+

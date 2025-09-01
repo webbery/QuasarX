@@ -32,5 +32,5 @@ private:
         char _future = 0;
     };
 
-    Array<Map<String, PipelineInfo>, 2> _pipelines; // 0-virtual, 1- real 
+    Map<String, PipelineInfo> _pipelines; 
 };

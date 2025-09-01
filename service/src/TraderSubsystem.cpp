@@ -1,5 +1,6 @@
 #include "TraderSubsystem.h"
 #include "BrokerSubSystem.h"
+#include "DataGroup.h"
 #include "server.h"
 #include "Transfer.h"
 #include "DataSource.h"
@@ -10,7 +11,7 @@
 #include "Features/VWAP.h"
 
 TraderSystem::TraderSystem(Server* handle, const String& dbpath): _server(handle) {
-    _virtualSystem = handle->GetVirtualSubSystem();
+    _broker = handle->GetBrokerSubSystem();
 }
 
 TraderSystem::~TraderSystem() {
@@ -22,45 +23,62 @@ void TraderSystem::SetupSimulation(const String& name) {
 void TraderSystem::Start() {
     _stock_working_range = GetWorkingRange(ExchangeName::MT_Beijing);
 
-    if (!_simulations.empty()) {
-        _simulater_trans = new Transfer([this] (nng_socket from, nng_socket to) {
-            DataFeatures dm;
-            if (!ReadFeatures(from, dm)) {
-                return true;
-            }
-            // read prediction and check operator
-            auto symb = dm._symbol;
-            fixed_time_range tr;
-            int op = 0;
-            if (!_virtualSystem->GetNextPrediction(symb, tr, op))
-                return true;
-
-            auto current = Now();
-            if (tr == current) {
-                // thread_local char 
-                if (op & (int)ContractOperator::Long) {
-                    if (StrategyBuy(symb, dm)) {
-                        _virtualSystem->DoneForecast(symb, op);
-                    }
-                }
-                if (op & (int)ContractOperator::Sell) {
-                    if (StrategySell(symb, dm)) {
-                        _virtualSystem->DoneForecast(symb, op);
-                    }
-                }
-                if (op & (int)ContractOperator::Short) {
-                    DEBUG_INFO("Short");
-                }
-            }
-            
+    _simulater_trans = new Transfer([this] (nng_socket from, nng_socket to) {
+        DataFeatures dm;
+        if (!ReadFeatures(from, dm)) {
             return true;
-        });
+        }
+        // read prediction and check operator
+        auto symb = dm._symbol;
+        fixed_time_range tr;
+        int op = 0;
+        if (!_broker->GetNextPrediction(symb, tr, op))
+            return true;
 
-        _simulater_trans->start("SimulationTrader", URI_FEATURE, URI_SIM_TRADE);
-    }
+        auto current = Now();
+        if (tr == current) {
+            // thread_local char 
+            if (op & (int)ContractOperator::Long) {
+                if (tr.IsDaily()) {
+                    if (DailyBuy(symb, dm)) {
+                        _broker->DoneForecast(symb, op);
+                    }
+                }
+                else {
+                    ImmediatelyBuy(symb, dm._price, OrderType::Market);
+                }
+            }
+            if (op & (int)ContractOperator::Sell) {
+                if (StrategySell(symb, dm)) {
+                    _broker->DoneForecast(symb, op);
+                }
+            }
+            if (op & (int)ContractOperator::Short) {
+                DEBUG_INFO("Short");
+            }
+        }
+        
+        return true;
+    });
+
+    _simulater_trans->start("SimulationTrader", URI_FEATURE, URI_SIM_TRADE);
 }
 
-bool TraderSystem::StrategyBuy(symbol_t symbol, const DataFeatures& features) {
+bool TraderSystem::ImmediatelyBuy(symbol_t symbol, double price, OrderType type) {
+    Order order;
+    order._side = 0;
+    order._type = type;
+    order._number = 0;
+    order._order[0]._price = price;
+    TradeInfo dd;
+    if (_broker->Buy(symbol, order, dd) == OrderStatus::All) {
+        LOG("buy order: {}, result: {}", order, dd);
+        return true;
+    }
+    return false;
+}
+
+bool TraderSystem::DailyBuy(symbol_t symbol, const DataFeatures& features) {
     // TODO: 分批多次入场
 
     float vwap = -1;
@@ -72,16 +90,7 @@ bool TraderSystem::StrategyBuy(symbol_t symbol, const DataFeatures& features) {
     }
 
     if (features._price < vwap || IsNearClose(symbol)) {
-        Order order;
-        order._type = OrderType::Market;
-        order._number = 0;
-        order._order[0]._price = features._price;
-        DealDetail dd;
-        if (_virtualSystem->Buy(symbol, order, dd) == OrderStatus::All) {
-            LOG("buy order: {}, result: {}", order, dd);
-            // _server->SendEmail("Buy " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
-            return true;
-        }
+        return ImmediatelyBuy(symbol, features._price, OrderType::Market);
     }
     return false;
 }
@@ -95,15 +104,21 @@ bool TraderSystem::StrategySell(symbol_t symbol, const DataFeatures& features) {
         }
     }
     if (features._price > vwap || IsNearClose(symbol)) {
-        Order order;
-        order._number = 0;
-        order._order[0]._price = features._price;
-        DealDetail dd;
-        if (_virtualSystem->Sell(symbol, order, dd) == OrderStatus::All) {
-            LOG("sell order: {}, result: {}", order, dd);
-            // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
-            return true;
-        }
+        return ImmediatelySell(symbol, features._price, OrderType::Market);
+    }
+    return false;
+}
+
+bool TraderSystem::ImmediatelySell(symbol_t symbol, double price, OrderType type) {
+    Order order;
+    order._number = 0;
+    order._side = 1;
+    order._order[0]._price = price;
+    TradeInfo dd;
+    if (_broker->Sell(symbol, order, dd) == OrderStatus::All) {
+        LOG("sell order: {}, result: {}", order, dd);
+        // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
+        return true;
     }
     return false;
 }

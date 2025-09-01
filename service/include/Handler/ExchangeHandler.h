@@ -22,10 +22,14 @@ public:
 
   ExchangeInterface* GetExchangeByType(ExchangeType type);
 
+  const Map<ExchangeType, ExchangeInterface*>& GetExchangesWithType() {
+    return _type_excs;
+  }
+
   virtual void post(const httplib::Request& req, httplib::Response& res);
 
-  double Buy(symbol_t symbol, const Order& order, DealInfo& deals);
-  double Sell(symbol_t symbol, const Order& order, DealInfo& deals);
+  double Buy(symbol_t symbol, const Order& order, TradeInfo& deals);
+  double Sell(symbol_t symbol, const Order& order, TradeInfo& deals);
   
 private:
   ExchangeInfo GetExchangeInfo(const char* name);

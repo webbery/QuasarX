@@ -37,7 +37,8 @@ void XTPTrade::OnTradeEvent(XTPTradeReport *trade_info, uint64_t session_id) {
   order_id id;
   id._id = trade_info->order_xtp_id;
   // 交易完成,更新订单，更新资金, 更新收益率/夏普率...
-  _exchange->UpdateOrder(id);
+  TradeReport report;
+  _exchange->OnOrderReport(id, report);
 }
 
 void XTPTrade::OnCancelOrderError(XTPOrderCancelInfo *cancel_info, XTPRI *error_info, uint64_t session_id) {
@@ -73,10 +74,6 @@ AccountAsset XTPTrade::GetAsset() {
   return _asset;
 }
 
-void XTPTrade::Order() {
-
-}
-
 void XTPTrade::CancelOrder() {
 
 }
@@ -85,9 +82,9 @@ OrderList XTPTrade::GetOrders() {
   return _orders;
 }
 
-struct Order XTPTrade::GetOrder(order_id id) {
+Order XTPTrade::GetOrder(order_id id) {
   auto itr = _order.find(id);
-  struct Order order;
+  Order order;
   // order._oid._id = 0;
   if (itr != _order.end()) {
     order = itr->second;

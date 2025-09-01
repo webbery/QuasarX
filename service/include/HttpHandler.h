@@ -1,8 +1,12 @@
 #pragma once
 #include "std_header.h"
+#include "json.hpp"
 #include "httplib.h"
 
 class Server;
+struct symbol_t;
+
+
 class HttpHandler {
 public:
   HttpHandler(Server* server) :_server(server) {}
@@ -17,3 +21,5 @@ public:
 protected:
   Server* _server;
 };
+
+symbol_t GetSymbol(const nlohmann::json& req);

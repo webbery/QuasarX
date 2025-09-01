@@ -57,5 +57,7 @@ private:
 
   std::mutex _mutex;
   std::map<symbol_t, QuoteInfo> _tickers;
+
+  std::mutex _lmt_mtx;
   Map<symbol_t, Pair<double, double>> _price_limits;
 };

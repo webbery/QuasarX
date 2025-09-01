@@ -1,12 +1,26 @@
 #include "Strategy.h"
+#include <algorithm>
 #include <cmath>
 #include "StrategySubSystem.h"
 
+namespace {
+    Map<String, AgentType> agent_types{
+        {"XGBOOST", AgentType::XGBoost},
+        {"LSTM", AgentType::NeuralNetwork},
+        {"CNN", AgentType::NeuralNetwork}
+    };
+}
+
+Set<String> GetAgentTypes() {
+    Set<String> types;
+    std::for_each(agent_types.begin(), agent_types.end(), [&types](auto&& item) {
+        types.insert(item.first);
+    });
+    return types;
+}
+
 AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     AgentStrategyInfo si;
-    static Map<String, AgentType> agent_types{
-        {"XGBOOST", AgentType::XGBoost}
-    };
     try {
         auto& strategy = content["strategy"];
         si._name = (String)strategy["name"];

@@ -1,7 +1,7 @@
 #pragma once
 #include "std_header.h"
 #include "PortfolioSubsystem.h"
-#include "DataHandler.h"
+#include "DataGroup.h"
 
 class IRiskMetric {
 public:

@@ -5,6 +5,7 @@
 #include "Bridge/exchange.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
+#include "BrokerSubSystem.h"
 
 ExchangeHandler::ExchangeHandler(Server* handle)
   :HttpHandler(handle)
@@ -13,21 +14,6 @@ ExchangeHandler::ExchangeHandler(Server* handle)
 }
 
 ExchangeHandler::~ExchangeHandler() {
-  for (auto& item: _exchanges) {
-    if (item.second)
-      item.second->Release();
-  }
-}
-
-void ExchangeHandler::doWork(const std::vector<std::string>& params)
-{
-  if (params[0] == "use") {
-    if (params.size() != 2) {
-      printf("wrong params.\n");
-      return;
-    }
-    Use(params[1]);
-  }
 }
 
 bool ExchangeHandler::Use(const String& name) {
@@ -126,17 +112,15 @@ ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
   return handle;
 }
 
-double ExchangeHandler::Buy(symbol_t symbol, const Order& order, DealInfo& deals) {
-  if (is_stock(symbol)) {
-
-  }
+double ExchangeHandler::Buy(symbol_t symbol, const Order& order, TradeInfo& deals) {
+    auto broker = _server->GetBrokerSubSystem();
+    broker->Buy(symbol, order, deals);
   return 0;
 }
 
-double ExchangeHandler::Sell(symbol_t symbol, const Order& order, DealInfo& deals) {
-  if (is_stock(symbol)) {
-    
-  }
+double ExchangeHandler::Sell(symbol_t symbol, const Order& order, TradeInfo& deals) {
+    auto broker = _server->GetBrokerSubSystem();
+    broker->Sell(symbol, order, deals);
   return 0;
 }
 

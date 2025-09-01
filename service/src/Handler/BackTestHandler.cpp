@@ -23,6 +23,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    auto exchange = _server->GetExchange(ExchangeType::EX_SIM);
+    if (!exchange) {
+        res.status = 400;
+        res.set_content("{message: 'mode is not correct.'}", "application/json");
+        return;
+    }
+        
     // Load Script
     std::filesystem::path p("scripts");
     auto script_path = p / (strategyName + ".json");
@@ -44,7 +51,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.set_content("{message: 'script json not correct.'}", "application/json");
         return;
     }
+    
     auto si = parse_strategy_script(script_json);
     // 
+    if (strategySys->HasStrategy(strategyName)) {
+        strategySys->DeleteStrategy(strategyName);
+    }
     strategySys->AddStrategy(si);
+    // 驱动数据
+    exchange->Login();
 }

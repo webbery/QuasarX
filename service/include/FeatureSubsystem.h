@@ -86,10 +86,10 @@ private:
 
     double recursive_feature(FeatureBlock* block, const QuoteInfo& quote, double cur);
 
+    void DeleteBlock(FeatureBlock* block);
+    
 private:
     Server* _handle;
-
-    
 
     struct PipelineInfo {
         char _gap:7 = 1;    // 间隔时长, 

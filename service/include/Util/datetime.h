@@ -56,6 +56,8 @@ public:
     time_t Start() const { return _start; }
     time_t End() const { return _end; }
 
+    bool IsDaily() const;
+
     bool operator == (time_t) const;
     bool operator < (time_t) const;
     bool operator > (time_t) const;

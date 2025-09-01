@@ -3,6 +3,7 @@
 #include "xtp/xtp_quote_api.h"
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <nng/protocol/pubsub0/pub.h>
 #include "Bridge/exchange.h"
 #include "yas/detail/type_traits/flags.hpp"
@@ -50,9 +51,9 @@ void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t
   }
 
   symbol_t symb;
-  if (strcmp("001318", market_data->ticker) == 0) {
-    printf("recieve \n");
-  }
+  // if (strcmp("001318", market_data->ticker) == 0) {
+  //   printf("recieve \n");
+  // }
 
   if (XTP_MARKETDATA_V2_INDEX == market_data->data_type_v2) {
     // 指数
@@ -74,10 +75,17 @@ void XTPQuote::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_t
     symb = to_symbol(market_data->ticker);
     break;
   }
-  auto& limit = _price_limits[symb];
-  // 过滤非法数据
-  if (limit.first > market_data->last_price || limit.second < market_data->last_price)
-    return;
+  {
+    // std::unique_lock<std::mutex> lck(_lmt_mtx);
+    // auto itr = _price_limits.find(symb);
+    // if (itr == _price_limits.end())
+    //   return;
+
+    // auto& limit = itr->second;
+    // // 过滤非法数据
+    // if (limit.first >= market_data->last_price || limit.second <= market_data->last_price)
+    //   return;
+  }
   
   QuoteInfo& info = _tickers[symb];
   {
@@ -126,6 +134,7 @@ void XTPQuote::AddAndUpdateTicker(XTPQFI* ticker_info) {
   // if (itr == _tickers.end()) {
     auto str_symbol = format_symbol(ticker_info->ticker);
     symbol_t symbol;
+    memset(&symbol, 0, sizeof(symbol_t));
     switch (ticker_info->exchange_id) {
     case XTP_EXCHANGE_SH:
       symbol = to_symbol(ticker_info->ticker, "SH");
@@ -137,6 +146,9 @@ void XTPQuote::AddAndUpdateTicker(XTPQFI* ticker_info) {
       symbol = to_symbol(ticker_info->ticker);
       break;
     }
+    if (symbol._symbol == 0)
+      return;
+
     std::unique_lock<std::mutex> lock(_mutex);
     QuoteInfo& info = _tickers[symbol];
     info._symbol = symbol;
@@ -144,8 +156,11 @@ void XTPQuote::AddAndUpdateTicker(XTPQFI* ticker_info) {
     info._open = ticker_info->pre_close_price;
     info._close = ticker_info->pre_close_price;
     // info._volume = ticker_info->
-    _price_limits[symbol].first = ticker_info->lower_limit_price;
-    _price_limits[symbol].second = ticker_info->upper_limit_price;
+    {
+      std::unique_lock<std::mutex> lck(_lmt_mtx);
+      _price_limits[symbol].first = ticker_info->lower_limit_price;
+      _price_limits[symbol].second = ticker_info->upper_limit_price;
+    }
     
     yas::shared_buffer buf = yas::save<flags>(info);
     if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {

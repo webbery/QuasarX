@@ -2,9 +2,11 @@
 #include "Bridge/exchange.h"
 #include "DataFrame/DataFrame.h"
 #include <nng/nng.h>
+#include <boost/lockfree/queue.hpp>
 
 using DataFrame = hmdf::StdDataFrame<uint32_t>;
 class Server;
+
 // 仿真,使用历史数据并在中间进行插值模拟
 class StockSimulation : public ExchangeInterface {
 public:
@@ -24,9 +26,9 @@ public:
 
   virtual AccountAsset GetAsset();
   
-  virtual bool AddOrder(const String& symbol, Order& order);
+  order_id AddOrder(const symbol_t& symbol, OrderContext* order);
 
-  virtual bool UpdateOrder(order_id id);
+  virtual void OnOrderReport(order_id id, const TradeReport& report);
 
   virtual bool CancelOrder(order_id id);
 
@@ -40,10 +42,18 @@ public:
 
 private:
   void Worker();
+  // 订单撮合
+  TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);
+
+  struct OrderInfo {
+      size_t _id;
+      OrderContext* _order;
+  };
 
 protected:
   String _org_path;
   nng_socket _sock;
+  bool _finish;
 
   Map<String, DataFrame> _csvs;
   Map<String, Vector<String>> _headers;
@@ -56,4 +66,8 @@ protected:
 
   std::mutex _mx;
   std::condition_variable _cv;
+
+  ConcurrentMap<symbol_t, boost::lockfree::queue<OrderInfo>*> _orders;
+  size_t _cur_id;
+  ConcurrentMap<size_t, OrderContext*> _reports;
 };

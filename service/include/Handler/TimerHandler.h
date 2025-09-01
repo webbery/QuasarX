@@ -27,7 +27,10 @@ private:
     std::fstream& GetFileStream(const symbol_t& name);
 
     String GetTypePath(symbol_t sym);
-    
+    // 合并备份数据
+    bool MergeBackup(const String& src, const String& dst);
+
+    bool MergeCSV(const String& src, const String& dst);
 private:
     nng_socket sock;
 

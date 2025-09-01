@@ -4,6 +4,7 @@
 #include "std_header.h"
 #include "Transfer.h"
 
+enum class OrderType: char;
 class Server;
 class BrokerSubSystem;
 /**
@@ -20,9 +21,12 @@ public:
     void Start();
 
 private:
-    bool StrategyBuy(symbol_t symbol, const DataFeatures& features);
+    bool DailyBuy(symbol_t symbol, const DataFeatures& features);
+
+    bool ImmediatelyBuy(symbol_t symbol, double price, OrderType type);
 
     bool StrategySell(symbol_t symbol, const DataFeatures& features);
+    bool ImmediatelySell(symbol_t symbol, double price, OrderType type);
 
     bool StrategyShort(symbol_t symbol, const DataFeatures& features);
 
@@ -36,7 +40,7 @@ private:
     ITransfer* _simulater_trans;
 
     Server* _server;
-    BrokerSubSystem* _virtualSystem;
+    BrokerSubSystem* _broker;
 
     // next operations for symbol
     Map<symbol_t, int> _operations;

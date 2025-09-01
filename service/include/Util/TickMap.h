@@ -29,6 +29,7 @@ public:
         if (_avliable[k] != std::numeric_limits<uint32_t>::max()) {
             _avliable[k] += 1;
         }
+        return ref;
     }
 
     bool Exist(const K& k) {

@@ -23,6 +23,7 @@ enum class PredictType: char {
 };
 class IStrategy {
 public:
+    virtual ~IStrategy() {}
     virtual int generate(const Vector<float>& prediction) = 0;
     virtual bool is_valid() = 0;
 };

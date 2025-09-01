@@ -59,6 +59,7 @@ public:
 
     bool CreateStrategy(const String& name, const nlohmann::json& params);
     bool AddStrategy(const AgentStrategyInfo& info);
+    void DeleteStrategy(const String& name);
     
     void Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq);
 

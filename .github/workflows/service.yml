@@ -60,29 +60,25 @@ jobs:
           make -j$(nproc)
           sudo make install
 
-      - name: Cache TVM build
+      - name: Cache ONNX-runtime build
         uses: actions/cache@v4
-        id: cache-tvm
+        id: cache-onnxruntime
         with:
           path: |
-            tvm/build
-            /usr/local/include/tvm
-            /usr/local/lib/libtvm*
-          key: ${{ runner.os }}-tvm-${{ hashFiles('**/CMakeLists.txt') }}
+            onnxruntime/build
+            /usr/local/include/onnxruntime
+            /usr/local/lib/libonnxruntime*
+          key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-tvm-
+            ${{ runner.os }}-onnx-
 
-      - name: build TVM (if cache miss)
-        if: steps.cache-tvm.outputs.cache-hit != 'true'
+      - name: build ONNX-runtime (if cache miss)
+        if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
         run: |
-          git clone --recursive https://github.com/apache/tvm
-          cd tvm
-          mkdir build && cd build
-          git checkout v0.20.0
-
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DUSE_OPENMP=ON -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(nproc)
-          sudo make install
+          git clone --recursive https://github.com/microsoft/onnxruntime
+          cd onnxruntime
+          git checkout v1.22.2
+          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
 
       - name: build third_party
         run: |

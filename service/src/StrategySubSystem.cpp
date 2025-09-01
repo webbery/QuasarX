@@ -117,3 +117,8 @@ bool StrategySubSystem::AddStrategy(const AgentStrategyInfo& info) {
 void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq) {
     auto data = _handle->PrepareData({history.begin(), history.end()}, freq);
 }
+
+void StrategySubSystem::DeleteStrategy(const String& name) {
+    _featureSystem->ErasePipeline(name);
+    _strategies.erase(name);
+}

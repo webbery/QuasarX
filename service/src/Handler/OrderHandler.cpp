@@ -4,7 +4,23 @@
 #include "Util/string_algorithm.h"
 #include <string>
 #include <tuple>
+#include "BrokerSubSystem.h"
 
+namespace {
+    nlohmann::json TradeInfo2Json(const TradeInfo& info, size_t& buy_count) {
+        nlohmann::json result;
+        for (auto& item : info._reports) {
+            nlohmann::json report;
+            report["time"] = item._time;
+            report["price"] = item._price;
+            report["quantity"] = item._quantity;
+            buy_count += item._quantity;
+
+            result["reports"].emplace_back(std::move(report));
+        }
+        return result;
+    }
+}
 OrderHandler::OrderHandler(Server* server)
   :HttpHandler(server) {
 
@@ -12,56 +28,6 @@ OrderHandler::OrderHandler(Server* server)
 
 OrderHandler::~OrderHandler() {
   CancelAllOrder();
-}
-
-void OrderHandler::doWork(const std::vector<std::string>& params) {
-  // if (params.empty())
-  //   return;
-
-  // if (params[0] == "cancel") {
-  //   if (params.size() != 2) {
-  //     printf("require 2 params: code=?\n");
-  //     return;
-  //   }
-  //   auto [symbol] = GetParams<std::string>(params, "code");
-  //   auto itr = _orders.find(symbol);
-  //   if (itr == _orders.end()) {
-  //     printf("no order for %s\n", symbol.c_str());
-  //     return;
-  //   }
-
-  //   std::set<order_id> fail_ids;
-  //   for (auto id: itr->second) {
-  //     if (!CancelOrder(id)) {
-  //       fail_ids.insert(id);
-  //       printf("cancel order success.\n");
-  //     }
-  //   }
-  //   if (fail_ids.empty()) {
-  //     printf("cancel all order success.\n");
-  //   } else {
-  //     printf("cancel order fail.\n");
-  //   }
-  // }
-  // else if (params[0] == "query") {
-  //   if (params.size() == 1) {
-  //     QueryOrders();
-  //   } else {
-  //     // auto [symbol] = GetParams<std::string>(params, "code");
-  //   }
-  // }
-  // else {
-  //   if (params.size() != 3) {
-  //     printf("require 3 params: code=? price=? cnt=?\n");
-  //     return;
-  //   }
-  //   auto [symbol, price, number] = GetParams<std::string, double, int>(params, "code", "price", "cnt");
-  //   if (Order(symbol, price, number)) {
-  //     printf("Order Success.\n");
-  //   } else {
-  //     printf("Order Fail.\n");
-  //   }
-  // }
 }
 
 bool OrderHandler::Order(const std::string& symbol, double price, int number) {
@@ -97,5 +63,118 @@ bool OrderHandler::CancelOrder(order_id id) {
 }
 
 void OrderHandler::CancelAllOrder() {
+
+}
+
+OrderBuyHandler::OrderBuyHandler(Server* server)
+    :HttpHandler(server)
+{
+
+}
+
+OrderBuyHandler::~OrderBuyHandler()
+{
+
+}
+
+void OrderBuyHandler::post(const httplib::Request& req, httplib::Response& res)
+{
+    auto params = nlohmann::json::parse(req.body);
+    auto symbol = GetSymbol(params);
+    int quantity = params["quantity"];
+    List<double> prices = params["price"];
+
+    auto broker = _server->GetBrokerSubSystem();
+
+    Order order;
+    order._side = 0;
+    order._number = quantity;
+    order._time = Now();
+    order._type = GetOrderType(params);
+    auto itr = prices.begin();
+    for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
+      order._order[i]._price = *itr;
+      ++itr;
+    }
+    TradeInfo info;
+    broker->Buy(symbol, order, info);
+    
+    size_t buy_count = 0;
+    nlohmann::json result = TradeInfo2Json(info, buy_count);
+
+    if (buy_count == quantity) {
+        result["status"] = 0;
+    }
+    else if (buy_count > 0) {
+        result["status"] = 1;
+    }
+    else {
+        result["status"] = 2;
+    }
+    res.set_content(result.dump(), "application/json");
+    res.status = 200;
+}
+
+OrderType GetOrderType(nlohmann::json& params)
+{
+    int type = params["type"];
+    switch (type) {
+    case 0:
+        return OrderType::Market;
+    case 1:
+        return OrderType::Limit;
+    default:
+        return OrderType::Market;
+    }
+}
+
+OrderSellHandler::OrderSellHandler(Server* server)
+    :HttpHandler(server)
+{
+
+}
+
+void OrderSellHandler::post(const httplib::Request& req, httplib::Response& res)
+{
+    auto params = nlohmann::json::parse(req.body);
+    auto symbol = GetSymbol(params);
+    int quantity = params["quantity"];
+    List<double> prices = params["price"];
+
+    Order order;
+    order._side = 1;
+    order._number = quantity;
+    order._time = Now();
+    order._type = GetOrderType(params);
+    auto itr = prices.begin();
+    for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
+        order._order[i]._price = *itr;
+        ++itr;
+    }
+    auto info = Sell(symbol, order);
+
+    size_t buy_count = 0;
+    auto result = TradeInfo2Json(info, buy_count);
+    result["status"] = 0;
+    res.set_content(result.dump(), "application/json");
+    res.status = 200;
+}
+
+TradeInfo OrderSellHandler::Sell(symbol_t symbol, const Order& order)
+{
+    auto broker = _server->GetBrokerSubSystem();
+    TradeInfo trades;
+    broker->Sell(symbol, order, trades);
+    return trades;
+}
+
+OrderCancelHandler::OrderCancelHandler(Server* server)
+    :HttpHandler(server)
+{
+
+}
+
+void OrderCancelHandler::post(const httplib::Request& req, httplib::Response& res)
+{
 
 }

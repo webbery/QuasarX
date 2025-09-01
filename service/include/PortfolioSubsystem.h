@@ -1,5 +1,5 @@
 #pragma once
-#include "DataHandler.h"
+#include "DataGroup.h"
 #include "Util/system.h"
 // #include "ql/math/matrix.hpp"
 #include "json.hpp"
@@ -42,7 +42,7 @@ public:
 
   double Position() { return _position; }
 
-  void Update(symbol_t symbol, const DealInfo& deals);
+  void Update(symbol_t symbol, const TradeInfo& deals);
 
   // A thread that decide how much contract to sell/buy after recieve buy/sell operator
   void Start();

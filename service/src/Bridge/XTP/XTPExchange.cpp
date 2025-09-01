@@ -1,4 +1,5 @@
 #include "Bridge/XTP/XTPExchange.h"
+#include <cassert>
 #include <cstddef>
 #include <cstdio>
 #include <string.h>
@@ -24,7 +25,7 @@ using namespace std;
 
 XTPExchange::XTPExchange(Server* server)
 :ExchangeInterface(server), m_pQuoteApi(NULL), m_pTradeApi(NULL), m_session(0), m_pTrade(NULL), m_pQuote(NULL),
-_requested(false), _login_status(false){
+_requested(false), _login_status(false), _quote_inited(false){
 }
 
 XTPExchange::~XTPExchange() {
@@ -138,6 +139,9 @@ bool XTPExchange::Login() {
   } else // 登录失败
   {
     XTPRI* error_info = m_pTradeApi->GetApiLastError();
+    if (error_info->error_id == 1) {
+      // [XTP:1]connect server failed.[OS:115]Operation now in progress
+    }
     WARN("login to trade server error, {} : {}", error_info->error_id, error_info->error_msg);
     return false;
   }
@@ -166,6 +170,12 @@ void XTPExchange::QueryQuotes() {
     else {
         if (_requested)
             return;
+        if (!_quote_inited) { // 做一次初始化
+          m_pQuoteApi->QueryAllTickersFullInfo(XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SZ);
+          m_pQuoteApi->QueryAllTickersFullInfo(XTP_EXCHANGE_TYPE::XTP_EXCHANGE_SH);
+          _quote_inited = true;
+          return;
+        }
 
         _requested = true;
         Map<XTP_EXCHANGE_TYPE, int> markets;
@@ -265,44 +275,36 @@ AccountAsset XTPExchange::GetAsset() {
   return asset;
 }
 
-bool XTPExchange::AddOrder(const String& symbol, Order& o) {
-  // 获取代码对应市场
-  auto type = Server::GetExchange(symbol);
-  if (type == MT_Unknow) {
-    return false;
-  }
-
+order_id XTPExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx) {
   XTPOrderInsertInfo* order = new XTPOrderInsertInfo;
-  strcpy(order->ticker, symbol.c_str());
-  switch (type) {
+  strcpy(order->ticker, get_symbol(symbol).c_str());
+  switch (symbol._exchange) {
   case MT_Shanghai: order->market = XTP_MKT_SH_A; break;
   case MT_Shenzhen: order->market = XTP_MKT_SZ_A; break;
   case MT_Beijing: order->market = XTP_MKT_BJ_A; break;
   default:
-    return false;
+    return order_id{0};
   }
+  auto& o = ctx->_order;
   order->price = o._order[0]._price;
   order->quantity = o._number;
 
-  auto order_id = m_pTradeApi->InsertOrder(order, m_session);
-  if (order_id == 0) {
+  auto oid = m_pTradeApi->InsertOrder(order, m_session);
+  if (oid == 0) {
     XTPRI* error_info = m_pTradeApi->GetApiLastError();
     printf("ERROR: add order fail, code %d: %s\n", error_info->error_id, error_info->error_msg);
-    return false;
+    return order_id{0};
   }
-  // o._oid._id = order_id;
-  return true;
+  _orders.emplace(oid, std::make_pair(order, ctx));
+  return order_id{oid};
 }
 
-bool XTPExchange::UpdateOrder(order_id id) {
-  auto itr = _orders.find(id._id);
-  if (itr == _orders.end()) {
-    printf("ERROR: order %ld not exist", id._id);
-    return false;
-  }
+void XTPExchange::OnOrderReport(order_id id, const TradeReport& report) {
+  assert(_orders.count(id._id) != 0);
 
-  _orders.erase(itr);
-  return true;
+  _orders.visit(id._id, [&report](concurrent_order_map::value_type& value) {
+      value.second.second->_trades._reports.emplace_back(report);
+      });
 }
 
 bool XTPExchange::CancelOrder(order_id id) {

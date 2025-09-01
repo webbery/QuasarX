@@ -231,6 +231,10 @@ String fixed_time_range::DateTime() const {
     return ret;
 }
 
+bool fixed_time_range::IsDaily() const {
+    return true;
+}
+
 String to_string(const fixed_time_range& tr) {
     auto start = tr.Start();
     auto end = tr.End();
