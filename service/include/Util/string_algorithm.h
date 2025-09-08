@@ -40,6 +40,8 @@ void split(const String& str, Container& ret_, const char* sep) {
     token = str.substr(pre, cur - pre);
     cur += 1;
     pre = cur;
+    if (token.empty())
+      continue;
     if constexpr (std::is_same<int64_t, value_type>::value) {
       ret_.push_back(atol(token.c_str()));
     }

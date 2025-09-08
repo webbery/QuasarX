@@ -1,6 +1,8 @@
 #pragma once
 #include "Feature.h"
+#include "Scaler.h"
 #include "json.hpp"
+
 
 class EMAFeature: public PrimitiveFeature {
 public:
@@ -20,7 +22,6 @@ public:
     static constexpr StringView name() {
         return "EMA";
     }
-
 
 private:
     short _N = 12;

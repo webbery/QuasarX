@@ -41,6 +41,15 @@ public:
   std::string GetWarningAddr();
 
   std::pair<char, char> GetDailyTime();
+
+  bool AuthenticateUser(const std::string& user, const std::string& pwd);
+
+  std::string GetJWTKey();
+
+  std::string GetPrivateKey();
+  std::string GetPublicKey();
+  std::string GetIssuer();
+  
 private:
   bool _status = false;
 
@@ -49,4 +58,7 @@ private:
   uint64_t _max_risk_id;
 
   std::string _path;
+
+  std::string _server_key;
+  std::string _pub_key;
 };

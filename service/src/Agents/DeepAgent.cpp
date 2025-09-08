@@ -174,7 +174,12 @@ bool CuNNAgent::prepareInputSpace()
 #else // __USE_CUDA__
 
 OnnxNNAgent::OnnxNNAgent(const String& path, const Ort::Env& env, const Ort::SessionOptions& opt, int classes, const nlohmann::json& params)
-:_session(env, path.c_str(), opt) {
+#ifdef WIN32
+    :_session(env, to_wstring(path.c_str()).c_str(), opt)
+#else
+    :_session(env, path.c_str(), opt)
+#endif
+{
 
 }
 
@@ -184,6 +189,9 @@ OnnxNNAgent::~OnnxNNAgent() {
 
 int OnnxNNAgent::predict(const DataFeatures& data, Vector<float>& result) {
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemTypeDefault);
+
+    if (result.empty())
+        return -1;
     return 0;
 }
 

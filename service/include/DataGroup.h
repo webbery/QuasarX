@@ -88,6 +88,8 @@ struct OrderContext {
   TradeInfo _trades;
   // 订单结束标志
   std::atomic_bool _flag = false;
+  // 订单成功标志
+  std::atomic_bool _success = false;
 
   std::promise<bool> _promise;
   std::function<void (Order&)> _callback;

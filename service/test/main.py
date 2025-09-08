@@ -1,5 +1,7 @@
 import requests
 import subprocess
+import sys
+import pytest
 
 if __name__ == "__main__":
     # 启动本地服务
@@ -7,8 +9,13 @@ if __name__ == "__main__":
     # if result.returncode != 0:
 
     #     return
-    # 开始接口测试
-    result = subprocess.run(["pytest", "testcases/"], check=False)
+    if len(sys.argv) > 1:
+        testfile = sys.argv[1]
+        pytest.main("-v -s testcases/" + testfile)
+        # result = subprocess.run(["pytest", "testcases/" + testfile], check=False)
+    else:
+        # 开始接口测试
+        result = subprocess.run(["pytest", "testcases/"], check=False)
 
     # 退出
     exit_uri = "http://localhost:19107/v0" + "/exit"

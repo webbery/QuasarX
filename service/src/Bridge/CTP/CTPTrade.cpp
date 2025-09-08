@@ -1,5 +1,6 @@
 #include "Bridge/CTP/CTPTrade.h"
 #include "Util/string_algorithm.h"
+#include "Util/datetime.h"
 
 CTPTrade::CTPTrade(CThostFtdcTraderApi* api):_conn_status(false) {
   

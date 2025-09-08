@@ -77,11 +77,11 @@ struct QuoteInfo {
   double _high;
   double _low;
 
-  std::array<double, 5> _bidPrice;
-  std::array<uint64_t, 5> _bidVolume;
+  std::array<double, MAX_ORDER_SIZE_LVL2> _bidPrice;
+  std::array<uint64_t, MAX_ORDER_SIZE_LVL2> _bidVolume;
 
-  std::array<double, 5> _askPrice;
-  std::array<uint64_t, 5> _askVolume;
+  std::array<double, MAX_ORDER_SIZE_LVL2> _askPrice;
+  std::array<uint64_t, MAX_ORDER_SIZE_LVL2> _askVolume;
 
   char _source;   // 数据源
   char _confidence;// 置信度 0-100

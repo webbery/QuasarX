@@ -9,12 +9,22 @@
 #include <limits>
 #include <string>
 #include "Features/VWAP.h"
+#include "RiskSubSystem.h"
 
-TraderSystem::TraderSystem(Server* handle, const String& dbpath): _server(handle) {
+TraderSystem::TraderSystem(Server* handle, const String& dbpath): _server(handle), _riskSystem(nullptr) {
     _broker = handle->GetBrokerSubSystem();
+    // Risk system start
+    _riskSystem = new RiskSubSystem(handle);
+    auto default_config = handle->GetConfig().GetDefault();
+    if (default_config.contains("risk")) {
+        _riskSystem->Init(default_config["risk"]);
+    }
 }
 
 TraderSystem::~TraderSystem() {
+    if (_riskSystem) {
+        delete _riskSystem;
+    }
 }
 void TraderSystem::SetupSimulation(const String& name) {
     _simulations.push_back(name);
@@ -27,6 +37,10 @@ void TraderSystem::Start() {
         DataFeatures dm;
         if (!ReadFeatures(from, dm)) {
             return true;
+        }
+
+        if (_riskSystem) {
+            // TODO: risk manage
         }
         // read prediction and check operator
         auto symb = dm._symbol;

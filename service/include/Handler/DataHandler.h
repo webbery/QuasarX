@@ -2,9 +2,13 @@
 
 #include "HttpHandler.h"
 
-class DataHandler: public HttpHandler {
+class DataSyncHandler: public HttpHandler {
 public:
-    DataHandler(Server* );
+    DataSyncHandler(Server* );
     virtual void get(const httplib::Request& req, httplib::Response& res);
 
+private:
+    void SendFile(const String& filepath, httplib::Response& res);
+
+    bool CreateZip(const String& dirs, const String& dstfile);
 };

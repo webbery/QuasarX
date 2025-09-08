@@ -6,7 +6,6 @@
 #include <filesystem>
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
-#include "RiskSubSystem.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "Handler/PredictionHandler.h"
 #include "Handler/RiskHandler.h"
@@ -35,11 +34,15 @@
 #include "Handler/OptionHandler.h"
 #include "Handler/IndexHandler.h"
 #include "Handler/BackTestHandler.h"
+#include "Handler/UserHandler.h"
+#include "Handler/DataHandler.h"
 #include "StrategySubSystem.h"
 #include "TraderSubsystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
 #include "FeatureSubsystem.h"
+#include "jwt-cpp/jwt.h"
+#include "jwt-cpp/traits/nlohmann-json/traits.h"
 
 #define THREAD_URL  "inproc://thread"
 #define ERROR_RESPONSE  "not a valid request"
@@ -52,21 +55,33 @@
 
 #define REGIST_GET(api_name) \
 _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
+    if (!JWTMiddleWare(req, res)) {\
+        return;\
+    }\
     INFO("Get " API_VERSION api_name);\
     this->_handlers[api_name]->get(req, res);\
 })
 #define REGIST_PUT(api_name) \
 _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
+    if (!JWTMiddleWare(req, res)) {\
+        return;\
+    }\
     INFO("Put " API_VERSION api_name);\
     this->_handlers[api_name]->put(req, res);\
 })
 #define REGIST_POST(api_name) \
 _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
+    if (!JWTMiddleWare(req, res)) {\
+        return;\
+    }\
     INFO("Post " API_VERSION api_name);\
     this->_handlers[api_name]->post(req, res);\
 })
 #define REGIST_DEL(api_name) \
 _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
+    if (!JWTMiddleWare(req, res)) {\
+        return;\
+    }\
     INFO("Del " API_VERSION api_name);\
     this->_handlers[api_name]->del(req, res);\
 })
@@ -92,6 +107,8 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_ORDER_BUY       "/order/buy"
 #define API_ORDER_SELL      "/order/sell"
 #define API_DATA_SYNC       "/data/sync"
+#define API_USER_LOGIN      "/user/login"
+#define API_SERVER_STATUS   "/server/status"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -108,17 +125,28 @@ std::map<time_t, float> Server::_inter_rates;
 
 Server::Server():_config(nullptr), _trade_exchange(nullptr), _dividends(12*60*12),
 _exit(false), _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
-_defaultPortfolio(1), _timer(nullptr), _riskSystem(nullptr), _traderSystem(nullptr) {
+_defaultPortfolio(1), _timer(nullptr), _traderSystem(nullptr)
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+,_svr("server.crt", "server.key")
+#endif
+{
     for (auto mt: {MT_Shanghai, MT_Beijing, MT_Shenzhen}) {
         _working_times[mt] = std::move(GetWorkingRange(mt));
     }
     _runType = RuningType::Simualtion;
+    if (!_svr.is_valid()) {
+        FATAL("SSLServer initialization failed. Check your certificate and key files.");
+        return ;
+    }
 }
 
 Server::~Server() {
     if (_timer) {
         _timer->join();
         delete _timer;
+    }
+    for (auto& item: _handlers) {
+        delete item.second;
     }
     if (_brokerSystem) {
         // _broker->Release();
@@ -130,9 +158,7 @@ Server::~Server() {
     if (_strategySystem) {
         delete _strategySystem;
     }
-    if (_riskSystem) {
-        delete _riskSystem;
-    }
+    
     if (_traderSystem) {
         delete _traderSystem;
     }
@@ -158,22 +184,27 @@ void Server::Run() {
     _svr.listen("0.0.0.0", port);
     _exit = true;
     printf("Bye\n");
-
-    for (auto& item: _handlers) {
-        delete item.second;
-    }
 }
 
 void Server::Regist() {
     InitDefault();
     _svr.Post(API_VERSION "/exit", [this](const httplib::Request& req, httplib::Response& res) {
-        LOG("Post /exit");
-        // TODO:检查权限
+        // 检查权限
+        if (!JWTMiddleWare(req, res)) {
+            return;
+        }
+        INFO("Post /exit");
         // TODO: 关闭所有订单和交易, 关闭数据源
 
         _config->Flush();
         _svr.stop();
         });
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    _svr.Post(API_VERSION API_USER_LOGIN, [this](const httplib::Request& req, httplib::Response& res) {
+        INFO("Post /user/login");
+        this->_handlers[API_USER_LOGIN]->post(req, res);
+    });
+#endif
 
     REGIST_POST(API_RISK_STOP_LOSS);
     REGIST_PUT(API_RISK_STOP_LOSS);
@@ -208,6 +239,11 @@ void Server::Regist() {
 
     REGIST_POST(API_ORDER_BUY);
     REGIST_POST(API_ORDER_SELL);
+
+    REGIST_GET(API_DATA_SYNC);
+    REGIST_GET(API_SERVER_STATUS);
+    
+    REGIST_POST(API_BACKTEST);
 }
 
 bool Server::InitDatabase() {
@@ -299,13 +335,6 @@ void Server::InitDefault() {
     auto& exchagnes = ((ExchangeHandler*)_handlers[API_EXHANGE])->GetExchangesWithType();
 
     _brokerSystem->Init(broker, exchagnes, 1000000);
-
-    // Risk system start
-    _riskSystem = new RiskSubSystem(this);
-    if (default_config.contains("risk")) {
-        _riskSystem->Init(default_config["risk"]);
-    }
-    _riskSystem->Start();
 
     _strategySystem = new StrategySubSystem(this);
 
@@ -915,6 +944,9 @@ void Server::InitHandlers() {
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_ORDER_BUY, OrderBuyHandler);
     RegistHandler(API_ORDER_SELL, OrderSellHandler);
+    RegistHandler(API_USER_LOGIN, UserLoginHandler);
+    RegistHandler(API_DATA_SYNC, DataSyncHandler);
+    RegistHandler(API_SERVER_STATUS, ServerStatusHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     risk->doWork({});
@@ -1061,6 +1093,22 @@ bool Server::IsOpen(ExchangeName exchange, time_t t) {
     return false;
 }
 
+time_t Server::GetCloseTime(ExchangeName exchange) {
+    time_t t = Now();
+    auto& working = _working_times[exchange];
+    for (auto& tr: working) {
+        if (tr == t) {
+            struct tm *timeinfo = localtime(&t);
+            int end_in_day = tr.End();
+            timeinfo->tm_hour = end_in_day / 3600;
+            timeinfo->tm_min = (end_in_day % 3600) / 60;
+            timeinfo->tm_sec = ((end_in_day % 3600) % 60) / 60;
+            return mktime(timeinfo);
+        }
+    }
+    return 0;
+}
+
 bool Server::SendEmail(const String& content) {
     auto sender = _config->GetSMTPSender();
     auto pwd = _config->GetSMTPPasswd();
@@ -1078,4 +1126,30 @@ bool Server::SendEmail(const String& content) {
         WARN("send email fail, unknow reason.");
         return false;
     }
+}
+
+bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    auto auth_header = req.get_header_value("Authorization");
+    if (auth_header.empty()) {
+        res.status = 401;
+        res.set_content("{'error': 'Missing or invalid Authorization header.'}","application/json");
+        return false;
+    }
+    try {
+        // 3. 验证和解析Token
+        using traits = jwt::traits::nlohmann_json;
+        auto verifier = jwt::verify<traits>()
+            .allow_algorithm(jwt::algorithm::rs256(_config->GetPublicKey(), "", "", "")) // 验证签名算法和密钥
+            .with_issuer(_config->GetIssuer());                 // 验证签发者是否匹配
+        auto decoded = jwt::decode<traits>(auth_header);
+        verifier.verify(decoded); // 如果验证失败（如签名无效、过期），会抛出异常
+    } catch (const std::exception& e) {
+        // 其他解析异常
+        res.status = 401;
+        res.set_content(std::string("{\"error\": \"Token processing error: ") + e.what() + "\"}", "application/json");
+        return false;
+    }
+#endif
+    return true;
 }

@@ -128,6 +128,10 @@ FeatureSubsystem::FeatureBlock* FeatureSubsystem::GenerateBlock(FeatureNode* nod
     if (!node->_nexts.empty()) {
         for (auto next: node->_nexts) {
             auto next_block = GenerateBlock(next);
+            if (!next_block) {
+                WARN("create feature {} fail", next->_type);
+                continue;
+            }
             block->_nexts.insert(next_block);
         }
     }
@@ -178,7 +182,7 @@ void FeatureSubsystem::run() {
         {
             std::unique_lock<std::mutex> lock(_mtx);
             auto& pipeinfo = _pipelines[quote._symbol];
-            if (pipeinfo._gap != 0 && !_handle->IsOpen(quote._symbol, quote._time)) { // 日间策略
+            if (pipeinfo._gap != 0 && !_handle->IsOpen(quote._symbol, quote._time)) { // 日间策略:
                 send_feature(send_sock, quote, pipeinfo._features);
                 continue;
             } else { // 实时
@@ -218,7 +222,7 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, List<
         types[i] = feat->id();
         ++i;
     }
-    DEBUG_INFO("{}", features);
+    DEBUG_INFO("REAL: {}", features);
     messenger._price = quote._close;
     messenger._data = std::move(features);
     messenger._features = std::move(types);
@@ -264,6 +268,7 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const
         
         ++i;
     }
+    DEBUG_INFO("{}", features);
     messenger._price = quote._close;
     messenger._data = std::move(features);
     messenger._features = std::move(types);

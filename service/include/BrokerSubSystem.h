@@ -154,6 +154,8 @@ private:
     ICommission* GetCommision(symbol_t symbol);
 
     Transaction Order2Transaction(const OrderContext& context);
+
+    
 private:
     Server* _server;
     PortfolioSubSystem* _portfolio;

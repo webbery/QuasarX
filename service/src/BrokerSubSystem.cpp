@@ -310,9 +310,16 @@ void BrokerSubSystem::run() {
   List<OrderContext*> contexts;
   while (!_exit) {
     auto future = std::chrono::system_clock::now() + std::chrono::seconds(5);
-    std::unique_lock<std::mutex> lck(_mutex);
-    if ((_order_queue.empty() && contexts.empty()) || _cv.wait_until(lck, future) == std::cv_status::timeout)
+    {
+      std::unique_lock<std::mutex> lck(_mutex);
+      if (_cv.wait_until(lck, future) == std::cv_status::timeout)
+        continue;
+    }
+    
+
+    if (_order_queue.empty() && contexts.empty()) {
       continue;
+    }
 
     while (!_order_queue.empty()) {
       OrderContext* ctx = nullptr;
@@ -324,9 +331,10 @@ void BrokerSubSystem::run() {
         if ((*itr)->_flag) {
             auto ctx = *itr;
             // TODO: 日志记录
-            auto act = Order2Transaction(*ctx);
-            _trans[ctx->_symbol].emplace_back(std::move(act));
-
+            if ((*itr)->_success) {
+                auto act = Order2Transaction(*ctx);
+                _trans[ctx->_symbol].emplace_back(std::move(act));
+            }
             delete ctx;
             itr = contexts.erase(itr);
         }
@@ -444,11 +452,29 @@ int BrokerSubSystem::AddOrderBySide(symbol_t symbol, const Order& order, TradeIn
 
     // 等待返回
     auto fut = ctx->_promise.get_future();
-    if (fut.get() == true) {
-      detail = ctx->_trades;
+    // 获取下一次收盘时间
+    auto wait_time = 2;
+    if (!_simulation) {
+      auto exchange = _server->GetExchange(get_symbol(symbol));
+      time_t close_t = _server->GetCloseTime(exchange);
+      wait_time = Now() - close_t;
     }
-    delete ctx;
-    return OrderStatus::All;
+    auto future = std::chrono::system_clock::now() + std::chrono::seconds(wait_time);
+    
+    OrderStatus ret = OrderStatus::None;
+    while (std::chrono::system_clock::now() < future) {
+      if (fut.wait_for(std::chrono::seconds(1)) == std::future_status::ready) {
+        detail = ctx->_trades;
+        ret = OrderStatus::All;
+        break;
+      }
+      if (_server->IsExit()) {
+        break;
+      }
+    }
+    // 设置结束标志
+    ctx->_flag.store(true);
+    return ret;
 }
 
 double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, TradeInfo& deal) {

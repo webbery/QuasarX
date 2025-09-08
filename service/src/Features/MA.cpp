@@ -10,6 +10,10 @@ EMAFeature::EMAFeature(const nlohmann::json& params) {
         _alpha = 2.0 /(_N + 1);
         _beta = (_N - 1)*1.0 / (_N + 1);
     }
+    if (params.contains("scaler")) {
+        String name = params["scaler"]["type"];
+        _scaler = CreateScaler(name, params["scaler"]);
+    }
 }
 
 EMAFeature::~EMAFeature() {

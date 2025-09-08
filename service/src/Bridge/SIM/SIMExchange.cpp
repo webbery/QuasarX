@@ -95,6 +95,7 @@ void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
     _reports.visit(id._id, [&report](auto&& value) {
         value.second->_trades._reports.emplace_back(std::move(report));
         value.second->_flag.store(true);
+        value.second->_success.store(true);
         value.second->_promise.set_value(true);
         });
 }
@@ -161,6 +162,8 @@ void StockSimulation::SetFilter(const QuoteFilter& filter) {
         volume.emplace_back(std::stol(row[5]));
       }
       ifs.close();
+      if (header.empty())
+        continue;
 
       Vector<uint32_t> indexes(index);
       std::iota(indexes.begin(), indexes.end(), 1);

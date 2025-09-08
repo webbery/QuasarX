@@ -1,24 +1,17 @@
 #pragma once
-#include "Feature.h"
+#include "json.hpp"
 
-class ScalerNode: public PrimitiveFeature {
+class IScaler {
 public:
-    ScalerNode(const nlohmann::json& params);
-    ~ScalerNode();
+    virtual ~IScaler() {}
+};
 
-    virtual size_t id();
-    
-    virtual bool plug(Server* handle, const String& account);
-
-    virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
-
-    virtual const char* desc();
-
-    virtual FeatureType type() { return FeatureType::FT_MIN_MAX_SCALER; }
-
-    static constexpr StringView name() {
-        return "MinMaxScaler";
-    }
+class MinMaxScaler: public IScaler {
+public:
+    MinMaxScaler(const nlohmann::json& params);
+    ~MinMaxScaler();
 
 private:
 };
+
+IScaler* CreateScaler(const std::string& name, const nlohmann::json& args);

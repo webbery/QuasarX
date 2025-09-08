@@ -34,6 +34,7 @@ typedef std::tuple<std::string, double, double, double, double, double, double, 
 std::string GetIP();
 
 bool RunCommand(const std::string& cmd);
+bool RunCommand(const std::string& cmd, String& output);
 std::vector<StockRowInfo> ReadCSV(const std::string& csv, int last_N);
 std::string GetProgramPath();
 
@@ -372,3 +373,5 @@ public:
     
 };
 #endif // __USE_CUDA__
+
+std::wstring to_wstring(const char* c);

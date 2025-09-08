@@ -3,6 +3,7 @@
 #include "Util/log.h"
 #include "json.hpp"
 #include <variant>
+#include "Features/Scaler.h"
 
 class Server;
 struct QuoteInfo;
@@ -54,9 +55,13 @@ protected:
 class PrimitiveFeature: public IFeature {
 public:
     virtual FeatureType type() = 0;
-
+    ~PrimitiveFeature() {
+        if (_scaler) {
+            delete _scaler;
+        }
+    }
 protected:
-    // static FeatureType _type;
+    IScaler* _scaler = nullptr;
 };
 
 template<typename... T>

@@ -90,16 +90,16 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
         continue;
       nlohmann::json row;
       row["datetime"] = datetime;
-      // using Extractor = QuoteExtractor<
-      //   FixedString{"open"},
-      //   FixedString{"close"},
-      //   FixedString{"low"},
-      //   FixedString{"high"},
-      //   FixedString{"volume"},
-      //   FixedString{"turnover"}
-      // >;
-      // Extractor::extract<double>(row, group, symbol, i);
-      // result.emplace_back(std::move(row));
+      using Extractor = QuoteExtractor<
+        FixedString{"open"},
+        FixedString{"close"},
+        FixedString{"low"},
+        FixedString{"high"},
+        FixedString{"volume"},
+        FixedString{"turnover"}
+      >;
+      Extractor::extract<double>(row, group, symbol, i);
+      result.emplace_back(std::move(row));
     }
     res.status = 200;
     res.set_content(result.dump(), "application/json");
@@ -119,7 +119,8 @@ void StockDetailHandler::get(const httplib::Request& req, httplib::Response& res
   auto quote = exchange->GetQuote(to_symbol(symbol));
   nlohmann::json jsn;
   jsn["price"] = quote._close;
-  jsn["_volume"] = quote._volume;
+  jsn["volume"] = quote._volume;
   jsn["turnover"] = quote._turnover;
-  res.set_content((String)jsn, "application/json");
+  res.status = 200;
+  res.set_content(jsn.dump(), "application/json");
 }

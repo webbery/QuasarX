@@ -25,6 +25,7 @@
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+#include <stdio.h>
 
 std::string GetIP() {
 #ifdef WIN32
@@ -127,6 +128,18 @@ bool RunCommand(const std::string& cmd) {
   if (system(cmd.c_str())) {
     FATAL("run command {} fail.", cmd);
     return false;
+  }
+  return true;
+}
+
+bool RunCommand(const std::string& cmd, String& output) {
+  std::array<char, 128> buffer;
+  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+  if (!pipe) {
+      return false;
+  }
+  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+      output += buffer.data();
   }
   return true;
 }
@@ -561,4 +574,16 @@ int64_t volume(nvinfer1::Dims const& d)
 {
     return std::accumulate(d.d, d.d + d.nbDims, int64_t{1}, std::multiplies<int64_t>{});
 }
+
 #endif // __USE_CUDA__
+
+std::wstring to_wstring(const char* c)
+{
+    const size_t cSize = strlen(c) + 1;
+
+    wchar_t* wc = new wchar_t[cSize];
+    mbstowcs(wc, c, cSize);
+    std::wstring ws(wc, cSize);
+    delete wc;
+    return ws;
+}

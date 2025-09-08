@@ -7,6 +7,8 @@
 enum class OrderType: char;
 class Server;
 class BrokerSubSystem;
+class RiskSubSystem;
+
 /**
  * 
  */
@@ -32,6 +34,7 @@ private:
 
     bool IsNearClose(symbol_t);
 private:
+    RiskSubSystem* _riskSystem;
     nng_socket _real_recv;  // 实盘接收
     nng_socket _real_send;
 

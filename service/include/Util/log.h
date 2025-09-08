@@ -18,7 +18,7 @@
 
 #ifndef INFO
 #define INFO(fmt_str, ...) \
-  fmt::print("" fmt_str "\n", ##__VA_ARGS__);
+  fmt::print("{} " fmt_str "\n", ToString(Now()),##__VA_ARGS__);
 #endif
 #ifndef LOG
 #define LOG(fmt_str, ...) \

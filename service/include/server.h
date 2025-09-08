@@ -27,7 +27,6 @@ class IStopLoss;
 class StopLossHandler;
 class BrokerSubSystem;
 class VirtualBroker;
-class RiskSubSystem;
 class TraderSystem;
 
 typedef enum {
@@ -112,7 +111,7 @@ public:
 
     HttpHandler* GetHandler(const String& name);
 
-    bool IsReal() { return _runType == RuningType::Real; }
+    RuningType GetRunningMode() { return _runType; }
 
   std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
   std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
@@ -150,12 +149,17 @@ public:
 
   bool IsOpen(ExchangeName exchange, time_t);
 
-public:
+  time_t GetCloseTime(ExchangeName exchange);
+
   void SetActiveExchange(ExchangeInterface* exchange) {
     _trade_exchange = exchange;
   }
 
   bool SendEmail(const String& content);
+  // 检查是否在数据备份中
+  bool IsDataLock() { return _isDataLock; }
+  void LockData() { _isDataLock = true; }
+  void FreeDataLock() { _isDataLock = false; }
 
 private:
     void Regist();
@@ -207,6 +211,9 @@ private:
 
     // 发送当日关注的合约的收盘信息作为特征
     void SendCloseFeatures();
+
+    bool JWTMiddleWare(const httplib::Request& req, httplib::Response& res);
+
 private:
     struct DividendData {
         time_t _start;
@@ -221,12 +228,13 @@ private:
 private:
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
   // HTTPS
-// httplib::SSLServer _svr;
+    httplib::SSLServer _svr;
 #else
-  httplib::Server _svr;
+httplib::Server _svr;
 #endif
 
   bool _exit;
+  bool _isDataLock = false;
   RuningType _runType;
   int _defaultPortfolio;
 
@@ -236,7 +244,6 @@ private:
 
   ExchangeInterface* _trade_exchange;
 
-  RiskSubSystem* _riskSystem;
   StrategySubSystem* _strategySystem;
   PortfolioSubSystem* _portfolioSystem;
   BrokerSubSystem* _brokerSystem; //

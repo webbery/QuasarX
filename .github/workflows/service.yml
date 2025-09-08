@@ -109,7 +109,7 @@ jobs:
           git clone --recursive https://github.com/fmtlib/fmt service/third_party/fmt
           git clone --recursive https://github.com/hosseinmoein/DataFrame service/third_party/DataFrame
           mkdir service/build && cd service/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
+          cmake .. -DCMAKE_BUILD_TYPE=Release
           cmake --build . --config Release
 
       # 显示缓存统计（验证加速效果）

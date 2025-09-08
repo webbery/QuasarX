@@ -1,26 +1,22 @@
 #include "Features/Scaler.h"
+#include "Util/log.h"
 
-ScalerNode::ScalerNode(const nlohmann::json& params) {
-
-}
-ScalerNode::~ScalerNode() {
+MinMaxScaler::MinMaxScaler(const nlohmann::json& params) {
 
 }
+MinMaxScaler::~MinMaxScaler() {
 
-size_t ScalerNode::id() {
-    String name = desc();
-    return std::hash<String>()(name);
 }
 
-bool ScalerNode::plug(Server* handle, const String& account) {
-    return true;
-}
-
-feature_t ScalerNode::deal(const QuoteInfo& quote, double extra) {
-    feature_t f;
-    return f;
-}
-
-const char* ScalerNode::desc() {
-    return ScalerNode::name().data();
+IScaler* CreateScaler(const std::string& name, const nlohmann::json& params) {
+    if (name == "minmax") {
+        nlohmann::json args;
+        if (params.contains("args")) {
+            args = params["args"];
+        }
+        return new MinMaxScaler(args);
+    } else {
+        WARN("not support {} scaler.", name);
+        return nullptr;
+    }
 }

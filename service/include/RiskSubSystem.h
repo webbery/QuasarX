@@ -15,11 +15,9 @@ public:
 
     void UpdateRisk(IRiskMetric* risk);
 
-    void Start();
+    void Metric();
 
 private:
-    // 运行风控服务
-    void run();
 
     void SendEMail();
     

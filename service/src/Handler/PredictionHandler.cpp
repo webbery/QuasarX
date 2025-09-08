@@ -128,6 +128,7 @@ void PredictionHandler::put(const httplib::Request& req, httplib::Response& res)
     // 计算日期差并返回绝对值
     auto N = local_tm2.tm_mday - local_tm1.tm_mday;
     if (N < 0) {
+        res.status = 400;
         WARN("day is {}", N);
         return;
     }

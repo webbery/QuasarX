@@ -30,6 +30,31 @@ ServerConfig::ServerConfig(const std::string& path):_path(path) {
             _max_risk_id = id;
         }
     }
+    // 
+    std::string key_file("server.key");
+    if (std::filesystem::exists(key_file)) {
+        std::ifstream ifs;
+        ifs.open(key_file);
+        if (!ifs.is_open()) {
+            return;
+        }
+        std::stringstream buffer;  
+        buffer << ifs.rdbuf();  
+        _server_key = buffer.str();
+        ifs.close();
+    }
+    std::string pub_file("server.crt");
+    if (std::filesystem::exists(pub_file)) {
+        std::ifstream ifs;
+        ifs.open(pub_file);
+        if (!ifs.is_open()) {
+            return;
+        }
+        std::stringstream buffer;
+        buffer << ifs.rdbuf();
+        _pub_key = buffer.str();
+        ifs.close();
+    }
 }
 
 ServerConfig::~ServerConfig() {
@@ -158,4 +183,38 @@ std::pair<char, char> ServerConfig::GetDailyTime() {
         return std::make_pair(20, 0);
     }
     return std::make_pair(info[0], info[1]);
+}
+
+bool ServerConfig::AuthenticateUser(const std::string& user, const std::string& pwd) {
+    std::string name = _config["server"]["user"];
+    if (name.empty()) {
+        WARN("login user is not config.");
+        return false;
+    }
+    if (name != user)
+        return false;
+
+    std::string password = _config["server"]["passwd"];
+    if (password.empty()) {
+        WARN("user password has not set.");
+        return false;
+    }
+    return password == pwd;
+}
+
+std::string ServerConfig::GetJWTKey() {
+    return _config["server"]["jwt"];
+}
+
+std::string ServerConfig::GetPrivateKey() {
+    return _server_key;
+}
+
+std::string ServerConfig::GetPublicKey()
+{
+    return _pub_key;
+}
+
+std::string ServerConfig::GetIssuer() {
+    return "QuasarX";
 }

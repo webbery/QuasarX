@@ -23,7 +23,7 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     AgentStrategyInfo si;
     try {
         auto& strategy = content["strategy"];
-        si._name = (String)strategy["name"];
+        // si._name = (String)strategy["name"];
         si._future = (int)strategy["level"];
         std::for_each(strategy["pool"].begin(), strategy["pool"].end(), [&si](auto&& item) {
             si._pool.emplace_back((String)item);

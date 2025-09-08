@@ -587,7 +587,7 @@ paths:
           name: id
           schema:
             type: integer
-          description: 要获取的策略id
+          description: 要获取的策略id, 0-表示一直持有的策略
       responses:
         '200':
           description: success
@@ -702,6 +702,8 @@ paths:
       responses:
         '200':
           description: success
+        '404':
+          description: fail
   /predict/montecarlo:
     post:
       summary: predict price of asset
@@ -944,7 +946,77 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Quote"
-
+  /user/login:
+    post:
+      summary: login
+      description: 登录服务
+      tags: 
+        - User
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: 'test'
+                pwd:
+                  type: string
+                  example: 'test'
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: string
+  /user/mode:
+    post:
+      summary: change mode
+      description: 修改运行模式,并重启服务
+      tags: 
+        - User
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: 'test'
+      responses:
+        '200':
+          description: success
+  /user/logout:
+    post:
+      summary: logout
+      description: 登出服务
+      tags: 
+        - User
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          pplication/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                token:
+                  type: string
+      responses:
+        '200':
+          description: success
 components:
   schemas:
     StockList:

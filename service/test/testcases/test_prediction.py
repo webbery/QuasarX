@@ -2,20 +2,22 @@ import requests
 import sys
 from tool import check_response, BASE_URL
 import pytest
+from datetime import datetime
 
+@pytest.mark.usefixtures("auth_token")
 class TestPrediction:
     @pytest.mark.timeout(5)
-    def test_set_operation(self):
-        response = requests.put(f"{BASE_URL}/operation")
-        data = check_response(response)
-        assert isinstance(data, list)
-        assert len(data) > 0
+    def test_set_operation(self, auth_token):
+        today = datetime.now()
+        headers = {
+            'Authorization': auth_token
+        }
+        params = {
+            'symbol': '001318',
+            'datetime': today.strftime("%Y-%m-%d"),
+            'operation': 1,
+            'exchange': 0
+        }
+        response = requests.put(f"{BASE_URL}/predict/operation", json=params, headers=headers, verify=False)
+        check_response(response)
 
-    # @pytest.mark.timeout(5)
-    # def test_run(self):
-    #     payload = {
-    #         "name": "xgboost",
-    #         "mode": 1
-    #     }
-    #     response = requests.post(f"{BASE_URL}/strategy", json=payload)
-    #     data = check_response(response)

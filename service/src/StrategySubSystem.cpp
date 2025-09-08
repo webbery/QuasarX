@@ -50,6 +50,8 @@ void StrategySubSystem::Init() {
         if (strategy._pool.empty()) {
             continue;
         }
+        auto filename = script_file.path().stem();
+        strategy._name = filename.string();
         strategy._virtual = false;
         if (_virtualStrategies.count(strategy._name)) {
             strategy._virtual = true;

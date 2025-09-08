@@ -6,6 +6,7 @@
 #include <nng/protocol/pubsub0/sub.h>
 #include "Bridge/exchange.h"
 #include <yas/serialize.hpp>
+#include "DataGroup.h"
 #include "HttpHandler.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
@@ -50,7 +51,6 @@ void RecordHandler::run() {
     constexpr std::size_t flags = yas::mem | yas::binary;
     Map<symbol_t, uint32_t> ticks;
     short rest_cnt = 0;
-    bool is_backup = false;
     while (!_close) {
         char* buff = NULL;
         size_t sz;
@@ -63,16 +63,21 @@ void RecordHandler::run() {
                 item.second.flush();
               }
             }
-            if (!is_backup) {
-            // if (rest_cnt > 720 && !is_backup) {
+            //if (!is_backup) {
+             if (rest_cnt > 720 && !_server->IsDataLock()) {
+              _server->LockData();
               // 1个小时无更新,刷新并备份到bak
               auto data_path = _server->GetConfig().GetDatabasePath() + "/zh";
               auto dst_path = _server->GetConfig().GetDatabasePath() + "/zh.backup";
               if (MergeBackup(data_path, dst_path)) {
+                for (auto& item: _fs_map) {
+                  item.second.close();
+                }
+                _fs_map.clear();
                 RunCommand("rm -rf " + data_path);
               }
               // PackageData();
-              is_backup = true;
+              _server->FreeDataLock();
             }
             continue;
         }
@@ -91,7 +96,6 @@ void RecordHandler::run() {
             }
         }
         rest_cnt = 0;
-        is_backup = false;
     }
     nng_close(sock);
     sock.id = 0;
@@ -138,11 +142,9 @@ std::fstream& RecordHandler::GetFileStream(const symbol_t& name) {
 
     String filepath = datapath + "/" + format_symbol(symbol) + ".csv";
     if (!std::filesystem::exists(filepath)) {
-      
-
       fs.open(filepath, std::ios_base::app | std::ios_base::ate | std::ios_base::out);
       String header("datetime,open,close,high,low,volume,turnover,");
-      for (int i = 0; i < 5; ++i) {
+      for (int i = 0; i < MAX_ORDER_SIZE_LVL2; ++i) {
         header += "bid" + std::to_string(i+1) + ",";
         header += "ask" + std::to_string(i+1) + ",";
         header += "ask_volume" + std::to_string(i+1) + ",";
@@ -182,7 +184,7 @@ void RecordHandler::WriteCSV(std::fstream& fs, const QuoteInfo& infos) {
   line += std::format("{}", infos._volume);
   line += ",";
   line += std::format("{}", infos._turnover);
-  for (int i = 0; i < 5; ++i) {
+  for (int i = 0; i < MAX_ORDER_SIZE_LVL2; ++i) {
     if (infos._bidPrice[i] > std::numeric_limits<double>::epsilon() || infos._askPrice[i] > std::numeric_limits<double>::epsilon()) {
       line += ",";
       line += std::format("{:.4f}", infos._bidPrice[i]);
@@ -202,21 +204,24 @@ void RecordHandler::WriteCSV(std::fstream& fs, const QuoteInfo& infos) {
 }
 
 bool RecordHandler::MergeBackup(const String& src, const String& dst) {
-  std::filesystem::path src_root(src);
-  std::filesystem::path dst_root(src);
-  for (auto& entry: std::filesystem::recursive_directory_iterator(src_root)) {
-    if (entry.is_directory()) {
-      if (!std::filesystem::exists(dst_root / entry)) {
-        std::filesystem::create_directories(dst_root / entry);
-      }
-      MergeBackup(dst_root / entry, dst_root / entry);
+    std::filesystem::path src_root(src);
+    std::filesystem::path dst_root(dst);
+    for (auto& entry : std::filesystem::recursive_directory_iterator(src_root)) {
+        auto relative_path = std::filesystem::relative(entry.path(), src_root);
+        auto target_path = dst_root / relative_path;
+        if (entry.is_directory()) {
+            auto name = entry.path().stem().string();
+            if (!std::filesystem::exists(target_path)) {
+                std::filesystem::create_directories(target_path);
+            }
+        }
+        else if (entry.is_regular_file()) {
+            if (!MergeCSV(entry.path().string(), target_path.string())) {
+                return false;
+            }
+        }
     }
-    else if (entry.is_regular_file()) {
-      if (!MergeCSV(src_root/entry, dst_root/entry))
-        return false;
-    }
-  }
-  return true;
+    return true;
 }
 
 bool RecordHandler::MergeCSV(const String& src, const String& dst) {
@@ -228,7 +233,7 @@ bool RecordHandler::MergeCSV(const String& src, const String& dst) {
   }
 
   std::fstream ofs;
-  ofs.open(dst.c_str(), std::ios::app|std::ios::ate);
+  ofs.open(dst.c_str(), std::ios::in|std::ios::out|std::ios::app);
   if (!ofs.is_open()) {
     ifs.close();
     return false;
@@ -248,28 +253,34 @@ bool RecordHandler::MergeCSV(const String& src, const String& dst) {
   // 定位到ofs末尾行
   List<String> new_lines, org_lines;
   lambda_readLines(ifs, new_lines);
+  ofs.seekg(0); // 将读取指针移动到文件开头，确保读取所有内容
   lambda_readLines(ofs, org_lines);
+  ofs.clear();
   time_t last_t = 0;
-  if (org_lines.empty()) {
-
+  List<String> append_lines;
+  if (org_lines.size() <= 1) {
+    // 复制header
+    append_lines.push_back(new_lines.front());
   } else {
     auto& last_line = org_lines.back();
     List<String> last_info;
     split(last_line, last_info, ",");
-    last_t = FromStr(last_info.front());
+    last_t = FromStr(last_info.front(), "%Y-%m-%d %H:%M:%S");
   }
+  new_lines.pop_front();
   
-  List<String> append_lines;
   for (auto& line: new_lines) {
     List<String> info;
-    split(new_lines.front(), info, ",");
-    auto t = FromStr(info.front());
+    split(line, info, ",");
+    auto t = FromStr(info.front(), "%Y-%m-%d %H:%M:%S");
     if (t > last_t) {
       append_lines.emplace_back(std::move(line));
+      last_t = t;
     }
   }
+  ofs.seekp(0, std::ios::end);
   for (auto& line: append_lines) {
-    ofs.write(line.c_str(), line.size());
+    ofs<<line<<std::endl;
   }
 
   ifs.close();
