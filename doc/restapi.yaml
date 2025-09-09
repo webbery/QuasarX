@@ -906,12 +906,12 @@ paths:
                     exchange:
                       type: string
                       example: xxx
-  /volatility:
+  /feature:
     get:
-      summary: volatility of symbol
-      description: get volatility of symbol
+      summary: features
+      description: get features of symbol
       tags: 
-        - Volatility
+        - Feature
       parameters:
         - in: query
           name: symbol
@@ -928,6 +928,18 @@ paths:
           schema:
             type: integer
           description: end time
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: array
+                  items:
+                    type: string
       responses:
         '200':
           description: success

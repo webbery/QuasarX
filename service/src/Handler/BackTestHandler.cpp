@@ -1,4 +1,5 @@
 #include "Handler/BackTestHandler.h"
+#include "BrokerSubSystem.h"
 #include "server.h"
 #include <filesystem>
 #include <thread>
@@ -66,9 +67,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     Set<String> featureCollections;
     auto tradeSystem = _server->GetTraderSystem();
     auto brokerSystem = _server->GetBrokerSubSystem();
+    brokerSystem->CleanAllIndicators();
+    tradeSystem->ClearCollections();
     if (params.contains("static")) {
         // sharp/features
         Set<String> features{"MACD"};
+        Map<String, StatisticIndicator> statistics{
+            {"SHARP", StatisticIndicator::Sharp}};
         List<String> stats = params["static"];
         for (auto& name: stats) {
             Vector<String> tokens;
@@ -79,6 +84,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             if (features.count(tokens[0])) {
                 tradeSystem->RegistCollection(name);
                 featureCollections.insert(name);
+            }
+            else if (statistics.count(tokens[0])) {
+                brokerSystem->RegistIndicator(statistics[tokens[0]]);
             }
         }
     }
@@ -101,6 +109,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
         }, colls);
     }
+    //
+    results["buy"];
+    results["sell"];
+    
     res.status = 200;
     res.set_content(results.dump(), "application/json");
 }

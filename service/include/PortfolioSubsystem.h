@@ -26,19 +26,17 @@ class PortfolioSubSystem {
 public:
   PortfolioSubSystem(Server* server);
 
-  int CreatePortfolio();
+  List<String> GetAllPortfolio();
 
-  List<int> GetAllPortfolio();
+  bool HasPortfolio(const String& id);
 
-  bool HasPortfolio(int id);
+  PortfolioInfo& GetPortfolio(const String& id);
 
-  PortfolioInfo& GetPortfolio(int id);
+  void ErasePortfolio(const String& id);
 
-  void ErasePortfolio(int id);
+  void SetDefault(const String& id);
 
-  void SetDefault(int id);
-
-  int Default() { return _default; }
+  String Default() { return _default; }
 
   double Position() { return _position; }
 
@@ -54,7 +52,7 @@ private:
 
 private:
   Server* _server;
-  Map<int, PortfolioInfo> _portfolios;
+  Map<String, PortfolioInfo> _portfolios;
   double _position;
-  int _default = 0;
+  String _default;
 };

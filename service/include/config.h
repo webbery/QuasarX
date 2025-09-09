@@ -50,6 +50,11 @@ public:
   std::string GetPublicKey();
   std::string GetIssuer();
   
+  float GetFreeRate();
+  void SetFreeRate(float rate);
+  short GetTradeDays();
+  void SetTradeDays(short days);
+
 private:
   bool _status = false;
 

@@ -218,3 +218,26 @@ std::string ServerConfig::GetPublicKey()
 std::string ServerConfig::GetIssuer() {
     return "QuasarX";
 }
+
+float ServerConfig::GetFreeRate() {
+    if (_config["server"]["default"].contains("freerate")) {
+        return _config["server"]["default"]["freerate"];
+    }
+    return 0.015;
+}
+
+void ServerConfig::SetFreeRate(float rate) {
+    _config["server"]["default"]["freerate"] = rate;
+}
+
+short ServerConfig::GetTradeDays() {
+    if (_config["server"]["default"].contains("trade_days")) {
+        return _config["server"]["default"]["trade_days"];
+    }
+    return 252;
+}
+
+void ServerConfig::SetTradeDays(short days) {
+    _config["server"]["default"]["trade_days"] = days;
+}
+

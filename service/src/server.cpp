@@ -36,6 +36,7 @@
 #include "Handler/BackTestHandler.h"
 #include "Handler/UserHandler.h"
 #include "Handler/DataHandler.h"
+#include "Handler/FeatureHandler.h"
 #include "StrategySubSystem.h"
 #include "TraderSubsystem.h"
 #include "AgentSubSystem.h"
@@ -109,6 +110,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_DATA_SYNC       "/data/sync"
 #define API_USER_LOGIN      "/user/login"
 #define API_SERVER_STATUS   "/server/status"
+#define API_FEATURE         "/feature"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -242,6 +244,7 @@ void Server::Regist() {
 
     REGIST_GET(API_DATA_SYNC);
     REGIST_GET(API_SERVER_STATUS);
+    REGIST_GET(API_FEATURE);
     
     REGIST_POST(API_BACKTEST);
 }
@@ -318,13 +321,9 @@ void Server::InitDefault() {
     }
 
     _portfolioSystem = new PortfolioSubSystem(this);
-    if (default_config.contains("portfolio")) {
-        _defaultPortfolio = default_config["portfolio"];
-        if (!_portfolioSystem->HasPortfolio(_defaultPortfolio)) {
-            WARN("portfolio {} not exist.", _defaultPortfolio);
-        }
+    for (String porfolio: default_config["exchange"]) {
+        _portfolioSystem->GetPortfolio(porfolio);
     }
-    _portfolioSystem->Start();
 
     _brokerSystem = new BrokerSubSystem(this, use_sim);
     String dbpath = broker["db"];
@@ -947,6 +946,7 @@ void Server::InitHandlers() {
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
     RegistHandler(API_DATA_SYNC, DataSyncHandler);
     RegistHandler(API_SERVER_STATUS, ServerStatusHandler);
+    RegistHandler(API_FEATURE, FeatureHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     risk->doWork({});

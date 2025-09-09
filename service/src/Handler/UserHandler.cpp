@@ -1,4 +1,5 @@
 #include "Handler/UserHandler.h"
+#include "HttpHandler.h"
 #include "server.h"
 #include "jwt-cpp/jwt.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
@@ -106,4 +107,14 @@ double ServerStatusHandler::getMemoryInfo()
     memory_usage = std::stol(info[2]) * 1.0/std::stol(info[1]);
 #endif
     return memory_usage;
+}
+
+SystemConfigHandler::SystemConfigHandler(Server* server): HttpHandler(server) {}
+
+void SystemConfigHandler::get(const httplib::Request& req, httplib::Response& res) {
+
+}
+
+void SystemConfigHandler::post(const httplib::Request& req, httplib::Response& res) {
+
 }

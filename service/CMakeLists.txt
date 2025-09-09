@@ -79,7 +79,6 @@ else (USE_CUDA)
         set(onnxruntime_ROOT ${onnxruntime_DIR}/../../..)
         include_directories(${onnxruntime_ROOT}/include)
         link_directories(${onnxruntime_ROOT}/lib/)
-        message('${onnxruntime_DIR}' ${onnxruntime_DIR})
         set(ONNXRUNTIME_LIBRARIES onnxruntime)
         # message(FATAL_ERROR "ONNX Runtime not found. Please install it first.")
     endif()
@@ -138,15 +137,14 @@ set(FMT_DOC OFF)
 add_subdirectory(third_party/fmt)
 add_subdirectory(third_party/DataFrame)
 target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame ta-lib xgboost
+    ${OpenSSL_LIBRARIES}
 )
-message("openssl" ${OpenSSL_LIBRARIES})
 if (USE_CUDA)
     target_link_libraries(${PROJECT_NAME} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES})
 else (USE_CUDA) # onnxruntime
     # target_link_libraries(${PROJECT_NAME} onnxruntime::onnxruntime)
-    target_link_libraries(${PROJECT_NAME} ${ONNXRUNTIME_LIBRARIES})
+    target_link_libraries(${PROJECT_NAME} onnxruntime)
 endif (USE_CUDA)
-target_link_libraries(${PROJECT_NAME} -Wl,-Bstatic ${OpenSSL_LIBRARIES} -Wl,-Bdynamic /usr/lib/gcc/x86_64-linux-gnu/13/libgcc_s.so)
 # install(TARGETS ${PROJECT_NAME})
 # install(FILES
 #     ${CMAKE_SOURCE_DIR}/build/dash_server

@@ -43,7 +43,7 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev
+          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev libpapi-dev
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install cython

@@ -6,33 +6,33 @@ PortfolioSubSystem::PortfolioSubSystem(Server* server)
   // Initialize portfolio
 }
 
-PortfolioInfo& PortfolioSubSystem::GetPortfolio(int id)
+PortfolioInfo& PortfolioSubSystem::GetPortfolio(const String& id)
 {
   return _portfolios[id];
 }
 
-bool PortfolioSubSystem::HasPortfolio(int id) {
+bool PortfolioSubSystem::HasPortfolio(const String& id) {
   return _portfolios.count(id);
 }
 
-void PortfolioSubSystem::SetDefault(int id) {
+void PortfolioSubSystem::SetDefault(const String& id) {
   _default = id;
 }
 
-int PortfolioSubSystem::CreatePortfolio() {
-  if (_portfolios.empty()) {
-    _default = 1;
-    _portfolios[_default];
-    return 1;
-  }
-  auto ritr = _portfolios.rbegin();
-  if (ritr == _portfolios.rend()) {
+// int PortfolioSubSystem::CreatePortfolio() {
+//   if (_portfolios.empty()) {
+//     _default = 1;
+//     _portfolios[_default];
+//     return 1;
+//   }
+//   auto ritr = _portfolios.rbegin();
+//   if (ritr == _portfolios.rend()) {
     
-  }
-  int maxID = ritr->first + 1;
-  _portfolios[maxID];
-  return maxID;
-}
+//   }
+//   int maxID = ritr->first + 1;
+//   _portfolios[maxID];
+//   return maxID;
+// }
 
 void PortfolioSubSystem::AddPortfolio(const nlohmann::json& p) {
   PortfolioInfo& pi = _portfolios[p["id"]];
@@ -41,15 +41,15 @@ void PortfolioSubSystem::AddPortfolio(const nlohmann::json& p) {
   }
 }
 
-List<int> PortfolioSubSystem::GetAllPortfolio() {
-  List<int> ids;
+List<String> PortfolioSubSystem::GetAllPortfolio() {
+  List<String> ids;
   for (auto& item: _portfolios) {
     ids.push_back(item.first);
   }
   return ids;
 }
 
-void PortfolioSubSystem::ErasePortfolio(int id) {
+void PortfolioSubSystem::ErasePortfolio(const String& id) {
   _portfolios.erase(id);
 }
 

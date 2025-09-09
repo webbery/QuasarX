@@ -42,6 +42,8 @@ enum class StatisticIndicator: char {
   MaxDrawDown,
   AnualReturn,
   Sharp,
+  Calmar,
+  Extreme,
 };
 
 class ICommission {
@@ -99,8 +101,11 @@ public:
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
     // 注册统计指标
-    bool RegistIndicator(StatisticIndicator indicator);
+    void RegistIndicator(StatisticIndicator indicator);
     void UnRegistIndicator(StatisticIndicator indicator);
+    void CleanAllIndicators();
+    const Set<StatisticIndicator> GetIndicatorsName() const { return _indicators; }
+    float GetIndicator(StatisticIndicator indicator);
 
     double GetProfitLoss();
 
@@ -135,6 +140,7 @@ private:
 
     double VaR(float confidence);
     double ES(double var);
+    double Sharp();
 
     MDB_dbi GetDBI(int portfolid_id, MDB_txn* txn);
 
@@ -162,6 +168,9 @@ private:
     bool _simulation;
     // 交易记录
     Map<symbol_t, List<Transaction>> _trans;
+
+    std::mutex _indMtx;
+    Set<StatisticIndicator> _indicators;
 
     std::shared_mutex _predMtx;
     Map<symbol_t, predictions_t> _predictions;

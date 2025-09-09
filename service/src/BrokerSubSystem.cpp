@@ -168,6 +168,20 @@ void BrokerSubSystem::InitPortfolio(MDB_txn* txn, MDB_dbi dbi) {
   }
 }
 
+float BrokerSubSystem::GetIndicator(StatisticIndicator indicator) {
+  constexpr double confidence = 0.95;
+  switch (indicator) {
+  case StatisticIndicator::Sharp:
+    return Sharp();
+  case StatisticIndicator::VaR:
+    return VaR(confidence);
+  case StatisticIndicator::ES:
+    return ES(VaR(confidence));
+  default:
+    return 0;
+  }
+}
+
 nlohmann::json BrokerSubSystem::GetPortfolioJson() {
   nlohmann::json result;
   auto allIDs = _portfolio->GetAllPortfolio();
@@ -426,6 +440,15 @@ double BrokerSubSystem::ES(double var)
     return -1;
 }
 
+double BrokerSubSystem::Sharp() {
+  auto& cfg = _server->GetConfig();
+  auto freerate = cfg.GetFreeRate();
+  auto days = cfg.GetTradeDays();
+
+  auto all = _portfolio->GetAllPortfolio();
+  return 0;
+}
+
 const Asset& BrokerSubSystem::GetAsset(const String& symbol) {
   auto id = to_symbol(symbol);
   return _portfolio->_portfolios[_portfolio->Default()]._holds.at(id);
@@ -643,4 +666,19 @@ Transaction BrokerSubSystem::Order2Transaction(const OrderContext& context) {
     act._order = context._order;
     act._deal = context._trades;
     return act;
+}
+
+void BrokerSubSystem::RegistIndicator(StatisticIndicator indicator) {
+  std::unique_lock<std::mutex> lck(_indMtx);
+  _indicators.insert(indicator);
+}
+
+void BrokerSubSystem::UnRegistIndicator(StatisticIndicator indicator) {
+  std::unique_lock<std::mutex> lck(_indMtx);
+  _indicators.erase(indicator);
+}
+
+void BrokerSubSystem::CleanAllIndicators() {
+  std::unique_lock<std::mutex> lck(_indMtx);
+  _indicators.clear();
 }

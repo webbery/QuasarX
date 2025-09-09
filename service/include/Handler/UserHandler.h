@@ -26,3 +26,10 @@ private:
 private:
     std::vector<unsigned long long> _previousCPUStats;
 };
+
+class SystemConfigHandler: public HttpHandler {
+public:
+    SystemConfigHandler(Server*);
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+    virtual void post(const httplib::Request& req, httplib::Response& res);
+};
