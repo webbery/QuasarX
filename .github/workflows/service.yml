@@ -65,7 +65,6 @@ jobs:
         id: cache-onnxruntime
         with:
           path: |
-            onnxruntime/build
             /usr/local/include/onnxruntime
             /usr/local/lib/libonnxruntime*
           key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/CMakeLists.txt') }}
@@ -78,7 +77,10 @@ jobs:
           git clone --recursive https://github.com/microsoft/onnxruntime
           cd onnxruntime
           git checkout v1.22.2
-          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
+          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests 
+          sudo cp -r include/onnxruntime /usr/local/include/
+          sudo cp build/Linux/Release/libonnxruntime* /usr/local/lib/
+          sudo ldconfig
 
       - name: build third_party
         run: |
@@ -109,7 +111,7 @@ jobs:
           git clone --recursive https://github.com/fmtlib/fmt service/third_party/fmt
           git clone --recursive https://github.com/hosseinmoein/DataFrame service/third_party/DataFrame
           mkdir service/build && cd service/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release 
           cmake --build . --config Release
 
       # 显示缓存统计（验证加速效果）

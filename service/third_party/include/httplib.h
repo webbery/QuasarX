@@ -9186,8 +9186,15 @@ inline SSLServer::SSLServer(const char *cert_path, const char *private_key_path,
                             const char *client_ca_cert_file_path,
                             const char *client_ca_cert_dir_path,
                             const char *private_key_password) {
-  ctx_ = SSL_CTX_new(TLS_server_method());
-
+    SSL_library_init();
+    const SSL_METHOD *meth = TLS_server_method();
+  ctx_ = SSL_CTX_new(meth);
+  if (!ctx_) {
+    unsigned long err_code = ERR_get_error();
+    char err_buf[256] = {0};
+    ERR_error_string_n(err_code, err_buf, sizeof(err_buf));
+    ERR_print_errors_fp(stderr);
+  }
   if (ctx_) {
     SSL_CTX_set_options(ctx_,
                         SSL_OP_NO_COMPRESSION |

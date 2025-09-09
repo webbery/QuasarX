@@ -16,10 +16,10 @@ export default defineConfig(({ command, mode }) => {
   
   return {
     server: {
-      port: 3678,
+      port: 13678,
       proxy: {
         '/v0': {
-          target: 'http://localhost:19107/v0',
+          target: 'https://localhost:19107/v0',
           changeOrigin: true,
           rewrite: (path) => {console.info(path); return path.replace(/^\/v0/, '')},
         },

@@ -7,7 +7,9 @@
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Strategy.h"
 #include <limits>
+#include <mutex>
 #include <string>
+#include <variant>
 #include "Features/VWAP.h"
 #include "RiskSubSystem.h"
 
@@ -38,7 +40,15 @@ void TraderSystem::Start() {
         if (!ReadFeatures(from, dm)) {
             return true;
         }
-
+        if (!_collections.empty()) {
+            for (int i = 0; i < dm._features.size(); ++i) {
+                auto id =  dm._features[i];
+                if (_collections.count(id)) {
+                    auto& val = dm._data[i];
+                    _collections[id] = val;
+                }
+            }
+        }
         if (_riskSystem) {
             // TODO: risk manage
         }
@@ -76,6 +86,20 @@ void TraderSystem::Start() {
     });
 
     _simulater_trans->start("SimulationTrader", URI_FEATURE, URI_SIM_TRADE);
+}
+
+void TraderSystem::RegistCollection(const String& name) {
+    std::unique_lock<std::mutex> lck(_mtx);
+    _collections[std::hash<String>()(name)];
+}
+
+void TraderSystem::ClearCollections() {
+    std::unique_lock<std::mutex> lck(_mtx);
+    _collections.clear();
+}
+
+const std::variant<float, Vector<float>>& TraderSystem::GetCollection(const String& name) const {
+    return _collections.at(std::hash<String>()(name));
 }
 
 bool TraderSystem::ImmediatelyBuy(symbol_t symbol, double price, OrderType type) {

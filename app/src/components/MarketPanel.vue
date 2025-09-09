@@ -76,6 +76,7 @@ function update_rate() {
   const url = "https://www.mxnzp.com/api/exchange_rate/aim?from=USD&to=CNY&app_id=g3xecmg8m8yjmrmy&app_secret=sYj6cRRd497E558UraALJOy6LDo1O61Z";  
   axios.get(url)  
     .then(response => {  
+      // console.log(response['data'])
       let value = response['data']['data']['price']
       if (prev_rate == 0) {
         prev_rate = parseFloat(usd_cny_rate.value)

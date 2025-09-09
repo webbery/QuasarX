@@ -1,5 +1,6 @@
-import { app, BrowserWindow, shell, screen, session } from 'electron';
+import { app, BrowserWindow, shell, screen, session, ipcMain, dialog } from 'electron';
 import { join } from 'path';
+import Store from 'electron-store';
 import { productName, description, version } from "../package.json";
 
 import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
@@ -20,6 +21,7 @@ process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
     : process.env.BUILD_APP
 
 let mainWindow: BrowserWindow | null = null
+Store.initRenderer()
 
 function createWindow() {
     const screenSize = screen.getPrimaryDisplay().workAreaSize
@@ -39,6 +41,7 @@ function createWindow() {
             // Read more on https://www.electronjs.org/docs/latest/tutorial/context-isolation
             nodeIntegration: true,
             contextIsolation: false,
+            webSecurity: false, // 禁用同源策略
             preload: join(__dirname, 'preload.js')
         }
     });
@@ -70,6 +73,7 @@ app.whenReady().then(async () => {
         //     console.error("Vue Devtools failed to install:", e.toString());
         // }
     }
+    app.commandLine.appendSwitch('ignore-certificate-errors');
 
     createWindow();
 
@@ -90,6 +94,16 @@ app.whenReady().then(async () => {
         allWindows.length === 0 ? createWindow() : allWindows[0].focus();
     });
 
+    ipcMain.handle('open-directory-dialog', async () => {
+        const result = await dialog.showOpenDialog({
+            properties: ['openDirectory']
+        });
+        if (result.canceled) {
+            return null;
+        } else {
+            return result.filePaths[0];
+        }
+    });
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common

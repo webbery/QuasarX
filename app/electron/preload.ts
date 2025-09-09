@@ -134,5 +134,5 @@ window.onmessage = (event) => {
          */
         timeout && removeLoading(); 
     }
+    console.info(event.data.payload)
 };
-

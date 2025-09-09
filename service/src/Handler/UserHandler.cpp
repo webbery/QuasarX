@@ -38,7 +38,7 @@ void UserLoginHandler::post(const httplib::Request& req, httplib::Response& res)
         res.set_content(data.dump(), "application/json");
     } else {
         res.status = 200;
-        res.set_content("{status: -1, message: 'login fail.'}", "application/json");
+        res.set_content("{tk: "", message: 'login fail.'}", "application/json");
     }
 }
 

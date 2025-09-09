@@ -15,11 +15,11 @@ class TestStrategy:
         assert isinstance(data, list)
         assert len(data) > 0
 
-    # @pytest.mark.timeout(5)
-    # def test_run(self):
-    #     payload = {
-    #         "name": "xgboost",
-    #         "mode": 1
-    #     }
-    #     response = requests.post(f"{BASE_URL}/strategy", json=payload)
-    #     data = check_response(response)
+    @pytest.mark.timeout(5)
+    def test_run_backtest(self):
+        payload = {
+            "name": "xgboost",
+            "static": ["MACD_5"]
+        }
+        response = requests.post(f"{BASE_URL}/backtest", json=payload)
+        data = check_response(response)

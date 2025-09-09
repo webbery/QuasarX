@@ -28,8 +28,8 @@ if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 add_compile_definitions(_DEBUG)
 elseif(${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-march=native -O3)
-endif()
 add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
+endif()
 add_compile_definitions(JWT_DISABLE_PICOJSON)
 
 set(OPENSSL_ROOT_DIR "/usr/local/openssl") 
@@ -38,7 +38,7 @@ set(OPENSSL_LIBRARY_DIR "${OPENSSL_ROOT_DIR}/lib64")
 set(OPENSSL_CRYPTO_LIBRARY "${OPENSSL_LIBRARY_DIR}/libcrypto.a")
 set(OPENSSL_SSL_LIBRARY "${OPENSSL_LIBRARY_DIR}/libssl.a")
 include_directories(${OPENSSL_INCLUDE_DIR})
-set(OpenSSL_LIBRARIES ${OPENSSL_CRYPTO_LIBRARY} ${OPENSSL_SSL_LIBRARY})
+set(OpenSSL_LIBRARIES ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY} )
 endif(WIN32)
 
 #find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
@@ -60,11 +60,29 @@ if (USE_CUDA)
     set(TensorRT_INCLUDE_DIRS "${TensorRT_DIR}/include")
     set(TensorRT_LIBRARIES_DIR "${TensorRT_DIR}/lib")
 else (USE_CUDA)
-    find_package(onnxruntime REQUIRED PATHS /usr/local/lib/cmake/onnxruntime)
-    set(onnxruntime_ROOT ${onnxruntime_DIR}/../../..)
-    include_directories(${onnxruntime_ROOT}/include)
-    link_directories(${onnxruntime_ROOT}/lib/)
-    message("ONNX include DIR:" ${onnxruntime_ROOT}/include)
+    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime/core/session/onnxruntime_c_api.h
+        PATHS /usr/local/include
+        NO_DEFAULT_PATH
+    )
+
+    find_library(ONNXRUNTIME_LIBRARY onnxruntime
+        PATHS /usr/local/lib
+        NO_DEFAULT_PATH
+    )
+
+    if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+        message("-- Found ONNX Runtime: ${ONNXRUNTIME_LIBRARY}")
+        include_directories(${ONNXRUNTIME_INCLUDE_DIR})
+        set(ONNXRUNTIME_LIBRARIES ${ONNXRUNTIME_LIBRARY})
+    else()
+        find_package(onnxruntime REQUIRED PATHS /usr/local/lib/cmake/onnxruntime)
+        set(onnxruntime_ROOT ${onnxruntime_DIR}/../../..)
+        include_directories(${onnxruntime_ROOT}/include)
+        link_directories(${onnxruntime_ROOT}/lib/)
+        message('${onnxruntime_DIR}' ${onnxruntime_DIR})
+        set(ONNXRUNTIME_LIBRARIES onnxruntime)
+        # message(FATAL_ERROR "ONNX Runtime not found. Please install it first.")
+    endif()
 endif (USE_CUDA)
 
 include_directories(include third_party/include ${CUDA_INCLUDE_DIRS} ${TensorRT_INCLUDE_DIRS})
@@ -109,7 +127,6 @@ else(WIN32)
 if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
 endif()
-
 target_link_libraries(${PROJECT_NAME} crypto ssl curl -pthread SQLiteWrapper pugixml nng
     xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se papi
 )
@@ -121,14 +138,15 @@ set(FMT_DOC OFF)
 add_subdirectory(third_party/fmt)
 add_subdirectory(third_party/DataFrame)
 target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame ta-lib xgboost
-    ${OpenSSL_LIBRARIES}
 )
+message("openssl" ${OpenSSL_LIBRARIES})
 if (USE_CUDA)
     target_link_libraries(${PROJECT_NAME} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES})
 else (USE_CUDA) # onnxruntime
     # target_link_libraries(${PROJECT_NAME} onnxruntime::onnxruntime)
-    target_link_libraries(${PROJECT_NAME} onnxruntime)
+    target_link_libraries(${PROJECT_NAME} ${ONNXRUNTIME_LIBRARIES})
 endif (USE_CUDA)
+target_link_libraries(${PROJECT_NAME} -Wl,-Bstatic ${OpenSSL_LIBRARIES} -Wl,-Bdynamic /usr/lib/gcc/x86_64-linux-gnu/13/libgcc_s.so)
 # install(TARGETS ${PROJECT_NAME})
 # install(FILES
 #     ${CMAKE_SOURCE_DIR}/build/dash_server

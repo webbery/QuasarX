@@ -1,7 +1,11 @@
 #include "Handler/BackTestHandler.h"
 #include "server.h"
 #include <filesystem>
+#include <thread>
+#include <variant>
 #include "Strategy.h"
+#include "TraderSubsystem.h"
+#include "Util/string_algorithm.h"
 
 BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 
@@ -58,6 +62,45 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         strategySys->DeleteStrategy(strategyName);
     }
     strategySys->AddStrategy(si);
+    // 注册统计信息
+    Set<String> featureCollections;
+    auto tradeSystem = _server->GetTraderSystem();
+    auto brokerSystem = _server->GetBrokerSubSystem();
+    if (params.contains("static")) {
+        // sharp/features
+        Set<String> features{"MACD"};
+        List<String> stats = params["static"];
+        for (auto& name: stats) {
+            Vector<String> tokens;
+            split(name, tokens, "_");
+            if (tokens.empty())
+                continue;
+
+            if (features.count(tokens[0])) {
+                tradeSystem->RegistCollection(name);
+                featureCollections.insert(name);
+            }
+        }
+    }
     // 驱动数据
     exchange->Login();
+    // 等待数据驱动结束
+    while (exchange->IsLogin() && !_server->IsExit()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        // TODO: 获取进度
+    }
+    // 获取结果
+    nlohmann::json results;
+    for (auto& name: featureCollections) {
+        auto& features = results["features"];
+        auto& colls = tradeSystem->GetCollection(name);
+        std::visit([&features, &name](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, float> || std::is_same_v<T, Vector<float>>) {
+                features[name] = arg;
+            }
+        }, colls);
+    }
+    res.status = 200;
+    res.set_content(results.dump(), "application/json");
 }

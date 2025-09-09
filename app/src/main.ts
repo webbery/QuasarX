@@ -2,6 +2,9 @@ import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import 'element-plus/dist/index.css'
+import '@fortawesome/fontawesome-free/css/all.min.css'
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
 import App from './App.vue'
 import axios from 'axios'
 

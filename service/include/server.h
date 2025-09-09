@@ -120,6 +120,7 @@ public:
 
   PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
   StrategySubSystem* GetStrategySystem() { return _strategySystem; }
+  TraderSystem* GetTraderSystem() { return _traderSystem; }
 
   double GetFreeRate(time_t t);
   /**
@@ -230,7 +231,7 @@ private:
   // HTTPS
     httplib::SSLServer _svr;
 #else
-httplib::Server _svr;
+    httplib::Server _svr;
 #endif
 
   bool _exit;
