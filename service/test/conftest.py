@@ -1,0 +1,20 @@
+import requests
+import pytest
+
+class AuthAPI:
+    """模拟认证API"""
+    def login(self):
+        """模拟登录请求"""
+        params = {"name": 'test', 'pwd': 'test'}
+        response = requests.post(f"https://localhost:19107/v0/user/login", json=params, verify=False)
+        data = response.json()
+        assert isinstance(data, object)
+        assert 'mode' in data
+        token = data['tk']
+        return token
+
+@pytest.fixture(scope="session")
+def auth_token(request):
+    """提供认证API实例"""
+    return AuthAPI().login()
+    

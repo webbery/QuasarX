@@ -10,10 +10,12 @@ class TestStock:
     stock_id = '000001'
     @pytest.mark.timeout(5)
     def test_stock_simple(self, auth_token):
-        headers = {
-            'Authorization': auth_token
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
         }
-        response = requests.get(f"{BASE_URL}/stocks/simple", headers=headers, verify=False)
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+        response = requests.get(f"{BASE_URL}/stocks/simple", **kwargs)
         data = check_response(response)
         assert isinstance(data, object)
         assert "status" in data
@@ -25,11 +27,13 @@ class TestStock:
 
     @pytest.mark.timeout(5)
     def test_stock_detail(self, auth_token):
-        headers = {
-            'Authorization': auth_token
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
         }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
         params = {"id": self.stock_id}
-        response = requests.get(f"{BASE_URL}/stocks/detail", params=params, headers=headers, verify=False)
+        response = requests.get(f"{BASE_URL}/stocks/detail", params=params, **kwargs)
         data = check_response(response)
         assert isinstance(data, object)
         assert "price" in data
@@ -38,9 +42,11 @@ class TestStock:
 
     @pytest.mark.timeout(5)
     def test_stock_history(self, auth_token):
-        headers = {
-            'Authorization': auth_token
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
         }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
         time_start_str = "2020-1-01"
         time_end_str = "2025-10-01"
         time_start = time.strptime(time_start_str, "%Y-%m-%d")
@@ -48,7 +54,7 @@ class TestStock:
         time_end = time.strptime(time_end_str, "%Y-%m-%d")
         end = int(time.mktime(time_end))
         params = {"id": self.stock_id, 'type': 2, 'start': start, 'end': end, 'right': 0}
-        response = requests.get(f"{BASE_URL}/stocks/history", params=params, headers=headers, verify=False)
+        response = requests.get(f"{BASE_URL}/stocks/history", params=params, **kwargs)
         data = check_response(response)
         assert isinstance(data, list)
         for row in data:

@@ -17,8 +17,10 @@ void UserLoginHandler::post(const httplib::Request& req, httplib::Response& res)
     auto& config = _server->GetConfig();
     String user = params["name"];
     String pwd = params["pwd"];
+    nlohmann::json data;
     if (config.AuthenticateUser(user, pwd)) {
-        auto token = jwt::create<traits>()
+        try {
+            auto token = jwt::create<traits>()
                     .set_issuer(config.GetIssuer())
                     .set_type("JWT")
                     .set_subject(user)
@@ -28,19 +30,31 @@ void UserLoginHandler::post(const httplib::Request& req, httplib::Response& res)
                     .set_payload_claim("user", user)
                     .sign(jwt::algorithm::rs256("",
                         config.GetPrivateKey(), "", ""));
-        nlohmann::json data;
-        data["tk"] = token;
-        switch (_server->GetRunningMode()) {
-            case RuningType::Backtest: data["mode"] = "Backtest"; break;
-            case RuningType::Real: data["mode"] = "Real"; break;
-            default: data["mode"] = "Simulation"; break;
+            data["tk"] = token;
+            switch (_server->GetRunningMode()) {
+                case RuningType::Backtest: data["mode"] = "Backtest"; break;
+                case RuningType::Real: data["mode"] = "Real"; break;
+                default: data["mode"] = "Simulation"; break;
+            }
+            res.status = 200;
+            res.set_content(data.dump(), "application/json");
+            return;
         }
-        res.status = 200;
-        res.set_content(data.dump(), "application/json");
-    } else {
-        res.status = 200;
-        res.set_content("{tk: "", message: 'login fail.'}", "application/json");
+        catch (...) {
+            res.status = 400;
+            data["tk"] = "";
+            data["mode"] = "";
+            data["message"] = "login fail.";
+            res.set_content(data.dump(), "application/json");
+            return;
+        }
     }
+    
+    res.status = 200;
+    data["tk"] = "";
+    data["mode"] = "";
+    data["message"] = "login fail.";
+    res.set_content(data.dump(), "application/json");
 }
 
 ServerStatusHandler::ServerStatusHandler(Server* server): HttpHandler(server) {

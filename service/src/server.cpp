@@ -201,12 +201,10 @@ void Server::Regist() {
         _config->Flush();
         _svr.stop();
         });
-#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
     _svr.Post(API_VERSION API_USER_LOGIN, [this](const httplib::Request& req, httplib::Response& res) {
         INFO("Post /user/login");
         this->_handlers[API_USER_LOGIN]->post(req, res);
     });
-#endif
 
     REGIST_POST(API_RISK_STOP_LOSS);
     REGIST_PUT(API_RISK_STOP_LOSS);

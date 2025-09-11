@@ -1,5 +1,13 @@
 #include "PortfolioSubsystem.h"
 
+double GetCost(const List<Asset>& assets) {
+  double total = 0;
+  for (auto& item: assets) {
+    total += (item._price * item._quantity);
+  }
+  return total;
+}
+
 PortfolioSubSystem::PortfolioSubSystem(Server* server)
   :_server(server)
 {
@@ -8,7 +16,14 @@ PortfolioSubSystem::PortfolioSubSystem(Server* server)
 
 PortfolioInfo& PortfolioSubSystem::GetPortfolio(const String& id)
 {
+  if (id.empty()) {
+    return _portfolios.begin()->second;
+  }
   return _portfolios[id];
+}
+
+void PortfolioSubSystem::UpdateProfit(double profit) {
+  GetPortfolio()._profit += profit;
 }
 
 bool PortfolioSubSystem::HasPortfolio(const String& id) {
@@ -19,20 +34,12 @@ void PortfolioSubSystem::SetDefault(const String& id) {
   _default = id;
 }
 
-// int PortfolioSubSystem::CreatePortfolio() {
-//   if (_portfolios.empty()) {
-//     _default = 1;
-//     _portfolios[_default];
-//     return 1;
-//   }
-//   auto ritr = _portfolios.rbegin();
-//   if (ritr == _portfolios.rend()) {
-    
-//   }
-//   int maxID = ritr->first + 1;
-//   _portfolios[maxID];
-//   return maxID;
-// }
+hold_t& PortfolioSubSystem::GetHolding(const String& id) {
+  if (id.empty()) {
+    return _portfolios.begin()->second._holds;
+  }
+  return _portfolios[id]._holds;
+}
 
 void PortfolioSubSystem::AddPortfolio(const nlohmann::json& p) {
   PortfolioInfo& pi = _portfolios[p["id"]];
@@ -59,11 +66,4 @@ void PortfolioSubSystem::Update(symbol_t symbol, const TradeInfo& deals) {
   if (itr == portfolio._holds.end()) {
     
   }
-}
-
-void PortfolioSubSystem::Start() {
-  
-}
-void PortfolioSubSystem::Stop() {
-
 }

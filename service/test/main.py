@@ -19,5 +19,5 @@ if __name__ == "__main__":
 
     # 退出
     exit_uri = "http://localhost:19107/v0" + "/exit"
-    response = requests.post(exit_uri)
+    # response = requests.post(exit_uri)
     

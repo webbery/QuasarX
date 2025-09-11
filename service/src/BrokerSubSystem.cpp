@@ -177,6 +177,7 @@ float BrokerSubSystem::GetIndicator(StatisticIndicator indicator) {
     return VaR(confidence);
   case StatisticIndicator::ES:
     return ES(VaR(confidence));
+  case StatisticIndicator::MaxDrawDown:
   default:
     return 0;
   }
@@ -193,12 +194,18 @@ nlohmann::json BrokerSubSystem::GetPortfolioJson() {
     port["pool"] = portfolio._pools;
     port["principal"] = portfolio._principal;
     for (auto& item: portfolio._holds) {
-      nlohmann::json asset;
-      asset["symbol"] = item.second._symbol;
-      asset["count"] = item.second._hold;
+      nlohmann::json hold;
+      hold["symbol"] = get_symbol(item.first);
+      for (auto& asset: item.second) {
+        nlohmann::json data;
+        data["quantity"] = asset._quantity;
+        data["price"] = asset._price;
+        data["time"] = asset._date;
+        hold["asset"] = std::move(data);
+      }
       // asset["price"] = item._;
 
-      port["asset"].emplace_back(std::move(asset));
+      port["hold"].emplace_back(std::move(hold));
     }
     result.emplace_back(std::move(port));
   }
@@ -424,13 +431,23 @@ void BrokerSubSystem::flush(MDB_txn* txn, MDB_dbi dbi) {
 
 double BrokerSubSystem::VaR(float confidence)
 {
-    // 计算最后组合的VaR值
-    // 计算期望与方差
-    double mu = 0;
-    double sigma = 1;
-    double p = 0.99; // 概率值
-    boost::math::normal_distribution<> norm(mu, sigma); // 均值0，标准差1
-    double z = quantile(norm, confidence); // 分位数值
+    auto& holding = _portfolio->GetHolding();
+    if (holding.size() == 1) {
+      auto itr = holding.begin();
+      auto symbol = itr->first;
+      double cost = GetCost(itr->second);
+      auto group = _server->PrepareData({symbol}, DataFrequencyType::Day, StockAdjustType::After);
+      // 计算最后组合的VaR值
+      // 计算期望与方差
+      double mu = 0;
+      double sigma = 1;
+      double p = 0.99; // 概率值
+      boost::math::normal_distribution<> norm(mu, sigma); // 均值0，标准差1
+      double z = quantile(norm, confidence); // 分位数值
+    }
+    else if (holding.size() > 1) {
+
+    }
     return -1;
 }
 
@@ -445,13 +462,27 @@ double BrokerSubSystem::Sharp() {
   auto freerate = cfg.GetFreeRate();
   auto days = cfg.GetTradeDays();
 
-  auto all = _portfolio->GetAllPortfolio();
-  return 0;
-}
+  auto& holding = _portfolio->GetHolding();
+  if (holding.size() == 1) {
+    auto itr = holding.begin();
+    auto symbol = itr->first;
+    auto group = _server->PrepareData({symbol}, DataFrequencyType::Day, StockAdjustType::After);
+    if (!group)
+      return 0;
+    String str = get_symbol(symbol);
+    auto sigma = group->Sigma(str, -1);
+    auto ret = group->Return(str, -1);
+    double sum = 0;
+    for (int i = 0; i < (int)ret.size() - 1; ++i) {
+      sum += (ret[i + 1] - ret[i]) / ret[i];
+    }
+    double r = sum / ((int)ret.size() - 1);
+    return (r - freerate)/sigma;
+  }
+  else if (holding.size() > 1) {
 
-const Asset& BrokerSubSystem::GetAsset(const String& symbol) {
-  auto id = to_symbol(symbol);
-  return _portfolio->_portfolios[_portfolio->Default()]._holds.at(id);
+  }
+  return 0;
 }
 
 ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {
@@ -494,6 +525,40 @@ int BrokerSubSystem::AddOrderBySide(symbol_t symbol, const Order& order, TradeIn
       if (_server->IsExit()) {
         break;
       }
+    }
+    // 记录
+    auto& holds = _portfolio->GetHolding();
+    auto& history = holds[symbol];
+    if (side == 0) {
+      for (auto& info: detail._reports) {
+        history.push_back({static_cast<uint32_t>(info._quantity), info._price, info._time});
+      }
+    }
+    else if (side == 1) {
+      // 先进先出
+      double org_princpal = 0;
+      double total_sell = 0;
+      for (auto info: detail._reports) {
+        total_sell += info._quantity * info._price;
+        while (!history.empty()) {
+          auto& front = history.front();
+          if (front._quantity >= info._quantity) {
+            org_princpal += front._price * info._quantity;
+            front._quantity -= info._quantity;
+            break;
+          } else {
+            org_princpal += front._price * front._quantity;
+            info._quantity -= front._quantity;
+            history.pop_front();
+          }
+        }
+      }
+      if (history.empty()) {
+        holds.erase(symbol);
+      }
+      // 损益
+      double profit = total_sell - org_princpal;
+      _portfolio->UpdateProfit(profit);
     }
     // 设置结束标志
     ctx->_flag.store(true);

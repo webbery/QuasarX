@@ -7,19 +7,22 @@
 class BrokerSubSystem;
 struct Asset {
   // count
-  uint32_t _hold;
+  uint32_t _quantity;
   // unit price
-  float _price;
-  String _symbol;
+  double _price;
+  time_t _date;
 };
 
+using hold_t = Map<symbol_t, List<Asset>>;
 // map to json
 struct PortfolioInfo {
-  Map<symbol_t, Asset> _holds;
-  double _principal;
+  hold_t _holds;
+  double _principal = 0;
   Set<String> _pools;
-  
+  double _profit = 0;
 };
+
+double GetCost(const List<Asset>&);
 
 class Server;
 class PortfolioSubSystem {
@@ -30,7 +33,9 @@ public:
 
   bool HasPortfolio(const String& id);
 
-  PortfolioInfo& GetPortfolio(const String& id);
+  PortfolioInfo& GetPortfolio(const String& id = "");
+
+  void UpdateProfit(double profit);
 
   void ErasePortfolio(const String& id);
 
@@ -42,9 +47,7 @@ public:
 
   void Update(symbol_t symbol, const TradeInfo& deals);
 
-  // A thread that decide how much contract to sell/buy after recieve buy/sell operator
-  void Start();
-  void Stop();
+  hold_t& GetHolding(const String& id = "");
 
   friend class BrokerSubSystem;
 private:

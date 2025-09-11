@@ -26,6 +26,10 @@
 #include <cuda_runtime.h>
 #endif
 #include <stdio.h>
+#ifdef WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
 
 std::string GetIP() {
 #ifdef WIN32

@@ -8,33 +8,33 @@ RiskMetric::RiskMetric(float confidence, double freerate, const PortfolioInfo& p
 :_confidence(confidence), _freerate(freerate), _mean(0) {
     assert(portfolio._holds.size() > 0);
     double total = 0;
-    for (auto& item: portfolio._holds) {
-        auto& asset = item.second;
-        total += asset._hold * asset._price;
-    }
-    if (total == 0)
-        return;
+    // for (auto& item: portfolio._holds) {
+    //     auto& asset = item.second;
+    //     total += asset._quantity * asset._price;
+    // }
+    // if (total == 0)
+    //     return;
 
-    Eigen::MatrixXd m(portfolio._holds.size(), 1);
-    int r = 0;
-    List<String> symbols;
-    for (auto& item: portfolio._holds) {
-        auto& asset = item.second;
-        auto weight = asset._hold * asset._price / total;
-        m(++r, 1) = weight;
-        symbols.emplace_back(asset._symbol);
-    }
-    _weight.swap(m);
+    // Eigen::MatrixXd m(portfolio._holds.size(), 1);
+    // int r = 0;
+    // List<String> symbols;
+    // for (auto& item: portfolio._holds) {
+    //     auto& asset = item.second;
+    //     auto weight = asset._quantity * asset._price / total;
+    //     m(++r, 1) = weight;
+    //     symbols.emplace_back(asset._symbol);
+    // }
+    // _weight.swap(m);
     // _correlation = group->Correlation(symbols);
-    r = 0;
+    // r = 0;
 
-    for (auto& symbol: symbols) {
-        auto ret = group->Return(symbol, 21);
-        double w = m(++r, 1);
-        double sum = std::accumulate(ret.begin(), ret.end(), 0);
-        _mean += w * sum/ret.size();
-        _sigma.push_back(group->Sigma(symbol, 21));
-    }
+    // for (auto& symbol: symbols) {
+    //     auto ret = group->Return(symbol, 21);
+    //     double w = m(++r, 1);
+    //     double sum = std::accumulate(ret.begin(), ret.end(), 0);
+    //     _mean += w * sum/ret.size();
+    //     _sigma.push_back(group->Sigma(symbol, 21));
+    // }
 }
 
 Vector<float> RiskMetric::ParametricVaR(int gap) {

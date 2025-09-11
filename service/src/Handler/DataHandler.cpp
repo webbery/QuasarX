@@ -58,9 +58,15 @@ bool DataSyncHandler::CreateZip(const String& dirs, const String& dstfile) {
     auto dstname = dstpath.filename().string();
 #ifdef __linux__
     String conn = "&&";
+    String compress = "7z a -tzip -mmt=on -mfb=1024 " + dstname + " " + dir_name;
 #else
     String conn = "&";
+    String compress = "zip -qr " + dstname + " " + dir_name;
 #endif
-    String cmd = "cd " + path.parent_path().string() +" " + conn +" zip -qr " + dstname + " " + dir_name;
-    return RunCommand(cmd);
+    String cmd = "cd " + path.parent_path().string() +" " + conn +" " + compress;
+    INFO("{}", cmd);
+    _server->LockData();
+    bool res = RunCommand(cmd);
+    _server->FreeDataLock();
+    return res;
 }

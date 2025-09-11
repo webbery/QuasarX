@@ -31,7 +31,6 @@ public:
 
   virtual uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) = 0;
 
-  virtual const Asset& GetAsset(const String& symbol) = 0;
   // 异步下单
   virtual int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeInfo&)> cb) = 0;
 };
@@ -108,8 +107,6 @@ public:
     float GetIndicator(StatisticIndicator indicator);
 
     double GetProfitLoss();
-
-    const Asset& GetAsset(const String& symbol);
 
     void SetCommission(symbol_t symbol, const Commission& comm);
     // 设置滑点

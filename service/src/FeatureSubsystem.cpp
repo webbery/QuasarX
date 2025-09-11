@@ -29,7 +29,7 @@ constexpr StringView ATRFeature::name() { return "ATR"; }
 
 const char* ATRFeature::desc() { return "ATR"; }
 
-ATRFeature::ATRFeature(const nlohmann::json& params):_sum(0) {
+ATRFeature::ATRFeature(const nlohmann::json& params):_sum(0), _close(nullptr) {
     try {
         _T = params["N"];
         _tr.resize(_T);

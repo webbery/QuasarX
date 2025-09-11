@@ -73,7 +73,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         // sharp/features
         Set<String> features{"MACD"};
         Map<String, StatisticIndicator> statistics{
-            {"SHARP", StatisticIndicator::Sharp}};
+            {"SHARP", StatisticIndicator::Sharp}
+        };
         List<String> stats = params["static"];
         for (auto& name: stats) {
             Vector<String> tokens;
