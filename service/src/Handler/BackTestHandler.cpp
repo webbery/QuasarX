@@ -1,5 +1,7 @@
 #include "Handler/BackTestHandler.h"
 #include "BrokerSubSystem.h"
+#include "Util/system.h"
+#include "json.hpp"
 #include "server.h"
 #include <filesystem>
 #include <thread>
@@ -16,12 +18,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto params = nlohmann::json::parse(req.body);
     String strategyName = params.at("name");
     auto strategySys = _server->GetStrategySystem();
-    if (!strategySys->HasStrategy(strategyName)) {
-        res.status = 404;
-        res.set_content("{message: 'strategy not found.'}", "application/json");
-        return;
-    }
-
     if (!std::filesystem::exists("scripts")) {
         res.status = 404;
         res.set_content("{message: 'strategy not found.'}", "application/json");
@@ -58,23 +54,26 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
     
     auto si = parse_strategy_script(script_json);
+    si._name = strategyName;
+    si._virtual = false;
     // 
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);
     }
     strategySys->AddStrategy(si);
     // 注册统计信息
-    Set<String> featureCollections;
+    Set<String> featureCollections, statCollection;
     auto tradeSystem = _server->GetTraderSystem();
     auto brokerSystem = _server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators();
     tradeSystem->ClearCollections();
+    Map<String, StatisticIndicator> statistics{
+        {"SHARP", StatisticIndicator::Sharp}
+    };
     if (params.contains("static")) {
         // sharp/features
         Set<String> features{"MACD"};
-        Map<String, StatisticIndicator> statistics{
-            {"SHARP", StatisticIndicator::Sharp}
-        };
+        
         List<String> stats = params["static"];
         for (auto& name: stats) {
             Vector<String> tokens;
@@ -88,6 +87,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
             else if (statistics.count(tokens[0])) {
                 brokerSystem->RegistIndicator(statistics[tokens[0]]);
+                statCollection.insert(tokens[0]);
             }
         }
     }
@@ -100,8 +100,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
     // 获取结果
     nlohmann::json results;
+    auto& features = results["features"];
     for (auto& name: featureCollections) {
-        auto& features = results["features"];
         auto& colls = tradeSystem->GetCollection(name);
         std::visit([&features, &name](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
@@ -110,9 +110,24 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             }
         }, colls);
     }
+    for (auto& name: statCollection) {
+        auto value = brokerSystem->GetIndicator(statistics[name]);
+        features[name] = value;
+    }
     //
-    results["buy"];
-    results["sell"];
+    auto symbols = brokerSystem->GetPoolSymbols();
+    for (auto& symbol: symbols) {
+        auto str = get_symbol(symbol);
+        auto& trades = brokerSystem->GetHistoryTrades(symbol);
+        for (auto& trans: trades) {
+            String side = (trans._order._side == 0? "buy": "sell");
+            for (auto& report: trans._deal._reports) {
+                nlohmann::json item;
+                item = {str, report._time, report._quantity, report._price};
+                results[side].emplace_back(std::move(item));
+            }
+        }
+    }
     
     res.status = 200;
     res.set_content(results.dump(), "application/json");

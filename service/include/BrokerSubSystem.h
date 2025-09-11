@@ -121,6 +121,10 @@ public:
 
     void DeletePrediction(symbol_t, int index);
 
+    const List<Transaction>& GetHistoryTrades(symbol_t) const;
+
+    Set<symbol_t> GetPoolSymbols();
+
 private:
     int AddOrderBySide(symbol_t symbol, const Order& order, TradeInfo& detail, int side);
 
@@ -132,7 +136,7 @@ private:
 
 private:
     void run();
-
+    
     void flush(MDB_txn* txn, MDB_dbi dbi);
 
     double VaR(float confidence);
@@ -164,7 +168,7 @@ private:
     PortfolioSubSystem* _portfolio;
     bool _simulation;
     // 交易记录
-    Map<symbol_t, List<Transaction>> _trans;
+    Map<symbol_t, List<Transaction>> _historyTrades;
 
     std::mutex _indMtx;
     Set<StatisticIndicator> _indicators;

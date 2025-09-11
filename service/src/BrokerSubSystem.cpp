@@ -238,7 +238,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
   for (auto& item : jsn) {
       String symbol = item["symbol"];
       auto symb = to_symbol(symbol);
-      auto& trans = _trans[symb];
+      auto& trans = _historyTrades[symb];
       for (auto& action : item[DB_TRANSACTION_NAME]) {
           Transaction tran;
           tran._order._number = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
@@ -262,7 +262,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
 
 nlohmann::json BrokerSubSystem::GetHistoryJson() {
   nlohmann::json jsn;
-  for (auto& item: _trans) {
+  for (auto& item: _historyTrades) {
     nlohmann::json temp;
     temp["symbol"] = get_symbol(item.first);
     for (auto& trans: item.second) {
@@ -354,7 +354,7 @@ void BrokerSubSystem::run() {
             // TODO: 日志记录
             if ((*itr)->_success) {
                 auto act = Order2Transaction(*ctx);
-                _trans[ctx->_symbol].emplace_back(std::move(act));
+                _historyTrades[ctx->_symbol].emplace_back(std::move(act));
             }
             delete ctx;
             itr = contexts.erase(itr);
@@ -746,4 +746,17 @@ void BrokerSubSystem::UnRegistIndicator(StatisticIndicator indicator) {
 void BrokerSubSystem::CleanAllIndicators() {
   std::unique_lock<std::mutex> lck(_indMtx);
   _indicators.clear();
+}
+
+const List<Transaction>& BrokerSubSystem::GetHistoryTrades(symbol_t symbol) const {
+  return _historyTrades.at(symbol);
+}
+
+Set<symbol_t> BrokerSubSystem::GetPoolSymbols() {
+  Set<symbol_t> result;
+  auto& pool = _portfolio->GetPortfolio()._pools;
+  for (auto sym: pool) {
+    result.insert(to_symbol(sym));
+  }
+  return result;
 }

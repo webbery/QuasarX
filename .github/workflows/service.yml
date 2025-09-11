@@ -65,6 +65,7 @@ jobs:
         id: cache-onnxruntime
         with:
           path: |
+            onnxruntime/install
             /usr/local/include/onnxruntime
             /usr/local/lib/libonnxruntime*
           key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/CMakeLists.txt') }}
@@ -77,10 +78,8 @@ jobs:
           git clone --recursive https://github.com/microsoft/onnxruntime
           cd onnxruntime
           git checkout v1.22.2
-          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=install
-          sudo cp -r install/include/onnxruntime /usr/local/include/
-          sudo cp -r install/lib/* /usr/local/lib/
-          sudo ldconfig
+          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
+          cd build/Linux/Release && sudo make install
 
       - name: build third_party
         run: |

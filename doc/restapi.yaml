@@ -708,6 +708,47 @@ paths:
       responses:
         '200':
           description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buy:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        symb:
+                          type: string
+                          description: 合约
+                        dt:
+                          type: integer
+                          description: 时间
+                        p:
+                          type: number
+                          description: 价格
+                        q:
+                          type: integer
+                          description: 数量
+                  sell:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        symb:
+                          type: string
+                          description: 合约
+                        dt:
+                          type: integer
+                          description: 时间
+                        p:
+                          type: number
+                          description: 价格
+                        q:
+                          type: integer
+                          description: 数量
+                  features:
+                    type: object
         '404':
           description: fail
   /predict/montecarlo:
