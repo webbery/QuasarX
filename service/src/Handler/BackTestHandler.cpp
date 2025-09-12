@@ -68,11 +68,15 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     brokerSystem->CleanAllIndicators();
     tradeSystem->ClearCollections();
     Map<String, StatisticIndicator> statistics{
-        {"SHARP", StatisticIndicator::Sharp}
+        {"SHARP", StatisticIndicator::Sharp},
+        {"VAR", StatisticIndicator::VaR},
+        {"ES", StatisticIndicator::ES},
+        {"MAXDRAWDOWN", StatisticIndicator::MaxDrawDown},
+        {"CALMAR", StatisticIndicator::Calmar}
     };
     if (params.contains("static")) {
         // sharp/features
-        Set<String> features{"MACD"};
+        Set<String> features{"MACD", "ATR"};
         
         List<String> stats = params["static"];
         for (auto& name: stats) {
@@ -81,11 +85,12 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             if (tokens.empty())
                 continue;
 
-            if (features.count(tokens[0])) {
+            auto key = to_upper(tokens[0]);
+            if (features.count(key)) {
                 tradeSystem->RegistCollection(name);
                 featureCollections.insert(name);
             }
-            else if (statistics.count(tokens[0])) {
+            else if (statistics.count(key)) {
                 brokerSystem->RegistIndicator(statistics[tokens[0]]);
                 statCollection.insert(tokens[0]);
             }

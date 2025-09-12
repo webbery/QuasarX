@@ -65,7 +65,7 @@ jobs:
         id: cache-onnxruntime
         with:
           path: |
-            onnxruntime/install
+            onnxruntime/build
             /usr/local/include/onnxruntime
             /usr/local/lib/libonnxruntime*
           key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/CMakeLists.txt') }}

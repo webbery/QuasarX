@@ -110,7 +110,6 @@ bool XTPExchange::Login() {
     WARN("Please config local IP addr");
     return false;
   }
-
 	uint64_t ret = m_pQuoteApi->Login(quote_server_ip.c_str(), quote_server_port, quote_username.c_str(), quote_password.c_str(), protocol_type, local_ip.c_str());
 	if (0 != ret)
 	{
