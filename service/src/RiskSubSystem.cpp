@@ -39,7 +39,7 @@ void RiskSubSystem::UpdateRisk(IRiskMetric* risk) {
 
 }
 
-void RiskSubSystem::Metric() {
+void RiskSubSystem::Metric(const DataFeatures& features) {
 
 }
 

@@ -1,4 +1,6 @@
 #include "Handler/BackTestHandler.h"
+#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/system.h"
 #include "json.hpp"
@@ -24,13 +26,18 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    auto exchange = _server->GetExchange(ExchangeType::EX_SIM);
+    auto exchange = (StockSimulation*)_server->GetExchange(ExchangeType::EX_SIM);
     if (!exchange) {
         res.status = 400;
         res.set_content("{message: 'mode is not correct.'}", "application/json");
         return;
     }
-        
+    String level = params.at("level");
+    if (level == "T+1") {
+        exchange->UseLevel(1);
+    } else {
+        exchange->UseLevel(0);
+    }
     // Load Script
     std::filesystem::path p("scripts");
     auto script_path = p / (strategyName + ".json");

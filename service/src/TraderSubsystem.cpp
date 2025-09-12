@@ -51,6 +51,7 @@ void TraderSystem::Start() {
         }
         if (_riskSystem) {
             // TODO: risk manage
+            _riskSystem->Metric(dm);
         }
         // read prediction and check operator
         auto symb = dm._symbol;

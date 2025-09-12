@@ -1,6 +1,7 @@
 #pragma once
 #include "Bridge/exchange.h"
 #include "DataFrame/DataFrame.h"
+#include "Util/system.h"
 #include <nng/nng.h>
 #include <boost/lockfree/queue.hpp>
 
@@ -21,6 +22,7 @@ public:
   virtual bool IsLogin();
 
   virtual void SetFilter(const QuoteFilter& filter);
+  void UseLevel(int level);
 
   virtual AccountPosition GetPosition();
 
@@ -42,6 +44,8 @@ public:
 
 private:
   void Worker();
+  void LoadT0(const String& code);
+  void LoadT1(const String& code);
   // 订单撮合
   TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);
 

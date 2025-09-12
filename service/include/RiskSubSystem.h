@@ -15,7 +15,7 @@ public:
 
     void UpdateRisk(IRiskMetric* risk);
 
-    void Metric();
+    void Metric(const DataFeatures& features);
 
 private:
 

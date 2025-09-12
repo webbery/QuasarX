@@ -7,5 +7,5 @@ public:
 
     virtual void get(const httplib::Request& req, httplib::Response& res);
 private:
-
+    int _times;
 };
