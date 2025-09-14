@@ -17,32 +17,30 @@
     <div class="card-grid">
         <div class="metric-card card">
         <div class="metric-title">账户净值</div>
-        <div class="metric-value">¥1,245,680</div>
-        <div class="positive">+3.2% <i class="fas fa-arrow-up"></i></div>
+        <div class="metric-value">¥{{ totalValue }}</div>
+        <div class="positive">+{{increasePencent}}% <i class="fas fa-arrow-up"></i></div>
         </div>
 
         <div class="metric-card card">
         <div class="metric-title">今日盈亏</div>
-        <div class="metric-value positive">¥24,850</div>
+        <div class="metric-value positive">¥{{ todayPL }}</div>
         <div>+2.04%</div>
         </div>
 
         <div class="metric-card card">
         <div class="metric-title">最大回撤</div>
-        <div class="metric-value negative">-8.2%</div>
+        <div class="metric-value negative">-{{ maxDrawDown }}%</div>
         <div>风险等级: 中</div>
         </div>
 
         <div class="metric-card card">
         <div class="metric-title">夏普比率</div>
-        <div class="metric-value">1.85</div>
-        <div>年化波动率: 12.4%</div>
+        <div class="metric-value">{{ sharpRatio }}</div>
         </div>
 
         <div class="metric-card card">
         <div class="metric-title">卡玛比率</div>
-        <div class="metric-value">1.85</div>
-        <div>年化波动率: 12.4%</div>
+        <div class="metric-value">{{ kamaRatio }}</div>
         </div>
     </div>
     </div>
@@ -62,5 +60,14 @@
         <div class="chart-container" id="overviewChart"></div>
     </div>
 </template>
-<script>
+<script setup>
+import {ref} from 'vue'
+
+let totalValue = ref(0)
+let increasePencent = ref(0)
+let todayPL = ref(0)
+let sharpRatio = ref(0)
+let kamaRatio = ref(0)
+let maxDrawDown = ref(0)
+
 </script>

@@ -44,9 +44,9 @@
           <div class="market-item">
             <div class="market-name">
               <i class="fas fa-caret-up positive-change"></i>
-              <span>黄金期货</span>
+              <span>黄金</span>
             </div>
-            <div class="market-value positive-change">1,935.40 (+0.6%)</div>
+            <div class="market-value positive-change">{{ GlodPrice }} (+0.6%)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
@@ -70,14 +70,18 @@ let rate_status_class = ref('no-change')
 const timer = ref(null)
 const isPolling = ref(false);
 const interval = ref(10000);
+let GlodPrice = ref(0);
 
 function update_rate() {
   // 更新USD/CNY利率
   const url = "https://www.mxnzp.com/api/exchange_rate/aim?from=USD&to=CNY&app_id=g3xecmg8m8yjmrmy&app_secret=sYj6cRRd497E558UraALJOy6LDo1O61Z";  
   axios.get(url)  
-    .then(response => {  
-      // console.log(response['data'])
-      let value = response['data']['data']['price']
+    .then(response => {
+      let data = response['data']['data']
+      let value = prev_rate
+      if ('price' in data) {
+        value = data['price']
+      }
       if (prev_rate == 0) {
         prev_rate = parseFloat(usd_cny_rate.value)
         console.info('prev rate:', prev_rate)
@@ -105,6 +109,21 @@ function update_rate() {
     });
 }
 
+function update_gold() {
+  // https://api.aa1.cn/doc/trade.html
+  const url = "https://free.xwteam.cn/api/gold/trade";  
+  axios.get(url)  
+    .then(response => {
+      let data = response['data']['data']['LF']
+      for (const item of data) {
+        if (item['Symbol'] === 'Au') {
+          console.info('AU', item)
+          GlodPrice.value = item['BP']
+          break;
+        }
+      }
+    })
+}
 // 开始轮询
 const startPolling = () => {
   // 如果已经在轮询中，先停止
@@ -114,10 +133,12 @@ const startPolling = () => {
   
   // 立即请求一次
   update_rate();
+  update_gold();
   
   // 设置定时器
   timer.value = setInterval(() => {
     update_rate();
+    update_gold();
   }, interval.value);
   
   isPolling.value = true;

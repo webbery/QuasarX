@@ -23,12 +23,12 @@
                 <i class="fas fa-info-circle"></i>同步状态
             </div>
             <div class="status-content">
-                最近同步: 2023年11月5日 14:30<br>
-                状态: <span style="color: #4ade80;">已就绪</span>
+                最近同步: {{ lastSyncDate }}<br>
+                状态: <span style="color: #4ade80;">{{ status }}</span>
             </div>
         </div>
         
-        <div class="stats">
+        <!-- <div class="stats">
             <div class="stat-card">
                 <div class="stat-value">2.5GB</div>
                 <div class="stat-label">已同步数据</div>
@@ -41,26 +41,43 @@
                 <div class="stat-value">98%</div>
                 <div class="stat-label">可用空间</div>
             </div>
-        </div>
+        </div> -->
 </template>
 <script setup>
 import {ref, onMounted} from 'vue'
 import {ipcRenderer} from 'electron'
 import axios from 'axios'
 import Store from 'electron-store';
+
+let status = ref('')
 const store = new Store();
 
 const storeKey = 'syncPath'
 let selectedFolderPath = ref(store.get(storeKey));
+let lastSyncDate = ref(store.get('lastSyncDate'));
 
 const onHandleDownload = async () => {
-    console.info("onHandleDownload");
-    const content = await axios.get('/data/sync')
-    const fs = require('fs')
+    console.info("onHandleDownload", selectedFolderPath.value);
     const filePath = 'sync.zip'
-    fs.writeFileSync(filePath, content, 'binary');
-    // 解压zip文件
-    // 递归遍历合并数据到目标文件夹下
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    const url = 'https://' + server + '/v0/data/sync'
+    const result = await ipcRenderer.invoke("merge-csv", url, token, filePath, selectedFolderPath.value);
+    if (result === true) {
+        const date = new Date()
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0'); // 月份从0开始，需要+1:cite[1]
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+
+        const formattedString = `${year}-${month}-${day} ${hours}:${minutes}`;
+        lastSyncDate.value = formattedString
+        store.set('lastSyncDate', formattedString)
+        status.value = '同步成功'
+    } else {
+        status.value = '同步失败'
+    }
 }
 
 const onHandleSelection = async () => {

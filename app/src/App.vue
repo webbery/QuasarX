@@ -18,7 +18,7 @@
         <button v-if="is_backtest" class="control-btn">
           <i class="fas fa-cloud-upload-alt"></i> 导出报告
         </button>
-        <button class="control-btn"><i class="fas fa-cog"></i> 设置</button>
+        <button class="control-btn" @click="onHandleSetting"><i class="fas fa-cog"></i> 设置</button>
       </div>
     </header>
 
@@ -92,7 +92,6 @@
     <!-- 主内容区 -->
     <main class="main-content">
       <component :is="activeComponent" />
-      <!-- <AccountView></AccountView> -->
     </main>
 
     <!-- 右侧面板 -->
@@ -106,6 +105,9 @@
       </div>
       <div v-else-if="is_strategy">
         <FlowComponents></FlowComponents>
+      </div>
+      <div v-else-if="is_setting">
+        <SettingPanel :enableOperation="useOperaion"></SettingPanel>
       </div>
     </aside>
 
@@ -123,7 +125,7 @@
         </div>
         <div class="status-item">
           <i class="fas fa-microchip"></i>
-          <span>CPU: 42%</span>
+          <span>CPU: {{ cpu }}</span>
         </div>
         <div class="status-item">
           <i class="fas fa-memory"></i>
@@ -133,12 +135,12 @@
     </footer>
 
     <teleport to="body">
-      <LoginForm :showLoginModal="showLogin" @onStatusChange="onStatusChange">
+      <LoginForm :showLoginModal="showLogin" @onStatusChange="onStatusChange" @closeLoginForm="onLoginClose">
       </LoginForm>
     </teleport>
 </template>
 <script setup >
-import { defineOptions, ref, defineEmits, onMounted, computed } from "vue";
+import { defineProps, ref, defineEmits, onMounted, computed } from "vue";
 import LabVue from "./components/Lab.vue";
 import MineVue from "./components/Mine.vue";
 import RiskManagerVue from "./components/RiskManager.vue";
@@ -152,13 +154,16 @@ import StrategyFactory from "./components/StrategyFactory.vue";
 import FlowComponents from "./components/FlowComponents.vue";
 import DataCenter from "./components/DataCenter.vue";
 import LoginForm from "./components/LoginForm.vue";
+import SettingView from "./components/SettingView.vue";
+import SettingPanel from "./components/SettingPanel.vue";
 
 // 定义视图状态常量
 const VIEWS = {
   ACCOUNT: 'account',
   BACKTEST: 'backtest',
   DESIGN_STATEGY: 'strategy',
-  DATA_CENTER: 'datacenter'
+  DATA_CENTER: 'datacenter',
+  SETTING_VIEW: 'setting',
 };
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
@@ -173,25 +178,30 @@ let activeComponent = computed(() => {
     return StrategyFactory;
   if (currentView.value === VIEWS.DATA_CENTER)
     return DataCenter;
-  
+  if (currentView.value === VIEWS.SETTING_VIEW)
+    return SettingView;
   return AccountView;
 });
 
 let activeIndex = ref(0);
 let runningMode = ref('登录')
 let showLogin = ref(false)
+let cpu = ref(0)
+// 1-展示已添加的服务器 2-展示已添加的交易所 3-新添加一个服务器 4-新添加一个交易所
+let useOperaion = ref(0)
 
 // 根据当前视图计算按钮状态
 let is_account = computed(() => currentView.value === VIEWS.ACCOUNT);
 let is_backtest = computed(() => currentView.value === VIEWS.BACKTEST);
 let is_strategy = computed(() => currentView.value === VIEWS.DESIGN_STATEGY);
 let is_datacenter = computed(() => currentView.value === VIEWS.DATA_CENTER);
+let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 
 onMounted(() => {
   console.log('mounted');
   activeComponent.value = AccountView
 });
-const emits = defineEmits(["refush"]);
+const emits = defineEmits(["refush", "onSettingChanged"]);
 
 const onHandleBacktest = () => {
   console.info("onHandleBacktest");
@@ -214,16 +224,23 @@ const onHandleDataCenter = () => {
 }
 
 const onLoginSwitch = () => {
-  showLogin = !showLogin
-  console.info('show login form', showLogin)
+  showLogin.value = !showLogin.value
 }
 
 const onStatusChange = (status, info) => {
   console.info('onStatusChange:', status, info)
   if (status) {
     runningMode.value = info
-    showLogin = false
+    showLogin.value = false
   }
+}
+
+const onLoginClose = () => {
+    showLogin.value = false
+}
+
+const onHandleSetting = () => {
+  currentView.value = VIEWS.SETTING_VIEW;
 }
 </script>
 

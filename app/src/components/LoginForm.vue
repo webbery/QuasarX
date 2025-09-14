@@ -81,10 +81,12 @@
 </template>
 <script setup>
 import axios from 'axios'
-import { ref, reactive, onMounted, onUnmounted, defineEmits } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps } from 'vue'
 
-const emit = defineEmits(['onStatusChange'])
-
+const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
+const props = defineProps({
+  showLoginModal: Boolean,
+})
 // 表单数据
 const loginForm = reactive({
   username: '',
@@ -94,15 +96,14 @@ const loginForm = reactive({
 
 // 服务器选项
 const serverOptions = ref([
-  { value: '127.0.0.1', label: '127.0.0.1 (本地)' },
-  { value: '192.168.1.101', label: '模拟盘环境' },
-  { value: '192.168.1.102', label: '实盘环境' }
+  { value: '127.0.0.1:19107', label: '127.0.0.1 (本地)' },
+  { value: '192.168.1.101:19107', label: '模拟盘环境' },
+  { value: '192.168.1.102:19107', label: '实盘环境' }
 ])
 
 // 下拉菜单状态
 const showDropdown = ref(false)
 const selectedServer = ref(null)
-let showLoginModal = ref(true)
 
 // 表单错误信息
 const errors = reactive({
@@ -147,7 +148,7 @@ onUnmounted(() => {
 
 // 关闭模态框
 const closeModal = () => {
-    showLoginModal.value = false;
+    emit('closeLoginForm')
 };
 
 // 表单验证
@@ -180,7 +181,7 @@ const handleLogin = () => {
           rejectUnauthorized: false, // 如果是自签名证书，需要设置这个选项为 false
           // cert: certificate, // 证书文件
         })
-        let url = 'https://'+ 'localhost:19107/v0/user/login'
+        let url = 'https://'+ loginForm.server + '/v0/user/login'
         fetch(url, {
           method: 'POST',
           headers: {
@@ -198,6 +199,7 @@ const handleLogin = () => {
             let mode = data['mode']
             let token = data['tk']
             localStorage.setItem('token', token)
+            localStorage.setItem('remote', loginForm.server)
             // 设置拦截器
             axios.interceptors.request.use((config) => {
               if (token) {

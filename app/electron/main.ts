@@ -4,6 +4,9 @@ import Store from 'electron-store';
 import { productName, description, version } from "../package.json";
 
 import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
+import axios from 'axios';
+import https from 'https';
+import { cpSync, mkdirSync } from 'fs';
 
 /**
  * ** The built directory structure
@@ -104,6 +107,34 @@ app.whenReady().then(async () => {
             return result.filePaths[0];
         }
     });
+
+    ipcMain.handle('merge-csv', async (_, url, token, dstZip, mergeSrc) => {
+        console.info('merge', url, dstZip, mergeSrc)
+        const agent = new https.Agent({  
+            rejectUnauthorized: false // 忽略证书错误
+        });
+        const response = await axios.get(url, {
+            httpsAgent: agent,
+            responseType: 'arraybuffer',
+            headers: { 'Authorization': token}})
+        // console.info('response', response)
+        if (response.status === 200) {
+            const fs = require('fs');
+            console.info('data len:', response.data.length, typeof(dstZip), typeof(response.data))
+            fs.writeFileSync(dstZip, response.data, 'binary');
+            const StreamZip = require('node-stream-zip');
+            // 解压zip文件
+            const zip = new StreamZip.async({ file: dstZip });
+            // 异步解压全部文件
+            await zip.extract(null, 'zip_temp'); // 第一个参数为 null 表示解压所有
+            await zip.close();
+            // 递归遍历合并数据到目标文件夹下
+            await RecursiveMergeCSVFile(mergeSrc, 'zip_temp')
+            return true;
+        } else {
+            return false;
+        }
+    })
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -114,5 +145,113 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
 });
 
+function createReadCSVPromise(filepath, ) {
+    return 
+}
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
+async function MergeCSV(orgCSV, newCSV) {
+    console.info('merge from', orgCSV, 'to', newCSV)
+    const fs = require('fs');
+    const readline = require('readline');
+
+    let lastLine = '';
+    const readLastimePromise = new Promise((resolve, reject) => {
+        const rl = readline.createInterface({
+            input: fs.createReadStream(orgCSV),
+            crlfDelay: Infinity
+        });
+
+        let orgIndex = 0;
+
+        rl.on('line', (line) => {
+            orgIndex += 1;
+            if (line.length === 0 || orgIndex === 1) {
+                return;
+            }
+            console.info(line);
+            lastLine = line;
+        });
+
+        rl.on('close', () => {
+            // 读取完成
+            resolve(lastLine);
+        });
+
+        rl.on('error', (err) => {
+            reject(err);
+        });
+    });
+
+    // 读取org最后一行时间
+    await readLastimePromise;
+
+    const tokens = lastLine.split(',')
+    const last_time = new Date(tokens[0]).getTime();
+    // 找新的csv中时间在last time之后的
+    let appendLines = ''
+    await new Promise((resolve, reject) => {
+        const new_rl = readline.createInterface({
+            input: fs.createReadStream(newCSV)
+        })
+        let newIndx = 0
+        new_rl.on('line', (line) => {
+            newIndx += 1
+            if (line.length == 0 || newIndx == 1)
+                return;
+
+            const tokens = line.split(',')
+            const cur_time = new Date(tokens[0]).getTime();
+            if (cur_time > last_time) {
+                appendLines += line + '\n'
+            }
+        })
+        new_rl.on('close', () => {
+            // 读取完成
+            resolve(appendLines);
+        });
+        new_rl.on('error', (err) => {
+            reject(err);
+        });
+    })
+    
+    if (appendLines.length > 0) {
+        fs.appendFile(orgCSV, appendLines, err => {
+            if (err) {
+                console.log(err);
+            }
+            else {}
+        });
+    }
+}
+
+async function RecursiveMergeCSVFile(to_dir, from_dir) {
+    const path = require('path');
+    const fs = require('fs');
+    console.info(from_dir, to_dir)
+    const subdirs = fs.readdirSync(from_dir)
+    for (const item of subdirs) {
+        const srcPath = path.join(from_dir, item);
+        const dstPath = path.join(to_dir, item);
+        const st = fs.statSync(srcPath);
+        // console.info('dir:', srcPath, dstPath)
+        if (!fs.existsSync(dstPath)) {
+            if (st.isDirectory()) {
+                // 创建文件夹
+                mkdirSync(dstPath, {recursive: true});
+                RecursiveMergeCSVFile(dstPath, srcPath);
+            }
+            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.csv') {
+                // 直接复制文件过去
+                cpSync(srcPath, dstPath);
+            }
+        } else {
+            if (st.isDirectory()) {
+                RecursiveMergeCSVFile(dstPath, srcPath);
+            }
+            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.csv') {
+                await MergeCSV(srcPath, dstPath);
+            }
+        }
+    }
+}
