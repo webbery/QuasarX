@@ -129,9 +129,11 @@ if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
 endif()
 if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")
-    target_link_libraries(${PROJECT_NAME} ${OpenSSL_LIBRARIES})
+    target_compile_options(${PROJECT_NAME} PRIVATE -fPIE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-pie")
+    target_link_libraries(${PROJECT_NAME} ${OpenSSL_LIBRARIES} dl z)
 else()
-    target_link_libraries(${PROJECT_NAME} crypto ssl)
+    target_link_libraries(${PROJECT_NAME} ssl crypto)
 endif()
 target_link_libraries(${PROJECT_NAME} curl -pthread nng
     xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se papi
@@ -144,8 +146,6 @@ set(FMT_DOC OFF)
 add_subdirectory(third_party/fmt)
 add_subdirectory(third_party/DataFrame)
 target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame ta-lib xgboost)
-
-
 if (USE_CUDA)
     target_link_libraries(${PROJECT_NAME} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES})
 else (USE_CUDA) # onnxruntime
