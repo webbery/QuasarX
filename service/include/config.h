@@ -1,6 +1,7 @@
 #include "json.hpp"
 #include <cstdint>
 #include <utility>
+#define DATA_PATH   "data"
 
 class ServerConfig {
 public:
@@ -54,6 +55,8 @@ public:
   void SetFreeRate(float rate);
   short GetTradeDays();
   void SetTradeDays(short days);
+private:
+    void Init();
 
 private:
   bool _status = false;

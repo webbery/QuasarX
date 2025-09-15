@@ -126,9 +126,84 @@ double ServerStatusHandler::getMemoryInfo()
 SystemConfigHandler::SystemConfigHandler(Server* server): HttpHandler(server) {}
 
 void SystemConfigHandler::get(const httplib::Request& req, httplib::Response& res) {
-
+    nlohmann::json config;
+    if (std::filesystem::exists("config.json")) {
+        std::ifstream ifs;
+        ifs.open("config.json");
+        std::string content((std::istreambuf_iterator<char>(ifs)),
+            (std::istreambuf_iterator<char>()));
+        config = nlohmann::json::parse(content);
+        ifs.close();
+    }
+    else {
+        nlohmann::json broker;
+        broker["commission"] = { {"fee", 0.0001345}, {"min", 5.0}, {"stamp", 0.001} };
+        broker["db"] = DATA_PATH "/broker";
+        broker["name"] = "astock";
+        broker["type"] = "stock";
+        config["broker"].emplace_back(std::move(broker));
+        nlohmann::json sim_exchange;
+        sim_exchange["api"] = "sim";
+        sim_exchange["name"] = "stock-sim";
+        sim_exchange["pool"] = std::vector<String>();
+        sim_exchange["quote"] = DATA_PATH;
+        sim_exchange["trade"] = "";
+        sim_exchange["type"] = "stock";
+        sim_exchange["desc"] = "";
+        config["exchange"].emplace_back(std::move(sim_exchange));
+        config["risk"] = std::vector<String>();
+        nlohmann::json server;
+        server["addr"] = "localhost";
+        server["db_path"] = DATA_PATH;
+        server["default"] = {
+            {"broker", "astock"},
+            {"daily", "20:00"},
+            {"exchange", {"stock-sim"}},
+            {"freerate", 0.0175},
+            {"record", {"*"}},
+            {"strategy", {}},
+        };
+        server["jwt"] = "2025_09_jwt_update_key";
+        server["notice"] = { {"email", ""}};
+        server["passwd"] = "admin";
+        server["user"] = "admin";
+        server["port"] = 19107;
+        server["smtp"] = { {"addr", ""}, {"auth", ""}, {"mail", ""} };
+        server["ssl"] = "";
+        config["server"] = std::move(server);
+    }
+    res.set_content(config.dump(), "application/json");
+    res.status = 200;
 }
 
 void SystemConfigHandler::post(const httplib::Request& req, httplib::Response& res) {
+    auto params = nlohmann::json::parse(req.body);
+    std::ifstream ifs;
+    ifs.open("config.json");
+    if (!ifs.is_open()) {
+        res.status = 400;
+        return false;
+    }
+    
+    // 用户名不能修改,数据及数据库位置不能修改，端口不能修改
+    if (params.contains("server")) {
+        params["server"]["port"] = 19107;
+        params["server"]["user"] = "admin";
+        params["server"]["db_path"] = DATA_PATH;
+    }
+    
+    for (auto& item : params["exchange"]) {
+        if (item["api"] == "sim") {
+            item["quote"] = DATA_PATH;
+        }
+    }
+    for (auto& item : params["broker"]) {
+        item["db"] = DATA_PATH "/broker";
+    }
+    std::ofstream ofs;
+    ofs.open("config.json");
+    ofs << params;
+    ofs.close();
 
+    res.status = 200;
 }

@@ -4,7 +4,6 @@
 #include "Util/datetime.h"
 #include "Util/string_algorithm.h"
 #include "server.h"
-#include "tabulate/table.hpp"
 #include "Util/finance.h"
 #include <tuple>
 #include <vector>

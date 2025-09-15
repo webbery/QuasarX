@@ -17,10 +17,10 @@ void DataSyncHandler::get(const httplib::Request& req, httplib::Response& res) {
     if (std::filesystem::exists(bakup_path) && !_server->IsDataLock()) {
         // 压缩
         auto zip_path = datapath + "/bak.zip";
-        if (!CreateZip(bakup_path, zip_path)) {
+        /*if (!CreateZip(bakup_path, zip_path)) {
             res.status = 401;
             return;
-        }
+        }*/
         SendFile(zip_path, res);
         res.status = 200;
     }
@@ -45,7 +45,7 @@ void DataSyncHandler::SendFile(const String& filepath, httplib::Response& res) {
                 sink.done();
                 file->close();
                 delete file;
-                std::filesystem::remove_all(filepath);
+                //std::filesystem::remove_all(filepath);
                 return false;
             }
         }

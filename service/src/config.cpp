@@ -8,8 +8,7 @@ using namespace std;
 
 ServerConfig::ServerConfig(const std::string& path):_path(path) {
     if (!filesystem::exists(path)) {
-        printf("Fail with Read Config %s\n", path.c_str());
-        return;
+        Init();
     }
     try {
         std::ifstream ifs;
@@ -239,5 +238,48 @@ short ServerConfig::GetTradeDays() {
 
 void ServerConfig::SetTradeDays(short days) {
     _config["server"]["default"]["trade_days"] = days;
+}
+
+void ServerConfig::Init()
+{
+    nlohmann::json config;
+    nlohmann::json broker;
+    broker["commission"] = { {"fee", 0.0001345}, {"min", 5.0}, {"stamp", 0.001} };
+    broker["db"] = DATA_PATH "/broker";
+    broker["name"] = "astock";
+    broker["type"] = "stock";
+    config["broker"].emplace_back(std::move(broker));
+    nlohmann::json sim_exchange;
+    sim_exchange["api"] = "sim";
+    sim_exchange["name"] = "stock-sim";
+    sim_exchange["pool"] = std::vector<String>();
+    sim_exchange["quote"] = DATA_PATH;
+    sim_exchange["trade"] = "";
+    sim_exchange["type"] = "stock";
+    sim_exchange["desc"] = "";
+    config["exchange"].emplace_back(std::move(sim_exchange));
+    config["risk"] = std::vector<String>();
+    nlohmann::json server;
+    server["addr"] = "localhost";
+    server["db_path"] = DATA_PATH;
+    server["default"] = {
+        {"broker", "astock"},
+        {"daily", "20:00"},
+        {"exchange", {"stock-sim"}},
+        {"freerate", 0.0175},
+        {"record", {"*"}},
+        {"strategy", {}},
+    };
+    server["jwt"] = "2025_09_jwt_update_key";
+    server["notice"] = { {"email", ""} };
+    server["passwd"] = "admin";
+    server["user"] = "admin";
+    server["port"] = 19107;
+    server["smtp"] = { {"addr", ""}, {"auth", ""}, {"mail", ""} };
+    server["ssl"] = "";
+    config["server"] = std::move(server);
+    std::ofstream ofs(_path);
+    ofs << config;
+    ofs.close();
 }
 
