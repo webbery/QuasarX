@@ -1,6 +1,7 @@
 #pragma once
 
 #include "HttpHandler.h"
+#include "json.hpp"
 
 class UserLoginHandler: public HttpHandler {
 public:
@@ -32,4 +33,12 @@ public:
     SystemConfigHandler(Server*);
     virtual void get(const httplib::Request& req, httplib::Response& res);
     virtual void post(const httplib::Request& req, httplib::Response& res);
+
+private:
+    bool AddExchange(nlohmann::json& config, const nlohmann::json& params);
+    bool DeleteExchange(nlohmann::json& config, const String& name);
+    bool ChangePassword(nlohmann::json& config, const String& org, const String& latest);
+    bool ChangeCommission(nlohmann::json& config, const nlohmann::json& params);
+    bool ChangeSMTP(nlohmann::json& config, const nlohmann::json& params);
+    bool ChangeSchedule(nlohmann::json& config, const nlohmann::json& params);
 };

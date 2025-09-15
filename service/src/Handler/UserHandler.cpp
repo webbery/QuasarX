@@ -1,5 +1,6 @@
 #include "Handler/UserHandler.h"
 #include "HttpHandler.h"
+#include "json.hpp"
 #include "server.h"
 #include "jwt-cpp/jwt.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
@@ -182,28 +183,118 @@ void SystemConfigHandler::post(const httplib::Request& req, httplib::Response& r
     ifs.open("config.json");
     if (!ifs.is_open()) {
         res.status = 400;
-        return false;
+        return ;
     }
-    
-    // 用户名不能修改,数据及数据库位置不能修改，端口不能修改
-    if (params.contains("server")) {
-        params["server"]["port"] = 19107;
-        params["server"]["user"] = "admin";
-        params["server"]["db_path"] = DATA_PATH;
-    }
-    
-    for (auto& item : params["exchange"]) {
-        if (item["api"] == "sim") {
-            item["quote"] = DATA_PATH;
+    std::string content((std::istreambuf_iterator<char>(ifs)),
+        (std::istreambuf_iterator<char>())); // 读取所有内容
+    auto config = nlohmann::json::parse(content);
+    int operatorType = params["type"];
+    switch (operatorType) {
+    case 1: // 添加server
+        break;
+    case 2: // 添加交易所
+        if (!AddExchange(config, params["data"])) {
+            res.status = 400;
+            return;
         }
+        break;
+    case 3: // 删除server
+        break;
+    case 4: // 删除交易所
+        if (!DeleteExchange(config, params["data"])) {
+            res.status = 400;
+            return;
+        }
+        break;
+    case 5: // 修改密码
+        if (!ChangePassword(config, params["data"]["org"], params["data"]["latest"])) {
+            res.status = 400;
+            return;
+        }
+        break;
+    case 6: // 修改费率
+        if (!ChangeCommission(config, params["data"])) {
+            res.status = 400;
+            return;
+        }
+        break;
+    case 7: // 修改STMP
+        if (!ChangeSMTP(config, params["data"])) {
+            res.status = 400;
+            return;
+        }
+        break;
+    case 8: // 修改定时任务
+        ChangeSchedule(config, params["data"]);
+        break;
+    default:
+        break;
     }
-    for (auto& item : params["broker"]) {
-        item["db"] = DATA_PATH "/broker";
-    }
+    
+    // 修改后写回去
     std::ofstream ofs;
     ofs.open("config.json");
-    ofs << params;
+    ofs << config;
     ofs.close();
 
     res.status = 200;
+}
+
+bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::json& params) {
+    for (auto& item: config["exchange"])  {
+        if (item["name"] == params["name"]) { // exist
+            return false;
+        }
+    }
+    nlohmann::json exchange;
+    exchange["account"] = params["account"];
+    exchange["passwd"] = params["passwd"];
+    exchange["name"] = params["name"];
+    if (params["api"] == "xtp") {
+        exchange["quote"] = "119.3.103.38:6002";
+        exchange["trade"] = "122.112.139.0:6104";
+        exchange["type"] = "stock";
+        exchange["log_path"] = "logs";
+        exchange["key"] = params["key"];
+    }
+    else if (params["api"] == "ctp") {
+        exchange["quote"] = "180.168.146.187:10211";
+        exchange["trade"] = "180.168.146.187:10201";
+        exchange["type"] = "future";
+        exchange["appid"] = params["appid"];
+        exchange["athencode"] = params["athencode"];
+    } else {
+        return false;
+    }
+    config["exchange"].emplace_back(std::move(exchange));
+    return true;
+}
+
+bool SystemConfigHandler::DeleteExchange(nlohmann::json& config, const String& name) {
+    
+    return true;
+}
+
+bool SystemConfigHandler::ChangePassword(nlohmann::json& config, const String& org, const String& latest) {
+    if (org == latest)
+        return true;
+
+    config["server"]["passwd"] = latest;
+    return true;
+}
+
+bool SystemConfigHandler::ChangeCommission(nlohmann::json& config, const nlohmann::json& params) {
+    return true;
+}
+
+bool SystemConfigHandler::ChangeSMTP(nlohmann::json& config, const nlohmann::json& params) {
+    config["server"]["smtp"]["addr"] = params["addr"];
+    config["server"]["smtp"]["auth"] = params["auth"];
+    config["server"]["smtp"]["mail"] = params["mail"];
+    return true;
+}
+
+bool SystemConfigHandler::ChangeSchedule(nlohmann::json& config, const nlohmann::json& params) {
+    config["server"]["default"]["daily"] = params["daily"];
+    return true;
 }

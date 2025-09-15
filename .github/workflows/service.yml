@@ -116,3 +116,10 @@ jobs:
       # 显示缓存统计（验证加速效果）
       - name: Show ccache stats
         run: ccache -s
+      # 上传构建以便下载
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: QuantService
+          compression-level: 5
