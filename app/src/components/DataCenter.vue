@@ -56,6 +56,8 @@ const storeKey = 'syncPath'
 let selectedFolderPath = ref(store.get(storeKey));
 let lastSyncDate = ref(store.get('lastSyncDate'));
 
+
+
 const onHandleDownload = async () => {
     console.info("onHandleDownload", selectedFolderPath.value);
     const filePath = 'sync.zip'

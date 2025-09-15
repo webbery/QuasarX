@@ -120,7 +120,7 @@ app.whenReady().then(async () => {
         // console.info('response', response)
         if (response.status === 200) {
             const fs = require('fs');
-            console.info('data len:', response.data.length, typeof(dstZip), typeof(response.data))
+            // console.info('data len:', response.data.length, typeof(dstZip), typeof(response.data))
             fs.writeFileSync(dstZip, response.data, 'binary');
             const StreamZip = require('node-stream-zip');
             // 解压zip文件

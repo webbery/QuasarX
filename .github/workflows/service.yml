@@ -68,9 +68,9 @@ jobs:
             onnxruntime/build
             /usr/local/include/onnxruntime
             /usr/local/lib/libonnxruntime*
-          key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/build.sh') }}
           restore-keys: |
-            ${{ runner.os }}-onnx-
+            ${{ runner.os }}-onnxruntime-
 
       - name: build ONNX-runtime (if cache miss)
         if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
