@@ -79,7 +79,7 @@ jobs:
           cd onnxruntime
           git checkout v1.22.2
           export ORT_BUILD_WITH_CACHE=1
-          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
+          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --parallel --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
           cd build/Linux/Release && sudo make install
 
       - name: build third_party
