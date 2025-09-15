@@ -271,7 +271,12 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
 }
 
 bool SystemConfigHandler::DeleteExchange(nlohmann::json& config, const String& name) {
-    
+    for (auto itr = config["exchange"].begin(); itr != config["exchange"].end(); ++itr) {
+        if ((*itr)["name"] == name) {
+            config["exchange"].erase(itr);
+            break;
+        }
+    }
     return true;
 }
 
@@ -284,6 +289,7 @@ bool SystemConfigHandler::ChangePassword(nlohmann::json& config, const String& o
 }
 
 bool SystemConfigHandler::ChangeCommission(nlohmann::json& config, const nlohmann::json& params) {
+    
     return true;
 }
 

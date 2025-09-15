@@ -110,6 +110,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_DATA_SYNC       "/data/sync"
 #define API_USER_LOGIN      "/user/login"
 #define API_SERVER_STATUS   "/server/status"
+#define API_SERVER_CONFIG   "/server/config"
 #define API_FEATURE         "/feature"
 
 void trim(std::string& input) {
@@ -244,8 +245,10 @@ void Server::Regist() {
     REGIST_GET(API_SERVER_STATUS);
     REGIST_GET(API_FEATURE);
     REGIST_GET(API_INDEX);
+    REGIST_GET(API_SERVER_CONFIG);
     
     REGIST_POST(API_BACKTEST);
+    REGIST_POST(API_SERVER_CONFIG);
 }
 
 bool Server::InitDatabase() {
@@ -945,6 +948,7 @@ void Server::InitHandlers() {
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
     RegistHandler(API_DATA_SYNC, DataSyncHandler);
     RegistHandler(API_SERVER_STATUS, ServerStatusHandler);
+    RegistHandler(API_SERVER_CONFIG, SystemConfigHandler);
     RegistHandler(API_FEATURE, FeatureHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];

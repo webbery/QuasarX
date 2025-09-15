@@ -43,7 +43,7 @@ jobs:
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev libpapi-dev 7zip
+          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install cython
@@ -78,6 +78,7 @@ jobs:
           git clone --recursive https://github.com/microsoft/onnxruntime
           cd onnxruntime
           git checkout v1.22.2
+          export ORT_BUILD_WITH_CACHE=1
           ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
           cd build/Linux/Release && sudo make install
 
