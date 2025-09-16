@@ -1,0 +1,19 @@
+# 作为服务放在/etc/systemd/system/下
+[Unit]
+Description=Quant Service   # 服务描述
+After=network.target                   # 指定在网络就绪后启动
+
+[Service]
+Type=simple
+User=webberg                           # 运行服务的用户（可选，建议用非root用户）
+Group=webberg                          # 用户组（可选）
+WorkingDirectory=/home/webberg/service     # 可执行文件所在目录
+ExecStart=/bin/bash /home/webberg/service/startup.sh   # 可执行文件的绝对路径
+Restart=always                         # 崩溃后总是重启
+RestartSec=5                           # 重启前等待时间（秒）
+StandardOutput=syslog                  # 输出日志到syslog
+StandardError=syslog                   # 错误日志到syslog
+Environment=KEY=value                  # 设置环境变量（可选）
+
+[Install]
+WantedBy=multi-user.target             # 多用户模式下启用
