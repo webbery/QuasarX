@@ -122,5 +122,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: QuantService
+          path: service/build/QuantService
           compression-level: 5
