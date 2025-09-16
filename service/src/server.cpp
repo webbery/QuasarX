@@ -363,6 +363,11 @@ bool Server::InitMarket(const std::string& path) {
         return false;
     // A股
     String stock_path = path + "/symbol_market.csv";
+    if (!std::filesystem::exist(stock_path)) {
+        // 首次启动,运行初始化脚本
+        RunCommand("python tools/run_task.py 1");
+        RunCommand("python tools/run_task.py 2");
+    }
     io::CSVReader<2> reader(stock_path);
     reader.read_header(io::ignore_extra_column, "代码", "交易所");
     std::string code;
@@ -409,18 +414,20 @@ bool Server::InitMarket(const std::string& path) {
         {"shfe", MT_ShanghaiFuture},
         {"ine", MT_ShanghaiEng},
     };
-    for (auto& files: std::filesystem::directory_iterator(future.c_str())) {
-        if (files.is_directory())
-            continue;
+    // TODO: 通过CTP初始化获取所有有效的期货和期权代码
+    // if ()
+    // for (auto& files: std::filesystem::directory_iterator(future.c_str())) {
+    //     if (files.is_directory())
+    //         continue;
 
-        auto name = files.path().filename().stem().string();
-        List<String> tokens;
-        split(name, tokens, "_");
-        ContractInfo info;
-        info._type = ContractType::Future;
-        info._exchange = future_exc_map.at(tokens.front());
-        _markets.emplace(tokens.back(), std::move(info));
-    }
+    //     auto name = files.path().filename().stem().string();
+    //     List<String> tokens;
+    //     split(name, tokens, "_");
+    //     ContractInfo info;
+    //     info._type = ContractType::Future;
+    //     info._exchange = future_exc_map.at(tokens.front());
+    //     _markets.emplace(tokens.back(), std::move(info));
+    // }
 
     String option = path + "/option";
     // for (auto& files: std::filesystem::directory_iterator(option.c_str())) {
@@ -429,14 +436,14 @@ bool Server::InitMarket(const std::string& path) {
     //     auto name = files.path().filename().stem().string();
     // }
     // 指数
-    String index = path + "/index.csv";
-    io::CSVReader<2> index_reader(index);
-    index_reader.read_header(io::ignore_extra_column, "code", "name");
-    while(index_reader.read_row(code, exch)){
-        ContractInfo info;
-        info._type = ContractType::Index;
-        _markets.emplace(code, std::move(info));
-    }
+    // String index = path + "/index.csv";
+    // io::CSVReader<2> index_reader(index);
+    // index_reader.read_header(io::ignore_extra_column, "code", "name");
+    // while(index_reader.read_row(code, exch)){
+    //     ContractInfo info;
+    //     info._type = ContractType::Index;
+    //     _markets.emplace(code, std::move(info));
+    // }
     return true;
 }
 
