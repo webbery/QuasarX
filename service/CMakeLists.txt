@@ -152,9 +152,17 @@ else (USE_CUDA) # onnxruntime
     # target_link_libraries(${PROJECT_NAME} onnxruntime::onnxruntime)
     target_link_libraries(${PROJECT_NAME} onnxruntime)
 endif (USE_CUDA)
-# install(TARGETS ${PROJECT_NAME})
-# install(FILES
-#     ${CMAKE_SOURCE_DIR}/build/dash_server
-#     ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libxtpquoteapi.so
-#     ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libxtptraderapi.so
-#     TYPE BIN)
+install(TARGETS ${PROJECT_NAME})
+install(FILES
+    ${CMAKE_SOURCE_DIR}/build/${PROJECT_NAME}
+    ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libxtpquoteapi.so
+    ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libxtptraderapi.so
+    ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libthosttraderapi_se.so
+    ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libthostmduserapi_se.so
+    DESTINATION installs
+    TYPE BIN)
+install(FILES
+    ${CMAKE_SOURCE_DIR}/tools/run_task.py
+    ${CMAKE_SOURCE_DIR}/tools/quote_index.py
+    DESTINATION installs/tools
+)
