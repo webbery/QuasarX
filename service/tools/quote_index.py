@@ -4,11 +4,11 @@ import pandas as pd
 
 def get_index_rt_value(index):
     rows = []
-    if index % 2 == 0:
-        data = ak.stock_zh_index_spot_em('沪深重要指数')
-        for _, row in data.iterrows():
-            if row['代码'] in ['000001', '399001', '899050', '399006']:
-                rows.append([row['代码'], row['最新价'], row['涨跌幅']])
+    # if index % 2 == 0:
+    data = ak.stock_zh_index_spot_em('沪深重要指数')
+    for _, row in data.iterrows():
+        if row['代码'] in ['000001', '399001', '899050', '399006']:
+            rows.append([row['代码'], row['最新价'], row['涨跌幅']])
     # else:
     #     data = ak.stock_zh_index_spot_sina()
     #     for _, row in data.iterrows():

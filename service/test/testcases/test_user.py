@@ -16,7 +16,7 @@ class TestUser:
         assert 'cpu' in data
         assert 'mem' in data
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(20)
     def test_index(self, auth_token):
         kwargs = {
             'verify': False  # 始终禁用 SSL 验证
@@ -25,21 +25,10 @@ class TestUser:
             kwargs['headers'] = {'Authorization': auth_token}
         response = requests.get(f"{BASE_URL}/index/quote", **kwargs)
         data = check_response(response)
-
-    @pytest.mark.timeout(5)
-    def test_get_config(self, auth_token):
-        kwargs = {
-            'verify': False  # 始终禁用 SSL 验证
-        }
-        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
-            kwargs['headers'] = {'Authorization': auth_token}
-
-        response = requests.get(f"{BASE_URL}/server/config", **kwargs)
-        data = check_response(response)
-        assert 'server' in data
-        assert 'default' in data['server']
-        assert 'exchange' in data
-        assert len(data['exchange']) > 0
+        assert len(data) > 0
+        assert 'code' in data[0]
+        assert 'price' in data[0]
+        assert 'rate' in data[0]
 
     @pytest.mark.timeout(5)
     def test_add_exchange(self, auth_token):
@@ -78,6 +67,21 @@ class TestUser:
         }
         response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
         check_response(response)
+
+    @pytest.mark.timeout(5)
+    def test_get_config(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        response = requests.get(f"{BASE_URL}/server/config", **kwargs)
+        data = check_response(response)
+        assert 'server' in data
+        assert 'default' in data['server']
+        assert 'exchange' in data
+        assert len(data['exchange']) > 0
 
     @pytest.mark.timeout(5)
     def test_update_smtp(self, auth_token):

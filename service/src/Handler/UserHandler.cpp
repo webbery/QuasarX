@@ -201,7 +201,7 @@ void SystemConfigHandler::post(const httplib::Request& req, httplib::Response& r
     case 3: // 删除server
         break;
     case 4: // 删除交易所
-        if (!DeleteExchange(config, params["data"])) {
+        if (!DeleteExchange(config, params["data"]["name"])) {
             res.status = 400;
             return;
         }
@@ -272,7 +272,7 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
 
 bool SystemConfigHandler::DeleteExchange(nlohmann::json& config, const String& name) {
     for (auto itr = config["exchange"].begin(); itr != config["exchange"].end(); ++itr) {
-        if ((*itr)["name"] == name) {
+        if (strcmp(((String)(*itr)["name"]).c_str(), name.c_str()) == 0) {
             config["exchange"].erase(itr);
             break;
         }

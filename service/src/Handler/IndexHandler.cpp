@@ -10,7 +10,7 @@
 IndexHandler::IndexHandler(Server* server): HttpHandler(server),_times(0) {}
 
 void IndexHandler::get(const httplib::Request& req, httplib::Response& res) {
-    String cmd = "python tool/quote_index.py " + std::to_string(_times++);
+    String cmd = "python tools/quote_index.py " + std::to_string(_times++);
     String output;
     RunCommand(cmd, output);
     Vector<String> lines;
@@ -22,7 +22,10 @@ void IndexHandler::get(const httplib::Request& req, httplib::Response& res) {
 
     nlohmann::json jsn;
     for (int i = 1; i < lines.size(); ++i) {
+        if ( lines[i].empty())
+            break;
         Vector<String> cols;
+        // INFO("{}", lines[i]);
         split(lines[i], cols, " ");
         nlohmann::json info;
         info["code"] = cols[1];
