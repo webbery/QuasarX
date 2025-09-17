@@ -113,6 +113,7 @@ jobs:
           mkdir service/build && cd service/build
           cmake .. -DCMAKE_BUILD_TYPE=Release 
           cmake --build . --config Release
+          make install
 
       # 显示缓存统计（验证加速效果）
       - name: Show ccache stats
@@ -122,5 +123,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: service/build/QuantService
+          path: service/installs
           compression-level: 5

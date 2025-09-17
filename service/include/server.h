@@ -215,6 +215,10 @@ private:
 
     bool JWTMiddleWare(const httplib::Request& req, httplib::Response& res);
 
+    void InitStocks(const String& path);
+    void InitStocks();
+    void InitFutures(const String& path);
+    void InitFutures();
 private:
     struct DividendData {
         time_t _start;

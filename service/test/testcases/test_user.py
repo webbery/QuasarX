@@ -91,7 +91,16 @@ class TestUser:
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
 
-        
+        json = {
+            'type': 7,
+            'data': {
+                'addr': 'smtp.qq.com:587',
+                'auth': '11111111111',
+                'mail': '222222@foxmail.com'
+            }
+        }
+        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
+        check_response(response)
 
     @pytest.mark.timeout(5)
     def test_update_passwd(self, auth_token):
@@ -100,6 +109,15 @@ class TestUser:
         }
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
+        json = {
+            'type': 5,
+            'data': {
+                'org': 'admin',
+                'latest': 'admin'
+            }
+        }
+        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
+        check_response(response)
 
     @pytest.mark.timeout(5)
     def test_update_commission(self, auth_token):
@@ -108,7 +126,28 @@ class TestUser:
         }
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
+        json = {
+            'type': 6,
+            'data': {
+                'org': 'admin',
+                'latest': 'admin'
+            }
+        }
+        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
+        check_response(response)
 
     @pytest.mark.timeout(5)
     def test_update_schedule(self, auth_token):
-        pass
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+        json = {
+            'type': 8,
+            'data': {
+                'daily': '20:00',
+            }
+        }
+        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
+        check_response(response)

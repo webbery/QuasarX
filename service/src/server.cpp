@@ -358,12 +358,14 @@ void Server::InitDefault() {
     StartTimer();
 }
 
-bool Server::InitMarket(const std::string& path) {
-    if (!std::filesystem::exists(path))
-        return false;
-    // A股
+void Server::InitStocks(const String& path) {
+    static bool isInit = false;
+    if (isInit)
+        return;
+    isInit = true;
+    
     String stock_path = path + "/symbol_market.csv";
-    if (!std::filesystem::exist(stock_path)) {
+    if (!std::filesystem::exists(stock_path)) {
         // 首次启动,运行初始化脚本
         RunCommand("python tools/run_task.py 1");
         RunCommand("python tools/run_task.py 2");
@@ -404,6 +406,38 @@ bool Server::InitMarket(const std::string& path) {
         }
         _markets.emplace(symbol, std::move(info));
     }
+}
+
+void Server::InitFutures(const String& path) {
+
+}
+
+bool Server::InitMarket(const std::string& path) {
+    if (!std::filesystem::exists(path))
+        return false;
+    // A股
+    auto defaults = _config->GetDefault();
+    auto& exchangeNames = defaults["exchange"];
+    for (String name: exchangeNames) {
+        auto& info = _config->GetExchangeByName(name);
+        if (info["type"] == "stock") {
+            if (info["api"] == "sim") {
+                InitStocks(path);
+            } else {
+                // TODO: 通过接口获取
+                InitStocks(path);
+            }
+        }
+        else if (info["type"] == "future") {
+            if (info["api"] == "sim") {
+                InitFutures(path);
+            } else {
+                // TODO: 通过接口获取
+                InitFutures();
+            }
+        }
+    }
+    
 
     String future = path + "/future";
     const Map<String, ExchangeName> future_exc_map{
@@ -445,6 +479,10 @@ bool Server::InitMarket(const std::string& path) {
     //     _markets.emplace(code, std::move(info));
     // }
     return true;
+}
+
+void Server::InitFutures() {
+
 }
 
 bool Server::InitInterestRate(const std::string& path) {
