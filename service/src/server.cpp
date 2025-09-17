@@ -254,7 +254,7 @@ void Server::Regist() {
 bool Server::InitDatabase() {
     auto db_path = _config->GetDatabasePath();
     InitMarket(db_path);
-    InitInterestRate(db_path + "/inter_rate.csv");
+    // InitInterestRate(db_path + "/inter_rate.csv");
 
     // TODO: 获取配置中计算所需的最大数据量,然后只读取这部分数据,提升加载速度并减少内存占用
     // int prepare_count = GetMaxPrepareCount();
