@@ -159,8 +159,7 @@ install(FILES
     ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libxtptraderapi.so
     ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libthosttraderapi_se.so
     ${CMAKE_SOURCE_DIR}/third_party/libs/unix/libthostmduserapi_se.so
-    DESTINATION installs
-    TYPE BIN)
+    DESTINATION installs)
 install(FILES
     ${CMAKE_SOURCE_DIR}/tools/run_task.py
     ${CMAKE_SOURCE_DIR}/tools/quote_index.py
