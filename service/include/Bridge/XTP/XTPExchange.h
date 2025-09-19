@@ -67,7 +67,5 @@ private:
   using concurrent_order_map = ConcurrentMap<uint64_t, Pair<XTPOrderInsertInfo*, OrderContext*>>;
   concurrent_order_map _orders;
 
-  QuoteFilter _filter;
-
   List<Pair<float, float>> _workingTime;
 };

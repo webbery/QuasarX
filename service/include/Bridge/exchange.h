@@ -175,4 +175,7 @@ protected:
     char _stop_minute;
   };
   Vector<WorkingRange> _range;
+
+  QuoteFilter _filter;
+
 };

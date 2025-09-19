@@ -482,7 +482,11 @@ bool Server::InitMarket(const std::string& path) {
 }
 
 void Server::InitFutures() {
+    static bool isInit = false;
+    if (isInit)
+        return;
 
+    isInit = true;
 }
 
 bool Server::InitInterestRate(const std::string& path) {

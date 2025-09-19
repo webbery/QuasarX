@@ -135,8 +135,9 @@ if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")
 else()
     target_link_libraries(${PROJECT_NAME} ssl crypto)
 endif()
-target_link_libraries(${PROJECT_NAME} curl -pthread nng
-    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se papi
+target_link_libraries(${PROJECT_NAME} curl -pthread nng papi
+    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se 
+    xmdapi xfastmdapi traderapi fasttraderapi
 )
 
 endif(WIN32)

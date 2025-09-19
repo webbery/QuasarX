@@ -63,8 +63,6 @@ protected:
   Map<String, Vector<String>> _headers;
   Map<String, QuoteInfo> _rows;
 
-  QuoteFilter _filter;
-
   int _cur_index;
   std::thread* _worker;
 
