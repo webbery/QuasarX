@@ -256,6 +256,7 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
         exchange["type"] = "stock";
         exchange["log_path"] = "logs";
         exchange["key"] = params["key"];
+        exchange["utc_active"] = FormatActiveTime(params["utc_active"]);
     }
     else if (params["api"] == "hx") {
         exchange["quote"] = "210.14.72.16:9402";
@@ -263,7 +264,7 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
         exchange["type"] = "stock";
         exchange["log_path"] = "logs";
         exchange["key"] = params["key"];
-        exchange["utc_active"] = params["utc_active"];
+        exchange["utc_active"] = FormatActiveTime(params["utc_active"]);
     }
     else if (params["api"] == "ctp") {
         exchange["quote"] = "180.168.146.187:10211";
@@ -311,4 +312,11 @@ bool SystemConfigHandler::ChangeSMTP(nlohmann::json& config, const nlohmann::jso
 bool SystemConfigHandler::ChangeSchedule(nlohmann::json& config, const nlohmann::json& params) {
     config["server"]["default"]["daily"] = params["daily"];
     return true;
+}
+
+List<String> SystemConfigHandler::FormatActiveTime(const nlohmann::json& times) {
+    List<String> result;
+    String info = times;
+    split(info, result, ";");
+    return result;
 }

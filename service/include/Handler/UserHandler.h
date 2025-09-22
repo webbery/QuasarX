@@ -41,4 +41,6 @@ private:
     bool ChangeCommission(nlohmann::json& config, const nlohmann::json& params);
     bool ChangeSMTP(nlohmann::json& config, const nlohmann::json& params);
     bool ChangeSchedule(nlohmann::json& config, const nlohmann::json& params);
+    // input:09:30-11:30;13:00-15:00
+    List<String> FormatActiveTime(const nlohmann::json& times);
 };
