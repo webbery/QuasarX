@@ -1,6 +1,7 @@
 #include "Bridge/HX/HXQuote.h"
 #include "Util/system.h"
 #include "Bridge/exchange.h"
+#include "Util/string_algorithm.h"
 
 using namespace TORALEV1API;
 
@@ -19,12 +20,21 @@ bool HXQuateSpi::Init() {
 }
 
 void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketDataField) {
-    auto name = pMarketDataField->SecurityName;
+    if (pMarketDataField->MDSecurityStat == 0)
+        return;
+
+    auto name = pMarketDataField->SecurityID;
     auto symb = to_symbol(name);
     QuoteInfo& info = _tickers[symb];
+    auto cur = Now();
+    auto strDate = ToString(cur);
+    List<String> infos;
+    split(strDate, infos, " ");
     {
         std::unique_lock<std::mutex> lock(_mutex);
-        // info._time = FromStr(std::to_string(pMarketDataField->data_time/1000), "%Y%m%d%H%M%S");
+        String strTime(pMarketDataField->UpdateTime);
+        strTime = infos.front() + " " + strTime;
+        info._time = FromStr(strTime, "%Y-%m-%d %H:%M:%S");
         info._symbol = symb;
         info._open = pMarketDataField->OpenPrice;
         info._close = pMarketDataField->PreClosePrice;
@@ -62,4 +72,14 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
         printf("send quote message fail.\n");
         return;
     }
+}
+
+void HXQuateSpi::OnFrontConnected()
+{
+    INFO("HX connected");
+}
+
+void HXQuateSpi::OnFrontDisconnected(int nReason)
+{
+    INFO("HX disconnect:{}", nReason);
 }

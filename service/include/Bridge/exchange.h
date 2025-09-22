@@ -25,6 +25,7 @@ enum ExchangeType {
     EX_XTP,
     EX_CTP,
     EX_SIM,
+    EX_HX,
     EX_Unknow
 };
 

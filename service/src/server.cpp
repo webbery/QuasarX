@@ -591,6 +591,26 @@ ExchangeName Server::GetExchange(const std::string& symbol) {
     return *types.begin();
 }
 
+ExchangeInterface* Server::GetAvaliableStockExchange()
+{
+    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
+    auto name = handler->GetActiveStock();
+    if (name.empty())
+        return nullptr;
+    auto& exchanges = handler->GetExchanges();
+    return exchanges.at(name);
+}
+
+ExchangeInterface* Server::GetAvaliableFutureExchange()
+{
+    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
+    auto name = handler->GetActiveFuture();
+    if (name.empty())
+        return nullptr;
+    auto& exchanges = handler->GetExchanges();
+    return exchanges.at(name);
+}
+
 ContractType Server::GetContractType(const std::string& symbol, const String& exhange)
 {
     auto lower_itr = _markets.lower_bound(symbol);

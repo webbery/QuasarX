@@ -14,6 +14,9 @@ public:
 
     virtual void OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketDataField);
 
+    virtual void OnFrontConnected();
+
+    virtual void OnFrontDisconnected(int nReason);
 private:
   nng_socket _sock;
   std::mutex _mutex;

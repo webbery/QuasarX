@@ -40,6 +40,10 @@ public:
     virtual QuoteInfo GetQuote(symbol_t symbol);
 
 private:
+    bool _login_status : 1;
+    bool _quote_inited : 1;
+    bool _requested : 1;
+
     HXQuateSpi* _quote;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;
 };

@@ -5,6 +5,7 @@
 
 #define XTP_API     "xtp"   // 
 #define CTP_API     "ctp"   // 
+#define HX_API      "hx"   // »ªöÎ
 
 class ExchangeInterface;
 class ExchangeHandler : public HttpHandler {
@@ -25,6 +26,9 @@ public:
   const Map<ExchangeType, ExchangeInterface*>& GetExchangesWithType() {
     return _type_excs;
   }
+
+  String GetActiveStock() { return _activeStockName; }
+  String GetActiveFuture() { return _activeFutureName; }
 
   virtual void post(const httplib::Request& req, httplib::Response& res);
 
@@ -56,6 +60,8 @@ private:
   }
 private:
   bool _enableSimulation = false;
+  String _activeStockName;
+  String _activeFutureName;
   Map<String, ExchangeInterface*> _exchanges;
   Map<ExchangeType, ExchangeInterface*> _type_excs;
 };

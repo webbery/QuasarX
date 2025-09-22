@@ -391,11 +391,13 @@ void BrokerSubSystem::AddOrderAsync(OrderContext* order) {
         _server->SendEmail(content);
     }
     if (is_stock(order->_symbol)) {
-        _exchanges[ExchangeType::EX_XTP]->AddOrder(order->_symbol, order);
+        auto exchange = _server->GetAvaliableStockExchange();
+        exchange->AddOrder(order->_symbol, order);
         return;
     }
     if (is_future(order->_symbol)) {
-        _exchanges[ExchangeType::EX_CTP]->AddOrder(order->_symbol, order);
+        auto exchange = _server->GetAvaliableFutureExchange();
+        exchange->AddOrder(order->_symbol, order);
         return;
     }
 }

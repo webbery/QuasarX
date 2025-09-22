@@ -257,6 +257,14 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
         exchange["log_path"] = "logs";
         exchange["key"] = params["key"];
     }
+    else if (params["api"] == "hx") {
+        exchange["quote"] = "210.14.72.16:9402";
+        //exchange["trade"] = "122.112.139.0:6104";
+        exchange["type"] = "stock";
+        exchange["log_path"] = "logs";
+        exchange["key"] = params["key"];
+        exchange["utc_active"] = params["utc_active"];
+    }
     else if (params["api"] == "ctp") {
         exchange["quote"] = "180.168.146.187:10211";
         exchange["trade"] = "180.168.146.187:10201";

@@ -99,6 +99,8 @@ public:
     bool IsExit() { return _exit; }
 
     ExchangeInterface* GetExchange(ExchangeType type);
+    ExchangeInterface* GetAvaliableStockExchange();
+    ExchangeInterface* GetAvaliableFutureExchange();
 
     float GetInterestRate(time_t datetime);
     

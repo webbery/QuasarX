@@ -6,7 +6,8 @@
 using namespace TORALEV1API;
 
 HXExchange::HXExchange(Server* server)
-:ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr) {
+:ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr)
+, _login_status(false), _quote_inited(false), _requested(false) {
 }
 HXExchange::~HXExchange(){
     if (_quote) {
@@ -23,16 +24,11 @@ bool HXExchange::Init(const ExchangeInfo& handle){
     _quote = new HXQuateSpi(_quoteAPI);
 
     _quoteAPI->RegisterSpi(_quote);
-    _quoteAPI->RegisterFront("tcp://210.14.72.16:9402");
+    String quote_ip("tcp://");
+    quote_ip += std::string(handle._quote_addr) + ":" + std::to_string(handle._quote_port);
+    _quoteAPI->RegisterFront((char*)quote_ip.c_str());
     _quoteAPI->Init();
-
-    CTORATstpReqUserLoginField req_user_login_field;
-    memset(&req_user_login_field, 0, sizeof(req_user_login_field));
-    int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, 0);
-    if (ret != 0) {
-        INFO("HX login fail.");
-        return false;
-    }
+    
     return true;
 }
 
@@ -49,19 +45,40 @@ bool HXExchange::Release(){
 }
 
 bool HXExchange::Login(){
+    if (IsLogin())
+        return true;
+
+    bool status = _quote->Init();
+
+    CTORATstpReqUserLoginField req_user_login_field;
+    memset(&req_user_login_field, 0, sizeof(req_user_login_field));
+    int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, 0);
+    if (ret != 0) {
+        INFO("HX login fail.");
+        return false;
+    }
+    if (status) {
+        _login_status = true;
+    }
     return true;
 }
 bool HXExchange::IsLogin(){
-    return true;
+    return _login_status;
 }
 
 AccountPosition HXExchange::GetPosition(){
+    AccountPosition ap;
+    return ap;
 }
 
 AccountAsset HXExchange::GetAsset(){
+    AccountAsset aa;
+    return aa;
 }
 
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* order){
+    order_id oi;
+    return oi;
 }
 
 void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
@@ -72,6 +89,8 @@ bool HXExchange::CancelOrder(order_id id){
 }
 // 获取当前尚未完成的所有订单
 OrderList HXExchange::GetOrders(){
+    OrderList ol;
+    return ol;
 }
 
 void HXExchange::QueryQuotes(){
@@ -79,28 +98,89 @@ void HXExchange::QueryQuotes(){
     if (_filter._symbols.empty()) {
 
     } else {
-        char **subscribe_array = new char*[_filter._symbols.size()];
-        int i = 0;
-        for (auto symbol: _filter._symbols) {
-            subscribe_array[i] = new char[symbol.size() + 1];
-            strcpy(subscribe_array[i], symbol.c_str());
-            ++i;
+        if (_quote_inited)
+            return;
+        _quote_inited = true;
+        Map<char, Vector<String>> subscribe_map;
+        for (auto symb: _filter._symbols) {
+            auto symbol = to_symbol(symb);
+            char type = 0;
+            switch (symbol._exchange) {
+            case MT_Shanghai: type = TORA_TSTP_EXD_SSE; break;
+            case MT_Shenzhen: type = TORA_TSTP_EXD_SZSE; break;
+            case MT_Beijing: type = TORA_TSTP_EXD_BSE; break;
+            default:
+                break;
+            }
+            if (type == 0) {
+                WARN("unsupport exchange {}", (int)symbol._exchange);
+                continue;
+            }
+            subscribe_map[type].emplace_back(symb);
         }
-        int ret = _quoteAPI->SubscribeMarketData(subscribe_array, _filter._symbols.size(), TORA_TSTP_EXD_SSE);
-        for (int j = 0; j < _filter._symbols.size(); ++j) {
+        for (auto& item : subscribe_map) {
+            char** subscribe_array = new char* [item.second.size()];
+            for (int i = 0; i < item.second.size(); ++i) {
+                subscribe_array[i] = new char[item.second[i].size() + 1] {0};
+                strcmp(subscribe_array[i], item.second[i].c_str());
+            }
+            int ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
+            for (int j = 0; j < item.second.size(); ++j) {
+                delete[] subscribe_array[j];
+            }
+            delete[] subscribe_array;
+            if (ret != 0)
+            {
+                WARN("SubscribeMarketData fail, ret{}", ret);
+                continue;
+            }
+        }
+        _requested = true;
+    }
+}
+
+void HXExchange::StopQuery(){
+    if (!_requested)
+        return;
+
+    _requested = false;
+    Map<char, Vector<String>> subscribe_map;
+    for (auto symb : _filter._symbols) {
+        auto symbol = to_symbol(symb);
+        char type = 0;
+        switch (symbol._exchange) {
+        case MT_Shanghai: type = TORA_TSTP_EXD_SSE; break;
+        case MT_Shenzhen: type = TORA_TSTP_EXD_SZSE; break;
+        case MT_Beijing: type = TORA_TSTP_EXD_BSE; break;
+        default:
+            break;
+        }
+        if (type == 0) {
+            WARN("unsupport exchange {}", (int)symbol._exchange);
+            continue;
+        }
+        subscribe_map[type].emplace_back(symb);
+    }
+    for (auto& item : subscribe_map) {
+        char** subscribe_array = new char* [item.second.size()];
+        for (int i = 0; i < item.second.size(); ++i) {
+            subscribe_array[i] = new char[item.second[i].size() + 1] {0};
+            strcmp(subscribe_array[i], item.second[i].c_str());
+        }
+        int ret = _quoteAPI->UnSubscribeMarketData(subscribe_array, item.second.size(), item.first);
+        for (int j = 0; j < item.second.size(); ++j) {
             delete[] subscribe_array[j];
         }
         delete[] subscribe_array;
         if (ret != 0)
         {
             WARN("SubscribeMarketData fail, ret{}", ret);
-            return;
+            continue;
         }
     }
 }
 
-void HXExchange::StopQuery(){
-}
-
 QuoteInfo HXExchange::GetQuote(symbol_t symbol){
+    QuoteInfo info;
+    return info;
 }

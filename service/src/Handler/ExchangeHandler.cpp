@@ -2,6 +2,7 @@
 #include "Bridge/XTP/XTPExchange.h"
 #include "Bridge/CTP/CTPExchange.h"
 #include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/HX/HXExchange.h"
 #include "Bridge/exchange.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
@@ -24,16 +25,28 @@ bool ExchangeHandler::Use(const String& name) {
   ExchangeType et = ExchangeType::EX_Unknow;
   if (ex_type == XTP_API) {
     ret = SwitchExchange<XTPExchange>(name);
+    _activeStockName = name;
     et = ExchangeType::EX_XTP;
   }
   else if (ex_type == CTP_API) {
     ret = SwitchExchange<CTPExchange>(name);
+    _activeFutureName = name;
     et = ExchangeType::EX_CTP;
   }
   else if (ex_type == "sim") {
     ret = SwitchExchange<StockSimulation>(name);
     et = ExchangeType::EX_SIM;
+    _activeFutureName = name;
+    _activeStockName = name;
     _enableSimulation = true;
+  }
+  else if (ex_type == HX_API) {
+      ret = SwitchExchange<HXExchange>(name);
+      _activeStockName = name;
+      et = ExchangeType::EX_HX;
+  }
+  else {
+      WARN("not support exchange {}", ex_type);
   }
   if (ret) {
     auto ptr = _exchanges[name];
