@@ -6,6 +6,7 @@ namespace TORALEV1API {
     class CTORATstpXMdApi;
 }
 class HXExchange: public ExchangeInterface {
+    friend class HXQuateSpi;
 public:
     HXExchange(Server* server);
     ~HXExchange();

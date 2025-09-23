@@ -1,11 +1,14 @@
 #include "Bridge/HX/HXQuote.h"
+#include "Bridge/HX/HXExchange.h"
 #include "Util/system.h"
 #include "Bridge/exchange.h"
 #include "Util/string_algorithm.h"
+#include <cstring>
 
 using namespace TORALEV1API;
 
-HXQuateSpi::HXQuateSpi(CTORATstpXMdApi* api) {
+HXQuateSpi::HXQuateSpi(CTORATstpXMdApi* api, HXExchange* exchange)
+:_exchange(exchange), _isInited(false) {
     
 }
 
@@ -16,14 +19,29 @@ HXQuateSpi::~HXQuateSpi() {
 }
 
 bool HXQuateSpi::Init() {
-  return Publish(URI_RAW_QUOTE, _sock);
+    if (!_isInited) {
+        _isInited = true;
+        return Publish(URI_RAW_QUOTE, _sock);
+    }
+    return _isInited;
+}
+
+QuoteInfo HXQuateSpi::GetQuote(symbol_t symbol) {
+    std::shared_lock<std::shared_mutex> lock(_mutex);
+    if (_tickers.count(symbol)) {
+        return _tickers[symbol];
+    }
+    return QuoteInfo();
 }
 
 void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketDataField) {
-    if (pMarketDataField->MDSecurityStat == 0)
-        return;
+    // if (pMarketDataField->MDSecurityStat == 0)
+    //     return;
 
     auto name = pMarketDataField->SecurityID;
+    if (strcmp(name, "000001") == 0 && pMarketDataField->ExchangeID == '1') {
+        INFO("recv: {}", pMarketDataField->LastPrice);
+    }
     auto symb = to_symbol(name);
     QuoteInfo& info = _tickers[symb];
     auto cur = Now();
@@ -31,7 +49,7 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     List<String> infos;
     split(strDate, infos, " ");
     {
-        std::unique_lock<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_mutex);
         String strTime(pMarketDataField->UpdateTime);
         strTime = infos.front() + " " + strTime;
         info._time = FromStr(strTime, "%Y-%m-%d %H:%M:%S");
@@ -82,4 +100,7 @@ void HXQuateSpi::OnFrontConnected()
 void HXQuateSpi::OnFrontDisconnected(int nReason)
 {
     INFO("HX disconnect:{}", nReason);
+    _exchange->_login_status = false;
+    _exchange->_quote_inited = false;
+    _exchange->Login();
 }

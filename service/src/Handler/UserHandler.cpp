@@ -47,8 +47,11 @@ void UserLoginHandler::post(const httplib::Request& req, httplib::Response& res)
             data["mode"] = "";
             data["message"] = "login fail.";
             res.set_content(data.dump(), "application/json");
+            WARN("login exception.");
             return;
         }
+    } else {
+        WARN("login auth fail");
     }
     
     res.status = 200;
@@ -183,6 +186,7 @@ void SystemConfigHandler::post(const httplib::Request& req, httplib::Response& r
     ifs.open("config.json");
     if (!ifs.is_open()) {
         res.status = 400;
+        WARN("open config.json fail");
         return ;
     }
     std::string content((std::istreambuf_iterator<char>(ifs)),
@@ -259,6 +263,7 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
         exchange["utc_active"] = FormatActiveTime(params["utc_active"]);
     }
     else if (params["api"] == "hx") {
+        exchange["fen"] = "";
         exchange["quote"] = "210.14.72.16:9402";
         //exchange["trade"] = "122.112.139.0:6104";
         exchange["type"] = "stock";

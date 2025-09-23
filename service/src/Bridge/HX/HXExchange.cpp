@@ -2,6 +2,7 @@
 #include "hx/TORATstpXMdApi.h"
 #include "Bridge/HX/HXQuote.h"
 #include <cstring>
+#include "server.h"
 
 using namespace TORALEV1API;
 
@@ -21,7 +22,7 @@ const char* HXExchange::Name(){
 
 bool HXExchange::Init(const ExchangeInfo& handle){
     _quoteAPI = CTORATstpXMdApi::CreateTstpXMdApi();
-    _quote = new HXQuateSpi(_quoteAPI);
+    _quote = new HXQuateSpi(_quoteAPI, this);
 
     _quoteAPI->RegisterSpi(_quote);
     String quote_ip("tcp://");
@@ -118,20 +119,24 @@ void HXExchange::QueryQuotes(){
             }
             subscribe_map[type].emplace_back(symb);
         }
+        // 补充指数
+        subscribe_map['1'].emplace_back("000001");
+        int ret = -1;
         for (auto& item : subscribe_map) {
             char** subscribe_array = new char* [item.second.size()];
             for (int i = 0; i < item.second.size(); ++i) {
                 subscribe_array[i] = new char[item.second[i].size() + 1] {0};
                 strcmp(subscribe_array[i], item.second[i].c_str());
             }
-            int ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
+            ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
             for (int j = 0; j < item.second.size(); ++j) {
                 delete[] subscribe_array[j];
             }
             delete[] subscribe_array;
             if (ret != 0)
             {
-                WARN("SubscribeMarketData fail, ret{}", ret);
+                WARN("SubscribeMarketData {} fail, ret{}", item.second, ret);
+                _quote_inited = false;
                 continue;
             }
         }
@@ -181,6 +186,6 @@ void HXExchange::StopQuery(){
 }
 
 QuoteInfo HXExchange::GetQuote(symbol_t symbol){
-    QuoteInfo info;
+    QuoteInfo info = _quote->GetQuote(symbol);
     return info;
 }

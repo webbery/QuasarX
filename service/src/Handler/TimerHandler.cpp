@@ -267,7 +267,9 @@ bool RecordHandler::MergeCSV(const String& src, const String& dst) {
     split(last_line, last_info, ",");
     last_t = FromStr(last_info.front(), "%Y-%m-%d %H:%M:%S");
   }
-  new_lines.pop_front();
+  if (!new_lines.empty()) {
+    new_lines.pop_front();
+  }
   
   for (auto& line: new_lines) {
     List<String> info;

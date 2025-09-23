@@ -403,11 +403,14 @@ namespace {
 }
 
 symbol_t to_symbol(const String& symbol, const String& exchange) {
+  List<String> tokens;
+  split(symbol, tokens, ".");
+  String strSymbol = tokens.back();
   symbol_t id;
   memset(&id, 0, sizeof(symbol_t));
   auto code = atoi(symbol.c_str());
   if (exchange.empty()) {
-    auto ct = Server::GetContractType(symbol);
+    auto ct = Server::GetContractType(strSymbol);
     switch (ct) {
     case ContractType::AStock: id._type = contract_type::stock; break;
     case ContractType::ETF: id._type = contract_type::fund; break;
@@ -419,7 +422,12 @@ symbol_t to_symbol(const String& symbol, const String& exchange) {
     break;
     default: break;
     }
-    id._exchange = Server::GetExchange(symbol);
+    if (tokens.size() > 1) {
+      auto excName = to_upper(tokens.front());
+      id._exchange = exchange_map.at(excName);
+    } else {
+      id._exchange = Server::GetExchange(strSymbol);
+    }
   } else {
     id._type = contract_type::stock;
     id._exchange = exchange_map.at(exchange);
@@ -439,11 +447,21 @@ String get_symbol(const symbol_t& symbol) {
     return CTPObjectName(symbol._opt) + buff + CP + std::to_string(symbol._price * 100);
   }
   else if (symbol._type != contract_type::put || symbol._type != contract_type::call) {
-    if (symbol._exchange == MT_Shenzhen || symbol._exchange == MT_Shanghai || symbol._exchange == MT_Beijing) {
 #define CHINA_STOCK_SIZE 7
+    String head;
+    if (symbol._exchange == MT_Shenzhen) {
+      head = "sz.";
+    }
+    else if (symbol._exchange == MT_Shanghai) {
+      head = "sh.";
+    }
+    else if (symbol._exchange == MT_Beijing) {
+      head = "bj.";
+    }
+    if (!head.empty()) {
       char buff[CHINA_STOCK_SIZE] = {0};
       snprintf(buff, CHINA_STOCK_SIZE, "%06d", symbol._symbol);
-      return String(buff, 6);
+      return head + String(buff, 6);
     }
     
     return std::to_string(symbol._symbol);

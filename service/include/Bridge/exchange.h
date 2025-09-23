@@ -67,7 +67,7 @@ inline bool operator < (order_id left, order_id right) {
 
 struct QuoteInfo {
   symbol_t _symbol;
-  time_t _time;
+  time_t _time = 0;
   double _open;
   double _close;
 
