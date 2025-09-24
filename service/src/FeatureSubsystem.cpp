@@ -12,6 +12,7 @@
 #include <variant>
 #include "Features/MA.h"
 #include "Features/VWAP.h"
+#include "Features/Basic.h"
 
 #define REGIST_FEATURE(class_name, json_str) \
     { auto f = FeatureFactory::Create(class_name::name(), nlohmann::json::parse(json_str));\
@@ -20,7 +21,8 @@
 using FeatureFactory = TypeFactory<
     ATRFeature,
     EMAFeature,
-    VWAPFeature
+    VWAPFeature,
+    BasicFeature
 >;
 
 unsigned short IFeature::_t = 0;
@@ -182,7 +184,8 @@ void FeatureSubsystem::run() {
         {
             std::unique_lock<std::mutex> lock(_mtx);
             auto& pipeinfo = _pipelines[quote._symbol];
-            if (pipeinfo._gap != 0 && !_handle->IsOpen(quote._symbol, quote._time)) { // 日间策略:
+            if (pipeinfo._gap != 0 &&
+                (_handle->GetRunningMode() == RuningType::Backtest || !_handle->IsOpen(quote._symbol, quote._time))) { // 日间策略:
                 send_feature(send_sock, quote, pipeinfo._features);
                 continue;
             } else { // 实时

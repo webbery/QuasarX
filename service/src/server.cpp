@@ -1145,9 +1145,6 @@ double Server::ResetPrice(symbol_t symbol, double adj_price, time_t adj_t) {
 }
 
 bool Server::IsOpen(symbol_t symbol, time_t t) {
-    if (_runType == RuningType::Backtest)
-        return true;
-
     auto exc_type = Server::GetExchange(get_symbol(symbol));
     return IsOpen(exc_type, t);
 }

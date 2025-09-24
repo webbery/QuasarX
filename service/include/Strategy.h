@@ -2,6 +2,8 @@
 #include "std_header.h"
 #include "json.hpp"
 
+#define BASIC_NAME  "Basic"
+
 enum class ContractOperator: unsigned char {
   Hold = 0,
   Long = 1,

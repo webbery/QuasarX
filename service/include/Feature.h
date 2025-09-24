@@ -16,6 +16,13 @@ enum class FeatureType: char {
     FT_VWAP,
     FT_MACD,
 
+    FT_OPEN,
+    FT_CLOSE,
+    FT_HIGH,
+    FT_LOW,
+    FT_VOLUME,
+    FT_TURNOVER,
+
     FT_MIN_MAX_SCALER,
     FT_COUNT,
 };

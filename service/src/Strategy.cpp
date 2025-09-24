@@ -6,6 +6,7 @@
 namespace {
     Map<String, AgentType> agent_types{
         {"XGBOOST", AgentType::XGBoost},
+        {"ONNX", AgentType::NeuralNetwork},
         {"LSTM", AgentType::NeuralNetwork},
         {"CNN", AgentType::NeuralNetwork}
     };
@@ -21,6 +22,7 @@ Set<String> GetAgentTypes() {
 
 AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     AgentStrategyInfo si;
+    Set<String> basicTypes{"open", "close", "high", "low", "volume", "turnover"};
     try {
         auto& strategy = content["strategy"];
         // si._name = (String)strategy["name"];
@@ -37,6 +39,10 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
                 fi->_type = (String)node["type"];
                 if (node.contains("params")) {
                     fi->_params = node["params"];
+                }
+                else if (basicTypes.count(fi->_type)) {
+                    fi->_params = fi->_type;
+                    fi->_type = BASIC_NAME;
                 }
                 if (category == "feature") {
                     si._features.emplace_back(fi);

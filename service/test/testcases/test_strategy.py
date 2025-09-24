@@ -18,13 +18,18 @@ class TestStrategy:
         assert len(data) > 0
 
     @pytest.mark.timeout(600)
-    def test_run_backtest(self):
-        payload = {
+    def test_run_backtest(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+        kwargs['json'] = {
             "name": "xgboost",
             "level": "T+1",
             "static": ["MACD_5", "sharp"]
         }
-        response = requests.post(f"{BASE_URL}/backtest", json=payload)
+        response = requests.post(f"{BASE_URL}/backtest", **kwargs)
         data = check_response(response)
         assert isinstance(data, object)
         assert 'features' in data

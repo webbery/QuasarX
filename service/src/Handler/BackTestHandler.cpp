@@ -29,7 +29,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto exchange = (StockSimulation*)_server->GetExchange(ExchangeType::EX_SIM);
     if (!exchange) {
         res.status = 400;
-        res.set_content("{message: 'mode is not correct.'}", "application/json");
+        res.set_content("{message: 'mode[SIM] is not correct.'}", "application/json");
         return;
     }
     String level = params.at("level");

@@ -13,6 +13,7 @@
 #define popen _popen
 #define pclose _pclose
 #endif
+#include "spdlog/sinks/rotating_file_sink.h"
 
 #define CMD_RESULT_BUF_SIZE 2048
 
@@ -138,6 +139,30 @@ void install_signal_handler() {
 #endif
 }
 
+void init_logger() {
+    auto console_sink = std::make_shared<spdlog::sinks::ansicolor_stdout_sink_mt>();
+    console_sink->set_level(spdlog::level::info); // 控制台输出级别
+
+    // 文件sink（每周回转）
+    // 日志文件路径，例如：logs/weekly_log.txt
+    std::string log_file_path = "logs/monthly_log.txt";
+    // 设置文件大小限制（例如100MB）和备份文件数量
+    size_t max_file_size = 1024 * 1024 * 100; // 100 MB
+    size_t max_files = 4; // 保留最近4周的日志备份
+    auto combined_logger = spdlog::rotating_logger_mt(
+        ToString(Now()).c_str(), log_file_path.c_str(), max_file_size, max_files);
+    combined_logger->sinks().push_back(console_sink);
+    // 4. 设置日志格式
+    combined_logger->set_pattern("[%m-%d %H:%M:%S.%e] [%^%l%$] [thread %t] %v");
+
+    // 5. 设置全局日志级别（可选，logger会继承这个级别）
+    combined_logger->set_level(spdlog::level::trace);
+
+    
+    // 7. 设置为默认logger（可选，这样可以直接使用spdlog::info()等函数）
+    spdlog::set_default_logger(combined_logger);
+}
+
 int main(int argc, char* argv[])
 {
     std::pmr::synchronized_pool_resource pool;
@@ -147,9 +172,7 @@ int main(int argc, char* argv[])
     install_signal_handler();
 
     // init log
-    auto log_name = ToString(Now(), "%Y%m%d%H%M%S") + ".log";
-    FILE* fp = fopen(("log/" + log_name).c_str(), "w");
-    fmtlog::setLogFile(fp);
+    init_logger();
 
     Server server;
     // 加载配置
@@ -165,6 +188,6 @@ int main(int argc, char* argv[])
     }
     
     server.Run();
-    fclose(fp);
+    spdlog::shutdown();
     return 0;
 }
