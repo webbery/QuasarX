@@ -18,7 +18,7 @@
             <div class="section-content" :class="{ expanded: expandedSections.server }">
                 <div class="form-group">
                     <label>服务器地址</label>
-                    <input type="text" class="form-control" v-model="serverForm.address" placeholder="例如：192.168.1.100 或 example.com">
+                    <input type="text" class="form-control" v-model="serverForm.address" placeholder="例如:192.168.1.100:8080 或 example.com">
                 </div>
                 <div class="form-group">
                     <label>别名</label>
@@ -29,53 +29,52 @@
                     <input type="password" class="form-control" v-model="serverForm.password" placeholder="密码" style="margin-top: 10px;">
                 </div>
                 <button class="btn btn-primary" @click="addServer">添加服务器</button>
-                
-                <div class="server-list" v-if="servers.length > 0">
-                    <div class="server-item" v-for="(server, index) in servers" :key="index">
-                        <div>{{ server.address }}:{{ server.port }}</div>
-                        <div class="server-actions">
-                            <button style="background: #e74c3c; color: white;">删除</button>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
         
-        <!-- 添加交易所 -->
+        <!-- 添加券商 -->
         <div class="settings-section">
             <div class="section-header" @click="toggleSection('exchange')">
                 <div class="section-title">
                     <div class="section-icon" style="background-color: rgba(155, 89, 182, 0.1); color: #9b59b6;">
                         <span>💱</span>
                     </div>
-                    <span>添加/删除交易所</span>
+                    <span>添加/删除券商</span>
                 </div>
                 <div class="section-arrow" :class="{ rotated: expandedSections.exchange }">▼</div>
             </div>
             <div class="section-content" :class="{ expanded: expandedSections.exchange }">
                 <div class="form-group">
-                    <label>选择交易所</label>
+                    <label>名称</label>
+                    <input type="text" class="form-control" v-model="exchangeForm.name" placeholder="别名">
+                    <label>选择券商</label>
                     <select class="form-control" v-model="exchangeForm.platform">
-                        <option v-for="platform in exchangePlatforms" :value="platform">{{ platform }}</option>
+                        <option v-for="platform in  Object.keys(exchangePlatforms)" :value="platform">{{ platform }}</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>交易所账号</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.account" placeholder="请输入交易所账号">
+                    <label>券商账号</label>
+                    <input type="text" class="form-control" v-model="exchangeForm.account" placeholder="请输入券商账号">
+                    <label>券商密码</label>
+                    <input type="password" class="form-control" v-model="exchangeForm.password" placeholder="请输入券商密码">
                 </div>
                 <div class="form-group">
-                    <label>交易所密码</label>
-                    <input type="password" class="form-control" v-model="exchangeForm.password" placeholder="请输入交易所密码">
+                    <label>行情服务器地址</label>
+                    <input type="text" class="form-control" v-model="exchangeForm.quoteAddr" placeholder="示例">
+                    <label>交易服务器地址</label>
+                    <input type="text" class="form-control" v-model="exchangeForm.tradeAddr" placeholder="示例">
+                </div>
+                <div class="form-group">
+                    <label>开盘时间</label>
+                    <input type="text" class="form-control" v-model="exchangeForm.validTime" placeholder="示例: 09:00-11:30;13:00-15:00">
                 </div>
                 <div class="form-group">
                     <label>API Key</label>
                     <input type="text" class="form-control" v-model="exchangeForm.apiKey" placeholder="请输入API Key">
-                </div>
-                <div class="form-group">
                     <label>Secret Key</label>
                     <input type="password" class="form-control" v-model="exchangeForm.secretKey" placeholder="请输入Secret Key">
                 </div>
-                <button class="btn btn-primary" @click="addExchange">添加交易所</button>
+                <button class="btn btn-primary" @click="addExchange">添加券商</button>
             </div>
         </div>
         
@@ -211,8 +210,11 @@
     </div>
 </template>
 <script setup>
+import axios from 'axios';
 import { ref, computed } from 'vue'
+import Store from 'electron-store';
 
+const store = new Store();
 // 展开/收缩状态管理
 const expandedSections = ref({
     server: false,
@@ -235,10 +237,7 @@ const serverForm = ref({
     privateKey: ''
 });
 
-const servers = ref([
-    { address: '192.168.1.101', port: 22 },
-    { address: 'server.example.com', port: 2222 }
-]);
+const servers = ref(store.get('servers'));
 
 // 密码修改数据
 const passwordForm = ref({
@@ -248,13 +247,15 @@ const passwordForm = ref({
 });
 
 // 交易所数据
-const exchangePlatforms = ['上海证券交易所', '深圳证券交易所', '北京证券交易所',
-                            '上海能源期货交易中心', '郑州交易所', '大连交易所',
-                            '广州期货交易所'];
+const exchangePlatforms = {'华鑫证券': 'hx', '中泰证券': 'xtp', '上期交易所': 'ctp'};
 const exchangeForm = ref({
-    platform: exchangePlatforms[0],
+    name: '',
+    platform: Object.keys(exchangePlatforms)[0],
     account: '',
     password: '',
+    quoteAddr: '',
+    tradeAddr: '',
+    validTime: '',
     apiKey: '',
     secretKey: ''
 });
@@ -305,14 +306,27 @@ const toggleAllSections = () => {
 };
 
 const addServer = () => {
-    if (serverForm.value.address) {
-        servers.value.push({
-            address: serverForm.value.address,
-            port: serverForm.value.port
-        });
-        serverForm.value.address = '';
-        alert('服务器添加成功!');
+    if (!serverForm.value.address) {
+        alert('地址不能为空');
+        return;
     }
+    if (!serverForm.value.password) {
+        alert('密码不能为空');
+        return;
+    }
+    if (!serverForm.value.name) {
+        alert('名字不能为空');
+        return;
+    }
+    if (!servers.value) {
+        servers.value = []
+    }
+    servers.value.push({
+        address: serverForm.value.address,
+        name: serverForm.value.name,
+        passwd: serverForm.value.password
+    });
+    store.set('servers', servers.value)
 };
 
 const updatePassword = () => {
@@ -324,15 +338,16 @@ const updatePassword = () => {
     }
 };
 
-const addExchange = () => {
-    alert(`已添加 ${exchangeForm.value.platform} 交易所账号`);
-    exchangeForm.value = {
-        platform: 'Binance',
-        account: '',
-        password: '',
-        apiKey: '',
-        secretKey: ''
-    };
+const addExchange = async () => {
+    let params = {
+        'account': exchangeForm.value.account,
+        'passwd': exchangeForm.value.password,
+        'name': exchangeForm.value.name,
+        'api': exchangePlatforms[exchangeForm.value.platform],
+        'utc_active': exchangeForm.value.validTime
+    }
+    console.info(`已添加 ${params} 交易所账号`)
+    const res = await axios.post('/server/config', params)
 };
 
 const updateFeeRate = () => {

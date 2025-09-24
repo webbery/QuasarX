@@ -82,7 +82,9 @@
 <script setup>
 import axios from 'axios'
 import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps } from 'vue'
+import Store from 'electron-store';
 
+const store = new Store();
 const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
 const props = defineProps({
   showLoginModal: Boolean,
@@ -95,11 +97,7 @@ const loginForm = reactive({
 })
 
 // 服务器选项
-const serverOptions = ref([
-  { value: '127.0.0.1:19107', label: '127.0.0.1 (本地)' },
-  { value: '192.168.1.101:19107', label: '模拟盘环境' },
-  { value: '192.168.1.102:19107', label: '实盘环境' }
-])
+const serverOptions = ref(store.get('servers'))
 
 // 下拉菜单状态
 const showDropdown = ref(false)
