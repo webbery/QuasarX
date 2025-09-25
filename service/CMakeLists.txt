@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 23)
 
 # include(FetchContent)
 if (WIN32)
-add_compile_options(/utf-8 /Z7 /GF /Zc:__cplusplus /DNOMINMAX /DJWT_DISABLE_PICOJSON)
+add_compile_options(/utf-8 /Z7 /GF /bigobj /Zc:__cplusplus /DNOMINMAX /DJWT_DISABLE_PICOJSON)
 set(OpenSSL_ROOT_DIR "/usr/local/openssl" CACHE PATH "/usr/local/openssl") 
 # find_package(OpenSSL REQUIRED )
 set(OPENSSL_INCLUDE_DIR "${OpenSSL_ROOT_DIR}/include")

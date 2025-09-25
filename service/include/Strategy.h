@@ -33,18 +33,42 @@ public:
 class QNode {
 public:
     virtual ~QNode(){}
+    /**
+     * @brief 对输入数据做处理，并返回处理后的数据
+     */
+    virtual feature_t Process(const feature_t& input) = 0;
+    /**
+    * @brief 绑定的输入节点名
+     */
+    virtual void Bind(const List<String>& names) {}
+
+    String name() const { return _name; }
+    void setName(const String& name){ _name = name; }
+protected:
+    String _name;
 };
 
 class QFeature : public QNode {
 public:
+    virtual feature_t Process(const feature_t& input);
 };
 
 class QAgent: public QNode {
 public:
+    virtual feature_t Process(const feature_t& input);
 };
 
 class QStrategy: public QNode {
 public:
+    QStrategy();
+
+    virtual feature_t Process(const feature_t& input);
+
+    void setT0(bool yes) { _isT0 = yes; }
+    bool isT0() { return _isT0; }
+
+protected:
+    bool _isT0;
 };
 
 struct AgentStrategyInfo;

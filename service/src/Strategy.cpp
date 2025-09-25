@@ -94,3 +94,23 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     }
     return si;
 }
+
+feature_t QFeature::Process(const feature_t& input)
+{
+    return input;
+}
+
+feature_t QAgent::Process(const feature_t& input)
+{
+    return input;
+}
+
+QStrategy::QStrategy()
+{
+
+}
+
+feature_t QStrategy::Process(const feature_t& input)
+{
+    return input;
+}

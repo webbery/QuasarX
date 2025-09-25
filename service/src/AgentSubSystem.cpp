@@ -108,6 +108,12 @@ void AgentSubsystem::Start() {
             
             Vector<float> result;
             try {
+                auto result = strategy->Process(messenger._data);
+                if (strategy->isT0()) {
+
+                }
+                else {
+                }
                 // if (-1 != agent->predict(messenger, result)) {
                 //     DEBUG_INFO("predict: {}", result[0]);
                 //     int op = strategy->generate(result);

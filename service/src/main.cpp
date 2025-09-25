@@ -140,9 +140,6 @@ void install_signal_handler() {
 }
 
 void init_logger() {
-    auto console_sink = std::make_shared<spdlog::sinks::ansicolor_stdout_sink_mt>();
-    console_sink->set_level(spdlog::level::info); // 控制台输出级别
-
     // 文件sink（每周回转）
     // 日志文件路径，例如：logs/weekly_log.txt
     std::string log_file_path = "logs/monthly_log.txt";
@@ -151,7 +148,6 @@ void init_logger() {
     size_t max_files = 4; // 保留最近4周的日志备份
     auto combined_logger = spdlog::rotating_logger_mt(
         ToString(Now()).c_str(), log_file_path.c_str(), max_file_size, max_files);
-    combined_logger->sinks().push_back(console_sink);
     // 4. 设置日志格式
     combined_logger->set_pattern("[%m-%d %H:%M:%S.%e] [%^%l%$] [thread %t] %v");
 
