@@ -66,7 +66,7 @@ bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
     nlohmann::json params;
     switch (config._strategy) {
     case StrategyType::ST_InterDay:
-        setting._strategy = new DailyStrategy(_handle, params);
+        // setting._strategy = new DailyStrategy(_handle, params);
     break;
     default:
         WARN("no support strategy {}", (int)config._strategy);
