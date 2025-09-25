@@ -6,11 +6,12 @@ class AuthAPI:
     def login(self):
         """模拟登录请求"""
         params = {"name": 'test', 'pwd': 'test'}
-        response = requests.post(f"https://localhost:19107/v0/user/login", json=params, verify=False)
+        response = requests.post(f"http://localhost:19107/v0/user/login", json=params, verify=False)
         data = response.json()
         assert isinstance(data, object)
         assert 'mode' in data
         token = data['tk']
+        assert len(token) > 0
         return token
 
 @pytest.fixture(scope="session")
