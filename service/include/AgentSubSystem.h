@@ -27,8 +27,9 @@ private:
 
     struct PipelineInfo {
         IAgent* _agent = nullptr;
-        IStrategy* _strategy = nullptr;
+        // IStrategy* _strategy = nullptr;
         Transfer* _transfer = nullptr;
+        QStrategy* _strategy = nullptr;
         char _future = 0;
     };
 

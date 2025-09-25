@@ -30,5 +30,22 @@ public:
     virtual bool is_valid() = 0;
 };
 
+class QNode {
+public:
+    virtual ~QNode(){}
+};
+
+class QFeature : public QNode {
+public:
+};
+
+class QAgent: public QNode {
+public:
+};
+
+class QStrategy: public QNode {
+public:
+};
+
 struct AgentStrategyInfo;
 AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);

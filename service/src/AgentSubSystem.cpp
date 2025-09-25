@@ -100,18 +100,20 @@ void AgentSubsystem::Start() {
             yas::load<flags>(buf, messenger);
             nng_free(buff, sz);
 
-            if (future > 0 && _handle->IsOpen(messenger._symbol, Now())) {
-                return true;
+            if (_handle->GetRunningMode() != RuningType::Backtest) {
+                if (future > 0 && _handle->IsOpen(messenger._symbol, Now())) {
+                    return true;
+                }
             }
-
+            
             Vector<float> result;
             try {
-                if (-1 != agent->predict(messenger, result)) {
-                    DEBUG_INFO("predict: {}", result[0]);
-                    int op = strategy->generate(result);
-                    // TODO: 保存第N天的操作
-                    broker->PredictWithDays(messenger._symbol, future, op);
-                }
+                // if (-1 != agent->predict(messenger, result)) {
+                //     DEBUG_INFO("predict: {}", result[0]);
+                //     int op = strategy->generate(result);
+                //     // TODO: 保存第N天的操作
+                //     broker->PredictWithDays(messenger._symbol, future, op);
+                // }
             } catch (const std::exception& e) {
                 FATAL("{}", e.what());
             }

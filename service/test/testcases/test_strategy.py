@@ -25,7 +25,7 @@ class TestStrategy:
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
         kwargs['json'] = {
-            "name": "xgboost",
+            "name": "basic",
             "level": "T+1",
             "static": ["MACD_5", "sharp"]
         }

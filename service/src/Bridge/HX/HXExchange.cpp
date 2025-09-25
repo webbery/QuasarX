@@ -138,6 +138,8 @@ void HXExchange::QueryQuotes(){
                 WARN("SubscribeMarketData {} fail, ret{}", item.second, ret);
                 _quote_inited = false;
                 continue;
+            } else {
+                LOG("SubscribeMarketData from symbol {}", item.second);
             }
         }
         _requested = true;
