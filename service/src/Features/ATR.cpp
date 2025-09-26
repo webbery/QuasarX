@@ -1,9 +1,6 @@
 #include "Features/ATR.h"
 #include "server.h"
 
-constexpr StringView ATRFeature::name() { return "ATR"; }
-
-const char* ATRFeature::desc() { return "ATR"; }
 
 ATRFeature::ATRFeature(const nlohmann::json& params):_sum(0), _close(nullptr) {
     try {

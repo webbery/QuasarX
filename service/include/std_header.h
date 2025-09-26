@@ -72,3 +72,5 @@ using UnorderedSet = std::unordered_set<T, Args...>;
 #endif
 #include "Eigen/Core"
 #include "Util/log.h"
+
+using feature_t = std::variant<double, Vector<float>>;

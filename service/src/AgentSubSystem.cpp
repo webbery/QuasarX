@@ -4,6 +4,7 @@
 #include "Util/system.h"
 #include "StrategySubSystem.h"
 #include "json.hpp"
+#include "Bridge/CTP/CTPSymbol.h"
 #include "yas/serialize.hpp"
 #include "DataSource.h"
 #include <filesystem>
@@ -12,9 +13,32 @@
 #include "Agents/XGBoostAgent.h"
 #include "Agents/DeepAgent.h"
 #include <exception>
+#include "RiskSubSystem.h"
+#include "Features/VWAP.h"
+
+namespace {
+    class TestStrategy: public QStrategy {
+    public:
+        feature_t Process(const feature_t& input) {
+            if (_v < 0.5) {
+                _v = 1.0;
+            } else {
+                _v = 0.0;
+            }
+            return _v;
+        }
+    private:
+        double _v = 0.;
+    };
+}
 
 AgentSubsystem::AgentSubsystem(Server* handle):_handle(handle) {
-
+    _riskSystem = new RiskSubSystem(handle);
+    auto default_config = handle->GetConfig().GetDefault();
+    if (default_config.contains("risk")) {
+        _riskSystem->Init(default_config["risk"]);
+    }
+    _stock_working_range = GetWorkingRange(ExchangeName::MT_Beijing);
 }
 
 AgentSubsystem::~AgentSubsystem() {
@@ -29,6 +53,7 @@ AgentSubsystem::~AgentSubsystem() {
 
     }
     _pipelines.clear();
+    delete _riskSystem;
 }
 
 bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
@@ -66,7 +91,10 @@ bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
     nlohmann::json params;
     switch (config._strategy) {
     case StrategyType::ST_InterDay:
-        // setting._strategy = new DailyStrategy(_handle, params);
+        setting._strategy = new TestStrategy();
+    break;
+    case StrategyType::ST_IntraDay:
+
     break;
     default:
         WARN("no support strategy {}", (int)config._strategy);
@@ -106,20 +134,17 @@ void AgentSubsystem::Start() {
                 }
             }
             
-            Vector<float> result;
+            // TODO: risk manage
+            _riskSystem->Metric(messenger);
             try {
-                auto result = strategy->Process(messenger._data);
-                if (strategy->isT0()) {
-
+                if (_handle->GetRunningMode() == RuningType::Backtest) {
+                    RunBacktest(strategy, messenger);
+                } else {
+                    RunInstant(strategy, messenger);
                 }
-                else {
-                }
-                // if (-1 != agent->predict(messenger, result)) {
-                //     DEBUG_INFO("predict: {}", result[0]);
-                //     int op = strategy->generate(result);
-                //     // TODO: 保存第N天的操作
-                //     broker->PredictWithDays(messenger._symbol, future, op);
-                // }
+                
+                
+                
             } catch (const std::exception& e) {
                 FATAL("{}", e.what());
             }
@@ -127,6 +152,168 @@ void AgentSubsystem::Start() {
             });
         item.second._transfer->start(name.data(), URI_FEATURE);
     }
+}
+
+void AgentSubsystem::RunBacktest(QStrategy* strategy, const DataFeatures& input) {
+    if (strategy->isT0()) {
+
+    }
+    else {
+        ProcessToday(input);
+        PredictTomorrow(strategy, input);
+    }
+}
+
+void AgentSubsystem::RunInstant(QStrategy* strategy, const DataFeatures& input) {
+    // process feature(daily or second)
+    auto result = strategy->Process(input._data);
+    if (strategy->isT0()) {
+
+    }
+    else {
+        
+    }
+}
+
+void AgentSubsystem::ProcessToday(const DataFeatures& data) {
+    auto broker = _handle->GetBrokerSubSystem();
+    // 如果是daily，那么在第二天操作
+    auto symb = data._symbol;
+    fixed_time_range tr;
+    int op = 0;
+    if (!broker->GetNextPrediction(symb, tr, op))
+        return;
+
+    auto current = Now();
+    if (tr == current) {
+        // thread_local char 
+        if (op & (int)ContractOperator::Long) {
+            if (tr.IsDaily()) {
+                if (DailyBuy(symb, data)) {
+                    broker->DoneForecast(symb, op);
+                }
+            }
+            else {
+                ImmediatelyBuy(symb, data._price, OrderType::Market);
+            }
+        }
+        if (op & (int)ContractOperator::Sell) {
+            if (StrategySell(symb, data)) {
+                broker->DoneForecast(symb, op);
+            }
+        }
+        if (op & (int)ContractOperator::Short) {
+            DEBUG_INFO("Short");
+        }
+    }
+}
+
+void AgentSubsystem::PredictTomorrow(QStrategy* strategy, const DataFeatures& input) {
+    auto result = strategy->Process(input._data);
+    auto broker = _handle->GetBrokerSubSystem();
+    auto value = std::get<double>(result);
+    int op = value > 0.5? 1: 0;
+    broker->PredictWithDays(input._symbol, 1, op);
+}
+
+bool AgentSubsystem::ImmediatelyBuy(symbol_t symbol, double price, OrderType type) {
+    auto broker = _handle->GetBrokerSubSystem();
+    Order order;
+    order._side = 0;
+    order._type = type;
+    order._number = 0;
+    order._order[0]._price = price;
+    TradeInfo dd;
+    if (broker->Buy(symbol, order, dd) == OrderStatus::All) {
+        LOG("buy order: {}, result: {}", order, dd);
+        return true;
+    }
+    return false;
+}
+
+bool AgentSubsystem::ImmediatelySell(symbol_t symbol, double price, OrderType type) {
+    auto broker = _handle->GetBrokerSubSystem();
+    Order order;
+    order._number = 0;
+    order._side = 1;
+    order._order[0]._price = price;
+    TradeInfo dd;
+    if (broker->Sell(symbol, order, dd) == OrderStatus::All) {
+        LOG("sell order: {}, result: {}", order, dd);
+        // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
+        return true;
+    }
+    return false;
+}
+
+bool AgentSubsystem::DailyBuy(symbol_t symbol, const DataFeatures& features) {
+    // TODO: 分批多次入场
+
+    float vwap = -1;
+    for (int i = 0; i < features._data.size(); ++i) {
+        if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
+            vwap = features._data[i];
+            break;
+        }
+    }
+
+    if (features._price < vwap || IsNearClose(symbol)) {
+        return ImmediatelyBuy(symbol, features._price, OrderType::Market);
+    }
+    return false;
+}
+
+bool AgentSubsystem::StrategySell(symbol_t symbol, const DataFeatures& features) {
+    float vwap = std::numeric_limits<float>::max();
+    for (int i = 0; i < features._data.size(); ++i) {
+        if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
+            vwap = features._data[i];
+            break;
+        }
+    }
+    if (features._price > vwap || IsNearClose(symbol)) {
+        return ImmediatelySell(symbol, features._price, OrderType::Market);
+    }
+    return false;
+}
+
+bool AgentSubsystem::IsNearClose(symbol_t symb) {
+    auto current = Now();
+    auto name = GetExchangeName(get_symbol(symb));
+    auto final_time = *_stock_working_range.rbegin();
+    if (current == final_time && final_time.near_end(current)) {
+        INFO("force buy because near trade end.");
+        return true;
+    }
+    return false;
+}
+
+void AgentSubsystem::RegistCollection(const String& strategy, const Set<String>& names) {
+    auto itr = _pipelines.find(strategy);
+    if (itr == _pipelines.end()) {
+        WARN("strategy {} not exist", strategy);
+        return;
+    }
+    for (auto& item: names) {
+        itr->second._collections[item];
+    }
+}
+
+void AgentSubsystem::ClearCollections(const String& strategy) {
+    auto itr = _pipelines.find(strategy);
+    if (itr == _pipelines.end()) {
+        WARN("strategy {} not exist", strategy);
+        return;
+    }
+    itr->second._collections.clear();
+}
+
+const Map<String, std::variant<float, List<float>>>& AgentSubsystem::GetCollection(const String& strategy) const {
+    auto itr = _pipelines.find(strategy);
+    if (itr == _pipelines.end()) {
+        WARN("strategy {} not exist", strategy);
+    }
+    return itr->second._collections;
 }
 
 void AgentSubsystem::Train(const String& strategy) {

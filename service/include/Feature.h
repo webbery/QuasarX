@@ -1,8 +1,6 @@
 #pragma once
 #include "std_header.h"
-#include "Util/log.h"
 #include "json.hpp"
-#include <variant>
 #include "Features/Scaler.h"
 
 class Server;
@@ -26,8 +24,6 @@ enum class FeatureType: char {
     FT_MIN_MAX_SCALER,
     FT_COUNT,
 };
-
-using feature_t = std::variant<double, Vector<float>>;
 
 class alignas(8) IFeature {
 public:

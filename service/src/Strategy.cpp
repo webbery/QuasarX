@@ -106,6 +106,7 @@ feature_t QAgent::Process(const feature_t& input)
 }
 
 QStrategy::QStrategy()
+:_isT0(true)
 {
 
 }

@@ -38,7 +38,6 @@
 #include "Handler/DataHandler.h"
 #include "Handler/FeatureHandler.h"
 #include "StrategySubSystem.h"
-#include "TraderSubsystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
 #include "FeatureSubsystem.h"
@@ -128,7 +127,7 @@ std::map<time_t, float> Server::_inter_rates;
 
 Server::Server():_config(nullptr), _trade_exchange(nullptr), _dividends(12*60*12),
 _exit(false), _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
-_defaultPortfolio(1), _timer(nullptr), _traderSystem(nullptr)
+_defaultPortfolio(1), _timer(nullptr)
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
 ,_svr("server.crt", "server.key")
 #endif
@@ -160,10 +159,6 @@ Server::~Server() {
     }
     if (_strategySystem) {
         delete _strategySystem;
-    }
-    
-    if (_traderSystem) {
-        delete _traderSystem;
     }
 }
 
@@ -339,12 +334,10 @@ void Server::InitDefault() {
 
     _strategySystem = new StrategySubSystem(this);
 
-    _traderSystem = new TraderSystem(this, dbpath);
     if (default_config.contains("strategy")) {
         auto& strategies = default_config["strategy"];
         if (strategies.contains("sim")) {
             for (String name: strategies["sim"]) {
-                _traderSystem->SetupSimulation(name);
                 _strategySystem->SetupSimulation(name);
             }
         }
@@ -353,7 +346,6 @@ void Server::InitDefault() {
         }
     }
     _strategySystem->Init();
-    _traderSystem->Start();
 
     StartTimer();
 }

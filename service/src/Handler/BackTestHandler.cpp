@@ -9,7 +9,6 @@
 #include <thread>
 #include <variant>
 #include "Strategy.h"
-#include "TraderSubsystem.h"
 #include "Util/string_algorithm.h"
 
 BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
@@ -70,10 +69,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     strategySys->AddStrategy(si);
     // 注册统计信息
     Set<String> featureCollections, statCollection;
-    auto tradeSystem = _server->GetTraderSystem();
+    auto strategySystem = _server->GetStrategySystem();
     auto brokerSystem = _server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators();
-    tradeSystem->ClearCollections();
+    strategySystem->ClearCollections(strategyName);
     Map<String, StatisticIndicator> statistics{
         {"SHARP", StatisticIndicator::Sharp},
         {"VAR", StatisticIndicator::VaR},
@@ -94,7 +93,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
             auto key = to_upper(tokens[0]);
             if (features.count(key)) {
-                tradeSystem->RegistCollection(name);
+                strategySystem->RegistCollection(name, {name});
                 featureCollections.insert(name);
             }
             else if (statistics.count(key)) {
@@ -113,11 +112,12 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 获取结果
     nlohmann::json results;
     auto& features = results["features"];
+    auto& allCols = strategySystem->GetCollections(strategyName);
     for (auto& name: featureCollections) {
-        auto& colls = tradeSystem->GetCollection(name);
+        auto& colls = allCols.at(name);
         std::visit([&features, &name](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, float> || std::is_same_v<T, Vector<float>>) {
+            if constexpr (std::is_same_v<T, float> || std::is_same_v<T, List<float>>) {
                 features[name] = arg;
             }
         }, colls);

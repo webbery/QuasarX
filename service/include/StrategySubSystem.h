@@ -66,6 +66,12 @@ public:
     void SetupSimulation(const String& name);
 
     FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }
+
+    void RegistCollection(const String& strategy, const Set<String>& );
+
+    void ClearCollections(const String& strategy);
+
+    const Map<String, std::variant<float, List<float>>>&  GetCollections(const String& strategy) const;
 private:
     AgentStrategyInfo ParseJsonScript(const String& content);
 

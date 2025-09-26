@@ -42,10 +42,17 @@ public:
      */
     virtual void Bind(const List<String>& names) {}
 
+    void Update(const nlohmann::json& args) {
+        _params = args;
+    }
+
+    const nlohmann::json& getParams() { return _params; }
+    
     String name() const { return _name; }
     void setName(const String& name){ _name = name; }
 protected:
     String _name;
+    nlohmann::json _params;
 };
 
 class QFeature : public QNode {

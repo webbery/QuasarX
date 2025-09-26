@@ -26,8 +26,6 @@ class StrategyPlugin;
 class IStopLoss;
 class StopLossHandler;
 class BrokerSubSystem;
-class VirtualBroker;
-class TraderSystem;
 
 typedef enum {
 	SEND_REQ, // Sending REQ request
@@ -122,7 +120,6 @@ public:
 
   PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
   StrategySubSystem* GetStrategySystem() { return _strategySystem; }
-  TraderSystem* GetTraderSystem() { return _traderSystem; }
 
   double GetFreeRate(time_t t);
   /**
@@ -255,7 +252,6 @@ private:
   PortfolioSubSystem* _portfolioSystem;
   BrokerSubSystem* _brokerSystem; //
   
-  TraderSystem* _traderSystem;
   // 默认持仓id
   static std::multimap<std::string, ContractInfo> _markets;
   static std::map<time_t, float> _inter_rates;

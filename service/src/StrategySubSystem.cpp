@@ -83,6 +83,18 @@ bool StrategySubSystem::HasStrategy(const String& name) {
     return _strategies.count(name);
 }
 
+void StrategySubSystem::RegistCollection(const String& strategy, const Set<String>& collections) {
+    _agentSystem->RegistCollection(strategy, collections);
+}
+
+void StrategySubSystem::ClearCollections(const String& strategy) {
+    _agentSystem->ClearCollections(strategy);
+}
+
+const Map<String, std::variant<float, List<float>>>& StrategySubSystem::GetCollections(const String& strategy) const {
+    return _agentSystem->GetCollection(strategy);
+}
+
 AgentStrategyInfo StrategySubSystem::ParseJsonScript(const String& content) {
     AgentStrategyInfo info;
     nlohmann::json script_content = nlohmann::json::parse(content);

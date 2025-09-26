@@ -9,13 +9,13 @@ public:
 
     virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
 
-    virtual const char* desc();
+    virtual const char* desc() { return "ATR"; }
 
     virtual FeatureType type() { return FeatureType::FT_ATR; }
 
     virtual size_t id();
 
-    static constexpr StringView name();
+    static constexpr StringView name() { return "ATR"; }
 
 private:
     double tr(short index);
