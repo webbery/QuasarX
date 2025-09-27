@@ -6,10 +6,32 @@
 
 enum class ContractOperator: unsigned char {
   Hold = 0,
-  Long = 1,
+  Buy = 1,
   Sell = 2,
   Short = 4,
   Done = (0x1<<7),
+};
+
+template <>
+struct fmt::formatter<ContractOperator> {
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.begin(); // 简单情况直接返回
+    }
+
+    template <typename FormatContext>
+    auto format(ContractOperator op, FormatContext& ctx) const {
+        String info;
+        switch (op)
+        {
+        case ContractOperator::Hold: info = "Hold"; break;
+        case ContractOperator::Buy: info = "Buy"; break;
+        case ContractOperator::Sell: info = "Sell"; break;
+        case ContractOperator::Short: info = "Short"; break;
+        case ContractOperator::Done: info = "Done"; break;
+        default: break;
+        }
+        return fmt::format_to(ctx.out(), "{}", info);
+    }
 };
 
 enum class StrategyType: char {

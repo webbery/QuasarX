@@ -1,57 +1,64 @@
 <template>
-    <div class="server-card" v-for="server in servers" :key="server.name">
-        <div class="server-header">
-            <div class="server-icon">
-                <i class="fas fa-server"></i>
-            </div>
-            <div class="server-info">
-                <h3>{{ server.name }}</h3>
-            </div>
-        </div>
-        
-        <div class="server-details">
-            <div class="detail-row">
-                <span class="detail-label">地址:</span>
-                <span class="detail-value">{{ server.address }}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">名称:</span>
-                <span class="detail-value"  @dblclick="startEditing(server, 'name')" v-if="">
-                    {{ server.name }}
-                </span>
-                <div v-else style="display: flex; align-items: center; width: 100%;">
-                    <input 
-                        type="text" 
-                        class="detail-input" 
-                        v-model="server.editingValue"
-                        @keyup.enter="saveEditing(server)"
-                        @keyup.esc="cancelEditing(server)"
-                        v-focus
-                    >
+    <div>
+        <div class="server-card" v-for="server in servers" :key="server.name">
+            <div class="server-details">
+                <div class="detail-row">
+                    <span class="detail-label">地址:</span>
+                    <span class="detail-value">{{ server.address }}</span>
                 </div>
-            <div class="detail-row">
-                <span class="detail-label">密码:</span>
-                <span class="detail-value">••••••••</span>
+                <div class="detail-row">
+                    <span class="detail-label">名称:</span>
+                    <span class="detail-value"  @dblclick="startEditing(server, 'name')" v-if="!server.edit">
+                        {{ server.name }}
+                    </span>
+                    <div v-else style="display: flex; align-items: center; width: 100%;">
+                        <input 
+                            type="text" 
+                            class="detail-input" 
+                            v-model="server.editingValue"
+                            @keyup.enter="saveEditing(server)"
+                            @keyup.esc="cancelEditing(server)"
+                            v-focus
+                        >
+                    </div>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">密码:</span>
+                    <span class="detail-value">••••••••</span>
+                </div>
             </div>
-        </div>
-        
-        <div class="server-actions">
-            <button class="btn btn-edit" @click="editServer(server)">
-                <i class="fas fa-key"></i> 修改密码
-            </button>
-            <button class="btn btn-delete" @click="deleteServer(server.name)">
-                <i class="fas fa-trash"></i> 删除
-            </button>
+            
+            <div class="server-actions">
+                <button class="btn btn-edit" @click="editServer(server)">
+                    <i class="fas fa-key"></i> 修改密码
+                </button>
+                <button class="btn btn-delete" @click="deleteServer(server.name)">
+                    <i class="fas fa-trash"></i> 删除
+                </button>
+            </div>
         </div>
     </div>
 </template>
 <script setup>
 import Store from 'electron-store';
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 const store = new Store();
-let servers = ref(store.get('servers'))
+let servers = ref([])
 
+onMounted(() => {
+    let data = store.get('servers')
+    console.info(data)
+    for (const item of data) {
+        console.info(item)
+        servers.value.push({
+            name: item.name,
+            address: item.address,
+            editingValue: item.name,
+            edit: false
+        })
+    }
+})
 const deleteServer = (severName) => {
     for (let item in servers.value) {
         

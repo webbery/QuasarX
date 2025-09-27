@@ -97,7 +97,7 @@ const loginForm = reactive({
 })
 
 // 服务器选项
-const serverOptions = ref(store.get('servers'))
+const serverOptions = ref([])
 
 // 下拉菜单状态
 const showDropdown = ref(false)
@@ -137,6 +137,15 @@ const handleClickOutside = (e) => {
 }
 
 onMounted(() => {
+  const data = store.get('servers')
+  for (const item of data) {
+    console.info(item)
+    serverOptions.value.push({
+      name: item.name,
+      label: item.name,
+      value: item.address + ':19107'
+    })
+  }
   document.addEventListener('click', handleClickOutside)
 })
 
