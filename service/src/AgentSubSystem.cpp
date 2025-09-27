@@ -59,6 +59,9 @@ AgentSubsystem::~AgentSubsystem() {
 bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
     bool status = true;
     auto& setting = _pipelines[config._name];
+    if (setting._transfer) {
+        setting._transfer->stop();
+    }
     if (setting._agent) {
         delete setting._agent;
     }
@@ -89,16 +92,20 @@ bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
         }
     }
     nlohmann::json params;
+    setting._strategy = new TestStrategy();
     switch (config._strategy) {
     case StrategyType::ST_InterDay:
-        setting._strategy = new TestStrategy();
+        setting._strategy->setT0(false);
     break;
     case StrategyType::ST_IntraDay:
-
+        setting._strategy->setT0(true);
     break;
     default:
         WARN("no support strategy {}", (int)config._strategy);
     break;
+    }
+    if (setting._transfer) {
+        setting._transfer->start(config._name.data(), URI_FEATURE);
     }
     return status;
 }
@@ -107,10 +114,7 @@ void AgentSubsystem::Start() {
     auto broker = _handle->GetBrokerSubSystem();
     for (auto& item : _pipelines) {
         auto name = item.first;
-        auto agent = item.second._agent;
-        auto future = item.second._future;
-        auto strategy = item.second._strategy;
-        item.second._transfer = new Transfer([agent, broker, future, strategy, this](nng_socket& from, nng_socket& to) {
+        item.second._transfer = new Transfer([&item, broker, this](nng_socket& from, nng_socket& to) {
             // if (strategy && !strategy->is_valid())
             //     return true;
 
@@ -129,7 +133,7 @@ void AgentSubsystem::Start() {
             nng_free(buff, sz);
 
             if (_handle->GetRunningMode() != RuningType::Backtest) {
-                if (future > 0 && _handle->IsOpen(messenger._symbol, Now())) {
+                if (item.second._future > 0 && _handle->IsOpen(messenger._symbol, Now())) {
                     return true;
                 }
             }
@@ -138,16 +142,14 @@ void AgentSubsystem::Start() {
             _riskSystem->Metric(messenger);
             try {
                 if (_handle->GetRunningMode() == RuningType::Backtest) {
-                    RunBacktest(strategy, messenger);
+                    RunBacktest(item.second._strategy, messenger);
                 } else {
-                    RunInstant(strategy, messenger);
+                    RunInstant(item.second._strategy, messenger);
                 }
-                
-                
-                
             } catch (const std::exception& e) {
                 FATAL("{}", e.what());
             }
+            UpdateCollection(item.first, messenger);
             return true;
             });
         item.second._transfer->start(name.data(), URI_FEATURE);
@@ -187,7 +189,7 @@ void AgentSubsystem::ProcessToday(const DataFeatures& data) {
     auto current = Now();
     if (tr == current) {
         // thread_local char 
-        if (op & (int)ContractOperator::Long) {
+        if (op & (int)ContractOperator::Buy) {
             if (tr.IsDaily()) {
                 if (DailyBuy(symb, data)) {
                     broker->DoneForecast(symb, op);
@@ -198,8 +200,13 @@ void AgentSubsystem::ProcessToday(const DataFeatures& data) {
             }
         }
         if (op & (int)ContractOperator::Sell) {
-            if (StrategySell(symb, data)) {
-                broker->DoneForecast(symb, op);
+            if (tr.IsDaily()) {
+                if (DailySell(symb, data)) {
+                    broker->DoneForecast(symb, op);
+                }
+            }
+            else {
+                ImmediatelySell(symb, data._price, OrderType::Market);
             }
         }
         if (op & (int)ContractOperator::Short) {
@@ -212,13 +219,14 @@ void AgentSubsystem::PredictTomorrow(QStrategy* strategy, const DataFeatures& in
     auto result = strategy->Process(input._data);
     auto broker = _handle->GetBrokerSubSystem();
     auto value = std::get<double>(result);
-    int op = value > 0.5? 1: 0;
+    int op = value > 0.5? (int)ContractOperator::Buy : (int)ContractOperator::Sell;
     broker->PredictWithDays(input._symbol, 1, op);
 }
 
 bool AgentSubsystem::ImmediatelyBuy(symbol_t symbol, double price, OrderType type) {
     auto broker = _handle->GetBrokerSubSystem();
     Order order;
+    order._time = Now();
     order._side = 0;
     order._type = type;
     order._number = 0;
@@ -247,20 +255,36 @@ bool AgentSubsystem::ImmediatelySell(symbol_t symbol, double price, OrderType ty
 }
 
 bool AgentSubsystem::DailyBuy(symbol_t symbol, const DataFeatures& features) {
-    // TODO: 分批多次入场
-
-    float vwap = -1;
-    for (int i = 0; i < features._data.size(); ++i) {
-        if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
-            vwap = features._data[i];
-            break;
-        }
-    }
-
-    if (features._price < vwap || IsNearClose(symbol)) {
+    if (_handle->GetRunningMode() == RuningType::Backtest) {
+        // 如果是天级数据,则使用收盘价
         return ImmediatelyBuy(symbol, features._price, OrderType::Market);
     }
+    else {
+        // TODO: 分批多次入场
+
+        float vwap = -1;
+        for (int i = 0; i < features._data.size(); ++i) {
+            if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
+                vwap = features._data[i];
+                break;
+            }
+        }
+
+        if (features._price < vwap || IsNearClose(symbol)) {
+            return ImmediatelyBuy(symbol, features._price, OrderType::Market);
+        }
+    }
     return false;
+}
+
+bool AgentSubsystem::DailySell(symbol_t symbol, const DataFeatures& features)
+{
+    if (_handle->GetRunningMode() == RuningType::Backtest) {
+        return ImmediatelySell(symbol, features._price, OrderType::Market);
+    }
+    else {
+        return StrategySell(symbol, features);
+    }
 }
 
 bool AgentSubsystem::StrategySell(symbol_t symbol, const DataFeatures& features) {
@@ -286,6 +310,21 @@ bool AgentSubsystem::IsNearClose(symbol_t symb) {
         return true;
     }
     return false;
+}
+
+void AgentSubsystem::UpdateCollection(const String& name, const DataFeatures& feature)
+{
+    for (auto& item : _pipelines[name]._collections) {
+        if (item.first.find("MACD") != std::string::npos) {
+
+        }
+        else if (item.first == "ATR") {
+
+        }
+        else {
+            WARN("not support collection {}", item.first);
+        }
+    }
 }
 
 void AgentSubsystem::RegistCollection(const String& strategy, const Set<String>& names) {

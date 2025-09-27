@@ -18,6 +18,10 @@ void ITransfer::stop() {
 }
 
 void ITransfer::start(const String& name, const String& from, const String& to) {
+    if (_worker) {
+        _worker->join();
+        delete _worker;
+    }
     if (!to.empty()) {
         _worker = new std::thread(static_cast<void (ITransfer::*)(const String&, const String&, const String&)>(&Transfer::run), this, name, from, to);
     } else {
@@ -34,6 +38,7 @@ void ITransfer::run(const String& name, const String& from, const String& to) {
         WARN("publish {} fail.", to);
         return;
     }
+    _running = true;
     SetCurrentThreadName(name.c_str());
     while (_running) {
         if (!work(_recv, _send)) {
@@ -49,7 +54,7 @@ void ITransfer::run(const String& name, const String& from) {
         WARN("subscribe {} fail.", from);
         return;
     }
-    
+    _running = true;
     SetCurrentThreadName(name.c_str());
     while (_running) {
         if (!work(_recv, _send)) {

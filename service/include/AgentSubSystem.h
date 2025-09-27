@@ -41,9 +41,12 @@ private:
     bool ImmediatelySell(symbol_t symbol, double price, OrderType type);
 
     bool DailyBuy(symbol_t symbol, const DataFeatures& features);
+    bool DailySell(symbol_t symbol, const DataFeatures& features);
 
     bool StrategySell(symbol_t symbol, const DataFeatures& features);
     bool IsNearClose(symbol_t symb);
+
+    void UpdateCollection(const String& name, const DataFeatures& feature);
 private:
     Server* _handle;
     RiskSubSystem* _riskSystem = nullptr;

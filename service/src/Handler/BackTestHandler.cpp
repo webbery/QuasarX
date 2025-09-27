@@ -31,12 +31,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.set_content("{message: 'mode[SIM] is not correct.'}", "application/json");
         return;
     }
-    String level = params.at("level");
-    if (level == "T+1") {
-        exchange->UseLevel(1);
-    } else {
-        exchange->UseLevel(0);
-    }
+    
     // Load Script
     std::filesystem::path p("scripts");
     auto script_path = p / (strategyName + ".json");
@@ -62,6 +57,19 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto si = parse_strategy_script(script_json);
     si._name = strategyName;
     si._virtual = false;
+
+    QuoteFilter filer;
+    for (auto& code : si._pool) {
+        filer._symbols.emplace(code);
+    }
+    exchange->SetFilter(filer);
+    String level = params.at("level");
+    if (level == "T+1") {
+        exchange->UseLevel(1);
+    }
+    else {
+        exchange->UseLevel(0);
+    }
     // 
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);
@@ -93,7 +101,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
             auto key = to_upper(tokens[0]);
             if (features.count(key)) {
-                strategySystem->RegistCollection(name, {name});
+                strategySystem->RegistCollection(strategyName, {name});
                 featureCollections.insert(name);
             }
             else if (statistics.count(key)) {

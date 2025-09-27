@@ -627,6 +627,7 @@ void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
   auto current = Now();
   auto next_date = ToString(current, "%Y-%m-%d");
   auto pred = std::make_pair(next_date, op);
+  DEBUG_INFO("PredictWithDays {} {}", next_date, (ContractOperator)op);
   std::unique_lock<std::shared_mutex> lck(_predMtx);
   _symbolOperation[symb] = pred;
   _predictions[symb].push_back(pred);
@@ -643,6 +644,7 @@ bool BrokerSubSystem::GetNextPrediction(symbol_t symb, fixed_time_range& tr, int
     if (itr->second.first == cur && (itr->second.second & (int)ContractOperator::Done) == 0) {
       tr = itr->second.first;
       op = itr->second.second;
+      DEBUG_INFO("GetNextPrediction {}", (ContractOperator)op);
       return true;
     }
   }

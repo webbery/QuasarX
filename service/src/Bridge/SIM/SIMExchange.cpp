@@ -132,67 +132,70 @@ void StockSimulation::UseLevel(int level) {
 
 #define CACHE_SIZE  2048
 void StockSimulation::LoadT1(const String& code) {
-  auto symbol = to_symbol(code);
-  String subdir, orgdir;
-  if (is_stock(symbol)) {
-    subdir = "A_hfq";
-    orgdir = "AStock";
-  }
-  auto file_path = _org_path + "/" + subdir + "/" + code + "_hist_data.csv";
-  auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + "_hist_data.csv";
-  int index = 0;
-  INFO("{}", file_path);
-  std::ifstream ifs, base_fs;
-  ifs.open(file_path);
-  if (ifs.is_open()) {
-    char cache[CACHE_SIZE] = { 0 };
-    Vector<time_t> dates;
-    Vector<float> open, close, high, low;
-    Vector<int64_t> volume;
-    Vector<String>& header = _headers[code];
-    header.clear();
-    while (ifs.getline(cache, CACHE_SIZE)) {
-      Vector<String> row;
-      split(cache, row, ",");
-      
-      if (index++ == 0) {
-        header.emplace_back(row[0]);
-        header.emplace_back(row[1]);
-        header.emplace_back(row[2]);
-        header.emplace_back(row[3]);
-        header.emplace_back(row[4]);
-        header.emplace_back(row[5]);
-        // TODO: ask/bid
-        continue;
-      }
-      dates.emplace_back(FromStr(row[0], "%Y-%m-%d %H:%M:%S"));
-      open.emplace_back(std::stof(row[1]));
-      close.emplace_back(std::stof(row[2]));
-      high.emplace_back(std::stof(row[3]));
-      low.emplace_back(std::stof(row[4]));
-      volume.emplace_back(std::stol(row[5]));
+    auto symbol = to_symbol(code);
+    String subdir, orgdir;
+    if (is_stock(symbol)) {
+        subdir = "A_hfq";
+        orgdir = "AStock";
     }
-    ifs.close();
-    
-    base_fs.open(primitive_file_path);
-    if (base_fs.is_open()) {
-      // 对齐时间
-      base_fs.close();
-    }
-    if (header.empty())
-      return;
+    auto file_path = _org_path + "/" + subdir + "/" + code + "_hist_data.csv";
+    auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + "_hist_data.csv";
+    int index = 0;
+    std::ifstream ifs, base_fs;
+    ifs.open(file_path);
+    if (ifs.is_open()) {
+        INFO("load {} success", file_path);
+        char cache[CACHE_SIZE] = { 0 };
+        Vector<time_t> dates;
+        Vector<float> open, close, high, low;
+        Vector<int64_t> volume;
+        Vector<String>& header = _headers[code];
+        header.clear();
+        while (ifs.getline(cache, CACHE_SIZE)) {
+            Vector<String> row;
+            split(cache, row, ",");
 
-    Vector<uint32_t> indexes(index);
-    std::iota(indexes.begin(), indexes.end(), 1);
-    DataFrame& df = _csvs[code];
-    df.load_index(std::move(indexes));
-    df.load_column(header[0].c_str(), std::move(dates));
-    df.load_column(header[1].c_str(), std::move(open));
-    df.load_column(header[2].c_str(), std::move(close));
-    df.load_column(header[3].c_str(), std::move(high));
-    df.load_column(header[4].c_str(), std::move(low));
-    df.load_column(header[5].c_str(), std::move(volume));
-  }
+            if (index++ == 0) {
+                header.emplace_back(row[0]);
+                header.emplace_back(row[1]);
+                header.emplace_back(row[2]);
+                header.emplace_back(row[3]);
+                header.emplace_back(row[4]);
+                header.emplace_back(row[5]);
+                // TODO: ask/bid
+                continue;
+            }
+            dates.emplace_back(FromStr(row[0], "%Y-%m-%d %H:%M:%S"));
+            open.emplace_back(std::stof(row[1]));
+            close.emplace_back(std::stof(row[2]));
+            high.emplace_back(std::stof(row[3]));
+            low.emplace_back(std::stof(row[4]));
+            volume.emplace_back(std::stol(row[5]));
+        }
+        ifs.close();
+
+        base_fs.open(primitive_file_path);
+        if (base_fs.is_open()) {
+            // 对齐时间
+            base_fs.close();
+        }
+        if (header.empty())
+            return;
+
+        Vector<uint32_t> indexes(index);
+        std::iota(indexes.begin(), indexes.end(), 1);
+        DataFrame& df = _csvs[code];
+        df.load_index(std::move(indexes));
+        df.load_column(header[0].c_str(), std::move(dates));
+        df.load_column(header[1].c_str(), std::move(open));
+        df.load_column(header[2].c_str(), std::move(close));
+        df.load_column(header[3].c_str(), std::move(high));
+        df.load_column(header[4].c_str(), std::move(low));
+        df.load_column(header[5].c_str(), std::move(volume));
+    }
+    else {
+        INFO("load {} fail", file_path);
+    }
 }
 
 void StockSimulation::LoadT0(const String& code) {
@@ -267,7 +270,9 @@ void StockSimulation::Worker() {
     if (status == std::cv_status::timeout) {
       continue;
     }
-
+    if (_csvs.size() == 0) {
+        continue;
+    }
     for (auto& df : _csvs) {
       auto& header = _headers[df.first];
 
@@ -316,6 +321,8 @@ TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quo
 {
     TradeReport report;
     report._price = quote._close;
+    report._time = quote._time;
+    report._quantity = quote._volume;
     return report;
 }
 

@@ -66,7 +66,7 @@ struct TradeReport {
     // 成交类型
     char _type;
     // 交易员代码
-    char _trader_code[7];
+    Array<char, 7> _trader_code;
     // YAS_DEFINE_STRUCT_SERIALIZE("DealDetail", _number, _status, _price, _time);
 };
 

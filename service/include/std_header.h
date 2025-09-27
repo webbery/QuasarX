@@ -11,6 +11,7 @@
 #include <map>
 #include <set>
 #include <array>
+#include <variant>
 
 #ifdef _WIN32
 #pragma warning(disable: 4828)

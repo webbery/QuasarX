@@ -11,7 +11,7 @@ int DailyStrategy::generate(const Vector<float>& prediction) {
             return (int)ContractOperator::Sell;
         }
         else if (prediction[0] < 0.3) {
-            return (int)ContractOperator::Long;
+            return (int)ContractOperator::Buy;
         }
     }
     else if (prediction.size() == 2) {
@@ -19,7 +19,7 @@ int DailyStrategy::generate(const Vector<float>& prediction) {
             return (int)ContractOperator::Sell;
         }
         if (prediction[0] < 0.3) {
-            return (int)ContractOperator::Long;
+            return (int)ContractOperator::Buy;
         }
     }
     return 0;
