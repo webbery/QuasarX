@@ -119,14 +119,12 @@ void trim(std::string& input) {
   input.erase(input.find_last_not_of(" ") + 1);
 }
 
-nng_mtx * job_lock;
-nng_socket req_sock;
-
 std::multimap<std::string, ContractInfo> Server::_markets;
 std::map<time_t, float> Server::_inter_rates;
+bool Server::_exit = false;
 
 Server::Server():_config(nullptr), _trade_exchange(nullptr), _dividends(12*60*12),
-_exit(false), _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
+_strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
 _defaultPortfolio(1), _timer(nullptr)
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
 ,_svr("server.crt", "server.key")
@@ -160,6 +158,7 @@ Server::~Server() {
     if (_strategySystem) {
         delete _strategySystem;
     }
+    spdlog::shutdown();
 }
 
 bool Server::Init(const char* config) {

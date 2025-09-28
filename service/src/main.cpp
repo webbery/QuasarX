@@ -184,6 +184,5 @@ int main(int argc, char* argv[])
     }
     
     server.Run();
-    spdlog::shutdown();
     return 0;
 }

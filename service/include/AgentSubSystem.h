@@ -58,6 +58,7 @@ private:
         QStrategy* _strategy = nullptr;
         char _future = 0;
         Map<String, std::variant<float, List<float>>> _collections;
+        Map<String, PrimitiveFeature*> _featureCalculator;
     };
 
     Map<String, PipelineInfo> _pipelines; 

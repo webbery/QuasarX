@@ -94,7 +94,7 @@ public:
 
     void Run();
 
-    bool IsExit() { return _exit; }
+    static bool IsExit() { return _exit; }
 
     ExchangeInterface* GetExchange(ExchangeType type);
     ExchangeInterface* GetAvaliableStockExchange();
@@ -237,7 +237,7 @@ private:
     httplib::Server _svr;
 #endif
 
-  bool _exit;
+  static bool _exit;
   bool _isDataLock = false;
   RuningType _runType;
   int _defaultPortfolio;

@@ -1,12 +1,14 @@
 #include "Transfer.h"
 #include "Util/system.h"
 #include <exception>
+#include "server.h"
 
 ITransfer::ITransfer():_worker(nullptr), _running(true) {
 
 }
 
 ITransfer::~ITransfer() {
+    stop();
     if (_worker) {
         _worker->join();
         delete _worker;
@@ -40,7 +42,7 @@ void ITransfer::run(const String& name, const String& from, const String& to) {
     }
     _running = true;
     SetCurrentThreadName(name.c_str());
-    while (_running) {
+    while (_running && !Server::IsExit()) {
         if (!work(_recv, _send)) {
             break;
         }
@@ -56,7 +58,7 @@ void ITransfer::run(const String& name, const String& from) {
     }
     _running = true;
     SetCurrentThreadName(name.c_str());
-    while (_running) {
+    while (_running && !Server::IsExit()) {
         if (!work(_recv, _send)) {
             break;
         }

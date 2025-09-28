@@ -356,7 +356,7 @@ void BrokerSubSystem::run() {
                 auto act = Order2Transaction(*ctx);
                 _historyTrades[ctx->_symbol].emplace_back(std::move(act));
             }
-            delete ctx;
+            // delete ctx;
             itr = contexts.erase(itr);
         }
         else {

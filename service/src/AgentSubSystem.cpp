@@ -312,18 +312,24 @@ bool AgentSubsystem::IsNearClose(symbol_t symb) {
     return false;
 }
 
-void AgentSubsystem::UpdateCollection(const String& name, const DataFeatures& feature)
+void AgentSubsystem::UpdateCollection(const String& name, const DataFeatures& data)
 {
-    for (auto& item : _pipelines[name]._collections) {
-        if (item.first.find("MACD") != std::string::npos) {
-
+    auto& pipe = _pipelines[name];
+    for (auto& item : pipe._featureCalculator) {
+        // 检查输入特征中是否已经有对应的数据
+        auto id = item.second->id();
+        int i = 0;
+        for (; i < data._features.size(); ++i) {
+            if (id == data._features[i]) {
+                break;
+            }
         }
-        else if (item.first == "ATR") {
-
+        if (i >= data._features.size()) {
+            // 如果没有这个特征,再计算?
+            WARN("feature {} is not calculated", item.second->desc());
+            continue;
         }
-        else {
-            WARN("not support collection {}", item.first);
-        }
+        pipe._collections[item.first] = data._data[i];
     }
 }
 

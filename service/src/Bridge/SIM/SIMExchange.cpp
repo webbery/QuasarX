@@ -303,17 +303,18 @@ void StockSimulation::Worker() {
         printf("send quote message e fail.\n");
         return;
       }
-       _orders.visit(symbol, [&info, &symbol, this] (auto&& que) {
-         OrderInfo oif;
-         while (que.second->pop(oif)) {
-           TradeReport report = OrderMatch(oif._order->_order, info);
-           oif._order->_trades._symbol = symbol;
-           OnOrderReport(order_id{ oif._id }, report);
-         }
-       });
+      _orders.visit(symbol, [&info, &symbol, this] (auto&& que) {
+        OrderInfo oif;
+        while (que.second->pop(oif)) {
+          TradeReport report = OrderMatch(oif._order->_order, info);
+          oif._order->_trades._symbol = symbol;
+          OnOrderReport(order_id{ oif._id }, report);
+        }
+      });
     }
     ++_cur_index;
   }
+  _finish = true;
   nng_close(_sock);
 }
 
