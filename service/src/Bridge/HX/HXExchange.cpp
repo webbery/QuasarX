@@ -128,18 +128,18 @@ void HXExchange::QueryQuotes(){
                 subscribe_array[i] = new char[item.second[i].size() + 1] {0};
                 strcmp(subscribe_array[i], item.second[i].c_str());
             }
-            ret = _quoteAPI->SubscribeSpecialMarketData(subscribe_array, item.second.size(), item.first);
+            ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
             for (int j = 0; j < item.second.size(); ++j) {
                 delete[] subscribe_array[j];
             }
             delete[] subscribe_array;
             if (ret != 0)
             {
-                WARN("SubscribeSpecialMarketData {} fail, ret{}", item.second, ret);
+                WARN("SubscribeMarketData {} fail, ret{}", item.second, ret);
                 _quote_inited = false;
                 continue;
             } else {
-                LOG("SubscribeSpecialMarketData from symbol {}", item.second);
+                LOG("SubscribeMarketData from symbol {}", item.second);
             }
         }
         _requested = true;
@@ -174,14 +174,14 @@ void HXExchange::StopQuery(){
             subscribe_array[i] = new char[item.second[i].size() + 1] {0};
             strcmp(subscribe_array[i], item.second[i].c_str());
         }
-        int ret = _quoteAPI->UnSubscribeSpecialMarketData(subscribe_array, item.second.size(), item.first);
+        int ret = _quoteAPI->UnSubscribeMarketData(subscribe_array, item.second.size(), item.first);
         for (int j = 0; j < item.second.size(); ++j) {
             delete[] subscribe_array[j];
         }
         delete[] subscribe_array;
         if (ret != 0)
         {
-            WARN("UnSubscribeSpecialMarketData fail, ret{}", ret);
+            WARN("UnSubscribeMarketData fail, ret{}", ret);
             continue;
         }
     }
