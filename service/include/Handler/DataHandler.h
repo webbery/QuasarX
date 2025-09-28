@@ -10,5 +10,5 @@ public:
 private:
     void SendFile(const String& filepath, httplib::Response& res);
 
-    bool CreateZip(const String& dirs, const String& dstfile);
+    bool CreateZip(const String& dirs, const String& dstfile, String& response);
 };

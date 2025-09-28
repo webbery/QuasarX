@@ -17,10 +17,12 @@ void DataSyncHandler::get(const httplib::Request& req, httplib::Response& res) {
     if (std::filesystem::exists(bakup_path) && !_server->IsDataLock()) {
         // 压缩
         auto zip_path = datapath + "/bak.zip";
-        /*if (!CreateZip(bakup_path, zip_path)) {
+        String excp;
+        if (!CreateZip(bakup_path, zip_path, excp)) {
             res.status = 401;
+            res.set_content(String("{error: '") + excp + "'}", "application/json");
             return;
-        }*/
+        }
         SendFile(zip_path, res);
         res.status = 200;
     }
@@ -52,7 +54,7 @@ void DataSyncHandler::SendFile(const String& filepath, httplib::Response& res) {
     );
 }
 
-bool DataSyncHandler::CreateZip(const String& dirs, const String& dstfile) {
+bool DataSyncHandler::CreateZip(const String& dirs, const String& dstfile, String& response) {
     std::filesystem::path path(dirs), dstpath(dstfile);
     auto dir_name = path.filename().string();
     auto dstname = dstpath.filename().string();
@@ -64,9 +66,9 @@ bool DataSyncHandler::CreateZip(const String& dirs, const String& dstfile) {
     String compress = "zip -qr " + dstname + " " + dir_name;
 #endif
     String cmd = "cd " + path.parent_path().string() +" " + conn +" " + compress;
-    INFO("{}", cmd);
+    LOG("{}", cmd);
     _server->LockData();
-    bool res = RunCommand(cmd);
+    bool res = RunCommand(cmd, response);
     _server->FreeDataLock();
     return res;
 }
