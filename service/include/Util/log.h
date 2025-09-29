@@ -16,6 +16,32 @@
 #endif
 #include "spdlog/spdlog.h"
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#ifndef INFO
+#define INFO(fmt_str, ...) \
+  fmt::print("{} " fmt_str "\n", ToString(Now()),##__VA_ARGS__);
+#endif
+#ifndef LOG
+#define LOG(...) \
+  SPDLOG_INFO(__VA_ARGS__);
+#endif
+#ifndef WARN
+#define WARN(...) \
+  SPDLOG_WARN(__VA_ARGS__);
+#endif
+#ifndef FATAL
+#define FATAL(...) \
+  SPDLOG_ERROR( __VA_ARGS__);
+#endif
+#ifndef DEBUG_INFO
+#ifdef _DEBUG 
+#define DEBUG_INFO(...) \
+  SPDLOG_DEBUG(__VA_ARGS__);
+#else
+#define DEBUG_INFO(fmt_str, ...)
+#endif
+#endif
+#else // defined(_MSC_VER) && !defined(__clang__)
 #ifndef INFO
 #define INFO(fmt_str, ...) \
   fmt::print("{} " fmt_str "\n", ToString(Now()),##__VA_ARGS__);
@@ -40,3 +66,4 @@
 #define DEBUG_INFO(fmt_str, ...)
 #endif
 #endif
+#endif //defined(_MSC_VER) && !defined(__clang__)

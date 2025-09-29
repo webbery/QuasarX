@@ -1,6 +1,6 @@
 #pragma once
-#include "Util/datetime.h"
 #include "std_header.h"
+#include "Util/datetime.h"
 #include "Util/system.h"
 #include "nng/nng.h"
 #include <memory>
@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <thread>
 #include "Bridge/exchange.h"
+#include "json.hpp"
 
 struct AgentStrategyInfo;
 struct FeatureNode;
@@ -48,37 +49,31 @@ public:
     const Map<String, std::variant<float, List<float>>>& GetCollection(symbol_t symbol) const ;
 
 private:
-    struct FeatureBlock{
-        IFeature* _feature;
-        Set<FeatureBlock*> _nexts;
-    };
     // extract tech index from quote/others
     void run();
     // 是否在开盘时间内
     bool is_open(symbol_t symbol, time_t);
 
     void send_feature(nng_socket& s, const QuoteInfo& quote, List<IFeature*>* pFeats);
-    void send_feature(nng_socket& s, const QuoteInfo& quote, const List<FeatureBlock*>& pFeats);
-
-    FeatureBlock* GenerateBlock(FeatureNode* node);
-
-    double recursive_feature(FeatureBlock* block, const QuoteInfo& quote, double cur);
-
-    void DeleteBlock(FeatureBlock* block);
+    
+    void CreateFeature(const String& strategy, const String& name, const nlohmann::json& params);
     
 private:
     Server* _handle;
 
     struct PipelineInfo {
         char _gap:7 = 1;    // 间隔时长, 
-        List<FeatureBlock*> _features;  // 预测特征
-        List<IFeature*> _reals;     // 实时特征
+
+        List<IFeature*> _features;  // 预测特征，频率可能是天，也可能是分钟, 将用于发送到下一阶段来生成新的信号
+        List<IFeature*> _reals;     // 实时特征，频率是秒, 将用于发送到下一阶段来生成新的信号
+        List<IFeature*> _externals; // 额外捕获的特征，不发送到下一阶段，仅收集作为服务数据提供
         Map<String, std::variant<float, List<float>>> _collections; // 额外采集的特征
     };
 
     Map<symbol_t, PipelineInfo> _pipelines;
     Map<String, Set<symbol_t>> _tasks;
-    List<IFeature*> _features;
+    // 所有的特征
+    Map<size_t, IFeature*> _features;
     
     std::thread* _thread;
     std::mutex _mtx;
