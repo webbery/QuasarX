@@ -333,26 +333,6 @@ void AgentSubsystem::UpdateCollection(const String& name, const DataFeatures& da
     }
 }
 
-void AgentSubsystem::RegistCollection(const String& strategy, const Set<String>& names) {
-    auto itr = _pipelines.find(strategy);
-    if (itr == _pipelines.end()) {
-        WARN("strategy {} not exist", strategy);
-        return;
-    }
-    for (auto& item: names) {
-        itr->second._collections[item];
-    }
-}
-
-void AgentSubsystem::ClearCollections(const String& strategy) {
-    auto itr = _pipelines.find(strategy);
-    if (itr == _pipelines.end()) {
-        WARN("strategy {} not exist", strategy);
-        return;
-    }
-    itr->second._collections.clear();
-}
-
 const Map<String, std::variant<float, List<float>>>& AgentSubsystem::GetCollection(const String& strategy) const {
     auto itr = _pipelines.find(strategy);
     if (itr == _pipelines.end()) {

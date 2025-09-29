@@ -120,16 +120,20 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 获取结果
     nlohmann::json results;
     auto& features = results["features"];
-    auto& allCols = strategySystem->GetCollections(strategyName);
-    for (auto& name: featureCollections) {
-        auto& colls = allCols.at(name);
-        std::visit([&features, &name](auto&& arg) {
-            using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, float> || std::is_same_v<T, List<float>>) {
-                features[name] = arg;
-            }
-        }, colls);
+    auto allCols = strategySystem->GetCollections(strategyName);
+    for (auto& item: allCols) {
+        auto symbol = get_symbol(item.first);
+        for (auto& name: featureCollections) {
+            auto& colls = item.second.at(name);
+            std::visit([&features, &name, &symbol](auto&& arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, float> || std::is_same_v<T, List<float>>) {
+                    features[symbol][name] = arg;
+                }
+            }, colls);
+        }
     }
+    
     for (auto& name: statCollection) {
         auto value = brokerSystem->GetIndicator(statistics[name]);
         features[name] = value;

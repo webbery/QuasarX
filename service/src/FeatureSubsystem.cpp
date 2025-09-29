@@ -318,3 +318,50 @@ void FeatureSubsystem::ErasePipeline(const String& name) {
     _tasks.erase(name);
 }
 
+void FeatureSubsystem::RegistCollection(const String& strategy, const Set<String>& names) {
+    auto& symbols = _tasks[strategy];
+    for (auto symbol: symbols) {
+        auto itr = _pipelines.find(symbol);
+        if (itr == _pipelines.end()) {
+            WARN("strategy {} not exist", strategy);
+            return;
+        }
+        for (auto& item: names) {
+            itr->second._collections[item];
+        }
+    }
+}
+
+void FeatureSubsystem::ClearCollections(const String& strategy) {
+    auto& symbols = _tasks[strategy];
+    for (auto symbol: symbols) {
+        auto itr = _pipelines.find(symbol);
+        if (itr == _pipelines.end()) {
+            WARN("strategy {} not exist", strategy);
+            return;
+        }
+        itr->second._collections.clear();
+    }
+}
+
+Map<symbol_t, Map<String, std::variant<float, List<float>>>> FeatureSubsystem::GetCollection(const String& strategy) {
+    Map<symbol_t, Map<String, std::variant<float, List<float>>>> result;
+    auto& symbols = _tasks[strategy];
+    for (auto symbol: symbols) {
+        auto itr = _pipelines.find(symbol);
+        if (itr == _pipelines.end()) {
+            WARN("symbol {} not exist", strategy);
+            continue;
+        }
+        result[symbol] = itr->second._collections;
+    }
+    return result;
+}
+
+const Map<String, std::variant<float, List<float>>>& FeatureSubsystem::GetCollection(symbol_t symbol) const {
+    auto itr = _pipelines.find(symbol);
+    if (itr == _pipelines.end()) {
+        WARN("symbol {}'s feature not exist", symbol);
+    }
+    return itr->second._collections;
+}

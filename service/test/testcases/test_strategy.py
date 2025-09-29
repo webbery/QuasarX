@@ -33,5 +33,16 @@ class TestStrategy:
         data = check_response(response)
         assert isinstance(data, object)
         assert 'features' in data
-        assert 'MACD_5' in data['features']
-        assert 'sharp' in data['features']
+        assert len(data['features']) > 0
+        features = data['features']
+        for symbol_feature in features:
+            assert 'MACD_5' in symbol_feature
+            macd5 = symbol_feature['MACD_5']
+            assert len(macd5) > 0
+            assert 'sharp' in symbol_feature
+            assert 'buy' in data
+            assert len(data['buy']) > 0
+            assert 'sell' in data
+            assert len(data['sell']) > 0
+
+            break

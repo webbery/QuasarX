@@ -1208,7 +1208,7 @@ bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) 
         verifier.verify(decoded); // 如果验证失败（如签名无效、过期），会抛出异常
     } catch (const std::exception& e) {
         // 其他解析异常
-        FATAL("{}", e.what());
+        FATAL("{} {}", _config->GetPublicKey(), e.what());
         res.status = 401;
         res.set_content(std::string("{\"error\": \"Token processing error: ") + e.what() + "\"}", "application/json");
         return false;

@@ -84,15 +84,15 @@ bool StrategySubSystem::HasStrategy(const String& name) {
 }
 
 void StrategySubSystem::RegistCollection(const String& strategy, const Set<String>& collections) {
-    _agentSystem->RegistCollection(strategy, collections);
+    _featureSystem->RegistCollection(strategy, collections);
 }
 
 void StrategySubSystem::ClearCollections(const String& strategy) {
-    _agentSystem->ClearCollections(strategy);
+    _featureSystem->ClearCollections(strategy);
 }
 
-const Map<String, std::variant<float, List<float>>>& StrategySubSystem::GetCollections(const String& strategy) const {
-    return _agentSystem->GetCollection(strategy);
+Map<symbol_t, Map<String, std::variant<float, List<float>>>> StrategySubSystem::GetCollections(const String& strategy) {
+    return _featureSystem->GetCollection(strategy);
 }
 
 AgentStrategyInfo StrategySubSystem::ParseJsonScript(const String& content) {

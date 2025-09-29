@@ -40,6 +40,13 @@ public:
 
     void InitSecondLvlFeatures();
 
+    void RegistCollection(const String& strategy, const Set<String>& names);
+
+    void ClearCollections(const String& strategy);
+
+    Map<symbol_t, Map<String, std::variant<float, List<float>>>> GetCollection(const String& strategy);
+    const Map<String, std::variant<float, List<float>>>& GetCollection(symbol_t symbol) const ;
+
 private:
     struct FeatureBlock{
         IFeature* _feature;
@@ -66,6 +73,7 @@ private:
         char _gap:7 = 1;    // 间隔时长, 
         List<FeatureBlock*> _features;  // 预测特征
         List<IFeature*> _reals;     // 实时特征
+        Map<String, std::variant<float, List<float>>> _collections; // 额外采集的特征
     };
 
     Map<symbol_t, PipelineInfo> _pipelines;

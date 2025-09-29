@@ -71,7 +71,7 @@ public:
 
     void ClearCollections(const String& strategy);
 
-    const Map<String, std::variant<float, List<float>>>&  GetCollections(const String& strategy) const;
+    Map<symbol_t, Map<String, std::variant<float, List<float>>>> GetCollections(const String& strategy);
 private:
     AgentStrategyInfo ParseJsonScript(const String& content);
 
