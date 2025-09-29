@@ -22,20 +22,20 @@
 #endif
 #ifndef LOG
 #define LOG(fmt_str, ...) \
-  spdlog::debug(fmt_str, ##__VA_ARGS__);
+  SPDLOG_INFO(fmt_str, ##__VA_ARGS__);
 #endif
 #ifndef WARN
 #define WARN(fmt_str, ...) \
-  spdlog::warn(fmt_str, ##__VA_ARGS__);
+  SPDLOG_WARN(fmt_str, ##__VA_ARGS__);
 #endif
 #ifndef FATAL
 #define FATAL(fmt_str, ...) \
-  fmt::print(fmt::fg(fmt::color::red), "ERROR: " fmt_str "\n", ##__VA_ARGS__)
+  SPDLOG_ERROR(fmt_str, ##__VA_ARGS__);
 #endif
 #ifndef DEBUG_INFO
 #ifdef _DEBUG 
 #define DEBUG_INFO(fmt_str, ...) \
-  spdlog::debug(fmt_str, ##__VA_ARGS__);
+  SPDLOG_DEBUG(fmt_str, ##__VA_ARGS__);
 #else
 #define DEBUG_INFO(fmt_str, ...)
 #endif

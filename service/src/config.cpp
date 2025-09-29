@@ -35,6 +35,7 @@ ServerConfig::ServerConfig(const std::string& path):_path(path) {
         std::ifstream ifs;
         ifs.open(key_file);
         if (!ifs.is_open()) {
+            LOG("load server.key fail.");
             return;
         }
         std::stringstream buffer;  
@@ -47,6 +48,7 @@ ServerConfig::ServerConfig(const std::string& path):_path(path) {
         std::ifstream ifs;
         ifs.open(pub_file);
         if (!ifs.is_open()) {
+            LOG("load server.crt fail.");
             return;
         }
         std::stringstream buffer;

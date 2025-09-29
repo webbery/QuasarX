@@ -102,9 +102,9 @@ void print_stacktrace(int signo) {
           std::string cmd = "addr2line " + addr + " -e " + GetProgramPath();
           std::string output;
           exec(cmd, output);
-          printf("[%s] ", output.c_str());
+          FATAL("{}", output.c_str());
         } else {
-          printf("%s ", str.c_str());
+          FATAL("{}", str.c_str());
         }
       }
       // 使用__cxa_demangle函数解析符号信息
@@ -118,7 +118,6 @@ void print_stacktrace(int signo) {
       //     // printf("Line: %d ", atoi(name) + 1);  // 注意：这里的行号是从1开始的
       // } else {
       // }
-      printf("\n");
     }
 
     // 释放内存
@@ -149,10 +148,14 @@ void init_logger() {
     auto combined_logger = spdlog::rotating_logger_mt(
         ToString(Now()).c_str(), log_file_path.c_str(), max_file_size, max_files);
     // 4. 设置日志格式
-    combined_logger->set_pattern("[%m-%d %H:%M:%S.%e] [%^%l%$] [thread %t] %v");
+    combined_logger->set_pattern("[%m-%d %H:%M:%S.%e] [%^%l%$] [thread %t] [%s:%#] %v");
 
     // 5. 设置全局日志级别（可选，logger会继承这个级别）
     combined_logger->set_level(spdlog::level::trace);
+    // 警告则刷新
+    combined_logger->flush_on(spdlog::level::warn);
+    // 每30秒刷新日志
+    spdlog::flush_every(std::chrono::seconds(60));
 
     
     // 7. 设置为默认logger（可选，这样可以直接使用spdlog::info()等函数）
