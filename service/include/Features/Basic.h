@@ -7,11 +7,9 @@ public:
     BasicFeature(const nlohmann::json& params);
     ~BasicFeature();
 
-    virtual size_t id();
-    
     virtual bool plug(Server* handle, const String& account);
 
-    virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
+    virtual bool deal(const QuoteInfo& quote, feature_t&);
 
     virtual const char* desc();
 

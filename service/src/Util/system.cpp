@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #ifdef WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -608,4 +609,11 @@ std::wstring to_wstring(const char* c)
     std::wstring ws(wc, cSize);
     delete wc;
     return ws;
+}
+
+size_t get_feature_id(const String& name, const nlohmann::json& params) {
+  auto h1 = std::hash<String>()(name);
+  auto h2 = std::hash<nlohmann::json>{}(params);
+  h2 ^= h1 + 0x9e3779b9 + (h2 << 6) + (h2 >> 2);
+  return h2;
 }

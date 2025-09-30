@@ -2,6 +2,7 @@
 #include "std_header.h"
 #include "json.hpp"
 #include "Features/Scaler.h"
+#include <cstddef>
 
 class Server;
 struct QuoteInfo;
@@ -31,11 +32,11 @@ public:
     /**
      * @brief 同一个特征,参数不同,id也不一样;参数相同的同一类特征,id一样
      */
-    virtual size_t id() = 0;
+    size_t id() { return _id; }
 
     virtual bool plug(Server* handle, const String& account) = 0;
 
-    virtual feature_t deal(const QuoteInfo& quote, double extra = 0) = 0;
+    virtual bool deal(const QuoteInfo& quote, feature_t& output) = 0;
 
     virtual const char* desc() = 0;
 
@@ -48,10 +49,10 @@ protected:
         return true;
     }
 protected:
-    static unsigned short _t;
+    size_t _id;
 };
 
-
+size_t get_feature_id(const String& name, const nlohmann::json& params);
 /**
  * 
  */
@@ -63,7 +64,13 @@ public:
             delete _scaler;
         }
     }
+
+    bool isValid(const QuoteInfo& q);
+    
 protected:
+    // 上一次数据的时间戳,如果同一个时间戳说明数据相同，不需要再次计算
+    time_t _last = 0;
+    feature_t _prevs;
     IScaler* _scaler = nullptr;
 };
 

@@ -7,15 +7,13 @@ public:
     ~ATRFeature();
     virtual bool plug(Server* handle, const String& account);
 
-    virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
+    virtual bool deal(const QuoteInfo& quote, feature_t&);
 
     virtual const char* desc() { return "ATR"; }
 
     virtual FeatureType type() { return FeatureType::FT_ATR; }
 
-    virtual size_t id();
-
-    static constexpr StringView name() { return "ATR"; }
+    static constexpr String name() { return "ATR"; }
 
 private:
     double tr(short index);

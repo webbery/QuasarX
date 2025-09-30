@@ -5,6 +5,7 @@
 BasicFeature::BasicFeature(const nlohmann::json& params)
 {
     _name = to_lower((String)params);
+    _id = get_feature_id(desc(), params);
 }
 
 BasicFeature::~BasicFeature()
@@ -12,39 +13,42 @@ BasicFeature::~BasicFeature()
 
 }
 
-size_t BasicFeature::id()
-{
-    String name = desc();
-    String sid = name + "_" + _name;
-    return std::hash<String>()(sid);
-}
-
 bool BasicFeature::plug(Server* handle, const String& account)
 {
     return true;
 }
 
-feature_t BasicFeature::deal(const QuoteInfo& quote, double extra /*= 0*/)
+bool BasicFeature::deal(const QuoteInfo& quote, feature_t& output)
 {
+    if (!isValid(quote)) {
+        output = _prevs;
+        return false;
+    }
     if (_name == "open") {
-        return quote._open;
+        _prevs = quote._open;
+        return true;
     }
-    if (_name == "close") {
-        return quote._close;
+    else if (_name == "close") {
+        _prevs = quote._close;
+        return true;
     }
-    if (_name == "high") {
-        return quote._high;
+    else if (_name == "high") {
+        _prevs = quote._high;
+        return true;
     }
-    if (_name == "low") {
-        return quote._low;
+    else if (_name == "low") {
+        _prevs = quote._low;
+        return true;
     }
-    if (_name == "volume") {
-        return (double)quote._volume;
+    else if (_name == "volume") {
+        _prevs = (double)quote._volume;
+        return true;
     }
-    if (_name == "turnover") {
-        return (double)quote._turnover;
+    else if (_name == "turnover") {
+        _prevs = (double)quote._turnover;
+        return true;
     }
-    return 0.;
+    return false;
 }
 
 const char* BasicFeature::desc()

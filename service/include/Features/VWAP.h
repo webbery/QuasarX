@@ -5,19 +5,17 @@ class VWAPFeature:  public PrimitiveFeature {
 public:
     VWAPFeature(const nlohmann::json& params);
 
-    virtual size_t id();
-
     virtual bool plug(Server* handle, const String& account);
 
-    virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
+    virtual bool deal(const QuoteInfo& quote, feature_t&);
 
     virtual const char* desc() {
-        return name().data();
+        return name().c_str();
     }
 
     virtual FeatureType type() { return FeatureType::FT_VWAP; }
     
-    static constexpr StringView name() {
+    static constexpr String name() {
         return "VWAP";
     }
 

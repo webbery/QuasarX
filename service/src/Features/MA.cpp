@@ -14,30 +14,28 @@ EMAFeature::EMAFeature(const nlohmann::json& params) {
         String name = params["scaler"]["type"];
         _scaler = CreateScaler(name, params["scaler"]);
     }
+    _id = get_feature_id(desc(), params);
 }
 
 EMAFeature::~EMAFeature() {
 
 }
 
-size_t EMAFeature::id() {
-    String name = desc();
-    String sN = std::to_string(_N);
-    String sid = name + "_" + sN;
-    return std::hash<String>()(sid);
-}
-
 bool EMAFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-feature_t EMAFeature::deal(const QuoteInfo& quote, double extra) {
+bool EMAFeature::deal(const QuoteInfo& quote, feature_t& output) {
+    if (!isValid(quote))
+        return false;
     if (_prev == 0) {
         _prev = _alpha * quote._close;
-        return _prev;
+        output = _prev;
+        return true;
     }
     _prev = _alpha * quote._close + _beta * _prev;
-    return _prev;
+    output = _prev;
+    return true;
 }
 
 const char* EMAFeature::desc() {
@@ -57,14 +55,11 @@ MACDFeature::MACDFeature(const nlohmann::json& params): _handle(nullptr) {
     _fastPeriod = params["FastPeriod"];
     _slowPeriod = params["SlowPeriod"];
     _signalPeriod = params["SignalPeriod"];
+    _id = get_feature_id(desc(), params);
 }
 
 MACDFeature::~MACDFeature() {
 
-}
-
-size_t MACDFeature::id() {
-    return std::hash<StringView>()(name());
 }
 
 bool MACDFeature::plug(Server* handle, const String& account) {
@@ -72,12 +67,14 @@ bool MACDFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-feature_t MACDFeature::deal(const QuoteInfo& quote, double extra) {
+bool MACDFeature::deal(const QuoteInfo& quote, feature_t& output) {
+    if (!isValid(quote))
+        return false;
     auto itr = _symbolHistory.find(quote._symbol);
     if (itr == _symbolHistory.end()) {
         itr->second = _handle->GetDailyClosePrice(quote._symbol, _signalPeriod, StockAdjustType::None);
     }
-    feature_t ret = quote._close;
+    output = quote._close;
 
     Vector<double> slow, fast, signal;
     int outBegin, outEnd;
@@ -86,7 +83,7 @@ feature_t MACDFeature::deal(const QuoteInfo& quote, double extra) {
     TA_EMA(0, itr->second.size(), &(itr->second[0]), _signalPeriod, &outBegin, &outEnd, &(slow[0]));
 
     // diff = fast - slow
-    return ret;
+    return true;
 }
 
 const char* MACDFeature::desc() {

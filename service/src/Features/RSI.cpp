@@ -9,19 +9,19 @@ RSIFeature::RSIFeature(const nlohmann::json& params):_prevClose(nan("")) {
         _lastN = atoi(((String)params["N"]).c_str());
         _diffs.reserve(_lastN);
     }
-}
-
-size_t RSIFeature::id(){
-    return std::hash<StringView>()(name());
+    _id = get_feature_id(desc(), params);
 }
 
 bool RSIFeature::plug(Server* handle, const String& account){
     return true;
 }
 
-feature_t RSIFeature::deal(const QuoteInfo& quote, double extra){
-    if (!_initialize)
-        return initialize(quote);
+bool RSIFeature::deal(const QuoteInfo& quote, feature_t& output){
+    if (!isValid(quote))
+        return false;
+    if (!_initialize) {
+        return initialize(quote, output);
+    }
     
     double val = quote._close - _prevClose;
     if (val > 0) {
@@ -31,7 +31,8 @@ feature_t RSIFeature::deal(const QuoteInfo& quote, double extra){
     }
     _diffs[_curIdx] = val;
     _curIdx = (++_curIdx % _lastN);
-    return calculateRSI();
+    output = calculateRSI();
+    return true;
 }
 
 const char* RSIFeature::desc(){
@@ -46,16 +47,16 @@ feature_t RSIFeature::calculateRSI() const {
     return 100.0 - (100.0 / (1.0 + rs));
 }
 
-feature_t RSIFeature::initialize(const QuoteInfo& quote) {
+bool RSIFeature::initialize(const QuoteInfo& quote, feature_t& output) {
     if (std::isnan(_prevClose)) {
         _prevClose = quote._close;
-        return nan("");
+        return false;
     }
     double val = quote._close - _prevClose;
     _prevClose = quote._close;
     if (_diffs.size() < _lastN) {
         _diffs.push_back(val);
-        return nan("");
+        return false;
     }
     double initGain = 0;
     double initLoss = 0;
@@ -70,5 +71,6 @@ feature_t RSIFeature::initialize(const QuoteInfo& quote) {
     _avgLoss = initLoss / _lastN;
     _initialize = true;
 
-    return calculateRSI();
+    output = calculateRSI();
+    return true;
 }

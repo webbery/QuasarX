@@ -15,10 +15,6 @@
 #include "Features/Basic.h"
 #include "Features/ATR.h"
 
-#define REGIST_FEATURE(class_name, json_str) \
-    { auto f = FeatureFactory::Create(class_name::name(), nlohmann::json::parse(json_str));\
-      _features[f->id()] = f; }
-
 using FeatureFactory = TypeFactory<
     ATRFeature,
     EMAFeature,
@@ -26,8 +22,13 @@ using FeatureFactory = TypeFactory<
     BasicFeature
 >;
 
-unsigned short IFeature::_t = 0;
-
+bool PrimitiveFeature::isValid(const QuoteInfo& q) {
+    if (q._time > _last) {
+        _last = q._time;
+        return true;
+    }
+    return false;
+}
 
 FeatureSubsystem::FeatureSubsystem(Server* handle): _handle(handle), _thread(nullptr) {
     
@@ -55,30 +56,16 @@ void FeatureSubsystem::LoadConfig(const AgentStrategyInfo& config) {
     LOG("Load Feature {}[{}]", name, symbols);
     for (auto node: config._features) {
         // 构建feature id，查找是否已经存在
-        auto f = FeatureFactory::Create(node->_type, node->_params);
-        auto id = f->id();
+        auto id = get_feature_id(node->_type, node->_params);
         if (_features.count(id) == 0) {
-            _features[id] = f;
-            for (auto symb : symbols) {
-                PipelineInfo& pi = _pipelines[symb];
-                pi._gap = config._future;
-                pi._features.push_back(f);
-                LOG("regist {}", f->desc());
-            }
-        }
-        else {
-            delete f;
+            CreateFeature(name, node->_type, node->_params, FeatureKind::LongGap);
         }
     }
 }
 
 void FeatureSubsystem::InitSecondLvlFeatures() {
-    REGIST_FEATURE(VWAPFeature, "{\"N\":1}");
-    for (auto& f: _features) {
-        for (auto& item: _pipelines) {
-            auto& pi = item.second;
-            pi._reals.push_back(f.second);
-        }
+    for (auto& item: _tasks) {
+        CreateFeature(item.first, VWAPFeature::name(), nlohmann::json::parse("{\"N\":1}"), FeatureKind::SecondLevel);
     }
 }
 
@@ -112,20 +99,18 @@ void FeatureSubsystem::run() {
                 continue;
         }
         
-        List<IFeature*>* pFeats = nullptr;
         {
             std::unique_lock<std::mutex> lock(_mtx);
             auto& pipeinfo = _pipelines[quote._symbol];
             if (pipeinfo._gap != 0 &&
                 (_handle->GetRunningMode() == RuningType::Backtest || !_handle->IsOpen(quote._symbol, quote._time))) { // 日间策略:
-                send_feature(send_sock, quote, &pipeinfo._features);
-                continue;
+                send_feature(send_sock, quote, pipeinfo._features);
             } else { // 实时
+                send_feature(send_sock, quote, pipeinfo._reals);
             }
-            pFeats = &pipeinfo._reals;
+            // update external
+            UpdateExternalFeature(pipeinfo, quote);
         }
-        
-        send_feature(send_sock, quote, pFeats);
     }
 
     nng_close(send_sock);
@@ -134,27 +119,29 @@ void FeatureSubsystem::run() {
     recvsock.id = 0;
 }
 
-void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, List<IFeature*>* pFeats) {
+void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const Map<size_t, IFeature*>& pFeats) {
     DataFeatures messenger;
     messenger._symbol = quote._symbol;
-    Vector<float> features(pFeats->size());
-    Vector<size_t> types(pFeats->size());
+    Vector<float> features(pFeats.size());
+    Vector<size_t> types(pFeats.size());
     int i = 0;
     DEBUG_INFO("{}", quote);
-    for (auto& feat: *pFeats) {
-        auto val = feat->deal(quote);
+    for (auto& feat: pFeats) {
+        feature_t val;
+        if (!feat.second->deal(quote, val))
+            continue;
+
         std::visit([&features, i](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, double>) {
-                if (!std::isnan(arg)) {
-                    features[i] = arg;
-                }
+                features[i] = arg;
             }
             else if constexpr (std::is_same_v<T, Vector<float>>) {
+                // features[i] = arg;
             }
         }, val);
         
-        types[i] = feat->id();
+        types[i] = feat.second->id();
         ++i;
     }
     DEBUG_INFO("REAL: {}", features);
@@ -168,24 +155,38 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, List<
     }
 }
 
-void FeatureSubsystem::CreateFeature(const String& strategy, const String& name, const nlohmann::json& params) {
-    auto f = FeatureFactory::Create(name, params);
-    if (!f) {
-        LOG("create feature {} fail.", name);
-        return;
-    }
-    auto id = f->id();
+void FeatureSubsystem::CreateFeature(const String& strategy, const String& name, const nlohmann::json& params, FeatureKind kind) {
+    auto id = get_feature_id(name, params);
+    IFeature* f = nullptr;
     if (_features.count(id) == 0) {
+        f = FeatureFactory::Create(name, params);
+        if (!f) {
+            LOG("create feature {} fail.", name);
+            return;
+        }
         _features[id] = f;
     }
     else {
-        delete f;
         f = _features[id];
     }
+    
     auto& symbols = _tasks[strategy];
     for (auto symbol : symbols) {
         auto& pipeline = _pipelines[symbol];
-        pipeline.
+        switch (kind) {
+        case FeatureKind::LongGap:
+            pipeline._features[id] = f;
+        break;
+        case FeatureKind::SecondLevel:
+            pipeline._reals[id] = f;
+        break;
+        case FeatureKind::Collection:
+            pipeline._externals[id] = f;
+        break;
+        default:
+        break;
+        }
+        // pipeline.
     }
     
 }
@@ -303,4 +304,17 @@ const Map<String, std::variant<float, List<float>>>& FeatureSubsystem::GetCollec
         WARN("symbol {}'s feature not exist", symbol);
     }
     return itr->second._collections;
+}
+
+void FeatureSubsystem::UpdateExternalFeature(PipelineInfo& pipeinfo, const QuoteInfo& quote) {
+    auto& features = pipeinfo._externals;
+    for (auto& item: features) {
+        feature_t output;
+        item.second->deal(quote, output);
+        if (output.valueless_by_exception()) {
+            continue;
+        }
+
+        
+    }
 }

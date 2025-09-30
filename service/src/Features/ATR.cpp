@@ -9,10 +9,7 @@ ATRFeature::ATRFeature(const nlohmann::json& params):_sum(0), _close(nullptr) {
     } catch(const nlohmann::json::exception& e) {
         WARN("ATRFeature exception: {}", e.what());
     }
-}
-
-size_t ATRFeature::id() {
-    return std::hash<StringView>()(name());
+    _id = get_feature_id(name(), params);
 }
 
 ATRFeature::~ATRFeature() {
@@ -27,12 +24,16 @@ bool ATRFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-feature_t ATRFeature::deal(const QuoteInfo& quote, double extra) {
+bool ATRFeature::deal(const QuoteInfo& quote, feature_t& output) {
+    if (!isValid(quote)) {
+        output = _prevs;
+        return false;
+    }
     _cnt += 1;
     if (_close == nullptr) {
         _close = new double[_T];
         _close[0] = quote._close;
-        return nan("");
+        return false;
     }
     double prev_close = _close[_cur];
     
@@ -48,7 +49,8 @@ feature_t ATRFeature::deal(const QuoteInfo& quote, double extra) {
     _sum += tr;
     if (_cnt >= _T + 1) {
         _sum -= _close[(_cur - 1) % _T];
-        return _sum / _T;
+        _prevs = _sum / _T;
     }
-    return nan("");
+    output = _prevs;
+    return true;
 }
