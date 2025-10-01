@@ -67,11 +67,11 @@ public:
 
     FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }
 
-    void RegistCollection(const String& strategy, const Set<String>& );
+    void RegistCollection(const String& strategy, const String& featureName, const nlohmann::json& params);
 
     void ClearCollections(const String& strategy);
 
-    Map<symbol_t, Map<String, std::variant<float, List<float>>>> GetCollections(const String& strategy);
+    Map<symbol_t, Map<String, List<feature_t>>> GetCollections(const String& strategy);
 private:
     AgentStrategyInfo ParseJsonScript(const String& content);
 

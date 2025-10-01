@@ -20,7 +20,7 @@ public:
     }
 
 private:
-    int _N = 60;
+    int _N = 15;    // 默认统计时长15s
 
     struct price_info {
         time_t _time;

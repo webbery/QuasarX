@@ -505,53 +505,6 @@ double Server::GetFreeRate(time_t t) {
     return _inter_rates.lower_bound(t)->second;
 }
 
-// void Server::RunCammand() {
-//     linenoiseInstallWindowChangeHandler();
-//     linenoiseHistoryLoad(HISTORY_FILENAME);
-//     linenoiseSetCompletionCallback([](char const* prefix, linenoiseCompletions* lc) {
-
-//     });
-//     auto commander = RegistCommand();
-//     InitDefault();
-
-//     do {
-//         char* result = linenoise("trash> ");
-//         if (result == nullptr) break;
-//         std::string input(result);
-//         free(result);
-//         trim(input);
-//         if (input == "exit") {
-//             break;
-//         }
-//         if (input.empty()) continue;
-
-//         // 命令格式: /xxx/xxx param1=xxx param2=xxx ...
-//         commander->run(input);
-//         linenoiseHistoryAdd(input.c_str());
-//     } while (true);
-//     delete commander;
-//     linenoiseHistorySave(HISTORY_FILENAME);
-//     linenoiseHistoryFree();
-// }
-
-// Commander* Server::RegistCommand() {
-//     Commander* cmder = new Commander();
-//     //cmder->route("/account", new AccountHandler(this));
-//     //cmder->route("/asset", new AssetHandler(this));
-//     //cmder->route("/order", new OrderHandler(this));
-//     //cmder->route("/strategy", new StrategyHandler(this));
-//     //cmder->route(API_STOCK, new StockHandler(this));
-//     // _recorder = new RecordHandler(this);
-//     // cmder->route(API_RECORD, _recorder);
-//     // _exchanger = new ExchangeHandler(this);
-//     // cmder->route(API_EXHANGE, _exchanger);
-//     // if (!_risker) {
-//     //     _risker = new RiskHandler(this);
-//     // }
-//     // cmder->route("/risk", _risker);
-//     return cmder;
-// }
-
 IStopLoss* Server::GetStopLoss(const String& name) {
     auto risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     return risk->Switch(name);
@@ -729,7 +682,6 @@ bool Server::LoadStock(DataFrame& df, symbol_t symbol, int lastN) {
     auto filename = get_symbol(symbol) + "_hist_data.csv";
     String path = _config->GetDatabasePath();
     path += "/Astock/" + filename;
-    double open, close, high, low, volumn, amount;
 
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
@@ -760,22 +712,36 @@ bool Server::LoadStock(DataFrame& df, symbol_t symbol, int lastN) {
     else file.seekg(0);
 
     // 读取目标行内容
-    unsigned int index = 0;
+    uint32_t index = 0;
     std::string line;
+    bool visited_head = false;
+    df.load_column("datetime", Vector<time_t>());
+    for (auto name : { "open", "close", "high", "low", "volume"}) {
+        df.load_column(name, Vector<double>());
+    }
     while (std::getline(file, line)) {
         // 处理换行符（\r\n）
-        if (!line.empty() && line.back() == '\n') 
+        if (!line.empty() && line.back() == '\n') {
             line.pop_back();
+            if (line.back() == '\r') {
+                line.pop_back();
+            }
+        }
         
+        if (!visited_head && line.find("open") != std::string::npos) {
+            visited_head = true;
+            continue;
+        }
+
         Vector<String> content;
         split(line, content, ",");
 
         auto t = FromStr(content[0]);
-        open = atof(content[1].c_str());
-        close = atof(content[2].c_str());
-        low = atof(content[3].c_str());
-        high = atof(content[4].c_str());
-        volumn = atof(content[5].c_str());
+        auto open = atof(content[1].c_str());
+        auto close = atof(content[2].c_str());
+        auto low = atof(content[3].c_str());
+        auto high = atof(content[4].c_str());
+        auto volumn = atof(content[5].c_str());
         df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
             std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn)
         );
@@ -1031,7 +997,9 @@ Vector<double> Server::GetDailyClosePrice(symbol_t symbol, int N, StockAdjustTyp
     Vector<double> ret;
     if (is_stock(symbol)) {
         DataFrame df;
-        LoadStock(df, symbol, N);
+        if (!LoadStock(df, symbol, N)) {
+            return ret;
+        }
         if (adjust == StockAdjustType::After) {
 
         } else {

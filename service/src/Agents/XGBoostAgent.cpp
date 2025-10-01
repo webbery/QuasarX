@@ -33,7 +33,11 @@ int XGBoostAgent::predict(const DataFeatures& data, Vector<float>& result) {
         return -1;
 
     DMatrixHandle xgb = nullptr;
-    if (XGDMatrixCreateFromMat(data._data.data(), 1, _features.size(), 0.0f, &xgb)) {
+    Vector<float> input(data._data.size());
+    std::transform(data._data.begin(), data._data.end(), input.begin(), [](double val) {
+        return static_cast<float>(val);
+        });
+    if (XGDMatrixCreateFromMat(input.data(), 1, _features.size(), 0.0f, &xgb)) {
         FATAL("XGDMatrixCreateFromMat fail: {}", XGBGetLastError());
         return -1;
     }

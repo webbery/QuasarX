@@ -25,7 +25,7 @@ private:
     short _N = 12;
     float _alpha = 1;
     float _beta = 1;
-    double _prev = 0;
+    double _prevVal = 0;
 };
 
 struct symbol_t;
@@ -49,9 +49,14 @@ public:
 private:
     Server* _handle;
 
-    short _signalPeriod;
-    short _fastPeriod;
-    short _slowPeriod;
+    short _signalPeriod = 9;
+    short _fastPeriod = 12;
+    short _slowPeriod = 26;
+
+    double _signalEma = 0;
+    double _fastEma = 0;
+    double _slowEma = 0;
     
-    Map<symbol_t, Vector<double>> _symbolHistory;
+    double _prevDEA = 0;
+    Map<symbol_t, List<double>> _symbolHistory;
 };

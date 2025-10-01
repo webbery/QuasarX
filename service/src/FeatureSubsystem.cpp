@@ -18,6 +18,7 @@
 using FeatureFactory = TypeFactory<
     ATRFeature,
     EMAFeature,
+    MACDFeature,
     VWAPFeature,
     BasicFeature
 >;
@@ -122,7 +123,7 @@ void FeatureSubsystem::run() {
 void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const Map<size_t, IFeature*>& pFeats) {
     DataFeatures messenger;
     messenger._symbol = quote._symbol;
-    Vector<float> features(pFeats.size());
+    Vector<double> features(pFeats.size());
     Vector<size_t> types(pFeats.size());
     int i = 0;
     DEBUG_INFO("{}", quote);
@@ -164,6 +165,7 @@ void FeatureSubsystem::CreateFeature(const String& strategy, const String& name,
             LOG("create feature {} fail.", name);
             return;
         }
+        f->plug(_handle, "");
         _features[id] = f;
     }
     else {
@@ -182,6 +184,7 @@ void FeatureSubsystem::CreateFeature(const String& strategy, const String& name,
         break;
         case FeatureKind::Collection:
             pipeline._externals[id] = f;
+            pipeline._externalNames[id] = name;
         break;
         default:
         break;
@@ -253,23 +256,8 @@ void FeatureSubsystem::ErasePipeline(const String& name) {
     _tasks.erase(name);
 }
 
-void FeatureSubsystem::RegistCollection(const String& strategy, const Set<String>& names) {
-    auto& symbols = _tasks[strategy];
-    for (auto symbol: symbols) {
-        auto itr = _pipelines.find(symbol);
-        if (itr == _pipelines.end()) {
-            WARN("strategy {} not exist", strategy);
-            return;
-        }
-        for (auto& item: names) {
-            itr->second._collections[item];
-            auto f = FeatureFactory::Create(item, "");
-            auto id = f->id();
-            if (_features.count(id) == 0) {
-                _features[id] = f;
-            }
-        }
-    }
+void FeatureSubsystem::RegistCollection(const String& strategy, const String& featureName, const nlohmann::json& params) {
+    CreateFeature(strategy, featureName, params, FeatureKind::Collection);
 }
 
 void FeatureSubsystem::ClearCollections(const String& strategy) {
@@ -284,8 +272,8 @@ void FeatureSubsystem::ClearCollections(const String& strategy) {
     }
 }
 
-Map<symbol_t, Map<String, std::variant<float, List<float>>>> FeatureSubsystem::GetCollection(const String& strategy) {
-    Map<symbol_t, Map<String, std::variant<float, List<float>>>> result;
+Map<symbol_t, Map<String, List<feature_t>>> FeatureSubsystem::GetCollection(const String& strategy) {
+    Map<symbol_t, Map<String, List<feature_t>>> result;
     auto& symbols = _tasks[strategy];
     for (auto symbol: symbols) {
         auto itr = _pipelines.find(symbol);
@@ -298,7 +286,7 @@ Map<symbol_t, Map<String, std::variant<float, List<float>>>> FeatureSubsystem::G
     return result;
 }
 
-const Map<String, std::variant<float, List<float>>>& FeatureSubsystem::GetCollection(symbol_t symbol) const {
+const Map<String, List<feature_t>>& FeatureSubsystem::GetCollection(symbol_t symbol) const {
     auto itr = _pipelines.find(symbol);
     if (itr == _pipelines.end()) {
         WARN("symbol {}'s feature not exist", symbol);
@@ -308,6 +296,8 @@ const Map<String, std::variant<float, List<float>>>& FeatureSubsystem::GetCollec
 
 void FeatureSubsystem::UpdateExternalFeature(PipelineInfo& pipeinfo, const QuoteInfo& quote) {
     auto& features = pipeinfo._externals;
+    auto& collections = pipeinfo._collections;
+    auto& idMap = pipeinfo._externalNames;
     for (auto& item: features) {
         feature_t output;
         item.second->deal(quote, output);
@@ -315,6 +305,7 @@ void FeatureSubsystem::UpdateExternalFeature(PipelineInfo& pipeinfo, const Quote
             continue;
         }
 
-        
+        auto& name = idMap[item.first];
+        collections[name].emplace_back(std::move(output));
     }
 }

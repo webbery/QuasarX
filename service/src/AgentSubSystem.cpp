@@ -149,7 +149,6 @@ void AgentSubsystem::Start() {
             } catch (const std::exception& e) {
                 FATAL("{}", e.what());
             }
-            UpdateCollection(item.first, messenger);
             return true;
             });
         item.second._transfer->start(name.data(), URI_FEATURE);
@@ -310,27 +309,6 @@ bool AgentSubsystem::IsNearClose(symbol_t symb) {
         return true;
     }
     return false;
-}
-
-void AgentSubsystem::UpdateCollection(const String& name, const DataFeatures& data)
-{
-    auto& pipe = _pipelines[name];
-    for (auto& item : pipe._featureCalculator) {
-        // 检查输入特征中是否已经有对应的数据
-        auto id = item.second->id();
-        int i = 0;
-        for (; i < data._features.size(); ++i) {
-            if (id == data._features[i]) {
-                break;
-            }
-        }
-        if (i >= data._features.size()) {
-            // 如果没有这个特征,再计算?
-            WARN("feature {} is not calculated", item.second->desc());
-            continue;
-        }
-        pipe._collections[item.first] = data._data[i];
-    }
 }
 
 const Map<String, std::variant<float, List<float>>>& AgentSubsystem::GetCollection(const String& strategy) const {

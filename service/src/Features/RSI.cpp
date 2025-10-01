@@ -17,10 +17,14 @@ bool RSIFeature::plug(Server* handle, const String& account){
 }
 
 bool RSIFeature::deal(const QuoteInfo& quote, feature_t& output){
-    if (!isValid(quote))
+    if (!isValid(quote)) {
+        output = _prevs;
         return false;
+    }
     if (!_initialize) {
-        return initialize(quote, output);
+        auto ret = initialize(quote, output);
+        _prevs = output;
+        return ret;
     }
     
     double val = quote._close - _prevClose;
@@ -32,6 +36,7 @@ bool RSIFeature::deal(const QuoteInfo& quote, feature_t& output){
     _diffs[_curIdx] = val;
     _curIdx = (++_curIdx % _lastN);
     output = calculateRSI();
+    _prevs = output;
     return true;
 }
 

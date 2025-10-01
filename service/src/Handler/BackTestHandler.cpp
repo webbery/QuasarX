@@ -63,8 +63,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         filer._symbols.emplace(code);
     }
     exchange->SetFilter(filer);
-    String level = params.at("level");
-    if (level == "T+1") {
+    String tickLevel = params.at("tick");
+    if (tickLevel == "1d") {
         exchange->UseLevel(1);
     }
     else {
@@ -92,21 +92,17 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         // sharp/features
         Set<String> features{"MACD", "ATR"};
         
-        List<String> stats = params["static"];
-        for (auto& name: stats) {
-            Vector<String> tokens;
-            split(name, tokens, "_");
-            if (tokens.empty())
-                continue;
-
-            auto key = to_upper(tokens[0]);
+        List<nlohmann::json> stats = params["static"];
+        for (auto& statInfo: stats) {
+            String statName = statInfo["name"];
+            auto key = to_upper(statName);
             if (features.count(key)) {
-                strategySystem->RegistCollection(strategyName, {name});
-                featureCollections.insert(name);
+                strategySystem->RegistCollection(strategyName, key, statInfo["params"]);
+                featureCollections.insert(statName);
             }
             else if (statistics.count(key)) {
-                brokerSystem->RegistIndicator(statistics[tokens[0]]);
-                statCollection.insert(tokens[0]);
+                brokerSystem->RegistIndicator(statistics[key]);
+                statCollection.insert(statName);
             }
         }
     }
@@ -125,12 +121,15 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         auto symbol = get_symbol(item.first);
         for (auto& name: featureCollections) {
             auto& colls = item.second.at(name);
-            std::visit([&features, &name, &symbol](auto&& arg) {
-                using T = std::decay_t<decltype(arg)>;
-                if constexpr (std::is_same_v<T, float> || std::is_same_v<T, List<float>>) {
-                    features[symbol][name] = arg;
-                }
-            }, colls);
+            for (auto& feature : colls) {
+                std::visit([&features, &name, &symbol](auto&& arg) {
+                    using T = std::decay_t<decltype(arg)>;
+                    if constexpr (std::is_same_v<T, double> || std::is_same_v<T, List<double>>) {
+                        features[symbol][name] = arg;
+                    }
+                }, feature);
+            }
+            
         }
     }
     

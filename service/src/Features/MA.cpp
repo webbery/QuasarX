@@ -4,6 +4,11 @@
 #include "server.h"
 #include "ta-lib/ta_libc.h"
 
+namespace {
+    double ema(double cur_close, double prev_ema, double coeff) {
+        return (cur_close - prev_ema) * coeff + prev_ema;
+    }
+}
 EMAFeature::EMAFeature(const nlohmann::json& params) {
     if (params.contains("N")) {
         _N = params["N"];
@@ -26,15 +31,19 @@ bool EMAFeature::plug(Server* handle, const String& account) {
 }
 
 bool EMAFeature::deal(const QuoteInfo& quote, feature_t& output) {
-    if (!isValid(quote))
+    if (!isValid(quote)) {
+        output = _prevs;
         return false;
-    if (_prev == 0) {
-        _prev = _alpha * quote._close;
-        output = _prev;
+    }
+    if (_prevVal == 0) {
+        _prevVal = _alpha * quote._close;
+        _prevs = _prevVal;
+        output = _prevs;
         return true;
     }
-    _prev = _alpha * quote._close + _beta * _prev;
-    output = _prev;
+    _prevVal = _alpha * quote._close + _beta * _prevVal;
+    _prevs = _prevVal;
+    output = _prevs;
     return true;
 }
 
@@ -43,6 +52,7 @@ const char* EMAFeature::desc() {
 }
 
 MACDFeature::MACDFeature(const nlohmann::json& params): _handle(nullptr) {
+    _id = get_feature_id(desc(), params);
     if (!check(params, "FastPeriod")) {
         return;
     }
@@ -55,7 +65,6 @@ MACDFeature::MACDFeature(const nlohmann::json& params): _handle(nullptr) {
     _fastPeriod = params["FastPeriod"];
     _slowPeriod = params["SlowPeriod"];
     _signalPeriod = params["SignalPeriod"];
-    _id = get_feature_id(desc(), params);
 }
 
 MACDFeature::~MACDFeature() {
@@ -68,21 +77,26 @@ bool MACDFeature::plug(Server* handle, const String& account) {
 }
 
 bool MACDFeature::deal(const QuoteInfo& quote, feature_t& output) {
-    if (!isValid(quote))
+    if (!isValid(quote)) {
+        output = _prevs;
         return false;
-    auto itr = _symbolHistory.find(quote._symbol);
-    if (itr == _symbolHistory.end()) {
-        itr->second = _handle->GetDailyClosePrice(quote._symbol, _signalPeriod, StockAdjustType::None);
     }
-    output = quote._close;
+    auto itr = _symbolHistory.find(quote._symbol);
+    if (itr == _symbolHistory.end() || itr->second.size() < _signalPeriod) {
+        _symbolHistory[quote._symbol].push_back(quote._close);
+        output = _prevs;
+        return false;
+        //_symbolHistory[quote._symbol] = _handle->GetDailyClosePrice(quote._symbol, _signalPeriod, StockAdjustType::None);
+    }
 
-    Vector<double> slow, fast, signal;
-    int outBegin, outEnd;
-    TA_EMA(0, itr->second.size(), &(itr->second[0]), _slowPeriod, &outBegin, &outEnd, &(slow[0]));
-    TA_EMA(0, itr->second.size(), &(itr->second[0]), _fastPeriod, &outBegin, &outEnd, &(slow[0]));
-    TA_EMA(0, itr->second.size(), &(itr->second[0]), _signalPeriod, &outBegin, &outEnd, &(slow[0]));
-
-    // diff = fast - slow
+    _slowEma = ema(quote._close, _slowEma, 2.0 / (_slowPeriod + 1));
+    _fastEma = ema(quote._close, _fastEma, 2.0 / (_fastPeriod + 1));
+    
+    double diff = _fastEma - _slowEma;
+    _prevDEA = ema(diff, _prevDEA, _signalPeriod);
+    double macd = 2 * (diff - _prevDEA);
+    _prevs = Vector<double>{ diff, _prevDEA, macd };
+    output = _prevs;
     return true;
 }
 

@@ -24,30 +24,13 @@ bool BasicFeature::deal(const QuoteInfo& quote, feature_t& output)
         output = _prevs;
         return false;
     }
-    if (_name == "open") {
-        _prevs = quote._open;
-        return true;
-    }
-    else if (_name == "close") {
-        _prevs = quote._close;
-        return true;
-    }
-    else if (_name == "high") {
-        _prevs = quote._high;
-        return true;
-    }
-    else if (_name == "low") {
-        _prevs = quote._low;
-        return true;
-    }
-    else if (_name == "volume") {
-        _prevs = (double)quote._volume;
-        return true;
-    }
-    else if (_name == "turnover") {
-        _prevs = (double)quote._turnover;
-        return true;
-    }
+#define PROCESS_QUOTE(name) if (_name == #name) { _prevs = (double)quote._##name; output = _prevs; return true; }
+    PROCESS_QUOTE(open);
+    PROCESS_QUOTE(close);
+    PROCESS_QUOTE(high);
+    PROCESS_QUOTE(low);
+    PROCESS_QUOTE(turnover);
+    PROCESS_QUOTE(volume);
     return false;
 }
 

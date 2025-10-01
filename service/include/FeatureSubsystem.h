@@ -28,7 +28,7 @@ class FeatureSubsystem {
         Map<size_t, IFeature*> _reals;     // 实时特征，频率是秒, 将用于发送到下一阶段来生成新的信号(比如预测X日操作，则使用该特征做择时)
         Map<size_t, IFeature*> _externals; // 额外捕获的特征，不发送到下一阶段，仅收集作为服务数据提供
         Map<size_t, String> _externalNames;
-        Map<String, std::variant<float, List<float>>> _collections; // 额外采集的特征
+        Map<String, List<feature_t>> _collections; // 额外采集的特征
     };
 
 public:
@@ -57,12 +57,12 @@ public:
 
     void InitSecondLvlFeatures();
 
-    void RegistCollection(const String& strategy, const Set<String>& names);
+    void RegistCollection(const String& strategy, const String& featureName, const nlohmann::json& params);
 
     void ClearCollections(const String& strategy);
 
-    Map<symbol_t, Map<String, std::variant<float, List<float>>>> GetCollection(const String& strategy);
-    const Map<String, std::variant<float, List<float>>>& GetCollection(symbol_t symbol) const ;
+    Map<symbol_t, Map<String, List<feature_t>>> GetCollection(const String& strategy);
+    const Map<String, List<feature_t>>& GetCollection(symbol_t symbol) const ;
 
 private:
     // extract tech index from quote/others

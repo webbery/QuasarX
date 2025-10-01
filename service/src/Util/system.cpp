@@ -465,7 +465,7 @@ String get_symbol(const symbol_t& symbol) {
       return head + String(buff, 6);
     }
     
-    return std::to_string(symbol._symbol);
+    return format_symbol(std::to_string(symbol._symbol));
   }
   WARN("unknow symbol type: {}", (int)symbol._type);
   return std::to_string(*(int32_t*)&symbol);

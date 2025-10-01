@@ -1,8 +1,8 @@
 # This is the API of trash
 openapi: "3.0.3"
 info:
-  title: Trash API
-  description: Trash Rest API接口
+  title: QuasarX API
+  description: QuasarX Rest API接口
   version: "0.0.1"
 servers:
   - url: http://localhost:19107/v0
@@ -699,12 +699,24 @@ paths:
                   type: object
                   description: 策略的参数
                   example: {}
+                tick:
+                  type: string
+                  description: 时间频率,1d-天,1h-小时,5m-5分钟,1m-1分钟,30s-30秒,15s-15秒,5s-5秒
+                  example: 1d
                 static:
                   type: array
                   description: 统计信息
                   items:
-                    type: string
-                    description: 待统计的特征或者指标,特征参数以_分割
+                    type: object
+                    description: 待统计的特征或者指标
+                    properties:
+                      name:
+                        type: string
+                        description: 指标名
+                        example: MACD
+                      params:
+                        type: object
+                        description: 指标参数
       responses:
         '200':
           description: success
@@ -716,39 +728,14 @@ paths:
                   buy:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        symb:
-                          type: string
-                          description: 合约
-                        dt:
-                          type: integer
-                          description: 时间
-                        p:
-                          type: number
-                          description: 价格
-                        q:
-                          type: integer
-                          description: 数量
+                      type: OperatorItem
                   sell:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        symb:
-                          type: string
-                          description: 合约
-                        dt:
-                          type: integer
-                          description: 时间
-                        p:
-                          type: number
-                          description: 价格
-                        q:
-                          type: integer
-                          description: 数量
+                      type: OperatorItem
                   features:
                     type: object
+                    description: 收集的特征信息,包括每只合约的特征,以及总的统计特征
         '404':
           description: fail
   /predict/montecarlo:
@@ -1126,6 +1113,22 @@ components:
           type: number
           description: 换手率
           example: 12.2
+    OperatorItem:
+      type: object
+      description: 买卖的信息
+      properties:
+        symb:
+          type: string
+          description: 合约
+        dt:
+          type: integer
+          description: 时间
+        p:
+          type: number
+          description: 价格
+        q:
+          type: integer
+          description: 数量
     StopLossList:
       type: object
       properties:

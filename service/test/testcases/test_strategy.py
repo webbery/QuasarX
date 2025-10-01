@@ -26,23 +26,26 @@ class TestStrategy:
             kwargs['headers'] = {'Authorization': auth_token}
         kwargs['json'] = {
             "name": "basic",
-            "level": "T+1",
-            "static": ["MACD_5", "sharp"]
+            "tick": "1d",
+            "static": [
+                {"name": "MACD"},
+                {"name": "sharp"}
+            ]
         }
         response = requests.post(f"{BASE_URL}/backtest", **kwargs)
         data = check_response(response)
         assert isinstance(data, object)
+        assert 'buy' in data
+        assert len(data['buy']) > 0
+        assert 'sell' in data
+        assert len(data['sell']) > 0
+
         assert 'features' in data
         assert len(data['features']) > 0
         features = data['features']
         for symbol_feature in features:
-            assert 'MACD_5' in symbol_feature
-            macd5 = symbol_feature['MACD_5']
+            assert 'MACD' in symbol_feature
+            macd5 = symbol_feature['MACD']
             assert len(macd5) > 0
             assert 'sharp' in symbol_feature
-            assert 'buy' in data
-            assert len(data['buy']) > 0
-            assert 'sell' in data
-            assert len(data['sell']) > 0
-
             break

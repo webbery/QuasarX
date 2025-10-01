@@ -3,7 +3,7 @@
 
 VWAPFeature::VWAPFeature(const nlohmann::json& params) {
     if (params.contains("N")) {
-        _N = 60* (int)params["N"]; // default unit is minute
+        _N = (int)params["N"]; // default unit is second
     }
     _id = get_feature_id(desc(), params);
 }
@@ -13,8 +13,10 @@ bool VWAPFeature::plug(Server* handle, const String& account) {
 }
 
 bool VWAPFeature::deal(const QuoteInfo& quote, feature_t& output) {
-    if (!isValid(quote))
+    if (!isValid(quote)) {
+        output = _prevs;
         return false;
+    }
     double price = (quote._high + quote._low + quote._close) / 3;
     _prices.emplace_back(price_info{ quote._time, price, quote._volume });
     auto front = &_prices.front();
@@ -33,6 +35,7 @@ bool VWAPFeature::deal(const QuoteInfo& quote, feature_t& output) {
         n1 += item._price * item._volume;
         total_volumn += item._volume;
     }
-    output = n1 / total_volumn;
+    _prevs = n1 / total_volumn;
+    output = _prevs;
     return true;
 }

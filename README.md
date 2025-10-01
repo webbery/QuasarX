@@ -1,7 +1,6 @@
 # QuasarX
 
-QuasarX is a quatum finacial software which inlcude service and client. The service is designed as follows:  
-![service](doc/serivce.png)
+QuasarX是自研量化交易软件(开发中).
 The client is call `QuasarX` which is a electron app. It associate with service by  a group of [resetapi](doc/restapi.yaml) or `SSE` techenical.
 
 ## Install
@@ -10,9 +9,9 @@ To be continue
 To be continue  
 
 ## Service  
-QuantService support CTP/XTP SDK only currently.  
+QuantService是Data Event驱动的服务程序, 数据平台接口支持CTP/中泰XTP/华鑫 SDK.  
 ### Dependency
-boost header, xgboost, tvm, 
+boost header, xgboost, onnx, nng, openssl 
 
 ## Client  
 To be continue  

@@ -46,7 +46,6 @@ private:
     bool StrategySell(symbol_t symbol, const DataFeatures& features);
     bool IsNearClose(symbol_t symb);
 
-    void UpdateCollection(const String& name, const DataFeatures& feature);
 private:
     Server* _handle;
     RiskSubSystem* _riskSystem = nullptr;
