@@ -1,54 +1,63 @@
 <template>
     <div class="panel results-panel">
         <div class="results-section">
-            <div class="main-chart chart-container">
+            <div class="full-width-chart chart-container">
                 <h2 class="panel-title"><i class="fas fa-chart-bar"></i> 价格走势与交易信号</h2>
                 <div id="priceChart"></div>
             </div>
             
-            <div class="chart-container">
-                <h2 class="panel-title"><i class="fas fa-wallet"></i> 资金曲线</h2>
-                <div id="equityChart"></div>
-            </div>
-            
-            <div class="chart-container">
-                <h2 class="panel-title"><i class="fas fa-chart-pie"></i> 资产分布</h2>
-                <div id="pieChart"></div>
+            <div class="half-width-charts">
+                <div class="chart-container">
+                    <h2 class="panel-title"><i class="fas fa-wallet"></i> 资金曲线</h2>
+                    <div id="equityChart"></div>
+                </div>
+                
+                <div class="chart-container">
+                    <h2 class="panel-title"><i class="fas fa-chart-pie"></i> 资产分布</h2>
+                    <div id="pieChart"></div>
+                </div>
             </div>
         </div>
         
-        <!-- <div class="metrics">
-            <div class="metric-card">
-                <div class="metric-label">总收益率</div>
-                <div class="metric-value">{{ (results.totalReturn * 100).toFixed(2) }}%</div>
+        <div class="metrics-section">
+            <h2 class="panel-title"><i class="fas fa-chart-line"></i> 关键指标</h2>
+            <div class="metrics">
+                <div class="metric-card">
+                    <div class="metric-label">总收益率</div>
+                    <div class="metric-value">{{ (results.totalReturn * 100).toFixed(2) }}%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">年化收益率</div>
+                    <div class="metric-value">{{ (results.annualReturn * 100).toFixed(2) }}%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">最大回撤</div>
+                    <div class="metric-value">{{ (results.maxDrawdown * 100).toFixed(2) }}%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">夏普比率</div>
+                    <div class="metric-value">{{ results.sharpeRatio.toFixed(2) }}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">交易次数</div>
+                    <div class="metric-value">{{ results.tradeCount }}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">胜率</div>
+                    <div class="metric-value">{{ (results.winRate * 100).toFixed(2) }}%</div>
+                </div>
             </div>
-            <div class="metric-card">
-                <div class="metric-label">年化收益率</div>
-                <div class="metric-value">{{ (results.annualReturn * 100).toFixed(2) }}%</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">最大回撤</div>
-                <div class="metric-value">{{ (results.maxDrawdown * 100).toFixed(2) }}%</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">夏普比率</div>
-                <div class="metric-value">{{ results.sharpeRatio.toFixed(2) }}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">交易次数</div>
-                <div class="metric-value">{{ results.tradeCount }}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">胜率</div>
-                <div class="metric-value">{{ (results.winRate * 100).toFixed(2) }}%</div>
-            </div>
-        </div> -->
+        </div>
     </div>
 </template>
 
 <script setup>
-import {ref, onMounted} from 'vue'
+import {ref, onMounted, defineExpose} from 'vue'
+import axios from 'axios'
+import https from 'https'
 import Plotly from 'plotly.js-dist'
+
+defineExpose({runBacktest})
 
 let results = {
                     totalReturn: 0.2845,
@@ -65,8 +74,31 @@ let startDate = '2022-01-01'
 let endDate = '2023-12-31'
 let maPeriod = 5
 let selectedAsset = '某股'
+let selectSymbol = '000001'
 let initialCapital = 100000
 
+async function runBacktest() {
+    console.info('get stock history data')
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    const url = 'https://' + server + '/v0/stocks/history'
+    const agent = new https.Agent({  
+        rejectUnauthorized: false // 忽略证书错误
+    });
+    let params = {
+        id: selectSymbol,
+        type: '1d',
+        start: Date.parse('2010-01-01')/1000,
+        end: Date.parse('2025-01-01')/1000,
+        right: 0
+    }
+    const response = await axios.get(url, {
+        params: params,
+        httpsAgent: agent,
+        responseType: 'application/json',
+        headers: { 'Authorization': token}})
+    console.info(response)
+}
 
 function getPriceChartData() {
     // 生成模拟价格数据
@@ -268,33 +300,113 @@ function updateCharts() {
 }
 </script>
 <style scoped>
-.main-chart {
-    grid-column: 1 / -1;
-}
-.chart-container {
-    flex: 1;
-    min-height: 300px;
-    background: rgba(15, 23, 42, 0.5);
-    border-radius: 10px;
+.panel {
     padding: 15px;
+    background: rgba(15, 23, 42, 0.8);
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
+
+.results-section {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.full-width-chart {
+    width: 100%;
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.half-width-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.chart-container {
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+}
+
 .panel-title {
-    font-size: 1.4rem;
+    font-size: 1.1rem;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     color: #4a9eff;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .panel-title i {
-    font-size: 1.2rem;
+    font-size: 1rem;
 }
 
-.results-section {
+.metrics-section {
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.metrics {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 25px;
-    height: 100%;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.metric-card {
+    background: rgba(30, 41, 59, 0.7);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.metric-label {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-bottom: 5px;
+}
+
+.metric-value {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #e2e8f0;
+}
+
+/* 响应式设计 */
+@media (max-width: 1024px) {
+    .half-width-charts {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .metrics {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    .metrics {
+        grid-template-columns: 1fr;
+    }
+    
+    .panel {
+        padding: 10px;
+    }
 }
 </style>

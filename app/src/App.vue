@@ -9,7 +9,7 @@
         <button v-if="is_account" class="control-btn">
           <i class="fas fa-sync-alt"></i> 刷新数据
         </button>
-        <button v-if="is_backtest" class="btn">
+        <button v-if="is_backtest" class="btn" @click="onHandleRunBacktest">
           <i class="fas fa-sync-alt"></i> 执行回测
         </button>
         <button v-if="is_backtest" class="btn">
@@ -91,7 +91,7 @@
 
     <!-- 主内容区 -->
     <main class="main-content">
-      <component :is="activeComponent" />
+      <component :is="activeComponent" ref="dynamicComponentRef"/>
     </main>
 
     <!-- 右侧面板 -->
@@ -167,6 +167,7 @@ const VIEWS = {
 };
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
+const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 
 // 根据当前视图动态计算活动组件
 let activeComponent = computed(() => {
@@ -241,6 +242,12 @@ const onLoginClose = () => {
 
 const onHandleSetting = () => {
   currentView.value = VIEWS.SETTING_VIEW;
+}
+
+const onHandleRunBacktest = () => {
+  if (dynamicComponentRef.value && dynamicComponentRef.value.runBacktest) {
+    dynamicComponentRef.value.runBacktest()
+  }
 }
 </script>
 

@@ -54,6 +54,49 @@ paths:
                     type: integer
                     description: 交易量
                     example: 168
+  /stocks/history:
+    get:
+      summary: get stock history
+      description: 获取指数信息
+      tags:
+        - Stocks
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: string
+          description: 要获取的代码
+          example: 000001
+        - in: query
+          name: type
+          schema:
+            type: string
+          description: 数据频率
+          example: 1d
+        - in: query
+          name: start
+          schema:
+            type: integer
+          description: 起始时间
+        - in: query
+          name: end
+          schema:
+            type: integer
+          description: 结束时间
+        - in: query
+          name: right
+          schema:
+            type: integer
+          description: 复权方式,1-后复权
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Quote"
   /index/quote:
     get:
       summary: get index info

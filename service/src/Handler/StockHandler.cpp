@@ -64,10 +64,10 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
   String right = req.get_param_value("right");
   auto end_t = FromTick(end);
   DataFrequencyType dft = DataFrequencyType::Day;
-  if (type == "1") {
+  if (type == "5m") {
     dft = DataFrequencyType::Min5;
   }
-  else if (type == "2") {
+  else if (type == "1d") {
     dft = DataFrequencyType::Day;
   }
   StockAdjustType rightType = StockAdjustType::None;

@@ -53,7 +53,7 @@ class TestStock:
         start = int(time.mktime(time_start))
         time_end = time.strptime(time_end_str, "%Y-%m-%d")
         end = int(time.mktime(time_end))
-        params = {"id": self.stock_id, 'type': 2, 'start': start, 'end': end, 'right': 0}
+        params = {"id": self.stock_id, 'type': '1d', 'start': start, 'end': end, 'right': 0}
         response = requests.get(f"{BASE_URL}/stocks/history", params=params, **kwargs)
         data = check_response(response)
         assert isinstance(data, list)
