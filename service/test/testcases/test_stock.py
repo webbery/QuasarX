@@ -71,3 +71,29 @@ class TestStock:
     #     query = "?id=000300"
     #     response = requests.get(f"{BASE_URL}/index/quote" + query)
     #     data = check_response(response)
+
+    @pytest.mark.timeout(20)
+    def test_sector_today_flow(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        params = {"type": 0}
+        response = requests.get(f"{BASE_URL}/stocks/sector/flow", params=params, **kwargs)
+        data = check_response(response)
+        assert isinstance(data, list)
+        for row in data:
+            assert 'name' in row
+            assert 'value' in row
+            assert len(row['value']) == 1
+            for item in row['value']:
+                assert 'date' in item
+                assert 'main' in item
+                assert 'supbig' in item
+                assert 'big' in item
+                assert 'mid' in item
+                assert 'small' in item
+                break
+            break

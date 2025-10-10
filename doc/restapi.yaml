@@ -97,6 +97,27 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Quote"
+  /stocks/sector/flow:
+    get:
+      summary: get flow info
+      description: 获取板块资金流信息
+      tags:
+        - Sector
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: integer
+            description: 1- 所有历史 0- 当日信息
+      responses:
+        '200':
+          description: An array of sectors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SectorItem"
   /index/quote:
     get:
       summary: get index info
@@ -771,11 +792,12 @@ paths:
                   buy:
                     type: array
                     items:
-                      type: OperatorItem
+                      type: object
+                      $ref: "#/components/schemas/OperatorItem"
                   sell:
                     type: array
                     items:
-                      type: OperatorItem
+                      $ref: "#/components/schemas/OperatorItem"
                   features:
                     type: object
                     description: 收集的特征信息,包括每只合约的特征,以及总的统计特征
@@ -999,18 +1021,6 @@ paths:
           schema:
             type: integer
           description: end time
-      requestBody:
-        description: 参数
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name:
-                  type: array
-                  items:
-                    type: string
       responses:
         '200':
           description: success
@@ -1156,6 +1166,35 @@ components:
           type: number
           description: 换手率
           example: 12.2
+    SectorItem:
+      type: object
+      properties:
+        name:
+          type: string
+          description: 板块名
+        value:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                description: 日期
+              main:
+                type: number
+                description: 主力净流入
+              supbig:
+                type: number
+                description: 超大单净流入
+              big:
+                type: number
+                description: 大单净流入
+              mid:
+                type: number
+                description: 中单净流入
+              small:
+                type: number
+                description: 小单净流入
     OperatorItem:
       type: object
       description: 买卖的信息

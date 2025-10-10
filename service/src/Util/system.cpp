@@ -17,6 +17,7 @@
 #include <netdb.h>
 #include <ifaddrs.h>
 #include <pthread.h>
+#include <sys/wait.h>
 #endif
 #include <vector>
 #include <fstream>
@@ -138,14 +139,59 @@ bool RunCommand(const std::string& cmd) {
 }
 
 bool RunCommand(const std::string& cmd, String& output) {
-  std::array<char, 128> buffer;
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
-  if (!pipe) {
-      return false;
-  }
-  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-      output += buffer.data();
-  }
+#ifdef WIN32
+    std::array<char, 128> buffer;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    if (!pipe) {
+        return false;
+    }
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        output += buffer.data();
+    }
+#else
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        return false;
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return false;
+    }
+
+    if (pid == 0) { // 子进程
+        close(pipefd[0]); // 关闭读端
+        dup2(pipefd[1], STDOUT_FILENO); // 将标准输出重定向到管道
+        close(pipefd[1]);
+
+        Vector<String> args;
+        split(cmd, args, " ");
+        // 准备参数数组供 execvp 使用
+        std::vector<char*> argv;
+        for (const auto& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr); // 参数数组必须以 nullptr 结尾
+
+        // 执行程序（第一个参数为程序路径）
+        execvp(argv[0], argv.data());
+        exit(1); // 如果 execvp 失败
+    } else { // 父进程
+        close(pipefd[1]); // 关闭写端
+
+        std::array<char, 128> buffer;
+        ssize_t bytes_read;
+        while ((bytes_read = read(pipefd[0], buffer.data(), buffer.size() - 1)) > 0) {
+            output.append(buffer.data(), bytes_read);
+        }
+
+        close(pipefd[0]);
+        waitpid(pid, nullptr, 0); // 等待子进程结束
+        return true;
+    }
+#endif
   return true;
 }
 

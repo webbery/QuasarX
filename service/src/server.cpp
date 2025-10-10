@@ -37,6 +37,7 @@
 #include "Handler/UserHandler.h"
 #include "Handler/DataHandler.h"
 #include "Handler/FeatureHandler.h"
+#include "Handler/SectorHandler.h"
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
@@ -111,6 +112,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_SERVER_STATUS   "/server/status"
 #define API_SERVER_CONFIG   "/server/config"
 #define API_FEATURE         "/feature"
+#define API_SECTOR_FLOW     "/stocks/sector/flow"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -240,6 +242,7 @@ void Server::Regist() {
     REGIST_GET(API_FEATURE);
     REGIST_GET(API_INDEX);
     REGIST_GET(API_SERVER_CONFIG);
+    REGIST_GET(API_SECTOR_FLOW);
     
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
@@ -976,6 +979,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SERVER_STATUS, ServerStatusHandler);
     RegistHandler(API_SERVER_CONFIG, SystemConfigHandler);
     RegistHandler(API_FEATURE, FeatureHandler);
+    RegistHandler(API_SECTOR_FLOW, SectorHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     risk->doWork({});
