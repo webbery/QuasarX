@@ -46,7 +46,6 @@
 <script setup>
 import {ref, onMounted} from 'vue'
 import {ipcRenderer} from 'electron'
-import axios from 'axios'
 import Store from 'electron-store';
 
 let status = ref('')

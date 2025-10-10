@@ -70,9 +70,9 @@
           <i class="fas fa-wind"></i>
           <span>压力测试</span>
         </div>
-        <div class="nav-item">
+        <div class="nav-item" @click="onHandleVisualAnanlysis">
           <i class="fas fa-chart-scatter"></i>
-          <span>相关性分析</span>
+          <span>可视化分析</span>
         </div>
       </div>
 
@@ -156,6 +156,7 @@ import DataCenter from "./components/DataCenter.vue";
 import LoginForm from "./components/LoginForm.vue";
 import SettingView from "./components/SettingView.vue";
 import SettingPanel from "./components/SettingPanel.vue";
+import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 
 // 定义视图状态常量
 const VIEWS = {
@@ -164,6 +165,7 @@ const VIEWS = {
   DESIGN_STATEGY: 'strategy',
   DATA_CENTER: 'datacenter',
   SETTING_VIEW: 'setting',
+  VISUAL_VIEW: 'visual_analysis',
 };
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
@@ -181,6 +183,8 @@ let activeComponent = computed(() => {
     return DataCenter;
   if (currentView.value === VIEWS.SETTING_VIEW)
     return SettingView;
+  if (currentView.value == VIEWS.VISUAL_VIEW)
+    return VisualAnalysisView;
   return AccountView;
 });
 
@@ -197,6 +201,7 @@ let is_backtest = computed(() => currentView.value === VIEWS.BACKTEST);
 let is_strategy = computed(() => currentView.value === VIEWS.DESIGN_STATEGY);
 let is_datacenter = computed(() => currentView.value === VIEWS.DATA_CENTER);
 let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
+let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
 
 onMounted(() => {
   console.log('mounted');
@@ -222,6 +227,10 @@ const onHandleAccount = () => {
 const onHandleDataCenter = () => {
   console.info("onHandleDataCenter");
   currentView.value = VIEWS.DATA_CENTER;
+}
+
+const onHandleVisualAnanlysis = () => {
+  currentView.value = VIEWS.VISUAL_VIEW;
 }
 
 const onLoginSwitch = () => {
