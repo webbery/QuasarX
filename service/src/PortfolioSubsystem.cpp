@@ -22,8 +22,8 @@ PortfolioInfo& PortfolioSubSystem::GetPortfolio(const String& id)
   return _portfolios[id];
 }
 
-void PortfolioSubSystem::UpdateProfit(double profit) {
-  GetPortfolio()._profit += profit;
+void PortfolioSubSystem::UpdateProfit(const String& id, double profit) {
+  GetPortfolio(id)._profit += profit;
 }
 
 bool PortfolioSubSystem::HasPortfolio(const String& id) {

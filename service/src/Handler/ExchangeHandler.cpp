@@ -125,15 +125,15 @@ ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
   return handle;
 }
 
-double ExchangeHandler::Buy(symbol_t symbol, const Order& order, TradeInfo& deals) {
+double ExchangeHandler::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& deals) {
     auto broker = _server->GetBrokerSubSystem();
-    broker->Buy(symbol, order, deals);
+    broker->Buy(strategy, symbol, order, deals);
   return 0;
 }
 
-double ExchangeHandler::Sell(symbol_t symbol, const Order& order, TradeInfo& deals) {
+double ExchangeHandler::Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& deals) {
     auto broker = _server->GetBrokerSubSystem();
-    broker->Sell(symbol, order, deals);
+    broker->Sell(strategy, symbol, order, deals);
   return 0;
 }
 

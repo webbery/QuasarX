@@ -5,7 +5,7 @@
 
 #define XTP_API     "xtp"   // 
 #define CTP_API     "ctp"   // 
-#define HX_API      "hx"   // »ªöÎ
+#define HX_API      "hx"   // ï¿½ï¿½ï¿½ï¿½
 
 class ExchangeInterface;
 class ExchangeHandler : public HttpHandler {
@@ -32,8 +32,8 @@ public:
 
   virtual void post(const httplib::Request& req, httplib::Response& res);
 
-  double Buy(symbol_t symbol, const Order& order, TradeInfo& deals);
-  double Sell(symbol_t symbol, const Order& order, TradeInfo& deals);
+  double Buy(const String& strategy,symbol_t symbol, const Order& order, TradeInfo& deals);
+  double Sell(const String& strategy,symbol_t symbol, const Order& order, TradeInfo& deals);
   
 private:
   ExchangeInfo GetExchangeInfo(const char* name);

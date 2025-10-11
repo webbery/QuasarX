@@ -78,13 +78,13 @@ bool AgentSubsystem::LoadConfig(const AgentStrategyInfo& config) {
             continue;
         }
         switch(agent._type) {
-        case AgentType::XGBoost:
+        case SignalGeneratorType::XGBoost:
             setting._agent = new XGBoostAgent(model_path, agent._classes, agent._params);
         break;
-        case AgentType::NeuralNetwork:
+        case SignalGeneratorType::NeuralNetwork:
             setting._agent = NerualNetworkAgentManager::GetInstance().GenerateAgent(model_path, agent._params);
         break;
-        case AgentType::LinearRegression:
+        case SignalGeneratorType::LinearRegression:
         break;
         default:
         WARN("can not create agent of type: {}", (int)agent._type);
@@ -142,9 +142,9 @@ void AgentSubsystem::Start() {
             _riskSystem->Metric(messenger);
             try {
                 if (_handle->GetRunningMode() == RuningType::Backtest) {
-                    RunBacktest(item.second._strategy, messenger);
+                    RunBacktest(item.first, item.second._strategy, messenger);
                 } else {
-                    RunInstant(item.second._strategy, messenger);
+                    RunInstant(item.first, item.second._strategy, messenger);
                 }
             } catch (const std::exception& e) {
                 FATAL("{}", e.what());
@@ -155,17 +155,17 @@ void AgentSubsystem::Start() {
     }
 }
 
-void AgentSubsystem::RunBacktest(QStrategy* strategy, const DataFeatures& input) {
+void AgentSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
     if (strategy->isT0()) {
 
     }
     else {
-        ProcessToday(input);
-        PredictTomorrow(strategy, input);
+        ProcessToday(strategyName, input);
+        PredictTomorrow(strategyName, strategy, input);
     }
 }
 
-void AgentSubsystem::RunInstant(QStrategy* strategy, const DataFeatures& input) {
+void AgentSubsystem::RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
     // process feature(daily or second)
     auto result = strategy->Process(input._data);
     if (strategy->isT0()) {
@@ -176,7 +176,7 @@ void AgentSubsystem::RunInstant(QStrategy* strategy, const DataFeatures& input) 
     }
 }
 
-void AgentSubsystem::ProcessToday(const DataFeatures& data) {
+void AgentSubsystem::ProcessToday(const String& strategy, const DataFeatures& data) {
     auto broker = _handle->GetBrokerSubSystem();
     // 如果是daily，那么在第二天操作
     auto symb = data._symbol;
@@ -190,22 +190,22 @@ void AgentSubsystem::ProcessToday(const DataFeatures& data) {
         // thread_local char 
         if (op & (int)ContractOperator::Buy) {
             if (tr.IsDaily()) {
-                if (DailyBuy(symb, data)) {
+                if (DailyBuy(strategy, symb, data)) {
                     broker->DoneForecast(symb, op);
                 }
             }
             else {
-                ImmediatelyBuy(symb, data._price, OrderType::Market);
+                ImmediatelyBuy(strategy, symb, data._price, OrderType::Market);
             }
         }
         if (op & (int)ContractOperator::Sell) {
             if (tr.IsDaily()) {
-                if (DailySell(symb, data)) {
+                if (DailySell(strategy, symb, data)) {
                     broker->DoneForecast(symb, op);
                 }
             }
             else {
-                ImmediatelySell(symb, data._price, OrderType::Market);
+                ImmediatelySell(strategy, symb, data._price, OrderType::Market);
             }
         }
         if (op & (int)ContractOperator::Short) {
@@ -214,7 +214,7 @@ void AgentSubsystem::ProcessToday(const DataFeatures& data) {
     }
 }
 
-void AgentSubsystem::PredictTomorrow(QStrategy* strategy, const DataFeatures& input) {
+void AgentSubsystem::PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
     auto result = strategy->Process(input._data);
     auto broker = _handle->GetBrokerSubSystem();
     auto value = std::get<double>(result);
@@ -222,7 +222,7 @@ void AgentSubsystem::PredictTomorrow(QStrategy* strategy, const DataFeatures& in
     broker->PredictWithDays(input._symbol, 1, op);
 }
 
-bool AgentSubsystem::ImmediatelyBuy(symbol_t symbol, double price, OrderType type) {
+bool AgentSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type) {
     auto broker = _handle->GetBrokerSubSystem();
     Order order;
     order._time = Now();
@@ -231,21 +231,21 @@ bool AgentSubsystem::ImmediatelyBuy(symbol_t symbol, double price, OrderType typ
     order._number = 0;
     order._order[0]._price = price;
     TradeInfo dd;
-    if (broker->Buy(symbol, order, dd) == OrderStatus::All) {
+    if (broker->Buy(strategy, symbol, order, dd) == OrderStatus::All) {
         LOG("buy order: {}, result: {}", order, dd);
         return true;
     }
     return false;
 }
 
-bool AgentSubsystem::ImmediatelySell(symbol_t symbol, double price, OrderType type) {
+bool AgentSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type) {
     auto broker = _handle->GetBrokerSubSystem();
     Order order;
     order._number = 0;
     order._side = 1;
     order._order[0]._price = price;
     TradeInfo dd;
-    if (broker->Sell(symbol, order, dd) == OrderStatus::All) {
+    if (broker->Sell(strategy, symbol, order, dd) == OrderStatus::All) {
         LOG("sell order: {}, result: {}", order, dd);
         // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
         return true;
@@ -253,40 +253,43 @@ bool AgentSubsystem::ImmediatelySell(symbol_t symbol, double price, OrderType ty
     return false;
 }
 
-bool AgentSubsystem::DailyBuy(symbol_t symbol, const DataFeatures& features) {
+bool AgentSubsystem::GenerateSignal(symbol_t symbol, const DataFeatures& features) {
+    float vwap = -1;
+    for (int i = 0; i < features._data.size(); ++i) {
+        if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
+            vwap = features._data[i];
+            break;
+        }
+    }
+    return features._price < vwap || IsNearClose(symbol);
+}
+
+bool AgentSubsystem::DailyBuy(const String& strategy, symbol_t symbol, const DataFeatures& features) {
     if (_handle->GetRunningMode() == RuningType::Backtest) {
         // 如果是天级数据,则使用收盘价
-        return ImmediatelyBuy(symbol, features._price, OrderType::Market);
+        return ImmediatelyBuy(strategy, symbol, features._price, OrderType::Market);
     }
     else {
         // TODO: 分批多次入场
 
-        float vwap = -1;
-        for (int i = 0; i < features._data.size(); ++i) {
-            if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
-                vwap = features._data[i];
-                break;
-            }
-        }
-
-        if (features._price < vwap || IsNearClose(symbol)) {
-            return ImmediatelyBuy(symbol, features._price, OrderType::Market);
+        if (GenerateSignal(symbol, features)) {
+            return ImmediatelyBuy(strategy, symbol, features._price, OrderType::Market);
         }
     }
     return false;
 }
 
-bool AgentSubsystem::DailySell(symbol_t symbol, const DataFeatures& features)
+bool AgentSubsystem::DailySell(const String& strategy, symbol_t symbol, const DataFeatures& features)
 {
     if (_handle->GetRunningMode() == RuningType::Backtest) {
-        return ImmediatelySell(symbol, features._price, OrderType::Market);
+        return ImmediatelySell(strategy, symbol, features._price, OrderType::Market);
     }
     else {
-        return StrategySell(symbol, features);
+        return StrategySell(strategy, symbol, features);
     }
 }
 
-bool AgentSubsystem::StrategySell(symbol_t symbol, const DataFeatures& features) {
+bool AgentSubsystem::StrategySell(const String& strategyName, symbol_t symbol, const DataFeatures& features) {
     float vwap = std::numeric_limits<float>::max();
     for (int i = 0; i < features._data.size(); ++i) {
         if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
@@ -295,7 +298,7 @@ bool AgentSubsystem::StrategySell(symbol_t symbol, const DataFeatures& features)
         }
     }
     if (features._price > vwap || IsNearClose(symbol)) {
-        return ImmediatelySell(symbol, features._price, OrderType::Market);
+        return ImmediatelySell(strategyName, symbol, features._price, OrderType::Market);
     }
     return false;
 }
@@ -340,14 +343,14 @@ void AgentSubsystem::Train(const String& strategy) {
     // pipeline._transfer->start(, , );
 }
 
-void AgentSubsystem::Create(const String& strategy, AgentType type, const nlohmann::json& params) {
+void AgentSubsystem::Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params) {
     if (_pipelines.count(strategy)) {
         return;
     }
     // 默认为模拟盘
     auto& pipeline = _pipelines[strategy];
     switch (type) {
-    case AgentType::XGBoost:
+    case SignalGeneratorType::XGBoost:
         // pipeline._agent = new XGBoostAgent(params, "");
     break;
     default:

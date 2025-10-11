@@ -35,7 +35,7 @@ public:
 
   PortfolioInfo& GetPortfolio(const String& id = "");
 
-  void UpdateProfit(double profit);
+  void UpdateProfit(const String& id, double profit);
 
   void ErasePortfolio(const String& id);
 

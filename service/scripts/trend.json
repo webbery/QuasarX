@@ -1,0 +1,39 @@
+{
+    "directed": true,
+    "strategy": {
+      "description": "A simple directed graph with properties",
+      "pool": ["001318"],
+      "hold": [],
+      "level": 1
+    },
+    "nodes": [
+      {"id": "open", "name": "open", "category": "feature", "type": "open"},
+      {"id": "close", "name": "close", "category": "feature", "type": "close"},
+      {"id": "high", "name": "high", "category": "feature", "type": "high"},
+      {"id": "low", "name": "low", "category": "feature", "type": "low"},
+      {"id": "volume", "name": "volume", "category": "feature", "type": "volume"},
+      {"id": "slow", "name": "slow", "category": "agent", "type": "FTMIX",
+        "model": {
+            "type": "MACD",
+            "params": {"N": 5}
+        }
+      },
+      {"id": "fast", "name": "fast", "category": "agent", "type": "FTMIX",
+        "model": {
+            "type": "MACD",
+            "params": {"N": 15}
+        }
+      },
+      {
+        "id": "dailyStrategy", "category": "strategy", "type": "interday"
+      }
+    ],
+    "edges": [
+      {"id": "edge1", "source": "open", "target": "model"},
+      {"id": "edge2", "source": "close", "target": "model"},
+      {"id": "edge3", "source": "high", "target": "model"},
+      {"id": "edge4", "source": "low", "target": "model"},
+      {"id": "edge4", "source": "volume", "target": "model"},
+      {"id": "edge6", "source": "model", "target": "dailyStrategy"}
+    ]
+}

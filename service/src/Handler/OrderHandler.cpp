@@ -97,7 +97,7 @@ void OrderBuyHandler::post(const httplib::Request& req, httplib::Response& res)
       ++itr;
     }
     TradeInfo info;
-    broker->Buy(symbol, order, info);
+    broker->Buy("", symbol, order, info);
     
     size_t buy_count = 0;
     nlohmann::json result = TradeInfo2Json(info, buy_count);
@@ -164,7 +164,7 @@ TradeInfo OrderSellHandler::Sell(symbol_t symbol, const Order& order)
 {
     auto broker = _server->GetBrokerSubSystem();
     TradeInfo trades;
-    broker->Sell(symbol, order, trades);
+    broker->Sell("", symbol, order, trades);
     return trades;
 }
 

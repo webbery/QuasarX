@@ -59,7 +59,7 @@ _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
-    INFO("Get " API_VERSION api_name);\
+    LOG("Get " API_VERSION api_name);\
     this->_handlers[api_name]->get(req, res);\
 })
 #define REGIST_PUT(api_name) \
@@ -67,7 +67,7 @@ _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
-    INFO("Put " API_VERSION api_name);\
+    LOG("Put " API_VERSION api_name);\
     this->_handlers[api_name]->put(req, res);\
 })
 #define REGIST_POST(api_name) \
@@ -75,7 +75,7 @@ _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Re
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
-    INFO("Post " API_VERSION api_name);\
+    LOG("Post " API_VERSION api_name);\
     this->_handlers[api_name]->post(req, res);\
 })
 #define REGIST_DEL(api_name) \
@@ -83,7 +83,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
-    INFO("Del " API_VERSION api_name);\
+    LOG("Del " API_VERSION api_name);\
     this->_handlers[api_name]->del(req, res);\
 })
 

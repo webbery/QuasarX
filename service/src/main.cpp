@@ -14,35 +14,9 @@
 #define pclose _pclose
 #endif
 #include "spdlog/sinks/rotating_file_sink.h"
+#include "Util/system.h"
 
 #define CMD_RESULT_BUF_SIZE 2048
-
-int exec(const std::string& cmd, std::string& result)
-{
-    int iRet = -1;
-    char buf_ps[CMD_RESULT_BUF_SIZE] = {0};
-    FILE *ptr;
-
-    if((ptr = popen(cmd.c_str(), "r")) != NULL)
-    {
-        while(fgets(buf_ps, sizeof(buf_ps), ptr) != NULL)
-        {
-           result += std::string(buf_ps);
-        }
-        if (result.back() == '\r' || result.back() == '\n') {
-            result.pop_back();
-        }
-        pclose(ptr);
-        ptr = NULL;
-        iRet = 0;  // 处理成功
-    }
-    else
-    {
-        iRet = -1; // 处理失败
-    }
-
-    return iRet;
-}
 
 #ifdef WIN32
 LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
@@ -101,7 +75,7 @@ void print_stacktrace(int signo) {
           std::string addr = str.substr(1, str.size() - 2);
           std::string cmd = "addr2line " + addr + " -e " + GetProgramPath();
           std::string output;
-          exec(cmd, output);
+          RunCommand(cmd, output);
           FATAL("{}", output.c_str());
         } else {
           FATAL("{}", str.c_str());
@@ -154,7 +128,7 @@ void init_logger() {
     combined_logger->set_level(spdlog::level::trace);
     // 警告则刷新
     combined_logger->flush_on(spdlog::level::warn);
-    // 每30秒刷新日志
+    // 每60秒刷新日志
     spdlog::flush_every(std::chrono::seconds(60));
 
     

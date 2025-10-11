@@ -134,11 +134,11 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
     
     for (auto& name: statCollection) {
-        auto value = brokerSystem->GetIndicator(statistics[name]);
+        auto value = brokerSystem->GetIndicator(strategyName, statistics[name]);
         features[name] = value;
     }
     //
-    auto symbols = brokerSystem->GetPoolSymbols();
+    auto symbols = brokerSystem->GetPoolSymbols(strategyName);
     for (auto& symbol: symbols) {
         auto str = get_symbol(symbol);
         auto& trades = brokerSystem->GetHistoryTrades(symbol);
@@ -153,5 +153,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
     
     res.status = 200;
+    INFO("{}", results.dump());
     res.set_content(results.dump(), "application/json");
 }

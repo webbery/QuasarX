@@ -4,11 +4,12 @@
 #include "StrategySubSystem.h"
 
 namespace {
-    Map<String, AgentType> agent_types{
-        {"XGBOOST", AgentType::XGBoost},
-        {"ONNX", AgentType::NeuralNetwork},
-        {"LSTM", AgentType::NeuralNetwork},
-        {"CNN", AgentType::NeuralNetwork}
+    Map<String, SignalGeneratorType> agent_types{
+        {"XGBOOST", SignalGeneratorType::XGBoost},
+        {"ONNX", SignalGeneratorType::NeuralNetwork},
+        {"LSTM", SignalGeneratorType::NeuralNetwork},
+        {"CNN", SignalGeneratorType::NeuralNetwork},
+        {"FTMIX", SignalGeneratorType::FeatureMixed}
     };
 }
 
@@ -57,7 +58,7 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
                     ai._classes = 0;
                 }
                 ai._type = agent_types[node["type"]];
-                if (ai._type == AgentType::Unknow) {
+                if (ai._type == SignalGeneratorType::Unknow) {
                     WARN("unsupport agent type: {}", (String)node["type"]);
                 }
                 if (node.contains("params")) {
