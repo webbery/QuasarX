@@ -18,7 +18,7 @@ struct FeatureNode {
 };
 
 struct AgentNode {
-    AgentType _type;
+    SignalGeneratorType _type;
     short _classes;     // if _classes is zero, it means that agent is a regression.
     String _modelpath;
     nlohmann::json _params;

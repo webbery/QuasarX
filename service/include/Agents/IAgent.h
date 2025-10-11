@@ -3,11 +3,12 @@
 #include "Util/system.h"
 #include "DataSource.h"
 
-enum class AgentType: char {
+enum class SignalGeneratorType: char {
     Unknow,
     LinearRegression,
     XGBoost,
     NeuralNetwork,
+    FeatureMixed,   // 基于多个特征混合构建的信号生成器
     Count
 };
 

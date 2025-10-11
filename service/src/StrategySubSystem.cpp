@@ -4,6 +4,7 @@
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>
+#include "PortfolioSubsystem.h"
 
 #define INIT_STRATEGY(classname) {\
     auto strategy = new classname();\
@@ -57,6 +58,9 @@ void StrategySubSystem::Init() {
             strategy._virtual = true;
         }
         AddStrategy(strategy);
+        auto pfSystem = _handle->GetPortforlioSubSystem();
+        auto& portfolio = pfSystem->GetPortfolio(strategy._name);
+        portfolio._pools = Set<String>{strategy._pool.begin(), strategy._pool.end()};
     }
     _featureSystem->InitSecondLvlFeatures();
     _featureSystem->Start();

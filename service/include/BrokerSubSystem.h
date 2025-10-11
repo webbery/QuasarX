@@ -92,9 +92,9 @@ public:
 
     void Release();
 
-    int Buy(symbol_t symbol, const Order& order, TradeInfo& detail);
+    int Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
-    int Sell(symbol_t symbol, const Order& order, TradeInfo& detail);
+    int Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
     int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeInfo&)> cb);
     // 统计当前指标
@@ -104,7 +104,7 @@ public:
     void UnRegistIndicator(StatisticIndicator indicator);
     void CleanAllIndicators();
     const Set<StatisticIndicator> GetIndicatorsName() const { return _indicators; }
-    float GetIndicator(StatisticIndicator indicator);
+    float GetIndicator(const String& name, StatisticIndicator indicator);
 
     double GetProfitLoss();
 
@@ -123,10 +123,10 @@ public:
 
     const List<Transaction>& GetHistoryTrades(symbol_t) const;
 
-    Set<symbol_t> GetPoolSymbols();
+    Set<symbol_t> GetPoolSymbols(const String& name);
 
 private:
-    int AddOrderBySide(symbol_t symbol, const Order& order, TradeInfo& detail, int side);
+    int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
 
     // 模拟撮合
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);
@@ -141,7 +141,7 @@ private:
 
     double VaR(float confidence);
     double ES(double var);
-    double Sharp();
+    double Sharp(const String& name);
 
     MDB_dbi GetDBI(int portfolid_id, MDB_txn* txn);
 

@@ -125,14 +125,14 @@ MDB_dbi BrokerSubSystem::GetDBI(int portfolid_id, MDB_txn* txn) {
   return dbi;
 }
 
-int BrokerSubSystem::Buy(symbol_t symbol, const Order& order, TradeInfo& detail) {
+int BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查本金
-    return AddOrderBySide(symbol, order, detail, 0);
+    return AddOrderBySide(strategy, symbol, order, detail, 0);
 }
 
-int BrokerSubSystem::Sell(symbol_t symbol, const Order& order, TradeInfo& detail) {
+int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查持仓
-    return AddOrderBySide(symbol, order, detail, 1);
+    return AddOrderBySide(strategy, symbol, order, detail, 1);
 }
 
 double BrokerSubSystem::GetProfitLoss() {
@@ -168,11 +168,11 @@ void BrokerSubSystem::InitPortfolio(MDB_txn* txn, MDB_dbi dbi) {
   }
 }
 
-float BrokerSubSystem::GetIndicator(StatisticIndicator indicator) {
+float BrokerSubSystem::GetIndicator(const String& name, StatisticIndicator indicator) {
   constexpr double confidence = 0.95;
   switch (indicator) {
   case StatisticIndicator::Sharp:
-    return Sharp();
+    return Sharp(name);
   case StatisticIndicator::VaR:
     return VaR(confidence);
   case StatisticIndicator::ES:
@@ -238,7 +238,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
   for (auto& item : jsn) {
       String symbol = item["symbol"];
       auto symb = to_symbol(symbol);
-      auto& trans = _historyTrades[symb];
+      // auto& trans = _historyTrades[symb];
       for (auto& action : item[DB_TRANSACTION_NAME]) {
           Transaction tran;
           tran._order._number = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
@@ -459,12 +459,12 @@ double BrokerSubSystem::ES(double var)
     return -1;
 }
 
-double BrokerSubSystem::Sharp() {
+double BrokerSubSystem::Sharp(const String& name) {
   auto& cfg = _server->GetConfig();
   auto freerate = cfg.GetFreeRate();
   auto days = cfg.GetTradeDays();
 
-  auto& holding = _portfolio->GetHolding();
+  auto& holding = _portfolio->GetHolding(name);
   if (holding.size() == 1) {
     auto itr = holding.begin();
     auto symbol = itr->first;
@@ -496,7 +496,7 @@ ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {
   return nullptr;
 }
 
-int BrokerSubSystem::AddOrderBySide(symbol_t symbol, const Order& order, TradeInfo& detail, int side)
+int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
@@ -529,7 +529,7 @@ int BrokerSubSystem::AddOrderBySide(symbol_t symbol, const Order& order, TradeIn
       }
     }
     // 记录
-    auto& holds = _portfolio->GetHolding();
+    auto& holds = _portfolio->GetHolding(strategy);
     auto& history = holds[symbol];
     if (side == 0) {
       for (auto& info: detail._reports) {
@@ -560,7 +560,7 @@ int BrokerSubSystem::AddOrderBySide(symbol_t symbol, const Order& order, TradeIn
       }
       // 损益
       double profit = total_sell - org_princpal;
-      _portfolio->UpdateProfit(profit);
+      _portfolio->UpdateProfit(strategy, profit);
     }
     // 设置结束标志
     ctx->_flag.store(true);
@@ -756,9 +756,9 @@ const List<Transaction>& BrokerSubSystem::GetHistoryTrades(symbol_t symbol) cons
   return _historyTrades.at(symbol);
 }
 
-Set<symbol_t> BrokerSubSystem::GetPoolSymbols() {
+Set<symbol_t> BrokerSubSystem::GetPoolSymbols(const String& name) {
   Set<symbol_t> result;
-  auto& pool = _portfolio->GetPortfolio()._pools;
+  auto& pool = _portfolio->GetPortfolio(name)._pools;
   for (auto sym: pool) {
     result.insert(to_symbol(sym));
   }

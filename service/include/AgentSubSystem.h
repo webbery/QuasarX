@@ -21,7 +21,7 @@ public:
 
     void Train(const String& strategy);
 
-    void Create(const String& strategy, AgentType type, const nlohmann::json& params);
+    void Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params);
 
     void RegistCollection(const String& strategy, const Set<String>& );
 
@@ -29,22 +29,24 @@ public:
 
     const Map<String, std::variant<float, List<float>>>& GetCollection(const String& strategy) const;
 private:
-    void RunBacktest(QStrategy* strategy, const DataFeatures& input);
+    void RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
-    void RunInstant(QStrategy* strategy, const DataFeatures& input);
+    void RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
-    void ProcessToday(const DataFeatures& symbol);
+    void ProcessToday(const String& strategy, const DataFeatures& symbol);
 
-    void PredictTomorrow(QStrategy* strategy, const DataFeatures& input);
+    void PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
-    bool ImmediatelyBuy(symbol_t symbol, double price, OrderType type);
-    bool ImmediatelySell(symbol_t symbol, double price, OrderType type);
+    bool ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type);
+    bool ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type);
 
-    bool DailyBuy(symbol_t symbol, const DataFeatures& features);
-    bool DailySell(symbol_t symbol, const DataFeatures& features);
+    bool DailyBuy(const String& strategy, symbol_t symbol, const DataFeatures& features);
+    bool DailySell(const String& strategy, symbol_t symbol, const DataFeatures& features);
 
-    bool StrategySell(symbol_t symbol, const DataFeatures& features);
+    bool StrategySell(const String& strategyName, symbol_t symbol, const DataFeatures& features);
     bool IsNearClose(symbol_t symb);
+    // 生成交易信号
+    bool GenerateSignal(symbol_t symbol, const DataFeatures& features);
 
 private:
     Server* _handle;
