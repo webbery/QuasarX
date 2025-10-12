@@ -4,10 +4,10 @@
     <header class="header">
       <div class="controls">
         <el-select v-model="selectedAssetType" placeholder="选择资产类型" class="control-item">
-          <el-option label="股票" value="stocks"></el-option>
-          <el-option label="债券" value="bonds"></el-option>
+          <el-option label="股票板块" value="stocks"></el-option>
+          <!-- <el-option label="债券" value="bonds"></el-option>
           <el-option label="基金" value="funds"></el-option>
-          <el-option label="期货" value="futures"></el-option>
+          <el-option label="期货" value="futures"></el-option> -->
         </el-select>
         
         <el-date-picker
@@ -30,7 +30,7 @@
       <div class="chart-row">
         <div class="chart-container">
           <div class="chart-header">
-            <h3>板块流入流出Top5</h3>
+            <h3>当日板块流入流出Top5</h3>
             <div class="chart-controls">
               <el-radio-group v-model="flowDirection" size="small">
                 <el-radio-button label="all">全部</el-radio-button>
@@ -44,10 +44,10 @@
 
         <div class="chart-container">
           <div class="chart-header">
-            <h3>板块资金流入情况</h3>
+            <h3>{{ selectedSector ? `[${selectedSector}]当日资金流向详情` : '板块资金流向详情' }}</h3>
             <div class="chart-controls">
               <el-radio-group v-model="fundsChartType" size="small">
-                <el-radio-button label="radar">雷达图</el-radio-button>
+                <!-- <el-radio-button label="radar">雷达图</el-radio-button> -->
                 <el-radio-button label="bar">柱状图</el-radio-button>
               </el-radio-group>
             </div>
@@ -60,7 +60,7 @@
       <div class="chart-row">
         <div class="chart-container">
           <div class="chart-header">
-            <h3>资产相关性热力图</h3>
+            <h3>板块流入流出变化率Top5</h3>
             <div class="chart-controls">
               <el-button size="small" @click="exportHeatmap">导出</el-button>
             </div>
@@ -70,7 +70,7 @@
         
         <div class="chart-container">
           <div class="chart-header">
-            <h3>资产聚类分析</h3>
+            <h3>{{ selectedSector ? `[${selectedSector}]历史资金流向` : '历史资金流向' }}</h3>
             <div class="chart-controls">
               <el-slider
                 v-model="clusterCount"
@@ -96,18 +96,6 @@
           <div class="stat-value">¥1,245.6亿</div>
           <div class="stat-label">总资产规模</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-value">+5.2%</div>
-          <div class="stat-label">平均收益率</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">12.8%</div>
-          <div class="stat-label">最大回撤</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">0.87</div>
-          <div class="stat-label">夏普比率</div>
-        </div>
       </div>
     </footer>
   </div>
@@ -119,12 +107,15 @@ import * as echarts from 'echarts'
 import https from 'https';
 import axios from 'axios'
 
+const unit = 100000000 // 单位:亿
 // 响应式数据
 const selectedAssetType = ref('stocks')
 const dateRange = ref([])
-const fundsChartType = ref('radar')
+const fundsChartType = ref('bar')
 const flowDirection = ref('all') // 流入流出显示选项
 const clusterCount = ref(4)
+const selectedSector = ref(null) // 选中的板块
+const currentSectorData = ref(null) // 当前选中板块的详细数据
 
 // 图表引用
 const fundsChart = ref(null)
@@ -141,42 +132,26 @@ let clusterChartInstance = null
 // 板块数据
 let sectorData = null
 
-// 模拟数据
-const generateFundsData = () => {
-  const industries = ['主力', '超大单', '大单', '中单', '小单']
-  const values = industries.map(() => Math.random() * 100)
-  
-  if (fundsChartType.value === 'radar') {
-    return {
-      indicator: industries.map(name => ({ name, max: 100 })),
-      value: values
-    }
-  } else {
-    return {
-      industries,
-      values
-    }
-  }
-}
-
 // 生成资金流入流出数据
 const generateFlowData = async () => {
     if (!sectorData) {
         sectorData = await getSectorData()
     }
     // 取首尾5个数据
-    console.info('sectorData:', sectorData)
     const inflows = sectorData.slice(0, 5)
     const outflows = sectorData.slice(-5)
     // 计算总流入流出
-    console.info('in:', inflows)
-    console.info('out:', outflows)
-    for (let flow of inflows) {
-      flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+    for (let flows of inflows) {
+      for (let flow of flows.value) {
+        flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+      }
     }
-    for (let flow of outflows) {
-      flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+    for (let flows of outflows) {
+      for (let flow of flows.value) {
+        flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+      }
     }
+    console.info('inflows:', inflows)
   
   // 根据选择过滤数据
   if (flowDirection.value === 'inflow') {
@@ -189,19 +164,72 @@ const generateFlowData = async () => {
   }
 }
 
-const generateHeatmapData = () => {
-  const assets = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN', 'META', 'NFLX', 'NVDA']
-  const data = []
-  for (let i = 0; i < assets.length; i++) {
-    for (let j = 0; j < assets.length; j++) {
-      if (i === j) {
-        data.push([i, j, 1])
-      } else {
-        data.push([i, j, Math.random() * 2 - 1])
-      }
+// 根据选中的板块数据生成雷达图/柱状图数据
+const generateFundsData = (sectorDetail = null) => {
+  const categories = ['主力', '超大单', '大单', '中单', '小单']
+  
+  // 如果没有选中板块，显示默认数据或提示
+  const item = sectorDetail.value[0]
+  const values = [item.main, item.supbig, item.big, item.mid, item.small]
+  console.info('sectorDetail:', values)
+  if (fundsChartType.value === 'radar') {
+    return {
+      indicator: categories.map(name => ({ name, max: item.all })),
+      value: values
+    }
+  } else {
+    return {
+      categories,
+      values
     }
   }
-  return { assets, data }
+}
+
+// 生成板块流入流出变化率热力图数据
+const generateHeatmapData = (sectorData) => {
+  if (!sectorData) {
+    // 如果没有数据，返回空数据
+    return { sectors: [], data: [] }
+  }
+
+  // 计算每个板块的总流入流出和变化率
+  const sectorsWithChangeRate = sectorData.map(sector => {
+    const totalFlow = sector.main + sector.supbig + sector.big + sector.mid + sector.small
+    // 这里简化处理，实际应该与前一天数据比较计算变化率
+    const changeRate = Math.random() * 0.4 - 0.2 // 模拟-20%到+20%的变化率
+    return {
+      name: sector.name,
+      totalFlow,
+      changeRate
+    }
+  })
+
+  // 按变化率绝对值排序，取前5个
+  const top5Sectors = sectorsWithChangeRate
+    .sort((a, b) => Math.abs(b.changeRate) - Math.abs(a.changeRate))
+    .slice(0, 5)
+
+  // 准备热力图数据
+  const sectors = top5Sectors.map(item => item.name)
+  const data = []
+  
+  // 假设有5个时间点
+  const timePoints = ['09:30', '10:30', '11:30', '13:00', '14:00']
+  
+  for (let i = 0; i < sectors.length; i++) {
+    for (let j = 0; j < timePoints.length; j++) {
+      // 基于基础变化率生成每个时间点的变化率
+      const baseRate = top5Sectors[i].changeRate
+      const timeRate = baseRate * (0.8 + Math.random() * 0.4) // 在基础变化率附近波动
+      data.push([j, i, timeRate])
+    }
+  }
+
+  return { 
+    sectors, 
+    timePoints, 
+    data 
+  }
 }
 
 const generateClusterData = () => {
@@ -242,25 +270,25 @@ const initCharts = () => {
   // 资金流入图表
   if (fundsChart.value) {
     fundsChartInstance = echarts.init(fundsChart.value)
-    updateFundsChart()
+    // updateFundsChart()
   }
   
   // 资金流入流出图表
   if (flowChart.value) {
     flowChartInstance = echarts.init(flowChart.value)
-    updateFlowChart()
+    // updateFlowChart()
   }
   
   // 热力图
   if (heatmapChart.value) {
     heatmapChartInstance = echarts.init(heatmapChart.value)
-    updateHeatmapChart()
+    // updateHeatmapChart()
   }
   
   // 聚类图
   if (clusterChart.value) {
     clusterChartInstance = echarts.init(clusterChart.value)
-    updateClusterChart()
+    // updateClusterChart()
   }
 }
 
@@ -268,31 +296,75 @@ const initCharts = () => {
 const updateFundsChart = () => {
   if (!fundsChartInstance) return
   
-  const data = generateFundsData()
-  
+  const data = generateFundsData(currentSectorData.value)
   let option
   if (fundsChartType.value === 'radar') {
+    // 分离正负数据
+    const positiveData = data.value.map(v => v >= 0 ? v : 0);
+    const negativeData = data.value.map(v => v < 0 ? Math.abs(v) : 0);
+    const absMax = Math.max(...data.value.map(Math.abs));
+    const maxValue = absMax * 1.2 || 100; // 如果absMax为0，则用100
     option = {
       tooltip: {
-        trigger: 'item'
+        trigger: 'item',
+        formatter: function(params) {
+          const values = params.data.value;
+          let total = values.reduce((prev, cur) => prev + cur, 0)
+          const name = params.seriesName === '资金流入' ? '流入' : '流出';
+          return `${params.name}<br/>${name}: ${(total/unit).toFixed(2)}亿`;
+        }
       },
       radar: {
-        indicator: data.indicator
+        indicator: data.indicator.map(ind => ({
+            name: ind.name,
+            min: -maxValue,
+            max: maxValue
+        })),
+        splitNumber: 5
       },
-      series: [{
-        type: 'radar',
-        data: [{
-          value: data.value,
-          name: '资金净流入',
-          areaStyle: {
-            color: new echarts.graphic.RadialGradient(0.5, 0.5, 1, [
-              { offset: 0, color: 'rgba(64, 158, 255, 0.5)' },
-              { offset: 1, color: 'rgba(64, 158, 255, 0.1)' }
-            ])
-          }
-        }]
-      }]
-    }
+      series: [
+        {
+          name: '资金流入',
+          type: 'radar',
+          data: [{
+            value: positiveData,
+            areaStyle: {
+              color: new echarts.graphic.RadialGradient(0.5, 0.5, 1, [
+                { offset: 0, color: 'rgba(20, 177, 67, 0.5)' },
+                { offset: 1, color: 'rgba(20, 177, 67, 0.1)' }
+              ])
+            },
+            lineStyle: {
+              width: 2,
+              color: '#14b143'
+            },
+            itemStyle: {
+              color: '#14b143'
+            }
+          }]
+        },
+        {
+          name: '资金流出',
+          type: 'radar',
+          data: [{
+            value: negativeData,
+            areaStyle: {
+              color: new echarts.graphic.RadialGradient(0.5, 0.5, 1, [
+                { offset: 0, color: 'rgba(239, 35, 42, 0.5)' },
+                { offset: 1, color: 'rgba(239, 35, 42, 0.1)' }
+              ])
+            },
+            lineStyle: {
+              width: 2,
+              color: '#ef232a'
+            },
+            itemStyle: {
+              color: '#ef232a'
+            }
+          }]
+        }
+      ]
+    };
   } else {
     option = {
       tooltip: {
@@ -300,21 +372,35 @@ const updateFundsChart = () => {
       },
       xAxis: {
         type: 'category',
-        data: data.industries
+        data: data.categories,
+        axisLabel: {
+          rotate: 45
+        }
       },
       yAxis: {
         type: 'value',
-        name: '资金流入(亿)'
+        name: '资金流入(亿)',
+        axisLabel: {
+          formatter: function(value) {
+            return (value/unit).toFixed(0)
+          }
+        }
       },
       series: [{
         data: data.values,
         type: 'bar',
         itemStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#83bff6' },
-            { offset: 0.5, color: '#188df0' },
-            { offset: 1, color: '#188df0' }
-          ])
+          color: function(params) {
+            // 根据数值正负显示不同颜色
+            return params.value >= 0 ? '#14b143' : '#ef232a'
+          }
+        },
+        label: {
+          show: true,
+          position: 'top',
+          formatter: function(params) {
+            return (params.value/unit).toFixed(2)
+          }
         }
       }]
     }
@@ -331,11 +417,7 @@ const updateFlowChart = async () => {
   
   // 准备图表数据
   const names = data.map(item => item.name)
-  const values = data.map(item => parseFloat(item.value))
-  
-  // 设置颜色（流入为绿色，流出为红色）
-  const colors = values.map(item => item['all'] >= 0 ? '#14b143' : '#ef232a')
-  
+  console.info('names:', names)
   const option = {
     tooltip: {
       trigger: 'axis',
@@ -343,9 +425,17 @@ const updateFlowChart = async () => {
         type: 'shadow'
       },
       formatter: function(params) {
-        const value = params[0].value
-        const direction = value['all'] >= 0 ? '流入' : '流出'
-        return `${params[0].name}<br/>${direction}: ${Math.abs(value['all']).toFixed(2)}亿`
+        const item = params[0].data.rawData.value[0]
+        const direction = item.all >= 0 ? '流入' : '流出'
+        return `
+          ${params[0].name}<br/>
+          总${direction}: ${Math.abs(item.all/unit).toFixed(2)}亿<br/>
+          主力: ${(item.main/unit).toFixed(2)}亿<br/>
+          超大单: ${(item.supbig/unit).toFixed(2)}亿<br/>
+          大单: ${(item.big/unit).toFixed(2)}亿<br/>
+          中单: ${(item.mid/unit).toFixed(2)}亿<br/>
+          小单: ${(item.small/unit).toFixed(2)}亿
+        `
       }
     },
     grid: {
@@ -354,94 +444,119 @@ const updateFlowChart = async () => {
       bottom: '3%',
       containLabel: true
     },
-    xAxis: {
+    yAxis: {
       type: 'value',
       name: '资金流(亿)',
       axisLabel: {
         formatter: function(value) {
-          return Math.abs(value['all'])
+          return (value/unit).toFixed(0)
         }
       }
     },
-    yAxis: {
+    xAxis: {
       type: 'category',
       data: names,
       axisLabel: {
-        interval: 0
+        interval: 0,
+        rotate: 40
       }
     },
     series: [
       {
         name: '资金流', 
         type: 'bar',
-        data: values.map((value, index) => ({
-          value,
+        data: data.map(item => ({
+          value: item.value[0].all,
           itemStyle: {
-            color: colors[index]
-          }
+            color: item.value[0].all >= 0 ? '#14b143' : '#ef232a'
+          },
+          // 保存完整数据用于点击事件
+          rawData: item
         })),
-        label: {
-          show: true,
-          position: 'right',
-          formatter: function(params) {
-            return Math.abs(params.value['all']).toFixed(1)
-          }
+        // label: {
+        //   show: true,
+        //   position: 'right',
+        //   formatter: function(params) {
+        //     return Math.abs(params.value).toFixed(1)
+        //   }
+        // },
+        // 添加点击事件
+        emphasis: {
+          focus: 'series'
         }
       }
     ]
   }
   
-  flowChartInstance.setOption(option)
+  flowChartInstance.setOption(option, true)
+  
+  // 添加点击事件监听
+  flowChartInstance.off('click') // 移除旧的事件监听
+  flowChartInstance.on('click', (params) => {
+    if (params.componentType === 'series' && params.seriesType === 'bar') {
+      const sectorData = params.data.rawData
+      selectedSector.value = params.name
+      currentSectorData.value = sectorData
+      console.info('data:', sectorData)
+      updateFundsChart() // 更新右侧图表
+    }
+  })
 }
 
 // 更新热力图
 const updateHeatmapChart = () => {
   if (!heatmapChartInstance) return
   
-  const { assets, data } = generateHeatmapData()
+  const { sectors, timePoints, data } = generateHeatmapData(sectorData)
   
   const option = {
     tooltip: {
-      position: 'top'
+      position: 'top',
+      formatter: function(params) {
+        const sector = sectors[params.data[1]]
+        const time = timePoints[params.data[0]]
+        const rate = (params.data[2] * 100).toFixed(2)
+        return `${sector}<br/>${time}<br/>变化率: ${rate}%`
+      }
     },
     grid: {
-      height: '80%',
-      top: '10%'
+      height: '70%',
+      top: '15%'
     },
     xAxis: {
       type: 'category',
-      data: assets,
+      data: timePoints,
       splitArea: {
         show: true
       }
     },
     yAxis: {
       type: 'category',
-      data: assets,
+      data: sectors,
       splitArea: {
         show: true
       }
     },
     visualMap: {
-      min: -1,
-      max: 1,
+      min: -0.2, // -20%
+      max: 0.2,  // +20%
       calculable: true,
       orient: 'horizontal',
       left: 'center',
-      bottom: '0%',
+      bottom: '5%',
+      text: ['高', '低'],
       inRange: {
-        color: ['#313695', '#4575b4', '#74add1', '#abd9e9', '#e0f3f8', 
-                '#ffffbf', '#fee090', '#fdae61', '#f46d43', '#d73027', '#a50026']
+        color: ['#ef232a', '#fff', '#14b143'] // 红色表示流出增加，绿色表示流入增加
       }
     },
     series: [{
-      name: '相关性',
+      name: '变化率',
       type: 'heatmap',
       data: data,
       label: {
         show: true,
         formatter: function (params) {
-          return params.value[2].toFixed(2)
+          return (params.value[2] * 100).toFixed(1) + '%'
         }
       },
       emphasis: {
@@ -503,11 +618,13 @@ const handleResize = () => {
 
 // 刷新数据
 const refreshData = async () => {
-    // 获取板块数据
+  sectorData = await getSectorData()
   updateFlowChart()
-//   updateFundsChart()
-//   updateHeatmapChart()
-//   updateClusterChart()
+  // updateHeatmapChart()
+  // 重置选中状态
+  selectedSector.value = null
+  currentSectorData.value = null
+  // updateFundsChart()
 }
 
 // 导出热力图
@@ -529,7 +646,7 @@ const getSectorData = async () => {
         headers: { 'Authorization': token}})
     console.info('response', response)
     if (response.status === 200) {
-        return response.data
+        return JSON.parse(response.data)
     }
     console.info('get sector data error')
     return null
@@ -542,10 +659,10 @@ watch(clusterCount, updateClusterChart)
 
 // 生命周期
 onMounted(() => {
-    // TODO: 初始化时间选项为今日
-
   initCharts()
   window.addEventListener('resize', handleResize)
+  // 初始化数据
+  refreshData()
 })
 
 onUnmounted(() => {
@@ -558,6 +675,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 样式保持不变，与原来相同 */
 .visual-analysis-container {
   height: 100vh;
   display: flex;

@@ -71,7 +71,7 @@
           <span>压力测试</span>
         </div>
         <div class="nav-item" @click="onHandleVisualAnanlysis">
-          <i class="fas fa-chart-scatter"></i>
+          <i class="fas fa-area-chart"></i>
           <span>可视化分析</span>
         </div>
       </div>
