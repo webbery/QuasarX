@@ -165,24 +165,18 @@ const generateFlowData = async () => {
         sectorData = await getSectorData()
     }
     // 取首尾5个数据
-    const inflowsData = sectorData.slice(0, 5)
-    const outflowsData = sectorData.slice(-5)
+    console.info('sectorData:', sectorData)
+    const inflows = sectorData.slice(0, 5)
+    const outflows = sectorData.slice(-5)
     // 计算总流入流出
-    console.info('in:', inflowsData)
-    console.info('out:', outflowsData)
-  
-  // 生成随机资金流数据（正值为流入，负值为流出）
-  const flows = assets.map(name => ({
-    name,
-    value: (Math.random() * 200 - 100).toFixed(2) // -100到100之间的随机数
-  }))
-  
-  // 按资金流绝对值排序，取前10个（前5流入和前5流出）
-  flows.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
-  
-  // 分离流入和流出
-  const inflows = flows.filter(item => item.value > 0).slice(0, 5)
-  const outflows = flows.filter(item => item.value < 0).slice(0, 5)
+    console.info('in:', inflows)
+    console.info('out:', outflows)
+    for (let flow of inflows) {
+      flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+    }
+    for (let flow of outflows) {
+      flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+    }
   
   // 根据选择过滤数据
   if (flowDirection.value === 'inflow') {
@@ -330,17 +324,17 @@ const updateFundsChart = () => {
 }
 
 // 更新资金流入流出图表
-const updateFlowChart = () => {
+const updateFlowChart = async () => {
   if (!flowChartInstance) return
   
-  const data = generateFlowData()
+  const data = await generateFlowData()
   
   // 准备图表数据
   const names = data.map(item => item.name)
   const values = data.map(item => parseFloat(item.value))
   
   // 设置颜色（流入为绿色，流出为红色）
-  const colors = values.map(value => value >= 0 ? '#14b143' : '#ef232a')
+  const colors = values.map(item => item['all'] >= 0 ? '#14b143' : '#ef232a')
   
   const option = {
     tooltip: {
@@ -350,8 +344,8 @@ const updateFlowChart = () => {
       },
       formatter: function(params) {
         const value = params[0].value
-        const direction = value >= 0 ? '流入' : '流出'
-        return `${params[0].name}<br/>${direction}: ${Math.abs(value).toFixed(2)}亿`
+        const direction = value['all'] >= 0 ? '流入' : '流出'
+        return `${params[0].name}<br/>${direction}: ${Math.abs(value['all']).toFixed(2)}亿`
       }
     },
     grid: {
@@ -365,7 +359,7 @@ const updateFlowChart = () => {
       name: '资金流(亿)',
       axisLabel: {
         formatter: function(value) {
-          return Math.abs(value)
+          return Math.abs(value['all'])
         }
       }
     },
@@ -378,7 +372,7 @@ const updateFlowChart = () => {
     },
     series: [
       {
-        name: '资金流',
+        name: '资金流', 
         type: 'bar',
         data: values.map((value, index) => ({
           value,
@@ -390,7 +384,7 @@ const updateFlowChart = () => {
           show: true,
           position: 'right',
           formatter: function(params) {
-            return Math.abs(params.value).toFixed(1)
+            return Math.abs(params.value['all']).toFixed(1)
           }
         }
       }
@@ -525,7 +519,7 @@ const exportHeatmap = () => {
 const getSectorData = async () => {
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
-    const url = 'https://' + server + '/v0/stocks/sector/flow'
+    const url = 'https://' + server + '/v0/stocks/sector/flow?type=0'
     const agent = new https.Agent({  
         rejectUnauthorized: false // 忽略证书错误
     });
@@ -533,7 +527,7 @@ const getSectorData = async () => {
         httpsAgent: agent,
         responseType: 'application/json',
         headers: { 'Authorization': token}})
-    // console.info('response', response)
+    console.info('response', response)
     if (response.status === 200) {
         return response.data
     }

@@ -18,9 +18,9 @@ class Broker {
 public:
   virtual ~Broker() {}
 
-  virtual int Buy(symbol_t, const Order& order, TradeInfo& detail) = 0;
+  virtual int Buy(const String& strategy, symbol_t, const Order& order, TradeInfo& detail) = 0;
 
-  virtual int Sell(symbol_t, const Order& order, TradeInfo& detail) = 0;
+  virtual int Sell(const String& strategy, symbol_t, const Order& order, TradeInfo& detail) = 0;
 
   virtual double Put(symbol_t, const Order& order)  {return 0; }
 

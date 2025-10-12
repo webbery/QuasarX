@@ -140,14 +140,68 @@ bool RunCommand(const std::string& cmd) {
 
 bool RunCommand(const std::string& cmd, String& output) {
 #ifdef WIN32
-    std::array<char, 128> buffer;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
-    if (!pipe) {
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+
+    HANDLE hStdoutRd, hStdoutWr;
+    if (!CreatePipe(&hStdoutRd, &hStdoutWr, &sa, 0)) {
         return false;
     }
-    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-        output += buffer.data();
+    SetHandleInformation(hStdoutRd, HANDLE_FLAG_INHERIT, 0);
+
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hStdoutWr;
+    si.hStdError = hStdoutWr;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    std::string command = "cmd /c " + cmd;  // 使用cmd执行命令
+
+    BOOL success = CreateProcessA(
+        NULL,
+        command.data(),
+        NULL,
+        NULL,
+        TRUE,
+        0,
+        NULL,
+        NULL,
+        &si,
+        &pi
+    );
+
+    if (!success) {
+        CloseHandle(hStdoutWr);
+        CloseHandle(hStdoutRd);
+        return false;
     }
+
+    CloseHandle(hStdoutWr);
+
+    const int BUFFER_SIZE = 4096;
+    char buffer[BUFFER_SIZE];
+    DWORD bytesRead;
+    output.clear();
+
+    while (true) {
+        BOOL readSuccess = ReadFile(hStdoutRd, buffer, BUFFER_SIZE - 1, &bytesRead, NULL);
+        if (!readSuccess || bytesRead == 0) {
+            break;
+    }
+        buffer[bytesRead] = '\0';
+        output += buffer;
+}
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(hStdoutRd);
 #else
     int pipefd[2];
     if (pipe(pipefd) == -1) {

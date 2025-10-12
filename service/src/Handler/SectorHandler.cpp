@@ -12,6 +12,7 @@ void SectorHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto& params = req.params;
     if (!params.contains("type")) {
         res.status = 400;
+        res.set_content("{message: 'query must contain `type`'}", "application/json");
         return;
     }
     auto itr = params.find("type");
@@ -31,7 +32,7 @@ void SectorHandler::get(const httplib::Request& req, httplib::Response& res) {
             Vector<String> flow;
             split(sector_info, flow, " ");
             if (flow.size() != 6)
-                break;
+                continue;
             nlohmann::json info, today_info;
             info["name"] = flow[0];
             today_info["date"] = ToString(Now(), "%Y-%m-%d");
