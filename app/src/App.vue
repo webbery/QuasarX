@@ -9,7 +9,7 @@
         <button v-if="is_account" class="control-btn">
           <i class="fas fa-sync-alt"></i> 刷新数据
         </button>
-        <button v-if="is_backtest" class="btn" @click="onHandleRunBacktest">
+        <button v-if="is_strategy" class="btn" @click="onHandleRunBacktest">
           <i class="fas fa-sync-alt"></i> 执行回测
         </button>
         <button v-if="is_backtest" class="btn">
@@ -45,10 +45,6 @@
         <div class="nav-item" @click="onHandleDesignStrategy" :class="{ active: is_strategy }">
           <i class="fas fa-industry"></i>
           <span>策略工厂</span>
-        </div>
-        <div class="nav-item"  @click="onHandleBacktest"  :class="{ active: is_backtest }">
-          <i class="fas fa-project-diagram"></i>
-          <span>策略回测</span>
         </div>
         <div class="nav-item">
           <i class="far fa-compass"></i>
@@ -96,10 +92,7 @@
 
     <!-- 右侧面板 -->
     <aside class="right-panel">
-      <div v-if="is_backtest">
-        <StrategyPanel></StrategyPanel>
-      </div>
-      <div v-else-if="is_account">
+      <div v-if="is_account">
         <MarketPanel></MarketPanel>
         <RiskPanel></RiskPanel>
       </div>
@@ -147,7 +140,6 @@ import RiskManagerVue from "./components/RiskManager.vue";
 import StrategyVue from "./components/Strategy.vue";
 import MarketPanel from "./components/MarketPanel.vue";
 import AccountView from "./components/AccountView.vue";
-import BackTestView from "./components/BackTestView.vue"
 import StrategyPanel from "./components/StrategyPanel.vue";
 import RiskPanel from "./components/RiskPanel.vue";
 import StrategyFactory from "./components/StrategyFactory.vue";
@@ -161,7 +153,6 @@ import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 // 定义视图状态常量
 const VIEWS = {
   ACCOUNT: 'account',
-  BACKTEST: 'backtest',
   DESIGN_STATEGY: 'strategy',
   DATA_CENTER: 'datacenter',
   SETTING_VIEW: 'setting',
@@ -175,8 +166,6 @@ const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 let activeComponent = computed(() => {
   if (currentView.value === VIEWS.ACCOUNT)
     return AccountView;
-  if (currentView.value === VIEWS.BACKTEST)
-    return BackTestView;
   if (currentView.value === VIEWS.DESIGN_STATEGY)
     return StrategyFactory;
   if (currentView.value === VIEWS.DATA_CENTER)
@@ -197,7 +186,6 @@ let useOperaion = ref(0)
 
 // 根据当前视图计算按钮状态
 let is_account = computed(() => currentView.value === VIEWS.ACCOUNT);
-let is_backtest = computed(() => currentView.value === VIEWS.BACKTEST);
 let is_strategy = computed(() => currentView.value === VIEWS.DESIGN_STATEGY);
 let is_datacenter = computed(() => currentView.value === VIEWS.DATA_CENTER);
 let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
@@ -208,11 +196,6 @@ onMounted(() => {
   activeComponent.value = AccountView
 });
 const emits = defineEmits(["refush", "onSettingChanged"]);
-
-const onHandleBacktest = () => {
-  console.info("onHandleBacktest");
-  currentView.value = VIEWS.BACKTEST;
-};
 
 const onHandleDesignStrategy = () => {
   console.info("onHandleDesignStrategy");

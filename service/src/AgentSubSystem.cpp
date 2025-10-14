@@ -167,7 +167,7 @@ void AgentSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy
 
 void AgentSubsystem::RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
     // process feature(daily or second)
-    auto result = strategy->Process(input._data);
+    //auto result = strategy->Process(input._data);
     if (strategy->isT0()) {
 
     }
@@ -215,11 +215,11 @@ void AgentSubsystem::ProcessToday(const String& strategy, const DataFeatures& da
 }
 
 void AgentSubsystem::PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-    auto result = strategy->Process(input._data);
+    //auto result = strategy->Process(input._data);
     auto broker = _handle->GetBrokerSubSystem();
-    auto value = std::get<double>(result);
-    int op = value > 0.5? (int)ContractOperator::Buy : (int)ContractOperator::Sell;
-    broker->PredictWithDays(input._symbol, 1, op);
+    //auto value = std::get<double>(result);
+    //int op = value > 0.5? (int)ContractOperator::Buy : (int)ContractOperator::Sell;
+    //broker->PredictWithDays(input._symbol, 1, op);
 }
 
 bool AgentSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type) {
