@@ -96,12 +96,12 @@ AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
     return si;
 }
 
-feature_t QFeature::Process(const feature_t& input)
+List<QNode*> QFeature::Process(const List<QNode*>& input)
 {
     return input;
 }
 
-feature_t QAgent::Process(const feature_t& input)
+List<QNode*> QAgent::Process(const List<QNode*>& input)
 {
     return input;
 }
@@ -112,7 +112,12 @@ QStrategy::QStrategy()
 
 }
 
-feature_t QStrategy::Process(const feature_t& input)
+List<QNode*> QStrategy::Process(const List<QNode*>& input)
 {
     return input;
+}
+
+List<QNode*> parse_strategy_script_v2(const nlohmann::json& content) {
+    List<QNode*> starts;
+    return starts;
 }

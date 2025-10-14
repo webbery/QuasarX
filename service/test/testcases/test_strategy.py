@@ -43,9 +43,10 @@ class TestStrategy:
         assert 'features' in data
         assert len(data['features']) > 0
         features = data['features']
-        for symbol_feature in features:
-            assert 'MACD' in symbol_feature
-            macd5 = symbol_feature['MACD']
-            assert len(macd5) > 0
-            assert 'sharp' in symbol_feature
+        assert 'sharp' in features
+        assert 'MACD' in features
+        macd5 = features['MACD']
+        assert len(macd5) > 0
+        for symbol in macd5:
+            assert isinstance(macd5[symbol], list)
             break

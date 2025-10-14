@@ -90,7 +90,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     };
     if (params.contains("static")) {
         // sharp/features
-        Set<String> features{"MACD", "ATR"};
+        static const Set<String> features{"MACD", "ATR"};
         
         List<nlohmann::json> stats = params["static"];
         for (auto& statInfo: stats) {
@@ -124,8 +124,11 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             for (auto& feature : colls) {
                 std::visit([&features, &name, &symbol](auto&& arg) {
                     using T = std::decay_t<decltype(arg)>;
-                    if constexpr (std::is_same_v<T, double> || std::is_same_v<T, List<double>>) {
-                        features[symbol][name] = arg;
+                    if constexpr (std::is_same_v<T, double>) {
+                        features[name][symbol].emplace_back(arg);
+                    }
+                    else if (std::is_same_v<T, List<double>>) {
+                        features[name][symbol] = arg;
                     }
                 }, feature);
             }

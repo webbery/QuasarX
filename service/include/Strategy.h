@@ -15,7 +15,7 @@ enum class ContractOperator: unsigned char {
 template <>
 struct fmt::formatter<ContractOperator> {
     constexpr auto parse(format_parse_context& ctx) {
-        return ctx.begin(); // ¼òµ¥Çé¿öÖ±½Ó·µ»Ø
+        return ctx.begin(); // ç®€å•æƒ…å†µç›´æ¥è¿”å›
     }
 
     template <typename FormatContext>
@@ -56,14 +56,10 @@ class QNode {
 public:
     virtual ~QNode(){}
     /**
-     * @brief ¶ÔÊäÈëÊı¾İ×ö´¦Àí£¬²¢·µ»Ø´¦ÀíºóµÄÊı¾İ
+     * @brief å¯¹è¾“å…¥æ•°æ®åšå¤„ç†ï¼Œå¹¶è¿”å›å¤„ç†åçš„æ•°æ®
      */
-    virtual feature_t Process(const feature_t& input) = 0;
-    /**
-    * @brief °ó¶¨µÄÊäÈë½ÚµãÃû
-     */
-    virtual void Bind(const List<String>& names) {}
-
+    virtual List<QNode*> Process(const List<QNode*>& input) = 0;
+    
     void Update(const nlohmann::json& args) {
         _params = args;
     }
@@ -75,23 +71,24 @@ public:
 protected:
     String _name;
     nlohmann::json _params;
+    Set<QNode*> _nexts;
 };
 
 class QFeature : public QNode {
 public:
-    virtual feature_t Process(const feature_t& input);
+    virtual List<QNode*> Process(const List<QNode*>& input);
 };
 
 class QAgent: public QNode {
 public:
-    virtual feature_t Process(const feature_t& input);
+    virtual List<QNode*> Process(const List<QNode*>& input);
 };
 
 class QStrategy: public QNode {
 public:
     QStrategy();
 
-    virtual feature_t Process(const feature_t& input);
+    virtual List<QNode*> Process(const List<QNode*>& input);
 
     void setT0(bool yes) { _isT0 = yes; }
     bool isT0() { return _isT0; }
@@ -102,3 +99,7 @@ protected:
 
 struct AgentStrategyInfo;
 AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);
+
+List<QNode*> parse_strategy_script_v2(const nlohmann::json& content);
+// å¯¹è¾“å…¥çš„æœ‰å‘å›¾èŠ‚ç‚¹ä½œtopoæ’åºï¼Œè¿”å›èµ·å§‹èŠ‚ç‚¹
+QNode* topo_sort(const List<QNode*>& graph);

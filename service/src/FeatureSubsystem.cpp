@@ -134,11 +134,8 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const
 
         std::visit([&features, i](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, double>) {
+            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, Vector<float>>) {
                 features[i] = arg;
-            }
-            else if constexpr (std::is_same_v<T, Vector<float>>) {
-                // features[i] = arg;
             }
         }, val);
         
