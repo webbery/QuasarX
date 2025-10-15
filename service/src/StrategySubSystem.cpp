@@ -106,7 +106,8 @@ AgentStrategyInfo StrategySubSystem::ParseJsonScript(const String& content) {
         WARN("script parse fail.");
         return info;
     }
-    return parse_strategy_script(script_content);
+    return info;
+    // return parse_strategy_script(script_content);
 }
 
 bool StrategySubSystem::CreateStrategy(const String& name, const nlohmann::json& params) {

@@ -1,6 +1,6 @@
 #pragma once
 #include "std_header.h"
-#include "json.hpp"
+#include "StrategyNode.h"
 
 #define BASIC_NAME  "Basic"
 
@@ -52,36 +52,12 @@ public:
     virtual bool is_valid() = 0;
 };
 
-class QNode {
-public:
-    virtual ~QNode(){}
-    /**
-     * @brief 对输入数据做处理，并返回处理后的数据
-     */
-    virtual List<QNode*> Process(const List<QNode*>& input) = 0;
-    
-    void Update(const nlohmann::json& args) {
-        _params = args;
-    }
-
-    const nlohmann::json& getParams() { return _params; }
-    
-    String name() const { return _name; }
-    void setName(const String& name){ _name = name; }
-protected:
-    String _name;
-    nlohmann::json _params;
-    Set<QNode*> _nexts;
-};
-
-class QFeature : public QNode {
-public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
-};
-
-class QAgent: public QNode {
-public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
+enum class StrategyNodeType {
+    Input,
+    Operation,
+    Function,
+    Output,
+    Feature
 };
 
 class QStrategy: public QNode {
@@ -98,7 +74,7 @@ protected:
 };
 
 struct AgentStrategyInfo;
-AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);
+// AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);
 
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content);
 // 对输入的有向图节点作topo排序，返回起始节点

@@ -55,13 +55,13 @@ void FeatureSubsystem::LoadConfig(const AgentStrategyInfo& config) {
     }
     _tasks[name] = symbols;
     LOG("Load Feature {}[{}]", name, symbols);
-    for (auto node: config._features) {
-        // 构建feature id，查找是否已经存在
-        auto id = get_feature_id(node->_type, node->_params);
-        if (_features.count(id) == 0) {
-            CreateFeature(name, node->_type, node->_params, FeatureKind::LongGap);
-        }
-    }
+    // for (auto node: config._features) {
+    //     // 构建feature id，查找是否已经存在
+    //     auto id = get_feature_id(node->_type, node->_params);
+    //     if (_features.count(id) == 0) {
+    //         CreateFeature(name, node->_type, node->_params, FeatureKind::LongGap);
+    //     }
+    // }
 }
 
 void FeatureSubsystem::InitSecondLvlFeatures() {

@@ -17,7 +17,17 @@ BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 
 void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
-    String strategyName = params.at("name");
+    String strScript = params.at("script");
+    if (strScript.empty()) {
+        res.status = 400;
+        return;
+    }
+    nlohmann::json script = nlohmann::json::parse(strScript);
+    if (script.is_discarded()) {
+        res.status = 400;
+        return;
+    }
+    String strategyName = script["graph"]["id"];
     auto strategySys = _server->GetStrategySystem();
     if (!std::filesystem::exists("scripts")) {
         res.status = 404;
@@ -32,7 +42,11 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
     
-    // Load Script
+    // Parse Script
+    auto graph = parse_strategy_script_v2(script);
+    auto start_node = topo_sort(graph);
+    // convert to executable stream
+
     std::filesystem::path p("scripts");
     auto script_path = p / (strategyName + ".json");
     std::ifstream ifs(script_path.string());
@@ -54,14 +68,14 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
     
-    auto si = parse_strategy_script(script_json);
-    si._name = strategyName;
-    si._virtual = false;
+    // auto si = parse_strategy_script(script_json);
+    // si._name = strategyName;
+    // si._virtual = false;
 
     QuoteFilter filer;
-    for (auto& code : si._pool) {
-        filer._symbols.emplace(code);
-    }
+    // for (auto& code : si._pool) {
+    //     filer._symbols.emplace(code);
+    // }
     exchange->SetFilter(filer);
     String tickLevel = params.at("tick");
     if (tickLevel == "1d") {
@@ -74,7 +88,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);
     }
-    strategySys->AddStrategy(si);
+    // strategySys->AddStrategy(si);
     // 注册统计信息
     Set<String> featureCollections, statCollection;
     auto strategySystem = _server->GetStrategySystem();

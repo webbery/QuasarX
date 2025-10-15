@@ -11,11 +11,11 @@ class Server;
 enum class DataFrequencyType;
 enum class StrategyType: char;
 
-struct FeatureNode {
-    String _type;
-    nlohmann::json _params;
-    Set<FeatureNode*> _nexts;   // 如果为空，说明输出到agent
-};
+// struct FeatureNode {
+//     String _type;
+//     nlohmann::json _params;
+//     Set<FeatureNode*> _nexts;   // 如果为空，说明输出到agent
+// };
 
 struct AgentNode {
     SignalGeneratorType _type;
@@ -29,7 +29,7 @@ struct AgentStrategyInfo {
     bool _virtual;
     String _name;
     List<String> _pool;
-    List<FeatureNode*> _features;
+    // List<FeatureNode*> _features;
     List<AgentNode> _agents;
     StrategyType _strategy;
 

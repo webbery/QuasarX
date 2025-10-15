@@ -755,14 +755,10 @@ paths:
             schema:
               type: object
               properties:
-                name:
+                script:
                   type: string
-                  description: 策略名称,对应于script文件夹下的文件名
-                  example: 'xgboost'
-                params:
-                  type: object
-                  description: 策略的参数
-                  example: {}
+                  description: 策略,json格式描述的图
+                  example: '{}'
                 tick:
                   type: string
                   description: 时间频率,1d-天,1h-小时,5m-5分钟,1m-1分钟,30s-30秒,15s-15秒,5s-5秒
