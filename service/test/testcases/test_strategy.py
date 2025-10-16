@@ -298,13 +298,18 @@ class TestStrategy:
                         "nodeType": "input",
                         "params": {
                             "source": {
-                            "value": "股票",
-                            "type": "select",
-                            "options": ["股票", "期货"]
+                                "value": "股票",
+                                "type": "select",
+                                "options": ["股票", "期货"]
                             },
                             "code": {
                             "value": ["001038"],
                             "type": "text"
+                            },
+                            "freq": {
+                                "value": "1d"
+                                "type": "select",
+                                "options": ["1d", "5m"]
                             },
                             "close": {
                             "value": "close",
@@ -358,13 +363,13 @@ class TestStrategy:
                         "nodeType": "function",
                         "params": {
                             "method": {
-                            "value": "MA",
-                            "type": "select",
-                            "options": ["MA"]
+                                "value": "MA",
+                                "type": "select",
+                                "options": ["MA"]
                             },
                             "smoothTime": {
-                            "value": 15,
-                            "type": "text",
+                                "value": 15,
+                                "type": "text",
                             }
                         }
                         },
@@ -377,14 +382,14 @@ class TestStrategy:
                         "label": "MA_15",
                         "nodeType": "function",
                         "params": {
-                            "方法": {
-                            "value": "MA",
-                            "type": "select",
-                            "options": ["MA"]
+                            "method": {
+                                "value": "MA",
+                                "type": "select",
+                                "options": ["MA"]
                             },
-                            "平滑时间": {
-                            "value": 15,
-                            "type": "text",
+                            "smoothTime": {
+                                "value": 15,
+                                "type": "text",
                             }
                         }
                         },
@@ -394,15 +399,14 @@ class TestStrategy:
                         "id": "6",
                         "type": "custom",
                         "data": { 
-                        "label": "MA_diff",
-                        "nodeType": "operation",
-                        "params": {
-                            "公式": {
-                            "value": "MA_5-MA_15",
-                            "type": "select",
-                            "options": ["-", "/"]
+                            "label": "MA_diff",
+                            "nodeType": "operation",
+                            "params": {
+                                "formula": {
+                                    "value": "MA_5-MA_15",
+                                    "type": "text"
+                                }
                             }
-                        }
                         },
                         "position": { "x": 800, "y": 150 }
                     },
@@ -410,21 +414,17 @@ class TestStrategy:
                         "id": "5",
                         "type": "custom",
                         "data": { 
-                        "label": "结果输出",
-                        "nodeType": "output",
-                        "params": {
-                            "格式": {
-                            "value": "CSV",
-                            "type": "select",
-                            "options": ["CSV", "JSON", "数据库", "实时推送"]
-                            },
-                            "路径": {
-                            "value": "/data/output.csv",
-                            "type": "text"
+                            "label": "结果输出",
+                            "nodeType": "output",
+                            "params": {
+                                "indicator": {
+                                    "value": ["sharp", "maxDrawdown", "totalReturn"],
+                                    "type": "multiselect",
+                                    "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "卡玛比率", "信息比率"]
+                                }
                             }
-                        }
                         },
-                        "position": { "x": 1050, "y": 100 }
+                        "position": { "x": 800, "y": 100 }
                     }
                     ],
                     "edges": [
@@ -470,12 +470,7 @@ class TestStrategy:
                     }
                     ]
                 }
-            }""",
-            "tick": "1d",
-            "static": [
-                {"name": "MACD"},
-                {"name": "sharp"}
-            ]
+            }"""
         }
         response = requests.post(f"{BASE_URL}/backtest", **kwargs)
         data = check_response(response)

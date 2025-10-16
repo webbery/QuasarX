@@ -8,4 +8,6 @@ public:
 
     virtual void post(const httplib::Request& req, httplib::Response& res);
 
+private:
+    void InitSymbols();
 };

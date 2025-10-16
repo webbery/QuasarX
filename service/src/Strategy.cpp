@@ -1,7 +1,15 @@
 #include "Strategy.h"
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <stdexcept>
+#include <unordered_map>
+#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/exchange.h"
+#include "StrategyNode.h"
 #include "StrategySubSystem.h"
+#include "Util/log.h"
+#include "server.h"
 
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]; node->AddArgument(name, v);}
 
@@ -20,6 +28,17 @@ namespace {
         {"operation", StrategyNodeType::Operation},
         {"function", StrategyNodeType::Function},
         {"feature", StrategyNodeType::Feature},
+    };
+
+    Map<String, StatisticIndicator> statistics{
+        {"sharp", StatisticIndicator::Sharp},
+        {"VAR", StatisticIndicator::VaR},
+        {"ES", StatisticIndicator::ES},
+        {"winRate", StatisticIndicator::WinRate},
+        {"annualReturn", StatisticIndicator::AnualReturn},
+        {"totalReturn", StatisticIndicator::TotalReturn},
+        {"maxDrawdown", StatisticIndicator::MaxDrawDown},
+        {"CalmarRatio", StatisticIndicator::Calmar}
     };
 }
 
@@ -117,35 +136,70 @@ List<QNode*> QStrategy::Process(const List<QNode*>& input)
     return input;
 }
 
-QNode* generate_input_node(const String& id, const nlohmann::json& data) {
+QNode* generate_input_node(const String& id, const nlohmann::json& data, Server* server) {
     auto node = new InputNode;
+    node->setName(id);
     String type = data["params"]["source"];
-    auto& codes = data["params"]["code"];
+    auto& codes = data["params"]["code"]["value"];
+    QuoteFilter filer;
     for (String code: codes) {
         auto symbol = to_symbol(code);
         node->AddSymbol(symbol);
+        filer._symbols.emplace(code);
     }
-    // if (!node->parseFormula(formula)) {
-    //     delete node;
-    //     return nullptr;
-    // }
+    // 设置数据源
+    if (server->GetRunningMode() == RuningType::Backtest) {
+        StockSimulation* exchange = (StockSimulation*)server->GetExchange(ExchangeType::EX_SIM);
+        String tickLevel = data["params"]["tick"]["value"];
+        if (tickLevel == "1d") {
+            exchange->UseLevel(1);
+        }
+        else {
+            exchange->UseLevel(0);
+        }
+        exchange->SetFilter(filer);
+    } else {
+        // TODO:
+    }
+
+    
     return node;
 }
 
-QNode* generate_output_node(const String& id, const nlohmann::json& data) {
+QNode* generate_output_node(const String& strategyName, const String& id, const nlohmann::json& data, Server* server) {
+    auto brokerSystem = server->GetBrokerSubSystem();
+    brokerSystem->CleanAllIndicators(strategyName);
+
     auto node = new OutputNode;
-
+    node->setName(id);
+    auto& names = data["params"]["indicator"];
+    for (String name: names) {
+        auto itr = statistics.find(name);
+        if (itr == statistics.end()) {
+            WARN("indicator {} not implement.", name);
+            continue;
+        }
+        node->AddIndicator(itr->second);
+        brokerSystem->RegistIndicator(strategyName, itr->second);
+    }
     return node;
 }
 
-QNode* generate_operation_node(const String& id, const nlohmann::json& data) {
+QNode* generate_operation_node(const String& id, const nlohmann::json& data, Server* server) {
     auto node = new OperationNode;
-
+    node->setName(id);
+    String lines = data["params"]["formula"];
+    if (!node->parseFomula(lines)) {
+        WARN("parse {} formula fail.", id);
+        delete node;
+        return nullptr;
+    }
     return node;
 }
 
-QNode* generate_function_node(const String& id, const nlohmann::json& data) {
+QNode* generate_function_node(const String& id, const nlohmann::json& data, Server* server) {
     auto node = new FunctionNode;
+    node->setName(id);
     String name = data["params"]["method"];
     node->SetFunctionName(name);
     if (name == "MA") {
@@ -154,11 +208,11 @@ QNode* generate_function_node(const String& id, const nlohmann::json& data) {
     return node;
 }
 
-List<QNode*> parse_strategy_script_v2(const nlohmann::json& content) {
+List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server) {
     List<QNode*> graph;
     auto& nodes = content["graph"]["nodes"];
     auto& edges = content["graph"]["edges"];
-    
+    String strategyName = content["graph"]["id"];
     Map<String, QNode*> nodeMap;
     for (auto& node: nodes) {
         String node_type = node["data"]["nodeType"];
@@ -166,18 +220,18 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content) {
         auto type = node_type_map[node_type];
         switch (type) {
         case StrategyNodeType::Input: 
-            nodeInstance = generate_input_node(node["id"], node["data"]);
+            nodeInstance = generate_input_node(node["id"], node["data"], server);
             break;
         case StrategyNodeType::Feature:
             break;
         case StrategyNodeType::Output:
-            nodeInstance = generate_output_node(node["id"], node["data"]);
+            nodeInstance = generate_output_node(strategyName, node["id"], node["data"], server);
             break;
         case StrategyNodeType::Operation:
-            nodeInstance = generate_operation_node(node["id"], node["data"]);
+            nodeInstance = generate_operation_node(node["id"], node["data"], server);
             break;
         case StrategyNodeType::Function:
-            nodeInstance = generate_function_node(node["id"], node["data"]);
+            nodeInstance = generate_function_node(node["id"], node["data"], server);
             break;
         default:
             break;
@@ -209,6 +263,35 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content) {
     return graph;
 }
 
-QNode* topo_sort(const List<QNode*>& graph) {
-    return nullptr;
+List<QNode*> topo_sort(const List<QNode*>& graph) {
+    std::unordered_map<QNode*, int> inDegree;
+    List<QNode*> nodeQueue;
+    
+    for (auto pNode: graph) {
+        inDegree[pNode] = pNode->in_degree();
+        if (pNode->in_degree() == 0) {
+            nodeQueue.push_back(pNode);
+        }
+    }
+
+    List<QNode*> sorted_nodes;
+    while (!nodeQueue.empty()) {
+        auto front = nodeQueue.front();
+        nodeQueue.pop_front();
+        sorted_nodes.push_back(front);
+
+        auto& outs = front->outs();
+        for (auto next: outs) {
+            --inDegree[next.second];
+            if (inDegree[next.second] == 0) {
+                nodeQueue.push_back(next.second);
+            }
+        }
+    }
+    
+    if (sorted_nodes.size() != graph.size()) {
+        WARN("Ring exist, build flow error.");
+        throw std::logic_error("Ring exist, build flow error.");
+    }
+    return sorted_nodes;
 }

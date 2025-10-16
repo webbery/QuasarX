@@ -1,7 +1,9 @@
 #pragma once
+#include "BrokerSubSystem.h"
 #include "std_header.h"
 #include "json.hpp"
 #include "Util/system.h"
+#include <functional>
 
 class QNode {
 public:
@@ -24,6 +26,13 @@ public:
     
     String name() const { return _name; }
     void setName(const String& name){ _name = name; }
+
+    size_t in_degree() const { return _ins.size(); }
+    size_t out_degree() const { return _outs.size(); }
+
+    const Map<String, QNode*>& outs() const { return _outs; }
+    const Map<String, QNode*>& ins() const { return _ins; }
+    
 protected:
     String _name;
     nlohmann::json _params;
@@ -34,8 +43,6 @@ protected:
 class InputNode : public QNode {
 public:
     virtual List<QNode*> Process(const List<QNode*>& input);
-
-    bool parseFormula(const String& formulas);
 
     void AddSymbol(symbol_t symbol) { _symbols.insert(symbol); }
 
@@ -49,6 +56,12 @@ private:
 class OperationNode: public QNode {
 public:
     virtual List<QNode*> Process(const List<QNode*>& input);
+
+    // 解析表达式，构建函数对象
+    bool parseFomula(const String& formulas);
+
+private:
+    std::function<void ()> _callable;
 };
 
 class FunctionNode: public QNode {
@@ -75,4 +88,10 @@ public:
 class OutputNode: public QNode {
 public:
     virtual List<QNode*> Process(const List<QNode*>& input);
+
+    void AddIndicator(StatisticIndicator ind) {
+        _indicators.insert(ind);
+    }
+private:
+    Set<StatisticIndicator> _indicators;
 };

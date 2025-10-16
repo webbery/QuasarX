@@ -42,7 +42,11 @@ enum class StatisticIndicator: char {
   AnualReturn,
   Sharp,
   Calmar,
+  Infomation,
+  WinRate,
+  NumTrades,
   Extreme,
+  TotalReturn,
 };
 
 class ICommission {
@@ -100,10 +104,10 @@ public:
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
     // 注册统计指标
-    void RegistIndicator(StatisticIndicator indicator);
-    void UnRegistIndicator(StatisticIndicator indicator);
-    void CleanAllIndicators();
-    const Set<StatisticIndicator> GetIndicatorsName() const { return _indicators; }
+    void RegistIndicator(const String& strategy, StatisticIndicator indicator);
+    void UnRegistIndicator(const String& strategy, StatisticIndicator indicator);
+    void CleanAllIndicators(const String& strategy);
+    const Set<StatisticIndicator> GetIndicatorsName(const String& strategy) const { return _indicators.at(strategy); }
     float GetIndicator(const String& name, StatisticIndicator indicator);
 
     double GetProfitLoss();
@@ -171,7 +175,7 @@ private:
     Map<symbol_t, List<Transaction>> _historyTrades;
 
     std::mutex _indMtx;
-    Set<StatisticIndicator> _indicators;
+    Map<String, Set<StatisticIndicator>> _indicators;
 
     std::shared_mutex _predMtx;
     Map<symbol_t, predictions_t> _predictions;

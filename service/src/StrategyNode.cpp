@@ -11,14 +11,14 @@ void InputNode::Connect(QNode* next, const String& from, const String& to) {
     QNode::Connect(next, from, to);
 }
 
-bool InputNode::parseFormula(const String& formulas) {
-    FormulaParser parser(nullptr);
-    return parser.parse(formulas);
-}
-
 List<QNode*> OperationNode::Process(const List<QNode*>& input)
 {
     return input;
+}
+
+bool OperationNode::parseFomula(const String& formulas) {
+    FormulaParser parser(nullptr);
+    return parser.parse(formulas);
 }
 
 List<QNode*> OutputNode::Process(const List<QNode*>& input)

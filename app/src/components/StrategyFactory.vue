@@ -209,7 +209,35 @@ const activeTab = ref('flow')
 const keyMap = {
   "source": "来源",
   "code": "代码",
-  "formula": "公式"
+  "formula": "公式",
+  "method": "方法",
+  "smoothTime": "平滑时间",
+  "indicator": "输出指标",
+  "sharp": "夏普比率",
+  "maxDrawdown": "最大回撤",
+  "totalReturn": "总收益",
+  "annualReturn": "年化收益",
+  "winRate": "胜率",
+  "numTrades": "交易次数",
+  "CalmarRatio": "卡玛比率",
+  "InformationRatio": "信息比率",
+  "VaR": "VaR",
+  "ES": "ES",
+}
+
+// 定义节点类型配置
+const nodeTypeConfigs = {
+  'result-visualization': {
+    label: '结果输出',
+    nodeType: 'output',
+    params: {
+      "输出指标": {
+        "value": ["夏普比率", "最大回撤"], // 默认选中的指标
+        "type": "multiselect",
+        "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "卡玛比率", "信息比率"]
+      },
+    }
+  }
 }
 
 // 修正数据格式，符合VueFlow要求
@@ -342,18 +370,14 @@ const flow_data = {
           "label": "结果输出",
           "nodeType": "output",
           "params": {
-            "格式": {
-              "value": "CSV",
-              "type": "select",
-              "options": ["CSV", "JSON", "数据库", "实时推送"]
-            },
-            "路径": {
-              "value": "/data/output.csv",
-              "type": "text"
+            "输出指标": {
+              "value": ["夏普比率", "最大回撤", "总收益"],
+              "type": "multiselect",
+              "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "年化波动率", "信息比率"]
             }
           }
         },
-        "position": { "x": 1050, "y": 100 }
+        "position": { "x": 800, "y": 100 }
       }
     ],
     "edges": [
@@ -444,6 +468,48 @@ const flow_data = {
 // 直接使用转换后的数据
 const nodes = ref(flow_data.graph.nodes)
 const edges = ref(flow_data.graph.edges)
+
+// 替换对象键名的辅助函数
+function replaceKeysInObject(obj, keyMapping) {
+  Object.keys(obj).forEach(key => {
+    // 如果当前键在映射中存在，则进行替换
+    if (keyMapping[key]) {
+      const newKey = keyMapping[key];
+      // 只有当新键名与旧键名不同时才进行替换
+      if (newKey !== key) {
+        obj[newKey] = obj[key];
+        delete obj[key];
+      }
+    }
+    
+    // 递归处理嵌套对象
+    if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+      replaceKeysInObject(obj[key], keyMapping);
+    }
+  });
+}
+
+const toServerKey = (json_data) => {
+  let reverseKeyMap = Object.fromEntries(
+    Object.entries(keyMap).map(([key, value]) => [value, key])
+  );
+
+  // 替换节点中的关键字
+  if (json_data.graph?.nodes) {
+    json_data.graph.nodes.forEach(node => {
+      if (node.data?.params) {
+        replaceKeysInObject(node.data.params, reverseKeyMap);
+      }
+    })
+  }
+  // 删除edge中的无用字段
+  if (json_data.graph?.edges) {
+    json_data.graph.edges.forEach(edge => {
+      delete edge.markerEnd;
+      delete edge.style;
+    });
+  }
+}
 
 // 拖拽放置处理
 const onDrop = (event) => {

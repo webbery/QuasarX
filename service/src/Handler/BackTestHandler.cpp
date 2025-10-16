@@ -10,6 +10,7 @@
 #include <variant>
 #include "Strategy.h"
 #include "Util/string_algorithm.h"
+#include "std_header.h"
 
 BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 
@@ -43,65 +44,19 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
     
     // Parse Script
-    auto graph = parse_strategy_script_v2(script);
-    auto start_node = topo_sort(graph);
+    auto graph = parse_strategy_script_v2(script, _server);
+    auto sorted_nodes = topo_sort(graph);
     // convert to executable stream
 
-    std::filesystem::path p("scripts");
-    auto script_path = p / (strategyName + ".json");
-    std::ifstream ifs(script_path.string());
-    if (!ifs.is_open()) {
-        FATAL("Load Script Fail: {}", script_path.string());
-        res.status = 400;
-        res.set_content("{message: 'read script fail.'}", "application/json");
-        return;
-    }
-    
-    std::stringstream buffer;  
-    buffer << ifs.rdbuf();
-    ifs.close();
-    String script_content = buffer.str();
-    nlohmann::json script_json = nlohmann::json::parse(script_content);
-    if (script_json.is_discarded()) {
-        res.status = 400;
-        res.set_content("{message: 'script json not correct.'}", "application/json");
-        return;
-    }
-    
-    // auto si = parse_strategy_script(script_json);
-    // si._name = strategyName;
-    // si._virtual = false;
-
-    QuoteFilter filer;
-    // for (auto& code : si._pool) {
-    //     filer._symbols.emplace(code);
-    // }
-    exchange->SetFilter(filer);
-    String tickLevel = params.at("tick");
-    if (tickLevel == "1d") {
-        exchange->UseLevel(1);
-    }
-    else {
-        exchange->UseLevel(0);
-    }
-    // 
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);
     }
     // strategySys->AddStrategy(si);
     // 注册统计信息
-    Set<String> featureCollections, statCollection;
+    Set<String> featureCollections;
     auto strategySystem = _server->GetStrategySystem();
-    auto brokerSystem = _server->GetBrokerSubSystem();
-    brokerSystem->CleanAllIndicators();
     strategySystem->ClearCollections(strategyName);
-    Map<String, StatisticIndicator> statistics{
-        {"SHARP", StatisticIndicator::Sharp},
-        {"VAR", StatisticIndicator::VaR},
-        {"ES", StatisticIndicator::ES},
-        {"MAXDRAWDOWN", StatisticIndicator::MaxDrawDown},
-        {"CALMAR", StatisticIndicator::Calmar}
-    };
+    
     if (params.contains("static")) {
         // sharp/features
         static const Set<String> features{"MACD", "ATR"};
@@ -113,10 +68,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             if (features.count(key)) {
                 strategySystem->RegistCollection(strategyName, key, statInfo["params"]);
                 featureCollections.insert(statName);
-            }
-            else if (statistics.count(key)) {
-                brokerSystem->RegistIndicator(statistics[key]);
-                statCollection.insert(statName);
             }
         }
     }
@@ -150,11 +101,20 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
     
-    for (auto& name: statCollection) {
-        auto value = brokerSystem->GetIndicator(strategyName, statistics[name]);
-        features[name] = value;
+    Map<StatisticIndicator, String> statistics{
+        {StatisticIndicator::Sharp, "SHARP"},
+        {StatisticIndicator::VaR, "VAR"},
+        {StatisticIndicator::ES, "ES"},
+        {StatisticIndicator::MaxDrawDown, "MAXDRAWDOWN"},
+        {StatisticIndicator::Calmar, "CALMAR"}
+    };
+    auto brokerSystem = _server->GetBrokerSubSystem();
+    auto& statCollection = brokerSystem->GetIndicatorsName(strategyName);
+    for (auto& indicator: statCollection) {
+        auto value = brokerSystem->GetIndicator(strategyName, indicator);
+        features[statistics[indicator]] = value;
     }
-    //
+    
     auto symbols = brokerSystem->GetPoolSymbols(strategyName);
     for (auto& symbol: symbols) {
         auto str = get_symbol(symbol);

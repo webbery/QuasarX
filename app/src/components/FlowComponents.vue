@@ -1,7 +1,5 @@
 <template>
 <div class="components-panel">
-    <div class="panel-title">机器学习组件</div>
-    
     <!-- 输入节点 -->
     <div class="category">
         <div class="category-title" @click="toggleCategory('input')">
@@ -15,7 +13,7 @@
                     <div class="component-icon">
                         <i class="fas fa-file-csv"></i>
                     </div>
-                    <div class="component-title">CSV数据源</div>
+                    <div class="component-title">数据源</div>
                 </div>
                 <div class="component-desc">从CSV文件加载数据</div>
             </div>
@@ -30,24 +28,14 @@
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.output }"></i>
         </div>
         <div class="components-list" v-show="openCategories.output">
-            <div class="component-card output-node" draggable="true">
+            <div class="component-card output-node" draggable="true" @dragstart="onDragStart($event, 'result-visualization')">
                 <div class="component-header">
                     <div class="component-icon">
                         <i class="fas fa-chart-bar"></i>
                     </div>
-                    <div class="component-title">结果可视化</div>
+                    <div class="component-title">结果输出</div>
                 </div>
-                <div class="component-desc">将结果以图表形式展示</div>
-            </div>
-            
-            <div class="component-card output-node" draggable="true">
-                <div class="component-header">
-                    <div class="component-icon">
-                        <i class="fas fa-file-export"></i>
-                    </div>
-                    <div class="component-title">模型导出</div>
-                </div>
-                <div class="component-desc">将训练好的模型保存到文件</div>
+                <div class="component-desc">选择要输出的回测指标</div>
             </div>
         </div>
     </div>

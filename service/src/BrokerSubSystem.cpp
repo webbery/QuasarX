@@ -737,17 +737,17 @@ Transaction BrokerSubSystem::Order2Transaction(const OrderContext& context) {
     return act;
 }
 
-void BrokerSubSystem::RegistIndicator(StatisticIndicator indicator) {
+void BrokerSubSystem::RegistIndicator(const String& strategy, StatisticIndicator indicator) {
   std::unique_lock<std::mutex> lck(_indMtx);
-  _indicators.insert(indicator);
+  _indicators[strategy].insert(indicator);
 }
 
-void BrokerSubSystem::UnRegistIndicator(StatisticIndicator indicator) {
+void BrokerSubSystem::UnRegistIndicator(const String& strategy, StatisticIndicator indicator) {
   std::unique_lock<std::mutex> lck(_indMtx);
-  _indicators.erase(indicator);
+  _indicators[strategy].erase(indicator);
 }
 
-void BrokerSubSystem::CleanAllIndicators() {
+void BrokerSubSystem::CleanAllIndicators(const String& strategy) {
   std::unique_lock<std::mutex> lck(_indMtx);
   _indicators.clear();
 }
