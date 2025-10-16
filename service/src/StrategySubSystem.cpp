@@ -18,7 +18,7 @@ AgentStrategyInfo::~AgentStrategyInfo() {
 StrategySubSystem::StrategySubSystem(Server* server)
 :_featureSystem(nullptr), _agentSystem(nullptr), _handle(server) {
     _featureSystem = new FeatureSubsystem(server);
-    _agentSystem = new AgentSubsystem(server);
+    _agentSystem = new FlowSubsystem(server);
 }
 
 StrategySubSystem::~StrategySubSystem() {
@@ -57,14 +57,18 @@ void StrategySubSystem::Init() {
         if (_virtualStrategies.count(strategy._name)) {
             strategy._virtual = true;
         }
-        AddStrategy(strategy);
+        // AddStrategy(strategy);
         auto pfSystem = _handle->GetPortforlioSubSystem();
         auto& portfolio = pfSystem->GetPortfolio(strategy._name);
         portfolio._pools = Set<String>{strategy._pool.begin(), strategy._pool.end()};
     }
     _featureSystem->InitSecondLvlFeatures();
     _featureSystem->Start();
-    _agentSystem->Start();
+}
+
+bool StrategySubSystem::Run(const String& strategy) {
+    _agentSystem->Start(strategy);
+    return true;
 }
 
 void StrategySubSystem::Release() {
@@ -117,21 +121,21 @@ bool StrategySubSystem::CreateStrategy(const String& name, const nlohmann::json&
     return true;
 }
 
-bool StrategySubSystem::AddStrategy(const AgentStrategyInfo& info) {
-    if (_strategies.count(info._name)) {
-        INFO("Strategy {} exist. Please check.", info._name);
-        return false;
-    }
+// bool StrategySubSystem::AddStrategy(const AgentStrategyInfo& info) {
+//     if (_strategies.count(info._name)) {
+//         INFO("Strategy {} exist. Please check.", info._name);
+//         return false;
+//     }
 
-    if (!_agentSystem->LoadConfig(info)) {
-        //LOG("load agent `{}` fail.", info._name);
-        return false;
-    }
-    _featureSystem->LoadConfig(info);
+//     if (!_agentSystem->LoadFlow(info)) {
+//         //LOG("load agent `{}` fail.", info._name);
+//         return false;
+//     }
+//     _featureSystem->LoadConfig(info);
     
-    _strategies.insert(info._name);
-    return true;
-}
+//     _strategies.insert(info._name);
+//     return true;
+// }
 
 void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq) {
     auto data = _handle->PrepareData({history.begin(), history.end()}, freq);
@@ -140,4 +144,8 @@ void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& histor
 void StrategySubSystem::DeleteStrategy(const String& name) {
     _featureSystem->ErasePipeline(name);
     _strategies.erase(name);
+}
+
+void StrategySubSystem::Init(const String& strategy, const List<QNode*>& flow) {
+    _agentSystem->LoadFlow(strategy, flow);
 }

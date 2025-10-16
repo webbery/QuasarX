@@ -1,5 +1,6 @@
 #pragma once
 #include "DataGroup.h"
+#include "StrategyNode.h"
 #include "std_header.h"
 #include "Strategy.h"
 #include "Transfer.h"
@@ -7,19 +8,17 @@
 #include "Agents/IAgent.h"
 
 class Server;
-struct AgentStrategyInfo;
 class RiskSubSystem;
 
-class AgentSubsystem  {
+class FlowSubsystem  {
 public:
-    AgentSubsystem(Server* handle);
-    ~AgentSubsystem();
+    FlowSubsystem(Server* handle);
+    ~FlowSubsystem();
 
-    bool LoadConfig(const AgentStrategyInfo& config);
+    bool LoadFlow(const String& strategy, const List<QNode*>& topo_flow);
 
     void Start();
-
-    void Train(const String& strategy);
+    void Start(const String& strategy);
 
     void Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params);
 
@@ -52,16 +51,17 @@ private:
     Server* _handle;
     RiskSubSystem* _riskSystem = nullptr;
 
-    struct PipelineInfo {
-        IAgent* _agent = nullptr;
+    struct StrategyFlowInfo {
+        // IAgent* _agent = nullptr;
         // IStrategy* _strategy = nullptr;
         Transfer* _transfer = nullptr;
         QStrategy* _strategy = nullptr;
         char _future = 0;
         Map<String, std::variant<float, List<float>>> _collections;
         Map<String, PrimitiveFeature*> _featureCalculator;
+        List<QNode*> _graph;
     };
 
-    Map<String, PipelineInfo> _pipelines; 
+    Map<String, StrategyFlowInfo> _flows; 
     Set<time_range> _stock_working_range;
 };

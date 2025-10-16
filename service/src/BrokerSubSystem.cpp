@@ -57,6 +57,11 @@ double StockCommission::GetCommission(symbol_t symbol, int64_t size) {
   return -1;
 }
 
+BrokerSubSystem::BrokerSubSystem(Server* server, bool is_simulation)
+    :_thread(nullptr), _exit(false), _order_queue(256), _simulation(is_simulation), _server(server){
+    _portfolio = server->GetPortforlioSubSystem();
+}
+
 bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers, double principal) {
   String dbpath = config["db"];
   if (_simulation) {

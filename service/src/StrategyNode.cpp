@@ -2,7 +2,7 @@
 #include "Interprecter/Stmt.h"
 
 
-List<QNode*> InputNode::Process(const List<QNode*>& input)
+feature_t InputNode::Process(const feature_t& input)
 {
     return input;
 }
@@ -11,7 +11,7 @@ void InputNode::Connect(QNode* next, const String& from, const String& to) {
     QNode::Connect(next, from, to);
 }
 
-List<QNode*> OperationNode::Process(const List<QNode*>& input)
+feature_t OperationNode::Process(const feature_t& input)
 {
     return input;
 }
@@ -21,17 +21,17 @@ bool OperationNode::parseFomula(const String& formulas) {
     return parser.parse(formulas);
 }
 
-List<QNode*> OutputNode::Process(const List<QNode*>& input)
+feature_t OutputNode::Process(const feature_t& input)
 {
     return input;
 }
 
-List<QNode*> FeatureNode::Process(const List<QNode*>& input)
+feature_t FeatureNode::Process(const feature_t& input)
 {
     return input;
 }
 
-List<QNode*> FunctionNode::Process(const List<QNode*>& input)
+feature_t FunctionNode::Process(const feature_t& input)
 {
     return input;
 }

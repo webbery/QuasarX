@@ -1,9 +1,9 @@
 #pragma once
-#include "BrokerSubSystem.h"
 #include "std_header.h"
 #include "json.hpp"
 #include "Util/system.h"
 #include <functional>
+#include "BrokerSubSystem.h"
 
 class QNode {
 public:
@@ -11,7 +11,7 @@ public:
     /**
      * @brief 对输入数据做处理，并返回处理后的数据
      */
-    virtual List<QNode*> Process(const List<QNode*>& input) = 0;
+    virtual feature_t Process(const feature_t& input) = 0;
     virtual void Connect(QNode* next, const String& from, const String& to) {
         _outs[from] = next;
         next->_ins[to] = this;
@@ -42,7 +42,7 @@ protected:
 
 class InputNode : public QNode {
 public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
+    virtual feature_t Process(const feature_t& input);
 
     void AddSymbol(symbol_t symbol) { _symbols.insert(symbol); }
 
@@ -55,7 +55,7 @@ private:
 
 class OperationNode: public QNode {
 public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
+    virtual feature_t Process(const feature_t& input);
 
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);
@@ -66,7 +66,7 @@ private:
 
 class FunctionNode: public QNode {
 public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
+    virtual feature_t Process(const feature_t& input);
 
     void SetFunctionName(const String& name) { _funcionName = name; }
 
@@ -82,12 +82,12 @@ private:
 
 class FeatureNode: public QNode {
 public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
+    virtual feature_t Process(const feature_t& input);
 };
 
 class OutputNode: public QNode {
 public:
-    virtual List<QNode*> Process(const List<QNode*>& input);
+    virtual feature_t Process(const feature_t& input);
 
     void AddIndicator(StatisticIndicator ind) {
         _indicators.insert(ind);

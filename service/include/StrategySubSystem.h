@@ -3,11 +3,13 @@
 #include "json.hpp"
 #include "Util/system.h"
 #include "Agents/IAgent.h"
+#include "StrategyNode.h"
 
 class StrategyPlugin;
 class FeatureSubsystem;
-class AgentSubsystem;
+class FlowSubsystem;
 class Server;
+class QNode;
 enum class DataFrequencyType;
 enum class StrategyType: char;
 
@@ -48,17 +50,18 @@ public:
     ~StrategySubSystem();
 
     void Init();
+    void Init(const String& strategy, const List<QNode*>& flow);
 
     void Release();
 
-    //StrategyPlugin* GetOrCreateStrategy(const char* name);
+    bool Run(const String& strategy);
 
     List<String> GetStrategyNames();
 
     bool HasStrategy(const String& name);
 
     bool CreateStrategy(const String& name, const nlohmann::json& params);
-    bool AddStrategy(const AgentStrategyInfo& info);
+    // bool AddStrategy(const AgentStrategyInfo& info);
     void DeleteStrategy(const String& name);
     
     void Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq);
@@ -77,7 +80,7 @@ private:
 
 private:
     FeatureSubsystem* _featureSystem;
-    AgentSubsystem* _agentSystem;
+    FlowSubsystem* _agentSystem;
 
     Set<String> _strategies;
     Set<String> _virtualStrategies;

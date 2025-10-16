@@ -6,7 +6,6 @@
 #include "Util/lmdb.h"
 #include "DataGroup.h"
 #include "json.hpp"
-#include "server.h"
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -85,10 +84,7 @@ public:
     using predictions_t = List<Pair<fixed_time_range, int>>;
 
     // 开启模拟则全部使用模拟
-    BrokerSubSystem(Server* server, bool is_simulation)
-        :_thread(nullptr), _exit(false), _order_queue(256), _simulation(is_simulation), _server(server){
-        _portfolio = server->GetPortforlioSubSystem();
-    }
+    BrokerSubSystem(Server* server, bool is_simulation);
 
     virtual ~BrokerSubSystem() { Release(); }
 

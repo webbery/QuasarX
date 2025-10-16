@@ -54,23 +54,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // strategySys->AddStrategy(si);
     // 注册统计信息
     Set<String> featureCollections;
-    auto strategySystem = _server->GetStrategySystem();
-    strategySystem->ClearCollections(strategyName);
-    
-    if (params.contains("static")) {
-        // sharp/features
-        static const Set<String> features{"MACD", "ATR"};
-        
-        List<nlohmann::json> stats = params["static"];
-        for (auto& statInfo: stats) {
-            String statName = statInfo["name"];
-            auto key = to_upper(statName);
-            if (features.count(key)) {
-                strategySystem->RegistCollection(strategyName, key, statInfo["params"]);
-                featureCollections.insert(statName);
-            }
-        }
-    }
+    strategySys->ClearCollections(strategyName);
+    strategySys->Init(strategyName, sorted_nodes);
+
+    strategySys->Run(strategyName);
     // 驱动数据
     exchange->Login();
     // 等待数据驱动结束
@@ -81,7 +68,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 获取结果
     nlohmann::json results;
     auto& features = results["features"];
-    auto allCols = strategySystem->GetCollections(strategyName);
+    auto allCols = strategySys->GetCollections(strategyName);
     for (auto& item: allCols) {
         auto symbol = get_symbol(item.first);
         for (auto& name: featureCollections) {
