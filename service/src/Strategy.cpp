@@ -170,7 +170,7 @@ QNode* generate_output_node(const String& strategyName, const String& id, const 
     auto brokerSystem = server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators(strategyName);
 
-    auto node = new OutputNode;
+    auto node = new StatisticNode;
     node->setName(id);
     auto& names = data["params"]["indicator"];
     for (String name: names) {
@@ -208,6 +208,11 @@ QNode* generate_function_node(const String& id, const nlohmann::json& data, Serv
     return node;
 }
 
+QNode* generate_signal_node(const String& id, const nlohmann::json& data, Server* server) {
+    auto node = new SignalNode(server);
+    return node;
+}
+
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server) {
     List<QNode*> graph;
     auto& nodes = content["graph"]["nodes"];
@@ -233,6 +238,8 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         case StrategyNodeType::Function:
             nodeInstance = generate_function_node(node["id"], node["data"], server);
             break;
+        case StrategyNodeType::Signal:
+            nodeInstance = generate_signal_node(node["id"], node["data"], server);
         default:
             break;
         }

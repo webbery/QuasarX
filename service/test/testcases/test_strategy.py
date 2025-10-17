@@ -294,7 +294,7 @@ class TestStrategy:
                         "id": "1",
                         "type": "custom",
                         "data": { 
-                        "label": "数据输入",
+                        "label": "行情数据输入",
                         "nodeType": "input",
                         "params": {
                             "source": {

@@ -5,6 +5,7 @@
 #include "StrategySubSystem.h"
 #include "json.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
+#include "std_header.h"
 #include "yas/serialize.hpp"
 #include "DataSource.h"
 #include <filesystem>
@@ -47,8 +48,12 @@ FlowSubsystem::~FlowSubsystem() {
             item.second._transfer->stop();
             delete item.second._transfer;
         }
+        for (auto node: item.second._graph) {
+            delete node;
+        }
     }
     _flows.clear();
+
     delete _riskSystem;
 }
 
@@ -82,8 +87,10 @@ void FlowSubsystem::Start(const String& strategy) {
                 return true;
             }
         }
+        
+        feature_t data = messenger._data;
         for (auto node: flow._graph) {
-            auto result = node->Process(messenger._data);
+            data = node->Process(messenger, data);
         }
         return true;
     });

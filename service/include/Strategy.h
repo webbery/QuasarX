@@ -57,6 +57,7 @@ enum class StrategyNodeType {
     Operation,
     Function,
     Output,
+    Signal,
     Feature
 };
 
