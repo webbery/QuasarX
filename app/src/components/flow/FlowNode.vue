@@ -1,6 +1,7 @@
 <template>
     <div class="vue-flow__node-custom" :class="[nodeClass, { 'selected': node.selected, 'multi-selected': isMultiSelected }]"
         @click.stop="onNodeClick"
+        @contextmenu="onNodeRightClick"
     >
         
         <div class="node-header" :class="headerClass">
@@ -178,7 +179,7 @@ const props = defineProps({
 })
 
 // 定义发射事件
-const emit = defineEmits(['update-node', 'node-click'])
+const emit = defineEmits(['update-node', 'node-click', 'node-context-menu'])
 
 // 注入选中的节点数组
 const selectedNodes = inject('selectedNodes', [])
@@ -198,7 +199,14 @@ const selectionIndex = computed(() => {
 
 // 节点点击处理
 const onNodeClick = (event) => {
+    console.info('selected:', props.node)
     emit('node-click', { node: props.node, event })
+}
+
+// 节点右键点击处理
+const onNodeRightClick = (event) => {
+    event.preventDefault()
+    emit('node-context-menu', { node: props.node, event })
 }
 
 // 节点类型映射
@@ -210,27 +218,6 @@ const nodeTypeConfig = {
         hasInput: false,
         hasOutput: true
     },
-    '数据预处理': {
-        type: 'dataPreprocess',
-        color: '#3b82f6', // 蓝色
-        icon: 'fas fa-filter',
-        hasInput: true,
-        hasOutput: true
-    },
-    '特征工程': {
-        type: 'featureEngineering',
-        color: '#8b5cf6', // 紫色
-        icon: 'fas fa-cogs',
-        hasInput: true,
-        hasOutput: true
-    },
-    '模型训练': {
-        type: 'modelTraining',
-        color: '#f59e0b', // 黄色
-        icon: 'fas fa-brain',
-        hasInput: true,
-        hasOutput: true
-    },
     '结果输出': {
         type: 'resultOutput',
         color: '#ef4444', // 红色
@@ -238,17 +225,8 @@ const nodeTypeConfig = {
         hasInput: true,
         hasOutput: false
     },
-    '交易信号生成': {
-        type: 'signalGeneration',
-        color: '#06b6d4', // 青色
-        icon: 'fas fa-bell',
-        hasInput: true,
-        hasOutput: true
-    },
-    '股票回测': {
-        type: 'stockBacktest', 
-        color: '#ec4899', // 粉色
-        icon: 'fas fa-chart-bar',
+    'default': {
+        icon: 'fas fa-cube',
         hasInput: true,
         hasOutput: true
     }
@@ -333,6 +311,12 @@ const updateParam = (paramKey, newValue) => {
 </script>
 
 <style scoped>
+/* 添加右键菜单相关的样式
+.vue-flow__node-custom {
+    user-select: none;
+    -webkit-user-select: none;
+}
+ */
 .vue-flow__node-custom {
     padding: 10px;
     border-radius: 8px;
@@ -347,49 +331,13 @@ const updateParam = (paramKey, newValue) => {
     position: relative;
     cursor: grab;
 }
+
 .vue-flow__node-custom:active {
     cursor: grabbing;
 }
 
-/* 节点类型颜色 */
-.node-type-dataInput {
-    border-color: #10b981;
-}
-
-.node-type-dataPreprocess {
-    border-color: #3b82f6;
-}
-
-.node-type-featureEngineering {
-    border-color: #8b5cf6;
-}
-
-.node-type-modelTraining {
-    border-color: #f59e0b;
-}
-
-.node-type-resultOutput {
-    border-color: #ef4444;
-}
-
-/* 选中状态样式 */
-.vue-flow__node-custom.selected {
-    border-width: 3px;
-    box-shadow: 0 0 0 2px var(--accent), 0 4px 12px rgba(0, 0, 0, 0.3);
-    transform: translateY(-1px);
-    z-index: 1000;
-}
-
-/* 多选状态样式 */
-.vue-flow__node-custom.multi-selected {
-    border-width: 3px;
-    box-shadow: 0 0 0 2px var(--primary), 0 4px 12px rgba(0, 0, 0, 0.3);
-    transform: translateY(-1px);
-    z-index: 1000;
-}
-
 /* 选择徽章 */
-.selection-badge {
+/* .selection-badge {
     position: absolute;
     top: -8px;
     right: -8px;
@@ -404,7 +352,7 @@ const updateParam = (paramKey, newValue) => {
     font-size: 0.7rem;
     font-weight: bold;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-}
+} */
 
 /* 节点悬停效果 */
 .vue-flow__node-custom:hover {
@@ -431,35 +379,6 @@ const updateParam = (paramKey, newValue) => {
     transform: translateY(-50%) scale(1.5);
 }
 
-/* 不同类型的选中颜色 */
-.node-type-dataInput.selected {
-    border-color: #10b981;
-}
-
-.node-type-dataPreprocess.selected {
-    border-color: #3b82f6;
-}
-
-.node-type-featureEngineering.selected {
-    border-color: #8b5cf6;
-}
-
-.node-type-modelTraining.selected {
-    border-color: #f59e0b;
-}
-
-.node-type-resultOutput.selected {
-    border-color: #ef4444;
-}
-
-.node-type-signalGeneration.selected {
-    border-color: #06b6d4;
-}
-
-.node-type-stockBacktest.selected {
-    border-color: #ec4899;
-}
-
 /* 多选时的统一颜色 */
 .vue-flow__node-custom.multi-selected {
     border-color: var(--primary);
@@ -478,27 +397,6 @@ const updateParam = (paramKey, newValue) => {
     margin-bottom: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border);
-}
-
-/* 头部颜色 */
-.header-type-dataInput {
-    border-bottom-color: rgba(16, 185, 129, 0.3);
-}
-
-.header-type-dataPreprocess {
-    border-bottom-color: rgba(59, 130, 246, 0.3);
-}
-
-.header-type-featureEngineering {
-    border-bottom-color: rgba(139, 92, 246, 0.3);
-}
-
-.header-type-modelTraining {
-    border-bottom-color: rgba(245, 158, 11, 0.3);
-}
-
-.header-type-resultOutput {
-    border-bottom-color: rgba(239, 68, 68, 0.3);
 }
 
 .node-icon {
@@ -692,29 +590,6 @@ const updateParam = (paramKey, newValue) => {
 
 .right-handle:hover {
     transform: translateY(-50%) scale(1.3);
-}
-.node-type-signalGeneration {
-    border-color: #06b6d4;
-}
-
-.node-type-stockBacktest {
-    border-color: #ec4899;
-}
-
-.header-type-signalGeneration {
-    border-bottom-color: rgba(6, 182, 212, 0.3);
-}
-
-.header-type-stockBacktest {
-    border-bottom-color: rgba(236, 72, 153, 0.3);
-}
-
-.icon-type-signalGeneration {
-    background-color: #06b6d4;
-}
-
-.icon-type-stockBacktest {
-    background-color: #ec4899;
 }
 
 /* 日期范围选择器样式 */

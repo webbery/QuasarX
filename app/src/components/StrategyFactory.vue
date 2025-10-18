@@ -29,7 +29,7 @@
                     @pane-ready="onPaneReady"
                     @drop="onDrop"
                     @dragover="onDragOver"
-                    @node-click="onNodeClick"
+                    @node-context-menu="onNodeContextMenu"
                     @selection-drag-start="onSelectionDragStart"
                     @selection-drag="onSelectionDrag"
                     @selection-drag-stop="onSelectionDragStop"
@@ -39,6 +39,8 @@
                     <template #node-custom="nodeProps">
                         <FlowNode :node="nodeProps" 
                             @update-node="updateNodeData"
+                            @node-click="onNodeClick"
+                            @node-context-menu="onNodeContextMenu"
                         />
                     </template>
                     
@@ -200,11 +202,33 @@
                 </div>
             </div>
         </div>
+
+        <!-- 右键菜单 -->
+        <div 
+            v-if="contextMenu.visible" 
+            class="context-menu" 
+            :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+            @click.stop
+        >
+            <div class="context-menu-item" @click="deleteSelectedNodes">
+                <i class="fas fa-trash"></i>
+                删除节点
+            </div>
+            <div class="context-menu-item" @click="duplicateSelectedNodes">
+                <i class="fas fa-copy"></i>
+                复制节点
+            </div>
+            <div class="context-menu-divider"></div>
+            <div class="context-menu-item" @click="clearSelection">
+                <i class="fas fa-times"></i>
+                取消选择
+            </div>
+        </div>
     </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted, provide, watch } from 'vue'
 import { useVueFlow, VueFlow, MarkerType } from '@vue-flow/core'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
@@ -212,12 +236,52 @@ import FlowConnectLine from './flow/FlowConnectLine.vue'
 const {
     fitView, 
     addNodes, 
-    screenToFlowPosition,
+    screenToFlowCoordinate,
     updateNode,
     getNodes,
+    removeNodes,
+    removeEdges,
+    getConnectedEdges,
+    getSelectedNodes,
+    addSelectedNodes,
+    addSelectedEdges,
+    nodesSelectionActive,
+    removeSelectedNodes,
     onNodesInitialized } = useVueFlow()
 const activeTab = ref('flow')
 const selectedNodes = ref([])
+let nodeIdCounter = 10
+
+// 右键菜单状态
+const contextMenu = ref({
+    visible: false,
+    x: 0,
+    y: 0,
+    targetNode: null
+})
+
+// 监听点击事件以关闭菜单
+const closeContextMenu = () => {
+    contextMenu.value.visible = false
+}
+
+// 添加全局点击事件监听
+onMounted(() => {
+    document.addEventListener('click', closeContextMenu)
+})
+
+onUnmounted(() => {
+    document.removeEventListener('click', closeContextMenu)
+})
+
+// 提供 selectedNodes 给子组件
+provide('selectedNodes', selectedNodes)
+
+// 监听 Vue Flow 的选中状态变化
+watch(getSelectedNodes, (newSelectedNodes) => {
+    // 同步 Vue Flow 的选中状态到我们的 selectedNodes
+    selectedNodes.value = newSelectedNodes
+}, { deep: true })
 
 const validNodes = computed({
     get: () => getNodes.value,
@@ -226,9 +290,30 @@ const validNodes = computed({
     }
 })
 
+// 节点右键菜单事件
+const onNodeContextMenu = (event) => {
+    event.event.preventDefault()
+    
+    const { node, event: mouseEvent } = event
+    
+    // 如果右键点击的节点不在选中列表中，则先选中它
+    if (!selectedNodes.value.find(n => n.id === node.id)) {
+        clearSelection()
+        selectNode(node)
+    }
+    
+    contextMenu.value = {
+        visible: true,
+        x: mouseEvent.clientX,
+        y: mouseEvent.clientY,
+        targetNode: node
+    }
+}
+
 // 节点点击事件
 const onNodeClick = ({ node, event }) => {
     // 如果按住了 Ctrl 或 Cmd 键，则切换选择状态
+    console.info('click node')
     if (event.ctrlKey || event.metaKey) {
         toggleNodeSelection(node)
     } else {
@@ -246,8 +331,8 @@ const onPaneClick = () => {
 // 选择节点
 const selectNode = (node) => {
     if (!selectedNodes.value.find(n => n.id === node.id)) {
-        selectedNodes.value.push(node)
-        updateNodeSelection(node.id, true)
+        console.info('add selected node', node)
+        addSelectedNodes([node])
     }
 }
 
@@ -255,8 +340,8 @@ const selectNode = (node) => {
 const deselectNode = (node) => {
     const index = selectedNodes.value.findIndex(n => n.id === node.id)
     if (index > -1) {
-        selectedNodes.value.splice(index, 1)
-        updateNodeSelection(node.id, false)
+      removeSelectedNodes(selectedNodes.value[index])
+      selectedNodes.value.splice(index, 1)
     }
 }
 
@@ -271,18 +356,7 @@ const toggleNodeSelection = (node) => {
 
 // 清空选择
 const clearSelection = () => {
-    selectedNodes.value.forEach(node => {
-        updateNodeSelection(node.id, false)
-    })
-    selectedNodes.value = []
-}
-
-// 更新节点选择状态
-const updateNodeSelection = (nodeId, selected) => {
-    updateNode(nodeId, (node) => ({
-        ...node,
-        selected: selected
-    }))
+    removeSelectedNodes(selectedNodes.value)
 }
 
 // 选择拖动相关事件
@@ -298,9 +372,42 @@ const onSelectionDragStop = () => {
     console.log('停止拖动选择')
 }
 
+// 右键菜单
 const onSelectionContextMenu = (event) => {
     event.preventDefault()
-    console.log('选择右键菜单')
+    contextMenu.value = {
+        visible: true,
+        x: event.event.clientX,
+        y: event.event.clientY,
+        targetNode: null
+    }
+}
+
+// 删除选中的节点
+const deleteSelectedNodes = () => {
+    if (selectedNodes.value.length === 0) return
+    
+    // 获取所有选中节点的ID
+    const nodeIdsToDelete = selectedNodes.value.map(node => node.id)
+    
+    // 获取与这些节点相关的所有边
+    const edgesToRemove = []
+    nodeIdsToDelete.forEach(nodeId => {
+        const connectedEdges = getConnectedEdges(nodeId)
+        edgesToRemove.push(...connectedEdges)
+    })
+    
+    // 删除边
+    removeEdges(edgesToRemove.map(edge => edge.id))
+    
+    // 删除节点
+    removeNodes(nodeIdsToDelete)
+    
+    // 清空选择
+    clearSelection()
+    
+    // 关闭菜单
+    contextMenu.value.visible = false
 }
 
 const keyMap = {
@@ -324,92 +431,97 @@ const keyMap = {
 
 // 定义节点类型配置
 const nodeTypeConfigs = {
-  'result-visualization': {
-    label: '结果输出',
-    nodeType: 'output',
-    params: {
+  'data-source': {
+    "label": "数据输入",
+    "nodeType": "input",
+    "params": {
+      "来源": {
+        "value": "股票",
+        "type": "select",
+        "options": ["股票", "期货"]
+      },
+      "代码": {
+        "value": ["001038"],
+        "type": "text"
+      },
+      "close": {
+        "value": "close",
+        "type": "text"
+      },
+      "open": {
+        "value": "open",
+        "type": "text"
+      },
+      "high": {
+        "value": "high",
+        "type": "text"
+      },
+      "low": {
+        "value": "low",
+        "type": "text"
+      },
+      "volume": {
+        "value": "volume",
+        "type": "text"
+      }
+    }
+  },
+  'index-output': {
+    "label": "结果输出",
+    "nodeType": "output",
+    "params": {
       "输出指标": {
-        "value": ["夏普比率", "最大回撤"], // 默认选中的指标
+        "value": ["夏普比率", "最大回撤", "总收益"],
         "type": "multiselect",
-        "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "卡玛比率", "信息比率"]
+        "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "年化波动率", "信息比率"]
       }
     }
   },
   'signal-generation': {
-    label: '交易信号生成',
-    nodeType: 'strategy',
-    params: {
-      "信号类型": {
-        "value": "双均线交叉",
+    "label": "交易信号生成",
+    "nodeType": "operation",
+    "params": {
+        "类型": {
+        "value": "股票",
         "type": "select",
-        "options": ["双均线交叉", "RSI超买超卖", "MACD", "布林带", "自定义"]
+        "options":["股票", "期货", "期权"]
       },
-      "快线周期": {
-        "value": 5,
-        "type": "number",
-        "min": 1,
-        "max": 100,
-        "step": 1,
-        "visible": true
+      "买入条件": {
+        "value": "MA_5-MA_15 >= 0",
+        "type": "text"
       },
-      "慢线周期": {
-        "value": 20,
-        "type": "number", 
-        "min": 1,
-        "max": 200,
-        "step": 1,
-        "visible": true
+      "卖出条件": {
+        "value": "MA_5-MA_15 < 0",
+        "type": "text"
       },
-      "买入阈值": {
-        "value": 0.5,
-        "type": "number",
-        "min": 0,
-        "max": 1,
-        "step": 0.1,
-        "visible": true
-      },
-      "卖出阈值": {
-        "value": -0.5,
-        "type": "number",
-        "min": -1,
-        "max": 0,
-        "step": 0.1,
-        "visible": true
-      }
-    }
-  },
-  
-  'stock-backtest': {
-    label: '股票回测',
-    nodeType: 'backtest',
-    params: {
       "初始资金": {
         "value": 100000,
         "type": "number",
-        "min": 1000,
-        "max": 10000000,
-        "step": 1000
+        "unit": "元"
       },
       "佣金费率": {
         "value": 0.0003,
         "type": "number",
         "min": 0,
         "max": 0.01,
-        "step": 0.0001
+        "step": 0.0001,
+        "unit": "%"
       },
       "印花税率": {
         "value": 0.001,
         "type": "number", 
         "min": 0,
         "max": 0.01,
-        "step": 0.0001
+        "step": 0.0001,
+        "unit": "%"
       },
-      "手续费": {
+      "最低手续费": {
         "value": 5,
         "type": "number",
         "min": 0,
         "max": 50,
-        "step": 1
+        "step": 1,
+        "unit": "元"
       },
       "滑点": {
         "value": 0.001,
@@ -419,15 +531,35 @@ const nodeTypeConfigs = {
         "step": 0.0001
       },
       "回测周期": {
-        "value": "2020-01-01 至 2023-12-31",
-        "type": "text"
-      },
-      "再平衡频率": {
-        "value": "每日",
-        "type": "select",
-        "options": ["每日", "每周", "每月", "每季度", "每年"]
+        "value": ["2020-01-01", "2023-12-31"], // 合并为日期范围
+        "type": "daterange"
       }
     }
+  },
+  
+  'cnn': {
+    label: 'CNN模型',
+    nodeType: 'backtest',
+    params: {
+      
+    }
+  },
+  'basic-index': {
+    "label": "MA_5",
+    "nodeType": "operation",
+    "params": {
+      "方法": {
+        "value": "MA",
+        "type": "select",
+        "options": ["MA"]
+      },
+      "平滑时间": {
+        "value": 5,
+        "type": "text",
+        "unit": "天"
+      }
+    },
+
   }
 }
 
@@ -736,9 +868,9 @@ const toServerKey = (json_data) => {
 const onDrop = (event) => {
   const { dataTransfer, clientX, clientY } = event
   const nodeType = dataTransfer?.getData('application/vueflow')
-  
+  console.info(nodeType, nodeTypeConfigs[nodeType])
   if (nodeType && nodeTypeConfigs[nodeType]) {
-    const position = screenToFlowPosition({
+    const position = screenToFlowCoordinate({
       x: clientX,
       y: clientY,
     })
@@ -754,7 +886,7 @@ const onDrop = (event) => {
       }
     }
     
-    addNodes(newNode)
+    addNodes([newNode])
   }
 }
 
@@ -769,7 +901,7 @@ const onDragOver = (event) => {
 // 确保流程图在容器内居中显示
 const onPaneReady = () => {
   setTimeout(() => {
-    fitView({ padding: 0.2 })
+    fitView({ padding: 0.25 })
   }, 100)
 }
 
@@ -807,10 +939,50 @@ const updateNodeData = (nodeId, paramKey, newValue) => {
 }
 
 const runBacktest = () => {
-
+  // 获取当前图节点信息
 }
 </script>
 <style scoped>
+/* 添加上下文菜单样式 */
+.context-menu {
+    position: fixed;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 10000;
+    min-width: 150px;
+    padding: 8px 0;
+    backdrop-filter: blur(10px);
+}
+
+.context-menu-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--text);
+    transition: background-color 0.2s ease;
+}
+
+.context-menu-item:hover {
+    background-color: var(--primary);
+    color: white;
+}
+
+.context-menu-item i {
+    width: 16px;
+    text-align: center;
+}
+
+.context-menu-divider {
+    height: 1px;
+    background-color: var(--border);
+    margin: 4px 0;
+}
+
 .main-container {
     height: 100%;
     display: flex;
@@ -880,8 +1052,17 @@ const runBacktest = () => {
 }
 
 .vue-flow__node-custom.selected {
-    border-color: var(--accent);
+    border-color: rgba(208, 62, 4, 0.892) !important;
     box-shadow: 0 2px 10px rgba(255, 109, 0, 0.3);
+}
+
+/* 多选状态样式 */
+.vue-flow__node-custom.multi-selected {
+    border-width: 3px;
+    border-color: rgba(208, 62, 4, 0.892) !important;
+    box-shadow: 0 0 0 2px var(--accent), 0 4px 12px rgba(235, 141, 141, 0.3);
+    transform: translateY(-1px);
+    z-index: 1000;
 }
 
 .node-header {
