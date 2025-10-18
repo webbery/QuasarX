@@ -9,13 +9,7 @@
         </div>
         <div class="components-list" v-show="openCategories.input">
             <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'csv-data-source')">
-                <div class="component-header">
-                    <div class="component-icon">
-                        <i class="fas fa-file-csv"></i>
-                    </div>
-                    <div class="component-title">数据源</div>
-                </div>
-                <div class="component-desc">从CSV文件加载数据</div>
+                <div class="component-title">数据源<span class="component-desc">从CSV文件加载数据</span></div> 
             </div>
         </div>
     </div>
@@ -29,13 +23,14 @@
         </div>
         <div class="components-list" v-show="openCategories.output">
             <div class="component-card output-node" draggable="true" @dragstart="onDragStart($event, 'result-visualization')">
-                <div class="component-header">
-                    <div class="component-icon">
-                        <i class="fas fa-chart-bar"></i>
-                    </div>
-                    <div class="component-title">结果输出</div>
-                </div>
-                <div class="component-desc">选择要输出的回测指标</div>
+                <div class="component-title">指标输出<span class="component-desc">选择要输出的回测指标</span></div>
+            </div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')">
+                <div class="component-title">交易信号生成<span class="component-desc">将输入数据转换为买卖信号</span></div>
+            </div>
+            <!-- 股票回测节点 -->
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'stock-backtest')">
+                <div class="component-title">股票回测<span class="component-desc">执行股票策略回测，包含资金和费用设置</span></div>
             </div>
         </div>
     </div>
@@ -49,172 +44,47 @@
         </div>
         <div v-show="openCategories.strategy">
             <!-- 神经网络模型节点 -->
-            <div class="subcategory">
-                <div class="subcategory-title" @click="toggleSubcategory('neural')">
-                    <i class="fas fa-microchip"></i>
-                    <span>神经网络模型节点</span>
-                    <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openSubcategories.neural }"></i>
-                </div>
                 <div class="components-list" v-show="openSubcategories.neural">
                     <div class="component-card strategy-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-brain"></i>
-                            </div>
-                            <div class="component-title">CNN模型</div>
-                        </div>
-                        <div class="component-desc">卷积神经网络，适用于图像处理</div>
+                        <div class="component-title">CNN模型</div>
                     </div>
                     
                     <div class="component-card strategy-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-network-wired"></i>
-                            </div>
-                            <div class="component-title">RNN模型</div>
-                        </div>
-                        <div class="component-desc">循环神经网络，适用于序列数据</div>
+                        <div class="component-title">LSTM</div>
                     </div>
-                </div>
-            </div>
-            
-            <!-- 普通机器学习节点 -->
-            <div class="subcategory">
-                <div class="subcategory-title" @click="toggleSubcategory('ml')">
-                    <i class="fas fa-cogs"></i>
-                    <span>普通机器学习节点</span>
-                    <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openSubcategories.ml }"></i>
-                </div>
-                <div class="components-list" v-show="openSubcategories.ml">
+
                     <div class="component-card strategy-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-chart-line"></i>
-                            </div>
                             <div class="component-title">线性回归</div>
-                        </div>
-                        <div class="component-desc">用于预测连续值的线性模型</div>
                     </div>
-                    
                     <div class="component-card strategy-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-project-diagram"></i>
-                            </div>
-                            <div class="component-title">决策树</div>
-                        </div>
-                        <div class="component-desc">基于树结构的分类与回归模型</div>
+                            <div class="component-title">xgboost</div>
                     </div>
                 </div>
-            </div>
-            
-            <!-- 组合特征节点 -->
-            <div class="subcategory">
-                <div class="subcategory-title" @click="toggleSubcategory('feature')">
-                    <i class="fas fa-layer-group"></i>
-                    <span>组合特征节点</span>
-                    <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openSubcategories.feature }"></i>
-                </div>
-                <div class="components-list" v-show="openSubcategories.feature">
-                    <div class="component-card strategy-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-plus-circle"></i>
-                            </div>
-                            <div class="component-title">特征交叉</div>
-                        </div>
-                        <div class="component-desc">将多个特征组合生成新特征</div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
     
-    <!-- 特征节点 -->
-    <div class="category">
-        <div class="category-title" @click="toggleCategory('featureNode')">
-            <i class="fas fa-filter"></i>
-            <span>特征节点</span>
-            <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.featureNode }"></i>
-        </div>
-        <div class="components-list" v-show="openCategories.featureNode">
-            <div class="component-card feature-node" draggable="true">
-                <div class="component-header">
-                    <div class="component-icon">
-                        <i class="fas fa-sliders-h"></i>
-                    </div>
-                    <div class="component-title">特征选择</div>
-                </div>
-                <div class="component-desc">选择最相关的特征子集</div>
-            </div>
-            
-            <div class="component-card feature-node" draggable="true">
-                <div class="component-header">
-                    <div class="component-icon">
-                        <i class="fas fa-compress-arrows-alt"></i>
-                    </div>
-                    <div class="component-title">特征提取</div>
-                </div>
-                <div class="component-desc">从原始特征中提取新特征</div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- 运算节点 -->
+    <!-- 公式节点 -->
     <div class="category">
         <div class="category-title" @click="toggleCategory('operation')">
             <i class="fas fa-calculator"></i>
-            <span>运算节点</span>
+            <span>公式节点</span>
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.operation }"></i>
         </div>
         <div v-show="openCategories.operation">
             <!-- 合并节点 -->
-            <div class="subcategory">
-                <div class="subcategory-title" @click="toggleSubcategory('merge')">
-                    <i class="fas fa-object-group"></i>
-                    <span>合并节点</span>
-                    <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openSubcategories.merge }"></i>
+            <div class="components-list" v-show="openSubcategories.merge">
+                <div class="component-card operation-node" draggable="true">
+                    <div class="component-title">合并节点</div>
                 </div>
-                <div class="components-list" v-show="openSubcategories.merge">
-                    <div class="component-card operation-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-link"></i>
-                            </div>
-                            <div class="component-title">数据连接</div>
-                        </div>
-                        <div class="component-desc">基于键值连接多个数据集</div>
-                    </div>
+                <div class="component-card operation-node" draggable="true">
+                    <div class="component-title">MA<span class="component-desc">Moving Avarage</span></div>
                 </div>
-            </div>
-            
-            <!-- 归一化节点 -->
-            <div class="subcategory">
-                <div class="subcategory-title" @click="toggleSubcategory('normalization')">
-                    <i class="fas fa-balance-scale"></i>
-                    <span>归一化节点</span>
-                    <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openSubcategories.normalization }"></i>
+                <div class="component-card operation-node" draggable="true">
+                        <div class="component-title">最小-最大归一化</div>
                 </div>
-                <div class="components-list" v-show="openSubcategories.normalization">
-                    <div class="component-card operation-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-ruler-combined"></i>
-                            </div>
-                            <div class="component-title">最小-最大归一化</div>
-                        </div>
-                        <div class="component-desc">将数据缩放到指定范围</div>
-                    </div>
-                    
-                    <div class="component-card operation-node" draggable="true">
-                        <div class="component-header">
-                            <div class="component-icon">
-                                <i class="fas fa-ruler"></i>
-                            </div>
-                            <div class="component-title">标准化</div>
-                        </div>
-                        <div class="component-desc">将数据转换为均值为0，标准差为1</div>
-                    </div>
+                
+                <div class="component-card operation-node" draggable="true">
+                        <div class="component-title">标准化</div>
                 </div>
             </div>
         </div>
@@ -264,13 +134,32 @@ const onDragStart = (event, nodeType) => {
 
 <style scoped>
 .components-panel {
-    width: 280px;
     background-color: var(--panel-bg);
     border-left: 1px solid var(--border);
-    padding: 15px;
     overflow-y: auto;
     box-shadow: -2px 0 5px rgba(0, 0, 0, 0.2);
-    margin-top: 60px;
+    height: calc(100vh - 100px); /* 根据布局调整这个值 */
+    max-height: calc(100vh - 100px); /* 确保不会超出视口 */
+
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) transparent;
+}
+
+.components-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+.components-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.components-panel::-webkit-scrollbar-thumb {
+    background-color: var(--primary);
+    border-radius: 3px;
+}
+
+.components-panel::-webkit-scrollbar-thumb:hover {
+    background-color: var(--primary-dark);
 }
 
 .panel-title {
@@ -371,7 +260,7 @@ const onDragStart = (event, nodeType) => {
     background: rgba(41, 98, 255, 0.05);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 12px;
+    padding: 5px;
     cursor: grab;
     transition: all 0.3s ease;
 }
@@ -408,7 +297,8 @@ const onDragStart = (event, nodeType) => {
 }
 
 .component-desc {
-    font-size: 0.85rem;
+    font: 0.75em sans-serif;
+    /* font-size: 0.7rem; */
     color: var(--text-secondary);
     line-height: 1.4;
 }

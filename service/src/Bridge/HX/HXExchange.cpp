@@ -126,7 +126,7 @@ void HXExchange::QueryQuotes(){
             char** subscribe_array = new char* [item.second.size()];
             for (int i = 0; i < item.second.size(); ++i) {
                 subscribe_array[i] = new char[item.second[i].size() + 1] {0};
-                strcmp(subscribe_array[i], item.second[i].c_str());
+                strncpy(subscribe_array[i], item.second[i].c_str(), item.second[i].size());
             }
             ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
             for (int j = 0; j < item.second.size(); ++j) {

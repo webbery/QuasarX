@@ -1,6 +1,6 @@
 #include "StrategyNode.h"
 #include "Interprecter/Stmt.h"
-
+#include "Function/Function.h"
 
 feature_t InputNode::Process(const DataFeatures& org, const feature_t& input)
 {
@@ -51,4 +51,9 @@ FunctionNode::~FunctionNode() {
 
 SignalNode::SignalNode(Server* server):_server(server) {
 
+}
+
+feature_t SignalNode::Process(const DataFeatures& org, const feature_t& input)
+{
+    return input;
 }

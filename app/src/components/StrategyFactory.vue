@@ -29,6 +29,12 @@
                     @pane-ready="onPaneReady"
                     @drop="onDrop"
                     @dragover="onDragOver"
+                    @node-click="onNodeClick"
+                    @selection-drag-start="onSelectionDragStart"
+                    @selection-drag="onSelectionDrag"
+                    @selection-drag-stop="onSelectionDragStop"
+                    @selection-context-menu="onSelectionContextMenu"
+                    @pane-click="onPaneClick"
                 >
                     <template #node-custom="nodeProps">
                         <FlowNode :node="nodeProps" 
@@ -198,13 +204,104 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useVueFlow, VueFlow, MarkerType } from '@vue-flow/core'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 
-const { fitView } = useVueFlow()
+const {
+    fitView, 
+    addNodes, 
+    screenToFlowPosition,
+    updateNode,
+    getNodes,
+    onNodesInitialized } = useVueFlow()
 const activeTab = ref('flow')
+const selectedNodes = ref([])
+
+const validNodes = computed({
+    get: () => getNodes.value,
+    set: (newNodes) => {
+        // 这里可以处理节点更新
+    }
+})
+
+// 节点点击事件
+const onNodeClick = ({ node, event }) => {
+    // 如果按住了 Ctrl 或 Cmd 键，则切换选择状态
+    if (event.ctrlKey || event.metaKey) {
+        toggleNodeSelection(node)
+    } else {
+        // 如果没有按修饰键，则清空选择并选择当前节点
+        clearSelection()
+        selectNode(node)
+    }
+}
+
+// 画布点击事件（点击空白处清空选择）
+const onPaneClick = () => {
+    clearSelection()
+}
+
+// 选择节点
+const selectNode = (node) => {
+    if (!selectedNodes.value.find(n => n.id === node.id)) {
+        selectedNodes.value.push(node)
+        updateNodeSelection(node.id, true)
+    }
+}
+
+// 取消选择节点
+const deselectNode = (node) => {
+    const index = selectedNodes.value.findIndex(n => n.id === node.id)
+    if (index > -1) {
+        selectedNodes.value.splice(index, 1)
+        updateNodeSelection(node.id, false)
+    }
+}
+
+// 切换节点选择状态
+const toggleNodeSelection = (node) => {
+    if (selectedNodes.value.find(n => n.id === node.id)) {
+        deselectNode(node)
+    } else {
+        selectNode(node)
+    }
+}
+
+// 清空选择
+const clearSelection = () => {
+    selectedNodes.value.forEach(node => {
+        updateNodeSelection(node.id, false)
+    })
+    selectedNodes.value = []
+}
+
+// 更新节点选择状态
+const updateNodeSelection = (nodeId, selected) => {
+    updateNode(nodeId, (node) => ({
+        ...node,
+        selected: selected
+    }))
+}
+
+// 选择拖动相关事件
+const onSelectionDragStart = () => {
+    console.log('开始拖动选择')
+}
+
+const onSelectionDrag = () => {
+    console.log('拖动选择中')
+}
+
+const onSelectionDragStop = () => {
+    console.log('停止拖动选择')
+}
+
+const onSelectionContextMenu = (event) => {
+    event.preventDefault()
+    console.log('选择右键菜单')
+}
 
 const keyMap = {
   "source": "来源",
@@ -235,7 +332,101 @@ const nodeTypeConfigs = {
         "value": ["夏普比率", "最大回撤"], // 默认选中的指标
         "type": "multiselect",
         "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "卡玛比率", "信息比率"]
+      }
+    }
+  },
+  'signal-generation': {
+    label: '交易信号生成',
+    nodeType: 'strategy',
+    params: {
+      "信号类型": {
+        "value": "双均线交叉",
+        "type": "select",
+        "options": ["双均线交叉", "RSI超买超卖", "MACD", "布林带", "自定义"]
       },
+      "快线周期": {
+        "value": 5,
+        "type": "number",
+        "min": 1,
+        "max": 100,
+        "step": 1,
+        "visible": true
+      },
+      "慢线周期": {
+        "value": 20,
+        "type": "number", 
+        "min": 1,
+        "max": 200,
+        "step": 1,
+        "visible": true
+      },
+      "买入阈值": {
+        "value": 0.5,
+        "type": "number",
+        "min": 0,
+        "max": 1,
+        "step": 0.1,
+        "visible": true
+      },
+      "卖出阈值": {
+        "value": -0.5,
+        "type": "number",
+        "min": -1,
+        "max": 0,
+        "step": 0.1,
+        "visible": true
+      }
+    }
+  },
+  
+  'stock-backtest': {
+    label: '股票回测',
+    nodeType: 'backtest',
+    params: {
+      "初始资金": {
+        "value": 100000,
+        "type": "number",
+        "min": 1000,
+        "max": 10000000,
+        "step": 1000
+      },
+      "佣金费率": {
+        "value": 0.0003,
+        "type": "number",
+        "min": 0,
+        "max": 0.01,
+        "step": 0.0001
+      },
+      "印花税率": {
+        "value": 0.001,
+        "type": "number", 
+        "min": 0,
+        "max": 0.01,
+        "step": 0.0001
+      },
+      "手续费": {
+        "value": 5,
+        "type": "number",
+        "min": 0,
+        "max": 50,
+        "step": 1
+      },
+      "滑点": {
+        "value": 0.001,
+        "type": "number",
+        "min": 0,
+        "max": 0.01,
+        "step": 0.0001
+      },
+      "回测周期": {
+        "value": "2020-01-01 至 2023-12-31",
+        "type": "text"
+      },
+      "再平衡频率": {
+        "value": "每日",
+        "type": "select",
+        "options": ["每日", "每周", "每月", "每季度", "每年"]
+      }
     }
   }
 }
@@ -285,30 +476,10 @@ const flow_data = {
             }
           }
         },
-        "position": { "x": 50, "y": 100 }
+        "position": { "x": 5, "y": 100 }
       },
       {
         "id": "2",
-        "type": "custom",
-        "data": { 
-          "label": "数据预处理",
-          "nodeType": "operation",
-          "params": {
-            "方法": {
-              "value": "MA",
-              "type": "select",
-              "options": ["MA"]
-            },
-            "平滑时间": {
-              "value": 5,
-              "type": "text",
-            }
-          }
-        },
-        "position": { "x": 300, "y": 100 }
-      },
-      {
-        "id": "3",
         "type": "custom",
         "data": { 
           "label": "MA_5",
@@ -320,12 +491,13 @@ const flow_data = {
               "options": ["MA"]
             },
             "平滑时间": {
-              "value": 15,
+              "value": 5,
               "type": "text",
+              "unit": "天"
             }
           }
         },
-        "position": { "x": 550, "y": 100 }
+        "position": { "x": 300, "y": 50 }
       },
       {
         "id": "3",
@@ -342,26 +514,75 @@ const flow_data = {
             "平滑时间": {
               "value": 15,
               "type": "text",
+              "unit": "天"
             }
           }
         },
-        "position": { "x": 800, "y": 50 }
+        "position": { "x": 300, "y": 250 }
       },
       {
         "id": "6",
         "type": "custom",
         "data": { 
-          "label": "MA_diff",
+          "label": "交易信号生成",
           "nodeType": "operation",
           "params": {
-            "公式": {
-              "value": "MA_5-MA_15",
+             "类型": {
+              "value": "股票",
               "type": "select",
-              "options": ["-", "/"]
+              "options":["股票", "期货", "期权"]
+            },
+            "买入条件": {
+              "value": "MA_5-MA_15 >= 0",
+              "type": "text"
+            },
+            "卖出条件": {
+              "value": "MA_5-MA_15 < 0",
+              "type": "text"
+            },
+            "初始资金": {
+              "value": 100000,
+              "type": "number",
+              "unit": "元"
+            },
+            "佣金费率": {
+              "value": 0.0003,
+              "type": "number",
+              "min": 0,
+              "max": 0.01,
+              "step": 0.0001,
+              "unit": "%"
+            },
+            "印花税率": {
+              "value": 0.001,
+              "type": "number", 
+              "min": 0,
+              "max": 0.01,
+              "step": 0.0001,
+              "unit": "%"
+            },
+            "最低手续费": {
+              "value": 5,
+              "type": "number",
+              "min": 0,
+              "max": 50,
+              "step": 1,
+              "unit": "元"
+            },
+            "滑点": {
+              "value": 0.001,
+              "type": "number",
+              "min": 0,
+              "max": 0.01,
+              "step": 0.0001
+            },
+            "回测周期": {
+              "value": ["2020-01-01", "2023-12-31"], // 合并为日期范围
+              "type": "daterange"
             }
           }
         },
-        "position": { "x": 800, "y": 150 }
+        "position": { "x": 600, "y": 60 }
       },
       {
         "id": "5",
@@ -377,7 +598,7 @@ const flow_data = {
             }
           }
         },
-        "position": { "x": 800, "y": 100 }
+        "position": { "x": 900, "y": 100 }
       }
     ],
     "edges": [
@@ -602,7 +823,6 @@ const runBacktest = () => {
     display: flex;
     background-color: var(--darker-bg);
     border-bottom: 1px solid var(--border);
-    padding: 0 20px;
 }
 
 .tab-button {
@@ -635,7 +855,6 @@ const runBacktest = () => {
     flex: 1;
     display: flex;
     background-color: var(--dark-bg);
-    margin: 20px;
     border-radius: 10px;
     border: 1px solid var(--border);
     overflow: hidden;

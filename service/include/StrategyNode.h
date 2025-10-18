@@ -7,13 +7,7 @@
 #include <functional>
 #include "BrokerSubSystem.h"
 
-class ICallable {
-public:
-};
-
-class MA: public ICallable {
-public:
-};
+class ICallable;
 
 class QNode {
 public:
