@@ -587,24 +587,19 @@ const flow_data = {
               "type": "text"
             },
             "close": {
-              "value": "close",
-              "type": "text"
+              "value": "close"
             },
             "open": {
-              "value": "open",
-              "type": "text"
+              "value": "open"
             },
             "high": {
-              "value": "high",
-              "type": "text"
+              "value": "high"
             },
             "low": {
-              "value": "low",
-              "type": "text"
+              "value": "low"
             },
             "volume": {
-              "value": "volume",
-              "type": "text"
+              "value": "volume"
             }
           }
         },
@@ -735,10 +730,10 @@ const flow_data = {
     ],
     "edges": [
       {
-        "id": "e1->2",
+        "id": "e1-close->2",
         "source": "1",
         "target": "2",
-        "sourceHandle": "output",
+        "sourceHandle": "field-close",
         "targetHandle": "input",
         "type": "default",
         "markerEnd": {
@@ -751,10 +746,10 @@ const flow_data = {
         },
       },
       {
-        "id": "e2->3",
+        "id": "e1-close->3",
         "source": "1",
         "target": "3",
-        "sourceHandle": "output",
+        "sourceHandle": "field-close",
         "targetHandle": "input",
         "type": "default",
         "markerEnd": {
@@ -1052,15 +1047,15 @@ const runBacktest = () => {
 }
 
 .vue-flow__node-custom.selected {
-    border-color: rgba(208, 62, 4, 0.892) !important;
-    box-shadow: 0 2px 10px rgba(255, 109, 0, 0.3);
+    border-color: rgba(205, 87, 41, 0.892) !important;
+    box-shadow: 0 0 5px 1px rgba(205, 109, 0, 0.8);
 }
 
 /* 多选状态样式 */
 .vue-flow__node-custom.multi-selected {
     border-width: 3px;
-    border-color: rgba(208, 62, 4, 0.892) !important;
-    box-shadow: 0 0 0 2px var(--accent), 0 4px 12px rgba(235, 141, 141, 0.3);
+    border-color: rgba(205, 87, 41, 0.892) !important;
+    box-shadow: 0 0 5px 1px rgba(208, 109, 0, 0.8);
     transform: translateY(-1px);
     z-index: 1000;
 }

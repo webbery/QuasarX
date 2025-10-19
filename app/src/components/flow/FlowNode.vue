@@ -28,7 +28,7 @@
                 
                 <!-- 右侧输出连接点 -->
                 <Handle
-                    v-if="nodeType !== 'resultOutput'"
+                    v-if="nodeType !== 'resultOutput' && nodeType !== 'dataInput'"
                     type="source"
                     :position="Position.Right"
                     id="output"
@@ -41,8 +41,9 @@
                 v-for="(paramConfig, key) in node.data.params" 
                 :key="key"
                 v-show="paramConfig.visible !== false"
+                :class="{ 'data-field-param': isDataFieldParam(key) }"
             >
-                <div class="param-label">{{ key }}</div>
+                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ key }}</div>
                 
                 <!-- 参数输入控件 -->
                 <div class="param-control">
@@ -75,6 +76,14 @@
                             class="param-input param-text"
                         />
                         <span v-if="paramConfig.unit" class="param-unit">{{ paramConfig.unit }}</span>
+                        <!-- 数据字段的输出连接点 -->
+                        <Handle
+                            v-if="isDataFieldParam(key)"
+                            type="source"
+                            :position="Position.Right"
+                            :id="`field-${key}`"
+                            class="field-output-handle"
+                        />
                     </div>
                     
                     <!-- 数字输入框 -->
@@ -159,6 +168,14 @@
                     <span v-else class="param-value">
                         {{ paramConfig.value }}
                         <span v-if="paramConfig.unit" class="param-unit">{{ paramConfig.unit }}</span>
+                        <!-- 数据字段的输出连接点 -->
+                        <Handle
+                            v-if="isDataFieldParam(key)"
+                            type="source"
+                            :position="Position.Right"
+                            :id="`field-${key}`"
+                            class="field-output-handle"
+                        />
                     </span>
                 </div>
             </div>
@@ -169,6 +186,8 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
 import { computed, inject } from 'vue'
+
+const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number']
 
 // 定义组件属性
 const props = defineProps({
@@ -197,8 +216,16 @@ const selectionIndex = computed(() => {
     return index >= 0 ? index + 1 : 0
 })
 
+// 检查是否为数据字段参数
+const isDataFieldParam = (key) => {
+    // 数据源节点的数据字段
+    const dataFields = ['close', 'open', 'high', 'low', 'volume']
+    return dataFields.includes(key)
+}
+
 // 节点点击处理
 const onNodeClick = (event) => {
+    // props.node.selected = true
     console.info('selected:', props.node)
     emit('node-click', { node: props.node, event })
 }
@@ -216,7 +243,7 @@ const nodeTypeConfig = {
         color: '#10b981', // 绿色
         icon: 'fas fa-database',
         hasInput: false,
-        hasOutput: true
+        hasOutput: false
     },
     '结果输出': {
         type: 'resultOutput',
@@ -335,24 +362,6 @@ const updateParam = (paramKey, newValue) => {
 .vue-flow__node-custom:active {
     cursor: grabbing;
 }
-
-/* 选择徽章 */
-/* .selection-badge {
-    position: absolute;
-    top: -8px;
-    right: -8px;
-    width: 20px;
-    height: 20px;
-    background: var(--primary);
-    color: white;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-    font-weight: bold;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-} */
 
 /* 节点悬停效果 */
 .vue-flow__node-custom:hover {
@@ -624,6 +633,71 @@ const updateParam = (paramKey, newValue) => {
     align-self: flex-end;
     position: static;
     margin-left: 4px;
+}
+
+/* 数据字段参数的特殊样式 */
+.node-param.data-field-param {
+    position: relative;
+    padding-right: 3px; /* 为连接点留出空间 */
+}
+
+.node-param.data-field-param .param-control {
+    justify-content: flex-end; /* 文本靠右 */
+    position: relative;
+}
+
+.node-param.data-field-param .param-label {
+    flex: none; /* 不占用多余空间 */
+    margin-right: 8px;
+}
+
+.node-param.data-field-param .input-with-unit {
+    flex: none; /* 不拉伸 */
+    max-width: 120px; /* 限制宽度 */
+}
+
+.node-param.data-field-param .param-value {
+    text-align: right;
+    padding-right: 15px; /* 为连接点留出空间 */
+}
+
+/* 字段输出连接点样式 */
+.field-output-handle {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    position: absolute;
+    right: -8px;
+    top: 50%;
+    transform: translateY(-10%);
+    border: 2px solid var(--text-secondary);
+    background: var(--primary);
+    pointer-events: all;
+    z-index: 10;
+}
+
+.field-output-handle:hover {
+    transform: translateY(-50%) scale(1.3);
+    background: var(--accent);
+    right: -8px; /* 悬停状态下也保持靠近边框 */
+}
+
+/* 选中状态下字段连接点的样式 */
+.vue-flow__node-custom.selected .field-output-handle,
+.vue-flow__node-custom.multi-selected .field-output-handle {
+    transform: translateY(-50%) scale(1.2);
+    border-width: 2px;
+    border-color: white;
+    right: -8px; /* 选中状态下也保持靠近边框 */
+}
+
+/* 确保输入控件在有连接点的情况下仍然正确显示 */
+.node-param.data-field-param .input-with-unit .param-input {
+    padding-right: 20px; /* 调整单位显示位置 */
+}
+
+.node-param.data-field-param .param-unit {
+    right: 20px; /* 调整单位位置，避免与连接点重叠 */
 }
 
 /* 响应式调整：在小屏幕上垂直排列 */
