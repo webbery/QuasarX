@@ -5,6 +5,7 @@
             fill="none"
             :stroke="connectionLineStyle?.stroke || 'var(--primary)'"
             :stroke-width="connectionLineStyle?.strokeWidth || 2"
+            @click="onClick"
         />
         <circle
             v-if="targetPosition"
@@ -31,8 +32,8 @@ const props = defineProps({
     sourceY: Number,
     targetX: Number,
     targetY: Number,
-    sourcePosition: Object,
-    targetPosition: Object
+    sourcePosition: String,
+    targetPosition: String
 })
 
 // 计算连接线路径 - 使用更安全的方式
@@ -43,23 +44,53 @@ const connectionLinePath = computed(() => {
         return getBezierPath({
             sourceX: props.sourceX,
             sourceY: props.sourceY,
+            sourcePosition: props.sourcePosition || 'right', // 默认位置
             targetX: props.targetX,
             targetY: props.targetY,
-        })
-    }
-    
-    // 备用方案：使用位置对象
-    if (props.sourcePosition && props.targetPosition) {
-        return getBezierPath({
-            sourceX: props.sourcePosition.x,
-            sourceY: props.sourcePosition.y,
-            targetX: props.targetPosition.x,
-            targetY: props.targetPosition.y,
+            targetPosition: props.targetPosition || 'left',   // 默认位置
         })
     }
     
     // 如果都没有有效数据，返回空路径
-    console.warn('FlowConnectLine: 缺少有效的坐标数据')
     return ''
 })
+
+// 计算目标位置
+const targetPosition = computed(() => ({
+  x: props.targetX,
+  y: props.targetY
+}))
+
+// 事件处理
+const onClick = (event) => {
+  emit('edge-click', { edge: props, event })
+}
+
 </script>
+<style scoped>
+.connection-line {
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+}
+
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 10;
+  }
+}
+
+.connection-target {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.2);
+  }
+}
+</style>

@@ -30,11 +30,14 @@
                     @drop="onDrop"
                     @dragover="onDragOver"
                     @node-context-menu="onNodeContextMenu"
+                    @edge-click="onEdgeClick"
                     @selection-drag-start="onSelectionDragStart"
                     @selection-drag="onSelectionDrag"
                     @selection-drag-stop="onSelectionDragStop"
                     @selection-context-menu="onSelectionContextMenu"
                     @pane-click="onPaneClick"
+                    @connect="onConnect"
+                    :is-valid-connection="isValidConnection"
                 >
                     <template #node-custom="nodeProps">
                         <FlowNode :node="nodeProps" 
@@ -236,6 +239,7 @@ import FlowConnectLine from './flow/FlowConnectLine.vue'
 const {
     fitView, 
     addNodes, 
+    addEdges,
     screenToFlowCoordinate,
     updateNode,
     getNodes,
@@ -243,13 +247,17 @@ const {
     removeEdges,
     getConnectedEdges,
     getSelectedNodes,
+    getSelectedEdges,
     addSelectedNodes,
     addSelectedEdges,
+    removeSelectedEdges,
+    edgesSelectionActive,
     nodesSelectionActive,
     removeSelectedNodes,
     onNodesInitialized } = useVueFlow()
 const activeTab = ref('flow')
 const selectedNodes = ref([])
+const selectedEdges = ref([])
 let nodeIdCounter = 10
 
 // 右键菜单状态
@@ -265,22 +273,46 @@ const closeContextMenu = () => {
     contextMenu.value.visible = false
 }
 
+// 添加键盘事件监听
+const onKeyDown = (event) => {
+  // 按 Delete 或 Backspace 键删除选中的元素
+  if ((event.key === 'Delete' || event.key === 'Backspace') && 
+      (selectedNodes.value.length > 0 || selectedEdges.value.length > 0)) {
+    event.preventDefault()
+    
+    if (selectedNodes.value.length > 0) {
+      deleteSelectedNodes()
+    } else if (selectedEdges.value.length > 0) {
+      deleteSelectedEdges()
+    } 
+  }
+}
+
 // 添加全局点击事件监听
 onMounted(() => {
     document.addEventListener('click', closeContextMenu)
+    document.addEventListener('keydown', onKeyDown)
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', closeContextMenu)
+    document.removeEventListener('keydown', onKeyDown)
 })
 
 // 提供 selectedNodes 给子组件
 provide('selectedNodes', selectedNodes)
+// 提供 selectedEdges 给子组件
+provide('selectedEdges', selectedEdges)
 
 // 监听 Vue Flow 的选中状态变化
 watch(getSelectedNodes, (newSelectedNodes) => {
     // 同步 Vue Flow 的选中状态到我们的 selectedNodes
     selectedNodes.value = newSelectedNodes
+}, { deep: true })
+
+// 监听选中的边变化
+watch(getSelectedEdges, (newSelectedEdges) => {
+  selectedEdges.value = newSelectedEdges
 }, { deep: true })
 
 const validNodes = computed({
@@ -408,6 +440,47 @@ const deleteSelectedNodes = () => {
     
     // 关闭菜单
     contextMenu.value.visible = false
+}
+
+// 连接创建事件处理
+const onConnect = (connection) => {
+  console.log('创建连接:', connection)
+  const newEdge = {
+    id: `e${connection.source}-${connection.sourceHandle}-${connection.target}-${connection.targetHandle}`,
+    source: connection.source,
+    target: connection.target,
+    sourceHandle: connection.sourceHandle,
+    targetHandle: connection.targetHandle,
+    type: 'default',
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: 'var(--primary)',
+    },
+    style: {
+      stroke: 'var(--primary)',
+      strokeWidth: 2,
+    },
+  }
+  // 添加到边数组
+  addEdges([newEdge])
+}
+
+// 连接验证（可选）
+const isValidConnection = (connection) => {
+  // 防止连接到自身
+  if (connection.source === connection.target) {
+    return false
+  }
+  
+  // 防止重复连接
+  const existingConnection = edges.value.find(edge => 
+    edge.source === connection.source && 
+    edge.target === connection.target &&
+    edge.sourceHandle === connection.sourceHandle &&
+    edge.targetHandle === connection.targetHandle
+  )
+  
+  return !existingConnection
 }
 
 const keyMap = {
@@ -931,6 +1004,57 @@ const updateNodeData = (nodeId, paramKey, newValue) => {
       nodes.value[nodeIndex].data.params.填充值.visible = false
     }
   }
+}
+
+// 边点击事件
+const onEdgeClick = (event) => {
+  const { edge, event: mouseEvent } = event
+  
+  // 如果按住了 Ctrl 或 Cmd 键，则切换选择状态
+  if (mouseEvent.ctrlKey || mouseEvent.metaKey) {
+    toggleEdgeSelection(edge)
+  } else {
+    // 如果没有按修饰键，则清空选择并选择当前边
+    clearEdgeSelection()
+    selectEdge(edge)
+  }
+}
+
+// 选择边
+const selectEdge = (edge) => {
+  if (!selectedEdges.value.find(e => e.id === edge.id)) {
+    addSelectedEdges([edge])
+  }
+}
+
+// 取消选择边
+const deselectEdge = (edge) => {
+  removeSelectedEdges([edge])
+}
+
+// 切换边选择状态
+const toggleEdgeSelection = (edge) => {
+  if (selectedEdges.value.find(e => e.id === edge.id)) {
+    deselectEdge(edge)
+  } else {
+    selectEdge(edge)
+  }
+}
+
+// 清空边选择
+const clearEdgeSelection = () => {
+  removeSelectedEdges(selectedEdges.value)
+}
+
+// 删除选中的边
+const deleteSelectedEdges = () => {
+  if (selectedEdges.value.length === 0) return
+  
+  const edgeIdsToDelete = selectedEdges.value.map(edge => edge.id)
+  removeEdges(edgeIdsToDelete)
+  
+  // 清空选择
+  clearEdgeSelection()
 }
 
 const runBacktest = () => {
