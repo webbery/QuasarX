@@ -10,6 +10,7 @@
 #include "StrategySubSystem.h"
 #include "Util/log.h"
 #include "server.h"
+#include "Nodes/QuoteNode.h"
 
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]; node->AddArgument(name, v);}
 
@@ -137,7 +138,7 @@ List<QNode*> QStrategy::Process(const List<QNode*>& input)
 }
 
 QNode* generate_input_node(const String& id, const nlohmann::json& data, Server* server) {
-    auto node = new InputNode;
+    auto node = new QuoteInputNode(server);
     node->setName(id);
     String type = data["params"]["source"];
     auto& codes = data["params"]["code"]["value"];

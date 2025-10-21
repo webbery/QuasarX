@@ -12,7 +12,6 @@
 }
 
 AgentStrategyInfo::~AgentStrategyInfo() {
-    
 }
 
 StrategySubSystem::StrategySubSystem(Server* server)

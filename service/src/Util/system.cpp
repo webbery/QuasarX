@@ -1,6 +1,7 @@
 #include "Util/system.h"
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Util/string_algorithm.h"
+#include "nng/nng.h"
 #include "nng/protocol/pubsub0/sub.h"
 #include "nng/protocol/pubsub0/pub.h"
 #include <cassert>
@@ -339,7 +340,7 @@ std::vector<StockRowInfo> ReadCSV(const std::string& csv, int last_N) {
   return rows;
 }
 
-bool Subscribe(const std::string& uri, nng_socket& sock, short tick) {
+bool Subscribe(const std::string& uri, nng_socket& sock, short tick, short hwm) {
   int rv = nng_sub0_open(&sock);
   if (rv != 0) {
     printf("ERROR: nng_sub0_open fail.\n");
@@ -350,6 +351,11 @@ bool Subscribe(const std::string& uri, nng_socket& sock, short tick) {
     printf("ERROR: nng_socket_set_string fail: %s\n", nng_strerror(rv));
     return false;
   }
+
+  // if ((rv == nng_setopt_size(sock, NNG_OPT_RECVBUF, hwm))) {
+  //   printf("ERROR: nng_setopt_size fail: %s\n", nng_strerror(rv));
+  //   return false;
+  // }
   if ((rv = nng_socket_set_ms(sock, NNG_OPT_RECVTIMEO, tick)) != 0) {
     printf("ERROR: nng_socket_set_int fail: %s\n", nng_strerror(rv));
     return false;

@@ -21,6 +21,7 @@ time_t FromStr(const std::string& dateString, const char* fmt) {
         printf("Date parsing failed!\n");
         return -1;
     }
+    // tm.tm_isdst = -1;
     // 将解析后的日期转换为 time_t 值
     std::time_t date = std::mktime(&tm);
     return date;
@@ -32,13 +33,18 @@ time_t FromTick(const std::string& str) {
 
 std::string ToString(time_t t, const char* fmt) {
     // 将 time_t 转换为 tm 结构
-    std::tm *ltm = localtime(&t);
+        std::tm ltm = {};
+#if defined(__linux__) || defined(__APPLE__)
+    localtime_r(&t, &ltm); // Linux/macOS
+#elif defined(_WIN32)
+    localtime_s(&ltm, &t); // Windows
+#endif
     
     // 创建一个字符数组来存储格式化后的日期字符串
     char buffer[80] = {0};
     
     // 使用 strftime 格式化日期
-    strftime(buffer, sizeof(buffer), fmt, ltm);
+    strftime(buffer, sizeof(buffer), fmt, &ltm);
     return std::string(buffer, strlen(buffer));
 }
 

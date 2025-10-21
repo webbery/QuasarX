@@ -1,19 +1,11 @@
 #include "StrategyNode.h"
 #include "Interprecter/Stmt.h"
 #include "Function/Function.h"
+#include <stdexcept>
 
-feature_t InputNode::Process(const DataFeatures& org, const feature_t& input)
+bool OperationNode::Process(DataContext& context, const DataFeatures& org)
 {
-    return input;
-}
-
-void InputNode::Connect(QNode* next, const String& from, const String& to) {
-    QNode::Connect(next, from, to);
-}
-
-feature_t OperationNode::Process(const DataFeatures& org, const feature_t& input)
-{
-    return input;
+    return true;
 }
 
 bool OperationNode::parseFomula(const String& formulas) {
@@ -21,20 +13,25 @@ bool OperationNode::parseFomula(const String& formulas) {
     return parser.parse(formulas);
 }
 
-feature_t StatisticNode::Process(const DataFeatures& org, const feature_t& input)
+bool StatisticNode::Process(DataContext& context, const DataFeatures& org)
 {
-    return input;
+    return true;
 }
 
-feature_t FeatureNode::Process(const DataFeatures& org, const feature_t& input)
+bool FeatureNode::Process(DataContext& context, const DataFeatures& org)
 {
-    return input;
+    return true;
 }
 
-feature_t FunctionNode::Process(const DataFeatures& org, const feature_t& input)
+bool FunctionNode::Process(DataContext& context, const DataFeatures& org)
 {
-    
-    return input;
+    if (!_callable) {[[unlikely]]
+        if (!Init()) {
+            throw std::invalid_argument("Node: function is not set");
+        }
+    }
+    // return (*_callable)(input);
+    return true;
 }
 
 bool FunctionNode::Init() {
@@ -53,7 +50,7 @@ SignalNode::SignalNode(Server* server):_server(server) {
 
 }
 
-feature_t SignalNode::Process(const DataFeatures& org, const feature_t& input)
+bool SignalNode::Process(DataContext& context, const DataFeatures& org)
 {
-    return input;
+    return true;
 }

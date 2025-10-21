@@ -1,13 +1,24 @@
 #pragma once
+#include "std_header.h"
 #include "Feature.h"
 #include "server.h"
-#include "std_header.h"
 #include "json.hpp"
 #include "Util/system.h"
 #include <functional>
 #include "BrokerSubSystem.h"
 
 class ICallable;
+// 数据上下文，用于管理节点间传输的数据
+class DataContext {
+public:
+    feature_t& get(const String& name) {
+        return _outputs[name];
+    }
+
+private:
+    // 节点的输出数据，待优化
+    Map<String, feature_t> _outputs;
+};
 
 class QNode {
 public:
@@ -15,7 +26,7 @@ public:
     /**
      * @brief 对输入数据做处理，并返回处理后的数据
      */
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input) = 0;
+    virtual bool Process(DataContext& context, const DataFeatures& org) = 0;
     virtual void Connect(QNode* next, const String& from, const String& to) {
         _outs[from] = next;
         next->_ins[to] = this;
@@ -36,7 +47,7 @@ public:
 
     const Map<String, QNode*>& outs() const { return _outs; }
     const Map<String, QNode*>& ins() const { return _ins; }
-    
+
 protected:
     String _name;
     nlohmann::json _params;
@@ -44,22 +55,9 @@ protected:
     Map<String, QNode*> _ins;
 };
 
-class InputNode : public QNode {
-public:
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
-
-    void AddSymbol(symbol_t symbol) { _symbols.insert(symbol); }
-
-    void EraseSymbol(symbol_t symbol) { _symbols.erase(symbol); }
-
-    void Connect(QNode* next, const String& from, const String& to);
-private:
-    Set<symbol_t> _symbols;
-};
-
 class OperationNode: public QNode {
 public:
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
+    virtual bool Process(DataContext& context, const DataFeatures& org);
 
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);
@@ -72,7 +70,7 @@ class FunctionNode: public QNode {
 public:
     ~FunctionNode();
 
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
+    virtual bool Process(DataContext& context, const DataFeatures& org);
 
     void SetFunctionName(const String& name) { _funcionName = name; }
 
@@ -92,12 +90,12 @@ private:
 
 class FeatureNode: public QNode {
 public:
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
+    virtual bool Process(DataContext& context, const DataFeatures& org);
 };
 
 class StatisticNode: public QNode {
 public:
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
+    virtual bool Process(DataContext& context, const DataFeatures& org);
 
     void AddIndicator(StatisticIndicator ind) {
         _indicators.insert(ind);
@@ -111,7 +109,7 @@ class SignalNode: public QNode {
 public:
     SignalNode(Server* server);
 
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
+    virtual bool Process(DataContext& context, const DataFeatures& org);
 private:
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);

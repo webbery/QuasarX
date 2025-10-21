@@ -38,7 +38,7 @@ bool RunCommand(const std::string& cmd, String& output);
 std::vector<StockRowInfo> ReadCSV(const std::string& csv, int last_N);
 std::string GetProgramPath();
 
-bool Subscribe(const std::string& uri, nng_socket& sock, short tick = 5000);
+bool Subscribe(const std::string& uri, nng_socket& sock, short tick = 5000, short hwm = 64);
 
 bool Publish(const std::string& uri, nng_socket& sock);
 

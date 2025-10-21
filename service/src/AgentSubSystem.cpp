@@ -1,4 +1,5 @@
 #include "AgentSubSystem.h"
+#include "StrategyNode.h"
 #include "server.h"
 #include "Transfer.h"
 #include "Util/system.h"
@@ -14,6 +15,7 @@
 #include "Agents/XGBoostAgent.h"
 #include "Agents/DeepAgent.h"
 #include <exception>
+#include <stdexcept>
 #include "RiskSubSystem.h"
 #include "Features/VWAP.h"
 
@@ -76,7 +78,8 @@ void FlowSubsystem::Start(const String& strategy) {
     if (flow._transfer) {
         delete flow._transfer;
     }
-    flow._transfer = new Transfer([strategy, this](nng_socket& from, nng_socket& to) {
+    DataContext context;
+    flow._transfer = new Transfer([context{std::move(context)}, strategy, this](nng_socket& from, nng_socket& to) mutable {
         DataFeatures messenger;
         if (!ReadFeatures(from, messenger)) {
             return true;
@@ -88,10 +91,17 @@ void FlowSubsystem::Start(const String& strategy) {
             }
         }
         
-        feature_t data = messenger._data;
-        for (auto node: flow._graph) {
-            data = node->Process(messenger, data);
+        try {
+            for (auto node: flow._graph) {
+                if (!node->Process(context, messenger)) {
+                    return false;
+                }
+            }
+        } catch (const std::invalid_argument& e) {
+            WARN("invalid argument error: {}", e.what());
+            return false;
         }
+        
         return true;
     });
     flow._transfer->start(strategy, URI_FEATURE);

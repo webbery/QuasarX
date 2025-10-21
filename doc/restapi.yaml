@@ -1101,6 +1101,34 @@ paths:
       responses:
         '200':
           description: success
+  /trade/stock:
+    post:
+      summary: stock trade
+      description: 股票交易
+      tags: 
+        - Trade
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbol:
+                  type: string
+                  description: 代码
+                prices:
+                  type: array
+                  
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
 components:
   schemas:
     StockList:
