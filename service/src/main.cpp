@@ -138,6 +138,7 @@ void init_logger() {
 
 int main(int argc, char* argv[])
 {
+    printf("VERSION: %s\n", QS_VERSION);
     std::pmr::synchronized_pool_resource pool;
     std::pmr::set_default_resource(&pool);
     hmdf::ThreadGranularity::set_optimum_thread_level();

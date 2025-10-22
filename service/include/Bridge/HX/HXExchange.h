@@ -44,6 +44,8 @@ private:
     bool _login_status : 1;
     bool _quote_inited : 1;
     bool _requested : 1;
+    String _user;
+    String _pwd;
 
     HXQuateSpi* _quote;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;

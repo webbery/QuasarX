@@ -144,41 +144,6 @@ paths:
                   change:
                     type: number
                     description: 涨跌幅
-  /order/buy:
-    post:
-      summary: buy a contract
-      description: 购买合约
-      tags: 
-        - Order
-      requestBody:
-        description: 合约信息
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                symbol:
-                  type: string
-                  description: 合约代码
-                  example: 000001
-                count:
-                  type: integer
-                  description: 份数
-                  example: 100
-                price:
-                  type: array
-                  description: 价格
-                  items:
-                    type: number
-                    example: 12.3
-      responses:
-        '200':
-          description: success or not
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StockList"
   /simulate:
     post:
       summary: simulate a exchange
@@ -1101,10 +1066,10 @@ paths:
       responses:
         '200':
           description: success
-  /trade/stock:
+  /trade/order:
     post:
-      summary: stock trade
-      description: 股票交易
+      summary: rade
+      description: 下单
       tags: 
         - Trade
       requestBody:
@@ -1115,12 +1080,25 @@ paths:
             schema:
               type: object
               properties:
+                kind:
+                  type: integer
+                  description: 交易种类 0-股票 1-期权 2-期货
                 symbol:
                   type: string
                   description: 代码
                 prices:
                   type: array
-                  
+                  items:
+                    type: number
+                quantity:
+                  type: integer
+                  description: 数量
+                type:
+                  type: integer
+                  description: 0-市价单 1-限价单
+                direct:
+                  type: integer
+                  description: 方向,0-买入 1-卖出 2-行权 3-融资买入 4-融券卖出
       responses:
         '200':
           description: success
@@ -1129,6 +1107,58 @@ paths:
               schema:
                 type: object
                 properties:
+                  id:
+                    type: integer
+                    description: 下单号
+        '401':
+          description: 频繁交易限制,失败
+    get:
+      summary: rade
+      description: 获取下单状态信息
+      tag:
+        - Trade
+      parameters:
+      - in: query
+        name: id
+        schema:
+          type: integer
+        description: 要获取的订单ID,如果请求不包含id则获取所有订单状态
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      description: 订单ID
+                    status:
+                      type: integer
+                      description: 状态, 0-下单成功 1-未成交 2-等待中 4-已撤销
+  /trade/cancel:
+    post:
+      summary: stock trade
+      description: 股票撤单
+      tags: 
+        - Trade
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: integer
+                  description: 下单号
+      responses:
+        '200':
+          description: success
 components:
   schemas:
     StockList:

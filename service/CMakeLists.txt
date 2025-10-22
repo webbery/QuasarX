@@ -3,6 +3,13 @@ project(QuantService)
 
 set(CMAKE_CXX_STANDARD 23)
 # add_compile_definitions(USE_PMR)
+execute_process(
+  COMMAND git describe --tags
+  TIMEOUT 5
+  OUTPUT_VARIABLE GIT_TAG_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+message(STATUS "Building from git tag: ${GIT_TAG_VERSION}")
 
 # include(FetchContent)
 if (WIN32)
@@ -115,6 +122,7 @@ source_group(TREE ${PROJECT_SOURCE_DIR}/src PREFIX "SourceFiles" FILES ${prj_fil
 
 add_executable(${PROJECT_NAME} ${prj_files_cpp} ${prj_files_header})
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE QS_VERSION="${GIT_TAG_VERSION}")
 if (WIN32)
 set(DEBUG_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se nngd xmdapi xfastmdapi fmtlog-static)
 set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se xmdapi xfastmdapi nng fmtlog)

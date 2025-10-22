@@ -5,6 +5,7 @@
 #include "server.h"
 
 using namespace TORALEV1API;
+#define USER_PRODUCT_INFO "HX5ZWWQ4VI"
 
 HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr)
@@ -21,6 +22,9 @@ const char* HXExchange::Name(){
 }
 
 bool HXExchange::Init(const ExchangeInfo& handle){
+    _user = handle._username;
+    _pwd = handle._passwd;
+
     _quoteAPI = CTORATstpXMdApi::CreateTstpXMdApi();
     _quote = new HXQuateSpi(_quoteAPI, this);
 
@@ -53,6 +57,9 @@ bool HXExchange::Login(){
 
     CTORATstpReqUserLoginField req_user_login_field;
     memset(&req_user_login_field, 0, sizeof(req_user_login_field));
+    strncpy(req_user_login_field.LogInAccount, _user.c_str(), _user.size());
+    strncpy(req_user_login_field.Password, _pwd.c_str(), _pwd.size());
+    memcpy(req_user_login_field.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
     int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, 0);
     if (ret != 0) {
         INFO("HX login fail.");
