@@ -7,16 +7,15 @@ import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import App from './App.vue'
 import axios from 'axios'
+import { message } from './tool'
 
 axios.defaults.headers.common['Access-Control-Allow-Origin'] = process.env.VUE_APP_Access_Control_Allow_Origin
-axios.create({
-    baseURL: '/v0',
-    timeout: 1000
-})
+
 const app = createApp(App)
-    .use(ElementPlus)
+app.config.globalProperties.$message = message
+app.use(ElementPlus)
     .mount('#app')
-    .$nextTick(() => postMessage({ payload: 'removeLoading' }, '*') );
+    .$nextTick(() => postMessage({ payload: 'removeLoading' }, '*'));
 // for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 //     app.component(key, component)
 // }

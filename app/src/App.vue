@@ -18,6 +18,12 @@
         <button v-if="is_backtest" class="control-btn">
           <i class="fas fa-cloud-upload-alt"></i> 导出报告
         </button>
+        <button v-if="is_position" class="btn btn-primary" @click="onHandleGlobalCancel">一键撤单</button>
+        <button v-if="is_position" class="btn btn-warning" @click="onHandleEmergency">应急处置</button>
+        <select v-if="is_position" class="form-control" style="width: auto;" v-model="selectedAccount">
+          <option value="main">主交易账户</option>
+          <option value="backup">备用交易账户</option>
+        </select>
         <button class="control-btn" @click="onHandleSetting"><i class="fas fa-cog"></i> 设置</button>
       </div>
     </header>
@@ -26,11 +32,15 @@
     <nav class="sidebar">
       <div class="nav-section">
         <div class="nav-title">交易</div>
-        <div class="nav-item" :class="{ active: is_account }">
+        <div class="nav-item" :class="{ active: is_account }"
+          @click="onHandleAccount"
+        >
           <i class="fas fa-home"></i>
-          <span @click="onHandleAccount">账户总览</span>
+          <span>账户总览</span>
         </div>
-        <div class="nav-item">
+        <div class="nav-item"  :class="{ active: is_position }"
+          @click="onHandlePosition"
+        >
           <i class="fas fa-boxes"></i>
           <span>持仓管理</span>
         </div>
@@ -42,7 +52,9 @@
 
       <div class="nav-section">
         <div class="nav-title">策略</div>
-        <div class="nav-item" @click="onHandleDesignStrategy" :class="{ active: is_strategy }">
+        <div class="nav-item" :class="{ active: is_strategy }"
+          @click="onHandleDesignStrategy" 
+        >
           <i class="fas fa-industry"></i>
           <span>策略工厂</span>
         </div>
@@ -66,7 +78,9 @@
           <i class="fas fa-wind"></i>
           <span>压力测试</span>
         </div>
-        <div class="nav-item" @click="onHandleVisualAnanlysis">
+        <div class="nav-item" :class="{ active: is_visual_analysis }"
+          @click="onHandleVisualAnanlysis"
+        >
           <i class="fas fa-area-chart"></i>
           <span>可视化分析</span>
         </div>
@@ -149,6 +163,7 @@ import LoginForm from "./components/LoginForm.vue";
 import SettingView from "./components/SettingView.vue";
 import SettingPanel from "./components/SettingPanel.vue";
 import VisualAnalysisView from "./components/VisualAnalysisView.vue";
+import PositionManager from "./components/PositionManager.vue";
 
 // 定义视图状态常量
 const VIEWS = {
@@ -157,10 +172,12 @@ const VIEWS = {
   DATA_CENTER: 'datacenter',
   SETTING_VIEW: 'setting',
   VISUAL_VIEW: 'visual_analysis',
+  POSITION_VIEW: 'position',
 };
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
+let selectedAccount;
 
 // 根据当前视图动态计算活动组件
 let activeComponent = computed(() => {
@@ -172,8 +189,10 @@ let activeComponent = computed(() => {
     return DataCenter;
   if (currentView.value === VIEWS.SETTING_VIEW)
     return SettingView;
-  if (currentView.value == VIEWS.VISUAL_VIEW)
+  if (currentView.value === VIEWS.VISUAL_VIEW)
     return VisualAnalysisView;
+  if (currentView.value === VIEWS.POSITION_VIEW)
+    return PositionManager;
   return AccountView;
 });
 
@@ -190,6 +209,7 @@ let is_strategy = computed(() => currentView.value === VIEWS.DESIGN_STATEGY);
 let is_datacenter = computed(() => currentView.value === VIEWS.DATA_CENTER);
 let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
+let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 
 onMounted(() => {
   console.log('mounted');
@@ -216,6 +236,9 @@ const onHandleVisualAnanlysis = () => {
   currentView.value = VIEWS.VISUAL_VIEW;
 }
 
+const onHandlePosition = () => {
+  currentView.value = VIEWS.POSITION_VIEW;
+}
 const onLoginSwitch = () => {
   showLogin.value = !showLogin.value
 }
@@ -240,6 +263,14 @@ const onHandleRunBacktest = () => {
   if (dynamicComponentRef.value && dynamicComponentRef.value.runBacktest) {
     dynamicComponentRef.value.runBacktest()
   }
+}
+
+const onHandleGlobalCancel = () => {
+  console.info('onHandleGlobalCancel')
+}
+
+const onHandleEmergency = () => {
+  console.info('onHandleEmergency')
 }
 </script>
 

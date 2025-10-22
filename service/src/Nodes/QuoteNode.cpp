@@ -5,7 +5,7 @@ QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 
 }
 
-feature_t QuoteInputNode::Process(const DataFeatures& org, const feature_t& input)
+bool QuoteInputNode::Process(DataContext& context, const DataFeatures& org)
 {
     // 
     Vector<double> result;
@@ -14,7 +14,8 @@ feature_t QuoteInputNode::Process(const DataFeatures& org, const feature_t& inpu
             result.push_back(org._data[i]);
         }
     }
-    return result;
+    context.add(_name, result);
+    return true;
 }
 
 void QuoteInputNode::Connect(QNode* next, const String& from, const String& to) {

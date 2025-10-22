@@ -6,7 +6,7 @@ class QuoteInputNode : public QNode {
 public:
     QuoteInputNode(Server* server);
 
-    virtual feature_t Process(const DataFeatures& org, const feature_t& input);
+    virtual bool Process(DataContext& context, const DataFeatures& org);
 
     void AddSymbol(symbol_t symbol) { _symbols.insert(symbol); }
 

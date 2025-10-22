@@ -83,6 +83,7 @@
 import axios from 'axios'
 import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps } from 'vue'
 import Store from 'electron-store';
+import { message } from '@/tool';
 
 const store = new Store();
 const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
@@ -179,8 +180,8 @@ const validateForm = () => {
 
 // 处理登录
 const handleLogin = () => {
+    isSubmitting.value = true;
     if (validateForm()) {
-        isSubmitting.value = true;
         const fs = require('fs')
         const certificate = fs.readFileSync('src/assets/server.crt', 'utf-8')
         const https = require('https');
@@ -214,6 +215,13 @@ const handleLogin = () => {
               }
               return config
             })
+            axios.defaults.baseURL = 'https://' + loginForm.server
+            axios.defaults.headers.common['Authorization'] = token
+            const agent = new https.Agent({  
+                rejectUnauthorized: false // 忽略证书错误
+            });
+            axios.defaults.httpsAgent = agent
+
             let removeInfo = selectedServer.value.label
             if (mode === 'Backtest') {
               emit('onStatusChange', true, removeInfo + ' - 回测模式')
@@ -226,12 +234,18 @@ const handleLogin = () => {
             }
             isSubmitting.value = false;
             closeModal();
+          } else {
+            message.error(`登录失败`)
           }
         })
         .catch(error => {
-          console.error('Error sending data:', error);
+          message.error(`登录失败: ${error}`)
         })
-        isSubmitting.value = false;
+        .finally(() => {
+          isSubmitting.value = false;
+        })
+    } else {
+      isSubmitting.value = false;
     }
 };
 </script>

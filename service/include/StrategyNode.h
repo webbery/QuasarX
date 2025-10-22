@@ -15,6 +15,9 @@ public:
         return _outputs[name];
     }
 
+    void add(const String& name, const feature_t& f) {
+        _outputs[name] = f;
+    }
 private:
     // TODO: 节点的输出数据，待优化
     Map<String, feature_t> _outputs;
