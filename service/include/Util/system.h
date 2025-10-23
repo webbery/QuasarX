@@ -20,12 +20,12 @@
 
 #define URI_RAW_QUOTE   "inproc://URI_RAW_QUOTE"
 #define URI_SIM_QUOTE   "inproc://URI_SIM_QUOTE"// 仿真数据
-// #define URI_QUOTE       "inproc://URI_QUOTE"    // 处理异常数据后的行情
 #define URI_SIM_TRADE   "inproc://URI_SIM_TRADE"    // 仿真交易结果
 #define URI_TRADE       "inproc://URI_TRADE"        // 实盘交易结果
 
 #define URI_FEATURE     "inproc://Feature"          // 输出特征
 #define URI_PREDICT     "inproc://Predict"          // 输出预测结果
+#define URI_SERVER_EVENT "inproc://SSE"             // SSE
 
 constexpr std::size_t flags = yas::mem|yas::binary;
 

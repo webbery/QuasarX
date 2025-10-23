@@ -6,6 +6,7 @@
 #include "Util/lmdb.h"
 #include "DataGroup.h"
 #include "json.hpp"
+#include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -96,6 +97,10 @@ public:
 
     int Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
+    int Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb);
+
+    int Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb);
+
     int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeInfo&)> cb);
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
@@ -127,12 +132,13 @@ public:
 
 private:
     int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
+    int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side);
 
     // 模拟撮合
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);
     double SimulateMatchStockSeller(symbol_t symbol, const Order& order, TradeInfo& deal);
 
-    void AddOrderAsync(OrderContext* order);
+    order_id AddOrderAsync(OrderContext* order);
 
 private:
     void run();

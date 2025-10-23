@@ -9,6 +9,7 @@
 #include "DataFrame/DataFrameTypes.h"
 #include "Handler/PredictionHandler.h"
 #include "Handler/RiskHandler.h"
+#include "Handler/ServerEventHandler.h"
 #include "Handler/TimerHandler.h"
 #include "HttpHandler.h"
 #include "PortfolioSubsystem.h"
@@ -38,6 +39,7 @@
 #include "Handler/DataHandler.h"
 #include "Handler/FeatureHandler.h"
 #include "Handler/SectorHandler.h"
+#include "Handler/ServerEventHandler.h"
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
@@ -105,14 +107,15 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_MONTECARLO      "/predict/montecarlo"
 #define API_FINITE_DIFF     "/predict/finite_diff"
 #define API_PREDICT_OPR     "/predict/operation"
-#define API_ORDER_BUY       "/order/buy"
-#define API_ORDER_SELL      "/order/sell"
 #define API_DATA_SYNC       "/data/sync"
 #define API_USER_LOGIN      "/user/login"
 #define API_SERVER_STATUS   "/server/status"
 #define API_SERVER_CONFIG   "/server/config"
 #define API_FEATURE         "/feature"
 #define API_SECTOR_FLOW     "/stocks/sector/flow"
+#define API_TRADE_ORDER     "/trade/order"
+#define API_POSITION        "/position"
+#define API_SERVER_EVENT    "/server/event"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -203,6 +206,13 @@ void Server::Regist() {
         this->_handlers[API_USER_LOGIN]->post(req, res);
     });
 
+    _svr.Get(API_VERSION API_SERVER_EVENT, [this](const httplib::Request& req, httplib::Response& res) {
+        if (!JWTMiddleWare(req, res)) {
+            return;
+        }
+        INFO("Get {}", API_SERVER_EVENT);
+
+    });
     REGIST_POST(API_RISK_STOP_LOSS);
     REGIST_PUT(API_RISK_STOP_LOSS);
     REGIST_GET(API_RISK_STOP_LOSS);
@@ -234,8 +244,7 @@ void Server::Regist() {
     REGIST_GET(API_STRATEGY);
     REGIST_POST(API_STRATEGY);
 
-    REGIST_POST(API_ORDER_BUY);
-    REGIST_POST(API_ORDER_SELL);
+    REGIST_POST(API_TRADE_ORDER);
 
     REGIST_GET(API_DATA_SYNC);
     REGIST_GET(API_SERVER_STATUS);
@@ -243,9 +252,13 @@ void Server::Regist() {
     REGIST_GET(API_INDEX);
     REGIST_GET(API_SERVER_CONFIG);
     REGIST_GET(API_SECTOR_FLOW);
+    REGIST_GET(API_TRADE_ORDER);
     
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
+
+    REGIST_DEL(API_TRADE_ORDER);
+
 }
 
 bool Server::InitDatabase() {
@@ -972,14 +985,14 @@ void Server::InitHandlers() {
     RegistHandler(API_INDEX, IndexHandler);
     RegistHandler(API_BACKTEST, BackTestHandler);
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
-    RegistHandler(API_ORDER_BUY, OrderBuyHandler);
-    RegistHandler(API_ORDER_SELL, OrderSellHandler);
+    RegistHandler(API_TRADE_ORDER, OrderHandler);
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
     RegistHandler(API_DATA_SYNC, DataSyncHandler);
     RegistHandler(API_SERVER_STATUS, ServerStatusHandler);
     RegistHandler(API_SERVER_CONFIG, SystemConfigHandler);
     RegistHandler(API_FEATURE, FeatureHandler);
     RegistHandler(API_SECTOR_FLOW, SectorHandler);
+    RegistHandler(API_SERVER_EVENT, ServerEventHandler);
 
     StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     risk->doWork({});

@@ -20,6 +20,9 @@ struct StockOrderDetail {
 enum class OrderType: char {
     Market, // 市价单
     Limit,  // 限价单
+    Condition, // 条件单
+    // 止损单
+    // 冰山订单
 };
 
 // 订单状态
@@ -47,26 +50,31 @@ struct Order {
 };
 
 enum class DealStatus: char {
-    Success,
-    Fail,
-    NetInterrupt,
+    OrderAccept,        // 报单录入成功
+    OrderReject,        // 报单录入失败
+    OrderSuccess,       // 报单成交
+    OrderFail,          // 报单失败
+    CancelSuccess,      // 撤单成功
+    CancelFail,         // 撤单失败
+    NetInterrupt,       // 网络中断
 };
 
 struct TradeReport {
     int _quantity;
     DealStatus _status;
+    // 成交类型
+    char _type;
+    // 交易员代码
+    Array<char, 7> _trader_code;
+    //成交编号，深交所唯一，上交所每笔交易唯一，当发现2笔成交回报拥有相同的exec_id，则可以认为此笔交易自成交
+    char _exec_id[18];
     // 成交价格
     double _price;
     // 成交时间
     time_t _time;
     // 成交总额
     double _trade_amount;
-    //成交编号，深交所唯一，上交所每笔交易唯一，当发现2笔成交回报拥有相同的exec_id，则可以认为此笔交易自成交
-    char _exec_id[18];
-    // 成交类型
-    char _type;
-    // 交易员代码
-    Array<char, 7> _trader_code;
+    
     // YAS_DEFINE_STRUCT_SERIALIZE("DealDetail", _number, _status, _price, _time);
 };
 
@@ -92,11 +100,11 @@ struct OrderContext {
   std::atomic_bool _success = false;
 
   std::promise<bool> _promise;
-  std::function<void (Order&)> _callback;
+  std::function<void (const TradeReport&)> _callback;
 
-  void Update(Order& order) {
+  void Update(const TradeReport& report) {
     if (_callback) {
-      _callback(order);
+      _callback(report);
     }
   }
 };

@@ -1,9 +1,13 @@
 #pragma once
+#include "Bridge/HX/HXTrade.h"
 #include "Bridge/exchange.h"
 
 class HXQuateSpi;
 namespace TORALEV1API {
     class CTORATstpXMdApi;
+}
+namespace TORASTOCKAPI {
+    class CTORATstpTraderApi;
 }
 class HXExchange: public ExchangeInterface {
     friend class HXQuateSpi;
@@ -48,5 +52,11 @@ private:
     String _pwd;
 
     HXQuateSpi* _quote;
+    HXTrade* _trade;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;
+    TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
+
+    uint32_t _reqID = 0;
+    using concurrent_order_map = ConcurrentMap<uint64_t, Pair<TORASTOCKAPI::CTORATstpInputOrderField*, OrderContext*>>;
+    concurrent_order_map _orders;
 };

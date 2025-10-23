@@ -20,8 +20,12 @@ public:
   OrderHandler(Server* server);
   ~OrderHandler();
 
+    virtual void post(const httplib::Request& req, httplib::Response& res);
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+    virtual void del(const httplib::Request& req, httplib::Response& res);
 private:
-  bool Order(const std::string& symbol, double price, int number);
+  bool BuyOrder(const std::string& symbol, double price, int number);
+  TradeInfo SellORder(symbol_t symbol, const Order& order);
   bool Trade();
   bool CancelOrder(order_id id);
   void CancelAllOrder();
@@ -34,15 +38,6 @@ private:
   Server* _handle;
 
   std::map<std::string, std::set<order_id>> _orders;
-};
-
-class OrderBuyHandler : public HttpHandler {
-public:
-    OrderBuyHandler(Server* server);
-    ~OrderBuyHandler();
-
-    virtual void post(const httplib::Request& req, httplib::Response& res);
-private:
 };
 
 class OrderSellHandler : public HttpHandler {

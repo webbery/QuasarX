@@ -140,6 +140,17 @@ int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& 
     return AddOrderBySide(strategy, symbol, order, detail, 1);
 }
 
+int BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb) {
+    int id = AddOrderBySide(strategy, symbol, order, 0);
+
+    return id;
+}
+
+int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb) {
+    int id = AddOrderBySide(strategy, symbol, order, 1);
+    return id;
+}
+
 double BrokerSubSystem::GetProfitLoss() {
   return 0;
 }
@@ -379,10 +390,10 @@ void BrokerSubSystem::run() {
   mdb_env_sync(_env, 1);
 }
 
-void BrokerSubSystem::AddOrderAsync(OrderContext* order) {
+order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     if (_simulation) {
         _exchanges[ExchangeType::EX_SIM]->AddOrder(order->_symbol, order);
-        return;
+        return order_id{0};
     }
     // 邮件通知
     String content;
@@ -397,13 +408,11 @@ void BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     }
     if (is_stock(order->_symbol)) {
         auto exchange = _server->GetAvaliableStockExchange();
-        exchange->AddOrder(order->_symbol, order);
-        return;
+        return exchange->AddOrder(order->_symbol, order);
     }
     if (is_future(order->_symbol)) {
         auto exchange = _server->GetAvaliableFutureExchange();
-        exchange->AddOrder(order->_symbol, order);
-        return;
+        return exchange->AddOrder(order->_symbol, order);
     }
 }
 
@@ -412,17 +421,17 @@ int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::func
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_symbol = symbol;
-    AddOrderAsync(ctx);
+    auto id = AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
 
     // 等待返回
-    auto fut = ctx->_promise.get_future();
-    if (fut.get() == true && cb) {
-        cb(ctx->_trades);
-    }
-    delete ctx;
-    return 0;
+    // auto fut = ctx->_promise.get_future();
+    // if (fut.get() == true && cb) {
+    //     cb(ctx->_trades);
+    // }
+    // delete ctx;
+    return id._id;
 }
 
 void BrokerSubSystem::flush(MDB_txn* txn, MDB_dbi dbi) {
@@ -570,6 +579,17 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     // 设置结束标志
     ctx->_flag.store(true);
     return ret;
+}
+
+int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side) {
+    auto ctx = new OrderContext;
+    ctx->_order = order;
+    ctx->_order._side = side;
+    ctx->_symbol = symbol;
+    AddOrderAsync(ctx);
+    _order_queue.push(ctx);
+    _cv.notify_all();
+    return 0;
 }
 
 double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, TradeInfo& deal) {
