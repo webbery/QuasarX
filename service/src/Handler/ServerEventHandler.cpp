@@ -51,7 +51,7 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
     res.set_chunked_content_provider("text/event-stream",
         [&](size_t offset, httplib::DataSink& sink) {
         // 当客户端首次连接时，将其添加到分发器
-        auto sink_ptr = std::make_shared<httplib::DataSink>(sink);
+        //auto sink_ptr = std::make_shared<httplib::DataSink>(sink);
         // dispatcher.addClient(sink_ptr);
         
         // 发送欢迎消息

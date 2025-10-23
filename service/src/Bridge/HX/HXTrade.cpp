@@ -31,6 +31,11 @@ void HXTrade::OnRspOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField *pIn
 
 }
 
+void HXTrade::OnErrRtnOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField* pInputOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID)
+{
+
+}
+
 void HXTrade::OnRspCondOrderInsert(TORASTOCKAPI::CTORATstpInputCondOrderField *pInputCondOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
 
 }

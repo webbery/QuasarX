@@ -1,13 +1,14 @@
 #pragma once
-#include "Bridge/HX/HXTrade.h"
 #include "Bridge/exchange.h"
 
 class HXQuateSpi;
+class HXTrade;
 namespace TORALEV1API {
     class CTORATstpXMdApi;
 }
 namespace TORASTOCKAPI {
     class CTORATstpTraderApi;
+    struct CTORATstpInputOrderField;
 }
 class HXExchange: public ExchangeInterface {
     friend class HXQuateSpi;

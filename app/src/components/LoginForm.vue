@@ -84,6 +84,7 @@ import axios from 'axios'
 import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps } from 'vue'
 import Store from 'electron-store';
 import { message } from '@/tool';
+import sseService from '@/ts/SSEService';
 
 const store = new Store();
 const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
@@ -222,6 +223,7 @@ const handleLogin = () => {
             });
             axios.defaults.httpsAgent = agent
 
+            sseService.connect(token)
             let removeInfo = selectedServer.value.label
             if (mode === 'Backtest') {
               emit('onStatusChange', true, removeInfo + ' - 回测模式')
@@ -240,8 +242,7 @@ const handleLogin = () => {
         })
         .catch(error => {
           message.error(`登录失败: ${error}`)
-        })
-        .finally(() => {
+        }).finally(()=>{
           isSubmitting.value = false;
         })
     } else {
