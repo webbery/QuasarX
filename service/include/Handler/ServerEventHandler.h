@@ -1,5 +1,6 @@
 #pragma once
 #include "HttpHandler.h"
+#include <thread>
 
 class EventDispatcher;
 
@@ -10,5 +11,5 @@ public:
 
     virtual void get(const httplib::Request& req, httplib::Response& res);
 private:
-    EventDispatcher* _eventDispatcher;
+    Map<std::thread::id, EventDispatcher*> _eventDispatchers;
 };

@@ -1,4 +1,5 @@
 #pragma once
+#include "json.hpp"
 #include "std_header.h"
 #include "nng/nng.h"
 #include "yas/binary_oarchive.hpp"
@@ -375,3 +376,4 @@ public:
 #endif // __USE_CUDA__
 
 std::wstring to_wstring(const char* c);
+bool get_system_status(nlohmann::json&);

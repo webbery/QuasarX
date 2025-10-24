@@ -205,6 +205,8 @@ private:
 
     void Schedules(time_t t);
 
+    void TimerWorker(nng_socket sock);
+
     void UpdateQuoteQueryStatus(time_t);
 
     void UpdateNextPrediction(time_t);

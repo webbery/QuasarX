@@ -2,6 +2,8 @@
 #include "Util/system.h"
 #include "nng/nng.h"
 #include "server.h"
+#include <thread>
+#include <unistd.h>
 
 class EventDispatcher {
 public:
@@ -10,23 +12,30 @@ public:
 
     }
 
-    void dispatchEvent(const std::string& data, const std::string& eventType = "message", const std::string& id = "") {
-        if (_sock.id == 0 && !Subscribe(URI_SERVER_EVENT, _sock)) {
-            WARN("EventDispatch Subscribe fail.");
-            return;
-        }
-        SetCurrentThreadName("SSE");
-        while (!Server::IsExit()) {
-            char* buff = NULL;
-            size_t sz = 0;
-            // 接收订单事件
-            int rv = nng_recv(_sock, &buff, &sz, NNG_FLAG_ALLOC);
-            if (rv != 0) {
-                nng_free(buff, sz);
-                continue;;
+    bool dispatchEvent(httplib::DataSink& sink) {
+        if (_sock.id == 0) {
+            if (!Subscribe(URI_SERVER_EVENT, _sock)) {
+                WARN("EventDispatch Subscribe fail.");
+                return false;
             }
-            // 发送给客户端
+            String thread_name = "SSE_" + std::to_string(_sock.id); 
+            SetCurrentThreadName(thread_name.c_str());
         }
+        char* buff = NULL;
+        size_t sz = 0;
+        // 接收订单事件
+        int rv = nng_recv(_sock, &buff, &sz, NNG_FLAG_ALLOC);
+        if (rv != 0) {
+            nng_free(buff, sz);
+            return true;
+        }
+        // 发送给客户端
+        auto status = sink.write(buff, sz);
+        nng_free(buff, sz);
+        return status;
+    }
+
+    void Release() {
         nng_close(_sock);
     }
 private:
@@ -35,11 +44,12 @@ private:
 };
 
 ServerEventHandler::ServerEventHandler(Server* server):HttpHandler(server) {
-    _eventDispatcher = new EventDispatcher();
 }
 
 ServerEventHandler::~ServerEventHandler() {
-    delete _eventDispatcher;
+    while (!_eventDispatchers.empty()) {
+        sleep(1);
+    }
 }
 
 void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res) {
@@ -50,15 +60,24 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
 
     res.set_chunked_content_provider("text/event-stream",
         [&](size_t offset, httplib::DataSink& sink) {
-        // 当客户端首次连接时，将其添加到分发器
-        //auto sink_ptr = std::make_shared<httplib::DataSink>(sink);
-        // dispatcher.addClient(sink_ptr);
+        auto id = std::this_thread::get_id();
+        auto itr = _eventDispatchers.find(id);
+        EventDispatcher* dispatcher = nullptr;
+        if (itr == _eventDispatchers.end()) {
+            // 当客户端首次连接时，将其添加到分发器
+            dispatcher = new EventDispatcher();
+            _eventDispatchers[id] = dispatcher;
+        } else {
+            dispatcher = itr->second;
+        }
         
-        // 发送欢迎消息
-        _eventDispatcher->dispatchEvent("连接已建立", "system", "welcome");
-        
-        // 这里保持连接打开，实际应用中可以通过条件变量等待新消息
-        // 返回true保持连接，返回false关闭连接:cite[1]
-        return false; 
+        if (!sink.is_writable() || Server::IsExit()) {
+            dispatcher->Release();
+            delete dispatcher;
+            _eventDispatchers.erase(id);
+            return false;
+        }
+        // 发送消息
+        return dispatcher->dispatchEvent(sink);
     });
 }

@@ -723,3 +723,53 @@ size_t get_feature_id(const String& name, const nlohmann::json& params) {
   h2 ^= h1 + 0x9e3779b9 + (h2 << 6) + (h2 >> 2);
   return h2;
 }
+
+double getMemoryInfo()
+{
+    double memory_usage = 0;
+#ifdef __linux__
+    String result;
+    if (!RunCommand("free", result)) {
+        return -1;
+    }
+    std::istringstream iss(result);
+    String line;
+    int lineNum = 0;
+    while (std::getline(iss, line)) {
+        lineNum++;
+        if (lineNum <= 2)
+            continue;
+
+        break;
+    }
+    Vector<String> info;
+    split(line, info, " ");
+    memory_usage = std::stol(info[2]) * 1.0/std::stol(info[1]);
+#endif
+    return memory_usage;
+}
+
+bool get_system_status(nlohmann::json&  status) {
+    String result;
+    if (!RunCommand("vmstat 1 1", result)) {
+        return false;
+    }
+    std::istringstream iss(result);
+    String line;
+    int lineNum = 0;
+    while (std::getline(iss, line)) {
+        lineNum++;
+        if (lineNum <= 2)
+            continue;
+
+        break;
+    }
+    Vector<String> info;
+    split(line, info, " ");
+    auto id = std::stoi(info[14]); // idle
+    // CPU
+    status["cpu"] = (100.0 - id) / 100.0;
+    // memory
+    status["mem"] = getMemoryInfo();
+    return true;
+}

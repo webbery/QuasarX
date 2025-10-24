@@ -807,9 +807,12 @@ void Server::Timer()
     using TimePoint = Clock::time_point;
     Duration interval(std::chrono::seconds(5));
     TimePoint next_wake = Clock::now() + interval;
+    nng_socket sock;
+    Publish(URI_SERVER_EVENT, sock);
     if (_runType == RuningType::Backtest) {
         while(!_exit) {
             auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
+            TimerWorker(sock);
             for (auto exchange: handler->GetExchanges()) {
                 if (exchange.second->IsLogin()) {
                     exchange.second->QueryQuotes();
@@ -823,9 +826,12 @@ void Server::Timer()
     } else {
         while(!_exit) {
             std::this_thread::sleep_until(next_wake);
-            if (_exit)
+            if (_exit) {
+                nng_close(sock);
                 return;
+            }
 
+            TimerWorker(sock);
             auto fut = std::async(std::launch::async,  [this]() {
                 auto curr = Now();
                 Schedules(curr);
@@ -836,6 +842,18 @@ void Server::Timer()
             });
             next_wake += interval;
         }
+    }
+    nng_close(sock);
+}
+
+void Server::TimerWorker(nng_socket sock) {
+    nlohmann::json status;
+    if (get_system_status(status)) {
+        String info("system_status");
+        double cpu = status["cpu"];
+        double mem = status["mem"];
+        info += ":" + std::to_string(cpu) + " " + std::to_string(mem) + "\n\n";
+        nng_send(sock, info.data(), info.size(), 0);
     }
 }
 
