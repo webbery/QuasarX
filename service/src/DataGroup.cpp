@@ -1,9 +1,39 @@
 #include "DataGroup.h"
 #include <cstdint>
+#include <string>
 #include "DataFrame/DataFrameStatsVisitors.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "boost/math/tools/bivariate_statistics.hpp"
 #include "DataFrame/DataFrameFinancialVisitors.h"
+
+String to_sse_string(const TradeReport& report) {
+    String str("trade_report:");
+    switch (report._status) {
+    case DealStatus::OrderAccept:
+        str += "order_accept";
+    break;
+    case DealStatus::OrderReject:
+        str += "order_reject";
+    break;
+    case DealStatus::OrderSuccess:
+    // 状态 id 交易数量 交易价格
+        str += "order_success " + String(report._exec_id) + " " + std::to_string(report._quantity) + " " + std::to_string(report._price);
+    break;
+    case DealStatus::OrderFail:
+        str += "order_fail";
+    break;
+    case DealStatus::CancelSuccess:
+        str += "cancel_success";
+    break;
+    case DealStatus::CancelFail:
+        str += "cancel_fail";
+    break;
+    default:
+        str += "unknow";
+    break;
+    }
+    return str;
+}
 
 bool DataGroup::IsValid() {
     if (_frames.empty())

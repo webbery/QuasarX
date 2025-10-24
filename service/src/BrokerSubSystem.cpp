@@ -9,6 +9,7 @@
 #include <utility>
 #include <yas/serialize.hpp>
 #include "Bridge/exchange.h"
+#include "DataGroup.h"
 #include "PortfolioSubsystem.h"
 #include "Util/lmdb.h"
 #include "Util/string_algorithm.h"
@@ -140,14 +141,14 @@ int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& 
     return AddOrderBySide(strategy, symbol, order, detail, 1);
 }
 
-int BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb) {
-    int id = AddOrderBySide(strategy, symbol, order, 0);
+int BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    int id = AddOrderBySide(strategy, symbol, order, 0, cb);
 
     return id;
 }
 
-int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb) {
-    int id = AddOrderBySide(strategy, symbol, order, 1);
+int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    int id = AddOrderBySide(strategy, symbol, order, 1, cb);
     return id;
 }
 
@@ -581,11 +582,12 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     return ret;
 }
 
-int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side) {
+int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_order._side = side;
     ctx->_symbol = symbol;
+    ctx->_callback = cb;
     AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();

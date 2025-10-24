@@ -97,9 +97,9 @@ public:
 
     int Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
-    int Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb);
+    int Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
-    int Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (TradeInfo&)> cb);
+    int Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
     int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeInfo&)> cb);
     // 统计当前指标
@@ -132,7 +132,7 @@ public:
 
 private:
     int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
-    int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side);
+    int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);
 
     // 模拟撮合
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);

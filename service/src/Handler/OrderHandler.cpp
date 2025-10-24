@@ -65,8 +65,12 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         ++itr;
         }
 
-        auto id = broker->Buy("", symbol, order, [](const TradeInfo&) {
-
+        auto id = broker->Buy("", symbol, order, [](const TradeReport&) {
+            auto info = to_sse_string(report);
+            nng_socket sock;
+            Publish(URI_SERVER_EVENT, sock);
+            nng_send(sock, info.data(), info.size(), 0);
+            nng_close(sock);
         });
         
         nlohmann::json result;
@@ -86,8 +90,12 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         }
         auto broker = _server->GetBrokerSubSystem();
         TradeInfo trades;
-        auto id = broker->Sell("", symbol, order, [](const TradeInfo&) {
-            
+        auto id = broker->Sell("", symbol, order, [](const TradeReport& report) {
+            auto info = to_sse_string(report);
+            nng_socket sock;
+            Publish(URI_SERVER_EVENT, sock);
+            nng_send(sock, info.data(), info.size(), 0);
+            nng_close(sock);
         });
         
         nlohmann::json result;
