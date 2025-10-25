@@ -141,9 +141,9 @@ bool CTPExchange::CancelOrder(order_id id){
     return true;
 }
 
-OrderList CTPExchange::GetOrders(){
-    OrderList ol;
-    return ol;
+bool CTPExchange::GetOrders(OrderList& ol)
+{
+    return true;
 }
 
 QuoteInfo CTPExchange::GetQuote(symbol_t symbol) {
@@ -202,6 +202,11 @@ void CTPExchange::UpdateCommission() {
     strcpy(comm_rate.InstrumentID, contract.data());
     _pUserTradeApi->ReqQryInstrumentCommissionRate(&comm_rate, _nRequestID++);
   }
+}
+
+double CTPExchange::GetAvailableFunds()
+{
+    return 1000000;
 }
 
 const Commission& CTPExchange::GetCommission(const symbol_t& symbol) {

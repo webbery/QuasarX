@@ -1,210 +1,231 @@
 <template>
-    <div class="expand-all">
-        <button @click="toggleAllSections">{{ allExpanded ? '收起所有' : '展开所有' }}</button>
-    </div>
-    
-    <div class="settings-panel">
-        <!-- 添加远程服务器 -->
-        <div class="settings-section">
-            <div class="section-header" @click="toggleSection('server')">
-                <div class="section-title">
-                    <div class="section-icon" style="background-color: rgba(52, 152, 219, 0.1); color: #3498db;">
-                        <span>🌐</span>
-                    </div>
-                    <span>添加/删除远程服务器</span>
-                </div>
-                <div class="section-arrow" :class="{ rotated: expandedSections.server }">▼</div>
-            </div>
-            <div class="section-content" :class="{ expanded: expandedSections.server }">
-                <div class="form-group">
-                    <label>服务器地址</label>
-                    <input type="text" class="form-control" v-model="serverForm.address" placeholder="例如:192.168.1.100:8080 或 example.com">
-                </div>
-                <div class="form-group">
-                    <label>别名</label>
-                    <input type="text" class="form-control" v-model="serverForm.name" placeholder="别名">
-                </div>
-                <div class="form-group" v-if="serverForm.authMethod === 'password'">
-                    <label>密码</label>
-                    <input type="password" class="form-control" v-model="serverForm.password" placeholder="密码" style="margin-top: 10px;">
-                </div>
-                <button class="btn btn-primary" @click="addServer">添加服务器</button>
-            </div>
+    <div>
+        <div class="expand-all">
+            <button @click="toggleAllSections">{{ allExpanded ? '收起所有' : '展开所有' }}</button>
         </div>
         
-        <!-- 添加券商 -->
-        <div class="settings-section">
-            <div class="section-header" @click="toggleSection('exchange')">
-                <div class="section-title">
-                    <div class="section-icon" style="background-color: rgba(155, 89, 182, 0.1); color: #9b59b6;">
-                        <span>💱</span>
+        <div class="settings-panel">
+            <!-- 添加远程服务器 -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('server')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(52, 152, 219, 0.1); color: #3498db;">
+                            <span>🌐</span>
+                        </div>
+                        <span>添加/删除远程服务器</span>
                     </div>
-                    <span>添加/删除券商</span>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.server }">▼</div>
                 </div>
-                <div class="section-arrow" :class="{ rotated: expandedSections.exchange }">▼</div>
-            </div>
-            <div class="section-content" :class="{ expanded: expandedSections.exchange }">
-                <div class="form-group">
-                    <label>名称</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.name" placeholder="别名">
-                    <label>选择券商</label>
-                    <select class="form-control" v-model="exchangeForm.platform">
-                        <option v-for="platform in  Object.keys(exchangePlatforms)" :value="platform">{{ platform }}</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>券商账号</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.account" placeholder="请输入券商账号">
-                    <label>券商密码</label>
-                    <input type="password" class="form-control" v-model="exchangeForm.password" placeholder="请输入券商密码">
-                </div>
-                <div class="form-group">
-                    <label>行情服务器地址</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.quoteAddr" placeholder="示例">
-                    <label>交易服务器地址</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.tradeAddr" placeholder="示例">
-                </div>
-                <div class="form-group">
-                    <label>开盘时间</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.validTime" placeholder="示例: 09:00-11:30;13:00-15:00">
-                </div>
-                <div class="form-group">
-                    <label>API Key</label>
-                    <input type="text" class="form-control" v-model="exchangeForm.apiKey" placeholder="请输入API Key">
-                    <label>Secret Key</label>
-                    <input type="password" class="form-control" v-model="exchangeForm.secretKey" placeholder="请输入Secret Key">
-                </div>
-                <button class="btn btn-primary" @click="addExchange">添加券商</button>
-            </div>
-        </div>
-        
-        <!-- 设置费率 -->
-        <div class="settings-section">
-            <div class="section-header" @click="toggleSection('fee')">
-                <div class="section-title">
-                    <div class="section-icon" style="background-color: rgba(241, 196, 15, 0.1); color: #f1c40f;">
-                        <span>💰</span>
+                <div class="section-content" :class="{ expanded: expandedSections.server }">
+                    <div class="form-group">
+                        <label>服务器地址</label>
+                        <input type="text" class="form-control" v-model="serverForm.address" placeholder="例如:192.168.1.100:8080 或 example.com">
                     </div>
-                    <span>设置费率</span>
-                </div>
-                <div class="section-arrow" :class="{ rotated: expandedSections.fee }">▼</div>
-            </div>
-            <div class="section-content" :class="{ expanded: expandedSections.fee }">
-                <div class="form-group">
-                    <label>交易费率 (%)</label>
-                    <input type="number" class="form-control" v-model="feeRate.trade" step="0.01" min="0">
-                </div>
-                <div class="form-group">
-                    <label>提现费率 (%)</label>
-                    <input type="number" class="form-control" v-model="feeRate.withdrawal" step="0.01" min="0">
-                </div>
-                <div class="form-group">
-                    <label>最低提现费用</label>
-                    <input type="number" class="form-control" v-model="feeRate.minWithdrawalFee" step="0.0001" min="0">
-                </div>
-                <button class="btn btn-primary" @click="updateFeeRate">更新费率</button>
-            </div>
-        </div>
-        
-        <!-- 设置SMTP -->
-        <div class="settings-section">
-            <div class="section-header" @click="toggleSection('smtp')">
-                <div class="section-title">
-                    <div class="section-icon" style="background-color: rgba(231, 76, 60, 0.1); color: #e74c3c;">
-                        <span>📧</span>
+                    <div class="form-group">
+                        <label>别名</label>
+                        <input type="text" class="form-control" v-model="serverForm.name" placeholder="别名">
                     </div>
-                    <span>设置SMTP</span>
-                </div>
-                <div class="section-arrow" :class="{ rotated: expandedSections.smtp }">▼</div>
-            </div>
-            <div class="section-content" :class="{ expanded: expandedSections.smtp }">
-                <div class="form-group">
-                    <label>SMTP服务器</label>
-                    <input type="text" class="form-control" v-model="smtpConfig.host" placeholder="例如：smtp.gmail.com">
-                </div>
-                <div class="form-group">
-                    <label>端口</label>
-                    <input type="number" class="form-control" v-model="smtpConfig.port" placeholder="例如：465">
-                </div>
-                <div class="form-group">
-                    <label>用户名</label>
-                    <input type="text" class="form-control" v-model="smtpConfig.username" placeholder="SMTP用户名">
-                </div>
-                <div class="form-group">
-                    <label>密码</label>
-                    <input type="password" class="form-control" v-model="smtpConfig.password" placeholder="SMTP密码">
-                </div>
-                <div class="form-group">
-                    <label>加密方式</label>
-                    <select class="form-control" v-model="smtpConfig.encryption">
-                        <option value="ssl">SSL</option>
-                        <option value="tls">TLS</option>
-                        <option value="none">无</option>
-                    </select>
-                </div>
-                <button class="btn btn-primary" @click="updateSmtp">更新SMTP设置</button>
-            </div>
-        </div>
-        
-        <!-- 设置无风险利率 -->
-        <div class="settings-section">
-            <div class="section-header" @click="toggleSection('risk')">
-                <div class="section-title">
-                    <div class="section-icon" style="background-color: rgba(52, 73, 94, 0.1); color: #34495e;">
-                        <span>📈</span>
+                    <div class="form-group" v-if="serverForm.authMethod === 'password'">
+                        <label>密码</label>
+                        <input type="password" class="form-control" v-model="serverForm.password" placeholder="密码" style="margin-top: 10px;">
                     </div>
-                    <span>设置无风险利率</span>
+                    <button class="btn btn-primary" @click="addServer">添加服务器</button>
                 </div>
-                <div class="section-arrow" :class="{ rotated: expandedSections.risk }">▼</div>
             </div>
-            <div class="section-content" :class="{ expanded: expandedSections.risk }">
-                <div class="form-group">
-                    <label>无风险利率 (%)</label>
-                    <input type="number" class="form-control" v-model="riskFreeRate" step="0.01" min="0">
-                    <p style="font-size: 0.9rem; color: #7f8c8d; margin-top: 5px;">
-                        通常设置为国债收益率或银行基准利率
-                    </p>
-                </div>
-                <button class="btn btn-primary" @click="updateRiskFreeRate">更新利率</button>
-            </div>
-        </div>
-        
-        <!-- 设置每日任务执行时间点 -->
-        <div class="settings-section">
-            <div class="section-header" @click="toggleSection('task')">
-                <div class="section-title">
-                    <div class="section-icon" style="background-color: rgba(26, 188, 156, 0.1); color: #1abc9c;">
-                        <span>⏰</span>
+            
+            <!-- 添加券商 -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('exchange')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(155, 89, 182, 0.1); color: #9b59b6;">
+                            <span>💱</span>
+                        </div>
+                        <span>添加/删除券商</span>
                     </div>
-                    <span>设置每日任务执行时间点</span>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.exchange }">▼</div>
                 </div>
-                <div class="section-arrow" :class="{ rotated: expandedSections.task }">▼</div>
-            </div>
-            <div class="section-content" :class="{ expanded: expandedSections.task }">
-                <!-- <div class="form-group">
-                    <label>任务类型</label>
-                    <select class="form-control" v-model="selectedTask">
-                        <option v-for="task in tasks" :value="task">{{ task.name }}</option>
-                    </select>
-                </div> -->
-                <div class="form-group">
-                    <label>执行时间</label>
-                    <div class="time-selector">
-                        <select v-model="selectedTask.hour">
-                            <option v-for="h in 24" :value="h-1">{{ String(h-1).padStart(2, '0') }}</option>
-                        </select>
-                        <span>:</span>
-                        <select v-model="selectedTask.minute">
-                            <option v-for="m in 60" :value="m-1">{{ String(m-1).padStart(2, '0') }}</option>
+                <div class="section-content" :class="{ expanded: expandedSections.exchange }">
+                    <div class="form-group">
+                        <label>名称</label>
+                        <input type="text" class="form-control" v-model="exchangeForm.name" placeholder="别名">
+                        <label>选择券商</label>
+                        <select class="form-control" v-model="exchangeForm.platform">
+                            <option v-for="platform in  Object.keys(exchangePlatforms)" :value="platform">{{ platform }}</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label>券商账号</label>
+                        <input type="text" class="form-control" v-model="exchangeForm.account" placeholder="请输入券商账号">
+                        <label>券商密码</label>
+                        <input type="password" class="form-control" v-model="exchangeForm.password" placeholder="请输入券商密码">
+                    </div>
+                    <div class="form-group">
+                        <label>行情服务器地址</label>
+                        <input type="text" class="form-control" v-model="exchangeForm.quoteAddr" placeholder="示例">
+                        <label>交易服务器地址</label>
+                        <input type="text" class="form-control" v-model="exchangeForm.tradeAddr" placeholder="示例">
+                    </div>
+                    <div class="form-group">
+                        <label>开盘时间</label>
+                        <input type="text" class="form-control" v-model="exchangeForm.validTime" placeholder="示例: 09:00-11:30;13:00-15:00">
+                    </div>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="text" class="form-control" v-model="exchangeForm.apiKey" placeholder="请输入API Key">
+                        <label>Secret Key</label>
+                        <input type="password" class="form-control" v-model="exchangeForm.secretKey" placeholder="请输入Secret Key">
+                    </div>
+                    <button class="btn btn-primary" @click="addExchange">添加券商</button>
                 </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" v-model="selectedTask.enabled"> 启用此任务
-                    </label>
+            </div>
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('fund')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(241, 196, 15, 0.1); color: #f1c40f;">
+                            <span>💰</span>
+                        </div>
+                        <span>设置资金账号</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.fund }">▼</div>
                 </div>
-                <button class="btn btn-primary" @click="updateTaskSchedule">更新任务计划</button>
+                <div class="section-content" :class="{ expanded: expandedSections.fund }">
+                    <div class="form-group">
+                        <label>账号</label>
+                        <input type="text" class="form-control" v-model="fundForm.account" placeholder="请输入资金账号">
+                        <label>密码</label>
+                        <input type="password" class="form-control" v-model="fundForm.password" placeholder="请输入资金账号密码">
+                    </div>
+                    <button class="btn btn-primary" @click="updateFundAccount">更新资金账号</button>
+                </div>
+            </div>
+            <!-- 设置费率 -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('fee')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(241, 196, 15, 0.1); color: #f1c40f;">
+                            <span>💰</span>
+                        </div>
+                        <span>设置回测费率</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.fee }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.fee }">
+                    <div class="form-group">
+                        <label>交易费率 (%)</label>
+                        <input type="number" class="form-control" v-model="feeRate.trade" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>提现费率 (%)</label>
+                        <input type="number" class="form-control" v-model="feeRate.withdrawal" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>最低提现费用</label>
+                        <input type="number" class="form-control" v-model="feeRate.minWithdrawalFee" step="0.0001" min="0">
+                    </div>
+                    <button class="btn btn-primary" @click="updateFeeRate">更新费率</button>
+                </div>
+            </div>
+            
+            <!-- 设置SMTP -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('smtp')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(231, 76, 60, 0.1); color: #e74c3c;">
+                            <span>📧</span>
+                        </div>
+                        <span>设置SMTP</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.smtp }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.smtp }">
+                    <div class="form-group">
+                        <label>SMTP服务器</label>
+                        <input type="text" class="form-control" v-model="smtpConfig.host" placeholder="例如：smtp.gmail.com">
+                    </div>
+                    <div class="form-group">
+                        <label>端口</label>
+                        <input type="number" class="form-control" v-model="smtpConfig.port" placeholder="例如：465">
+                    </div>
+                    <div class="form-group">
+                        <label>用户名</label>
+                        <input type="text" class="form-control" v-model="smtpConfig.username" placeholder="SMTP用户名">
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" class="form-control" v-model="smtpConfig.password" placeholder="SMTP密码">
+                    </div>
+                    <div class="form-group">
+                        <label>加密方式</label>
+                        <select class="form-control" v-model="smtpConfig.encryption">
+                            <option value="ssl">SSL</option>
+                            <option value="tls">TLS</option>
+                            <option value="none">无</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" @click="updateSmtp">更新SMTP设置</button>
+                </div>
+            </div>
+            
+            <!-- 设置无风险利率 -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('risk')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(52, 73, 94, 0.1); color: #34495e;">
+                            <span>📈</span>
+                        </div>
+                        <span>设置无风险利率</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.risk }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.risk }">
+                    <div class="form-group">
+                        <label>无风险利率 (%)</label>
+                        <input type="number" class="form-control" v-model="riskFreeRate" step="0.01" min="0">
+                        <p style="font-size: 0.9rem; color: #7f8c8d; margin-top: 5px;">
+                            通常设置为国债收益率或银行基准利率
+                        </p>
+                    </div>
+                    <button class="btn btn-primary" @click="updateRiskFreeRate">更新利率</button>
+                </div>
+            </div>
+            
+            <!-- 设置每日任务执行时间点 -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('task')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(26, 188, 156, 0.1); color: #1abc9c;">
+                            <span>⏰</span>
+                        </div>
+                        <span>设置每日任务执行时间点</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.task }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.task }">
+                    <!-- <div class="form-group">
+                        <label>任务类型</label>
+                        <select class="form-control" v-model="selectedTask">
+                            <option v-for="task in tasks" :value="task">{{ task.name }}</option>
+                        </select>
+                    </div> -->
+                    <div class="form-group">
+                        <label>执行时间</label>
+                        <div class="time-selector">
+                            <select v-model="selectedTask.hour">
+                                <option v-for="h in 24" :value="h-1">{{ String(h-1).padStart(2, '0') }}</option>
+                            </select>
+                            <span>:</span>
+                            <select v-model="selectedTask.minute">
+                                <option v-for="m in 60" :value="m-1">{{ String(m-1).padStart(2, '0') }}</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" v-model="selectedTask.enabled"> 启用此任务
+                        </label>
+                    </div>
+                    <button class="btn btn-primary" @click="updateTaskSchedule">更新任务计划</button>
+                </div>
             </div>
         </div>
     </div>
@@ -223,6 +244,7 @@ const expandedSections = ref({
     fee: false,
     smtp: false,
     risk: false,
+    fund: false,
     task: false
 });
 
@@ -259,6 +281,11 @@ const exchangeForm = ref({
     apiKey: '',
     secretKey: ''
 });
+
+const fundForm = ref({
+    account: '',
+    password: ''
+})
 
 // 费率数据
 const feeRate = ref({
@@ -349,6 +376,10 @@ const addExchange = async () => {
     console.info(`已添加 ${params} 交易所账号`)
     const res = await axios.post('/server/config', params)
 };
+
+const updateFundAccount = async () => {
+    console.info('TODO:更新资金账号')
+}
 
 const updateFeeRate = () => {
     alert('费率更新成功!');

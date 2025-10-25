@@ -34,7 +34,7 @@ public:
 
   bool CancelOrder(order_id id);
   
-  OrderList GetOrders();
+  virtual bool GetOrders(OrderList& ol);
 
   Order GetOrder(const order_id& id);
 
@@ -47,6 +47,7 @@ public:
 
   void StopQuery();
   
+  virtual double GetAvailableFunds();
 private:
   bool _requested: 1;
   bool _login_status: 1;

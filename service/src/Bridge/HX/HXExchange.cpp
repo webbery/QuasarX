@@ -11,9 +11,80 @@
 using namespace TORALEV1API;
 #define USER_PRODUCT_INFO "HX5ZWWQ4VI"
 
+namespace {
+    // 转交易所类型
+    char toExchangeID(ExchangeName name) {
+        switch (name) {
+        case MT_Shanghai: return TORALEV1API::TORA_TSTP_EXD_SSE;
+        case MT_Shenzhen: return TORALEV1API::TORA_TSTP_EXD_SZSE;
+        case MT_Beijing: return TORALEV1API::TORA_TSTP_EXD_BSE;
+        case MT_Hongkong: return TORALEV1API::TORA_TSTP_EXD_HK;
+        default:
+            return 0;
+        }
+    }
+
+    // 转订单类型
+    char toPriceType(OrderType type) {
+        switch (type)
+        {
+        case OrderType::Market:
+            return TORASTOCKAPI::TORA_TSTP_OPT_AnyPrice;
+        case OrderType::Limit:
+            return TORASTOCKAPI::TORA_TSTP_OPT_LimitPrice;
+        case OrderType::Condition:
+            return TORASTOCKAPI::TORA_TSTP_OPT_LimitPrice;
+        default:
+            return TORASTOCKAPI::TORA_TSTP_OPT_AnyPrice;
+        }
+    }
+
+    char toValidTime(OrderTimeValid otv) {
+        switch (otv)
+        {
+        case OrderTimeValid::Today:
+            return TORASTOCKAPI::TORA_TSTP_TC_GFD;
+        case OrderTimeValid::Future:
+            return TORASTOCKAPI::TORA_TSTP_TC_GTD;
+        default:
+            return TORASTOCKAPI::TORA_TSTP_TC_GFD;
+        }
+    }
+
+    void convertOrderType(const OrderContext& ctx, TORASTOCKAPI::CTORATstpInputOrderField& order) {
+        auto exchange = (ExchangeName)ctx._symbol._exchange;
+        switch (ctx._order._type) {
+        case OrderType::Market: // 市价单,以对手方最优价格操作,抢筹速度最快
+            if (exchange == ExchangeName::MT_Shanghai || exchange == ExchangeName::MT_Shenzhen ||exchange == ExchangeName::MT_Beijing) {
+                order.OrderPriceType = TORASTOCKAPI::TORA_TSTP_OPT_BestPrice;
+                order.TimeCondition = TORASTOCKAPI::TORA_TSTP_TC_GFD;
+                order.VolumeCondition = TORASTOCKAPI::TORA_TSTP_VC_AV;
+            }
+            else {
+                WARN("not support order type: {}", ctx._symbol);
+            }
+            break;
+        case OrderType::Limit:  // 限价单
+            if (exchange == ExchangeName::MT_Shanghai || exchange == ExchangeName::MT_Shenzhen || exchange == ExchangeName::MT_Beijing) {
+                order.OrderPriceType = TORASTOCKAPI::TORA_TSTP_OPT_LimitPrice;
+                order.TimeCondition = TORASTOCKAPI::TORA_TSTP_TC_GFD;
+                order.VolumeCondition = TORASTOCKAPI::TORA_TSTP_VC_AV;
+            }
+            else {
+                WARN("not support order type: {}", ctx._symbol);
+            }
+            break;
+        default:
+            WARN("not support order type: {}", ctx._symbol);
+            break;
+        }
+        
+    }
+}
 HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr), _tradeAPI(nullptr), _trade(nullptr)
-, _login_status(false), _quote_inited(false), _requested(false) {
+, _login_status(false), _quote_inited(false), _requested(false), _reqID(0)
+, _trader_login(false), _quote_login(false) {
 }
 HXExchange::~HXExchange(){
     if (_quote) {
@@ -28,6 +99,9 @@ const char* HXExchange::Name(){
 bool HXExchange::Init(const ExchangeInfo& handle){
     _user = handle._username;
     _pwd = handle._passwd;
+    _account = handle._account;
+    _accpwd = handle._accpwd;
+    _port = handle._localPort;
 
     _quoteAPI = CTORATstpXMdApi::CreateTstpXMdApi();
     _quote = new HXQuateSpi(_quoteAPI, this);
@@ -45,6 +119,8 @@ bool HXExchange::Init(const ExchangeInfo& handle){
     String trade_ip("tcp://");
     trade_ip += std::string(handle._trade_addr) + ":" + std::to_string(handle._trade_port);
     _tradeAPI->RegisterFront((char*)trade_ip.c_str());
+    _tradeAPI->SubscribePrivateTopic(TORASTOCKAPI::TORA_TERT_QUICK);
+    _tradeAPI->SubscribePublicTopic(TORASTOCKAPI::TORA_TERT_RESTART);
     _tradeAPI->Init();
     return true;
 }
@@ -67,16 +143,43 @@ bool HXExchange::Login(){
 
     bool status = _quote->Init();
 
-    CTORATstpReqUserLoginField req_user_login_field;
-    memset(&req_user_login_field, 0, sizeof(req_user_login_field));
-    strncpy(req_user_login_field.LogInAccount, _user.c_str(), _user.size());
-    strncpy(req_user_login_field.Password, _pwd.c_str(), _pwd.size());
-    memcpy(req_user_login_field.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
-    int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, 0);
-    if (ret != 0) {
-        INFO("HX login fail.");
-        return false;
+    if (!_quote_login) {
+        CTORATstpReqUserLoginField req_user_login_field;
+        memset(&req_user_login_field, 0, sizeof(req_user_login_field));
+        strncpy(req_user_login_field.LogInAccount, _user.c_str(), _user.size());
+        strncpy(req_user_login_field.Password, _pwd.c_str(), _pwd.size());
+        memcpy(req_user_login_field.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+        int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, _reqID);
+        if (ret != 0) {
+            INFO("HX login fail.");
+            return false;
+        }
+        _quote_login = true;
     }
+    
+    // 
+    if (!_trader_login) {
+        TORASTOCKAPI::CTORATstpReqUserLoginField tradeUser;
+        memset(&tradeUser, 0, sizeof(tradeUser));
+        strncpy(tradeUser.LogInAccount, _account.c_str(), _account.size());
+        strncpy(tradeUser.Password, _accpwd.c_str(), _accpwd.size());
+        tradeUser.LogInAccountType = TORA_TSTP_LACT_AccountID;  // 使用资金账号
+        tradeUser.AuthMode = TORA_TSTP_AM_Password;
+        memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+
+        // 
+        String termInfo("PC;");
+        termInfo += GetIP() + ";IPORT=" + std::to_string(_port);
+        strcpy(tradeUser.TerminalInfo,
+            (termInfo + ";LIP=192.168.118.107;MAC=54EE750B1713FCF8AE5CBD58;HD=TF655AY91GHRVL").c_str());
+        int ret = _tradeAPI->ReqUserLogin(&tradeUser, ++_reqID);
+        if (!ret) {
+            WARN("trader login fail {}", ret);
+            return false;
+        }
+        _trader_login = true;
+    }
+    
     if (status) {
         _login_status = true;
     }
@@ -99,20 +202,17 @@ AccountAsset HXExchange::GetAsset(){
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     order_id oid{++_reqID};
     using namespace TORASTOCKAPI;
-    CTORATstpInputOrderField* order = new CTORATstpInputOrderField;
+    CTORATstpInputOrderField* order = new CTORATstpInputOrderField{ 0 };
     auto& o = ctx->_order;
-    order->Direction = o._side;
+    order->OrderRef = oid._id;
+    order->Direction = (o._side == 0? TORA_TSTP_D_Buy: TORA_TSTP_D_Sell);
     order->UserRequestID = oid._id;
     auto strCode = format_symbol(std::to_string(symbol._symbol));
     strncpy(order->SecurityID, strCode.c_str(), strCode.size());
-    switch (symbol._exchange) {
-        case MT_Shanghai: order->ExchangeID = TORALEV1API::TORA_TSTP_EXD_SSE; break;
-        case MT_Shenzhen: order->ExchangeID = TORALEV1API::TORA_TSTP_EXD_SZSE; break;
-        case MT_Beijing: order->ExchangeID = TORALEV1API::TORA_TSTP_EXD_BSE; break;
-        case MT_Hongkong: order->ExchangeID = TORALEV1API::TORA_TSTP_EXD_HK; break;
-        default:
-            return order_id{0};
-    }
+    order->ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
+    order->VolumeTotalOriginal = ctx->_order._volume;
+
+    convertOrderType(*ctx, *order);
 
     _tradeAPI->ReqOrderInsert(order, oid._id);
 
@@ -133,12 +233,41 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
 }
 
 bool HXExchange::CancelOrder(order_id id){
+
     return true;
 }
 // 获取当前尚未完成的所有订单
-OrderList HXExchange::GetOrders(){
-    OrderList ol;
-    return ol;
+bool HXExchange::GetOrders(OrderList& ol){
+    auto reqID = ++_reqID;
+    auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpOrderField>>();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promises.emplace(reqID, promise);
+    }
+    auto& orders = _trade->GetOrders();
+    orders.clear();
+
+    TORASTOCKAPI::CTORATstpQryOrderField qry_orders;
+    memset(&qry_orders, 0, sizeof(qry_orders));
+    
+    int ret = _tradeAPI->ReqQryOrder(&qry_orders, reqID);
+    if (ret != 0) {
+        return false;
+    }
+
+    try {
+        auto fut = promise->get_future();
+        auto status = fut.wait_for(std::chrono::seconds(10));
+        if (status == std::future_status::timeout) {
+            return false;
+        }
+        ol = std::move(orders);
+    }
+    catch (const std::exception& e) {
+        return false;
+    }
+    
+    return true;
 }
 
 void HXExchange::QueryQuotes(){
@@ -239,5 +368,32 @@ void HXExchange::StopQuery(){
 QuoteInfo HXExchange::GetQuote(symbol_t symbol){
     QuoteInfo info = _quote->GetQuote(symbol);
     return info;
+}
+
+double HXExchange::GetAvailableFunds()
+{
+    auto reqID = ++_reqID;
+    auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpTradingAccountField>>();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promises.emplace(reqID, promise);
+    }
+    TORASTOCKAPI::CTORATstpQryTradingAccountField qry_trading_account_field;
+    memset(&qry_trading_account_field, 0, sizeof(qry_trading_account_field));
+    strcpy(qry_trading_account_field.AccountID, _account.c_str());
+
+    int ret = _tradeAPI->ReqQryTradingAccount(&qry_trading_account_field, reqID);
+    if (ret != 0) {
+        WARN("ReqQryTradingAccount fail, ret {}", ret);
+        _promises.erase(reqID);
+        return 0;
+    }
+
+    auto result = promise->get_future();
+    auto info = result.wait_for(std::chrono::seconds(10));
+    if (info == std::future_status::timeout) {
+        return 0;
+    }
+    return result.get().UsefulMoney;
 }
 

@@ -119,7 +119,7 @@ paths:
           name: id
           schema:
             type: string
-          description: 要获取的指数代码
+          description: 要获取的指数代码,多个时用逗号分开
       responses:
         '200':
           description: An array of stocks
@@ -653,6 +653,23 @@ paths:
       responses:
         '200':
           description: success
+  /user/funds:
+    get:
+      summary: 用户当前的可用资金
+      description: 用户当前的可用资金
+      tags:
+        - User
+      responses:
+        '200':
+          description: 返回用户当前的可用资金
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  funds:
+                    type: number
+                    description: 用户当前的可用资金
   /trade/order:
     post:
       summary: trade

@@ -258,7 +258,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
       // auto& trans = _historyTrades[symb];
       for (auto& action : item[DB_TRANSACTION_NAME]) {
           Transaction tran;
-          tran._order._number = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
+          tran._order._volume = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
           tran._order._time = action[DB_ORDER_NAME][DB_TIME_NAME];
           int i = 0;
           for (double price : action[DB_ORDER_NAME][DB_PRICE_NAME]) {
@@ -284,7 +284,7 @@ nlohmann::json BrokerSubSystem::GetHistoryJson() {
     temp["symbol"] = get_symbol(item.first);
     for (auto& trans: item.second) {
       nlohmann::json action;
-      action[DB_ORDER_NAME][DB_QUANTITY_NAME] = trans._order._number;
+      action[DB_ORDER_NAME][DB_QUANTITY_NAME] = trans._order._volume;
       action[DB_ORDER_NAME][DB_TIME_NAME] = trans._order._time;
       for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
         action[DB_ORDER_NAME][DB_PRICE_NAME].push_back(trans._order._order[i]._price);
@@ -532,11 +532,11 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     }
     auto future = std::chrono::system_clock::now() + std::chrono::seconds(wait_time);
     
-    OrderStatus ret = OrderStatus::None;
+    OrderStatus ret = OrderStatus::OrderUnknow;
     while (std::chrono::system_clock::now() < future) {
       if (fut.wait_for(std::chrono::seconds(1)) == std::future_status::ready) {
         detail = ctx->_trades;
-        ret = OrderStatus::All;
+        ret = OrderStatus::OrderSuccess;
         break;
       }
       if (_server->IsExit()) {
@@ -579,7 +579,7 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     }
     // 设置结束标志
     ctx->_flag.store(true);
-    return ret;
+    return (int)ret;
 }
 
 int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
@@ -602,7 +602,7 @@ double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principa
     return 0;
   }
 
-  auto number = order._number;
+  auto number = order._volume;
   if (number == 0) {
     auto lower_total_price = _stockCommission._min / _stockCommission._fee;
     number = ceil(lower_total_price / order._order[0]._price);
@@ -638,12 +638,12 @@ double BrokerSubSystem::SimulateMatchStockSeller(symbol_t symbol, const Order& o
   // TODO: 模拟卖出一部分/无法卖出的场景
 
   // 全部卖出的场景
-  double total = order._number * price;
+  double total = order._volume * price;
   _principal += total;
 
   TradeReport dd;
   dd._price = price;
-  dd._quantity = order._number;
+  dd._quantity = order._volume;
   dd._time = Now();
   deal._reports.push_back(std::move(dd));
 

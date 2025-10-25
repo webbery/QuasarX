@@ -104,9 +104,9 @@ bool StockSimulation::CancelOrder(order_id id){
     return true;
 }
 
-OrderList StockSimulation::GetOrders(){
-    OrderList ols;
-    return ols;
+bool StockSimulation::GetOrders(OrderList& ol)
+{
+    return true;
 }
 
 void StockSimulation::SetFilter(const QuoteFilter& filter) {
@@ -257,6 +257,11 @@ void StockSimulation::LoadT0(const String& code) {
 void StockSimulation::QueryQuotes() {
   // 5s一次，请求一组信息
   _cv.notify_all();
+}
+
+double StockSimulation::GetAvailableFunds()
+{
+    return 1000000;
 }
 
 void StockSimulation::Worker() {

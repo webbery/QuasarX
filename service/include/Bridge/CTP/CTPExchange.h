@@ -31,7 +31,7 @@ public:
 
     virtual bool CancelOrder(order_id id);
 
-    virtual OrderList GetOrders();
+    virtual bool GetOrders(OrderList& ol);
 
     virtual void QueryQuotes();
 
@@ -46,6 +46,7 @@ public:
      */
     void UpdateCommission();
 
+    virtual double GetAvailableFunds();
 private:
     CThostFtdcMdApi* _pUserMdApi;
     CThostFtdcTraderApi* _pUserTradeApi;

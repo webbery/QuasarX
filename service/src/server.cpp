@@ -109,6 +109,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_PREDICT_OPR     "/predict/operation"
 #define API_DATA_SYNC       "/data/sync"
 #define API_USER_LOGIN      "/user/login"
+#define API_USER_FUNDS      "/user/funds"
 #define API_SERVER_STATUS   "/server/status"
 #define API_SERVER_CONFIG   "/server/config"
 #define API_FEATURE         "/feature"
@@ -253,6 +254,7 @@ void Server::Regist() {
     REGIST_GET(API_SERVER_CONFIG);
     REGIST_GET(API_SECTOR_FLOW);
     REGIST_GET(API_TRADE_ORDER);
+    REGIST_GET(API_USER_FUNDS);
     
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
@@ -299,7 +301,6 @@ void Server::InitDefault() {
         }
         auto exchanger = (ExchangeHandler*)_handlers[API_EXHANGE];
         if (!exchanger->Use(name)) {
-            return;
         }
         if ((String)exchange["api"] == "sim") {
             use_sim = true;
@@ -848,6 +849,7 @@ void Server::Timer()
 
 void Server::TimerWorker(nng_socket sock) {
     nlohmann::json status;
+#ifndef _WIN32
     if (get_system_status(status)) {
         String info("system_status");
         double cpu = status["cpu"];
@@ -855,6 +857,7 @@ void Server::TimerWorker(nng_socket sock) {
         info += ":" + std::to_string(cpu) + " " + std::to_string(mem) + "\n\n";
         nng_send(sock, info.data(), info.size(), 0);
     }
+#endif
 }
 
 void Server::SendCloseFeatures() {
@@ -903,6 +906,9 @@ void Server::UpdateQuoteQueryStatus(time_t curr) {
         if (exchange.second->IsWorking(curr)) {
             if (exchange.second->IsLogin()) {
                 exchange.second->QueryQuotes();
+            }
+            else {
+                exchange.second->Login();
             }
         } else {
             exchange.second->StopQuery();
@@ -1005,6 +1011,7 @@ void Server::InitHandlers() {
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_TRADE_ORDER, OrderHandler);
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
+    RegistHandler(API_USER_FUNDS, UserFundHandler);
     RegistHandler(API_DATA_SYNC, DataSyncHandler);
     RegistHandler(API_SERVER_STATUS, ServerStatusHandler);
     RegistHandler(API_SERVER_CONFIG, SystemConfigHandler);

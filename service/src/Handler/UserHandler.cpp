@@ -325,3 +325,22 @@ List<String> SystemConfigHandler::FormatActiveTime(const nlohmann::json& times) 
     split(info, result, ";");
     return result;
 }
+
+UserFundHandler::UserFundHandler(Server* server):HttpHandler(server)
+{
+
+}
+
+void UserFundHandler::get(const httplib::Request& req, httplib::Response& res)
+{
+    auto exchange = _server->GetAvaliableStockExchange();
+    if (!exchange) {
+        res.status = 400;
+        return;
+    }
+    auto funds = exchange->GetAvailableFunds();
+    nlohmann::json result;
+    result["funds"] = funds;
+    res.status = 200;
+    res.set_content(result.dump(), "application/json");
+}

@@ -19,9 +19,6 @@ public:
     virtual void get(const httplib::Request& req, httplib::Response& res);
 
 private:
-    std::vector<unsigned long long> readCPUStats();
-    double getCPUUsage();
-
     double getMemoryInfo();
 
 private:
@@ -43,4 +40,13 @@ private:
     bool ChangeSchedule(nlohmann::json& config, const nlohmann::json& params);
     // input:09:30-11:30;13:00-15:00
     List<String> FormatActiveTime(const nlohmann::json& times);
+};
+
+class UserFundHandler :public HttpHandler {
+public:
+    UserFundHandler(Server*);
+
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+
+private:
 };

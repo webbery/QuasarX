@@ -37,6 +37,11 @@ struct ExchangeInfo {
   int _trade_port;
   char _username[32];
   char _passwd[32];
+
+  char _account[32];    // 资金账号
+  char _accpwd[32];     // 资金密码
+  // 监管相关
+  int _localPort;
 };
 
 // 交易手续费
@@ -132,6 +137,9 @@ public:
   virtual bool Login() = 0;
   virtual bool IsLogin() = 0;
 
+  // 获取当前可用资金
+  virtual double GetAvailableFunds() = 0;
+
   virtual AccountPosition GetPosition() = 0;
 
   virtual AccountAsset GetAsset() = 0;
@@ -142,7 +150,7 @@ public:
 
   virtual bool CancelOrder(order_id id) = 0;
   // 获取当前尚未完成的所有订单
-  virtual OrderList GetOrders() = 0;
+  virtual bool GetOrders(OrderList& ol) = 0;
 
   virtual void QueryQuotes() = 0;
 

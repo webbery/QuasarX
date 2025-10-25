@@ -21,13 +21,17 @@
 #define INFO(fmt_str, ...) \
   fmt::print("{} " fmt_str "\n", ToString(Now()),##__VA_ARGS__);
 #endif
+//#ifndef CUSTOM_WARN
+//#define CUSTOM_WARN(fmt_str, ...) \
+//  fmt::print(fmt_str "\n",##__VA_ARGS__);
+//#endif
 #ifndef LOG
 #define LOG(...) \
   SPDLOG_INFO(__VA_ARGS__);
 #endif
 #ifndef WARN
 #define WARN(...) \
-  SPDLOG_WARN(__VA_ARGS__);
+  {SPDLOG_WARN(__VA_ARGS__);fmt::print(##__VA_ARGS__);fmt::print("\n");}
 #endif
 #ifndef FATAL
 #define FATAL(...) \
@@ -42,7 +46,7 @@
 #endif
 #endif
 #else // defined(_MSC_VER) && !defined(__clang__)
-#ifndef INFO
+#ifndef INF.............................O
 #define INFO(fmt_str, ...) \
   fmt::print("{} " fmt_str "\n", ToString(Now()),##__VA_ARGS__);
 #endif

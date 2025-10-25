@@ -34,7 +34,7 @@ public:
 
   virtual bool CancelOrder(order_id id);
 
-  virtual OrderList GetOrders();
+  virtual bool GetOrders(OrderList& ol);
 
   virtual void QueryQuotes();
 
@@ -42,6 +42,7 @@ public:
 
   virtual QuoteInfo GetQuote(symbol_t) { return QuoteInfo();}
 
+  virtual double GetAvailableFunds();
 private:
   void Worker();
   void LoadT0(const String& code);

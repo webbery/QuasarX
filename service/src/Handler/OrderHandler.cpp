@@ -56,7 +56,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
 
         Order order;
         order._side = 0;
-        order._number = quantity;
+        order._volume = quantity;
         order._time = Now();
         order._type = GetOrderType(params);
         auto itr = prices.begin();
@@ -65,7 +65,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         ++itr;
         }
 
-        auto id = broker->Buy("", symbol, order, [](const TradeReport&) {
+        auto id = broker->Buy("", symbol, order, [](const TradeReport& report) {
             auto info = to_sse_string(report);
             nng_socket sock;
             Publish(URI_SERVER_EVENT, sock);
@@ -80,7 +80,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     else if (direct == 1) {
         Order order;
         order._side = 1;
-        order._number = quantity;
+        order._volume = quantity;
         order._time = Now();
         order._type = GetOrderType(params);
         auto itr = prices.begin();
@@ -107,11 +107,11 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
 }
 
 void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
-
+    // 获取所有订单状态
 }
 
 void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
-
+    // 尝试撤单
 }
 
 bool OrderHandler::BuyOrder(const std::string& symbol, double price, int number) {

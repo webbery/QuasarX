@@ -13,7 +13,7 @@
 // 2级行情
 #define MAX_ORDER_SIZE_LVL2  10
 
-struct StockOrderDetail {
+struct OrderDetail {
   double _price;
 };
 
@@ -23,45 +23,52 @@ enum class OrderType: char {
     Condition, // 条件单
     // 止损单
     // 冰山订单
+    // 最优五档成交剩余转撤销
+    // 最优五档成交剩余转限价
+    // 本方最优
+    // 对手方最优
+    // 跨日委托
+    // 立即成交剩余撤销
+    // 
 };
 
 // 订单状态
-enum OrderStatus: short {
-    All = 1,
-    Part = 2,
-    None = 4,
-    Accept = 8,
-    Submmit = 16, // 已提交
-    Completed = 32,// 已成交
-    Margin = 64,  // 保证金不足
-    Rejected = 128
+enum class OrderStatus : char {
+    OrderUnknow,
+    OrderAccept,        // 报单录入成功
+    OrderReject,        // 报单录入失败
+    OrderPartSuccess,   // 报单部分成交
+    OrderSuccess,       // 报单成交
+    OrderFail,          // 报单失败
+    CancelPartSuccess,  // 撤单部分成功
+    CancelSuccess,      // 撤单成功
+    CancelFail,         // 撤单失败
+    PartSuccessCancel,  // 报单部分成交部分撤单
+    NetInterrupt,       // 网络中断
+};
+
+// 订单有效期
+enum OrderTimeValid : char {
+    Today,  // 当日有效
+    Future, // 指定日期有效
 };
 
 struct Order {
-  uint32_t _number; //
+  uint32_t _volume; //
   OrderType _type;
-  OrderStatus _status;
   // 买卖方向: 0 买入, 1 卖出
   char _side;
+  OrderTimeValid _validTime;
+  OrderStatus _status;
   time_t _time;
-  Array<StockOrderDetail, MAX_ORDER_SIZE> _order;
+  Array<OrderDetail, MAX_ORDER_SIZE> _order;
 
 //   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _type, _status, _order);
 };
 
-enum class DealStatus: char {
-    OrderAccept,        // 报单录入成功
-    OrderReject,        // 报单录入失败
-    OrderSuccess,       // 报单成交
-    OrderFail,          // 报单失败
-    CancelSuccess,      // 撤单成功
-    CancelFail,         // 撤单失败
-    NetInterrupt,       // 网络中断
-};
-
 struct TradeReport {
     int _quantity;
-    DealStatus _status;
+    OrderStatus _status;
     // 成交类型
     char _type;
     // 交易员代码
@@ -122,7 +129,7 @@ public:
 
     auto format(const Order& order, auto &context) const {
         String ot("Market");
-        return fmt::format_to(context.out(), "Order[TYPE:{} NUMNER:{}]", ot, order._number);
+        return fmt::format_to(context.out(), "Order[TYPE:{} NUMNER:{}]", ot, order._volume);
     }
 };
 

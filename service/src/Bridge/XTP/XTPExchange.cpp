@@ -256,6 +256,11 @@ void XTPExchange::StopQuery() {
   }
 }
 
+double XTPExchange::GetAvailableFunds()
+{
+    return 1000000;
+}
+
 AccountPosition XTPExchange::GetPosition() {
     m_pTradeApi->QueryPosition(nullptr, m_session, REQUEST_POSITION);
     AccountPosition pos{};
@@ -286,7 +291,7 @@ order_id XTPExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx) {
   }
   auto& o = ctx->_order;
   order->price = o._order[0]._price;
-  order->quantity = o._number;
+  order->quantity = o._volume;
 
   auto oid = m_pTradeApi->InsertOrder(order, m_session);
   if (oid == 0) {
@@ -315,15 +320,15 @@ bool XTPExchange::CancelOrder(order_id id) {
   return true;
 }
 
-OrderList XTPExchange::GetOrders() {
-  XTPQueryOrderReq query_param;
-  memset(&query_param, 0, sizeof(XTPQueryOrderReq));
-  m_pTradeApi->QueryOrders(&query_param, m_session, REQUEST_ORDERS);
-  OrderList orders;
-  WAIT_FOR_REQUEST(REQUEST_ORDERS) {
-    orders = m_pTrade->GetOrders();
-  } FINISH_WAIT()
-  return orders;
+bool XTPExchange::GetOrders(OrderList& ol)
+{
+    XTPQueryOrderReq query_param;
+    memset(&query_param, 0, sizeof(XTPQueryOrderReq));
+    m_pTradeApi->QueryOrders(&query_param, m_session, REQUEST_ORDERS);
+    WAIT_FOR_REQUEST(REQUEST_ORDERS) {
+        ol = m_pTrade->GetOrders();
+    } FINISH_WAIT()
+    return true;
 }
 
 Order XTPExchange::GetOrder(const order_id& id) {

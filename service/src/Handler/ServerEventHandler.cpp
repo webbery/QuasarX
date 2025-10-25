@@ -3,7 +3,6 @@
 #include "nng/nng.h"
 #include "server.h"
 #include <thread>
-#include <unistd.h>
 
 class EventDispatcher {
 public:
@@ -48,7 +47,7 @@ ServerEventHandler::ServerEventHandler(Server* server):HttpHandler(server) {
 
 ServerEventHandler::~ServerEventHandler() {
     while (!_eventDispatchers.empty()) {
-        sleep(1);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 

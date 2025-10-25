@@ -112,11 +112,11 @@
                 <div class="form-row">
                   <div class="form-group">
                     <label>股票代码</label>
-                    <input type="number" class="form-control" v-model="newStockOrder.code" placeholder="请输入股票代码">
+                    <input type="text" class="form-control" v-model="newStockOrder.code" placeholder="请输入股票代码">
                   </div>
                   <div class="form-group">
                     <label>股票名称</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.name"></input>
+                    <input type="text" class="form-control" v-model="newStockOrder.name" readonly="readonly"></input>
                   </div>
                   <div class="form-group">
                     <label>交易类型</label>
@@ -667,6 +667,7 @@
 import { ref, computed, onMounted, reactive, onUnmounted } from 'vue'
 import axios from 'axios';
 import sseService from '@/ts/SSEService';
+import { message } from '@/tool';
 
 // 市场选项卡
 const activeMarketTab = ref('stock');
@@ -828,11 +829,11 @@ const modalCallback = ref(null);
 // 计算属性
 const canPlaceStockOrder = computed(() => {
     // 基础验证
-    if (stockOperationType.value === 'buy' || stockOperationType.value === 'buy_margin') {
-        if (!capitalChecked.value) return false;
-    } else {
-        if (!stockChecked.value) return false;
-    }
+    // if (stockOperationType.value === 'buy' || stockOperationType.value === 'buy_margin') {
+    //     if (!capitalChecked.value) return false;
+    // } else {
+    //     if (!stockChecked.value) return false;
+    // }
     
     // 根据订单类型进行验证
     switch(stockOrder.orderType) {
@@ -856,16 +857,24 @@ const canPlaceNewStockOrder = computed(() => {
     }
     
     // 基础验证
-    if (!newStockOrder.code || !newStockOrder.name || !newStockOrder.quantity) {
+    if (!newStockOrder.code) {
+        message.show('股票代码不能为空')
         return false;
     }
-    
+    if (!newStockOrder.quantity) {
+        message.show('股票数量不能为空')
+        return false;
+    }
+    if (!newStockOrder.price > 0) {
+      message.show('股票价格必须大于0')
+        return false;
+    }
+    console.info(newStockOrder.orderType)
     // 根据订单类型进行验证
     switch(newStockOrder.orderType) {
         case 'limit':
-            return newStockOrder.price;
         case 'market':
-            return true; // 市价单只需要数量
+            return true;
         case 'conditional':
             return newStockOrder.triggerPrice && newStockOrder.price;
         case 'stop':
@@ -991,7 +1000,6 @@ const checkStock = () => {
 
 const placeStockOrder = () => {
     const order = {
-        id: Date.now(),
         code: selectedStock.value.code,
         name: selectedStock.value.name,
         type: stockOperationType.value,
@@ -1005,32 +1013,52 @@ const placeStockOrder = () => {
         validityDate: stockOrder.validityDate,
         status: stockOrder.orderType === 'limit' || stockOrder.orderType === 'market' ? 'pending' : 'waiting'
     };
+    console.info('stock commit', order)
     
     stockOrders.value.unshift(order);
     showMessage('股票订单提交成功', 'success');
     closeStockOperation();
 };
 
-const placeNewStockOrder = () => {
+const placeNewStockOrder = async () => {
+    let direct = 0;
+    switch(newStockOrder.tradeType) {
+      case 'buy': direct = 0; break;
+      case 'sell': direct = 1; break;
+      default: break;
+    }
+    let type = 0;
+    switch (newStockOrder.orderType) {
+      case 'limit': type = 0; break;
+      case 'market': type = 1; break;
+      default: type = 0; break;
+    }
     const order = {
         id: Date.now(),
-        code: newStockOrder.code,
+        symbol: newStockOrder.code,
         name: newStockOrder.name,
-        type: newStockOrder.tradeType,
-        orderType: newStockOrder.orderType,
-        price: newStockOrder.price,
+        direct: direct,
+        kind: 0,
+        type: type,
+        prices: [newStockOrder.price],
         quantity: newStockOrder.quantity,
         conditionType: newStockOrder.conditionType,
         triggerPrice: newStockOrder.triggerPrice,
         stopPrice: newStockOrder.stopPrice,
         validity: newStockOrder.validity,
-        validityDate: newStockOrder.validityDate,
-        status: newStockOrder.orderType === 'limit' || newStockOrder.orderType === 'market' ? 'pending' : 'waiting'
+        validityDate: newStockOrder.validityDate
     };
+    console.info('buy:', order)
+    try{
+      await axios.post('/v0/trade/order', order)
+      stockOrders.value.unshift(order);
+      message.success('新代码买入订单提交成功');
+      closeNewStockOperation();
+    } catch (error) {
+      console.info('error:')
+      message.error('error:' + error)
+    }
     
-    stockOrders.value.unshift(order);
-    showMessage('新代码买入订单提交成功', 'success');
-    closeNewStockOperation();
 };
 
 const openNewOptionOperation = () => {
@@ -1274,18 +1302,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-:root {
-  --primary: #2962ff;
-  --secondary: #00c853;
-  --accent: #ff6d00;
-  --dark-bg: #121826;
-  --darker-bg: #0d111c;
-  --panel-bg: #1a2236;
-  --border: #2a3449;
-  --text: #e0e0e0;
-  --text-secondary: #a0aec0;
-}
-
 .position-manager {
   background-color: var(--dark-bg);
   color: var(--text);

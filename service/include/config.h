@@ -55,6 +55,9 @@ public:
   void SetFreeRate(float rate);
   short GetTradeDays();
   void SetTradeDays(short days);
+
+  std::string GetAccountName();
+  std::string GetAccountPassword();
 private:
     void Init();
 

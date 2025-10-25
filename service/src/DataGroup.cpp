@@ -9,23 +9,23 @@
 String to_sse_string(const TradeReport& report) {
     String str("trade_report:");
     switch (report._status) {
-    case DealStatus::OrderAccept:
+    case OrderStatus::OrderAccept:
         str += "order_accept";
     break;
-    case DealStatus::OrderReject:
+    case OrderStatus::OrderReject:
         str += "order_reject";
     break;
-    case DealStatus::OrderSuccess:
+    case OrderStatus::OrderSuccess:
     // 状态 id 交易数量 交易价格
         str += "order_success " + String(report._exec_id) + " " + std::to_string(report._quantity) + " " + std::to_string(report._price);
     break;
-    case DealStatus::OrderFail:
+    case OrderStatus::OrderFail:
         str += "order_fail";
     break;
-    case DealStatus::CancelSuccess:
+    case OrderStatus::CancelSuccess:
         str += "cancel_success";
     break;
-    case DealStatus::CancelFail:
+    case OrderStatus::CancelFail:
         str += "cancel_fail";
     break;
     default:

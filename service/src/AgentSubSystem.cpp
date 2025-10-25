@@ -180,10 +180,10 @@ bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, doub
     order._time = Now();
     order._side = 0;
     order._type = type;
-    order._number = 0;
+    order._volume = 0;
     order._order[0]._price = price;
     TradeInfo dd;
-    if (broker->Buy(strategy, symbol, order, dd) == OrderStatus::All) {
+    if (broker->Buy(strategy, symbol, order, dd) == (int)OrderStatus::OrderSuccess) {
         LOG("buy order: {}, result: {}", order, dd);
         return true;
     }
@@ -193,11 +193,11 @@ bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, doub
 bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type) {
     auto broker = _handle->GetBrokerSubSystem();
     Order order;
-    order._number = 0;
+    order._volume = 0;
     order._side = 1;
     order._order[0]._price = price;
     TradeInfo dd;
-    if (broker->Sell(strategy, symbol, order, dd) == OrderStatus::All) {
+    if (broker->Sell(strategy, symbol, order, dd) == (int)OrderStatus::OrderSuccess) {
         LOG("sell order: {}, result: {}", order, dd);
         // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
         return true;

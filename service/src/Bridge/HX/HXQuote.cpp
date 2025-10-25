@@ -102,5 +102,7 @@ void HXQuateSpi::OnFrontDisconnected(int nReason)
     INFO("HX disconnect:{}", nReason);
     _exchange->_login_status = false;
     _exchange->_quote_inited = false;
+    _exchange->_quote_login = false;
+    _exchange->_trader_login = false;
     _exchange->Login();
 }

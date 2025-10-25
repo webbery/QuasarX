@@ -18,6 +18,7 @@ ServerConfig::ServerConfig(const std::string& path):_path(path) {
         _config = nlohmann::json::parse(content);
         ifs.close();
     } catch(...) {
+        FATAL("read config {} fail.", path);
         return;
     }
     _status = true;
@@ -240,6 +241,22 @@ short ServerConfig::GetTradeDays() {
 
 void ServerConfig::SetTradeDays(short days) {
     _config["server"]["default"]["trade_days"] = days;
+}
+
+String ServerConfig::GetAccountName()
+{
+    auto& accounts = _config["server"]["accounts"];
+    auto& account = accounts.front();
+    String name = account["n"];
+    return name;
+}
+
+String ServerConfig::GetAccountPassword()
+{
+    auto& accounts = _config["server"]["accounts"];
+    auto& account = accounts.front();
+    String pwd = account["p"];
+    return pwd;
 }
 
 void ServerConfig::Init()
