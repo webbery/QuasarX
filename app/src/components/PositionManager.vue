@@ -1306,7 +1306,7 @@ onUnmounted(() => {
   background-color: var(--dark-bg);
   color: var(--text);
   min-height: 100vh;
-  padding: 20px;
+  padding: 5px;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
@@ -1314,12 +1314,11 @@ onUnmounted(() => {
   background-color: var(--panel-bg);
   border-radius: 8px;
   border: 1px solid var(--border);
-  margin-bottom: 20px;
+  margin-bottom: 5px;
   overflow: hidden;
 }
 
 .card-header {
-  padding: 15px 20px;
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -1333,7 +1332,7 @@ onUnmounted(() => {
 }
 
 .card-content {
-  padding: 20px;
+  padding: 20px 0px 0px 0px;
   max-height: 70vh;
   overflow-y: auto;
 }
@@ -1361,10 +1360,10 @@ onUnmounted(() => {
 }
 
 .pane-header {
-  margin-bottom: 15px;
+  margin-bottom: 5px;
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 5px;
 }
 
 .tab-pane {
@@ -1378,7 +1377,7 @@ onUnmounted(() => {
 .position-table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 
 .position-table th,
@@ -1648,7 +1647,7 @@ onUnmounted(() => {
 }
 
 .system-monitor {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 
 .market-positions {

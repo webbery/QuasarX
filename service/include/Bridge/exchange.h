@@ -137,6 +137,8 @@ public:
   virtual bool Login() = 0;
   virtual bool IsLogin() = 0;
 
+  virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info) = 0;
+
   // 获取当前可用资金
   virtual double GetAvailableFunds() = 0;
 

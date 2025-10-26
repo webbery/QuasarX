@@ -21,6 +21,7 @@ public:
   virtual bool Login();
   virtual bool IsLogin();
 
+  virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
   virtual void SetFilter(const QuoteFilter& filter);
   void UseLevel(int level);
 

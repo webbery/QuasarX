@@ -13,7 +13,7 @@
       </div>
       <!-- 可手动关闭 -->
       <button v-if="message.closable" class="close-btn" @click="closeMessage(message)">
-        ×
+        x
       </button>
     </div>
   </transition-group>

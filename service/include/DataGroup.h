@@ -54,17 +54,21 @@ enum OrderTimeValid : char {
 };
 
 struct Order {
-  uint32_t _volume; //
-  OrderType _type;
-  // 买卖方向: 0 买入, 1 卖出
-  char _side;
-  OrderTimeValid _validTime;
-  OrderStatus _status;
-  time_t _time;
-  Array<OrderDetail, MAX_ORDER_SIZE> _order;
+    uint64_t _id;
+    symbol_t _symbol;
+    uint32_t _volume; //
+    OrderType _type;
+    // 买卖方向: 0 买入, 1 卖出
+    char _side;
+    OrderTimeValid _validTime;
+    OrderStatus _status;
+    time_t _time;
+    Array<OrderDetail, MAX_ORDER_SIZE> _order;
 
-//   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _type, _status, _order);
+    //   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _type, _status, _order);
 };
+
+nlohmann::json order2json(const Order& );
 
 struct TradeReport {
     int _quantity;
@@ -99,7 +103,6 @@ struct Transaction {
 };
 
 struct OrderContext {
-  symbol_t _symbol;
   Order _order;
   // 订单交易结果
   TradeInfo _trades;
@@ -117,6 +120,8 @@ struct OrderContext {
     }
   }
 };
+
+#define GET_SYMBOL(context) context->_order._symbol
 
 template<>
 class fmt::formatter<Order>

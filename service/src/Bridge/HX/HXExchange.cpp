@@ -52,7 +52,7 @@ namespace {
     }
 
     void convertOrderType(const OrderContext& ctx, TORASTOCKAPI::CTORATstpInputOrderField& order) {
-        auto exchange = (ExchangeName)ctx._symbol._exchange;
+        auto exchange = (ExchangeName)ctx._order._symbol._exchange;
         switch (ctx._order._type) {
         case OrderType::Market: // 市价单,以对手方最优价格操作,抢筹速度最快
             if (exchange == ExchangeName::MT_Shanghai || exchange == ExchangeName::MT_Shenzhen ||exchange == ExchangeName::MT_Beijing) {
@@ -61,7 +61,7 @@ namespace {
                 order.VolumeCondition = TORASTOCKAPI::TORA_TSTP_VC_AV;
             }
             else {
-                WARN("not support order type: {}", ctx._symbol);
+                WARN("not support order type: {}", ctx._order._symbol);
             }
             break;
         case OrderType::Limit:  // 限价单
@@ -71,11 +71,11 @@ namespace {
                 order.VolumeCondition = TORASTOCKAPI::TORA_TSTP_VC_AV;
             }
             else {
-                WARN("not support order type: {}", ctx._symbol);
+                WARN("not support order type: {}", ctx._order._symbol);
             }
             break;
         default:
-            WARN("not support order type: {}", ctx._symbol);
+            WARN("not support order type: {}", ctx._order._symbol);
             break;
         }
         
@@ -163,7 +163,7 @@ bool HXExchange::Login(){
         memset(&tradeUser, 0, sizeof(tradeUser));
         strncpy(tradeUser.LogInAccount, _account.c_str(), _account.size());
         strncpy(tradeUser.Password, _accpwd.c_str(), _accpwd.size());
-        tradeUser.LogInAccountType = TORA_TSTP_LACT_AccountID;  // 使用资金账号
+        tradeUser.LogInAccountType = TORA_TSTP_LACT_AccountID;  // 
         tradeUser.AuthMode = TORA_TSTP_AM_Password;
         memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
 
@@ -172,12 +172,23 @@ bool HXExchange::Login(){
         termInfo += GetIP() + ";IPORT=" + std::to_string(_port);
         strcpy(tradeUser.TerminalInfo,
             (termInfo + ";LIP=192.168.118.107;MAC=54EE750B1713FCF8AE5CBD58;HD=TF655AY91GHRVL").c_str());
-        int ret = _tradeAPI->ReqUserLogin(&tradeUser, ++_reqID);
-        if (!ret) {
-            WARN("trader login fail {}", ret);
+
+        auto reqID = ++_reqID;
+        auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpRspUserLoginField>>();
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _promises.emplace(reqID, promise);
+        }
+        _tradeAPI->ReqUserLogin(&tradeUser, reqID);
+
+        auto fut = promise->get_future();
+        auto status = fut.wait_for(std::chrono::seconds(10));
+        if (status == std::future_status::timeout) {
             return false;
         }
         _trader_login = true;
+        // 获取股东账户信息
+        QueryShareHolder();
     }
     
     if (status) {
@@ -187,6 +198,35 @@ bool HXExchange::Login(){
 }
 bool HXExchange::IsLogin(){
     return _login_status;
+}
+
+bool HXExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
+{
+    order_id id{ ++_reqID };
+
+    char* all[1] = { 0 };
+    strcpy(all[0], "00000000");
+    _quoteAPI->SubscribeSimplifyMarketData(all, 1, 0);
+
+    auto promise = std::make_shared<std::promise<CTORATstpSpecificSecurityField>>();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promises.emplace(id._id, promise);
+    }
+
+    try {
+        auto fut = promise->get_future();
+        auto status = fut.wait_for(std::chrono::seconds(10));
+        _quoteAPI->UnSubscribeSimplifyMarketData(all, 1, 0);
+
+        if (status == std::future_status::timeout) {
+            return false;
+        }
+    }
+    catch (const std::exception& e) {
+        return false;
+    }
+    return true;
 }
 
 AccountPosition HXExchange::GetPosition(){
@@ -207,16 +247,18 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     order->OrderRef = oid._id;
     order->Direction = (o._side == 0? TORA_TSTP_D_Buy: TORA_TSTP_D_Sell);
     order->UserRequestID = oid._id;
+    strcpy(order->ShareholderID, _shareholder.c_str());
     auto strCode = format_symbol(std::to_string(symbol._symbol));
     strncpy(order->SecurityID, strCode.c_str(), strCode.size());
     order->ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
     order->VolumeTotalOriginal = ctx->_order._volume;
+    order->LimitPrice = o._order[0]._price;
 
     convertOrderType(*ctx, *order);
 
     _tradeAPI->ReqOrderInsert(order, oid._id);
 
-    ctx->_symbol = symbol;
+    ctx->_order._symbol = symbol;
     auto pr = std::make_pair(order, ctx);
     _orders.emplace(oid._id, std::move(pr));
     return oid;
@@ -395,5 +437,28 @@ double HXExchange::GetAvailableFunds()
         return 0;
     }
     return result.get().UsefulMoney;
+}
+
+bool HXExchange::QueryShareHolder()
+{
+    order_id id{ ++_reqID };
+    auto promise = std::make_shared<std::promise<String>>();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promises.emplace(id._id, promise);
+    }
+
+    TORASTOCKAPI::CTORATstpQryShareholderAccountField qry_shr_account;
+    memset(&qry_shr_account, 0, sizeof(qry_shr_account));
+    strcpy(qry_shr_account.InvestorID, _account.c_str());
+    _tradeAPI->ReqQryShareholderAccount(&qry_shr_account, id._id);
+
+    auto result = promise->get_future();
+    auto info = result.wait_for(std::chrono::seconds(10));
+    if (info == std::future_status::timeout) {
+        return false;
+    }
+    _shareholder = result.get();
+    return true;
 }
 

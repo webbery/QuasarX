@@ -108,6 +108,33 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
 
 void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
     // 获取所有订单状态
+    nlohmann::json result;
+    if (req.params.size() == 0) {
+        auto broker = _server->GetBrokerSubSystem();
+        OrderList ol;
+        if (!broker->QueryOrders(ol)) {
+            res.status = 500;
+        }
+        else {
+            for (auto& item : ol) {
+                auto order = order2json(item);
+                result.emplace_back(std::move(order));
+            }
+            res.status = 200;
+        }
+    }
+    else {
+        auto itr = req.params.find("id");
+        if (itr == req.params.end()) {
+            res.status = 400;
+            res.set_content("{message: 'query must be `id`'}", "application/json");
+            return;
+        }
+        String symbol = itr->second;
+
+        res.status = 200;
+    }
+    res.set_content(result.dump(), "application/json");
 }
 
 void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {

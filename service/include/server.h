@@ -101,7 +101,7 @@ public:
     ExchangeInterface* GetAvaliableFutureExchange();
 
     float GetInterestRate(time_t datetime);
-    
+
     //StrategyPlugin* GetOrCreateStrategy(const std::string& strategy_name);
 
     const ServerConfig& GetConfig() const { return *_config; }
@@ -113,53 +113,55 @@ public:
 
     RuningType GetRunningMode() { return _runType; }
 
-  std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
-  std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
+    std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
+    std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
 
-  BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
+    BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
 
-  PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
-  StrategySubSystem* GetStrategySystem() { return _strategySystem; }
+    PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
+    StrategySubSystem* GetStrategySystem() { return _strategySystem; }
 
-  double GetFreeRate(time_t t);
-  /**
-   * @brief Get the Position of Account
-   * 
-   * @param account 
-   * @return AccountPosition& 
-   */
-  AccountPosition& GetPosition(const String& account = "");
+    double GetFreeRate(time_t t);
+    /**
+     * @brief Get the Position of Account
+     *
+     * @param account
+     * @return AccountPosition&
+     */
+    AccountPosition& GetPosition(const String& account = "");
 
-  Set<String> GetAccounts();
-  
-  /**
-   * @brief Get the previous N day's close price
-   */
-  Vector<double> GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust);
+    Set<String> GetAccounts();
 
-  /**
-   */
-  double AdjustAfter(symbol_t symbol, double org_price, time_t org_t);
-  
-  double AdjustBefore(symbol_t symbol, double org_price, time_t org_t);
+    /**
+     * @brief Get the previous N day's close price
+     */
+    Vector<double> GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust);
 
-  double ResetPrice(symbol_t symbol, double adj_price, time_t adj_t);
+    /**
+     */
+    double AdjustAfter(symbol_t symbol, double org_price, time_t org_t);
 
-  bool IsOpen(symbol_t symbol, time_t t);
+    double AdjustBefore(symbol_t symbol, double org_price, time_t org_t);
 
-  bool IsOpen(ExchangeName exchange, time_t);
+    double ResetPrice(symbol_t symbol, double adj_price, time_t adj_t);
 
-  time_t GetCloseTime(ExchangeName exchange);
+    bool IsOpen(symbol_t symbol, time_t t);
 
-  void SetActiveExchange(ExchangeInterface* exchange) {
-    _trade_exchange = exchange;
-  }
+    bool IsOpen(ExchangeName exchange, time_t);
 
-  bool SendEmail(const String& content);
-  // 检查是否在数据备份中
-  bool IsDataLock() { return _isDataLock; }
-  void LockData() { _isDataLock = true; }
-  void FreeDataLock() { _isDataLock = false; }
+    time_t GetCloseTime(ExchangeName exchange);
+
+    void SetActiveExchange(ExchangeInterface* exchange) {
+        _trade_exchange = exchange;
+    }
+
+    bool SendEmail(const String& content);
+    // 检查是否在数据备份中
+    bool IsDataLock() { return _isDataLock; }
+    void LockData() { _isDataLock = true; }
+    void FreeDataLock() { _isDataLock = false; }
+
+    void InitMarket(const List<Pair<String, ExchangeName>>& info);
 
 private:
     void Regist();
@@ -233,44 +235,44 @@ private:
 
 private:
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-  // HTTPS
+    // HTTPS
     httplib::SSLServer _svr;
 #else
     httplib::Server _svr;
 #endif
 
-  static bool _exit;
-  bool _isDataLock = false;
-  RuningType _runType;
-  int _defaultPortfolio;
+    static bool _exit;
+    bool _isDataLock = false;
+    RuningType _runType;
+    int _defaultPortfolio;
 
-  Map<String, HttpHandler*> _handlers;
+    Map<String, HttpHandler*> _handlers;
 
-  ServerConfig* _config;
+    ServerConfig* _config;
 
-  ExchangeInterface* _trade_exchange;
+    ExchangeInterface* _trade_exchange;
 
-  StrategySubSystem* _strategySystem;
-  PortfolioSubSystem* _portfolioSystem;
-  BrokerSubSystem* _brokerSystem; //
-  
-  // 默认持仓id
-  static std::multimap<std::string, ContractInfo> _markets;
-  static std::map<time_t, float> _inter_rates;
-  // 数据缓存
-  Map<String, DataFrame> _data;
-  Map<String, DataFrame> _hfqdata;
-  List<String> _symbolCache;
-  Map<int, DataFrame> _simulations;
-  // 除权出息信息
-  TickMap<symbol_t, Map<time_t, DividendData>> _dividends;
+    StrategySubSystem* _strategySystem;
+    PortfolioSubSystem* _portfolioSystem;
+    BrokerSubSystem* _brokerSystem; //
 
-  std::thread* _timer;
+    // 默认持仓id
+    static std::multimap<std::string, ContractInfo> _markets;
+    static std::map<time_t, float> _inter_rates;
+    // 数据缓存
+    Map<String, DataFrame> _data;
+    Map<String, DataFrame> _hfqdata;
+    List<String> _symbolCache;
+    Map<int, DataFrame> _simulations;
+    // 除权出息信息
+    TickMap<symbol_t, Map<time_t, DividendData>> _dividends;
 
-  /**
-   * an account only have one holding
-   */
-  Map<String, AccountPosition> _account_positions;
+    std::thread* _timer;
+
+    /**
+     * an account only have one holding
+     */
+    Map<String, AccountPosition> _account_positions;
 
     Map<ExchangeName, Set<time_range>> _working_times;
 };

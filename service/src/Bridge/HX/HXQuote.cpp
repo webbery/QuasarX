@@ -106,3 +106,8 @@ void HXQuateSpi::OnFrontDisconnected(int nReason)
     _exchange->_trader_login = false;
     _exchange->Login();
 }
+
+void HXQuateSpi::OnRspSubSimplifyMarketData(CTORATstpSpecificSecurityField* pSpecificSecurityField, CTORATstpRspInfoField* pRspInfoField)
+{
+    // 初始话代码与交易所信息
+}

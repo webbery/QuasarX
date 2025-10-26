@@ -28,6 +28,7 @@ public:
     virtual bool Login();
     virtual bool IsLogin();
 
+    virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
     virtual AccountPosition GetPosition();
 
     virtual AccountAsset GetAsset();
@@ -47,6 +48,11 @@ public:
     virtual QuoteInfo GetQuote(symbol_t symbol);
 
     virtual double GetAvailableFunds();
+
+private:
+    // 查询股东用户
+    bool QueryShareHolder();
+
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;
@@ -59,8 +65,10 @@ private:
     String _user;
     String _pwd;
 
-    String _account;    // 资金账号
+    String _account;    // 投资者账号
     String _accpwd;
+
+    String _shareholder;    // 股东账号
 
     HXQuateSpi* _quote;
     HXTrade* _trade;

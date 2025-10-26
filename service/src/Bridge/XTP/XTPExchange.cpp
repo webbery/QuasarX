@@ -348,3 +348,8 @@ QuoteInfo XTPExchange::GetQuote(symbol_t symbol)
 bool XTPExchange::IsLogin() {
   return _login_status;
 }
+
+bool XTPExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
+{
+    return true;
+}

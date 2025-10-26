@@ -2,6 +2,16 @@
 #include "Bridge/exchange.h"
 #include "Bridge/HX/HXExchange.h"
 
+#define INIT_PROMISE(type) \
+auto itr = _exchange->_promises.find(nRequestID);\
+if (itr == _exchange->_promises.end())\
+    return;\
+PromisePtr<type> prom = static_pointer_cast<std::promise<type>>(_exchange->_promises[nRequestID]);\
+_exchange->_promises.erase(nRequestID)
+
+#define SET_PROMISE(value) prom->set_value(value);
+
+
 template<typename T>
 using PromisePtr = std::shared_ptr<std::promise<T>>;
 
@@ -41,12 +51,26 @@ void HXTrade::OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserL
         FATAL("trader login fail: {} {}", pRspInfoField->ErrorID, pRspInfoField->ErrorMsg);
         return;
     }
+    INIT_PROMISE(TORASTOCKAPI::CTORATstpRspUserLoginField);
+
     _exchange->_maxInsertOrder = pRspUserLoginField->OrderInsertCommFlux;
     _exchange->_maxTradeReq = pRspUserLoginField->TradeCommFlux;
     _exchange->_maxQuoteReq = pRspUserLoginField->QueryCommFlux;
     _exchange->_maxCancelOrder = pRspUserLoginField->OrderActionCommFlux;
     _exchange->_trader_login = true;
-    _exchange->_login_status = true; 
+    _exchange->_login_status = true;
+    SET_PROMISE(*pRspUserLoginField);
+}
+
+void HXTrade::OnRspQryShareholderAccount(TORASTOCKAPI::CTORATstpShareholderAccountField* pShareholderAccountField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)
+{
+    INIT_PROMISE(String);
+    if (pRspInfoField->ErrorID != 0) {
+        FATAL("get shareholder account fail: {} {}", pRspInfoField->ErrorID, pRspInfoField->ErrorMsg);
+        return;
+    }
+    String acc(pShareholderAccountField->ShareholderID, strlen(pShareholderAccountField->ShareholderID));
+    SET_PROMISE(acc);
 }
 
 void HXTrade::OnRspError(TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {
@@ -56,6 +80,8 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     order_id id{ nRequestID };
     TradeReport report;
     if (pRspInfoField->ErrorID == 0) {// 交易系统已接收报单
+        _investor = pInputOrderField->InvestorID;
+
         report._status = OrderStatus::OrderAccept;
         _exchange->OnOrderReport(id, report);
     }
@@ -128,12 +154,13 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
 {
     PromisePtr<TORASTOCKAPI::CTORATstpOrderField> prom = static_pointer_cast<std::promise<TORASTOCKAPI::CTORATstpOrderField>>(_exchange->_promises[nRequestID]);
     _exchange->_promises.erase(nRequestID);
-    if (pRspInfoField->ErrorID == 0) {
+    if (pOrderField && pRspInfoField->ErrorID == 0) {
         Order order;
         order._status = toOrderStatus(pOrderField->OrderStatus);
         order._side = pOrderField->Direction;
         order._volume = pOrderField->VolumeTraded;
         order._order[0]._price = pOrderField->LimitPrice;
+        order._symbol = to_symbol(pOrderField->SecurityID);
         _orders.emplace_back(std::move(order));
         if (bIsLast) {
             prom->set_value(*pOrderField);
@@ -141,6 +168,8 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
     }
     else {
         LOG("query order fail");
-        prom->set_exception(std::current_exception());
+        if (bIsLast) {
+            prom->set_exception(std::current_exception());
+        }
     }
 }

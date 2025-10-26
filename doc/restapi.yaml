@@ -1430,6 +1430,9 @@ components:
         id:
           type: integer
           description: 订单ID
+        symbol:
+          type: string
+          description: 代码
         kind:
           type: integer
           description: 交易种类 0-股票 1-期权 2-期货
@@ -1450,7 +1453,7 @@ components:
           description: 方向,0-买入 1-卖出 2-行权 3-融资买入 4-融券卖出
         status:
           type: integer
-          description: 状态, 0-下单成功 1-未成交 2-等待中 4-已撤销
+          description: 状态, 1-下单成功 2-下单失败 3-部分成交 4-完全成交 5-交易失败 6-撤单部分成功 7-撤单成功 8-撤单失败 9-部分成交部分撤单
     
     CancelOrderRequest:
       type: object

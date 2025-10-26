@@ -165,6 +165,21 @@ void BrokerSubSystem::SetCommission(symbol_t symbol, const Commission& comm) {
   }
 }
 
+bool BrokerSubSystem::QueryOrders(OrderList& ol)
+{
+    auto exchange = _server->GetAvaliableStockExchange();
+    if (!exchange->GetOrders(ol)) {
+        WARN("query orders fail");
+        return false;
+    }
+    return true;
+}
+
+int BrokerSubSystem::QueryOrder(uint32_t orderID, Order& order)
+{
+    return 0;
+}
+
 uint32_t BrokerSubSystem::Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) {
     auto var = VaR(confidence);
     indexes["var"] = var;
@@ -371,7 +386,7 @@ void BrokerSubSystem::run() {
             // TODO: 日志记录
             if ((*itr)->_success) {
                 auto act = Order2Transaction(*ctx);
-                _historyTrades[ctx->_symbol].emplace_back(std::move(act));
+                _historyTrades[GET_SYMBOL(ctx)].emplace_back(std::move(act));
             }
             // delete ctx;
             itr = contexts.erase(itr);
@@ -393,35 +408,36 @@ void BrokerSubSystem::run() {
 
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     if (_simulation) {
-        _exchanges[ExchangeType::EX_SIM]->AddOrder(order->_symbol, order);
+        _exchanges[ExchangeType::EX_SIM]->AddOrder(GET_SYMBOL(order), order);
         return order_id{0};
     }
     // 邮件通知
     String content;
     if (order->_order._side == 0) {
-        content = std::format("Buy {} {}", get_symbol(order->_symbol), order->_order._order[0]._price);
+        content = std::format("Buy {} {}", get_symbol(GET_SYMBOL(order)), order->_order._order[0]._price);
     } 
     else if (order->_order._side == 1) {
-        content = std::format("Sell {} {}", get_symbol(order->_symbol), order->_order._order[0]._price);
+        content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._order[0]._price);
     }
     if (!content.empty()) {
-        _server->SendEmail(content);
+        //_server->SendEmail(content);
     }
-    if (is_stock(order->_symbol)) {
+    if (is_stock(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableStockExchange();
-        return exchange->AddOrder(order->_symbol, order);
+        return exchange->AddOrder(GET_SYMBOL(order), order);
     }
-    if (is_future(order->_symbol)) {
+    if (is_future(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableFutureExchange();
-        return exchange->AddOrder(order->_symbol, order);
+        return exchange->AddOrder(GET_SYMBOL(order), order);
     }
+    return order_id{ 0 };
 }
 
 int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeInfo&)> cb)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
-    ctx->_symbol = symbol;
+    GET_SYMBOL(ctx) = symbol;
     auto id = AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
@@ -516,7 +532,7 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_order._side = side;
-    ctx->_symbol = symbol;
+    GET_SYMBOL(ctx) = symbol;
     AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
@@ -586,7 +602,7 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_order._side = side;
-    ctx->_symbol = symbol;
+    GET_SYMBOL(ctx) = symbol;
     ctx->_callback = cb;
     AddOrderAsync(ctx);
     _order_queue.push(ctx);

@@ -58,7 +58,7 @@
 
 #define REGIST_GET(api_name) \
 _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Get " API_VERSION api_name);\
+    INFO("Get " API_VERSION api_name);\
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
@@ -66,7 +66,7 @@ _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
 })
 #define REGIST_PUT(api_name) \
 _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Put " API_VERSION api_name);\
+    INFO("Put " API_VERSION api_name);\
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
@@ -74,7 +74,7 @@ _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
 })
 #define REGIST_POST(api_name) \
 _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Post " API_VERSION api_name);\
+    INFO("Post " API_VERSION api_name);\
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
@@ -82,7 +82,7 @@ _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Re
 })
 #define REGIST_DEL(api_name) \
 _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::Response &res) {\
-    LOG("Del " API_VERSION api_name);\
+    INFO("Del " API_VERSION api_name);\
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
@@ -487,6 +487,25 @@ bool Server::InitMarket(const std::string& path) {
     //     _markets.emplace(code, std::move(info));
     // }
     return true;
+}
+
+void Server::InitMarket(const List<Pair<String, ExchangeName>>& info)
+{
+    for (auto& item : info) {
+        ContractInfo ci;
+        ci._exchange = item.second;
+        auto lower_itr = _markets.lower_bound(item.first);
+        auto upper_itr = _markets.upper_bound(item.first);
+        if (lower_itr == upper_itr) {
+            _markets.emplace(item.first, std::move(ci));
+        }
+        else {
+            for (auto itr = lower_itr; itr != upper_itr; ++itr) {
+                itr->second._exchange = item.second;
+            }
+        }
+        
+    }
 }
 
 void Server::InitFutures() {
@@ -1019,8 +1038,8 @@ void Server::InitHandlers() {
     RegistHandler(API_SECTOR_FLOW, SectorHandler);
     RegistHandler(API_SERVER_EVENT, ServerEventHandler);
 
-    StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
-    risk->doWork({});
+    //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
+    //risk->doWork({});
 }
 
 AccountPosition& Server::GetPosition(const String& account) {

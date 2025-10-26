@@ -20,6 +20,8 @@ public:
 
     virtual void OnFrontDisconnected(int nReason);
 
+    virtual void OnRspSubSimplifyMarketData(TORALEV1API::CTORATstpSpecificSecurityField* pSpecificSecurityField, TORALEV1API::CTORATstpRspInfoField* pRspInfoField);
+
     QuoteInfo GetQuote(symbol_t symbol);
 private:
   bool _isInited;

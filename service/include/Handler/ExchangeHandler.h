@@ -55,6 +55,10 @@ private:
       printf("login fail.\n");
       return false;
     }
+    //List<Pair<String, ExchangeName>> symbolMap;
+    //ptr->GetSymbolExchanges(symbolMap);
+    //_server->InitMarket(symbolMap);
+
     _server->SetActiveExchange(ptr);
     return true;
   }

@@ -79,6 +79,11 @@ bool CTPExchange::IsLogin() {
   return _quote->LoginStatus();
 }
 
+bool CTPExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
+{
+    return true;
+}
+
 bool CTPExchange::Login(){
   if (!_quote->Init()) {
     return false;

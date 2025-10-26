@@ -11,6 +11,9 @@ public:
 
     ///登录响应
     virtual void OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserLoginField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID);
+    
+    ///查询股东账户响应
+    virtual void OnRspQryShareholderAccount(TORASTOCKAPI::CTORATstpShareholderAccountField* pShareholderAccountField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast);
 
     virtual void OnRspError(TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast);
     ///报单录入响应
@@ -51,6 +54,8 @@ public:
 
 private:
     HXExchange* _exchange;
+
+    String _investor;   // 投资者代码
 
     OrderList _orders;
 };

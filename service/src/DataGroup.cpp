@@ -6,6 +6,41 @@
 #include "boost/math/tools/bivariate_statistics.hpp"
 #include "DataFrame/DataFrameFinancialVisitors.h"
 
+nlohmann::json order2json(const Order& item)
+{
+    nlohmann::json order;
+    order["id"] = item._id;
+    order["symbol"] = get_symbol(item._symbol);
+    int kind = 0;
+    switch (item._symbol._type)
+    {
+    case contract_type::future:
+        kind = 2;
+        break;
+    case contract_type::put:
+    case contract_type::call:
+        kind = 1;
+        break;
+    case contract_type::stock:
+    default:
+        kind = 0;
+        break;
+    }
+    order["kind"] = kind;
+    order["type"] = item._type;
+    List<double> prices;
+    for (auto detail : item._order) {
+        if (detail._price <= 0)
+            continue;
+        prices.push_back(detail._price);
+    }
+    order["prices"] = prices;
+    order["quantity"] = item._volume;
+    order["direct"] = item._side;
+    order["status"] = item._status;
+    return order;
+}
+
 String to_sse_string(const TradeReport& report) {
     String str("trade_report:");
     switch (report._status) {
