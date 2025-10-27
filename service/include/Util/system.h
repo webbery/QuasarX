@@ -80,6 +80,7 @@ enum ExchangeName: char {
     MT_ShanghaiFuture,
     MT_ShanghaiEng,
     MT_Hongkong,
+    MT_COUNT,
 };
 
 enum class contract_type: char {

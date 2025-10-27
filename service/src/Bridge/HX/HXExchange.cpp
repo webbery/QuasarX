@@ -188,7 +188,8 @@ bool HXExchange::Login(){
         }
         _trader_login = true;
         // 获取股东账户信息
-        QueryShareHolder();
+        QueryShareHolder(ExchangeName::MT_Shanghai);
+        QueryShareHolder(ExchangeName::MT_Shenzhen);
     }
     
     if (status) {
@@ -242,17 +243,33 @@ AccountAsset HXExchange::GetAsset(){
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     order_id oid{++_reqID};
     using namespace TORASTOCKAPI;
-    CTORATstpInputOrderField* order = new CTORATstpInputOrderField{ 0 };
+    CTORATstpInputOrderField* order = new CTORATstpInputOrderField;
+    memset(order, 0, sizeof(CTORATstpInputOrderField));
+    
     auto& o = ctx->_order;
     order->OrderRef = oid._id;
     order->Direction = (o._side == 0? TORA_TSTP_D_Buy: TORA_TSTP_D_Sell);
     order->UserRequestID = oid._id;
-    strcpy(order->ShareholderID, _shareholder.c_str());
+
+    String& shareholder = _shareholder[symbol._exchange];
+    if (shareholder.empty()) {
+        WARN("shareholder is empty");
+        return {0};
+    }
+    strcpy(order->ShareholderID, shareholder.c_str());
     auto strCode = format_symbol(std::to_string(symbol._symbol));
     strncpy(order->SecurityID, strCode.c_str(), strCode.size());
     order->ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
     order->VolumeTotalOriginal = ctx->_order._volume;
     order->LimitPrice = o._order[0]._price;
+    // order->CombOffsetFlag[0] = TORA_TSTP_OF_Open;
+    // order->CombOffsetFlag[1] = '\0';
+    // order->CombHedgeFlag[0] = TORA_TSTP_HF_Speculation;
+    // order->CombHedgeFlag[1] = '\0';
+    // order->MinVolume = 0;
+    order->ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
+    // order->UserForceClose = 0;
+    // order->IsSwapOrder = 0;
 
     convertOrderType(*ctx, *order);
 
@@ -439,7 +456,7 @@ double HXExchange::GetAvailableFunds()
     return result.get().UsefulMoney;
 }
 
-bool HXExchange::QueryShareHolder()
+bool HXExchange::QueryShareHolder(ExchangeName name)
 {
     order_id id{ ++_reqID };
     auto promise = std::make_shared<std::promise<String>>();
@@ -451,6 +468,16 @@ bool HXExchange::QueryShareHolder()
     TORASTOCKAPI::CTORATstpQryShareholderAccountField qry_shr_account;
     memset(&qry_shr_account, 0, sizeof(qry_shr_account));
     strcpy(qry_shr_account.InvestorID, _account.c_str());
+    switch (name) {
+    case ExchangeName::MT_Shanghai:
+        qry_shr_account.ExchangeID = TORA_TSTP_EXD_SSE;
+    break;
+    case ExchangeName::MT_Shenzhen:
+        qry_shr_account.ExchangeID = TORA_TSTP_EXD_SZSE;
+    default:
+    break;
+    }
+    
     _tradeAPI->ReqQryShareholderAccount(&qry_shr_account, id._id);
 
     auto result = promise->get_future();
@@ -458,7 +485,7 @@ bool HXExchange::QueryShareHolder()
     if (info == std::future_status::timeout) {
         return false;
     }
-    _shareholder = result.get();
+    _shareholder[name] = result.get();
     return true;
 }
 

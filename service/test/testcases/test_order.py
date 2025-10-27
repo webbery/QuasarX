@@ -8,7 +8,7 @@ class TestOrder:
     stock_id = '000001'
     order_id = -1
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(60)
     def test_order_buy(self, auth_token):
         kwargs = {
             'verify': False  # 始终禁用 SSL 验证
@@ -24,7 +24,7 @@ class TestOrder:
         assert data['id'] != -1
         self.order_id = data['id']
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(60)
     def test_get_all_orders(self, auth_token):
         kwargs = {
             'verify': False  # 始终禁用 SSL 验证

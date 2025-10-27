@@ -51,7 +51,7 @@ public:
 
 private:
     // 查询股东用户
-    bool QueryShareHolder();
+    bool QueryShareHolder(ExchangeName name);
 
 private:
     bool _login_status : 1;
@@ -68,7 +68,7 @@ private:
     String _account;    // 投资者账号
     String _accpwd;
 
-    String _shareholder;    // 股东账号
+    String _shareholder[MT_COUNT];    // 股东账号
 
     HXQuateSpi* _quote;
     HXTrade* _trade;

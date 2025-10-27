@@ -81,11 +81,12 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     TradeReport report;
     if (pRspInfoField->ErrorID == 0) {// 交易系统已接收报单
         _investor = pInputOrderField->InvestorID;
-
+        LOG("Order {} accept", nRequestID);
         report._status = OrderStatus::OrderAccept;
         _exchange->OnOrderReport(id, report);
     }
     else {
+        LOG("Order {} reject", nRequestID);
         // 交易系统拒绝报单
         report._status = OrderStatus::OrderReject;
         _exchange->OnOrderReport(id, report);
