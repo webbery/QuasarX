@@ -18,8 +18,6 @@
         <button v-if="is_backtest" class="control-btn">
           <i class="fas fa-cloud-upload-alt"></i> 导出报告
         </button>
-        <button v-if="is_position" class="btn btn-primary" @click="onHandleGlobalCancel">一键撤单</button>
-        <button v-if="is_position" class="btn btn-warning" @click="onHandleEmergency">应急处置</button>
         <select v-if="is_position" class="form-control" style="width: auto;" v-model="selectedAccount">
           <option value="main">主交易账户</option>
           <option value="backup">备用交易账户</option>
@@ -136,7 +134,7 @@
         </div>
         <div class="status-item">
           <i class="fas fa-memory"></i>
-          <span>内存: 3.2G/8G</span>
+          <span>内存: {{memUsage}}G/8G</span>
         </div>
       </div>
     </footer>
@@ -147,7 +145,7 @@
     </teleport>
 </template>
 <script setup >
-import { defineProps, ref, defineEmits, onMounted, computed } from "vue";
+import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed } from "vue";
 import LabVue from "./components/Lab.vue";
 import MineVue from "./components/Mine.vue";
 import RiskManagerVue from "./components/RiskManager.vue";
@@ -164,6 +162,7 @@ import SettingView from "./components/SettingView.vue";
 import SettingPanel from "./components/SettingPanel.vue";
 import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 import PositionManager from "./components/PositionManager.vue";
+import sseService from "./ts/SSEService";
 
 // 定义视图状态常量
 const VIEWS = {
@@ -199,7 +198,8 @@ let activeComponent = computed(() => {
 let activeIndex = ref(0);
 let runningMode = ref('登录')
 let showLogin = ref(false)
-let cpu = ref(0)
+let cpu = ref("0")
+let memUsage = ref("0")
 // 1-展示已添加的服务器 2-展示已添加的交易所 3-新添加一个服务器 4-新添加一个交易所
 let useOperaion = ref(0)
 
@@ -211,10 +211,37 @@ let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 
+const onSystemStatus = (message) => {
+  const infos = message.split(' ');
+  if (infos.length > 1) {
+    cpu.value = infos[0];
+    memUsage.value = infos[1];
+  }
+}
+
+const onLoginSucess = () => {
+  // 服务器状态监控
+  initServerEvent();
+}
+
+const initServerEvent = () => {
+  sseService.on('system_status', onSystemStatus)
+}
+
+const uninitServerEvent = () => {
+  sseService.off('system_status', onSystemStatus)
+}
+
 onMounted(() => {
-  console.log('mounted');
   activeComponent.value = AccountView
+  window.addEventListener('loginSuccess', onLoginSucess)
 });
+
+onUnmounted(() => {
+  window.removeEventListener('loginSuccess', onLoginSucess)
+  uninitServerEvent()
+})
+
 const emits = defineEmits(["refush", "onSettingChanged"]);
 
 const onHandleDesignStrategy = () => {
@@ -265,13 +292,6 @@ const onHandleRunBacktest = () => {
   }
 }
 
-const onHandleGlobalCancel = () => {
-  console.info('onHandleGlobalCancel')
-}
-
-const onHandleEmergency = () => {
-  console.info('onHandleEmergency')
-}
 </script>
 
 <style scoped>

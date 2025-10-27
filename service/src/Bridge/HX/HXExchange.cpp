@@ -5,6 +5,7 @@
 #include "Bridge/HX/HXQuote.h"
 #include "Bridge/HX/HXTrade.h"
 #include <cstring>
+#include <future>
 #include "server.h"
 #include "Util/string_algorithm.h"
 
@@ -80,6 +81,20 @@ namespace {
         }
         
     }
+
+    template<typename T>
+    bool getFuture(std::shared_ptr<std::promise<T>> prom, std::future<T>& fut) {
+        try{
+            auto fut = prom->get_future();
+            auto status = fut.wait_for(std::chrono::seconds(10));
+            if (status == std::future_status::timeout) {
+                return false;
+            }
+        } catch (...) {
+            return false;
+        }
+        return true;
+    }
 }
 HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr), _tradeAPI(nullptr), _trade(nullptr)
@@ -94,6 +109,11 @@ HXExchange::~HXExchange(){
 
 const char* HXExchange::Name(){
     return "HX";
+}
+
+void HXExchange::addPromise(uint64_t reqID, std::shared_ptr<void> promise) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _promises.emplace(reqID, promise);
 }
 
 bool HXExchange::Init(const ExchangeInfo& handle){
@@ -181,9 +201,8 @@ bool HXExchange::Login(){
         }
         _tradeAPI->ReqUserLogin(&tradeUser, reqID);
 
-        auto fut = promise->get_future();
-        auto status = fut.wait_for(std::chrono::seconds(10));
-        if (status == std::future_status::timeout) {
+        std::future<TORASTOCKAPI::CTORATstpRspUserLoginField> fut;
+        if (!getFuture(promise, fut)) {
             return false;
         }
         _trader_login = true;
@@ -289,20 +308,30 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
       });
+    if (report._status == OrderStatus::CancelSuccess) {
+        _orders.erase(id._id);
+    }
 }
 
 bool HXExchange::CancelOrder(order_id id){
+    auto reqID = ++_reqID;
+    _orders.visit(id._id, [reqID, this](concurrent_order_map::value_type& value) {
+        auto ctx = value.second.second;
 
+        TORASTOCKAPI::CTORATstpInputOrderActionField pInputOrderActionField;
+        memset(&pInputOrderActionField, 0, sizeof(TORASTOCKAPI::CTORATstpInputOrderActionField));
+
+        _tradeAPI->ReqOrderAction(&pInputOrderActionField, reqID);
+    });
+
+    // 成功则移除_orders中的订单
+    // _orders.erase(id._id);
     return true;
 }
 // 获取当前尚未完成的所有订单
 bool HXExchange::GetOrders(OrderList& ol){
     auto reqID = ++_reqID;
-    auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpOrderField>>();
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _promises.emplace(reqID, promise);
-    }
+    auto promise = initPromise<TORASTOCKAPI::CTORATstpOrderField>(reqID);
     auto& orders = _trade->GetOrders();
     orders.clear();
 
@@ -432,11 +461,8 @@ QuoteInfo HXExchange::GetQuote(symbol_t symbol){
 double HXExchange::GetAvailableFunds()
 {
     auto reqID = ++_reqID;
-    auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpTradingAccountField>>();
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _promises.emplace(reqID, promise);
-    }
+    auto promise = initPromise<TORASTOCKAPI::CTORATstpTradingAccountField>(reqID);
+    
     TORASTOCKAPI::CTORATstpQryTradingAccountField qry_trading_account_field;
     memset(&qry_trading_account_field, 0, sizeof(qry_trading_account_field));
     strcpy(qry_trading_account_field.AccountID, _account.c_str());
@@ -448,22 +474,17 @@ double HXExchange::GetAvailableFunds()
         return 0;
     }
 
-    auto result = promise->get_future();
-    auto info = result.wait_for(std::chrono::seconds(10));
-    if (info == std::future_status::timeout) {
+    std::future<TORASTOCKAPI::CTORATstpTradingAccountField> fut;
+    if (!getFuture(promise, fut)) {
         return 0;
     }
-    return result.get().UsefulMoney;
+    return fut.get().UsefulMoney;
 }
 
 bool HXExchange::QueryShareHolder(ExchangeName name)
 {
     order_id id{ ++_reqID };
-    auto promise = std::make_shared<std::promise<String>>();
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _promises.emplace(id._id, promise);
-    }
+    auto promise = initPromise<String>(id._id);
 
     TORASTOCKAPI::CTORATstpQryShareholderAccountField qry_shr_account;
     memset(&qry_shr_account, 0, sizeof(qry_shr_account));
@@ -480,12 +501,11 @@ bool HXExchange::QueryShareHolder(ExchangeName name)
     
     _tradeAPI->ReqQryShareholderAccount(&qry_shr_account, id._id);
 
-    auto result = promise->get_future();
-    auto info = result.wait_for(std::chrono::seconds(10));
-    if (info == std::future_status::timeout) {
+    std::future<String> fut;
+    if (!getFuture(promise, fut)) {
         return false;
     }
-    _shareholder[name] = result.get();
+    _shareholder[name] = fut.get();
     return true;
 }
 

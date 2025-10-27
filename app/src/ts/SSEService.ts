@@ -40,7 +40,7 @@ class SSEService {
         },
         signal: this.abortController.signal,
         
-        onopen: async (response) => {
+        onopen: async (response: any) => {
           console.log('SSE 连接已建立')
           this.isConnected.value = true
           if (response.ok) {
@@ -52,7 +52,7 @@ class SSEService {
           }
         },
         
-        onmessage: (event) => {
+        onmessage: (event: any) => {
           if (event.data) {
             this.handleEvent(event)
           }

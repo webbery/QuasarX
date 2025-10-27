@@ -77,7 +77,7 @@ void HXTrade::OnRspError(TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int
 
 }
 void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
-    order_id id{ nRequestID };
+    order_id id{ static_cast<uint64_t>(nRequestID) };
     TradeReport report;
     if (pRspInfoField->ErrorID == 0) {// 交易系统已接收报单
         _investor = pInputOrderField->InvestorID;
@@ -93,7 +93,7 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     }
 }
 void HXTrade::OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField) {
-    order_id id{ pOrderField->OrderRef };
+    order_id id{ static_cast<uint64_t>(pOrderField->OrderRef) };
     TradeReport report;
     report._status = toOrderStatus(pOrderField->OrderStatus);
     if (report._status != OrderStatus::OrderUnknow) {
@@ -106,20 +106,30 @@ void HXTrade::OnErrRtnOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInput
 }
 
 void HXTrade::OnRtnTrade(TORASTOCKAPI::CTORATstpTradeField *pTradeField) {
-    order_id id{ pTradeField->OrderRef};
+    order_id id{ static_cast<uint64_t>(pTradeField->OrderRef)};
     TradeReport report;
-    report._status = OrderStatus::CancelPartSuccess;
+    report._status = OrderStatus::OrderSuccess;
 
     _exchange->OnOrderReport(id, report);
 }
 
 void HXTrade::OnRspOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField *pInputOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
-
+    order_id id{ static_cast<uint64_t>(pInputOrderActionField->OrderRef)};
+    TradeReport report;
+    if (pRspInfoField && pRspInfoField->ErrorID == 0) {
+        // 取消成功
+        report._status = OrderStatus::CancelSuccess;
+        _exchange->OnOrderReport(id, report);
+    } else {
+        report._status = OrderStatus::CancelFail;
+        _exchange->OnOrderReport(id, report);
+    }
 }
 
 void HXTrade::OnErrRtnOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField* pInputOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID)
 {
-
+    TradeReport report;
+    report._status = OrderStatus::CancelFail;
 }
 
 void HXTrade::OnRspCondOrderInsert(TORASTOCKAPI::CTORATstpInputCondOrderField *pInputCondOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {

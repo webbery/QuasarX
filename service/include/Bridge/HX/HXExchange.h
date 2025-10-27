@@ -1,5 +1,6 @@
 #pragma once
 #include "Bridge/exchange.h"
+#include <memory>
 
 class HXQuateSpi;
 class HXTrade;
@@ -52,6 +53,15 @@ public:
 private:
     // 查询股东用户
     bool QueryShareHolder(ExchangeName name);
+
+    void addPromise(uint64_t reqID, std::shared_ptr<void> promise);
+
+    template<typename T>
+    std::shared_ptr<std::promise<T>> initPromise(uint64_t reqID) {
+        auto promise = std::make_shared<std::promise<T>>();
+        addPromise(reqID, promise);
+        return promise;
+    }
 
 private:
     bool _login_status : 1;
