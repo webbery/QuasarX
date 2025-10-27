@@ -505,7 +505,10 @@ bool HXExchange::QueryShareHolder(ExchangeName name)
     if (!getFuture(promise, fut)) {
         return false;
     }
-    _shareholder[name] = fut.get();
-    return true;
+    if (fut.valid()) {
+        _shareholder[name] = fut.get();
+        return true;
+    }
+    return false;
 }
 

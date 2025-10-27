@@ -29,9 +29,10 @@ class SSEService {
     }
 
     this.abortController = new AbortController()
-
+    const server = localStorage.getItem('remote')
+    let url = 'https://' + server + '/v0/server/event'
     try {
-      await fetchEventSource('/v0/server/event', {
+      await fetchEventSource(url, {
         method: 'GET',
         headers: {
           'Authorization': `${token}`,
@@ -43,6 +44,7 @@ class SSEService {
         onopen: async (response: any) => {
           console.log('SSE 连接已建立')
           this.isConnected.value = true
+          console.info(response)
           if (response.ok) {
             return // 一切正常
           } else if (response.status >= 400 && response.status < 500) {
@@ -53,6 +55,7 @@ class SSEService {
         },
         
         onmessage: (event: any) => {
+          console.info('event', event)
           if (event.data) {
             this.handleEvent(event)
           }
@@ -70,6 +73,7 @@ class SSEService {
         }
       })
     } catch (error: any) {
+      console.info('error:', error)
       if (error.name !== 'AbortError') {
         console.error('SSE 连接失败:', error)
       }

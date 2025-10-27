@@ -79,4 +79,5 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
         // 发送消息
         return dispatcher->dispatchEvent(sink);
     });
+    res.status = 200;
 }

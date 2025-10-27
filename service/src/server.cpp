@@ -212,7 +212,7 @@ void Server::Regist() {
             return;
         }
         INFO("Get {}", API_SERVER_EVENT);
-
+        this->_handlers[API_SERVER_EVENT]->get(req, res);
     });
     REGIST_POST(API_RISK_STOP_LOSS);
     REGIST_PUT(API_RISK_STOP_LOSS);
@@ -1231,9 +1231,7 @@ bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) 
         auto verifier = jwt::verify<traits>()
             .allow_algorithm(jwt::algorithm::rs256(_config->GetPublicKey(), "", "", "")) // 验证签名算法和密钥
             .with_issuer(_config->GetIssuer());                 // 验证签发者是否匹配
-        WARN("verifier created");
         auto decoded = jwt::decode<traits>(auth_header);
-        WARN("decode success");
         verifier.verify(decoded); // 如果验证失败（如签名无效、过期），会抛出异常
     } catch (const std::exception& e) {
         // 其他解析异常

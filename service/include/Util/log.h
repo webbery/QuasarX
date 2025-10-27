@@ -19,7 +19,7 @@
 #if defined(_MSC_VER) && !defined(__clang__)
 #ifndef INFO
 #define INFO(...) \
-    SPDLOG_WARN(__VA_ARGS__);fmt::print("{}", ToString(Now())); fmt::print(##__VA_ARGS__);fmt::print("\n");
+    SPDLOG_WARN(__VA_ARGS__);fmt::print("{} ", ToString(Now())); fmt::print(##__VA_ARGS__);fmt::print("\n");
 #endif
 //#ifndef CUSTOM_WARN
 //#define CUSTOM_WARN(fmt_str, ...) \

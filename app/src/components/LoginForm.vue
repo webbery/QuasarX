@@ -225,7 +225,7 @@ const handleLogin = () => {
 
             // 登录成功后触发账户数据刷新
             window.dispatchEvent(new Event('loginSuccess'))
-            // sseService.connect(token)
+            sseService.connect(token)
             let removeInfo = selectedServer.value.label
             if (mode === 'Backtest') {
               emit('onStatusChange', true, removeInfo + ' - 回测模式')
