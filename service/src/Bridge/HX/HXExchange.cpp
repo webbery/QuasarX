@@ -249,9 +249,23 @@ bool HXExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
     return true;
 }
 
-AccountPosition HXExchange::GetPosition(){
-    AccountPosition ap;
-    return ap;
+bool HXExchange::GetPosition(AccountPosition& ap){
+    order_id oid{++_reqID};
+    auto promise = initPromise<bool>(oid._id);
+    auto& positions = _trade->GetPositions();
+    positions.clear();
+
+    TORASTOCKAPI::CTORATstpQryPositionField field;
+    memset(&field, 0, sizeof(field));
+    strcpy(field.InvestorID, _account.c_str());
+    int ret = _tradeAPI->ReqQryPosition(&field, oid._id);
+
+    std::future<bool> fut;
+    if (!getFuture(promise, fut)) {
+        return false;
+    }
+    ap._positions = std::move(positions);
+    return true;
 }
 
 AccountAsset HXExchange::GetAsset(){

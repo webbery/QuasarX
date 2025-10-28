@@ -7,6 +7,7 @@
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "DataFrame/DataFrameTypes.h"
+#include "Handler/PositionHandler.h"
 #include "Handler/PredictionHandler.h"
 #include "Handler/RiskHandler.h"
 #include "Handler/ServerEventHandler.h"
@@ -255,6 +256,7 @@ void Server::Regist() {
     REGIST_GET(API_SECTOR_FLOW);
     REGIST_GET(API_TRADE_ORDER);
     REGIST_GET(API_USER_FUNDS);
+    REGIST_GET(API_POSITION);
     
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
@@ -1037,6 +1039,7 @@ void Server::InitHandlers() {
     RegistHandler(API_FEATURE, FeatureHandler);
     RegistHandler(API_SECTOR_FLOW, SectorHandler);
     RegistHandler(API_SERVER_EVENT, ServerEventHandler);
+    RegistHandler(API_POSITION, PositionHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});

@@ -261,13 +261,12 @@ double XTPExchange::GetAvailableFunds()
     return 1000000;
 }
 
-AccountPosition XTPExchange::GetPosition() {
+bool XTPExchange::GetPosition(AccountPosition& pos) {
     m_pTradeApi->QueryPosition(nullptr, m_session, REQUEST_POSITION);
-    AccountPosition pos{};
     WAIT_FOR_REQUEST(REQUEST_POSITION) {
       pos = m_pTrade->GetPosition();
     } FINISH_WAIT()
-    return pos;
+    return true;
 }
 
 AccountAsset XTPExchange::GetAsset() {

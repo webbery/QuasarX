@@ -15,6 +15,9 @@ bool OperationNode::parseFomula(const String& formulas) {
 
 bool StatisticNode::Process(DataContext& context, const DataFeatures& org)
 {
+    for (auto node: _ins) {
+        auto& feature = context.get(node.first);
+    }
     return true;
 }
 

@@ -18,6 +18,11 @@ public:
     void add(const String& name, const feature_t& f) {
         _outputs[name] = f;
     }
+
+    void erase(const String& name) {
+        _outputs.erase(name);
+    }
+    
 private:
     // TODO: 节点的输出数据，待优化
     Map<String, feature_t> _outputs;

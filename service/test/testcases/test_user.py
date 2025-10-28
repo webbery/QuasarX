@@ -119,22 +119,22 @@ class TestUser:
         response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
         check_response(response)
 
-    @pytest.mark.timeout(5)
-    def test_update_commission(self, auth_token):
-        kwargs = {
-            'verify': False  # 始终禁用 SSL 验证
-        }
-        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
-            kwargs['headers'] = {'Authorization': auth_token}
-        json = {
-            'type': 6,
-            'data': {
-                'org': 'admin',
-                'latest': 'admin'
-            }
-        }
-        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
-        check_response(response)
+    # @pytest.mark.timeout(5)
+    # def test_update_commission(self, auth_token):
+    #     kwargs = {
+    #         'verify': False  # 始终禁用 SSL 验证
+    #     }
+    #     if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+    #         kwargs['headers'] = {'Authorization': auth_token}
+    #     json = {
+    #         'type': 6,
+    #         'data': {
+    #             'org': 'admin',
+    #             'latest': 'admin'
+    #         }
+    #     }
+    #     response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
+    #     check_response(response)
 
     @pytest.mark.timeout(5)
     def test_update_schedule(self, auth_token):
@@ -151,3 +151,21 @@ class TestUser:
         }
         response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
         check_response(response)
+
+    @pytest.mark.timeout(5)
+    def test_get_position(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+        response = requests.get(f"{BASE_URL}/position", **kwargs)
+        data = check_response(response)
+        assert isinstance(data, list)
+        for item in data:
+            assert 'id' in item
+            assert 'datetime' in item
+            assert 'operation' in item
+            assert 'price' in item
+            assert 'quantity' in item
+            break

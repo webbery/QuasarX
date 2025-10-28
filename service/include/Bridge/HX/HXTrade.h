@@ -1,5 +1,6 @@
 #pragma once
 #include "DataGroup.h"
+#include "Util/system.h"
 #include "hx/TORATstpTraderApi.h"
 
 class HXExchange;
@@ -8,6 +9,7 @@ public:
     HXTrade(HXExchange* );
 
     OrderList& GetOrders() { return _orders; }
+    List<position_t>& GetPositions() { return _positions; }
 
     ///登录响应
     virtual void OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserLoginField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID);
@@ -52,10 +54,21 @@ public:
     ///查询报单响应
     virtual void OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast);
 
+    ///查询投资者持仓响应
+    virtual void OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast);
+    
+    ///查询基础交易费率响应
+    virtual void OnRspQryTradingFee(TORASTOCKAPI::CTORATstpTradingFeeField *pTradingFeeField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast); 
+    
+    ///查询佣金费率响应
+    virtual void OnRspQryInvestorTradingFee(TORASTOCKAPI::CTORATstpInvestorTradingFeeField *pInvestorTradingFeeField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast); 
+
 private:
     HXExchange* _exchange;
 
     String _investor;   // 投资者代码
 
     OrderList _orders;
+
+    List<position_t> _positions;
 };

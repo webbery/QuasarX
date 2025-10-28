@@ -157,10 +157,12 @@ struct fmt::formatter<symbol_t> {
 
 struct position_t {
   symbol_t _symbol;
+  String _name;
+  // 昨日成本价
   double _price;
-  uint32_t _holds;
   time_t _buy;
   time_t _sell;
+  uint32_t _holds;
 };
 
 struct AccountPosition {

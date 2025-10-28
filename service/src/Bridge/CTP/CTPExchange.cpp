@@ -124,9 +124,8 @@ bool CTPExchange::Login(){
   return ret;
 }
 
-AccountPosition CTPExchange::GetPosition(){
-    AccountPosition ap;
-    return ap;
+bool CTPExchange::GetPosition(AccountPosition&) {
+  return true;
 }
 
 AccountAsset CTPExchange::GetAsset(){

@@ -63,9 +63,8 @@ bool StockSimulation::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
     return true;
 }
 
-AccountPosition StockSimulation::GetPosition(){
-    AccountPosition pos;
-    return pos;
+bool StockSimulation::GetPosition(AccountPosition& pos){
+    return true;
 }
 
 AccountAsset StockSimulation::GetAsset(){

@@ -142,7 +142,7 @@ public:
   // 获取当前可用资金
   virtual double GetAvailableFunds() = 0;
 
-  virtual AccountPosition GetPosition() = 0;
+  virtual bool GetPosition(AccountPosition&) = 0;
 
   virtual AccountAsset GetAsset() = 0;
   

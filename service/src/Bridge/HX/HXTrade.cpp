@@ -40,6 +40,14 @@ namespace {
         }
         return OrderStatus::OrderUnknow;
     }
+
+    position_t toPosition(const TORASTOCKAPI::CTORATstpPositionField& field) {
+        position_t position;
+        position._symbol = to_symbol(field.SecurityID);
+        position._holds = field.CollateralBuyUntradeVolume;
+        position._price = field.HistoryPosPrice;
+        return position;
+    }
 }
 HXTrade::HXTrade(HXExchange* exc):_exchange(exc) {
 
@@ -184,3 +192,33 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
         }
     }
 }
+
+void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {
+    if (bIsLast) {
+        INIT_PROMISE(bool);
+        if (pRspInfoField->ErrorID != 0) {
+            prom->set_exception(std::current_exception());
+            return;
+        }
+        if (pPositionField) {
+            position_t position = toPosition(*pPositionField);
+            _positions.emplace_back(std::move(position));
+        }
+        SET_PROMISE(true);
+    } else {
+        if (pRspInfoField->ErrorID != 0) {
+            return;
+        }
+        position_t position = toPosition(*pPositionField);
+        _positions.emplace_back(std::move(position));
+    }
+    
+}
+    
+void HXTrade::OnRspQryTradingFee(TORASTOCKAPI::CTORATstpTradingFeeField *pTradingFeeField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {
+
+}
+    
+void HXTrade::OnRspQryInvestorTradingFee(TORASTOCKAPI::CTORATstpInvestorTradingFeeField *pInvestorTradingFeeField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {
+
+} 

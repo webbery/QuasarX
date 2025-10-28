@@ -25,7 +25,7 @@ public:
   virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
   virtual void SetFilter(const QuoteFilter& filter);
 
-  AccountPosition GetPosition();
+  virtual bool GetPosition(AccountPosition&);
 
   AccountAsset GetAsset();
 

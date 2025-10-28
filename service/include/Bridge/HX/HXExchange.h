@@ -11,7 +11,7 @@ namespace TORASTOCKAPI {
     class CTORATstpTraderApi;
     struct CTORATstpInputOrderField;
 }
-class HXExchange: public ExchangeInterface {
+class alignas(8) HXExchange: public ExchangeInterface {
     friend class HXQuateSpi;
     friend class HXTrade;
 public:
@@ -30,7 +30,8 @@ public:
     virtual bool IsLogin();
 
     virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
-    virtual AccountPosition GetPosition();
+
+    virtual bool GetPosition(AccountPosition&);
 
     virtual AccountAsset GetAsset();
     

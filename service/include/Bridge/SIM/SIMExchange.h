@@ -25,7 +25,7 @@ public:
   virtual void SetFilter(const QuoteFilter& filter);
   void UseLevel(int level);
 
-  virtual AccountPosition GetPosition();
+  virtual bool GetPosition(AccountPosition&);
 
   virtual AccountAsset GetAsset();
   
