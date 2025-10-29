@@ -872,10 +872,9 @@ void Server::TimerWorker(nng_socket sock) {
     nlohmann::json status;
 #ifndef _WIN32
     if (get_system_status(status)) {
-        String info("system_status");
         double cpu = status["cpu"];
         double mem = status["mem"];
-        info += ":" + std::to_string(cpu) + " " + std::to_string(mem) + "\n";
+        String info = format_sse("system_status", { {"cpu", cpu}, {"mem", mem})；
         nng_send(sock, info.data(), info.size(), 0);
     }
 #endif

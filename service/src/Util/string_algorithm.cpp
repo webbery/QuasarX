@@ -11,7 +11,9 @@
 #endif
 #include <fstream>
 #include <strstream>
-
+namespace {
+    std::atomic<uint64_t> _sseID{ 0 };
+}
 std::string to_lower(const std::string& str) {
     std::string ret(str);
     std::transform(str.begin(), str.end(), ret.begin(), ::tolower);
@@ -123,6 +125,22 @@ std::string to_gbk(const std::string& str) {
 }
 
 std::string to_utf8(const std::string& strGbk) {
+#ifdef WIN32
+    int wlen = MultiByteToWideChar(CP_ACP, 0, strGbk.c_str(), -1, nullptr, 0);
+    if (wlen == 0) return "";
+    wchar_t* wstr = new wchar_t[wlen];
+    MultiByteToWideChar(CP_ACP, 0, strGbk.c_str(), -1, wstr, wlen);
+
+    // 第二步：UTF-16 -> UTF-8
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, nullptr, 0, nullptr, nullptr);
+    char* str = new char[len];
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, str, len, nullptr, nullptr);
+
+    std::string result(str);
+    delete[] wstr;
+    delete[] str;
+    return result;
+#else
     iconv_t cd = iconv_open("UTF-8", "GBK"); // 打开转换描述符
     if (cd == (iconv_t)-1) {
         std::cerr << "Failed to open iconv descriptor" << std::endl;
@@ -148,6 +166,7 @@ std::string to_utf8(const std::string& strGbk) {
     }
     delete[] outbuf;
     return utf8Str;
+#endif
 }
 
 String to_base64(const String& bin) {
@@ -197,4 +216,14 @@ String to_base64(const String& bin) {
 
     return ret;
 
+}
+
+String format_sse(const String& event, const Map<String, String>& data)
+{
+    nlohmann::json payload = data;
+    String value("event:");
+    value += event + "\n";
+    value += "id:" + std::to_string(++_sseID) + "\n";
+    value += "data:" + payload.dump() + "\n\n";
+    return value;
 }

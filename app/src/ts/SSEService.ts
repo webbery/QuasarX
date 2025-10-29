@@ -2,11 +2,11 @@
 import { ref, readonly, type Ref } from 'vue'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 
-// export interface SSEMessage {
-//   type: string
-//   data: any
-//   timestamp: number
-// }
+export interface SSEMessage {
+  type: string
+  data: any
+  timestamp: number
+}
 
 class SSEService {
   private abortController: AbortController | null = null
@@ -85,20 +85,19 @@ class SSEService {
    */
   private handleEvent(event: any) {
     try {
-      // const eventType = event.event || 'message'
-      const [type, messageData] = event.data.split(':')
-      // const messageData = JSON.parse(event.data)
-      // const message: SSEMessage = {
-      //   type: eventType,
-      //   data: messageData,
-      //   timestamp: Date.now()
-      // }
+      const eventType = event.event || 'message'
+      const messageData = JSON.parse(event.data)
+      const message: SSEMessage = {
+        type: eventType,
+        data: messageData,
+        timestamp: Date.now()
+      }
 
       this.messages.value.push(messageData)
       this.lastMessage.value = messageData
 
-      this.triggerHandlers(type, messageData)
-      this.triggerHandlers('*', messageData)
+      this.triggerHandlers(eventType, messageData)
+      // this.triggerHandlers('*', messageData)
 
       if (this.messages.value.length > 100) {
         this.messages.value = this.messages.value.slice(-50)

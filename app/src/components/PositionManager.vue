@@ -143,6 +143,10 @@
                     <input type="text" class="form-control" v-model="newStockOrder.price" placeholder="请输入限价价格">
                   </div>
                   <div class="form-group">
+                    <label>当前价格</label>
+                    <input type="text" class="form-control" v-model="newStockOrder.curPrice" readonly>
+                  </div>
+                  <div class="form-group">
                     <label>数量</label>
                     <input type="text" class="form-control" v-model="newStockOrder.quantity" placeholder="请输入数量">
                   </div>
@@ -700,6 +704,7 @@ const newStockOrder = reactive({
     tradeType: 'buy',
     orderType: 'limit', // 默认限价单
     price: '',
+    curPrice: '',
     quantity: '',
     conditionType: 'price_ge', // 条件单类型
     triggerPrice: '', // 触发价格
@@ -941,8 +946,17 @@ const getOrderTypeDisplayText = (orderType) => {
 };
 
 // 方法
-const refreshStockPositions = () => {
-    showMessage('股票持仓已刷新', 'success');
+const refreshStockPositions = async () => {
+  const positions = await axios.get('/v0/position')
+  // { code: '000001', name: '平安银行', quantity: 1000, available: 800, costPrice: 15.20, currentPrice: 16.50, profit: 1300 },
+  let array = []
+  for (const position of positions) {
+    array.push({
+      code: position.id,
+      name: position.name
+    })
+  }
+  stockPositions.value = array
 };
 
 const refreshOptionPositions = () => {
