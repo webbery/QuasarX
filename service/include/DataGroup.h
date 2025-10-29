@@ -26,7 +26,6 @@ enum class OrderType: char {
     // 最优五档成交剩余转撤销
     // 最优五档成交剩余转限价
     // 本方最优
-    // 对手方最优
     // 跨日委托
     // 立即成交剩余撤销
     // 
@@ -59,9 +58,14 @@ struct Order {
     uint32_t _volume; //
     OrderType _type;
     // 买卖方向: 0 买入, 1 卖出
-    char _side;
+    char _side: 1;
+    // 开平仓
+    char _flag: 1;
+    // 是否行权单
+    bool _exec: 1;
     OrderTimeValid _validTime;
     OrderStatus _status;
+    // 订单发起时间
     time_t _time;
     Array<OrderDetail, MAX_ORDER_SIZE> _order;
 

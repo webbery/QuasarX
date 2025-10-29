@@ -44,7 +44,9 @@ namespace {
     position_t toPosition(const TORASTOCKAPI::CTORATstpPositionField& field) {
         position_t position;
         position._symbol = to_symbol(field.SecurityID);
-        position._holds = field.CollateralBuyUntradeVolume;
+        position._name = String(field.SecurityName, strlen(field.SecurityName));
+        position._holds = field.CurrentPosition;
+        position._validHolds = field.AvailablePosition;
         position._price = field.HistoryPosPrice;
         return position;
     }

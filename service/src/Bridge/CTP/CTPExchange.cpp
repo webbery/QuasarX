@@ -154,6 +154,10 @@ QuoteInfo CTPExchange::GetQuote(symbol_t symbol) {
   return _quote->GetQuote(symbol);
 }
 
+Commission CTPExchange::GetCommission(symbol_t symbol) {
+  return {};
+}
+
 void CTPExchange::SetFilter(const QuoteFilter& filter) {
 
 }

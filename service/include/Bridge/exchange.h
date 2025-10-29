@@ -160,6 +160,8 @@ public:
 
   virtual QuoteInfo GetQuote(symbol_t symbol) = 0;
 
+  virtual Commission GetCommission(symbol_t symbol) = 0;
+
   Server* GetHandle() { return _server; }
 
   void SetWorkingRange(char start_hour, char stop_hour, char start_minute, char stop_minute) {

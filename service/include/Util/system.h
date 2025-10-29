@@ -162,7 +162,8 @@ struct position_t {
   double _price;
   time_t _buy;
   time_t _sell;
-  uint32_t _holds;
+  uint32_t _holds;      // 总量
+  uint32_t _validHolds; // 可用量
 };
 
 struct AccountPosition {

@@ -215,6 +215,10 @@ void XTPExchange::QueryQuotes() {
     }
 }
 
+Commission XTPExchange::GetCommission(symbol_t symbol) {
+  return {};
+}
+
 void XTPExchange::StopQuery() {
   if (_requested) {
     Map<XTP_EXCHANGE_TYPE, int> markets;

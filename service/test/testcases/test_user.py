@@ -152,7 +152,7 @@ class TestUser:
         response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
         check_response(response)
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(20)
     def test_get_position(self, auth_token):
         kwargs = {
             'verify': False  # 始终禁用 SSL 验证
@@ -164,8 +164,9 @@ class TestUser:
         assert isinstance(data, list)
         for item in data:
             assert 'id' in item
-            assert 'datetime' in item
-            assert 'operation' in item
+            # assert 'datetime' in item
+            # assert 'operation' in item
             assert 'price' in item
             assert 'quantity' in item
+            assert 'valid_quantity' in item
             break

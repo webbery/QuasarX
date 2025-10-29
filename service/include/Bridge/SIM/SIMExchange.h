@@ -44,6 +44,7 @@ public:
   virtual QuoteInfo GetQuote(symbol_t) { return QuoteInfo();}
 
   virtual double GetAvailableFunds();
+    virtual Commission GetCommission(symbol_t symbol);
 private:
   void Worker();
   void LoadT0(const String& code);

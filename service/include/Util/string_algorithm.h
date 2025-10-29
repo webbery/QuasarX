@@ -109,4 +109,6 @@ String format_symbol(const String& symbol);
 
 String to_gbk(const String& str);
 
+String to_utf8(const String& str);
+
 String to_base64(const String& bin);

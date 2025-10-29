@@ -1423,6 +1423,9 @@ components:
         id:
           type: integer
           description: 下单号
+        status:
+          type: integer
+          description: 下单状态
     
     TradeOrderItem:
       type: object
@@ -1469,6 +1472,9 @@ components:
           type: string
           description: 代码
           example: 000001
+        name:
+          type: string
+          description: 名称
         datetime:
           type: integer
           description: 买入/卖出/行权时间

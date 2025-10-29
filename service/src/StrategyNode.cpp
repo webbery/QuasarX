@@ -18,6 +18,14 @@ bool StatisticNode::Process(DataContext& context, const DataFeatures& org)
     for (auto node: _ins) {
         auto& feature = context.get(node.first);
     }
+    for (auto indicator: _indicators) {
+        switch (indicator) {
+        case StatisticIndicator::Sharp:
+        break;
+        default:
+        break;
+        }
+    }
     return true;
 }
 

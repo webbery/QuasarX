@@ -48,6 +48,7 @@ public:
     void UpdateCommission();
 
     virtual double GetAvailableFunds();
+    virtual Commission GetCommission(symbol_t symbol);
 private:
     CThostFtdcMdApi* _pUserMdApi;
     CThostFtdcTraderApi* _pUserTradeApi;

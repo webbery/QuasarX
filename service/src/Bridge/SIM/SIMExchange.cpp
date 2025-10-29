@@ -268,6 +268,10 @@ double StockSimulation::GetAvailableFunds()
     return 1000000;
 }
 
+Commission StockSimulation::GetCommission(symbol_t symbol) {
+  return {};
+}
+
 void StockSimulation::Worker() {
   Publish(URI_RAW_QUOTE, _sock);
   constexpr std::size_t flags = yas::mem | yas::binary;

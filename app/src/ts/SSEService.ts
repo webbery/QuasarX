@@ -2,19 +2,19 @@
 import { ref, readonly, type Ref } from 'vue'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 
-export interface SSEMessage {
-  type: string
-  data: any
-  timestamp: number
-}
+// export interface SSEMessage {
+//   type: string
+//   data: any
+//   timestamp: number
+// }
 
 class SSEService {
   private abortController: AbortController | null = null
   private messageHandlers: Map<string, Function[]> = new Map()
   
-  public messages: Ref<SSEMessage[]> = ref([])
+  public messages: Ref<string[]> = ref([])
   public isConnected: Ref<boolean> = ref(false)
-  public lastMessage: Ref<SSEMessage | null> = ref(null)
+  public lastMessage: Ref<string | null> = ref(null)
 
   public readonlyMessages = readonly(this.messages)
   public readonlyIsConnected = readonly(this.isConnected)
@@ -85,19 +85,20 @@ class SSEService {
    */
   private handleEvent(event: any) {
     try {
-      const eventType = event.event || 'message'
-      const messageData = JSON.parse(event.data)
-      const message: SSEMessage = {
-        type: eventType,
-        data: messageData,
-        timestamp: Date.now()
-      }
+      // const eventType = event.event || 'message'
+      const [type, messageData] = event.data.split(':')
+      // const messageData = JSON.parse(event.data)
+      // const message: SSEMessage = {
+      //   type: eventType,
+      //   data: messageData,
+      //   timestamp: Date.now()
+      // }
 
-      this.messages.value.push(message)
-      this.lastMessage.value = message
+      this.messages.value.push(messageData)
+      this.lastMessage.value = messageData
 
-      this.triggerHandlers(eventType, message)
-      this.triggerHandlers('*', message)
+      this.triggerHandlers(type, messageData)
+      this.triggerHandlers('*', messageData)
 
       if (this.messages.value.length > 100) {
         this.messages.value = this.messages.value.slice(-50)
@@ -109,14 +110,14 @@ class SSEService {
   }
 
   // 其他方法保持不变...
-  on(messageType: string, handler: (message: SSEMessage) => void) {
+  on(messageType: string, handler: (message: string) => void) {
     if (!this.messageHandlers.has(messageType)) {
       this.messageHandlers.set(messageType, [])
     }
     this.messageHandlers.get(messageType)!.push(handler)
   }
 
-  off(messageType: string, handler: (message: SSEMessage) => void) {
+  off(messageType: string, handler: (message: string) => void) {
     const handlers = this.messageHandlers.get(messageType)
     if (handlers) {
       const index = handlers.indexOf(handler)
@@ -126,7 +127,7 @@ class SSEService {
     }
   }
 
-  private triggerHandlers(messageType: string, message: SSEMessage) {
+  private triggerHandlers(messageType: string, message: string) {
     const handlers = this.messageHandlers.get(messageType)
     if (handlers) {
       handlers.forEach(handler => {
@@ -148,7 +149,7 @@ class SSEService {
     this.messageHandlers.clear()
   }
 
-  getMessagesByType(type: string): SSEMessage[] {
+  getMessagesByType(type: string): string[] {
     return this.messages.value.filter(msg => msg.type === type)
   }
 

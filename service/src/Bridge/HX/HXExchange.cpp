@@ -85,7 +85,7 @@ namespace {
     template<typename T>
     bool getFuture(std::shared_ptr<std::promise<T>> prom, std::future<T>& fut) {
         try{
-            auto fut = prom->get_future();
+            fut = prom->get_future();
             auto status = fut.wait_for(std::chrono::seconds(10));
             if (status == std::future_status::timeout) {
                 return false;
@@ -470,6 +470,10 @@ void HXExchange::StopQuery(){
 QuoteInfo HXExchange::GetQuote(symbol_t symbol){
     QuoteInfo info = _quote->GetQuote(symbol);
     return info;
+}
+
+Commission HXExchange::GetCommission(symbol_t symbol) {
+  return {};
 }
 
 double HXExchange::GetAvailableFunds()
