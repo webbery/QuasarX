@@ -4,6 +4,16 @@ import requests
 
 @pytest.mark.usefixtures("auth_token")
 class TestUser:
+
+    def generate_args(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        return kwargs
+    
     @pytest.mark.timeout(5)
     def test_status(self, auth_token):
         kwargs = {
@@ -70,11 +80,7 @@ class TestUser:
 
     @pytest.mark.timeout(5)
     def test_get_config(self, auth_token):
-        kwargs = {
-            'verify': False  # 始终禁用 SSL 验证
-        }
-        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
-            kwargs['headers'] = {'Authorization': auth_token}
+        kwargs = self.generate_args(auth_token)
 
         response = requests.get(f"{BASE_URL}/server/config", **kwargs)
         data = check_response(response)
@@ -119,23 +125,6 @@ class TestUser:
         response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
         check_response(response)
 
-    # @pytest.mark.timeout(5)
-    # def test_update_commission(self, auth_token):
-    #     kwargs = {
-    #         'verify': False  # 始终禁用 SSL 验证
-    #     }
-    #     if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
-    #         kwargs['headers'] = {'Authorization': auth_token}
-    #     json = {
-    #         'type': 6,
-    #         'data': {
-    #             'org': 'admin',
-    #             'latest': 'admin'
-    #         }
-    #     }
-    #     response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
-    #     check_response(response)
-
     @pytest.mark.timeout(5)
     def test_update_schedule(self, auth_token):
         kwargs = {
@@ -154,14 +143,12 @@ class TestUser:
 
     @pytest.mark.timeout(20)
     def test_get_position(self, auth_token):
-        kwargs = {
-            'verify': False  # 始终禁用 SSL 验证
-        }
-        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
-            kwargs['headers'] = {'Authorization': auth_token}
+        kwargs = self.generate_args(auth_token)
+
         response = requests.get(f"{BASE_URL}/position", **kwargs)
         data = check_response(response)
         assert isinstance(data, list)
+        assert len(data) > 0
         for item in data:
             assert 'id' in item
             # assert 'datetime' in item
@@ -181,3 +168,10 @@ class TestUser:
         response = requests.get(f"{BASE_URL}/user/funds", **kwargs)
         data = check_response(response)
         assert data['funds'] > 0
+
+    @pytest.mark.timeout(5)
+    def test_get_commission(self, auth_token):
+        kwargs = self.generate_args(auth_token)
+        response = requests.get(f"{BASE_URL}/commission", **kwargs)
+        data = check_response(response)
+        assert len(data) > 0

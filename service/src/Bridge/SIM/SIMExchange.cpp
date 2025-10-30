@@ -268,8 +268,8 @@ double StockSimulation::GetAvailableFunds()
     return 1000000;
 }
 
-Commission StockSimulation::GetCommission(symbol_t symbol) {
-  return {};
+bool StockSimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
+  return true;
 }
 
 void StockSimulation::Worker() {

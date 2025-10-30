@@ -31,7 +31,6 @@
         </div>
     </div>
     
-    <!-- 策略节点 -->
     <div class="category">
         <div class="category-title" @click="toggleCategory('strategy')">
             <i class="fas fa-chess-knight"></i>
@@ -57,6 +56,45 @@
                 </div>
         </div>
     </div>
+
+    <div class="category">
+        <div class="category-title" @click="toggleCategory('signal')">
+            <i class="fas fa-download"></i>
+            <span>信号处理节点</span>
+            <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.input }"></i>
+        </div>
+        <div class="components-list" v-show="openCategories.input">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
+                <div class="component-title">EMD</div> 
+            </div>
+        </div>
+    </div>
+
+    <div class="category">
+        <div class="category-title" @click="toggleCategory('signal')">
+            <i class="fas fa-download"></i>
+            <span>统计学节点</span>
+            <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.input }"></i>
+        </div>
+        <div class="components-list" v-show="openCategories.input">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
+                <div class="component-title">统计检验</div> 
+            </div>
+        </div>
+    </div>
+
+    <div class="category">
+        <div class="category-title" @click="toggleCategory('signal')">
+            <i class="fas fa-download"></i>
+            <span>因果推理节点</span>
+            <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.input }"></i>
+        </div>
+        <div class="components-list" v-show="openCategories.input">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
+                <div class="component-title">统计检验</div> 
+            </div>
+        </div>
+    </div>
     
     <!-- 公式节点 -->
     <div class="category">
@@ -72,7 +110,7 @@
                     <div class="component-title">合并节点</div>
                 </div>
                 <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'basic-index')">
-                    <div class="component-title">MA<span class="component-desc">Moving Avarage</span></div>
+                    <div class="component-title">金融特征<span class="component-desc">Moving Avarage</span></div>
                 </div>
                 <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'normalization')">
                         <div class="component-title">最小-最大归一化</div>

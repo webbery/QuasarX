@@ -315,39 +315,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/PortfolioResponse"
   /commission:
-    put:
-      summary: commission
-      description: 创建一个佣金
-      tags: 
-        - Commission
-      requestBody:
-        description: 佣金参数
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CommissionRequest"
-      responses:
-        '200':
-          description: success or not
-          content:
-            application/json:
-              schema:
-                type: integer
-                description: 设置成功后返回的id
-                example: 121
     get:
       summary: commission
-      description: 获取创建的佣金
+      description: 获取佣金
       tags: 
-        - Commission
+        - User
       parameters:
         - in: query
           name: id
           schema:
-            type: integer
-            description: 佣金id
+            type: string
+            description: 代码,可选，只针对期货
             example: 12
+        - in: query
+          name: broker
+          schema:
+            type: string
+            description: 代理商,保留
+        - in: query
+          name: type
+          schema:
+            type: integer
+            description: 类型, 0-股票 1-期货 2-期权
+            enum: [0, 1, 2]
       responses:
         '200':
           description: success or not
@@ -358,20 +348,6 @@ paths:
                 description: 返回的佣金信息
                 items:
                   $ref: "#/components/schemas/CommissionItem"
-    delete:
-      summary: commission
-      description: 删除佣金
-      tags: 
-        - Commission
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          description: 要删除的佣金id
-      responses:
-        '200':
-          description: success or not
   /strategy/metric:
     get:
       summary: metric
@@ -722,7 +698,7 @@ paths:
           name: id
           schema:
             type: integer
-          description: 单号
+          description: 单号,如果没有，则表示撤销当前所有订单
       responses:
         '200':
           description: success

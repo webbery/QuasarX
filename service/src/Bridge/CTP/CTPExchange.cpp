@@ -154,8 +154,8 @@ QuoteInfo CTPExchange::GetQuote(symbol_t symbol) {
   return _quote->GetQuote(symbol);
 }
 
-Commission CTPExchange::GetCommission(symbol_t symbol) {
-  return {};
+bool CTPExchange::GetCommission(symbol_t symbol, List<Commission>&) {
+  return true;
 }
 
 void CTPExchange::SetFilter(const QuoteFilter& filter) {
@@ -215,8 +215,4 @@ void CTPExchange::UpdateCommission() {
 double CTPExchange::GetAvailableFunds()
 {
     return 1000000;
-}
-
-const Commission& CTPExchange::GetCommission(const symbol_t& symbol) {
-  return _commissions.at(symbol);
 }

@@ -51,7 +51,7 @@ public:
 
     virtual double GetAvailableFunds();
 
-    virtual Commission GetCommission(symbol_t symbol);
+    virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
 private:
     // 查询股东用户
     bool QueryShareHolder(ExchangeName name);

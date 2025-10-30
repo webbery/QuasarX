@@ -215,8 +215,8 @@ void XTPExchange::QueryQuotes() {
     }
 }
 
-Commission XTPExchange::GetCommission(symbol_t symbol) {
-  return {};
+bool XTPExchange::GetCommission(symbol_t symbol, List<Commission>& ) {
+  return true;
 }
 
 void XTPExchange::StopQuery() {

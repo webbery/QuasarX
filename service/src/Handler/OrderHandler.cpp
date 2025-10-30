@@ -3,6 +3,7 @@
 #include "DataGroup.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
+#include <cstdint>
 #include <string>
 #include <tuple>
 #include "BrokerSubSystem.h"
@@ -107,7 +108,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
 }
 
 void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
-    // »ñÈ¡ËùÓÐ¶©µ¥×´Ì¬
+    // èŽ·å–æ‰€æœ‰è®¢å•çŠ¶æ€
     nlohmann::json result;
     if (req.params.size() == 0) {
         auto broker = _server->GetBrokerSubSystem();
@@ -138,7 +139,29 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
 }
 
 void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
-    // ³¢ÊÔ³·µ¥
+    auto broker = _server->GetBrokerSubSystem();
+    if (req.params.size() == 0) { // å…¨éƒ¨
+        OrderList ol;
+        if (!broker->QueryOrders(ol)) {
+            res.status = 500;
+        }
+        else {
+            for (auto& item: ol) {
+                broker->CancelOrder({item._id});
+            }
+        }
+    } else {
+        auto itr = req.params.find("id");
+        if (itr == req.params.end()) {
+            res.status = 400;
+            res.set_content("{message: 'query must be `id`'}", "application/json");
+            return;
+        }
+        uint64_t id = atol(itr->second.c_str());
+        broker->CancelOrder({id});
+    }
+    res.status = 200;
+    res.set_content("{}", "application/json");
 }
 
 bool OrderHandler::BuyOrder(const std::string& symbol, double price, int number) {

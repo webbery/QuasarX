@@ -32,10 +32,11 @@ public:
   virtual uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) = 0;
 
   // 异步下单
-  virtual int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeInfo&)> cb) = 0;
+  virtual int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb) = 0;
   // 查询订单
   virtual bool QueryOrders(OrderList& ol) = 0;
   virtual int QueryOrder(uint32_t orderID, Order& order) = 0;
+  virtual void CancelOrder(order_id id) = 0;
 };
 
 enum class StatisticIndicator: char {
@@ -104,10 +105,11 @@ public:
 
     int Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
-    int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeInfo&)> cb);
+    int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 
     virtual bool QueryOrders(OrderList& ol);
     virtual int QueryOrder(uint32_t orderID, Order& order);
+    virtual void CancelOrder(order_id id);
 
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);

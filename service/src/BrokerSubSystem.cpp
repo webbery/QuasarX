@@ -75,7 +75,7 @@ bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType,
   if (config["type"] == "stock") {
     if (config.contains("commission")) {
       _stockCommission._min = config["commission"]["min"];
-      _stockCommission._fee = config["commission"]["fee"];
+      _stockCommission._ration = config["commission"]["fee"];
     }
   } else {
     WARN("commission is not set for type: {}", String(config["type"]));
@@ -178,6 +178,11 @@ bool BrokerSubSystem::QueryOrders(OrderList& ol)
 int BrokerSubSystem::QueryOrder(uint32_t orderID, Order& order)
 {
     return 0;
+}
+
+void BrokerSubSystem::CancelOrder(order_id id) {
+    auto exchange = _server->GetAvaliableStockExchange();
+    exchange->CancelOrder(id);
 }
 
 uint32_t BrokerSubSystem::Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) {
@@ -433,11 +438,12 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     return order_id{ 0 };
 }
 
-int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeInfo&)> cb)
+int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
     GET_SYMBOL(ctx) = symbol;
+    ctx->_callback = cb;
     auto id = AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
@@ -620,7 +626,7 @@ double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principa
 
   auto number = order._volume;
   if (number == 0) {
-    auto lower_total_price = _stockCommission._min / _stockCommission._fee;
+    auto lower_total_price = _stockCommission._min / _stockCommission._ration;
     number = ceil(lower_total_price / order._order[0]._price);
   }
   int count = number;

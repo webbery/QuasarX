@@ -5,6 +5,7 @@
 #include "DataFrame/DataFrameTypes.h"
 #include "boost/math/tools/bivariate_statistics.hpp"
 #include "DataFrame/DataFrameFinancialVisitors.h"
+#include "Util/string_algorithm.h"
 
 nlohmann::json order2json(const Order& item)
 {
@@ -42,7 +43,7 @@ nlohmann::json order2json(const Order& item)
 }
 
 String to_sse_string(const TradeReport& report) {
-    String str("trade_report:");
+    String str;
     switch (report._status) {
     case OrderStatus::OrderAccept:
         str += "order_accept";
@@ -67,7 +68,7 @@ String to_sse_string(const TradeReport& report) {
         str += "unknow";
     break;
     }
-    return str;
+    return format_sse("trade_report", {{String("status"), str}});
 }
 
 bool DataGroup::IsValid() {

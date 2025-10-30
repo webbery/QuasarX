@@ -321,6 +321,7 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
         auto ctx = value.second.second;
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
+        delete ctx;
       });
     if (report._status == OrderStatus::CancelSuccess) {
         _orders.erase(id._id);
@@ -472,7 +473,30 @@ QuoteInfo HXExchange::GetQuote(symbol_t symbol){
     return info;
 }
 
-Commission HXExchange::GetCommission(symbol_t symbol) {
+bool HXExchange::GetCommission(symbol_t symbol, List<Commission>& comms) {
+    auto reqID = ++_reqID;
+    Commission comm;
+    memset(&comm, 0, sizeof(comm));
+    if (is_stock(symbol)) {
+        auto promise =  initPromise<TORASTOCKAPI::CTORATstpInvestorTradingFeeField>(reqID);
+
+        TORASTOCKAPI::CTORATstpQryTradingFeeField fee;
+        memset(&fee, 0, sizeof(fee));
+        _tradeAPI->ReqQryTradingFee(&fee, reqID);
+
+        std::future<TORASTOCKAPI::CTORATstpInvestorTradingFeeField> fut;
+        if (!getFuture(promise, fut)) {
+            return false;
+        }
+
+        auto field = fut.get();
+        comm._status = 1;
+        comms.emplace_back(std::move(comm));
+        return true;
+    }
+    
+    
+    // _tradeAPI->ReqQryRationalInfo(, reqID);
   return {};
 }
 

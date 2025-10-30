@@ -40,7 +40,7 @@ public:
 
     QuoteInfo GetQuote(symbol_t symbol);
 
-    const Commission& GetCommission(const symbol_t& symbol);
+    virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
     /**
      * @brief 更新手续费
      * 
@@ -48,7 +48,6 @@ public:
     void UpdateCommission();
 
     virtual double GetAvailableFunds();
-    virtual Commission GetCommission(symbol_t symbol);
 private:
     CThostFtdcMdApi* _pUserMdApi;
     CThostFtdcTraderApi* _pUserTradeApi;

@@ -47,11 +47,15 @@ struct ExchangeInfo {
 // 交易手续费
 struct alignas(8) Commission {
 public:
+    bool _status: 1; // 是否有效
     /// 买卖方向
     bool _direction: 1;
+    // 费率类型: 0-按金额收取比例 1-按面值收取比例 2-按笔收取金额
+    char _type: 6;
     float _stamp;
     float _min;
-    double _fee;
+    double _max;
+    double _ration;
 };
 
 struct order_id {
@@ -160,7 +164,7 @@ public:
 
   virtual QuoteInfo GetQuote(symbol_t symbol) = 0;
 
-  virtual Commission GetCommission(symbol_t symbol) = 0;
+  virtual bool GetCommission(symbol_t symbol, List<Commission>& comms) = 0;
 
   Server* GetHandle() { return _server; }
 

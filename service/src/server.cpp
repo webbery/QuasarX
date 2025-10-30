@@ -874,7 +874,7 @@ void Server::TimerWorker(nng_socket sock) {
     if (get_system_status(status)) {
         double cpu = status["cpu"];
         double mem = status["mem"];
-        String info = format_sse("system_status", { {"cpu", cpu}, {"mem", mem})；
+        String info = format_sse("system_status", { {"cpu", std::to_string(cpu)}, {"mem", std::to_string(mem)}});
         nng_send(sock, info.data(), info.size(), 0);
     }
 #endif

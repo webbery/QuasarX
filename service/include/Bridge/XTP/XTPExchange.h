@@ -49,7 +49,7 @@ public:
   void StopQuery();
   
   virtual double GetAvailableFunds();
-    virtual Commission GetCommission(symbol_t symbol);
+    virtual bool GetCommission(symbol_t symbol, List<Commission>& );
 private:
   bool _requested: 1;
   bool _login_status: 1;

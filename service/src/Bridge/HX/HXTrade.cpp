@@ -21,19 +21,19 @@ namespace {
         {
         case TORASTOCKAPI::TORA_TSTP_OST_Unknown:
             break;
-        case TORASTOCKAPI::TORA_TSTP_OST_Accepted://交易所已接收
+        case TORASTOCKAPI::TORA_TSTP_OST_Accepted://浜ゆ槗鎵�宸叉帴鏀?
             return OrderStatus::OrderAccept;
-        case TORASTOCKAPI::TORA_TSTP_OST_PartTraded://部分成交
+        case TORASTOCKAPI::TORA_TSTP_OST_PartTraded://閮ㄥ垎鎴愪氦
             return OrderStatus::OrderPartSuccess;
-        case TORASTOCKAPI::TORA_TSTP_OST_AllTraded://全部成交
+        case TORASTOCKAPI::TORA_TSTP_OST_AllTraded://鍏ㄩ儴鎴愪氦
             return OrderStatus::OrderSuccess;
-        case TORASTOCKAPI::TORA_TSTP_OST_PartTradeCanceled://部成部撤
+        case TORASTOCKAPI::TORA_TSTP_OST_PartTradeCanceled://閮ㄦ垚閮ㄦ挙
             return OrderStatus::PartSuccessCancel;
-        case TORASTOCKAPI::TORA_TSTP_OST_AllCanceled://全部撤单
+        case TORASTOCKAPI::TORA_TSTP_OST_AllCanceled://鍏ㄩ儴鎾ゅ崟
             return OrderStatus::CancelSuccess;
-        case TORASTOCKAPI::TORA_TSTP_OST_Rejected://交易所已拒绝
+        case TORASTOCKAPI::TORA_TSTP_OST_Rejected://浜ゆ槗鎵�宸叉嫆缁?
             return OrderStatus::OrderReject;
-        case TORASTOCKAPI::TORA_TSTP_OST_SendTradeEngine://发往交易核心
+        case TORASTOCKAPI::TORA_TSTP_OST_SendTradeEngine://鍙戝線浜ゆ槗鏍稿績
             break;
         default:
             break;
@@ -89,7 +89,7 @@ void HXTrade::OnRspError(TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int
 void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
     order_id id{ static_cast<uint64_t>(nRequestID) };
     TradeReport report;
-    if (pRspInfoField->ErrorID == 0) {// 交易系统已接收报单
+    if (pRspInfoField->ErrorID == 0) {// 浜ゆ槗绯荤粺宸叉帴鏀舵姤鍗?
         _investor = pInputOrderField->InvestorID;
         LOG("Order {} accept", nRequestID);
         report._status = OrderStatus::OrderAccept;
@@ -97,7 +97,7 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     }
     else {
         LOG("Order {} reject", nRequestID);
-        // 交易系统拒绝报单
+        // 浜ゆ槗绯荤粺鎷掔粷鎶ュ崟
         report._status = OrderStatus::OrderReject;
         _exchange->OnOrderReport(id, report);
     }
@@ -127,7 +127,7 @@ void HXTrade::OnRspOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField *pIn
     order_id id{ static_cast<uint64_t>(pInputOrderActionField->OrderRef)};
     TradeReport report;
     if (pRspInfoField && pRspInfoField->ErrorID == 0) {
-        // 取消成功
+        // 鍙栨秷鎴愬姛
         report._status = OrderStatus::CancelSuccess;
         _exchange->OnOrderReport(id, report);
     } else {
@@ -222,5 +222,16 @@ void HXTrade::OnRspQryTradingFee(TORASTOCKAPI::CTORATstpTradingFeeField *pTradin
 }
     
 void HXTrade::OnRspQryInvestorTradingFee(TORASTOCKAPI::CTORATstpInvestorTradingFeeField *pInvestorTradingFeeField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {
+    if (pRspInfoField && pRspInfoField->ErrorID == 0) {
+        if (!bIsLast) {
 
+        } else {
+            INIT_PROMISE(TORASTOCKAPI::CTORATstpInvestorTradingFeeField);
+            if (!pInvestorTradingFeeField) {
+                LOG("get commission fail");
+                return;
+            }
+            SET_PROMISE(*pInvestorTradingFeeField);
+        }
+    }
 } 
