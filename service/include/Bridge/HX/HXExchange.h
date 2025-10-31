@@ -39,7 +39,7 @@ public:
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
 
-    virtual bool CancelOrder(order_id id);
+    virtual bool CancelOrder(order_id id, OrderContext* order);
     // 获取当前尚未完成的所有订单
     virtual bool GetOrders(OrderList& ol);
 
@@ -98,4 +98,6 @@ private:
 
     std::mutex _mutex;
     std::unordered_map<uint32_t, std::shared_ptr<void>> _promises;
+
+    Map<symbol_t, Set<Commission*>> _commissions;
 };

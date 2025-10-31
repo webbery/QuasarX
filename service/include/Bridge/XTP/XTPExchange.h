@@ -33,7 +33,7 @@ public:
 
   void OnOrderReport(order_id id, const TradeReport& report);
 
-  bool CancelOrder(order_id id);
+  bool CancelOrder(order_id id, OrderContext* order);
   
   virtual bool GetOrders(OrderList& ol);
 

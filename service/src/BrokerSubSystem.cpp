@@ -180,9 +180,11 @@ int BrokerSubSystem::QueryOrder(uint32_t orderID, Order& order)
     return 0;
 }
 
-void BrokerSubSystem::CancelOrder(order_id id) {
+void BrokerSubSystem::CancelOrder(order_id id, std::function<void (const TradeReport&)> cb) {
     auto exchange = _server->GetAvaliableStockExchange();
-    exchange->CancelOrder(id);
+    OrderContext* ctx = new OrderContext;
+    ctx->_callback = cb;
+    exchange->CancelOrder(id, ctx);
 }
 
 uint32_t BrokerSubSystem::Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) {

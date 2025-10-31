@@ -104,7 +104,7 @@ void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
         });
 }
 
-bool StockSimulation::CancelOrder(order_id id){
+bool StockSimulation::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 

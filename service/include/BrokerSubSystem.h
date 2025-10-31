@@ -14,30 +14,30 @@
 #include "PortfolioSubsystem.h"
 #include <boost/lockfree/queue.hpp>
 
-class Broker {
-public:
-  virtual ~Broker() {}
+// class Broker {
+// public:
+//   virtual ~Broker() {}
 
-  virtual int Buy(const String& strategy, symbol_t, const Order& order, TradeInfo& detail) = 0;
+//   virtual int Buy(const String& strategy, symbol_t, const Order& order, TradeInfo& detail) = 0;
 
-  virtual int Sell(const String& strategy, symbol_t, const Order& order, TradeInfo& detail) = 0;
+//   virtual int Sell(const String& strategy, symbol_t, const Order& order, TradeInfo& detail) = 0;
 
-  virtual double Put(symbol_t, const Order& order)  {return 0; }
+//   virtual double Put(symbol_t, const Order& order)  {return 0; }
 
-  virtual double Call(symbol_t, const Order& order) { return 0; }
+//   virtual double Call(symbol_t, const Order& order) { return 0; }
 
-  // 行权
-  virtual int Exercise(symbol_t, const Order& order, TradeInfo& info) { return 0; }
+//   // 行权
+//   virtual int Exercise(symbol_t, const Order& order, TradeInfo& info) { return 0; }
 
-  virtual uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) = 0;
+//   virtual uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) = 0;
 
-  // 异步下单
-  virtual int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb) = 0;
-  // 查询订单
-  virtual bool QueryOrders(OrderList& ol) = 0;
-  virtual int QueryOrder(uint32_t orderID, Order& order) = 0;
-  virtual void CancelOrder(order_id id) = 0;
-};
+//   // 异步下单
+//   virtual int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb) = 0;
+//   // 查询订单
+//   virtual bool QueryOrders(OrderList& ol) = 0;
+//   virtual int QueryOrder(uint32_t orderID, Order& order) = 0;
+//   virtual void CancelOrder(order_id id) = 0;
+// };
 
 enum class StatisticIndicator: char {
   VaR,
@@ -84,7 +84,7 @@ public:
   virtual double GetCommission(symbol_t symbol, int64_t size) { return 0; }
 };
 
-class BrokerSubSystem : public Broker {
+class BrokerSubSystem {
 public:
     using predictions_t = List<Pair<fixed_time_range, int>>;
 
@@ -109,7 +109,7 @@ public:
 
     virtual bool QueryOrders(OrderList& ol);
     virtual int QueryOrder(uint32_t orderID, Order& order);
-    virtual void CancelOrder(order_id id);
+    virtual void CancelOrder(order_id id, std::function<void (const TradeReport&)> cb);
 
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);

@@ -122,8 +122,10 @@ ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
   if (quote_info.size() > 1) {
     handle._quote_port = atoi(quote_info[1].c_str());
   }
-  auto account = config.GetAccountName();
-  auto accpwd = config.GetAccountPassword();
+  auto accounts = config.GetStockAccounts();
+  assert(accounts.size() > 0);
+  auto account = accounts.front().first;
+  auto accpwd = accounts.front().second;
   strcpy(handle._account, account.c_str());
   strcpy(handle._accpwd, accpwd.c_str());
   handle._localPort = config.GetPort();

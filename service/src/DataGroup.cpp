@@ -42,33 +42,37 @@ nlohmann::json order2json(const Order& item)
     return order;
 }
 
-String to_sse_string(const TradeReport& report) {
+String to_sse_string(symbol_t symbol, const TradeReport& report) {
     String str;
+    Map<String, String> info;
+    info["symbol"] = get_symbol(symbol);
     switch (report._status) {
     case OrderStatus::OrderAccept:
-        str += "order_accept";
+        info["status"] = "order_accept";
     break;
     case OrderStatus::OrderReject:
-        str += "order_reject";
+        info["status"] = "order_reject";
     break;
     case OrderStatus::OrderSuccess:
-    // 状态 id 交易数量 交易价格
-        str += "order_success " + String(report._exec_id) + " " + std::to_string(report._quantity) + " " + std::to_string(report._price);
+        info["status"] = "order_success";
+        // info["symbol"] = std::to_string(report._);
+        info["price"] = std::to_string(report._price);
+        info["quantity"] = std::to_string(report._quantity);
     break;
     case OrderStatus::OrderFail:
-        str += "order_fail";
+        info["status"] = "order_fail";
     break;
     case OrderStatus::CancelSuccess:
-        str += "cancel_success";
+        info["status"] = "cancel_success";
     break;
     case OrderStatus::CancelFail:
-        str += "cancel_fail";
+        info["status"] = "cancel_fail";
     break;
     default:
-        str += "unknow";
+        info["status"] = "unknow";
     break;
     }
-    return format_sse("trade_report", {{String("status"), str}});
+    return format_sse("trade_report", info);
 }
 
 bool DataGroup::IsValid() {

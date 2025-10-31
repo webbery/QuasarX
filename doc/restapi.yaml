@@ -646,6 +646,19 @@ paths:
                   funds:
                     type: number
                     description: 用户当前的可用资金
+  /user/account:
+    post:
+      summary: switch account
+      description: 切换账户/备用账户
+    get:
+      summary: get account
+      description: 获取账户/备用账户
+    put:
+      summary: add account
+      description: 添加账户/备用账户
+    delete:
+      summary: delete account
+      description: 删除账户/备用账户
   /trade/order:
     post:
       summary: trade

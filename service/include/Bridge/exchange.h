@@ -47,11 +47,12 @@ struct ExchangeInfo {
 // 交易手续费
 struct alignas(8) Commission {
 public:
+    bool _valid: 1;   
     bool _status: 1; // 是否有效
     /// 买卖方向
     bool _direction: 1;
     // 费率类型: 0-按金额收取比例 1-按面值收取比例 2-按笔收取金额
-    char _type: 6;
+    char _type: 5;
     float _stamp;
     float _min;
     double _max;
@@ -154,7 +155,7 @@ public:
 
   virtual void OnOrderReport(order_id id, const TradeReport& report) = 0;
 
-  virtual bool CancelOrder(order_id id) = 0;
+  virtual bool CancelOrder(order_id id, OrderContext* order) = 0;
   // 获取当前尚未完成的所有订单
   virtual bool GetOrders(OrderList& ol) = 0;
 

@@ -141,7 +141,7 @@ void CTPExchange::OnOrderReport(order_id id, const TradeReport& report) {
 
 }
 
-bool CTPExchange::CancelOrder(order_id id){
+bool CTPExchange::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 

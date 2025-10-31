@@ -100,7 +100,7 @@
     <div class="category">
         <div class="category-title" @click="toggleCategory('operation')">
             <i class="fas fa-calculator"></i>
-            <span>公式节点</span>
+            <span>其他节点</span>
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.operation }"></i>
         </div>
         <div v-show="openCategories.operation">

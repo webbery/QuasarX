@@ -5,6 +5,7 @@
 #include "Util/string_algorithm.h"
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <tuple>
 #include "BrokerSubSystem.h"
 
@@ -52,6 +53,17 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
     List<double> prices = params["price"];
+    auto lambda_sendResult = [symbol, this](const TradeReport& report) {
+        auto tid = std::this_thread::get_id();
+        if (_sockets.count(tid) == 0) {
+            nng_socket sock;
+            Publish(URI_SERVER_EVENT, sock);
+            _sockets[tid] = sock;
+        }
+        auto sock = _sockets[tid];
+        auto info = to_sse_string(symbol, report);
+        nng_send(sock, info.data(), info.size(), 0);
+    };
     if (direct == 0) {
         auto broker = _server->GetBrokerSubSystem();
 
@@ -62,17 +74,11 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._type = GetOrderType(params);
         auto itr = prices.begin();
         for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-        order._order[i]._price = *itr;
-        ++itr;
+            order._order[i]._price = *itr;
+            ++itr;
         }
 
-        auto id = broker->Buy("", symbol, order, [](const TradeReport& report) {
-            auto info = to_sse_string(report);
-            nng_socket sock;
-            Publish(URI_SERVER_EVENT, sock);
-            nng_send(sock, info.data(), info.size(), 0);
-            nng_close(sock);
-        });
+        auto id = broker->Buy("", symbol, order, lambda_sendResult);
         
         nlohmann::json result;
         result["id"] = id;
@@ -80,7 +86,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     }
     else if (direct == 1) {
         Order order;
-        order._side = 1;
+        order._side = true;
         order._volume = quantity;
         order._time = Now();
         order._type = GetOrderType(params);
@@ -91,13 +97,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         }
         auto broker = _server->GetBrokerSubSystem();
         TradeInfo trades;
-        auto id = broker->Sell("", symbol, order, [](const TradeReport& report) {
-            auto info = to_sse_string(report);
-            nng_socket sock;
-            Publish(URI_SERVER_EVENT, sock);
-            nng_send(sock, info.data(), info.size(), 0);
-            nng_close(sock);
-        });
+        auto id = broker->Sell("", symbol, order, lambda_sendResult);
         
         nlohmann::json result;
         result["id"] = id;
@@ -140,6 +140,17 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
 
 void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
     auto broker = _server->GetBrokerSubSystem();
+    auto lambda_sendReport = [this] (const TradeReport& report) {
+        auto tid = std::this_thread::get_id();
+        if (_sockets.count(tid) == 0) {
+            nng_socket sock;
+            Publish(URI_SERVER_EVENT, sock);
+            _sockets[tid] = sock;
+        }
+        // auto sock = _sockets[tid];
+        // auto info = to_sse_string(symbol, report);
+        // nng_send(sock, info.data(), info.size(), 0);
+    };
     if (req.params.size() == 0) { // 全部
         OrderList ol;
         if (!broker->QueryOrders(ol)) {
@@ -147,7 +158,7 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
         }
         else {
             for (auto& item: ol) {
-                broker->CancelOrder({item._id});
+                broker->CancelOrder({item._id}, lambda_sendReport);
             }
         }
     } else {
@@ -158,7 +169,7 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             return;
         }
         uint64_t id = atol(itr->second.c_str());
-        broker->CancelOrder({id});
+        broker->CancelOrder({id}, lambda_sendReport);
     }
     res.status = 200;
     res.set_content("{}", "application/json");

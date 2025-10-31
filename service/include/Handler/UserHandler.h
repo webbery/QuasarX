@@ -50,3 +50,16 @@ public:
 
 private:
 };
+
+class AccountHandler: public HttpHandler {
+public:
+    AccountHandler(Server* server);
+    // 获取当前可用帐号
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+    // 切换帐号
+    virtual void post(const httplib::Request& req, httplib::Response& res);
+    // 添加新帐号
+    virtual void put(const httplib::Request& req, httplib::Response& res);
+    // 删除帐号
+    virtual void del(const httplib::Request& req, httplib::Response& res);
+};

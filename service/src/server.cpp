@@ -22,7 +22,6 @@
 #include <nng/protocol/reqrep0/rep.h>
 #include <nng/protocol/reqrep0/req.h>
 #include <nng/supplemental/util/platform.h>
-#include "Handler/AccountHandler.h"
 #include "Handler/AssetHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/StrategyHandler.h"

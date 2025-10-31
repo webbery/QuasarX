@@ -328,14 +328,16 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
     }
 }
 
-bool HXExchange::CancelOrder(order_id id){
+bool HXExchange::CancelOrder(order_id id, OrderContext* order){
     auto reqID = ++_reqID;
     _orders.visit(id._id, [reqID, this](concurrent_order_map::value_type& value) {
         auto ctx = value.second.second;
 
         TORASTOCKAPI::CTORATstpInputOrderActionField pInputOrderActionField;
         memset(&pInputOrderActionField, 0, sizeof(TORASTOCKAPI::CTORATstpInputOrderActionField));
-
+        pInputOrderActionField.ExchangeID = toExchangeID((ExchangeName)ctx->_order._symbol._exchange);
+		pInputOrderActionField.ActionFlag = TORASTOCKAPI::TORA_TSTP_AF_Delete;
+		// strcpy(pInputOrderActionField.OrderSysID, id._id);
         _tradeAPI->ReqOrderAction(&pInputOrderActionField, reqID);
     });
 
@@ -474,9 +476,15 @@ QuoteInfo HXExchange::GetQuote(symbol_t symbol){
 }
 
 bool HXExchange::GetCommission(symbol_t symbol, List<Commission>& comms) {
+    if (_commissions.count(symbol)) {
+        for (auto p: _commissions[symbol]) {
+            comms.push_back(*p);
+        }
+        return true;
+    }
     auto reqID = ++_reqID;
-    Commission comm;
-    memset(&comm, 0, sizeof(comm));
+    Commission* comm = new Commission;
+    memset(comm, 0, sizeof(Commission));
     if (is_stock(symbol)) {
         auto promise =  initPromise<TORASTOCKAPI::CTORATstpInvestorTradingFeeField>(reqID);
 
@@ -490,14 +498,16 @@ bool HXExchange::GetCommission(symbol_t symbol, List<Commission>& comms) {
         }
 
         auto field = fut.get();
-        comm._status = 1;
-        comms.emplace_back(std::move(comm));
+        comm->_status = 1;
+        comms.emplace_back(*comm);
+
+        _commissions[symbol].insert(comm);
         return true;
     }
     
     
     // _tradeAPI->ReqQryRationalInfo(, reqID);
-  return {};
+  return false;
 }
 
 double HXExchange::GetAvailableFunds()

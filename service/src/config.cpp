@@ -243,20 +243,40 @@ void ServerConfig::SetTradeDays(short days) {
     _config["server"]["default"]["trade_days"] = days;
 }
 
-String ServerConfig::GetAccountName()
-{
+std::list<std::pair<std::string, std::string>> ServerConfig::GetStockAccounts() {
     auto& accounts = _config["server"]["accounts"];
-    auto& account = accounts.front();
-    String name = account["n"];
-    return name;
+    Vector<std::pair<std::string, std::string>> container(accounts.size());
+    for (auto& item: accounts) {
+        String type = item["t"];
+        if (type != "stock")
+            continue;
+
+        String name = item["n"];
+        String pwd = item["p"];
+        int index = item["i"];
+        container[index] = std::move(make_pair(name, pwd));
+    }
+    return {container.begin(), container.end()};
 }
 
-String ServerConfig::GetAccountPassword()
-{
+void ServerConfig::DeleteStockAccount(const std::string& name) {
     auto& accounts = _config["server"]["accounts"];
-    auto& account = accounts.front();
-    String pwd = account["p"];
-    return pwd;
+    for (auto itr = accounts.begin(); itr != accounts.end(); ++itr) {
+        if ((*itr)["n"] == name) {
+            accounts.erase(itr);
+            break;
+        }
+    }
+}
+
+void ServerConfig::AddStockAccount(const std::string& name, const std::string& pwd) {
+    auto& accounts = _config["server"]["accounts"];
+    nlohmann::json acc;
+    acc["n"] = name;
+    acc["p"] = pwd;
+    acc["t"] = "stock";
+    acc["i"] = accounts.size();
+    accounts.emplace_back(std::move(acc));
 }
 
 void ServerConfig::Init()

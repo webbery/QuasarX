@@ -1,6 +1,7 @@
 #include "json.hpp"
 #include <cstdint>
 #include <utility>
+#include <list>
 #define DATA_PATH   "data"
 
 class ServerConfig {
@@ -56,8 +57,10 @@ public:
   short GetTradeDays();
   void SetTradeDays(short days);
 
-  std::string GetAccountName();
-  std::string GetAccountPassword();
+  std::list<std::pair<std::string, std::string>> GetStockAccounts();
+  void DeleteStockAccount(const std::string& name);
+  void AddStockAccount(const std::string& name, const std::string& pwd);
+
 private:
     void Init();
 

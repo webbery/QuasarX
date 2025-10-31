@@ -93,7 +93,7 @@ struct TradeReport {
     // YAS_DEFINE_STRUCT_SERIALIZE("DealDetail", _number, _status, _price, _time);
 };
 
-String to_sse_string(const TradeReport&);
+String to_sse_string(symbol_t symbol, const TradeReport&);
 
 struct TradeInfo {
     symbol_t _symbol;

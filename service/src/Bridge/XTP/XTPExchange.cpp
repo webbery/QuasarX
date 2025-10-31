@@ -314,7 +314,7 @@ void XTPExchange::OnOrderReport(order_id id, const TradeReport& report) {
       });
 }
 
-bool XTPExchange::CancelOrder(order_id id) {
+bool XTPExchange::CancelOrder(order_id id, OrderContext* order) {
   uint64_t order_id = id._id;
   auto cancel_id = m_pTradeApi->CancelOrder(order_id, m_session);
   if (cancel_id == 0)

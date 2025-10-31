@@ -344,3 +344,28 @@ void UserFundHandler::get(const httplib::Request& req, httplib::Response& res)
     res.status = 200;
     res.set_content(result.dump(), "application/json");
 }
+
+AccountHandler::AccountHandler(Server* server):HttpHandler(server) {
+
+}
+
+void AccountHandler::get(const httplib::Request& req, httplib::Response& res) {
+    auto config = _server->GetConfig();
+    auto accounts = config.GetStockAccounts();
+    nlohmann::json result;
+    for (auto& item: accounts) {
+        result.push_back({item.first, item.second});
+    }
+    res.status = 200;
+    res.set_content(result.dump(), "application/json");
+}
+
+void AccountHandler::post(const httplib::Request& req, httplib::Response& res) {
+    
+}
+void AccountHandler::del(const httplib::Request& req, httplib::Response& res) {
+    
+}
+void AccountHandler::put(const httplib::Request& req, httplib::Response& res) {
+    
+}
