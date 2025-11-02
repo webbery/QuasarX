@@ -1,6 +1,7 @@
 #include "Bridge/HX/HXTrade.h"
 #include "Bridge/exchange.h"
 #include "Bridge/HX/HXExchange.h"
+#include "Util/string_algorithm.h"
 
 #define INIT_PROMISE(type) \
 auto itr = _exchange->_promises.find(nRequestID);\
@@ -48,6 +49,7 @@ namespace {
         position._holds = field.CurrentPosition;
         position._validHolds = field.AvailablePosition;
         position._price = field.HistoryPosPrice;
+        position._curPrice = field.OpenPosCost;
         return position;
     }
 }
@@ -96,8 +98,7 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
         _exchange->OnOrderReport(id, report);
     }
     else {
-        LOG("Order {} reject", nRequestID);
-        // 交易系统拒绝报单
+        LOG("Order {} reject: {}", nRequestID, to_utf8(pRspInfoField->ErrorMsg));
         report._status = OrderStatus::OrderReject;
         _exchange->OnOrderReport(id, report);
     }
@@ -106,6 +107,7 @@ void HXTrade::OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField) {
     order_id id{ static_cast<uint64_t>(pOrderField->OrderRef) };
     TradeReport report;
     report._status = toOrderStatus(pOrderField->OrderStatus);
+    INFO("order status: {}", (int)report._status);
     if (report._status != OrderStatus::OrderUnknow) {
         _exchange->OnOrderReport(id, report);
     }
@@ -173,24 +175,32 @@ void HXTrade::OnRspQryTradingAccount(TORASTOCKAPI::CTORATstpTradingAccountField*
 
 void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)
 {
-    PromisePtr<TORASTOCKAPI::CTORATstpOrderField> prom = static_pointer_cast<std::promise<TORASTOCKAPI::CTORATstpOrderField>>(_exchange->_promises[nRequestID]);
-    _exchange->_promises.erase(nRequestID);
-    if (pOrderField && pRspInfoField->ErrorID == 0) {
-        Order order;
-        order._status = toOrderStatus(pOrderField->OrderStatus);
-        order._side = pOrderField->Direction;
-        order._volume = pOrderField->VolumeTraded;
-        order._order[0]._price = pOrderField->LimitPrice;
-        order._symbol = to_symbol(pOrderField->SecurityID);
-        _orders.emplace_back(std::move(order));
-        if (bIsLast) {
-            prom->set_value(*pOrderField);
+    INIT_PROMISE(TORASTOCKAPI::CTORATstpOrderField);
+    if (pRspInfoField->ErrorID == 0) {
+        if (pOrderField) {
+            Order order;
+            order._status = toOrderStatus(pOrderField->OrderStatus);
+            order._side = pOrderField->Direction;
+            order._volume = pOrderField->VolumeTraded;
+            order._order[0]._price = pOrderField->LimitPrice;
+            order._symbol = to_symbol(pOrderField->SecurityID);
+            order._id = pOrderField->RequestID;
+            //order._type = 
+            _orders.emplace_back(std::move(order));
         }
+        //if (bIsLast) {
+            if (pOrderField) {
+                SET_PROMISE(*pOrderField);
+            }
+            else {
+                prom->set_exception(std::make_exception_ptr(std::runtime_error("query order empty.")));
+            }
+        //}
     }
     else {
         LOG("query order fail");
         if (bIsLast) {
-            prom->set_exception(std::current_exception());
+            prom->set_exception(std::make_exception_ptr(std::runtime_error("query order fail.")));
         }
     }
 }
@@ -199,7 +209,7 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
     if (bIsLast) {
         INIT_PROMISE(bool);
         if (pRspInfoField->ErrorID != 0) {
-            prom->set_exception(std::current_exception());
+            prom->set_exception(std::make_exception_ptr(std::runtime_error("query position fail.")));
             return;
         }
         if (pPositionField) {

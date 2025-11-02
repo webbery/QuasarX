@@ -650,15 +650,23 @@ paths:
     post:
       summary: switch account
       description: 切换账户/备用账户
+      tags:
+        - User
     get:
       summary: get account
       description: 获取账户/备用账户
+      tags:
+        - User
     put:
       summary: add account
       description: 添加账户/备用账户
+      tags:
+        - User
     delete:
       summary: delete account
       description: 删除账户/备用账户
+      tags:
+        - User
   /trade/order:
     post:
       summary: trade
@@ -681,6 +689,8 @@ paths:
                 $ref: "#/components/schemas/TradeOrderResponse"
         '401':
           description: 频繁交易限制,失败
+        '402':
+          description: 价格超过涨停板限制,失败
     get:
       summary: trade
       description: 获取下单状态信息

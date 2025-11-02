@@ -2,7 +2,6 @@
     <div class="panel-section">
         <div class="panel-title">
           <h3><i class="fas fa-radiation"></i> 风险指标</h3>
-          <span>当前持仓</span>
         </div>
 
         <div class="stats-grid">
@@ -32,7 +31,6 @@
       <div class="panel-section">
         <div class="panel-title">
           <h3><i class="fas fa-exclamation-triangle"></i> 压力测试结果</h3>
-          <span>最新</span>
         </div>
 
         <div class="stats-grid">

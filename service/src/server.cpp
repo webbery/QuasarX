@@ -877,6 +877,21 @@ void Server::TimerWorker(nng_socket sock) {
         nng_send(sock, info.data(), info.size(), 0);
     }
 #endif
+    // 更新持仓
+    auto broker = GetAvaliableStockExchange();
+    AccountPosition ap;
+    broker->GetPosition(ap);
+    for (auto& item : ap._positions) {
+        Map<String, String> data;
+        data["id"] = get_symbol(item._symbol);
+        data["price"] = std::to_string(item._price);
+        data["curPrice"] = std::to_string(item._curPrice);
+        data["name"] = to_utf8(item._name);
+        data["quantity"] = std::to_string(item._holds);
+        data["valid_quantity"] = std::to_string(item._validHolds);
+        String info = format_sse("update_position", data);
+        nng_send(sock, info.data(), info.size(), 0);
+    }
 }
 
 void Server::SendCloseFeatures() {

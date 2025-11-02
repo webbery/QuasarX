@@ -612,10 +612,10 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
     ctx->_callback = cb;
-    AddOrderAsync(ctx);
+    auto id = AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
-    return 0;
+    return id._id;
 }
 
 double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, TradeInfo& deal) {

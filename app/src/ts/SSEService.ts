@@ -96,7 +96,7 @@ class SSEService {
       this.messages.value.push(messageData)
       this.lastMessage.value = messageData
 
-      this.triggerHandlers(eventType, messageData)
+      this.triggerHandlers(eventType, message)
       // this.triggerHandlers('*', messageData)
 
       if (this.messages.value.length > 100) {
@@ -126,7 +126,7 @@ class SSEService {
     }
   }
 
-  private triggerHandlers(messageType: string, message: string) {
+  private triggerHandlers(messageType: string, message: SSEMessage) {
     const handlers = this.messageHandlers.get(messageType)
     if (handlers) {
       handlers.forEach(handler => {

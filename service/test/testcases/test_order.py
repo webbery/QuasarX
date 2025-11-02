@@ -20,7 +20,7 @@ class TestOrder:
     @pytest.mark.timeout(60)
     def test_order_buy(self, auth_token):
         kwargs = self.generate_args(auth_token)
-        params = {"symbol": self.stock_id, 'type': 0, 'quantity': 200, 'price': [1.0, 1.1, 1.2, 1.3, 1.4],
+        params = {"symbol": self.stock_id, 'type': 1, 'quantity': 200, 'price': [11.0, 1.1, 1.2, 1.3, 1.4],
                   'direct': 0, 'kind': 0}
         response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
         data = check_response(response)
@@ -36,6 +36,7 @@ class TestOrder:
         response = requests.get(f"{BASE_URL}/trade/order", **kwargs)
         data = check_response(response)
         assert isinstance(data, list)
+        assert len(data) > 0
         for item in data:
             assert isinstance(item, object)
             assert "id" in item

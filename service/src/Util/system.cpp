@@ -724,9 +724,10 @@ size_t get_feature_id(const String& name, const nlohmann::json& params) {
   return h2;
 }
 
-double getMemoryInfo()
+std::pair<double, double> getMemoryInfo()
 {
     double memory_usage = 0;
+    double total_mem = 0;
 #ifdef __linux__
     String result;
     if (!RunCommand("free", result)) {
@@ -737,16 +738,17 @@ double getMemoryInfo()
     int lineNum = 0;
     while (std::getline(iss, line)) {
         lineNum++;
-        if (lineNum <= 2)
+        if (line.find("Mem:") == std::string::npos)
             continue;
 
         break;
     }
     Vector<String> info;
     split(line, info, " ");
-    memory_usage = std::stol(info[2]) * 1.0/std::stol(info[1]);
+    memory_usage = std::stol(info[2]);
+    total_mem = std::stol(info[1]);
 #endif
-    return memory_usage;
+    return std::make_pair(memory_usage, total_mem);
 }
 
 bool get_system_status(nlohmann::json&  status) {

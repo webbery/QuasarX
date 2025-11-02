@@ -264,6 +264,11 @@ bool HXExchange::GetPosition(AccountPosition& ap){
     if (!getFuture(promise, fut)) {
         return false;
     }
+    // 更新当前价格
+    for (auto& item : positions) {
+        auto qt = _quote->GetQuote(item._symbol);
+        item._curPrice = qt._askPrice[0];
+    }
     ap._positions = std::move(positions);
     return true;
 }
@@ -309,6 +314,7 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     _tradeAPI->ReqOrderInsert(order, oid._id);
 
     ctx->_order._symbol = symbol;
+    ctx->_order._id = oid._id;
     auto pr = std::make_pair(order, ctx);
     _orders.emplace(oid._id, std::move(pr));
     return oid;
@@ -321,7 +327,7 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
         auto ctx = value.second.second;
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
-        delete ctx;
+        //delete ctx;
       });
     if (report._status == OrderStatus::CancelSuccess) {
         _orders.erase(id._id);
@@ -354,24 +360,20 @@ bool HXExchange::GetOrders(OrderList& ol){
 
     TORASTOCKAPI::CTORATstpQryOrderField qry_orders;
     memset(&qry_orders, 0, sizeof(qry_orders));
-    
+    qry_orders.IInfo = INT_NULL_VAL;
+    qry_orders.IsCancel = INT_NULL_VAL;
+    strcpy(qry_orders.InvestorID, _account.c_str());
     int ret = _tradeAPI->ReqQryOrder(&qry_orders, reqID);
     if (ret != 0) {
         return false;
     }
 
-    try {
-        auto fut = promise->get_future();
-        auto status = fut.wait_for(std::chrono::seconds(10));
-        if (status == std::future_status::timeout) {
-            return false;
-        }
-        ol = std::move(orders);
-    }
-    catch (const std::exception& e) {
+    std::future<TORASTOCKAPI::CTORATstpOrderField> fut;
+    if (!getFuture(promise, fut)) {
         return false;
     }
-    
+
+    ol = std::move(orders);
     return true;
 }
 

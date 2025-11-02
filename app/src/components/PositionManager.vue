@@ -67,7 +67,8 @@
             <!-- 股票持仓 -->
             <div class="tab-pane" :class="{active: activeMarketTab === 'stock'}">
               <div class="pane-header">
-                <button class="btn btn-primary btn-small" @click="refreshStockPositions">刷新</button>
+                <span>总盈亏: {{  }}</span>
+                <button class="btn btn-warning" @click="handleStockCancel">一键撤单</button>
                 <button class="btn btn-secondary btn-small" @click="openNewStockOperation">新代码买入</button>
               </div>
               
@@ -352,10 +353,7 @@
                     <span>{{ order.code }} {{ order.name }}</span> | 
                     <span :class="getOrderTypeClass(order.type)">{{ getOrderTypeText(order.type) }}</span> | 
                     <span class="order-type-badge" :class="`order-type-${order.orderType}`">{{ getOrderTypeDisplayText(order.orderType) }}</span> |
-                    <span v-if="order.orderType === 'limit'">{{ order.price }} × {{ order.quantity }}</span>
-                    <span v-if="order.orderType === 'market'">市价 × {{ order.quantity }}</span>
-                    <span v-if="order.orderType === 'conditional'">触发:{{ order.triggerPrice }} 执行:{{ order.price }} × {{ order.quantity }}</span>
-                    <span v-if="order.orderType === 'stop'">止损:{{ order.stopPrice }} 执行:{{ order.price }} × {{ order.quantity }}</span>
+                    <span >{{ order.price }} × {{ order.quantity }}</span>
                   </div>
                   <div>
                     <span class="order-status" :class="`status-${order.status}`">
@@ -668,8 +666,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, reactive, onUnmounted } from 'vue'
 import axios from 'axios';
+import { ref, computed, onMounted, reactive, onUnmounted } from 'vue'
 import sseService from '@/ts/SSEService';
 import { message } from '@/tool';
 
@@ -677,10 +675,7 @@ import { message } from '@/tool';
 const activeMarketTab = ref('stock');
 
 // 股票相关数据
-const stockPositions = ref([
-    { code: '000001', name: '平安银行', quantity: 1000, available: 800, costPrice: 15.20, currentPrice: 16.50, profit: 1300 },
-    { code: '600036', name: '招商银行', quantity: 500, available: 500, costPrice: 38.50, currentPrice: 40.20, profit: 850 }
-]);
+const stockPositions = ref([]);
 const selectedStock = ref(null);
 const stockOperationType = ref('');
 const capitalChecked = ref(false);
@@ -713,50 +708,7 @@ const newStockOrder = reactive({
     validityDate: '' // 指定日期
 });
 
-const stockOrders = ref([
-    { 
-        id: 1, 
-        code: '000001', 
-        name: '平安银行', 
-        type: 'buy', 
-        orderType: 'limit',
-        price: 16.30, 
-        quantity: 200, 
-        status: 'pending' 
-    },
-    { 
-        id: 2, 
-        code: '600036', 
-        name: '招商银行', 
-        type: 'sell', 
-        orderType: 'market',
-        price: 0, 
-        quantity: 100, 
-        status: 'filled' 
-    },
-    { 
-        id: 3, 
-        code: '000858', 
-        name: '五粮液', 
-        type: 'buy_margin', 
-        orderType: 'conditional',
-        price: 145.00, 
-        triggerPrice: 150.00,
-        quantity: 100, 
-        status: 'waiting' 
-    },
-    { 
-        id: 4, 
-        code: '600519', 
-        name: '贵州茅台', 
-        type: 'sell', 
-        orderType: 'stop',
-        price: 1800.00, 
-        stopPrice: 1750.00,
-        quantity: 50, 
-        status: 'waiting' 
-    }
-]);
+const stockOrders = ref([]);
 
 // 期权相关数据
 const optionPositions = ref([
@@ -946,18 +898,6 @@ const getOrderTypeDisplayText = (orderType) => {
 };
 
 // 方法
-const refreshStockPositions = async () => {
-  const positions = await axios.get('/v0/position')
-  // { code: '000001', name: '平安银行', quantity: 1000, available: 800, costPrice: 15.20, currentPrice: 16.50, profit: 1300 },
-  let array = []
-  for (const position of positions) {
-    array.push({
-      code: position.id,
-      name: position.name
-    })
-  }
-  stockPositions.value = array
-};
 
 const refreshOptionPositions = () => {
     showMessage('期权持仓已刷新', 'success');
@@ -1043,8 +983,8 @@ const placeNewStockOrder = async () => {
     }
     let type = 0;
     switch (newStockOrder.orderType) {
-      case 'limit': type = 0; break;
-      case 'market': type = 1; break;
+      case 'limit': type = 1; break;  // 限价单
+      case 'market': type = 0; break; // 市价单
       default: type = 0; break;
     }
     const order = {
@@ -1065,7 +1005,17 @@ const placeNewStockOrder = async () => {
     console.info('buy:', order)
     try{
       await axios.post('/v0/trade/order', order)
-      stockOrders.value.unshift(order);
+      let displayOrder = {
+        id: order.id, 
+        code: order.symbol, 
+        name: order.name, 
+        type: (direct === 0? 'buy': 'sell'), 
+        orderType: newStockOrder.orderType,
+        price: newStockOrder.price, 
+        quantity: newStockOrder.quantity, 
+        status: 'pending'
+      };
+      stockOrders.value.unshift(displayOrder);
       message.success('新代码买入订单提交成功');
       closeNewStockOperation();
     } catch (error) {
@@ -1303,15 +1253,111 @@ const showMessage = (message, type) => {
 
 const onOrderSuccess = (message) => {
   console.info('onOrderSuccess sse: ', message)
-  if (message.type === 'order_success') {
+  
+}
+
+const onPositionUpdate = (message) => {
+  console.info('onPositionUpdate sse: ', message)
+  const data = message.data;
+  let updated = false;
+  let profit = (parseFloat(data.curPrice) - parseFloat(data.price)) * parseFloat(data.quantity)
+  stockPositions.value.forEach((value) => {
+    if (value.code == data.id) {
+      updated = true;
+      value.currentPrice = data.curPrice;
+      value.profit = profit;
+    }
+  })
+  if (updated === false) {
+    const stock = {
+      code: data.id,
+      name: data.name,
+      quantity: data.quantity,
+      costPrice: data.price,
+      currentPrice: data.curPrice,
+      available: data.valid_quantity,
+      profit: profit
+    }
+    stockPositions.value.push(stock)
+  }
+}
+
+const onOrderUpdate = (message) => {
+  // 订单状态更新
+  console.info('update order:', message.data)
+}
+
+const handleStockCancel = () => {
+  //一键取消股票订单
+}
+
+const queryAllStockOrders = async () => {
+  const response = await axios.get('/v0/trade/order')
+  console.info(response.data)
+  /*{ 
+        id: 1, 
+        code: '000001', 
+        name: '平安银行', 
+        type: 'buy', 
+        orderType: 'limit',
+        price: 16.30, 
+        quantity: 200, 
+        status: 'pending'/'filled'/'waiting'
+    },
+    { 
+        id: 2, 
+        code: '600036', 
+        name: '招商银行', 
+        type: 'sell', 
+        orderType: 'market',
+        price: 0, 
+        quantity: 100, 
+        status: 'filled' 
+    },
+    { 
+        id: 3, 
+        code: '000858', 
+        name: '五粮液', 
+        type: 'buy_margin', 
+        orderType: 'conditional',
+        price: 145.00, 
+        triggerPrice: 150.00,
+        quantity: 100, 
+        status: 'waiting' 
+    }*/
+  for (const item of response.data) {
+    let status = 'pending'
+    switch (item.status) {
+    case 1: status = 'pending'; break;
+    case 2: status = 'filled'; break;
+    case 3: status = 'waiting'; break;
+    default: break;
+    }
+    const order = {
+      id: item.id,
+      code: item.symbol,
+      name: item.name,
+      type: (item.direct === 0? 'buy': 'sell'),
+      price: item.prices[0],
+      quantity: item.quantity,
+      status: status
+    }
+    console.info('order:', order)
+    stockOrders.value.push(order)
   }
 }
 onMounted(() => {
+  // 首次查询当前订单
+  queryAllStockOrders()
+  sseService.on('update_position', onPositionUpdate)
+  sseService.on('update_order', onOrderUpdate)
   sseService.on('order_success', onOrderSuccess)
 })
 onUnmounted(() => {
   // 清理处理器
   sseService.off('order_success', onOrderSuccess)
+  sseService.off('update_position', onPositionUpdate)
+  sseService.off('update_order', onOrderUpdate)
 })
 </script>
 

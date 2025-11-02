@@ -130,11 +130,11 @@
         </div>
         <div class="status-item">
           <i class="fas fa-microchip"></i>
-          <span>CPU: {{ cpu }}</span>
+          <span>CPU: {{ cpu }}%</span>
         </div>
         <div class="status-item">
           <i class="fas fa-memory"></i>
-          <span>内存: {{memUsage}}G/8G</span>
+          <span>内存: {{memUsage}}G/{{totalmem}}G</span>
         </div>
       </div>
     </footer>
@@ -200,6 +200,7 @@ let runningMode = ref('登录')
 let showLogin = ref(false)
 let cpu = ref("0")
 let memUsage = ref("0")
+let totalmem = ref("0")
 // 1-展示已添加的服务器 2-展示已添加的交易所 3-新添加一个服务器 4-新添加一个交易所
 let useOperaion = ref(0)
 
@@ -212,11 +213,9 @@ let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW)
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 
 const onSystemStatus = (message) => {
-  const infos = message.split(' ');
-  if (infos.length > 1) {
-    cpu.value = infos[0];
-    memUsage.value = infos[1];
-  }
+  const infos = message.data;
+  cpu.value = (infos['cpu'] * 100).toFixed(1);
+  memUsage.value = infos['mem'];
 }
 
 const onLoginSucess = () => {
