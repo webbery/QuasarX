@@ -731,7 +731,7 @@ std::pair<double, double> getMemoryInfo()
 #ifdef __linux__
     String result;
     if (!RunCommand("free", result)) {
-        return -1;
+        return {0, 0};
     }
     std::istringstream iss(result);
     String line;

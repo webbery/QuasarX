@@ -108,20 +108,27 @@ public:
     void AddIndicator(StatisticIndicator ind) {
         _indicators.insert(ind);
     }
+
+private:
+    double Sharp(const Vector<double>&, double freerate);
 private:
     Set<StatisticIndicator> _indicators;
 };
 
+class FormulaParser;
 // 构建买入/卖出信号
 class SignalNode: public QNode {
 public:
     SignalNode(Server* server);
+    ~SignalNode();
 
     virtual bool Process(DataContext& context, const DataFeatures& org);
 private:
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);
 
+
 private:
     Server* _server;
+    FormulaParser* _buyParser;
 };

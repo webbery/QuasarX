@@ -51,12 +51,30 @@ namespace peg{
     class parser;
 }
 
+class DataContext;
+// 交易操作类型
+enum class TradeAction {
+    BUY,
+    SELL,
+    HOLD
+};
+// 交易决策结果
+struct TradeDecision {
+    TradeAction action;
+    std::string symbol;
+    int quantity;           // 数量
+    double price;           // 建议价格
+    String reason;     // 决策原因
+};
+
 // 解析器定义
 class FormulaParser {
 public:
     FormulaParser(Server* server);
 
     bool parse(const String& code);
+
+    TradeDecision envoke(const List<String>& variantNames, DataContext* context);
 
 private:
     peg::parser _parser;

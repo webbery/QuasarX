@@ -28,7 +28,7 @@ paths:
   /stocks/detail:
     get:
       summary: stock detail info
-      description: 当前时刻股票的信息
+      description: 当前时刻股票的信息(价格/量/换手率等)
       tags:
         - Stocks
       parameters:
@@ -108,6 +108,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SectorItem"
+  /stocks/verbose:
+    get:
+      summary: stock verbose info
+      description: 股票的详细信息(基本面/板块/十大股东/主营业务等)
+      tags:
+        - Stocks
+      parameters:
+      - in: query
+        name: id
+        schema:
+          type: integer
+        description: 要获取的合约代码
   /index/quote:
     get:
       summary: get index info

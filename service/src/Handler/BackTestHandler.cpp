@@ -79,8 +79,11 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
                     if constexpr (std::is_same_v<T, double>) {
                         features[name][symbol].emplace_back(arg);
                     }
-                    else if (std::is_same_v<T, List<double>>) {
+                    else if constexpr (std::is_same_v<T, Vector<double>>) {
                         features[name][symbol] = arg;
+                    }
+                    else if constexpr (std::is_same_v<T, Eigen::MatrixXd>) {
+
                     }
                 }, feature);
             }

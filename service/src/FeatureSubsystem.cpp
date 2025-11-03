@@ -123,8 +123,8 @@ void FeatureSubsystem::run() {
 void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const Map<size_t, IFeature*>& pFeats) {
     DataFeatures messenger;
     messenger._symbol = quote._symbol;
-    Vector<double> features(pFeats.size());
-    Vector<size_t> types(pFeats.size());
+    Vector<feature_t> features(pFeats.size());
+    Vector<String> types(pFeats.size());
     int i = 0;
     DEBUG_INFO("{}", quote);
     for (auto& feat: pFeats) {
@@ -134,18 +134,18 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const
 
         std::visit([&features, i](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, Vector<float>>) {
+            if constexpr (std::is_same_v<T, double> || std::is_same_v<T, Vector<double>> || std::is_same_v<T, Eigen::MatrixXd>) {
                 features[i] = arg;
             }
         }, val);
         
-        types[i] = feat.second->id();
+        types[i] = feat.second->desc();
         ++i;
     }
     DEBUG_INFO("REAL: {}", features);
-    messenger._price = quote._close;
+    // messenger._price = quote._close;
     messenger._data = std::move(features);
-    messenger._features = std::move(types);
+    messenger._names = std::move(types);
     // Send to next 
     yas::shared_buffer buf = yas::save<flags>(messenger);
     if (0 != nng_send(s, buf.data.get(), buf.size, 0)) {

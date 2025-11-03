@@ -147,7 +147,7 @@ void FlowSubsystem::ProcessToday(const String& strategy, const DataFeatures& dat
                 }
             }
             else {
-                ImmediatelyBuy(strategy, symb, data._price, OrderType::Market);
+                ImmediatelyBuy(strategy, symb, std::get<double>(data._data.front()), OrderType::Market);
             }
         }
         if (op & (int)ContractOperator::Sell) {
@@ -157,7 +157,7 @@ void FlowSubsystem::ProcessToday(const String& strategy, const DataFeatures& dat
                 }
             }
             else {
-                ImmediatelySell(strategy, symb, data._price, OrderType::Market);
+                ImmediatelySell(strategy, symb, std::get<double>(data._data.front()), OrderType::Market);
             }
         }
         if (op & (int)ContractOperator::Short) {
@@ -208,50 +208,49 @@ bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, dou
 bool FlowSubsystem::GenerateSignal(symbol_t symbol, const DataFeatures& features) {
     float vwap = -1;
     for (int i = 0; i < features._data.size(); ++i) {
-        if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
-            vwap = features._data[i];
+        if (features._names[i] == VWAPFeature::name()) {
+            vwap = std::get<double>(features._data[i]);
             break;
         }
     }
-    return features._price < vwap || IsNearClose(symbol);
+    return true;
+    // return features._price < vwap || IsNearClose(symbol);
 }
 
 bool FlowSubsystem::DailyBuy(const String& strategy, symbol_t symbol, const DataFeatures& features) {
-    if (_handle->GetRunningMode() == RuningType::Backtest) {
-        // 如果是天级数据,则使用收盘价
-        return ImmediatelyBuy(strategy, symbol, features._price, OrderType::Market);
-    }
-    else {
-        // TODO: 分批多次入场
+    // if (_handle->GetRunningMode() == RuningType::Backtest) {
+    //     // 如果是天级数据,则使用收盘价
+    //     return ImmediatelyBuy(strategy, symbol, features._price, OrderType::Market);
+    // }
+    // else {
+    //     // TODO: 分批多次入场
 
-        if (GenerateSignal(symbol, features)) {
-            return ImmediatelyBuy(strategy, symbol, features._price, OrderType::Market);
-        }
-    }
+    //     if (GenerateSignal(symbol, features)) {
+    //         return ImmediatelyBuy(strategy, symbol, features._price, OrderType::Market);
+    //     }
+    // }
     return false;
 }
 
 bool FlowSubsystem::DailySell(const String& strategy, symbol_t symbol, const DataFeatures& features)
 {
     if (_handle->GetRunningMode() == RuningType::Backtest) {
-        return ImmediatelySell(strategy, symbol, features._price, OrderType::Market);
+        // return ImmediatelySell(strategy, symbol, features._price, OrderType::Market);
     }
-    else {
-        return StrategySell(strategy, symbol, features);
-    }
+    return StrategySell(strategy, symbol, features);
 }
 
 bool FlowSubsystem::StrategySell(const String& strategyName, symbol_t symbol, const DataFeatures& features) {
     float vwap = std::numeric_limits<float>::max();
-    for (int i = 0; i < features._data.size(); ++i) {
-        if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
-            vwap = features._data[i];
-            break;
-        }
-    }
-    if (features._price > vwap || IsNearClose(symbol)) {
-        return ImmediatelySell(strategyName, symbol, features._price, OrderType::Market);
-    }
+    // for (int i = 0; i < features._data.size(); ++i) {
+    //     if (features._features[i] == std::hash<StringView>()(VWAPFeature::name())) {
+    //         vwap = features._data[i];
+    //         break;
+    //     }
+    // }
+    // if (features._price > vwap || IsNearClose(symbol)) {
+    //     return ImmediatelySell(strategyName, symbol, features._price, OrderType::Market);
+    // }
     return false;
 }
 

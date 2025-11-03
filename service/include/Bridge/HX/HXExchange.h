@@ -1,9 +1,11 @@
 #pragma once
 #include "Bridge/exchange.h"
+#include "HXOptionTrade.h"
 #include <memory>
 
 class HXQuateSpi;
 class HXTrade;
+class HXOptionTrade;
 namespace TORALEV1API {
     class CTORATstpXMdApi;
 }
@@ -11,9 +13,18 @@ namespace TORASTOCKAPI {
     class CTORATstpTraderApi;
     struct CTORATstpInputOrderField;
 }
+
+struct StockHandle {
+    HXQuateSpi* _quote;
+    HXTrade* _trade;
+    TORALEV1API::CTORATstpXMdApi* _quoteAPI;
+    TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
+};
+
 class alignas(8) HXExchange: public ExchangeInterface {
     friend class HXQuateSpi;
     friend class HXTrade;
+    friend class HXOptionTrade;
 public:
     HXExchange(Server* server);
     ~HXExchange();
@@ -65,6 +76,9 @@ private:
         return promise;
     }
 
+    bool InitStockHandle();
+    bool InitOptionHandle();
+    
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;

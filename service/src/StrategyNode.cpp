@@ -57,11 +57,31 @@ FunctionNode::~FunctionNode() {
         delete _callable;
 }
 
-SignalNode::SignalNode(Server* server):_server(server) {
+SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr) {
 
 }
 
 bool SignalNode::Process(DataContext& context, const DataFeatures& org)
 {
+    List<String> args;
+    for (auto& item: _outs) {
+        auto& name = item.first;
+        args.push_back(name);
+    }
+    auto d = _buyParser->envoke(args, &context);
+
     return true;
+}
+
+bool SignalNode::parseFomula(const String& formulas) {
+    if (!_buyParser) {
+        _buyParser = new FormulaParser(_server);
+    }
+    return _buyParser->parse(formulas);
+}
+
+SignalNode::~SignalNode() {
+    if (_buyParser) {
+        delete _buyParser;
+    }
 }

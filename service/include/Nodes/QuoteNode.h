@@ -19,6 +19,6 @@ private:
 
 private:
     Set<symbol_t> _symbols;
-    Map<size_t, String> _validDatumNames;
+    Map<String, String> _validDatumNames;
     Server* _server;
 };

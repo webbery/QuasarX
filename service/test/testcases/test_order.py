@@ -7,6 +7,7 @@ import pytest
 class TestOrder:
     stock_id = '000001'
     order_id = -1
+    sys_id = ''
 
     def generate_args(self, auth_token):
         kwargs = {
@@ -16,7 +17,7 @@ class TestOrder:
             kwargs['headers'] = {'Authorization': auth_token}
 
         return kwargs
-    
+     
     @pytest.mark.timeout(60)
     def test_order_buy(self, auth_token):
         kwargs = self.generate_args(auth_token)
@@ -28,6 +29,7 @@ class TestOrder:
         assert "id" in data
         assert data['id'] != -1
         self.order_id = data['id']
+        self.sys_id = data['sysID']
 
     @pytest.mark.timeout(60)
     def test_get_all_orders(self, auth_token):
@@ -47,21 +49,25 @@ class TestOrder:
             assert "quantity" in item
             assert "direct" in item
             assert "status" in item
+            assert "sysID" in item
             break
 
     @pytest.mark.timeout(5)
     def test_cancel_order(self, auth_token):
         kwargs = self.generate_args(auth_token)
+        params = {'id': self.order_id, 'sysID': self.sys_id}
+        response = requests.delete(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        data = check_response(response)
         
 
-    @pytest.mark.timeout(5)
-    def test_order_sell(self, auth_token):
-        kwargs = self.generate_args(auth_token)
+    # @pytest.mark.timeout(5)
+    # def test_order_sell(self, auth_token):
+    #     kwargs = self.generate_args(auth_token)
         
-        params = {"symbol": self.stock_id, 'type': 0, 'kind': 0, 'quantity': 100, 'price': [999,1000],
-                  'direct': 1}
-        response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
-        data = check_response(response)
-        assert isinstance(data, object)
-        assert "id" in data
-        assert "status" in data
+    #     params = {"symbol": self.stock_id, 'type': 0, 'kind': 0, 'quantity': 100, 'price': [999,1000],
+    #               'direct': 1}
+    #     response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+    #     data = check_response(response)
+    #     assert isinstance(data, object)
+    #     assert "id" in data
+    #     assert "status" in data

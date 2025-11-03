@@ -22,7 +22,7 @@ namespace {
         {
         case TORASTOCKAPI::TORA_TSTP_OST_Unknown:
             break;
-        case TORASTOCKAPI::TORA_TSTP_OST_Accepted://交易所已接�?
+        case TORASTOCKAPI::TORA_TSTP_OST_Accepted://交易所已接�?
             return OrderStatus::OrderAccept;
         case TORASTOCKAPI::TORA_TSTP_OST_PartTraded://部分成交
             return OrderStatus::OrderPartSuccess;
@@ -32,7 +32,7 @@ namespace {
             return OrderStatus::PartSuccessCancel;
         case TORASTOCKAPI::TORA_TSTP_OST_AllCanceled://全部撤单
             return OrderStatus::CancelSuccess;
-        case TORASTOCKAPI::TORA_TSTP_OST_Rejected://交易所已拒�?
+        case TORASTOCKAPI::TORA_TSTP_OST_Rejected://交易所已拒�?
             return OrderStatus::OrderReject;
         case TORASTOCKAPI::TORA_TSTP_OST_SendTradeEngine://发往交易核心
             break;
@@ -91,7 +91,7 @@ void HXTrade::OnRspError(TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int
 void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
     order_id id{ static_cast<uint64_t>(nRequestID) };
     TradeReport report;
-    if (pRspInfoField->ErrorID == 0) {// 交易系统已接收报�?
+    if (pRspInfoField->ErrorID == 0) {// 交易系统已接收报�?
         _investor = pInputOrderField->InvestorID;
         LOG("Order {} accept", nRequestID);
         report._status = OrderStatus::OrderAccept;
@@ -104,8 +104,9 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     }
 }
 void HXTrade::OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField) {
-    order_id id{ static_cast<uint64_t>(pOrderField->OrderRef) };
+    order_id id{ static_cast<uint64_t>(pOrderField->RequestID) };
     TradeReport report;
+    report._sysID = pOrderField->OrderSysID;
     report._status = toOrderStatus(pOrderField->OrderStatus);
     INFO("order status: {}", (int)report._status);
     if (report._status != OrderStatus::OrderUnknow) {
@@ -185,6 +186,7 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
             order._order[0]._price = pOrderField->LimitPrice;
             order._symbol = to_symbol(pOrderField->SecurityID);
             order._id = pOrderField->RequestID;
+            order._sysID = pOrderField->OrderSysID;
             //order._type = 
             _orders.emplace_back(std::move(order));
         }

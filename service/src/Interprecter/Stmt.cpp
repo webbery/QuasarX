@@ -118,3 +118,8 @@ bool FormulaParser::parse(const String& code) {
     }
     return true;
 }
+
+TradeDecision FormulaParser::envoke(const List<String>& variantNames, DataContext* context) {
+    TradeDecision d;
+    return d;
+}

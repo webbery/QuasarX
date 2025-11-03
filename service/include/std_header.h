@@ -74,4 +74,4 @@ using UnorderedSet = std::unordered_set<T, Args...>;
 #include "Eigen/Core"
 #include "Util/log.h"
 
-using feature_t = std::variant<double, Vector<double>>;
+using feature_t = std::variant<double, Vector<double>, Eigen::MatrixXd>;

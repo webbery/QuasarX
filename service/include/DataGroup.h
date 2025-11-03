@@ -68,21 +68,21 @@ struct Order {
     // 订单发起时间
     time_t _time;
     Array<OrderDetail, MAX_ORDER_SIZE> _order;
-
+    String _sysID; // 其他SDK数据的交易ID
     //   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _type, _status, _order);
 };
 
 nlohmann::json order2json(const Order& );
 
 struct TradeReport {
-    int _quantity;
     OrderStatus _status;
     // 成交类型
     char _type;
     // 交易员代码
     Array<char, 7> _trader_code;
-    //成交编号，深交所唯一，上交所每笔交易唯一，当发现2笔成交回报拥有相同的exec_id，则可以认为此笔交易自成交
-    char _exec_id[18];
+    int _quantity;
+    //成交编号 其他SDK数据的交易ID
+    String _sysID;
     // 成交价格
     double _price;
     // 成交时间

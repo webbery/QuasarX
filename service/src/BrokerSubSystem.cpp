@@ -185,6 +185,7 @@ void BrokerSubSystem::CancelOrder(order_id id, std::function<void (const TradeRe
     OrderContext* ctx = new OrderContext;
     ctx->_callback = cb;
     exchange->CancelOrder(id, ctx);
+    _order_queue.push(ctx);
 }
 
 uint32_t BrokerSubSystem::Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) {

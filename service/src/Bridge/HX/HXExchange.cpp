@@ -336,6 +336,7 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
 
 bool HXExchange::CancelOrder(order_id id, OrderContext* order){
     auto reqID = ++_reqID;
+    auto promise = initPromise<TORASTOCKAPI::CTORATstpInputOrderActionField>(reqID);
     _orders.visit(id._id, [reqID, this](concurrent_order_map::value_type& value) {
         auto ctx = value.second.second;
 
@@ -343,10 +344,18 @@ bool HXExchange::CancelOrder(order_id id, OrderContext* order){
         memset(&pInputOrderActionField, 0, sizeof(TORASTOCKAPI::CTORATstpInputOrderActionField));
         pInputOrderActionField.ExchangeID = toExchangeID((ExchangeName)ctx->_order._symbol._exchange);
 		pInputOrderActionField.ActionFlag = TORASTOCKAPI::TORA_TSTP_AF_Delete;
-		// strcpy(pInputOrderActionField.OrderSysID, id._id);
+        strcpy(pInputOrderActionField.OrderSysID, ctx->_order._sysID.c_str());
         _tradeAPI->ReqOrderAction(&pInputOrderActionField, reqID);
     });
 
+    std::future<TORASTOCKAPI::CTORATstpInputOrderActionField> fut;
+    if (!getFuture(promise, fut)) {
+        return false;
+    }
+    // auto info = fut.get();
+    // TradeReport report;
+    // report._status = OrderStatus::CancelSuccess;
+    // order->Update(report);
     // 成功则移除_orders中的订单
     // _orders.erase(id._id);
     return true;

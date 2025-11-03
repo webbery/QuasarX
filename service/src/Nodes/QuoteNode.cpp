@@ -8,13 +8,11 @@ QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 bool QuoteInputNode::Process(DataContext& context, const DataFeatures& org)
 {
     // 
-    Vector<double> result;
-    for (int i = 0; i < org._features.size(); ++i) {
-        if (_validDatumNames.count(org._features[i])) {
-            result.push_back(org._data[i]);
+    for (int i = 0; i < org._names.size(); ++i) {
+        if (_validDatumNames.count(org._names[i])) {
+            context.add(org._names[i], org._data[i]);
         }
     }
-    context.add(_name, result);
     return true;
 }
 
@@ -23,8 +21,8 @@ void QuoteInputNode::Connect(QNode* next, const String& from, const String& to) 
     split(from, froms, "_");
     QNode::Connect(next, froms[0], to);
     if (froms.size() == 2) {
-        auto id = get_feature_id(froms[1], "");
-        _validDatumNames[id] = froms[1];
+        // auto id = get_feature_id(froms[1], "");
+        _validDatumNames[froms[1]] = froms[1];
     }
 }
 

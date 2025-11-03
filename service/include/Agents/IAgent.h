@@ -27,12 +27,12 @@ public:
 protected:
     bool is_valid(const DataFeatures& features) {
         if (!_isValid) {
-            if (features._features.size() != _features.size())
+            if (features._names.size() != _features.size())
                 return false;
 
             auto itr = _features.begin();
-            for (auto ft: features._features) {
-                auto id = std::hash<StringView>()(*itr);
+            for (auto ft: features._names) {
+                auto id = *itr;
                 if (id != ft)
                     return false;
             }
