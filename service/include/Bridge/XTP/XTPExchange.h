@@ -36,6 +36,7 @@ public:
   bool CancelOrder(order_id id, OrderContext* order);
   
   virtual bool GetOrders(OrderList& ol);
+  virtual bool GetOrder(const String& sysID, Order& ol);
 
   Order GetOrder(const order_id& id);
 

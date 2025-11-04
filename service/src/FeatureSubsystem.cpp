@@ -122,7 +122,7 @@ void FeatureSubsystem::run() {
 
 void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const Map<size_t, IFeature*>& pFeats) {
     DataFeatures messenger;
-    messenger._symbol = quote._symbol;
+    messenger._symbols.push_back(quote._symbol);
     Vector<feature_t> features(pFeats.size());
     Vector<String> types(pFeats.size());
     int i = 0;

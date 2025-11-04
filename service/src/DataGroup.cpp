@@ -39,6 +39,7 @@ nlohmann::json order2json(const Order& item)
     order["quantity"] = item._volume;
     order["direct"] = item._side;
     order["status"] = item._status;
+    order["sysID"] = item._sysID;
     return order;
 }
 

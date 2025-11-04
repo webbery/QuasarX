@@ -113,6 +113,11 @@ bool StockSimulation::GetOrders(OrderList& ol)
     return true;
 }
 
+bool StockSimulation::GetOrder(const String& sysID, Order& ol)
+{
+    return true;
+}
+
 void StockSimulation::SetFilter(const QuoteFilter& filter) {
   _filter = filter;
   if (!std::filesystem::exists(_org_path)) {

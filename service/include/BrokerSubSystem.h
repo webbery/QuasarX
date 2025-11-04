@@ -97,18 +97,18 @@ public:
 
     void Release();
 
-    int Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
+    order_id Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
-    int Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
+    order_id Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
-    int Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
+    order_id Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
-    int Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
+    order_id Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
     int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 
     virtual bool QueryOrders(OrderList& ol);
-    virtual int QueryOrder(uint32_t orderID, Order& order);
+    virtual int QueryOrder(const String& sysID, Order& order);
     virtual void CancelOrder(order_id id, std::function<void (const TradeReport&)> cb);
 
     // 统计当前指标
@@ -140,8 +140,8 @@ public:
     Set<symbol_t> GetPoolSymbols(const String& name);
 
 private:
-    int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
-    int AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);
+    order_id AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
+    order_id AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);
 
     // 模拟撮合
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);

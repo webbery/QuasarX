@@ -615,10 +615,22 @@ std::string GetProgramPath() {
     }
     return path;
 #else
+    static std::string program_path;
+    static std::once_flag flag;
+    
+    std::call_once(flag, []() {
     const std::size_t MAXBUFSIZE = 2048;
-    char buf[MAXBUFSIZE] = { '\0' };
-    auto size = readlink("/proc/self/exe", buf, MAXBUFSIZE);
-    return std::string(buf, size);
+        char path[MAXBUFSIZE] = {'\0'};
+        ssize_t count = readlink("/proc/self/exe", path, MAXBUFSIZE);
+        if (count != -1) {
+            path[count] = '\0';
+            program_path = path;
+        } else {
+            program_path = "unknown";
+        }
+    });
+    
+    return program_path;
 #endif
 }
 
@@ -743,6 +755,9 @@ std::pair<double, double> getMemoryInfo()
 
         break;
     }
+    if (line.empty())
+      return {0, 0};
+    
     Vector<String> info;
     split(line, info, " ");
     memory_usage = std::stol(info[2]);

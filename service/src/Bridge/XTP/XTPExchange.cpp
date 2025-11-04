@@ -334,6 +334,10 @@ bool XTPExchange::GetOrders(OrderList& ol)
     return true;
 }
 
+bool XTPExchange::GetOrder(const String& sysID, Order& ol) {
+    return true;
+}
+
 Order XTPExchange::GetOrder(const order_id& id) {
   m_pTradeApi->QueryOrderByXTPIDEx(id._id, m_session, REQUEST_ORDER);
   Order order;

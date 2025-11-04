@@ -131,24 +131,24 @@ MDB_dbi BrokerSubSystem::GetDBI(int portfolid_id, MDB_txn* txn) {
   return dbi;
 }
 
-int BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
+order_id BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查本金
     return AddOrderBySide(strategy, symbol, order, detail, 0);
 }
 
-int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
+order_id BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查持仓
     return AddOrderBySide(strategy, symbol, order, detail, 1);
 }
 
-int BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
-    int id = AddOrderBySide(strategy, symbol, order, 0, cb);
+order_id BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    auto id = AddOrderBySide(strategy, symbol, order, 0, cb);
 
     return id;
 }
 
-int BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
-    int id = AddOrderBySide(strategy, symbol, order, 1, cb);
+order_id BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    auto id = AddOrderBySide(strategy, symbol, order, 1, cb);
     return id;
 }
 
@@ -175,16 +175,22 @@ bool BrokerSubSystem::QueryOrders(OrderList& ol)
     return true;
 }
 
-int BrokerSubSystem::QueryOrder(uint32_t orderID, Order& order)
+int BrokerSubSystem::QueryOrder(const String& sysID, Order& order)
 {
-    return 0;
+    auto exchange = _server->GetAvaliableStockExchange();
+    if (!exchange->GetOrder(sysID, order)) {
+      return 0;
+    }
+    return 1;
 }
 
 void BrokerSubSystem::CancelOrder(order_id id, std::function<void (const TradeReport&)> cb) {
     auto exchange = _server->GetAvaliableStockExchange();
     OrderContext* ctx = new OrderContext;
     ctx->_callback = cb;
-    exchange->CancelOrder(id, ctx);
+    if (!exchange->CancelOrder(id, ctx)) {
+        WARN("cancel order {} fail.", id._sysID);
+    }
     _order_queue.push(ctx);
 }
 
@@ -536,7 +542,7 @@ ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {
   return nullptr;
 }
 
-int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side)
+order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
@@ -604,10 +610,10 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     }
     // 设置结束标志
     ctx->_flag.store(true);
-    return (int)ret;
+    return order_id();
 }
 
-int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
+order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_order._side = side;
@@ -616,7 +622,7 @@ int BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, con
     auto id = AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
-    return id._id;
+    return id;
 }
 
 double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, TradeInfo& deal) {

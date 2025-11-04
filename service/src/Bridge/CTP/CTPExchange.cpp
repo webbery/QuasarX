@@ -150,6 +150,11 @@ bool CTPExchange::GetOrders(OrderList& ol)
     return true;
 }
 
+bool CTPExchange::GetOrder(const String& sysID, Order& ol)
+{
+    return true;
+}
+
 QuoteInfo CTPExchange::GetQuote(symbol_t symbol) {
   return _quote->GetQuote(symbol);
 }

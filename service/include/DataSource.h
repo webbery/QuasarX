@@ -8,11 +8,11 @@
 #include <yas/std_traits.hpp>
 
 struct DataFeatures {
-    symbol_t _symbol;
+    Vector<symbol_t> _symbols;
     Vector<String> _names;
     Vector<feature_t> _data;
     Vector<char> _type; // 0-double, 1-vector, 2-matrix
-    YAS_DEFINE_STRUCT_SERIALIZE("DataMessenger", _symbol, _names,  _data, _type);
+    YAS_DEFINE_STRUCT_SERIALIZE("DataMessenger", _symbols, _names,  _data, _type);
 };
 
 namespace yas {

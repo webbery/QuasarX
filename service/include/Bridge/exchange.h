@@ -63,6 +63,8 @@ struct order_id {
   union {
     uint64_t _id;
   };
+  char _sysID[24];
+  char _type;   // 0-股票 1-期权 2-期货
 };
 
 struct AccountAsset {
@@ -158,6 +160,8 @@ public:
   virtual bool CancelOrder(order_id id, OrderContext* order) = 0;
   // 获取当前尚未完成的所有订单
   virtual bool GetOrders(OrderList& ol) = 0;
+  // 查询订单
+  virtual bool GetOrder(const String& sysID, Order& ol) = 0;
 
   virtual void QueryQuotes() = 0;
 

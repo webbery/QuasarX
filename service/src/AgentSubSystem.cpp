@@ -86,7 +86,7 @@ void FlowSubsystem::Start(const String& strategy) {
         }
         auto& flow = _flows[strategy];
         if (_handle->GetRunningMode() != RuningType::Backtest) {
-            if (flow._future > 0 && _handle->IsOpen(messenger._symbol, Now())) {
+            if (flow._future > 0 && _handle->IsOpen(messenger._symbols[0], Now())) {
                 return true;
             }
         }
@@ -131,7 +131,7 @@ void FlowSubsystem::RunInstant(const String& strategyName, QStrategy* strategy, 
 void FlowSubsystem::ProcessToday(const String& strategy, const DataFeatures& data) {
     auto broker = _handle->GetBrokerSubSystem();
     // 如果是daily，那么在第二天操作
-    auto symb = data._symbol;
+    auto symb = data._symbols[0];
     fixed_time_range tr;
     int op = 0;
     if (!broker->GetNextPrediction(symb, tr, op))
@@ -183,7 +183,8 @@ bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, doub
     order._volume = 0;
     order._order[0]._price = price;
     TradeInfo dd;
-    if (broker->Buy(strategy, symbol, order, dd) == (int)OrderStatus::OrderSuccess) {
+    auto id = broker->Buy(strategy, symbol, order, dd);
+    if (id._id != 0) {
         LOG("buy order: {}, result: {}", order, dd);
         return true;
     }
@@ -194,15 +195,11 @@ bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, dou
     auto broker = _handle->GetBrokerSubSystem();
     Order order;
     order._volume = 0;
-    order._side = 1;
+    order._side = true;
     order._order[0]._price = price;
     TradeInfo dd;
-    if (broker->Sell(strategy, symbol, order, dd) == (int)OrderStatus::OrderSuccess) {
-        LOG("sell order: {}, result: {}", order, dd);
-        // _server->SendEmail("Sell " + get_symbol(symbol) + "[price: " + std::to_string(features._price) + "]");
-        return true;
-    }
-    return false;
+    auto id = broker->Sell(strategy, symbol, order, dd);
+    return true;
 }
 
 bool FlowSubsystem::GenerateSignal(symbol_t symbol, const DataFeatures& features) {

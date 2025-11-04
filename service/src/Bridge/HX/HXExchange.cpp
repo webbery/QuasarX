@@ -317,6 +317,7 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     ctx->_order._id = oid._id;
     auto pr = std::make_pair(order, ctx);
     _orders.emplace(oid._id, std::move(pr));
+    strcpy(oid._sysID, ctx->_order._sysID.c_str());
     return oid;
 }
 
@@ -383,6 +384,32 @@ bool HXExchange::GetOrders(OrderList& ol){
     }
 
     ol = std::move(orders);
+    return true;
+}
+
+bool HXExchange::GetOrder(const String& sysID, Order& ol){
+    auto reqID = ++_reqID;
+    auto promise = initPromise<TORASTOCKAPI::CTORATstpOrderField>(reqID);
+    auto& orders = _trade->GetOrders();
+    orders.clear();
+
+    TORASTOCKAPI::CTORATstpQryOrderField qry_orders;
+    memset(&qry_orders, 0, sizeof(qry_orders));
+    qry_orders.IInfo = INT_NULL_VAL;
+    qry_orders.IsCancel = INT_NULL_VAL;
+    strcpy(qry_orders.InvestorID, _account.c_str());
+    strcpy(qry_orders.OrderSysID, sysID.c_str());
+    int ret = _tradeAPI->ReqQryOrder(&qry_orders, reqID);
+    if (ret != 0) {
+        return false;
+    }
+
+    std::future<TORASTOCKAPI::CTORATstpOrderField> fut;
+    if (!getFuture(promise, fut) || orders.size() != 1) {
+        return false;
+    }
+
+    ol = std::move(orders.front());
     return true;
 }
 

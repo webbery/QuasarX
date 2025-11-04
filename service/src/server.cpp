@@ -872,8 +872,8 @@ void Server::TimerWorker(nng_socket sock) {
 #ifndef _WIN32
     if (get_system_status(status)) {
         double cpu = status["cpu"];
-        double mem = status["mem"];
-        String info = format_sse("system_status", { {"cpu", std::to_string(cpu)}, {"mem", std::to_string(mem)}});
+        Pair<double, double> val = status["mem"];
+        String info = format_sse("system_status", { {"cpu", std::to_string(cpu)}, {"mem", std::to_string(val.first)}, {"total", std::to_string(val.second)}});
         nng_send(sock, info.data(), info.size(), 0);
     }
 #endif

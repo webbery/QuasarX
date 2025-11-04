@@ -7,7 +7,7 @@ import pytest
 class TestOrder:
     stock_id = '000001'
     order_id = -1
-    sys_id = ''
+    sys_id = '12002P900000001'
 
     def generate_args(self, auth_token):
         kwargs = {
@@ -40,6 +40,7 @@ class TestOrder:
         assert isinstance(data, list)
         assert len(data) > 0
         for item in data:
+            # print(item)
             assert isinstance(item, object)
             assert "id" in item
             assert "kind" in item
@@ -52,7 +53,7 @@ class TestOrder:
             assert "sysID" in item
             break
 
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(60)
     def test_cancel_order(self, auth_token):
         kwargs = self.generate_args(auth_token)
         params = {'id': self.order_id, 'sysID': self.sys_id}

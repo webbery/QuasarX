@@ -53,6 +53,7 @@ public:
     virtual bool CancelOrder(order_id id, OrderContext* order);
     // 获取当前尚未完成的所有订单
     virtual bool GetOrders(OrderList& ol);
+    virtual bool GetOrder(const String& sysID, Order& ol);
 
     virtual void QueryQuotes();
 
