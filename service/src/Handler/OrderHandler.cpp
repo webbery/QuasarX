@@ -52,7 +52,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     int direct = params["direct"];
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
-    List<double> prices = params["price"];
+    List<double> prices = params["prices"];
     auto lambda_sendResult = [symbol, this](const TradeReport& report) {
         auto tid = std::this_thread::get_id();
         if (_sockets.count(tid) == 0) {
@@ -74,8 +74,13 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._type = GetOrderType(params);
         auto itr = prices.begin();
         for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-            order._order[i]._price = *itr;
-            ++itr;
+            if (itr != prices.end()) {
+                order._order[i]._price = *itr;
+                ++itr;
+            }
+            else {
+                order._order[i]._price = 0;
+            }
         }
 
         auto id = broker->Buy("", symbol, order, lambda_sendResult);
@@ -93,8 +98,13 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._type = GetOrderType(params);
         auto itr = prices.begin();
         for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-            order._order[i]._price = *itr;
-            ++itr;
+            if (itr != prices.end()) {
+                order._order[i]._price = *itr;
+                ++itr;
+            }
+            else {
+                order._order[i]._price = 0;
+            }
         }
         auto broker = _server->GetBrokerSubSystem();
         TradeInfo trades;

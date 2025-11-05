@@ -212,10 +212,14 @@ let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 
+const unit = 1024.0/1000000000;
+
 const onSystemStatus = (message) => {
   const infos = message.data;
+  console.info(infos)
   cpu.value = (infos['cpu'] * 100).toFixed(1);
-  memUsage.value = infos['mem'];
+  memUsage.value = (parseFloat(infos['mem'])*unit).toFixed(2);
+  totalmem.value = (parseFloat(infos["total"])*unit).toFixed(2);
 }
 
 const onLoginSucess = () => {

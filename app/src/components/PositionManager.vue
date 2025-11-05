@@ -224,7 +224,7 @@
                 
                 <div class="operation-buttons">
                   <button class="btn btn-primary" @click="checkCapital" v-if="newStockOrder.tradeType === 'buy_margin'">验资</button>
-                  <button class="btn btn-success" :disabled="!canPlaceNewStockOrder" @click="placeNewStockOrder">提交订单</button>
+                  <button class="btn " @click="placeNewStockOrder">提交订单</button>
                   <button class="btn" @click="closeNewStockOperation">取消</button>
                 </div>
               </div>
@@ -340,7 +340,7 @@
                 <div class="operation-buttons">
                   <button class="btn btn-primary" @click="checkCapital" v-if="stockOperationType === 'buy' || stockOperationType === 'buy_margin'">验资</button>
                   <button class="btn btn-primary" @click="checkStock" v-if="stockOperationType === 'sell' || stockOperationType === 'sell_short'">验券</button>
-                  <button class="btn btn-success" :disabled="!canPlaceStockOrder" @click="placeStockOrder">提交订单</button>
+                  <button class="btn" @click="placeStockOrder">提交订单</button>
                   <button class="btn" @click="closeStockOperation">取消</button>
                 </div>
               </div>
@@ -471,7 +471,7 @@
                 </div>
                 
                 <div class="operation-buttons">
-                  <button class="btn btn-success" @click="placeNewOptionOrder">提交订单</button>
+                  <button class="btn" @click="placeNewOptionOrder">提交订单</button>
                   <button class="btn" @click="closeNewOptionOperation">取消</button>
                 </div>
               </div>
@@ -492,7 +492,7 @@
                 </div>
                 
                 <div class="operation-buttons">
-                  <button class="btn btn-success" @click="placeOptionOrder">提交订单</button>
+                  <button class="btn" @click="placeOptionOrder">提交订单</button>
                   <button class="btn" @click="closeOptionOperation">取消</button>
                 </div>
               </div>
@@ -593,7 +593,7 @@
                 </div>
                 
                 <div class="operation-buttons">
-                  <button class="btn btn-success" @click="placeNewFutureOrder">提交订单</button>
+                  <button class="btn" @click="placeNewFutureOrder">提交订单</button>
                   <button class="btn" @click="closeNewFutureOperation">取消</button>
                 </div>
               </div>
@@ -621,7 +621,7 @@
                 </div>
                 
                 <div class="operation-buttons">
-                  <button class="btn btn-success" @click="placeFutureOrder">提交订单</button>
+                  <button class="btn" @click="placeFutureOrder">提交订单</button>
                   <button class="btn" @click="closeFutureOperation">取消</button>
                 </div>
               </div>
@@ -953,6 +953,9 @@ const checkStock = () => {
 };
 
 const placeStockOrder = () => {
+    if (canPlaceNewStockOrder) {
+        return;
+    }
     const order = {
         code: selectedStock.value.code,
         name: selectedStock.value.name,
@@ -994,11 +997,11 @@ const placeNewStockOrder = async () => {
         direct: direct,
         kind: 0,
         type: type,
-        prices: [newStockOrder.price],
-        quantity: newStockOrder.quantity,
+        prices: [parseFloat(newStockOrder.price)],
+        quantity: parseInt(newStockOrder.quantity),
         conditionType: newStockOrder.conditionType,
-        triggerPrice: newStockOrder.triggerPrice,
-        stopPrice: newStockOrder.stopPrice,
+        triggerPrice: parseFloat(newStockOrder.triggerPrice),
+        stopPrice: parseFloat(newStockOrder.stopPrice),
         validity: newStockOrder.validity,
         validityDate: newStockOrder.validityDate
     };
