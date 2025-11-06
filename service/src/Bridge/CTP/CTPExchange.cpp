@@ -84,7 +84,7 @@ bool CTPExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
     return true;
 }
 
-bool CTPExchange::Login(){
+bool CTPExchange::Login(AccountType t){
   if (!_quote->Init()) {
     return false;
   }
@@ -122,6 +122,10 @@ bool CTPExchange::Login(){
     UpdateCommission();
   }
   return ret;
+}
+
+void CTPExchange::Logout(AccountType t) {
+
 }
 
 bool CTPExchange::GetPosition(AccountPosition&) {

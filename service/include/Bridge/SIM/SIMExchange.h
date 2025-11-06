@@ -18,8 +18,9 @@ public:
   virtual bool Init(const ExchangeInfo& handle);
   virtual bool Release();
 
-  virtual bool Login();
+  virtual bool Login(AccountType t);
   virtual bool IsLogin();
+  virtual void Logout(AccountType t);
 
   virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
   virtual void SetFilter(const QuoteFilter& filter);

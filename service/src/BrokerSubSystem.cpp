@@ -613,6 +613,10 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
     return order_id();
 }
 
+void BrokerSubSystem::ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report) {
+
+}
+
 order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
     auto ctx = new OrderContext;
     ctx->_order = order;

@@ -3,7 +3,7 @@
 #include "Function/Function.h"
 #include <stdexcept>
 
-bool OperationNode::Process(DataContext& context, const DataFeatures& org)
+bool OperationNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     return true;
 }
@@ -13,7 +13,7 @@ bool OperationNode::parseFomula(const String& formulas) {
     return parser.parse(formulas);
 }
 
-bool StatisticNode::Process(DataContext& context, const DataFeatures& org)
+bool StatisticNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     for (auto node: _ins) {
         auto& feature = context.get(node.first);
@@ -29,12 +29,12 @@ bool StatisticNode::Process(DataContext& context, const DataFeatures& org)
     return true;
 }
 
-bool FeatureNode::Process(DataContext& context, const DataFeatures& org)
+bool FeatureNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     return true;
 }
 
-bool FunctionNode::Process(DataContext& context, const DataFeatures& org)
+bool FunctionNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     if (!_callable) {[[unlikely]]
         if (!Init()) {
@@ -57,19 +57,36 @@ FunctionNode::~FunctionNode() {
         delete _callable;
 }
 
-SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr) {
+SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
 
 }
 
-bool SignalNode::Process(DataContext& context, const DataFeatures& org)
+bool SignalNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     List<String> args;
     for (auto& item: _outs) {
         auto& name = item.first;
         args.push_back(name);
     }
-    auto d = _buyParser->envoke(args, &context);
+    auto buys = _buyParser->envoke(org._symbols, args, &context);
+    auto sells = _sellParser->envoke(org._symbols, args, &context);
+    List<TradeDecision> decisions(buys);
+    decisions.emplace(sells.begin(), sells.end());
+    auto broker = _server->GetBrokerSubSystem();
+    // broker->RegistIndicator(, StatisticIndicator::Sharp);
+    for (auto& decision: decisions) {
+        Order order;
+        if (decision.action == TradeAction::BUY) {
+            broker->Buy(strategy, decision.symbol, order, [] (const TradeReport& ) {
 
+            });
+        }
+        else if (decision.action == TradeAction::SELL) {
+            broker->Sell(strategy, decision.symbol, order, [] (const TradeReport&) {
+                
+            });
+        }
+    }
     return true;
 }
 
@@ -77,11 +94,17 @@ bool SignalNode::parseFomula(const String& formulas) {
     if (!_buyParser) {
         _buyParser = new FormulaParser(_server);
     }
-    return _buyParser->parse(formulas);
+    if (!_sellParser) {
+        _sellParser = new FormulaParser(_server);
+    }
+    return _buyParser->parse(formulas, TradeAction::BUY) && _sellParser->parse(formulas, TradeAction::SELL);
 }
 
 SignalNode::~SignalNode() {
     if (_buyParser) {
         delete _buyParser;
+    }
+    if (_sellParser) {
+        delete _sellParser;
     }
 }

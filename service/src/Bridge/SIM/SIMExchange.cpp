@@ -49,9 +49,13 @@ bool StockSimulation::Release() {
   return true;
 }
 
-bool StockSimulation::Login(){
+bool StockSimulation::Login(AccountType t){
     _finish = false;
     return true;
+}
+
+void StockSimulation::Logout(AccountType t) {
+    
 }
 
 bool StockSimulation::IsLogin() {

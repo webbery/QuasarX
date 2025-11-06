@@ -892,6 +892,21 @@ void Server::TimerWorker(nng_socket sock) {
         String info = format_sse("update_position", data);
         nng_send(sock, info.data(), info.size(), 0);
     }
+    // 更新订单
+    OrderList ol;
+    if (broker->GetOrders(ol) && !ol.empty()) {
+        nlohmann::json array;
+        for (auto& item: ol) {
+            nlohmann::json order;
+            order["id"] = get_symbol(item._symbol);
+
+            array.push_back(std::move(order));
+        }
+        Map<String, String> data;
+        data["data"] = array.dump();
+        String info = format_sse("update_order", data);
+        nng_send(sock, info.data(), info.size(), 0);
+    }
 }
 
 void Server::SendCloseFeatures() {

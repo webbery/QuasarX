@@ -37,8 +37,9 @@ public:
 
     virtual bool Release();
 
-    virtual bool Login();
+    virtual bool Login(AccountType t);
     virtual bool IsLogin();
+    virtual void Logout(AccountType t);
 
     virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
 
@@ -80,6 +81,9 @@ private:
     bool InitStockHandle();
     bool InitOptionHandle();
     
+    order_id AddStockOrder(const symbol_t& symbol, OrderContext* order);
+    order_id AddOptionOrder(const symbol_t& symbol, OrderContext* order);
+
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;
@@ -92,6 +96,7 @@ private:
     String _user;
     String _pwd;
 
+    char _current;      // 当前帐号索引
     String _account;    // 投资者账号
     String _accpwd;
 

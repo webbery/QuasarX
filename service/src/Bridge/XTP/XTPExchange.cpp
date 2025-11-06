@@ -94,7 +94,7 @@ bool XTPExchange::Release()
   return true;
 }
 
-bool XTPExchange::Login() {
+bool XTPExchange::Login(AccountType t) {
   if (IsLogin())
     return true;
   std::string quote_server_ip = _handle._quote_addr;//行情服务器ip地址
@@ -144,6 +144,10 @@ bool XTPExchange::Login() {
     WARN("login to trade server error, {} : {}", error_info->error_id, error_info->error_msg);
     return false;
   }
+}
+
+void XTPExchange::Logout(AccountType t) {
+    
 }
 
 void XTPExchange::SetFilter(const QuoteFilter& filter) {

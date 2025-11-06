@@ -99,8 +99,9 @@ namespace {
 HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr), _tradeAPI(nullptr), _trade(nullptr)
 , _login_status(false), _quote_inited(false), _requested(false), _reqID(0)
-, _trader_login(false), _quote_login(false) {
+, _trader_login(false), _quote_login(false), _current(0) {
 }
+
 HXExchange::~HXExchange(){
     if (_quote) {
         delete _quote;
@@ -157,7 +158,7 @@ bool HXExchange::Release(){
     return true;
 }
 
-bool HXExchange::Login(){
+bool HXExchange::Login(AccountType t){
     if (IsLogin())
         return true;
 
@@ -218,6 +219,15 @@ bool HXExchange::Login(){
 }
 bool HXExchange::IsLogin(){
     return _login_status;
+}
+
+void HXExchange::Logout(AccountType t) {
+    if (_trader_login) {
+        auto reqID = ++_reqID;
+        TORASTOCKAPI::CTORATstpUserLogoutField field;
+        _tradeAPI->ReqUserLogout(&field, reqID);
+        _trader_login = false;
+    }
 }
 
 bool HXExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)

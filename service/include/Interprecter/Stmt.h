@@ -1,6 +1,7 @@
 #pragma once
 #include "std_header.h"
 #include "peglib.h"
+#include "Util/system.h"
 
 class Server;
 struct Stmt {
@@ -54,29 +55,46 @@ namespace peg{
 class DataContext;
 // 交易操作类型
 enum class TradeAction {
+    HOLD,
     BUY,
     SELL,
-    HOLD
+    EXEC,
 };
 // 交易决策结果
 struct TradeDecision {
     TradeAction action;
-    std::string symbol;
+    symbol_t symbol;
     int quantity;           // 数量
     double price;           // 建议价格
     String reason;     // 决策原因
 };
 
+struct symbol_t;
 // 解析器定义
 class FormulaParser {
 public:
     FormulaParser(Server* server);
 
     bool parse(const String& code);
+    bool parse(const String& code, TradeAction action);
 
-    TradeDecision envoke(const List<String>& variantNames, DataContext* context);
+    List<TradeDecision> envoke(const Vector<symbol_t>& symbols, const List<String>& variantNames, DataContext* context);
 
 private:
+    double eval(const symbol_t& symbol, const peg::Ast& ast, DataContext* context);
+
+    double evalNode(const symbol_t& symbol, const peg::Ast&, DataContext* context);
+    // 处理函数调用的辅助函数
+    double evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext* context);
+    
+    // 获取变量值的辅助函数
+    feature_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
+
+    // 根据表达式值生成交易决策
+    TradeDecision makeDecision(const symbol_t& symbol, double exprValue, DataContext* context);
+private:
     peg::parser _parser;
+    std::shared_ptr<peg::Ast> _ast;
     Server* _server;
+    TradeAction _default;
 };

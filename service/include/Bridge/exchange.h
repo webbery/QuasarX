@@ -128,6 +128,12 @@ struct QuoteFilter {
   Set<String> _symbols;
 };
 
+enum class AccountType {
+  MAIN,       // 主帐号
+  CANDIDATE,  // 备用帐号
+  ACCOUNT_COUNT
+};
+
 class ExchangeInterface {
 public:
   ExchangeInterface(Server* server):_server(server) {}
@@ -141,8 +147,10 @@ public:
 
   virtual bool Release() = 0;
 
-  virtual bool Login() = 0;
+  virtual bool Login(AccountType t = AccountType::MAIN) = 0;
   virtual bool IsLogin() = 0;
+
+  virtual void Logout(AccountType t = AccountType::MAIN) = 0;
 
   virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info) = 0;
 

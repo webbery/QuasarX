@@ -139,6 +139,8 @@ public:
 
     Set<symbol_t> GetPoolSymbols(const String& name);
 
+    void ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report);
+
 private:
     order_id AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
     order_id AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);

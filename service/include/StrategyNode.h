@@ -34,7 +34,7 @@ public:
     /**
      * @brief 对输入数据做处理，并返回处理后的数据
      */
-    virtual bool Process(DataContext& context, const DataFeatures& org) = 0;
+    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org) = 0;
     virtual void Connect(QNode* next, const String& from, const String& to) {
         _outs[from] = next;
         next->_ins[to] = this;
@@ -65,7 +65,7 @@ protected:
 
 class OperationNode: public QNode {
 public:
-    virtual bool Process(DataContext& context, const DataFeatures& org);
+    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
 
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);
@@ -78,7 +78,7 @@ class FunctionNode: public QNode {
 public:
     ~FunctionNode();
 
-    virtual bool Process(DataContext& context, const DataFeatures& org);
+    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
 
     void SetFunctionName(const String& name) { _funcionName = name; }
 
@@ -98,12 +98,12 @@ private:
 
 class FeatureNode: public QNode {
 public:
-    virtual bool Process(DataContext& context, const DataFeatures& org);
+    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
 };
 
 class StatisticNode: public QNode {
 public:
-    virtual bool Process(DataContext& context, const DataFeatures& org);
+    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
 
     void AddIndicator(StatisticIndicator ind) {
         _indicators.insert(ind);
@@ -122,7 +122,7 @@ public:
     SignalNode(Server* server);
     ~SignalNode();
 
-    virtual bool Process(DataContext& context, const DataFeatures& org);
+    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
 private:
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);
@@ -131,4 +131,5 @@ private:
 private:
     Server* _server;
     FormulaParser* _buyParser;
+    FormulaParser* _sellParser;
 };

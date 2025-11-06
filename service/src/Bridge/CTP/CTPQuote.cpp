@@ -63,7 +63,7 @@ void CTPQuote::OnFrontConnected() {
       _cv.notify_all();
   }
   if (_reconnected) {
-      _exchange->Login();
+      _exchange->Login(AccountType::MAIN);
   }
 }
 

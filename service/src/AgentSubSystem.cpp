@@ -93,7 +93,7 @@ void FlowSubsystem::Start(const String& strategy) {
         
         try {
             for (auto node: flow._graph) {
-                if (!node->Process(context, messenger)) {
+                if (!node->Process(strategy, context, messenger)) {
                     return false;
                 }
             }

@@ -5,7 +5,7 @@ QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 
 }
 
-bool QuoteInputNode::Process(DataContext& context, const DataFeatures& org)
+bool QuoteInputNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     // 
     for (int i = 0; i < org._names.size(); ++i) {
