@@ -117,6 +117,58 @@ void HXExchange::addPromise(uint64_t reqID, std::shared_ptr<void> promise) {
     _promises.emplace(reqID, promise);
 }
 
+bool HXExchange::InitStockHandle()
+{
+    return true;
+}
+
+bool HXExchange::InitOptionHandle()
+{
+    return true;
+}
+
+order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
+{
+    order_id oid{ ++_reqID };
+    using namespace TORASTOCKAPI;
+    CTORATstpInputOrderField* order = new CTORATstpInputOrderField;
+    memset(order, 0, sizeof(CTORATstpInputOrderField));
+
+    auto& o = ctx->_order;
+    order->OrderRef = oid._id;
+    order->Direction = (o._side == 0 ? TORA_TSTP_D_Buy : TORA_TSTP_D_Sell);
+    order->UserRequestID = oid._id;
+
+    String& shareholder = _shareholder[symbol._exchange];
+    if (shareholder.empty()) {
+        WARN("shareholder is empty");
+        return { 0 };
+    }
+    strcpy(order->ShareholderID, shareholder.c_str());
+    auto strCode = format_symbol(std::to_string(symbol._symbol));
+    strncpy(order->SecurityID, strCode.c_str(), strCode.size());
+    order->ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
+    order->VolumeTotalOriginal = ctx->_order._volume;
+    order->LimitPrice = o._order[0]._price;
+    order->ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
+
+    convertOrderType(*ctx, *order);
+
+    _tradeAPI->ReqOrderInsert(order, oid._id);
+
+    ctx->_order._symbol = symbol;
+    ctx->_order._id = oid._id;
+    auto pr = std::make_pair(order, ctx);
+    _orders.emplace(oid._id, std::move(pr));
+    strcpy(oid._sysID, ctx->_order._sysID.c_str());
+    return oid;
+}
+
+order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* order)
+{
+    return order_id();
+}
+
 bool HXExchange::Init(const ExchangeInfo& handle){
     _user = handle._username;
     _pwd = handle._passwd;
@@ -289,46 +341,9 @@ AccountAsset HXExchange::GetAsset(){
 }
 
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
-    order_id oid{++_reqID};
-    using namespace TORASTOCKAPI;
-    CTORATstpInputOrderField* order = new CTORATstpInputOrderField;
-    memset(order, 0, sizeof(CTORATstpInputOrderField));
-    
-    auto& o = ctx->_order;
-    order->OrderRef = oid._id;
-    order->Direction = (o._side == 0? TORA_TSTP_D_Buy: TORA_TSTP_D_Sell);
-    order->UserRequestID = oid._id;
-
-    String& shareholder = _shareholder[symbol._exchange];
-    if (shareholder.empty()) {
-        WARN("shareholder is empty");
-        return {0};
+    if (is_stock(symbol)) {
+        return AddStockOrder(symbol, ctx);
     }
-    strcpy(order->ShareholderID, shareholder.c_str());
-    auto strCode = format_symbol(std::to_string(symbol._symbol));
-    strncpy(order->SecurityID, strCode.c_str(), strCode.size());
-    order->ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
-    order->VolumeTotalOriginal = ctx->_order._volume;
-    order->LimitPrice = o._order[0]._price;
-    // order->CombOffsetFlag[0] = TORA_TSTP_OF_Open;
-    // order->CombOffsetFlag[1] = '\0';
-    // order->CombHedgeFlag[0] = TORA_TSTP_HF_Speculation;
-    // order->CombHedgeFlag[1] = '\0';
-    // order->MinVolume = 0;
-    order->ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
-    // order->UserForceClose = 0;
-    // order->IsSwapOrder = 0;
-
-    convertOrderType(*ctx, *order);
-
-    _tradeAPI->ReqOrderInsert(order, oid._id);
-
-    ctx->_order._symbol = symbol;
-    ctx->_order._id = oid._id;
-    auto pr = std::make_pair(order, ctx);
-    _orders.emplace(oid._id, std::move(pr));
-    strcpy(oid._sysID, ctx->_order._sysID.c_str());
-    return oid;
 }
 
 void HXExchange::OnOrderReport(order_id id, const TradeReport& report){

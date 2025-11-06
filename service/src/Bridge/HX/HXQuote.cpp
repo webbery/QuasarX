@@ -104,7 +104,7 @@ void HXQuateSpi::OnFrontDisconnected(int nReason)
     _exchange->_quote_inited = false;
     _exchange->_quote_login = false;
     _exchange->_trader_login = false;
-    _exchange->Login();
+    _exchange->Login(AccountType::MAIN);
 }
 
 void HXQuateSpi::OnRspSubSimplifyMarketData(CTORATstpSpecificSecurityField* pSpecificSecurityField, CTORATstpRspInfoField* pRspInfoField)

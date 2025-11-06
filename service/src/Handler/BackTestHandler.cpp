@@ -59,7 +59,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     strategySys->Run(strategyName);
     // 驱动数据
-    exchange->Login();
+    exchange->Login(AccountType::MAIN);
     // 等待数据驱动结束
     while (exchange->IsLogin() && !_server->IsExit()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));

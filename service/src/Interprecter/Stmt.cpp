@@ -96,5 +96,6 @@ feature_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& 
 }
 
 TradeDecision FormulaParser::makeDecision(const symbol_t& symbol, double exprValue, DataContext* context) {
-
+    TradeDecision d;
+    return d;
 }

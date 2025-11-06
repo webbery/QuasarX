@@ -71,7 +71,7 @@ bool SignalNode::Process(const String& strategy, DataContext& context, const Dat
     auto buys = _buyParser->envoke(org._symbols, args, &context);
     auto sells = _sellParser->envoke(org._symbols, args, &context);
     List<TradeDecision> decisions(buys);
-    decisions.emplace(sells.begin(), sells.end());
+    decisions.splice(decisions.end(), sells);
     auto broker = _server->GetBrokerSubSystem();
     // broker->RegistIndicator(, StatisticIndicator::Sharp);
     for (auto& decision: decisions) {

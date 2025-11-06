@@ -33,7 +33,7 @@ bool XTPQuote::Init() {
 void XTPQuote::OnDisconnected(int reason) {
   INFO("XTP Disconnect: {}", reason);
   _exchange->_login_status = false;
-  _exchange->Login();
+  _exchange->Login(AccountType::MAIN);
 }
 
 void XTPQuote::OnError(XTPRI *error_info) {
