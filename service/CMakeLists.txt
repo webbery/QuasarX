@@ -126,8 +126,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE QS_VERSION="${GIT_TAG_VERSION
 
 
 if (WIN32)
-set(DEBUG_LINK_LIBS ws2_32 xmdapi xfastmdapi xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se fasttraderapi traderapi nngd fmtlog-static)
-set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se xmdapi xfastmdapi fasttraderapi traderapi nng fmtlog)
+set(DEBUG_LINK_LIBS ws2_32 xmdapi xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se traderapi sptraderapi nngd fmtlog-static)
+set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se xfastmdapi fasttraderapi fastsptraderapi nng fmtlog)
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
 #if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 target_link_libraries(${PROJECT_NAME} ${DEBUG_LINK_LIBS} Crypt32.lib ${OpenSSL_LIBRARIES})

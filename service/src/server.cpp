@@ -45,6 +45,7 @@
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
+#include "jwt-cpp/traits/nlohmann-json/traits.h"
 
 #define THREAD_URL  "inproc://thread"
 #define ERROR_RESPONSE  "not a valid request"

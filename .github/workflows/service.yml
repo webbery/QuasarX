@@ -39,12 +39,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xgboost-
 
+      - name: Cache Boost build
+        uses: actions/cache@v4
+        id: cache-boost
+        with:
+          path: |
+            /usr/local/include/boost
+            /usr/local/lib/libboost_filesystem*
+          key: ${{ runner.os }}-boost-${{ hashFiles('**/any.hpp') }}
+          restore-keys: |
+            ${{ runner.os }}-boost-
+
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
-          sudo add-apt-repository ppa:mhier/libboost-latest
           sudo apt-get update
-          sudo apt-get install -y libboost1.82-dev libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
+          sudo apt-get install -y  libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install cython
@@ -60,6 +70,15 @@ jobs:
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           sudo make install
+
+      - name: Build boost (if cache miss)
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        run: |
+          wget https://archives.boost.io/release/1.89.0/source/boost_1_89_0.tar.gz
+          tar -xzf boost_1_89_0.tar.gz
+          cd boost_1_89_0
+          ./bootstrap.sh --prefix=/usr/local
+          sudo ./b2 install
 
       - name: Cache ONNX-runtime build
         uses: actions/cache@v4
