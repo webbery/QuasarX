@@ -82,6 +82,7 @@ public:
     // 获取代码对应的市场
     static ExchangeName GetExchange(const std::string& symbol);
     static ContractType GetContractType(const std::string& symbol, const String& exhange = "");
+    static nng_socket GetSocket();
 
     // enum EXECUTE_MODE: unsigned short {
     //     MODE_SERVICE,   // 网络服务模式
@@ -214,7 +215,7 @@ private:
     void UpdateNextPrediction(time_t);
 
     // 发送当日关注的合约的收盘信息作为特征
-    void SendCloseFeatures();
+    // void SendCloseFeatures();
 
     bool JWTMiddleWare(const httplib::Request& req, httplib::Response& res);
 
@@ -259,6 +260,9 @@ private:
     // 默认持仓id
     static std::multimap<std::string, ContractInfo> _markets;
     static std::map<time_t, float> _inter_rates;
+
+    static std::mutex _sseMutex;
+    static Map<std::thread::id, nng_socket> _sseSockets;
     // 数据缓存
     Map<String, DataFrame> _data;
     Map<String, DataFrame> _hfqdata;
@@ -275,4 +279,5 @@ private:
     Map<String, AccountPosition> _account_positions;
 
     Map<ExchangeName, Set<time_range>> _working_times;
+
 };

@@ -19,9 +19,11 @@
 #include "Util/datetime.h"
 #include "csv.h"
 #include <fstream>
+#include <mutex>
 #include <nng/protocol/reqrep0/rep.h>
 #include <nng/protocol/reqrep0/req.h>
 #include <nng/supplemental/util/platform.h>
+#include <thread>
 #include "Handler/AssetHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/StrategyHandler.h"
@@ -43,9 +45,6 @@
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
-#include "FeatureSubsystem.h"
-#include "jwt-cpp/jwt.h"
-#include "jwt-cpp/traits/nlohmann-json/traits.h"
 
 #define THREAD_URL  "inproc://thread"
 #define ERROR_RESPONSE  "not a valid request"
@@ -129,6 +128,8 @@ void trim(std::string& input) {
 std::multimap<std::string, ContractInfo> Server::_markets;
 std::map<time_t, float> Server::_inter_rates;
 bool Server::_exit = false;
+std::mutex Server::_sseMutex;
+Map<std::thread::id, nng_socket> Server::_sseSockets;
 
 Server::Server():_config(nullptr), _trade_exchange(nullptr), _dividends(12*60*12),
 _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
@@ -910,45 +911,45 @@ void Server::TimerWorker(nng_socket sock) {
     }
 }
 
-void Server::SendCloseFeatures() {
-    nng_socket send;
-    if (!Publish(URI_RAW_QUOTE, send)) {
-        WARN("regist SendCloseFeatures socket fail.");
-        return;
-    }
-    auto featureSystem = _strategySystem->GetFeatureSystem();
-    auto symbols = featureSystem->GetFeatureSymbols();
-    static constexpr std::size_t flags = yas::mem|yas::binary;
-    for (auto symbol: symbols) {
-        if (is_stock(symbol)) {
-            DataFrame df;
-            String path = _config->GetDatabasePath() + "/" + get_symbol(symbol) + "_hist_data.csv";
-            if (!LoadStock(df, path)) {
-                WARN("Load stock {} data fail.", get_symbol(symbol));
-                continue;
-            }
-            auto& close = df.get_column<double>("close");
-            if (close.empty())
-                continue;
+// void Server::SendCloseFeatures() {
+    // nng_socket send;
+    // if (!Publish(URI_RAW_QUOTE, send)) {
+    //     WARN("regist SendCloseFeatures socket fail.");
+    //     return;
+    // }
+    // auto featureSystem = _strategySystem->GetFeatureSystem();
+    // auto symbols = featureSystem->GetFeatureSymbols();
+    // static constexpr std::size_t flags = yas::mem|yas::binary;
+    // for (auto symbol: symbols) {
+    //     if (is_stock(symbol)) {
+    //         DataFrame df;
+    //         String path = _config->GetDatabasePath() + "/" + get_symbol(symbol) + "_hist_data.csv";
+    //         if (!LoadStock(df, path)) {
+    //             WARN("Load stock {} data fail.", get_symbol(symbol));
+    //             continue;
+    //         }
+    //         auto& close = df.get_column<double>("close");
+    //         if (close.empty())
+    //             continue;
 
-            QuoteInfo info;
-            info._symbol = symbol;
-            info._time = FromStr(df.get_column<String>("datetime").back());
-            info._open = df.get_column<double>("open").back();
-            info._high = df.get_column<double>("high").back();
-            info._volume = df.get_column<double>("volume").back();
-            info._close = close.back();
-            info._low = df.get_column<double>("low").back();
+    //         QuoteInfo info;
+    //         info._symbol = symbol;
+    //         info._time = FromStr(df.get_column<String>("datetime").back());
+    //         info._open = df.get_column<double>("open").back();
+    //         info._high = df.get_column<double>("high").back();
+    //         info._volume = df.get_column<double>("volume").back();
+    //         info._close = close.back();
+    //         info._low = df.get_column<double>("low").back();
             
-            yas::shared_buffer buf = yas::save<flags>(info);
-            if (0 != nng_send(send, buf.data.get(), buf.size, 0)) {
-                WARN("send daily close quote message fail.");
-                return;
-            }
-        }
-    }
-    nng_close(send);
-}
+    //         yas::shared_buffer buf = yas::save<flags>(info);
+    //         if (0 != nng_send(send, buf.data.get(), buf.size, 0)) {
+    //             WARN("send daily close quote message fail.");
+    //             return;
+    //         }
+    //     }
+    // }
+    // nng_close(send);
+// }
 
 void Server::UpdateQuoteQueryStatus(time_t curr) {
     auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
@@ -990,7 +991,7 @@ void Server::Schedules(time_t t) {
         }
 
         // TODO: run daily forecast with newest data
-        SendCloseFeatures();
+        // SendCloseFeatures();
     }
 }
 
@@ -1275,4 +1276,17 @@ bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) 
     }
 #endif
     return true;
+}
+
+nng_socket Server::GetSocket() {
+    auto id = std::this_thread::get_id();
+    std::unique_lock<std::mutex> lock(_sseMutex);
+    auto itr = _sseSockets.find(id);
+    if (itr == _sseSockets.end()) {
+        nng_socket sock;
+        Publish(URI_SERVER_EVENT, sock);
+        _sseSockets[id] = sock;
+        return sock;
+    }
+    return _sseSockets[id];
 }

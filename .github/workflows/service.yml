@@ -42,8 +42,9 @@ jobs:
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
+          sudo add-apt-repository ppa:mhier/libboost-latest
           sudo apt-get update
-          sudo apt-get install -y libboost-all-dev libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
+          sudo apt-get install -y libboost1.82-dev libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install cython

@@ -68,9 +68,11 @@
           <i class="fas fa-flask"></i>
           <span>衍生品定价</span>
         </div>
-        <div class="nav-item">
+        <div class="nav-item" :class="{active: is_risk}"
+          @click="onHandleRiskMananger"
+        >
           <i class="fas fa-wind"></i>
-          <span>压力测试</span>
+          <span>风险控制</span>
         </div>
         <div class="nav-item" :class="{ active: is_visual_analysis }"
           @click="onHandleVisualAnanlysis"
@@ -103,6 +105,8 @@
       <div v-if="is_account">
         <MarketPanel></MarketPanel>
         <RiskPanel></RiskPanel>
+      </div>
+      <div v-else-if="is_risk">
       </div>
       <div v-else-if="is_strategy">
         <FlowComponents></FlowComponents>
@@ -168,6 +172,7 @@ const VIEWS = {
   SETTING_VIEW: 'setting',
   VISUAL_VIEW: 'visual_analysis',
   POSITION_VIEW: 'position',
+  RISK_VIEW: 'risk'
 };
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
@@ -188,6 +193,8 @@ let activeComponent = computed(() => {
     return VisualAnalysisView;
   if (currentView.value === VIEWS.POSITION_VIEW)
     return PositionManager;
+  if (currentView.value === VIEWS.RISK_VIEW)
+    return RiskManagerVue;
   return AccountView;
 });
 
@@ -207,6 +214,7 @@ let is_datacenter = computed(() => currentView.value === VIEWS.DATA_CENTER);
 let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
+let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW);
 
 const unit = 1024.0/1000000000;
 
@@ -260,6 +268,10 @@ const onHandleDataCenter = () => {
 
 const onHandleVisualAnanlysis = () => {
   currentView.value = VIEWS.VISUAL_VIEW;
+}
+
+const onHandleRiskMananger = () => {
+  currentView.value = VIEWS.RISK_VIEW
 }
 
 const onHandlePosition = () => {

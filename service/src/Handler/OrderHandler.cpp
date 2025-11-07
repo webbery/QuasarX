@@ -54,13 +54,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     int quantity = params["quantity"];
     List<double> prices = params["prices"];
     auto lambda_sendResult = [symbol, this](const TradeReport& report) {
-        auto tid = std::this_thread::get_id();
-        if (_sockets.count(tid) == 0) {
-            nng_socket sock;
-            Publish(URI_SERVER_EVENT, sock);
-            _sockets[tid] = sock;
-        }
-        auto sock = _sockets[tid];
+        auto sock = Server::GetSocket();
         auto info = to_sse_string(symbol, report);
         nng_send(sock, info.data(), info.size(), 0);
     };
@@ -163,14 +157,8 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
                 order_id id;
                 strcpy(id._sysID, item._sysID.c_str());
                 id._id = item._id;
-                broker->CancelOrder(id, symbol, [this, symbol] (const TradeReport& report) {
-                    auto tid = std::this_thread::get_id();
-                    if (_sockets.count(tid) == 0) {
-                        nng_socket sock;
-                        Publish(URI_SERVER_EVENT, sock);
-                        _sockets[tid] = sock;
-                    }
-                    auto sock = _sockets[tid];
+                broker->CancelOrder(id, symbol, [symbol] (const TradeReport& report) {
+                    auto sock = Server::GetSocket();
                     auto info = to_sse_string(symbol, report);
                     nng_send(sock, info.data(), info.size(), 0);
                 });
@@ -195,13 +183,7 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
         // id._id = order._id;
         strcpy(id._sysID, sysID.c_str());
         broker->CancelOrder(id, symbol, [this, symbol] (const TradeReport& report) {
-            auto tid = std::this_thread::get_id();
-            if (_sockets.count(tid) == 0) {
-                nng_socket sock;
-                Publish(URI_SERVER_EVENT, sock);
-                _sockets[tid] = sock;
-            }
-            auto sock = _sockets[tid];
+            auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
             nng_send(sock, info.data(), info.size(), 0);
         });

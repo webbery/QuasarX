@@ -38,7 +38,6 @@ private:
   Server* _handle;
 
   std::map<std::string, std::set<order_id>> _orders;
-  Map<std::thread::id, nng_socket> _sockets;
 };
 
 class OrderSellHandler : public HttpHandler {

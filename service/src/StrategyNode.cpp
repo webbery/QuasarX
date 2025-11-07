@@ -77,13 +77,17 @@ bool SignalNode::Process(const String& strategy, DataContext& context, const Dat
     for (auto& decision: decisions) {
         Order order;
         if (decision.action == TradeAction::BUY) {
-            broker->Buy(strategy, decision.symbol, order, [] (const TradeReport& ) {
-
+            broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
+                auto sock = Server::GetSocket();
+                auto info = to_sse_string(symbol, report);
+                nng_send(sock, info.data(), info.size(), 0);
             });
         }
         else if (decision.action == TradeAction::SELL) {
-            broker->Sell(strategy, decision.symbol, order, [] (const TradeReport&) {
-                
+            broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
+                auto sock = Server::GetSocket();
+                auto info = to_sse_string(symbol, report);
+                nng_send(sock, info.data(), info.size(), 0);
             });
         }
     }

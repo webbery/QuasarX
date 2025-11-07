@@ -253,7 +253,6 @@ class TestStrategy:
             }""",
             "tick": "1d",
             "static": [
-                {"name": "MACD"},
                 {"name": "sharp"}
             ]
         }
