@@ -123,6 +123,8 @@ source_group(TREE ${PROJECT_SOURCE_DIR}/src PREFIX "SourceFiles" FILES ${prj_fil
 add_executable(${PROJECT_NAME} ${prj_files_cpp} ${prj_files_header})
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE QS_VERSION="${GIT_TAG_VERSION}")
+
+
 if (WIN32)
 set(DEBUG_LINK_LIBS ws2_32 xmdapi xfastmdapi xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se fasttraderapi traderapi nngd fmtlog-static)
 set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se xmdapi xfastmdapi fasttraderapi traderapi nng fmtlog)
@@ -135,6 +137,9 @@ target_link_libraries(${PROJECT_NAME} ${DEBUG_LINK_LIBS} Crypt32.lib ${OpenSSL_L
 else(WIN32)
 if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
+set(LINUX_LIBS xfastmdapi fasttraderapi fastsptraderapi)
+else()
+set(LINUX_LIBS xmdapi traderapi sptraderapi)
 endif()
 if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")
     target_compile_options(${PROJECT_NAME} PRIVATE -fPIE)
@@ -145,7 +150,7 @@ else()
 endif()
 target_link_libraries(${PROJECT_NAME} curl -pthread nng papi
     xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se 
-    xmdapi xfastmdapi traderapi fasttraderapi
+    ${LINUX_LIBS}
 )
 
 endif(WIN32)

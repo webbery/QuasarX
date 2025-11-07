@@ -51,6 +51,14 @@ public:
 private:
 };
 
+class UserSwitchHandler: public HttpHandler {
+public:
+    UserSwitchHandler(Server* );
+    virtual void post(const httplib::Request& req, httplib::Response& res);
+private:
+    
+};
+
 class AccountHandler: public HttpHandler {
 public:
     AccountHandler(Server* server);

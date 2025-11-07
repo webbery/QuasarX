@@ -641,6 +641,32 @@ paths:
       responses:
         '200':
           description: success
+  /user/switch:
+    post:
+      summary: 切换当前用户
+      description: 切换当前用户
+      tags:
+        - User
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user:
+                  type: string
+                  description: 用户名
+                pwd:
+                  type: string
+                  description: 用户密码
+                type:
+                  type: integer
+                  description: 帐号类型
+      responses:
+        '200':
+          description: success
   /user/funds:
     get:
       summary: 用户当前的可用资金

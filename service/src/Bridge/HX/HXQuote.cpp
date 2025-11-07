@@ -39,8 +39,8 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     //     return;
 
     auto name = pMarketDataField->SecurityID;
-    if (strcmp(name, "000001") == 0 && pMarketDataField->ExchangeID == '1') {
-        INFO("recv: {}", pMarketDataField->LastPrice);
+    if (strcmp(name, "000001") == 0) {
+        INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
     }
     auto symb = to_symbol(name);
     QuoteInfo& info = _tickers[symb];
@@ -60,6 +60,8 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
         info._value = pMarketDataField->Turnover;
         info._high = pMarketDataField->HighestPrice;
         info._low = pMarketDataField->LowestPrice;
+        info._upper = pMarketDataField->UpperLimitPrice;
+        info._lower = pMarketDataField->LowerLimitPrice;
 
         info._bidPrice[0] = pMarketDataField->BidPrice1;
         info._bidPrice[1] = pMarketDataField->BidPrice2;
@@ -99,12 +101,13 @@ void HXQuateSpi::OnFrontConnected()
 
 void HXQuateSpi::OnFrontDisconnected(int nReason)
 {
-    INFO("HX disconnect:{}", nReason);
+    INFO("HX quote disconnect:{}", nReason);
+    _exchange->InitQuote();
     _exchange->_login_status = false;
     _exchange->_quote_inited = false;
     _exchange->_quote_login = false;
-    _exchange->_trader_login = false;
-    _exchange->Login(AccountType::MAIN);
+    // _exchange->_trader_login = false;
+    // _exchange->Login(AccountType::MAIN);
 }
 
 void HXQuateSpi::OnRspSubSimplifyMarketData(CTORATstpSpecificSecurityField* pSpecificSecurityField, CTORATstpRspInfoField* pRspInfoField)

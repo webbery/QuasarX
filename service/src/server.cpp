@@ -110,6 +110,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_DATA_SYNC       "/data/sync"
 #define API_USER_LOGIN      "/user/login"
 #define API_USER_FUNDS      "/user/funds"
+#define API_USER_SWITCH     "/user/switch"
 #define API_SERVER_STATUS   "/server/status"
 #define API_SERVER_CONFIG   "/server/config"
 #define API_FEATURE         "/feature"
@@ -1068,6 +1069,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SECTOR_FLOW, SectorHandler);
     RegistHandler(API_SERVER_EVENT, ServerEventHandler);
     RegistHandler(API_POSITION, PositionHandler);
+    RegistHandler(API_USER_SWITCH, UserSwitchHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});

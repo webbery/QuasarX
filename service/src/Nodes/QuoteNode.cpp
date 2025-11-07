@@ -8,9 +8,12 @@ QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 bool QuoteInputNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
 {
     // 
+    auto symbol = org._symbols.front();
+    auto code = get_symbol(symbol);
     for (int i = 0; i < org._names.size(); ++i) {
         if (_validDatumNames.count(org._names[i])) {
-            context.add(org._names[i], org._data[i]);
+            auto key = code + "." + org._names[i];
+            context.add(key, org._data[i]);
         }
     }
     return true;

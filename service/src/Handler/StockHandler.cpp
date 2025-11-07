@@ -114,9 +114,11 @@ StockDetailHandler::StockDetailHandler(Server* server)
 void StockDetailHandler::get(const httplib::Request& req, httplib::Response& res)
 {
   String symbol = req.get_param_value("id");
-  auto exchange = _server->GetExchange(ExchangeType::EX_XTP);
+  auto exchange = _server->GetAvaliableStockExchange();
   auto quote = exchange->GetQuote(to_symbol(symbol));
   nlohmann::json jsn;
+  jsn["upper"] = quote._upper;
+  jsn["lower"] = quote._lower;
   jsn["price"] = quote._close;
   jsn["volume"] = quote._volume;
   jsn["turnover"] = quote._turnover;

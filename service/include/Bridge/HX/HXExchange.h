@@ -1,6 +1,5 @@
 #pragma once
 #include "Bridge/exchange.h"
-#include "HXOptionTrade.h"
 #include <memory>
 
 class HXQuateSpi;
@@ -12,6 +11,10 @@ namespace TORALEV1API {
 namespace TORASTOCKAPI {
     class CTORATstpTraderApi;
     struct CTORATstpInputOrderField;
+}
+
+namespace TORASPAPI {
+    class CTORATstpSPTraderApi;
 }
 
 struct StockHandle {
@@ -80,6 +83,10 @@ private:
 
     bool InitStockHandle();
     bool InitOptionHandle();
+
+    bool InitQuote();
+    bool InitStockTrade();
+    bool InitOptionTrade();
     
     order_id AddStockOrder(const symbol_t& symbol, OrderContext* order);
     order_id AddOptionOrder(const symbol_t& symbol, OrderContext* order);
@@ -91,14 +98,9 @@ private:
     bool _trader_login : 1;
     bool _quote_login : 1;
 
-    uint32_t _port;
-
-    String _user;
-    String _pwd;
+    ExchangeInfo _brokerInfo;
 
     char _current;      // 当前帐号索引
-    String _account;    // 投资者账号
-    String _accpwd;
 
     String _shareholder[MT_COUNT];    // 股东账号
 
@@ -106,6 +108,9 @@ private:
     HXTrade* _trade;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;
     TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
+
+    HXOptionTrade* _optionTrade;
+    TORASPAPI::CTORATstpSPTraderApi* _optionTradeAPI;
 
     int8_t _maxInsertOrder; // 每秒最大报单笔数
     int8_t _maxCancelOrder; // 每秒最大撤单笔数

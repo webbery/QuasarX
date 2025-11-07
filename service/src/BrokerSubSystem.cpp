@@ -184,10 +184,11 @@ int BrokerSubSystem::QueryOrder(const String& sysID, Order& order)
     return 1;
 }
 
-void BrokerSubSystem::CancelOrder(order_id id, std::function<void (const TradeReport&)> cb) {
+void BrokerSubSystem::CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb) {
     auto exchange = _server->GetAvaliableStockExchange();
     OrderContext* ctx = new OrderContext;
     ctx->_callback = cb;
+    ctx->_order._symbol = symbol;
     if (!exchange->CancelOrder(id, ctx)) {
         WARN("cancel order {} fail.", id._sysID);
     }
@@ -614,7 +615,10 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
 }
 
 void BrokerSubSystem::ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report) {
-
+    if (report._status == OrderStatus::OrderSuccess) {
+        auto& holds = _portfolio->GetHolding(strategy);
+        auto& history = holds[symbol];
+    }
 }
 
 order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {

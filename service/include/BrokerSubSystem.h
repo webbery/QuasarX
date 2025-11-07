@@ -109,7 +109,7 @@ public:
 
     virtual bool QueryOrders(OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
-    virtual void CancelOrder(order_id id, std::function<void (const TradeReport&)> cb);
+    virtual void CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
 
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);

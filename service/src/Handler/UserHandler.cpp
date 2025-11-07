@@ -345,6 +345,18 @@ void UserFundHandler::get(const httplib::Request& req, httplib::Response& res)
     res.set_content(result.dump(), "application/json");
 }
 
+UserSwitchHandler::UserSwitchHandler(Server* server): HttpHandler(server) {
+
+}
+
+void UserSwitchHandler::post(const httplib::Request& req, httplib::Response& res) {
+    auto exchange = _server->GetAvaliableStockExchange();
+    if (!exchange) {
+        res.status = 400;
+        return;
+    }
+}
+
 AccountHandler::AccountHandler(Server* server):HttpHandler(server) {
 
 }

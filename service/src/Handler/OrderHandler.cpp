@@ -152,7 +152,7 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
 
 void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
     auto broker = _server->GetBrokerSubSystem();
-    if (req.params.size() == 0) { // 全部
+    if (req.body.size() == 0) { // 全部
         OrderList ol;
         if (!broker->QueryOrders(ol)) {
             res.status = 500;
@@ -160,7 +160,10 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
         else {
             for (auto& item: ol) {
                 auto symbol = item._symbol;
-                broker->CancelOrder({item._id}, [this, symbol] (const TradeReport& report) {
+                order_id id;
+                strcpy(id._sysID, item._sysID.c_str());
+                id._id = item._id;
+                broker->CancelOrder(id, symbol, [this, symbol] (const TradeReport& report) {
                     auto tid = std::this_thread::get_id();
                     if (_sockets.count(tid) == 0) {
                         nng_socket sock;
@@ -174,22 +177,24 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             }
         }
     } else {
-        auto itr = req.params.find("sysID");
-        if (itr == req.params.end()) {
+        nlohmann::json data = nlohmann::json::parse(req.body);
+        if (!data.contains("sysID")) {
             res.status = 400;
             res.set_content("{message: 'query must be `id`'}", "application/json");
             return;
         }
+        String sysID = data["sysID"];
         Order order;
-        if (!broker->QueryOrder(itr->second, order)) {
+        if (!broker->QueryOrder(sysID, order)) {
             res.status = 400;
             res.set_content("{message: 'order not exist}", "application/json");
             return;
         }
         auto symbol = order._symbol;
         order_id id;
-        strcpy(id._sysID, itr->second.c_str());
-        broker->CancelOrder(id, [this, symbol] (const TradeReport& report) {
+        // id._id = order._id;
+        strcpy(id._sysID, sysID.c_str());
+        broker->CancelOrder(id, symbol, [this, symbol] (const TradeReport& report) {
             auto tid = std::this_thread::get_id();
             if (_sockets.count(tid) == 0) {
                 nng_socket sock;

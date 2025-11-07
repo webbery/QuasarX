@@ -11,6 +11,7 @@ public:
     OrderList& GetOrders() { return _orders; }
     List<position_t>& GetPositions() { return _positions; }
 
+    virtual void OnFrontDisconnected(int nReason);
     ///登录响应
     virtual void OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserLoginField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID);
     

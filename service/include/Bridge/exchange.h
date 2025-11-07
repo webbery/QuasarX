@@ -90,6 +90,9 @@ struct QuoteInfo {
   double _high;
   double _low;
 
+  double _upper;
+  double _lower;
+
   std::array<double, MAX_ORDER_SIZE_LVL2> _bidPrice;
   std::array<uint64_t, MAX_ORDER_SIZE_LVL2> _bidVolume;
 
@@ -101,7 +104,7 @@ struct QuoteInfo {
 
   YAS_DEFINE_STRUCT_SERIALIZE("QuoteInfo", _symbol, _time, _open, _close,
     _volume, _value, _turnover, _high, _low, _bidPrice, _bidVolume, _askPrice, _askVolume,
-    _source, _confidence);
+    _source, _confidence, _upper, _lower);
 };
 
 namespace fmt {

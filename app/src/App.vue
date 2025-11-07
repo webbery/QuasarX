@@ -57,12 +57,8 @@
           <span>策略工厂</span>
         </div>
         <div class="nav-item">
-          <i class="far fa-compass"></i>
-          <span>模拟盘监控</span>
-        </div>
-        <div class="nav-item">
           <i class="fas fa-bolt"></i>
-          <span>实盘监控</span>
+          <span>策略监控</span>
         </div>
       </div>
 
