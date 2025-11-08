@@ -197,6 +197,38 @@ order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* order)
     return order_id();
 }
 
+void HXExchange::SubscribeStockQuote(const Map<char, Vector<String>>& stocks)
+{
+    int ret = -1;
+    for (auto& item : stocks) {
+        char** subscribe_array = new char* [item.second.size()];
+        for (int i = 0; i < item.second.size(); ++i) {
+            subscribe_array[i] = new char[item.second[i].size() + 1] {0};
+            strncpy(subscribe_array[i], item.second[i].c_str(), item.second[i].size());
+        }
+        // 非交易时段无数据
+        ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
+        for (int j = 0; j < item.second.size(); ++j) {
+            delete[] subscribe_array[j];
+        }
+        delete[] subscribe_array;
+        if (ret != 0)
+        {
+            WARN("SubscribeMarketData {} fail, ret{}", item.second, ret);
+            _quote_inited = false;
+            continue;
+        }
+        else {
+            LOG("SubscribeMarketData from symbol {}", item.second);
+        }
+    }
+}
+
+void HXExchange::SubscribeOptionQuote(const Map<char, Vector<String>>& options)
+{
+
+}
+
 bool HXExchange::Init(const ExchangeInfo& handle){
     _brokerInfo = handle;
     // _user = handle._username;
@@ -479,14 +511,15 @@ bool HXExchange::GetOrder(const String& sysID, Order& ol){
 }
 
 void HXExchange::QueryQuotes(){
+    if (_quote_inited)
+        return;
+    _quote_inited = true;
     // 订阅行情
     if (_filter._symbols.empty()) {
-
+        // 订阅全市场行情,流量?
+        SubscribeStockQuote({ {0, {"000000"}} });
     } else {
-        if (_quote_inited)
-            return;
-        _quote_inited = true;
-        Map<char, Vector<String>> subscribe_map;
+        Map<char, Vector<String>> subscribe_map, option_map;
         for (auto symb: _filter._symbols) {
             auto symbol = to_symbol(symb);
             char type = 0;
@@ -502,32 +535,18 @@ void HXExchange::QueryQuotes(){
                 WARN("unsupport exchange {}", (int)symbol._exchange);
                 continue;
             }
-            subscribe_map[type].emplace_back(symb);
+            if (is_stock(symbol)) {
+                subscribe_map[type].emplace_back(symb);
+            }
+            else {
+                option_map[type].emplace_back(std::move(symb));
+            }
         }
         // 补充指数
         subscribe_map['1'].emplace_back("000001");
-        int ret = -1;
-        for (auto& item : subscribe_map) {
-            char** subscribe_array = new char* [item.second.size()];
-            for (int i = 0; i < item.second.size(); ++i) {
-                subscribe_array[i] = new char[item.second[i].size() + 1] {0};
-                strncpy(subscribe_array[i], item.second[i].c_str(), item.second[i].size());
-            }
-            // 非交易时段无数据
-            ret = _quoteAPI->SubscribeMarketData(subscribe_array, item.second.size(), item.first);
-            for (int j = 0; j < item.second.size(); ++j) {
-                delete[] subscribe_array[j];
-            }
-            delete[] subscribe_array;
-            if (ret != 0)
-            {
-                WARN("SubscribeMarketData {} fail, ret{}", item.second, ret);
-                _quote_inited = false;
-                continue;
-            } else {
-                LOG("SubscribeMarketData from symbol {}", item.second);
-            }
-        }
+
+        SubscribeStockQuote(subscribe_map);
+        SubscribeOptionQuote(option_map);
         _requested = true;
     }
 }

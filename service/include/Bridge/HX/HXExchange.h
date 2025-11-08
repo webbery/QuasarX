@@ -91,6 +91,8 @@ private:
     order_id AddStockOrder(const symbol_t& symbol, OrderContext* order);
     order_id AddOptionOrder(const symbol_t& symbol, OrderContext* order);
 
+    void SubscribeStockQuote(const Map<char, Vector<String>>& stocks);
+    void SubscribeOptionQuote(const Map<char, Vector<String>>& options);
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;

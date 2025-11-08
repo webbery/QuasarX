@@ -79,6 +79,9 @@ jobs:
           cd boost_1_89_0
           ./bootstrap.sh --prefix=/usr/local
           sudo ./b2 install
+          sudo ldconfig
+          cd ..
+          sudo rm -rf boost_1_89_0
 
       - name: Cache ONNX-runtime build
         uses: actions/cache@v4

@@ -902,7 +902,13 @@ void Server::TimerWorker(nng_socket sock) {
         for (auto& item: ol) {
             nlohmann::json order;
             order["id"] = get_symbol(item._symbol);
-
+            order["price"] = item._order[0]._price;
+            order["sysID"] = item._sysID;
+            order["status"] = (int)item._status;
+            order["direct"] = (int)item._side;
+            order["quantity"] = item._volume;
+            order["orderType"] = item._type;
+            //order["name"] = Get
             array.push_back(std::move(order));
         }
         Map<String, String> data;
@@ -1236,6 +1242,8 @@ time_t Server::GetCloseTime(ExchangeName exchange) {
 bool Server::SendEmail(const String& content) {
     auto sender = _config->GetSMTPSender();
     auto pwd = _config->GetSMTPPasswd();
+    if (pwd.empty() || sender.empty())
+        return false;
 
     String prefix = "python tool/mail.py ";
     prefix += sender + " " + pwd;

@@ -671,6 +671,7 @@ import { ref, computed, onMounted, reactive, onUnmounted } from 'vue'
 import sseService from '@/ts/SSEService';
 import { message } from '@/tool';
 
+const STOCK_ORDER = 'stockOrders'
 // 市场选项卡
 const activeMarketTab = ref('stock');
 
@@ -880,12 +881,30 @@ const getOrderStatusText = (order) => {
         case 'pending': return '待成交';
         case 'filled': return '已成交';
         case 'cancelled': return '已撤单';
+        case 'rejected': return '已失败';
         case 'waiting': 
             return order.orderType === 'conditional' ? '等待触发' : 
                    order.orderType === 'stop' ? '监控中' : '待成交';
         default: return order.status;
     }
 };
+
+const getOrderStatusType = (type) => {
+  let status = 'pending'
+  switch (type) {
+    case 1: status = 'pending'; break;
+    case 2: status = 'rejected'; break;
+    case 3: status = 'part_filled'; break;
+    case 4: status = 'filled'; break;
+    case 5: status = 'rejected'; break;
+    case 6: status = 'cancel_part'; break;
+    case 7: status = 'cancelled'; break;
+    case 8: status = 'cancel_fail'; break;
+    case 9: status = 'cancelled_filled'; break;
+    default: break;
+  }
+  return status;
+}
 
 const getOrderTypeDisplayText = (orderType) => {
     switch(orderType) {
@@ -1007,7 +1026,8 @@ const placeNewStockOrder = async () => {
     };
     console.info('buy:', order)
     try{
-      await axios.post('/v0/trade/order', order)
+      const res = await axios.post('/v0/trade/order', order)
+      console.info('trade order:', res)
       let displayOrder = {
         id: order.id, 
         code: order.symbol, 
@@ -1016,8 +1036,13 @@ const placeNewStockOrder = async () => {
         orderType: newStockOrder.orderType,
         price: newStockOrder.price, 
         quantity: newStockOrder.quantity, 
-        status: 'pending'
+        status: 'pending',
+        sysID: res['data'].sysID
       };
+      const existOrders = localStorage.getItem(STOCK_ORDER)
+      let orders = JSON.parse(existOrders)
+      orders.push(displayOrder)
+      localStorage.setItem('stockOrders', JSON.stringify(orders))
       stockOrders.value.unshift(displayOrder);
       message.success('新代码买入订单提交成功');
       closeNewStockOperation();
@@ -1288,6 +1313,26 @@ const onPositionUpdate = (message) => {
 const onOrderUpdate = (message) => {
   // 订单状态更新
   console.info('update order:', message.data)
+  stockOrders.value = []
+  const data = JSON.parse(message.data['data'])
+  for (const item of data) {
+    let status = getOrderStatusType(item['status'])
+    const order = {
+        code: item["id"],
+        name: "",
+        type: (item["direct"] === 0? 'buy': 'sell'),
+        orderType: item['orderType'],
+        price: item['price'],
+        quantity: item['quantity'],
+        // conditionType: stockOrder.conditionType,
+        // triggerPrice: stockOrder.triggerPrice,
+        // stopPrice: stockOrder.stopPrice,
+        // validity: stockOrder.validity,
+        // validityDate: stockOrder.validityDate,
+        status: status
+    };
+    stockOrders.value.push(order)
+  }
 }
 
 const handleStockCancel = () => {
@@ -1328,6 +1373,11 @@ const queryAllStockOrders = async () => {
         quantity: 100, 
         status: 'waiting' 
     }*/
+  const existOrders = localStorage.getItem(STOCK_ORDER)
+  let orders;
+  if (existOrders.length != 0) {
+    orders = JSON.stringify(existOrders)
+  }
   for (const item of response.data) {
     let status = 'pending'
     switch (item.status) {
@@ -1343,7 +1393,8 @@ const queryAllStockOrders = async () => {
       type: (item.direct === 0? 'buy': 'sell'),
       price: item.prices[0],
       quantity: item.quantity,
-      status: status
+      status: status,
+      sysID: item.sysID
     }
     console.info('order:', order)
     stockOrders.value.push(order)

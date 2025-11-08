@@ -435,7 +435,7 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
         content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._order[0]._price);
     }
     if (!content.empty()) {
-        //_server->SendEmail(content);
+        _server->SendEmail(content);
     }
     if (is_stock(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableStockExchange();
