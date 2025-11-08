@@ -102,10 +102,10 @@ void HXQuateSpi::OnFrontConnected()
 void HXQuateSpi::OnFrontDisconnected(int nReason)
 {
     INFO("HX quote disconnect:{}", nReason);
-    _exchange->InitQuote();
-    _exchange->_login_status = false;
-    _exchange->_quote_inited = false;
-    _exchange->_quote_login = false;
+    //_exchange->InitQuote();
+    //_exchange->_login_status = false;
+    //_exchange->_quote_inited = false;
+    //_exchange->_quote_login = false;
     // _exchange->_trader_login = false;
     // _exchange->Login(AccountType::MAIN);
 }

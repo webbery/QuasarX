@@ -120,7 +120,7 @@ private:
     int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
 
     std::atomic<uint32_t> _reqID;
-    using concurrent_order_map = ConcurrentMap<uint64_t, Pair<TORASTOCKAPI::CTORATstpInputOrderField*, OrderContext*>>;
+    using concurrent_order_map = ConcurrentMap<uint64_t, OrderContext*>;
     concurrent_order_map _orders;
 
     std::mutex _mutex;

@@ -186,8 +186,8 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 
     ctx->_order._symbol = symbol;
     ctx->_order._id = oid._id;
-    auto pr = std::make_pair(order, ctx);
-    _orders.emplace(oid._id, std::move(pr));
+    //auto pr = std::make_pair(order, ctx);
+    _orders.emplace(oid._id, ctx);
     strcpy(oid._sysID, ctx->_order._sysID.c_str());
     return oid;
 }
@@ -410,9 +410,10 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
 
 void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
     _orders.visit(id._id, [&report](concurrent_order_map::value_type& value) {
-        auto ctx = value.second.second;
+        auto ctx = value.second;
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
+        ctx->_flag = true;
         //delete ctx;
       });
     if (report._status == OrderStatus::CancelSuccess) {
@@ -422,18 +423,8 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
 
 bool HXExchange::CancelOrder(order_id id, OrderContext* ctx){
     auto reqID = ++_reqID;
-    auto promise = initPromise<TORASTOCKAPI::CTORATstpInputOrderActionField>(reqID);
-
-    if (!_orders.empty()) {
-        _orders.visit_while([&id] (concurrent_order_map::value_type& value) {
-            auto ctx = value.second.second;
-            if (ctx->_order._sysID != id._sysID) {
-                return true;
-            }
-            id._id = value.first;
-            return false;
-        });
-    }
+    id._id = reqID;
+    //auto promise = initPromise<TORASTOCKAPI::CTORATstpInputOrderActionField>(reqID);
 
     TORASTOCKAPI::CTORATstpInputOrderActionField pInputOrderActionField;
     memset(&pInputOrderActionField, 0, sizeof(TORASTOCKAPI::CTORATstpInputOrderActionField));
@@ -442,12 +433,26 @@ bool HXExchange::CancelOrder(order_id id, OrderContext* ctx){
     strcpy(pInputOrderActionField.OrderSysID, id._sysID);
     strcpy(pInputOrderActionField.SInfo, id._sysID);
     pInputOrderActionField.IInfo = id._id;
+
+    if (!_orders.empty()) {
+        _orders.visit_while([&id](concurrent_order_map::value_type& value) {
+            auto ctx = value.second;
+            if (ctx->_order._sysID != id._sysID) {
+                return true;
+            }
+            id._id = value.first;
+            return false;
+            });
+    }
+    else {
+        _orders.emplace(id._id, ctx);
+    }
     _tradeAPI->ReqOrderAction(&pInputOrderActionField, reqID);
 
-    std::future<TORASTOCKAPI::CTORATstpInputOrderActionField> fut;
-    if (!getFuture(promise, fut)) {
-        return false;
-    }
+    //std::future<TORASTOCKAPI::CTORATstpInputOrderActionField> fut;
+    //if (!getFuture(promise, fut)) {
+    //    return false;
+    //}
 
     // auto info = fut.get();
     // TradeReport report;

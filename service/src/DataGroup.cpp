@@ -6,12 +6,14 @@
 #include "boost/math/tools/bivariate_statistics.hpp"
 #include "DataFrame/DataFrameFinancialVisitors.h"
 #include "Util/string_algorithm.h"
+#include "server.h"
 
 nlohmann::json order2json(const Order& item)
 {
     nlohmann::json order;
+    String name = get_symbol(item._symbol);
     order["id"] = item._id;
-    order["symbol"] = get_symbol(item._symbol);
+    order["symbol"] = name;
     int kind = 0;
     switch (item._symbol._type)
     {
@@ -40,13 +42,15 @@ nlohmann::json order2json(const Order& item)
     order["direct"] = item._side;
     order["status"] = item._status;
     order["sysID"] = item._sysID;
+    order["name"] = Server::GetName(name);
     return order;
 }
 
 String to_sse_string(symbol_t symbol, const TradeReport& report) {
     String str;
     Map<String, String> info;
-    info["symbol"] = get_symbol(symbol);
+    auto name = get_symbol(symbol);
+    info["symbol"] = name;
     switch (report._status) {
     case OrderStatus::OrderAccept:
         info["status"] = "order_accept";
@@ -73,6 +77,7 @@ String to_sse_string(symbol_t symbol, const TradeReport& report) {
         info["status"] = "unknow";
     break;
     }
+    info["name"] = Server::GetName(name);
     return format_sse("trade_report", info);
 }
 

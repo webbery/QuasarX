@@ -56,6 +56,7 @@ enum class ContractType: char {
 struct ContractInfo {
     ContractType _type;
     ExchangeName _exchange;
+    String _name;
 };
 
 enum class DataFrequencyType {
@@ -83,6 +84,7 @@ public:
     static ExchangeName GetExchange(const std::string& symbol);
     static ContractType GetContractType(const std::string& symbol, const String& exhange = "");
     static nng_socket GetSocket();
+    static String GetName(const String& symbol);
 
     // enum EXECUTE_MODE: unsigned short {
     //     MODE_SERVICE,   // 网络服务模式

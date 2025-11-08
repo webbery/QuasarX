@@ -1039,10 +1039,6 @@ const placeNewStockOrder = async () => {
         status: 'pending',
         sysID: res['data'].sysID
       };
-      const existOrders = localStorage.getItem(STOCK_ORDER)
-      let orders = JSON.parse(existOrders)
-      orders.push(displayOrder)
-      localStorage.setItem('stockOrders', JSON.stringify(orders))
       stockOrders.value.unshift(displayOrder);
       message.success('新代码买入订单提交成功');
       closeNewStockOperation();
@@ -1341,7 +1337,7 @@ const handleStockCancel = () => {
 
 const queryAllStockOrders = async () => {
   const response = await axios.get('/v0/trade/order')
-  console.info(response.data)
+  console.info('queryAllStockOrders:', response.data)
   /*{ 
         id: 1, 
         code: '000001', 
@@ -1373,11 +1369,6 @@ const queryAllStockOrders = async () => {
         quantity: 100, 
         status: 'waiting' 
     }*/
-  const existOrders = localStorage.getItem(STOCK_ORDER)
-  let orders;
-  if (existOrders.length != 0) {
-    orders = JSON.stringify(existOrders)
-  }
   for (const item of response.data) {
     let status = 'pending'
     switch (item.status) {
@@ -1393,6 +1384,7 @@ const queryAllStockOrders = async () => {
       type: (item.direct === 0? 'buy': 'sell'),
       price: item.prices[0],
       quantity: item.quantity,
+      orderType: 'limit',
       status: status,
       sysID: item.sysID
     }

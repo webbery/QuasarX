@@ -187,6 +187,7 @@ int BrokerSubSystem::QueryOrder(const String& sysID, Order& order)
 void BrokerSubSystem::CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb) {
     auto exchange = _server->GetAvaliableStockExchange();
     OrderContext* ctx = new OrderContext;
+    ctx->_flag = false;
     ctx->_callback = cb;
     ctx->_order._symbol = symbol;
     if (!exchange->CancelOrder(id, ctx)) {
@@ -403,7 +404,7 @@ void BrokerSubSystem::run() {
                 auto act = Order2Transaction(*ctx);
                 _historyTrades[GET_SYMBOL(ctx)].emplace_back(std::move(act));
             }
-            // delete ctx;
+            delete ctx;
             itr = contexts.erase(itr);
         }
         else {

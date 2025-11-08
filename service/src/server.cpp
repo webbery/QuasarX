@@ -382,11 +382,12 @@ void Server::InitStocks(const String& path) {
         RunCommand("python tools/run_task.py 1");
         RunCommand("python tools/run_task.py 2");
     }
-    io::CSVReader<2> reader(stock_path);
-    reader.read_header(io::ignore_extra_column, "代码", "交易所");
+    io::CSVReader<3> reader(stock_path);
+    reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
     std::string code;
     std::string exch;
-    while(reader.read_row(code, exch)){
+    String name;
+    while(reader.read_row(code, exch, name)){
         ContractInfo info;
         info._type = ContractType::AStock;
         if (exch == "SH") {
@@ -398,12 +399,12 @@ void Server::InitStocks(const String& path) {
             WARN("{} Unknow exchange {}", code.c_str(), exch.c_str());
             continue;
         }
+        info._name = name;
         _markets.emplace(code, std::move(info));
     }
     // 基金
     String fund_path = path + "/fund_market.csv";
     io::CSVReader<2> fund_reader(fund_path);
-    String name;
     fund_reader.read_header(io::ignore_extra_column, "code", "name");
     while(fund_reader.read_row(code, name)){
         String head = code.substr(0, 2);
@@ -901,14 +902,15 @@ void Server::TimerWorker(nng_socket sock) {
         nlohmann::json array;
         for (auto& item: ol) {
             nlohmann::json order;
-            order["id"] = get_symbol(item._symbol);
+            String strSymbol = get_symbol(item._symbol);
+            order["id"] = strSymbol;
             order["price"] = item._order[0]._price;
             order["sysID"] = item._sysID;
             order["status"] = (int)item._status;
             order["direct"] = (int)item._side;
             order["quantity"] = item._volume;
             order["orderType"] = item._type;
-            //order["name"] = Get
+            order["name"] = GetName(strSymbol);
             array.push_back(std::move(order));
         }
         Map<String, String> data;
@@ -1298,4 +1300,40 @@ nng_socket Server::GetSocket() {
         return sock;
     }
     return _sseSockets[id];
+}
+
+String Server::GetName(const String& symbol)
+{
+    Vector<String> tokens;
+    split(symbol, tokens, ".");
+    String key = tokens.back();
+
+    ExchangeName exchange = ExchangeName::MT_Unknow;
+    if (tokens.size() > 1) {
+        String strExc = tokens.front();
+        if (strExc == "sz") {
+            exchange = ExchangeName::MT_Shenzhen;
+        }
+        else if (strExc == "sh") {
+            exchange = ExchangeName::MT_Shanghai;
+        }
+        else if (strExc == "bj") {
+            exchange = ExchangeName::MT_Beijing;
+        }
+        else {
+            WARN("not support exchange for {}", symbol);
+        }
+    }
+    auto lower_itr = _markets.lower_bound(key);
+    auto upper_itr = _markets.upper_bound(key);
+    for (; lower_itr != upper_itr; ++lower_itr) {
+        if (exchange == ExchangeName::MT_Unknow) {
+            return lower_itr->second._name;
+        }
+        else {
+            if (exchange == lower_itr->second._exchange)
+                return lower_itr->second._name;
+        }
+    }
+    return "Newest";
 }

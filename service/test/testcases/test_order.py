@@ -8,7 +8,7 @@ import math
 class TestOrder:
     stock_id = '000001'
     order_id = -1
-    sys_id = '12002P900000008'
+    sys_id = '12002P900000001'
 
     def generate_args(self, auth_token):
         kwargs = {
@@ -64,7 +64,7 @@ class TestOrder:
 
     @pytest.mark.timeout(60)
     def test_order_buy(self, auth_token):
-        data = self.limit_order_buy_stock(auth_token=auth_token, )
+        data = self.limit_order_buy_stock(auth_token=auth_token)
         assert isinstance(data, object)
         assert "id" in data
         assert data['id'] != -1
@@ -77,7 +77,7 @@ class TestOrder:
         assert isinstance(data, list)
         assert len(data) > 0
         for item in data:
-            # print(item)
+            print(item["sysID"])
             assert isinstance(item, object)
             assert "id" in item
             assert "kind" in item
@@ -87,7 +87,7 @@ class TestOrder:
             assert "quantity" in item
             assert "direct" in item
             assert "status" in item
-            assert "sysID" in item
+            assert "sysID1" in item
             break
 
     @pytest.mark.timeout(60)
