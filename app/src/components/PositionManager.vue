@@ -38,6 +38,11 @@
         <div class="card market-positions">
           <div class="card-header">
             <h2>持仓管理</h2>
+            <span>
+              <span v-if="activeMarketTab === 'stock'">股票</span>
+              <span v-else-if="activeMarketTab === 'option'">期权</span>
+              <span v-else-if="activeMarketTab === 'future'">期货</span>
+              总盈亏: {{  }}</span>
             <div class="tab-navigation">
               <div 
                 class="tab-item" 
@@ -65,13 +70,7 @@
           
           <div class="card-content">
             <!-- 股票持仓 -->
-            <div class="tab-pane" :class="{active: activeMarketTab === 'stock'}">
-              <div class="pane-header">
-                <span>总盈亏: {{  }}</span>
-                <button class="btn btn-warning" @click="handleStockCancel">一键撤单</button>
-                <button class="btn btn-secondary btn-small" @click="openNewStockOperation">新代码买入</button>
-              </div>
-              
+            <div class="tab-pane" :class="{active: activeMarketTab === 'stock'}">              
               <table class="position-table">
                 <thead>
                   <tr>
@@ -347,20 +346,59 @@
               
               <!-- 股票委托列表 -->
               <div class="order-list">
-                <h3>股票委托</h3>
-                <div class="order-item" v-for="order in stockOrders" :key="order.id">
-                  <div>
-                    <span>{{ order.code }} {{ order.name }}</span> | 
-                    <span :class="getOrderTypeClass(order.type)">{{ getOrderTypeText(order.type) }}</span> | 
-                    <span class="order-type-badge" :class="`order-type-${order.orderType}`">{{ getOrderTypeDisplayText(order.orderType) }}</span> |
-                    <span >{{ order.price }} × {{ order.quantity }}</span>
-                  </div>
-                  <div>
-                    <span class="order-status" :class="`status-${order.status}`">
-                      {{ getOrderStatusText(order) }}
-                    </span>
-                    <button class="btn btn-mini" @click="cancelOrder(order)" v-if="order.status === 'pending' || order.status === 'waiting'">撤单</button>
-                  </div>
+                <div class="pane-header">
+                  <h3>股票委托</h3>
+                  <button class="btn btn-secondary btn-small" @click="openNewStockOperation">新代码买入</button>
+                  <button class="btn btn-warning" @click="handleStockCancel">一键撤单</button>
+                </div>
+                
+                <table class="order-table">
+                  <thead>
+                    <tr>
+                      <th>代码</th>
+                      <th>名称</th>
+                      <th>委托类型</th>
+                      <th>订单类型</th>
+                      <th>价格</th>
+                      <th>数量</th>
+                      <th>状态</th>
+                      <th>委托时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="order in stockOrders" :key="order.id" class="order-row">
+                      <td>{{ order.code }}</td>
+                      <td>{{ order.name }}</td>
+                      <td :class="getOrderTypeClass(order.type)">{{ getOrderTypeText(order.type) }}</td>
+                      <td>
+                        <span class="order-type-badge" :class="`order-type-${order.orderType}`">
+                          {{ getOrderTypeDisplayText(order.orderType) }}
+                        </span>
+                      </td>
+                      <td>{{ order.price }}</td>
+                      <td>{{ order.quantity }}</td>
+                      <td>
+                        <span class="order-status" :class="`status-${order.status}`">
+                          {{ getOrderStatusText(order.status) }}
+                        </span>
+                      </td>
+                      <td>{{ order.orderTime || formatTime(order.timestamp) }}</td>
+                      <td>
+                        <button 
+                          class="btn btn-mini btn-danger" 
+                          @click="cancelOrder(order)" 
+                          v-if="order.status === 'pending' || order.status === 'waiting'"
+                        >
+                          撤单
+                        </button>
+                        <span v-else class="no-action">-</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="empty-state" v-if="stockOrders.length === 0">
+                  暂无委托记录
                 </div>
               </div>
             </div>
@@ -876,16 +914,16 @@ const optionOperationTypeText = computed(() => {
     }
 });
 
-const getOrderStatusText = (order) => {
-    switch(order.status) {
+const getOrderStatusText = (status) => {
+    switch(status) {
         case 'pending': return '待成交';
         case 'filled': return '已成交';
         case 'cancelled': return '已撤单';
         case 'rejected': return '已失败';
-        case 'waiting': 
-            return order.orderType === 'conditional' ? '等待触发' : 
-                   order.orderType === 'stop' ? '监控中' : '待成交';
-        default: return order.status;
+        // case 'waiting': 
+        //     return order.orderType === 'conditional' ? '等待触发' : 
+        //            order.orderType === 'stop' ? '监控中' : '待成交';
+        default: return '监控中';
     }
 };
 
@@ -899,7 +937,7 @@ const getOrderStatusType = (type) => {
     case 5: status = 'rejected'; break;
     case 6: status = 'cancel_part'; break;
     case 7: status = 'cancelled'; break;
-    case 8: status = 'cancel_fail'; break;
+    case 8: status = 'pending'; break;
     case 9: status = 'cancelled_filled'; break;
     default: break;
   }
@@ -916,14 +954,29 @@ const getOrderTypeDisplayText = (orderType) => {
     }
 };
 
+const getOrderType = (orgType) => {
+  switch(orgType) {
+    case 0: return 'market';
+    case 1: return 'limit';
+    case 2: return 'conditional';
+    case 3: return 'stop';
+    default: return 'limit';
+  }
+}
 // 方法
 
+const formatTime = (timestamp) => {
+  if (!timestamp) return '-';
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+};
+
 const refreshOptionPositions = () => {
-    showMessage('期权持仓已刷新', 'success');
+    message.show('期权持仓已刷新', 'success')
 };
 
 const refreshFuturePositions = () => {
-    showMessage('期货持仓已刷新', 'success');
+    message.show('期货持仓已刷新', 'success')
 };
 
 const openNewStockOperation = () => {
@@ -960,14 +1013,14 @@ const closeStockOperation = () => {
 const checkCapital = () => {
     openModal('验资确认', '确定要进行验资操作吗？', () => {
         capitalChecked.value = true;
-        showMessage('验资通过', 'success');
+        message.show('验资通过', 'success')
     });
 };
 
 const checkStock = () => {
     openModal('验券确认', '确定要进行验券操作吗？', () => {
         stockChecked.value = true;
-        showMessage('验券通过', 'success');
+        message.show('验券通过', 'success')
     });
 };
 
@@ -987,12 +1040,12 @@ const placeStockOrder = () => {
         stopPrice: stockOrder.stopPrice,
         validity: stockOrder.validity,
         validityDate: stockOrder.validityDate,
-        status: stockOrder.orderType === 'limit' || stockOrder.orderType === 'market' ? 'pending' : 'waiting'
+        status: getOrderStatusType(stockOrder.status)
     };
     console.info('stock commit', order)
     
     stockOrders.value.unshift(order);
-    showMessage('股票订单提交成功', 'success');
+    message.show('股票订单提交成功', 'success')
     closeStockOperation();
 };
 
@@ -1037,7 +1090,8 @@ const placeNewStockOrder = async () => {
         price: newStockOrder.price, 
         quantity: newStockOrder.quantity, 
         status: 'pending',
-        sysID: res['data'].sysID
+        sysID: res['data'].sysID,
+        timestamp: Date.now() // 添加时间戳
       };
       stockOrders.value.unshift(displayOrder);
       message.success('新代码买入订单提交成功');
@@ -1090,7 +1144,7 @@ const placeOptionOrder = () => {
     };
     
     optionOrders.value.unshift(order);
-    showMessage('期权订单提交成功', 'success');
+    message.show('期权订单提交成功', 'success')
     closeOptionOperation();
 };
 
@@ -1107,12 +1161,12 @@ const placeNewOptionOrder = () => {
     };
     
     optionOrders.value.unshift(order);
-    showMessage('新合约买入订单提交成功', 'success');
+    message.show('新合约买入订单提交成功', 'success')
     closeNewOptionOperation();
 };
 
 const saveOptionSettings = () => {
-    showMessage('期权参数设置已保存', 'success');
+    message.show('期权参数设置已保存', 'success')
 };
 
 const openNewFutureOperation = () => {
@@ -1157,7 +1211,7 @@ const placeFutureOrder = () => {
     };
     
     futureOrders.value.unshift(order);
-    showMessage('期货订单提交成功', 'success');
+    message.show('期货订单提交成功', 'success')
     closeFutureOperation();
 };
 
@@ -1174,15 +1228,16 @@ const placeNewFutureOrder = () => {
     };
     
     futureOrders.value.unshift(order);
-    showMessage('新合约买入订单提交成功', 'success');
+    message.show('新合约买入订单提交成功', 'success')
     closeNewFutureOperation();
 };
 
 const cancelOrder = (order) => {
-    openModal('撤单确认', '确定要撤销此订单吗？', () => {
-        order.status = 'cancelled';
-        showMessage('订单已撤销', 'success');
-    });
+    console.info('order:', order)
+    // openModal('撤单确认', '确定要撤销此订单吗？', () => {
+    //     order.status = 'cancelled';
+    //     message.show('订单已撤销', 'success')
+    // });
 };
 
 const handleGlobalCancel = () => {
@@ -1200,26 +1255,26 @@ const handleGlobalCancel = () => {
             if (order.status === 'pending') order.status = 'cancelled';
         });
         
-        showMessage('所有待成交订单已撤销', 'success');
+        message.show('所有待成交订单已撤销', 'success')
     });
 };
 
 const handleEmergency = () => {
     openModal('应急处置确认', '确定要执行应急处置操作吗？此操作将暂停所有交易功能。', () => {
         tradePermission.value = 'disabled';
-        showMessage('应急处置已执行，交易功能已暂停', 'success');
+        message.show('应急处置已执行，交易功能已暂停', 'success')
     });
 };
 
 const handleErrorReport = () => {
-    showMessage('错误报告已生成，请联系技术支持', 'info');
+    message.show('错误报告已生成，请联系技术支持', 'success')
 };
 
 const handleEmergencyStop = () => {
     openModal('紧急停止确认', '确定要紧急停止所有交易吗？此操作不可逆。', () => {
         tradePermission.value = 'disabled';
         abnormalTradeDetected.value = true;
-        showMessage('交易已紧急停止', 'success');
+        message.show('交易已紧急停止', 'success')
     });
 };
 
@@ -1269,12 +1324,6 @@ const confirmModal = () => {
     closeModal();
 };
 
-// 消息提示
-const showMessage = (message, type) => {
-    // 在实际项目中，这里可以集成更复杂的消息提示组件
-    alert(`${type === 'success' ? '成功' : '信息'}: ${message}`);
-};
-
 const onOrderSuccess = (message) => {
   console.info('onOrderSuccess sse: ', message)
   
@@ -1288,8 +1337,8 @@ const onPositionUpdate = (message) => {
   stockPositions.value.forEach((value) => {
     if (value.code == data.id) {
       updated = true;
-      value.currentPrice = data.curPrice;
-      value.profit = profit;
+      value.currentPrice = parseFloat(data.curPrice).toFixed(4);
+      value.profit = parseFloat(profit).toFixed(4);
     }
   })
   if (updated === false) {
@@ -1297,10 +1346,10 @@ const onPositionUpdate = (message) => {
       code: data.id,
       name: data.name,
       quantity: data.quantity,
-      costPrice: data.price,
-      currentPrice: data.curPrice,
+      costPrice: parseFloat(data.price).toFixed(4),
+      currentPrice: parseFloat(data.curPrice).toFixed(4),
       available: data.valid_quantity,
-      profit: profit
+      profit: parseFloat(profit).toFixed(4)
     }
     stockPositions.value.push(stock)
   }
@@ -1312,12 +1361,11 @@ const onOrderUpdate = (message) => {
   stockOrders.value = []
   const data = JSON.parse(message.data['data'])
   for (const item of data) {
-    let status = getOrderStatusType(item['status'])
     const order = {
         code: item["id"],
-        name: "",
+        name: item["name"],
         type: (item["direct"] === 0? 'buy': 'sell'),
-        orderType: item['orderType'],
+        orderType: getOrderType(item['orderType']),
         price: item['price'],
         quantity: item['quantity'],
         // conditionType: stockOrder.conditionType,
@@ -1325,8 +1373,9 @@ const onOrderUpdate = (message) => {
         // stopPrice: stockOrder.stopPrice,
         // validity: stockOrder.validity,
         // validityDate: stockOrder.validityDate,
-        status: status
+        status: getOrderStatusType(item['status'])
     };
+    console.info('curOrder:', order)
     stockOrders.value.push(order)
   }
 }
@@ -1628,31 +1677,62 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-.order-list {
+..order-list {
   margin-top: 30px;
-}
-
-.order-list h3 {
-  margin-bottom: 15px;
-  font-size: 1.1rem;
-}
-
-.order-item {
-  padding: 12px 15px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  margin-bottom: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.order-list .pane-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 15px 20px;
   background-color: rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+.order-list .pane-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.order-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0;
+}
+
+.order-table th,
+.order-table td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.order-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.85rem;
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.order-table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.order-row {
+  transition: all 0.2s;
 }
 
 .order-status {
-  padding: 3px 8px;
+  padding: 4px 8px;
   border-radius: 4px;
   font-size: 0.75rem;
-  margin-right: 10px;
+  font-weight: 500;
 }
 
 .status-pending {
@@ -1668,6 +1748,10 @@ onUnmounted(() => {
 .status-cancelled {
   background-color: #757575;
   color: white;
+}
+
+.status-rejected {
+  color: rgb(213, 9, 9);
 }
 
 .order-type-buy {

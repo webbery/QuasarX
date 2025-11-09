@@ -7,10 +7,9 @@
 auto itr = _exchange->_promises.find(nRequestID);\
 if (itr == _exchange->_promises.end())\
     return;\
-PromisePtr<type> prom = static_pointer_cast<std::promise<type>>(_exchange->_promises[nRequestID]);\
-_exchange->_promises.erase(nRequestID)
+PromisePtr<type> prom = static_pointer_cast<std::promise<type>>(_exchange->_promises[nRequestID])
 
-#define SET_PROMISE(value) prom->set_value(value);
+#define SET_PROMISE(value) prom->set_value(value); _exchange->_promises.erase(nRequestID)
 
 
 template<typename T>
@@ -59,7 +58,7 @@ HXTrade::HXTrade(HXExchange* exc):_exchange(exc) {
 
 void HXTrade::OnFrontConnected()
 {
-    INFO("HX Trade connected");
+    INFO("HX Stock connected");
 }
 
 void HXTrade::OnFrontDisconnected(int nReason) {
@@ -188,7 +187,7 @@ void HXTrade::OnRspQryTradingAccount(TORASTOCKAPI::CTORATstpTradingAccountField*
 
 void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)
 {
-    INIT_PROMISE(TORASTOCKAPI::CTORATstpOrderField);
+    INIT_PROMISE(bool);
     if (pRspInfoField->ErrorID == 0) {
         if (pOrderField) {
             Order order;
@@ -202,24 +201,20 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
             if (pOrderField->OrderType == TORASTOCKAPI::TORA_TSTP_ORDT_Normal) {
                 // 
             }
-            //order._type = 
+            order._type = OrderType::Limit;
             _orders.emplace_back(std::move(order));
         }
-        //if (bIsLast) {
-            if (pOrderField) {
-                SET_PROMISE(*pOrderField);
-            }
-            else {
-                prom->set_exception(std::make_exception_ptr(std::runtime_error("query order empty.")));
-            }
-        //}
+        if (bIsLast) {
+            SET_PROMISE(true);
+        }
     }
     else {
         LOG("query order fail");
         if (bIsLast) {
-            prom->set_exception(std::make_exception_ptr(std::runtime_error("query order fail.")));
+            SET_PROMISE(false);
         }
     }
+    
 }
 
 void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {

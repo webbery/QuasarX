@@ -22,6 +22,10 @@ public:
 
     virtual void OnRspSubSimplifyMarketData(TORALEV1API::CTORATstpSpecificSecurityField* pSpecificSecurityField, TORALEV1API::CTORATstpRspInfoField* pRspInfoField);
 
+    virtual void OnRspSubSPMarketData(TORALEV1API::CTORATstpSpecificSecurityField* pSpecificSecurityField, TORALEV1API::CTORATstpRspInfoField* pRspInfoField);
+    
+    virtual void OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarketDataField);
+
     QuoteInfo GetQuote(symbol_t symbol);
 private:
   bool _isInited;

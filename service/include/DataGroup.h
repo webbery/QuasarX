@@ -21,7 +21,7 @@ enum class OrderType: char {
     Market, // 市价单
     Limit,  // 限价单
     Condition, // 条件单
-    // 止损单
+    Stop,   // 止损单
     // 冰山订单
     // 最优五档成交剩余转撤销
     // 最优五档成交剩余转限价

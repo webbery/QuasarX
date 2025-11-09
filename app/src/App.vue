@@ -104,9 +104,9 @@
     <aside class="right-panel">
       <div v-if="is_account">
         <MarketPanel></MarketPanel>
-        <RiskPanel></RiskPanel>
       </div>
       <div v-else-if="is_risk">
+        <RiskPanel></RiskPanel>
       </div>
       <div v-else-if="is_strategy">
         <FlowComponents></FlowComponents>

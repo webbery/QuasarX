@@ -6,6 +6,7 @@ class HXOptionTrade : public TORASPAPI::CTORATstpSPTraderSpi{
 public:
     HXOptionTrade(HXExchange* exchange);
 
+    virtual void OnFrontConnected();
     virtual void OnFrontDisconnected(int nReason);
 
 private:

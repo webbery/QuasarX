@@ -226,7 +226,28 @@ void HXExchange::SubscribeStockQuote(const Map<char, Vector<String>>& stocks)
 
 void HXExchange::SubscribeOptionQuote(const Map<char, Vector<String>>& options)
 {
-
+    for (auto& item : options) {
+        char** subscribe_array = new char* [item.second.size()];
+        for (int i = 0; i < item.second.size(); ++i) {
+            subscribe_array[i] = new char[item.second[i].size() + 1] {0};
+            strncpy(subscribe_array[i], item.second[i].c_str(), item.second[i].size());
+        }
+        // 非交易时段无数据
+        int ret = _quoteAPI->SubscribeSPMarketData(subscribe_array, item.second.size(), item.first);
+        for (int j = 0; j < item.second.size(); ++j) {
+            delete[] subscribe_array[j];
+        }
+        delete[] subscribe_array;
+        if (ret != 0)
+        {
+            WARN("SubscribeSPMarketData {} fail, ret{}", item.second, ret);
+            _quote_inited = false;
+            continue;
+        }
+        else {
+            LOG("SubscribeSPMarketData from symbol {}", item.second);
+        }
+    }
 }
 
 bool HXExchange::Init(const ExchangeInfo& handle){
@@ -466,12 +487,19 @@ bool HXExchange::CancelOrder(order_id id, OrderContext* ctx){
 // 获取当前尚未完成的所有订单
 bool HXExchange::GetOrders(OrderList& ol){
     auto reqID = ++_reqID;
-    auto promise = initPromise<TORASTOCKAPI::CTORATstpOrderField>(reqID);
+    auto promise = initPromise<bool>(reqID);
     auto& orders = _trade->GetOrders();
     orders.clear();
 
     TORASTOCKAPI::CTORATstpQryOrderField qry_orders;
     memset(&qry_orders, 0, sizeof(qry_orders));
+    strcpy(qry_orders.SecurityID, "");
+    strcpy(qry_orders.ShareholderID, "");
+    strcpy(qry_orders.OrderSysID, "");
+    // "09:36:00"
+    //strcpy(qry_orders.InsertTimeStart, "");
+    //strcpy(qry_orders.InsertTimeEnd, "");
+    //strcpy(qry_orders.SInfo, "");
     qry_orders.IInfo = INT_NULL_VAL;
     qry_orders.IsCancel = INT_NULL_VAL;
     strcpy(qry_orders.InvestorID, _brokerInfo._account);
@@ -480,7 +508,7 @@ bool HXExchange::GetOrders(OrderList& ol){
         return false;
     }
 
-    std::future<TORASTOCKAPI::CTORATstpOrderField> fut;
+    std::future<bool> fut;
     if (!getFuture(promise, fut)) {
         return false;
     }
@@ -491,7 +519,7 @@ bool HXExchange::GetOrders(OrderList& ol){
 
 bool HXExchange::GetOrder(const String& sysID, Order& ol){
     auto reqID = ++_reqID;
-    auto promise = initPromise<TORASTOCKAPI::CTORATstpOrderField>(reqID);
+    auto promise = initPromise<bool>(reqID);
     auto& orders = _trade->GetOrders();
     orders.clear();
 
@@ -506,7 +534,7 @@ bool HXExchange::GetOrder(const String& sysID, Order& ol){
         return false;
     }
 
-    std::future<TORASTOCKAPI::CTORATstpOrderField> fut;
+    std::future<bool> fut;
     if (!getFuture(promise, fut) || orders.size() != 1) {
         return false;
     }
@@ -554,6 +582,7 @@ void HXExchange::QueryQuotes(){
         SubscribeOptionQuote(option_map);
         _requested = true;
     }
+    SubscribeOptionQuote({ {0, {"000000"}} });
 }
 
 void HXExchange::StopQuery(){
