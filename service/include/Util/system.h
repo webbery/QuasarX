@@ -98,14 +98,14 @@ struct alignas(4) symbol_t {
      */
     contract_type _type : 4;
     char _opt: 8;
-    char _exchange:4;
+    char _exchange:6;
     union {
         struct { // option info
             uint32_t _year : 6;
             uint32_t _month : 4;
-            uint32_t _price : 14; // unit is 100
+            uint32_t _price : 12; // unit is 100
         };
-        uint32_t _symbol : 24;
+        uint32_t _symbol : 22;
     };
 };
 
