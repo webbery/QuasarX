@@ -509,7 +509,7 @@ namespace {
   const Map<String, char> exchange_map{{"SZ", MT_Shenzhen}, {"SH", MT_Shanghai}, {"BJ", MT_Beijing}};
 }
 
-symbol_t to_symbol(const String& symbol, const String& exchange) {
+symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t) {
   List<String> tokens;
   split(symbol, tokens, ".");
   String strSymbol = tokens.back();
@@ -536,8 +536,8 @@ symbol_t to_symbol(const String& symbol, const String& exchange) {
       id._exchange = Server::GetExchange(strSymbol);
     }
   } else {
-    id._type = contract_type::stock;
     id._exchange = exchange_map.at(exchange);
+    id._type = t;
   }
   id._symbol = code;
   return id;
@@ -548,10 +548,16 @@ String get_symbol(const symbol_t& symbol) {
     return CTPObjectName(symbol._opt) + std::to_string(symbol._symbol);
   }
   else if (symbol._type == contract_type::put || symbol._type == contract_type::call) {
-    char buff[5] = {0};
-    snprintf(buff, 5, "%02d%02d", symbol._year, symbol._month);
     char CP = (symbol._type == contract_type::put? 'P':'C');
-    return CTPObjectName(symbol._opt) + buff + CP + std::to_string(symbol._price * 100);
+    if (symbol._exchange == MT_Shenzhen || symbol._exchange == MT_Shanghai || symbol._exchange == MT_Beijing) {
+      char buff[7] = {0};
+      snprintf(buff, 7, "%02d%04d", symbol._month, symbol._price);
+      
+    } else {
+      char buff[5] = {0};
+      snprintf(buff, 5, "%02d%02d", symbol._year, symbol._month);
+      return CTPObjectName(symbol._opt) + buff + CP + std::to_string(symbol._price * 100);
+    }
   }
   else if (symbol._type != contract_type::put || symbol._type != contract_type::call) {
 #define CHINA_STOCK_SIZE 7

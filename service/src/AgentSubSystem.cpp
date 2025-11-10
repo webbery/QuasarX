@@ -80,10 +80,15 @@ void FlowSubsystem::Start(const String& strategy) {
     }
     DataContext context;
     flow._transfer = new Transfer([context{std::move(context)}, strategy, this](nng_socket& from, nng_socket& to) mutable {
-        DataFeatures messenger;
-        if (!ReadFeatures(from, messenger)) {
+        QuoteInfo quote;
+        if (!ReadQuote(from, quote)) {
             return true;
         }
+
+        DataFeatures messenger;
+        // if (!ReadFeatures(from, messenger)) {
+        //     return true;
+        // }
         auto& flow = _flows[strategy];
         if (_handle->GetRunningMode() != RuningType::Backtest) {
             if (flow._future > 0 && _handle->IsOpen(messenger._symbols[0], Now())) {
@@ -104,7 +109,7 @@ void FlowSubsystem::Start(const String& strategy) {
         
         return true;
     });
-    flow._transfer->start(strategy, URI_FEATURE);
+    flow._transfer->start(strategy, URI_RAW_QUOTE);
 }
 
 void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {

@@ -192,9 +192,9 @@ void FeatureSubsystem::CreateFeature(const String& strategy, const String& name,
 }
 
 bool FeatureSubsystem::Start() {
-    if (!_thread) {
-        _thread = new std::thread(&FeatureSubsystem::run, this);
-    }
+    // if (!_thread) {
+    //     _thread = new std::thread(&FeatureSubsystem::run, this);
+    // }
 
     return true;
 }

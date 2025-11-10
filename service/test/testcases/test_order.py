@@ -98,6 +98,9 @@ class TestOrder:
         data = check_response(response)
         data = self.get_orders(auth_token=auth_token)
         # assert len(data) == 0
+        if len(data) == 1:
+            order = data[0]
+            assert order["status"] == 7     # 取消成功
 
     # @pytest.mark.timeout(5)
     # def test_order_sell(self, auth_token):

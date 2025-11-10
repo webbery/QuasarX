@@ -119,14 +119,45 @@ void HXQuateSpi::OnRspSubSPMarketData(TORALEV1API::CTORATstpSpecificSecurityFiel
     INFO("subscribe option");
 }
 
+void HXQuateSpi::GetOptionInfo(const String& name, const String& token, char& month, int& price) {
+    Vector<String> tokens;
+    split(name, tokens, token.c_str());
+    Vector<String> info;
+    split(tokens.back(), info, "月");
+    month = atoi(info.front().c_str());
+    price = atoi(info.back().c_str());
+}
+
 void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarketDataField)
 {
     //option data
     auto strCode = pMarketDataField->SecurityID;
-    auto strName = pMarketDataField->SecurityName;
+    String strName(to_utf8(pMarketDataField->SecurityName));
+    static Map<TTORATstpExchangeIDType, String> exchangeMap{{TORA_TSTP_EXD_SSE, "SH"}, {'2', "SZ"}};
     auto strExchange = pMarketDataField->ExchangeID;
+
+    contract_type t = contract_type::call;
+    char month;
+    int price;
+    if (strName.find("沽") != std::string::npos) {
+        t = contract_type::put;
+        GetOptionInfo(strName, "沽", month, price);
+    }
+    else if (strName.find("购") != std::string::npos) {
+        t = contract_type::call;
+        GetOptionInfo(strName, "购", month, price);
+    } else {
+        WARN("unknow option type {} {}", strCode, strName);
+        return;
+    }
     // 
-    auto symb = to_symbol(strCode);
+    auto symb = to_symbol(strCode, exchangeMap[strExchange], t);
+    symb._price = price;
+    symb._month = month;
+
+    if (_names.count(symb) == 0) {
+        _names[symb] = strName;
+    }
 
     QuoteInfo& info = _tickers[symb];
     auto cur = Now();

@@ -281,8 +281,19 @@ void HXExchange::SetFilter(const QuoteFilter& filter){
 
 bool HXExchange::Release(){
     if (_quote) {
+        _quoteAPI->Release();
         delete _quote;
         _quote = nullptr;
+    }
+    if (_trade) {
+        _tradeAPI->Release();
+        delete _trade;
+        _trade = nullptr;
+    }
+    if (_optionTrade) {
+        _optionTradeAPI->Release();
+        delete _optionTrade;
+        _optionTrade = nullptr;
     }
     return true;
 }

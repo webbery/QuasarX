@@ -27,6 +27,10 @@ public:
     virtual void OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarketDataField);
 
     QuoteInfo GetQuote(symbol_t symbol);
+
+private:
+    void GetOptionInfo(const String& name, const String& token, char& month, int& price);
+
 private:
   bool _isInited;
 
@@ -35,4 +39,6 @@ private:
   nng_socket _sock;
   std::shared_mutex _mutex;
   Map<symbol_t, QuoteInfo> _tickers;
+
+  Map<symbol_t, String> _names;
 };

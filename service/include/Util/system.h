@@ -98,14 +98,14 @@ struct alignas(4) symbol_t {
      */
     contract_type _type : 4;
     char _opt: 8;
-    char _exchange:8;
+    char _exchange:4;
     union {
         struct { // option info
             uint32_t _year : 6;
             uint32_t _month : 4;
-            uint32_t _price : 10; // unit is 100
+            uint32_t _price : 14; // unit is 100
         };
-        uint32_t _symbol : 20;
+        uint32_t _symbol : 24;
     };
 };
 
@@ -135,7 +135,7 @@ void serialize(Archive& ar, symbol_t& s) {
     }
 }
 }
-symbol_t to_symbol(const String& symbol, const String& exchange = "");
+symbol_t to_symbol(const String& symbol, const String& exchange = "", contract_type t=contract_type::stock);
 String get_symbol(const symbol_t&);
 
 bool is_future(symbol_t );
