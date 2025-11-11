@@ -3,11 +3,21 @@
 
 class ETFOptionSymbol {
 public:
-    ETFOptionSymbol(const String& symbol);
+    ETFOptionSymbol(const String& code, const String& name);
+    ETFOptionSymbol(symbol_t symbol);
 
     operator symbol_t() const;
+
+    String name();
+
 private:
-    String _symbol;
+    String GetOptionInfo(const String& name, const String& token, char& month, int& price);
+
+    void SetCode(uint64_t idx, uint64_t id);
+    void GetCode(uint64_t& idx, uint64_t& id);
+
+private:
+    symbol_t _symbol;
 };
 
 String ETFObjectName(int type);

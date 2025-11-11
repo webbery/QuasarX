@@ -29,7 +29,6 @@ public:
     QuoteInfo GetQuote(symbol_t symbol);
 
 private:
-    void GetOptionInfo(const String& name, const String& token, char& month, int& price);
 
 private:
   bool _isInited;

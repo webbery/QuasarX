@@ -97,13 +97,13 @@ struct alignas(4) symbol_t {
     * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC
      */
     contract_type _type : 4;
-    char _opt: 8;
     char _exchange:6;
+    char _opt : 8;
     union {
         struct { // option info
-            uint32_t _year : 6;
+            uint32_t _year : 8;
             uint32_t _month : 4;
-            uint32_t _price : 12; // unit is 100
+            uint32_t _price : 10; // unit is 100
         };
         uint32_t _symbol : 22;
     };

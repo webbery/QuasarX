@@ -3,7 +3,7 @@
 #include "Util/system.h"
 #include "Bridge/exchange.h"
 #include "Util/string_algorithm.h"
-#include <cstring>
+#include "Bridge/ETFOptionSymbol.h"
 
 using namespace TORALEV1API;
 
@@ -119,15 +119,6 @@ void HXQuateSpi::OnRspSubSPMarketData(TORALEV1API::CTORATstpSpecificSecurityFiel
     INFO("subscribe option");
 }
 
-void HXQuateSpi::GetOptionInfo(const String& name, const String& token, char& month, int& price) {
-    Vector<String> tokens;
-    split(name, tokens, token.c_str());
-    Vector<String> info;
-    split(tokens.back(), info, "月");
-    month = atoi(info.front().c_str());
-    price = atoi(info.back().c_str());
-}
-
 void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarketDataField)
 {
     //option data
@@ -137,23 +128,9 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
     auto strExchange = pMarketDataField->ExchangeID;
 
     contract_type t = contract_type::call;
-    char month;
-    int price;
-    if (strName.find("沽") != std::string::npos) {
-        t = contract_type::put;
-        GetOptionInfo(strName, "沽", month, price);
-    }
-    else if (strName.find("购") != std::string::npos) {
-        t = contract_type::call;
-        GetOptionInfo(strName, "购", month, price);
-    } else {
-        WARN("unknow option type {} {}", strCode, strName);
-        return;
-    }
+    ETFOptionSymbol opSymbol(strCode, strName);
     // 
-    auto symb = to_symbol(strCode, exchangeMap[strExchange], t);
-    symb._price = price;
-    symb._month = month;
+    symbol_t symb = opSymbol;
 
     if (_names.count(symb) == 0) {
         _names[symb] = strName;
