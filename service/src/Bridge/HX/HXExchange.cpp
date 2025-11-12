@@ -562,7 +562,9 @@ void HXExchange::QueryQuotes(){
     if (_filter._symbols.empty()) {
         // 订阅全市场行情,流量?
         SubscribeStockQuote({ {0, {"000000"}} });
-    } else {
+        SubscribeOptionQuote({ {0, {"000000"}} });
+    }
+    else {
         Map<char, Vector<String>> subscribe_map, option_map;
         for (auto symb: _filter._symbols) {
             auto symbol = to_symbol(symb);
@@ -593,7 +595,6 @@ void HXExchange::QueryQuotes(){
         SubscribeOptionQuote(option_map);
         _requested = true;
     }
-    SubscribeOptionQuote({ {0, {"000000"}} });
 }
 
 void HXExchange::StopQuery(){

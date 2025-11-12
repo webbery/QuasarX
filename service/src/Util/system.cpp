@@ -4,6 +4,7 @@
 #include "nng/nng.h"
 #include "nng/protocol/pubsub0/sub.h"
 #include "nng/protocol/pubsub0/pub.h"
+#include "Bridge/ETFOptionSymbol.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -550,9 +551,8 @@ String get_symbol(const symbol_t& symbol) {
   else if (symbol._type == contract_type::put || symbol._type == contract_type::call) {
     char CP = (symbol._type == contract_type::put? 'P':'C');
     if (symbol._exchange == MT_Shenzhen || symbol._exchange == MT_Shanghai || symbol._exchange == MT_Beijing) {
-      char buff[7] = {0};
-      snprintf(buff, 7, "%02d%04d", symbol._month, symbol._price);
-      
+        ETFOptionSymbol etfOpt(symbol);
+        return etfOpt.name();
     } else {
       char buff[5] = {0};
       snprintf(buff, 5, "%02d%02d", symbol._year, symbol._month);

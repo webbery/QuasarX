@@ -132,7 +132,8 @@ String ETFOptionSymbol::name()
             n += "_";
             break;
     }
-    n += std::to_string(_symbol._month);
+    auto mon = _symbol._month;
+    n += std::format("{:0^{}}", mon, 2);
     auto price = _symbol._price;
     n += std::format("M{:0^{}}", price, 5);
     // 形如510050C2511M02850
