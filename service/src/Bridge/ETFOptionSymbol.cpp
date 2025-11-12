@@ -1,7 +1,10 @@
 #include "std_header.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include <boost/unordered/concurrent_flat_map.hpp>
+#include <cstdint>
+#include <format>
 #include "Util/string_algorithm.h"
+#include "Util/datetime.h"
 
 namespace {
     const Map<char, String> ID2Symbol{
@@ -44,25 +47,20 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
     contract_type t = contract_type::call;
     char month;
     int price;
-    String objName;
+    uint64_t id = 0;
     if (name.find("沽") != std::string::npos) {
         t = contract_type::put;
-        objName = GetOptionInfo(name, "沽", month, price);
+        id = GetOptionInfo(name, "沽", month, price);
     }
     else if (name.find("购") != std::string::npos) {
         t = contract_type::call;
-        objName = GetOptionInfo(name, "购", month, price);
+        id = GetOptionInfo(name, "购", month, price);
     }
     else {
         WARN("parse {} fail.", name);
         return;
     }
-    auto itr = name2ID.find(objName);
-    if (itr == name2ID.end())
-        return;
-
-    uint64_t id = itr->second;
-    _symbol._exchange = ID2Exchange.at(id);
+    
     _symbol._month = month;
     _symbol._price = price;
     _symbol._type = t;
@@ -76,30 +74,37 @@ ETFOptionSymbol::ETFOptionSymbol(symbol_t symbol):_symbol(symbol)
 
 ETFOptionSymbol::operator symbol_t() const
 {
-    // 形如510050C2511M02850
-
     return _symbol;
 }
 
-String ETFOptionSymbol::GetOptionInfo(const String& name, const String& token, char& month, int& price) {
+uint64_t ETFOptionSymbol::GetOptionInfo(const String& name, const String& token, char& month, int& price) {
     Vector<String> tokens;
     split(name, tokens, token.c_str());
+    auto itr = name2ID.find(tokens.front());
+    if (itr == name2ID.end())
+        return 0;
+
+    uint64_t id = itr->second;
+    _symbol._exchange = ID2Exchange.at(id);
+
     Vector<String> info;
-    split(tokens.back(), info, "月");
+    auto back = tokens.back().substr(2);
+    split(back, info, "月");
     month = atoi(info.front().c_str());
-    price = atoi(info.back().c_str());
-    return tokens.front();
+    price = atoi(info.back().substr(2).c_str());
+    return id;
 }
 
 void ETFOptionSymbol::SetCode(uint64_t idx, uint64_t id)
 {
-    *((uint64_t*)&_symbol) |= ((idx << 16) | (id << 25));
+    _symbol._opt = id;
+    _symbol._year = idx;
 }
 
 void ETFOptionSymbol::GetCode(uint64_t& idx, uint64_t& id)
 {
-    id = *((uint64_t*)&_symbol) & (0b11111 << 25);
-    idx = *((uint64_t*)&_symbol) & (0b11111111111 << 16);
+    id = _symbol._opt;
+    idx = _symbol._year;
 }
 
 String ETFOptionSymbol::name()
@@ -114,6 +119,22 @@ String ETFOptionSymbol::name()
         }
         n += val.second;
         return false;
-        });
+    });
+    switch (_symbol._type) {
+        case contract_type::call:
+            n += "C";
+            break;
+        case contract_type::put:
+            n += "P";
+            break;
+        default:
+            WARN("unknow option type.");
+            n += "_";
+            break;
+    }
+    n += std::to_string(_symbol._month);
+    auto price = _symbol._price;
+    n += std::format("M{:0^{}}", price, 5);
+    // 形如510050C2511M02850
     return n;
 }

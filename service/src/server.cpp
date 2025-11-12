@@ -19,11 +19,9 @@
 #include "Util/datetime.h"
 #include "csv.h"
 #include <fstream>
-#include <mutex>
 #include <nng/protocol/reqrep0/rep.h>
 #include <nng/protocol/reqrep0/req.h>
 #include <nng/supplemental/util/platform.h>
-#include <thread>
 #include "Handler/AssetHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/StrategyHandler.h"
@@ -963,16 +961,16 @@ void Server::TimerWorker(nng_socket sock) {
 void Server::UpdateQuoteQueryStatus(time_t curr) {
     auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
     for (auto exchange: handler->GetExchanges()) {
-        if (exchange.second->IsWorking(curr)) {
+        // if (exchange.second->IsWorking(curr)) {
             if (exchange.second->IsLogin()) {
                 exchange.second->QueryQuotes();
             }
             else {
                 exchange.second->Login();
             }
-        } else {
-            exchange.second->StopQuery();
-        }
+        // } else {
+        //     exchange.second->StopQuery();
+        // }
     }
 }
 

@@ -11,7 +11,7 @@ public:
     String name();
 
 private:
-    String GetOptionInfo(const String& name, const String& token, char& month, int& price);
+    uint64_t GetOptionInfo(const String& name, const String& token, char& month, int& price);
 
     void SetCode(uint64_t idx, uint64_t id);
     void GetCode(uint64_t& idx, uint64_t& id);

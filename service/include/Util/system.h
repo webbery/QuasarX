@@ -1,5 +1,4 @@
 #pragma once
-#include "json.hpp"
 #include "std_header.h"
 #include "nng/nng.h"
 #include "yas/binary_oarchive.hpp"
@@ -18,6 +17,7 @@
 #pragma GCC diagnostic pop
 #endif
 #include <boost/container_hash/hash.hpp>
+#include "json.hpp"
 
 #define URI_RAW_QUOTE   "inproc://URI_RAW_QUOTE"
 #define URI_SIM_QUOTE   "inproc://URI_SIM_QUOTE"// 仿真数据
@@ -96,16 +96,17 @@ struct alignas(4) symbol_t {
     /**
     * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC
      */
-    contract_type _type : 4;
-    char _exchange:6;
-    char _opt : 8;
+    contract_type _type : 8;
+    char _exchange:8;
+    uint32_t _opt : 8;
     union {
         struct { // option info
-            uint32_t _year : 8;
+            uint32_t _reserved : 12;
+            uint32_t _year : 6;
             uint32_t _month : 4;
             uint32_t _price : 10; // unit is 100
         };
-        uint32_t _symbol : 22;
+        uint32_t _symbol : 32;
     };
 };
 
