@@ -54,7 +54,7 @@ class TestOrder:
         response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
         return check_response(response)
 
-    def get_orders(self, auth_token):
+    def get_stock_orders(self, auth_token):
         kwargs = self.generate_args(auth_token)
         response = requests.get(f"{BASE_URL}/trade/order", **kwargs)
         return check_response(response)
@@ -62,8 +62,11 @@ class TestOrder:
     def cancel_order(self, auth_token):
         pass
 
+    def market_order_buy_option(self, auth_token):
+        pass
+    
     @pytest.mark.timeout(60)
-    def test_order_buy(self, auth_token):
+    def test_stock_order_buy(self, auth_token):
         data = self.limit_order_buy_stock(auth_token=auth_token)
         assert isinstance(data, object)
         assert "id" in data
@@ -72,8 +75,8 @@ class TestOrder:
         self.sys_id = data['sysID']
 
     @pytest.mark.timeout(60)
-    def test_get_all_orders(self, auth_token):
-        data = self.get_orders(auth_token=auth_token)
+    def test_get_all_stock_orders(self, auth_token):
+        data = self.get_stock_orders(auth_token=auth_token)
         assert isinstance(data, list)
         assert len(data) == 1
         for item in data:
@@ -91,12 +94,12 @@ class TestOrder:
             break
 
     @pytest.mark.timeout(60)
-    def test_cancel_order(self, auth_token):
+    def test_cancel_stock_order(self, auth_token):
         kwargs = self.generate_args(auth_token)
         params = {'id': self.order_id, 'sysID': self.sys_id}
         response = requests.delete(f"{BASE_URL}/trade/order", json=params, **kwargs)
         data = check_response(response)
-        data = self.get_orders(auth_token=auth_token)
+        data = self.get_stock_orders(auth_token=auth_token)
         # assert len(data) == 0
         if len(data) == 1:
             order = data[0]
@@ -113,3 +116,7 @@ class TestOrder:
     #     assert isinstance(data, object)
     #     assert "id" in data
     #     assert "status" in data
+
+    @pytest.mark.timeout(60)
+    def test_option_order_buy(self, auth_token):
+        pass

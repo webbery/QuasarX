@@ -24,6 +24,11 @@ struct StockHandle {
     TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
 };
 
+struct OptionHandle {
+    HXOptionTrade* _optionTrade;
+    TORASPAPI::CTORATstpSPTraderApi* _optionTradeAPI;
+};
+
 class alignas(8) HXExchange: public ExchangeInterface {
     friend class HXQuateSpi;
     friend class HXTrade;
@@ -91,6 +96,9 @@ private:
     order_id AddStockOrder(const symbol_t& symbol, OrderContext* order);
     order_id AddOptionOrder(const symbol_t& symbol, OrderContext* order);
 
+    void CancelStockOrder(order_id id, OrderContext* order);
+    void CancelOptionOrder(order_id id, OrderContext* order);
+
     void SubscribeStockQuote(const Map<char, Vector<String>>& stocks);
     void SubscribeOptionQuote(const Map<char, Vector<String>>& options);
 private:
@@ -99,6 +107,7 @@ private:
     bool _requested : 1;
     bool _trader_login : 1;
     bool _quote_login : 1;
+    bool _option_login : 1;
 
     ExchangeInfo _brokerInfo;
 
@@ -111,8 +120,7 @@ private:
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;
     TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
 
-    HXOptionTrade* _optionTrade;
-    TORASPAPI::CTORATstpSPTraderApi* _optionTradeAPI;
+    OptionHandle _optionHandle;
 
     int8_t _maxInsertOrder; // 每秒最大报单笔数
     int8_t _maxCancelOrder; // 每秒最大撤单笔数

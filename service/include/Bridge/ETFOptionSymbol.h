@@ -20,6 +20,4 @@ private:
     symbol_t _symbol;
 };
 
-String ETFObjectName(int type);
-
-ExchangeName GetETFOptionExchangeName(const String& object);
+symbol_t get_etf_option_symbol(const String& code);

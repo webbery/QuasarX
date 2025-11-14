@@ -98,7 +98,7 @@ struct alignas(4) symbol_t {
      */
     contract_type _type : 8;
     char _exchange:8;
-    unsigned char _opt : 8;
+    unsigned short _opt : 16;
     union {
         struct { // option info
             uint32_t _reserved : 12;

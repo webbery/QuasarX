@@ -102,6 +102,8 @@ HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr), _tradeAPI(nullptr), _trade(nullptr)
 , _login_status(false), _quote_inited(false), _requested(false), _reqID(0)
 , _trader_login(false), _quote_login(false), _current(0) {
+    _optionHandle._optionTrade = nullptr;
+    _optionHandle._optionTradeAPI = nullptr;
 }
 
 HXExchange::~HXExchange(){
@@ -146,7 +148,13 @@ bool HXExchange::InitStockTrade() {
 }
 
 bool HXExchange::InitOptionTrade() {
-    _optionTradeAPI->RegisterSpi(_optionTrade);
+    _optionHandle._optionTradeAPI->RegisterSpi(_optionHandle._optionTrade);
+    String trade_ip("tcp://");
+    trade_ip += std::string(_brokerInfo._trade_addr) + ":" + std::to_string(_brokerInfo._trade_port);
+    _optionHandle._optionTradeAPI->RegisterFront((char*)trade_ip.c_str());
+    _optionHandle._optionTradeAPI->SubscribePrivateTopic(TORASPAPI::TORA_TERT_QUICK);
+    _optionHandle._optionTradeAPI->SubscribePublicTopic(TORASPAPI::TORA_TERT_RESTART);
+    _optionHandle._optionTradeAPI->Init();
     return true;
 }
 
@@ -159,30 +167,30 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 {
     order_id oid{ ++_reqID };
     using namespace TORASTOCKAPI;
-    CTORATstpInputOrderField* order = new CTORATstpInputOrderField;
-    memset(order, 0, sizeof(CTORATstpInputOrderField));
+    CTORATstpInputOrderField order;
+    memset(&order, 0, sizeof(CTORATstpInputOrderField));
 
     auto& o = ctx->_order;
-    order->OrderRef = oid._id;
-    order->Direction = (o._side == 0 ? TORA_TSTP_D_Buy : TORA_TSTP_D_Sell);
-    order->UserRequestID = oid._id;
+    order.OrderRef = oid._id;
+    order.Direction = (o._side == 0 ? TORA_TSTP_D_Buy : TORA_TSTP_D_Sell);
+    order.UserRequestID = oid._id;
 
     String& shareholder = _shareholder[symbol._exchange];
     if (shareholder.empty()) {
         WARN("shareholder is empty");
         return { 0 };
     }
-    strcpy(order->ShareholderID, shareholder.c_str());
+    strcpy(order.ShareholderID, shareholder.c_str());
     auto strCode = format_symbol(std::to_string(symbol._symbol));
-    strncpy(order->SecurityID, strCode.c_str(), strCode.size());
-    order->ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
-    order->VolumeTotalOriginal = ctx->_order._volume;
-    order->LimitPrice = o._order[0]._price;
-    order->ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
+    strncpy(order.SecurityID, strCode.c_str(), strCode.size());
+    order.ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
+    order.VolumeTotalOriginal = ctx->_order._volume;
+    order.LimitPrice = o._order[0]._price;
+    order.ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
 
-    convertOrderType(*ctx, *order);
+    convertOrderType(*ctx, order);
 
-    _tradeAPI->ReqOrderInsert(order, oid._id);
+    _tradeAPI->ReqOrderInsert(&order, oid._id);
 
     ctx->_order._symbol = symbol;
     ctx->_order._id = oid._id;
@@ -194,7 +202,13 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 
 order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* order)
 {
-    return order_id();
+    order_id oid{ ++_reqID };
+
+    TORASPAPI::CTORATstpSPInputOrderField pInputOrderField;
+    memset(&pInputOrderField, 0, sizeof(TORASPAPI::CTORATstpSPInputOrderField));
+    
+    _optionHandle._optionTradeAPI->ReqOrderInsert(&pInputOrderField, oid._id);
+    return oid;
 }
 
 void HXExchange::SubscribeStockQuote(const Map<char, Vector<String>>& stocks)
@@ -269,8 +283,8 @@ bool HXExchange::Init(const ExchangeInfo& handle){
     InitStockTrade();
 
     using namespace TORASPAPI;
-    _optionTradeAPI = CTORATstpSPTraderApi::CreateTstpSPTraderApi();
-    _optionTrade = new HXOptionTrade(this);
+    _optionHandle._optionTradeAPI = CTORATstpSPTraderApi::CreateTstpSPTraderApi();
+    _optionHandle._optionTrade = new HXOptionTrade(this);
     InitOptionTrade();
     return true;
 }
@@ -290,10 +304,11 @@ bool HXExchange::Release(){
         delete _trade;
         _trade = nullptr;
     }
-    if (_optionTrade) {
-        _optionTradeAPI->Release();
-        delete _optionTrade;
-        _optionTrade = nullptr;
+    if (_optionHandle._optionTrade) {
+        _optionHandle._optionTradeAPI->Release();
+        _optionHandle._optionTrade->Release();
+        delete _optionHandle._optionTrade;
+        _optionHandle._optionTrade = nullptr;
     }
     return true;
 }
@@ -434,7 +449,7 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     }
     else if (is_option(symbol)) {
         if (symbol._exchange == ExchangeName::MT_Shanghai || symbol._exchange == ExchangeName::MT_Shenzhen) {
-
+            return AddOptionOrder(symbol, ctx);
         }
     }
     return order_id{0};
@@ -454,6 +469,15 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
 }
 
 bool HXExchange::CancelOrder(order_id id, OrderContext* ctx){
+    if (is_stock(ctx->_order._symbol)) {
+        CancelStockOrder(id, ctx);
+    } else {
+        CancelOptionOrder(id, ctx);
+    }
+    return true;
+}
+
+void HXExchange::CancelStockOrder(order_id id, OrderContext* ctx) {
     auto reqID = ++_reqID;
     id._id = reqID;
     //auto promise = initPromise<TORASTOCKAPI::CTORATstpInputOrderActionField>(reqID);
@@ -481,20 +505,12 @@ bool HXExchange::CancelOrder(order_id id, OrderContext* ctx){
     }
     _tradeAPI->ReqOrderAction(&pInputOrderActionField, reqID);
 
-    //std::future<TORASTOCKAPI::CTORATstpInputOrderActionField> fut;
-    //if (!getFuture(promise, fut)) {
-    //    return false;
-    //}
-
-    // auto info = fut.get();
-    // TradeReport report;
-    // report._status = OrderStatus::CancelSuccess;
-    // order->Update(report);
-    // TODO: 成功则移除_orders中的订单
-    
-    // _orders.erase(id._id);
-    return true;
 }
+
+void HXExchange::CancelOptionOrder(order_id id, OrderContext* order) {
+
+}
+
 // 获取当前尚未完成的所有订单
 bool HXExchange::GetOrders(OrderList& ol){
     auto reqID = ++_reqID;

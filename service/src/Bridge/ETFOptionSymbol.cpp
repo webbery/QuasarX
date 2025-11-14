@@ -2,6 +2,7 @@
 #include "Bridge/ETFOptionSymbol.h"
 #include <boost/unordered/concurrent_flat_map.hpp>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
@@ -25,6 +26,8 @@ namespace {
     boost::concurrent_flat_map<uint32_t, String> etf_code_map;
     // 合约编码code对应短编码
     boost::concurrent_flat_map<String, uint32_t> code_etf_map;
+
+    boost::concurrent_flat_map<String, symbol_t> code_symbol_map;
 }
 
 String ETFObjectName(int type)
@@ -39,6 +42,12 @@ ExchangeName GetETFOptionExchangeName(const String& object)
 
 ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
 {
+    if (code_symbol_map.contains(code)) {
+        code_symbol_map.visit(code, [this](boost::concurrent_flat_map<String, symbol_t>::value_type& value) {
+            _symbol = value.second;
+        });
+        return;
+    }
     auto idx = etf_code_map.size() + 1;
     if (!code_etf_map.contains(code)) {
         code_etf_map.emplace(code, idx);
@@ -65,6 +74,9 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
     _symbol._price = price;
     _symbol._type = t;
     SetCode(idx, id);
+    if (!code_symbol_map.contains(code)) {
+        code_symbol_map.emplace(code, _symbol);
+    }
 }
 
 ETFOptionSymbol::ETFOptionSymbol(symbol_t symbol):_symbol(symbol)
@@ -138,4 +150,15 @@ String ETFOptionSymbol::name()
     n += std::format("M{:0^{}}", price, 5);
     // 形如510050C2511M02850
     return n;
+}
+
+symbol_t get_etf_option_symbol(const String& code) {
+    symbol_t result;
+    memset(&result, 0, sizeof(symbol_t));
+    if (code_symbol_map.contains(code)) {
+        code_symbol_map.visit(code, [&result](boost::concurrent_flat_map<String, symbol_t>::value_type& value) {
+            result = value.second;
+        });
+    }
+    return result;
 }

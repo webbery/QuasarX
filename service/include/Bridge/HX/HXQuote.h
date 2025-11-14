@@ -28,6 +28,8 @@ public:
 
     QuoteInfo GetQuote(symbol_t symbol);
 
+    List<QuoteInfo>& GetOptionHistory(symbol_t symbol);
+
 private:
 
 private:
@@ -40,4 +42,7 @@ private:
   Map<symbol_t, QuoteInfo> _tickers;
 
   Map<symbol_t, String> _names;
+  // 用于计算希腊字母
+  std::shared_mutex _optMtx;
+  Map<symbol_t, List<QuoteInfo>> _optionHistory;
 };

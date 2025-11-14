@@ -4,6 +4,7 @@
 #include "Bridge/exchange.h"
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
+#include <shared_mutex>
 
 using namespace TORALEV1API;
 
@@ -128,9 +129,8 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
     auto strExchange = pMarketDataField->ExchangeID;
 
     contract_type t = contract_type::call;
-    ETFOptionSymbol opSymbol(strCode, strName);
     // 
-    symbol_t symb = opSymbol;
+    symbol_t symb = ETFOptionSymbol(strCode, strName);
 
     if (_names.count(symb) == 0) {
         _names[symb] = strName;
@@ -186,4 +186,9 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
         printf("send quote message fail.\n");
         return;
     }
+}
+
+List<QuoteInfo>& HXQuateSpi::GetOptionHistory(symbol_t symbol) {
+    std::shared_lock<std::shared_mutex> lock(_optMtx);
+    return _optionHistory[symbol];
 }
