@@ -116,10 +116,18 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
 void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
     // 获取所有订单状态
     nlohmann::json result;
-    if (req.params.size() == 0) {
+    auto tp_itr = req.params.find("type");
+    if (tp_itr == req.params.end()) {
+        res.status = 400;
+        res.set_content("{message: 'not set type of stock/option/future'}", "application/json");
+        return;
+    }
+    auto type = (SecurityType)atoi(tp_itr->second.c_str());
+    auto itr = req.params.find("id");
+    if (itr == req.params.end()) {
         auto broker = _server->GetBrokerSubSystem();
         OrderList ol;
-        if (!broker->QueryOrders(ol)) {
+        if (!broker->QueryOrders(type,ol)) {
             res.status = 500;
         }
         else {
@@ -131,7 +139,6 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
         }
     }
     else {
-        auto itr = req.params.find("id");
         if (itr == req.params.end()) {
             res.status = 400;
             res.set_content("{message: 'query must be `id`'}", "application/json");
@@ -145,10 +152,18 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
 }
 
 void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
+    nlohmann::json data = nlohmann::json::parse(req.body);
+    if (!data.contains("type")) {
+        res.status = 400;
+        res.set_content("{message: 'query must contain `type`'}", "application/json");
+        return;
+    }
+
+    auto type = (SecurityType)data["type"];
     auto broker = _server->GetBrokerSubSystem();
-    if (req.body.size() == 0) { // 全部
+    if (req.body.empty()) { // 全部
         OrderList ol;
-        if (!broker->QueryOrders(ol)) {
+        if (!broker->QueryOrders(type,ol)) {
             res.status = 500;
         }
         else {
@@ -165,10 +180,9 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             }
         }
     } else {
-        nlohmann::json data = nlohmann::json::parse(req.body);
         if (!data.contains("sysID")) {
             res.status = 400;
-            res.set_content("{message: 'query must be `id`'}", "application/json");
+            res.set_content("{message: 'query must contain `sysID`'}", "application/json");
             return;
         }
         String sysID = data["sysID"];

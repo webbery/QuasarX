@@ -125,7 +125,6 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
     //option data
     auto strCode = pMarketDataField->SecurityID;
     String strName(to_utf8(pMarketDataField->SecurityName));
-    static Map<TTORATstpExchangeIDType, String> exchangeMap{{TORA_TSTP_EXD_SSE, "SH"}, {'2', "SZ"}};
     auto strExchange = pMarketDataField->ExchangeID;
 
     contract_type t = contract_type::call;

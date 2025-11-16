@@ -57,153 +57,8 @@
 
         <!-- 回测结果面板 -->
         <div v-show="activeTab === 'backtest'" class="backtest-panel">
-            <div class="backtest-container">
-                <!-- 关键指标卡片 -->
-                <div class="metrics-grid">
-                    <div class="metric-card">
-                        <div class="metric-title">总收益</div>
-                        <div class="metric-value positive">+24.5%</div>
-                        <div class="metric-description">累计收益率</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-title">夏普比率</div>
-                        <div class="metric-value">1.82</div>
-                        <div class="metric-description">风险调整后收益</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-title">最大回撤</div>
-                        <div class="metric-value negative">-8.3%</div>
-                        <div class="metric-description">最大亏损幅度</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-title">胜率</div>
-                        <div class="metric-value">65.2%</div>
-                        <div class="metric-description">盈利交易比例</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-title">年化收益</div>
-                        <div class="metric-value positive">+18.7%</div>
-                        <div class="metric-description">年化收益率</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-title">交易次数</div>
-                        <div class="metric-value">142</div>
-                        <div class="metric-description">总交易笔数</div>
-                    </div>
-                </div>
-
-                <!-- 图表区域 -->
-                <div class="charts-container">
-                    <!-- 价格走势与交易信号 -->
-                    <div class="chart-section">
-                        <div class="section-title">
-                            <h3>价格走势与交易信号</h3>
-                            <div class="chart-controls">
-                                <button class="control-btn small">
-                                    <i class="fas fa-download"></i>
-                                </button>
-                                <button class="control-btn small">
-                                    <i class="fas fa-expand"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="chart-wrapper">
-                            <div class="chart-legend">
-                                <div class="legend-item">
-                                    <div class="legend-color price-color"></div>
-                                    <span>价格</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color buy-color"></div>
-                                    <span>买入信号</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color sell-color"></div>
-                                    <span>卖出信号</span>
-                                </div>
-                            </div>
-                            <div class="chart-placeholder">
-                                <!-- 这里可以替换为实际的图表组件，如ECharts -->
-                                <div class="mock-chart">
-                                    <div class="mock-chart-title">价格走势与交易信号图表</div>
-                                    <div class="mock-chart-content">
-                                        <div class="mock-line"></div>
-                                        <div class="mock-signal buy" style="left: 20%"></div>
-                                        <div class="mock-signal sell" style="left: 40%"></div>
-                                        <div class="mock-signal buy" style="left: 60%"></div>
-                                        <div class="mock-signal sell" style="left: 80%"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 收益率曲线 -->
-                    <div class="chart-section">
-                        <div class="section-title">
-                            <h3>收益率曲线</h3>
-                            <div class="chart-controls">
-                                <button class="control-btn small">
-                                    <i class="fas fa-download"></i>
-                                </button>
-                                <button class="control-btn small">
-                                    <i class="fas fa-expand"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="chart-wrapper">
-                            <div class="chart-legend">
-                                <div class="legend-item">
-                                    <div class="legend-color strategy-color"></div>
-                                    <span>策略收益</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color benchmark-color"></div>
-                                    <span>基准收益</span>
-                                </div>
-                            </div>
-                            <div class="chart-placeholder">
-                                <div class="mock-chart">
-                                    <div class="mock-chart-title">收益率曲线图表</div>
-                                    <div class="mock-chart-content">
-                                        <div class="mock-line strategy-line"></div>
-                                        <div class="mock-line benchmark-line"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 仓位变化 -->
-                    <div class="chart-section">
-                        <div class="section-title">
-                            <h3>仓位变化</h3>
-                            <div class="chart-controls">
-                                <button class="control-btn small">
-                                    <i class="fas fa-download"></i>
-                                </button>
-                                <button class="control-btn small">
-                                    <i class="fas fa-expand"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="chart-wrapper">
-                            <div class="chart-placeholder">
-                                <div class="mock-chart">
-                                    <div class="mock-chart-title">仓位变化图表</div>
-                                    <div class="mock-chart-content">
-                                        <div class="mock-position-bar"></div>
-                                        <div class="mock-position-bar" style="height: 40%"></div>
-                                        <div class="mock-position-bar" style="height: 80%"></div>
-                                        <div class="mock-position-bar" style="height: 60%"></div>
-                                        <div class="mock-position-bar" style="height: 30%"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <!-- 报表区域 -->
+            <ReportView></ReportView>
         </div>
 
         <!-- 右键菜单 -->
@@ -235,6 +90,7 @@ import { ref, onMounted, computed, onUnmounted, provide, watch } from 'vue'
 import { useVueFlow, VueFlow, MarkerType } from '@vue-flow/core'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
+import ReportView from './ReportView.vue'
 
 const {
     fitView, 
@@ -1158,6 +1014,10 @@ const runBacktest = () => {
     position: relative;
 }
 
+.backtest-panel {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary) transparent;
+}
 /* 自定义节点样式 */
 .vue-flow__node-custom {
     padding: 10px;

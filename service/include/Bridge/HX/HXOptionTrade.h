@@ -1,4 +1,6 @@
 #pragma once
+#include "std_header.h"
+#include "DataGroup.h"
 #include "hx/TORATstpSPTraderApi.h"
 
 class HXExchange;
@@ -45,4 +47,6 @@ public:
 
 private:
     HXExchange* _exchange;
+
+    List<Order> _orders;
 };

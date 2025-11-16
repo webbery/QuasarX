@@ -85,9 +85,16 @@ def update_fund(dst):
         df = pd.concat([data, to_add], ignore_index=True)
     df.to_csv(csv_path, index = False)
 
+def update_option(dst):
+    csv_path = dst + '/option_market.csv'
+    option_contract_info_ctp_df = ak.option_contract_info_ctp()
+    option_contract_info_ctp_df.to_csv(csv_path, index=False)
+
 if __name__ == "__main__":
     task_id = int(sys.argv[1])
     if task_id == 1:    # 更新symbol_market.csv
         update_symbol_market('data/symbol_market.csv')
     elif task_id == 2:
         update_fund('data')
+    elif task_id == 3:  # 更新期权
+        update_option('data')

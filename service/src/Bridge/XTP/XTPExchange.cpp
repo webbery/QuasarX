@@ -327,7 +327,7 @@ bool XTPExchange::CancelOrder(order_id id, OrderContext* order) {
   return true;
 }
 
-bool XTPExchange::GetOrders(OrderList& ol)
+bool XTPExchange::GetOrders(SecurityType type, OrderList& ol)
 {
     XTPQueryOrderReq query_param;
     memset(&query_param, 0, sizeof(XTPQueryOrderReq));

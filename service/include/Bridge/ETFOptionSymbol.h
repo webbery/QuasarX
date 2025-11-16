@@ -21,3 +21,4 @@ private:
 };
 
 symbol_t get_etf_option_symbol(const String& code);
+String get_etf_option_code(symbol_t symbol);

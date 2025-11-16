@@ -2,18 +2,7 @@
 #include "Bridge/exchange.h"
 #include "Bridge/HX/HXExchange.h"
 #include "Util/string_algorithm.h"
-
-#define INIT_PROMISE(type) \
-auto itr = _exchange->_promises.find(nRequestID);\
-if (itr == _exchange->_promises.end())\
-    return;\
-PromisePtr<type> prom = static_pointer_cast<std::promise<type>>(_exchange->_promises[nRequestID])
-
-#define SET_PROMISE(value) prom->set_value(value); _exchange->_promises.erase(nRequestID)
-
-
-template<typename T>
-using PromisePtr = std::shared_ptr<std::promise<T>>;
+#include "Bridge/OrderLimit.h"
 
 namespace {
     OrderStatus toOrderStatus(char status) {
@@ -76,10 +65,10 @@ void HXTrade::OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserL
     }
     INIT_PROMISE(TORASTOCKAPI::CTORATstpRspUserLoginField);
 
-    _exchange->_maxInsertOrder = pRspUserLoginField->OrderInsertCommFlux;
+    _exchange->_stockHandle._insertLimit = new OrderLimit(pRspUserLoginField->OrderInsertCommFlux, pRspUserLoginField->OrderInsertCommFlux / 2);
     _exchange->_maxTradeReq = pRspUserLoginField->TradeCommFlux;
     _exchange->_maxQuoteReq = pRspUserLoginField->QueryCommFlux;
-    _exchange->_maxCancelOrder = pRspUserLoginField->OrderActionCommFlux;
+    _exchange->_stockHandle._cancelLimit = new OrderLimit(pRspUserLoginField->OrderActionCommFlux, pRspUserLoginField->OrderActionCommFlux / 2);
     _exchange->_trader_login = true;
     _exchange->_login_status = true;
     SET_PROMISE(*pRspUserLoginField);

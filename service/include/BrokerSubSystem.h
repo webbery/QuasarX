@@ -107,7 +107,7 @@ public:
 
     int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 
-    virtual bool QueryOrders(OrderList& ol);
+    virtual bool QueryOrders(SecurityType type, OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
     virtual void CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
 

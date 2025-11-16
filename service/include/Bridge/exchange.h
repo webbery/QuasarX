@@ -29,6 +29,13 @@ enum ExchangeType {
     EX_Unknow
 };
 
+enum class SecurityType: char {
+    Stock,
+    Option,
+    Future,
+    Count,
+};
+
 struct ExchangeInfo {
   char _local_addr[16];
   char _quote_addr[16];   // 对于仿真环境,该参数为行情数据存储路径
@@ -170,7 +177,7 @@ public:
 
   virtual bool CancelOrder(order_id id, OrderContext* order) = 0;
   // 获取当前尚未完成的所有订单
-  virtual bool GetOrders(OrderList& ol) = 0;
+  virtual bool GetOrders(SecurityType type, OrderList& ol) = 0;
   // 查询订单
   virtual bool GetOrder(const String& sysID, Order& ol) = 0;
 

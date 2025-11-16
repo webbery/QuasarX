@@ -162,3 +162,13 @@ symbol_t get_etf_option_symbol(const String& code) {
     }
     return result;
 }
+
+String get_etf_option_code(symbol_t symbol)
+{
+    String result;
+    uint32_t shortID = symbol._year;
+    etf_code_map.cvisit(shortID, [&result](const boost::concurrent_flat_map<uint32_t, String>::value_type& value) {
+        result = value.second;
+        });
+    return result;
+}

@@ -377,8 +377,9 @@ void Server::InitStocks(const String& path) {
     String stock_path = path + "/symbol_market.csv";
     if (!std::filesystem::exists(stock_path)) {
         // 首次启动,运行初始化脚本
-        RunCommand("python tools/run_task.py 1");
-        RunCommand("python tools/run_task.py 2");
+        RunCommand("cd tools && python run_task.py 1");
+        RunCommand("cd tools && python tools/run_task.py 2");
+        RunCommand("cd tools && python tools/run_task.py 3");
     }
     io::CSVReader<3> reader(stock_path);
     reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
@@ -416,6 +417,25 @@ void Server::InitStocks(const String& path) {
             continue;
         }
         _markets.emplace(symbol, std::move(info));
+    }
+    // 期权
+    String expire, delivery;
+    double strike;
+    String opt_path = path + "/option_market.csv";
+    io::CSVReader<6> opt_reader(opt_path);
+    opt_reader.read_header(io::ignore_extra_column, "交易所ID", "合约ID", "合约名称", "最后交易日", "交割日", "行权价");
+    while (opt_reader.read_row(exch, code, name, expire, delivery, strike)) {
+        ContractInfo info;
+        info._name = name;
+        if (exch == "SZSE") info._exchange = MT_Shenzhen;
+        else if (exch == "SSE") info._exchange = MT_Shanghai;
+        //else if (exch == "SHFE") info._exchange = MT_ShanghaiFuture;
+        else continue;
+        info._type = ContractType::AmericanOption;
+        info._deliveryDate = delivery;
+        info._strike = strike;
+        info._expireDate = expire;
+        _markets.emplace(code, std::move(info));
     }
 }
 
@@ -836,15 +856,9 @@ void Server::Timer()
         while(!_exit) {
             auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
             TimerWorker(sock);
-            for (auto exchange: handler->GetExchanges()) {
-                if (exchange.second->IsLogin()) {
-                    exchange.second->QueryQuotes();
-                    next_wake = Clock::now() + interval;
-                } else {
-                    std::this_thread::sleep_until(next_wake);
-                    next_wake += interval;
-                }
-            }
+            auto curr = Now();
+            // 
+            UpdateQuoteQueryStatus(curr);
         }
     } else {
         while(!_exit) {
@@ -896,7 +910,7 @@ void Server::TimerWorker(nng_socket sock) {
     }
     // 更新订单
     OrderList ol;
-    if (broker->GetOrders(ol) && !ol.empty()) {
+    if (broker->GetOrders(SecurityType::Stock,ol) && !ol.empty()) {
         nlohmann::json array;
         for (auto& item: ol) {
             nlohmann::json order;
@@ -961,17 +975,17 @@ void Server::TimerWorker(nng_socket sock) {
 void Server::UpdateQuoteQueryStatus(time_t curr) {
     auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
     for (auto exchange: handler->GetExchanges()) {
-         if (exchange.second->IsWorking(curr)) {
+         //if (exchange.second->IsWorking(curr)) {
             if (exchange.second->IsLogin()) {
                 exchange.second->QueryQuotes();
             }
             else {
                 exchange.second->Login();
             }
-         }
+         /*}
          else {
              exchange.second->StopQuery();
-         }
+         }*/
     }
 }
 
@@ -995,7 +1009,9 @@ void Server::Schedules(time_t t) {
 
         if (prev_day == 6) {
             // every week 6 run once
-            RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
+            //RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
+            // 每周末更新一次
+            RunCommand("cd ../tools && python run_task.py 3");
         }
 
         // TODO: run daily forecast with newest data

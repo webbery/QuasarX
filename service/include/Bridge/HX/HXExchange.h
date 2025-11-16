@@ -2,6 +2,18 @@
 #include "Bridge/exchange.h"
 #include <memory>
 
+#define INIT_PROMISE(type) \
+auto itr = _exchange->_promises.find(nRequestID);\
+if (itr == _exchange->_promises.end())\
+    return;\
+PromisePtr<type> prom = static_pointer_cast<std::promise<type>>(_exchange->_promises[nRequestID])
+
+#define SET_PROMISE(value) prom->set_value(value); _exchange->_promises.erase(nRequestID)
+
+template<typename T>
+using PromisePtr = std::shared_ptr<std::promise<T>>;
+
+class OrderLimit;
 class HXQuateSpi;
 class HXTrade;
 class HXOptionTrade;
@@ -18,15 +30,16 @@ namespace TORASPAPI {
 }
 
 struct StockHandle {
-    HXQuateSpi* _quote;
     HXTrade* _trade;
-    TORALEV1API::CTORATstpXMdApi* _quoteAPI;
     TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
+
+    OrderLimit* _insertLimit;   // 报单限流
+    OrderLimit* _cancelLimit;   // 撤单限流
 };
 
 struct OptionHandle {
-    HXOptionTrade* _optionTrade;
-    TORASPAPI::CTORATstpSPTraderApi* _optionTradeAPI;
+    HXOptionTrade* _trade;
+    TORASPAPI::CTORATstpSPTraderApi* _tradeAPI;
 };
 
 class alignas(8) HXExchange: public ExchangeInterface {
@@ -61,7 +74,7 @@ public:
 
     virtual bool CancelOrder(order_id id, OrderContext* order);
     // 获取当前尚未完成的所有订单
-    virtual bool GetOrders(OrderList& ol);
+    virtual bool GetOrders(SecurityType type, OrderList& ol);
     virtual bool GetOrder(const String& sysID, Order& ol);
 
     virtual void QueryQuotes();
@@ -101,6 +114,9 @@ private:
 
     void SubscribeStockQuote(const Map<char, Vector<String>>& stocks);
     void SubscribeOptionQuote(const Map<char, Vector<String>>& options);
+
+    bool QueryStockOrders(uint64_t reqID);
+
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;
@@ -116,14 +132,11 @@ private:
     String _shareholder[MT_COUNT];    // 股东账号
 
     HXQuateSpi* _quote;
-    HXTrade* _trade;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;
-    TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
 
     OptionHandle _optionHandle;
+    StockHandle _stockHandle;
 
-    int8_t _maxInsertOrder; // 每秒最大报单笔数
-    int8_t _maxCancelOrder; // 每秒最大撤单笔数
     int8_t _maxTradeReq;    // 交易通道每秒最大请求数
     int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
 

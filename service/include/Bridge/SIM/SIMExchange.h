@@ -36,7 +36,7 @@ public:
 
   virtual bool CancelOrder(order_id id, OrderContext* order);
 
-  virtual bool GetOrders(OrderList& ol);
+  virtual bool GetOrders(SecurityType type, OrderList& ol);
   virtual bool GetOrder(const String& sysID, Order& ol);
 
   virtual void QueryQuotes();

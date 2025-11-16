@@ -165,10 +165,10 @@ void BrokerSubSystem::SetCommission(symbol_t symbol, const Commission& comm) {
   }
 }
 
-bool BrokerSubSystem::QueryOrders(OrderList& ol)
+bool BrokerSubSystem::QueryOrders(SecurityType type, OrderList& ol)
 {
     auto exchange = _server->GetAvaliableStockExchange();
-    if (!exchange->GetOrders(ol)) {
+    if (!exchange->GetOrders(type, ol)) {
         WARN("query orders fail");
         return false;
     }

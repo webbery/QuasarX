@@ -57,6 +57,9 @@ struct ContractInfo {
     ContractType _type;
     ExchangeName _exchange;
     String _name;
+    String _expireDate; //到期日
+    String _deliveryDate;   //交割日
+    float _strike;  // 行权价
 };
 
 enum class DataFrequencyType {

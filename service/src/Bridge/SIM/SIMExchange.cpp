@@ -112,7 +112,7 @@ bool StockSimulation::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 
-bool StockSimulation::GetOrders(OrderList& ol)
+bool StockSimulation::GetOrders(SecurityType type, OrderList& ol)
 {
     return true;
 }

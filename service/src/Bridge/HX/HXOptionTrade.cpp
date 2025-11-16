@@ -2,6 +2,34 @@
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
+#include "Bridge/HX/HXExchange.h"
+
+namespace {
+    OrderStatus toOrderStatus(char status) {
+        switch (status)
+        {
+        case TORASPAPI::TORA_TSTP_SP_OST_PartTraded:
+            return OrderStatus::OrderPartSuccess;
+        case TORASPAPI::TORA_TSTP_SP_OST_Accepted://
+            return OrderStatus::OrderAccept;
+        case TORASPAPI::TORA_TSTP_SP_OST_AllTraded://
+            return OrderStatus::OrderSuccess;
+        case TORASPAPI::TORA_TSTP_SP_OST_PartTradedCancelled://
+            return OrderStatus::PartSuccessCancel;
+        case TORASPAPI::TORA_TSTP_SP_OST_Cancelled://
+            return OrderStatus::CancelSuccess;
+        case TORASPAPI::TORA_TSTP_SP_OST_Failed://
+            return OrderStatus::OrderFail;
+        case TORASPAPI::TORA_TSTP_SP_OST_Cached:
+            return OrderStatus::OrderCached;
+        case TORASPAPI::TORA_TSTP_SP_OST_SendTradeKernel://
+            break;
+        default:
+            break;
+        }
+        return OrderStatus::OrderUnknow;
+    }
+}
 
 HXOptionTrade::HXOptionTrade(HXExchange* exchange): _exchange(exchange) {
 
@@ -26,11 +54,11 @@ void HXOptionTrade::OnRspError(TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int
 }
 
 void HXOptionTrade::OnRspOrderInsert(TORASPAPI::CTORATstpSPInputOrderField *pInputOrderField, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID) {
-
+    INFO("option insert order success");
 }
 
 void HXOptionTrade::OnRtnOrder(TORASPAPI::CTORATstpSPOrderField *pOrder) {
-
+    INFO("option order success");
 }
 
 void HXOptionTrade::OnErrRtnOrderInsert(TORASPAPI::CTORATstpSPInputOrderField *pInputOrder, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo,int nRequestID) {
@@ -42,14 +70,15 @@ void HXOptionTrade::OnRspOrderAction(TORASPAPI::CTORATstpSPInputOrderActionField
 }
 
 void HXOptionTrade::OnRtnTrade(TORASPAPI::CTORATstpSPTradeField *pTrade) {
-
+    INFO("option trade success");
 }
 
 void HXOptionTrade::OnRspExerciseInsert(TORASPAPI::CTORATstpSPInputExerciseField *pInputExerciseField, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID) {
-
+    INFO("option exercise isnert success");
 }
 
 void HXOptionTrade::OnRtnExercise(TORASPAPI::CTORATstpSPExerciseField *pExercise) {
+    INFO("option exercise success");
 
 }
 
@@ -58,7 +87,25 @@ void HXOptionTrade::OnRspExerciseAction(TORASPAPI::CTORATstpSPInputExerciseActio
 }
 
 void HXOptionTrade::OnRspQryOrder(TORASPAPI::CTORATstpSPOrderField *pOrder, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
-
+    INIT_PROMISE(bool);
+    if (pRspInfo->ErrorID == 0) {
+        if (pOrder) {
+            Order order;
+            order._side = (pOrder->Direction == TORASPAPI::TORA_TSTP_SP_D_Buy ? 0 : 1);
+            order._sysID = pOrder->OrderSysID;
+            order._status = toOrderStatus(pOrder->OrderStatus);
+            _orders.emplace_back(std::move(order));
+        }
+        if (bIsLast) {
+            SET_PROMISE(true);
+        }
+    }
+    else {
+        LOG("query option order fail");
+        if (bIsLast) {
+            SET_PROMISE(false);
+        }
+    }
 }
 
 void HXOptionTrade::OnRspQryTrade(TORASPAPI::CTORATstpSPTradeField *pTrade, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {

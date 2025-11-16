@@ -120,6 +120,38 @@ paths:
         schema:
           type: integer
         description: 要获取的合约代码
+  /options/detail:
+    get:
+      summary: 当前期权的信息
+      description: 当前期权的信息(基本信息、希腊字母及隐波等)
+      tags:
+        - Options
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          description: 要获取的期权代码
+        - in: query
+          name: type
+          schema:
+            type: integer
+          description: 期权代码类型 0-上交所深交所etf期权, 1-期货类期权
+      responses:
+          '200':
+            description: An array of stocks
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: 期权名称
+                    symbol:
+                      type: string
+                      description: 期权代码
+
   /index/quote:
     get:
       summary: get index info
@@ -736,6 +768,11 @@ paths:
         - Trade
       parameters:
       - in: query
+        name: type
+        schema:
+          type: integer
+        description: 订单类型, 0-股票 1-期权 2-期货
+      - in: query
         name: id
         schema:
           type: integer
@@ -750,16 +787,24 @@ paths:
                 items:
                   $ref: "#/components/schemas/TradeOrderItem"
     delete:
-      summary: stock trade
-      description: 股票撤单
+      summary: 撤单请求
+      description: 股票/期权撤单
       tags: 
         - Trade
-      parameters:
-        - in: query
-          name: id
-          schema:
-            type: integer
-          description: 单号,如果没有，则表示撤销当前所有订单
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: integer
+                  description: 订单类型, 0-股票 1-期权 2-期货
+                sysID:
+                  type: string
+                  description: 订单单号,如果没有，则表示撤销当前所有订单
       responses:
         '200':
           description: success

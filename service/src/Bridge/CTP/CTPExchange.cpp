@@ -149,7 +149,7 @@ bool CTPExchange::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 
-bool CTPExchange::GetOrders(OrderList& ol)
+bool CTPExchange::GetOrders(SecurityType type, OrderList& ol)
 {
     return true;
 }

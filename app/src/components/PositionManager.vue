@@ -1233,11 +1233,20 @@ const placeNewFutureOrder = () => {
 };
 
 const cancelOrder = (order) => {
-    console.info('order:', order)
-    // openModal('撤单确认', '确定要撤销此订单吗？', () => {
-    //     order.status = 'cancelled';
-    //     message.show('订单已撤销', 'success')
-    // });
+    const info = order.name + ", 价格:" + order.price
+    openModal('撤单确认', '确定要撤销此订单吗？' + info, async () => {
+        console.info('cancel order:', order)
+        const sysID = order.sysID
+        const params = {
+          id: sysID
+        }
+        const result = await axios.delete('/v0/trade/order', params)
+        if (result.status != 200) {
+          message.error('撤销订单失败')
+        } else {
+          message.success('撤销订单请求已发出')
+        }
+    });
 };
 
 const handleGlobalCancel = () => {
