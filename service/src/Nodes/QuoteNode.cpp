@@ -1,21 +1,89 @@
 #include "Nodes/QuoteNode.h"
 #include "Util/string_algorithm.h"
+#include "Bridge/ETFOptionSymbol.h"
+#include <ctime>
+#include <limits>
+
+namespace {
+    std::unordered_map<std::string, std::function<feature_t(const QuoteInfo&)>> propertyHandlers = {
+        {"open", [](const QuoteInfo& q) { return q._open; }},
+        {"close", [](const QuoteInfo& q) { return q._close; }},
+        {"volume", [](const QuoteInfo& q) { return q._volume; }},
+        {"turnover", [](const QuoteInfo& q) { return q._turnover; }},
+        {"high", [](const QuoteInfo& q) { return q._high; }},
+        {"low", [](const QuoteInfo& q) { return q._low; }}
+    };
+}
 
 QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 
 }
 
-bool QuoteInputNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
-{
-    // 
-    auto symbol = org._symbols.front();
-    auto code = get_symbol(symbol);
-    for (int i = 0; i < org._names.size(); ++i) {
-        if (_validDatumNames.count(org._names[i])) {
-            auto key = code + "." + org._names[i];
-            context.add(key, org._data[i]);
+bool QuoteInputNode::Init(DataContext& context, const nlohmann::json& config) {
+    Set<String> pool = config["pool"];
+    // stock/option/future
+    for (auto& code: pool) {
+        List<String> tokens;
+        split(code, tokens, ".");
+        auto security = Server::GetSecurity(tokens.back());
+        if (tokens.back().size() == 6) { // stock
+            auto symbol = to_symbol(tokens.back(), tokens.front());
+            _symbols.insert(symbol);
+        }
+        else if (security._exchange == ExchangeName::MT_Shenzhen || security._exchange == ExchangeName::MT_Shanghai) {
+            auto symbol = get_etf_option_symbol(tokens.back());
+            _symbols.insert(symbol);
+        } else {
+            WARN("not support symbol for backtest");
+            return false;
         }
     }
+    return true;
+}
+
+bool QuoteInputNode::is_etf_option(symbol_t symbol) {
+    if (symbol._exchange == ExchangeName::MT_Shenzhen || symbol._exchange == MT_Shanghai) {
+        return is_option(symbol);
+    }
+    return false;
+}
+
+bool QuoteInputNode::Process(const String& strategy, DataContext& context)
+{
+    auto cur = context.GetTime();
+    // 
+    time_t min_t = std::numeric_limits<time_t>::max();
+    for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
+        auto symbol = *itr;
+        if (is_stock(symbol) || is_etf_option(symbol)) {
+            auto stockExchange = _server->GetAvaliableStockExchange();
+            auto quote = stockExchange->GetQuote(symbol);
+            if (quote._time == 0)
+                return false;
+            else if (cur != 0 && quote._time <= cur) {
+                continue;
+            }
+            if (quote._time < min_t) { // 注意频率不一致时的填充方式
+                min_t = quote._time;
+            }
+
+            auto name = get_symbol(symbol);
+            auto baseKey = name + ".";
+            for (auto& property : _properties[name]) {
+                auto it = propertyHandlers.find(property);
+                if (it == propertyHandlers.end())
+                    continue;
+
+                context.add(baseKey + property, it->second(quote));
+            }
+        }
+        else if (is_option(symbol)) {
+            WARN("not implement for input node");
+            return false;
+        }
+    }
+    // 
+    context.SetTime(min_t);
     return true;
 }
 
@@ -25,15 +93,7 @@ void QuoteInputNode::Connect(QNode* next, const String& from, const String& to) 
     QNode::Connect(next, froms[0], to);
     if (froms.size() == 2) {
         // auto id = get_feature_id(froms[1], "");
-        _validDatumNames[froms[1]] = froms[1];
+        _properties[froms[1]].insert(froms[1]);
     }
 }
 
-bool QuoteInputNode::Init() {
-    // String source = URI_RAW_QUOTE;
-    // if (!Subscribe(source, _sock)) {
-    //     WARN("subscribe {} fail.", source);
-    //     return false;
-    // }
-    return true;
-}

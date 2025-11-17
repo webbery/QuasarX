@@ -3,7 +3,11 @@
 #include "Function/Function.h"
 #include <stdexcept>
 
-bool OperationNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
+bool OperationNode::Init(DataContext& context, const nlohmann::json& config) {
+    return true;
+}
+
+bool OperationNode::Process(const String& strategy, DataContext& context)
 {
     return true;
 }
@@ -13,28 +17,16 @@ bool OperationNode::parseFomula(const String& formulas) {
     return parser.parse(formulas);
 }
 
-bool StatisticNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
-{
-    for (auto node: _ins) {
-        auto& feature = context.get(node.first);
-    }
-    for (auto indicator: _indicators) {
-        switch (indicator) {
-        case StatisticIndicator::Sharp:
-        break;
-        default:
-        break;
-        }
-    }
-    return true;
-}
-
-bool FeatureNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
+bool FeatureNode::Process(const String& strategy, DataContext& context)
 {
     return true;
 }
 
-bool FunctionNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
+bool FunctionNode::Init(DataContext& context, const nlohmann::json& config) {
+    return true;
+}
+
+bool FunctionNode::Process(const String& strategy, DataContext& context)
 {
     if (!_callable) {[[unlikely]]
         if (!Init()) {
@@ -61,36 +53,40 @@ SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _se
 
 }
 
-bool SignalNode::Process(const String& strategy, DataContext& context, const DataFeatures& org)
+bool SignalNode::Init(DataContext& context, const nlohmann::json& config) {
+    return true;
+}
+
+bool SignalNode::Process(const String& strategy, DataContext& context)
 {
-    List<String> args;
-    for (auto& item: _outs) {
-        auto& name = item.first;
-        args.push_back(name);
-    }
-    auto buys = _buyParser->envoke(org._symbols, args, &context);
-    auto sells = _sellParser->envoke(org._symbols, args, &context);
-    List<TradeDecision> decisions(buys);
-    decisions.splice(decisions.end(), sells);
-    auto broker = _server->GetBrokerSubSystem();
-    // broker->RegistIndicator(, StatisticIndicator::Sharp);
-    for (auto& decision: decisions) {
-        Order order;
-        if (decision.action == TradeAction::BUY) {
-            broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
-                auto sock = Server::GetSocket();
-                auto info = to_sse_string(symbol, report);
-                nng_send(sock, info.data(), info.size(), 0);
-            });
-        }
-        else if (decision.action == TradeAction::SELL) {
-            broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
-                auto sock = Server::GetSocket();
-                auto info = to_sse_string(symbol, report);
-                nng_send(sock, info.data(), info.size(), 0);
-            });
-        }
-    }
+    // List<String> args;
+    // for (auto& item: _outs) {
+    //     auto& name = item.first;
+    //     args.push_back(name);
+    // }
+    // auto buys = _buyParser->envoke(org._symbols, args, &context);
+    // auto sells = _sellParser->envoke(org._symbols, args, &context);
+    // List<TradeDecision> decisions(buys);
+    // decisions.splice(decisions.end(), sells);
+    // auto broker = _server->GetBrokerSubSystem();
+    // // broker->RegistIndicator(, StatisticIndicator::Sharp);
+    // for (auto& decision: decisions) {
+    //     Order order;
+    //     if (decision.action == TradeAction::BUY) {
+    //         broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
+    //             auto sock = Server::GetSocket();
+    //             auto info = to_sse_string(symbol, report);
+    //             nng_send(sock, info.data(), info.size(), 0);
+    //         });
+    //     }
+    //     else if (decision.action == TradeAction::SELL) {
+    //         broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
+    //             auto sock = Server::GetSocket();
+    //             auto info = to_sse_string(symbol, report);
+    //             nng_send(sock, info.data(), info.size(), 0);
+    //         });
+    //     }
+    // }
     return true;
 }
 

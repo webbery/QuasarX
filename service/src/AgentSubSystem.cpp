@@ -46,9 +46,10 @@ FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
 
 FlowSubsystem::~FlowSubsystem() {
     for (auto& item : _flows) {
-        if (item.second._transfer) {
-            item.second._transfer->stop();
-            delete item.second._transfer;
+        if (item.second._worker) {
+            item.second._running = false;
+            if (item.second._worker->joinable()) item.second._worker->join();
+            delete item.second._worker;
         }
         for (auto node: item.second._graph) {
             delete node;
@@ -75,41 +76,35 @@ void FlowSubsystem::Start() {
 
 void FlowSubsystem::Start(const String& strategy) {
     auto& flow = _flows.at(strategy);
-    if (flow._transfer) {
-        delete flow._transfer;
+    if (flow._worker) {
+        flow._running = false;
+        if (flow._worker->joinable()) flow._worker->join();
+        delete flow._worker;
     }
-    DataContext context;
-    flow._transfer = new Transfer([context{std::move(context)}, strategy, this](nng_socket& from, nng_socket& to) mutable {
-        QuoteInfo quote;
-        if (!ReadQuote(from, quote)) {
-            return true;
-        }
-
-        DataFeatures messenger;
-        // if (!ReadFeatures(from, messenger)) {
-        //     return true;
-        // }
-        auto& flow = _flows[strategy];
-        if (_handle->GetRunningMode() != RuningType::Backtest) {
-            if (flow._future > 0 && _handle->IsOpen(messenger._symbols[0], Now())) {
-                return true;
-            }
-        }
-        
+    flow._worker = new std::thread([strategy, this]() {
+        DataContext context;
         try {
+            auto& flow = _flows[strategy];
             for (auto node: flow._graph) {
-                if (!node->Process(strategy, context, messenger)) {
-                    return false;
+                if (flow._running && !node->Init(context, flow._config)) {
+                    return;
                 }
+            }
+            uint64_t epoch = 0;
+            while (flow._running) {
+                context.SetEpoch(++epoch);
+                for (auto node: flow._graph) {
+                    if (!node->Process(strategy, context)) {
+                        return;
+                    }
+                }
+                if (context.GetEpoch() == 0)
+                    break;
             }
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
-            return false;
         }
-        
-        return true;
     });
-    flow._transfer->start(strategy, URI_RAW_QUOTE);
 }
 
 void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {

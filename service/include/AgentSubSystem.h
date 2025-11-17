@@ -6,6 +6,7 @@
 #include "Transfer.h"
 #include "json.hpp"
 #include "Agents/IAgent.h"
+#include <atomic>
 
 class Server;
 class RiskSubSystem;
@@ -52,9 +53,10 @@ private:
     RiskSubSystem* _riskSystem = nullptr;
 
     struct StrategyFlowInfo {
-        // IAgent* _agent = nullptr;
-        // IStrategy* _strategy = nullptr;
-        Transfer* _transfer = nullptr;
+        std::atomic_bool _running = false;
+        std::thread* _worker = nullptr;
+        nlohmann::json _config;
+
         QStrategy* _strategy = nullptr;
         char _future = 0;
         Map<String, std::variant<float, List<float>>> _collections;

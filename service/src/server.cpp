@@ -381,62 +381,7 @@ void Server::InitStocks(const String& path) {
         RunCommand("cd tools && python tools/run_task.py 2");
         RunCommand("cd tools && python tools/run_task.py 3");
     }
-    io::CSVReader<3> reader(stock_path);
-    reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
-    std::string code;
-    std::string exch;
-    String name;
-    while(reader.read_row(code, exch, name)){
-        ContractInfo info;
-        info._type = ContractType::AStock;
-        if (exch == "SH") {
-            info._exchange = MT_Shanghai;
-        }
-        else if (exch == "SZ") info._exchange = MT_Shenzhen;
-        else if (exch == "BJ") info._exchange = MT_Beijing;
-        else {
-            WARN("{} Unknow exchange {}", code.c_str(), exch.c_str());
-            continue;
-        }
-        info._name = name;
-        _markets.emplace(code, std::move(info));
-    }
-    // 基金
-    String fund_path = path + "/fund_market.csv";
-    io::CSVReader<2> fund_reader(fund_path);
-    fund_reader.read_header(io::ignore_extra_column, "code", "name");
-    while(fund_reader.read_row(code, name)){
-        String head = code.substr(0, 2);
-        String symbol = code.substr(2);
-        ContractInfo info;
-        info._type = ContractType::ETF;
-        if (head == "sh") info._exchange = MT_Shanghai;
-        else if (head == "sz") info._exchange = MT_Shenzhen;
-        else {
-            WARN("{} Unknow exchange {}", symbol, head);
-            continue;
-        }
-        _markets.emplace(symbol, std::move(info));
-    }
-    // 期权
-    String expire, delivery;
-    double strike;
-    String opt_path = path + "/option_market.csv";
-    io::CSVReader<6> opt_reader(opt_path);
-    opt_reader.read_header(io::ignore_extra_column, "交易所ID", "合约ID", "合约名称", "最后交易日", "交割日", "行权价");
-    while (opt_reader.read_row(exch, code, name, expire, delivery, strike)) {
-        ContractInfo info;
-        info._name = name;
-        if (exch == "SZSE") info._exchange = MT_Shenzhen;
-        else if (exch == "SSE") info._exchange = MT_Shanghai;
-        //else if (exch == "SHFE") info._exchange = MT_ShanghaiFuture;
-        else continue;
-        info._type = ContractType::AmericanOption;
-        info._deliveryDate = delivery;
-        info._strike = strike;
-        info._expireDate = expire;
-        _markets.emplace(code, std::move(info));
-    }
+    ReloadMarketData(path);
 }
 
 void Server::InitFutures(const String& path) {
@@ -1012,6 +957,7 @@ void Server::Schedules(time_t t) {
             //RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
             // 每周末更新一次
             RunCommand("cd ../tools && python run_task.py 3");
+            ReloadMarketData(_config->GetDatabasePath());
         }
 
         // TODO: run daily forecast with newest data
@@ -1066,6 +1012,67 @@ int Server::GetMaxPrepareCount() {
         }
     }
     return max_count;
+}
+
+void Server::ReloadMarketData(const String& path) {
+    _markets.clear();
+    String stock_path = path + "/symbol_market.csv";
+    io::CSVReader<3> reader(stock_path);
+    reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
+    std::string code;
+    std::string exch;
+    String name;
+    while(reader.read_row(code, exch, name)){
+        ContractInfo info;
+        info._type = ContractType::AStock;
+        if (exch == "SH") {
+            info._exchange = MT_Shanghai;
+        }
+        else if (exch == "SZ") info._exchange = MT_Shenzhen;
+        else if (exch == "BJ") info._exchange = MT_Beijing;
+        else {
+            WARN("{} Unknow exchange {}", code.c_str(), exch.c_str());
+            continue;
+        }
+        info._name = name;
+        _markets.emplace(code, std::move(info));
+    }
+    // 基金
+    String fund_path = path + "/fund_market.csv";
+    io::CSVReader<2> fund_reader(fund_path);
+    fund_reader.read_header(io::ignore_extra_column, "code", "name");
+    while(fund_reader.read_row(code, name)){
+        String head = code.substr(0, 2);
+        String symbol = code.substr(2);
+        ContractInfo info;
+        info._type = ContractType::ETF;
+        if (head == "sh") info._exchange = MT_Shanghai;
+        else if (head == "sz") info._exchange = MT_Shenzhen;
+        else {
+            WARN("{} Unknow exchange {}", symbol, head);
+            continue;
+        }
+        _markets.emplace(symbol, std::move(info));
+    }
+    // 期权
+    String expire, delivery;
+    double strike;
+    String opt_path = path + "/option_market.csv";
+    io::CSVReader<6> opt_reader(opt_path);
+    opt_reader.read_header(io::ignore_extra_column, "交易所ID", "合约ID", "合约名称", "最后交易日", "交割日", "行权价");
+    while (opt_reader.read_row(exch, code, name, expire, delivery, strike)) {
+        ContractInfo info;
+        info._name = name;
+        if (exch == "SZSE") info._exchange = MT_Shenzhen;
+        else if (exch == "SSE") info._exchange = MT_Shanghai;
+        //else if (exch == "SHFE") info._exchange = MT_ShanghaiFuture;
+        else continue;
+        info._type = ContractType::AmericanOption;
+        info._deliveryDate = delivery;
+        info._strike = strike;
+        info._expireDate = expire;
+        _markets.emplace(code, std::move(info));
+    }
 }
 
 void Server::InitHandlers() {
@@ -1317,28 +1324,28 @@ nng_socket Server::GetSocket() {
     return _sseSockets[id];
 }
 
+ExchangeName Server::GetExchangeName(const String& prefix) {
+    ExchangeName exchange = ExchangeName::MT_Unknow;
+    if (prefix == "sz") {
+        exchange = ExchangeName::MT_Shenzhen;
+    }
+    else if (prefix == "sh") {
+        exchange = ExchangeName::MT_Shanghai;
+    }
+    else if (prefix == "bj") {
+        exchange = ExchangeName::MT_Beijing;
+    }
+    return exchange;
+}
+
 String Server::GetName(const String& symbol)
 {
     Vector<String> tokens;
     split(symbol, tokens, ".");
     String key = tokens.back();
 
-    ExchangeName exchange = ExchangeName::MT_Unknow;
-    if (tokens.size() > 1) {
-        String strExc = tokens.front();
-        if (strExc == "sz") {
-            exchange = ExchangeName::MT_Shenzhen;
-        }
-        else if (strExc == "sh") {
-            exchange = ExchangeName::MT_Shanghai;
-        }
-        else if (strExc == "bj") {
-            exchange = ExchangeName::MT_Beijing;
-        }
-        else {
-            WARN("not support exchange for {}", symbol);
-        }
-    }
+    auto exchange = GetExchangeName(tokens.front());
+
     auto lower_itr = _markets.lower_bound(key);
     auto upper_itr = _markets.upper_bound(key);
     for (; lower_itr != upper_itr; ++lower_itr) {
@@ -1351,4 +1358,23 @@ String Server::GetName(const String& symbol)
         }
     }
     return "Newest";
+}
+
+const ContractInfo& Server::GetSecurity(const String& symbol) {
+    Vector<String> tokens;
+    split(symbol, tokens, ".");
+    String key = tokens.back();
+    auto exchange = GetExchangeName(tokens.front());
+    auto lower_itr = _markets.lower_bound(key);
+    auto upper_itr = _markets.upper_bound(key);
+    for (; lower_itr != upper_itr; ++lower_itr) {
+        if (exchange == ExchangeName::MT_Unknow) {
+            return lower_itr->second;
+        }
+        else {
+            if (exchange == lower_itr->second._exchange)
+                return lower_itr->second;
+        }
+    }
+    assert(false);
 }

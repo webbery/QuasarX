@@ -6,7 +6,9 @@ class QuoteInputNode : public QNode {
 public:
     QuoteInputNode(Server* server);
 
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
+    bool Init(DataContext& context, const nlohmann::json& config);
+
+    virtual bool Process(const String& strategy, DataContext& context);
 
     void AddSymbol(symbol_t symbol) { _symbols.insert(symbol); }
 
@@ -17,8 +19,9 @@ public:
 private:
     bool Init();
 
+    bool is_etf_option(symbol_t);
 private:
     Set<symbol_t> _symbols;
-    Map<String, String> _validDatumNames;
+    Map<String, Set<String>> _properties;
     Server* _server;
 };

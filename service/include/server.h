@@ -88,6 +88,7 @@ public:
     static ContractType GetContractType(const std::string& symbol, const String& exhange = "");
     static nng_socket GetSocket();
     static String GetName(const String& symbol);
+    static const ContractInfo& GetSecurity(const String& symbol);
 
     // enum EXECUTE_MODE: unsigned short {
     //     MODE_SERVICE,   // 网络服务模式
@@ -228,6 +229,8 @@ private:
     void InitStocks();
     void InitFutures(const String& path);
     void InitFutures();
+
+    void ReloadMarketData(const String& path);
 private:
     struct DividendData {
         time_t _start;
@@ -239,6 +242,8 @@ private:
 
     bool GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info);
 
+    static ExchangeName GetExchangeName(const String& prefix);
+    
 private:
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
     // HTTPS

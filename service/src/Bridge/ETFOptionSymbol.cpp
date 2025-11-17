@@ -6,6 +6,9 @@
 #include <format>
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
+#include "server.h"
+
+#define SHORT_ID_OFFSET 4
 
 namespace {
     const Map<char, String> ID2Symbol{
@@ -74,6 +77,10 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
     _symbol._price = price;
     _symbol._type = t;
     SetCode(idx, id);
+    auto& info = Server::GetSecurity(code);
+    Vector<String> tokens;
+    split(info._deliveryDate, tokens, "-");
+    _symbol._year = atoi(tokens.front().substr(2).c_str());
     if (!code_symbol_map.contains(code)) {
         code_symbol_map.emplace(code, _symbol);
     }
@@ -109,14 +116,13 @@ uint64_t ETFOptionSymbol::GetOptionInfo(const String& name, const String& token,
 
 void ETFOptionSymbol::SetCode(uint64_t idx, uint64_t id)
 {
-    _symbol._opt = id;
-    _symbol._year = idx;
+    _symbol._opt = (idx << SHORT_ID_OFFSET) | id;
 }
 
 void ETFOptionSymbol::GetCode(uint64_t& idx, uint64_t& id)
 {
-    id = _symbol._opt;
-    idx = _symbol._year;
+    id = _symbol._opt & 0b1111;
+    idx = (_symbol._opt >> SHORT_ID_OFFSET);
 }
 
 String ETFOptionSymbol::name()
@@ -124,14 +130,7 @@ String ETFOptionSymbol::name()
     String n;
     uint64_t idx, id;
     GetCode(idx, id);
-    auto index = (uint32_t)idx;
-    etf_code_map.cvisit_while([&n, idx](const boost::concurrent_flat_map<uint32_t, String>::value_type& val) {
-        if (val.first != idx) {
-            return true;
-        }
-        n += val.second;
-        return false;
-    });
+    n += ID2Symbol.at(id);
     switch (_symbol._type) {
         case contract_type::call:
             n += "C";
@@ -144,6 +143,8 @@ String ETFOptionSymbol::name()
             n += "_";
             break;
     }
+    auto year = _symbol._year;
+    n += std::format("{:0^{}}", year, 2);
     auto mon = _symbol._month;
     n += std::format("{:0^{}}", mon, 2);
     auto price = _symbol._price;
@@ -166,7 +167,7 @@ symbol_t get_etf_option_symbol(const String& code) {
 String get_etf_option_code(symbol_t symbol)
 {
     String result;
-    uint32_t shortID = symbol._year;
+    uint32_t shortID = symbol._opt >> SHORT_ID_OFFSET;
     etf_code_map.cvisit(shortID, [&result](const boost::concurrent_flat_map<uint32_t, String>::value_type& value) {
         result = value.second;
         });

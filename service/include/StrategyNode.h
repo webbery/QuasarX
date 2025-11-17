@@ -23,7 +23,20 @@ public:
         _outputs.erase(name);
     }
     
+    void SetEpoch(uint64_t epoch) {
+        _epoch = epoch;
+    }
+
+    uint64_t GetEpoch() {
+        return _epoch;
+    }
+
+    void SetTime(time_t t) { _time = t; }
+    time_t GetTime() { return _time; }
 private:
+    uint64_t _epoch = 0;
+    time_t _time = 0;
+
     // TODO: 节点的输出数据，待优化
     Map<String, feature_t> _outputs;
 };
@@ -31,21 +44,17 @@ private:
 class QNode {
 public:
     virtual ~QNode(){}
+    virtual bool Init(DataContext& context, const nlohmann::json& config) = 0;
     /**
      * @brief 对输入数据做处理，并返回处理后的数据
      */
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org) = 0;
+    virtual bool Process(const String& strategy, DataContext& context) = 0;
     virtual void Connect(QNode* next, const String& from, const String& to) {
         _outs[from] = next;
         next->_ins[to] = this;
     }
     
-
-    void Update(const nlohmann::json& args) {
-        _params = args;
-    }
-
-    const nlohmann::json& getParams() { return _params; }
+    // const nlohmann::json& getParams() { return _params; }
     
     String name() const { return _name; }
     void setName(const String& name){ _name = name; }
@@ -58,14 +67,16 @@ public:
 
 protected:
     String _name;
-    nlohmann::json _params;
+    // nlohmann::json _params;
     Map<String, QNode*> _outs;
     Map<String, QNode*> _ins;
 };
 
 class OperationNode: public QNode {
 public:
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
+    virtual bool Init(DataContext& context, const nlohmann::json& config);
+
+    virtual bool Process(const String& strategy, DataContext& context);
 
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);
@@ -78,7 +89,9 @@ class FunctionNode: public QNode {
 public:
     ~FunctionNode();
 
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
+    virtual bool Init(DataContext& context, const nlohmann::json& config);
+
+    virtual bool Process(const String& strategy, DataContext& context);
 
     void SetFunctionName(const String& name) { _funcionName = name; }
 
@@ -98,21 +111,8 @@ private:
 
 class FeatureNode: public QNode {
 public:
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
-};
-
-class StatisticNode: public QNode {
-public:
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
-
-    void AddIndicator(StatisticIndicator ind) {
-        _indicators.insert(ind);
-    }
-
-private:
-    double Sharp(const Vector<double>&, double freerate);
-private:
-    Set<StatisticIndicator> _indicators;
+    virtual bool Init(DataContext& context, const nlohmann::json& config);
+    virtual bool Process(const String& strategy, DataContext& context);
 };
 
 class FormulaParser;
@@ -122,7 +122,8 @@ public:
     SignalNode(Server* server);
     ~SignalNode();
 
-    virtual bool Process(const String& strategy, DataContext& context, const DataFeatures& org);
+    virtual bool Init(DataContext& context, const nlohmann::json& config);
+    virtual bool Process(const String& strategy, DataContext& context);
 private:
     // 解析表达式，构建函数对象
     bool parseFomula(const String& formulas);

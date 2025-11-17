@@ -31,6 +31,7 @@ public:
     List<QuoteInfo>& GetOptionHistory(symbol_t symbol);
 
 private:
+    void InitQuoteInfo(QuoteInfo& info, symbol_t symb, const String& date, TORALEV1API::CTORATstpMarketDataField* pMarketDataField);
 
 private:
   bool _isInited;
