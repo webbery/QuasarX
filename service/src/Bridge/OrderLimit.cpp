@@ -2,8 +2,8 @@
 
 OrderLimit::OrderLimit(int rate, int capacity)
     : timePerToken_(Nanoseconds(1000000000) / rate),
-      timePerBurst_((capacity - 1) * Nanoseconds(1000000000) / rate), // ¼ÆËãÍ»·¢ÈİÁ¿¶ÔÓ¦µÄÊ±¼ä·¶Î§
-      nextFreeTime_(Clock::now()) // ³õÊ¼»¯Îªµ±Ç°Ê±¼ä£¬±íÊ¾ÁîÅÆÍ°³õÊ¼ÎªÂú
+      timePerBurst_((capacity - 1) * Nanoseconds(1000000000) / rate), // è®¡ç®—çªå‘å®¹é‡å¯¹åº”çš„æ—¶é—´èŒƒå›´
+      nextFreeTime_(Clock::now()) // åˆå§‹åŒ–ä¸ºå½“å‰æ—¶é—´ï¼Œè¡¨ç¤ºä»¤ç‰Œæ¡¶åˆå§‹ä¸ºæ»¡
 {
 }
 
@@ -16,32 +16,32 @@ bool OrderLimit::tryConsume(uint64_t tokens)
 {
     const auto now = Clock::now();
     const Nanoseconds timeNeeded = tokens * timePerToken_;
-    const auto minTime = now - timePerBurst_; // ¼ÆËãÔÊĞíÏû·ÑµÄ×îÔç¿ªÊ¼Ê±¼ä
+    const auto minTime = now - timePerBurst_; // è®¡ç®—å…è®¸æ¶ˆè´¹çš„æœ€æ—©å¼€å§‹æ—¶é—´
 
     auto oldNextTime = nextFreeTime_.load(std::memory_order_relaxed);
     for (;;) {
-        // Ê¹ÓÃÁÙÊ±±äÁ¿½øĞĞ¼ÆËã£¬±ÜÃâÖ±½Ó²Ù×÷Ô­×Ó¶ÔÏó
+        // ä½¿ç”¨ä¸´æ—¶å˜é‡è¿›è¡Œè®¡ç®—ï¼Œé¿å…ç›´æ¥æ“ä½œåŸå­å¯¹è±¡
         auto newNextTime = oldNextTime;
         
-        // Èç¹ûµ±Ç°ÇëÇó¾àÀëÉÏ´Î³É¹¦Ïû·ÑµÄÊ±¼ä¼ä¸ô³¬¹ıÁËÍ»·¢ÈİÁ¿ÔÊĞíµÄ·¶Î§£¬
-        // Ôò´Óµ±Ç°Ê±¼ä¼õÈ¥Í»·¢ÈİÁ¿¶ÔÓ¦µÄÊ±¼ä¿ªÊ¼¼ÆËã£¬±ÜÃâÒò³¤ÆÚ¿ÕÏĞµ¼ÖÂµÄÏÂÒ»´ÎÍ»·¢¹ı´ó
+        // å¦‚æœå½“å‰è¯·æ±‚è·ç¦»ä¸Šæ¬¡æˆåŠŸæ¶ˆè´¹çš„æ—¶é—´é—´éš”è¶…è¿‡äº†çªå‘å®¹é‡å…è®¸çš„èŒƒå›´ï¼Œ
+        // åˆ™ä»å½“å‰æ—¶é—´å‡å»çªå‘å®¹é‡å¯¹åº”çš„æ—¶é—´å¼€å§‹è®¡ç®—ï¼Œé¿å…å› é•¿æœŸç©ºé—²å¯¼è‡´çš„ä¸‹ä¸€æ¬¡çªå‘è¿‡å¤§
         if (minTime > newNextTime) {
             newNextTime = minTime;
         }
         newNextTime += timeNeeded;
 
-        // Èç¹ûĞÂµÄÊ±¼äµãÔÚÎ´À´£¬ËµÃ÷ÁîÅÆ²»×ã£¬Ïû·ÑÊ§°Ü
+        // å¦‚æœæ–°çš„æ—¶é—´ç‚¹åœ¨æœªæ¥ï¼Œè¯´æ˜ä»¤ç‰Œä¸è¶³ï¼Œæ¶ˆè´¹å¤±è´¥
         if (newNextTime > now) {
             return false;
         }
 
-        // Ê¹ÓÃÔ­×Ó²Ù×÷±È½Ï²¢½»»»£¬È·±£Ïß³Ì°²È«µØ¸üĞÂÏÂÒ»´Î¿ÉÓÃÊ±¼ä
+        // ä½¿ç”¨åŸå­æ“ä½œæ¯”è¾ƒå¹¶äº¤æ¢ï¼Œç¡®ä¿çº¿ç¨‹å®‰å…¨åœ°æ›´æ–°ä¸‹ä¸€æ¬¡å¯ç”¨æ—¶é—´
         if (nextFreeTime_.compare_exchange_weak(
             oldNextTime, newNextTime,
             std::memory_order_relaxed,
             std::memory_order_relaxed)) {
             return true;
         }
-        // Èç¹û½»»»Ê§°Ü£¨ËµÃ÷ÆäËûÏß³ÌĞŞ¸ÄÁËnextFreeTime_£©£¬ÔòÑ­»·ÖØÊÔ
+        // å¦‚æœäº¤æ¢å¤±è´¥ï¼ˆè¯´æ˜å…¶ä»–çº¿ç¨‹ä¿®æ”¹äº†nextFreeTime_ï¼‰ï¼Œåˆ™å¾ªç¯é‡è¯•
     }
 }

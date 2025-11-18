@@ -23,3 +23,5 @@ protected:
 };
 
 symbol_t GetSymbol(const nlohmann::json& req);
+
+void ProcessError(char error, nlohmann::json& result, httplib::Response& res);

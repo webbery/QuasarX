@@ -19,7 +19,6 @@ public:
 private:
     bool Init();
 
-    bool is_etf_option(symbol_t);
 private:
     Set<symbol_t> _symbols;
     Map<String, Set<String>> _properties;

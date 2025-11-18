@@ -423,9 +423,11 @@ void BrokerSubSystem::run() {
 }
 
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
+    order_id id;
+    memset(&id, 0, sizeof (order_id));
     if (_simulation) {
         _exchanges[ExchangeType::EX_SIM]->AddOrder(GET_SYMBOL(order), order);
-        return order_id{0};
+        return id;
     }
     // 邮件通知
     String content;
@@ -438,15 +440,15 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     if (!content.empty()) {
         _server->SendEmail(content);
     }
-    if (is_stock(GET_SYMBOL(order))) {
+    if (is_stock(GET_SYMBOL(order)) || is_etf_option(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableStockExchange();
-        return exchange->AddOrder(GET_SYMBOL(order), order);
+        id = exchange->AddOrder(GET_SYMBOL(order), order);
     }
     if (is_future(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableFutureExchange();
-        return exchange->AddOrder(GET_SYMBOL(order), order);
+        id = exchange->AddOrder(GET_SYMBOL(order), order);
     }
-    return order_id{ 0 };
+    return id;
 }
 
 int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)

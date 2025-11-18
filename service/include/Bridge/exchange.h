@@ -21,6 +21,8 @@ using ConcurrentMap = boost::concurrent_flat_map<K, V>;
 #define REQUEST_ORDERS        3
 #define REQUEST_ORDER         4
 
+#define ERROR_INSERT_LIMIT    -100
+
 enum ExchangeType {
     EX_XTP,
     EX_CTP,
@@ -66,12 +68,13 @@ public:
     double _ration;
 };
 
-struct order_id {
-  union {
-    uint64_t _id;
-  };
-  char _sysID[24];
+struct alignas(4) order_id {
+  uint32_t _id;
+  char _sysID[26];
+  char _error;
   char _type;   // 0-股票 1-期权 2-期货
+
+  order_id():_id(0), _error(0), _type(0){memset(_sysID, 0, sizeof(_sysID));}
 };
 
 struct AccountAsset {

@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <atomic>
 
 using Clock = std::chrono::steady_clock;
 using Nanoseconds = std::chrono::nanoseconds;

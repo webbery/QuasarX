@@ -41,13 +41,6 @@ bool QuoteInputNode::Init(DataContext& context, const nlohmann::json& config) {
     return true;
 }
 
-bool QuoteInputNode::is_etf_option(symbol_t symbol) {
-    if (symbol._exchange == ExchangeName::MT_Shenzhen || symbol._exchange == MT_Shanghai) {
-        return is_option(symbol);
-    }
-    return false;
-}
-
 bool QuoteInputNode::Process(const String& strategy, DataContext& context)
 {
     auto cur = context.GetTime();

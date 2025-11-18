@@ -138,7 +138,7 @@ AccountAsset CTPExchange::GetAsset(){
 }
 
 order_id CTPExchange::AddOrder(const symbol_t& symbol, OrderContext* order){
-    return order_id{0};
+    return order_id();
 }
 
 void CTPExchange::OnOrderReport(order_id id, const TradeReport& report) {

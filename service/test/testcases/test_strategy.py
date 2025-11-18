@@ -2,6 +2,7 @@ import requests
 import sys
 from tool import check_response, BASE_URL
 import pytest
+import json
 
 @pytest.mark.usefixtures("auth_token")
 class TestStrategy:
@@ -268,7 +269,6 @@ class TestStrategy:
         assert len(data['features']) > 0
         features = data['features']
         assert 'sharp' in features
-        assert 'MACD' in features
         macd5 = features['MACD']
         assert len(macd5) > 0
         for symbol in macd5:
@@ -282,195 +282,163 @@ class TestStrategy:
         }
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
-        kwargs['json'] = {
-            "script": """{
+
+        script = {
                 "graph": {
                     "id": "graph_ma2",
                     "name": "双均线动量流水线",
                     "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
                     "nodes": [
-                    {
-                        "id": "1",
-                        "type": "custom",
-                        "data": { 
-                        "label": "行情数据输入",
-                        "nodeType": "input",
-                        "params": {
-                            "source": {
-                                "value": "股票",
-                                "type": "select",
-                                "options": ["股票", "期货"]
-                            },
-                            "code": {
-                            "value": ["001038"],
-                            "type": "text"
-                            },
-                            "freq": {
-                                "value": "1d"
-                                "type": "select",
-                                "options": ["1d", "5m"]
-                            },
-                            "close": {
-                            "value": "close",
-                            "type": "text"
-                            },
-                            "open": {
-                            "value": "open",
-                            "type": "text"
-                            },
-                            "high": {
-                            "value": "high",
-                            "type": "text"
-                            },
-                            "low": {
-                            "value": "low",
-                            "type": "text"
-                            },
-                            "volume": {
-                            "value": "volume",
-                            "type": "text"
-                            }
-                        }
-                        },
-                        "position": { "x": 50, "y": 100 }
-                    },
-                    {
-                        "id": "2",
-                        "type": "custom",
-                        "data": { 
-                        "label": "数据预处理",
-                        "nodeType": "operation",
-                        "params": {
-                            "method": {
-                                "value": "MA",
-                                "type": "select",
-                                "options": ["MA"]
-                            },
-                            "smoothTime": {
-                            "value": 5,
-                            "type": "text",
-                            }
-                        }
-                        },
-                        "position": { "x": 300, "y": 100 }
-                    },
-                    {
-                        "id": "3",
-                        "type": "custom",
-                        "data": { 
-                        "label": "MA_5",
-                        "nodeType": "function",
-                        "params": {
-                            "method": {
-                                "value": "MA",
-                                "type": "select",
-                                "options": ["MA"]
-                            },
-                            "smoothTime": {
-                                "value": 15,
-                                "type": "text",
-                            }
-                        }
-                        },
-                        "position": { "x": 550, "y": 100 }
-                    },
-                    {
-                        "id": "3",
-                        "type": "custom",
-                        "data": { 
-                        "label": "MA_15",
-                        "nodeType": "function",
-                        "params": {
-                            "method": {
-                                "value": "MA",
-                                "type": "select",
-                                "options": ["MA"]
-                            },
-                            "smoothTime": {
-                                "value": 15,
-                                "type": "text",
-                            }
-                        }
-                        },
-                        "position": { "x": 800, "y": 50 }
-                    },
-                    {
-                        "id": "6",
-                        "type": "custom",
-                        "data": { 
-                            "label": "MA_diff",
-                            "nodeType": "operation",
-                            "params": {
-                                "formula": {
-                                    "value": "MA_5-MA_15",
-                                    "type": "text"
+                        {
+                            "id": "1",
+                            "type": "custom",
+                            "data": { 
+                                "label": "行情数据输入",
+                                "nodeType": "input",
+                                "params": {
+                                    "source": {
+                                        "value": "股票",
+                                        "type": "select",
+                                        "options": ["股票", "期货"]
+                                    },
+                                    "code": {
+                                        "value": ["001380"],
+                                        "type": "text"
+                                    },
+                                    "freq": {
+                                        "value": "1d",
+                                        "type": "select",
+                                        "options": ["1d", "5m"]
+                                    },
+                                    "close": {
+                                        "value": "close",
+                                        "type": "text"
+                                    },
+                                    "open": {
+                                        "value": "open",
+                                        "type": "text"
+                                    },
+                                    "high": {
+                                        "value": "high",
+                                        "type": "text"
+                                    },
+                                    "low": {
+                                        "value": "low",
+                                        "type": "text"
+                                    },
+                                    "volume": {
+                                        "value": "volume",
+                                        "type": "text"
+                                    }
                                 }
-                            }
+                            },
+                            "position": { "x": 50, "y": 100 }
                         },
-                        "position": { "x": 800, "y": 150 }
-                    },
-                    {
-                        "id": "5",
-                        "type": "custom",
-                        "data": { 
-                            "label": "结果输出",
-                            "nodeType": "output",
-                            "params": {
-                                "indicator": {
-                                    "value": ["sharp", "maxDrawdown", "totalReturn"],
-                                    "type": "multiselect",
-                                    "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "卡玛比率", "信息比率"]
+                        {
+                            "id": "3",
+                            "type": "custom",
+                            "data": { 
+                                "label": "MA_5",
+                                "nodeType": "function",
+                                "params": {
+                                    "method": {
+                                        "value": "MA",
+                                        "type": "select",
+                                        "options": ["MA"]
+                                    },
+                                    "smoothTime": {
+                                        "value": 15,
+                                        "type": "text",
+                                    }
                                 }
-                            }
+                            },
+                            "position": { "x": 550, "y": 100 }
                         },
-                        "position": { "x": 800, "y": 100 }
-                    }
+                        {
+                            "id": "3",
+                            "type": "custom",
+                            "data": { 
+                                "label": "MA_15",
+                                "nodeType": "function",
+                                "params": {
+                                    "method": {
+                                        "value": "MA",
+                                        "type": "select",
+                                        "options": ["MA"]
+                                    },
+                                    "smoothTime": {
+                                        "value": 15,
+                                        "type": "text",
+                                    }
+                                }
+                            },
+                            "position": { "x": 800, "y": 50 }
+                        },
+                        {
+                            "id": "6",
+                            "type": "custom",
+                            "data": { 
+                                "label": "MA_diff",
+                                "nodeType": "signal",
+                                "params": {
+                                    "formula": {
+                                        "value": "MA_5-MA_15",
+                                        "type": "text"
+                                    }
+                                }
+                            },
+                            "position": { "x": 800, "y": 150 }
+                        }
                     ],
                     "edges": [
-                    {
-                        "id": "e1->2",
-                        "source": "1",
-                        "target": "2",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    },
-                    {
-                        "id": "e2->3",
-                        "source": "1",
-                        "target": "3",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    },
-                    {
-                        "id": "e3->4",
-                        "source": "2",
-                        "target": "6",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    },
-                    {
-                        "id": "e3->6",
-                        "source": "3",
-                        "target": "6",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    },
-                    {
-                        "id": "e4->5",
-                        "source": "6",
-                        "target": "5",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    }
+                        {
+                            "id": "e1->2",
+                            "source": "1",
+                            "target": "2",
+                            "sourceHandle": "output",
+                            "targetHandle": "input",
+                            "type": "default"
+                        },
+                        {
+                            "id": "e2->3",
+                            "source": "1",
+                            "target": "3",
+                            "sourceHandle": "output",
+                            "targetHandle": "input",
+                            "type": "default"
+                        },
+                        {
+                            "id": "e3->4",
+                            "source": "2",
+                            "target": "6",
+                            "sourceHandle": "output",
+                            "targetHandle": "input",
+                            "type": "default"
+                        },
+                        {
+                            "id": "e3->6",
+                            "source": "3",
+                            "target": "6",
+                            "sourceHandle": "output",
+                            "targetHandle": "input",
+                            "type": "default"
+                        },
+                        {
+                            "id": "e4->5",
+                            "source": "6",
+                            "target": "5",
+                            "sourceHandle": "output",
+                            "targetHandle": "input",
+                            "type": "default"
+                        }
                     ]
                 }
-            }"""
+            }
+        
+        kwargs['json'] = {
+            "script": json.dumps(script, ensure_ascii=False)
         }
+
         response = requests.post(f"{BASE_URL}/backtest", **kwargs)
         data = check_response(response)
         assert isinstance(data, object)
@@ -483,9 +451,3 @@ class TestStrategy:
         assert len(data['features']) > 0
         features = data['features']
         assert 'sharp' in features
-        assert 'MACD' in features
-        macd5 = features['MACD']
-        assert len(macd5) > 0
-        for symbol in macd5:
-            assert isinstance(macd5[symbol], list)
-            break

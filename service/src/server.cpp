@@ -22,6 +22,7 @@
 #include <nng/protocol/reqrep0/rep.h>
 #include <nng/protocol/reqrep0/req.h>
 #include <nng/supplemental/util/platform.h>
+#include <stdexcept>
 #include "Handler/AssetHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/StrategyHandler.h"
@@ -377,9 +378,15 @@ void Server::InitStocks(const String& path) {
     String stock_path = path + "/symbol_market.csv";
     if (!std::filesystem::exists(stock_path)) {
         // 首次启动,运行初始化脚本
-        RunCommand("cd tools && python run_task.py 1");
-        RunCommand("cd tools && python tools/run_task.py 2");
-        RunCommand("cd tools && python tools/run_task.py 3");
+        RunCommand("python tools/run_task.py 1");
+    }
+    if (!std::filesystem::exists(path + "/fund_market.csv")) {
+        RunCommand("python tools/run_task.py 2");
+    }
+    if (!std::filesystem::exists(path + "/option_market.csv")) {
+        if (!RunCommand("python tools/run_task.py 3")) {
+            
+        }
     }
     ReloadMarketData(path);
 }
@@ -1376,5 +1383,5 @@ const ContractInfo& Server::GetSecurity(const String& symbol) {
                 return lower_itr->second;
         }
     }
-    assert(false);
+    throw std::runtime_error("not find symbol");
 }

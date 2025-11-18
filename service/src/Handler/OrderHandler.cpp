@@ -78,10 +78,14 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         }
 
         auto id = broker->Buy("", symbol, order, lambda_sendResult);
-        
         nlohmann::json result;
-        result["id"] = id._id;
-        result["sysID"] = id._sysID;
+        if (id._error) {
+            ProcessError(id._error, result, res);
+        } else {
+            res.status = 200;
+            result["id"] = id._id;
+            result["sysID"] = id._sysID;
+        }
         res.set_content(result.dump(), "application/json");
     }
     else if (direct == 1) {
@@ -105,12 +109,16 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         auto id = broker->Sell("", symbol, order, lambda_sendResult);
         
         nlohmann::json result;
-        result["id"] = id._id;
-        result["sysID"] = id._sysID;
+        if (id._error) {
+            ProcessError(id._error, result, res);
+        } else {
+            res.status = 200;
+            result["id"] = id._id;
+            result["sysID"] = id._sysID;
+        }
         res.set_content(result.dump(), "application/json");
     }
     
-    res.status = 200;
 }
 
 void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {

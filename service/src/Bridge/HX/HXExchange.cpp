@@ -169,13 +169,14 @@ bool HXExchange::InitOptionHandle()
 
 order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 {
+    order_id oid;
     String& shareholder = _shareholder[symbol._exchange];
     if (shareholder.empty()) {
         WARN("shareholder is empty");
-        return { 0 };
+        return oid;
     }
 
-    order_id oid{ ++_reqID };
+    oid._id = ++_reqID;
     using namespace TORASTOCKAPI;
     CTORATstpInputOrderField order;
     memset(&order, 0, sizeof(CTORATstpInputOrderField));
@@ -207,19 +208,19 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 
 order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
 {
+    order_id oid;
     String& shareholder = _shareholder[symbol._exchange];
     if (shareholder.empty()) {
         WARN("shareholder is empty");
-        return { 0 };
+        return oid;
     }
     auto strCode = get_etf_option_code(symbol);
     if (strCode.empty()) {
         WARN("can't find option code {}", ETFOptionSymbol(symbol).name());
-        return { 0 };
+        return oid;
     }
 
-    order_id oid{ ++_reqID };
-
+    oid._id = ++_reqID;
     TORASPAPI::CTORATstpSPInputOrderField pInputOrderField;
     memset(&pInputOrderField, 0, sizeof(TORASPAPI::CTORATstpSPInputOrderField));
     auto& o = ctx->_order;
@@ -437,8 +438,8 @@ void HXExchange::Logout(AccountType t) {
 
 bool HXExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
 {
-    order_id id{ ++_reqID };
-
+    order_id id;
+    id._id = ++_reqID;
     char* all[1] = { 0 };
     strcpy(all[0], "00000000");
     _quoteAPI->SubscribeSimplifyMarketData(all, 1, 0);
@@ -465,7 +466,8 @@ bool HXExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
 }
 
 bool HXExchange::GetPosition(AccountPosition& ap){
-    order_id oid{++_reqID};
+    order_id oid;
+    oid._id = ++_reqID;
     auto promise = initPromise<bool>(oid._id);
     auto& positions = _stockHandle._trade->GetPositions();
     positions.clear();
@@ -494,7 +496,12 @@ AccountAsset HXExchange::GetAsset(){
 }
 
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
+    order_id id;
     if (is_stock(symbol)) {
+        if (!_stockHandle._insertLimit->tryConsume()) {
+            id._error = ERROR_INSERT_LIMIT;
+            return id;
+        }
         return AddStockOrder(symbol, ctx);
     }
     else if (is_option(symbol)) {
@@ -502,7 +509,7 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
             return AddOptionOrder(symbol, ctx);
         }
     }
-    return order_id{0};
+    return id;
 }
 
 void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
@@ -785,7 +792,8 @@ double HXExchange::GetAvailableFunds()
 
 bool HXExchange::QueryShareHolder(ExchangeName name)
 {
-    order_id id{ ++_reqID };
+    order_id id;
+    id._id = ++_reqID;
     auto promise = initPromise<String>(id._id);
 
     TORASTOCKAPI::CTORATstpQryShareholderAccountField qry_shr_account;

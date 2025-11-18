@@ -22,33 +22,6 @@ bool FeatureNode::Process(const String& strategy, DataContext& context)
     return true;
 }
 
-bool FunctionNode::Init(DataContext& context, const nlohmann::json& config) {
-    return true;
-}
-
-bool FunctionNode::Process(const String& strategy, DataContext& context)
-{
-    if (!_callable) {[[unlikely]]
-        if (!Init()) {
-            throw std::invalid_argument("Node: function is not set");
-        }
-    }
-    // return (*_callable)(input);
-    return true;
-}
-
-bool FunctionNode::Init() {
-    if (_funcionName == "MA") {
-        _callable = new MA();
-    }
-    return true;
-}
-
-FunctionNode::~FunctionNode() {
-    if (_callable)
-        delete _callable;
-}
-
 SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
 
 }

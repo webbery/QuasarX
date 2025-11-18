@@ -11,8 +11,9 @@
 #include "Util/log.h"
 #include "server.h"
 #include "Nodes/QuoteNode.h"
+#include "Nodes/FunctionNode.h"
 
-#define ADD_ARGUMENT(type, name) { type v = data["params"][name]; node->AddArgument(name, v);}
+#define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 namespace {
     Map<String, SignalGeneratorType> agent_types{
@@ -29,6 +30,7 @@ namespace {
         {"operation", StrategyNodeType::Operation},
         {"function", StrategyNodeType::Function},
         {"feature", StrategyNodeType::Feature},
+        {"signal", StrategyNodeType::Signal},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -140,18 +142,20 @@ List<QNode*> QStrategy::Process(const List<QNode*>& input)
 QNode* generate_input_node(const String& id, const nlohmann::json& data, Server* server) {
     auto node = new QuoteInputNode(server);
     node->setName(id);
-    String type = data["params"]["source"];
+    // String type = data["params"]["source"]["value"];
     auto& codes = data["params"]["code"]["value"];
     QuoteFilter filer;
     for (String code: codes) {
-        auto symbol = to_symbol(code);
+        auto& security = Server::GetSecurity(code);
+        auto symbol = to_symbol(code, security);
         node->AddSymbol(symbol);
+        
         filer._symbols.emplace(code);
     }
     // 设置数据源
     if (server->GetRunningMode() == RuningType::Backtest) {
         StockSimulation* exchange = (StockSimulation*)server->GetExchange(ExchangeType::EX_SIM);
-        String tickLevel = data["params"]["tick"]["value"];
+        String tickLevel = data["params"]["freq"]["value"];
         if (tickLevel == "1d") {
             exchange->UseLevel(1);
         }
@@ -167,41 +171,22 @@ QNode* generate_input_node(const String& id, const nlohmann::json& data, Server*
     return node;
 }
 
-QNode* generate_output_node(const String& strategyName, const String& id, const nlohmann::json& data, Server* server) {
-    auto brokerSystem = server->GetBrokerSubSystem();
-    brokerSystem->CleanAllIndicators(strategyName);
-
-    auto node = new StatisticNode;
-    node->setName(id);
-    auto& names = data["params"]["indicator"];
-    for (String name: names) {
-        auto itr = statistics.find(name);
-        if (itr == statistics.end()) {
-            WARN("indicator {} not implement.", name);
-            continue;
-        }
-        node->AddIndicator(itr->second);
-        brokerSystem->RegistIndicator(strategyName, itr->second);
-    }
-    return node;
-}
-
 QNode* generate_operation_node(const String& id, const nlohmann::json& data, Server* server) {
     auto node = new OperationNode;
     node->setName(id);
-    String lines = data["params"]["formula"];
-    if (!node->parseFomula(lines)) {
-        WARN("parse {} formula fail.", id);
-        delete node;
-        return nullptr;
-    }
+    // String operatorName = data["params"]["method"]["value"];
+    // if (!node->parseFomula(lines)) {
+    //     WARN("parse {} formula fail.", id);
+    //     delete node;
+    //     return nullptr;
+    // }
     return node;
 }
 
 QNode* generate_function_node(const String& id, const nlohmann::json& data, Server* server) {
-    auto node = new FunctionNode;
+    auto node = new FunctionNode();
     node->setName(id);
-    String name = data["params"]["method"];
+    String name = data["params"]["method"]["value"];
     node->SetFunctionName(name);
     if (name == "MA") {
         ADD_ARGUMENT(int, "smoothTime");
@@ -209,8 +194,19 @@ QNode* generate_function_node(const String& id, const nlohmann::json& data, Serv
     return node;
 }
 
-QNode* generate_signal_node(const String& id, const nlohmann::json& data, Server* server) {
+QNode* generate_signal_node(const String& strategyName, const String& id, const nlohmann::json& data, Server* server) {
     auto node = new SignalNode(server);
+    auto brokerSystem = server->GetBrokerSubSystem();
+    brokerSystem->CleanAllIndicators(strategyName);
+    auto& names = data["params"]["indicator"];
+    for (String name: names) {
+        auto itr = statistics.find(name);
+        if (itr == statistics.end()) {
+            WARN("indicator {} not implement.", name);
+            continue;
+        }
+        brokerSystem->RegistIndicator(strategyName, itr->second);
+    }
     return node;
 }
 
@@ -230,9 +226,6 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Feature:
             break;
-        case StrategyNodeType::Output:
-            nodeInstance = generate_output_node(strategyName, node["id"], node["data"], server);
-            break;
         case StrategyNodeType::Operation:
             nodeInstance = generate_operation_node(node["id"], node["data"], server);
             break;
@@ -240,7 +233,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             nodeInstance = generate_function_node(node["id"], node["data"], server);
             break;
         case StrategyNodeType::Signal:
-            nodeInstance = generate_signal_node(node["id"], node["data"], server);
+            nodeInstance = generate_signal_node(strategyName, node["id"], node["data"], server);
         default:
             break;
         }

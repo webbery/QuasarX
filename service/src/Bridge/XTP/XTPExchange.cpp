@@ -287,6 +287,7 @@ AccountAsset XTPExchange::GetAsset() {
 }
 
 order_id XTPExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx) {
+  order_id odid;
   XTPOrderInsertInfo* order = new XTPOrderInsertInfo;
   strcpy(order->ticker, get_symbol(symbol).c_str());
   switch (symbol._exchange) {
@@ -294,7 +295,8 @@ order_id XTPExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx) {
   case MT_Shenzhen: order->market = XTP_MKT_SZ_A; break;
   case MT_Beijing: order->market = XTP_MKT_BJ_A; break;
   default:
-    return order_id{0};
+    delete order;
+    return odid;
   }
   auto& o = ctx->_order;
   order->price = o._order[0]._price;
@@ -304,10 +306,12 @@ order_id XTPExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx) {
   if (oid == 0) {
     XTPRI* error_info = m_pTradeApi->GetApiLastError();
     printf("ERROR: add order fail, code %d: %s\n", error_info->error_id, error_info->error_msg);
-    return order_id{0};
+    delete order;
+    return odid;
   }
   _orders.emplace(oid, std::make_pair(order, ctx));
-  return order_id{oid};
+  odid._id = oid;
+  return odid;
 }
 
 void XTPExchange::OnOrderReport(order_id id, const TradeReport& report) {

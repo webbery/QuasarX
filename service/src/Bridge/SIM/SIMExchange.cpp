@@ -96,7 +96,9 @@ order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
             item.second->push(info);
             });
     }
-    return order_id{ info._id };
+    order_id id;
+    id._id = info._id;
+    return id;
 }
 
 void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
@@ -330,7 +332,9 @@ void StockSimulation::Worker() {
         while (que.second->pop(oif)) {
           TradeReport report = OrderMatch(oif._order->_order, info);
           oif._order->_trades._symbol = symbol;
-          OnOrderReport(order_id{ oif._id }, report);
+          order_id id;
+          id._id = static_cast<uint32_t>(oif._id);
+          OnOrderReport(id, report);
         }
       });
     }

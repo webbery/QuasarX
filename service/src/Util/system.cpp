@@ -544,6 +544,17 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
   return id;
 }
 
+symbol_t to_symbol(const String& code, const ContractInfo& security) {
+  if (security._type == ContractType::AStock) {
+    return to_symbol(code);
+  }
+  if (security._exchange == ExchangeName::MT_Shanghai || security._exchange == MT_Shenzhen) {
+    return ETFOptionSymbol(code, security._name);
+  }
+  WARN("not support symbol");
+  return symbol_t();
+}
+
 String get_symbol(const symbol_t& symbol) {
   if (symbol._type == contract_type::future) {
     return CTPObjectName(symbol._opt) + std::to_string(symbol._symbol);
@@ -598,6 +609,14 @@ bool is_future(symbol_t sym) {
 bool is_stock(symbol_t sym) {
   return sym._type == contract_type::stock;
 }
+
+bool is_etf_option(symbol_t symbol) {
+  if (symbol._exchange == ExchangeName::MT_Shenzhen || symbol._exchange == MT_Shanghai) {
+      return is_option(symbol);
+  }
+  return false;
+}
+
 bool is_option(symbol_t sym) {
   return sym._type == contract_type::call || sym._type == contract_type::put;
 }
