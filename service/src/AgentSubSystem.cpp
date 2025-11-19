@@ -87,6 +87,7 @@ void FlowSubsystem::Start(const String& strategy) {
             auto& flow = _flows[strategy];
             for (auto node: flow._graph) {
                 if (flow._running && !node->Init(context, flow._config)) {
+                    INFO("strategy thread exit.");
                     return;
                 }
             }
@@ -101,10 +102,12 @@ void FlowSubsystem::Start(const String& strategy) {
                 if (context.GetEpoch() == 0)
                     break;
             }
+            // 结束通知
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
         }
     });
+    flow._running = true;
 }
 
 void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {

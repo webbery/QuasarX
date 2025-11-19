@@ -100,9 +100,11 @@ public:
 
     virtual bool Init(DataContext& context, const nlohmann::json& config);
     virtual bool Process(const String& strategy, DataContext& context);
+
+    bool ParseBuyExpression(const String& expression);
+    bool ParseSellExpression(const String& expression);
+
 private:
-    // 解析表达式，构建函数对象
-    bool parseFomula(const String& formulas);
 
 
 private:

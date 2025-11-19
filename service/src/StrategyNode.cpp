@@ -63,14 +63,18 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
     return true;
 }
 
-bool SignalNode::parseFomula(const String& formulas) {
+bool SignalNode::ParseBuyExpression(const String& expression) {
     if (!_buyParser) {
         _buyParser = new FormulaParser(_server);
     }
+    return _buyParser->parse(expression, TradeAction::BUY);
+}
+
+bool SignalNode::ParseSellExpression(const String& expression) {
     if (!_sellParser) {
         _sellParser = new FormulaParser(_server);
     }
-    return _buyParser->parse(formulas, TradeAction::BUY) && _sellParser->parse(formulas, TradeAction::SELL);
+    return _sellParser->parse(expression, TradeAction::SELL);
 }
 
 SignalNode::~SignalNode() {

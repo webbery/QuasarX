@@ -1,6 +1,7 @@
 #include "Nodes/QuoteNode.h"
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
+#include "Util/system.h"
 #include <ctime>
 #include <limits>
 
@@ -20,6 +21,8 @@ QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 }
 
 bool QuoteInputNode::Init(DataContext& context, const nlohmann::json& config) {
+    if (config.empty())
+        return true;
     Set<String> pool = config["pool"];
     // stock/option/future
     for (auto& code: pool) {
@@ -82,11 +85,13 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
 
 void QuoteInputNode::Connect(QNode* next, const String& from, const String& to) {
     Vector<String> froms;
-    split(from, froms, "_");
+    split(from, froms, "-");
     QNode::Connect(next, froms[0], to);
     if (froms.size() == 2) {
         // auto id = get_feature_id(froms[1], "");
-        _properties[froms[1]].insert(froms[1]);
+        for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
+            _properties[get_symbol(*itr)].insert(froms[1]);
+        }
     }
 }
 

@@ -10,6 +10,10 @@ class TestOrder:
     order_id = -1
     sys_id = '12002P900000001'
 
+    option_id = ''
+    option_order_id = -1
+    option_sys_id = ''
+
     def generate_args(self, auth_token):
         kwargs = {
             'verify': False  # 始终禁用 SSL 验证
@@ -23,6 +27,12 @@ class TestOrder:
         kwargs = self.generate_args(auth_token)
         params = {"id": self.stock_id}
         response = requests.get(f"{BASE_URL}/stocks/detail", params=params, **kwargs)
+        return check_response(response)
+
+    def get_etf_option(self, auth_token):
+        kwargs = self.generate_args(auth_token)
+        params = {"id": self.option_id}
+        response = requests.get(f"{BASE_URL}/options/detail", params=params, **kwargs)
         return check_response(response)
 
     def market_order_buy(self, auth_token):
@@ -59,11 +69,23 @@ class TestOrder:
         response = requests.get(f"{BASE_URL}/trade/order", **kwargs)
         return check_response(response)
 
+    def get_option_orders(self, auth_token):
+        kwargs = self.generate_args(auth_token)
+        params = {
+            "type": 1
+        }
+        response = requests.get(f"{BASE_URL}/trade/order", params = params, **kwargs)
+        return check_response(response)
+    
     def cancel_order(self, auth_token):
         pass
 
     def market_order_buy_option(self, auth_token):
-        pass
+        kwargs = self.generate_args(auth_token)
+        params = {"symbol": self.option_id, 'type': 1, 'quantity': 200, 'prices': [1.0],
+                  'direct': 0, 'kind': 1}
+        response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        return check_response(response)
     
     @pytest.mark.timeout(60)
     def test_stock_order_buy(self, auth_token):
@@ -119,4 +141,14 @@ class TestOrder:
 
     @pytest.mark.timeout(60)
     def test_option_order_buy(self, auth_token):
-        pass
+        data = self.market_order_buy_option(auth_token=auth_token)
+        assert isinstance(data, object)
+        assert "id" in data
+        assert data['id'] != -1
+        self.option_id = data['id']
+        self.option_sys_id = data['sysID']
+
+    @pytest.mark.timeout(60)
+    def test_get_all_option_orders(self, auth_token):
+        data = self.get_option_orders(auth_token=auth_token)
+        assert isinstance(data, list)

@@ -302,7 +302,7 @@ class TestStrategy:
                                         "options": ["股票", "期货"]
                                     },
                                     "code": {
-                                        "value": ["001380"],
+                                        "value": ["001318"],
                                         "type": "text"
                                     },
                                     "freq": {
@@ -381,8 +381,12 @@ class TestStrategy:
                                 "label": "MA_diff",
                                 "nodeType": "signal",
                                 "params": {
-                                    "formula": {
-                                        "value": "MA_5-MA_15",
+                                    "buy": {
+                                        "value": "MA_5-MA_15>0",
+                                        "type": "text"
+                                    },
+                                    "sell": {
+                                        "value": "MA_5 - MA_15 < 0",
                                         "type": "text"
                                     }
                                 }
@@ -392,43 +396,35 @@ class TestStrategy:
                     ],
                     "edges": [
                         {
-                            "id": "e1->2",
+                            "id": "1-close->2",
                             "source": "1",
                             "target": "2",
-                            "sourceHandle": "output",
-                            "targetHandle": "input",
+                            "sourceHandle": "1-close",
+                            "targetHandle": "2",
                             "type": "default"
                         },
                         {
-                            "id": "e2->3",
+                            "id": "1-close->3",
                             "source": "1",
                             "target": "3",
-                            "sourceHandle": "output",
-                            "targetHandle": "input",
+                            "sourceHandle": "1-close",
+                            "targetHandle": "3",
                             "type": "default"
                         },
                         {
-                            "id": "e3->4",
+                            "id": "3->4",
                             "source": "2",
                             "target": "6",
-                            "sourceHandle": "output",
-                            "targetHandle": "input",
+                            "sourceHandle": "3",
+                            "targetHandle": "4",
                             "type": "default"
                         },
                         {
-                            "id": "e3->6",
+                            "id": "2->4",
                             "source": "3",
                             "target": "6",
-                            "sourceHandle": "output",
-                            "targetHandle": "input",
-                            "type": "default"
-                        },
-                        {
-                            "id": "e4->5",
-                            "source": "6",
-                            "target": "5",
-                            "sourceHandle": "output",
-                            "targetHandle": "input",
+                            "sourceHandle": "2",
+                            "targetHandle": "4",
                             "type": "default"
                         }
                     ]

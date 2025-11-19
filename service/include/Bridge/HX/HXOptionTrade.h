@@ -8,6 +8,8 @@ class HXOptionTrade : public TORASPAPI::CTORATstpSPTraderSpi{
 public:
     HXOptionTrade(HXExchange* exchange);
 
+    OrderList& GetOrders() { return _orders; }
+    
     void Release();
 
     virtual void OnFrontConnected();

@@ -234,6 +234,9 @@ order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
 
     pInputOrderField.ForceCloseReason = TORASPAPI::TORA_TSTP_SP_FCC_NotForceClose;
     pInputOrderField.Direction = (ctx->_order._side == 0 ? TORASPAPI::TORA_TSTP_SP_D_Buy : TORASPAPI::TORA_TSTP_SP_D_Sell);
+    
+    // 构建订单类型
+
     _optionHandle._tradeAPI->ReqOrderInsert(&pInputOrderField, oid._id);
     return oid;
 }
@@ -306,6 +309,22 @@ bool HXExchange::QueryStockOrders(uint64_t reqID)
     qry_orders.IsCancel = INT_NULL_VAL;
     strcpy(qry_orders.InvestorID, _brokerInfo._account);
     int ret = _stockHandle._tradeAPI->ReqQryOrder(&qry_orders, reqID);
+    if (ret != 0) {
+        return false;
+    }
+    return true;
+}
+
+bool HXExchange::QueryOptionOrders(uint64_t reqID) {
+    TORASPAPI::CTORATstpSPQryOrderField pQryOrderField;
+    memset(&pQryOrderField, 0, sizeof(pQryOrderField));
+    strcpy(pQryOrderField.SecurityID, "");
+    strcpy(pQryOrderField.ShareholderID, "");
+    strcpy(pQryOrderField.OrderSysID, "");
+    pQryOrderField.IInfo = INT_NULL_VAL;
+    strcpy(pQryOrderField.InvestorID, _brokerInfo._account);
+
+    int ret = _optionHandle._tradeAPI->ReqQryOrder(&pQryOrderField, reqID);
     if (ret != 0) {
         return false;
     }
@@ -582,6 +601,10 @@ bool HXExchange::GetOrders(SecurityType type, OrderList& ol){
         _stockHandle._trade->GetOrders().clear();
         break;
     case SecurityType::Option:
+        if (!QueryOptionOrders(reqID)) {
+            return false;
+        }
+        _optionHandle._trade->GetOrders().clear();
         break;
     case SecurityType::Future:
         break;
@@ -599,6 +622,7 @@ bool HXExchange::GetOrders(SecurityType type, OrderList& ol){
         ol = std::move(_stockHandle._trade->GetOrders());
         break;
     case SecurityType::Option:
+        ol = std::move(_optionHandle._trade->GetOrders());
         break;
     case SecurityType::Future:
         break;

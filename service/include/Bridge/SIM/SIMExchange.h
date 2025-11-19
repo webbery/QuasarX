@@ -43,11 +43,13 @@ public:
 
   virtual void StopQuery() {}
 
-  virtual QuoteInfo GetQuote(symbol_t) { return QuoteInfo();}
+  virtual QuoteInfo GetQuote(symbol_t);
 
   virtual double GetAvailableFunds();
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
 private:
+  void Once(uint& curIndex);
+
   void Worker();
   void LoadT0(const String& code);
   void LoadT1(const String& code);
@@ -64,11 +66,11 @@ protected:
   nng_socket _sock;
   bool _finish;
 
-  Map<String, DataFrame> _csvs;
-  Map<String, Vector<String>> _headers;
-  Map<String, QuoteInfo> _rows;
+  Map<symbol_t, DataFrame> _csvs;
+  Map<symbol_t, Vector<String>> _headers;
+  Map<symbol_t, QuoteInfo> _quotes;
 
-  int _cur_index;
+  uint _cur_index;
   std::thread* _worker;
 
   std::mutex _mx;

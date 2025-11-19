@@ -12,6 +12,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory_resource>
 #include <numeric>
 #include <thread>
@@ -147,7 +148,8 @@ void StockSimulation::UseLevel(int level) {
 
 #define CACHE_SIZE  2048
 void StockSimulation::LoadT1(const String& code) {
-    auto symbol = to_symbol(code);
+    auto& security = Server::GetSecurity(code);
+    auto symbol = to_symbol(code, security);
     String subdir, orgdir;
     if (is_stock(symbol)) {
         subdir = "A_hfq";
@@ -164,7 +166,7 @@ void StockSimulation::LoadT1(const String& code) {
         Vector<time_t> dates;
         Vector<float> open, close, high, low;
         Vector<int64_t> volume;
-        Vector<String>& header = _headers[code];
+        Vector<String>& header = _headers[symbol];
         header.clear();
         while (ifs.getline(cache, CACHE_SIZE)) {
             Vector<String> row;
@@ -199,7 +201,7 @@ void StockSimulation::LoadT1(const String& code) {
 
         Vector<uint32_t> indexes(index);
         std::iota(indexes.begin(), indexes.end(), 1);
-        DataFrame& df = _csvs[code];
+        DataFrame& df = _csvs[symbol];
         df.load_index(std::move(indexes));
         df.load_column(header[0].c_str(), std::move(dates));
         df.load_column(header[1].c_str(), std::move(open));
@@ -214,7 +216,8 @@ void StockSimulation::LoadT1(const String& code) {
 }
 
 void StockSimulation::LoadT0(const String& code) {
-  auto symbol = to_symbol(code);
+  auto& security = Server::GetSecurity(code);
+  auto symbol = to_symbol(code, security);
   String subdir, orgdir;
   if (is_stock(symbol)) {
     subdir = "stock";
@@ -223,12 +226,14 @@ void StockSimulation::LoadT0(const String& code) {
   int index = 0;
   std::ifstream ifs;
   ifs.open(file_path);
+
+  
   if (ifs.is_open()) {
     Vector<time_t> dates;
     Vector<float> open, close, high, low;
     Vector<int64_t> volume;
     char cache[CACHE_SIZE] = { 0 };
-    Vector<String>& header = _headers[code];
+    Vector<String>& header = _headers[symbol];
     header.clear();
     while (ifs.getline(cache, CACHE_SIZE)) {
       Vector<String> row;
@@ -258,7 +263,7 @@ void StockSimulation::LoadT0(const String& code) {
 
     Vector<uint32_t> indexes(index);
     std::iota(indexes.begin(), indexes.end(), 1);
-    DataFrame& df = _csvs[code];
+    DataFrame& df = _csvs[symbol];
     df.load_index(std::move(indexes));
     df.load_column(header[0].c_str(), std::move(dates));
     df.load_column(header[1].c_str(), std::move(open));
@@ -274,6 +279,52 @@ void StockSimulation::QueryQuotes() {
   _cv.notify_all();
 }
 
+void StockSimulation::Once(uint& curIndex) {
+  for (auto& df : _csvs) {
+      auto& header = _headers[df.first];
+
+      auto& datetime = df.second.get_column<time_t>(header[0].c_str());
+      auto& open = df.second.get_column<float>(header[1].c_str());
+      auto& close = df.second.get_column<float>(header[2].c_str());
+      auto& high = df.second.get_column<float>(header[3].c_str());
+      auto& low = df.second.get_column<float>(header[4].c_str());
+      auto& volume = df.second.get_column<int64_t>(header[5].c_str());
+
+      auto num = df.second.get_index().size();
+      if (curIndex >= num) {
+        _finish = true;
+        curIndex = 0;
+      }
+      QuoteInfo info;
+      info._symbol = df.first;
+      info._open = open[curIndex];
+      info._close = close[curIndex];
+      info._high = high[curIndex];
+      info._low = low[curIndex];
+      info._volume = volume[curIndex];
+      info._time = datetime[curIndex];
+      
+      yas::shared_buffer buf = yas::save<flags>(info);
+      if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
+        printf("send quote message e fail.\n");
+        return;
+      }
+      auto symbol = df.first;
+      _orders.visit(df.first, [&info, &symbol, this] (auto&& que) {
+        OrderInfo oif;
+        while (que.second->pop(oif)) {
+          TradeReport report = OrderMatch(oif._order->_order, info);
+          oif._order->_trades._symbol = symbol;
+          order_id id;
+          id._id = static_cast<uint32_t>(oif._id);
+          OnOrderReport(id, report);
+        }
+      });
+      _quotes[df.first] = std::move(info);
+    }
+    ++curIndex;
+}
+
 double StockSimulation::GetAvailableFunds()
 {
     return 1000000;
@@ -287,6 +338,7 @@ void StockSimulation::Worker() {
   Publish(URI_RAW_QUOTE, _sock);
   constexpr std::size_t flags = yas::mem | yas::binary;
   _finish = true;
+  thread_local uint curIndex = 0;
   while (!_server->IsExit()) {
     // notifys
     std::unique_lock<std::mutex> lock(_mx);
@@ -297,48 +349,7 @@ void StockSimulation::Worker() {
     if (_csvs.size() == 0) {
         continue;
     }
-    for (auto& df : _csvs) {
-      auto& header = _headers[df.first];
-
-      auto& datetime = df.second.get_column<time_t>(header[0].c_str());
-      auto& open = df.second.get_column<float>(header[1].c_str());
-      auto& close = df.second.get_column<float>(header[2].c_str());
-      auto& high = df.second.get_column<float>(header[3].c_str());
-      auto& low = df.second.get_column<float>(header[4].c_str());
-      auto& volume = df.second.get_column<int64_t>(header[5].c_str());
-
-      auto symbol = to_symbol(df.first);
-      auto num = df.second.get_index().size();
-      if (_cur_index >= num) {
-        _finish = true;
-        _cur_index = 0;
-      }
-      QuoteInfo info;
-      info._symbol = symbol;
-      info._open = open[_cur_index];
-      info._close = close[_cur_index];
-      info._high = high[_cur_index];
-      info._low = low[_cur_index];
-      info._volume = volume[_cur_index];
-      info._time = datetime[_cur_index];
-      
-      yas::shared_buffer buf = yas::save<flags>(info);
-      if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
-        printf("send quote message e fail.\n");
-        return;
-      }
-      _orders.visit(symbol, [&info, &symbol, this] (auto&& que) {
-        OrderInfo oif;
-        while (que.second->pop(oif)) {
-          TradeReport report = OrderMatch(oif._order->_order, info);
-          oif._order->_trades._symbol = symbol;
-          order_id id;
-          id._id = static_cast<uint32_t>(oif._id);
-          OnOrderReport(id, report);
-        }
-      });
-    }
-    ++_cur_index;
+    Once(curIndex);
   }
   _finish = true;
   nng_close(_sock);
@@ -353,3 +364,13 @@ TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quo
     return report;
 }
 
+QuoteInfo StockSimulation::GetQuote(symbol_t symbol) {
+  auto fut = std::async(std::launch::async, [this]() {
+    Once(_cur_index);
+  });
+  auto status = fut.wait_for(std::chrono::seconds(5));
+  if (status == std::future_status::timeout) {
+  }
+  auto info = _quotes[symbol];
+  return info;
+}

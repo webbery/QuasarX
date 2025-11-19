@@ -57,9 +57,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     strategySys->ClearCollections(strategyName);
     strategySys->Init(strategyName, sorted_nodes);
 
-    strategySys->Run(strategyName);
     // 驱动数据
     exchange->Login(AccountType::MAIN);
+    strategySys->Run(strategyName);
     // 等待数据驱动结束
     while (exchange->IsLogin() && !_server->IsExit()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));

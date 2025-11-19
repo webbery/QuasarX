@@ -927,17 +927,19 @@ void Server::TimerWorker(nng_socket sock) {
 void Server::UpdateQuoteQueryStatus(time_t curr) {
     auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
     for (auto exchange: handler->GetExchanges()) {
-         //if (exchange.second->IsWorking(curr)) {
+        if (strcmp(exchange.second->Name(),"SIM") == 0) {
+            continue;
+        }
+        if (exchange.second->IsWorking(curr)) {
             if (exchange.second->IsLogin()) {
                 exchange.second->QueryQuotes();
             }
             else {
                 exchange.second->Login();
             }
-         /*}
-         else {
-             exchange.second->StopQuery();
-         }*/
+        } else {
+            exchange.second->StopQuery();
+        }
     }
 }
 

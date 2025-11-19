@@ -198,15 +198,14 @@ QNode* generate_signal_node(const String& strategyName, const String& id, const 
     auto node = new SignalNode(server);
     auto brokerSystem = server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators(strategyName);
-    auto& names = data["params"]["indicator"];
-    for (String name: names) {
-        auto itr = statistics.find(name);
-        if (itr == statistics.end()) {
-            WARN("indicator {} not implement.", name);
-            continue;
-        }
-        brokerSystem->RegistIndicator(strategyName, itr->second);
+    for (auto& item: statistics) {
+        brokerSystem->RegistIndicator(strategyName, item.second);
     }
+
+    auto& buySignal = data["params"]["buy"]["value"];
+    auto& sellSignal = data["params"]["sell"]["value"];
+    node->ParseBuyExpression(buySignal);
+    node->ParseSellExpression(sellSignal);
     return node;
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "Bridge/exchange.h"
+#include <cstdint>
 #include <memory>
 
 #define INIT_PROMISE(type) \
@@ -116,6 +117,7 @@ private:
     void SubscribeOptionQuote(const Map<char, Vector<String>>& options);
 
     bool QueryStockOrders(uint64_t reqID);
+    bool QueryOptionOrders(uint64_t reqID);
 
 private:
     bool _login_status : 1;
