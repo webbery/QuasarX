@@ -196,6 +196,7 @@ QNode* generate_function_node(const String& id, const nlohmann::json& data, Serv
 
 QNode* generate_signal_node(const String& strategyName, const String& id, const nlohmann::json& data, Server* server) {
     auto node = new SignalNode(server);
+    node->setName(id);
     auto brokerSystem = server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators(strategyName);
     for (auto& item: statistics) {

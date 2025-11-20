@@ -64,6 +64,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     while (exchange->IsLogin() && !_server->IsExit()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         // TODO: 获取进度
+        double progress = exchange->Progress();
+        INFO("{}%", progress * 100);
     }
     // 获取结果
     nlohmann::json results;

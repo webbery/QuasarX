@@ -16,6 +16,7 @@ public:
 
     void Connect(QNode* next, const String& from, const String& to);
 
+    Map<String, ArgType> out_elements();
 private:
     bool Init();
 

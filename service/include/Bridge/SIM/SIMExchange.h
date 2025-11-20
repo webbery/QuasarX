@@ -47,8 +47,11 @@ public:
 
   virtual double GetAvailableFunds();
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
+
+  double Progress();
 private:
-  void Once(uint& curIndex);
+  bool Once(uint& curIndex);
+  bool Once(symbol_t symbol, time_t timeAxis);
 
   void Worker();
   void LoadT0(const String& code);

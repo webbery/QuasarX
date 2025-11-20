@@ -2,6 +2,7 @@
 #include "StrategyNode.h"
 
 class FunctionNode: public QNode {
+    
 public:
     ~FunctionNode();
 
@@ -9,6 +10,8 @@ public:
 
     virtual bool Process(const String& strategy, DataContext& context);
 
+    virtual Map<String, ArgType> out_elements();
+    
     void SetFunctionName(const String& name) { _funcionName = name; }
 
     template<typename T>
@@ -23,4 +26,5 @@ private:
     String _funcionName;
     Map<String, std::variant<int>> _args;
     ICallable* _callable = nullptr;
+    Map<String, ArgType> _params;
 };

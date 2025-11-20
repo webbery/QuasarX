@@ -12,6 +12,7 @@ class Server;
 class RiskSubSystem;
 
 class FlowSubsystem  {
+    struct StrategyFlowInfo;
 public:
     FlowSubsystem(Server* handle);
     ~FlowSubsystem();
@@ -48,6 +49,7 @@ private:
     // 生成交易信号
     bool GenerateSignal(symbol_t symbol, const DataFeatures& features);
 
+    bool RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context);
 private:
     Server* _handle;
     RiskSubSystem* _riskSystem = nullptr;

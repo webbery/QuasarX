@@ -335,7 +335,7 @@ class TestStrategy:
                             "position": { "x": 50, "y": 100 }
                         },
                         {
-                            "id": "3",
+                            "id": "2",
                             "type": "custom",
                             "data": { 
                                 "label": "MA_5",
@@ -412,19 +412,19 @@ class TestStrategy:
                             "type": "default"
                         },
                         {
-                            "id": "3->4",
+                            "id": "3->6",
                             "source": "2",
                             "target": "6",
                             "sourceHandle": "3",
-                            "targetHandle": "4",
+                            "targetHandle": "6",
                             "type": "default"
                         },
                         {
-                            "id": "2->4",
-                            "source": "3",
+                            "id": "2->6",
+                            "source": "2",
                             "target": "6",
                             "sourceHandle": "2",
-                            "targetHandle": "4",
+                            "targetHandle": "6",
                             "type": "default"
                         }
                     ]

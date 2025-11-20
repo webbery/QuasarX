@@ -81,6 +81,7 @@ void FlowSubsystem::Start(const String& strategy) {
         if (flow._worker->joinable()) flow._worker->join();
         delete flow._worker;
     }
+    flow._running = true;
     flow._worker = new std::thread([strategy, this]() {
         DataContext context;
         try {
@@ -94,20 +95,25 @@ void FlowSubsystem::Start(const String& strategy) {
             uint64_t epoch = 0;
             while (flow._running) {
                 context.SetEpoch(++epoch);
-                for (auto node: flow._graph) {
-                    if (!node->Process(strategy, context)) {
-                        return;
-                    }
-                }
-                if (context.GetEpoch() == 0)
+                if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
                     break;
+                }
             }
             // 结束通知
+            INFO("backtest finish");
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
         }
     });
-    flow._running = true;
+}
+
+bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
+    for (auto node: flow._graph) {
+        if (!node->Process(strategy, context)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {

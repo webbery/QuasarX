@@ -4,8 +4,12 @@ MA::MA(short count): _count(0), _nextIndex(0), _sum(0.) {
     _buffer.resize(count, 0.0);
 }
 
-feature_t MA::operator()(const feature_t& feature) {
-    auto value = std::get<double>(feature);
+feature_t MA::operator()(const Map<String, feature_t>& features) {
+    if (features.size() != 1) {
+        return std::nan("nan");
+    }
+    auto itr = features.begin();
+    auto value = std::get<double>(itr->second);
     if (_count < _buffer.size()) {
         _buffer[_count] = value;
         _sum += value;
@@ -16,7 +20,7 @@ feature_t MA::operator()(const feature_t& feature) {
     _buffer[_nextIndex] = value;
     _sum += value;
     _nextIndex = (_nextIndex + 1) % _buffer.size();
-    return feature;
+    return average();
 }
 
 double MA::average() {

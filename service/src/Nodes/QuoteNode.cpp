@@ -1,4 +1,5 @@
 #include "Nodes/QuoteNode.h"
+#include "StrategyNode.h"
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Util/system.h"
@@ -17,7 +18,6 @@ namespace {
 }
 
 QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
-
 }
 
 bool QuoteInputNode::Init(DataContext& context, const nlohmann::json& config) {
@@ -86,7 +86,7 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
 void QuoteInputNode::Connect(QNode* next, const String& from, const String& to) {
     Vector<String> froms;
     split(from, froms, "-");
-    QNode::Connect(next, froms[0], to);
+    QNode::Connect(next, from, to);
     if (froms.size() == 2) {
         // auto id = get_feature_id(froms[1], "");
         for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
@@ -95,3 +95,18 @@ void QuoteInputNode::Connect(QNode* next, const String& from, const String& to) 
     }
 }
 
+Map<String, ArgType> QuoteInputNode::out_elements() {
+    Map<String, ArgType> names;
+    for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
+        auto name = get_symbol(*itr);
+        auto baseKey = name + ".";
+        for (auto& item: _properties[name]) {
+            if (item == "volume") {
+                names[baseKey + item] = ArgType::Integer;
+            } else {
+                names[baseKey + item] = ArgType::Double;
+            }
+        }
+    }
+    return names;
+}

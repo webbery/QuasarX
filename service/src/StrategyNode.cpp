@@ -3,6 +3,11 @@
 #include "Function/Function.h"
 #include <stdexcept>
 
+Map<String, ArgType> QNode::out_elements() {
+    Map<String, ArgType> elems;
+    return elems;
+}
+
 bool OperationNode::Init(DataContext& context, const nlohmann::json& config) {
     return true;
 }
@@ -23,7 +28,6 @@ bool FeatureNode::Process(const String& strategy, DataContext& context)
 }
 
 SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
-
 }
 
 bool SignalNode::Init(DataContext& context, const nlohmann::json& config) {

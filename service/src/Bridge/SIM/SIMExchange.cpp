@@ -279,8 +279,16 @@ void StockSimulation::QueryQuotes() {
   _cv.notify_all();
 }
 
-void StockSimulation::Once(uint& curIndex) {
+bool StockSimulation::Once(uint& curIndex) {
   for (auto& df : _csvs) {
+      auto num = df.second.get_index().size();
+      if (curIndex >= num - 1) {
+        _finish = true;
+        INFO("_finish true");
+        curIndex = 0;
+        return false;
+      }
+
       auto& header = _headers[df.first];
 
       auto& datetime = df.second.get_column<time_t>(header[0].c_str());
@@ -290,11 +298,7 @@ void StockSimulation::Once(uint& curIndex) {
       auto& low = df.second.get_column<float>(header[4].c_str());
       auto& volume = df.second.get_column<int64_t>(header[5].c_str());
 
-      auto num = df.second.get_index().size();
-      if (curIndex >= num) {
-        _finish = true;
-        curIndex = 0;
-      }
+      
       QuoteInfo info;
       info._symbol = df.first;
       info._open = open[curIndex];
@@ -307,7 +311,7 @@ void StockSimulation::Once(uint& curIndex) {
       yas::shared_buffer buf = yas::save<flags>(info);
       if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
         printf("send quote message e fail.\n");
-        return;
+        return false;
       }
       auto symbol = df.first;
       _orders.visit(df.first, [&info, &symbol, this] (auto&& que) {
@@ -323,6 +327,11 @@ void StockSimulation::Once(uint& curIndex) {
       _quotes[df.first] = std::move(info);
     }
     ++curIndex;
+    return true;
+}
+
+bool StockSimulation::Once(symbol_t symbol, time_t timeAxis) {
+
 }
 
 double StockSimulation::GetAvailableFunds()
@@ -372,5 +381,14 @@ QuoteInfo StockSimulation::GetQuote(symbol_t symbol) {
   if (status == std::future_status::timeout) {
   }
   auto info = _quotes[symbol];
+  if (_finish) {
+    info._time = 0;
+  }
   return info;
+}
+
+double StockSimulation::Progress() {
+  auto itr = _csvs.begin();
+  auto size = itr->second.get_index().size() - 1;
+  return 1.0 * _cur_index / size;
 }

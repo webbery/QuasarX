@@ -4,13 +4,13 @@
 class ICallable {
 public:
     virtual ~ICallable(){}
-    virtual feature_t operator()(const feature_t& feature) = 0;
+    virtual feature_t operator()(const Map<String, feature_t>& args) = 0;
 };
 
 class MA : public ICallable {
 public:
     MA(short count);
-    virtual feature_t operator()(const feature_t& feature);
+    virtual feature_t operator()(const Map<String, feature_t>& args);
 
 private:
     double average();

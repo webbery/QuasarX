@@ -5,6 +5,7 @@
 #include "json.hpp"
 #include "Util/system.h"
 #include <functional>
+#include <utility>
 #include "BrokerSubSystem.h"
 
 class ICallable;
@@ -41,7 +42,13 @@ private:
     Map<String, feature_t> _outputs;
 };
 
+enum ArgType {
+    Integer,
+    Double,
+};
+
 class QNode {
+    using Edges = MultiMap<String, QNode*>;
 public:
     virtual ~QNode(){}
     virtual bool Init(DataContext& context, const nlohmann::json& config) = 0;
@@ -50,9 +57,13 @@ public:
      */
     virtual bool Process(const String& strategy, DataContext& context) = 0;
     virtual void Connect(QNode* next, const String& from, const String& to) {
-        _outs[from] = next;
-        next->_ins[to] = this;
+        _outs.insert({from, next});
+        next->_ins.insert({to, this});
     }
+    /**
+     * @brief 返回输出结果在context中的输出名
+     */
+    virtual Map<String, ArgType> out_elements();
     
     // const nlohmann::json& getParams() { return _params; }
     
@@ -62,14 +73,15 @@ public:
     size_t in_degree() const { return _ins.size(); }
     size_t out_degree() const { return _outs.size(); }
 
-    const Map<String, QNode*>& outs() const { return _outs; }
-    const Map<String, QNode*>& ins() const { return _ins; }
+    const Edges& outs() const { return _outs; }
+    const Edges& ins() const { return _ins; }
 
 protected:
     String _name;
     // nlohmann::json _params;
-    Map<String, QNode*> _outs;
-    Map<String, QNode*> _ins;
+    // key是handle名
+    Edges _outs;
+    Edges _ins;
 };
 
 class OperationNode: public QNode {

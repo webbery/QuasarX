@@ -27,6 +27,9 @@ using Vector = std::pmr::vector<T>;
 template <typename K, typename V>
 using Map = std::pmr::map<K, V>;
 
+template <typename K, typename V>
+using MultiMap = std::multimap<K, V>;
+
 template <typename T>
 using List = std::pmr::list<T>;
 
@@ -48,6 +51,9 @@ using Vector = std::vector<T>;
 
 template <typename K, typename V>
 using Map = std::map<K, V>;
+
+template <typename K, typename V>
+using MultiMap = std::multimap<K, V>;
 
 template <typename T>
 using List = std::list<T>;
