@@ -22,7 +22,7 @@ String grammar = R"(
         Number          <- < '-'? [0-9]+ ('.' [0-9]+)? >
         
         # 运算符
-        ComparisonOp    <- < [<>]=? | '==' | '!=' >
+        ComparisonOp    <- '<=' / '>=' / '==' / '!=' / '<' / '>'
         TermOp          <- < [-+] >
         FactorOp        <- < [*/] >
         
@@ -35,6 +35,11 @@ double FunctionCallStmt::evaluate(Server* server) const {
 }
 
 FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAction::HOLD) {
+    _parser.set_logger([](size_t line, size_t col, const std::string& msg) {
+        INFO("{} {}: {}", line, col, msg);
+    });
+    _parser.enable_packrat_parsing();
+    // _parser.enable_trace();
     if (!_parser.load_grammar(grammar)) {
         return ;
     }
@@ -56,7 +61,7 @@ bool FormulaParser::parse(const String& code, TradeAction action) {
     return parse(code);
 }
 
-List<TradeDecision> FormulaParser::envoke(const Vector<symbol_t>& symbols, const List<String>& variantNames, DataContext* context) {
+List<TradeDecision> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext* context) {
     List<TradeDecision> decisions;
     for (auto symbol: symbols) {
         try {

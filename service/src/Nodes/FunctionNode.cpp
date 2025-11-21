@@ -1,18 +1,24 @@
 #include "Nodes/FunctionNode.h"
 #include "Function/Function.h"
+#include "StrategyNode.h"
 #include "Util/string_algorithm.h"
 
-bool FunctionNode::Init(DataContext& context, const nlohmann::json& config) {
-    if (_funcionName == "MA") {
-        auto cnt = std::get<int>(_args["smoothTime"]);
+#define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
+
+bool FunctionNode::Init(const nlohmann::json& config) {
+    String name = config["params"]["method"]["value"];
+    if (name == "MA") {
+        int cnt = config["params"]["smoothTime"]["value"];
         _callable = new MA(cnt);
-        // 从输入节点获取处理的属性
-        for (auto& item: _ins) {
-            auto input_names = item.second->out_elements();
-            _params.emplace(input_names.begin(), input_names.end());
-        }
+
+        String label = config["label"];
+        _outputs[label] = ArgType::Double;
     }
-    
+    // 从输入节点获取处理的属性
+    for (auto& item: _ins) {
+        auto input_names = item.second->out_elements();
+        _params.merge(input_names);
+    }
     return true;
 }
 
@@ -29,13 +35,14 @@ bool FunctionNode::Process(const String& strategy, DataContext& context)
         arguments[item.first] = value;
     }
     auto result = (*_callable)(arguments);
-    
+    for (auto& item: _outputs) {
+        context.add(item.first, result);
+    }
     return true;
 }
 
 Map<String, ArgType> FunctionNode::out_elements() {
-    Map<String, ArgType> names;
-    return names;
+    return _outputs;
 }
 
 FunctionNode::~FunctionNode() {

@@ -332,6 +332,7 @@ bool StockSimulation::Once(uint& curIndex) {
 
 bool StockSimulation::Once(symbol_t symbol, time_t timeAxis) {
 
+    return true;
 }
 
 double StockSimulation::GetAvailableFunds()

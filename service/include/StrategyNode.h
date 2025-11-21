@@ -1,12 +1,7 @@
 #pragma once
 #include "std_header.h"
-#include "Feature.h"
-#include "server.h"
 #include "json.hpp"
-#include "Util/system.h"
 #include <functional>
-#include <utility>
-#include "BrokerSubSystem.h"
 
 class ICallable;
 // 数据上下文，用于管理节点间传输的数据
@@ -51,7 +46,7 @@ class QNode {
     using Edges = MultiMap<String, QNode*>;
 public:
     virtual ~QNode(){}
-    virtual bool Init(DataContext& context, const nlohmann::json& config) = 0;
+    virtual bool Init(const nlohmann::json& config) = 0;
     /**
      * @brief 对输入数据做处理，并返回处理后的数据
      */
@@ -86,7 +81,7 @@ protected:
 
 class OperationNode: public QNode {
 public:
-    virtual bool Init(DataContext& context, const nlohmann::json& config);
+    virtual bool Init(const nlohmann::json& config);
 
     virtual bool Process(const String& strategy, DataContext& context);
 
@@ -95,32 +90,4 @@ public:
 
 private:
     std::function<void ()> _callable;
-};
-
-class FeatureNode: public QNode {
-public:
-    virtual bool Init(DataContext& context, const nlohmann::json& config);
-    virtual bool Process(const String& strategy, DataContext& context);
-};
-
-class FormulaParser;
-// 构建买入/卖出信号
-class SignalNode: public QNode {
-public:
-    SignalNode(Server* server);
-    ~SignalNode();
-
-    virtual bool Init(DataContext& context, const nlohmann::json& config);
-    virtual bool Process(const String& strategy, DataContext& context);
-
-    bool ParseBuyExpression(const String& expression);
-    bool ParseSellExpression(const String& expression);
-
-private:
-
-
-private:
-    Server* _server;
-    FormulaParser* _buyParser;
-    FormulaParser* _sellParser;
 };

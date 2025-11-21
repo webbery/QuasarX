@@ -381,6 +381,10 @@ class TestStrategy:
                                 "label": "MA_diff",
                                 "nodeType": "signal",
                                 "params": {
+                                    "code": {
+                                        "value": ["001318"],
+                                        "type": "text"
+                                    },
                                     "buy": {
                                         "value": "MA_5-MA_15>0",
                                         "type": "text"

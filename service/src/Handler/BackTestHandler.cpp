@@ -121,6 +121,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
     
+    for (auto node: graph) {
+        delete node;
+    }
     res.status = 200;
     INFO("{}", results.dump());
     res.set_content(results.dump(), "application/json");

@@ -8,12 +8,12 @@
 #include "Bridge/exchange.h"
 #include "StrategyNode.h"
 #include "StrategySubSystem.h"
+#include "BrokerSubSystem.h"
 #include "Util/log.h"
 #include "server.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/FunctionNode.h"
-
-#define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
+#include "Nodes/SignalNode.h"
 
 namespace {
     Map<String, SignalGeneratorType> agent_types{
@@ -128,50 +128,13 @@ Set<String> GetAgentTypes() {
 //     return si;
 // }
 
-QStrategy::QStrategy()
-:_isT0(true)
-{
-
-}
-
-List<QNode*> QStrategy::Process(const List<QNode*>& input)
-{
-    return input;
-}
-
-QNode* generate_input_node(const String& id, const nlohmann::json& data, Server* server) {
+QNode* generate_input_node(const String& id, Server* server) {
     auto node = new QuoteInputNode(server);
     node->setName(id);
-    // String type = data["params"]["source"]["value"];
-    auto& codes = data["params"]["code"]["value"];
-    QuoteFilter filer;
-    for (String code: codes) {
-        auto& security = Server::GetSecurity(code);
-        auto symbol = to_symbol(code, security);
-        node->AddSymbol(symbol);
-        
-        filer._symbols.emplace(code);
-    }
-    // 设置数据源
-    if (server->GetRunningMode() == RuningType::Backtest) {
-        StockSimulation* exchange = (StockSimulation*)server->GetExchange(ExchangeType::EX_SIM);
-        String tickLevel = data["params"]["freq"]["value"];
-        if (tickLevel == "1d") {
-            exchange->UseLevel(1);
-        }
-        else {
-            exchange->UseLevel(0);
-        }
-        exchange->SetFilter(filer);
-    } else {
-        // TODO:
-    }
-
-    
     return node;
 }
 
-QNode* generate_operation_node(const String& id, const nlohmann::json& data, Server* server) {
+QNode* generate_operation_node(const String& id, Server* server) {
     auto node = new OperationNode;
     node->setName(id);
     // String operatorName = data["params"]["method"]["value"];
@@ -183,30 +146,21 @@ QNode* generate_operation_node(const String& id, const nlohmann::json& data, Ser
     return node;
 }
 
-QNode* generate_function_node(const String& id, const nlohmann::json& data, Server* server) {
+QNode* generate_function_node(const String& id, Server* server) {
     auto node = new FunctionNode();
     node->setName(id);
-    String name = data["params"]["method"]["value"];
-    node->SetFunctionName(name);
-    if (name == "MA") {
-        ADD_ARGUMENT(int, "smoothTime");
-    }
     return node;
 }
 
-QNode* generate_signal_node(const String& strategyName, const String& id, const nlohmann::json& data, Server* server) {
+QNode* generate_signal_node(const String& strategyName, const String& id, Server* server) {
     auto node = new SignalNode(server);
     node->setName(id);
+
     auto brokerSystem = server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators(strategyName);
     for (auto& item: statistics) {
         brokerSystem->RegistIndicator(strategyName, item.second);
     }
-
-    auto& buySignal = data["params"]["buy"]["value"];
-    auto& sellSignal = data["params"]["sell"]["value"];
-    node->ParseBuyExpression(buySignal);
-    node->ParseSellExpression(sellSignal);
     return node;
 }
 
@@ -216,30 +170,32 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
     auto& edges = content["graph"]["edges"];
     String strategyName = content["graph"]["id"];
     Map<String, QNode*> nodeMap;
+    Map<String, nlohmann::json> nodeConfigMap;
     for (auto& node: nodes) {
         String node_type = node["data"]["nodeType"];
         QNode* nodeInstance = nullptr;
         auto type = node_type_map[node_type];
         switch (type) {
         case StrategyNodeType::Input: 
-            nodeInstance = generate_input_node(node["id"], node["data"], server);
+            nodeInstance = generate_input_node(node["id"], server);
             break;
         case StrategyNodeType::Feature:
             break;
         case StrategyNodeType::Operation:
-            nodeInstance = generate_operation_node(node["id"], node["data"], server);
+            nodeInstance = generate_operation_node(node["id"], server);
             break;
         case StrategyNodeType::Function:
-            nodeInstance = generate_function_node(node["id"], node["data"], server);
+            nodeInstance = generate_function_node(node["id"],  server);
             break;
         case StrategyNodeType::Signal:
-            nodeInstance = generate_signal_node(strategyName, node["id"], node["data"], server);
+            nodeInstance = generate_signal_node(strategyName, node["id"], server);
         default:
             break;
         }
         if (!nodeInstance) {
             continue;
         }
+        nodeConfigMap[nodeInstance->name()] = std::move(node["data"]);
         nodeMap[nodeInstance->name()] = nodeInstance;
         graph.push_back(nodeInstance);
     }
@@ -260,6 +216,11 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             continue;
         }
         itr->second->Connect(next_itr->second, sourceHandle, targetHandle);
+    }
+    // 初始化
+    for (auto& node: nodeMap) {
+        auto& config = nodeConfigMap[node.first];
+        node.second->Init(config);
     }
     return graph;
 }

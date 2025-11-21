@@ -86,12 +86,12 @@ void FlowSubsystem::Start(const String& strategy) {
         DataContext context;
         try {
             auto& flow = _flows[strategy];
-            for (auto node: flow._graph) {
-                if (flow._running && !node->Init(context, flow._config)) {
-                    INFO("strategy thread exit.");
-                    return;
-                }
-            }
+            // for (auto node: flow._graph) {
+            //     if (flow._running && !node->Init(context, flow._config)) {
+            //         INFO("strategy thread exit.");
+            //         return;
+            //     }
+            // }
             uint64_t epoch = 0;
             while (flow._running) {
                 context.SetEpoch(++epoch);

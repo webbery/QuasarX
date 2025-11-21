@@ -78,7 +78,7 @@ public:
     bool parse(const String& code);
     bool parse(const String& code, TradeAction action);
 
-    List<TradeDecision> envoke(const Vector<symbol_t>& symbols, const List<String>& variantNames, DataContext* context);
+    List<TradeDecision> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext* context);
 
 private:
     double eval(const symbol_t& symbol, const peg::Ast& ast, DataContext* context);

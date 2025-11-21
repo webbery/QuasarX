@@ -77,6 +77,7 @@ protected:
 struct AgentStrategyInfo;
 // AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);
 
+class Server;
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server);
 // 对输入的有向图节点作topo排序，返回排序后的节点
 List<QNode*> topo_sort(const List<QNode*>& graph);
