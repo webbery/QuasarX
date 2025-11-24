@@ -279,7 +279,7 @@ void StockSimulation::QueryQuotes() {
   _cv.notify_all();
 }
 
-bool StockSimulation::Once(uint& curIndex) {
+bool StockSimulation::Once(uint32_t& curIndex) {
   for (auto& df : _csvs) {
       auto num = df.second.get_index().size();
       if (curIndex >= num - 1) {
@@ -288,7 +288,7 @@ bool StockSimulation::Once(uint& curIndex) {
         curIndex = 0;
         return false;
       }
-
+      
       auto& header = _headers[df.first];
 
       auto& datetime = df.second.get_column<time_t>(header[0].c_str());
@@ -348,7 +348,7 @@ void StockSimulation::Worker() {
   Publish(URI_RAW_QUOTE, _sock);
   constexpr std::size_t flags = yas::mem | yas::binary;
   _finish = true;
-  thread_local uint curIndex = 0;
+  thread_local uint32_t curIndex = 0;
   while (!_server->IsExit()) {
     // notifys
     std::unique_lock<std::mutex> lock(_mx);

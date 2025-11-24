@@ -50,8 +50,8 @@ public:
 
   double Progress();
 private:
-  bool Once(uint& curIndex);
   bool Once(symbol_t symbol, time_t timeAxis);
+  bool Once(uint32_t& curIndex);
 
   void Worker();
   void LoadT0(const String& code);
@@ -73,7 +73,7 @@ protected:
   Map<symbol_t, Vector<String>> _headers;
   Map<symbol_t, QuoteInfo> _quotes;
 
-  uint _cur_index;
+  uint32_t _cur_index;
   std::thread* _worker;
 
   std::mutex _mx;
