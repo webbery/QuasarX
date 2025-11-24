@@ -177,12 +177,13 @@ FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAct
 }
 
 bool FormulaParser::parse(const String& code) {
-    auto input = cleanInputString(code);
-    if (_parser.parse(input, _ast)) {
-        _ast = _parser.optimize_ast(_ast);
+    _codes = cleanInputString(code);
+    std::shared_ptr<peg::Ast> ast;
+    if (_parser.parse(_codes, ast)) {
+        _ast = _parser.optimize_ast(ast);
         return true;
     } else {
-        FATAL("Parse failed for formula: {}", input);
+        FATAL("Parse failed for formula: {}", _codes);
         return false;
     }
 }

@@ -52,6 +52,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
     // 设置数据源
     if (_server->GetRunningMode() == RuningType::Backtest) {
         StockSimulation* exchange = (StockSimulation*)_server->GetExchange(ExchangeType::EX_SIM);
+        exchange->SetFilter(filer);
         String tickLevel = config["params"]["freq"]["value"];
         if (tickLevel == "1d") {
             exchange->UseLevel(1);
@@ -59,7 +60,6 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         else {
             exchange->UseLevel(0);
         }
-        exchange->SetFilter(filer);
     } else {
         // TODO:
     }

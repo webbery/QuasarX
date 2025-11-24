@@ -98,6 +98,7 @@ private:
     feature_t evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context, const String& nodeType);
 private:
     peg::parser _parser;
+    String _codes;
     std::shared_ptr<peg::Ast> _ast;
     Server* _server;
     TradeAction _default;
