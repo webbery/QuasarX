@@ -78,12 +78,14 @@ public:
     bool parse(const String& code);
     bool parse(const String& code, TradeAction action);
 
-    List<TradeDecision> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext* context);
+    List<TradeDecision> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
 
 private:
-    double eval(const symbol_t& symbol, const peg::Ast& ast, DataContext* context);
+    String cleanInputString(const String& input);
 
-    double evalNode(const symbol_t& symbol, const peg::Ast&, DataContext* context);
+    feature_t eval(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
+
+    feature_t evalNode(const symbol_t& symbol, const peg::Ast&, DataContext& context);
     // 处理函数调用的辅助函数
     double evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext* context);
     
@@ -91,7 +93,9 @@ private:
     feature_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
 
     // 根据表达式值生成交易决策
-    TradeDecision makeDecision(const symbol_t& symbol, double exprValue, DataContext* context);
+    TradeDecision makeDecision(const symbol_t& symbol, double exprValue, DataContext& context);
+
+    feature_t evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context, const String& nodeType);
 private:
     peg::parser _parser;
     std::shared_ptr<peg::Ast> _ast;

@@ -45,7 +45,7 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
         }
     }
     
-    auto buys = _buyParser->envoke(_pools, args, &context);
+    auto buys = _buyParser->envoke(_pools, args, context);
     // auto sells = _sellParser->envoke(org._symbols, args, &context);
     // List<TradeDecision> decisions(buys);
     // decisions.splice(decisions.end(), sells);
