@@ -95,8 +95,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     
     auto brokerSystem = _server->GetBrokerSubSystem();
     
-    strategySys->get
-    auto symbols = brokerSystem->GetPoolSymbols(strategyName);
+    auto symbols = strategySys->GetPools(strategyName);
     for (auto& symbol: symbols) {
         auto str = get_symbol(symbol);
         auto& trades = brokerSystem->GetHistoryTrades(symbol);

@@ -639,27 +639,11 @@ const flow_data = {
           }
         },
         "position": { "x": 600, "y": 60 }
-      },
-      {
-        "id": "5",
-        "type": "custom",
-        "data": { 
-          "label": "结果输出",
-          "nodeType": "output",
-          "params": {
-            "输出指标": {
-              "value": ["夏普比率", "最大回撤", "总收益"],
-              "type": "multiselect",
-              "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "年化波动率", "信息比率"]
-            }
-          }
-        },
-        "position": { "x": 900, "y": 100 }
       }
     ],
     "edges": [
       {
-        "id": "e1-close->2",
+        "id": "1-close->2",
         "source": "1",
         "target": "2",
         "sourceHandle": "field-close",
@@ -675,7 +659,7 @@ const flow_data = {
         },
       },
       {
-        "id": "e1-close->3",
+        "id": "1-close->3",
         "source": "1",
         "target": "3",
         "sourceHandle": "field-close",
@@ -691,7 +675,7 @@ const flow_data = {
         },
       },
       {
-        "id": "e3->4",
+        "id": "3->4",
         "source": "2",
         "target": "6",
         "sourceHandle": "output",
@@ -707,25 +691,9 @@ const flow_data = {
         },
       },
       {
-        "id": "e3->6",
+        "id": "3->6",
         "source": "3",
         "target": "6",
-        "sourceHandle": "output",
-        "targetHandle": "input",
-        "type": "default",
-        "markerEnd": {
-          "type": MarkerType.ArrowClosed,
-          "color": 'var(--primary)',
-        },
-        "style": {
-          "stroke": 'var(--primary)',
-          "strokeWidth": 2,
-        },
-      },
-      {
-        "id": "e4->5",
-        "source": "6",
-        "target": "5",
         "sourceHandle": "output",
         "targetHandle": "input",
         "type": "default",
