@@ -93,7 +93,7 @@ private:
     feature_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
 
     // 根据表达式值生成交易决策
-    TradeDecision makeDecision(const symbol_t& symbol, double exprValue, DataContext& context);
+    TradeDecision makeDecision(const symbol_t& symbol, bool exprValue, DataContext& context);
 
     feature_t evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context, const String& nodeType);
 private:

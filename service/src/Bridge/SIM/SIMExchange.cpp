@@ -99,12 +99,17 @@ order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
     }
     order_id id;
     id._id = info._id;
+    if (is_stock(symbol)) {
+      id._type = 0;
+    }
     return id;
 }
 
 void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
     _reports.visit(id._id, [&report](auto&& value) {
         value.second->_trades._reports.emplace_back(std::move(report));
+        auto ctx = value.second;
+        ctx->Update(report);
         value.second->_flag.store(true);
         value.second->_success.store(true);
         value.second->_promise.set_value(true);
@@ -375,12 +380,10 @@ TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quo
 }
 
 QuoteInfo StockSimulation::GetQuote(symbol_t symbol) {
-  auto fut = std::async(std::launch::async, [this]() {
+  auto fut = std::async(std::launch::deferred, [this]() {
     Once(_cur_index);
   });
-  auto status = fut.wait_for(std::chrono::seconds(5));
-  if (status == std::future_status::timeout) {
-  }
+  fut.wait();
   auto info = _quotes[symbol];
   if (_finish) {
     info._time = 0;

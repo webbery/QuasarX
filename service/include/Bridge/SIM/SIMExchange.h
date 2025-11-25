@@ -80,6 +80,6 @@ protected:
   std::condition_variable _cv;
 
   ConcurrentMap<symbol_t, boost::lockfree::queue<OrderInfo>*> _orders;
-  size_t _cur_id;
+  std::atomic<size_t> _cur_id;
   ConcurrentMap<size_t, OrderContext*> _reports;
 };

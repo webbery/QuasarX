@@ -93,20 +93,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
     
-    Map<StatisticIndicator, String> statistics{
-        {StatisticIndicator::Sharp, "SHARP"},
-        {StatisticIndicator::VaR, "VAR"},
-        {StatisticIndicator::ES, "ES"},
-        {StatisticIndicator::MaxDrawDown, "MAXDRAWDOWN"},
-        {StatisticIndicator::Calmar, "CALMAR"}
-    };
     auto brokerSystem = _server->GetBrokerSubSystem();
-    auto& statCollection = brokerSystem->GetIndicatorsName(strategyName);
-    for (auto& indicator: statCollection) {
-        auto value = brokerSystem->GetIndicator(strategyName, indicator);
-        features[statistics[indicator]] = value;
-    }
     
+    strategySys->get
     auto symbols = brokerSystem->GetPoolSymbols(strategyName);
     for (auto& symbol: symbols) {
         auto str = get_symbol(symbol);

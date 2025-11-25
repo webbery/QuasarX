@@ -178,9 +178,8 @@ FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAct
 
 bool FormulaParser::parse(const String& code) {
     _codes = cleanInputString(code);
-    std::shared_ptr<peg::Ast> ast;
-    if (_parser.parse(_codes, ast)) {
-        _ast = _parser.optimize_ast(ast);
+    if (_parser.parse(_codes, _ast)) {
+        _ast = _parser.optimize_ast(_ast);
         return true;
     } else {
         FATAL("Parse failed for formula: {}", _codes);
@@ -198,7 +197,7 @@ List<TradeDecision> FormulaParser::envoke(const Vector<symbol_t>& symbols, const
     for (auto symbol: symbols) {
         try {
             auto exprValue = eval(symbol, *_ast, context);
-            auto decision = makeDecision(symbol, std::get<double>(exprValue), context);
+            auto decision = makeDecision(symbol, std::get<bool>(exprValue), context);
             decisions.emplace_back(std::move(decision));
         } catch (const std::exception& e) {
             FATAL("envoke error: {}", e.what());
@@ -280,8 +279,12 @@ feature_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& 
     return context->get(key);
 }
 
-TradeDecision FormulaParser::makeDecision(const symbol_t& symbol, double exprValue, DataContext& context) {
+TradeDecision FormulaParser::makeDecision(const symbol_t& symbol, bool exprValue, DataContext& context) {
     TradeDecision d;
+    d.symbol = symbol;
+    d.action = (exprValue? _default: TradeAction::HOLD);
+    d.quantity = 0;
+    d.price = 0;
     return d;
 }
 

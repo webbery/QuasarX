@@ -66,6 +66,8 @@ public:
     
     void Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq);
 
+    Set<symbol_t> GetPools(const String& strategy);
+    
     void SetupSimulation(const String& name);
 
     FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }

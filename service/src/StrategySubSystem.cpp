@@ -70,6 +70,10 @@ bool StrategySubSystem::Run(const String& strategy) {
     return true;
 }
 
+Set<symbol_t> StrategySubSystem::GetPools(const String& strategy) {
+    return _agentSystem->GetPools(strategy);
+}
+
 void StrategySubSystem::Release() {
     _strategies.clear();
 }

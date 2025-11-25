@@ -16,8 +16,11 @@ public:
     bool ParseBuyExpression(const String& expression);
     bool ParseSellExpression(const String& expression);
 
+    Set<symbol_t> GetPool() {
+        return {_pools.begin(), _pools.end()};
+    }
+    
 private:
-
 
 private:
     Server* _server;

@@ -347,7 +347,7 @@ class TestStrategy:
                                         "options": ["MA"]
                                     },
                                     "smoothTime": {
-                                        "value": 15,
+                                        "value": 5,
                                         "type": "text",
                                     }
                                 }

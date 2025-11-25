@@ -2,23 +2,38 @@
 #include "Function/Function.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
+#include "boost/algorithm/string/join.hpp"
 
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 bool FunctionNode::Init(const nlohmann::json& config) {
+    // 从输入节点获取处理的属性
+    for (auto& item: _ins) {
+        auto input_names = item.second->out_elements();
+        _params.merge(input_names);
+        
+    }
+
+    Set<String> symbols;
+    for (auto& item: _params) {
+        auto& name = item.first;
+        Vector<String> tokens;
+        split(name, tokens, ".");
+        tokens.erase(tokens.end());
+        symbols.insert(boost::algorithm::join(tokens, "."));
+    }
+
     String name = config["params"]["method"]["value"];
     if (name == "MA") {
         int cnt = config["params"]["smoothTime"]["value"];
         _callable = new MA(cnt);
 
         String label = config["label"];
-        _outputs[label] = ArgType::Double;
+        for (auto& symbol: symbols) {
+            _outputs[symbol + "." + label] = ArgType::Double;
+        }
     }
-    // 从输入节点获取处理的属性
-    for (auto& item: _ins) {
-        auto input_names = item.second->out_elements();
-        _params.merge(input_names);
-    }
+    
     return true;
 }
 

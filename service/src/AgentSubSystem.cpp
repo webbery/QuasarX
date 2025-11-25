@@ -1,7 +1,6 @@
 #include "AgentSubSystem.h"
 #include "StrategyNode.h"
 #include "server.h"
-#include "Transfer.h"
 #include "Util/system.h"
 #include "StrategySubSystem.h"
 #include "json.hpp"
@@ -14,7 +13,7 @@
 #include "Strategy/Daily.h"
 #include "Agents/XGBoostAgent.h"
 #include "Agents/DeepAgent.h"
-#include <exception>
+#include "Nodes/SignalNode.h"
 #include <stdexcept>
 #include "RiskSubSystem.h"
 #include "Features/VWAP.h"
@@ -85,13 +84,9 @@ void FlowSubsystem::Start(const String& strategy) {
     flow._worker = new std::thread([strategy, this]() {
         DataContext context;
         try {
+            RegistIndicator(strategy);
+
             auto& flow = _flows[strategy];
-            // for (auto node: flow._graph) {
-            //     if (flow._running && !node->Init(context, flow._config)) {
-            //         INFO("strategy thread exit.");
-            //         return;
-            //     }
-            // }
             uint64_t epoch = 0;
             while (flow._running) {
                 context.SetEpoch(++epoch);
@@ -107,6 +102,16 @@ void FlowSubsystem::Start(const String& strategy) {
     });
 }
 
+Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
+    auto& flow = _flows[strategy];
+    for (auto& node: flow._graph) {
+        if (typeid(*node) == typeid(SignalNode)) {
+            auto p = (SignalNode*)node;
+            return p->GetPool();
+        }
+    }
+}
+
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
     for (auto node: flow._graph) {
         if (!node->Process(strategy, context)) {
@@ -114,6 +119,13 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         }
     }
     return true;
+}
+
+void FlowSubsystem::RegistIndicator(const String& strategy) {
+    auto broker = _handle->GetBrokerSubSystem();
+    broker->CleanAllIndicators(strategy);
+    broker->RegistIndicator(strategy, StatisticIndicator::VaR);
+    broker->RegistIndicator(strategy, StatisticIndicator::Sharp);
 }
 
 void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {

@@ -29,6 +29,8 @@ public:
     void ClearCollections(const String& strategy);
 
     const Map<String, std::variant<float, List<float>>>& GetCollection(const String& strategy) const;
+    
+    Set<symbol_t> GetPools(const String& strategy);
 private:
     void RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
@@ -50,6 +52,9 @@ private:
     bool GenerateSignal(symbol_t symbol, const DataFeatures& features);
 
     bool RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context);
+
+    void RegistIndicator(const String& strategy);
+
 private:
     Server* _handle;
     RiskSubSystem* _riskSystem = nullptr;
