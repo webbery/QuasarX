@@ -65,6 +65,14 @@
                 </div>
               </div>
               
+              <div class="form-group horizontal">
+                <label></label>
+                <div class="input-container">
+                  <label class="remember-me">
+                    <input type="checkbox" v-model="rememberMe"> 记住登录信息
+                  </label>
+                </div>
+              </div>
               <div class="form-actions">
                 <button 
                   type="submit" 
@@ -138,6 +146,50 @@ const handleClickOutside = (e) => {
   }
 }
 
+// 保存登录信息到localStorage
+const saveLoginInfo = () => {
+  if (rememberMe.value) {
+    const loginInfo = {
+      username: loginForm.username,
+      password: loginForm.password, // 注意：实际项目中密码应该加密存储
+      server: loginForm.server,
+      serverLabel: selectedServer.value ? selectedServer.value.label : '',
+      rememberMe: true
+    }
+    localStorage.setItem('savedLoginInfo', JSON.stringify(loginInfo))
+  } else {
+    // 如果不记住，清除保存的信息
+    localStorage.removeItem('savedLoginInfo')
+  }
+}
+
+// 从localStorage加载保存的登录信息
+const loadSavedLoginInfo = () => {
+  const savedInfo = localStorage.getItem('savedLoginInfo')
+  if (savedInfo) {
+    try {
+      const loginInfo = JSON.parse(savedInfo)
+      loginForm.username = loginInfo.username || ''
+      loginForm.password = loginInfo.password || ''
+      loginForm.server = loginInfo.server || ''
+      
+      // 查找对应的服务器选项
+      if (loginInfo.server && serverOptions.value.length > 0) {
+        const server = serverOptions.value.find(s => s.value === loginInfo.server)
+        if (server) {
+          selectedServer.value = server
+        }
+      }
+      
+      rememberMe.value = loginInfo.rememberMe || false
+    } catch (error) {
+      console.error('加载保存的登录信息失败:', error)
+      // 如果解析失败，清除损坏的数据
+      localStorage.removeItem('savedLoginInfo')
+    }
+  }
+}
+
 onMounted(() => {
   const data = store.get('servers')
   for (const item of data) {
@@ -148,6 +200,10 @@ onMounted(() => {
       value: item.address + ':19107'
     })
   }
+
+  // 加载保存的登录信息
+  loadSavedLoginInfo()
+
   document.addEventListener('click', handleClickOutside)
 })
 
@@ -209,6 +265,10 @@ const handleLogin = () => {
             let token = data['tk']
             localStorage.setItem('token', token)
             localStorage.setItem('remote', loginForm.server)
+
+            // 保存登录信息
+            saveLoginInfo()
+            
             // 设置拦截器
             axios.interceptors.request.use((config) => {
               if (token) {
