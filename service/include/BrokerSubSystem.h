@@ -110,7 +110,8 @@ public:
     virtual bool QueryOrders(SecurityType type, OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
     virtual void CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
-
+    // 记录交易
+    void RecordTrade(const OrderContext& );
     // 统计当前指标
     uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
     // 注册统计指标
@@ -185,6 +186,7 @@ private:
     PortfolioSubSystem* _portfolio;
     bool _simulation;
     // 交易记录
+    std::mutex _tradeMtx;
     Map<symbol_t, List<Transaction>> _historyTrades;
 
     std::mutex _indMtx;

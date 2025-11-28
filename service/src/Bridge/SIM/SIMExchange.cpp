@@ -19,6 +19,7 @@
 #include <utility>
 #include "yas/detail/type_traits/flags.hpp"
 #include "server.h"
+#include "BrokerSubSystem.h"
 
 StockSimulation::StockSimulation(Server* server)
   :ExchangeInterface(server),_cur_index(0), _worker(nullptr), _cur_id(0)
@@ -106,12 +107,16 @@ order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
 }
 
 void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
-    _reports.visit(id._id, [&report](auto&& value) {
+    auto broker = _server->GetBrokerSubSystem();
+    _reports.visit(id._id, [&report, broker](auto&& value) {
         value.second->_trades._reports.emplace_back(std::move(report));
         auto ctx = value.second;
+        // 交易记录
+        broker->RecordTrade(*ctx);
+        // 回调通知完成
         ctx->Update(report);
-        value.second->_flag.store(true);
         value.second->_success.store(true);
+        value.second->_flag.store(true);
         value.second->_promise.set_value(true);
         });
 }

@@ -310,6 +310,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
 
 nlohmann::json BrokerSubSystem::GetHistoryJson() {
   nlohmann::json jsn;
+  std::unique_lock<std::mutex> lck(_tradeMtx);
   for (auto& item: _historyTrades) {
     nlohmann::json temp;
     temp["symbol"] = get_symbol(item.first);
@@ -381,8 +382,10 @@ void BrokerSubSystem::run() {
     auto future = std::chrono::system_clock::now() + std::chrono::seconds(5);
     {
       std::unique_lock<std::mutex> lck(_mutex);
-      if (_cv.wait_until(lck, future) == std::cv_status::timeout)
+      if (_cv.wait_until(lck, future) == std::cv_status::timeout) {
+        flush(_txn, dbi);
         continue;
+      }
     }
     
 
@@ -397,12 +400,11 @@ void BrokerSubSystem::run() {
       }
     }
     for (auto itr = contexts.begin(); itr != contexts.end();) {
-        if ((*itr)->_flag) {
-            auto ctx = *itr;
+        auto ctx = *itr;
+        if (ctx->_flag) {
             // TODO: 日志记录
-            if ((*itr)->_success) {
-                auto act = Order2Transaction(*ctx);
-                _historyTrades[GET_SYMBOL(ctx)].emplace_back(std::move(act));
+            if (ctx->_success) {
+                LOG("Order Success:{}", ctx->_order);
             }
             delete ctx;
             itr = contexts.erase(itr);
@@ -420,6 +422,12 @@ void BrokerSubSystem::run() {
   }
   mdb_txn_commit(_txn);
   mdb_env_sync(_env, 1);
+}
+
+void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
+    auto act = Order2Transaction(ctx);
+    std::unique_lock<std::mutex> lck(_tradeMtx);
+    _historyTrades[ctx._order._symbol].emplace_back(std::move(act));
 }
 
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
@@ -472,13 +480,21 @@ int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::func
 
 void BrokerSubSystem::flush(MDB_txn* txn, MDB_dbi dbi) {
   auto history = GetHistoryJson();
-  SaveJson("history", txn, dbi, history);
+  if (!history.empty()) {
+    SaveJson("history", txn, dbi, history);
+  }
   auto portfolios = GetPortfolioJson();
-  SaveJson("portfolio", txn, dbi, portfolios);
+  if (!portfolios.empty()) {
+    SaveJson("portfolio", txn, dbi, portfolios);
+  }
   auto broker = GetBrokers();
-  SaveJson("broker", txn, dbi, broker);
+  if (!broker.empty()) {
+    SaveJson("broker", txn, dbi, broker);
+  }
   auto prediction = GetPrediction();
-  SaveJson(DB_PREDICTION, txn, dbi, prediction);
+  if (!prediction.empty()) {
+    SaveJson(DB_PREDICTION, txn, dbi, prediction);
+  }
 }
 
 double BrokerSubSystem::VaR(float confidence)

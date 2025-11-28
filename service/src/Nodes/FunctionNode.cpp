@@ -51,7 +51,13 @@ bool FunctionNode::Process(const String& strategy, DataContext& context)
     }
     auto result = (*_callable)(arguments);
     for (auto& item: _outputs) {
-        context.add(item.first, result);
+        if (context.exist(item.first)) {
+            context.add(item.first, std::get<double>(result));
+        } else {
+            Vector<double> timeseriel;
+            timeseriel.push_back(std::get<double>(result));
+            context.set(item.first, timeseriel);
+        }
     }
     return true;
 }

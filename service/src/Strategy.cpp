@@ -14,6 +14,7 @@
 #include "Nodes/QuoteNode.h"
 #include "Nodes/FunctionNode.h"
 #include "Nodes/SignalNode.h"
+#include "boost/algorithm/string.hpp"
 
 namespace {
     Map<String, SignalGeneratorType> agent_types{
@@ -214,6 +215,16 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         auto next_itr = nodeMap.find(target);
         if (next_itr == nodeMap.end()) {
             continue;
+        }
+        if (sourceHandle == "output") {
+            sourceHandle = from;
+        } else {
+            boost::algorithm::replace_all(sourceHandle, "field", from);
+        }
+        if (targetHandle == "input") {
+            targetHandle = target;
+        } else {
+            boost::algorithm::replace_all(targetHandle, "field", target);
         }
         itr->second->Connect(next_itr->second, sourceHandle, targetHandle);
     }

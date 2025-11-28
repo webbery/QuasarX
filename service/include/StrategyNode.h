@@ -7,13 +7,15 @@ class ICallable;
 // 数据上下文，用于管理节点间传输的数据
 class DataContext {
 public:
-    feature_t& get(const String& name) {
-        return _outputs[name];
-    }
+    feature_t& get(const String& name);
 
-    void add(const String& name, const feature_t& f) {
+    void set(const String& name, const feature_t& f) {
         _outputs[name] = f;
     }
+
+    void add(const String& name, double value);
+
+    bool exist(const String& name);
 
     void erase(const String& name) {
         _outputs.erase(name);

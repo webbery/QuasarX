@@ -386,11 +386,11 @@ class TestStrategy:
                                         "type": "text"
                                     },
                                     "buy": {
-                                        "value": "MA_5-MA_15>0",
+                                        "value": "MA_5[t]>MA_15[t] and MA_5[t-1]<MA_15[t-1] ",
                                         "type": "text"
                                     },
                                     "sell": {
-                                        "value": "MA_5 - MA_15 < 0",
+                                        "value": "MA_5[t]<MA_15[t] and MA_5[t-1]>MA_15[t-1] ",
                                         "type": "text"
                                     }
                                 }

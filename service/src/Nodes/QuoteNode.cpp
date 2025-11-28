@@ -93,7 +93,7 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
                 if (it == propertyHandlers.end())
                     continue;
 
-                context.add(baseKey + property, it->second(quote));
+                context.set(baseKey + property, it->second(quote));
             }
         }
         else if (is_option(symbol)) {

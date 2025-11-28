@@ -12,6 +12,7 @@
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/OrderLimit.h"
+#include "BrokerSubSystem.h"
 
 using namespace TORALEV1API;
 #define USER_PRODUCT_INFO "HX5ZWWQ4VI"
@@ -532,8 +533,10 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
 }
 
 void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
-    _orders.visit(id._id, [&report](concurrent_order_map::value_type& value) {
+    auto broker = _server->GetBrokerSubSystem();
+    _orders.visit(id._id, [&report,broker](concurrent_order_map::value_type& value) {
         auto ctx = value.second;
+        broker->RecordTrade(*ctx);
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
         ctx->_flag = true;
