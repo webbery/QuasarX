@@ -67,9 +67,10 @@
               
               <div class="form-group horizontal">
                 <label></label>
-                <div class="input-container">
-                  <label class="remember-me">
-                    <input type="checkbox" v-model="rememberMe"> 记住登录信息
+                <div class="input-container checkbox-container">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="rememberMe">
+                    <span>记住登录信息</span>
                   </label>
                 </div>
               </div>
@@ -108,6 +109,8 @@ const loginForm = reactive({
 
 // 服务器选项
 const serverOptions = ref([])
+// 记住我
+const rememberMe = ref(false)
 
 // 下拉菜单状态
 const showDropdown = ref(false)
@@ -400,7 +403,7 @@ background-color: var(--darker-bg);
   display: block;
   color: var(--text);
   font-weight: 500;
-  width: 100px;
+  width: 120px;
   flex-shrink: 0;
   margin-right: 15px;
   text-align: right;
@@ -484,6 +487,26 @@ color: var(--text);
 
 .dropdown-option:hover {
   background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* 复选框容器 */
+.checkbox-container {
+  display: flex;
+  align-items: center;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--text);
+  margin: 0;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin: 0;
+  margin-right: 8px;
+  width: auto;
 }
 
 /* 表单操作 */

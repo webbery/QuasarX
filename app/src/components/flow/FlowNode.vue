@@ -65,6 +65,38 @@
                         <span v-if="paramConfig.unit" class="param-unit">{{ paramConfig.unit }}</span>
                     </div>
                     
+                    <!-- 多选下拉框 -->
+                    <div v-else-if="paramConfig.type === 'multiselect-dropdown'" class="multiselect-dropdown-wrapper">
+                        <div class="multiselect-dropdown" @click="toggleDropdown(key)">
+                            <div class="selected-options-display">
+                                <template v-if="getSelectedOptions(paramConfig.value, paramConfig.options).length > 0">
+                                    <span class="selected-option-tag" 
+                                          v-for="selectedOption in getSelectedOptions(paramConfig.value, paramConfig.options)" 
+                                          :key="selectedOption">
+                                        {{ selectedOption }}
+                                    </span>
+                                </template>
+                                <span v-else class="placeholder">请选择...</span>
+                            </div>
+                            <div class="dropdown-arrow" :class="{ 'open': openDropdowns[key] }">
+                                <i class="fas fa-chevron-down"></i>
+                            </div>
+                        </div>
+                        
+                        <div v-if="openDropdowns[key]" class="dropdown-options" @click.stop>
+                            <div class="dropdown-option" 
+                                 v-for="option in paramConfig.options" 
+                                 :key="option"
+                                 @click="toggleOptionSelection(key, option)">
+                                <input type="checkbox" 
+                                       :checked="isOptionSelected(paramConfig.value, option)"
+                                       @change.stop />
+                                <span class="option-label">{{ option }}</span>
+                            </div>
+                        </div>
+                        <span v-if="paramConfig.unit" class="param-unit">{{ paramConfig.unit }}</span>
+                    </div>
+
                     <!-- 文本输入框 -->
                     <div v-else-if="paramConfig.type === 'text'" class="input-with-unit">
                         <input 
@@ -185,9 +217,9 @@
 
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
-import { computed, inject } from 'vue'
+import { computed, inject, ref } from 'vue'
 
-const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number']
+const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown']
 
 // 定义组件属性
 const props = defineProps({
@@ -202,6 +234,9 @@ const emit = defineEmits(['update-node', 'node-click', 'node-context-menu'])
 
 // 注入选中的节点数组
 const selectedNodes = inject('selectedNodes', [])
+
+// 存储打开的下拉框状态
+const openDropdowns = ref({})
 
 // 计算是否是多选状态
 const isMultiSelected = computed(() => {
@@ -226,6 +261,8 @@ const isDataFieldParam = (key) => {
 // 节点点击处理
 const onNodeClick = (event) => {
     // props.node.selected = true
+    // 关闭所有下拉框
+    closeAllDropdowns()
     console.info('selected:', props.node)
     emit('node-click', { node: props.node, event })
 }
@@ -233,7 +270,60 @@ const onNodeClick = (event) => {
 // 节点右键点击处理
 const onNodeRightClick = (event) => {
     event.preventDefault()
+    closeAllDropdowns()
     emit('node-context-menu', { node: props.node, event })
+}
+
+// 关闭所有下拉框
+const closeAllDropdowns = () => {
+    openDropdowns.value = {}
+}
+
+// 切换下拉框显示状态
+const toggleDropdown = (paramKey) => {
+    // 关闭其他下拉框
+    const newState = { ...openDropdowns.value }
+    Object.keys(newState).forEach(key => {
+        if (key !== paramKey) {
+            newState[key] = false
+        }
+    })
+    
+    // 切换当前下拉框状态
+    newState[paramKey] = !newState[paramKey]
+    openDropdowns.value = newState
+}
+
+// 切换选项选择状态
+const toggleOptionSelection = (paramKey, option) => {
+    const currentValue = props.node.data.params[paramKey]?.value || []
+    let newValue
+    
+    if (currentValue.includes(option)) {
+        // 移除选项
+        newValue = currentValue.filter(item => item !== option)
+    } else {
+        // 添加选项
+        newValue = [...currentValue, option]
+    }
+    
+    updateParam(paramKey, newValue)
+}
+
+// 检查选项是否被选中
+const isOptionSelected = (currentValue, option) => {
+    if (!currentValue || !Array.isArray(currentValue)) {
+        return false
+    }
+    return currentValue.includes(option)
+}
+
+// 获取选中的选项（用于显示）
+const getSelectedOptions = (currentValue, allOptions) => {
+    if (!currentValue || !Array.isArray(currentValue)) {
+        return []
+    }
+    return allOptions.filter(option => currentValue.includes(option))
 }
 
 // 节点类型映射
@@ -338,12 +428,99 @@ const updateParam = (paramKey, newValue) => {
 </script>
 
 <style scoped>
-/* 添加右键菜单相关的样式
-.vue-flow__node-custom {
-    user-select: none;
-    -webkit-user-select: none;
+/* 多选下拉框样式 */
+.multiselect-dropdown-wrapper {
+    position: relative;
+    width: 100%;
 }
- */
+
+.multiselect-dropdown {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--darker-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    min-height: 28px;
+}
+
+.multiselect-dropdown:hover {
+    border-color: var(--primary);
+}
+
+.selected-options-display {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1;
+}
+
+.selected-option-tag {
+    background: var(--primary);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    white-space: nowrap;
+}
+
+.placeholder {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.dropdown-arrow {
+    transition: transform 0.2s ease;
+    margin-left: 8px;
+    color: var(--text-secondary);
+}
+
+.dropdown-arrow.open {
+    transform: rotate(180deg);
+}
+
+.dropdown-options {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 2px;
+}
+
+.dropdown-option {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.dropdown-option:last-child {
+    border-bottom: none;
+}
+
+.dropdown-option:hover {
+    background: var(--darker-bg);
+}
+
+.dropdown-option input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+.option-label {
+    font-size: 0.8rem;
+    color: var(--text);
+}
+
 .vue-flow__node-custom {
     padding: 10px;
     border-radius: 8px;
