@@ -51,8 +51,12 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
     auto sells = _sellParser->envoke(_pools, args, context);
     Map<symbol_t, TradeDecision> decisions;
     for (auto& trade: {buys, sells}) {
-        for (auto& item: buys) {
+        for (auto& item: trade) {
             if (item.action != TradeAction::HOLD) {
+                if (decisions.count(item.symbol) && decisions[item.symbol].action != item.action) {
+                    INFO("not match operation!");
+                    continue;
+                }
                 decisions[item.symbol] = item;
             }
         }

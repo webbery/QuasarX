@@ -94,15 +94,7 @@ bool StrategySubSystem::HasStrategy(const String& name) {
     return _strategies.count(name);
 }
 
-void StrategySubSystem::RegistCollection(const String& strategy, const String& featureName, const nlohmann::json& params) {
-    _featureSystem->RegistCollection(strategy, featureName, params);
-}
-
-void StrategySubSystem::ClearCollections(const String& strategy) {
-    _featureSystem->ClearCollections(strategy);
-}
-
-Map<symbol_t, Map<String, List<feature_t>>> StrategySubSystem::GetCollections(const String& strategy) {
+Map<symbol_t, Map<String, List<feature_t>>> StrategySubSystem::GetIndicators(const String& strategy) {
     return _featureSystem->GetCollection(strategy);
 }
 

@@ -82,7 +82,7 @@ private:
     // 根据表达式值生成交易决策
     TradeDecision makeDecision(const symbol_t& symbol, bool exprValue, DataContext& context);
 
-    
+    void printAST(std::shared_ptr<peg::Ast> ast, int lvl = 0);
 private:
     peg::parser _parser;
     String _codes;

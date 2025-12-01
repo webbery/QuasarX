@@ -417,7 +417,7 @@ class TestStrategy:
                         },
                         {
                             "id": "3->6",
-                            "source": "2",
+                            "source": "3",
                             "target": "6",
                             "sourceHandle": "3",
                             "targetHandle": "6",

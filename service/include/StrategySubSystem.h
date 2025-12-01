@@ -72,11 +72,7 @@ public:
 
     FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }
 
-    void RegistCollection(const String& strategy, const String& featureName, const nlohmann::json& params);
-
-    void ClearCollections(const String& strategy);
-
-    Map<symbol_t, Map<String, List<feature_t>>> GetCollections(const String& strategy);
+    Map<symbol_t, Map<String, List<feature_t>>> GetIndicators(const String& strategy);
 private:
     AgentStrategyInfo ParseJsonScript(const String& content);
 

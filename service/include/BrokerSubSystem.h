@@ -120,6 +120,7 @@ public:
     void CleanAllIndicators(const String& strategy);
     const Set<StatisticIndicator> GetIndicatorsName(const String& strategy) const { return _indicators.at(strategy); }
     float GetIndicator(const String& name, StatisticIndicator indicator);
+    StringView GetIndicatorName(StatisticIndicator indicator);
 
     double GetProfitLoss();
 

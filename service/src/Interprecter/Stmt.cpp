@@ -31,7 +31,7 @@ String grammar = R"(
         # 时间序列访问
         Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeIndex ']'
         TimeIndex       <- TimeOffset
-        TimeOffset      <- CurrentTime / HistoricalTime / PureNumber
+        TimeOffset      <- HistoricalTime / CurrentTime / PureNumber
         CurrentTime     <- 't'
         HistoricalTime  <- 't' '-' PureNumber
         PureNumber      <- < [0-9]+ >
@@ -43,6 +43,9 @@ String grammar = R"(
         # 数据结构
         ListExpr        <- '[' Expression (',' Expression)* ']'
 
+        # 技术指标专用函数
+        # TechFunction    <- 'cross_above' / 'cross_below'
+
         # 标识符和数字
         Identifier      <- < [a-zA-Z_][a-zA-Z_0-9]* >
         Number          <- < '-'? [0-9]+ ('.' [0-9-9]+)? >
@@ -53,12 +56,9 @@ String grammar = R"(
         AddOp           <- '+' / '-'
         MulOp           <- '*' / '@' / '/' / '//' / '%'
         FactorOp        <- '**'
-
-        # 技术指标专用函数
-        # TechFunction    <- 'cross_above' / 'cross_below'
-
+        
         # 语句分隔符
-        EOL             <- ';'? [ \t\r\n]*
+        EOL             <- ';' [ \t\r\n]* / !.
         %whitespace     <- [ \t]*
     )";
 
@@ -189,7 +189,7 @@ Map<String, EvalPtr> evalMap{
     {"NotExpr", &FormulaParser::evalNotExpr},
     {"Primary", &FormulaParser::evalPrimary},
     {"ArithExpr", &FormulaParser::evalArithmetic},
-    // {"ExpressionStmt", &FormulaParser::}
+    {"ExpressionStmt", &FormulaParser::evalStatement}
 };
 
 bool check_bool(const feature_t& feature) {
@@ -238,10 +238,27 @@ bool FormulaParser::parse(const String& code) {
     _codes = cleanInputString(code);
     if (_parser.parse(_codes, _ast)) {
         _ast = _parser.optimize_ast(_ast);
+
+        // 调试：打印AST结构
+#ifdef _DEBUG
+        INFO("AST nodes count: {}", _ast->nodes.size());
+        printAST(_ast);
+#endif
         return true;
     } else {
         FATAL("Parse failed for formula: {}", _codes);
         return false;
+    }
+}
+
+void FormulaParser::printAST(std::shared_ptr<peg::Ast> ast, int lvl ) {
+    for (auto& node : ast->nodes) {
+        String tabs("  ");
+        for (int i = 0; i < lvl; ++i) {
+            tabs += "  ";
+        }
+        INFO("{}Node: {}", tabs, node->name);
+        printAST(node, ++lvl);
     }
 }
 
@@ -307,6 +324,9 @@ feature_t FormulaParser::evalProgram(const symbol_t& symbol, const peg::Ast& ast
 
     feature_t last_result;
     for (auto& stmt : ast.nodes) {
+        if (stmt->name == "EOL")
+            continue;
+
         last_result = evalStatement(symbol, *stmt, context);
     }
     return last_result;
@@ -337,8 +357,10 @@ feature_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast
         if (trailer->name == "Trailer") {
             value = evalTrailer(symbol, value, *trailer, context);
         }
-        else if (trailer->name == "TimeOffset") {
-            value = evalTimeIndex(symbol, value, *trailer->nodes[0], context);
+        else if (trailer->name == "PureNumber") {
+            int offset = atoi(String(trailer->token).c_str());
+            value = getHistoricalValue(symbol, value, offset, context);
+            // value = evalTimeIndex(symbol, value, *trailer->nodes[0], context);
         }
         else if (trailer->name == "CurrentTime") {
             value = getHistoricalValue(symbol, value, 0, context);
@@ -434,7 +456,7 @@ feature_t FormulaParser::evalOrExpr(const symbol_t& symbol, const peg::Ast& ast,
     if (check_bool(left)) return true;  // 短路求值
 
     for (size_t i = 1; i < ast.nodes.size(); i += 2) {
-        auto right = evalNode(symbol, *ast.nodes[i + 1], context);
+        auto right = evalNode(symbol, *ast.nodes[i], context);
         if (check_bool(right)) return true;
     }
     return false;
@@ -444,7 +466,7 @@ feature_t FormulaParser::evalAndExpr(const symbol_t& symbol, const peg::Ast& ast
     auto left = evalNode(symbol, *ast.nodes[0], context);
     if (check_bool(left) == false) return false;  // 短路求值
     for (size_t i = 1; i < ast.nodes.size(); i += 2) {
-        auto right = evalNode(symbol, *ast.nodes[i + 1], context);
+        auto right = evalNode(symbol, *ast.nodes[i], context);
         if (check_bool(right) == false) return false;
     }
     return true;

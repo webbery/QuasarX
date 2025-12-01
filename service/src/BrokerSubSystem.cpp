@@ -231,6 +231,21 @@ float BrokerSubSystem::GetIndicator(const String& name, StatisticIndicator indic
   }
 }
 
+StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
+  switch (indicator) {
+    case StatisticIndicator::Sharp:
+    return "sharp";
+  case StatisticIndicator::VaR:
+    return "VAR";
+  case StatisticIndicator::ES:
+    return "ES";
+  case StatisticIndicator::MaxDrawDown:
+    return "MaxDrowDown";
+  default:
+    return "Unknow";
+  }
+}
+
 nlohmann::json BrokerSubSystem::GetPortfolioJson() {
   nlohmann::json result;
   auto allIDs = _portfolio->GetAllPortfolio();

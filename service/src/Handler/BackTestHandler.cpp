@@ -54,7 +54,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // strategySys->AddStrategy(si);
     // 注册统计信息
     Set<String> featureCollections;
-    strategySys->ClearCollections(strategyName);
     strategySys->Init(strategyName, sorted_nodes);
 
     // 驱动数据
@@ -70,30 +69,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 获取结果
     nlohmann::json results;
     auto& features = results["features"];
-    auto allCols = strategySys->GetCollections(strategyName);
-    for (auto& item: allCols) {
-        auto symbol = get_symbol(item.first);
-        for (auto& name: featureCollections) {
-            auto& colls = item.second.at(name);
-            for (auto& feature : colls) {
-                std::visit([&features, &name, &symbol](auto&& arg) {
-                    using T = std::decay_t<decltype(arg)>;
-                    if constexpr (std::is_same_v<T, double>) {
-                        features[name][symbol].emplace_back(arg);
-                    }
-                    else if constexpr (std::is_same_v<T, Vector<double>>) {
-                        features[name][symbol] = arg;
-                    }
-                    else if constexpr (std::is_same_v<T, Eigen::MatrixXd>) {
-
-                    }
-                }, feature);
-            }
-            
-        }
-    }
-    
     auto brokerSystem = _server->GetBrokerSubSystem();
+    auto indicators = brokerSystem->GetIndicatorsName(strategyName);
+    for (auto ind: indicators) {
+        auto value = brokerSystem->GetIndicator(strategyName, ind);
+        String key(brokerSystem->GetIndicatorName(ind));
+        features[key] = value;
+    }
     
     auto symbols = strategySys->GetPools(strategyName);
     for (auto& symbol: symbols) {
