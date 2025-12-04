@@ -29,12 +29,18 @@ public:
 private:
   template<FixedString... Strs>
   struct QuoteExtractor {
-      // 编译时遍历展开
+      // // 编译时遍历展开
+      // template<typename T>
+      // static constexpr void extract(nlohmann::json& data, std::shared_ptr<DataGroup> group, const String& symbol, size_t i) {
+      //     ((data[Strs.value] = group->Get<T>(symbol, Strs.value, i)), ...);
+      // }
       template<typename T>
-      static constexpr void extract(nlohmann::json& data, std::shared_ptr<DataGroup> group, const String& symbol, size_t i) {
-          ((data[Strs.value] = group->Get<T>(symbol, Strs.value, i)), ...);
+      static constexpr void extract(nlohmann::json& data, DataFrame& df, size_t i) {
+          ((data[Strs.value] = df.get_column<time_t>(Strs.value)[i]),...);
       }
   };
+
+  bool LoadStock(DataFrame& df, const String& path); 
 };
 
 class StockDetailHandler : public HttpHandler {

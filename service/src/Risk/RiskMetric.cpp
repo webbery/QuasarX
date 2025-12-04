@@ -4,7 +4,7 @@
 #include <boost/math/distributions.hpp>
 #include <numeric>
 
-RiskMetric::RiskMetric(float confidence, double freerate, const PortfolioInfo& portfolio, std::shared_ptr<DataGroup> group)
+RiskMetric::RiskMetric(float confidence, double freerate, const PortfolioInfo& portfolio)
 :_confidence(confidence), _freerate(freerate), _mean(0) {
     assert(portfolio._holds.size() > 0);
     double total = 0;

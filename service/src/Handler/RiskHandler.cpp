@@ -287,7 +287,7 @@ void VaRHandler::post(const httplib::Request& req, httplib::Response& res) {
     // auto broker = _server->GetVirtualSubSystem();
     //strategyInstance->Init(broker);
     // 数据准备
-    auto group = _server->PrepareStockData(pool, dft);
+    // auto group = _server->PrepareStockData(pool, dft);
     //if (!group || !group->IsValid()) {
     //    res.status = 400;
     //}

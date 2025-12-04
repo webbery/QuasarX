@@ -120,9 +120,6 @@ public:
 
     RuningType GetRunningMode() { return _runType; }
 
-    std::shared_ptr<DataGroup> PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
-    std::shared_ptr<DataGroup> PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right = StockAdjustType::None);
-
     BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
 
     PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
@@ -142,7 +139,7 @@ public:
     /**
      * @brief Get the previous N day's close price
      */
-    Vector<double> GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust);
+    // Vector<double> GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust);
 
     /**
      */
@@ -198,13 +195,13 @@ private:
     // 从配置中获取最大读取数据量
     int GetMaxPrepareCount();
 
-    bool LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType type = DataFrequencyType::Day);
+    // bool LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType type = DataFrequencyType::Day);
 
-    bool LoadStock(DataFrame& df, const String& path);
+    // bool LoadStock(DataFrame& df, const String& path);
     /**
      * @brief load stock last N data
      */
-    bool LoadStock(DataFrame& df, symbol_t symbol, int lastN);
+    // bool LoadStock(DataFrame& df, symbol_t symbol, int lastN);
 
     bool LoadFuture(DataFrame& df, const String& path);
 

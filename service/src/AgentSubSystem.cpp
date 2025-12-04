@@ -1,4 +1,5 @@
 #include "AgentSubSystem.h"
+#include "Metric/Sharp.h"
 #include "StrategyNode.h"
 #include "server.h"
 #include "Util/system.h"
@@ -88,13 +89,20 @@ void FlowSubsystem::Start(const String& strategy) {
 
             auto& flow = _flows[strategy];
             uint64_t epoch = 0;
-            while (flow._running) {
+            while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
                 if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
                     break;
                 }
             }
+            // 统计指标
+            auto endNode = dynamic_cast<SignalNode*>(flow._graph.back());
+            if (endNode) {
+                auto& cash_flow = endNode->GetReports();
+                flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
+            }
             // 结束通知
+            flow._running = false;
             INFO("backtest finish");
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
@@ -283,12 +291,17 @@ bool FlowSubsystem::IsNearClose(symbol_t symb) {
     return false;
 }
 
-const Map<String, std::variant<float, List<float>>>& FlowSubsystem::GetCollection(const String& strategy) const {
+const Map<StatisticIndicator, std::variant<float, List<float>>>& FlowSubsystem::GetCollection(const String& strategy) const {
     auto itr = _flows.find(strategy);
     if (itr == _flows.end()) {
         WARN("strategy {} not exist", strategy);
     }
-    return itr->second._collections;
+    // 等待对应线程完成
+    auto& flow = itr->second;
+    if (flow._worker && flow._worker->joinable()) {
+        flow._worker->join();
+    }
+    return flow._collections;
 }
 
 void FlowSubsystem::Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params) {

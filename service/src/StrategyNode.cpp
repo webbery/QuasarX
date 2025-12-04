@@ -4,17 +4,6 @@
 #include <stdexcept>
 #include <variant>
 
-feature_t& DataContext::get(const String& name) {
-    return _outputs[name];
-}
-
-void DataContext::add(const String& name, double value) {
-    std::get<Vector<double>>(_outputs[name]).push_back(value);
-}
-
-bool DataContext::exist(const String& name) {
-    return _outputs.contains(name);
-}
 
 Map<String, ArgType> QNode::out_elements() {
     Map<String, ArgType> elems;

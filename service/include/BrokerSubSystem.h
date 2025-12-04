@@ -44,6 +44,7 @@ enum class StatisticIndicator: char {
   ES,
   MaxDrawDown,
   AnualReturn,
+  AnualSharp,
   Sharp,
   Calmar,
   Infomation,
@@ -112,8 +113,6 @@ public:
     virtual void CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
     // 记录交易
     void RecordTrade(const OrderContext& );
-    // 统计当前指标
-    uint32_t Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes);
     // 注册统计指标
     void RegistIndicator(const String& strategy, StatisticIndicator indicator);
     void UnRegistIndicator(const String& strategy, StatisticIndicator indicator);
@@ -160,7 +159,6 @@ private:
 
     double VaR(float confidence);
     double ES(double var);
-    double Sharp(const String& name);
 
     MDB_dbi GetDBI(int portfolid_id, MDB_txn* txn);
 
@@ -181,7 +179,6 @@ private:
 
     Transaction Order2Transaction(const OrderContext& context);
 
-    
 private:
     Server* _server;
     PortfolioSubSystem* _portfolio;
@@ -217,4 +214,5 @@ private:
     boost::lockfree::queue<OrderContext*> _order_queue;
     // 
     static Map<ExchangeType, ExchangeInterface*> _exchanges;
+
 };

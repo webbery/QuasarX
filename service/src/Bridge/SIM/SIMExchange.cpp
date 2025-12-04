@@ -109,8 +109,8 @@ order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
 void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
     auto broker = _server->GetBrokerSubSystem();
     _reports.visit(id._id, [&report, broker](auto&& value) {
-        value.second->_trades._reports.emplace_back(std::move(report));
         auto ctx = value.second;
+        value.second->_trades._reports.emplace_back(report);
         // 交易记录
         broker->RecordTrade(*ctx);
         // 回调通知完成
@@ -118,7 +118,7 @@ void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
         value.second->_success.store(true);
         value.second->_flag.store(true);
         value.second->_promise.set_value(true);
-        });
+    });
 }
 
 bool StockSimulation::CancelOrder(order_id id, OrderContext* order){
@@ -381,6 +381,7 @@ TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quo
     report._price = quote._close;
     report._time = quote._time;
     report._quantity = quote._volume;
+    report._side = order._side;
     return report;
 }
 

@@ -1,43 +1,9 @@
 #pragma once
-#include "std_header.h"
+#include "DataContext.h"
 #include "json.hpp"
 #include <functional>
 
 class ICallable;
-// 数据上下文，用于管理节点间传输的数据
-class DataContext {
-public:
-    feature_t& get(const String& name);
-
-    void set(const String& name, const feature_t& f) {
-        _outputs[name] = f;
-    }
-
-    void add(const String& name, double value);
-
-    bool exist(const String& name);
-
-    void erase(const String& name) {
-        _outputs.erase(name);
-    }
-    
-    void SetEpoch(uint64_t epoch) {
-        _epoch = epoch;
-    }
-
-    uint64_t GetEpoch() {
-        return _epoch;
-    }
-
-    void SetTime(time_t t) { _time = t; }
-    time_t GetTime() { return _time; }
-private:
-    uint64_t _epoch = 0;
-    time_t _time = 0;
-
-    // TODO: 节点的输出数据，待优化
-    Map<String, feature_t> _outputs;
-};
 
 enum ArgType {
     Integer,

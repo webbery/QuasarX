@@ -75,16 +75,18 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
     rightType = StockAdjustType::After;
   }
   auto symbol = format_symbol(id);
-  auto group = _server->PrepareStockData({symbol}, dft, rightType);
-  if (!group || !group->IsValid()) {
+  auto& config = _server->GetConfig();
+  String path = config.GetDatabasePath() + "/" + symbol + "_hist_data.csv";
+  DataFrame df;
+  if (!LoadStock(df, path)) {
     res.status = 400;
   }
   else {
-    auto size = group->Size(symbol);
+    auto size = df.get_index().size();
     nlohmann::json result;
 
     for (size_t i = 0; i < size; ++i) {
-      auto datetime = group->Get<time_t>(symbol, "datetime", i);
+      auto datetime = df.get_column<time_t>("datetime")[i];
       if (datetime < start_t || datetime > end_t)
         continue;
       nlohmann::json row;
@@ -97,12 +99,41 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
         FixedString{"volume"},
         FixedString{"turnover"}
       >;
-      Extractor::extract<double>(row, group, symbol, i);
+      Extractor::extract<double>(row, df, i);
       result.emplace_back(std::move(row));
     }
     res.status = 200;
     res.set_content(result.dump(), "application/json");
   }
+}
+
+bool StockHistoryHandler::LoadStock(DataFrame& df, const String& path) {
+    if (!std::filesystem::exists(path))
+        return false;
+
+    String datetime;
+    double open, close, high, low, volumn, amount, price_volatility, change_percent, turnover_rate;
+
+    Vector<String> sv;
+    df.load_column("datetime", sv);
+    Vector<double> dv;
+    for (auto name : { "open", "close", "high","low", "volume", "turnover",
+        }) {
+        df.load_column(name, dv);
+    }
+    uint32_t index = 0;
+    io::CSVReader<7> reader(path);
+    // 日期,开盘,收盘,最高,最低,成交量,成交额,换手率
+    reader.read_header(io::ignore_extra_column, "datetime", "open", "close", "high", "low", "volume", "turnover");
+    while (reader.read_row(datetime, open, close, high, low, volumn, turnover_rate)) {
+        auto t = FromStr(datetime);
+        df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
+            std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn),
+            std::make_pair("turnover", turnover_rate)
+        );
+        ++index;
+    }
+    return true;
 }
 
 StockDetailHandler::StockDetailHandler(Server* server)

@@ -1,5 +1,4 @@
 #pragma once
-#include "DataGroup.h"
 #include "Util/system.h"
 // #include "ql/math/matrix.hpp"
 #include "json.hpp"
@@ -45,7 +44,7 @@ public:
 
   double Position() { return _position; }
 
-  void Update(symbol_t symbol, const TradeInfo& deals);
+  // void Update(symbol_t symbol, const TradeInfo& deals);
 
   hold_t& GetHolding(const String& id = "");
 

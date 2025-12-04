@@ -63,18 +63,17 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     while (exchange->IsLogin() && !_server->IsExit()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         // TODO: 获取进度
-        double progress = exchange->Progress();
-        INFO("{}%", progress * 100);
+        // double progress = exchange->Progress();
+        // INFO("{}%", progress * 100);
     }
     // 获取结果
     nlohmann::json results;
     auto& features = results["features"];
     auto brokerSystem = _server->GetBrokerSubSystem();
-    auto indicators = brokerSystem->GetIndicatorsName(strategyName);
-    for (auto ind: indicators) {
-        auto value = brokerSystem->GetIndicator(strategyName, ind);
-        String key(brokerSystem->GetIndicatorName(ind));
-        features[key] = value;
+    auto indicators = strategySys->GetIndicators(strategyName);
+    for (auto& item: indicators) {
+        String key(brokerSystem->GetIndicatorName(item.first));
+        features[key] = std::get<float>(item.second);
     }
     
     auto symbols = strategySys->GetPools(strategyName);

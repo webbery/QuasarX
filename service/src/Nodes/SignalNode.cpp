@@ -2,6 +2,7 @@
 #include "Interprecter/Stmt.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
+#include <utility>
 
 SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
 }
@@ -67,20 +68,23 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
         auto& decision = item.second;
         Order order;
         if (decision.action == TradeAction::BUY) {
-            broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
+            broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
                 auto sock = Server::GetSocket();
                 auto info = to_sse_string(symbol, report);
                 nng_send(sock, info.data(), info.size(), 0);
+                _reports.emplace_back(std::make_pair(symbol, report));
             });
         }
         else if (decision.action == TradeAction::SELL) {
-            broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol] (const TradeReport& report) {
+            broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
                 auto sock = Server::GetSocket();
                 auto info = to_sse_string(symbol, report);
                 nng_send(sock, info.data(), info.size(), 0);
+                _reports.emplace_back(std::make_pair(symbol, report));
             });
         }
     }
+    
     return true;
 }
 

@@ -10,6 +10,7 @@
 
 class Server;
 class RiskSubSystem;
+enum class StatisticIndicator: char;
 
 class FlowSubsystem  {
     struct StrategyFlowInfo;
@@ -28,7 +29,7 @@ public:
 
     void ClearCollections(const String& strategy);
 
-    const Map<String, std::variant<float, List<float>>>& GetCollection(const String& strategy) const;
+    const Map<StatisticIndicator, std::variant<float, List<float>>>& GetCollection(const String& strategy) const;
     
     Set<symbol_t> GetPools(const String& strategy);
 private:
@@ -66,7 +67,7 @@ private:
 
         QStrategy* _strategy = nullptr;
         char _future = 0;
-        Map<String, std::variant<float, List<float>>> _collections;
+        Map<StatisticIndicator, std::variant<float, List<float>>> _collections;
         Map<String, PrimitiveFeature*> _featureCalculator;
         List<QNode*> _graph;
     };

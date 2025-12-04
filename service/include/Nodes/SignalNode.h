@@ -1,6 +1,7 @@
 #pragma once
 #include "StrategyNode.h"
 #include "Util/system.h"
+#include "DataGroup.h"
 
 class FormulaParser;
 class Server;
@@ -20,6 +21,9 @@ public:
         return {_pools.begin(), _pools.end()};
     }
     
+    const List<Pair<symbol_t, TradeReport>>& GetReports() const {
+        return _reports;
+    }
 private:
 
 private:
@@ -27,4 +31,6 @@ private:
     FormulaParser* _buyParser;
     FormulaParser* _sellParser;
     Vector<symbol_t> _pools;
+    
+    List<Pair<symbol_t, TradeReport>> _reports;
 };

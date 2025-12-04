@@ -20,6 +20,7 @@
 #include <boost/math/distributions/normal.hpp>
 #include "Handler/ExchangeHandler.h"
 #include "Strategy.h"
+#include "Metric/Sharp.h"
 
 #define ER(expr) {int rc = 0; CHECK((rc = (expr)) == MDB_SUCCESS, #expr);  }
 #define CHECK(test, msg) ((test) ? (void)0 : ((void)fprintf(stderr, \
@@ -196,15 +197,6 @@ void BrokerSubSystem::CancelOrder(order_id id, symbol_t symbol, std::function<vo
     _order_queue.push(ctx);
 }
 
-uint32_t BrokerSubSystem::Statistic(float confidence, int N, std::shared_ptr<DataGroup> group, nlohmann::json& indexes) {
-    auto var = VaR(confidence);
-    indexes["var"] = var;
-
-    auto es = ES(var);
-    indexes["es"] = es;
-    return 0;
-}
-
 void BrokerSubSystem::InitPortfolio(MDB_txn* txn, MDB_dbi dbi) {
   String portfolioName("portfolio");
   auto jsn = LoadJson(portfolioName, txn, dbi);
@@ -220,7 +212,7 @@ float BrokerSubSystem::GetIndicator(const String& name, StatisticIndicator indic
   constexpr double confidence = 0.95;
   switch (indicator) {
   case StatisticIndicator::Sharp:
-    return Sharp(name);
+    // return Sharp(name, -1);
   case StatisticIndicator::VaR:
     return VaR(confidence);
   case StatisticIndicator::ES:
@@ -233,7 +225,7 @@ float BrokerSubSystem::GetIndicator(const String& name, StatisticIndicator indic
 
 StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   switch (indicator) {
-    case StatisticIndicator::Sharp:
+  case StatisticIndicator::Sharp:
     return "sharp";
   case StatisticIndicator::VaR:
     return "VAR";
@@ -519,7 +511,6 @@ double BrokerSubSystem::VaR(float confidence)
       auto itr = holding.begin();
       auto symbol = itr->first;
       double cost = GetCost(itr->second);
-      auto group = _server->PrepareData({symbol}, DataFrequencyType::Day, StockAdjustType::After);
       // 计算最后组合的VaR值
       // 计算期望与方差
       double mu = 0;
@@ -538,34 +529,6 @@ double BrokerSubSystem::ES(double var)
 {
     // 计算最后组合的ES
     return -1;
-}
-
-double BrokerSubSystem::Sharp(const String& name) {
-  auto& cfg = _server->GetConfig();
-  auto freerate = cfg.GetFreeRate();
-  auto days = cfg.GetTradeDays();
-
-  auto& holding = _portfolio->GetHolding(name);
-  if (holding.size() == 1) {
-    auto itr = holding.begin();
-    auto symbol = itr->first;
-    auto group = _server->PrepareData({symbol}, DataFrequencyType::Day, StockAdjustType::After);
-    if (!group)
-      return 0;
-    String str = get_symbol(symbol);
-    auto sigma = group->Sigma(str, -1);
-    auto ret = group->Return(str, -1);
-    double sum = 0;
-    for (int i = 0; i < (int)ret.size() - 1; ++i) {
-      sum += (ret[i + 1] - ret[i]) / ret[i];
-    }
-    double r = sum / ((int)ret.size() - 1);
-    return (r - freerate)/sigma;
-  }
-  else if (holding.size() > 1) {
-
-  }
-  return 0;
 }
 
 ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {

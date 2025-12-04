@@ -592,175 +592,145 @@ float Server::GetInterestRate(time_t datetime) {
     return itr->second;
 }
 
-bool Server::LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType freq) {
-    auto& dataCache = (right == StockAdjustType::None? _data: _hfqdata);
-    if (dataCache.count(symbol)) {
-        // TODO: 检查数据最后一天的时间是否是当天,如果不是,需要加载新的数据进来
-        return true;
-    }
-    String path = _config->GetDatabasePath();
-    auto type = GetContractType(symbol);
-    String contract = (right == StockAdjustType::None? "Astock": "A_hfq");
-    String filename;
-    try {
-        auto& df = dataCache[symbol];
-        _symbolCache.push_front(symbol);
-        switch (type)
-        {
-        case ContractType::ETF:
-            contract = "etf";
-            if (freq == DataFrequencyType::Min5) {
-                filename = symbol + "_5_data.csv";
-            }
-            else {
-                filename = symbol + "_hist_data.csv";
-            }
-            path += "/" + contract + "/" + filename;
-            if (!LoadStock(df, path))
-                return false;
-            break;
-        case ContractType::LOF:
-            contract = "lof";
-            break;
-        case ContractType::Future:
-            contract = "Future";
-            path += "/" + contract + "/" + filename;
-            if (!LoadFuture(df, path))
-                return false;
-            break;
-        case ContractType::Option:
-        case ContractType::AsianOption:
-        case ContractType::BarrierOption:
-        case ContractType::BinaryOption:
-        case ContractType::EureanOption:
-            contract = "Option";
-            break;
-        default:
-            if (freq == DataFrequencyType::Min5) {
-                contract = "A_tick";
-            }
-            filename = symbol + "_hist_data.csv";
-            path += "/" + contract + "/" + filename;
-            if (!LoadStock(df, path))
-                return false;
-            break;
-        }
-    }
-    catch (std::exception& e) {
-        WARN("read csv file fail:{}", e.what());
-        return false;
-    }
+// bool Server::LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType freq) {
+//     auto& dataCache = (right == StockAdjustType::None? _data: _hfqdata);
+//     if (dataCache.count(symbol)) {
+//         // TODO: 检查数据最后一天的时间是否是当天,如果不是,需要加载新的数据进来
+//         return true;
+//     }
+//     String path = _config->GetDatabasePath();
+//     auto type = GetContractType(symbol);
+//     String contract = (right == StockAdjustType::None? "Astock": "A_hfq");
+//     String filename;
+//     try {
+//         auto& df = dataCache[symbol];
+//         _symbolCache.push_front(symbol);
+//         switch (type)
+//         {
+//         case ContractType::ETF:
+//             contract = "etf";
+//             if (freq == DataFrequencyType::Min5) {
+//                 filename = symbol + "_5_data.csv";
+//             }
+//             else {
+//                 filename = symbol + "_hist_data.csv";
+//             }
+//             path += "/" + contract + "/" + filename;
+//             if (!LoadStock(df, path))
+//                 return false;
+//             break;
+//         case ContractType::LOF:
+//             contract = "lof";
+//             break;
+//         case ContractType::Future:
+//             contract = "Future";
+//             path += "/" + contract + "/" + filename;
+//             if (!LoadFuture(df, path))
+//                 return false;
+//             break;
+//         case ContractType::Option:
+//         case ContractType::AsianOption:
+//         case ContractType::BarrierOption:
+//         case ContractType::BinaryOption:
+//         case ContractType::EureanOption:
+//             contract = "Option";
+//             break;
+//         default:
+//             if (freq == DataFrequencyType::Min5) {
+//                 contract = "A_tick";
+//             }
+//             filename = symbol + "_hist_data.csv";
+//             path += "/" + contract + "/" + filename;
+//             if (!LoadStock(df, path))
+//                 return false;
+//             break;
+//         }
+//     }
+//     catch (std::exception& e) {
+//         WARN("read csv file fail:{}", e.what());
+//         return false;
+//     }
 
-    if (_symbolCache.size() > MAX_HISTORY_SIZE) {
-        auto erase_symbol = _symbolCache.back();
-        dataCache.erase(erase_symbol);
-        _symbolCache.pop_back();
-    }
-    return true;
-}
+//     if (_symbolCache.size() > MAX_HISTORY_SIZE) {
+//         auto erase_symbol = _symbolCache.back();
+//         dataCache.erase(erase_symbol);
+//         _symbolCache.pop_back();
+//     }
+//     return true;
+// }
 
-bool Server::LoadStock(DataFrame& df, const String& path) {
-    if (!std::filesystem::exists(path))
-        return false;
+// bool Server::LoadStock(DataFrame& df, symbol_t symbol, int lastN) {
+//     auto filename = get_symbol(symbol) + "_hist_data.csv";
+//     String path = _config->GetDatabasePath();
+//     path += "/Astock/" + filename;
 
-    String datetime;
-    double open, close, high, low, volumn, amount, price_volatility, change_percent, turnover_rate;
-
-    Vector<String> sv;
-    df.load_column("datetime", sv);
-    Vector<double> dv;
-    for (auto name : { "open", "close", "high","low", "volume", "amount", "volatility", "change", "turnover",
-        }) {
-        df.load_column(name, dv);
-    }
-    uint32_t index = 0;
-    io::CSVReader<10> reader(path);
-    // 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
-    reader.read_header(io::ignore_extra_column, "datetime", "open", "close", "high", "low", "volume", "amount", "volatility", "change", "turnover");
-    while (reader.read_row(datetime, open, close, high, low, volumn, amount, price_volatility, change_percent,
-        turnover_rate)) {
-        auto t = FromStr(datetime);
-        df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
-            std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn), std::make_pair("amount", amount),
-            std::make_pair("volatility", price_volatility), std::make_pair("change", change_percent), std::make_pair("turnover", turnover_rate)
-        );
-        ++index;
-    }
-    return true;
-}
-
-bool Server::LoadStock(DataFrame& df, symbol_t symbol, int lastN) {
-    auto filename = get_symbol(symbol) + "_hist_data.csv";
-    String path = _config->GetDatabasePath();
-    path += "/Astock/" + filename;
-
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        WARN("Can't open file: {}", path);
-        return false;
-    }
-    // 获取文件大小并初始化位置指针
-    std::streampos pos = file.tellg();
-    int newlineCount = 0;
-    char ch;
-    // 从文件末尾向前搜索换行符
-    while (pos > 0) {
-        pos -= 1;
-        file.seekg(pos, std::ios::beg); // 向前移动一个字节
-        file.get(ch);
+//     std::ifstream file(path, std::ios::binary | std::ios::ate);
+//     if (!file.is_open()) {
+//         WARN("Can't open file: {}", path);
+//         return false;
+//     }
+//     // 获取文件大小并初始化位置指针
+//     std::streampos pos = file.tellg();
+//     int newlineCount = 0;
+//     char ch;
+//     // 从文件末尾向前搜索换行符
+//     while (pos > 0) {
+//         pos -= 1;
+//         file.seekg(pos, std::ios::beg); // 向前移动一个字节
+//         file.get(ch);
         
-        if (ch == '\n') {
-            if (++newlineCount == lastN) 
-                break; // 找到第n个换行符
-        }
-    }
-    // 如果未找到足够换行符，回到文件开头
+//         if (ch == '\n') {
+//             if (++newlineCount == lastN) 
+//                 break; // 找到第n个换行符
+//         }
+//     }
+//     // 如果未找到足够换行符，回到文件开头
     
-    if (pos != 0) {
-        pos += 1;
-        file.seekg(pos); // 跳过找到的换行符
-    }
-    else file.seekg(0);
+//     if (pos != 0) {
+//         pos += 1;
+//         file.seekg(pos); // 跳过找到的换行符
+//     }
+//     else file.seekg(0);
 
-    // 读取目标行内容
-    uint32_t index = 0;
-    std::string line;
-    bool visited_head = false;
-    df.load_column("datetime", Vector<time_t>());
-    for (auto name : { "open", "close", "high", "low", "volume"}) {
-        df.load_column(name, Vector<double>());
-    }
-    while (std::getline(file, line)) {
-        // 处理换行符（\r\n）
-        if (!line.empty() && line.back() == '\n') {
-            line.pop_back();
-            if (line.back() == '\r') {
-                line.pop_back();
-            }
-        }
+//     // 读取目标行内容
+//     uint32_t index = 0;
+//     std::string line;
+//     bool visited_head = false;
+//     df.load_column("datetime", Vector<time_t>());
+//     for (auto name : { "open", "close", "high", "low", "volume"}) {
+//         df.load_column(name, Vector<double>());
+//     }
+//     while (std::getline(file, line)) {
+//         // 处理换行符（\r\n）
+//         if (!line.empty() && line.back() == '\n') {
+//             line.pop_back();
+//             if (line.back() == '\r') {
+//                 line.pop_back();
+//             }
+//         }
         
-        if (!visited_head && line.find("open") != std::string::npos) {
-            visited_head = true;
-            continue;
-        }
+//         if (!visited_head && line.find("open") != std::string::npos) {
+//             visited_head = true;
+//             continue;
+//         }
 
-        Vector<String> content;
-        split(line, content, ",");
+//         Vector<String> content;
+//         split(line, content, ",");
 
-        auto t = FromStr(content[0]);
-        auto open = atof(content[1].c_str());
-        auto close = atof(content[2].c_str());
-        auto low = atof(content[3].c_str());
-        auto high = atof(content[4].c_str());
-        auto volumn = atof(content[5].c_str());
-        df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
-            std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn)
-        );
-        ++index;
-    }
-    file.close();
-    return true;
-}
+//         auto t = FromStr(content[0]);
+//         auto open = atof(content[1].c_str());
+//         auto close = atof(content[2].c_str());
+//         auto low = atof(content[3].c_str());
+//         auto high = atof(content[4].c_str());
+//         auto volumn = atof(content[5].c_str());
+//         df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
+//             std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn)
+//         );
+//         ++index;
+//     }
+//     file.close();
+//     return true;
+// }
 
 bool Server::LoadFuture(DataFrame& df, const String& path) {
     if (!std::filesystem::exists(path))
@@ -974,37 +944,37 @@ void Server::Schedules(time_t t) {
     }
 }
 
-std::shared_ptr<DataGroup> Server::PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right) {
-    Map<contract_type, List<String>> all_symbol;
-    for (auto sym: symbols) {
-        all_symbol[sym._type].emplace_back(get_symbol(sym));
-    }
-    for (auto& item: all_symbol) {
-        if (item.first == contract_type::stock) {
-            return PrepareStockData(item.second, type, right);
-        } else {
-            WARN("not implement for data type {}", (int)item.first);
-        }
-    }
-    return nullptr;
-}
+// std::shared_ptr<DataGroup> Server::PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right) {
+//     Map<contract_type, List<String>> all_symbol;
+//     for (auto sym: symbols) {
+//         all_symbol[sym._type].emplace_back(get_symbol(sym));
+//     }
+//     for (auto& item: all_symbol) {
+//         if (item.first == contract_type::stock) {
+//             return PrepareStockData(item.second, type, right);
+//         } else {
+//             WARN("not implement for data type {}", (int)item.first);
+//         }
+//     }
+//     return nullptr;
+// }
 
-std::shared_ptr<DataGroup> Server::PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right) {
-    for (auto& sym: symbols) {
-        auto itr = _data.find(sym);
-        DataFrame* curr_df = nullptr;
-        if (itr == _data.end()) {
-            if (!LoadDataBySymbol(sym, right, type)) {
-                continue;
-            }
-        }
-    }
-    std::shared_ptr<DataGroup> handle;
-    if (!symbols.empty()) {
-        handle = std::make_shared<DataGroup>(symbols, _data);
-    }
-    return handle;
-}
+// std::shared_ptr<DataGroup> Server::PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right) {
+//     for (auto& sym: symbols) {
+//         auto itr = _data.find(sym);
+//         DataFrame* curr_df = nullptr;
+//         if (itr == _data.end()) {
+//             if (!LoadDataBySymbol(sym, right, type)) {
+//                 continue;
+//             }
+//         }
+//     }
+//     std::shared_ptr<DataGroup> handle;
+//     if (!symbols.empty()) {
+//         handle = std::make_shared<DataGroup>(symbols, _data);
+//     }
+//     return handle;
+// }
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {
     ExchangeHandler* handler = (ExchangeHandler*)_handlers[API_EXHANGE];
@@ -1128,25 +1098,25 @@ Set<String> Server::GetAccounts() {
     return accs;
 }
 
-Vector<double> Server::GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust) {
-    Vector<double> ret;
-    if (is_stock(symbol)) {
-        DataFrame df;
-        if (!LoadStock(df, symbol, N)) {
-            return ret;
-        }
-        if (adjust == StockAdjustType::After) {
+// Vector<double> Server::GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust) {
+//     Vector<double> ret;
+//     if (is_stock(symbol)) {
+//         DataFrame df;
+//         if (!LoadStock(df, symbol, N)) {
+//             return ret;
+//         }
+//         if (adjust == StockAdjustType::After) {
 
-        } else {
-            auto& close = df.get_column<double>("close");
-            int min_size = std::min((int)close.size(), N);
-            for (int i = min_size - 1; i >= 0; --i) {
-                ret.insert(ret.begin(), close[i]);
-            }
-        }
-    }
-    return ret;
-}
+//         } else {
+//             auto& close = df.get_column<double>("close");
+//             int min_size = std::min((int)close.size(), N);
+//             for (int i = min_size - 1; i >= 0; --i) {
+//                 ret.insert(ret.begin(), close[i]);
+//             }
+//         }
+//     }
+//     return ret;
+// }
 
 bool Server::GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info) {
     auto path = _config->GetDatabasePath();

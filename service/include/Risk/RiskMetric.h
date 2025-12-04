@@ -1,7 +1,6 @@
 #pragma once
 #include "std_header.h"
 #include "PortfolioSubsystem.h"
-#include "DataGroup.h"
 
 class IRiskMetric {
 public:
@@ -11,7 +10,7 @@ public:
 
 class RiskMetric {
 public:
-    RiskMetric(float confidence, double freerate, const PortfolioInfo& portfolio, std::shared_ptr<DataGroup> group);
+    RiskMetric(float confidence, double freerate, const PortfolioInfo& portfolio);
 
     Vector<float> ParametricVaR(int gap = 10);
 

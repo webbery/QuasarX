@@ -1,9 +1,11 @@
 #include "StrategySubSystem.h"
+#include "BrokerSubSystem.h"
 #include "FeatureSubsystem.h"
 #include "AgentSubSystem.h"
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>
+#include <variant>
 #include "PortfolioSubsystem.h"
 
 #define INIT_STRATEGY(classname) {\
@@ -94,8 +96,8 @@ bool StrategySubSystem::HasStrategy(const String& name) {
     return _strategies.count(name);
 }
 
-Map<symbol_t, Map<String, List<feature_t>>> StrategySubSystem::GetIndicators(const String& strategy) {
-    return _featureSystem->GetCollection(strategy);
+Map<StatisticIndicator, std::variant<float, List<float>>>  StrategySubSystem::GetIndicators(const String& strategy) {
+    return _agentSystem->GetCollection(strategy);
 }
 
 AgentStrategyInfo StrategySubSystem::ParseJsonScript(const String& content) {
@@ -133,7 +135,7 @@ bool StrategySubSystem::CreateStrategy(const String& name, const nlohmann::json&
 // }
 
 void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq) {
-    auto data = _handle->PrepareData({history.begin(), history.end()}, freq);
+    // auto data = _handle->PrepareData({history.begin(), history.end()}, freq);
 }
 
 void StrategySubSystem::DeleteStrategy(const String& name) {

@@ -12,6 +12,7 @@ class Server;
 class QNode;
 enum class DataFrequencyType;
 enum class StrategyType: char;
+enum class StatisticIndicator: char;
 
 // struct FeatureNode {
 //     String _type;
@@ -72,7 +73,7 @@ public:
 
     FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }
 
-    Map<symbol_t, Map<String, List<feature_t>>> GetIndicators(const String& strategy);
+    Map<StatisticIndicator, std::variant<float, List<float>>> GetIndicators(const String& strategy);
 private:
     AgentStrategyInfo ParseJsonScript(const String& content);
 
