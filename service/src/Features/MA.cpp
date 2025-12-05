@@ -17,7 +17,6 @@ EMAFeature::EMAFeature(const nlohmann::json& params) {
     }
     if (params.contains("scaler")) {
         String name = params["scaler"]["type"];
-        _scaler = CreateScaler(name, params["scaler"]);
     }
     _id = get_feature_id(desc(), params);
 }

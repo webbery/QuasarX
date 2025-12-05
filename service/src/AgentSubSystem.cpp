@@ -1,12 +1,10 @@
 #include "AgentSubSystem.h"
-#include "Metric/Sharp.h"
 #include "StrategyNode.h"
 #include "server.h"
 #include "Util/system.h"
 #include "StrategySubSystem.h"
 #include "json.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
-#include "std_header.h"
 #include "yas/serialize.hpp"
 #include "DataSource.h"
 #include <filesystem>
@@ -17,7 +15,9 @@
 #include "Nodes/SignalNode.h"
 #include <stdexcept>
 #include "RiskSubSystem.h"
-#include "Features/VWAP.h"
+
+#include "Metric/Return.h"
+#include "Metric/Sharp.h"
 
 namespace {
     class TestStrategy: public QStrategy {
@@ -83,7 +83,7 @@ void FlowSubsystem::Start(const String& strategy) {
     }
     flow._running = true;
     flow._worker = new std::thread([strategy, this]() {
-        DataContext context;
+        DataContext context(strategy, _handle);
         try {
             RegistIndicator(strategy);
 
@@ -100,6 +100,7 @@ void FlowSubsystem::Start(const String& strategy) {
             if (endNode) {
                 auto& cash_flow = endNode->GetReports();
                 flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
+                flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
             }
             // 结束通知
             flow._running = false;
@@ -233,12 +234,12 @@ bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, dou
 
 bool FlowSubsystem::GenerateSignal(symbol_t symbol, const DataFeatures& features) {
     float vwap = -1;
-    for (int i = 0; i < features._data.size(); ++i) {
-        if (features._names[i] == VWAPFeature::name()) {
-            vwap = std::get<double>(features._data[i]);
-            break;
-        }
-    }
+    // for (int i = 0; i < features._data.size(); ++i) {
+    //     if (features._names[i] == VWAPFeature::name()) {
+    //         vwap = std::get<double>(features._data[i]);
+    //         break;
+    //     }
+    // }
     return true;
     // return features._price < vwap || IsNearClose(symbol);
 }

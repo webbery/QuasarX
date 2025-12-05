@@ -14,4 +14,4 @@
  * 2. 计算每日收益率序列
  * 3. 根据模式计算不同维度的年化收益率
  */
-float annual_return_ratio(const crash_flow_t& flow, const DataContext& context, int mode = 0);
+float annual_return_ratio(const crash_flow_t& flow, const DataContext& context, int mode = 0, int window = YEAR_DAY);

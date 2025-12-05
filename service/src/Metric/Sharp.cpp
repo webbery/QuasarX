@@ -1,7 +1,7 @@
+#include "std_header.h"
 #include "Metric/Sharp.h"
 #include "Util/system.h"
 #include "DataGroup.h"
-#include "std_header.h"
 #include <algorithm>
 
 namespace {

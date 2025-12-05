@@ -41,3 +41,17 @@ double MA::average() {
     if (_count == 0) return 0.0;
     return _sum / _count;
 }
+
+EMA::EMA(short count, double alpha)
+:_alpha(alpha) {
+    _buffer.resize(count);
+}
+
+feature_t EMA::operator()(const Map<String, feature_t>& args) {
+    return 0.;
+}
+
+feature_t MACD::operator()(const Map<String, feature_t>& args) {
+
+    return 0.;
+}

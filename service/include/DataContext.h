@@ -3,10 +3,13 @@
 
 struct symbol_t;
 struct TradeReport;
+class Server;
 using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
 // 数据上下文，用于管理节点间传输的数据
 class DataContext {
 public:
+    DataContext(const String& strategy, Server* server);
+
     feature_t& get(const String& name);
     const feature_t& get(const String& name) const;
 

@@ -131,13 +131,13 @@ Set<String> GetAgentTypes() {
 
 QNode* generate_input_node(const String& id, Server* server) {
     auto node = new QuoteInputNode(server);
-    node->setName(id);
+    node->setID(atoi(id.c_str()));
     return node;
 }
 
 QNode* generate_operation_node(const String& id, Server* server) {
     auto node = new OperationNode;
-    node->setName(id);
+    node->setID(atoi(id.c_str()));
     // String operatorName = data["params"]["method"]["value"];
     // if (!node->parseFomula(lines)) {
     //     WARN("parse {} formula fail.", id);
@@ -148,14 +148,14 @@ QNode* generate_operation_node(const String& id, Server* server) {
 }
 
 QNode* generate_function_node(const String& id, Server* server) {
-    auto node = new FunctionNode();
-    node->setName(id);
+    auto node = new FunctionNode(server);
+    node->setID(atoi(id.c_str()));
     return node;
 }
 
 QNode* generate_signal_node(const String& strategyName, const String& id, Server* server) {
     auto node = new SignalNode(server);
-    node->setName(id);
+    node->setID(atoi(id.c_str()));
 
     auto brokerSystem = server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators(strategyName);
@@ -170,8 +170,8 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
     auto& nodes = content["graph"]["nodes"];
     auto& edges = content["graph"]["edges"];
     String strategyName = content["graph"]["id"];
-    Map<String, QNode*> nodeMap;
-    Map<String, nlohmann::json> nodeConfigMap;
+    Map<uint32_t, QNode*> nodeMap;
+    Map<uint32_t, nlohmann::json> nodeConfigMap;
     for (auto& node: nodes) {
         String node_type = node["data"]["nodeType"];
         QNode* nodeInstance = nullptr;
@@ -196,8 +196,8 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         if (!nodeInstance) {
             continue;
         }
-        nodeConfigMap[nodeInstance->name()] = std::move(node["data"]);
-        nodeMap[nodeInstance->name()] = nodeInstance;
+        nodeConfigMap[nodeInstance->id()] = std::move(node["data"]);
+        nodeMap[nodeInstance->id()] = nodeInstance;
         graph.push_back(nodeInstance);
     }
     // 构建连接关系
@@ -207,12 +207,12 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         String sourceHandle = edge["sourceHandle"];
         String targetHandle = edge["targetHandle"];
         
-        auto itr = nodeMap.find(from);
+        auto itr = nodeMap.find(atoi(from.c_str()));
         if (itr == nodeMap.end()) {
             WARN("node {} not exist", from);
             continue;
         }
-        auto next_itr = nodeMap.find(target);
+        auto next_itr = nodeMap.find(atoi(target.c_str()));
         if (next_itr == nodeMap.end()) {
             continue;
         }

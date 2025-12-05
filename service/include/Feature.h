@@ -1,7 +1,6 @@
 #pragma once
 #include "std_header.h"
 #include "json.hpp"
-#include "Features/Scaler.h"
 #include <cstddef>
 
 class Server;
@@ -60,9 +59,6 @@ class PrimitiveFeature: public IFeature {
 public:
     virtual FeatureType type() = 0;
     ~PrimitiveFeature() {
-        if (_scaler) {
-            delete _scaler;
-        }
     }
 
     bool isValid(const QuoteInfo& q);
@@ -71,7 +67,6 @@ protected:
     // 上一次数据的时间戳,如果同一个时间戳说明数据相同，不需要再次计算
     time_t _last = 0;
     feature_t _prevs;
-    IScaler* _scaler = nullptr;
 };
 
 template<typename... T>

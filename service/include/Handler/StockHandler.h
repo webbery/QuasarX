@@ -40,7 +40,6 @@ private:
       }
   };
 
-  bool LoadStock(DataFrame& df, const String& path); 
 };
 
 class StockDetailHandler : public HttpHandler {

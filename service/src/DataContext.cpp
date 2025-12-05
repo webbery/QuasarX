@@ -3,6 +3,10 @@
 #include <type_traits>
 #include <variant>
 
+DataContext::DataContext(const String& strategy, Server* server) {
+    // 初始化该策略的历史记录
+}
+
 feature_t& DataContext::get(const String& name) {
     return _outputs[name];
 }

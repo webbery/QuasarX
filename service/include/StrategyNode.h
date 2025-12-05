@@ -27,11 +27,11 @@ public:
      * @brief 返回输出结果在context中的输出名
      */
     virtual Map<String, ArgType> out_elements();
-    
+
+    virtual void UpdateLabel(const String& label) {}
     // const nlohmann::json& getParams() { return _params; }
     
-    String name() const { return _name; }
-    void setName(const String& name){ _name = name; }
+    void setID(const uint32_t name){ _id = name; }
 
     size_t in_degree() const { return _ins.size(); }
     size_t out_degree() const { return _outs.size(); }
@@ -39,9 +39,9 @@ public:
     const Edges& outs() const { return _outs; }
     const Edges& ins() const { return _ins; }
 
+    uint32_t id() { return _id; }
 protected:
-    String _name;
-    // nlohmann::json _params;
+    uint32_t _id;
     // key是handle名
     Edges _outs;
     Edges _ins;
