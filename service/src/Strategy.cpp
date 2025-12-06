@@ -167,9 +167,9 @@ QNode* generate_signal_node(const String& strategyName, const String& id, Server
 
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server) {
     List<QNode*> graph;
-    auto& nodes = content["graph"]["nodes"];
-    auto& edges = content["graph"]["edges"];
-    String strategyName = content["graph"]["id"];
+    auto& nodes = content["nodes"];
+    auto& edges = content["edges"];
+    String strategyName = content["id"];
     Map<uint32_t, QNode*> nodeMap;
     Map<uint32_t, nlohmann::json> nodeConfigMap;
     for (auto& node: nodes) {

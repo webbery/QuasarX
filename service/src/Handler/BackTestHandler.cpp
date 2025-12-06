@@ -28,7 +28,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.status = 400;
         return;
     }
-    String strategyName = script["graph"]["id"];
+    String strategyName = script["id"];
     auto strategySys = _server->GetStrategySystem();
     if (!std::filesystem::exists("scripts")) {
         res.status = 404;

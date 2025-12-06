@@ -284,7 +284,6 @@ class TestStrategy:
             kwargs['headers'] = {'Authorization': auth_token}
 
         script = {
-                "graph": {
                     "id": "graph_ma2",
                     "name": "双均线动量流水线",
                     "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
@@ -302,7 +301,7 @@ class TestStrategy:
                                         "options": ["股票", "期货"]
                                     },
                                     "code": {
-                                        "value": ["001318"],
+                                        "value": ["001201"],
                                         "type": "text"
                                     },
                                     "freq": {
@@ -382,7 +381,7 @@ class TestStrategy:
                                 "nodeType": "signal",
                                 "params": {
                                     "code": {
-                                        "value": ["001318"],
+                                        "value": ["001201"],
                                         "type": "text"
                                     },
                                     "buy": {
@@ -433,7 +432,6 @@ class TestStrategy:
                         }
                     ]
                 }
-            }
         
         kwargs['json'] = {
             "script": json.dumps(script, ensure_ascii=False)

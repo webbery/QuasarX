@@ -8,7 +8,7 @@
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.input }"></i>
         </div>
         <div class="components-list" v-show="openCategories.input">
-            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')" title="从外部获取数据，作为策略的基础输入">
                 <div class="component-title">数据源</div> 
             </div>
         </div>
@@ -22,9 +22,6 @@
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.output }"></i>
         </div>
         <div class="components-list" v-show="openCategories.output">
-            <div class="component-card output-node" draggable="true" @dragstart="onDragStart($event, 'index-output')">
-                <div class="component-title">指标输出<span class="component-desc">选择要输出的回测指标</span></div>
-            </div>
             <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')">
                 <div class="component-title">交易信号生成<span class="component-desc">将输入数据转换为买卖信号</span></div>
             </div>
@@ -109,15 +106,9 @@
                 <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'node-merge')">
                     <div class="component-title">合并节点</div>
                 </div>
-                <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'basic-index')">
-                    <div class="component-title">金融特征<span class="component-desc">Moving Avarage</span></div>
-                </div>
-                <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'normalization')">
-                        <div class="component-title">最小-最大归一化</div>
-                </div>
-                
-                <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'standard')">
-                    <div class="component-title">标准化</div>
+                <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'normalization')"
+                    title="包含一些常见函数如MA、RSI等金融特征及归一化计算">
+                    <div class="component-title">运算节点</div>
                 </div>
             </div>
         </div>

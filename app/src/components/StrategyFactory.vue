@@ -56,9 +56,9 @@
         </div>
 
         <!-- 回测结果面板 -->
-        <div v-show="activeTab === 'backtest'" class="backtest-panel">
+        <div v-if="activeTab === 'backtest'" class="backtest-panel">
             <!-- 报表区域 -->
-            <ReportView></ReportView>
+            <ReportView ref="reportViewRef"></ReportView>
         </div>
 
         <!-- 右键菜单 -->
@@ -86,11 +86,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted, provide, watch } from 'vue'
+import { ref, onMounted, computed, onUnmounted, provide, watch, nextTick } from 'vue'
 import { useVueFlow, VueFlow, MarkerType } from '@vue-flow/core'
+import { message } from '@/tool'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 import ReportView from './ReportView.vue'
+import axios from 'axios'
 
 const {
     fitView, 
@@ -114,6 +116,7 @@ const {
 const activeTab = ref('flow')
 const selectedNodes = ref([])
 const selectedEdges = ref([])
+const reportViewRef = ref(null)
 let nodeIdCounter = 10
 
 // 右键菜单状态
@@ -354,6 +357,11 @@ const keyMap = {
   "numTrades": "交易次数",
   "CalmarRatio": "卡玛比率",
   "InformationRatio": "信息比率",
+  "BacktestRange": "回测周期",
+  "freq": "频率",
+  "buy": "买入条件",
+  "sell": "卖出条件",
+  "1d": "日频",
   "VaR": "VaR",
   "ES": "ES",
 }
@@ -370,7 +378,7 @@ const nodeTypeConfigs = {
         "options": ["股票", "期货"]
       },
       "代码": {
-        "value": ["001038"],
+        "value": ["000001"],
         "type": "text"
       },
       "close": {
@@ -392,17 +400,6 @@ const nodeTypeConfigs = {
       "volume": {
         "value": "volume",
         "type": "text"
-      }
-    }
-  },
-  'index-output': {
-    "label": "结果输出",
-    "nodeType": "output",
-    "params": {
-      "输出指标": {
-        "value": ["夏普比率", "最大回撤", "总收益"],
-        "type": "multiselect",
-        "options": ["夏普比率", "最大回撤", "总收益", "年化收益", "胜率", "交易次数", "年化波动率", "信息比率"]
       }
     }
   },
@@ -493,7 +490,7 @@ const nodeTypeConfigs = {
 }
 
 // 修正数据格式，符合VueFlow要求
-const flow_data = {
+let flow_data = {
   "graph": {
     "id": "graph_ma2",
     "name": "双均线动量流水线",
@@ -514,6 +511,11 @@ const flow_data = {
             "代码": {
               "value": ["001038"],
               "type": "text"
+            },
+            "频率": {
+              "value": "日频",
+              "type": "select",
+              "options": ["日频", "6s"]
             },
             "close": {
               "value": "close"
@@ -539,7 +541,7 @@ const flow_data = {
         "type": "custom",
         "data": { 
           "label": "MA_5",
-          "nodeType": "operation",
+          "nodeType": "function",
           "params": {
             "方法": {
               "value": "MA",
@@ -560,7 +562,7 @@ const flow_data = {
         "type": "custom",
         "data": { 
           "label": "MA_15",
-          "nodeType": "operation",
+          "nodeType": "function",
           "params": {
             "方法": {
               "value": "MA",
@@ -581,12 +583,16 @@ const flow_data = {
         "type": "custom",
         "data": { 
           "label": "交易信号生成",
-          "nodeType": "operation",
+          "nodeType": "signal",
           "params": {
              "类型": {
               "value": "股票",
               "type": "select",
               "options":["股票", "期货", "期权"]
+            },
+            "代码": {
+              "value": "000012",
+              "type": "text",
             },
             "买入条件": {
               "value": "MA_5-MA_15 >= 0",
@@ -881,9 +887,37 @@ const deleteSelectedEdges = () => {
   clearEdgeSelection()
 }
 
-const runBacktest = () => {
+const runBacktest = async () => {
   // 获取当前图节点信息
+  const curGraph = {
+    "id": "graph_ma2",
+    "name": "双均线动量流水线",
+    "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
+    nodes: nodes.value,
+    edges: edges.value
+  }
+  let graph = JSON.stringify(curGraph)
+  // 替换中文
+  for (const key in keyMap) {
+    const src = keyMap[key]
+    graph = graph.replaceAll(src, key)
+  }
+  console.info('graph:', graph)
+  try {
+    const response = await axios.post('/v0/backtest', {script: graph})
+    console.info('backtest result:', response)
+  } catch (error) {
+    const exceptionWhat = error.response.headers['exception_what'] || 
+                           error.response.headers['EXCEPTION_WHAT'] ||
+                           error.response.headers['Exception-What']
+    message.error(`运行失败: ${exceptionWhat}`)
+  }
+  
 }
+
+defineExpose({
+  runBacktest
+})
 </script>
 <style scoped>
 /* 添加上下文菜单样式 */
@@ -982,10 +1016,6 @@ const runBacktest = () => {
     position: relative;
 }
 
-.backtest-panel {
-  scrollbar-width: thin;
-  scrollbar-color: var(--primary) transparent;
-}
 /* 自定义节点样式 */
 .vue-flow__node-custom {
     padding: 10px;
@@ -1077,6 +1107,9 @@ const runBacktest = () => {
     display: flex;
     padding: 20px;
     overflow-y: auto;
+    width: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) transparent;
 }
 
 .backtest-container {

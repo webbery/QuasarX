@@ -57,7 +57,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         auto& name = item.first;
         Vector<String> tokens;
         split(name, tokens, ".");
-        tokens.erase(tokens.end());
+        tokens.pop_back();
         symbols.insert(boost::algorithm::join(tokens, "."));
     }
 

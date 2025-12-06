@@ -61,6 +61,7 @@ _svr.Get(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
+    res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
     this->_handlers[api_name]->get(req, res);\
 })
 #define REGIST_PUT(api_name) \
@@ -69,6 +70,7 @@ _svr.Put(API_VERSION api_name, [this](const httplib::Request & req, httplib::Res
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
+    res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
     this->_handlers[api_name]->put(req, res);\
 })
 #define REGIST_POST(api_name) \
@@ -77,6 +79,7 @@ _svr.Post(API_VERSION api_name, [this](const httplib::Request & req, httplib::Re
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
+    res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
     this->_handlers[api_name]->post(req, res);\
 })
 #define REGIST_DEL(api_name) \
@@ -85,6 +88,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
     if (!JWTMiddleWare(req, res)) {\
         return;\
     }\
+    res.set_header("Access-Control-Expose-Headers", "EXCEPTION_WHAT");\
     this->_handlers[api_name]->del(req, res);\
 })
 
@@ -1355,5 +1359,6 @@ const ContractInfo& Server::GetSecurity(const String& symbol) {
                 return lower_itr->second;
         }
     }
-    throw std::runtime_error("not find symbol");
+    auto str = fmt::format("symbol {} not find", symbol);
+    throw std::runtime_error(str.c_str());
 }

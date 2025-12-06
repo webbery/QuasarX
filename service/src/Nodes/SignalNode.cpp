@@ -17,7 +17,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         WARN("parse buy express fail.");
         delete _buyParser;
         _buyParser = nullptr;
-        return false;
+        throw std::runtime_error("parse buy express fail.");
     }
     if (!_sellParser) {
         _sellParser = new FormulaParser(_server);
@@ -26,7 +26,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         WARN("parse sell express fail.");
         delete _sellParser;
         _sellParser = nullptr;
-        return false;
+        throw std::runtime_error("parse sell express fail.");
     }
     auto& operatorPool = config["params"]["code"]["value"];
     for (String code: operatorPool) {

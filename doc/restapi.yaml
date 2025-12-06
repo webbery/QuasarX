@@ -455,7 +455,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BacktestRequest"
+              type: object
+              properties:
+                script:
+                  type: string
+                  description: 策略图的json
+                  example: ""
       responses:
         '200':
           description: success
@@ -1308,23 +1313,6 @@ components:
           type: object
           description: 训练模式下的参数
           example: {}
-    
-    BacktestRequest:
-      type: object
-      properties:
-        script:
-          type: string
-          description: 策略,json格式描述的图
-          example: '{}'
-        tick:
-          type: string
-          description: 时间频率,1d-天,1h-小时,5m-5分钟,1m-1分钟,30s-30秒,15s-15秒,5s-5秒
-          example: 1d
-        static:
-          type: array
-          description: 统计信息
-          items:
-            $ref: "#/components/schemas/StatisticItem"
     
     StatisticItem:
       type: object
