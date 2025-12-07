@@ -70,25 +70,12 @@
     <div class="category">
         <div class="category-title" @click="toggleCategory('signal')">
             <i class="fas fa-download"></i>
-            <span>统计学节点</span>
-            <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.input }"></i>
-        </div>
-        <div class="components-list" v-show="openCategories.input">
-            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
-                <div class="component-title">统计检验</div> 
-            </div>
-        </div>
-    </div>
-
-    <div class="category">
-        <div class="category-title" @click="toggleCategory('signal')">
-            <i class="fas fa-download"></i>
             <span>因果推理节点</span>
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.input }"></i>
         </div>
         <div class="components-list" v-show="openCategories.input">
             <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
-                <div class="component-title">统计检验</div> 
+                <div class="component-title">HMM</div> 
             </div>
         </div>
     </div>
@@ -110,6 +97,16 @@
                     title="包含一些常见函数如MA、RSI等金融特征及归一化计算">
                     <div class="component-title">运算节点</div>
                 </div>
+            </div>
+        </div>
+        <div class="components-list" v-show="openCategories.input">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
+                <div class="component-title">统计检验</div> 
+            </div>
+        </div>
+        <div class="components-list" v-show="openCategories.input">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-python')">
+                <div class="component-title">python脚本</div> 
             </div>
         </div>
     </div>

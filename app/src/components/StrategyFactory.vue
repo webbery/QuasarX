@@ -1,5 +1,6 @@
 <template>
     <div class="main-container">
+      <div class="tab-header">
         <!-- 选项卡切换 -->
         <div class="tabs">
             <button 
@@ -19,70 +20,91 @@
                 回测结果
             </button>
         </div>
-
-        <!-- 流程图面板 -->
-        <div v-show="activeTab === 'flow'" class="flow-panel">
-            <div class="flow-container">
-                <VueFlow 
-                    :nodes="nodes" 
-                    :edges="edges"
-                    @pane-ready="onPaneReady"
-                    @drop="onDrop"
-                    @dragover="onDragOver"
-                    @node-context-menu="onNodeContextMenu"
-                    @edge-click="onEdgeClick"
-                    @selection-drag-start="onSelectionDragStart"
-                    @selection-drag="onSelectionDrag"
-                    @selection-drag-stop="onSelectionDragStop"
-                    @selection-context-menu="onSelectionContextMenu"
-                    @pane-click="onPaneClick"
-                    @connect="onConnect"
-                    :is-valid-connection="isValidConnection"
-                >
-                    <template #node-custom="nodeProps">
-                        <FlowNode :node="nodeProps" 
-                            @update-node="updateNodeData"
-                            @node-click="onNodeClick"
-                            @node-context-menu="onNodeContextMenu"
-                        />
-                    </template>
-                    
-                    <!-- 自定义连接线样式 -->
-                    <template #connection-line="connectionProps">
-                        <FlowConnectLine v-bind="connectionProps" />
-                    </template>
-                </VueFlow>
-            </div>
+      </div>
+      <!-- 流程图面板 -->
+      <div v-show="activeTab === 'flow'" class="flow-panel">
+        <div class="flow-container-wrapper">
+          <div class="flow-container">
+              <VueFlow 
+                  :nodes="nodes" 
+                  :edges="edges"
+                  @pane-ready="onPaneReady"
+                  @drop="onDrop"
+                  @dragover="onDragOver"
+                  @node-context-menu="onNodeContextMenu"
+                  @edge-click="onEdgeClick"
+                  @selection-drag-start="onSelectionDragStart"
+                  @selection-drag="onSelectionDrag"
+                  @selection-drag-stop="onSelectionDragStop"
+                  @selection-context-menu="onSelectionContextMenu"
+                  @pane-click="onPaneClick"
+                  @connect="onConnect"
+                  :is-valid-connection="isValidConnection"
+              >
+                  <template #node-custom="nodeProps">
+                      <FlowNode :node="nodeProps" 
+                          @update-node="updateNodeData"
+                          @node-click="onNodeClick"
+                          @node-context-menu="onNodeContextMenu"
+                      />
+                  </template>
+                  
+                  <!-- 自定义连接线样式 -->
+                  <template #connection-line="connectionProps">
+                      <FlowConnectLine v-bind="connectionProps" />
+                  </template>
+              </VueFlow>
+          </div>
+          <!-- 右下角功能按钮 -->
+          <div class="flow-actions">
+            <button class="action-btn" @click="newFlow" title="新建流程图">
+                <i class="fas fa-plus"></i>
+                新建
+            </button>
+            <button class="action-btn" @click="saveFlow" title="保存流程图">
+                <i class="fas fa-save"></i>
+                保存
+            </button>
+            <button class="action-btn" @click="reloadFlow" title="重新载入流程图">
+                <i class="fas fa-redo"></i>
+                重新载入
+            </button>
+            <!-- <button class="action-btn run-btn" @click="runBacktest" title="运行回测">
+                <i class="fas fa-play"></i>
+                运行回测
+            </button> -->
+          </div>
         </div>
+      </div>
 
-        <!-- 回测结果面板 -->
-        <div v-if="activeTab === 'backtest'" class="backtest-panel">
-            <!-- 报表区域 -->
-            <ReportView ref="reportViewRef"></ReportView>
-        </div>
+      <!-- 回测结果面板 -->
+      <div v-if="activeTab === 'backtest'" class="backtest-panel">
+          <!-- 报表区域 -->
+          <ReportView ref="reportViewRef"></ReportView>
+      </div>
 
-        <!-- 右键菜单 -->
-        <div 
-            v-if="contextMenu.visible" 
-            class="context-menu" 
-            :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
-            @click.stop
-        >
-            <div class="context-menu-item" @click="deleteSelectedNodes">
-                <i class="fas fa-trash"></i>
-                删除节点
-            </div>
-            <div class="context-menu-item" @click="duplicateSelectedNodes">
-                <i class="fas fa-copy"></i>
-                复制节点
-            </div>
-            <div class="context-menu-divider"></div>
-            <div class="context-menu-item" @click="clearSelection">
-                <i class="fas fa-times"></i>
-                取消选择
-            </div>
-        </div>
+      <!-- 右键菜单 -->
+      <div 
+          v-if="contextMenu.visible" 
+          class="context-menu" 
+          :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+          @click.stop
+      >
+          <div class="context-menu-item" @click="deleteSelectedNodes">
+              <i class="fas fa-trash"></i>
+              删除节点
+          </div>
+          <div class="context-menu-item" @click="duplicateSelectedNodes">
+              <i class="fas fa-copy"></i>
+              复制节点
+          </div>
+          <div class="context-menu-divider"></div>
+          <div class="context-menu-item" @click="clearSelection">
+              <i class="fas fa-times"></i>
+              取消选择
+          </div>
     </div>
+  </div>
 </template>
 
 <script setup>
@@ -117,6 +139,9 @@ const activeTab = ref('flow')
 const selectedNodes = ref([])
 const selectedEdges = ref([])
 const reportViewRef = ref(null)
+// localStorage 键名
+const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
+const LAST_BACKTEST_RESULT = 'last_backtest_result'
 let nodeIdCounter = 10
 
 // 右键菜单状态
@@ -151,6 +176,7 @@ const onKeyDown = (event) => {
 onMounted(() => {
     document.addEventListener('click', closeContextMenu)
     document.addEventListener('keydown', onKeyDown)
+    loadSavedFlow()
 })
 
 onUnmounted(() => {
@@ -490,7 +516,7 @@ const nodeTypeConfigs = {
 }
 
 // 修正数据格式，符合VueFlow要求
-let flow_data = {
+let initialFlowData  = {
   "graph": {
     "id": "graph_ma2",
     "name": "双均线动量流水线",
@@ -595,11 +621,11 @@ let flow_data = {
               "type": "text",
             },
             "买入条件": {
-              "value": "MA_5-MA_15 >= 0",
+              "value": "MA_5[t]>MA_15[t] and MA_5[t-1]<MA_15[t-1]",
               "type": "text"
             },
             "卖出条件": {
-              "value": "MA_5-MA_15 < 0",
+              "value": "MA_5[t]<MA_15[t] and MA_5[t-1]>MA_15[t-1]",
               "type": "text"
             },
             "初始资金": {
@@ -717,8 +743,8 @@ let flow_data = {
 }
 
 // 直接使用转换后的数据
-const nodes = ref(flow_data.graph.nodes)
-const edges = ref(flow_data.graph.edges)
+const nodes = ref(initialFlowData .graph.nodes)
+const edges = ref(initialFlowData .graph.edges)
 
 // 替换对象键名的辅助函数
 function replaceKeysInObject(obj, keyMapping) {
@@ -887,6 +913,116 @@ const deleteSelectedEdges = () => {
   clearEdgeSelection()
 }
 
+// 新建流程图
+const newFlow = () => {
+  if (confirm('确定要新建流程图吗？当前未保存的更改将会丢失。')) {
+    nodes.value = []
+    edges.value = []
+    nodeIdCounter = 1
+  }
+}
+// 保存流程图到localStorage
+const saveFlow = () => {
+  try {
+    const flowData = {
+      nodes: nodes.value,
+      edges: edges.value,
+      saveTime: new Date().toISOString()
+    }
+    console.info('save edges', edges.value)
+    localStorage.setItem(FLOW_STORAGE_KEY, JSON.stringify(flowData))
+    message.success('流程图已保存到本地存储')
+  } catch (error) {
+    console.error('保存流程图失败:', error)
+    message.error('保存流程图失败')
+  }
+}
+// 从localStorage加载保存的流程图
+const loadSavedFlow = () => {
+  try {
+    const savedData = localStorage.getItem(FLOW_STORAGE_KEY)
+    if (savedData) {
+      const parsedData = JSON.parse(savedData)
+      let loadedNodes = parsedData.nodes || []
+      let loadedEdges = parsedData.edges || []
+      // 首先清空现有数据
+      removeNodes(getNodes.value.map(n => n.id))
+      removeEdges(edges.value.map(e => e.id))
+
+      // 先添加节点，确保节点存在
+      addNodes(loadedNodes.map(node => ({
+        ...node,
+        // 确保节点类型正确
+        type: node.type || 'custom'
+      })))
+
+      // 更新节点计数器
+      if (loadedNodes.length > 0) {
+        const maxId = Math.max(...loadedNodes.map(node => parseInt(node.id) || 0))
+        nodeIdCounter = maxId + 1
+      }
+      // 然后添加边（使用 nextTick 确保节点已添加）
+      nextTick(() => {
+        // 验证并添加边
+        const validEdges = loadedEdges.filter(edge => {
+          const sourceExists = getNodes.value.some(n => n.id === edge.source)
+          const targetExists = getNodes.value.some(n => n.id === edge.target)
+          
+          if (!sourceExists || !targetExists) {
+            console.warn(`边 ${edge.id} 引用了不存在的节点: source=${edge.source}, target=${edge.target}`)
+            return false
+          }
+          return true
+        })
+        
+        addEdges(validEdges.map(edge => ({
+          ...edge,
+          // 确保边类型正确
+          type: edge.type || 'default',
+          // 确保 markerEnd 存在
+          markerEnd: edge.markerEnd || {
+            type: MarkerType.ArrowClosed,
+            color: 'var(--primary)',
+          },
+          // 确保 style 存在
+          style: edge.style || {
+            stroke: 'var(--primary)',
+            strokeWidth: 2,
+          }
+        })))
+        
+        message.success('已加载保存的流程图')
+        
+        // 重新适应视图
+        setTimeout(() => {
+          fitView({ padding: 0.25 })
+        }, 100)
+      })
+    } else {
+      // 如果没有保存的数据，使用初始数据
+      nodes.value = [...initialFlowData.graph.nodes]
+      edges.value = [...initialFlowData.graph.edges]
+    }
+  } catch (error) {
+    console.error('加载流程图数据失败:', error)
+    message.error('加载流程图数据失败')
+    // 出错时使用初始数据
+    nodes.value = [...initialFlowData.graph.nodes]
+    edges.value = [...initialFlowData.graph.edges]
+  }
+}
+
+// 重新载入流程图
+const reloadFlow = () => {
+  if (confirm('确定要重新载入上次保存的流程图吗？当前未保存的更改将会丢失。')) {
+    loadSavedFlow()
+    // 重新适应视图
+    setTimeout(() => {
+      fitView({ padding: 0.25 })
+    }, 100)
+  }
+}
+
 const runBacktest = async () => {
   // 获取当前图节点信息
   const curGraph = {
@@ -906,6 +1042,7 @@ const runBacktest = async () => {
   try {
     const response = await axios.post('/v0/backtest', {script: graph})
     console.info('backtest result:', response)
+    // localStorage.setItem(LAST_BACKTEST_RESULT, response)
   } catch (error) {
     const exceptionWhat = error.response.headers['exception_what'] || 
                            error.response.headers['EXCEPTION_WHAT'] ||
@@ -920,6 +1057,15 @@ defineExpose({
 })
 </script>
 <style scoped>
+  /* 头部容器样式 */
+.tab-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: var(--darker-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+}
 /* 添加上下文菜单样式 */
 .context-menu {
     position: fixed;
@@ -943,7 +1089,17 @@ defineExpose({
     color: var(--text);
     transition: background-color 0.2s ease;
 }
-
+/* 流程图操作按钮容器 */
+.flow-actions {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 1000;
+    pointer-events: auto;
+}
 .context-menu-item:hover {
     background-color: var(--primary);
     color: white;
@@ -966,12 +1122,53 @@ defineExpose({
     flex-direction: column;
     background-color: var(--dark-bg);
 }
+/* 功能按钮样式 */
+.action-buttons {
+    display: flex;
+    gap: 8px;
+}
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 10px 16px;
+    background: rgba(30, 33, 45, 0.85); /* 增加透明度 */
+    backdrop-filter: blur(10px); /* 添加毛玻璃效果 */
+    -webkit-backdrop-filter: blur(10px);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.1); /* 更细更透明的边框 */
+    border-radius: 8px; /* 稍微增加圆角 */
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    width: 110px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    opacity: 0.9; /* 整体透明度 */
+}
 
+.action-btn:hover {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(41, 98, 255, 0.3);
+    opacity: 1;
+}
+
+.action-btn:active {
+    transform: translateY(0);
+}
+
+.action-btn i {
+    font-size: 12px;
+}
 /* 选项卡样式 */
 .tabs {
     display: flex;
     background-color: var(--darker-bg);
     border-bottom: 1px solid var(--border);
+    flex: 1;
 }
 
 .tab-button {
@@ -1008,6 +1205,13 @@ defineExpose({
     border: 1px solid var(--border);
     overflow: hidden;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+/* 添加包装容器样式 */
+.flow-container-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  flex: 1;
 }
 
 .flow-container {
