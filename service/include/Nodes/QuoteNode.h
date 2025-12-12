@@ -5,6 +5,9 @@
 class Server;
 class QuoteInputNode : public QNode {
 public:
+    RegistClassName(QuoteInputNode);
+    static const nlohmann::json getParams();
+
     QuoteInputNode(Server* server);
 
     bool Init(const nlohmann::json& config);

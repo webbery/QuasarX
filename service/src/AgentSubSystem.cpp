@@ -15,25 +15,10 @@
 #include "Nodes/SignalNode.h"
 #include <stdexcept>
 #include "RiskSubSystem.h"
+#include "Nodes/ScriptNode.h"
 
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
-
-namespace {
-    class TestStrategy: public QStrategy {
-    public:
-        feature_t Process(const feature_t& input) {
-            if (_v < 0.5) {
-                _v = 1.0;
-            } else {
-                _v = 0.0;
-            }
-            return _v;
-        }
-    private:
-        double _v = 0.;
-    };
-}
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     _riskSystem = new RiskSubSystem(handle);
@@ -85,9 +70,11 @@ void FlowSubsystem::Start(const String& strategy) {
     flow._worker = new std::thread([strategy, this]() {
         DataContext context(strategy, _handle);
         try {
-            RegistIndicator(strategy);
-
             auto& flow = _flows[strategy];
+            if (IsUseShareMemory(flow)) {
+                context.EnableShareMemory(strategy);
+            }
+            
             uint64_t epoch = 0;
             while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
@@ -102,6 +89,9 @@ void FlowSubsystem::Start(const String& strategy) {
                 flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
                 flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
             }
+            for (auto node: flow._graph) {
+                node->Done(strategy);
+            }
             // 结束通知
             flow._running = false;
             INFO("backtest finish");
@@ -109,6 +99,16 @@ void FlowSubsystem::Start(const String& strategy) {
             WARN("invalid argument error: {}", e.what());
         }
     });
+}
+
+bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {
+    auto& graph = flow._graph;
+    for (auto node: graph) {
+        if (dynamic_cast<ScriptNode*>(node)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
@@ -119,6 +119,7 @@ Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
             return p->GetPool();
         }
     }
+    return Set<symbol_t>();
 }
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
@@ -137,26 +138,26 @@ void FlowSubsystem::RegistIndicator(const String& strategy) {
     broker->RegistIndicator(strategy, StatisticIndicator::Sharp);
 }
 
-void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-    if (strategy->isT0()) {
+// void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
+//     if (strategy->isT0()) {
 
-    }
-    else {
-        ProcessToday(strategyName, input);
-        PredictTomorrow(strategyName, strategy, input);
-    }
-}
+//     }
+//     else {
+//         ProcessToday(strategyName, input);
+//         PredictTomorrow(strategyName, strategy, input);
+//     }
+// }
 
-void FlowSubsystem::RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-    // process feature(daily or second)
-    //auto result = strategy->Process(input._data);
-    if (strategy->isT0()) {
+// void FlowSubsystem::RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
+//     // process feature(daily or second)
+//     //auto result = strategy->Process(input._data);
+//     if (strategy->isT0()) {
 
-    }
-    else {
+//     }
+//     else {
         
-    }
-}
+//     }
+// }
 
 void FlowSubsystem::ProcessToday(const String& strategy, const DataFeatures& data) {
     auto broker = _handle->GetBrokerSubSystem();
@@ -196,13 +197,13 @@ void FlowSubsystem::ProcessToday(const String& strategy, const DataFeatures& dat
     }
 }
 
-void FlowSubsystem::PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-    //auto result = strategy->Process(input._data);
-    auto broker = _handle->GetBrokerSubSystem();
-    //auto value = std::get<double>(result);
-    //int op = value > 0.5? (int)ContractOperator::Buy : (int)ContractOperator::Sell;
-    //broker->PredictWithDays(input._symbol, 1, op);
-}
+// void FlowSubsystem::PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
+//     //auto result = strategy->Process(input._data);
+//     auto broker = _handle->GetBrokerSubSystem();
+//     //auto value = std::get<double>(result);
+//     //int op = value > 0.5? (int)ContractOperator::Buy : (int)ContractOperator::Sell;
+//     //broker->PredictWithDays(input._symbol, 1, op);
+// }
 
 bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type) {
     auto broker = _handle->GetBrokerSubSystem();

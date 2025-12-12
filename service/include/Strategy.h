@@ -1,6 +1,6 @@
 #pragma once
 #include "std_header.h"
-#include "StrategyNode.h"
+#include "json.hpp"
 
 #define BASIC_NAME  "Basic"
 
@@ -53,31 +53,23 @@ public:
 };
 
 enum class StrategyNodeType {
-    Input,
-    Operation,
+    Input,      // 输入节点
     Function,
-    Output,
     Signal,
-    Feature
-};
-
-class QStrategy: public QNode {
-public:
-    QStrategy();
-
-    virtual List<QNode*> Process(const List<QNode*>& input);
-
-    void setT0(bool yes) { _isT0 = yes; }
-    bool isT0() { return _isT0; }
-
-protected:
-    bool _isT0;
+    Feature,
+    Script,
+    LSTM,
+    BOOST,
+    NARX,
+    Debug,
+    Stack,
 };
 
 struct AgentStrategyInfo;
 // AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);
 
 class Server;
+class QNode;
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server);
 // 对输入的有向图节点作topo排序，返回排序后的节点
 List<QNode*> topo_sort(const List<QNode*>& graph);

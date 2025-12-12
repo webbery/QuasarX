@@ -12,8 +12,6 @@ public:
   StrategyHandler(Server* server);
   ~StrategyHandler();
 
-  virtual void doWork(const std::vector<std::string>& params);
-
   virtual void get(const httplib::Request& req, httplib::Response& res);
   virtual void post(const httplib::Request& req, httplib::Response& res);
 
@@ -33,4 +31,11 @@ private:
     nng_socket sock;
 
     std::thread* _main;
+};
+
+class StratefyNodesHandler: public HttpHandler {
+public:
+  StratefyNodesHandler(Server* server);
+
+  virtual void get(const httplib::Request& req, httplib::Response& res);
 };

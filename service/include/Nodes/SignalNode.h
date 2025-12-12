@@ -8,6 +8,9 @@ class Server;
 // 构建买入/卖出信号
 class SignalNode: public QNode {
 public:
+    RegistClassName(SignalNode);
+    static const nlohmann::json getParams();
+
     SignalNode(Server* server);
     ~SignalNode();
 

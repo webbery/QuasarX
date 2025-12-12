@@ -105,6 +105,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_PORTFOLIO       "/portfolio"
 #define API_COMMISSION      "/commission"
 #define API_STRATEGY        "/strategy"
+#define API_STRATEGY_NODES  "/strategy/nodes"
 #define API_BACKTEST        "/backtest"
 #define API_INDEX           "/index/quote"
 #define API_MONTECARLO      "/predict/montecarlo"
@@ -262,6 +263,7 @@ void Server::Regist() {
     REGIST_GET(API_TRADE_ORDER);
     REGIST_GET(API_USER_FUNDS);
     REGIST_GET(API_POSITION);
+    REGIST_GET(API_STRATEGY_NODES);
     
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
@@ -1071,6 +1073,7 @@ void Server::InitHandlers() {
     RegistHandler(API_ALL_FUTURE, FutureHandler);
     RegistHandler(API_ALL_OPTION, OptionHandler);
     RegistHandler(API_STRATEGY, StrategyHandler);
+    RegistHandler(API_STRATEGY_NODES, StratefyNodesHandler);
     RegistHandler(API_INDEX, IndexHandler);
     RegistHandler(API_BACKTEST, BackTestHandler);
     RegistHandler(API_PREDICT_OPR, PredictionHandler);

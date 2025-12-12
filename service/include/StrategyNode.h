@@ -3,6 +3,8 @@
 #include "json.hpp"
 #include <functional>
 
+#define RegistClassName(clsName) static String className() { return #clsName; }
+
 class ICallable;
 
 enum ArgType {
@@ -23,13 +25,13 @@ public:
         _outs.insert({from, next});
         next->_ins.insert({to, this});
     }
+    virtual void Done(const String& strategy) {}
     /**
      * @brief 返回输出结果在context中的输出名
      */
     virtual Map<String, ArgType> out_elements();
 
     virtual void UpdateLabel(const String& label) {}
-    // const nlohmann::json& getParams() { return _params; }
     
     void setID(const uint32_t name){ _id = name; }
 
@@ -45,17 +47,4 @@ protected:
     // key是handle名
     Edges _outs;
     Edges _ins;
-};
-
-class OperationNode: public QNode {
-public:
-    virtual bool Init(const nlohmann::json& config);
-
-    virtual bool Process(const String& strategy, DataContext& context);
-
-    // 解析表达式，构建函数对象
-    bool parseFomula(const String& formulas);
-
-private:
-    std::function<void ()> _callable;
 };

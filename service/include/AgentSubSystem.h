@@ -33,13 +33,13 @@ public:
     
     Set<symbol_t> GetPools(const String& strategy);
 private:
-    void RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
+    // void RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
-    void RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
+    // void RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
     void ProcessToday(const String& strategy, const DataFeatures& symbol);
 
-    void PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
+    // void PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input);
 
     bool ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type);
     bool ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type);
@@ -56,6 +56,7 @@ private:
 
     void RegistIndicator(const String& strategy);
 
+    bool IsUseShareMemory(const StrategyFlowInfo& flow);
 private:
     Server* _handle;
     RiskSubSystem* _riskSystem = nullptr;
@@ -65,7 +66,6 @@ private:
         std::thread* _worker = nullptr;
         nlohmann::json _config;
 
-        QStrategy* _strategy = nullptr;
         char _future = 0;
         Map<StatisticIndicator, std::variant<float, List<float>>> _collections;
         Map<String, PrimitiveFeature*> _featureCalculator;

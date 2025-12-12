@@ -4,6 +4,7 @@
 #include <exception>
 #include <stdexcept>
 #include <unordered_map>
+#include "boost/algorithm/string.hpp"
 #include "Bridge/SIM/SIMExchange.h"
 #include "Bridge/exchange.h"
 #include "StrategyNode.h"
@@ -14,24 +15,19 @@
 #include "Nodes/QuoteNode.h"
 #include "Nodes/FunctionNode.h"
 #include "Nodes/SignalNode.h"
-#include "boost/algorithm/string.hpp"
+#include "Nodes/NeuralNetworkNode.h"
+#include "Nodes/DebugNode.h"
+#include "Nodes/ScriptNode.h"
+#include "Nodes/StackNode.h"
 
 namespace {
-    Map<String, SignalGeneratorType> agent_types{
-        {"XGBOOST", SignalGeneratorType::XGBoost},
-        {"ONNX", SignalGeneratorType::NeuralNetwork},
-        {"LSTM", SignalGeneratorType::NeuralNetwork},
-        {"CNN", SignalGeneratorType::NeuralNetwork},
-        {"FTMIX", SignalGeneratorType::FeatureMixed}
-    };
-
     Map<String, StrategyNodeType> node_type_map{
         {"input", StrategyNodeType::Input},
-        {"output", StrategyNodeType::Output},
-        {"operation", StrategyNodeType::Operation},
+        {"lstm", StrategyNodeType::LSTM},
         {"function", StrategyNodeType::Function},
         {"feature", StrategyNodeType::Feature},
         {"signal", StrategyNodeType::Signal},
+        {"debug", StrategyNodeType::Debug},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -46,104 +42,9 @@ namespace {
     };
 }
 
-Set<String> GetAgentTypes() {
-    Set<String> types;
-    std::for_each(agent_types.begin(), agent_types.end(), [&types](auto&& item) {
-        types.insert(item.first);
-    });
-    return types;
-}
-
-// AgentStrategyInfo parse_strategy_script(const nlohmann::json& content) {
-//     AgentStrategyInfo si;
-//     Set<String> basicTypes{"open", "close", "high", "low", "volume", "turnover"};
-//     try {
-//         auto& strategy = content["strategy"];
-//         // si._name = (String)strategy["name"];
-//         si._future = (int)strategy["level"];
-//         std::for_each(strategy["pool"].begin(), strategy["pool"].end(), [&si](auto&& item) {
-//             si._pool.emplace_back((String)item);
-//         });
-//         auto& nodes = content["nodes"];
-//         Map<String, FeatureNode*> feature_map;
-//         for (auto& node: nodes) {
-//             String category = node["category"];
-//             if (category == "feature" || category == "normal") {
-//                 FeatureNode* fi = new FeatureNode;
-//                 fi->_type = (String)node["type"];
-//                 if (node.contains("params")) {
-//                     fi->_params = node["params"];
-//                 }
-//                 else if (basicTypes.count(fi->_type)) {
-//                     fi->_params = fi->_type;
-//                     fi->_type = BASIC_NAME;
-//                 }
-//                 if (category == "feature") {
-//                     si._features.emplace_back(fi);
-//                 }
-//                 feature_map[(String)node["id"]] = fi;
-//             }
-//             else if (category == "agent") {
-//                 AgentNode ai;
-//                 if (node.contains("class_count")) {
-//                     ai._classes = (int)node["class_count"];
-//                 } else {
-//                     ai._classes = 0;
-//                 }
-//                 ai._type = agent_types[node["type"]];
-//                 if (ai._type == SignalGeneratorType::Unknow) {
-//                     WARN("unsupport agent type: {}", (String)node["type"]);
-//                 }
-//                 if (node.contains("params")) {
-//                     ai._params = node["params"];
-//                 }
-//                 ai._modelpath = (String)node["model"];
-//                 si._agents.emplace_back(ai);
-//             }
-//             else if (category == "strategy") {
-//                 auto type = (String)node["type"];
-//                 if (type == "interday") {
-//                     si._strategy = StrategyType::ST_InterDay;
-//                 }
-//                 else if (type == "intraday") {
-//                     si._strategy = StrategyType::ST_IntraDay;
-//                 }
-//                 else {
-//                     si._strategy = StrategyType::ST_Unknow;
-//                 }
-//             }
-//         }
-//         auto& edges = content["edges"];
-//         for (auto& edge: edges) {
-//             String from = edge["source"];
-//             String to = edge["target"];
-//             if (feature_map.count(from) == 0 || feature_map.count(to) == 0)
-//                 continue;
-//             auto feat = feature_map[from];
-//             auto next = feature_map[to];
-//             feat->_nexts.insert(next);
-//         }
-//     } catch(const nlohmann::json::exception& e) {
-//         WARN("parse script fail: {}", e.what());
-//     }
-//     return si;
-// }
-
 QNode* generate_input_node(const String& id, Server* server) {
     auto node = new QuoteInputNode(server);
     node->setID(atoi(id.c_str()));
-    return node;
-}
-
-QNode* generate_operation_node(const String& id, Server* server) {
-    auto node = new OperationNode;
-    node->setID(atoi(id.c_str()));
-    // String operatorName = data["params"]["method"]["value"];
-    // if (!node->parseFomula(lines)) {
-    //     WARN("parse {} formula fail.", id);
-    //     delete node;
-    //     return nullptr;
-    // }
     return node;
 }
 
@@ -165,6 +66,20 @@ QNode* generate_signal_node(const String& strategyName, const String& id, Server
     return node;
 }
 
+template<typename T>
+QNode* generate_node(const String& id) {
+    auto node = new T();
+    node->setID(atoi(id.c_str()));
+    return node;
+}
+
+template<typename T>
+QNode* generate_node(const String& id, Server* server) {
+    auto node = new T(server);
+    node->setID(atoi(id.c_str()));
+    return node;
+}
+
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server) {
     List<QNode*> graph;
     auto& nodes = content["nodes"];
@@ -182,14 +97,24 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Feature:
             break;
-        case StrategyNodeType::Operation:
-            nodeInstance = generate_operation_node(node["id"], server);
+        case StrategyNodeType::LSTM:
+            nodeInstance = generate_node<LSTMNode>(node["id"]);
             break;
         case StrategyNodeType::Function:
             nodeInstance = generate_function_node(node["id"],  server);
             break;
         case StrategyNodeType::Signal:
             nodeInstance = generate_signal_node(strategyName, node["id"], server);
+            break;
+        case StrategyNodeType::Debug:
+            nodeInstance = generate_node<DebugNode>(node["id"], server);
+            break;
+        case StrategyNodeType::Script:
+            nodeInstance = generate_node<ScriptNode>(node["id"]);
+            break;
+        case StrategyNodeType::Stack:
+            nodeInstance = generate_node<StackNode>(node["id"]);
+            break;
         default:
             break;
         }

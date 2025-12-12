@@ -9,21 +9,18 @@ using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
 class DataContext {
 public:
     DataContext(const String& strategy, Server* server);
+    ~DataContext();
 
     feature_t& get(const String& name);
     const feature_t& get(const String& name) const;
 
-    void set(const String& name, const feature_t& f) {
-        _outputs[name] = f;
-    }
+    void set(const String& name, const feature_t& f);
 
     void add(const String& name, feature_t value);
 
     bool exist(const String& name);
 
-    void erase(const String& name) {
-        _outputs.erase(name);
-    }
+    void erase(const String& name);
     
     void SetEpoch(uint64_t epoch) {
         _epoch = epoch;
@@ -36,6 +33,11 @@ public:
     void SetTime(time_t t);
     const List<time_t>& GetTime() const;
     time_t Current();
+
+    void EnableShareMemory(const String& name) {}
+
+private:
+    
 private:
     uint64_t _epoch = 0;
     List<time_t> _times;

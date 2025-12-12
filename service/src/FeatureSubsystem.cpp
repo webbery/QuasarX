@@ -12,15 +12,13 @@
 #include <variant>
 #include "Features/MA.h"
 #include "Features/VWAP.h"
-#include "Features/Basic.h"
 #include "Features/ATR.h"
 
 using FeatureFactory = TypeFactory<
     ATRFeature,
     EMAFeature,
     MACDFeature,
-    VWAPFeature,
-    BasicFeature
+    VWAPFeature
 >;
 
 bool PrimitiveFeature::isValid(const QuoteInfo& q) {

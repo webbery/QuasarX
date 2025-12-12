@@ -25,237 +25,203 @@ class TestStrategy:
         }
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
-        kwargs['json'] = {
-            "script": """{
-                "graph": {
-                    "id": "graph_001",
-                    "name": "机器学习流水线",
-                    "description": "包含数据输入、预处理、特征工程、模型训练和结果输出的完整流水线",
-                    "nodes": [
-                    {
-                        "id": "1",
-                        "type": "custom",
-                        "data": { 
-                            "label": "数据输入",
-                            "nodeType": "input",
-                            "params": {
-                                "source": {
-                                    "value": "股票",
-                                    "type": "select",
-                                    "options": ["股票", "期货", "期权"]
-                                },
-                                "code": {
-                                    "value": ["001038"],
-                                    "type": "text"
-                                },
-                                "formula": {
-                                    "value": "price=MA(close,5)",
-                                    "type": "text"
-                                }
-                            }
+        script = {
+            "id": "graph_001",
+            "name": "机器学习流水线",
+            "description": "包含数据输入、预处理、特征工程、模型训练和结果输出的完整流水线",
+            "nodes": [
+            {
+                "id": "1",
+                "type": "custom",
+                "data": { 
+                    "label": "数据输入",
+                    "nodeType": "input",
+                    "params": {
+                        "source": {
+                            "value": "股票",
+                            "type": "select",
+                            "options": ["股票", "期货", "期权"]
                         },
-                        "position": { "x": 50, "y": 100 }
-                    },
-                    {
-                        "id": "2",
-                        "type": "custom",
-                        "data": { 
-                        "label": "数据预处理",
-                        "nodeType": "operation",
-                        "params": {
-                            "方法": {
-                            "value": "Z-score",
-                            "type": "select",
-                            "options": ["Z-score", "Min-Max", "标准化", "归一化"]
-                            },
-                            "缺失值": {
-                            "value": "填充",
-                            "type": "select",
-                            "options": ["填充", "删除", "插值"]
-                            },
-                            "填充值": {
-                            "value": "0",
-                            "type": "text",
-                            "visible": false
-                            }
-                        }
-                        },
-                        "position": { "x": 300, "y": 100 }
-                    },
-                    {
-                        "id": "3",
-                        "type": "custom",
-                        "data": { 
-                        "label": "特征工程",
-                        "nodeType": "feature",
-                        "params": {
-                            "特征选择": {
-                            "value": "是",
-                            "type": "select",
-                            "options": ["是", "否"]
-                            },
-                            "降维": {
-                            "value": "PCA",
-                            "type": "select",
-                            "options": ["PCA", "LDA", "t-SNE", "无"]
-                            },
-                            "特征数量": {
-                            "value": "10",
-                            "type": "number",
-                            "min": 1,
-                            "max": 100
-                            }
-                        }
-                        },
-                        "position": { "x": 550, "y": 100 }
-                    },
-                    {
-                        "id": "4",
-                        "type": "custom",
-                        "data": { 
-                        "label": "模型训练(XGBoost)",
-                        "nodeType": "operation",
-                        "params": {
-                            "算法": {
-                            "value": "XGBoost",
-                            "type": "select",
-                            "options": ["XGBoost", "Random Forest", "SVM", "神经网络", "逻辑回归"]
-                            },
-                            "objective": {
-                            "value": "binary:logistic",
-                            "type": "select",
-                            "options": ["binary:logistic", "reg:linear", "multi:softmax"]
-                            },
-                            "eval_metric": {
-                            "value": "logloss",
-                            "type": "select",
-                            "options": ["logloss", "error", "auc"]
-                            },
-                            "max_depth": {
-                            "value": 3,
-                            "type": "number",
-                            "min": 1,
-                            "max": 10
-                            },
-                            "eta": {
-                            "value": 0.0001,
-                            "type": "number",
-                            "step": 0.0001,
-                            "min": 0,
-                            "max": 1
-                            },
-                            "迭代次数": {
-                            "value": 100,
-                            "type": "number",
-                            "min": 1,
-                            "max": 1000
-                            }
-                        }
-                        },
-                        "position": { "x": 800, "y": 50 }
-                    },
-                    {
-                        "id": "6",
-                        "type": "custom",
-                        "data": { 
-                        "label": "模型训练(LSTM)",
-                        "nodeType": "operation",
-                        "params": {
-                            "算法": {
-                            "value": "LSTM",
-                            "type": "select",
-                            "options": ["LSTM", "GRU", "RNN", "Transformer"]
-                            },
-                            "objective": {
-                            "value": "binary:logistic",
-                            "type": "select",
-                            "options": ["binary:logistic", "regression", "classification"]
-                            },
-                            "input": {
-                            "value": 5,
-                            "type": "number",
-                            "min": 1,
-                            "max": 100
-                            },
-                            "迭代次数": {
-                            "value": 100,
-                            "type": "number",
-                            "min": 1,
-                            "max": 1000
-                            }
-                        }
-                        },
-                        "position": { "x": 800, "y": 150 }
-                    },
-                    {
-                        "id": "5",
-                        "type": "custom",
-                        "data": { 
-                        "label": "结果输出",
-                        "nodeType": "output",
-                        "params": {
-                            "格式": {
-                            "value": "CSV",
-                            "type": "select",
-                            "options": ["CSV", "JSON", "数据库", "实时推送"]
-                            },
-                            "路径": {
-                            "value": "/data/output.csv",
+                        "code": {
+                            "value": ["000001"],
                             "type": "text"
-                            }
-                        }
                         },
-                        "position": { "x": 1050, "y": 100 }
+                        "freq": {
+                            "value": "1d",
+                            "type": "select",
+                            "options": ["1d", "5m"]
+                        },
                     }
-                    ],
-                    "edges": [
-                    {
-                        "id": "e1->2",
-                        "source": "1",
-                        "target": "2",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
+                },
+                "position": { "x": 50, "y": 100 }
+            },
+            {
+                "id": "2",
+                "type": "custom",
+                "data": { 
+                "label": "MinMax",
+                "nodeType": "function",
+                "params": {
+                    "method": {
+                        "value": "MinMax",
+                        "type": "select",
+                        "options": ["Z-score", "MinMax", "标准化", "归一化"]
                     },
-                    {
-                        "id": "e2->3",
-                        "source": "2",
-                        "target": "3",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
+                    "缺失值": {
+                    "value": "填充",
+                    "type": "select",
+                    "options": ["填充", "删除", "插值"]
                     },
-                    {
-                        "id": "e3->4",
-                        "source": "3",
-                        "target": "4",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    },
-                    {
-                        "id": "e3->6",
-                        "source": "3",
-                        "target": "6",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
-                    },
-                    {
-                        "id": "e4->5",
-                        "source": "4",
-                        "target": "5",
-                        "sourceHandle": "output",
-                        "targetHandle": "input",
-                        "type": "default"
+                    "填充值": {
+                    "value": "0",
+                    "type": "text",
+                    "visible": False
                     }
-                    ]
                 }
-            }""",
-            "tick": "1d",
-            "static": [
-                {"name": "sharp"}
+                },
+                "position": { "x": 300, "y": 100 }
+            },
+            # {
+            #     "id": "3",
+            #     "type": "custom",
+            #     "data": { 
+            #     "label": "特征工程",
+            #     "nodeType": "feature",
+            #     "params": {
+            #         "特征选择": {
+            #         "value": "是",
+            #         "type": "select",
+            #         "options": ["是", "否"]
+            #         },
+            #         "降维": {
+            #         "value": "PCA",
+            #         "type": "select",
+            #         "options": ["PCA", "LDA", "t-SNE", "无"]
+            #         },
+            #         "特征数量": {
+            #         "value": "10",
+            #         "type": "number",
+            #         "min": 1,
+            #         "max": 100
+            #         }
+            #     }
+            #     },
+            #     "position": { "x": 550, "y": 100 }
+            # },
+            # {
+            #     "id": "4",
+            #     "type": "custom",
+            #     "data": { 
+            #     "label": "模型训练(XGBoost)",
+            #     "nodeType": "operation",
+            #     "params": {
+            #         "算法": {
+            #         "value": "XGBoost",
+            #         "type": "select",
+            #         "options": ["XGBoost", "Random Forest", "SVM", "神经网络", "逻辑回归"]
+            #         },
+            #         "objective": {
+            #         "value": "binary:logistic",
+            #         "type": "select",
+            #         "options": ["binary:logistic", "reg:linear", "multi:softmax"]
+            #         },
+            #         "eval_metric": {
+            #         "value": "logloss",
+            #         "type": "select",
+            #         "options": ["logloss", "error", "auc"]
+            #         },
+            #         "max_depth": {
+            #         "value": 3,
+            #         "type": "number",
+            #         "min": 1,
+            #         "max": 10
+            #         },
+            #         "eta": {
+            #         "value": 0.0001,
+            #         "type": "number",
+            #         "step": 0.0001,
+            #         "min": 0,
+            #         "max": 1
+            #         },
+            #         "迭代次数": {
+            #         "value": 100,
+            #         "type": "number",
+            #         "min": 1,
+            #         "max": 1000
+            #         }
+            #     }
+            #     },
+            #     "position": { "x": 800, "y": 50 }
+            # },
+            {
+                "id": "6",
+                "type": "custom",
+                "data": { 
+                "label": "LSTM",
+                "nodeType": "lstm",
+                "params": {
+                    "model": {
+                        "value": "/root/lstm_model.onnx",
+                        "type": "text"
+                    },
+                    "input": {
+                        "value": 10,
+                        "type": "number"
+                    },
+                    "step": {
+                        "value": 5,
+                        "type": "number"
+                    }
+                }
+                },
+                "position": { "x": 800, "y": 150 }
+            },
+            {
+                "id": "5",
+                "type": "custom",
+                "data": { 
+                "label": "结果输出",
+                "nodeType": "debug",
+                "params": {
+                    "下载格式": {
+                    "value": "CSV",
+                    "type": "select",
+                    "options": ["CSV", "JSON", "txt"]
+                    }
+                }
+                },
+                "position": { "x": 1050, "y": 100 }
+            }
+            ],
+            "edges": [
+            {
+                "id": "1-close->2",
+                "source": "1",
+                "target": "2",
+                "sourceHandle": "field-close",
+                "targetHandle": "input",
+                "type": "default"
+            },
+            {
+                "id": "2->6",
+                "source": "2",
+                "target": "6",
+                "sourceHandle": "output",
+                "targetHandle": "input",
+                "type": "default"
+            },
+            {
+                "id": "6->5",
+                "source": "6",
+                "target": "5",
+                "sourceHandle": "output",
+                "targetHandle": "input",
+                "type": "default"
+            }
             ]
+        }
+        kwargs['json'] = {
+            "script": json.dumps(script, ensure_ascii=False)
         }
         response = requests.post(f"{BASE_URL}/backtest", **kwargs)
         data = check_response(response)

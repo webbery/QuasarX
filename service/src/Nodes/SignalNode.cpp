@@ -110,3 +110,7 @@ SignalNode::~SignalNode() {
         delete _sellParser;
     }
 }
+
+const nlohmann::json SignalNode::getParams() {
+    return {"buy", "sell", "code"};
+}

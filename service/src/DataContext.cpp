@@ -3,6 +3,8 @@
 #include <type_traits>
 #include <variant>
 
+DataContext::~DataContext() {}
+
 DataContext::DataContext(const String& strategy, Server* server) {
     // 初始化该策略的历史记录
 }
@@ -22,9 +24,9 @@ void DataContext::add(const String& name, feature_t value) {
             auto itr = _outputs.find(name);
             if (itr == _outputs.end()) {
                 _outputs[name] = Vector<T>{std::get<T>(value)};
-            } else { [[likely]]
-                std::get<Vector<T>>(itr->second).push_back(std::get<T>(value));
-            }
+                } else { [[likely]]
+                    std::get<Vector<T>>(itr->second).push_back(std::get<T>(value));
+                }
         }
         else {
             set(name, value);
@@ -34,6 +36,14 @@ void DataContext::add(const String& name, feature_t value) {
 
 bool DataContext::exist(const String& name) {
     return _outputs.contains(name);
+}
+
+void DataContext::erase(const String& name) {
+    _outputs.erase(name);
+}
+
+void DataContext::set(const String& name, const feature_t& f) {
+    _outputs[name] = f;
 }
 
 void DataContext::SetTime(time_t t) {

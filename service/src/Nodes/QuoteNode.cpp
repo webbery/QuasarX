@@ -124,3 +124,7 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
     }
     return names;
 }
+
+const nlohmann::json QuoteInputNode::getParams() {
+    return {"code", "freq"};
+}

@@ -5,15 +5,73 @@
 #include "server.h"
 #include "boost/algorithm/string/join.hpp"
 #include "boost/algorithm/string/replace.hpp"
+#include "boost/core/span.hpp"
 #include "Function/Function.h"
 #include "Function/Normalization.h"
 #include "Util/finance.h"
 #include <algorithm>
+#include <stdexcept>
 
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
-List<String> FunctionNode::GetNames() {
-    return {"MA", "MinMax"};
+namespace {
+    Map<String, std::function<ICallable* (const FunctionNode&, const nlohmann::json&)>> intrinsic_functions{
+        {"MA", [] (const FunctionNode& node, const nlohmann::json& config) {
+            int cnt = config["params"]["smoothTime"]["value"];
+            return new MA(cnt);
+        }},
+        {"MinMax", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            // 根据输入节点的要素，获取上下限
+            for (auto& item: node.ins()) {
+                auto outs = item.second->out_elements();
+                auto& key = outs.begin()->first;
+                Vector<String> tokens;
+                split(key, tokens, ".");
+                boost::span<String> spanview(tokens);
+                // TODO: 此时数据未准备,需要自行加载,找到最大最小值
+                auto symbol = to_symbol(boost::algorithm::join(spanview.subspan(0, 2), "."));
+                auto& cgf = node.GetServer()->GetConfig();
+                DataFrame df;
+                if (is_stock(symbol)) {
+                    String path = cgf.GetDatabasePath() + "/A_hfq/" + spanview[1] + "_hist_data.csv";
+                    if (!LoadStockQuote(df, path)) {
+                        String info = fmt::format("stock csv {} not exist.", path);
+                        INFO("{}", info);
+                        throw std::runtime_error(info.c_str());
+                    }
+                }
+                else {
+                    
+                }
+                
+                auto& data = df.get_column<double>(spanview[2].c_str());
+                auto upper = *std::max_element(data.begin(), data.end());
+                auto lower = *std::min_element(data.begin(), data.end());
+                return new MinMax(lower, upper);
+            }
+            return nullptr;
+        }},
+        {"Z-score", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            return nullptr;
+        }},
+        {"ATR", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            return nullptr;
+        }},
+        {"VWAP", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            return nullptr;
+        }},
+        {"RSI", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            return nullptr;
+        }},
+    };
+}
+
+List<String> GetAllFunctionNames() {
+    List<String> names;
+    for (auto& item: intrinsic_functions) {
+        names.push_back(item.first);
+    }
+    return names;
 }
 
 List<String> FunctionNode::GetParams(const String& name) {
@@ -62,34 +120,12 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     }
 
     String name = config["params"]["method"]["value"];
-    if (name == "MA") {
-        int cnt = config["params"]["smoothTime"]["value"];
-        _callable = new MA(cnt);
+    auto itr = intrinsic_functions.find(name);
+    if (itr == intrinsic_functions.end()) {
+        String info = fmt::format("function {} not implement.", name);
+        throw std::runtime_error(info.c_str());
     }
-    else if (name == "MinMax") {
-        // 根据输入节点的要素，获取上下限
-        for (auto& item: _ins) {
-            auto outs = item.second->out_elements();
-            String key = outs.begin()->first;
-            auto pos = key.find_last_of(".");
-            auto symbol = key.substr(0, pos);
-            auto prop = key.substr(pos + 1);
-            // TODO: 此时数据未准备,需要自行加载,找到最大最小值
-            DataFrame df;
-            auto& cgf = _server->GetConfig();
-            String path = cgf.GetDatabasePath() + "/" + symbol + "_hist_data.csv";
-            if (!LoadStockQuote(df, path)) {
-                FATAL("stock csv {} not exist.", path);
-                return false;
-            }
-            
-            auto& data = df.get_column<double>(prop.c_str());
-            auto upper = *std::max_element(data.begin(), data.end());
-            auto lower = *std::min_element(data.begin(), data.end());
-            _callable = new MinMax(lower, upper);
-            break;
-        }
-    }
+    _callable = itr->second(*this, config);
     
     _label = (String)config["label"];
     for (auto& symbol: symbols) {
@@ -132,3 +168,6 @@ FunctionNode::~FunctionNode() {
         delete _callable;
 }
 
+const nlohmann::json FunctionNode::getParams() {
+    return {};
+}

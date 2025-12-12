@@ -470,6 +470,19 @@ paths:
                 $ref: "#/components/schemas/BacktestResponse"
         '404':
           description: fail
+  /strategy/nodes:
+    get:
+      summary: 获取策略节点信息
+      description: 获取策略节点信息
+      tags: 
+        - Strategy
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                
   /predict/montecarlo:
     post:
       summary: predict price of asset

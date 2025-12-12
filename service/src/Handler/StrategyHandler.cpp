@@ -3,14 +3,18 @@
 #include <functional>
 #include <limits>
 #include <yas/serialize.hpp>
-#include "DataGroup.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "nng/nng.h"
 #include "server.h"
 #include "Bridge/exchange.h"
-#include "Risk/StopLoss.h"
 #include "StrategySubSystem.h"
+#include <boost/hana.hpp>
+#include "Nodes/FunctionNode.h"
+#include "Nodes/NeuralNetworkNode.h"
+#include "Nodes/DebugNode.h"
+#include "Nodes/QuoteNode.h"
+#include "Nodes/SignalNode.h"
 
 StrategyHandler::StrategyHandler(Server* server)
 : _close(true), _main(nullptr),HttpHandler(server) {
@@ -23,44 +27,6 @@ StrategyHandler::~StrategyHandler() {
     _main->join();
     delete _main;
   }
-}
-
-void StrategyHandler::doWork(const std::vector<std::string>& params) {
-    if (params.empty())
-        return;
-
-    if (params[0] == "run") {
-      if (sock.id != 0) {
-        printf("an strategy is running.\n");
-        return;
-      }
-
-      std::string strategy_name = "smc";
-      if (params.size() >= 2) {
-        strategy_name = params[1];
-      }
-
-      /*StrategyPlugin* strategy = nullptr;
-      auto itr = _strategies.find(strategy_name);
-      if (itr == _strategies.end()) {
-        strategy = _handle->GetOrCreateStrategy(strategy_name);
-        if (strategy == nullptr)
-          return;
-
-        _strategies[strategy_name] = strategy;
-      }
-      else {
-        strategy = itr->second;
-      }
-
-      _main = new std::thread(&StrategyHandler::run, this, strategy);*/
-    }
-    else if (params[0] == "stop") {
-      _close = true;
-      _main->join();
-      printf("strategy exit.\n");
-      delete _main;
-    }
 }
 
 void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
@@ -210,4 +176,23 @@ void StrategyHandler::train(const nlohmann::json& params, httplib::Response& res
     }
     strategy_system->Train(strategyName, symbols, DataFrequencyType::Day);
     res.status = 200;
+}
+
+StratefyNodesHandler::StratefyNodesHandler(Server* server):HttpHandler(server) {
+
+}
+
+void StratefyNodesHandler::get(const httplib::Request& req, httplib::Response& res) {
+    namespace hana = boost::hana;
+    auto types = hana::tuple_t<DebugNode, QuoteInputNode, SignalNode, LSTMNode, FunctionNode>;
+
+    nlohmann::json nodeParams;
+    hana::for_each(types, [&nodeParams](auto t) {
+        using T = typename decltype(t)::type;
+        auto cls = T::className();
+        auto params = T::getParams();
+        nodeParams[cls] = params;
+    });
+    res.status = 200;
+    res.set_content(nodeParams.dump(), "application/json");
 }

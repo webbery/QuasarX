@@ -4,6 +4,9 @@
 
 class ScriptNode: public QNode {
 public:
+    RegistClassName(ScriptNode);
+    static const nlohmann::json getParams();
+    
     virtual bool Init(const nlohmann::json& config);
     virtual bool Process(const String& strategy, DataContext& context);
 
