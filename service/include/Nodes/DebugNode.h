@@ -16,5 +16,7 @@ public:
 private:
     Server* _server;
     String _suffix;
+    String _label;
     List<String> _inNames;
+    DataContext* _context;
 };

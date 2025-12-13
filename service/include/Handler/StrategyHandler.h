@@ -33,9 +33,23 @@ private:
     std::thread* _main;
 };
 
-class StratefyNodesHandler: public HttpHandler {
+class StrategyNodesHandler: public HttpHandler {
 public:
-  StratefyNodesHandler(Server* server);
+  StrategyNodesHandler(Server* server);
 
   virtual void get(const httplib::Request& req, httplib::Response& res);
+};
+
+class StrategyNodeHandler: public HttpHandler {
+public:
+  StrategyNodeHandler(Server* server);
+
+  /**
+   * @brief 从节点下载数据
+   */
+  virtual void get(const httplib::Request& req, httplib::Response& res);
+  /**
+   * @brief 从节点上传数据
+   */
+  virtual void put(const httplib::Request& req, httplib::Response& res);
 };

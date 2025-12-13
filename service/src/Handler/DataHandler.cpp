@@ -3,8 +3,6 @@
 #include <filesystem>
 #include <fstream>
 
-#define MAX_STREAM_SIZE     8192    // 8K
-
 DataSyncHandler::DataSyncHandler(Server* server): HttpHandler(server) {
 
 }

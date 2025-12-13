@@ -18,6 +18,24 @@ class TestStrategy:
         assert isinstance(data, list)
         assert len(data) > 0
 
+    @pytest.mark.timeout(5)
+    def test_upload_model(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        with open("../models/lstm_model.onnx", "rb") as f:
+            files = {"file": ("lstm_model.onnx", f)}
+            response = requests.put(
+                f"{BASE_URL}/strategy/node",
+                files=files,
+                **kwargs
+            )
+        check_response(response)
+        
+
     @pytest.mark.timeout(600)
     def test_run_backtest_ml(self, auth_token):
         kwargs = {

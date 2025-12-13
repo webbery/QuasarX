@@ -119,7 +119,15 @@ paths:
         name: id
         schema:
           type: integer
-        description: 要获取的合约代码
+          description: 要获取的合约代码
+      responses:
+        '200':
+          description: An array of sectors
+          content:
+            application/json:
+              schema:
+                type: object
+
   /options/detail:
     get:
       summary: 当前期权的信息
@@ -413,8 +421,8 @@ paths:
                 $ref: "#/components/schemas/StrategyMetrics"
   /strategy:
     get:
-      summary: get all strategy name
-      description: 获取策略的名字
+      summary: 获取所有策略的名字
+      description: 获取所有策略的名字
       tags: 
         - Strategy
       responses:
@@ -429,7 +437,7 @@ paths:
                   description: 策略的名字
                   example: random
     post:
-      summary: run a strategy
+      summary: 部署指定的某个策略
       description: 部署指定的某个策略
       tags: 
         - Strategy
@@ -445,7 +453,7 @@ paths:
           description: success
   /backtest:
     post:
-      summary: test one strategy
+      summary: 对某个策略做回测
       description: 对某个策略做回测
       tags: 
         - Backtest
@@ -472,7 +480,7 @@ paths:
           description: fail
   /strategy/nodes:
     get:
-      summary: 获取策略节点信息
+      summary: 获取所有策略节点参数等信息
       description: 获取策略节点信息
       tags: 
         - Strategy
@@ -483,6 +491,40 @@ paths:
             application/json:
               schema:
                 
+  /strategy/node:
+    get:
+      summary: 策略节点上的下载功能，如下载调试输出
+      description: 策略节点上的下载功能，如下载调试输出
+      tags: 
+        - Strategy
+      parameters:
+        - in: query
+          name: strategy
+          schema:
+            type: string
+          description: 对应的策略名
+        - in: query
+          name: label
+          schema:
+            type: string
+          description: 对应的debug节点标签
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+    put:
+      summary: 策略节点上的上传功能，如上传模型
+      description: 策略节点上的上传功能，如上传模型
+      tags: 
+        - Strategy
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
   /predict/montecarlo:
     post:
       summary: predict price of asset
@@ -740,21 +782,49 @@ paths:
       description: 切换账户/备用账户
       tags:
         - User
+      responses:
+        '200':
+          description: 返回状态
+          content:
+            application/json:
+              schema:
+                type: object
     get:
       summary: get account
       description: 获取账户/备用账户
       tags:
         - User
+      responses:
+        '200':
+          description: 返回状态
+          content:
+            application/json:
+              schema:
+                type: object
     put:
       summary: add account
       description: 添加账户/备用账户
       tags:
         - User
+      responses:
+        '200':
+          description: 返回状态
+          content:
+            application/json:
+              schema:
+                type: object
     delete:
       summary: delete account
       description: 删除账户/备用账户
       tags:
         - User
+      responses:
+        '200':
+          description: 返回状态
+          content:
+            application/json:
+              schema:
+                type: object
   /trade/order:
     post:
       summary: trade
@@ -832,6 +902,13 @@ paths:
       description: 长链接，侦听服务器返回的消息，包括订单成交撤销等事件
       tags:
         - Server
+      responses:
+        '200':
+          description: 长链接，无返回状态
+          content:
+            application/json:
+              schema:
+                type: object
   /position:
     get:
       summary: get position
@@ -1325,20 +1402,7 @@ components:
         params:
           type: object
           description: 训练模式下的参数
-          example: {}
-    
-    StatisticItem:
-      type: object
-      description: 待统计的特征或者指标
-      properties:
-        name:
-          type: string
-          description: 指标名
-          example: MACD
-        params:
-          type: object
-          description: 指标参数
-    
+          example: {}    
     BacktestResponse:
       type: object
       properties:
@@ -1539,15 +1603,7 @@ components:
           description: 方向,0-买入 1-卖出 2-行权 3-融资买入 4-融券卖出
         status:
           type: integer
-          description: 状态, 1-下单成功 2-下单失败 3-部分成交 4-完全成交 5-交易失败 6-撤单部分成功 7-撤单成功 8-撤单失败 9-部分成交部分撤单
-    
-    CancelOrderRequest:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: 下单号
-    
+          description: 状态, 1-下单成功 2-下单失败 3-部分成交 4-完全成交 5-交易失败 6-撤单部分成功 7-撤单成功 8-撤单失败 9-部分成交部分撤单    
     PositionItem:
       type: object
       properties:

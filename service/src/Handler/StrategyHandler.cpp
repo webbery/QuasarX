@@ -1,5 +1,8 @@
 #include "Handler/StrategyHandler.h"
 #include <cstring>
+#include <filesystem>
+#include <format>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <yas/serialize.hpp>
@@ -178,11 +181,11 @@ void StrategyHandler::train(const nlohmann::json& params, httplib::Response& res
     res.status = 200;
 }
 
-StratefyNodesHandler::StratefyNodesHandler(Server* server):HttpHandler(server) {
+StrategyNodesHandler::StrategyNodesHandler(Server* server):HttpHandler(server) {
 
 }
 
-void StratefyNodesHandler::get(const httplib::Request& req, httplib::Response& res) {
+void StrategyNodesHandler::get(const httplib::Request& req, httplib::Response& res) {
     namespace hana = boost::hana;
     auto types = hana::tuple_t<DebugNode, QuoteInputNode, SignalNode, LSTMNode, FunctionNode>;
 
@@ -195,4 +198,87 @@ void StratefyNodesHandler::get(const httplib::Request& req, httplib::Response& r
     });
     res.status = 200;
     res.set_content(nodeParams.dump(), "application/json");
+}
+
+StrategyNodeHandler::StrategyNodeHandler(Server* server):HttpHandler(server) {
+
+}
+
+void StrategyNodeHandler::get(const httplib::Request& req, httplib::Response& res) {
+    String strategy = req.get_param_value("strategy");
+    String label = req.get_param_value("label");
+    auto& cfg = _server->GetConfig();
+    auto path = cfg.GetDatabasePath();
+    path += "/data/debug/" + strategy + "/" + label;
+    if (!std::filesystem::exists(path)) {
+        res.status = 404;
+        res.set_content("{message: 'data not exist'}", "application/json");
+        return;
+    }
+    std::ifstream* file = new std::ifstream(path, std::ios::binary);
+    res.set_chunked_content_provider(
+        "application/octet-stream", // Content-Type
+        [file, path](size_t offset, httplib::DataSink &sink) {
+            char buffer[MAX_STREAM_SIZE] = {0};
+            file->read(buffer, sizeof(buffer));
+            std::streamsize bytes_read = file->gcount();
+            if (bytes_read > 0) {
+                sink.write(buffer, bytes_read);
+                return true;
+            }
+            else {
+                sink.done();
+                file->close();
+                delete file;
+                // 不删除保证可以重复下载
+                // std::filesystem::remove_all(path);
+                return false;
+            }
+        }
+    );
+}
+
+void StrategyNodeHandler::put(const httplib::Request& req, httplib::Response& res) {
+    // 检查是否是multipart/form-data
+    if (!req.has_file("file")) {
+        res.status = 400;
+        res.set_content("No file uploaded", "text/plain");
+        return;
+    }
+    
+    // 获取上传的文件
+    const auto& file = req.get_file_value("file");
+    
+    // 打印文件信息
+    std::cout << "File name: " << file.filename << std::endl;
+    std::cout << "Content type: " << file.content_type << std::endl;
+    std::cout << "File size: " << file.content.size() << " bytes" << std::endl;
+    
+    try {
+        auto& cfg = _server->GetConfig();
+        // 保存文件到指定目录
+        auto dir = cfg.GetDatabasePath() + "/model";
+        auto save_path = dir + "/" + file.filename;
+
+        // 确保上传目录存在
+        std::filesystem::create_directories(dir);
+        
+        // 写入文件
+        std::ofstream ofs(save_path, std::ios::binary);
+        if (!ofs) {
+            res.status = 500;
+            res.set_content("Failed to save file", "text/plain");
+            return;
+        }
+        
+        ofs.write(file.content.data(), file.content.size());
+        ofs.close();
+        
+        // 返回成功响应
+        res.set_content("{'message':'" + file.filename + " upload success'}", "application/json");
+        
+    } catch (const std::exception& e) {
+        res.status = 500;
+        res.set_content("{message: '" + std::string(e.what()) + "'}", "text/plain");
+    }
 }

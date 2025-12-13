@@ -17,6 +17,7 @@
 
 #define HEADER_SIZE         2
 #define MAX_HISTORY_SIZE    32
+#define MAX_STREAM_SIZE     8192    // 8K
 
 class Commander;
 class StrategySubSystem;
