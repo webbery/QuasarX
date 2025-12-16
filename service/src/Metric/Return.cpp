@@ -1,6 +1,6 @@
 #include "Metric/Return.h"
 #include "Util/system.h"
-#include "DataGroup.h"
+#include "Bridge/exchange.h"
 
 namespace {
     // 计算几何平均数

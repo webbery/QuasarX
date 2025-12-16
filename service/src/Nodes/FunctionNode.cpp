@@ -63,6 +63,9 @@ namespace {
         {"RSI", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
             return nullptr;
         }},
+        {"STD", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            return nullptr;
+        }},
     };
 }
 
@@ -169,5 +172,10 @@ FunctionNode::~FunctionNode() {
 }
 
 const nlohmann::json FunctionNode::getParams() {
-    return {};
+    nlohmann::json params;
+    for (auto& item: intrinsic_functions) {
+        auto key = item.first;
+        params[key] = {{"args", "type"}};
+    }
+    return params;
 }

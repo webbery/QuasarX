@@ -1,5 +1,5 @@
 #pragma once
-#include "DataGroup.h"
+#include "Bridge/exchange.h"
 #include "Util/system.h"
 #include "hx/TORATstpTraderApi.h"
 

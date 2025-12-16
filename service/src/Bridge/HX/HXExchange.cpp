@@ -327,6 +327,7 @@ bool HXExchange::QueryOptionOrders(uint64_t reqID) {
 
     int ret = _optionHandle._tradeAPI->ReqQryOrder(&pQryOrderField, reqID);
     if (ret != 0) {
+        INFO("Qruery Option fail.");
         return false;
     }
     return true;
@@ -598,16 +599,16 @@ bool HXExchange::GetOrders(SecurityType type, OrderList& ol){
     switch (type)
     {
     case SecurityType::Stock:
+        _stockHandle._trade->GetOrders().clear();
         if (!QueryStockOrders(reqID)) {
             return false;
         }
-        _stockHandle._trade->GetOrders().clear();
         break;
     case SecurityType::Option:
+        _optionHandle._trade->GetOrders().clear();
         if (!QueryOptionOrders(reqID)) {
             return false;
         }
-        _optionHandle._trade->GetOrders().clear();
         break;
     case SecurityType::Future:
         break;

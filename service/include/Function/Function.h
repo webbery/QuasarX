@@ -29,3 +29,14 @@ class MACD: public ICallable {
 public:
     virtual feature_t operator()(const Map<String, feature_t>& args);
 };
+
+class VWAP: public ICallable {
+public:
+    virtual feature_t operator()(const Map<String, feature_t>& args);
+};
+
+class STD: public ICallable {
+public:
+    STD(short count);
+    virtual feature_t operator()(const Map<String, feature_t>& args);
+};

@@ -1,6 +1,5 @@
 #pragma once
-#include "std_header.h"
-#include "DataGroup.h"
+#include "Bridge/exchange.h"
 #include "hx/TORATstpSPTraderApi.h"
 
 class HXExchange;

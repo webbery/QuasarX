@@ -7,9 +7,8 @@
                     <div class="title-icon">💹</div>
                     <span>Price Trend & Trading Signals</span>
                     <div class="chart-controls">
-                        <select v-model="selectedTimeframe" @change="updatePriceChart">
-                            <option value="day">日级数据</option>
-                            <option value="second">秒级数据</option>
+                        <select v-model="selectedSymbol" @change="updatePriceChart">
+                            <option value="000001">000001</option>
                         </select>
                     </div>
                 </div>
@@ -253,7 +252,7 @@ const darkTheme = {
 
 const chartInstances = ref<echarts.ECharts[]>([])
 const priceChart = ref<echarts.ECharts | null>(null)
-const selectedTimeframe = ref('day')
+const selectedSymbol = ref('')
 const zoomLevel = ref(100)
 const tableScrollPosition = ref(0)
 
@@ -349,7 +348,7 @@ function generateSecondData() {
     return { data, buySignals, sellSignals };
 }
 
-function generateDayData() {
+function generatePriceData() {
     const data = [];
     const buySignals = [];
     const sellSignals = [];
@@ -383,9 +382,7 @@ function generateDayData() {
 
 function updatePriceChart() {
     if (!priceChart.value) return;
-    
-    const isSecond = selectedTimeframe.value === 'second';
-    const { data, buySignals, sellSignals } = isSecond ? generateSecondData() : generateDayData();
+    const { data, buySignals, sellSignals } = generatePriceData();
     
     const option = {
         tooltip: {
@@ -481,11 +478,8 @@ function updatePriceChart() {
             },
             axisLabel: {
                 color: '#a0aec0',
-                rotate: isSecond ? 45 : 0,
+                rotate: 0,
                 formatter: function(value: string) {
-                    if (isSecond && value.includes(':')) {
-                        return value.split(':')[0] + ':' + value.split(':')[1];
-                    }
                     return value;
                 }
             },
@@ -589,8 +583,7 @@ function initializeCharts() {
             
             let option;
             if (config.id === 'priceTrend') {
-                const isSecond = selectedTimeframe.value === 'second';
-                const { data, buySignals, sellSignals } = isSecond ? generateSecondData() : generateDayData();
+                const { data, buySignals, sellSignals } = generatePriceData();
                 
                 option = {
                     tooltip: {
@@ -669,7 +662,7 @@ function initializeCharts() {
                         },
                         axisLabel: {
                             color: '#a0aec0',
-                            rotate: isSecond ? 45 : 0
+                            rotate: 0
                         },
                         splitLine: {
                             show: false

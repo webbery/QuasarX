@@ -35,9 +35,6 @@ class TestOrder:
         response = requests.get(f"{BASE_URL}/options/detail", params=params, **kwargs)
         return check_response(response)
 
-    def market_order_buy(self, auth_token):
-        pass
-
     def limit_order_buy_stock(self, auth_token):
         stock_info = self.get_stock(auth_token)
         cur_price = stock_info['price']
@@ -84,6 +81,13 @@ class TestOrder:
         kwargs = self.generate_args(auth_token)
         params = {"symbol": self.option_id, 'type': 1, 'quantity': 200, 'prices': [1.0],
                   'direct': 0, 'kind': 1}
+        response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        return check_response(response)
+    
+    def market_order_sell_option(self, auth_token):
+        kwargs = self.generate_args(auth_token)
+        params = {"symbol": self.option_id, 'type': 1, 'quantity': 200, 'prices': [1.0],
+                  'direct': 1, 'kind': 1}
         response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
         return check_response(response)
     
@@ -152,3 +156,15 @@ class TestOrder:
     def test_get_all_option_orders(self, auth_token):
         data = self.get_option_orders(auth_token=auth_token)
         assert isinstance(data, list)
+
+    @pytest.mark.timeout(60)
+    def test_cancel_option_order(self, auth_token):
+        pass
+
+    @pytest.mark.timeout(60)
+    def test_option_order_sell(self, auth_token):
+        pass
+
+    @pytest.mark.timeout(60)
+    def test_option_order_exe(self, auth_token):
+        pass

@@ -55,3 +55,12 @@ feature_t MACD::operator()(const Map<String, feature_t>& args) {
 
     return 0.;
 }
+
+STD::STD(short count) {
+
+}
+
+feature_t STD::operator()(const Map<String, feature_t>& args) {
+
+    return 0.;
+}

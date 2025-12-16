@@ -132,6 +132,7 @@ bool StockSimulation::GetOrders(SecurityType type, OrderList& ol)
 
 bool StockSimulation::GetOrder(const String& sysID, Order& ol)
 {
+    INFO("StockSimulation GetOrder");
     return true;
 }
 

@@ -1,9 +1,8 @@
 #pragma once
-#include "DataGroup.h"
 #include "StrategyNode.h"
 #include "std_header.h"
 #include "Strategy.h"
-#include "Transfer.h"
+#include "Util/datetime.h"
 #include "json.hpp"
 #include "Agents/IAgent.h"
 #include <atomic>
@@ -11,6 +10,7 @@
 class Server;
 class RiskSubSystem;
 enum class StatisticIndicator: char;
+enum class OrderType: char;
 
 class FlowSubsystem  {
     struct StrategyFlowInfo;
