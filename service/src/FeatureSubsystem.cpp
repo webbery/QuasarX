@@ -44,24 +44,6 @@ FeatureSubsystem::~FeatureSubsystem() {
     }
 }
 
-void FeatureSubsystem::LoadConfig(const AgentStrategyInfo& config) {
-    auto name = config._name;
-    Set<symbol_t> symbols;
-    for (auto& symbol: config._pool) {
-        auto symb = to_symbol(symbol);
-        symbols.insert(symb);
-    }
-    _tasks[name] = symbols;
-    LOG("Load Feature {}[{}]", name, symbols);
-    // for (auto node: config._features) {
-    //     // 构建feature id，查找是否已经存在
-    //     auto id = get_feature_id(node->_type, node->_params);
-    //     if (_features.count(id) == 0) {
-    //         CreateFeature(name, node->_type, node->_params, FeatureKind::LongGap);
-    //     }
-    // }
-}
-
 void FeatureSubsystem::InitSecondLvlFeatures() {
     for (auto& item: _tasks) {
         CreateFeature(item.first, VWAPFeature::name(), nlohmann::json::parse("{\"N\":1}"), FeatureKind::SecondLevel);

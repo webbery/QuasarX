@@ -1,0 +1,123 @@
+{
+    "id": "graph_001",
+    "name": "机器学习流水线",
+    "description": "包含数据输入、预处理、特征工程、模型训练和结果输出的完整流水线",
+    "nodes": [
+    {
+        "id": "1",
+        "type": "custom",
+        "data": { 
+            "label": "数据输入",
+            "nodeType": "input",
+            "params": {
+                "source": {
+                    "value": "股票",
+                    "type": "select",
+                    "options": ["股票", "期货", "期权"]
+                },
+                "code": {
+                    "value": ["000001"],
+                    "type": "text"
+                },
+                "freq": {
+                    "value": "1d",
+                    "type": "select",
+                    "options": ["1d", "5m"]
+                }
+            }
+        },
+        "position": { "x": 50, "y": 100 }
+    },
+    {
+        "id": "2",
+        "type": "custom",
+        "data": { 
+        "label": "MinMax",
+        "nodeType": "function",
+        "params": {
+            "method": {
+                "value": "MinMax",
+                "type": "select",
+                "options": ["Z-score", "MinMax", "标准化", "归一化"]
+            },
+            "缺失值": {
+            "value": "填充",
+            "type": "select",
+            "options": ["填充", "删除", "插值"]
+            },
+            "填充值": {
+            "value": "0",
+            "type": "text",
+            "visible": 0
+            }
+        }
+        },
+        "position": { "x": 300, "y": 100 }
+    },
+    {
+        "id": "6",
+        "type": "custom",
+        "data": { 
+        "label": "LSTM",
+        "nodeType": "lstm",
+        "params": {
+            "model": {
+                "value": "/root/lstm_model.onnx",
+                "type": "text"
+            },
+            "input": {
+                "value": 10,
+                "type": "number"
+            },
+            "step": {
+                "value": 5,
+                "type": "number"
+            }
+        }
+        },
+        "position": { "x": 800, "y": 150 }
+    },
+    {
+        "id": "5",
+        "type": "custom",
+        "data": { 
+        "label": "结果输出",
+        "nodeType": "debug",
+        "params": {
+            "suffix": {
+                "value": "CSV",
+                "type": "select",
+                "options": ["CSV", "JSON", "txt"]
+            }
+        }
+        },
+        "position": { "x": 1050, "y": 100 }
+    }
+    ],
+    "edges": [
+    {
+        "id": "1-close->2",
+        "source": "1",
+        "target": "2",
+        "sourceHandle": "field-close",
+        "targetHandle": "input",
+        "type": "default"
+    },
+    {
+        "id": "2->6",
+        "source": "2",
+        "target": "6",
+        "sourceHandle": "output",
+        "targetHandle": "input",
+        "type": "default"
+    },
+    {
+        "id": "6->5",
+        "source": "6",
+        "target": "5",
+        "sourceHandle": "output",
+        "targetHandle": "input",
+        "type": "default"
+    }
+    ]
+}

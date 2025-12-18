@@ -40,3 +40,9 @@ public:
     STD(short count);
     virtual feature_t operator()(const Map<String, feature_t>& args);
 };
+
+class Return: public ICallable {
+public:
+    Return(short count);
+    virtual feature_t operator()(const Map<String, feature_t>& args);
+};

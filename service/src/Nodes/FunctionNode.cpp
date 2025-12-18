@@ -66,6 +66,13 @@ namespace {
         {"STD", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
             return nullptr;
         }},
+        {"Return", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            String cnt = (String)config["params"]["range"]["value"];
+            static const Map<String, int> timeHorizon{
+                {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, 
+            };
+            return new Return(timeHorizon.at(cnt));
+        }},
     };
 }
 

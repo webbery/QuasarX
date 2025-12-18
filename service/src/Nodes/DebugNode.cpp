@@ -2,6 +2,7 @@
 #include "server.h"
 #include <filesystem>
 #include <variant>
+#include "Util/string_algorithm.h"
 
 DebugNode::DebugNode(Server* server)
 :_server(server), _context(nullptr) {
@@ -9,7 +10,7 @@ DebugNode::DebugNode(Server* server)
 }
 
 bool DebugNode::Init(const nlohmann::json& config) {
-    _suffix = (String)config["params"]["suffix"]["value"];
+    _suffix = to_lower((String)config["params"]["suffix"]["value"]);
     _label = (String)config["label"];
     // 读取输入节点的输出
     for (auto node: _ins) {
@@ -36,7 +37,11 @@ void DebugNode::Done(const String& strategy) {
     auto& times = _context->GetTime();
     List<Vector<float>*> data;
     DataFrame df;
-    df.load_column("datetime", Vector<time_t>(times.begin(), times.end()));
+    Vector<uint32_t> indexes(times.size());
+    std::iota(indexes.begin(), indexes.end(), 1);
+    df.load_index(std::move(indexes));
+    auto ts = Vector<time_t>(times.begin(), times.end());
+    df.load_column("datetime", ts);
     for (auto& name: _inNames) {
         auto& feature = _context->get(name);
         std::visit([&data](auto&& val) {
@@ -50,14 +55,14 @@ void DebugNode::Done(const String& strategy) {
             }
         }, feature);
     }
-    if (_suffix == ".csv") {
-        SaveCSV(df);
+    if (_suffix == "csv") {
+        SaveCSV(df, dir);
     }
 }
 
-void DebugNode::SaveCSV(const DataFrame& df) {
-
-    df.write("custom.csv");
+void DebugNode::SaveCSV(const DataFrame& df, const String& dir) {
+    String save_path = dir + "/" + _label + ".csv";
+    df.write(save_path.c_str());
 }
 
 const nlohmann::json DebugNode::getParams() {

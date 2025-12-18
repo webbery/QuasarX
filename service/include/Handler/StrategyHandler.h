@@ -16,7 +16,7 @@ public:
   virtual void post(const httplib::Request& req, httplib::Response& res);
 
 private:
-  void run(const nlohmann::json& param, httplib::Response& res);
+  // void run(const nlohmann::json& param, httplib::Response& res);
 
   void train(const nlohmann::json& param, httplib::Response& res);
 

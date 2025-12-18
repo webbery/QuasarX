@@ -4,8 +4,8 @@ project(QuantService)
 set(CMAKE_CXX_STANDARD 23)
 # add_compile_definitions(USE_PMR)
 execute_process(
-  COMMAND git describe --tags
-  TIMEOUT 5
+  COMMAND git describe --tags --always --dirty
+  TIMEOUT 15
   OUTPUT_VARIABLE GIT_TAG_VERSION
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )

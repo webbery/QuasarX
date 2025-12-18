@@ -2,7 +2,6 @@
 #include "std_header.h"
 #include "json.hpp"
 #include "Util/system.h"
-#include "Agents/IAgent.h"
 #include "StrategyNode.h"
 
 class StrategyPlugin;
@@ -20,24 +19,24 @@ enum class StatisticIndicator: char;
 //     Set<FeatureNode*> _nexts;   // 如果为空，说明输出到agent
 // };
 
-struct AgentNode {
-    SignalGeneratorType _type;
-    short _classes;     // if _classes is zero, it means that agent is a regression.
-    String _modelpath;
-    nlohmann::json _params;
-};
+// struct AgentNode {
+//     SignalGeneratorType _type;
+//     short _classes;     // if _classes is zero, it means that agent is a regression.
+//     String _modelpath;
+//     nlohmann::json _params;
+// };
 
-struct AgentStrategyInfo {
-    char _future;    // N则表示预测第N天/0表示实时预测,交易执行器在第N天/实时执行
-    bool _virtual;
-    String _name;
-    List<String> _pool;
-    // List<FeatureNode*> _features;
-    List<AgentNode> _agents;
-    StrategyType _strategy;
+// struct AgentStrategyInfo {
+//     char _future;    // N则表示预测第N天/0表示实时预测,交易执行器在第N天/实时执行
+//     bool _virtual;
+//     String _name;
+//     List<String> _pool;
+//     // List<FeatureNode*> _features;
+//     List<AgentNode> _agents;
+//     StrategyType _strategy;
 
-    ~AgentStrategyInfo();
-};
+//     ~AgentStrategyInfo();
+// };
 
 /**
  * @brief 策略系统,从配置脚本中加载并构建策略,启动特征服务线程和预测线程.
@@ -75,7 +74,7 @@ public:
 
     Map<StatisticIndicator, std::variant<float, List<float>>> GetIndicators(const String& strategy);
 private:
-    AgentStrategyInfo ParseJsonScript(const String& content);
+    // AgentStrategyInfo ParseJsonScript(const String& content);
 
 private:
     FeatureSubsystem* _featureSystem;

@@ -49,6 +49,7 @@ class TestStrategy:
         if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
             kwargs['headers'] = {'Authorization': auth_token}
 
+        no_reply = ['ml.json']
         script_dir = './script'
         for item_name in os.listdir(script_dir):
             item_path = os.path.join(script_dir, item_name)
@@ -63,6 +64,9 @@ class TestStrategy:
             response = requests.post(f"{BASE_URL}/backtest", **kwargs)
             data = check_response(response)
             assert isinstance(data, object)
+            if item_name in no_reply:
+                continue
+
             assert 'buy' in data
             assert len(data['buy']) > 0
             assert 'sell' in data

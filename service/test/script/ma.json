@@ -1,0 +1,149 @@
+{
+    "id": "graph_ma2",
+    "name": "双均线动量流水线",
+    "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
+    "nodes": [
+        {
+            "id": "1",
+            "type": "custom",
+            "data": { 
+                "label": "行情数据输入",
+                "nodeType": "input",
+                "params": {
+                    "source": {
+                        "value": "股票",
+                        "type": "select",
+                        "options": ["股票", "期货"]
+                    },
+                    "code": {
+                        "value": ["001201"],
+                        "type": "text"
+                    },
+                    "freq": {
+                        "value": "1d",
+                        "type": "select",
+                        "options": ["1d", "5m"]
+                    },
+                    "close": {
+                        "value": "close",
+                        "type": "text"
+                    },
+                    "open": {
+                        "value": "open",
+                        "type": "text"
+                    },
+                    "high": {
+                        "value": "high",
+                        "type": "text"
+                    },
+                    "low": {
+                        "value": "low",
+                        "type": "text"
+                    },
+                    "volume": {
+                        "value": "volume",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 50, "y": 100 }
+        },
+        {
+            "id": "2",
+            "type": "custom",
+            "data": { 
+                "label": "MA_5",
+                "nodeType": "function",
+                "params": {
+                    "method": {
+                        "value": "MA",
+                        "type": "select",
+                        "options": ["MA"]
+                    },
+                    "smoothTime": {
+                        "value": 5,
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 550, "y": 100 }
+        },
+        {
+            "id": "3",
+            "type": "custom",
+            "data": { 
+                "label": "MA_15",
+                "nodeType": "function",
+                "params": {
+                    "method": {
+                        "value": "MA",
+                        "type": "select",
+                        "options": ["MA"]
+                    },
+                    "smoothTime": {
+                        "value": 15,
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 800, "y": 50 }
+        },
+        {
+            "id": "6",
+            "type": "custom",
+            "data": { 
+                "label": "MA_diff",
+                "nodeType": "signal",
+                "params": {
+                    "code": {
+                        "value": ["001201"],
+                        "type": "text"
+                    },
+                    "buy": {
+                        "value": "MA_5[t]>MA_15[t] and MA_5[t-1]<MA_15[t-1] ",
+                        "type": "text"
+                    },
+                    "sell": {
+                        "value": "MA_5[t]<MA_15[t] and MA_5[t-1]>MA_15[t-1] ",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 800, "y": 150 }
+        }
+    ],
+    "edges": [
+        {
+            "id": "1-close->2",
+            "source": "1",
+            "target": "2",
+            "sourceHandle": "1-close",
+            "targetHandle": "2",
+            "type": "default"
+        },
+        {
+            "id": "1-close->3",
+            "source": "1",
+            "target": "3",
+            "sourceHandle": "1-close",
+            "targetHandle": "3",
+            "type": "default"
+        },
+        {
+            "id": "3->6",
+            "source": "3",
+            "target": "6",
+            "sourceHandle": "3",
+            "targetHandle": "6",
+            "type": "default"
+        },
+        {
+            "id": "2->6",
+            "source": "2",
+            "target": "6",
+            "sourceHandle": "2",
+            "targetHandle": "6",
+            "type": "default"
+        }
+    ]
+}

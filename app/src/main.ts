@@ -10,7 +10,6 @@ import axios from 'axios'
 import { message } from './tool'
 
 axios.defaults.headers.common['Access-Control-Allow-Origin'] = process.env.VUE_APP_Access_Control_Allow_Origin
-
 const app = createApp(App)
 app.config.globalProperties.$message = message
 app.use(ElementPlus)
@@ -19,3 +18,13 @@ app.use(ElementPlus)
 // for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 //     app.component(key, component)
 // }
+
+if (process.env.NODE_ENV === "development") {
+    import("autopreview/vue3").then(({ default: AutoPreview }) => {
+        new AutoPreview("#app", (app) => {
+            app.use(router).use(store).use(vuetify);
+        });
+    });
+} else {
+    
+}

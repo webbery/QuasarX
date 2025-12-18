@@ -64,3 +64,12 @@ feature_t STD::operator()(const Map<String, feature_t>& args) {
 
     return 0.;
 }
+
+Return::Return(short count) {
+
+}
+
+feature_t Return::operator()(const Map<String, feature_t>& args) {
+
+    return 0.;
+}

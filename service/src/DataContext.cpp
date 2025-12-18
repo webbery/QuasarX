@@ -60,3 +60,31 @@ time_t DataContext::Current() {
     return _times.back();
 }
 
+TradeSignal* DataContext::getSignalBySymbol(symbol_t symbol) {
+    return _signals[symbol];
+}
+
+void DataContext::AddSignal(TradeSignal* signal) {
+    _signals[signal->GetSymbol()] = signal;
+}
+
+void DataContext::cleanupExpiredSignals() {
+
+}
+
+void DataContext::RegistSignalObserver(ISignalObserver*) {
+
+}
+
+void DataContext::UnregisterObserver(ISignalObserver* observer) {
+
+}
+
+void DataContext::ConsumeSignals() {
+    for (auto obs: _observers) {
+        for (auto& item: _signals) {
+            obs->OnSignalConsume(item.second);
+        }
+    }
+    cleanupExpiredSignals();
+}

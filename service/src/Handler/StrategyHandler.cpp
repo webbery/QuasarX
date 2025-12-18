@@ -44,7 +44,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto params = nlohmann::json::parse(req.body);
     int mode = params["mode"];
     if (mode == 1) { // 部署实盘
-        run(params, res);
+        // run(params, res);
     }
     else if (mode == 2) {
         // 部署模拟盘到策略服务
@@ -58,102 +58,102 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 }
 
-void StrategyHandler::run(const nlohmann::json& params, httplib::Response& res) {
-    String strategyName = params.at("name");
-    auto strategy_system = _server->GetStrategySystem();
-    if (!strategy_system->HasStrategy(strategyName)) {
-        res.status = 404;
-        res.set_content("{message: 'strategy not found.'}", "application/json");
-        return;
-    }
+// void StrategyHandler::run(const nlohmann::json& params, httplib::Response& res) {
+//     String strategyName = params.at("name");
+//     auto strategy_system = _server->GetStrategySystem();
+//     if (!strategy_system->HasStrategy(strategyName)) {
+//         res.status = 404;
+//         res.set_content("{message: 'strategy not found.'}", "application/json");
+//         return;
+//     }
 
-    res.set_header("Cache-Control", "no-cache");
-    res.set_header("Connection", "keep-alive");
-    res.set_header("Access-Control-Allow-Origin", "*");
-    // request run strategy and wait reply
-    res.set_chunked_content_provider("text/event-stream", [this, strategyName] (size_t /*offset*/, httplib::DataSink &sink) {
-        String begin("data: Connection established\n\n");
-        sink.write(begin.c_str(), begin.size());
-        nng_socket recv;
-        // receive result once per 5000ms 
-        Subscribe("inproc://Signal." + strategyName, recv);
-        // this thread exit when program exit or client connection is closed 
-        constexpr std::size_t flags = yas::mem | yas::binary;
-        try {
-            while (!_handle->IsExit())
-            {
-                char* buff = NULL;
-                size_t sz = 0;
-                int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
-                if (rv != 0) {
-                    nng_free(buff, sz);
-                    continue;
-                }
-                if (sz == 0 || sz == std::numeric_limits<size_t>::max()) {
-                    nng_free(buff, sz);
-                    continue;
-                }
-                yas::shared_buffer buf;
-                buf.assign(buff, sz);
-                Vector<Signal> signals;
-                yas::load<flags>(buf, signals);
-                String info;
-                for (auto& sig: signals) {
-                    info += get_symbol(sig._symbol) + "|" + std::to_string(sig._hold) + ",";
-                }
-                if (!info.empty()) info.pop_back();
+//     res.set_header("Cache-Control", "no-cache");
+//     res.set_header("Connection", "keep-alive");
+//     res.set_header("Access-Control-Allow-Origin", "*");
+//     // request run strategy and wait reply
+//     res.set_chunked_content_provider("text/event-stream", [this, strategyName] (size_t /*offset*/, httplib::DataSink &sink) {
+//         String begin("data: Connection established\n\n");
+//         sink.write(begin.c_str(), begin.size());
+//         nng_socket recv;
+//         // receive result once per 5000ms 
+//         Subscribe("inproc://Signal." + strategyName, recv);
+//         // this thread exit when program exit or client connection is closed 
+//         constexpr std::size_t flags = yas::mem | yas::binary;
+//         try {
+//             while (!_handle->IsExit())
+//             {
+//                 char* buff = NULL;
+//                 size_t sz = 0;
+//                 int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
+//                 if (rv != 0) {
+//                     nng_free(buff, sz);
+//                     continue;
+//                 }
+//                 if (sz == 0 || sz == std::numeric_limits<size_t>::max()) {
+//                     nng_free(buff, sz);
+//                     continue;
+//                 }
+//                 yas::shared_buffer buf;
+//                 buf.assign(buff, sz);
+//                 Vector<Signal> signals;
+//                 yas::load<flags>(buf, signals);
+//                 String info;
+//                 for (auto& sig: signals) {
+//                     info += get_symbol(sig._symbol) + "|" + std::to_string(sig._hold) + ",";
+//                 }
+//                 if (!info.empty()) info.pop_back();
 
-                String reply = "data: " + info + "\n\n";
-                sink.write(reply.c_str(), reply.size());
-                nng_free(buff, sz);
-            }
-        } catch(...) {}
-        nng_close(recv);
-        sink.done();
-        return false;
-    });
-}
+//                 String reply = "data: " + info + "\n\n";
+//                 sink.write(reply.c_str(), reply.size());
+//                 nng_free(buff, sz);
+//             }
+//         } catch(...) {}
+//         nng_close(recv);
+//         sink.done();
+//         return false;
+//     });
+// }
 
-void StrategyHandler::connect_strategy_service(const String& strategyName, httplib::DataSink& sink) {
-    String begin("data: Connection established\n\n");
-    sink.write(begin.c_str(), begin.size());
-    nng_socket recv;
-    // receive result once per 5000ms 
-    Subscribe("inproc://Signal." + strategyName, recv);
-    // this thread exit when program exit or client connection is closed 
-    constexpr std::size_t flags = yas::mem | yas::binary;
-    try {
-        while (!_handle->IsExit())
-        {
-            char* buff = NULL;
-            size_t sz = 0;
-            int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
-            if (rv != 0) {
-                nng_free(buff, sz);
-                continue;
-            }
-            if (sz == 0 || sz == std::numeric_limits<size_t>::max()) {
-                nng_free(buff, sz);
-                continue;
-            }
-            yas::shared_buffer buf;
-            buf.assign(buff, sz);
-            Vector<Signal> signals;
-            yas::load<flags>(buf, signals);
-            String info;
-            for (auto& sig: signals) {
-                info += get_symbol(sig._symbol) + "|" + std::to_string(sig._hold) + ",";
-            }
-            if (!info.empty()) info.pop_back();
+// void StrategyHandler::connect_strategy_service(const String& strategyName, httplib::DataSink& sink) {
+//     String begin("data: Connection established\n\n");
+//     sink.write(begin.c_str(), begin.size());
+//     nng_socket recv;
+//     // receive result once per 5000ms 
+//     Subscribe("inproc://Signal." + strategyName, recv);
+//     // this thread exit when program exit or client connection is closed 
+//     constexpr std::size_t flags = yas::mem | yas::binary;
+//     try {
+//         while (!_handle->IsExit())
+//         {
+//             char* buff = NULL;
+//             size_t sz = 0;
+//             int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
+//             if (rv != 0) {
+//                 nng_free(buff, sz);
+//                 continue;
+//             }
+//             if (sz == 0 || sz == std::numeric_limits<size_t>::max()) {
+//                 nng_free(buff, sz);
+//                 continue;
+//             }
+//             yas::shared_buffer buf;
+//             buf.assign(buff, sz);
+//             Vector<Signal> signals;
+//             yas::load<flags>(buf, signals);
+//             String info;
+//             for (auto& sig: signals) {
+//                 info += get_symbol(sig._symbol) + "|" + std::to_string(sig._hold) + ",";
+//             }
+//             if (!info.empty()) info.pop_back();
 
-            String reply = "data: " + info + "\n\n";
-            sink.write(reply.c_str(), reply.size());
-            nng_free(buff, sz);
-        }
-    } catch(...) {}
-    nng_close(recv);
-    sink.done();
-}
+//             String reply = "data: " + info + "\n\n";
+//             sink.write(reply.c_str(), reply.size());
+//             nng_free(buff, sz);
+//         }
+//     } catch(...) {}
+//     nng_close(recv);
+//     sink.done();
+// }
 
 void StrategyHandler::virtual_deploy(const nlohmann::json& param, httplib::Response& res) {
 

@@ -113,14 +113,18 @@ struct alignas(4) symbol_t {
 bool operator==(const symbol_t& , const symbol_t&);
 bool operator<(const symbol_t& , const symbol_t&);
 
-namespace boost {
-    template<>
-    struct hash<symbol_t> {
-        size_t operator()(const symbol_t& p) const {
-            return *(size_t*)&p;
-        }
-    };
-}
+template<>
+struct boost::hash<symbol_t> {
+    size_t operator()(const symbol_t& p) const {
+        return *(size_t*)&p;
+    }
+};
+template<>
+struct std::hash<symbol_t> {
+    size_t operator()(const symbol_t& p) const {
+        return *(size_t*)&p;
+    }
+};
 
 namespace yas {
 template<typename Archive>

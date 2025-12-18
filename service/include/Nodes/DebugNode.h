@@ -16,7 +16,7 @@ public:
     virtual void Done(const String& strategy);
 
 private:
-    void SaveCSV(const DataFrame& df);
+    void SaveCSV(const DataFrame& df, const String& dir);
 private:
     Server* _server;
     String _suffix;

@@ -2,6 +2,7 @@
 #include "std_header.h"
 #include "peglib.h"
 #include "Util/system.h"
+#include "DataContext.h"
 
 class Server;
 // 语句执行结果
@@ -16,23 +17,6 @@ struct StatementResult {
 namespace peg{
     class parser;
 }
-
-class DataContext;
-// 交易操作类型
-enum class TradeAction {
-    HOLD,
-    BUY,
-    SELL,
-    EXEC,
-};
-// 交易决策结果
-struct TradeDecision {
-    TradeAction action;
-    symbol_t symbol;
-    int quantity;           // 数量
-    double price;           // 建议价格
-    String reason;     // 决策原因
-};
 
 struct symbol_t;
 // 解析器定义

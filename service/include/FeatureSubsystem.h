@@ -35,12 +35,6 @@ public:
     FeatureSubsystem(Server* handle);
     ~FeatureSubsystem();
 
-    /**
-     * @brief load feature configuration of given holding
-     * 
-     */
-    void LoadConfig(const AgentStrategyInfo& config);
-
     void EraseConfig(const String& name);
 
     bool Start();
