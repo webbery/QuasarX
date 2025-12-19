@@ -50,40 +50,43 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
     
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
-    Map<symbol_t, TradeDecision> decisions;
+    
+    Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
         for (auto& item: trade) {
-            if (item.action != TradeAction::HOLD) {
-                if (decisions.count(item.symbol) && decisions[item.symbol].action != item.action) {
+            if (item.second != TradeAction::HOLD) {
+                if (decisions.count(item.first) && decisions[item.first] != item.second) {
                     INFO("not match operation!");
                     continue;
                 }
-                decisions[item.symbol] = item;
+                decisions[item.first] = item.second;
+                TradeSignal *signal = new TradeSignal(item.first, item.second);
+                context.AddSignal(signal);
             }
         }
     }
     
-    auto broker = _server->GetBrokerSubSystem();
-    for (auto& item: decisions) {
-        auto& decision = item.second;
-        Order order;
-        if (decision.action == TradeAction::BUY) {
-            broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
-                auto sock = Server::GetSocket();
-                auto info = to_sse_string(symbol, report);
-                nng_send(sock, info.data(), info.size(), 0);
-                _reports.emplace_back(std::make_pair(symbol, report));
-            });
-        }
-        else if (decision.action == TradeAction::SELL) {
-            broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
-                auto sock = Server::GetSocket();
-                auto info = to_sse_string(symbol, report);
-                nng_send(sock, info.data(), info.size(), 0);
-                _reports.emplace_back(std::make_pair(symbol, report));
-            });
-        }
-    }
+    // auto broker = _server->GetBrokerSubSystem();
+    // for (auto& item: decisions) {
+    //     auto& decision = item.second;
+    //     Order order;
+    //     if (decision.action == TradeAction::BUY) {
+    //         broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
+    //             auto sock = Server::GetSocket();
+    //             auto info = to_sse_string(symbol, report);
+    //             nng_send(sock, info.data(), info.size(), 0);
+    //             _reports.emplace_back(std::make_pair(symbol, report));
+    //         });
+    //     }
+    //     else if (decision.action == TradeAction::SELL) {
+    //         broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
+    //             auto sock = Server::GetSocket();
+    //             auto info = to_sse_string(symbol, report);
+    //             nng_send(sock, info.data(), info.size(), 0);
+    //             _reports.emplace_back(std::make_pair(symbol, report));
+    //         });
+    //     }
+    // }
     
     return true;
 }

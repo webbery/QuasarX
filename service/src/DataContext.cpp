@@ -69,22 +69,36 @@ void DataContext::AddSignal(TradeSignal* signal) {
 }
 
 void DataContext::cleanupExpiredSignals() {
-
+    for (auto& item: _signals) {
+    }
 }
 
-void DataContext::RegistSignalObserver(ISignalObserver*) {
-
+void DataContext::RegistSignalObserver(ISignalObserver* obs) {
+    _observers.push_back(obs);
 }
 
 void DataContext::UnregisterObserver(ISignalObserver* observer) {
-
+    for (auto itr = _observers.begin(); itr != _observers.end(); ++itr) {
+        if (*itr == observer) {
+            _observers.erase(itr);
+            break;
+        }
+    }
 }
 
 void DataContext::ConsumeSignals() {
-    for (auto obs: _observers) {
-        for (auto& item: _signals) {
+    cleanupExpiredSignals();
+    // TODO: portfolio
+
+    Set<symbol_t> erases;
+    for (auto& item: _signals) {
+        // signal execution
+        for (auto obs: _observers) {
             obs->OnSignalConsume(item.second);
         }
+        erases.insert(item.first);
     }
-    cleanupExpiredSignals();
+    for (auto key: erases) {
+        _signals.erase(key);
+    }
 }

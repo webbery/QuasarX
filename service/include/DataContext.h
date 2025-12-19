@@ -13,17 +13,11 @@ enum class TradeAction {
     SELL,
     EXEC,
 };
-// 交易决策结果
-struct TradeDecision {
-    TradeAction action;
-    symbol_t symbol;
-    int quantity;           // 数量
-    double price;           // 建议价格
-    String reason;     // 决策原因
-};
-
+// 交易决策信号
 class TradeSignal {
 public:
+    TradeSignal(symbol_t symbol, TradeAction act): _symbol(symbol), _action(act) {}
+    
     virtual ~TradeSignal(){}
 
     symbol_t GetSymbol() { return _symbol; }

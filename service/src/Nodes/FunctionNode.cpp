@@ -84,17 +84,6 @@ List<String> GetAllFunctionNames() {
     return names;
 }
 
-List<String> FunctionNode::GetParams(const String& name) {
-    static Map<String, List<String>> params{
-        {"MA", {"smoothTime"}},
-        {"MinMax", {"lower", "upper"}},
-    };
-    if (params.count(name) == 0) {
-        return {};
-    }
-    return params.at(name);
-}
-
 FunctionNode::FunctionNode(Server* server)
 :_server(server) {
 

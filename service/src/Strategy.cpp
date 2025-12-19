@@ -93,7 +93,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         auto type = node_type_map[node_type];
         switch (type) {
         case StrategyNodeType::Input: 
-            nodeInstance = generate_input_node(node["id"], server);
+            nodeInstance = generate_node<QuoteInputNode>(node["id"], server);
             break;
         case StrategyNodeType::Feature:
             break;
@@ -101,7 +101,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             nodeInstance = generate_node<LSTMNode>(node["id"]);
             break;
         case StrategyNodeType::Function:
-            nodeInstance = generate_function_node(node["id"],  server);
+            nodeInstance = generate_node<FunctionNode>(node["id"], server);
             break;
         case StrategyNodeType::Signal:
             nodeInstance = generate_signal_node(strategyName, node["id"], server);
