@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <thread>
+#include "Util/system.h"
 
 using namespace Ort;
 Env ArtificialIntelligenceNode::_env(ORT_LOGGING_LEVEL_WARNING, "AIInference");
@@ -17,7 +18,12 @@ bool LSTMNode::Init(const nlohmann::json& config) {
     session_options.SetIntraOpNumThreads(num_thread);  // 设置线程数
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
     if (!_session) {
+#ifdef _WIN32
+        auto model_path = to_wstring(server_model_path.c_str());
+        _session = new Session(_env, model_path.c_str(), session_options);
+#else
         _session = new Session(_env, server_model_path.c_str(), session_options);
+#endif
     }
     // 获取预测的窗口大小
     _predictWindow = (int)config["params"]["step"]["value"];

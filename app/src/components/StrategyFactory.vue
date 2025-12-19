@@ -78,7 +78,7 @@
       </div>
 
       <!-- 回测结果面板 -->
-      <div v-if="activeTab === 'backtest'" class="backtest-panel">
+      <div v-show="activeTab === 'backtest'" class="backtest-panel">
           <!-- 报表区域 -->
           <ReportView ref="reportViewRef"></ReportView>
       </div>
@@ -176,7 +176,7 @@ const onKeyDown = (event) => {
 onMounted(() => {
     document.addEventListener('click', closeContextMenu)
     document.addEventListener('keydown', onKeyDown)
-    loadSavedFlow()
+    // loadSavedFlow()
 })
 
 onUnmounted(() => {
@@ -431,7 +431,7 @@ const nodeTypeConfigs = {
   },
   'signal-generation': {
     "label": "交易信号生成",
-    "nodeType": "operation",
+    "nodeType": "signal",
     "params": {
         "类型": {
         "value": "股票",
@@ -498,7 +498,7 @@ const nodeTypeConfigs = {
   },
   'basic-index': {
     "label": "MA_5",
-    "nodeType": "operation",
+    "nodeType": "function",
     "params": {
       "方法": {
         "value": "MA",
@@ -938,23 +938,28 @@ const saveFlow = () => {
   }
 }
 // 从localStorage加载保存的流程图
-const loadSavedFlow = () => {
+const loadSavedFlow = async () => {
   try {
     const savedData = localStorage.getItem(FLOW_STORAGE_KEY)
     if (savedData) {
       const parsedData = JSON.parse(savedData)
       let loadedNodes = parsedData.nodes || []
       let loadedEdges = parsedData.edges || []
+      console.info('load edge:', loadedEdges)
       // 首先清空现有数据
       removeNodes(getNodes.value.map(n => n.id))
       removeEdges(edges.value.map(e => e.id))
 
       // 先添加节点，确保节点存在
-      addNodes(loadedNodes.map(node => ({
-        ...node,
-        // 确保节点类型正确
-        type: node.type || 'custom'
-      })))
+      await nextTick(() => {
+        addNodes(loadedNodes.map(node => ({
+          ...node,
+          // 确保节点类型正确
+          type: node.type || 'custom'
+        })))
+      })
+
+      console.info('loadedNodes:', loadedNodes)
 
       // 更新节点计数器
       if (loadedNodes.length > 0) {
@@ -967,16 +972,17 @@ const loadSavedFlow = () => {
         const validEdges = loadedEdges.filter(edge => {
           const sourceExists = getNodes.value.some(n => n.id === edge.source)
           const targetExists = getNodes.value.some(n => n.id === edge.target)
-          
+          console.info('edge:', edge)
           if (!sourceExists || !targetExists) {
             console.warn(`边 ${edge.id} 引用了不存在的节点: source=${edge.source}, target=${edge.target}`)
             return false
           }
           return true
         })
-        
-        addEdges(validEdges.map(edge => ({
+        const curEdges = validEdges.map(edge => ({
           ...edge,
+          source: String(edge.source),
+          target: String(edge.target),
           // 确保边类型正确
           type: edge.type || 'default',
           // 确保 markerEnd 存在
@@ -989,7 +995,28 @@ const loadSavedFlow = () => {
             stroke: 'var(--primary)',
             strokeWidth: 2,
           }
-        })))
+        }))
+        console.info('curEdge:', curEdges)
+        // 先测试最简单的边
+        let testEdge = {
+          id: 'test-edge',
+          source: '2',  // 确保这个节点存在
+          target: '6',  // 确保这个节点存在
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: 'var(--primary)',
+          },
+          style: {
+            stroke: 'var(--primary)',
+            strokeWidth: 2,
+          },
+          sourceHandle: 'output',
+          targetHandle: 'input',
+          type: 'default'
+        }
+        // testEdge = curEdges[0]
+        console.info(testEdge)
+        addEdges([testEdge])
         
         message.success('已加载保存的流程图')
         
@@ -1049,7 +1076,21 @@ const runBacktest = async () => {
                            error.response.headers['Exception-What']
     message.error(`运行失败: ${exceptionWhat}`)
   }
-  
+
+  // 获取信号节点的代码和日期范围
+  let signalNode = null
+  for (const node of nodes.value) {
+    if (node.data.nodeType === 'signal') {
+      signalNode = node
+      break
+    }
+  }
+  const codes = signalNode.data.params['代码']['value']
+  const symbols = codes.split(',')
+  const rangeDate = signalNode.data.params['回测周期']['value']
+  if (symbols.length != 0) {
+    reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1]);
+  }
 }
 
 defineExpose({

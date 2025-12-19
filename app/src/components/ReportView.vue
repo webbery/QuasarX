@@ -224,7 +224,9 @@
 
 <script lang="ts" setup>
 import * as echarts from 'echarts'
-import { onMounted, nextTick, defineExpose, ref, onUnmounted } from 'vue'
+import { onMounted, nextTick, defineExpose, watch, ref, onUnmounted } from 'vue'
+import axios from 'axios';
+import https from 'https';
 
 // 暗色主题配置保持不变
 const darkTheme = {
@@ -255,6 +257,15 @@ const priceChart = ref<echarts.ECharts | null>(null)
 const selectedSymbol = ref('')
 const zoomLevel = ref(100)
 const tableScrollPosition = ref(0)
+const symbolPrices = ref<any[]>([])
+const buySignals = ref<any[]>([])
+const sellSignals = ref<any[]>([])
+
+watch(symbolPrices, (newPrices) => {
+    if (newPrices.length > 0 && priceChart.value) {
+        updatePriceChart();
+    }
+}, { deep: true });
 
 onMounted(() => {
     console.info('mount report view')
@@ -348,43 +359,123 @@ function generateSecondData() {
     return { data, buySignals, sellSignals };
 }
 
-function generatePriceData() {
-    const data = [];
-    const buySignals = [];
-    const sellSignals = [];
-    
-    // 生成30天的数据
-    const startPrice = 100;
-    let currentPrice = startPrice;
-    
-    for (let day = 1; day <= 30; day++) {
-        const timestamp = `Day ${day}`;
-        
-        // 随机价格波动
-        const change = (Math.random() - 0.5) * 2;
-        currentPrice += change;
-        currentPrice = Math.max(95, Math.min(105, currentPrice));
-        
-        data.push([timestamp, currentPrice]);
-        
-        // 随机生成交易信号
-        if (Math.random() < 0.2) { // 20%的概率有信号
-            if (Math.random() > 0.5) {
-                buySignals.push([timestamp, currentPrice]);
-            } else {
-                sellSignals.push([timestamp, currentPrice]);
-            }
-        }
-    }
-    
-    return { data, buySignals, sellSignals };
-}
-
 function updatePriceChart() {
     if (!priceChart.value) return;
-    const { data, buySignals, sellSignals } = generatePriceData();
     
-    const option = {
+    const isSecond = false;
+    let chartData, chartBuySignals, chartSellSignals;
+    if (isSecond) {
+        const secondData = generateSecondData();
+        chartData = secondData.data;
+        chartBuySignals = secondData.buySignals;
+        chartSellSignals = secondData.sellSignals;
+    } else {
+        // 使用现有的日级数据
+        chartData = symbolPrices.value;
+        chartBuySignals = buySignals.value;
+        chartSellSignals = sellSignals.value;
+    }
+    const option = getPriceOption(isSecond, chartData, chartSellSignals, chartBuySignals);
+    
+    priceChart.value.setOption(option, true);
+}
+
+async function updatePrice(symbol: string, startDate: string, endDate: string) {
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    const url = 'https://' + server + '/v0/stocks/history'
+    const agent = new https.Agent({  
+        rejectUnauthorized: false // 忽略证书错误
+    });
+    let params = {
+        id: symbol,
+        type: '1d',
+        start: Date.parse('2010-01-01')/1000,
+        end: Date.parse('2025-01-01')/1000,
+        right: 1    // 默认使用后复权
+    }
+    const response = await axios.get(url, {
+        params: params,
+        httpsAgent: agent,
+        responseType: 'application/json',
+        headers: { 'Authorization': token}})
+    
+    console.info('get price response:', response)
+    if (response.status != 200)
+        return;
+
+    symbolPrices.value = [];
+    buySignals.value = [];
+    sellSignals.value = [];
+    const data = JSON.parse(response.data)
+    for (const oclhv of data) {
+        const dt = oclhv['datetime']
+        const date = new Date(dt * 1000)
+        const Y = date.getFullYear() + '-';
+        const M = (date.getMonth()+1 < 10 ? '0'+(date.getMonth()+1) : date.getMonth()+1) + '-';
+        const D = date.getDate() ;
+        symbolPrices.value.push([Y + M + D, oclhv['close']])
+    }
+    if (priceChart.value) {
+        updatePriceChart();
+    }
+}
+
+function initializeCharts() {
+    console.info('initializeCharts')
+    
+    const chartsToInitialize = [
+        { id: 'strategyPerformance', type: 'strategy' },
+        { id: 'priceTrend', type: 'price' },
+        { id: 'positionChanges', type: 'position' },
+        { id: 'monthlyReturn', type: 'monthly' },
+        { id: 'yearlyReturn', type: 'yearly' },
+        { id: 'distributionReturn', type: 'distribution' },
+        { id: 'qqPlot', type: 'qq' },
+        { id: 'performanceVsExpectation', type: 'performance' },
+        { id: 'rollingStats', type: 'rolling' },
+        { id: 'returnQuantiles', type: 'quantiles' },
+        { id: 'drawdown', type: 'drawdown' },
+        { id: 'skewness', type: 'skewness' }
+    ]
+    
+    chartsToInitialize.forEach(config => {
+        const element = document.getElementById(config.id)
+        if (element && element.offsetWidth > 0) {
+            const chart = echarts.init(element, 'dark')
+            
+            let option;
+            if (config.id === 'priceTrend') {
+                priceChart.value = chart;
+                option = getPriceOption(true, symbolPrices.value, sellSignals.value, buySignals.value)
+            } else {
+                option = getChartOption(config.type)
+            }
+            chart.setOption(option)
+            chartInstances.value.push(chart)
+            
+            // 监听容器大小变化
+            const resizeObserver = new ResizeObserver(() => {
+                chart.resize()
+            })
+            resizeObserver.observe(element)
+            
+            onUnmounted(() => {
+                resizeObserver.disconnect()
+            })
+        } else {
+            console.warn(`容器 ${config.id} 不可见，延迟初始化`)
+            setTimeout(() => {
+                if (document.getElementById(config.id)?.offsetWidth > 0) {
+                    initializeCharts()
+                }
+            }, 300)
+        }
+    })
+}
+
+function getPriceOption(isSecond: boolean, chartData: any[], sellSignals: any[], buySignals: any[]) {
+    return {
         tooltip: {
             trigger: 'axis',
             axisPointer: {
@@ -470,7 +561,7 @@ function updatePriceChart() {
         },
         xAxis: {
             type: 'category',
-            data: data.map((item: any) => item[0]),
+            data: chartData.map((item: any) => item[0]),
             axisLine: {
                 lineStyle: {
                     color: '#6E7079'
@@ -509,7 +600,7 @@ function updatePriceChart() {
             {
                 name: '价格',
                 type: 'line',
-                data: data.map((item: any) => item[1]),
+                data: chartData.map((item: any) => item[1]),
                 lineStyle: {
                     width: 2
                 },
@@ -550,208 +641,7 @@ function updatePriceChart() {
             }
         ]
     };
-    
-    priceChart.value.setOption(option, true);
 }
-
-function initializeCharts() {
-    console.info('initializeCharts')
-    
-    const chartsToInitialize = [
-        { id: 'strategyPerformance', type: 'strategy' },
-        { id: 'priceTrend', type: 'price' },
-        { id: 'positionChanges', type: 'position' },
-        { id: 'monthlyReturn', type: 'monthly' },
-        { id: 'yearlyReturn', type: 'yearly' },
-        { id: 'distributionReturn', type: 'distribution' },
-        { id: 'qqPlot', type: 'qq' },
-        { id: 'performanceVsExpectation', type: 'performance' },
-        { id: 'rollingStats', type: 'rolling' },
-        { id: 'returnQuantiles', type: 'quantiles' },
-        { id: 'drawdown', type: 'drawdown' },
-        { id: 'skewness', type: 'skewness' }
-    ]
-    
-    chartsToInitialize.forEach(config => {
-        const element = document.getElementById(config.id)
-        if (element && element.offsetWidth > 0) {
-            const chart = echarts.init(element, 'dark')
-            
-            if (config.id === 'priceTrend') {
-                priceChart.value = chart;
-            }
-            
-            let option;
-            if (config.id === 'priceTrend') {
-                const { data, buySignals, sellSignals } = generatePriceData();
-                
-                option = {
-                    tooltip: {
-                        trigger: 'axis',
-                        axisPointer: {
-                            type: 'cross',
-                            label: {
-                                backgroundColor: '#6a7985'
-                            }
-                        },
-                        backgroundColor: 'rgba(26, 34, 54, 0.9)',
-                        borderColor: '#2a3449',
-                        textStyle: {
-                            color: '#e0e0e0'
-                        }
-                    },
-                    legend: {
-                        data: ['价格', '买入信号', '卖出信号'],
-                        textStyle: {
-                            color: '#e0e0e0'
-                        },
-                        top: 'top',
-                        right: '10%'
-                    },
-                    grid: {
-                        left: '3%',
-                        right: '4%',
-                        bottom: '15%',
-                        containLabel: true
-                    },
-                    dataZoom: [
-                        {
-                            type: 'inside',
-                            xAxisIndex: 0,
-                            filterMode: 'filter',
-                            zoomOnMouseWheel: true,
-                            moveOnMouseMove: true,
-                            moveOnMouseWheel: false
-                        },
-                        {
-                            type: 'slider',
-                            xAxisIndex: 0,
-                            filterMode: 'filter',
-                            bottom: '3%',
-                            height: 20,
-                            borderColor: '#2a3449',
-                            fillerColor: 'rgba(41, 98, 255, 0.2)',
-                            handleStyle: {
-                                color: '#2962ff'
-                            },
-                            textStyle: {
-                                color: '#a0aec0'
-                            }
-                        }
-                    ],
-                    toolbox: {
-                        feature: {
-                            dataZoom: {
-                                yAxisIndex: false
-                            },
-                            restore: {},
-                            saveAsImage: {
-                                pixelRatio: 2
-                            }
-                        },
-                        right: 10,
-                        top: 10
-                    },
-                    xAxis: {
-                        type: 'category',
-                        data: data.map((item: any) => item[0]),
-                        axisLine: {
-                            lineStyle: {
-                                color: '#6E7079'
-                            }
-                        },
-                        axisLabel: {
-                            color: '#a0aec0',
-                            rotate: 0
-                        },
-                        splitLine: {
-                            show: false
-                        }
-                    },
-                    yAxis: {
-                        type: 'value',
-                        scale: true,
-                        axisLine: {
-                            lineStyle: {
-                                color: '#6E7079'
-                            }
-                        },
-                        axisLabel: {
-                            color: '#a0aec0'
-                        },
-                        splitLine: {
-                            lineStyle: {
-                                color: '#2a3449',
-                                type: 'dashed'
-                            }
-                        }
-                    },
-                    series: [
-                        {
-                            name: '价格',
-                            type: 'line',
-                            data: data.map((item: any) => item[1]),
-                            lineStyle: {
-                                width: 2
-                            },
-                            itemStyle: {
-                                color: '#2962ff'
-                            },
-                            smooth: true,
-                            showSymbol: false,
-                            animationDuration: 2000,
-                            animationEasing: 'cubicOut'
-                        },
-                        {
-                            name: '买入信号',
-                            type: 'scatter',
-                            data: buySignals,
-                            symbol: 'triangle',
-                            symbolSize: 16,
-                            itemStyle: {
-                                color: '#00c853'
-                            }
-                        },
-                        {
-                            name: '卖出信号',
-                            type: 'scatter',
-                            data: sellSignals,
-                            symbol: 'triangle',
-                            symbolSize: 16,
-                            symbolRotate: 180,
-                            itemStyle: {
-                                color: '#ff6d00'
-                            }
-                        }
-                    ]
-                };
-            } else {
-                option = getChartOption(config.type)
-            }
-            
-            chart.setOption(option)
-            chartInstances.value.push(chart)
-            
-            // 监听容器大小变化
-            const resizeObserver = new ResizeObserver(() => {
-                chart.resize()
-            })
-            resizeObserver.observe(element)
-            
-            onUnmounted(() => {
-                resizeObserver.disconnect()
-            })
-        } else {
-            console.warn(`容器 ${config.id} 不可见，延迟初始化`)
-            setTimeout(() => {
-                if (document.getElementById(config.id)?.offsetWidth > 0) {
-                    initializeCharts()
-                }
-            }, 300)
-        }
-    })
-}
-
 function getChartOption(type: string) {
     switch (type) {
         case 'strategy':
@@ -889,6 +779,7 @@ function getChartOption(type: string) {
 }
 
 defineExpose({
+    updatePrice,
     updatePriceChart,
     resetTableZoom
 })

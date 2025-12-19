@@ -36,7 +36,7 @@ private:
       // }
       template<typename T>
       static constexpr void extract(nlohmann::json& data, DataFrame& df, size_t i) {
-          ((data[Strs.value] = df.get_column<time_t>(Strs.value)[i]),...);
+          ((data[Strs.value] = df.get_column<T>(Strs.value)[i]),...);
       }
   };
 

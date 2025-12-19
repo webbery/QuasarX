@@ -19,7 +19,7 @@
             <div class="node-connection-row">
                 <!-- 左侧输入连接点 -->
                 <Handle
-                    v-if="nodeType !== 'dataInput'"
+                    v-if="nodeType !== 'input'"
                     type="target"
                     :position="Position.Left"
                     id="input"
@@ -28,7 +28,7 @@
                 
                 <!-- 右侧输出连接点 -->
                 <Handle
-                    v-if="nodeType !== 'resultOutput' && nodeType !== 'dataInput'"
+                    v-if="nodeType !== 'resultOutput' && nodeType !== 'input'"
                     type="source"
                     :position="Position.Right"
                     id="output"
@@ -217,7 +217,7 @@
 
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
-import { computed, inject, ref } from 'vue'
+import { computed, inject, ref, onMounted } from 'vue'
 
 const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown']
 
@@ -257,6 +257,18 @@ const isDataFieldParam = (key) => {
     const dataFields = ['close', 'open', 'high', 'low', 'volume']
     return dataFields.includes(key)
 }
+
+onMounted(() => {
+  console.log(`节点 ${props.node.id} (${props.node.data.label}) 的 Handles:`, {
+    hasLeftHandle: props.node.data.label !== '数据输入',
+    leftHandleId: 'input',
+    hasRightHandle: props.node.data.label !== '结果输出' && props.node.data.label !== '数据输入',
+    rightHandleId: 'output',
+    fieldHandles: Object.keys(props.node.data.params || {})
+      .filter(key => isDataFieldParam(key))
+      .map(key => `field-${key}`)
+  })
+})
 
 // 节点点击处理
 const onNodeClick = (event) => {

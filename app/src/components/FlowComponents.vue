@@ -22,8 +22,11 @@
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories.output }"></i>
         </div>
         <div class="components-list" v-show="openCategories.output">
-            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')">
-                <div class="component-title">交易信号生成<span class="component-desc">将输入数据转换为买卖信号</span></div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')" title="将输入数据转换为买卖信号">
+                <div class="component-title">交易信号生成</div>
+            </div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')" title="将输入数据下载成指定格式">
+                <div class="component-title">调试</div>
             </div>
         </div>
     </div>
@@ -38,7 +41,7 @@
             <!-- 神经网络模型节点 -->
                 <div class="components-list" v-show="openSubcategories.neural">
                     <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'cnn')">
-                        <div class="component-title">CNN模型</div>
+                        <div class="component-title">CNN</div>
                     </div>
                     
                     <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'lstm')">
@@ -49,6 +52,9 @@
                     </div>
                     <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'xgboost')">
                             <div class="component-title">xgboost</div>
+                    </div>
+                    <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'xgboost')">
+                            <div class="component-title">LLM</div>
                     </div>
                 </div>
         </div>
@@ -315,13 +321,6 @@ const onDragStart = (event, nodeType) => {
     font-weight: 600;
     color: var(--text);
     font-size: 0.95rem;
-}
-
-.component-desc {
-    font: 0.75em sans-serif;
-    /* font-size: 0.7rem; */
-    color: var(--text-secondary);
-    line-height: 1.4;
 }
 
 /* 节点类型特定样式 */
