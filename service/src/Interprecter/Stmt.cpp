@@ -267,13 +267,15 @@ bool FormulaParser::parse(const String& code, TradeAction action) {
     return parse(code);
 }
 
-List<TradeDecision> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
-    List<TradeDecision> decisions;
+List<Pair<symbol_t, TradeAction>> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
+    List<Pair<symbol_t, TradeAction>> decisions;
     for (auto symbol: symbols) {
         // try {
             auto exprValue = eval(symbol, *_ast, context);
-            auto decision = makeDecision(symbol, std::get<bool>(exprValue), context);
-            decisions.emplace_back(std::move(decision));
+            Pair<symbol_t, TradeAction> action{
+                symbol, (std::get<bool>(exprValue)? _default: TradeAction::HOLD)
+            };
+            decisions.emplace_back(std::move(action));
         // } catch (const std::exception& e) {
         //     FATAL("envoke error: {}", e.what());
         //     continue;
@@ -525,15 +527,6 @@ feature_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& 
     auto str = get_symbol(symbol);
     String key = str + "." + varName;
     return context->get(key);
-}
-
-TradeDecision FormulaParser::makeDecision(const symbol_t& symbol, bool exprValue, DataContext& context) {
-    TradeDecision d;
-    d.symbol = symbol;
-    d.action = (exprValue? _default: TradeAction::HOLD);
-    d.quantity = 0;
-    d.price = 0;
-    return d;
 }
 
 feature_t FormulaParser::evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {

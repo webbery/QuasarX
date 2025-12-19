@@ -28,7 +28,7 @@ public:
     bool parse(const String& code);
     bool parse(const String& code, TradeAction action);
 
-    List<TradeDecision> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
+    List<Pair<symbol_t, TradeAction>> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
 
 public:
     feature_t evalNumber(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
@@ -62,9 +62,6 @@ private:
     double getHistoricalValue(const symbol_t& symbol, const feature_t& base, int time_offset, DataContext& context);
     // 获取变量值的辅助函数
     feature_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
-
-    // 根据表达式值生成交易决策
-    TradeDecision makeDecision(const symbol_t& symbol, bool exprValue, DataContext& context);
 
     void printAST(std::shared_ptr<peg::Ast> ast, int lvl = 0);
 private:

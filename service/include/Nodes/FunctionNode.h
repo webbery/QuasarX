@@ -3,7 +3,7 @@
 
 class FunctionNode: public QNode {
 public:
-    static List<String> GetParams(const String& name);
+    static const nlohmann::json getParams();
     RegistClassName(FunctionNode);
     
 public:
@@ -14,7 +14,6 @@ public:
 
     virtual bool Process(const String& strategy, DataContext& context);
 
-    static const nlohmann::json getParams();
     virtual Map<String, ArgType> out_elements();
     
     virtual void UpdateLabel(const String& label);
