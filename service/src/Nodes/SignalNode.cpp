@@ -65,29 +65,6 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
             }
         }
     }
-    
-    // auto broker = _server->GetBrokerSubSystem();
-    // for (auto& item: decisions) {
-    //     auto& decision = item.second;
-    //     Order order;
-    //     if (decision.action == TradeAction::BUY) {
-    //         broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
-    //             auto sock = Server::GetSocket();
-    //             auto info = to_sse_string(symbol, report);
-    //             nng_send(sock, info.data(), info.size(), 0);
-    //             _reports.emplace_back(std::make_pair(symbol, report));
-    //         });
-    //     }
-    //     else if (decision.action == TradeAction::SELL) {
-    //         broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol, this] (const TradeReport& report) {
-    //             auto sock = Server::GetSocket();
-    //             auto info = to_sse_string(symbol, report);
-    //             nng_send(sock, info.data(), info.size(), 0);
-    //             _reports.emplace_back(std::make_pair(symbol, report));
-    //         });
-    //     }
-    // }
-    
     return true;
 }
 

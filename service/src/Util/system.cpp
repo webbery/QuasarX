@@ -519,12 +519,18 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
   auto code = atoi(symbol.c_str());
   if (exchange.empty()) {
     auto ct = Server::GetContractType(strSymbol);
-    switch (ct) {
+    switch (ct.first) {
     case ContractType::AStock: id._type = contract_type::stock; break;
     case ContractType::ETF: id._type = contract_type::fund; break;
     case ContractType::Future: id._type = contract_type::future; break;
+    case ContractType::AmericanOption:
     case ContractType::Option: {
-      id._type = contract_type::call;
+        if (ct.second) {
+            id._type = contract_type::call;
+        }
+        else {
+            id._type = contract_type::put;
+        }
     }
     case ContractType::Index: id._type = contract_type::index; break;
     break;
@@ -545,7 +551,7 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
 }
 
 symbol_t to_symbol(const String& code, const ContractInfo& security) {
-  if (security._type == ContractType::AStock) {
+  if (ConvertContractType(security._type) == ContractType::AStock) {
     return to_symbol(code);
   }
   if (security._exchange == ExchangeName::MT_Shanghai || security._exchange == MT_Shenzhen) {

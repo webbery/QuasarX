@@ -13,6 +13,7 @@ public:
 
     virtual void OnFrontConnected();
     virtual void OnFrontDisconnected(int nReason);
+    virtual void OnRspUserLogin(TORASPAPI::CTORATstpSPRspUserLoginField* pRspUserLoginField, TORASPAPI::CTORATstpSPRspInfoField* pRspInfo, int nRequestID);
 
     virtual void OnRspError(TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID, bool bIsLast);
 	
@@ -45,6 +46,7 @@ public:
     //查询保证金费率
     virtual void OnRspQryInvestorMarginFee(TORASPAPI::CTORATstpSPInvestorMarginFeeField *pInvestorMarginFee, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {}; 
 
+    virtual void OnRspQryShareholderAccount(TORASPAPI::CTORATstpSPShareholderAccountField* pShareholderAccount, TORASPAPI::CTORATstpSPRspInfoField* pRspInfo, int nRequestID, bool bIsLast);
 
 private:
     HXExchange* _exchange;

@@ -26,6 +26,7 @@ public:
         next->_ins.insert({to, this});
     }
     virtual void Done(const String& strategy) {}
+    virtual void Prepare(const String& strategy, DataContext& context) {}
     /**
      * @brief 返回输出结果在context中的输出名
      */

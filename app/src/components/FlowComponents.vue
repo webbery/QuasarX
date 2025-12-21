@@ -9,7 +9,10 @@
         </div>
         <div class="components-list" v-show="openCategories.input">
             <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')" title="从外部获取数据，作为策略的基础输入">
-                <div class="component-title">数据源</div> 
+                <div class="component-title">行情节点</div> 
+            </div>
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')" title="从外部获取数据，作为策略的基础输入">
+                <div class="component-title">爬虫节点</div>
             </div>
         </div>
     </div>
@@ -25,8 +28,17 @@
             <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')" title="将输入数据转换为买卖信号">
                 <div class="component-title">交易信号生成</div>
             </div>
-            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'signal-generation')" title="将输入数据下载成指定格式">
-                <div class="component-title">调试</div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'debug')" title="将输入数据下载成指定格式">
+                <div class="component-title">调试节点</div>
+            </div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'trade')" title="执行交易操作">
+                <div class="component-title">交易执行节点</div>
+            </div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'risk')" title="风控定制">
+                <div class="component-title">风控节点</div>
+            </div>
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'porfolio')" title="设计投资组合">
+                <div class="component-title">投资组合</div>
             </div>
         </div>
     </div>

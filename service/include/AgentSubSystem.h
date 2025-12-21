@@ -69,7 +69,7 @@ private:
         Map<StatisticIndicator, std::variant<float, List<float>>> _collections;
         List<QNode*> _graph;
         // 择时模块
-        IMarketTiming* _timing = nullptr;
+        ITimingStrategy* _timing = nullptr;
     };
 
     Map<String, StrategyFlowInfo> _flows; 

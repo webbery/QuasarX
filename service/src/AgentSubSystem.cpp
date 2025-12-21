@@ -71,7 +71,10 @@ void FlowSubsystem::Start(const String& strategy) {
             if (IsUseShareMemory(flow)) {
                 context.EnableShareMemory(strategy);
             }
-            
+            for (auto node : flow._graph) {
+                node->Prepare(strategy, context);
+            }
+
             uint64_t epoch = 0;
             while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
@@ -127,7 +130,6 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         }
     }
     // 
-    context.ConsumeSignals();
     return true;
 }
 

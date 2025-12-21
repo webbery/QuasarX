@@ -104,7 +104,7 @@ namespace {
 HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr)
 , _login_status(false), _quote_inited(false), _requested(false), _reqID(0)
-, _trader_login(false), _quote_login(false), _current(0) {
+, _stock_login(false), _quote_login(false), _option_login(false), _current(0) {
     _optionHandle._trade = nullptr;
     _optionHandle._tradeAPI = nullptr;
     _stockHandle._trade = nullptr;
@@ -144,7 +144,7 @@ bool HXExchange::InitQuote() {
 bool HXExchange::InitStockTrade() {
     _stockHandle._tradeAPI->RegisterSpi(_stockHandle._trade);
     String trade_ip("tcp://");
-    trade_ip += std::string(_brokerInfo._trade_addr) + ":" + std::to_string(_brokerInfo._trade_port);
+    trade_ip += std::string(_brokerInfo._default_addr) + ":" + std::to_string(_brokerInfo._stock_port);
     _stockHandle._tradeAPI->RegisterFront((char*)trade_ip.c_str());
     _stockHandle._tradeAPI->SubscribePrivateTopic(TORASTOCKAPI::TORA_TERT_QUICK);
     _stockHandle._tradeAPI->SubscribePublicTopic(TORASTOCKAPI::TORA_TERT_RESTART);
@@ -155,11 +155,99 @@ bool HXExchange::InitStockTrade() {
 bool HXExchange::InitOptionTrade() {
     _optionHandle._tradeAPI->RegisterSpi(_optionHandle._trade);
     String trade_ip("tcp://");
-    trade_ip += std::string(_brokerInfo._trade_addr) + ":" + std::to_string(_brokerInfo._trade_port);
+    trade_ip += std::string(_brokerInfo._option_addr) + ":" + std::to_string(_brokerInfo._option_port);
     _optionHandle._tradeAPI->RegisterFront((char*)trade_ip.c_str());
     _optionHandle._tradeAPI->SubscribePrivateTopic(TORASPAPI::TORA_TERT_QUICK);
     _optionHandle._tradeAPI->SubscribePublicTopic(TORASPAPI::TORA_TERT_RESTART);
     _optionHandle._tradeAPI->Init();
+    return true;
+}
+
+bool HXExchange::StockLogin()
+{
+    TORASTOCKAPI::CTORATstpReqUserLoginField tradeUser;
+    memset(&tradeUser, 0, sizeof(tradeUser));
+    strncpy(tradeUser.LogInAccount, _brokerInfo._account, strlen(_brokerInfo._account));
+    strncpy(tradeUser.Password, _brokerInfo._accpwd, strlen(_brokerInfo._accpwd));
+    tradeUser.LogInAccountType = TORA_TSTP_LACT_AccountID;  // 
+    tradeUser.AuthMode = TORA_TSTP_AM_Password;
+    memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+
+    // 
+    String termInfo("PC;");
+    termInfo += GetIP() + ";IPORT=" + std::to_string(_brokerInfo._localPort);
+    strcpy(tradeUser.TerminalInfo,
+        (termInfo + ";LIP=192.168.118.107;MAC=54EE750B1713FCF8AE5CBD58;HD=TF655AY91GHRVL").c_str());
+
+    auto reqID = ++_reqID;
+    auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpRspUserLoginField>>();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promises.emplace(reqID, promise);
+    }
+    _stockHandle._tradeAPI->ReqUserLogin(&tradeUser, reqID);
+
+    std::future<TORASTOCKAPI::CTORATstpRspUserLoginField> fut;
+    if (!getFuture(promise, fut)) {
+        return false;
+    }
+    _stock_login = true;
+    // 获取股东账户信息
+    QueryStockShareHolder(ExchangeName::MT_Shanghai);
+    QueryStockShareHolder(ExchangeName::MT_Shenzhen);
+    return true;
+}
+
+bool HXExchange::OptionLogin()
+{
+    TORASPAPI::CTORATstpSPReqUserLoginField tradeUser;
+    memset(&tradeUser, 0, sizeof(tradeUser));
+    strncpy(tradeUser.LogInAccount, _brokerInfo._account, strlen(_brokerInfo._account));
+    strncpy(tradeUser.Password, _brokerInfo._accpwd, strlen(_brokerInfo._accpwd));
+    strcpy(tradeUser.MacAddress, "");
+    strcpy(tradeUser.OneTimePassword, "");
+    strcpy(tradeUser.MacAddress, "12:34:EC:23:ED:3E");
+    strcpy(tradeUser.HDSerial, "D034-2DF22582");
+    strcpy(tradeUser.HDSerial, "D034-2DF22582");
+    strncpy(tradeUser.DepartmentID, tradeUser.LogInAccount, 4);
+
+    tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;  // 
+    tradeUser.AuthMode = TORASPAPI::TORA_TSTP_SP_AM_Password;
+    memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+    strcpy(tradeUser.TerminalInfo, "1123ni3498ebf");
+
+    //tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;
+    //strcpy(tradeUser.LogInAccount, "00105687");
+    //strcpy(tradeUser.Password, "50798535");
+    ////strcpy(reqUserLoginField.LogInAccount, "admin");
+    ////strcpy(reqUserLoginField.Password, "admin");
+
+    //strcpy(tradeUser.DepartmentID, "0010");
+    //strcpy(tradeUser.UserProductInfo, "UltraVIP");
+    //strcpy(tradeUser.MacAddress, "");
+    //strcpy(tradeUser.OneTimePassword, "");
+    ////strcpy(tradeUser.ClientIPAddress, "192.18.10.11");
+    ////strcpy(tradeUser.Lang, "zh_cn");
+    //strcpy(tradeUser.TerminalInfo, "1123ni3498ebf");
+    //strcpy(tradeUser.MacAddress, "12:34:EC:23:ED:3E");
+    //strcpy(tradeUser.HDSerial, "D034-2DF22582");
+
+    auto reqID = ++_reqID;
+    auto promise = std::make_shared<std::promise<TORASPAPI::CTORATstpSPReqUserLoginField>>();
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _promises.emplace(reqID, promise);
+    }
+    int res = _optionHandle._tradeAPI->ReqUserLogin(&tradeUser, reqID);
+
+    std::future<TORASPAPI::CTORATstpSPReqUserLoginField> fut;
+    if (!getFuture(promise, fut)) {
+        return false;
+    }
+    _option_login = true;
+    // 获取股东账户信息
+    QueryOptionShareHolder(ExchangeName::MT_Shanghai);
+    QueryOptionShareHolder(ExchangeName::MT_Shenzhen);
     return true;
 }
 
@@ -171,7 +259,7 @@ bool HXExchange::InitOptionHandle()
 order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 {
     order_id oid;
-    String& shareholder = _shareholder[symbol._exchange];
+    String& shareholder = _stockHandle._shareholder[symbol._exchange];
     if (shareholder.empty()) {
         WARN("shareholder is empty");
         return oid;
@@ -210,9 +298,9 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
 {
     order_id oid;
-    String& shareholder = _shareholder[symbol._exchange];
+    String& shareholder = _stockHandle._shareholder[symbol._exchange];
     if (shareholder.empty()) {
-        WARN("shareholder is empty");
+        WARN("option shareholder is empty");
         return oid;
     }
     auto strCode = get_etf_option_code(symbol);
@@ -406,37 +494,9 @@ bool HXExchange::Login(AccountType t){
     }
     
     // 
-    if (!_trader_login) {
-        TORASTOCKAPI::CTORATstpReqUserLoginField tradeUser;
-        memset(&tradeUser, 0, sizeof(tradeUser));
-        strncpy(tradeUser.LogInAccount, _brokerInfo._account, strlen(_brokerInfo._account));
-        strncpy(tradeUser.Password, _brokerInfo._accpwd, strlen(_brokerInfo._accpwd));
-        tradeUser.LogInAccountType = TORA_TSTP_LACT_AccountID;  // 
-        tradeUser.AuthMode = TORA_TSTP_AM_Password;
-        memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
-
-        // 
-        String termInfo("PC;");
-        termInfo += GetIP() + ";IPORT=" + std::to_string(_brokerInfo._localPort);
-        strcpy(tradeUser.TerminalInfo,
-            (termInfo + ";LIP=192.168.118.107;MAC=54EE750B1713FCF8AE5CBD58;HD=TF655AY91GHRVL").c_str());
-
-        auto reqID = ++_reqID;
-        auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpRspUserLoginField>>();
-        {
-            std::lock_guard<std::mutex> lock(_mutex);
-            _promises.emplace(reqID, promise);
-        }
-        _stockHandle._tradeAPI->ReqUserLogin(&tradeUser, reqID);
-
-        std::future<TORASTOCKAPI::CTORATstpRspUserLoginField> fut;
-        if (!getFuture(promise, fut)) {
-            return false;
-        }
-        _trader_login = true;
-        // 获取股东账户信息
-        QueryShareHolder(ExchangeName::MT_Shanghai);
-        QueryShareHolder(ExchangeName::MT_Shenzhen);
+    if (!_stock_login) {
+        StockLogin();
+        OptionLogin();
     }
     
     if (status) {
@@ -449,11 +509,11 @@ bool HXExchange::IsLogin(){
 }
 
 void HXExchange::Logout(AccountType t) {
-    if (_trader_login) {
+    if (_stock_login) {
         auto reqID = ++_reqID;
         TORASTOCKAPI::CTORATstpUserLogoutField field;
         _stockHandle._tradeAPI->ReqUserLogout(&field, reqID);
-        _trader_login = false;
+        _stock_login = false;
     }
 }
 
@@ -818,7 +878,7 @@ double HXExchange::GetAvailableFunds()
     return fut.get().UsefulMoney;
 }
 
-bool HXExchange::QueryShareHolder(ExchangeName name)
+bool HXExchange::QueryStockShareHolder(ExchangeName name)
 {
     order_id id;
     id._id = ++_reqID;
@@ -830,11 +890,12 @@ bool HXExchange::QueryShareHolder(ExchangeName name)
     switch (name) {
     case ExchangeName::MT_Shanghai:
         qry_shr_account.ExchangeID = TORA_TSTP_EXD_SSE;
-    break;
+        break;
     case ExchangeName::MT_Shenzhen:
         qry_shr_account.ExchangeID = TORA_TSTP_EXD_SZSE;
+        break;
     default:
-    break;
+        break;
     }
     
     _stockHandle._tradeAPI->ReqQryShareholderAccount(&qry_shr_account, id._id);
@@ -844,7 +905,37 @@ bool HXExchange::QueryShareHolder(ExchangeName name)
         return false;
     }
     if (fut.valid()) {
-        _shareholder[name] = fut.get();
+        _stockHandle._shareholder[name] = fut.get();
+        return true;
+    }
+    return false;
+}
+
+bool HXExchange::QueryOptionShareHolder(ExchangeName name)
+{
+    order_id id;
+    id._id = ++_reqID;
+    auto promise = initPromise<String>(id._id);
+    TORASPAPI::CTORATstpSPQryShareholderAccountField  qry_shr_account;
+    memset(&qry_shr_account, 0, sizeof(qry_shr_account));
+    strcpy(qry_shr_account.InvestorID, _brokerInfo._account);
+    switch (name) {
+    case ExchangeName::MT_Shanghai:
+        qry_shr_account.ExchangeID = TORA_TSTP_EXD_SSE;
+        break;
+    case ExchangeName::MT_Shenzhen:
+        qry_shr_account.ExchangeID = TORA_TSTP_EXD_SZSE;
+        break;
+    default:
+        break;
+    }
+    auto res = _optionHandle._tradeAPI->ReqQryShareholderAccount(&qry_shr_account, id._id);
+    std::future<String> fut;
+    if (!getFuture(promise, fut)) {
+        return false;
+    }
+    if (fut.valid()) {
+        _optionHandle._shareholder[name] = fut.get();
         return true;
     }
     return false;

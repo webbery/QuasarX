@@ -53,7 +53,7 @@ void HXTrade::OnFrontConnected()
 void HXTrade::OnFrontDisconnected(int nReason) {
     INFO("HX stock disconnect:{}", nReason);
     _exchange->InitStockTrade();
-    _exchange->_trader_login = false;
+    _exchange->_stock_login = false;
     _exchange->_login_status = false;
 }
 
@@ -64,14 +64,14 @@ void HXTrade::OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserL
         return;
     }
     INIT_PROMISE(TORASTOCKAPI::CTORATstpRspUserLoginField);
-
     _exchange->_stockHandle._insertLimit = new OrderLimit(pRspUserLoginField->OrderInsertCommFlux, pRspUserLoginField->OrderInsertCommFlux / 2);
     _exchange->_maxTradeReq = pRspUserLoginField->TradeCommFlux;
     _exchange->_maxQuoteReq = pRspUserLoginField->QueryCommFlux;
     _exchange->_stockHandle._cancelLimit = new OrderLimit(pRspUserLoginField->OrderActionCommFlux, pRspUserLoginField->OrderActionCommFlux / 2);
-    _exchange->_trader_login = true;
+    _exchange->_stock_login = true;
     _exchange->_login_status = true;
     SET_PROMISE(*pRspUserLoginField);
+    INFO("Stock Logined");
 }
 
 void HXTrade::OnRspQryShareholderAccount(TORASTOCKAPI::CTORATstpShareholderAccountField* pShareholderAccountField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)

@@ -7,7 +7,7 @@ class Server;
 using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
 
 // 交易操作类型
-enum class TradeAction {
+enum class TradeAction: char {
     HOLD,
     BUY,
     SELL,
@@ -33,12 +33,22 @@ private:
     std::chrono::system_clock::time_point _create_time;
 };
 
+enum class SignalSource: char {
+    STRATEGY_DAILY,
+    STRATEGY_HOURLY,
+    STRATEGY_MINUTE,
+    MANUAL
+};
+
+class ITimingStrategy;
 class ISignalObserver {
 public:
     virtual ~ISignalObserver(){}
     virtual void OnSignalConsume(TradeSignal* ) = 0;
     virtual void OnSignalAdded(TradeSignal* ) {};
-    virtual void OnSignalExpired(TradeSignal* ) {};
+    virtual void OnSignalExpired(TradeSignal*) {};
+    virtual void RegistTimingStrategy(ITimingStrategy*) {};
+    virtual void UnregistTimingStrategy(ITimingStrategy*) {};
 };
 
 // 数据上下文，用于管理节点间传输的数据

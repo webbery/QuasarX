@@ -19,6 +19,8 @@
 #define MAX_HISTORY_SIZE    32
 #define MAX_STREAM_SIZE     8192    // 8K
 
+#define ConvertContractType(type) (ContractType)(type & 127)
+
 class Commander;
 class StrategySubSystem;
 class PortfolioSubSystem;
@@ -55,7 +57,7 @@ enum class ContractType: char {
 };
 
 struct ContractInfo {
-    ContractType _type;
+    char _type;     // ContractType, 对期权, 首位1表示看涨, 0看跌
     ExchangeName _exchange;
     String _name;
     String _expireDate; //到期日
@@ -86,7 +88,7 @@ class Server {
 public:
     // 获取代码对应的市场
     static ExchangeName GetExchange(const std::string& symbol);
-    static ContractType GetContractType(const std::string& symbol, const String& exhange = "");
+    static Pair<ContractType, char> GetContractType(const std::string& symbol, const String& exhange = "");
     static nng_socket GetSocket();
     static String GetName(const String& symbol);
     static const ContractInfo& GetSecurity(const String& symbol);

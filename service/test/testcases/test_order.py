@@ -10,7 +10,7 @@ class TestOrder:
     order_id = -1
     sys_id = '12002P900000001'
 
-    option_id = ''
+    option_id = '10009816'
     option_order_id = -1
     option_sys_id = ''
 

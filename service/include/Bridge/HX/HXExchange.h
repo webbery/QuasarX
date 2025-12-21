@@ -33,6 +33,7 @@ namespace TORASPAPI {
 struct StockHandle {
     HXTrade* _trade;
     TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
+    String _shareholder[MT_COUNT];    // 股东账号
 
     OrderLimit* _insertLimit;   // 报单限流
     OrderLimit* _cancelLimit;   // 撤单限流
@@ -41,6 +42,7 @@ struct StockHandle {
 struct OptionHandle {
     HXOptionTrade* _trade;
     TORASPAPI::CTORATstpSPTraderApi* _tradeAPI;
+    String _shareholder[MT_COUNT];    // 股东账号
 };
 
 class alignas(8) HXExchange: public ExchangeInterface {
@@ -89,7 +91,8 @@ public:
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
 private:
     // 查询股东用户
-    bool QueryShareHolder(ExchangeName name);
+    bool QueryStockShareHolder(ExchangeName name);
+    bool QueryOptionShareHolder(ExchangeName name);
 
     void addPromise(uint64_t reqID, std::shared_ptr<void> promise);
 
@@ -106,6 +109,9 @@ private:
     bool InitQuote();
     bool InitStockTrade();
     bool InitOptionTrade();
+
+    bool StockLogin();
+    bool OptionLogin();
     
     order_id AddStockOrder(const symbol_t& symbol, OrderContext* order);
     order_id AddOptionOrder(const symbol_t& symbol, OrderContext* order);
@@ -123,7 +129,7 @@ private:
     bool _login_status : 1;
     bool _quote_inited : 1;
     bool _requested : 1;
-    bool _trader_login : 1;
+    bool _stock_login : 1;
     bool _quote_login : 1;
     bool _option_login : 1;
 
@@ -131,7 +137,6 @@ private:
 
     char _current;      // 当前帐号索引
 
-    String _shareholder[MT_COUNT];    // 股东账号
 
     HXQuateSpi* _quote;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;

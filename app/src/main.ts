@@ -18,13 +18,3 @@ app.use(ElementPlus)
 // for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 //     app.component(key, component)
 // }
-
-if (process.env.NODE_ENV === "development") {
-    import("autopreview/vue3").then(({ default: AutoPreview }) => {
-        new AutoPreview("#app", (app) => {
-            app.use(router).use(store).use(vuetify);
-        });
-    });
-} else {
-    
-}

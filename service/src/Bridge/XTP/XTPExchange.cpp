@@ -123,8 +123,8 @@ bool XTPExchange::Login(AccountType t) {
   }
 
   // 用户请根据实际情况修改登录参数
-  std::string trade_server_ip = _handle._trade_addr;
-  int trade_server_port = _handle._trade_port;
+  std::string trade_server_ip = _handle._default_addr;
+  int trade_server_port = _handle._stock_port;
   std::string account_name = _handle._username;
   std::string account_pw = _handle._passwd;
 

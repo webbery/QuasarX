@@ -123,6 +123,7 @@ const {
     screenToFlowCoordinate,
     updateNode,
     getNodes,
+    getEdges,
     removeNodes,
     removeEdges,
     getConnectedEdges,
@@ -350,15 +351,31 @@ const onConnect = (connection) => {
   addEdges([newEdge])
 }
 
+// const onConnectStart = (event) => {
+//   console.log('=== 连接开始 ===')
+//   console.log('连接开始事件:', event)
+// }
+
+// const onConnectEnd = (event) => {
+//   console.log('=== 连接结束 ===')
+//   console.log('连接结束事件:', event)
+// }
+
+// const onConnectAbort = (event) => {
+//   console.log('=== 连接中止 ===')
+//   console.log('连接中止事件:', event)
+// }
+
 // 连接验证（可选）
 const isValidConnection = (connection) => {
   // 防止连接到自身
+  // console.info('isValidConnection:', connection)
   if (connection.source === connection.target) {
     return false
   }
   
   // 防止重复连接
-  const existingConnection = edges.value.find(edge => 
+  const existingConnection = getEdges.value.find(edge => 
     edge.source === connection.source && 
     edge.target === connection.target &&
     edge.sourceHandle === connection.sourceHandle &&
@@ -445,7 +462,13 @@ const nodeTypeConfigs = {
       "卖出条件": {
         "value": "MA_5-MA_15 < 0",
         "type": "text"
-      },
+      }
+    }
+  },
+  'trade': {
+    "label": "执行交易",
+    "nodeType": "trade",
+    "params": {
       "初始资金": {
         "value": 100000,
         "type": "number",
@@ -488,7 +511,24 @@ const nodeTypeConfigs = {
       }
     }
   },
-  
+  'debug': {
+    "label": "调试",
+    "nodeType": "debug",
+    "params": {
+      '下载路径': {
+        "value": "",
+        "type": "directory"
+      },
+      '下载文件': {
+        "value": "",
+        "type": "download"
+      }
+    }
+  },
+  'risk': {},
+  'porfolio': {
+
+  },
   'cnn': {
     label: 'CNN模型',
     nodeType: 'backtest',
@@ -514,237 +554,6 @@ const nodeTypeConfigs = {
 
   }
 }
-
-// 修正数据格式，符合VueFlow要求
-let initialFlowData  = {
-  "graph": {
-    "id": "graph_ma2",
-    "name": "双均线动量流水线",
-    "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
-    "nodes": [
-      {
-        "id": "1",
-        "type": "custom",
-        "data": { 
-          "label": "数据输入",
-          "nodeType": "input",
-          "params": {
-            "来源": {
-              "value": "股票",
-              "type": "select",
-              "options": ["股票", "期货"]
-            },
-            "代码": {
-              "value": ["001038"],
-              "type": "text"
-            },
-            "频率": {
-              "value": "日频",
-              "type": "select",
-              "options": ["日频", "6s"]
-            },
-            "close": {
-              "value": "close"
-            },
-            "open": {
-              "value": "open"
-            },
-            "high": {
-              "value": "high"
-            },
-            "low": {
-              "value": "low"
-            },
-            "volume": {
-              "value": "volume"
-            }
-          }
-        },
-        "position": { "x": 5, "y": 100 }
-      },
-      {
-        "id": "2",
-        "type": "custom",
-        "data": { 
-          "label": "MA_5",
-          "nodeType": "function",
-          "params": {
-            "方法": {
-              "value": "MA",
-              "type": "select",
-              "options": ["MA"]
-            },
-            "平滑时间": {
-              "value": 5,
-              "type": "text",
-              "unit": "天"
-            }
-          }
-        },
-        "position": { "x": 300, "y": 50 }
-      },
-      {
-        "id": "3",
-        "type": "custom",
-        "data": { 
-          "label": "MA_15",
-          "nodeType": "function",
-          "params": {
-            "方法": {
-              "value": "MA",
-              "type": "select",
-              "options": ["MA"]
-            },
-            "平滑时间": {
-              "value": 15,
-              "type": "text",
-              "unit": "天"
-            }
-          }
-        },
-        "position": { "x": 300, "y": 250 }
-      },
-      {
-        "id": "6",
-        "type": "custom",
-        "data": { 
-          "label": "交易信号生成",
-          "nodeType": "signal",
-          "params": {
-             "类型": {
-              "value": "股票",
-              "type": "select",
-              "options":["股票", "期货", "期权"]
-            },
-            "代码": {
-              "value": "000012",
-              "type": "text",
-            },
-            "买入条件": {
-              "value": "MA_5[t]>MA_15[t] and MA_5[t-1]<MA_15[t-1]",
-              "type": "text"
-            },
-            "卖出条件": {
-              "value": "MA_5[t]<MA_15[t] and MA_5[t-1]>MA_15[t-1]",
-              "type": "text"
-            },
-            "初始资金": {
-              "value": 100000,
-              "type": "number",
-              "unit": "元"
-            },
-            "佣金费率": {
-              "value": 0.0003,
-              "type": "number",
-              "min": 0,
-              "max": 0.01,
-              "step": 0.0001,
-              "unit": "%"
-            },
-            "印花税率": {
-              "value": 0.001,
-              "type": "number", 
-              "min": 0,
-              "max": 0.01,
-              "step": 0.0001,
-              "unit": "%"
-            },
-            "最低手续费": {
-              "value": 5,
-              "type": "number",
-              "min": 0,
-              "max": 50,
-              "step": 1,
-              "unit": "元"
-            },
-            "滑点": {
-              "value": 0.001,
-              "type": "number",
-              "min": 0,
-              "max": 0.01,
-              "step": 0.0001
-            },
-            "回测周期": {
-              "value": ["2020-01-01", "2023-12-31"], // 合并为日期范围
-              "type": "daterange"
-            }
-          }
-        },
-        "position": { "x": 600, "y": 60 }
-      }
-    ],
-    "edges": [
-      {
-        "id": "1-close->2",
-        "source": "1",
-        "target": "2",
-        "sourceHandle": "field-close",
-        "targetHandle": "input",
-        "type": "default",
-        "markerEnd": {
-          "type": MarkerType.ArrowClosed,
-          "color": 'var(--primary)',
-        },
-        "style": {
-          "stroke": 'var(--primary)',
-          "strokeWidth": 2,
-        },
-      },
-      {
-        "id": "1-close->3",
-        "source": "1",
-        "target": "3",
-        "sourceHandle": "field-close",
-        "targetHandle": "input",
-        "type": "default",
-        "markerEnd": {
-          "type": MarkerType.ArrowClosed,
-          "color": 'var(--primary)',
-        },
-        "style": {
-          "stroke": 'var(--primary)',
-          "strokeWidth": 2,
-        },
-      },
-      {
-        "id": "3->4",
-        "source": "2",
-        "target": "6",
-        "sourceHandle": "output",
-        "targetHandle": "input",
-        "type": "default",
-        "markerEnd": {
-          "type": MarkerType.ArrowClosed,
-          "color": 'var(--primary)',
-        },
-        "style": {
-          "stroke": 'var(--primary)',
-          "strokeWidth": 2,
-        },
-      },
-      {
-        "id": "3->6",
-        "source": "3",
-        "target": "6",
-        "sourceHandle": "output",
-        "targetHandle": "input",
-        "type": "default",
-        "markerEnd": {
-          "type": MarkerType.ArrowClosed,
-          "color": 'var(--primary)',
-        },
-        "style": {
-          "stroke": 'var(--primary)',
-          "strokeWidth": 2,
-        },
-      }
-    ]
-  }
-}
-
-// 直接使用转换后的数据
-const nodes = ref(initialFlowData .graph.nodes)
-const edges = ref(initialFlowData .graph.edges)
 
 // 替换对象键名的辅助函数
 function replaceKeysInObject(obj, keyMapping) {
@@ -831,17 +640,17 @@ const onPaneReady = () => {
 
 // 更新节点数据
 const updateNodeData = (nodeId, paramKey, newValue) => {
-  const nodeIndex = nodes.value.findIndex(node => node.id === nodeId)
+  const nodeIndex = getNodes.value.findIndex(node => node.id === nodeId)
   if (nodeIndex !== -1) {
     // 创建新的节点对象以触发响应式更新
     const updatedNode = {
-      ...nodes.value[nodeIndex],
+      ...getNodes.value[nodeIndex],
       data: {
-        ...nodes.value[nodeIndex].data,
+        ...getNodes.value[nodeIndex].data,
         params: {
-          ...nodes.value[nodeIndex].data.params,
+          ...getNodes.value[nodeIndex].data.params,
           [paramKey]: {
-            ...nodes.value[nodeIndex].data.params[paramKey],
+            ...getNodes.value[nodeIndex].data.params[paramKey],
             value: newValue
           }
         }
@@ -849,15 +658,21 @@ const updateNodeData = (nodeId, paramKey, newValue) => {
     }
     
     // 更新节点
-    nodes.value[nodeIndex] = updatedNode
+    getNodes.value[nodeIndex] = updatedNode
     
     // 如果参数变化影响其他参数的可见性，可以在这里处理
     if (paramKey === '缺失值' && newValue === '填充') {
       // 显示填充值参数
-      nodes.value[nodeIndex].data.params.填充值.visible = true
+      getNodes.value[nodeIndex].data.params.填充值.visible = true
     } else if (paramKey === '缺失值' && newValue !== '填充') {
       // 隐藏填充值参数
-      nodes.value[nodeIndex].data.params.填充值.visible = false
+      getNodes.value[nodeIndex].data.params.填充值.visible = false
+    } else if (paramKey === 'label') {
+      const node = getNodes.value.find(n => n.id === nodeId)
+      if (node) {
+        // 更新node的title
+        node.data.label = newValue
+      }
     }
   }
 }
@@ -916,8 +731,8 @@ const deleteSelectedEdges = () => {
 // 新建流程图
 const newFlow = () => {
   if (confirm('确定要新建流程图吗？当前未保存的更改将会丢失。')) {
-    nodes.value = []
-    edges.value = []
+    removeNodes(getNodes.value.map(e=>e.id))
+    removeEdges(getEdges.value.map(e => e.id))
     nodeIdCounter = 1
   }
 }
@@ -925,11 +740,10 @@ const newFlow = () => {
 const saveFlow = () => {
   try {
     const flowData = {
-      nodes: nodes.value,
-      edges: edges.value,
+      nodes: getNodes.value,
+      edges: getEdges.value,
       saveTime: new Date().toISOString()
     }
-    console.info('save edges', edges.value)
     localStorage.setItem(FLOW_STORAGE_KEY, JSON.stringify(flowData))
     message.success('流程图已保存到本地存储')
   } catch (error) {
@@ -945,10 +759,9 @@ const loadSavedFlow = async () => {
       const parsedData = JSON.parse(savedData)
       let loadedNodes = parsedData.nodes || []
       let loadedEdges = parsedData.edges || []
-      console.info('load edge:', loadedEdges)
       // 首先清空现有数据
       removeNodes(getNodes.value.map(n => n.id))
-      removeEdges(edges.value.map(e => e.id))
+      removeEdges(getEdges.value.map(e => e.id))
 
       // 先添加节点，确保节点存在
       await nextTick(() => {
@@ -996,27 +809,7 @@ const loadSavedFlow = async () => {
             strokeWidth: 2,
           }
         }))
-        console.info('curEdge:', curEdges)
-        // 先测试最简单的边
-        let testEdge = {
-          id: 'test-edge',
-          source: '2',  // 确保这个节点存在
-          target: '6',  // 确保这个节点存在
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: 'var(--primary)',
-          },
-          style: {
-            stroke: 'var(--primary)',
-            strokeWidth: 2,
-          },
-          sourceHandle: 'output',
-          targetHandle: 'input',
-          type: 'default'
-        }
-        // testEdge = curEdges[0]
-        console.info(testEdge)
-        addEdges([testEdge])
+        addEdges(curEdges)
         
         message.success('已加载保存的流程图')
         
@@ -1025,17 +818,10 @@ const loadSavedFlow = async () => {
           fitView({ padding: 0.25 })
         }, 100)
       })
-    } else {
-      // 如果没有保存的数据，使用初始数据
-      nodes.value = [...initialFlowData.graph.nodes]
-      edges.value = [...initialFlowData.graph.edges]
     }
   } catch (error) {
     console.error('加载流程图数据失败:', error)
     message.error('加载流程图数据失败')
-    // 出错时使用初始数据
-    nodes.value = [...initialFlowData.graph.nodes]
-    edges.value = [...initialFlowData.graph.edges]
   }
 }
 

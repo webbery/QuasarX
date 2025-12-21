@@ -50,7 +50,7 @@ const connectionLinePath = computed(() => {
             targetPosition: props.targetPosition || 'left',   // 默认位置
         })
     }
-    
+    console.info('connection line path')
     // 如果都没有有效数据，返回空路径
     return ''
 })

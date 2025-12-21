@@ -209,8 +209,10 @@ struct ExchangeInfo {
   char _local_addr[16];
   char _quote_addr[16];   // 对于仿真环境,该参数为行情数据存储路径
   int _quote_port;        // 对于仿真环境,表示仿真类型:1 - A股，2 - 期货
-  char _trade_addr[16];
-  int _trade_port;
+  char _default_addr[16];
+  int _stock_port;
+  char _option_addr[16];
+  int _option_port;
   char _username[32];
   char _passwd[32];
 

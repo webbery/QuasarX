@@ -49,6 +49,18 @@ void HXOptionTrade::OnFrontDisconnected(int nReason) {
 
 }
 
+void HXOptionTrade::OnRspUserLogin(TORASPAPI::CTORATstpSPRspUserLoginField* pRspUserLoginField, TORASPAPI::CTORATstpSPRspInfoField* pRspInfo, int nRequestID)
+{
+    if (pRspInfo->ErrorID != 0) {
+        INFO("OnRspUserLogin {}.", to_utf8(pRspInfo->ErrorMsg));
+        return;
+    }
+    INIT_PROMISE(TORASPAPI::CTORATstpSPRspUserLoginField);
+    //_exchange->_optionHandle
+    SET_PROMISE(*pRspUserLoginField);
+    INFO("Option Logined");
+}
+
 void HXOptionTrade::OnRspError(TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
     INFO("OnRspError {}.", to_utf8(pRspInfo->ErrorMsg));
 }
@@ -101,7 +113,7 @@ void HXOptionTrade::OnRspQryOrder(TORASPAPI::CTORATstpSPOrderField *pOrder, TORA
         }
     }
     else {
-        LOG("query option order fail");
+        LOG("query option order fail: {}", pRspInfo->ErrorMsg);
         if (bIsLast) {
             SET_PROMISE(false);
         }
@@ -110,4 +122,15 @@ void HXOptionTrade::OnRspQryOrder(TORASPAPI::CTORATstpSPOrderField *pOrder, TORA
 
 void HXOptionTrade::OnRspQryTrade(TORASPAPI::CTORATstpSPTradeField *pTrade, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
 
+}
+
+void HXOptionTrade::OnRspQryShareholderAccount(TORASPAPI::CTORATstpSPShareholderAccountField* pShareholderAccount, TORASPAPI::CTORATstpSPRspInfoField* pRspInfo, int nRequestID, bool bIsLast)
+{
+    INIT_PROMISE(String);
+    if (pRspInfo->ErrorID != 0) {
+        FATAL("get shareholder account fail: {} {}", pRspInfo->ErrorID, to_utf8(pRspInfo->ErrorMsg));
+        return;
+    }
+    String acc(pShareholderAccount->ShareholderID, strlen(pShareholderAccount->ShareholderID));
+    SET_PROMISE(acc);
 }

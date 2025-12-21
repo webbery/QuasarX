@@ -576,16 +576,18 @@ ExchangeInterface* Server::GetAvaliableFutureExchange()
     return exchanges.at(name);
 }
 
-ContractType Server::GetContractType(const std::string& symbol, const String& exhange)
+Pair<ContractType, char> Server::GetContractType(const std::string& symbol, const String& exhange)
 {
     auto lower_itr = _markets.lower_bound(symbol);
     auto upper_itr = _markets.upper_bound(symbol);
     if (lower_itr == upper_itr)
-        return ContractType::AStock;
+        return { ContractType::AStock, 1 }; // A股默认看涨股票
 
-    Set<ContractType> types;
+    Set<Pair<ContractType, char>> types;
     for (auto itr = lower_itr; itr != upper_itr; ++itr) {
-        types.insert(itr->second._type);
+        char is_call = itr->second._type >> 7;
+        Pair<ContractType, char> info{ ConvertContractType(itr->second._type), is_call };
+        types.emplace(std::move(info));
     }
     if (exhange.empty() || types.size() == 1) {
         return *types.begin();
@@ -1013,7 +1015,7 @@ void Server::ReloadMarketData(const String& path) {
     String name;
     while(reader.read_row(code, exch, name)){
         ContractInfo info;
-        info._type = ContractType::AStock;
+        info._type = (int)ContractType::AStock;
         if (exch == "SH") {
             info._exchange = MT_Shanghai;
         }
@@ -1034,7 +1036,7 @@ void Server::ReloadMarketData(const String& path) {
         String head = code.substr(0, 2);
         String symbol = code.substr(2);
         ContractInfo info;
-        info._type = ContractType::ETF;
+        info._type = (int)ContractType::ETF;
         if (head == "sh") info._exchange = MT_Shanghai;
         else if (head == "sz") info._exchange = MT_Shenzhen;
         else {
@@ -1047,6 +1049,15 @@ void Server::ReloadMarketData(const String& path) {
     String expire, delivery;
     double strike;
     String opt_path = path + "/option_market.csv";
+    auto lambda_isPutOption = [](const String& name) {
+        if (name.find("沽") != String::npos)
+            return true;
+        auto pos = name.find_last_of("P");
+        if (pos != String::npos && pos > 3) {
+            return true;
+        }
+        return false;
+    };
     io::CSVReader<6> opt_reader(opt_path);
     opt_reader.read_header(io::ignore_extra_column, "交易所ID", "合约ID", "合约名称", "最后交易日", "交割日", "行权价");
     while (opt_reader.read_row(exch, code, name, expire, delivery, strike)) {
@@ -1056,7 +1067,13 @@ void Server::ReloadMarketData(const String& path) {
         else if (exch == "SSE") info._exchange = MT_Shanghai;
         //else if (exch == "SHFE") info._exchange = MT_ShanghaiFuture;
         else continue;
-        info._type = ContractType::AmericanOption;
+        bool is_put = lambda_isPutOption(name);
+        if (is_put) {
+            info._type = (int)ContractType::AmericanOption;
+        }
+        else {
+            info._type = (1 << 7| (int)ContractType::AmericanOption);
+        }
         info._deliveryDate = delivery;
         info._strike = strike;
         info._expireDate = expire;

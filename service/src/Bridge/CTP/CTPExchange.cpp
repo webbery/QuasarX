@@ -44,8 +44,8 @@ bool CTPExchange::Init(const ExchangeInfo& handle){
     _trade = new CTPTrade(_pUserTradeApi);
     _pUserTradeApi->RegisterSpi(_trade);
     protocal = "tcp://";
-    protocal += handle._trade_addr;
-    protocal += ":" + std::to_string(handle._trade_port);
+    protocal += handle._default_addr;
+    protocal += ":" + std::to_string(handle._stock_port);
     memset(szFrontAddr, 0, 32);
     sprintf(szFrontAddr, "%s", protocal.c_str());
     _pUserTradeApi->RegisterFront(szFrontAddr);

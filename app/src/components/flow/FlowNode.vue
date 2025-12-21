@@ -8,7 +8,22 @@
             <div class="node-icon" :class="iconClass">
                 <i :class="iconType"></i>
             </div>
-            <div class="node-title">{{ node.data.label }}</div>
+            <div class="node-title" @dblclick="startEditing">
+                <span v-if="!isEditing">{{ node.data.label }}</span>
+                <input
+                    v-else
+                    ref="titleInput"
+                    v-model="editingLabel"
+                    @blur="saveEditing"
+                    @keyup.enter="saveEditing"
+                    @keyup.esc="cancelEditing"
+                    @keydown="onTitleInputKeydown"
+                    class="title-input"
+                    type="text"
+                    @mousedown.stop
+                    @dragstart.stop
+                />
+            </div>
             <div v-if="isMultiSelected" class="selection-badge">
                 {{ selectionIndex }}
             </div>
@@ -28,7 +43,7 @@
                 
                 <!-- 右侧输出连接点 -->
                 <Handle
-                    v-if="nodeType !== 'resultOutput' && nodeType !== 'input'"
+                    v-if="nodeType !== 'output' && nodeType !== 'input' && nodeType !== 'trade'"
                     type="source"
                     :position="Position.Right"
                     id="output"
@@ -103,6 +118,7 @@
                             type="text"
                             :value="paramConfig.value"
                             @input="updateParam(key, $event.target.value)"
+                            @keydown="onTitleInputKeydown"
                             @mousedown.stop
                             @dragstart.stop
                             class="param-input param-text"
@@ -195,7 +211,35 @@
                             >{{ option }}</label>
                         </div>
                     </div>
-                    
+                    <div v-else-if="paramConfig.type === 'directory'" class="directory-input">
+                        <div class="directory-path-display">
+                            <span class="path-text">{{ paramConfig.value || '未选择路径' }}</span>
+                            <button 
+                                class="directory-select-btn"
+                                @click="selectDirectory(key)"
+                                @mousedown.stop
+                                @dragstart.stop
+                            >
+                                <i class="fas fa-folder-open"></i>
+                                选择路径
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 下载按钮 -->
+                    <div v-else-if="paramConfig.type === 'download'" class="download-section">
+                        <button 
+                            class="download-btn"
+                            @click="downloadFile(key)"
+                            :disabled="!canDownload"
+                            @mousedown.stop
+                            @dragstart.stop
+                        >
+                            <i class="fas fa-download"></i>
+                            下载文件
+                        </button>
+                        <span v-if="downloadStatus" class="download-status">{{ downloadStatus }}</span>
+                    </div>
                     <!-- 默认显示文本 -->
                     <span v-else class="param-value">
                         {{ paramConfig.value }}
@@ -217,7 +261,7 @@
 
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
-import { computed, inject, ref, onMounted } from 'vue'
+import { computed, inject, ref, onMounted, onUnmounted, nextTick } from 'vue'
 
 const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown']
 
@@ -237,6 +281,10 @@ const selectedNodes = inject('selectedNodes', [])
 
 // 存储打开的下拉框状态
 const openDropdowns = ref({})
+const isEditing = ref(false)
+const editingLabel = ref('')
+const titleInput = ref(null)
+const downloadStatus = ref('')
 
 // 计算是否是多选状态
 const isMultiSelected = computed(() => {
@@ -251,6 +299,14 @@ const selectionIndex = computed(() => {
     return index >= 0 ? index + 1 : 0
 })
 
+const canDownload = computed(() => {
+    // 检查是否有有效的下载路径
+    const downloadPath = Object.values(props.node.data.params).find(
+        param => param.type === 'directory'
+    )?.value
+    return downloadPath && downloadPath.trim() !== ''
+})
+
 // 检查是否为数据字段参数
 const isDataFieldParam = (key) => {
     // 数据源节点的数据字段
@@ -259,31 +315,88 @@ const isDataFieldParam = (key) => {
 }
 
 onMounted(() => {
-  console.log(`节点 ${props.node.id} (${props.node.data.label}) 的 Handles:`, {
-    hasLeftHandle: props.node.data.label !== '数据输入',
-    leftHandleId: 'input',
-    hasRightHandle: props.node.data.label !== '结果输出' && props.node.data.label !== '数据输入',
-    rightHandleId: 'output',
-    fieldHandles: Object.keys(props.node.data.params || {})
-      .filter(key => isDataFieldParam(key))
-      .map(key => `field-${key}`)
-  })
+    document.addEventListener('click', handleClickOutside)
+    console.log(`节点 ${props.node.id} (${props.node.data.label}) 的 Handles:`, {
+        hasLeftHandle: props.node.data.label !== '数据输入',
+        leftHandleId: 'input',
+        hasRightHandle: props.node.data.label !== '结果输出' && props.node.data.label !== '数据输入',
+        rightHandleId: 'output',
+        fieldHandles: Object.keys(props.node.data.params || {})
+        .filter(key => isDataFieldParam(key))
+        .map(key => `field-${key}`)
+    })
 })
 
-// 节点点击处理
-const onNodeClick = (event) => {
-    // props.node.selected = true
-    // 关闭所有下拉框
-    closeAllDropdowns()
-    console.info('selected:', props.node)
-    emit('node-click', { node: props.node, event })
-}
+onUnmounted(() => {
+    document.removeEventListener('click', handleClickOutside)
+})
 
 // 节点右键点击处理
 const onNodeRightClick = (event) => {
     event.preventDefault()
     closeAllDropdowns()
     emit('node-context-menu', { node: props.node, event })
+}
+
+const startEditing = () => {
+    // 只有 function 类型的节点可以编辑
+    if (props.node.data.nodeType === 'function') {
+        isEditing.value = true
+        editingLabel.value = props.node.data.label
+        
+        // 下一个tick聚焦输入框
+        nextTick(() => {
+            if (titleInput.value) {
+                titleInput.value.focus()
+                titleInput.value.select() // 选中所有文本
+            }
+        })
+    }
+}
+
+const saveEditing = () => {
+    console.info('saveEditing')
+    const label = editingLabel.value.trim()
+    if (label !== '') {
+        // 发射事件更新节点的label
+        emit('update-node', props.node.id, 'label', label)
+        props.node.data.label = label
+    }
+    isEditing.value = false
+}
+// 取消编辑
+const cancelEditing = () => {
+    isEditing.value = false
+    editingLabel.value = props.node.data.label // 恢复原始值
+}
+// 处理标题输入框的键盘事件
+const onTitleInputKeydown = (event) => {
+    // 阻止所有键盘事件冒泡，避免 Vue Flow 处理这些事件
+    event.stopPropagation()
+    
+    // 特别处理退格键，确保只删除文字不删除节点
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+        event.stopImmediatePropagation()
+    }
+}
+// 点击节点时，如果正在编辑，不触发节点选中
+const onNodeClick = (event) => {
+    // 如果正在编辑标题，不触发节点选中逻辑
+    if (isEditing.value) {
+        return
+    }
+    
+    // 关闭所有下拉框
+    closeAllDropdowns()
+    console.info('selected:', props.node)
+    emit('node-click', { node: props.node, event })
+}
+
+// 添加点击外部关闭编辑的功能
+const handleClickOutside = (event) => {
+    if (isEditing.value && !event.target.closest('.node-title')) {
+        saveEditing()
+    }
 }
 
 // 关闭所有下拉框
@@ -338,6 +451,72 @@ const getSelectedOptions = (currentValue, allOptions) => {
     return allOptions.filter(option => currentValue.includes(option))
 }
 
+// 路径选择方法
+const selectDirectory = async (paramKey) => {
+    try {
+        // 这里可以调用Electron的对话框API或使用浏览器原生的文件选择
+        // 假设我们有一个全局的路径选择方法
+        if (window.showDirectoryPicker) {
+            // 使用现代浏览器的文件系统API
+            const handle = await window.showDirectoryPicker()
+            const path = handle.name // 实际项目中可能需要获取完整路径
+            updateParam(paramKey, path)
+        } else {
+            // 降级方案：使用input元素
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.webkitdirectory = true
+            input.onchange = (e) => {
+                const files = e.target.files
+                if (files.length > 0) {
+                    // 获取第一个文件的路径（实际项目中可能需要处理多个文件）
+                    updateParam(paramKey, files[0].webkitRelativePath.split('/')[0])
+                }
+            }
+            input.click()
+        }
+    } catch (error) {
+        console.error('选择路径失败:', error)
+        // 用户取消选择或其他错误
+    }
+}
+// 下载文件方法
+const downloadFile = async (paramKey) => {
+    if (!canDownload.value) {
+        downloadStatus.value = '请先选择下载路径'
+        setTimeout(() => { downloadStatus.value = '' }, 3000)
+        return
+    }
+
+    try {
+        downloadStatus.value = '下载中...'
+        
+        // 获取下载路径
+        const downloadPath = Object.values(props.node.data.params).find(
+            param => param.type === 'directory'
+        )?.value
+
+        // 这里调用实际的下载逻辑
+        // 假设我们有一个全局的下载方法
+        const success = await window.downloadDebugFile?.({
+            nodeId: props.node.id,
+            downloadPath: downloadPath,
+            nodeType: props.node.data.nodeType
+        })
+
+        if (success) {
+            downloadStatus.value = '下载完成'
+            setTimeout(() => { downloadStatus.value = '' }, 2000)
+        } else {
+            downloadStatus.value = '下载失败'
+            setTimeout(() => { downloadStatus.value = '' }, 3000)
+        }
+    } catch (error) {
+        console.error('下载失败:', error)
+        downloadStatus.value = '下载错误: ' + error.message
+        setTimeout(() => { downloadStatus.value = '' }, 3000)
+    }
+}
 // 节点类型映射
 const nodeTypeConfig = {
     '数据输入': {
@@ -363,8 +542,7 @@ const nodeTypeConfig = {
 
 // 计算节点类型
 const nodeType = computed(() => {
-    const label = props.node.data.label
-    return nodeTypeConfig[label]?.type || 'default'
+    return props.node.data.nodeType
 })
 
 // 计算节点类名
@@ -608,7 +786,104 @@ const updateParam = (paramKey, newValue) => {
     color: white;
     font-size: 12px;
 }
+/* 路径选择器样式 */
+.directory-input {
+    width: 100%;
+}
 
+.directory-path-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--darker-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+}
+
+.path-text {
+    flex: 1;
+    font-size: 0.8rem;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.directory-select-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: background-color 0.2s ease;
+}
+
+.directory-select-btn:hover {
+    background: var(--accent);
+}
+
+.directory-select-btn:active {
+    transform: translateY(1px);
+}
+
+/* 下载按钮样式 */
+.download-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.download-btn {
+    background: var(--secondary);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+
+.download-btn:hover:not(:disabled) {
+    background: var(--accent);
+    transform: translateY(-1px);
+}
+
+.download-btn:disabled {
+    background: var(--border);
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.download-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.download-status {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* 确保按钮内部的鼠标事件不会触发节点拖动 */
+.directory-select-btn,
+.download-btn {
+    cursor: pointer;
+}
+
+.directory-select-btn:active,
+.download-btn:active {
+    cursor: pointer;
+}
 /* 图标背景颜色 */
 .icon-type-dataInput {
     background-color: #10b981;
@@ -631,10 +906,55 @@ const updateParam = (paramKey, newValue) => {
 }
 
 .node-title {
+    flex: 1;
     font-weight: 600;
     color: var(--text);
+    cursor: default;
+    min-height: 20px;
+    display: flex;
+    align-items: center;
+}
+.node-type-function .node-title:hover::after {
+    content: "双击编辑";
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--darker-bg);
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    opacity: 0;
+    animation: fadeIn 0.3s ease forwards;
+}
+.node-type-function .node-title {
+    cursor: pointer;
+    position: relative;
+}
+@keyframes fadeIn {
+    to {
+        opacity: 1;
+    }
 }
 
+.title-input {
+    width: 100%;
+    background: var(--darker-bg);
+    border: 1px solid var(--primary);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    outline: none;
+}
+
+.title-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
 .node-content {
     padding: 5px 0;
     flex: 1;
@@ -888,7 +1208,15 @@ const updateParam = (paramKey, newValue) => {
 .node-param.data-field-param .param-unit {
     right: 20px; /* 调整单位位置，避免与连接点重叠 */
 }
+/* 编辑状态下节点的样式调整 */
+.vue-flow__node-custom.editing {
+    cursor: default;
+}
 
+.vue-flow__node-custom.editing:hover {
+    transform: none;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
 /* 响应式调整：在小屏幕上垂直排列 */
 @media (max-width: 200px) {
     .date-range-inputs {

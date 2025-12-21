@@ -107,7 +107,7 @@ ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
   std::vector<std::string> quote_info;
   split(quote_addr, quote_info, ":");
   strcpy(handle._quote_addr, quote_info[0].c_str());
-  strcpy(handle._trade_addr, trade_info[0].c_str());
+  strcpy(handle._default_addr, trade_info[0].c_str());
   if (exchange.contains("account")) {
     std::string username = exchange["account"];
     strcpy(handle._username, username.c_str());
@@ -116,8 +116,15 @@ ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
     std::string passwd = exchange["passwd"];
     strcpy(handle._passwd, passwd.c_str());
   }
+  if (exchange.contains("option")) {
+      std::string option_addr = exchange["option"];
+      std::vector<std::string> option_info;
+      split(option_addr, option_info, ":");
+      strcpy(handle._option_addr, option_info[0].c_str());
+      handle._option_port = atoi(option_info[1].c_str());
+  }
   if (trade_info.size() > 1) {
-    handle._trade_port = atoi(trade_info[1].c_str());
+    handle._stock_port = atoi(trade_info[1].c_str());
   }
   if (quote_info.size() > 1) {
     handle._quote_port = atoi(quote_info[1].c_str());
