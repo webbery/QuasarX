@@ -26,7 +26,7 @@ String grammar = R"(
         Term            <- Factor (MulOp Factor)*
         Factor          <- Primary (FactorOp Primary)*
         Primary         <- Atom (Trailer)*
-        Atom            <- Number / String / Identifier / FunctionCall / ListExpr / '(' Expression ')'
+        Atom            <- Number / String / FunctionCall / ListExpr / Identifier / '(' Expression ')'
 
         # 时间序列访问
         Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeIndex ']'
@@ -519,6 +519,9 @@ feature_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
     auto funcName = ast.nodes[0]->token;
     if (funcName == "MA" && ast.nodes.size() >= 3) {
         // 获取参数：MA(close, 5)
+    }
+    else if (funcName == "topk") {
+        INFO("call topk");
     }
     return 0.;
 }

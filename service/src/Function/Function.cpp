@@ -56,7 +56,7 @@ feature_t MACD::operator()(const Map<String, feature_t>& args) {
     return 0.;
 }
 
-STD::STD(short count) {
+STD::STD(int32_t count) {
 
 }
 
@@ -65,11 +65,19 @@ feature_t STD::operator()(const Map<String, feature_t>& args) {
     return 0.;
 }
 
-Return::Return(short count) {
+Return::Return(int32_t count): _cnts(count){
 
 }
 
 feature_t Return::operator()(const Map<String, feature_t>& args) {
-
+    if (args.size() != 1) {
+        return std::nan("nan");
+    }
+    auto itr = args.begin();
+    auto& prop_name = itr->first;
+    auto& vec = std::get<Vector<double>>(itr->second);
+    if (vec.size() < _cnts) {
+        return std::nan("nan");
+    }
     return 0.;
 }

@@ -19,6 +19,7 @@
 #include "Nodes/DebugNode.h"
 #include "Nodes/ScriptNode.h"
 #include "Nodes/StackNode.h"
+#include "Nodes/ExecuteNode.h"
 
 namespace {
     Map<String, StrategyNodeType> node_type_map{
@@ -28,6 +29,10 @@ namespace {
         {"feature", StrategyNodeType::Feature},
         {"signal", StrategyNodeType::Signal},
         {"debug", StrategyNodeType::Debug},
+        {"execution", StrategyNodeType::Execution},
+        // {"debug", StrategyNodeType::Debug},
+        // {"debug", StrategyNodeType::Debug},
+        // {"debug", StrategyNodeType::Debug},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -115,7 +120,11 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         case StrategyNodeType::Stack:
             nodeInstance = generate_node<StackNode>(node["id"]);
             break;
+        case StrategyNodeType::Execution:
+            nodeInstance = generate_node<ExecuteNode>(node["id"], server);
+            break;
         default:
+            INFO("unknow node type: {}", node_type);
             break;
         }
         if (!nodeInstance) {

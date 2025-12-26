@@ -37,12 +37,21 @@ public:
 
 class STD: public ICallable {
 public:
-    STD(short count);
+    STD(int32_t count);
     virtual feature_t operator()(const Map<String, feature_t>& args);
 };
 
+/**
+ * 回报率计算: log(P(t)/P(t-1))
+ */
 class Return: public ICallable {
 public:
-    Return(short count);
+    /**
+     * @param count 
+     */
+    Return(int32_t count);
     virtual feature_t operator()(const Map<String, feature_t>& args);
+
+private:
+    int32_t _cnts;
 };

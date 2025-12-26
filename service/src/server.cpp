@@ -788,7 +788,6 @@ void Server::Timer()
     Publish(URI_SERVER_EVENT, sock);
     if (_runType == RuningType::Backtest) {
         while(!_exit) {
-            auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
             TimerWorker(sock);
             auto curr = Now();
             // 
@@ -1386,4 +1385,65 @@ const ContractInfo& Server::GetSecurity(const String& symbol) {
     }
     auto str = fmt::format("symbol {} not find", symbol);
     throw std::runtime_error(str.c_str());
+}
+
+ExchangeInfo Server::GetExchangeInfo(const String& name) {
+    auto& config = GetConfig();
+    auto exchange = config.GetExchangeByName(name);
+
+    std::string ex_type = exchange["api"];
+    std::string quote_addr = exchange["quote"];
+    std::string trade_addr = exchange["trade"];
+    ExchangeInfo handle;
+    strcpy(handle._local_addr, config.GetHost().c_str());
+    std::vector<std::string> trade_info;
+    split(trade_addr, trade_info, ":");
+    std::vector<std::string> quote_info;
+    split(quote_addr, quote_info, ":");
+    strcpy(handle._quote_addr, quote_info[0].c_str());
+    strcpy(handle._default_addr, trade_info[0].c_str());
+    if (exchange.contains("account")) {
+        std::string username = exchange["account"];
+        strcpy(handle._username, username.c_str());
+    }
+    if (exchange.contains("passwd")) {
+        std::string passwd = exchange["passwd"];
+        strcpy(handle._passwd, passwd.c_str());
+    }
+    if (exchange.contains("option")) {
+        std::string option_addr = exchange["option"];
+        std::vector<std::string> option_info;
+        split(option_addr, option_info, ":");
+        strcpy(handle._option_addr, option_info[0].c_str());
+        handle._option_port = atoi(option_info[1].c_str());
+    }
+    if (trade_info.size() > 1) {
+        handle._stock_port = atoi(trade_info[1].c_str());
+    }
+    if (quote_info.size() > 1) {
+        handle._quote_port = atoi(quote_info[1].c_str());
+    }
+    auto accounts = config.GetStockAccounts();
+    assert(accounts.size() > 0);
+    auto account = accounts.front().first;
+    auto accpwd = accounts.front().second;
+    strcpy(handle._account, account.c_str());
+    strcpy(handle._accpwd, accpwd.c_str());
+    handle._localPort = config.GetPort();
+    return handle;
+}
+
+StockSimulation* Server::CreateSimulation(const String& name, const String& strategy, int type) {
+    auto ptr = new StockSimulation(this);
+    auto info = GetExchangeInfo(name.c_str());
+    if (!ptr->Init(info)) {
+        printf("init fail.\n");
+        delete ptr;
+        return nullptr;
+    }
+    if (!ptr->Login(AccountType::MAIN)) {
+        printf("login fail.\n");
+        return nullptr;
+    }
+    return ptr;
 }

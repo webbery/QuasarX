@@ -77,6 +77,13 @@ using UnorderedSet = std::unordered_set<T, Args...>;
 #ifndef YEAR_DAY
 #define YEAR_DAY    252
 #endif
+#ifndef SECOND_PER_YEAR
+#define SECOND_PER_YEAR 21772800
+#endif 
+#ifndef SECOND_PER_DAY
+#define SECOND_PER_DAY 86400
+#endif
+
 #include "Eigen/Core"
 #include "Util/log.h"
 

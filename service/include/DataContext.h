@@ -20,10 +20,12 @@ public:
     
     virtual ~TradeSignal(){}
 
-    symbol_t GetSymbol() { return _symbol; }
+    symbol_t GetSymbol() const { return _symbol; }
 
     void Consume() { _executed = true; }
     bool IsConsume() { return _executed; }
+
+    const TradeAction& Action() const { return _action; }
 private:
     symbol_t _symbol;
     TradeAction _action;
@@ -41,10 +43,11 @@ enum class SignalSource: char {
 };
 
 class ITimingStrategy;
+class DataContext;
 class ISignalObserver {
 public:
     virtual ~ISignalObserver(){}
-    virtual void OnSignalConsume(TradeSignal* ) = 0;
+    virtual void OnSignalConsume(const String& strategy, TradeSignal* , const DataContext &context) = 0;
     virtual void OnSignalAdded(TradeSignal* ) {};
     virtual void OnSignalExpired(TradeSignal*) {};
     virtual void RegistTimingStrategy(ITimingStrategy*) {};
@@ -86,6 +89,8 @@ public:
 
     void EnableShareMemory(const String& name) {}
 
+    const String& CurrentStrategy() const { return _strategy; }
+
     void AddSignal(TradeSignal* signal);
 
     void RegistSignalObserver(ISignalObserver*);
@@ -103,10 +108,11 @@ private:
     bool markSignalExecuted(const std::string& signal_id);
 private:
     uint64_t _epoch = 0;
+    const String _strategy;
     List<time_t> _times;
 
     std::unordered_map<symbol_t, TradeSignal*> _signals;
-    List<ISignalObserver*> _observers;
+    List<ISignalObserver*> _signalObservers;
 
     // TODO: 节点的输出数据，待优化
     Map<String, feature_t> _outputs;

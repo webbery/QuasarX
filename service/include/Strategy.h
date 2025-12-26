@@ -53,9 +53,11 @@ public:
 };
 
 enum class StrategyNodeType {
+    Unknow,
     Input,      // 输入节点
     Function,
     Signal,
+    Execution,
     Feature,
     Script,
     LSTM,

@@ -1,33 +1,22 @@
 #include "Nodes/ExecuteNode.h"
+#include "Bridge/SIM/SIMExchange.h"
+#include "MarketTiming/ImmediateTiming.h"
 #include "server.h"
 
 namespace{
     class BasicSignalObserver : public ISignalObserver {
     public:
         BasicSignalObserver(Server* server):_server(server) {}
-        virtual void OnSignalConsume(TradeSignal* signal) {
-            auto broker = _server->GetBrokerSubSystem();
+        ~BasicSignalObserver() {
+            delete _strategy;
+        }
+
+        virtual void OnSignalConsume(const String& strategy, TradeSignal* signal, const DataContext &context) {
+            if (!_strategy)
+                return;
             INFO("signal try consume");
-            /*for (auto& item : decisions) {
-                auto& decision = item.second;
-                Order order;
-                if (decision.action == TradeAction::BUY) {
-                    broker->Buy(strategy, decision.symbol, order, [symbol = decision.symbol, this](const TradeReport& report) {
-                        auto sock = Server::GetSocket();
-                        auto info = to_sse_string(symbol, report);
-                        nng_send(sock, info.data(), info.size(), 0);
-                        _reports.emplace_back(std::make_pair(symbol, report));
-                        });
-                }
-                else if (decision.action == TradeAction::SELL) {
-                    broker->Sell(strategy, decision.symbol, order, [symbol = decision.symbol, this](const TradeReport& report) {
-                        auto sock = Server::GetSocket();
-                        auto info = to_sse_string(symbol, report);
-                        nng_send(sock, info.data(), info.size(), 0);
-                        _reports.emplace_back(std::make_pair(symbol, report));
-                        });
-                }
-            }*/
+            _strategy->processSignal(strategy, *signal, context);
+            
         }
 
         virtual void RegistTimingStrategy(ITimingStrategy* strategy) {
@@ -44,8 +33,15 @@ ExecuteNode::ExecuteNode(Server* server):_server(server), _timing(nullptr){
 
 bool ExecuteNode::Init(const nlohmann::json& config) {
     int type = config["params"]["type"]["value"];
-    auto timing = GenerateTiming((ExecuteType)type);
+    double slippage = config["params"]["slippage"]["value"];
 
+    _timing = GenerateTiming((ExecuteType)type);
+    
+    auto exchange = _server->GetAvaliableStockExchange();
+    auto simExchagne = dynamic_cast<StockSimulation*>(exchange);
+    if (simExchagne) {
+        simExchagne->SetSlippage(slippage);
+    }
     return true;
 }
 
@@ -65,10 +61,16 @@ ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)
 {
     switch (type)
     {
-    case ExecuteType::Immediatly:
-        break;
+    case ExecuteType::ImmediatlyLimit:
+        return new ImmediateTiming(_server, true);
+    case ExecuteType::ImmediatlyMarket:
+        return new ImmediateTiming(_server, false);
     default:
         break;
     }
     return nullptr;
+}
+
+const List<Pair<symbol_t, TradeReport>>& ExecuteNode::GetReports() const {
+    return _timing->GetReports();
 }

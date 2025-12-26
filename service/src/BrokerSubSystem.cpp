@@ -153,6 +153,11 @@ order_id BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Or
     return id;
 }
 
+order_id BrokerSubSystem::Exercise(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    auto id = AddOrderBySide(strategy, symbol, order, 1, cb);
+    return id;
+}
+
 double BrokerSubSystem::GetProfitLoss() {
   return 0;
 }

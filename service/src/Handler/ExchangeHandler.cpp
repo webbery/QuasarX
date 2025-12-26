@@ -92,53 +92,6 @@ ExchangeInterface* ExchangeHandler::GetExchangeByType(ExchangeType type) {
   return _type_excs[type];
 }
 
-ExchangeInfo ExchangeHandler::GetExchangeInfo(const char* name)
-{
-  auto& config = _server->GetConfig();
-  auto exchange = config.GetExchangeByName(name);
-
-  std::string ex_type = exchange["api"];
-  std::string quote_addr = exchange["quote"];
-  std::string trade_addr = exchange["trade"];
-  ExchangeInfo handle;
-  strcpy(handle._local_addr, config.GetHost().c_str());
-  std::vector<std::string> trade_info;
-  split(trade_addr, trade_info, ":");
-  std::vector<std::string> quote_info;
-  split(quote_addr, quote_info, ":");
-  strcpy(handle._quote_addr, quote_info[0].c_str());
-  strcpy(handle._default_addr, trade_info[0].c_str());
-  if (exchange.contains("account")) {
-    std::string username = exchange["account"];
-    strcpy(handle._username, username.c_str());
-  }
-  if (exchange.contains("passwd")) {
-    std::string passwd = exchange["passwd"];
-    strcpy(handle._passwd, passwd.c_str());
-  }
-  if (exchange.contains("option")) {
-      std::string option_addr = exchange["option"];
-      std::vector<std::string> option_info;
-      split(option_addr, option_info, ":");
-      strcpy(handle._option_addr, option_info[0].c_str());
-      handle._option_port = atoi(option_info[1].c_str());
-  }
-  if (trade_info.size() > 1) {
-    handle._stock_port = atoi(trade_info[1].c_str());
-  }
-  if (quote_info.size() > 1) {
-    handle._quote_port = atoi(quote_info[1].c_str());
-  }
-  auto accounts = config.GetStockAccounts();
-  assert(accounts.size() > 0);
-  auto account = accounts.front().first;
-  auto accpwd = accounts.front().second;
-  strcpy(handle._account, account.c_str());
-  strcpy(handle._accpwd, accpwd.c_str());
-  handle._localPort = config.GetPort();
-  return handle;
-}
-
 double ExchangeHandler::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& deals) {
     auto broker = _server->GetBrokerSubSystem();
     broker->Buy(strategy, symbol, order, deals);

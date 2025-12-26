@@ -42,7 +42,7 @@ private:
   bool SwitchExchange(const String& name) {
     if (!_exchanges[name]) {
       auto ptr = new T(_server);
-      auto info = GetExchangeInfo(name.c_str());
+      auto info = _server->GetExchangeInfo(name.c_str());
       if (!ptr->Init(info)) {
         printf("init fail.\n");
         delete ptr;

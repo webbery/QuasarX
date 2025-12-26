@@ -46,9 +46,11 @@ public:
   virtual QuoteInfo GetQuote(symbol_t);
 
   virtual double GetAvailableFunds();
-    virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
+  virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
 
   double Progress();
+  void SetCommission(const Commission& buy, const Commission& sell);
+  void SetSlippage(float slippage) { _slippage = slippage; }
 private:
   bool Once(symbol_t symbol, time_t timeAxis);
   bool Once(uint32_t& curIndex);
@@ -82,4 +84,7 @@ protected:
   ConcurrentMap<symbol_t, boost::lockfree::queue<OrderInfo>*> _orders;
   std::atomic<size_t> _cur_id;
   ConcurrentMap<size_t, OrderContext*> _reports;
+  Commission _buy;
+  Commission _sell;
+  float _slippage;  // 滑点
 };

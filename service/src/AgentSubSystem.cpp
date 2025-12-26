@@ -6,13 +6,12 @@
 #include "json.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
 #include "yas/serialize.hpp"
-#include "DataSource.h"
-#include <filesystem>
 #include "BrokerSubSystem.h"
 #include "Nodes/SignalNode.h"
 #include <stdexcept>
 #include "RiskSubSystem.h"
 #include "Nodes/ScriptNode.h"
+#include "Nodes/ExecuteNode.h"
 
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
@@ -83,7 +82,7 @@ void FlowSubsystem::Start(const String& strategy) {
                 }
             }
             // 统计指标
-            auto endNode = dynamic_cast<SignalNode*>(flow._graph.back());
+            auto endNode = dynamic_cast<ExecuteNode*>(flow._graph.back());
             if (endNode) {
                 auto& cash_flow = endNode->GetReports();
                 flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);

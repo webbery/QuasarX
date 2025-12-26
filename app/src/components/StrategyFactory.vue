@@ -407,6 +407,11 @@ const keyMap = {
   "1d": "日频",
   "VaR": "VaR",
   "ES": "ES",
+  "initialCapital": "初始资金",
+  "commission": "佣金费率",
+  "stampDuty": "印花税率",
+  "minFee": "最低手续费",
+  "slippage": "滑点",
 }
 
 // 定义节点类型配置

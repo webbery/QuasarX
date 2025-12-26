@@ -1,4 +1,5 @@
 #pragma once
+#include "Bridge/SIM/SIMExchange.h"
 #include "std_header.h"
 #include "DataGroup.h"
 #include "Handler/RiskHandler.h"
@@ -29,6 +30,7 @@ class StrategyPlugin;
 class IStopLoss;
 class StopLossHandler;
 class BrokerSubSystem;
+class StockSimulation;
 
 typedef enum {
 	SEND_REQ, // Sending REQ request
@@ -170,6 +172,9 @@ public:
 
     void InitMarket(const List<Pair<String, ExchangeName>>& info);
 
+    ExchangeInfo GetExchangeInfo(const String& name);
+    // type 0-股票
+    StockSimulation* CreateSimulation(const String& name, const String& strategy, int type = 0);
 private:
     void Regist();
     // void RunCammand();
@@ -231,6 +236,7 @@ private:
     void InitFutures();
 
     void ReloadMarketData(const String& path);
+
 private:
     struct DividendData {
         time_t _start;
@@ -277,7 +283,6 @@ private:
     Map<String, DataFrame> _data;
     Map<String, DataFrame> _hfqdata;
     List<String> _symbolCache;
-    Map<int, DataFrame> _simulations;
     // 除权出息信息
     TickMap<symbol_t, Map<time_t, DividendData>> _dividends;
 
@@ -289,5 +294,5 @@ private:
     Map<String, AccountPosition> _account_positions;
 
     Map<ExchangeName, Set<time_range>> _working_times;
-
+    Set<StockSimulation*> _simulations;
 };

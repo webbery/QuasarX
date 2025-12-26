@@ -105,6 +105,7 @@ public:
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
     order_id Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
+    order_id Exercise(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
     int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 

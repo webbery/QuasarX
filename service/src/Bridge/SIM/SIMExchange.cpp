@@ -53,6 +53,9 @@ bool StockSimulation::Release() {
 
 bool StockSimulation::Login(AccountType t){
     _finish = false;
+    // 加载配置中的买入/卖出手续费
+    auto& config = _server->GetConfig();
+    
     return true;
 }
 
@@ -374,6 +377,11 @@ void StockSimulation::Worker() {
   }
   _finish = true;
   nng_close(_sock);
+}
+
+void StockSimulation::SetCommission(const Commission& buy, const Commission& sell) {
+  _buy = buy;
+  _sell = sell;
 }
 
 TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quote)

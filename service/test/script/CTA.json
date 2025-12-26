@@ -1,7 +1,7 @@
 {
-    "id": "graph_ma2",
-    "name": "双均线动量流水线",
-    "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
+    "id": "cta-1",
+    "name": "日内CTA策略",
+    "description": "日内CTA策略",
     "nodes": [
         {
             "id": "1",
@@ -16,7 +16,7 @@
                         "options": ["股票", "期货"]
                     },
                     "code": {
-                        "value": ["000001"],
+                        "value": ["000001", "002825", "003007", "301110", "000423"],
                         "type": "text"
                     },
                     "freq": {
@@ -52,17 +52,18 @@
             "id": "2",
             "type": "custom",
             "data": { 
-                "label": "MA_5",
+                "label": "ReturnRate",
                 "nodeType": "function",
                 "params": {
                     "method": {
-                        "value": "MA",
+                        "value": "Return",
                         "type": "select",
-                        "options": ["MA"]
+                        "options": ["Return"]
                     },
-                    "smoothTime": {
-                        "value": 5,
-                        "type": "text"
+                    "range": {
+                        "value": "1m",
+                        "type": "select",
+                        "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
                     }
                 }
             },
@@ -72,17 +73,18 @@
             "id": "3",
             "type": "custom",
             "data": { 
-                "label": "MA_15",
+                "label": "STD",
                 "nodeType": "function",
                 "params": {
                     "method": {
-                        "value": "MA",
+                        "value": "STD",
                         "type": "select",
-                        "options": ["MA"]
+                        "options": ["STD"]
                     },
-                    "smoothTime": {
-                        "value": 15,
-                        "type": "text"
+                    "range": {
+                        "value": "1m",
+                        "type": "select",
+                        "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
                     }
                 }
             },
@@ -91,20 +93,20 @@
         {
             "id": "6",
             "type": "custom",
-            "data": { 
-                "label": "MA_diff",
+            "data": {
+                "label": "Signal",
                 "nodeType": "signal",
                 "params": {
                     "code": {
-                        "value": ["000001"],
+                        "value": ["000001", "002825", "003007", "301110", "000423"],
                         "type": "text"
                     },
                     "buy": {
-                        "value": "MA_5[t]>MA_15[t] and MA_5[t-1]<MA_15[t-1] ",
+                        "value": "topk(ReturnRate[t], 2)",
                         "type": "text"
                     },
                     "sell": {
-                        "value": "MA_5[t]<MA_15[t] and MA_5[t-1]>MA_15[t-1] ",
+                        "value": "not topk(ReturnRate[t], 2)",
                         "type": "text"
                     }
                 }
@@ -112,41 +114,12 @@
             "position": { "x": 800, "y": 150 }
         },
         {
-            "id": "7",
+            "id": "4",
             "type": "custom",
             "data": { 
-                "label": "trader",
+                "label": "执行器",
                 "nodeType": "execution",
                 "params": {
-                    "initialCapital": {
-                        "value": 100000,
-                        "type": "number",
-                        "unit": "元"
-                    },
-                    "commission": {
-                        "value": 0.0003,
-                        "type": "number",
-                        "min": 0,
-                        "max": 0.01,
-                        "step": 0.0001,
-                        "unit": "%"
-                    },
-                    "stampDuty": {
-                        "value": 0.001,
-                        "type": "number", 
-                        "min": 0,
-                        "max": 0.01,
-                        "step": 0.0001,
-                        "unit": "%"
-                    },
-                    "minFee": {
-                        "value": 5,
-                        "type": "number",
-                        "min": 0,
-                        "max": 50,
-                        "step": 1,
-                        "unit": "元"
-                    },
                     "slippage": {
                         "value": 0.001,
                         "type": "number",
@@ -160,13 +133,13 @@
                         "options": ["立即执行市价单", "VWAP"]
                     },
                     "contract":{
-                        "value": 1,
+                        "value": 0,
                         "type": "select",
                         "options": ["股票", "期货", "期权"]
                     }
                 }
             },
-            "position": { "x": 800, "y": 150 }
+            "position": { "x": 800, "y": 50 }
         }
     ],
     "edges": [
@@ -179,22 +152,6 @@
             "type": "default"
         },
         {
-            "id": "1-close->3",
-            "source": "1",
-            "target": "3",
-            "sourceHandle": "1-close",
-            "targetHandle": "3",
-            "type": "default"
-        },
-        {
-            "id": "3->6",
-            "source": "3",
-            "target": "6",
-            "sourceHandle": "3",
-            "targetHandle": "6",
-            "type": "default"
-        },
-        {
             "id": "2->6",
             "source": "2",
             "target": "6",
@@ -203,11 +160,11 @@
             "type": "default"
         },
         {
-            "id": "6->7",
+            "id": "6->4",
             "source": "6",
-            "target": "7",
+            "target": "4",
             "sourceHandle": "6",
-            "targetHandle": "7",
+            "targetHandle": "4",
             "type": "default"
         }
     ]

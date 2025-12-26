@@ -15,6 +15,10 @@
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 namespace {
+    static const Map<String, int> timeHorizon{
+        {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, 
+    };
+
     Map<String, std::function<ICallable* (const FunctionNode&, const nlohmann::json&)>> intrinsic_functions{
         {"MA", [] (const FunctionNode& node, const nlohmann::json& config) {
             int cnt = config["params"]["smoothTime"]["value"];
@@ -64,13 +68,11 @@ namespace {
             return nullptr;
         }},
         {"STD", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
-            return nullptr;
+            String cnt = (String)config["params"]["range"]["value"];
+            return new STD(timeHorizon.at(cnt));
         }},
         {"Return", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
             String cnt = (String)config["params"]["range"]["value"];
-            static const Map<String, int> timeHorizon{
-                {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, 
-            };
             return new Return(timeHorizon.at(cnt));
         }},
     };

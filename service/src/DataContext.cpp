@@ -3,9 +3,13 @@
 #include <type_traits>
 #include <variant>
 
-DataContext::~DataContext() {}
+DataContext::~DataContext() {
+    for (auto& item: _signalObservers) {
+        delete item;
+    }
+}
 
-DataContext::DataContext(const String& strategy, Server* server) {
+DataContext::DataContext(const String& strategy, Server* server):_strategy(strategy) {
     // 初始化该策略的历史记录
 }
 
@@ -74,13 +78,13 @@ void DataContext::cleanupExpiredSignals() {
 }
 
 void DataContext::RegistSignalObserver(ISignalObserver* obs) {
-    _observers.push_back(obs);
+    _signalObservers.push_back(obs);
 }
 
 void DataContext::UnregisterObserver(ISignalObserver* observer) {
-    for (auto itr = _observers.begin(); itr != _observers.end(); ++itr) {
+    for (auto itr = _signalObservers.begin(); itr != _signalObservers.end(); ++itr) {
         if (*itr == observer) {
-            _observers.erase(itr);
+            _signalObservers.erase(itr);
             break;
         }
     }
@@ -90,11 +94,13 @@ void DataContext::ConsumeSignals() {
     cleanupExpiredSignals();
     // TODO: portfolio
 
+    // TODO: risk
+
     Set<symbol_t> erases;
     for (auto& item: _signals) {
         // signal execution
-        for (auto obs: _observers) {
-            obs->OnSignalConsume(item.second);
+        for (auto obs: _signalObservers) {
+            obs->OnSignalConsume(_strategy, item.second, *this);
         }
         erases.insert(item.first);
     }
