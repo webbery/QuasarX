@@ -94,8 +94,11 @@ import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps } from 
 import Store from 'electron-store';
 import { message } from '@/tool';
 import sseService from '@/ts/SSEService';
+import { getGlobalStorage } from '@/ts/globalStorage';
 
 const store = new Store();
+const globalStorage = getGlobalStorage()
+
 const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
 const props = defineProps({
   showLoginModal: Boolean,
@@ -300,6 +303,18 @@ const handleLogin = () => {
               emit('onStatusChange', true, removeInfo + ' - 实盘模式')
             }
             isSubmitting.value = false;
+            // 更新所有股票代码名称到本地缓存
+            axios.get('/v0/stocks/simple').then((response)=> {
+              console.info('login response:', response)
+              const data = response.data
+              let securities = {
+                'stocks': new Map()
+              }
+              data['stocks'].map((item)=> {
+                securities['stocks'].set(item.symbol, item.name)
+              })
+              globalStorage.setItem('securities', securities)
+            })
             closeModal();
           } else {
             message.error(`登录失败`)

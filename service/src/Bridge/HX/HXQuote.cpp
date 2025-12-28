@@ -40,9 +40,9 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     //     return;
 
     auto name = pMarketDataField->SecurityID;
-    // if (strcmp(name, "000001") == 0) {
-    //     INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
-    // }
+    //if (strcmp(name, "000001") == 0) {
+    //    INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
+    //}
     auto symb = to_symbol(name);
     QuoteInfo& info = _tickers[symb];
     auto cur = Now();

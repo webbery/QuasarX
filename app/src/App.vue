@@ -114,6 +114,9 @@
       <div v-else-if="is_setting">
         <SettingPanel :enableOperation="useOperaion"></SettingPanel>
       </div>
+      <div v-else-if="is_position">
+        <TradePanel></TradePanel>
+      </div>
     </aside>
 
     <!-- 页脚 -->
@@ -147,7 +150,6 @@
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed } from "vue";
 import LabVue from "./components/Lab.vue";
-import MineVue from "./components/Mine.vue";
 import RiskManagerVue from "./components/RiskManager.vue";
 import StrategyVue from "./components/Strategy.vue";
 import MarketPanel from "./components/MarketPanel.vue";
@@ -162,6 +164,7 @@ import SettingView from "./components/SettingView.vue";
 import SettingPanel from "./components/SettingPanel.vue";
 import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 import PositionManager from "./components/PositionManager.vue";
+import TradePanel from "./components/TradePanel.vue";
 import sseService from "./ts/SSEService";
 
 // 定义视图状态常量

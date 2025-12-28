@@ -1276,7 +1276,10 @@ bool Server::SendEmail(const String& content) {
     if (pwd.empty() || sender.empty())
         return false;
 
-    String prefix = "python tool/mail.py ";
+    String scriptFile("tool/mail.py");
+    if (!std::filesystem::exists(scriptFile))
+        return false;
+    String prefix = "python " + scriptFile +" ";
     prefix += sender + " " + pwd;
 
     String cmd = prefix + " " + _config->GetWarningAddr() + " \"" + content + "\"";

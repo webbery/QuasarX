@@ -258,10 +258,11 @@ bool RecordHandler::MergeCSV(const String& src, const String& dst) {
   ofs.clear();
   time_t last_t = 0;
   List<String> append_lines;
-  if (org_lines.size() <= 1) {
+  if (org_lines.size() <= 1 && !new_lines.empty()) {
     // 复制header
     append_lines.push_back(new_lines.front());
-  } else {
+  }
+  else if (!org_lines.empty()){
     auto& last_line = org_lines.back();
     List<String> last_info;
     split(last_line, last_info, ",");

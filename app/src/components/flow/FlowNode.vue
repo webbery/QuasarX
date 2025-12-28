@@ -225,7 +225,20 @@
                             </button>
                         </div>
                     </div>
-
+                    <div v-else-if="paramConfig.type === 'file'" class="file-input">
+                        <div class="file-path-display">
+                            <span class="path-text">{{ paramConfig.value || '未选择路径' }}</span>
+                            <button 
+                                class="file-select-btn"
+                                @click="selectFile(key)"
+                                @mousedown.stop
+                                @dragstart.stop
+                            >
+                                <i class="fas fa-file"></i>
+                                选择文件
+                            </button>
+                        </div>
+                    </div>
                     <!-- 下载按钮 -->
                     <div v-else-if="paramConfig.type === 'download'" class="download-section">
                         <button 
@@ -262,8 +275,9 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
 import { computed, inject, ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ipcRenderer } from 'electron'
 
-const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown']
+const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file']
 
 // 定义组件属性
 const props = defineProps({
@@ -454,27 +468,7 @@ const getSelectedOptions = (currentValue, allOptions) => {
 // 路径选择方法
 const selectDirectory = async (paramKey) => {
     try {
-        // 这里可以调用Electron的对话框API或使用浏览器原生的文件选择
-        // 假设我们有一个全局的路径选择方法
-        if (window.showDirectoryPicker) {
-            // 使用现代浏览器的文件系统API
-            const handle = await window.showDirectoryPicker()
-            const path = handle.name // 实际项目中可能需要获取完整路径
-            updateParam(paramKey, path)
-        } else {
-            // 降级方案：使用input元素
-            const input = document.createElement('input')
-            input.type = 'file'
-            input.webkitdirectory = true
-            input.onchange = (e) => {
-                const files = e.target.files
-                if (files.length > 0) {
-                    // 获取第一个文件的路径（实际项目中可能需要处理多个文件）
-                    updateParam(paramKey, files[0].webkitRelativePath.split('/')[0])
-                }
-            }
-            input.click()
-        }
+        
     } catch (error) {
         console.error('选择路径失败:', error)
         // 用户取消选择或其他错误
@@ -515,6 +509,24 @@ const downloadFile = async (paramKey) => {
         console.error('下载失败:', error)
         downloadStatus.value = '下载错误: ' + error.message
         setTimeout(() => { downloadStatus.value = '' }, 3000)
+    }
+}
+const selectFile = async (paramKey) => {
+    try {
+        console.info('paramKey', paramKey)
+        const filters = getFileFilters(paramKey)
+        const result = await ipcRenderer.invoke('select-file', {
+            title: `选择${paramKey}文件`,
+            filters: filters,
+            properties: ['openFile']
+        })
+        if (result.success) {
+            updateParam(paramKey, result.filePath)
+        }
+    }catch (error) {
+        console.error('选择文件失败:', error)
+        // 可以添加用户提示
+        alert(`选择文件失败: ${error.message}`)
     }
 }
 // 节点类型映射
@@ -614,6 +626,14 @@ const updateDateRange = (paramKey, index, newDateValue) => {
 // 更新参数值
 const updateParam = (paramKey, newValue) => {
     emit('update-node', props.node.id, paramKey, newValue)
+}
+
+const getFileFilters = (paramKey) => {
+  const filterMap = {
+    'csv文件': [{ name: 'CSV文件', extensions: ['csv'] }],
+    '上传模型': [{ name: '模型文件', extensions: ['onnx'] }],
+  }
+  return filterMap[paramKey] || [{ name: '所有文件', extensions: ['*'] }]
 }
 </script>
 
@@ -883,6 +903,42 @@ const updateParam = (paramKey, newValue) => {
 .directory-select-btn:active,
 .download-btn:active {
     cursor: pointer;
+}
+/* 文件选择器样式 */
+.file-input {
+  width: 100%;
+}
+
+.file-path-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--darker-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+}
+
+.file-select-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.file-select-btn:hover {
+  background: var(--accent);
+}
+
+.file-select-btn:active {
+  transform: translateY(1px);
 }
 /* 图标背景颜色 */
 .icon-type-dataInput {

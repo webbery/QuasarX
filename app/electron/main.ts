@@ -97,11 +97,14 @@ app.whenReady().then(async () => {
         allWindows.length === 0 ? createWindow() : allWindows[0].focus();
     });
 
-    ipcMain.handle('open-directory-dialog', async () => {
+    ipcMain.handle('open-directory-dialog', async (event, options) => {
         const result = await dialog.showOpenDialog({
+            title: options?.title || '选择目录',
+            defaultPath: options?.defaultPath || '',
+            buttonLabel: options?.buttonLabel || '选择',
             properties: ['openDirectory']
         });
-        if (result.canceled) {
+        if (result.canceled || result.filePaths.length == 0) {
             return null;
         } else {
             return result.filePaths[0];
@@ -133,6 +136,29 @@ app.whenReady().then(async () => {
             return true;
         } else {
             return false;
+        }
+    })
+
+    // 处理文件选择请求
+    ipcMain.handle('select-file', async (event, options) => {
+        try {
+            const result = await dialog.showOpenDialog({
+            title: options.title || '选择文件',
+            defaultPath: options.defaultPath || '',
+            buttonLabel: options.buttonLabel || '选择',
+            filters: options.filters || [
+                { name: '所有文件', extensions: ['*'] }
+            ],
+            properties: options.properties || ['openFile']
+            })
+            
+            if (!result.canceled && result.filePaths.length > 0) {
+            return { success: true, filePath: result.filePaths[0] }
+            }
+            return { success: false, filePath: null }
+        } catch (error) {
+            console.error('文件选择错误:', error)
+            return { success: false, error: error.message }
         }
     })
 });

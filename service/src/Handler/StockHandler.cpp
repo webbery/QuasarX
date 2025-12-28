@@ -28,21 +28,30 @@ void StockHandler::checkHelp() {
 void StockHandler::get(const httplib::Request& req, httplib::Response& res)
 {
     auto path = _server->GetConfig().GetDatabasePath();
-    String stock_path = path + "/A_code.csv";
-    io::CSVReader<2> reader(stock_path);
-    reader.read_header(io::ignore_extra_column, "code", "name");
-    std::string code;
-    std::string name;
+    String stock_path = path + "/symbol_market.csv";
     nlohmann::json stocks;
-    while (reader.read_row(code, name)) {
-        if (name == "-")
-            continue;
-        auto symbol = format_symbol(code);
-        Map<String, String> info;
-        info["symbol"] = symbol;
-        info["name"] = name;
-        stocks["stocks"].emplace_back(std::move(info));
+    if (std::filesystem::exists(stock_path)) {
+        try {
+            io::CSVReader<2> reader(stock_path);
+            reader.read_header(io::ignore_extra_column, "代码", "name");
+            std::string code;
+            std::string name;
+            while (reader.read_row(code, name)) {
+                if (name == "-")
+                    continue;
+                auto symbol = format_symbol(code);
+                Map<String, String> info;
+                info["symbol"] = symbol;
+                info["name"] = name;
+                stocks["stocks"].emplace_back(std::move(info));
+            }
+        }
+        catch (std::exception& e) {
+            INFO("read symbol_market.csv error: {}", e.what());
+            throw std::runtime_error(e.what());
+        }
     }
+    res.status = 200;
     stocks["status"] = "success";
     res.set_content(stocks.dump(), "application/json");
 }

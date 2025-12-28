@@ -51,6 +51,7 @@
     "electron-store": "^10.1.0",
     "element-plus": "^2.9.5",
     "node-stream-zip": "^1.15.0",
+    "pinia": "^3.0.4",
     "plotly.js-dist": "^3.0.1",
     "vue": "^3.5.10"
   },

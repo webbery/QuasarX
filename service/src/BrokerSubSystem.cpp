@@ -468,7 +468,7 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
         auto exchange = _server->GetAvaliableFutureExchange();
         id = exchange->AddOrder(GET_SYMBOL(order), order);
     }
-    return id;
+    return id;  
 }
 
 int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)

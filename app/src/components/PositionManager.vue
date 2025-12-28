@@ -75,6 +75,7 @@
                 <thead>
                   <tr>
                     <th>代码</th>
+                    <th>交易所</th>
                     <th>名称</th>
                     <th>持仓数量</th>
                     <th>可用数量</th>
@@ -105,250 +106,10 @@
                 </tbody>
               </table>
               
-              <!-- 新代码买入面板 -->
-              <div class="operation-panel" v-if="newStockOperation">
-                <h3>新代码买入</h3>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>股票代码</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.code" placeholder="请输入股票代码">
-                  </div>
-                  <div class="form-group">
-                    <label>股票名称</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.name" readonly="readonly"></input>
-                  </div>
-                  <div class="form-group">
-                    <label>交易类型</label>
-                    <select class="form-control" v-model="newStockOrder.tradeType">
-                      <option value="buy">普通买入</option>
-                      <option value="buy_margin">融资买入</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>订单类型</label>
-                    <select class="form-control" v-model="newStockOrder.orderType" @change="handleOrderTypeChange('new')">
-                      <option value="limit">限价单</option>
-                      <option value="market">市价单</option>
-                      <option value="conditional">条件单</option>
-                      <option value="stop">止损单</option>
-                    </select>
-                  </div>
-                </div>
-                
-                <!-- 价格输入区域 - 根据订单类型动态显示 -->
-                <div class="form-row" v-if="newStockOrder.orderType === 'limit'">
-                  <div class="form-group">
-                    <label>限价价格</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.price" placeholder="请输入限价价格">
-                  </div>
-                  <div class="form-group">
-                    <label>当前价格</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.curPrice" readonly>
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="newStockOrder.orderType === 'market'">
-                  <div class="form-group">
-                    <label>市价单说明</label>
-                    <div class="market-order-notice">市价单将以最优市场价格立即成交</div>
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="newStockOrder.orderType === 'conditional'">
-                  <div class="form-group">
-                    <label>触发条件</label>
-                    <select class="form-control" v-model="newStockOrder.conditionType">
-                      <option value="price_ge">价格≥</option>
-                      <option value="price_le">价格≤</option>
-                      <option value="time">时间条件</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>触发价格</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.triggerPrice" placeholder="触发价格">
-                  </div>
-                  <div class="form-group">
-                    <label>订单价格</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.price" placeholder="触发后执行价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="newStockOrder.orderType === 'stop'">
-                  <div class="form-group">
-                    <label>止损价格</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.stopPrice" placeholder="止损触发价格">
-                  </div>
-                  <div class="form-group">
-                    <label>订单价格</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.price" placeholder="止损后执行价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="newStockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                <!-- 有效期设置 -->
-                <div class="form-row" v-if="newStockOrder.orderType !== 'market'">
-                  <div class="form-group">
-                    <label>有效期</label>
-                    <select class="form-control" v-model="newStockOrder.validity">
-                      <option value="day">当日有效</option>
-                      <option value="week">本周有效</option>
-                      <option value="month">本月有效</option>
-                      <option value="gtd">指定日期前有效</option>
-                    </select>
-                  </div>
-                  <div class="form-group" v-if="newStockOrder.validity === 'gtd'">
-                    <label>有效日期</label>
-                    <input type="date" class="form-control" v-model="newStockOrder.validityDate">
-                  </div>
-                </div>
-
-                <div class="warning-banner" v-if="newStockOrder.tradeType === 'buy_margin' && !capitalChecked">
-                  请先进行验资操作
-                </div>
-                
-                <div class="operation-buttons">
-                  <button class="btn btn-primary" @click="checkCapital" v-if="newStockOrder.tradeType === 'buy_margin'">验资</button>
-                  <button class="btn " @click="placeNewStockOrder">提交订单</button>
-                  <button class="btn" @click="closeNewStockOperation">取消</button>
-                </div>
-              </div>
-              
-              <!-- 股票操作面板 -->
-              <div class="operation-panel" v-if="selectedStock && !newStockOperation">
-                <h3>{{ selectedStock.name }} ({{ selectedStock.code }}) - {{ stockOperationTypeText }}</h3>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>订单类型</label>
-                    <select class="form-control" v-model="stockOrder.orderType" @change="handleOrderTypeChange('existing')">
-                      <option value="limit">限价单</option>
-                      <option value="market">市价单</option>
-                      <option value="conditional">条件单</option>
-                      <option value="stop">止损单</option>
-                    </select>
-                  </div>
-                </div>
-                
-                <!-- 价格输入区域 - 根据订单类型动态显示 -->
-                <div class="form-row" v-if="stockOrder.orderType === 'limit'">
-                  <div class="form-group">
-                    <label>限价价格</label>
-                    <input type="text" class="form-control" v-model="stockOrder.price" placeholder="请输入限价价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="stockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="stockOrder.orderType === 'market'">
-                  <div class="form-group">
-                    <label>市价单说明</label>
-                    <div class="market-order-notice">市价单将以最优市场价格立即成交</div>
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="stockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="stockOrder.orderType === 'conditional'">
-                  <div class="form-group">
-                    <label>触发条件</label>
-                    <select class="form-control" v-model="stockOrder.conditionType">
-                      <option value="price_ge">价格≥</option>
-                      <option value="price_le">价格≤</option>
-                      <option value="time">时间条件</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>触发价格</label>
-                    <input type="text" class="form-control" v-model="stockOrder.triggerPrice" placeholder="触发价格">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="stockOrder.orderType === 'conditional'">
-                  <div class="form-group">
-                    <label>订单价格</label>
-                    <input type="text" class="form-control" v-model="stockOrder.price" placeholder="触发后执行价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="stockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="stockOrder.orderType === 'stop'">
-                  <div class="form-group">
-                    <label>止损价格</label>
-                    <input type="text" class="form-control" v-model="stockOrder.stopPrice" placeholder="止损触发价格">
-                  </div>
-                  <div class="form-group">
-                    <label>订单价格</label>
-                    <input type="text" class="form-control" v-model="stockOrder.price" placeholder="止损后执行价格">
-                  </div>
-                </div>
-                
-                <div class="form-row" v-if="stockOrder.orderType === 'stop'">
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="stockOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <!-- 有效期设置 -->
-                <div class="form-row" v-if="stockOrder.orderType !== 'market'">
-                  <div class="form-group">
-                    <label>有效期</label>
-                    <select class="form-control" v-model="stockOrder.validity">
-                      <option value="day">当日有效</option>
-                      <option value="week">本周有效</option>
-                      <option value="month">本月有效</option>
-                      <option value="gtd">指定日期前有效</option>
-                    </select>
-                  </div>
-                  <div class="form-group" v-if="stockOrder.validity === 'gtd'">
-                    <label>有效日期</label>
-                    <input type="date" class="form-control" v-model="stockOrder.validityDate">
-                  </div>
-                </div>
-                
-                <div class="warning-banner" v-if="(stockOperationType === 'buy' || stockOperationType === 'buy_margin') && !capitalChecked">
-                  请先进行验资操作
-                </div>
-                
-                <div class="warning-banner" v-if="(stockOperationType === 'sell' || stockOperationType === 'sell_short') && !stockChecked">
-                  请先进行验券操作
-                </div>
-                
-                <div class="operation-buttons">
-                  <button class="btn btn-primary" @click="checkCapital" v-if="stockOperationType === 'buy' || stockOperationType === 'buy_margin'">验资</button>
-                  <button class="btn btn-primary" @click="checkStock" v-if="stockOperationType === 'sell' || stockOperationType === 'sell_short'">验券</button>
-                  <button class="btn" @click="placeStockOrder">提交订单</button>
-                  <button class="btn" @click="closeStockOperation">取消</button>
-                </div>
-              </div>
-              
               <!-- 股票委托列表 -->
               <div class="order-list">
                 <div class="pane-header">
                   <h3>股票委托</h3>
-                  <button class="btn btn-secondary btn-small" @click="openNewStockOperation">新代码买入</button>
                   <button class="btn btn-warning" @click="handleStockCancel">一键撤单</button>
                 </div>
                 
@@ -405,11 +166,6 @@
             
             <!-- 期权持仓 -->
             <div class="tab-pane" :class="{active: activeMarketTab === 'option'}">
-              <div class="pane-header">
-                <button class="btn btn-primary btn-small" @click="refreshOptionPositions">刷新</button>
-                <button class="btn btn-secondary btn-small" @click="openNewOptionOperation">新合约买入</button>
-              </div>
-              
               <div class="tab-container">
                 <div class="tab-header">
                   <div class="tab-item" :class="{active: activeOptionTab === 'positions'}" @click="activeOptionTab = 'positions'">持仓</div>
@@ -475,66 +231,6 @@
                 </div>
               </div>
               
-              <!-- 新合约买入面板 -->
-              <div class="operation-panel" v-if="newOptionOperation">
-                <h3>新合约买入</h3>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>合约代码</label>
-                    <input type="text" class="form-control" v-model="newOptionOrder.code" placeholder="请输入合约代码">
-                  </div>
-                  <div class="form-group">
-                    <label>合约名称</label>
-                    <input type="text" class="form-control" v-model="newOptionOrder.name" placeholder="请输入合约名称">
-                  </div>
-                </div>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>操作类型</label>
-                    <select class="form-control" v-model="newOptionOrder.type">
-                      <option value="buyOpen">买开</option>
-                      <option value="sellOpen">卖开</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>价格</label>
-                    <input type="text" class="form-control" v-model="newOptionOrder.price" placeholder="请输入价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="newOptionOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="operation-buttons">
-                  <button class="btn" @click="placeNewOptionOrder">提交订单</button>
-                  <button class="btn" @click="closeNewOptionOperation">取消</button>
-                </div>
-              </div>
-              
-              <!-- 期权操作面板 -->
-              <div class="operation-panel" v-if="selectedOption && !newOptionOperation">
-                <h3>{{ selectedOption.name }} ({{ selectedOption.code }}) - {{ optionOperationTypeText }}</h3>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>价格</label>
-                    <input type="text" class="form-control" v-model="optionOrder.price" placeholder="请输入价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="optionOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="operation-buttons">
-                  <button class="btn" @click="placeOptionOrder">提交订单</button>
-                  <button class="btn" @click="closeOptionOperation">取消</button>
-                </div>
-              </div>
-              
               <!-- 期权委托列表 -->
               <div class="order-list">
                 <h3>期权委托</h3>
@@ -556,11 +252,6 @@
             
             <!-- 期货持仓 -->
             <div class="tab-pane" :class="{active: activeMarketTab === 'future'}">
-              <div class="pane-header">
-                <button class="btn btn-primary btn-small" @click="refreshFuturePositions">刷新</button>
-                <button class="btn btn-secondary btn-small" @click="openNewFutureOperation">新合约买入</button>
-              </div>
-              
               <table class="position-table">
                 <thead>
                   <tr>
@@ -596,73 +287,6 @@
                   </tr>
                 </tbody>
               </table>
-              
-              <!-- 新合约买入面板 -->
-              <div class="operation-panel" v-if="newFutureOperation">
-                <h3>新合约买入</h3>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>合约代码</label>
-                    <input type="text" class="form-control" v-model="newFutureOrder.code" placeholder="请输入合约代码">
-                  </div>
-                  <div class="form-group">
-                    <label>合约名称</label>
-                    <input type="text" class="form-control" v-model="newFutureOrder.name" placeholder="请输入合约名称">
-                  </div>
-                </div>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>方向</label>
-                    <select class="form-control" v-model="newFutureOrder.direction">
-                      <option value="long">多头</option>
-                      <option value="short">空头</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>价格</label>
-                    <input type="text" class="form-control" v-model="newFutureOrder.price" placeholder="请输入价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="newFutureOrder.quantity" placeholder="请输入数量">
-                  </div>
-                </div>
-                
-                <div class="operation-buttons">
-                  <button class="btn" @click="placeNewFutureOrder">提交订单</button>
-                  <button class="btn" @click="closeNewFutureOperation">取消</button>
-                </div>
-              </div>
-              
-              <!-- 期货操作面板 -->
-              <div class="operation-panel" v-if="selectedFuture && !newFutureOperation">
-                <h3>{{ selectedFuture.name }} ({{ selectedFuture.code }}) - {{ futureOperationType === 'open' ? '开仓' : '平仓' }}</h3>
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>价格</label>
-                    <input type="text" class="form-control" v-model="futureOrder.price" placeholder="请输入价格">
-                  </div>
-                  <div class="form-group">
-                    <label>数量</label>
-                    <input type="text" class="form-control" v-model="futureOrder.quantity" placeholder="请输入数量">
-                  </div>
-                  <div class="form-group" v-if="futureOperationType === 'open'">
-                    <label>方向</label>
-                    <select class="form-control" v-model="futureOrder.direction">
-                      <option value="long">多头</option>
-                      <option value="short">空头</option>
-                    </select>
-                  </div>
-                </div>
-                
-                <div class="operation-buttons">
-                  <button class="btn" @click="placeFutureOrder">提交订单</button>
-                  <button class="btn" @click="closeFutureOperation">取消</button>
-                </div>
-              </div>
               
               <!-- 期货委托列表 -->
               <div class="order-list">
@@ -971,14 +595,6 @@ const formatTime = (timestamp) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
 };
 
-const refreshOptionPositions = () => {
-    message.show('期权持仓已刷新', 'success')
-};
-
-const refreshFuturePositions = () => {
-    message.show('期货持仓已刷新', 'success')
-};
-
 const openNewStockOperation = () => {
     newStockOperation.value = true;
     selectedStock.value = null;
@@ -1167,17 +783,6 @@ const placeNewOptionOrder = () => {
 
 const saveOptionSettings = () => {
     message.show('期权参数设置已保存', 'success')
-};
-
-const openNewFutureOperation = () => {
-    newFutureOperation.value = true;
-    selectedFuture.value = null;
-    futureOperationType.value = '';
-    newFutureOrder.code = '';
-    newFutureOrder.name = '';
-    newFutureOrder.direction = 'long';
-    newFutureOrder.price = '';
-    newFutureOrder.quantity = '';
 };
 
 const closeNewFutureOperation = () => {

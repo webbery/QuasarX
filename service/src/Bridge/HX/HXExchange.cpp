@@ -21,7 +21,11 @@ namespace {
     // 转交易所类型
     char toExchangeID(ExchangeName name) {
         switch (name) {
-        case MT_Shanghai: return TORALEV1API::TORA_TSTP_EXD_SSE;
+        case MT_Shanghai:
+        {
+            //TORASPAPI::TORA_TSTP_SP_EXD_SSE;
+            return TORALEV1API::TORA_TSTP_EXD_SSE;
+        }
         case MT_Shenzhen: return TORALEV1API::TORA_TSTP_EXD_SZSE;
         case MT_Beijing: return TORALEV1API::TORA_TSTP_EXD_BSE;
         case MT_Hongkong: return TORALEV1API::TORA_TSTP_EXD_HK;
@@ -298,7 +302,7 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
 {
     order_id oid;
-    String& shareholder = _stockHandle._shareholder[symbol._exchange];
+    String& shareholder = _optionHandle._shareholder[symbol._exchange];
     if (shareholder.empty()) {
         WARN("option shareholder is empty");
         return oid;
@@ -318,8 +322,49 @@ order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
     strcpy(pInputOrderField.ShareholderID, shareholder.c_str());
     strncpy(pInputOrderField.SecurityID, strCode.c_str(), strCode.size());
     pInputOrderField.ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
-    pInputOrderField.VolumeTotalOriginal = ctx->_order._volume;
-    pInputOrderField.LimitPrice = o._order[0]._price;
+    pInputOrderField.VolumeCondition = TORASPAPI::TORA_TSTP_SP_VC_AV; // 任意数量
+    pInputOrderField.VolumeTotalOriginal = ctx->_order._volume; // volume手
+
+    switch (ctx->_order._type) {
+    case OrderType::Market:
+        pInputOrderField.OrderPriceType = TORASPAPI::TORA_TSTP_SP_OPT_AnyPrice; // 
+        pInputOrderField.LimitPrice = 0; // 市价单
+        break;
+    case OrderType::Limit: // 限价单
+        pInputOrderField.OrderPriceType = TORASPAPI::TORA_TSTP_SP_OPT_LimitPrice; // 
+        pInputOrderField.LimitPrice = o._order[0]._price;
+    default:
+        INFO("Unsupport type {}", (int)ctx->_order._type);
+        break;
+    }
+     
+    if (ctx->_order._flag) {
+        pInputOrderField.CombOffsetFlag[0] = TORASPAPI::TORA_TSTP_SP_OF_Open; // 开仓
+    }
+    else {
+        pInputOrderField.CombOffsetFlag[0] = TORASPAPI::TORA_TSTP_SP_OF_Close; // 
+    }
+
+    switch (ctx->_order._hedge) {
+    case OptionHedge::Arbitrage:
+        pInputOrderField.CombHedgeFlag[0] = TORASPAPI::TORA_TSTP_SP_HF_Arbitrage; // 
+        break;
+    case OptionHedge::Hedge:
+        pInputOrderField.CombHedgeFlag[0] = TORASPAPI::TORA_TSTP_SP_HF_Hedge; // 
+        break;
+    default:
+        pInputOrderField.CombHedgeFlag[0] = TORASPAPI::TORA_TSTP_SP_HF_Speculation; // 投机
+        break;
+    }
+    
+    switch (ctx->_order._validTime)
+    {
+    default:
+        pInputOrderField.TimeCondition = TORASPAPI::TORA_TSTP_SP_TC_GFD;
+        break;
+    }
+     pInputOrderField.CondCheck = TORASPAPI::TORA_TSTP_SP_CCT_None;
+     pInputOrderField.Operway = TORASPAPI::TORA_TSTP_SP_OPERW_PCClient;
 
     pInputOrderField.ForceCloseReason = TORASPAPI::TORA_TSTP_SP_FCC_NotForceClose;
     pInputOrderField.Direction = (ctx->_order._side == 0 ? TORASPAPI::TORA_TSTP_SP_D_Buy : TORASPAPI::TORA_TSTP_SP_D_Sell);
@@ -414,7 +459,7 @@ bool HXExchange::QueryOptionOrders(uint64_t reqID) {
     strcpy(pQryOrderField.InvestorID, _brokerInfo._account);
 
     int ret = _optionHandle._tradeAPI->ReqQryOrder(&pQryOrderField, reqID);
-    if (ret != 0) {
+        if (ret != 0) {
         INFO("Qruery Option fail.");
         return false;
     }
@@ -725,7 +770,6 @@ bool HXExchange::GetOrder(const String& sysID, Order& ol){
 void HXExchange::QueryQuotes(){
     if (_quote_inited)
         return;
-    _quote_inited = true;
     // 订阅行情
     if (_filter._symbols.empty()) {
         // 订阅全市场行情,流量?
@@ -739,6 +783,8 @@ void HXExchange::QueryQuotes(){
                 List<String> info;
                 split(symb, info, ",");
                 symbol = ETFOptionSymbol(info.front(), info.back());
+                if (symbol._year == 0)
+                    continue;
             }
             else {
                 symbol = to_symbol(symb);
@@ -771,6 +817,7 @@ void HXExchange::QueryQuotes(){
         _requested = true;
     }
     SubscribeOptionQuote({ {0, {"000000"}} });
+    _quote_inited = true;
 }
 
 void HXExchange::StopQuery(){

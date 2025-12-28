@@ -455,7 +455,7 @@ const nodeTypeConfigs = {
     "label": "交易信号生成",
     "nodeType": "signal",
     "params": {
-        "类型": {
+      "类型": {
         "value": "股票",
         "type": "select",
         "options":["股票", "期货", "期权"]
@@ -510,6 +510,16 @@ const nodeTypeConfigs = {
         "max": 0.01,
         "step": 0.0001
       },
+      "类型": {
+        "value": "股票",
+        "type": "select",
+        "options":["股票", "期货", "期权"]
+      },
+      "策略": {
+        "value": "立即执行(市价单)",
+        "type": "select",
+        "options":["立即执行(市价单)", "立即执行(限价单)", "VWAP"]
+      },
       "回测周期": {
         "value": ["2020-01-01", "2023-12-31"], // 合并为日期范围
         "type": "daterange"
@@ -539,6 +549,16 @@ const nodeTypeConfigs = {
     nodeType: 'backtest',
     params: {
       
+    }
+  },
+  'xgboost': {
+    label: 'xgboost',
+    nodeType: 'xgboost',
+    params: {
+      '上传模型': {
+        "value": "",
+        "type": "file"
+      },
     }
   },
   'basic-index': {

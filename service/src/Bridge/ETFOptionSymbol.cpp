@@ -77,10 +77,17 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
     _symbol._price = price;
     _symbol._type = t;
     SetCode(idx, id);
-    auto& info = Server::GetSecurity(code);
-    Vector<String> tokens;
-    split(info._deliveryDate, tokens, "-");
-    _symbol._year = atoi(tokens.front().substr(2).c_str());
+    try {
+        auto& info = Server::GetSecurity(code);
+        Vector<String> tokens;
+        split(info._deliveryDate, tokens, "-");
+        _symbol._year = atoi(tokens.front().substr(2).c_str());
+    }
+    catch (std::runtime_error& e) {
+        // 说明该期权已经过期
+        _symbol._year = 0;
+    }
+    
     if (!code_symbol_map.contains(code)) {
         code_symbol_map.emplace(code, _symbol);
     }

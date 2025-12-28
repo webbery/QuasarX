@@ -31,8 +31,8 @@ struct OrderDetail {
 };
 
 enum class OrderType: char {
-    Market, // 市价单
-    Limit,  // 限价单
+    Market, // 市价单(股票/期权)
+    Limit,  // 限价单(股票/期权)
     Condition, // 条件单
     Stop,   // 止损单
     // 冰山订单
@@ -66,6 +66,14 @@ enum OrderTimeValid : char {
     Future, // 指定日期有效
 };
 
+// 期权套保类型
+enum class OptionHedge : char {
+    Speculation,        // 投机
+    Arbitrage,          // 套利
+    Hedge,              // 套保
+    Covered
+};
+
 struct Order {
     uint64_t _id;
     symbol_t _symbol;
@@ -78,12 +86,12 @@ struct Order {
     // 是否行权单
     bool _exec: 1;
     OrderTimeValid _validTime;
+    OptionHedge _hedge;
     OrderStatus _status;
     // 订单发起时间
     time_t _time;
     Array<OrderDetail, MAX_ORDER_SIZE> _order;
     String _sysID; // 其他SDK数据的交易ID
-    //   YAS_DEFINE_STRUCT_SERIALIZE("Order", _number, _type, _status, _order);
 };
 
 nlohmann::json order2json(const Order& );

@@ -10,7 +10,8 @@ class TestOrder:
     order_id = -1
     sys_id = '12002P900000001'
 
-    option_id = '10009816'
+    option_id = '10010462'
+    option_price = 0.2730
     option_order_id = -1
     option_sys_id = ''
 
@@ -80,7 +81,7 @@ class TestOrder:
     def market_order_buy_option(self, auth_token):
         kwargs = self.generate_args(auth_token)
         params = {"symbol": self.option_id, 'type': 1, 'quantity': 200, 'prices': [1.0],
-                  'direct': 0, 'kind': 1}
+                  'direct': 0, 'kind': 1, 'open': 0, 'hedge': 0, 'timeType': 0}
         response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
         return check_response(response)
     

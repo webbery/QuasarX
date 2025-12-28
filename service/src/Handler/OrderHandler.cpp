@@ -50,6 +50,7 @@ OrderHandler::~OrderHandler() {
 void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
     int direct = params["direct"];
+    int kind = params["kind"];
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
     List<double> prices = params["prices"];
@@ -58,25 +59,30 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         auto info = to_sse_string(symbol, report);
         nng_send(sock, info.data(), info.size(), 0);
     };
-    if (direct == 0) {
-        auto broker = _server->GetBrokerSubSystem();
-
-        Order order;
-        order._side = 0;
-        order._volume = quantity;
-        order._time = Now();
-        order._type = GetOrderType(params);
-        auto itr = prices.begin();
-        for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-            if (itr != prices.end()) {
-                order._order[i]._price = *itr;
-                ++itr;
-            }
-            else {
-                order._order[i]._price = 0;
-            }
+    Order order;
+    order._volume = quantity;
+    order._time = Now();
+    order._validTime = (OrderTimeValid)params["timeType"];
+    order._type = GetOrderType(params);
+    auto itr = prices.begin();
+    for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
+        if (itr != prices.end()) {
+            order._order[i]._price = *itr;
+            ++itr;
         }
+        else {
+            order._order[i]._price = 0;
+        }
+    }
+    if (kind == 1) {
+        order._flag = (int)params["open"];
+        order._hedge = (OptionHedge)params["hedge"];
+    }
 
+    nlohmann::json result;
+    auto broker = _server->GetBrokerSubSystem();
+    if (direct == 0) {
+        order._side = 0;
         auto id = broker->Buy("", symbol, order, lambda_sendResult);
         nlohmann::json result;
         if (id._error) {
@@ -86,29 +92,11 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
             result["id"] = id._id;
             result["sysID"] = id._sysID;
         }
-        res.set_content(result.dump(), "application/json");
     }
     else if (direct == 1) {
-        Order order;
         order._side = true;
-        order._volume = quantity;
-        order._time = Now();
-        order._type = GetOrderType(params);
-        auto itr = prices.begin();
-        for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-            if (itr != prices.end()) {
-                order._order[i]._price = *itr;
-                ++itr;
-            }
-            else {
-                order._order[i]._price = 0;
-            }
-        }
-        auto broker = _server->GetBrokerSubSystem();
-        TradeInfo trades;
         auto id = broker->Sell("", symbol, order, lambda_sendResult);
         
-        nlohmann::json result;
         if (id._error) {
             ProcessError(id._error, result, res);
         } else {
@@ -116,9 +104,8 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
             result["id"] = id._id;
             result["sysID"] = id._sysID;
         }
-        res.set_content(result.dump(), "application/json");
     }
-    
+    res.set_content(result.dump(), "application/json");
 }
 
 void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {

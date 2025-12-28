@@ -35,7 +35,7 @@ paths:
       - in: query
         name: id
         schema:
-          type: integer
+          type: string
         description: 要获取的合约代码
       responses:
         '200':
@@ -1563,7 +1563,19 @@ components:
         direct:
           type: integer
           description: 方向,0-买入 1-卖出 2-行权 3-融资买入 4-融券卖出
-    
+        timeType:
+          type: integer
+          description: 订单有效期 0-当日有效 1-给定时间范围
+          enum: [0, 1, 2]
+        open:
+          type: integer
+          description: 开仓与否, 0-开仓
+          enum: [0, 1]
+        hedge:
+          type: integer
+          description: 对冲方式 0-投机 1-套利 2-套保 3-
+          enum: [0, 1]
+
     TradeOrderResponse:
       type: object
       properties:

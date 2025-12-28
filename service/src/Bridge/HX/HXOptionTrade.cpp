@@ -74,7 +74,9 @@ void HXOptionTrade::OnRtnOrder(TORASPAPI::CTORATstpSPOrderField *pOrder) {
 }
 
 void HXOptionTrade::OnErrRtnOrderInsert(TORASPAPI::CTORATstpSPInputOrderField *pInputOrder, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo,int nRequestID) {
-
+    if (pRspInfo->ErrorID) {
+        INFO("option OnErrRtnOrderInsert ErrorID: {}  ErrorMsg: {}, ", pRspInfo->ErrorID, to_utf8(pRspInfo->ErrorMsg));
+    }
 }
 
 void HXOptionTrade::OnRspOrderAction(TORASPAPI::CTORATstpSPInputOrderActionField *pInputOrderActionField, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID) {
@@ -82,7 +84,7 @@ void HXOptionTrade::OnRspOrderAction(TORASPAPI::CTORATstpSPInputOrderActionField
 }
 
 void HXOptionTrade::OnRtnTrade(TORASPAPI::CTORATstpSPTradeField *pTrade) {
-    INFO("option trade success");
+    INFO("option trade success:{}, price {}", pTrade->OrderSysID, pTrade->Price);
 }
 
 void HXOptionTrade::OnRspExerciseInsert(TORASPAPI::CTORATstpSPInputExerciseField *pInputExerciseField, TORASPAPI::CTORATstpSPRspInfoField *pRspInfo, int nRequestID) {

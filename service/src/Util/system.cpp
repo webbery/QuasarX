@@ -523,7 +523,11 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     case ContractType::AStock: id._type = contract_type::stock; break;
     case ContractType::ETF: id._type = contract_type::fund; break;
     case ContractType::Future: id._type = contract_type::future; break;
-    case ContractType::AmericanOption:
+    case ContractType::AmericanOption: {
+        auto name = Server::GetName(symbol);
+        ETFOptionSymbol option(symbol, name);
+        return option;
+    }
     case ContractType::Option: {
         if (ct.second) {
             id._type = contract_type::call;
@@ -532,6 +536,7 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
             id._type = contract_type::put;
         }
     }
+    break;
     case ContractType::Index: id._type = contract_type::index; break;
     break;
     default: break;
