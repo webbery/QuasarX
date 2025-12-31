@@ -521,7 +521,38 @@ feature_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
         // 获取参数：MA(close, 5)
     }
     else if (funcName == "topk") {
-        INFO("call topk");
+        if (ast.nodes.size() < 2) {
+            WARN("topk function requires two arguments");
+            return false;
+        }
+        auto& args = ast.nodes[1];
+        if (args->name != "Arguments" || args->nodes.size() != 2) {
+            WARN("topk function requires exactly two arguments");
+            return false;
+        }
+        // 第一个参数应该是Identifier，获取变量名
+        auto& firstArg = args->nodes[0];
+        feature_t scoreExprValue = evalNode(symbol, *firstArg, context);
+        // 解析第二个参数：k值
+        auto& secondArg = args->nodes[1];
+        feature_t secondValue = evalNode(symbol, *secondArg, context);
+        // 获取变量名（从第一个参数）
+        String varName;
+        if (std::holds_alternative<String>(scoreExprValue)) {
+            varName = std::get<String>(scoreExprValue);
+        } else {
+            // 如果不是字符串，尝试转换或使用默认方式
+            WARN("First argument of topk should be a variable name");
+            return false;
+        }
+        // 获取k值
+        int k = 0;
+        if (std::holds_alternative<double>(secondValue)) {
+            k = static_cast<int>(std::get<double>(secondValue));
+        } else {
+            WARN("Second argument of topk should be a number");
+            return false;
+        }
     }
     return 0.;
 }

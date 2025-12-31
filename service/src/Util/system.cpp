@@ -20,6 +20,8 @@
 #include <ifaddrs.h>
 #include <pthread.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #endif
 #include <vector>
 #include <fstream>
@@ -130,6 +132,31 @@ std::string GetIP() {
         return ip4.front();
     return "";
 #endif
+}
+
+String GetMacAddr() {
+    char mac[64];
+    memset(mac, 0, 64);
+#ifdef WIN32
+#else
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket创建失败");
+        return "";
+    }
+
+    struct ifreq ifr;
+    strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1); // 尝试获取"eth0"的MAC地址
+
+    if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) != -1) {
+        char* val = (char*)ifr.ifr_hwaddr.sa_data;
+        printf("MAC地址: %02X:%02X:%02X:%02X:%02X:%02X\n",
+               val[0], val[1], val[2], val[3], val[4], val[5]);
+        sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X", val[0], val[1], val[2], val[3], val[4], val[5]);
+    }
+    close(sockfd);
+#endif
+    return mac;
 }
 
 bool RunCommand(const std::string& cmd) {
