@@ -124,7 +124,7 @@ void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
     });
 }
 
-bool StockSimulation::CancelOrder(order_id id, OrderContext* order){
+Boolean StockSimulation::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 
@@ -356,6 +356,16 @@ double StockSimulation::GetAvailableFunds()
 
 bool StockSimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
   return true;
+}
+
+Expected<bool, String> StockSimulation::HasPermission(symbol_t symbol)
+{
+    return true;
+}
+
+void StockSimulation::Reset()
+{
+
 }
 
 void StockSimulation::Worker() {

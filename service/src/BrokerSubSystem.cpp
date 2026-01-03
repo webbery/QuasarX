@@ -190,14 +190,19 @@ int BrokerSubSystem::QueryOrder(const String& sysID, Order& order)
     return 1;
 }
 
-void BrokerSubSystem::CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb) {
+void BrokerSubSystem::CancelOrder(order_id& id, symbol_t symbol, std::function<void (const TradeReport&)> cb) {
     auto exchange = _server->GetAvaliableStockExchange();
     OrderContext* ctx = new OrderContext;
     ctx->_flag = false;
     ctx->_callback = cb;
     ctx->_order._symbol = symbol;
-    if (!exchange->CancelOrder(id, ctx)) {
-        WARN("cancel order {} fail.", id._sysID);
+    auto ret = exchange->CancelOrder(id, ctx);
+    if (!ret.has_value()) {
+        if (ret.error() == STR_CANCEL_LIMIT) {
+            id._error = ERROR_CANCEL_LIMIT;
+            delete ctx;
+            return;
+        }
     }
     _order_queue.push(ctx);
 }

@@ -34,7 +34,7 @@ public:
 
   virtual void OnOrderReport(order_id id, const TradeReport& report);
 
-  virtual bool CancelOrder(order_id id, OrderContext* order);
+  virtual Boolean CancelOrder(order_id id, OrderContext* order);
 
   virtual bool GetOrders(SecurityType type, OrderList& ol);
   virtual bool GetOrder(const String& sysID, Order& ol);
@@ -47,6 +47,8 @@ public:
 
   virtual double GetAvailableFunds();
   virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
+  virtual Boolean HasPermission(symbol_t symbol);
+  virtual void Reset();
 
   double Progress();
   void SetCommission(const Commission& buy, const Commission& sell);

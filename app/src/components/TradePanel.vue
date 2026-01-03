@@ -152,6 +152,7 @@
 import { ref, computed, watch, onMounted, onActivated } from 'vue'
 import axios from 'axios';
 import { getGlobalStorage } from '@/ts/globalStorage';
+import getZh from '@/ts/i18n';
 
 const globalStorage = getGlobalStorage()
 // 响应式数据
@@ -304,6 +305,17 @@ const getOperationText = (operation: string): string => {
     return operationMap[operation] || operation
 }
 
+const checkStockPrivilege = async (code: string) => {
+    const response = await axios.get('/v0/stocks/privilege', {params: {
+        id: code
+    }})
+    const data = response.data
+    if (data['forbid']) {
+        statusMessage.value = '错误: ' + getZh(data['message'])
+        return false
+    }
+    return true
+}
 // 提交交易
 const submitTrade = async () => {
     if (!price.value || parseFloat(price.value) <= 0) {
@@ -324,9 +336,14 @@ const submitTrade = async () => {
             return
         }
     }
+    
     let order
     switch (selectedType.value) {
     case 'stock':
+        // 检查交易权限
+        if (!await checkStockPrivilege(code.value)) {
+            return
+        }
         order = generateSockOrder()
     break;
     case 'option':
@@ -339,17 +356,17 @@ const submitTrade = async () => {
     statusMessage.value = `正在提交${operationText}订单...`
     
     // 提交交易
-    try{
-        const res = await axios.post('/v0/trade/order', order)
-        console.info('trade order:', res)
-        // TODO: 发送消息更新持仓信息
-        statusMessage.value = `${operationText}订单提交成功`
-        // TODO:更新可用资金
-        await updateCapital()
-    } catch (error) {
-        console.info('error:')
-        statusMessage.value = `${operationText}订单提交失败`
-    }
+    // try{
+    //     const res = await axios.post('/v0/trade/order', order)
+    //     console.info('trade order:', res)
+    //     // TODO: 发送消息更新持仓信息
+    //     statusMessage.value = `${operationText}订单提交成功`
+    //     // TODO:更新可用资金
+    //     await updateCapital()
+    // } catch (error) {
+    //     console.info('error:')
+    //     statusMessage.value = `${operationText}订单提交失败`
+    // }
 }
 
 const generateSockOrder = () => {

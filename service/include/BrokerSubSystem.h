@@ -111,7 +111,7 @@ public:
 
     virtual bool QueryOrders(SecurityType type, OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
-    virtual void CancelOrder(order_id id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
+    virtual void CancelOrder(order_id& id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
     // 记录交易
     void RecordTrade(const OrderContext& );
     // 注册统计指标

@@ -60,6 +60,7 @@ enum class ContractType: char {
 
 struct ContractInfo {
     char _type;     // ContractType, 对期权, 首位1表示看涨, 0看跌
+    char _market;   // 股票对应的市场类型，如主板、科创板等
     ExchangeName _exchange;
     String _name;
     String _expireDate; //到期日

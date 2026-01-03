@@ -223,6 +223,16 @@ bool XTPExchange::GetCommission(symbol_t symbol, List<Commission>& ) {
   return true;
 }
 
+Expected<bool, String> XTPExchange::HasPermission(symbol_t)
+{
+    return true;
+}
+
+void XTPExchange::Reset()
+{
+
+}
+
 void XTPExchange::StopQuery() {
   if (_requested) {
     Map<XTP_EXCHANGE_TYPE, int> markets;
@@ -322,7 +332,7 @@ void XTPExchange::OnOrderReport(order_id id, const TradeReport& report) {
       });
 }
 
-bool XTPExchange::CancelOrder(order_id id, OrderContext* order) {
+Boolean XTPExchange::CancelOrder(order_id id, OrderContext* order) {
   uint64_t order_id = id._id;
   auto cancel_id = m_pTradeApi->CancelOrder(order_id, m_session);
   if (cancel_id == 0)

@@ -65,6 +65,10 @@ public:
     ///查询佣金费率响应
     virtual void OnRspQryInvestorTradingFee(TORASTOCKAPI::CTORATstpInvestorTradingFeeField *pInvestorTradingFeeField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast); 
 
+    virtual void OnRspQryShareholderSpecPrivilege(TORASTOCKAPI::CTORATstpShareholderSpecPrivilegeField* pShareholderSpecPrivilegeField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast);
+    ///查询证券信息响应
+    virtual void OnRspQrySecurity(TORASTOCKAPI::CTORATstpSecurityField* pSecurityField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast);
+
 private:
     HXExchange* _exchange;
 

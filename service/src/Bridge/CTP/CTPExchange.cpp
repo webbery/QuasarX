@@ -145,7 +145,7 @@ void CTPExchange::OnOrderReport(order_id id, const TradeReport& report) {
 
 }
 
-bool CTPExchange::CancelOrder(order_id id, OrderContext* order){
+Boolean CTPExchange::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 
@@ -225,3 +225,14 @@ double CTPExchange::GetAvailableFunds()
 {
     return 1000000;
 }
+
+Expected<bool, String> CTPExchange::HasPermission(symbol_t symbol)
+{
+    return true;
+}
+
+void CTPExchange::Reset()
+{
+
+}
+

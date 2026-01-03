@@ -35,14 +35,19 @@ struct StockHandle {
     TORASTOCKAPI::CTORATstpTraderApi* _tradeAPI;
     String _shareholder[MT_COUNT];    // 股东账号
 
+    unsigned short _currentCount;   // 当前交易(下单)次数
+    unsigned short _dailyLimit; // 日内交易最大次数
     OrderLimit* _insertLimit;   // 报单限流
     OrderLimit* _cancelLimit;   // 撤单限流
+    int8_t _maxTradeReq;    // 交易通道每秒最大请求数
+    int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
 };
 
 struct OptionHandle {
     HXOptionTrade* _trade;
     TORASPAPI::CTORATstpSPTraderApi* _tradeAPI;
     String _shareholder[MT_COUNT];    // 股东账号
+    unsigned short _dailyLimit; // 日内交易最大次数
 };
 
 class alignas(8) HXExchange: public ExchangeInterface {
@@ -75,7 +80,7 @@ public:
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
 
-    virtual bool CancelOrder(order_id id, OrderContext* order);
+    virtual Expected<bool, String> CancelOrder(order_id id, OrderContext* order);
     // 获取当前尚未完成的所有订单
     virtual bool GetOrders(SecurityType type, OrderList& ol);
     virtual bool GetOrder(const String& sysID, Order& ol);
@@ -89,6 +94,8 @@ public:
     virtual double GetAvailableFunds();
 
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
+    virtual Expected<bool, String> HasPermission(symbol_t symbol);
+    virtual void Reset();
 private:
     // 查询股东用户
     bool QueryStockShareHolder(ExchangeName name);
@@ -125,6 +132,7 @@ private:
     bool QueryStockOrders(uint64_t reqID);
     bool QueryOptionOrders(uint64_t reqID);
 
+    Expected<bool, String> HasStockPermission(symbol_t symbol);
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;
@@ -137,15 +145,13 @@ private:
 
     char _current;      // 当前帐号索引
 
-
     HXQuateSpi* _quote;
     TORALEV1API::CTORATstpXMdApi* _quoteAPI;
 
     OptionHandle _optionHandle;
     StockHandle _stockHandle;
 
-    int8_t _maxTradeReq;    // 交易通道每秒最大请求数
-    int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
+    
 
     std::atomic<uint32_t> _reqID;
     using concurrent_order_map = ConcurrentMap<uint64_t, OrderContext*>;

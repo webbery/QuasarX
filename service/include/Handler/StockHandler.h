@@ -50,3 +50,10 @@ public:
 
 private:
 };
+
+class StockPrivilege : public HttpHandler {
+public:
+    StockPrivilege(Server*);
+
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+};

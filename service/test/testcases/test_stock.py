@@ -66,6 +66,18 @@ class TestStock:
             assert 'volume' in row
             break
 
+    @pytest.mark.timeout(20)
+    def test_stock_privilege(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+        params = {'id': '688719'}
+        response = requests.get(f"{BASE_URL}/stocks/privilege", params=params, **kwargs)
+        data = check_response(response)
+        assert isinstance(data, list)
+        
     # @pytest.mark.timeout(5)
     # def test_index(self):
     #     query = "?id=000300"
@@ -97,3 +109,28 @@ class TestStock:
                 assert 'small' in item
                 break
             break
+        
+    @pytest.mark.timeout(60)
+    def test_daily_limit(self, auth_token):
+        '''
+        单日交易流量限制测试
+        
+        '''
+
+    @pytest.mark.timeout(20)
+    def test_daily_limit(self, auth_token):
+        '''
+        交易速率限制测试:每秒20笔
+        '''
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        symbol = '000001'
+        order_price = 11.1
+        params = {"symbol": symbol, 'type': 1, 'quantity': 200, 'prices': [order_price],
+                'direct': 0, 'kind': 0, 'timeType': 0, 'perf': 100}
+        response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        # data =  check_response(response)

@@ -21,10 +21,27 @@ using ConcurrentMap = boost::concurrent_flat_map<K, V>;
 #define REQUEST_ORDER         4
 
 #define ERROR_INSERT_LIMIT    -100
+#define ERROR_DAILY_LIMIT     -101
+#define ERROR_CANCEL_LIMIT    -102
+
+#define STR_INSERT_LIMIT    "out of insert limit"
+#define STR_CANCEL_LIMIT    "out of cancel limit"
 
 #define MAX_ORDER_SIZE  5
 // 2级行情
 #define MAX_ORDER_SIZE_LVL2  10
+
+// 用户权限
+enum class UserPermission : short {
+    None = 0,   // 行情,无交易权限
+    MainStock = 1,  // 主板股票
+    StockOption = 2,    // 股票期权
+    StockShort = 4,     // 融资融券
+    Future = 8,         // 期货
+    FutureOption = 16,  // 期货期权
+    SecondStock = 32,   // 创业板股票
+    SciTechStock = 64,  // 科创板股票
+};
 
 struct OrderDetail {
   double _price;
@@ -355,7 +372,7 @@ public:
 
   virtual void OnOrderReport(order_id id, const TradeReport& report) = 0;
 
-  virtual bool CancelOrder(order_id id, OrderContext* order) = 0;
+  virtual Boolean CancelOrder(order_id id, OrderContext* order) = 0;
   // 获取当前尚未完成的所有订单
   virtual bool GetOrders(SecurityType type, OrderList& ol) = 0;
   // 查询订单
@@ -368,6 +385,10 @@ public:
   virtual QuoteInfo GetQuote(symbol_t symbol) = 0;
 
   virtual bool GetCommission(symbol_t symbol, List<Commission>& comms) = 0;
+
+  virtual Boolean HasPermission(symbol_t symbol) = 0;
+  // 换日时，重置各种限流参数等操作
+  virtual void Reset() = 0;
 
   Server* GetHandle() { return _server; }
 

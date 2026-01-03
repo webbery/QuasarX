@@ -50,7 +50,7 @@ class TestOrder:
 
         kwargs = self.generate_args(auth_token)
         params = {"symbol": self.stock_id, 'type': 1, 'quantity': 200, 'prices': [order_price],
-                  'direct': 0, 'kind': 0}
+                  'direct': 0, 'kind': 0, 'timeType': 0}
         response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
         return check_response(response)
 

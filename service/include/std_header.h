@@ -12,6 +12,7 @@
 #include <set>
 #include <array>
 #include <variant>
+#include <expected>
 
 #ifdef _WIN32
 #pragma warning(disable: 4828)
@@ -72,6 +73,10 @@ using Tuple = std::tuple<T...>;
 
 template <typename T, typename ...Args>
 using UnorderedSet = std::unordered_set<T, Args...>;
+
+template<typename T, typename Err>
+using Expected = std::expected<T, Err>;
+using Boolean = Expected<bool, String>;
 #endif
 
 #ifndef YEAR_DAY

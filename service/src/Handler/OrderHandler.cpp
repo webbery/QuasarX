@@ -78,31 +78,41 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._flag = (int)params["open"];
         order._hedge = (OptionHedge)params["hedge"];
     }
-
+    int perf = 1;
+    if (params.contains("perf")) {
+        // 循环请求,测试性能
+        perf = params["perf"];
+    }
     nlohmann::json result;
     auto broker = _server->GetBrokerSubSystem();
     if (direct == 0) {
         order._side = 0;
-        auto id = broker->Buy("", symbol, order, lambda_sendResult);
-        nlohmann::json result;
-        if (id._error) {
-            ProcessError(id._error, result, res);
-        } else {
-            res.status = 200;
-            result["id"] = id._id;
-            result["sysID"] = id._sysID;
+        for (int i = 0; i < perf; ++i) {
+            auto id = broker->Buy("_custom_", symbol, order, lambda_sendResult);
+            nlohmann::json result;
+            if (id._error) {
+                ProcessError(id._error, result, res);
+            }
+            else {
+                res.status = 200;
+                result["id"] = id._id;
+                result["sysID"] = id._sysID;
+            }
         }
     }
     else if (direct == 1) {
         order._side = true;
-        auto id = broker->Sell("", symbol, order, lambda_sendResult);
-        
-        if (id._error) {
-            ProcessError(id._error, result, res);
-        } else {
-            res.status = 200;
-            result["id"] = id._id;
-            result["sysID"] = id._sysID;
+        for (int i = 0; i < perf; ++i) {
+            auto id = broker->Sell("_custom_", symbol, order, lambda_sendResult);
+
+            if (id._error) {
+                ProcessError(id._error, result, res);
+            }
+            else {
+                res.status = 200;
+                result["id"] = id._id;
+                result["sysID"] = id._sysID;
+            }
         }
     }
     res.set_content(result.dump(), "application/json");
@@ -172,6 +182,11 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
                     auto info = to_sse_string(symbol, report);
                     nng_send(sock, info.data(), info.size(), 0);
                 });
+                if (id._error == ERROR_CANCEL_LIMIT) {
+                    res.status = 500;
+                    res.set_content("{message: 'cancel order out of limit'}", "application/json");
+                    return;
+                }
             }
         }
     } else {

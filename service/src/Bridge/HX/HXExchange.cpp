@@ -108,7 +108,8 @@ namespace {
 HXExchange::HXExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _quoteAPI(nullptr)
 , _login_status(false), _quote_inited(false), _requested(false), _reqID(0)
-, _stock_login(false), _quote_login(false), _option_login(false), _current(0) {
+, _stock_login(false), _quote_login(false), _option_login(false), _current(0)
+ {
     _optionHandle._trade = nullptr;
     _optionHandle._tradeAPI = nullptr;
     _stockHandle._trade = nullptr;
@@ -199,6 +200,7 @@ bool HXExchange::StockLogin()
     // 获取股东账户信息
     QueryStockShareHolder(ExchangeName::MT_Shanghai);
     QueryStockShareHolder(ExchangeName::MT_Shenzhen);
+
     return true;
 }
 
@@ -263,12 +265,17 @@ bool HXExchange::InitOptionHandle()
 order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
 {
     order_id oid;
+    
     String& shareholder = _stockHandle._shareholder[symbol._exchange];
     if (shareholder.empty()) {
         WARN("shareholder is empty");
         return oid;
     }
-
+    ++_stockHandle._currentCount;
+    if (_stockHandle._currentCount > _stockHandle._dailyLimit) {
+        oid._error = ERROR_DAILY_LIMIT;
+        return oid;
+    }
     oid._id = ++_reqID;
     using namespace TORASTOCKAPI;
     CTORATstpInputOrderField order;
@@ -459,10 +466,147 @@ bool HXExchange::QueryOptionOrders(uint64_t reqID) {
     strcpy(pQryOrderField.InvestorID, _brokerInfo._account);
 
     int ret = _optionHandle._tradeAPI->ReqQryOrder(&pQryOrderField, reqID);
-        if (ret != 0) {
+    if (ret != 0) {
         INFO("Qruery Option fail.");
         return false;
     }
+    return true;
+}
+
+Expected<bool, String> HXExchange::HasStockPermission(symbol_t symbol)
+{
+    auto reqID = ++_reqID;
+    auto str = get_symbol(symbol);
+    List<String> token;
+    split(str, token, ".");
+    auto exch = Server::GetExchange(token.back());
+
+    using security_info_t = std::tuple<char, int64_t, char>;
+    security_info_t info;
+    {
+        auto promise = initPromise<security_info_t>(reqID);
+        TORASTOCKAPI::CTORATstpQrySecurityField qry_field;
+        memset(&qry_field, 0, sizeof(qry_field));
+        switch (exch)
+        {
+        case MT_Shenzhen:
+            qry_field.ExchangeID = TORA_TSTP_EXD_SZSE;
+            qry_field.ProductID = TORASTOCKAPI::TORA_TSTP_PID_SZStock;
+            break;
+        case MT_Shanghai:
+            qry_field.ExchangeID = TORA_TSTP_EXD_SSE;
+            qry_field.ProductID = TORASTOCKAPI::TORA_TSTP_PID_SHStock;
+            break;
+        case MT_Beijing:
+            qry_field.ExchangeID = TORA_TSTP_EXD_BSE;
+            qry_field.ProductID = TORASTOCKAPI::TORA_TSTP_PID_BJStock;
+            break;
+        default:
+            break;
+        }
+        strcpy(qry_field.SecurityID, token.back().c_str());
+
+        // 查询证券信息
+        if (_stockHandle._tradeAPI->ReqQrySecurity(&qry_field, reqID)) {
+            INFO("Query Security fail.");
+            _promises.erase(reqID);
+            return false;
+        }
+
+        std::future<security_info_t> fut;
+        if (!getFuture(promise, fut)) {
+            return false;
+        }
+        info = fut.get();
+    }
+    // 判断是否需要特殊权限
+    bool need_special_permission = false;
+    String reason = "";
+    char market_id = std::get<2>(info);
+    if (market_id == TORASTOCKAPI::TORA_TSTP_STP_SHKC) {
+        need_special_permission = true;
+        reason = "科创板";
+    }
+    else if (market_id == TORASTOCKAPI::TORA_TSTP_STP_SZGEM) {
+        need_special_permission = true;
+        reason = "创业板";
+    }
+    //if (security_status & 0x0000000000000008) { // ST
+    //    need_special_permission = true;
+    //    reason = "风险警示";
+    //}
+    //else if (security_status & 0x0000000000000020) { // 退市整理
+    //    need_special_permission = true;
+    //    reason = "退市整理";
+    //}
+    if (need_special_permission) {
+        reqID = ++_reqID;
+        auto promise = initPromise<bool>(reqID);
+        TORASTOCKAPI::CTORATstpQryShareholderSpecPrivilegeField field;
+        auto lambda_initMarket = [&field](ExchangeName exch) {
+            if (exch == ExchangeName::MT_Shanghai) {
+                field.MarketID = TORA_TSTP_MKD_SHA;
+            }
+            else if (exch == ExchangeName::MT_Shenzhen) {
+                field.MarketID = TORA_TSTP_MKD_SZA;
+            }
+            //field.Direction = TORASTOCKAPI::TORA_TSTP_D_Buy;
+            };
+        memset(&field, 0, sizeof(field));
+        String& shareholder = _stockHandle._shareholder[symbol._exchange];
+        strncpy(field.ShareholderID, shareholder.c_str(), shareholder.size());
+        auto type = getMarketType(symbol);
+        /*switch (type)
+        {
+        case MarketType::AStock:
+            field.SpecPrivilegeType = TORASTOCKAPI::TORA_TSTP_SPLT_Main;
+            lambda_initMarket(exch);
+            break;
+        case MarketType::STARMarket:
+            field.SpecPrivilegeType = TORASTOCKAPI::TORA_TSTP_SPLT_SHKC;
+            lambda_initMarket(exch);
+            break;
+        case MarketType::GEMMarkget:
+            field.SpecPrivilegeType = TORASTOCKAPI::TORA_TSTP_SPLT_GEM;
+            lambda_initMarket(exch);
+            break;
+        case MarketType::BStock:
+            break;
+        case MarketType::ThreeMarket:
+            field.MarketID = TORA_TSTP_MKD_SZThreeA;
+            break;
+        case MarketType::BJMarket:
+            field.MarketID = TORA_TSTP_MKD_BJMain;
+            field.SpecPrivilegeType = TORASTOCKAPI::TORA_TSTP_SPLT_BJStock;
+            break;
+        default:
+            break;
+        }*/
+        if (exch == ExchangeName::MT_Shanghai) {
+            field.ExchangeID = TORA_TSTP_EXD_SSE;
+        }
+        else if (exch == ExchangeName::MT_Shenzhen) {
+            field.ExchangeID = TORA_TSTP_EXD_SZSE;
+        }
+        else if (exch == ExchangeName::MT_Beijing) {
+            field.ExchangeID = TORA_TSTP_EXD_BSE;
+        }
+
+        if (_stockHandle._tradeAPI->ReqQryShareholderSpecPrivilege(&field, reqID)) {
+            INFO("Query Privileges fail.");
+            _promises.erase(reqID);
+            return false;
+        }
+        std::future<bool> fut;
+        if (!getFuture(promise, fut)) {
+            return false;
+        }
+        if (fut.get()) {
+            return true;
+        }
+        throw std::unexpected("");
+    }
+    // 不需要特殊权限
     return true;
 }
 
@@ -624,6 +768,8 @@ AccountAsset HXExchange::GetAsset(){
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     order_id id;
     if (is_stock(symbol)) {
+        // 检查权限
+
         if (!_stockHandle._insertLimit->tryConsume()) {
             id._error = ERROR_INSERT_LIMIT;
             return id;
@@ -633,6 +779,9 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     else if (is_option(symbol)) {
         if (symbol._exchange == ExchangeName::MT_Shanghai || symbol._exchange == ExchangeName::MT_Shenzhen) {
             return AddOptionOrder(symbol, ctx);
+        }
+        else {
+
         }
     }
     return id;
@@ -653,8 +802,11 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
     }
 }
 
-bool HXExchange::CancelOrder(order_id id, OrderContext* ctx){
+Boolean HXExchange::CancelOrder(order_id id, OrderContext* ctx){
     if (is_stock(ctx->_order._symbol)) {
+        if (_stockHandle._cancelLimit->tryConsume()) {
+            throw std::runtime_error(STR_CANCEL_LIMIT);
+        }
         CancelStockOrder(id, ctx);
     } else {
         CancelOptionOrder(id, ctx);
@@ -900,6 +1052,16 @@ bool HXExchange::GetCommission(symbol_t symbol, List<Commission>& comms) {
     
     // _tradeAPI->ReqQryRationalInfo(, reqID);
   return false;
+}
+
+Expected<bool, String> HXExchange::HasPermission(symbol_t symbol)
+{
+    return HasStockPermission(symbol);
+}
+
+void HXExchange::Reset()
+{
+    _stockHandle._currentCount = 0;
 }
 
 double HXExchange::GetAvailableFunds()

@@ -31,7 +31,7 @@ public:
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
 
-    virtual bool CancelOrder(order_id id, OrderContext* order);
+    virtual Boolean CancelOrder(order_id id, OrderContext* order);
 
     virtual bool GetOrders(SecurityType type, OrderList& ol);
     virtual bool GetOrder(const String& sysID, Order& ol);
@@ -50,6 +50,8 @@ public:
     void UpdateCommission();
 
     virtual double GetAvailableFunds();
+    virtual Expected<bool, String> HasPermission(symbol_t symbol);
+    virtual void Reset();
 private:
     CThostFtdcMdApi* _pUserMdApi;
     CThostFtdcTraderApi* _pUserTradeApi;

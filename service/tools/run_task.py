@@ -8,6 +8,7 @@ def update_symbol_market(dst):
     market = []
     names = []
     industries = []
+    types = []
 
     stock_list_df = ak.stock_info_a_code_name()
     symbol_info = dict()
@@ -22,32 +23,40 @@ def update_symbol_market(dst):
         #         break
 
     sz_A = ak.stock_info_sz_name_code()
+    bk_dict = {
+        '主板': 'A', '创业板': 'CYB',
+    }
     for _, row in sz_A.iterrows():
         symbol = str(row['A股代码']).zfill(6)
         codes.append(symbol)
         market.append('SZ')
+        bk = row['板块']
+        types.append(bk_dict[bk])
         if symbol_info[symbol] is None:
             names.append('')
             continue
 
         names.append(symbol_info[symbol])
     
-    sh_A = ak.stock_info_sh_name_code(symbol='主板A股')
-    for _, row in sh_A.iterrows():
-        symbol = str(row['证券代码']).zfill(6)
-        codes.append(symbol)
-        market.append('SH')
-        if symbol_info[symbol] is None:
-            names.append('')
-            continue
+    for type in [('主板A股', 'A'), ("主板B股", 'B'), ("科创板", "KCB")]:
+        sh_A = ak.stock_info_sh_name_code(symbol=type[0])
+        for _, row in sh_A.iterrows():
+            symbol = str(row['证券代码']).zfill(6)
+            codes.append(symbol)
+            market.append('SH')
+            types.append(type[1])
+            if symbol_info[symbol] is None:
+                names.append('')
+                continue
 
-        names.append(symbol_info[symbol])
+            names.append(symbol_info[symbol])
     # sh_kc = ak.stock_info_sh_name_code(symbol='科创板')
     bj_A = ak.stock_info_bj_name_code()
     for _, row in bj_A.iterrows():
         symbol = str(row['证券代码']).zfill(6)
         codes.append(symbol)
         market.append('BJ')
+        types.append('-')
         if symbol_info[symbol] is None:
             names.append('')
             continue
@@ -57,7 +66,8 @@ def update_symbol_market(dst):
     df = pd.DataFrame({
         '代码': codes,
         '交易所': market,
-        "name": names
+        "name": names,
+        'market': types
     })
 
     df.to_csv(dst, index=False)

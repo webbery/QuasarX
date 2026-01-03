@@ -670,6 +670,28 @@ Set<symbol_t> get_holds(const AccountPosition& account) {
   return holds;
 }
 
+MarketType getMarketType(symbol_t stock)
+{
+    int prefix = stock._symbol / 1000;
+    switch (prefix)
+    {
+    case 300:   // 创业板
+        return MarketType::GEMMarkget;
+    case 688:   // 科创板
+        return MarketType::STARMarket;
+    case 400: // 新三板
+    case 430:
+    case 830:
+        return MarketType::ThreeMarket;
+    default: {
+        int h = prefix / 100;
+        if (h == 8 || h == 9)
+            return MarketType::BJMarket;
+    }
+        return MarketType::AStock;
+    }
+}
+
 std::string GetProgramPath() {
 #ifdef WIN32
     TCHAR path[MAX_PATH] = { 0 };

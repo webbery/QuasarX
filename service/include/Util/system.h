@@ -216,6 +216,17 @@ struct fmt::formatter<ExchangeName> {
     }
 };
 
+enum class MarketType : char {
+    AStock,
+    BStock,
+    STARMarket, //科创板
+    GEMMarkget, //创业板
+    ThreeMarket,// 新三板
+    BJMarket,   // 北交所
+};
+// 获取股票的类型
+MarketType getMarketType(symbol_t stock);
+
 #ifdef __linux__
 class CPUPerformanceMesure {
 public:

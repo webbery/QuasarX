@@ -101,6 +101,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_ALL_OPTION      "/option/simple"
 #define API_STOCK_DETAIL    "/stocks/detail"
 #define API_STOCK_HISTORY   "/stocks/history"
+#define API_STOCK_PRIVILEGE "/stocks/privilege"
 #define API_EXHANGE         "/exchange"
 #define API_PORTFOLIO       "/portfolio"
 #define API_COMMISSION      "/commission"
@@ -265,8 +266,9 @@ void Server::Regist() {
     REGIST_GET(API_USER_FUNDS);
     REGIST_GET(API_POSITION);
     REGIST_GET(API_STRATEGY_NODES);
-    REGIST_GET(API_STRATEGY_NODE);
-    
+    REGIST_GET(API_STRATEGY_NODE); 
+    REGIST_GET(API_STOCK_PRIVILEGE);
+
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
 
@@ -955,38 +957,6 @@ void Server::Schedules(time_t t) {
     }
 }
 
-// std::shared_ptr<DataGroup> Server::PrepareData(const Set<symbol_t>& symbols, DataFrequencyType type, StockAdjustType right) {
-//     Map<contract_type, List<String>> all_symbol;
-//     for (auto sym: symbols) {
-//         all_symbol[sym._type].emplace_back(get_symbol(sym));
-//     }
-//     for (auto& item: all_symbol) {
-//         if (item.first == contract_type::stock) {
-//             return PrepareStockData(item.second, type, right);
-//         } else {
-//             WARN("not implement for data type {}", (int)item.first);
-//         }
-//     }
-//     return nullptr;
-// }
-
-// std::shared_ptr<DataGroup> Server::PrepareStockData(const List<String>& symbols, DataFrequencyType type, StockAdjustType right) {
-//     for (auto& sym: symbols) {
-//         auto itr = _data.find(sym);
-//         DataFrame* curr_df = nullptr;
-//         if (itr == _data.end()) {
-//             if (!LoadDataBySymbol(sym, right, type)) {
-//                 continue;
-//             }
-//         }
-//     }
-//     std::shared_ptr<DataGroup> handle;
-//     if (!symbols.empty()) {
-//         handle = std::make_shared<DataGroup>(symbols, _data);
-//     }
-//     return handle;
-// }
-
 ExchangeInterface* Server::GetExchange(ExchangeType type) {
     ExchangeHandler* handler = (ExchangeHandler*)_handlers[API_EXHANGE];
     return handler->GetExchangeByType(type);
@@ -1011,6 +981,7 @@ void Server::ReloadMarketData(const String& path) {
     reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
     std::string code;
     std::string exch;
+    String market;
     String name;
     while(reader.read_row(code, exch, name)){
         ContractInfo info;
@@ -1109,6 +1080,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SERVER_EVENT, ServerEventHandler);
     RegistHandler(API_POSITION, PositionHandler);
     RegistHandler(API_USER_SWITCH, UserSwitchHandler);
+    RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});

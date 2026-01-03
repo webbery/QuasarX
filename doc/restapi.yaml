@@ -127,7 +127,32 @@ paths:
             application/json:
               schema:
                 type: object
-
+  /stocks/privilege:
+    get:
+      summary: 查询股票的交易权限
+      description: 查询股票的交易权限
+      tags:
+        - Stocks
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: string
+          description: 要查询的股票代码
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forbid:
+                    type: boolean
+                    description: 是否禁止交易
+                  message:
+                    type: string
+                    description: 禁止交易原因
   /options/detail:
     get:
       summary: 当前期权的信息
@@ -138,7 +163,7 @@ paths:
         - in: query
           name: id
           schema:
-            type: integer
+            type: string
           description: 要获取的期权代码
         - in: query
           name: type

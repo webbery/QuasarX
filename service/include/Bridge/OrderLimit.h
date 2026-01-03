@@ -13,6 +13,9 @@ public:
     // @params maxTimes 每秒最大次数
     OrderLimit(int rate, int capcity);
 
+    // 更新最大流量
+    void update();
+
     // 尝试消费一个令牌
     // 返回true表示成功（未超过限制），false表示失败（已超过限制）
     bool tryConsume();

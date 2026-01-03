@@ -138,3 +138,32 @@ void StockDetailHandler::get(const httplib::Request& req, httplib::Response& res
   res.status = 200;
   res.set_content(jsn.dump(), "application/json");
 }
+
+StockPrivilege::StockPrivilege(Server* server):HttpHandler(server)
+{
+
+}
+
+void StockPrivilege::get(const httplib::Request& req, httplib::Response& res)
+{
+    String id = req.get_param_value("id");
+    auto exchange = _server->GetAvaliableStockExchange();
+    auto symbol = to_symbol(id);
+    nlohmann::json jsn;
+    auto result = exchange->HasPermission(symbol);
+    if (result.has_value()) {
+        if (result.value()) {
+            jsn["forbid"] = false;
+        }
+        else {
+            jsn["forbid"] = true;
+            jsn["message"] = "query privilege fail";
+        }
+    }
+    else {
+        jsn["forbid"] = true;
+        jsn["message"] = result.error();
+    }
+    res.status = 200;
+    res.set_content(jsn.dump(), "application/json");
+}

@@ -7,70 +7,72 @@
 #include <condition_variable>
 
 class XTPExchange : public ExchangeInterface {
-  friend class XTPQuote;
-  friend class XTPTrade;
+    friend class XTPQuote;
+    friend class XTPTrade;
 public:
-  XTPExchange(Server* server);
+    XTPExchange(Server* server);
 
-  ~XTPExchange();
+    ~XTPExchange();
 
-  virtual const char* Name() { return "XTP"; }
-  virtual bool Init(const ExchangeInfo& handle);
+    virtual const char* Name() { return "XTP"; }
+    virtual bool Init(const ExchangeInfo& handle);
 
-  virtual bool Release();
+    virtual bool Release();
 
-  virtual bool Login(AccountType t);
-  virtual bool IsLogin();
-  virtual void Logout(AccountType t);
+    virtual bool Login(AccountType t);
+    virtual bool IsLogin();
+    virtual void Logout(AccountType t);
 
-  virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
-  virtual void SetFilter(const QuoteFilter& filter);
+    virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
+    virtual void SetFilter(const QuoteFilter& filter);
 
-  virtual bool GetPosition(AccountPosition&);
+    virtual bool GetPosition(AccountPosition&);
 
-  AccountAsset GetAsset();
+    AccountAsset GetAsset();
 
-  order_id AddOrder(const symbol_t& symbol, OrderContext* order);
+    order_id AddOrder(const symbol_t& symbol, OrderContext* order);
 
-  void OnOrderReport(order_id id, const TradeReport& report);
+    void OnOrderReport(order_id id, const TradeReport& report);
 
-  bool CancelOrder(order_id id, OrderContext* order);
-  
-  virtual bool GetOrders(SecurityType type, OrderList& ol);
-  virtual bool GetOrder(const String& sysID, Order& ol);
+    Boolean CancelOrder(order_id id, OrderContext* order);
 
-  Order GetOrder(const order_id& id);
+    virtual bool GetOrders(SecurityType type, OrderList& ol);
+    virtual bool GetOrder(const String& sysID, Order& ol);
 
-  QuoteInfo GetQuote(symbol_t symbol);
+    Order GetOrder(const order_id& id);
 
-  std::mutex& GetMutex(int request_id) { return _mtxs[request_id]; }
-  std::condition_variable& GetCV(int request_id) { return _cvs[request_id]; }
+    QuoteInfo GetQuote(symbol_t symbol);
 
-  void QueryQuotes();
+    std::mutex& GetMutex(int request_id) { return _mtxs[request_id]; }
+    std::condition_variable& GetCV(int request_id) { return _cvs[request_id]; }
 
-  void StopQuery();
-  
-  virtual double GetAvailableFunds();
-    virtual bool GetCommission(symbol_t symbol, List<Commission>& );
+    void QueryQuotes();
+
+    void StopQuery();
+
+    virtual double GetAvailableFunds();
+    virtual bool GetCommission(symbol_t symbol, List<Commission>&);
+    virtual Boolean HasPermission(symbol_t);
+    virtual void Reset();
 private:
-  bool _requested: 1;
-  bool _login_status: 1;
-  bool _quote_inited: 1;
+    bool _requested : 1;
+    bool _login_status : 1;
+    bool _quote_inited : 1;
 
-  XTP::API::QuoteApi* m_pQuoteApi;
-  XTP::API::TraderApi* m_pTradeApi;
-  XTPQuote* m_pQuote;
-  XTPTrade* m_pTrade;
+    XTP::API::QuoteApi* m_pQuoteApi;
+    XTP::API::TraderApi* m_pTradeApi;
+    XTPQuote* m_pQuote;
+    XTPTrade* m_pTrade;
 
-  uint64_t m_session;
+    uint64_t m_session;
 
-  ExchangeInfo _handle;
+    ExchangeInfo _handle;
 
-  std::map<int, std::condition_variable> _cvs;
-  std::map<int, std::mutex> _mtxs;
+    std::map<int, std::condition_variable> _cvs;
+    std::map<int, std::mutex> _mtxs;
 
-  using concurrent_order_map = ConcurrentMap<uint64_t, Pair<XTPOrderInsertInfo*, OrderContext*>>;
-  concurrent_order_map _orders;
+    using concurrent_order_map = ConcurrentMap<uint64_t, Pair<XTPOrderInsertInfo*, OrderContext*>>;
+    concurrent_order_map _orders;
 
-  List<Pair<float, float>> _workingTime;
+    List<Pair<float, float>> _workingTime;
 };
