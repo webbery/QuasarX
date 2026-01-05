@@ -769,7 +769,6 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     order_id id;
     if (is_stock(symbol)) {
         // 检查权限
-
         if (!_stockHandle._insertLimit->tryConsume()) {
             id._error = ERROR_INSERT_LIMIT;
             return id;
@@ -791,13 +790,16 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
     auto broker = _server->GetBrokerSubSystem();
     _orders.visit(id._id, [&report,broker](concurrent_order_map::value_type& value) {
         auto ctx = value.second;
+        LOG("OnOrderReport {}", ctx->_order._id);
         broker->RecordTrade(*ctx);
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
-        ctx->_flag = true;
+        if (OrderStatus::OrderAccept != report._status) {
+            ctx->_flag.store(true);
+        }
         //delete ctx;
       });
-    if (report._status == OrderStatus::CancelSuccess) {
+    if (OrderStatus::OrderAccept != report._status) {
         _orders.erase(id._id);
     }
 }

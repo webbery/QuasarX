@@ -423,6 +423,7 @@ void BrokerSubSystem::run() {
             if (ctx->_success) {
                 LOG("Order Success:{}", ctx->_order);
             }
+            LOG("Delete Order {}", ctx->_order._id);
             delete ctx;
             itr = contexts.erase(itr);
         }
@@ -448,11 +449,9 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
 }
 
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
-    order_id id;
-    memset(&id, 0, sizeof (order_id));
+
     if (_simulation) {
-        _exchanges[ExchangeType::EX_SIM]->AddOrder(GET_SYMBOL(order), order);
-        return id;
+        return _exchanges[ExchangeType::EX_SIM]->AddOrder(GET_SYMBOL(order), order);
     }
     // 邮件通知
     String content;
@@ -467,12 +466,14 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     }
     if (is_stock(GET_SYMBOL(order)) || is_etf_option(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableStockExchange();
-        id = exchange->AddOrder(GET_SYMBOL(order), order);
+        return exchange->AddOrder(GET_SYMBOL(order), order);
     }
     if (is_future(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableFutureExchange();
-        id = exchange->AddOrder(GET_SYMBOL(order), order);
+        return exchange->AddOrder(GET_SYMBOL(order), order);
     }
+    order_id id;
+    memset(&id, 0, sizeof(order_id));
     return id;  
 }
 

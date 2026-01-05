@@ -87,8 +87,9 @@ void HXTrade::OnRspQryShareholderAccount(TORASTOCKAPI::CTORATstpShareholderAccou
 }
 
 void HXTrade::OnRspError(TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID, bool bIsLast) {
-
+    LOG("OnRspError {}: {}", pRspInfoField->ErrorID, to_utf8(pRspInfoField->ErrorMsg));
 }
+
 void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
     order_id id;
     id._id = nRequestID;
@@ -118,7 +119,7 @@ void HXTrade::OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField) {
 }
 
 void HXTrade::OnErrRtnOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
-
+    LOG("OnErrRtnOrderInsert {}: {}", pRspInfoField->ErrorID, to_utf8(pRspInfoField->ErrorMsg));
 }
 
 void HXTrade::OnRtnTrade(TORASTOCKAPI::CTORATstpTradeField *pTradeField) {
@@ -126,7 +127,7 @@ void HXTrade::OnRtnTrade(TORASTOCKAPI::CTORATstpTradeField *pTradeField) {
     id._id = pTradeField->OrderRef;
     TradeReport report;
     report._status = OrderStatus::OrderSuccess;
-
+    LOG("OnRtnTrade {} success", id._id);
     _exchange->OnOrderReport(id, report);
 }
 

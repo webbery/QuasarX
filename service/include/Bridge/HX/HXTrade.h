@@ -23,7 +23,8 @@ public:
     ///报单录入响应
     virtual void OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID);
     
-    virtual void OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField);
+    ///报单回报
+    virtual void OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField);
     ///报单错误回报
     virtual void OnErrRtnOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID);
     

@@ -88,6 +88,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     if (direct == 0) {
         order._side = 0;
         for (int i = 0; i < perf; ++i) {
+            INFO("buy: {}", i);
             auto id = broker->Buy("_custom_", symbol, order, lambda_sendResult);
             nlohmann::json result;
             if (id._error) {
