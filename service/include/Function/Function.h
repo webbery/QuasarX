@@ -4,7 +4,7 @@
 class MA : public ICallable {
 public:
     MA(short count);
-    virtual feature_t operator()(const Map<String, feature_t>& args);
+    virtual context_t operator()(const Map<String, context_t>& args);
 
 private:
     double average();
@@ -18,7 +18,7 @@ private:
 class EMA: public ICallable {
 public:
     EMA(short count, double alpha);
-    virtual feature_t operator()(const Map<String, feature_t>& args);
+    virtual context_t operator()(const Map<String, context_t>& args);
 
 private:
     std::vector<double> _buffer;
@@ -27,18 +27,18 @@ private:
 
 class MACD: public ICallable {
 public:
-    virtual feature_t operator()(const Map<String, feature_t>& args);
+    virtual context_t operator()(const Map<String, context_t>& args);
 };
 
 class VWAP: public ICallable {
 public:
-    virtual feature_t operator()(const Map<String, feature_t>& args);
+    virtual context_t operator()(const Map<String, context_t>& args);
 };
 
 class STD: public ICallable {
 public:
     STD(int32_t count);
-    virtual feature_t operator()(const Map<String, feature_t>& args);
+    virtual context_t operator()(const Map<String, context_t>& args);
 };
 
 /**
@@ -50,7 +50,7 @@ public:
      * @param count 
      */
     Return(int32_t count);
-    virtual feature_t operator()(const Map<String, feature_t>& args);
+    virtual context_t operator()(const Map<String, context_t>& args);
 
 private:
     int32_t _cnts;

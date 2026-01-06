@@ -75,12 +75,16 @@ void FlowSubsystem::Start(const String& strategy) {
             }
 
             uint64_t epoch = 0;
+            auto startTick = std::chrono::high_resolution_clock::now();
             while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
                 if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
                     break;
                 }
             }
+            auto endtTick = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endtTick - startTick);
+            
             // 统计指标
             auto endNode = dynamic_cast<ExecuteNode*>(flow._graph.back());
             if (endNode) {
@@ -93,7 +97,8 @@ void FlowSubsystem::Start(const String& strategy) {
             }
             // 结束通知
             flow._running = false;
-            INFO("backtest finish");
+            auto info = fmt::format("backtest finish, cost {}s, {}s/per datum", duration.count(), (epoch == 0? 0:duration.count()/epoch));
+            strategy_log("");
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
         }

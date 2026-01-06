@@ -18,6 +18,18 @@ namespace peg{
     class parser;
 }
 
+struct CrossSectionResult {
+    String funcName;
+    std::shared_ptr<peg::Ast> funcAst;
+    Map<symbol_t, bool> stockResults; // 每个股票的结果
+};
+
+struct cross_function_t {
+    String _name;
+    Map<String, String> _args;  // 参数占位符
+    // 返回类型
+};
+
 struct symbol_t;
 // 解析器定义
 class FormulaParser {
@@ -61,15 +73,34 @@ private:
     
     double getHistoricalValue(const symbol_t& symbol, const feature_t& base, int time_offset, DataContext& context);
     // 获取变量值的辅助函数
-    feature_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
+    context_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
 
     void printAST(std::shared_ptr<peg::Ast> ast, int lvl = 0);
+
+    bool hasCrossSectionFunctions(const peg::Ast& ast);
+
+    bool isCrossSectionFunction(const String& funName);
+    // 处理截面函数混合的情况
+    List<Pair<symbol_t, TradeAction>> envokeMixedCase(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
+    // 提取表达式中的所有截面函数
+    void extractCrossSectionFunctions(const peg::Ast& ast);
+    // 计算截面函数，结果保存到context中
+    void precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, const peg::Ast& ast, DataContext& context);
+
+    feature_t evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
+        const Map<String, std::shared_ptr<CrossSectionResult>>& crossSectionResults);
+
+private:
+    void topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context);
+
 private:
     peg::parser _parser;
     String _codes;
     std::shared_ptr<peg::Ast> _ast;
     Server* _server;
     TradeAction _default;
+
+    Map<String, cross_function_t> _CSFunctions;
 
     std::unordered_map<String, intrinsic_function> _functions;
 };

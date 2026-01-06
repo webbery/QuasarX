@@ -1,5 +1,6 @@
 #include "Interprecter/Stmt.h"
 #include "Util/string_algorithm.h"
+#include "peglib.h"
 #include "server.h"
 #include <cstdint>
 #include <functional>
@@ -7,6 +8,7 @@
 
 #define ANY_CAST(val) any_cast<std::shared_ptr<Stmt>>(val)
 
+#define INTRINSIC_TOPK  "topk"
 namespace  {
 String grammar = R"(
         # 程序结构
@@ -208,6 +210,49 @@ bool check_bool(const feature_t& feature) {
 
 }
 
+void FormulaParser::topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context) {
+    // 解析topk参数
+    auto& args = funcAst.nodes[1]; // Arguments节点
+    
+    if (args->nodes.size() != 2) {
+        WARN("topk requires 2 arguments");
+        return;
+    }
+    
+    auto& scoreExprAst = args->nodes[0];
+    auto& kExprAst = args->nodes[1];
+    
+    // 计算k值
+    feature_t kValue = evalNode(symbol_t{}, *kExprAst, context);
+    int k = 10; // 默认值
+    if (std::holds_alternative<double>(kValue)) {
+        k = static_cast<int>(std::get<double>(kValue));
+    }
+    
+    // 计算每个symbol的分数
+    Vector<std::pair<symbol_t, double>> scores;
+    for (auto symbol : allSymbols) {
+        // double score = computeScoreForSymbol(symbol, *scoreExprAst, context);
+        // scores.emplace_back(symbol, score);
+    }
+    
+    // 排序并取前k个
+    std::sort(scores.begin(), scores.end(),
+        [](const auto& a, const auto& b) {
+            return a.second > b.second;
+        });
+    
+    // 存储结果
+    Set<symbol_t> topKSymbols;
+    for (int i = 0; i < std::min(k, static_cast<int>(scores.size())); ++i) {
+        topKSymbols.insert(scores[i].first);
+    }
+    
+    for (auto symbol : allSymbols) {
+        result.stockResults[symbol] = (topKSymbols.count(symbol) > 0);
+    }
+}
+
 String FormulaParser::cleanInputString(const String& input) {
     String result;
     for (char c : input) {
@@ -267,19 +312,119 @@ bool FormulaParser::parse(const String& code, TradeAction action) {
     return parse(code);
 }
 
+bool FormulaParser::isCrossSectionFunction(const String& funName) {
+    static const UnorderedSet<String> crossFuncs{
+        INTRINSIC_TOPK,
+    };
+    return crossFuncs.count(funName);
+}
+
+bool FormulaParser::hasCrossSectionFunctions(const peg::Ast& ast) {
+    std::stack<const peg::Ast*> stack;
+    stack.push(&ast);
+    
+    while (!stack.empty()) {
+        const peg::Ast* current = stack.top();
+        stack.pop();
+        
+        // 检查当前节点
+        if (current->name == "FunctionCall") {
+            if (!current->nodes.empty()) {
+                auto& firstChild = current->nodes[0];
+                if (firstChild->name == "Identifier") {
+                    String funcName(firstChild->token);
+                    if (isCrossSectionFunction(funcName)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // 添加子节点到栈中
+        for (auto it = current->nodes.rbegin(); it != current->nodes.rend(); ++it) {
+            stack.push(it->get());
+        }
+    }
+    return false;
+}
+
+void FormulaParser::precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, const peg::Ast& ast, DataContext& context) {
+    // Map<String, std::shared_ptr<CrossSectionResult>> results;
+    for (const auto& [funcName, func] : _CSFunctions) {
+        // auto result = std::make_shared<CrossSectionResult>();
+        // result->funcName = funcName;
+        // result->funcAst = funcAst;
+        
+        if (funcName == INTRINSIC_TOPK) {
+            // topk(symbols, *funcAst, *result, context);
+        }
+        // results[funcName] = result;
+    }
+    // return results;
+}
+
+feature_t FormulaParser::evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
+        const Map<String, std::shared_ptr<CrossSectionResult>>& crossSectionResults) {
+    
+}
+
+void FormulaParser::extractCrossSectionFunctions(const peg::Ast& ast) {
+       
+    std::function<void(const peg::Ast&)> traverse = [&](const peg::Ast& node) {
+        if (node.name == "FunctionCall") {
+            String funcName(node.nodes[0]->token);
+            if (isCrossSectionFunction(funcName)) {
+                // 生成对应的函数对象
+                // result[funcName] = cloneAst(node);
+                _CSFunctions[funcName];
+            }
+        }
+        
+        for (auto& child : node.nodes) {
+            traverse(*child);
+        }
+    };
+    
+    if (_CSFunctions.empty()) {
+        traverse(ast);
+    }
+}
+
 List<Pair<symbol_t, TradeAction>> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
     List<Pair<symbol_t, TradeAction>> decisions;
-    for (auto symbol: symbols) {
-        // try {
-            auto exprValue = eval(symbol, *_ast, context);
-            Pair<symbol_t, TradeAction> action{
-                symbol, (std::get<bool>(exprValue)? _default: TradeAction::HOLD)
-            };
-            decisions.emplace_back(std::move(action));
-        // } catch (const std::exception& e) {
-        //     FATAL("envoke error: {}", e.what());
-        //     continue;
-        // }
+    if (hasCrossSectionFunctions(*_ast)) {
+        return envokeMixedCase(symbols, variantNames, context);
+    } else {
+        for (auto symbol: symbols) {
+            // try {
+                auto exprValue = eval(symbol, *_ast, context);
+                Pair<symbol_t, TradeAction> action{
+                    symbol, (std::get<bool>(exprValue)? _default: TradeAction::HOLD)
+                };
+                decisions.emplace_back(std::move(action));
+            // } catch (const std::exception& e) {
+            //     FATAL("envoke error: {}", e.what());
+            //     continue;
+            // }
+        }
+    }
+    return decisions;
+}
+
+List<Pair<symbol_t, TradeAction>> FormulaParser::envokeMixedCase(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
+    List<Pair<symbol_t, TradeAction>> decisions;
+    // 预计算所有截面函数
+    extractCrossSectionFunctions(*_ast);
+    precomputeCrossSectionFunctions(symbols, *_ast, context);
+    // 为每个symbol求值
+    for (auto symbol : symbols) {
+        // auto exprValue = evaluateForSymbolWithCrossSectionResults(
+        //     symbol, *_ast, context, crossSectionResults);
+        
+        // Pair<symbol_t, TradeAction> action{
+        //     symbol, (std::get<bool>(exprValue) ? _default : TradeAction::HOLD)
+        // };
+        // decisions.emplace_back(std::move(action));
     }
     return decisions;
 }
@@ -442,8 +587,7 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const feature_t
     String key = name + "." + var_name;
     
     // 扩展 DataContext 支持历史数据访问
-    auto& data = context.get(key);
-    auto& vec = std::get<Vector<double>>(data);
+    auto& vec = context.get<Vector<double>>(key);
     // time_offset 0,-1, ...
     int idx = vec.size() - 1 - time_offset;
     if (idx >= 0) {
@@ -520,7 +664,7 @@ feature_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
     if (funcName == "MA" && ast.nodes.size() >= 3) {
         // 获取参数：MA(close, 5)
     }
-    else if (funcName == "topk") {
+    else if (funcName == INTRINSIC_TOPK) {
         if (ast.nodes.size() < 2) {
             WARN("topk function requires two arguments");
             return false;
@@ -557,7 +701,7 @@ feature_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
     return 0.;
 }
 
-feature_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context) {
+context_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context) {
     auto str = get_symbol(symbol);
     String key = str + "." + varName;
     return context->get(key);

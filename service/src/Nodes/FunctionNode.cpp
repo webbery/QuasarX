@@ -142,7 +142,7 @@ bool FunctionNode::Process(const String& strategy, DataContext& context)
         return false;
     }
 
-    Map<String, feature_t> arguments;
+    Map<String, context_t> arguments;
     for (auto& item: _params) {
         auto& value = context.get(item.first);
         arguments[item.first] = value;

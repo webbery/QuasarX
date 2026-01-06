@@ -1,5 +1,5 @@
 #pragma once
-#include "std_header.h"
+#include "DataContext.h"
 
 /**
  * @brief 缺失值处理方式
@@ -21,5 +21,5 @@ enum class FillType {
 class ICallable {
 public:
     virtual ~ICallable(){}
-    virtual feature_t operator()(const Map<String, feature_t>& args) = 0;
+    virtual context_t operator()(const Map<String, context_t>& args) = 0;
 };
