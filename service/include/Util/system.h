@@ -404,3 +404,5 @@ public:
 
 std::wstring to_wstring(const char* c);
 bool get_system_status(nlohmann::json&);
+
+void strategy_log(const String& info);

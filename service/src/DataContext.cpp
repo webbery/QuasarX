@@ -1,4 +1,5 @@
 #include "DataContext.h"
+#include "Util/system.h"
 #include "std_header.h"
 #include <type_traits>
 #include <variant>
@@ -13,13 +14,13 @@ DataContext::DataContext(const String& strategy, Server* server):_strategy(strat
     // 初始化该策略的历史记录
 }
 
-feature_t& DataContext::get(const String& name) {
-    return _outputs[name];
-}
+// feature_t& DataContext::get(const String& name) {
+//     return _outputs[name];
+// }
 
-const feature_t& DataContext::get(const String& name) const {
-    return _outputs.at(name);
-}
+// const feature_t& DataContext::get(const String& name) const {
+//     return _outputs.at(name);
+// }
 
 void DataContext::add(const String& name, feature_t value) {
     std::visit([this, &name, &value](auto&& v) {
@@ -32,7 +33,7 @@ void DataContext::add(const String& name, feature_t value) {
                     std::get<Vector<T>>(itr->second).push_back(std::get<T>(value));
                 }
         }
-        else {
+        else if constexpr (std::is_same_v<T, uint64_t>){
             set(name, value);
         }
     }, value);
@@ -46,9 +47,9 @@ void DataContext::erase(const String& name) {
     _outputs.erase(name);
 }
 
-void DataContext::set(const String& name, const feature_t& f) {
-    _outputs[name] = f;
-}
+// void DataContext::set(const String& name, const feature_t& f) {
+//     _outputs[name] = f;
+// }
 
 void DataContext::SetTime(time_t t) {
     _times.push_back(t);    

@@ -6,6 +6,7 @@ struct TradeReport;
 class Server;
 using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
 
+using context_t = std::variant<bool, String, uint64_t, Vector<float>, List<symbol_t>, double, Vector<double>, Vector<uint64_t>, Eigen::MatrixXd>;
 // 交易操作类型
 enum class TradeAction: char {
     HOLD,
@@ -64,12 +65,32 @@ public:
 
     ~DataContext();
 
-    feature_t& get(const String& name);
-    const feature_t& get(const String& name) const;
+    template<typename T>
+    T& get(const String& name) {
+        return std::get<T>(_outputs.at(name));
+    }
+    template<typename T>
+    const T& get(const String& name) const {
+        return std::get<T>(_outputs.at(name));
+    }
 
-    void set(const String& name, const feature_t& f);
+    context_t& get(const String& name) {
+        return _outputs.at(name);
+    }
+
+    // feature_t& get(const String& name); 
+    // const feature_t& get(const String& name) const;
+
+    template<typename T>
+    void set(const String& name, const T& f) {
+        _outputs[name] = f;
+    }
 
     void add(const String& name, feature_t value);
+    template<typename T>
+    void add(const String& name, const T& value) {
+        set(name, value);
+    }
 
     bool exist(const String& name);
 
@@ -115,5 +136,5 @@ private:
     List<ISignalObserver*> _signalObservers;
 
     // TODO: 节点的输出数据，待优化
-    Map<String, feature_t> _outputs;
+    Map<String, context_t> _outputs;
 };

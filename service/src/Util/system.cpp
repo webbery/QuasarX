@@ -875,3 +875,9 @@ bool get_system_status(nlohmann::json&  status) {
     status["mem"] = getMemoryInfo();
     return true;
 }
+
+void strategy_log(const String& info) {
+    auto sock = Server::GetSocket();
+    auto msg = format_sse("strategy", {{"message", info}});
+    nng_send(sock, msg.data(), msg.size(), 0);
+}

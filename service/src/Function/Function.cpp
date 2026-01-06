@@ -7,7 +7,7 @@ MA::MA(short count): _count(0), _nextIndex(0), _sum(0.) {
     _buffer.resize(count, 0.0);
 }
 
-feature_t MA::operator()(const Map<String, feature_t>& features) {
+context_t MA::operator()(const Map<String, context_t>& features) {
     if (features.size() != 1) {
         return std::nan("nan");
     }
@@ -47,11 +47,11 @@ EMA::EMA(short count, double alpha)
     _buffer.resize(count);
 }
 
-feature_t EMA::operator()(const Map<String, feature_t>& args) {
+context_t EMA::operator()(const Map<String, context_t>& args) {
     return 0.;
 }
 
-feature_t MACD::operator()(const Map<String, feature_t>& args) {
+context_t MACD::operator()(const Map<String, context_t>& args) {
 
     return 0.;
 }
@@ -60,7 +60,7 @@ STD::STD(int32_t count) {
 
 }
 
-feature_t STD::operator()(const Map<String, feature_t>& args) {
+context_t STD::operator()(const Map<String, context_t>& args) {
 
     return 0.;
 }
@@ -69,7 +69,7 @@ Return::Return(int32_t count): _cnts(count){
 
 }
 
-feature_t Return::operator()(const Map<String, feature_t>& args) {
+context_t Return::operator()(const Map<String, context_t>& args) {
     if (args.size() != 1) {
         return std::nan("nan");
     }

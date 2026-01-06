@@ -84,7 +84,7 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
         String name = get_symbol(symbol);
         String key = name + ".close";
         try {
-            auto& closes = std::get<Vector<double>>(context.get(key));
+            auto& closes = context.get<Vector<double>>(key);
             price_data[symbol] = closes;
         } catch (...) {
             // 如果获取数据失败，跳过这个symbol
