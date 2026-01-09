@@ -1,5 +1,6 @@
 #include "Interprecter/Stmt.h"
 #include "Util/string_algorithm.h"
+#include "Util/system.h"
 #include "peglib.h"
 #include "server.h"
 #include <cstdint>
@@ -320,6 +321,10 @@ bool FormulaParser::isCrossSectionFunction(const String& funName) {
 }
 
 bool FormulaParser::hasCrossSectionFunctions(const peg::Ast& ast) {
+    thread_local bool hasCrossFunc = false;
+    if (hasCrossFunc)
+        return true;
+
     std::stack<const peg::Ast*> stack;
     stack.push(&ast);
     
@@ -334,6 +339,7 @@ bool FormulaParser::hasCrossSectionFunctions(const peg::Ast& ast) {
                 if (firstChild->name == "Identifier") {
                     String funcName(firstChild->token);
                     if (isCrossSectionFunction(funcName)) {
+                        hasCrossFunc = true;
                         return true;
                     }
                 }
@@ -348,14 +354,18 @@ bool FormulaParser::hasCrossSectionFunctions(const peg::Ast& ast) {
     return false;
 }
 
-void FormulaParser::precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, const peg::Ast& ast, DataContext& context) {
+void FormulaParser::precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, DataContext& context) {
     // Map<String, std::shared_ptr<CrossSectionResult>> results;
-    for (const auto& [funcName, func] : _CSFunctions) {
-        // auto result = std::make_shared<CrossSectionResult>();
-        // result->funcName = funcName;
-        // result->funcAst = funcAst;
-        
-        if (funcName == INTRINSIC_TOPK) {
+    for (const auto& [varName, func] : _CSFunctions) {
+        if (func._name == INTRINSIC_TOPK) {
+            auto arg1 = std::get<String>(func._args.at(0));
+            auto arg2 = func._args.at(1);
+            Map<double, symbol_t> scores;
+            for (auto symbol: symbols) {
+                String key = arg1 + "." + get_symbol(symbol);
+                auto& vec = context.get<Vector<double>>(key);
+                scores[vec.back()] = symbol;
+            }
             // topk(symbols, *funcAst, *result, context);
         }
         // results[funcName] = result;
@@ -373,10 +383,24 @@ void FormulaParser::extractCrossSectionFunctions(const peg::Ast& ast) {
     std::function<void(const peg::Ast&)> traverse = [&](const peg::Ast& node) {
         if (node.name == "FunctionCall") {
             String funcName(node.nodes[0]->token);
-            if (isCrossSectionFunction(funcName)) {
-                // 生成对应的函数对象
-                // result[funcName] = cloneAst(node);
-                _CSFunctions[funcName];
+            if (!isCrossSectionFunction(funcName))
+                return;
+
+            // 生成对应的函数对象
+            auto& func = _CSFunctions[funcName];
+            func._name = funcName;
+            for (int i = 1; i < node.nodes.size(); ++i) {
+                auto arguments = node.nodes[i];
+                for (int loc = 0; loc < arguments->nodes.size(); ++loc) {
+                    auto arg = arguments->nodes[loc];
+                    if (arg->name == "Number") {
+                        func._args[loc] = arg->token_to_number<double>();
+                    }
+                    else if (arg->name == "Primary") {
+                        func._args[loc] = genPrimaryPlaceHolder(*arg);
+                    }
+                }
+                
             }
         }
         
@@ -388,6 +412,11 @@ void FormulaParser::extractCrossSectionFunctions(const peg::Ast& ast) {
     if (_CSFunctions.empty()) {
         traverse(ast);
     }
+}
+
+String FormulaParser::genPrimaryPlaceHolder(const peg::Ast& ats) {
+    String code;
+    return code;
 }
 
 List<Pair<symbol_t, TradeAction>> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
@@ -415,7 +444,7 @@ List<Pair<symbol_t, TradeAction>> FormulaParser::envokeMixedCase(const Vector<sy
     List<Pair<symbol_t, TradeAction>> decisions;
     // 预计算所有截面函数
     extractCrossSectionFunctions(*_ast);
-    precomputeCrossSectionFunctions(symbols, *_ast, context);
+    precomputeCrossSectionFunctions(symbols, context);
     // 为每个symbol求值
     for (auto symbol : symbols) {
         // auto exprValue = evaluateForSymbolWithCrossSectionResults(
