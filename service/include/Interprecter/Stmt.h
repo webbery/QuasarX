@@ -26,7 +26,7 @@ struct CrossSectionResult {
 
 struct cross_function_t {
     String _name;
-    Map<String, String> _args;  // 参数占位符
+    Map<char, context_t> _args;  // 参数占位符
     // 返回类型
 };
 
@@ -85,10 +85,13 @@ private:
     // 提取表达式中的所有截面函数
     void extractCrossSectionFunctions(const peg::Ast& ast);
     // 计算截面函数，结果保存到context中
-    void precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, const peg::Ast& ast, DataContext& context);
+    void precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, DataContext& context);
 
     feature_t evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
         const Map<String, std::shared_ptr<CrossSectionResult>>& crossSectionResults);
+
+private:
+    String genPrimaryPlaceHolder(const peg::Ast& ats);
 
 private:
     void topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context);
@@ -99,7 +102,7 @@ private:
     std::shared_ptr<peg::Ast> _ast;
     Server* _server;
     TradeAction _default;
-
+    // 变量名-函数信息
     Map<String, cross_function_t> _CSFunctions;
 
     std::unordered_map<String, intrinsic_function> _functions;
