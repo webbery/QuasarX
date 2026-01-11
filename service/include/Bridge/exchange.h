@@ -23,6 +23,7 @@ using ConcurrentMap = boost::concurrent_flat_map<K, V>;
 #define ERROR_INSERT_LIMIT    -100
 #define ERROR_DAILY_LIMIT     -101
 #define ERROR_CANCEL_LIMIT    -102
+#define ERROR_ORDER_INSERT    -103
 
 #define STR_INSERT_LIMIT    "out of insert limit"
 #define STR_CANCEL_LIMIT    "out of cancel limit"
@@ -389,6 +390,10 @@ public:
   virtual Boolean HasPermission(symbol_t symbol) = 0;
   // 换日时，重置各种限流参数等操作
   virtual void Reset() = 0;
+  // type = 1-表示每日下单上限 2-表示每秒下单上限 3-表示每秒撤单上限
+  virtual int GetStockLimitation(char type) = 0;
+  // 设置订单上限，如果超过最大上限则返回失败，如果limitation设置为0则约定按最大值设置
+  virtual bool SetStockLimitation(char type, int limitation) = 0;
 
   Server* GetHandle() { return _server; }
 

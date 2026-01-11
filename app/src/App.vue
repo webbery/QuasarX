@@ -9,8 +9,11 @@
         <button v-if="is_account" class="control-btn">
           <i class="fas fa-sync-alt"></i> 刷新数据
         </button>
-        <button v-if="is_strategy" class="btn" @click="onHandleRunBacktest">
-          <i class="fas fa-sync-alt"></i> 执行回测
+        <button v-if="is_strategy" class="btn" @click="onHandleRunBacktest"
+          :disabled="isBacktesting"
+          :class="{ 'loading': isBacktesting }"
+        >
+          <i :class="isBacktesting ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>{{ isBacktesting ? '回测中...' : '执行回测' }}
         </button>
         <button v-if="is_backtest" class="btn">
           <i class="fas fa-sync-alt"></i> 部署模拟盘
@@ -180,6 +183,7 @@ const VIEWS = {
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
+let isBacktesting = ref(false);
 let selectedAccount;
 
 // 根据当前视图动态计算活动组件
@@ -300,9 +304,15 @@ const onHandleSetting = () => {
   currentView.value = VIEWS.SETTING_VIEW;
 }
 
-const onHandleRunBacktest = () => {
-  if (dynamicComponentRef.value && dynamicComponentRef.value.runBacktest) {
-    dynamicComponentRef.value.runBacktest()
+const onHandleRunBacktest = async () => {
+  if (!isBacktesting.value && dynamicComponentRef.value && dynamicComponentRef.value.runBacktest) {
+    isBacktesting.value = true;
+    try {
+      await dynamicComponentRef.value.runBacktest()
+    } catch (error) {
+      console.error('回测执行失败:', error);
+    }
+    isBacktesting.value = false;
   }
 }
 
@@ -322,6 +332,34 @@ const onHandleRunBacktest = () => {
   align-items: center;
   gap: 8px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+.btn:hover:not(:disabled) {
+  background: linear-gradient(90deg, #1d4ed8, #1e40af);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+/* 禁用状态样式 */
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* 加载状态样式 */
+.btn.loading {
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+}
+
+/* spinner动画 */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.fa-spinner {
+  animation: spin 1s linear infinite;
 }
 .open-login-btn {
   color: rgb(103, 254, 141);

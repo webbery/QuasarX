@@ -3,6 +3,7 @@
 OrderLimit::OrderLimit(int rate, int capacity)
     : timePerToken_(Nanoseconds(1000000000) / rate),
       timePerBurst_((capacity - 1) * Nanoseconds(1000000000) / rate), // 计算突发容量对应的时间范围
+      _capcity(capacity),
       nextFreeTime_(Clock::now()) // 初始化为当前时间，表示令牌桶初始为满
 {
 }

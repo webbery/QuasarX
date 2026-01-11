@@ -87,6 +87,54 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Quote"
+  /stocks/params:
+    get:
+      summary: 获取股票下单参数
+      description: 获取股票下单参数
+      tags: 
+        - Stocks
+      responses:
+        '200':
+          description: An array of stocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_limit:
+                    type: integer
+                    description: 每秒下单最大次数
+                  daily_limit:
+                    type: integer
+                    description: 每日下单最大次数
+                  cancel_limit:
+                    type: integer
+                    description: 每秒撤单最大次数
+    put:
+      summary: 股票下单参数设置
+      description: 股票下单参数设置
+      tags: 
+        - Stocks
+      requestBody:
+        description: 下单参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order_limit:
+                  type: integer
+                  description: 每秒下单最大次数
+                daily_limit:
+                  type: integer
+                  description: 每日下单最大次数
+                cancel_limit:
+                  type: integer
+                  description: 每秒撤单最大次数
+      responses:
+        '200':
+          description: success or not
   /stocks/sector/flow:
     get:
       summary: get flow info
@@ -852,10 +900,10 @@ paths:
                 type: object
   /trade/order:
     post:
-      summary: trade
+      summary: 下单
       description: 下单
       tags: 
-        - Trade
+        - Order
       requestBody:
         description: 参数
         required: true
@@ -875,10 +923,10 @@ paths:
         '402':
           description: 价格超过涨停板限制,失败
     get:
-      summary: trade
+      summary: 获取下单状态信息
       description: 获取下单状态信息
       tags:
-        - Trade
+        - Order
       parameters:
       - in: query
         name: type
@@ -903,7 +951,7 @@ paths:
       summary: 撤单请求
       description: 股票/期权撤单
       tags: 
-        - Trade
+        - Order
       requestBody:
         description: 参数
         required: true

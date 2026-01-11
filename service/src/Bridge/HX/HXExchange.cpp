@@ -296,7 +296,12 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
     order.Direction = (o._side == 0 ? TORA_TSTP_D_Buy : TORA_TSTP_D_Sell);
     convertOrderType(*ctx, order);
 
-    _stockHandle._tradeAPI->ReqOrderInsert(&order, oid._id);
+    int ret = _stockHandle._tradeAPI->ReqOrderInsert(&order, oid._id);
+    if (ret != 0) {
+        WARN("insert order fail.");
+        oid._error = ERROR_ORDER_INSERT;
+        return oid;
+    }
 
     ctx->_order._symbol = symbol;
     ctx->_order._id = oid._id;
@@ -1064,6 +1069,48 @@ Expected<bool, String> HXExchange::HasPermission(symbol_t symbol)
 void HXExchange::Reset()
 {
     _stockHandle._currentCount = 0;
+}
+
+int HXExchange::GetStockLimitation(char type)
+{
+    if (type == 1) {
+        return _stockHandle._dailyLimit;
+    }
+    else if (type == 2) {
+        return _stockHandle._insertLimit->capacity();
+    }
+    else if (type == 3) {
+        return _stockHandle._cancelLimit->capacity();
+    }
+    return 0;
+}
+
+bool HXExchange::SetStockLimitation(char type, int limitation)
+{
+    if (type == 1) {
+        static int max_limit = _stockHandle._dailyLimit;
+        if (limitation <= max_limit) {
+            _stockHandle._dailyLimit = limitation;
+            return true;
+        }
+    }
+    else if (type == 2) {
+        if (limitation <= _stockHandle._insertLimitation) {
+            auto limiter = new OrderLimit(2 * limitation, limitation);
+            std::swap(_stockHandle._insertLimit, limiter);
+            delete limiter;
+            return true;
+        }
+    }
+    else if (type == 3) {
+        if (limitation <= _stockHandle._cancelLimitation) {
+            auto limiter = new OrderLimit(2 * limitation, limitation);
+            std::swap(_stockHandle._cancelLimit, limiter);
+            delete limiter;
+            return true;
+        }
+    }
+    return false;
 }
 
 double HXExchange::GetAvailableFunds()

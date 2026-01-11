@@ -42,20 +42,22 @@ class SSEService {
         signal: this.abortController.signal,
         
         onopen: async (response: any) => {
-          console.log('SSE 连接已建立')
           this.isConnected.value = true
+          console.log('SSE 连接已建立')
           console.info(response)
           if (response.ok) {
             return // 一切正常
           } else if (response.status >= 400 && response.status < 500) {
+            console.log('SSE 客户端错误')
             throw new Error(`客户端错误: ${response.status}`)
           } else {
+            console.log('SSE 服务器错误')
             throw new Error(`服务器错误: ${response.status}`)
           }
         },
         
         onmessage: (event: any) => {
-          console.info('event', event)
+          console.info('sse event', event)
           if (event.data) {
             this.handleEvent(event)
           }

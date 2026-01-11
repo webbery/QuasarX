@@ -53,6 +53,10 @@ public:
   double Progress();
   void SetCommission(const Commission& buy, const Commission& sell);
   void SetSlippage(float slippage) { _slippage = slippage; }
+
+  virtual int GetStockLimitation(char type);
+
+  virtual bool SetStockLimitation(char type, int limitation);
 private:
   bool Once(symbol_t symbol, time_t timeAxis);
   bool Once(uint32_t& curIndex);

@@ -57,7 +57,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto lambda_sendResult = [symbol, this](const TradeReport& report) {
         auto sock = Server::GetSocket();
         auto info = to_sse_string(symbol, report);
-        nng_send(sock, info.data(), info.size(), 0);
+        nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
     };
     Order order;
     order._volume = quantity;
@@ -88,7 +88,6 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     if (direct == 0) {
         order._side = 0;
         for (int i = 0; i < perf; ++i) {
-            INFO("buy: {}", i);
             auto id = broker->Buy("_custom_", symbol, order, lambda_sendResult);
             nlohmann::json result;
             if (id._error) {
@@ -181,7 +180,7 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
                 broker->CancelOrder(id, symbol, [symbol] (const TradeReport& report) {
                     auto sock = Server::GetSocket();
                     auto info = to_sse_string(symbol, report);
-                    nng_send(sock, info.data(), info.size(), 0);
+                    nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
                 });
                 if (id._error == ERROR_CANCEL_LIMIT) {
                     res.status = 500;
@@ -210,11 +209,16 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
         broker->CancelOrder(id, symbol, [this, symbol] (const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
-            nng_send(sock, info.data(), info.size(), 0);
+            nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
         });
     }
     res.status = 200;
     res.set_content("{}", "application/json");
+}
+
+void OrderHandler::put(const httplib::Request& req, httplib::Response& res)
+{
+
 }
 
 bool OrderHandler::BuyOrder(const std::string& symbol, double price, int number) {

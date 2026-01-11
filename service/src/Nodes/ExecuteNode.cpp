@@ -14,7 +14,7 @@ namespace{
         virtual void OnSignalConsume(const String& strategy, TradeSignal* signal, const DataContext &context) {
             if (!_strategy)
                 return;
-            INFO("signal try consume");
+            //INFO("signal try consume");
             _strategy->processSignal(strategy, *signal, context);
             
         }

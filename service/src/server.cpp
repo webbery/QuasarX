@@ -96,12 +96,13 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_STOP_LOSS  "/risk/stoploss"
 #define API_RISK_VAR        "/risk/var"
 #define API_RECORD          "/record"
-#define API_ALL_STOCK       "/stocks/simple"
 #define API_ALL_FUTURE      "/future/simple"
 #define API_ALL_OPTION      "/option/simple"
 #define API_STOCK_DETAIL    "/stocks/detail"
 #define API_STOCK_HISTORY   "/stocks/history"
+#define API_ALL_STOCK       "/stocks/simple"
 #define API_STOCK_PRIVILEGE "/stocks/privilege"
+#define API_STOCK_PARAMS    "/stocks/params"
 #define API_EXHANGE         "/exchange"
 #define API_PORTFOLIO       "/portfolio"
 #define API_COMMISSION      "/commission"
@@ -268,12 +269,14 @@ void Server::Regist() {
     REGIST_GET(API_STRATEGY_NODES);
     REGIST_GET(API_STRATEGY_NODE); 
     REGIST_GET(API_STOCK_PRIVILEGE);
+    REGIST_GET(API_STOCK_PARAMS);
 
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
 
     REGIST_PUT(API_STRATEGY_NODE);
-    
+    REGIST_PUT(API_STOCK_PARAMS);
+
     REGIST_DEL(API_TRADE_ORDER);
 
 }
@@ -787,7 +790,7 @@ void Server::Timer()
     Duration interval(std::chrono::seconds(5));
     TimePoint next_wake = Clock::now() + interval;
     nng_socket sock;
-    Publish(URI_SERVER_EVENT, sock);
+    Pusher(URI_SERVER_EVENT, sock);
     if (_runType == RuningType::Backtest) {
         while(!_exit) {
             TimerWorker(sock);
@@ -841,7 +844,7 @@ void Server::TimerWorker(nng_socket sock) {
         data["quantity"] = std::to_string(item._holds);
         data["valid_quantity"] = std::to_string(item._validHolds);
         String info = format_sse("update_position", data);
-        nng_send(sock, info.data(), info.size(), 0);
+        nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
     }
     // 更新订单
     OrderList ol;
@@ -863,7 +866,7 @@ void Server::TimerWorker(nng_socket sock) {
         Map<String, String> data;
         data["data"] = array.dump();
         String info = format_sse("update_order", data);
-        nng_send(sock, info.data(), info.size(), 0);
+        nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
     }
 }
 
@@ -1081,6 +1084,7 @@ void Server::InitHandlers() {
     RegistHandler(API_POSITION, PositionHandler);
     RegistHandler(API_USER_SWITCH, UserSwitchHandler);
     RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
+    RegistHandler(API_STOCK_PARAMS, StockParams);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});
@@ -1299,7 +1303,7 @@ nng_socket Server::GetSocket() {
     auto itr = _sseSockets.find(id);
     if (itr == _sseSockets.end()) {
         nng_socket sock;
-        Publish(URI_SERVER_EVENT, sock);
+        Pusher(URI_SERVER_EVENT, sock);
         _sseSockets[id] = sock;
         return sock;
     }

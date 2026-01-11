@@ -236,3 +236,13 @@ void CTPExchange::Reset()
 
 }
 
+int CTPExchange::GetStockLimitation(char type)
+{
+    return 0;
+}
+
+bool CTPExchange::SetStockLimitation(char type, int limitation)
+{
+    return false;
+}
+

@@ -4,6 +4,8 @@
 #include "nng/nng.h"
 #include "nng/protocol/pubsub0/sub.h"
 #include "nng/protocol/pubsub0/pub.h"
+#include "nng/protocol/pipeline0/pull.h"
+#include "nng/protocol/pipeline0/push.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include <cassert>
 #include <cstdio>
@@ -410,6 +412,36 @@ bool Publish(const std::string& uri, nng_socket& sock)
     return false;
   }
   return true;
+}
+
+bool Puller(const String& uri, nng_socket& sock)
+{
+    int rv = nng_pull0_open(&sock);
+    if (rv != 0) {
+        printf("ERROR: nng_pull0_open fail.\n");
+        return false;
+    }
+    rv = nng_listen(sock, uri.c_str(), NULL, 0);
+    if (rv != 0) {
+        printf("ERROR: nng_listen fail: %s.\n", nng_strerror(rv));
+        return false;
+    }
+    return true;
+}
+
+bool Pusher(const String& uri, nng_socket& sock)
+{
+    int rv = nng_push0_open(&sock);
+    if (rv != 0) {
+        printf("ERROR: nng_push0_open fail.\n");
+        return false;
+    }
+    rv = nng_dial(sock, uri.c_str(), NULL, NNG_FLAG_NONBLOCK);
+    if (rv != 0) {
+        printf("ERROR: nng_dial fail: %s.\n", nng_strerror(rv));
+        return false;
+    }
+    return true;
 }
 
 bool ReadQuote(nng_socket& sock, QuoteInfo& quote, const Set<symbol_t>& filter) {
@@ -876,8 +908,14 @@ bool get_system_status(nlohmann::json&  status) {
     return true;
 }
 
-void strategy_log(const String& info) {
+void strategy_log(const String& strategy, const String& info) {
     auto sock = Server::GetSocket();
-    auto msg = format_sse("strategy", {{"message", info}});
-    nng_send(sock, msg.data(), msg.size(), 0);
+    auto msg = format_sse("strategy", { {"message", info} });
+    nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
+}
+
+void strategy_error(const String& strategy, const String& info) {
+    auto sock = Server::GetSocket();
+    auto msg = format_sse("strategy", { {"message", info}, {"type","error"} });
+    nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
 }

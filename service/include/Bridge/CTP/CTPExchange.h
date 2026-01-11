@@ -52,6 +52,10 @@ public:
     virtual double GetAvailableFunds();
     virtual Expected<bool, String> HasPermission(symbol_t symbol);
     virtual void Reset();
+
+    virtual int GetStockLimitation(char type);
+
+    virtual bool SetStockLimitation(char type, int limitation);
 private:
     CThostFtdcMdApi* _pUserMdApi;
     CThostFtdcTraderApi* _pUserTradeApi;

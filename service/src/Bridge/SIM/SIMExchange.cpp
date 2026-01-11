@@ -394,6 +394,16 @@ void StockSimulation::SetCommission(const Commission& buy, const Commission& sel
   _sell = sell;
 }
 
+int StockSimulation::GetStockLimitation(char type)
+{
+    return 0;
+}
+
+bool StockSimulation::SetStockLimitation(char type, int limitation)
+{
+    return false;
+}
+
 TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quote)
 {
     TradeReport report;

@@ -167,3 +167,26 @@ void StockPrivilege::get(const httplib::Request& req, httplib::Response& res)
     res.status = 200;
     res.set_content(jsn.dump(), "application/json");
 }
+
+StockParams::StockParams(Server* server):HttpHandler(server)
+{
+
+}
+
+void StockParams::get(const httplib::Request& req, httplib::Response& res)
+{
+    auto& config = _server->GetConfig();
+    auto& limits = config.GetStockLimits();
+    res.status = 200;
+    nlohmann::json result;
+    auto exchange = _server->GetAvaliableStockExchange();
+    result["order_limit"] = exchange->GetStockLimitation(2);
+    result["daily_limit"] = exchange->GetStockLimitation(1);
+    result["cancel_limit"] = exchange->GetStockLimitation(3);
+    res.set_content(result.dump(), "application/json");
+}
+
+void StockParams::put(const httplib::Request& req, httplib::Response& res)
+{
+
+}

@@ -36,7 +36,9 @@ struct StockHandle {
     String _shareholder[MT_COUNT];    // 股东账号
 
     unsigned short _currentCount;   // 当前交易(下单)次数
-    unsigned short _dailyLimit; // 日内交易最大次数
+    unsigned short _dailyLimit = 1000; // 日内交易最大次数
+    unsigned short _insertLimitation = 20;
+    unsigned short _cancelLimitation = 20;
     OrderLimit* _insertLimit;   // 报单限流
     OrderLimit* _cancelLimit;   // 撤单限流
     int8_t _maxTradeReq;    // 交易通道每秒最大请求数
@@ -96,6 +98,11 @@ public:
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
     virtual Expected<bool, String> HasPermission(symbol_t symbol);
     virtual void Reset();
+
+    virtual int GetStockLimitation(char type);
+
+    virtual bool SetStockLimitation(char type, int limitation);
+
 private:
     // 查询股东用户
     bool QueryStockShareHolder(ExchangeName name);

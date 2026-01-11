@@ -24,6 +24,21 @@
       <!-- 流程图面板 -->
       <div v-show="activeTab === 'flow'" class="flow-panel">
         <div class="flow-container-wrapper">
+          <!-- 左下角信息面板 -->
+          <div class="info-panel" :class="{ 'collapsed': isInfoPanelCollapsed }">
+            <div class="info-panel-content" ref="infoPanelContent">
+              <div 
+                v-for="(msg, index) in infoMessages" 
+                :key="index" 
+                class="info-message"
+                :class="`type-${msg.type}`"
+              >
+                <span class="info-timestamp">{{ formatTime(msg.timestamp) }}</span>
+                <span class="info-text">{{ msg.text }}</span>
+              </div>
+            </div>
+          </div>
+
           <div class="flow-container">
               <VueFlow 
                   :nodes="nodes" 
@@ -115,6 +130,7 @@ import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 import ReportView from './ReportView.vue'
 import axios from 'axios'
+import sseService from '@/ts/SSEService';
 
 const {
     fitView, 
@@ -145,6 +161,12 @@ const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
 const LAST_BACKTEST_RESULT = 'last_backtest_result'
 let nodeIdCounter = 10
 
+// 信息面板相关状态
+const infoMessages = ref([])
+const isInfoPanelCollapsed = ref(false)
+const infoPanelContent = ref(null)
+const MAX_MESSAGES = 100 // 最大消息数量
+
 // 右键菜单状态
 const contextMenu = ref({
     visible: false,
@@ -173,16 +195,60 @@ const onKeyDown = (event) => {
   }
 }
 
+// 添加信息到面板
+const addInfoMessage = (text, type = 'info') => {
+  const timestamp = new Date()
+  infoMessages.value.push({
+    text,
+    type, // 'info', 'warning', 'error'
+    timestamp
+  })
+  
+  // 限制消息数量
+  if (infoMessages.value.length > MAX_MESSAGES) {
+    infoMessages.value = infoMessages.value.slice(-MAX_MESSAGES)
+  }
+  
+  // 滚动到底部
+  nextTick(() => {
+    if (infoPanelContent.value) {
+      infoPanelContent.value.scrollTop = infoPanelContent.value.scrollHeight
+    }
+  })
+}
+
+// 清空消息
+const clearMessages = () => {
+  infoMessages.value = []
+}
+
+// 切换信息面板折叠状态
+const toggleInfoPanel = () => {
+  isInfoPanelCollapsed.value = !isInfoPanelCollapsed.value
+}
+
+// 格式化时间显示
+const formatTime = (date) => {
+  return date.toLocaleTimeString('zh-CN', { 
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
 // 添加全局点击事件监听
 onMounted(() => {
     document.addEventListener('click', closeContextMenu)
     document.addEventListener('keydown', onKeyDown)
     // loadSavedFlow()
+    sseService.on('strategy', onStrategyMessageUpdate)
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', closeContextMenu)
     document.removeEventListener('keydown', onKeyDown)
+    sseService.off('strategy')
 })
 
 // 提供 selectedNodes 给子组件
@@ -580,6 +646,12 @@ const nodeTypeConfigs = {
   }
 }
 
+function onStrategyMessageUpdate(message) {
+  console.info('onStrategyMessageUpdate message:', message)
+  const data = message.data
+  addInfoMessage(data.message, data.type)
+}
+
 // 替换对象键名的辅助函数
 function replaceKeysInObject(obj, keyMapping) {
   Object.keys(obj).forEach(key => {
@@ -867,8 +939,8 @@ const runBacktest = async () => {
     "id": "graph_ma2",
     "name": "双均线动量流水线",
     "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
-    nodes: nodes.value,
-    edges: edges.value
+    nodes: getNodes.value,
+    edges: getEdges.value
   }
   let graph = JSON.stringify(curGraph)
   // 替换中文
@@ -890,7 +962,7 @@ const runBacktest = async () => {
 
   // 获取信号节点的代码和日期范围
   let signalNode = null
-  for (const node of nodes.value) {
+  for (const node of getNodes.value) {
     if (node.data.nodeType === 'signal') {
       signalNode = node
       break
@@ -986,8 +1058,6 @@ defineExpose({
     gap: 8px;
     padding: 10px 16px;
     background: rgba(30, 33, 45, 0.85); /* 增加透明度 */
-    backdrop-filter: blur(10px); /* 添加毛玻璃效果 */
-    -webkit-backdrop-filter: blur(10px);
     color: var(--text);
     border: 1px solid rgba(255, 255, 255, 0.1); /* 更细更透明的边框 */
     border-radius: 8px; /* 稍微增加圆角 */
@@ -1415,5 +1485,171 @@ defineExpose({
 .chart-controls {
     display: flex;
     gap: 8px;
+}
+
+/* 信息面板样式 */
+.info-panel {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    width: 320px;
+    max-height: 300px;
+    background: transparent; /* 半透明背景 */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border: none;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.info-panel.collapsed {
+    height: 40px;
+    max-height: 40px;
+}
+
+.info-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: rgba(41, 98, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s ease;
+}
+
+.info-panel-header:hover {
+    background: rgba(41, 98, 255, 0.15);
+}
+
+.info-panel-header span {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--primary);
+}
+
+.info-panel-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.info-panel-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 12px;
+}
+
+.info-panel-btn:hover {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.info-panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    font-size: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) transparent;
+    background: rgba(30, 33, 45, 0.1);
+}
+
+.info-panel-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.info-panel-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.info-panel-content::-webkit-scrollbar-thumb {
+    background-color: var(--primary);
+    border-radius: 3px;
+}
+.info-message {
+    display: flex;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    background: transparent;
+    animation: fadeIn 0.3s ease;
+    line-height: 1.4;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.info-message.type-warning {
+  color: #ff9800;
+}
+
+.info-message.type-error {
+  color: #f44336;
+}
+
+.info-timestamp {
+    color: var(--text-secondary);
+    font-size: 10px;
+    white-space: nowrap;
+    min-width: 60px;
+    padding-top: 1px;
+}
+
+.info-text {
+    color: var(--text);
+    flex: 1;
+    word-break: break-word;
+}
+
+.type-info .info-text {
+    color: var(--text);
+}
+
+.type-success .info-text {
+    color: var(--secondary);
+}
+
+.type-warning .info-text {
+    color: #ff9800;
+}
+
+.type-error .info-text {
+    color: #f44336;
+}
+
+.info-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    gap: 8px;
+}
+
+.info-empty i {
+    font-size: 24px;
+    opacity: 0.5;
 }
 </style>

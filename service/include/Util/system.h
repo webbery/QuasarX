@@ -26,7 +26,8 @@
 
 #define URI_FEATURE     "inproc://Feature"          // 输出特征
 #define URI_PREDICT     "inproc://Predict"          // 输出预测结果
-#define URI_SERVER_EVENT "inproc://SSE"             // SSE
+#define URI_SERVER_EVENT "inproc://SSE_PULL"        // SSE
+#define URI_DISPATH_EVENT "inproc://SSE_PUB"        // SSE
 
 constexpr std::size_t flags = yas::mem|yas::binary;
 
@@ -42,6 +43,11 @@ std::string GetProgramPath();
 bool Subscribe(const std::string& uri, nng_socket& sock, short tick = 5000, short hwm = 64);
 
 bool Publish(const std::string& uri, nng_socket& sock);
+
+// 接收方，只能一个
+bool Puller(const String& uri, nng_socket& sock);
+// 发布方(可以多个)
+bool Pusher(const String& uri, nng_socket& sock);
 
 struct QuoteInfo;
 struct symbol_t;
@@ -405,4 +411,5 @@ public:
 std::wstring to_wstring(const char* c);
 bool get_system_status(nlohmann::json&);
 
-void strategy_log(const String& info);
+void strategy_error(const String& strategy, const String& info);
+void strategy_log(const String & strategy, const String & info);

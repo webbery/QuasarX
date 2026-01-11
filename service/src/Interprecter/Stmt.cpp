@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <variant>
+#include <stack>
 
 #define ANY_CAST(val) any_cast<std::shared_ptr<Stmt>>(val)
 
@@ -270,7 +271,8 @@ String FormulaParser::cleanInputString(const String& input) {
 
 FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAction::HOLD) {
     _parser.set_logger([](size_t line, size_t col, const std::string& msg) {
-        INFO("{} {}: {}", line, col, msg);
+        auto info = fmt::format("{} {}: {}", line, col, msg);
+        strategy_error("", info);
     });
     _parser.enable_packrat_parsing();
     // _parser.enable_trace();
@@ -375,7 +377,7 @@ void FormulaParser::precomputeCrossSectionFunctions(const Vector<symbol_t>& symb
 
 feature_t FormulaParser::evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
         const Map<String, std::shared_ptr<CrossSectionResult>>& crossSectionResults) {
-    
+    return true;
 }
 
 void FormulaParser::extractCrossSectionFunctions(const peg::Ast& ast) {

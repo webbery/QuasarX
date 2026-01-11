@@ -4,7 +4,6 @@
 #include "nng/nng.h"
 #include <fstream>
 #include <thread>
-#include "Bridge/XTP/XTPExchange.h"
 
 class Server;
 class RecordHandler: public HttpHandler {

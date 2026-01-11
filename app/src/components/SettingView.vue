@@ -32,50 +32,30 @@
                     <button class="btn btn-primary" @click="addServer">添加服务器</button>
                 </div>
             </div>
-            
-            <!-- 添加券商 -->
+            <!-- 股票设置 -->
             <div class="settings-section">
-                <div class="section-header" @click="toggleSection('exchange')">
+                <div class="section-header" @click="toggleSection('stock')">
                     <div class="section-title">
-                        <div class="section-icon" style="background-color: rgba(155, 89, 182, 0.1); color: #9b59b6;">
-                            <span>💱</span>
+                        <div class="section-icon" style="background-color: rgba(46, 204, 113, 0.1); color: #2ecc71;">
+                            <span>📈</span>
                         </div>
-                        <span>添加/删除券商</span>
+                        <span>股票设置</span>
                     </div>
-                    <div class="section-arrow" :class="{ rotated: expandedSections.exchange }">▼</div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.stock }">▼</div>
                 </div>
-                <div class="section-content" :class="{ expanded: expandedSections.exchange }">
+                <div class="section-content" :class="{ expanded: expandedSections.stock }">
                     <div class="form-group">
-                        <label>名称</label>
-                        <input type="text" class="form-control" v-model="exchangeForm.name" placeholder="别名">
-                        <label>选择券商</label>
-                        <select class="form-control" v-model="exchangeForm.platform">
-                            <option v-for="platform in  Object.keys(exchangePlatforms)" :value="platform">{{ platform }}</option>
-                        </select>
+                        <label>每日下单上限</label>
+                        <input type="number" class="form-control" v-model="stockSettings.dailyOrderLimit" placeholder="例如：1000">
+                        <label>每秒下单上限</label>
+                        <input type="number" class="form-control" v-model="stockSettings.perSecondOrderLimit" placeholder="例如：10">
+                        <label>每秒撤单上限</label>
+                        <input type="number" class="form-control" v-model="stockSettings.perSecondCancelLimit" placeholder="例如：5">
                     </div>
-                    <div class="form-group">
-                        <label>券商账号</label>
-                        <input type="text" class="form-control" v-model="exchangeForm.account" placeholder="请输入券商账号">
-                        <label>券商密码</label>
-                        <input type="password" class="form-control" v-model="exchangeForm.password" placeholder="请输入券商密码">
-                    </div>
-                    <div class="form-group">
-                        <label>行情服务器地址</label>
-                        <input type="text" class="form-control" v-model="exchangeForm.quoteAddr" placeholder="示例">
-                        <label>交易服务器地址</label>
-                        <input type="text" class="form-control" v-model="exchangeForm.tradeAddr" placeholder="示例">
-                    </div>
-                    <div class="form-group">
-                        <label>开盘时间</label>
-                        <input type="text" class="form-control" v-model="exchangeForm.validTime" placeholder="示例: 09:00-11:30;13:00-15:00">
-                    </div>
-                    <div class="form-group">
-                        <label>API Key</label>
-                        <input type="text" class="form-control" v-model="exchangeForm.apiKey" placeholder="请输入API Key">
-                        <label>Secret Key</label>
-                        <input type="password" class="form-control" v-model="exchangeForm.secretKey" placeholder="请输入Secret Key">
-                    </div>
-                    <button class="btn btn-primary" @click="addExchange">添加券商</button>
+                    <button class="btn btn-primary" @click="updateStockSettings"
+                        :disabled="updateStockSettingsLoading" :class="{ 'btn-loading': updateStockSettingsLoading }">
+                        {{ updateStockSettingsLoading ? '更新中...' : '更新股票设置' }}
+                    </button>
                 </div>
             </div>
             <div class="settings-section">
@@ -96,33 +76,6 @@
                         <input type="password" class="form-control" v-model="fundForm.password" placeholder="请输入资金账号密码">
                     </div>
                     <button class="btn btn-primary" @click="updateFundAccount">更新资金账号</button>
-                </div>
-            </div>
-            <!-- 设置费率 -->
-            <div class="settings-section">
-                <div class="section-header" @click="toggleSection('fee')">
-                    <div class="section-title">
-                        <div class="section-icon" style="background-color: rgba(241, 196, 15, 0.1); color: #f1c40f;">
-                            <span>💰</span>
-                        </div>
-                        <span>设置回测费率</span>
-                    </div>
-                    <div class="section-arrow" :class="{ rotated: expandedSections.fee }">▼</div>
-                </div>
-                <div class="section-content" :class="{ expanded: expandedSections.fee }">
-                    <div class="form-group">
-                        <label>交易费率 (%)</label>
-                        <input type="number" class="form-control" v-model="feeRate.trade" step="0.01" min="0">
-                    </div>
-                    <div class="form-group">
-                        <label>提现费率 (%)</label>
-                        <input type="number" class="form-control" v-model="feeRate.withdrawal" step="0.01" min="0">
-                    </div>
-                    <div class="form-group">
-                        <label>最低提现费用</label>
-                        <input type="number" class="form-control" v-model="feeRate.minWithdrawalFee" step="0.0001" min="0">
-                    </div>
-                    <button class="btn btn-primary" @click="updateFeeRate">更新费率</button>
                 </div>
             </div>
             
@@ -163,29 +116,6 @@
                         </select>
                     </div>
                     <button class="btn btn-primary" @click="updateSmtp">更新SMTP设置</button>
-                </div>
-            </div>
-            
-            <!-- 设置无风险利率 -->
-            <div class="settings-section">
-                <div class="section-header" @click="toggleSection('risk')">
-                    <div class="section-title">
-                        <div class="section-icon" style="background-color: rgba(52, 73, 94, 0.1); color: #34495e;">
-                            <span>📈</span>
-                        </div>
-                        <span>设置无风险利率</span>
-                    </div>
-                    <div class="section-arrow" :class="{ rotated: expandedSections.risk }">▼</div>
-                </div>
-                <div class="section-content" :class="{ expanded: expandedSections.risk }">
-                    <div class="form-group">
-                        <label>无风险利率 (%)</label>
-                        <input type="number" class="form-control" v-model="riskFreeRate" step="0.01" min="0">
-                        <p style="font-size: 0.9rem; color: #7f8c8d; margin-top: 5px;">
-                            通常设置为国债收益率或银行基准利率
-                        </p>
-                    </div>
-                    <button class="btn btn-primary" @click="updateRiskFreeRate">更新利率</button>
                 </div>
             </div>
             
@@ -234,6 +164,7 @@
 import axios from 'axios';
 import { ref, computed } from 'vue'
 import Store from 'electron-store';
+import { message } from '@/tool'
 
 const store = new Store();
 // 展开/收缩状态管理
@@ -258,7 +189,12 @@ const serverForm = ref({
     password: '',
     privateKey: ''
 });
-
+ // 股票设置数据
+const stockSettings = ref({
+    dailyOrderLimit: 1000,
+    perSecondOrderLimit: 20,
+    perSecondCancelLimit: 5
+});
 const servers = ref(store.get('servers'));
 
 // 密码修改数据
@@ -287,13 +223,6 @@ const fundForm = ref({
     password: ''
 })
 
-// 费率数据
-const feeRate = ref({
-    trade: 0.1,
-    withdrawal: 0.5,
-    minWithdrawalFee: 0.001
-});
-
 // SMTP配置
 const smtpConfig = ref({
     host: '',
@@ -303,9 +232,6 @@ const smtpConfig = ref({
     encryption: 'ssl'
 });
 
-// 无风险利率
-const riskFreeRate = ref(2.5);
-
 // 任务调度
 const tasks = ref([
     { name: '数据备份', hour: 2, minute: 0, enabled: true },
@@ -314,6 +240,9 @@ const tasks = ref([
 ]);
 
 const selectedTask = ref(tasks.value[0]);
+
+// 加载状态
+const updateStockSettingsLoading = ref(false);
 
 // 计算属性：检查是否所有部分都已展开
 const allExpanded = computed(() => {
@@ -332,6 +261,30 @@ const toggleAllSections = () => {
     }
 };
 
+ // 股票设置更新方法
+const updateStockSettings = async () => {
+    // 这里可以添加验证逻辑
+    if (stockSettings.value.dailyOrderLimit < 0 || 
+        stockSettings.value.perSecondOrderLimit < 0 || 
+        stockSettings.value.perSecondCancelLimit < 0) {
+        message.error(`数值不能为负数！`)
+        return;
+    }
+    updateStockSettingsLoading.value = true;
+    try {
+        const response = await axios.put('/v0/stocks/params', {
+            "order_limit": stockSettings.value.perSecondOrderLimit,
+            "daily_limit": stockSettings.value.dailyOrderLimit,
+            "cancel_limit": stockSettings.value.perSecondCancelLimit
+        })
+        if (response.status == 200) {
+            message.success('股票设置已更新！');
+        }
+    } catch (err) {
+        message.error(`设置异常 ${err.message}`)
+    }
+    updateStockSettingsLoading.value = false;
+};
 const addServer = () => {
     if (!serverForm.value.address) {
         alert('地址不能为空');

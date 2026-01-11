@@ -57,3 +57,11 @@ public:
 
     virtual void get(const httplib::Request& req, httplib::Response& res);
 };
+
+class StockParams : public HttpHandler {
+public:
+    StockParams(Server*);
+
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+    virtual void put(const httplib::Request& req, httplib::Response& res);
+};

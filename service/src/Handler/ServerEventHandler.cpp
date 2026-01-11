@@ -4,50 +4,43 @@
 #include "server.h"
 #include <thread>
 
-class EventDispatcher {
-public:
-    EventDispatcher() { _sock.id = 0; }
-    ~EventDispatcher() {
-
+void ServerEventHandler::run()
+{
+    // 收集消息，然后分发给每个sink
+    nng_socket pull_sock, pub_sock;
+    if (!Puller(URI_SERVER_EVENT, pull_sock)) {
+        WARN("EventDispatch Subscribe fail.");
+        return;
     }
-
-    bool dispatchEvent(httplib::DataSink& sink) {
-        if (_sock.id == 0) {
-            if (!Subscribe(URI_SERVER_EVENT, _sock)) {
-                WARN("EventDispatch Subscribe fail.");
-                return false;
-            }
-            String thread_name = "SSE_" + std::to_string(_sock.id); 
-            SetCurrentThreadName(thread_name.c_str());
-        }
+    if (!Publish(URI_DISPATH_EVENT, pub_sock)) {
+        WARN("EventDispatch Subscribe fail.");
+        return;
+    }
+    SetCurrentThreadName("SSEDispather");
+    while (!Server::IsExit()) {
         char* buff = NULL;
         size_t sz = 0;
-        // 接收订单事件
-        int rv = nng_recv(_sock, &buff, &sz, NNG_FLAG_ALLOC);
+        int rv = nng_recv(pull_sock, &buff, &sz, NNG_FLAG_ALLOC);
         if (rv != 0) {
             nng_free(buff, sz);
-            return true;
+            continue;
         }
         // 发送给客户端
-        auto status = sink.write(buff, sz);
+        nng_send(pub_sock, buff, sz, NNG_FLAG_NONBLOCK);
         nng_free(buff, sz);
-        return status;
     }
+    nng_close(pull_sock);
+    nng_close(pub_sock);
+}
 
-    void Release() {
-        nng_close(_sock);
-    }
-private:
-    std::shared_ptr<httplib::DataSink> _sinks;
-    nng_socket _sock;
-};
+std::thread* ServerEventHandler::_dispather = nullptr;
 
 ServerEventHandler::ServerEventHandler(Server* server):HttpHandler(server) {
 }
 
 ServerEventHandler::~ServerEventHandler() {
-    while (!_eventDispatchers.empty()) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (_dispather) {
+        delete _dispather;
     }
 }
 
@@ -56,28 +49,30 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
     res.set_header("Cache-Control", "no-cache");
     res.set_header("Connection", "keep-alive");
     res.set_header("Access-Control-Allow-Origin", "*"); // 允许跨域
-
+    if (!_dispather) {
+        _dispather = new std::thread(&ServerEventHandler::run, this);
+    }
     res.set_chunked_content_provider("text/event-stream",
         [&](size_t offset, httplib::DataSink& sink) {
         auto id = std::this_thread::get_id();
-        auto itr = _eventDispatchers.find(id);
-        EventDispatcher* dispatcher = nullptr;
-        if (itr == _eventDispatchers.end()) {
-            // 当客户端首次连接时，将其添加到分发器
-            dispatcher = new EventDispatcher();
-            _eventDispatchers[id] = dispatcher;
-        } else {
-            dispatcher = itr->second;
+        // 当客户端首次连接时，将其添加到分发器
+        thread_local nng_socket sock{ 0 };
+        if (sock.id == 0) {
+            Subscribe(URI_DISPATH_EVENT, sock);
         }
-        
         if (!sink.is_writable() || Server::IsExit()) {
-            dispatcher->Release();
-            delete dispatcher;
-            _eventDispatchers.erase(id);
+            nng_close(sock);
             return false;
         }
+        char* buff = NULL;
+        size_t sz = 0;
+        int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
+        if (rv != 0) {
+            nng_free(buff, sz);
+            return true;
+        }
         // 发送消息
-        return dispatcher->dispatchEvent(sink);
+        return sink.write(buff, sz);
     });
     res.status = 200;
 }

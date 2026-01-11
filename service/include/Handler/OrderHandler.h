@@ -23,6 +23,7 @@ public:
     virtual void post(const httplib::Request& req, httplib::Response& res);
     virtual void get(const httplib::Request& req, httplib::Response& res);
     virtual void del(const httplib::Request& req, httplib::Response& res);
+    virtual void put(const httplib::Request& req, httplib::Response& res);
 private:
   bool BuyOrder(const std::string& symbol, double price, int number);
   TradeInfo SellORder(symbol_t symbol, const Order& order);

@@ -52,7 +52,7 @@ class TestStrategy:
         no_reply = ['ml.json']
         script_dir = './script'
         for item_name in os.listdir(script_dir):
-            item_name = 'CTA.json'
+            item_name = 'ma.json'
             item_path = os.path.join(script_dir, item_name)
             print('run script:', item_name)
             script = self.load_script(item_path)

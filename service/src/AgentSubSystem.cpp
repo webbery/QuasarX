@@ -98,7 +98,7 @@ void FlowSubsystem::Start(const String& strategy) {
             // 结束通知
             flow._running = false;
             auto info = fmt::format("backtest finish, cost {}s, {}s/per datum", duration.count(), (epoch == 0? 0:duration.count()/epoch));
-            strategy_log("");
+            strategy_log(strategy, info);
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
         }

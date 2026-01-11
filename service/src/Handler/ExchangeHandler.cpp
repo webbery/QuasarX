@@ -1,5 +1,4 @@
 #include "Handler/ExchangeHandler.h"
-#include "Bridge/XTP/XTPExchange.h"
 #include "Bridge/CTP/CTPExchange.h"
 #include "Bridge/SIM/SIMExchange.h"
 #include "Bridge/HX/HXExchange.h"
@@ -23,12 +22,7 @@ bool ExchangeHandler::Use(const String& name) {
   String ex_type = exchange["api"];
   bool ret = false;
   ExchangeType et = ExchangeType::EX_Unknow;
-  if (ex_type == XTP_API) {
-    ret = SwitchExchange<XTPExchange>(name);
-    _activeStockName = name;
-    et = ExchangeType::EX_XTP;
-  }
-  else if (ex_type == CTP_API) {
+  if (ex_type == CTP_API) {
     ret = SwitchExchange<CTPExchange>(name);
     _activeFutureName = name;
     et = ExchangeType::EX_CTP;

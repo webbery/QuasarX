@@ -65,6 +65,9 @@ void HXTrade::OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserL
     }
     INIT_PROMISE(TORASTOCKAPI::CTORATstpRspUserLoginField);
     _exchange->Reset();
+    // 单位时间最大突发流量20次请求
+    _exchange->_stockHandle._cancelLimitation = pRspUserLoginField->OrderActionCommFlux;
+    _exchange->_stockHandle._insertLimitation = pRspUserLoginField->OrderInsertCommFlux;
     _exchange->_stockHandle._insertLimit = new OrderLimit(pRspUserLoginField->OrderInsertCommFlux, pRspUserLoginField->OrderInsertCommFlux / 2);
     _exchange->_stockHandle._maxTradeReq = pRspUserLoginField->TradeCommFlux;
     _exchange->_stockHandle._maxQuoteReq = pRspUserLoginField->QueryCommFlux;

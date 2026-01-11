@@ -13,7 +13,7 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
         broker->Buy(strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
-            nng_send(sock, info.data(), info.size(), 0);
+            nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
             _reports.emplace_back(std::make_pair(symbol, report));
             });
     break;
@@ -21,7 +21,7 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
         broker->Sell(strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
-            nng_send(sock, info.data(), info.size(), 0);
+            nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
             _reports.emplace_back(std::make_pair(symbol, report));
             });
     break;
