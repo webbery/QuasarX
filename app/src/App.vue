@@ -247,11 +247,22 @@ const uninitServerEvent = () => {
 }
 
 onMounted(() => {
-  activeComponent.value = AccountView
   window.addEventListener('loginSuccess', onLoginSucess)
+  const remotes = localStorage.getItem('remote')
+  if (remotes) { // 已经设置过服务器
+    activeComponent.value = AccountView
+    const token = localStorage.getItem('token')
+    console.info('token:', token)
+    if (!token || token.length == 0) {
+      showLogin.value = true
+    }
+  } else {
+    activeComponent.value = SettingView
+  }
 });
 
 onUnmounted(() => {
+  localStorage.setItem('token', '')
   window.removeEventListener('loginSuccess', onLoginSucess)
   uninitServerEvent()
 })

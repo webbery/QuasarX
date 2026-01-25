@@ -19,6 +19,16 @@
 #include <boost/container_hash/hash.hpp>
 #include "json.hpp"
 
+#define ERROR_INSERT_LIMIT      -100
+#define ERROR_DAILY_LIMIT       -101
+#define ERROR_CANCEL_LIMIT      -102
+#define ERROR_ORDER_INSERT      -103
+#define ERROR_SET_DAILY_LIMIT   -104
+#define ERROR_SET_CANCEL_LIMIT  -105
+#define ERROR_SET_ORDER_LIMIT   -106
+#define ERROR_NO_SECURITY       -107    //无此证券
+#define ERROR_REQUIR_TYPE       -108    // 请求缺type参数
+
 #define URI_RAW_QUOTE   "inproc://URI_RAW_QUOTE"
 #define URI_SIM_QUOTE   "inproc://URI_SIM_QUOTE"// 仿真数据
 #define URI_SIM_TRADE   "inproc://URI_SIM_TRADE"    // 仿真交易结果
@@ -233,6 +243,13 @@ enum class MarketType : char {
 // 获取股票的类型
 MarketType getMarketType(symbol_t stock);
 
+class RuntimeError : public std::exception {
+public:
+    RuntimeError(int code):_code(code) {}
+
+private:
+    int _code;
+};
 #ifdef __linux__
 class CPUPerformanceMesure {
 public:

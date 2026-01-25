@@ -478,7 +478,7 @@ bool HXExchange::QueryOptionOrders(uint64_t reqID) {
     return true;
 }
 
-Expected<bool, String> HXExchange::HasStockPermission(symbol_t symbol)
+Boolean HXExchange::HasStockPermission(symbol_t symbol)
 {
     auto reqID = ++_reqID;
     auto str = get_symbol(symbol);
@@ -812,7 +812,7 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
 Boolean HXExchange::CancelOrder(order_id id, OrderContext* ctx){
     if (is_stock(ctx->_order._symbol)) {
         if (_stockHandle._cancelLimit->tryConsume()) {
-            throw std::runtime_error(STR_CANCEL_LIMIT);
+            throw RuntimeError(ERROR_CANCEL_LIMIT);
         }
         CancelStockOrder(id, ctx);
     } else {
@@ -1061,7 +1061,7 @@ bool HXExchange::GetCommission(symbol_t symbol, List<Commission>& comms) {
   return false;
 }
 
-Expected<bool, String> HXExchange::HasPermission(symbol_t symbol)
+Boolean HXExchange::HasPermission(symbol_t symbol)
 {
     return HasStockPermission(symbol);
 }

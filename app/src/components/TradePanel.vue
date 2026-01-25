@@ -1,5 +1,10 @@
 <template>
-    <div class="trade-panel">
+    <div class="trade-panel" :class="{ 'disabled': isSubmitting }">
+        <div v-if="isSubmitting" class="submit-overlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">正在提交...</div>
+        </div>
+
         <div class="panel-header">
             <h3>交易面板</h3>
         </div>
@@ -153,6 +158,7 @@ import { ref, computed, watch, onMounted, onActivated } from 'vue'
 import axios from 'axios';
 import { getGlobalStorage } from '@/ts/globalStorage';
 import getZh from '@/ts/i18n';
+import errorCode from '@/ts/ErrorCode';
 
 const globalStorage = getGlobalStorage()
 // 响应式数据
@@ -166,7 +172,11 @@ const price = ref('')
 const followLatestPrice = ref(false)
 const quantity = ref('')
 const availableFunds = ref('0')
-const statusMessage = ref('等待输入')
+const statusMessage = ref('')
+const isSubmitting = ref(false)
+
+let upper = 0
+let lower = 0
 
 // 计算属性
 const quantityUnit = computed(() => {
@@ -248,16 +258,23 @@ const onOperationChange = () => {
 // 监听代码变化
 const onCodeChange = async () => {
     if (code.value.length >= 6) {
-        // 模拟根据代码获取证券名称和最新价格
-        const securityInfo = await getSecurityInfo(code.value)
-        securityName.value = securityInfo.name
-        price.value = securityInfo.latestPrice.toString()
-        
-        statusMessage.value = `已加载 ${securityInfo.name}`
-        calculateAmount()
+        // 根据代码获取证券名称和最新价格
+        try {
+            const securityInfo = await getSecurityInfo(code.value)
+            securityName.value = securityInfo.name
+            price.value = securityInfo.latestPrice.toString()
+            upper = securityInfo.upper
+            lower = securityInfo.lower
+
+            statusMessage.value = `已加载 ${securityInfo.name}`
+            calculateAmount()
+        } catch (err) {
+            const response = err.response
+            const data = response.data
+        }
     } else if (code.value.length === 0) {
         securityName.value = ''
-        statusMessage.value = '等待输入'
+        statusMessage.value = ''
     }
 }
 
@@ -286,7 +303,9 @@ const getSecurityInfo = async (code: string) => {
             const data = response.data
             info = {
                 name: name,
-                latestPrice: data.price
+                latestPrice: data.price,
+                upper: data.upper,
+                lower: data.lower
             }
         }
         return info
@@ -306,19 +325,40 @@ const getOperationText = (operation: string): string => {
 }
 
 const checkStockPrivilege = async (code: string) => {
-    const response = await axios.get('/v0/stocks/privilege', {params: {
-        id: code
-    }})
-    const data = response.data
-    if (data['forbid']) {
-        statusMessage.value = '错误: ' + getZh(data['message'])
-        return false
+    try {
+        const response = await axios.get('/v0/stocks/privilege', {params: {
+            id: code
+        }})
+        if (response.status === 200) {
+            const data = response.data
+            if (data['forbid']) {
+                statusMessage.value = '错误: ' + getZh(data['message'])
+                return false
+            }
+        }
+    } catch (err) {
+        // console.info('err: ', err)
+        const response = err.response
+        if (response.status === 400) {
+            const data = response.data
+            const code = data['status']
+            if (code in errorCode) {
+                statusMessage.value = '错误: ' + errorCode[code]
+            } else {
+                statusMessage.value = '未知错误:' + code
+            }
+            return false
+        }
     }
+    
     return true
 }
 // 提交交易
 const submitTrade = async () => {
-    if (!price.value || parseFloat(price.value) <= 0) {
+    if (isSubmitting.value) return;
+
+    let priceValue = parseFloat(price.value)
+    if (!price.value || priceValue <= 0) {
         statusMessage.value = '错误: 价格必须大于0'
         return
     }
@@ -336,12 +376,24 @@ const submitTrade = async () => {
             return
         }
     }
-    
+    if (priceValue > upper) {
+        statusMessage.value = '错误: 买入价超过涨停价'
+        return
+    }
+    if (priceValue > lower) {
+        statusMessage.value = '错误: 买入价低于跌停价'
+        return
+    }
+    isSubmitting.value = true
+    const operationText = getOperationText(selectedOperation.value)
+    statusMessage.value = `正在提交${operationText}订单...`
+
     let order
     switch (selectedType.value) {
     case 'stock':
         // 检查交易权限
         if (!await checkStockPrivilege(code.value)) {
+            isSubmitting.value = false
             return
         }
         order = generateSockOrder()
@@ -350,23 +402,38 @@ const submitTrade = async () => {
     break;
     default:
         statusMessage.value = `暂不支持的证券类型`
+        isSubmitting.value = false
         return;
     }
-    const operationText = getOperationText(selectedOperation.value)
-    statusMessage.value = `正在提交${operationText}订单...`
     
     // 提交交易
-    // try{
-    //     const res = await axios.post('/v0/trade/order', order)
-    //     console.info('trade order:', res)
-    //     // TODO: 发送消息更新持仓信息
-    //     statusMessage.value = `${operationText}订单提交成功`
-    //     // TODO:更新可用资金
-    //     await updateCapital()
-    // } catch (error) {
-    //     console.info('error:')
-    //     statusMessage.value = `${operationText}订单提交失败`
-    // }
+    try{
+        const res = await axios.post('/v0/trade/order', order)
+        console.info('trade order:', res)
+        // TODO: 发送消息更新持仓信息
+        statusMessage.value = `${operationText}订单提交成功`
+        // TODO:更新可用资金
+        await updateCapital()
+    } catch (error) {
+        statusMessage.value = `${operationText}订单提交失败`
+        if (error.response) {
+            const data = error.response.data
+            const code = data['status']
+            if (code in errorCode) {
+                statusMessage.value = `${operationText}订单提交失败: ${errorCode[code]}`
+            } else {
+                statusMessage.value = '服务器错误: ' + (data['message'] || '未知错误')
+            }
+        }
+        else if (error.request) {
+            statusMessage.value = '网络错误: 无法连接到服务器'
+        }
+        else {
+            statusMessage.value = '请求错误: ' + error.message
+        }
+    } finally {
+        isSubmitting.value = false
+    }
 }
 
 const generateSockOrder = () => {
@@ -438,6 +505,57 @@ const updateCapital = async () => {
     height: 100%;
     display: flex;
     flex-direction: column;
+    position: relative;
+}
+
+.submit-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    border-radius: 8px;
+}
+
+/* 加载动画 */
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: var(--primary);
+    animation: spin 1s ease-in-out infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 加载文本 */
+.loading-text {
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* 禁用状态下的样式 */
+.trade-panel.disabled {
+    opacity: 0.7;
+}
+
+.trade-panel.disabled .form-select,
+.trade-panel.disabled .form-input,
+.trade-panel.disabled .submit-btn,
+.trade-panel.disabled .reset-btn {
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .panel-header {

@@ -50,7 +50,7 @@ public:
     void UpdateCommission();
 
     virtual double GetAvailableFunds();
-    virtual Expected<bool, String> HasPermission(symbol_t symbol);
+    virtual Boolean HasPermission(symbol_t symbol);
     virtual void Reset();
 
     virtual int GetStockLimitation(char type);

@@ -88,6 +88,7 @@
                 <tbody>
                   <tr v-for="position in stockPositions" :key="position.code">
                     <td>{{ position.code }}</td>
+                    <td>{{ position.exchange }}</td>
                     <td>{{ position.name }}</td>
                     <td>{{ position.quantity }}</td>
                     <td>{{ position.available }}</td>
@@ -916,6 +917,15 @@ const getOrderTypeClass = (type) => {
     }
 };
 
+const getExchange = (id) => {
+    const tokens = id.split('.')
+    switch (tokens[0]) {
+      case 'sz': return '深交所'
+      case 'sh': return '上交所'
+      case 'bj': return '北交所'
+      default: return tokens[0]
+    }
+}
 // 模态框方法
 const openModal = (title, message, callback) => {
     modalTitle.value = title;
@@ -958,6 +968,7 @@ const onPositionUpdate = (message) => {
   if (updated === false) {
     const stock = {
       code: data.id,
+      exchange: getExchange(data.id),
       name: data.name,
       quantity: data.quantity,
       costPrice: parseFloat(data.price).toFixed(4),
@@ -999,39 +1010,8 @@ const handleStockCancel = () => {
 }
 
 const queryAllStockOrders = async () => {
-  const response = await axios.get('/v0/trade/order')
+  const response = await axios.get('/v0/trade/order', params={'type': 0})
   console.info('queryAllStockOrders:', response.data)
-  /*{ 
-        id: 1, 
-        code: '000001', 
-        name: '平安银行', 
-        type: 'buy', 
-        orderType: 'limit',
-        price: 16.30, 
-        quantity: 200, 
-        status: 'pending'/'filled'/'waiting'
-    },
-    { 
-        id: 2, 
-        code: '600036', 
-        name: '招商银行', 
-        type: 'sell', 
-        orderType: 'market',
-        price: 0, 
-        quantity: 100, 
-        status: 'filled' 
-    },
-    { 
-        id: 3, 
-        code: '000858', 
-        name: '五粮液', 
-        type: 'buy_margin', 
-        orderType: 'conditional',
-        price: 145.00, 
-        triggerPrice: 150.00,
-        quantity: 100, 
-        status: 'waiting' 
-    }*/
   for (const item of response.data) {
     let status = 'pending'
     switch (item.status) {

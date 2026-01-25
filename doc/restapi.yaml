@@ -201,6 +201,45 @@ paths:
                   message:
                     type: string
                     description: 禁止交易原因
+        '400':
+          description: 失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: integer
+                    description: 失败错误码
+  /stocks/range:
+    get:
+      summary: 获取股票当日涨跌停价格
+      description: 获取股票当日涨跌停价格
+      tags:
+        - Stocks
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: string
+          description: 要获取的股票代码
+      responses:
+          '200':
+            description: An array of stocks
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    code:
+                      type: string
+                      description: 股票代码
+                    upper:
+                      type: number
+                      description: 股票涨停价
+                    lower:
+                      type: number
+                      description: 股票跌停价
   /options/detail:
     get:
       summary: 当前期权的信息

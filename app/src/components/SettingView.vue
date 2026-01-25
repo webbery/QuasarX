@@ -162,7 +162,7 @@
 </template>
 <script setup>
 import axios from 'axios';
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import Store from 'electron-store';
 import { message } from '@/tool'
 
@@ -334,21 +334,21 @@ const updateFundAccount = async () => {
     console.info('TODO:更新资金账号')
 }
 
-const updateFeeRate = () => {
-    alert('费率更新成功!');
-};
-
 const updateSmtp = () => {
     alert('SMTP设置已更新!');
-};
-
-const updateRiskFreeRate = () => {
-    alert('无风险利率已更新!');
 };
 
 const updateTaskSchedule = () => {
     alert('任务计划已更新!');
 };
+
+onMounted(async () => {
+    const res = await axios.get('/v0/stocks/params')
+    const limitation = res.data
+    stockSettings.value.dailyOrderLimit = limitation.daily_limit
+    stockSettings.value.perSecondOrderLimit = limitation.order_limit
+    stockSettings.value.perSecondCancelLimit = limitation.cancel_limit
+})
 </script>
 <style scoped>
 .expand-all {
@@ -505,6 +505,10 @@ textarea.form-control {
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--text);
+}
+
+.btn-loading {
+    cursor: not-allowed;
 }
 @media (max-width: 768px) {
     .form-group {

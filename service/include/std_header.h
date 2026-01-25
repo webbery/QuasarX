@@ -76,7 +76,7 @@ using UnorderedSet = std::unordered_set<T, Args...>;
 
 template<typename T, typename Err>
 using Expected = std::expected<T, Err>;
-using Boolean = Expected<bool, String>;
+using Boolean = Expected<bool, int>;
 #endif
 
 #ifndef YEAR_DAY

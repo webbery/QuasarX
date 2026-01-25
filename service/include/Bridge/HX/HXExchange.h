@@ -82,7 +82,7 @@ public:
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
 
-    virtual Expected<bool, String> CancelOrder(order_id id, OrderContext* order);
+    virtual Boolean CancelOrder(order_id id, OrderContext* order);
     // 获取当前尚未完成的所有订单
     virtual bool GetOrders(SecurityType type, OrderList& ol);
     virtual bool GetOrder(const String& sysID, Order& ol);
@@ -96,7 +96,7 @@ public:
     virtual double GetAvailableFunds();
 
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
-    virtual Expected<bool, String> HasPermission(symbol_t symbol);
+    virtual Boolean HasPermission(symbol_t symbol);
     virtual void Reset();
 
     virtual int GetStockLimitation(char type);
@@ -139,7 +139,7 @@ private:
     bool QueryStockOrders(uint64_t reqID);
     bool QueryOptionOrders(uint64_t reqID);
 
-    Expected<bool, String> HasStockPermission(symbol_t symbol);
+    Boolean HasStockPermission(symbol_t symbol);
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;

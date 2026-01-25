@@ -358,7 +358,7 @@ bool StockSimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
   return true;
 }
 
-Expected<bool, String> StockSimulation::HasPermission(symbol_t symbol)
+Boolean StockSimulation::HasPermission(symbol_t symbol)
 {
     return true;
 }

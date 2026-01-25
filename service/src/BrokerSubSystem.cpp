@@ -198,7 +198,7 @@ void BrokerSubSystem::CancelOrder(order_id& id, symbol_t symbol, std::function<v
     ctx->_order._symbol = symbol;
     auto ret = exchange->CancelOrder(id, ctx);
     if (!ret.has_value()) {
-        if (ret.error() == STR_CANCEL_LIMIT) {
+        if (ret.error() == ERROR_CANCEL_LIMIT) {
             id._error = ERROR_CANCEL_LIMIT;
             delete ctx;
             return;

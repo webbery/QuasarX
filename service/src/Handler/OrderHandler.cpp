@@ -79,10 +79,12 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._hedge = (OptionHedge)params["hedge"];
     }
     int perf = 1;
+#ifdef _DEBUG
     if (params.contains("perf")) {
         // 循环请求,测试性能
         perf = params["perf"];
     }
+#endif
     nlohmann::json result;
     auto broker = _server->GetBrokerSubSystem();
     if (direct == 0) {
@@ -91,7 +93,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
             auto id = broker->Buy("_custom_", symbol, order, lambda_sendResult);
             nlohmann::json result;
             if (id._error) {
-                ProcessError(id._error, result, res);
+                return ProcessError(id._error, res);
             }
             else {
                 res.status = 200;
@@ -106,7 +108,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
             auto id = broker->Sell("_custom_", symbol, order, lambda_sendResult);
 
             if (id._error) {
-                ProcessError(id._error, result, res);
+                return ProcessError(id._error, res);
             }
             else {
                 res.status = 200;
@@ -124,7 +126,7 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto tp_itr = req.params.find("type");
     if (tp_itr == req.params.end()) {
         res.status = 400;
-        res.set_content("{message: 'not set type of stock/option/future'}", "application/json");
+        ProcessError(ERROR_REQUIR_TYPE, res);
         return;
     }
     auto type = (SecurityType)atoi(tp_itr->second.c_str());

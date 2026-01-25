@@ -6,7 +6,6 @@
 class Server;
 struct symbol_t;
 
-
 class HttpHandler {
 public:
   HttpHandler(Server* server) :_server(server) {}
@@ -24,4 +23,4 @@ protected:
 
 symbol_t GetSymbol(const nlohmann::json& req);
 
-void ProcessError(char error, nlohmann::json& result, httplib::Response& res);
+void ProcessError(char error, httplib::Response& res);

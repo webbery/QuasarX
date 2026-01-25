@@ -20,14 +20,6 @@ using ConcurrentMap = boost::concurrent_flat_map<K, V>;
 #define REQUEST_ORDERS        3
 #define REQUEST_ORDER         4
 
-#define ERROR_INSERT_LIMIT    -100
-#define ERROR_DAILY_LIMIT     -101
-#define ERROR_CANCEL_LIMIT    -102
-#define ERROR_ORDER_INSERT    -103
-
-#define STR_INSERT_LIMIT    "out of insert limit"
-#define STR_CANCEL_LIMIT    "out of cancel limit"
-
 #define MAX_ORDER_SIZE  5
 // 2级行情
 #define MAX_ORDER_SIZE_LVL2  10
@@ -386,7 +378,7 @@ public:
   virtual QuoteInfo GetQuote(symbol_t symbol) = 0;
 
   virtual bool GetCommission(symbol_t symbol, List<Commission>& comms) = 0;
-
+  // 权限查询
   virtual Boolean HasPermission(symbol_t symbol) = 0;
   // 换日时，重置各种限流参数等操作
   virtual void Reset() = 0;
@@ -396,7 +388,7 @@ public:
   virtual bool SetStockLimitation(char type, int limitation) = 0;
 
   Server* GetHandle() { return _server; }
-
+  // 设置工作时间段
   void SetWorkingRange(char start_hour, char stop_hour, char start_minute, char stop_minute) {
     _range.emplace_back(WorkingRange{start_hour, start_minute, stop_hour, stop_minute});
   }

@@ -226,7 +226,7 @@ double CTPExchange::GetAvailableFunds()
     return 1000000;
 }
 
-Expected<bool, String> CTPExchange::HasPermission(symbol_t symbol)
+Boolean CTPExchange::HasPermission(symbol_t symbol)
 {
     return true;
 }

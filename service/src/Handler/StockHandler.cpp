@@ -147,8 +147,12 @@ StockPrivilege::StockPrivilege(Server* server):HttpHandler(server)
 void StockPrivilege::get(const httplib::Request& req, httplib::Response& res)
 {
     String id = req.get_param_value("id");
-    auto exchange = _server->GetAvaliableStockExchange();
+    if (Server::GetExchange(id) == ExchangeName::MT_Unknow) {
+        ProcessError(ERROR_NO_SECURITY, res);
+        return;
+    }
     auto symbol = to_symbol(id);
+    auto exchange = _server->GetAvaliableStockExchange();
     nlohmann::json jsn;
     auto result = exchange->HasPermission(symbol);
     if (result.has_value()) {
@@ -188,5 +192,23 @@ void StockParams::get(const httplib::Request& req, httplib::Response& res)
 
 void StockParams::put(const httplib::Request& req, httplib::Response& res)
 {
-
+    nlohmann::json data = nlohmann::json::parse(req.body);
+    int ol = data["order_limit"];
+    int dl = data["daily_limit"];
+    int cl = data["cancel_limit"];
+    auto exchange = _server->GetAvaliableStockExchange();
+    if (!exchange->SetStockLimitation(1, dl)) {
+        ProcessError(ERROR_SET_ORDER_LIMIT, res);
+        return;
+    }
+    if (!exchange->SetStockLimitation(2, ol)) {
+        ProcessError(ERROR_SET_DAILY_LIMIT, res);
+        return;
+    }
+    if (!exchange->SetStockLimitation(3, cl)) {
+        ProcessError(ERROR_SET_CANCEL_LIMIT, res);
+        return;
+    }
+    res.status = 200;
+    res.set_content("{'message':'success'}", "application/json");
 }
