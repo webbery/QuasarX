@@ -2,7 +2,7 @@
 #include "Bridge/exchange.h"
 #include <functional>
 #include "server.h"
-#include "ta-lib/ta_libc.h"
+// #include "ta-lib/ta_libc.h"
 
 namespace {
     double ema(double cur_close, double prev_ema, double coeff) {

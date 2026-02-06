@@ -1,6 +1,6 @@
 
 
-BASE_URL = "https://localhost:19107/v0"
+BASE_URL = "http://localhost:19107/v0"
 # BASE_URL = "https://47.115.93.62:19107/v0"
 # --------------------------
 # 测试工具函数

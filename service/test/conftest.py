@@ -6,7 +6,7 @@ class AuthAPI:
     def login(self):
         """模拟登录请求"""
         params = {"name": 'admin', 'pwd': 'admin'}
-        response = requests.post(f"https://localhost:19107/v0/user/login", json=params, verify=False)
+        response = requests.post(f"http://localhost:19107/v0/user/login", json=params, verify=False)
         # response = requests.post(f"https://47.115.93.62:19107/v0/user/login", json=params, verify=False)
         data = response.json()
         assert isinstance(data, object)

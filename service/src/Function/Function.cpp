@@ -81,3 +81,18 @@ context_t Return::operator()(const Map<String, context_t>& args) {
     }
     return 0.;
 }
+
+R2::R2(int32_t window)
+:_window(window){
+
+}
+
+context_t R2::operator()(const Map<String, context_t>& args) {
+    if (args.size() != 1) {
+        return std::nan("nan");
+    }
+    auto itr = args.begin();
+    auto& prop_name = itr->first;
+    auto& vec = std::get<Vector<double>>(itr->second);
+    return 0.;
+}

@@ -65,6 +65,7 @@ enum class StrategyNodeType {
     NARX,
     Debug,
     Stack,
+    Test,
 };
 
 struct AgentStrategyInfo;

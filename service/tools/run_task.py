@@ -10,8 +10,14 @@ def update_symbol_market(dst):
     industries = []
     types = []
 
-    stock_list_df = ak.stock_info_a_code_name()
     symbol_info = dict()
+    try:
+        stock_list_df = ak.stock_info_a_code_name()
+    except:
+        stock_spot_df = ak.stock_zh_a_spot_em()
+        stock_list_df = stock_spot_df[['代码', '名称']]
+        stock_list_df = stock_list_df.rename(columns={'代码': 'code', '名称': 'name'})
+
     for idx, row in stock_list_df.iterrows():
         symbol = str(row['code']).zfill(6)
         # info = ak.stock_individual_info_em(symbol)
@@ -37,7 +43,7 @@ def update_symbol_market(dst):
             continue
 
         names.append(symbol_info[symbol])
-    
+        
     for type in [('主板A股', 'A'), ("主板B股", 'B'), ("科创板", "KCB")]:
         sh_A = ak.stock_info_sh_name_code(symbol=type[0])
         for _, row in sh_A.iterrows():

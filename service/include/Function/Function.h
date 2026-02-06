@@ -1,5 +1,6 @@
 #pragma once
 #include "Callable.h"
+#include <cstdint>
 
 class MA : public ICallable {
 public:
@@ -54,4 +55,16 @@ public:
 
 private:
     int32_t _cnts;
+};
+
+/**
+ * R²
+*/
+class R2: public ICallable {
+public:
+    R2(int32_t window);
+    virtual context_t operator()(const Map<String, context_t>& args);
+
+private:
+    int32_t _window;
 };

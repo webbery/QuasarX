@@ -159,7 +159,7 @@ set(FMT_TEST OFF)
 set(FMT_DOC OFF) 
 add_subdirectory(third_party/fmt)
 add_subdirectory(third_party/DataFrame)
-target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame ta-lib xgboost)
+target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame xgboost)
 if (USE_CUDA)
     target_link_libraries(${PROJECT_NAME} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES})
 else (USE_CUDA) # onnxruntime

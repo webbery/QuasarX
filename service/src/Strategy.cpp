@@ -4,6 +4,7 @@
 #include <exception>
 #include <stdexcept>
 #include <unordered_map>
+#include "Nodes/TestNode.h"
 #include "boost/algorithm/string.hpp"
 #include "Bridge/SIM/SIMExchange.h"
 #include "Bridge/exchange.h"
@@ -30,9 +31,7 @@ namespace {
         {"signal", StrategyNodeType::Signal},
         {"debug", StrategyNodeType::Debug},
         {"execution", StrategyNodeType::Execution},
-        // {"debug", StrategyNodeType::Debug},
-        // {"debug", StrategyNodeType::Debug},
-        // {"debug", StrategyNodeType::Debug},
+        {"test", StrategyNodeType::Test},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -123,6 +122,8 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         case StrategyNodeType::Execution:
             nodeInstance = generate_node<ExecuteNode>(node["id"], server);
             break;
+        case StrategyNodeType::Test:
+            nodeInstance = generate_node<TestNode>(node["id"], server);
         default:
             INFO("unknow node type: {}", node_type);
             break;

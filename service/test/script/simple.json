@@ -1,0 +1,166 @@
+{
+    "id": "simple",
+    "name": "测试",
+    "description": "基本流水线",
+    "nodes": [
+        {
+            "id": "1",
+            "type": "custom",
+            "data": { 
+                "label": "行情数据输入",
+                "nodeType": "input",
+                "params": {
+                    "source": {
+                        "value": "股票",
+                        "type": "select",
+                        "options": ["股票", "期货"]
+                    },
+                    "code": {
+                        "value": ["000001"],
+                        "type": "text"
+                    },
+                    "freq": {
+                        "value": "1d",
+                        "type": "select",
+                        "options": ["1d", "5m"]
+                    },
+                    "close": {
+                        "value": "close",
+                        "type": "text"
+                    },
+                    "open": {
+                        "value": "open",
+                        "type": "text"
+                    },
+                    "high": {
+                        "value": "high",
+                        "type": "text"
+                    },
+                    "low": {
+                        "value": "low",
+                        "type": "text"
+                    },
+                    "volume": {
+                        "value": "volume",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 50, "y": 100 }
+        },
+        {
+            "id": "6",
+            "type": "custom",
+            "data": { 
+                "label": "test",
+                "nodeType": "test",
+                "params": {
+                    "code": {
+                        "value": ["000001"],
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 800, "y": 150 }
+        },
+        {
+            "id": "7",
+            "type": "custom",
+            "data": { 
+                "label": "trader",
+                "nodeType": "execution",
+                "params": {
+                    "initialCapital": {
+                        "value": 100000,
+                        "type": "number",
+                        "unit": "元"
+                    },
+                    "commission": {
+                        "value": 0.0003,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001,
+                        "unit": "%"
+                    },
+                    "stampDuty": {
+                        "value": 0.001,
+                        "type": "number", 
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001,
+                        "unit": "%"
+                    },
+                    "minFee": {
+                        "value": 5,
+                        "type": "number",
+                        "min": 0,
+                        "max": 50,
+                        "step": 1,
+                        "unit": "元"
+                    },
+                    "slippage": {
+                        "value": 0.001,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001
+                    },
+                    "type": {
+                        "value": 0,
+                        "type": "select",
+                        "options": ["立即执行市价单", "VWAP"]
+                    },
+                    "contract":{
+                        "value": 0,
+                        "type": "select",
+                        "options": ["股票", "期货", "期权"]
+                    }
+                }
+            },
+            "position": { "x": 800, "y": 150 }
+        }
+    ],
+    "edges": [
+        {
+            "id": "1-close->2",
+            "source": "1",
+            "target": "2",
+            "sourceHandle": "1-close",
+            "targetHandle": "2",
+            "type": "default"
+        },
+        {
+            "id": "1-close->3",
+            "source": "1",
+            "target": "3",
+            "sourceHandle": "1-close",
+            "targetHandle": "3",
+            "type": "default"
+        },
+        {
+            "id": "3->6",
+            "source": "3",
+            "target": "6",
+            "sourceHandle": "3",
+            "targetHandle": "6",
+            "type": "default"
+        },
+        {
+            "id": "2->6",
+            "source": "2",
+            "target": "6",
+            "sourceHandle": "2",
+            "targetHandle": "6",
+            "type": "default"
+        },
+        {
+            "id": "6->7",
+            "source": "6",
+            "target": "7",
+            "sourceHandle": "6",
+            "targetHandle": "7",
+            "type": "default"
+        }
+    ]
+}
