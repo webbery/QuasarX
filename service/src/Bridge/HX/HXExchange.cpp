@@ -674,17 +674,8 @@ bool HXExchange::Login(AccountType t){
     bool status = _quote->Init();
 
     if (!_quote_login) {
-        CTORATstpReqUserLoginField req_user_login_field;
-        memset(&req_user_login_field, 0, sizeof(req_user_login_field));
-        strncpy(req_user_login_field.LogInAccount, _brokerInfo._username, strlen(_brokerInfo._username));
-        strncpy(req_user_login_field.Password, _brokerInfo._passwd, strlen(_brokerInfo._passwd));
-        memcpy(req_user_login_field.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
-        int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, _reqID);
-        if (ret != 0) {
-            INFO("HX login fail.");
+        if (!QuoteLogin())
             return false;
-        }
-        _quote_login = true;
     }
     
     // 
@@ -772,6 +763,11 @@ AccountAsset HXExchange::GetAsset(){
 
 order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     order_id id;
+    if (!_enableOrder) {
+        id._error = ERROR_ORDER_FORBID;
+        return id;
+    }
+
     if (is_stock(symbol)) {
         // 检查权限
         if (!_stockHandle._insertLimit->tryConsume()) {
@@ -1111,6 +1107,27 @@ bool HXExchange::SetStockLimitation(char type, int limitation)
         }
     }
     return false;
+}
+
+bool HXExchange::QuoteLogin()
+{
+    CTORATstpReqUserLoginField req_user_login_field;
+    memset(&req_user_login_field, 0, sizeof(req_user_login_field));
+    strncpy(req_user_login_field.LogInAccount, _brokerInfo._username, strlen(_brokerInfo._username));
+    strncpy(req_user_login_field.Password, _brokerInfo._passwd, strlen(_brokerInfo._passwd));
+    memcpy(req_user_login_field.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+    int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, _reqID);
+    if (ret != 0) {
+        INFO("HX login fail.");
+        return false;
+    }
+    _quote_login = true;
+    return true;
+}
+
+bool HXExchange::ResubscribeQuote()
+{
+    return true;
 }
 
 double HXExchange::GetAvailableFunds()

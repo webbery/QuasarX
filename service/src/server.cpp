@@ -278,6 +278,7 @@ void Server::Regist() {
     REGIST_PUT(API_STOCK_PARAMS);
 
     REGIST_DEL(API_TRADE_ORDER);
+    REGIST_PUT(API_TRADE_ORDER);
 
 }
 

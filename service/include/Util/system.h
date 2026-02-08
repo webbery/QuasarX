@@ -28,6 +28,7 @@
 #define ERROR_SET_ORDER_LIMIT   -106
 #define ERROR_NO_SECURITY       -107    //无此证券
 #define ERROR_REQUIR_TYPE       -108    // 请求缺type参数
+#define ERROR_ORDER_FORBID      -109    // 禁止报单
 
 #define URI_RAW_QUOTE   "inproc://URI_RAW_QUOTE"
 #define URI_SIM_QUOTE   "inproc://URI_SIM_QUOTE"// 仿真数据

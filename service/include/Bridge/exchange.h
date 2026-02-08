@@ -370,6 +370,13 @@ public:
   virtual bool GetOrders(SecurityType type, OrderList& ol) = 0;
   // 查询订单
   virtual bool GetOrder(const String& sysID, Order& ol) = 0;
+  // 设置是否允许报单
+  virtual void EnableInsertOrder(bool isEnable) {
+      _enableOrder = isEnable;
+  }
+  virtual bool GetEnableOrderStatus() {
+      return _enableOrder;
+  }
 
   virtual void QueryQuotes() = 0;
 
@@ -415,5 +422,5 @@ protected:
   Vector<WorkingRange> _range;
 
   QuoteFilter _filter;
-
+  bool _enableOrder;    // 是否允许报单
 };

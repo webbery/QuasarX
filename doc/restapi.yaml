@@ -1008,6 +1008,28 @@ paths:
       responses:
         '200':
           description: success
+    put:
+      summary: 暂停报单/一键撤单设置
+      description: 暂停报单/一键撤单设置
+      tags: 
+        - Order
+      requestBody:
+        description: 设置类型
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: integer
+                  description: 类型, 0-股票 1-期权 2-期货
+                operation:
+                  type: integer
+                  description: 0-暂停报单, 1-恢复报单 2-一键撤单
+      responses:
+        '200':
+          description: success
   /server/event:
     get:
       summary: waiting for server event

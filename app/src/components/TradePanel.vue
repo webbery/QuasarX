@@ -5,7 +5,7 @@
             <div class="loading-text">正在提交...</div>
         </div>
 
-        <div class="panel-header">
+        <div class="panel-header" :class="{'highlighted': isHighlighted}" >
             <h3>交易面板</h3>
         </div>
         
@@ -41,14 +41,14 @@
                     v-model="code" 
                     type="text" 
                     class="form-input" 
-                    placeholder="输入证券代码" 
+                    placeholder="输入证券代码"
                     @input="onCodeChange"
                 />
             </div>
 
             <!-- 名称 -->
             <div class="form-row">
-                <label class="form-label">名称</label>
+                <label class="form-label" >名称</label>
                 <div class="form-display">{{ securityName || '--' }}</div>
             </div>
 
@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onActivated } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, defineProps } from 'vue'
 import axios from 'axios';
 import { getGlobalStorage } from '@/ts/globalStorage';
 import getZh from '@/ts/i18n';
@@ -174,9 +174,58 @@ const quantity = ref('')
 const availableFunds = ref('0')
 const statusMessage = ref('')
 const isSubmitting = ref(false)
+// 高亮状态
+const isHighlighted = ref(false);
 
 let upper = 0
 let lower = 0
+
+const props = defineProps({
+    selectedSecurity: {
+        type: Object,
+        default: null
+    },
+    highlight: {
+        type: Boolean,
+        default: false
+    }
+});
+
+// 监听选中的股票变化
+watch(() => props.selectedSecurity, (newStock) => {
+    if (newStock) {
+        console.log('收到选中的股票:', newStock);
+        
+        // 自动填充信息
+        const exchangeMap: Record<string, string> = {
+            '深交所': 'SZSE',
+            '上交所': 'SSE',
+            '北交所': 'BSE'
+        };
+        
+        selectedExchange.value = exchangeMap[newStock.exchange] || 'SSE';
+        selectedType.value = 'stock';
+        code.value = newStock.code.split('.')[1] || newStock.code;
+        securityName.value = newStock.name;
+        
+        // 根据操作类型设置交易操作
+        if (newStock.operationType === 'buy' || newStock.operationType === 'buy_margin') {
+            selectedOperation.value = 'buy_open';
+        } else if (newStock.operationType === 'sell' || newStock.operationType === 'sell_short') {
+            selectedOperation.value = 'sell_close';
+        }
+        
+        // 设置价格
+        price.value = newStock.currentPrice;
+        followLatestPrice.value = true;
+        statusMessage.value = `已选择 ${newStock.name} (${newStock.code})`;
+    }
+}, { immediate: true });
+
+// 监听高亮状态
+watch(() => props.highlight, (newVal) => {
+    isHighlighted.value = newVal;
+});
 
 // 计算属性
 const quantityUnit = computed(() => {
@@ -380,7 +429,7 @@ const submitTrade = async () => {
         statusMessage.value = '错误: 买入价超过涨停价'
         return
     }
-    if (priceValue > lower) {
+    if (priceValue < lower) {
         statusMessage.value = '错误: 买入价低于跌停价'
         return
     }
@@ -506,6 +555,63 @@ const updateCapital = async () => {
     display: flex;
     flex-direction: column;
     position: relative;
+}
+
+@keyframes highlight-fade {
+    0% {
+        /* 高亮状态 */
+        background-color: #3498db;
+        color: white;
+    }
+    100% {
+        /* 原始状态 */
+        background-color: #ecf0f1;
+        color: #2c3e50;
+    }
+}
+
+/* panel-header 高亮时的样式 */
+.panel-header.highlighted {
+    /* 立即应用高亮样式 */
+    background: linear-gradient(90deg, 
+        rgba(41, 98, 255, 0.3), 
+        rgba(61, 126, 255, 0.4),
+        var(--panel-bg)
+    ) !important;
+    border-bottom: 2px solid var(--primary) !important;
+    
+    /* 添加发光效果 */
+    box-shadow: 0 5px 15px rgba(41, 98, 255, 0.4);
+    
+    /* 3秒淡出动画 */
+    animation: header-highlight-fade 3s ease-out forwards;
+}
+
+/* 高亮淡出动画 */
+@keyframes header-highlight-fade {
+    0% {
+        background: linear-gradient(90deg, 
+            rgba(41, 98, 255, 0.3), 
+            rgba(61, 126, 255, 0.4),
+            var(--panel-bg)
+        );
+        border-bottom: 2px solid var(--primary);
+        box-shadow: 0 5px 15px rgba(41, 98, 255, 0.4);
+    }
+    70% {
+        background: linear-gradient(90deg, 
+            rgba(41, 98, 255, 0.1), 
+            rgba(61, 126, 255, 0.2),
+            var(--panel-bg)
+        );
+        border-bottom: 1px solid color-mix(in srgb, var(--primary) 50%, var(--border));
+        box-shadow: 0 2px 8px rgba(41, 98, 255, 0.2);
+    }
+    100% {
+        background: linear-gradient(90deg, var(--darker-bg) 0%, var(--panel-bg) 100%);
+        border-bottom: 1px solid var(--border);
+        box-shadow: none;
+    }
 }
 
 .submit-overlay {

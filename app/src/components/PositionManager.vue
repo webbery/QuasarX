@@ -1,39 +1,5 @@
 <template>
     <div class="position-manager">
-        <!-- 系统监控面板 -->
-        <div class="card system-monitor">
-          <div class="card-header">
-            <h2>系统监控</h2>
-          </div>
-          <div class="card-content">
-            <div class="form-row">
-              <div class="form-group">
-                <label>交易权限</label>
-                <select class="form-control" v-model="tradePermission">
-                  <option value="full">全权限</option>
-                  <option value="readonly">只读</option>
-                  <option value="disabled">禁止交易</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>交易阈值</label>
-                <input type="text" class="form-control" v-model="tradeThreshold" placeholder="请输入阈值">
-              </div>
-            </div>
-            
-            <div class="warning-banner" v-if="abnormalTradeDetected">
-              检测到异常交易行为，已自动限制交易
-            </div>
-            
-            <div class="form-row">
-              <button class="btn btn-warning" @click="handleGlobalCancel">一键撤单</button>
-              <button class="btn btn-warning" @click="handleEmergency">应急处置</button>
-              <button class="btn btn-warning" @click="handleErrorReport">错误报告</button>
-              <button class="btn btn-danger" @click="handleEmergencyStop">紧急停止</button>
-            </div>
-          </div>
-        </div>
-
         <!-- 市场持仓面板 -->
         <div class="card market-positions">
           <div class="card-header">
@@ -42,7 +8,9 @@
               <span v-if="activeMarketTab === 'stock'">股票</span>
               <span v-else-if="activeMarketTab === 'option'">期权</span>
               <span v-else-if="activeMarketTab === 'future'">期货</span>
-              总盈亏: {{  }}</span>
+              总盈亏: {{  }}
+            </span>
+
             <div class="tab-navigation">
               <div 
                 class="tab-item" 
@@ -51,7 +19,7 @@
               >
                 股票持仓
               </div>
-              <div 
+              <!-- <div 
                 class="tab-item" 
                 :class="{active: activeMarketTab === 'option'}" 
                 @click="activeMarketTab = 'option'"
@@ -64,7 +32,7 @@
                 @click="activeMarketTab = 'future'"
               >
                 期货持仓
-              </div>
+              </div> -->
             </div>
           </div>
           
@@ -111,7 +79,16 @@
               <div class="order-list">
                 <div class="pane-header">
                   <h3>股票委托</h3>
-                  <button class="btn btn-warning" @click="handleStockCancel">一键撤单</button>
+                  <div>
+                    <button 
+                      class="btn" 
+                      :class="stockTradingEnabled ? 'btn-warning' : 'btn-success'"
+                      @click="toggleStockTradingEnabled"
+                    >
+                      {{ stockTradingEnabled ? '暂停报单' : '允许报单' }}
+                    </button>
+                    <button class="btn btn-warning" @click="handleStockCancel">一键撤单</button>
+                    </div>
                 </div>
                 
                 <table class="order-table">
@@ -330,7 +307,7 @@
 
 <script setup>
 import axios from 'axios';
-import { ref, computed, onMounted, reactive, onUnmounted } from 'vue'
+import { ref, computed, onMounted, reactive, inject, onUnmounted } from 'vue'
 import sseService from '@/ts/SSEService';
 import { message } from '@/tool';
 
@@ -340,7 +317,6 @@ const activeMarketTab = ref('stock');
 
 // 股票相关数据
 const stockPositions = ref([]);
-const selectedStock = ref(null);
 const stockOperationType = ref('');
 const capitalChecked = ref(false);
 const stockChecked = ref(false);
@@ -417,6 +393,7 @@ const futurePositions = ref([
 const selectedFuture = ref(null);
 const futureOperationType = ref('');
 const newFutureOperation = ref(false);
+const stockTradingEnabled = ref(true);
 
 const futureOrder = reactive({
     price: '',
@@ -446,6 +423,8 @@ const showModal = ref(false);
 const modalTitle = ref('');
 const modalMessage = ref('');
 const modalCallback = ref(null);
+
+const handleSecuritySelection = inject('handleSecuritySelection');
 
 // 计算属性
 const canPlaceStockOrder = computed(() => {
@@ -519,16 +498,6 @@ const handleOrderTypeChange = (type) => {
     }
 };
 
-const stockOperationTypeText = computed(() => {
-    switch(stockOperationType.value) {
-        case 'buy': return '普通买入';
-        case 'buy_margin': return '融资买入';
-        case 'sell': return '普通卖出';
-        case 'sell_short': return '融券卖出';
-        default: return '';
-    }
-});
-
 const optionOperationTypeText = computed(() => {
     switch(optionOperationType.value) {
         case 'buyOpen': return '限价买开';
@@ -544,7 +513,8 @@ const getOrderStatusText = (status) => {
         case 'pending': return '待成交';
         case 'filled': return '已成交';
         case 'cancelled': return '已撤单';
-        case 'rejected': return '已失败';
+        case 'rejected': return '交易所已拒绝';
+        case 'fail': return '已失败';
         // case 'waiting': 
         //     return order.orderType === 'conditional' ? '等待触发' : 
         //            order.orderType === 'stop' ? '监控中' : '待成交';
@@ -559,7 +529,7 @@ const getOrderStatusType = (type) => {
     case 2: status = 'rejected'; break;
     case 3: status = 'part_filled'; break;
     case 4: status = 'filled'; break;
-    case 5: status = 'rejected'; break;
+    case 5: status = 'fail'; break;
     case 6: status = 'cancel_part'; break;
     case 7: status = 'cancelled'; break;
     case 8: status = 'pending'; break;
@@ -598,7 +568,6 @@ const formatTime = (timestamp) => {
 
 const openNewStockOperation = () => {
     newStockOperation.value = true;
-    selectedStock.value = null;
     stockOperationType.value = '';
     capitalChecked.value = false;
     newStockOrder.code = '';
@@ -613,13 +582,17 @@ const closeNewStockOperation = () => {
 };
 
 const openStockOperation = (stock, operationType) => {
-    selectedStock.value = stock;
-    stockOperationType.value = operationType;
-    newStockOperation.value = false;
-    capitalChecked.value = false;
-    stockChecked.value = false;
-    stockOrder.price = '';
-    stockOrder.quantity = '';
+    // 将股票信息发送到交易面板
+    if (handleSecuritySelection) {
+        handleSecuritySelection({
+            code: stock.code,
+            name: stock.name,
+            exchange: stock.exchange,
+            currentPrice: stock.currentPrice,
+            operationType: operationType,
+            direction: operationType === 'buy' || operationType === 'buy_margin' ? 'buy' : 'sell'
+        });
+    }
 };
 
 const closeStockOperation = () => {
@@ -953,6 +926,50 @@ const onOrderSuccess = (message) => {
   
 }
 
+const toggleStockTradingEnabled = async () => {
+    if (stockTradingEnabled.value) {
+        openModal('暂停报单确认', '确定要暂停股票报单功能吗？暂停后无法提交新的订单，但可以撤单。', async () => {
+            try {
+              const params = {
+                type: 0,  // 股票
+                operation: 0
+              }
+              const response = await axios.put('/v0/trade/order', params)
+              if (response.status != 200) {
+                throw Error(response.data.message)
+              }
+
+              stockTradingEnabled.value = false;
+              message.show('报单功能已暂停', 'warning');
+            } catch (err) {
+              if (err.response) {
+                const data = err.response.data;
+                const info = data.message || err.message
+                message.error('暂停报单失败:' + info)
+              } else {
+                message.error('暂停报单失败:' + err.message)
+              }
+            }
+        });
+    } else {
+        try {
+          const params = {
+            type: 0,  // 股票
+            operation: 0
+          }
+          const response = await axios.put('/v0/trade/order', params)
+          if (response.status != 200) {
+              throw Error(response.data.message)
+            }
+          stockTradingEnabled.value = true;
+          message.show('报单功能已启用', 'success');
+        } catch (err) {
+            message.error('启用报单失败' + err)
+        }
+        
+    }
+};
+
 const onPositionUpdate = (message) => {
   console.info('onPositionUpdate sse: ', message)
   const data = message.data;
@@ -993,6 +1010,7 @@ const onOrderUpdate = (message) => {
         orderType: getOrderType(item['orderType']),
         price: item['price'],
         quantity: item['quantity'],
+        sysID: item["sysID"],
         // conditionType: stockOrder.conditionType,
         // triggerPrice: stockOrder.triggerPrice,
         // stopPrice: stockOrder.stopPrice,
@@ -1006,11 +1024,23 @@ const onOrderUpdate = (message) => {
 }
 
 const handleStockCancel = () => {
-  //一键取消股票订单
+  openModal('一键撤单确认', '确定要撤销全部订单吗？', async () => {
+      //一键取消股票订单
+      for (const order of stockOrders) {
+          console.info('cancel order:', order)
+          const sysID = order.sysID
+          const params = {
+            id: sysID
+          }
+          const result = await axios.delete('/v0/trade/order', params)
+      }
+      message.success('所有撤单请求已发出')
+  });
+  
 }
 
 const queryAllStockOrders = async () => {
-  const response = await axios.get('/v0/trade/order', params={'type': 0})
+  const response = await axios.get('/v0/trade/order', {params: {'type': 0}})
   console.info('queryAllStockOrders:', response.data)
   for (const item of response.data) {
     let status = 'pending'
@@ -1166,7 +1196,7 @@ onUnmounted(() => {
 
 .btn {
   padding: 8px 16px;
-  border: none;
+  border: 2px;
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.85rem;
@@ -1344,6 +1374,7 @@ onUnmounted(() => {
   color: white;
 }
 
+.status-fail,
 .status-rejected {
   color: rgb(213, 9, 9);
 }

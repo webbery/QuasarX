@@ -118,7 +118,7 @@
         <SettingPanel :enableOperation="useOperaion"></SettingPanel>
       </div>
       <div v-else-if="is_position">
-        <TradePanel></TradePanel>
+        <TradePanel :selectedSecurity="selectedSecurity" :highlight="highlightTradePanel"></TradePanel>
       </div>
     </aside>
 
@@ -151,7 +151,7 @@
     </teleport>
 </template>
 <script setup >
-import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed } from "vue";
+import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide } from "vue";
 import LabVue from "./components/Lab.vue";
 import RiskManagerVue from "./components/RiskManager.vue";
 import StrategyVue from "./components/Strategy.vue";
@@ -213,6 +213,9 @@ let memUsage = ref("0")
 let totalmem = ref("0")
 // 1-展示已添加的服务器 2-展示已添加的交易所 3-新添加一个服务器 4-新添加一个交易所
 let useOperaion = ref(0)
+// 持仓证券的信息
+const selectedSecurity = ref(null)
+const highlightTradePanel = ref(false)    // 高亮交易面板
 
 // 根据当前视图计算按钮状态
 let is_account = computed(() => currentView.value === VIEWS.ACCOUNT);
@@ -327,6 +330,18 @@ const onHandleRunBacktest = async () => {
   }
 }
 
+const handleSecuritySelection = (securityData) => {
+    selectedSecurity.value = securityData;
+    highlightTradePanel.value = true;
+    
+    // 3秒后取消高亮
+    setTimeout(() => {
+        highlightTradePanel.value = false;
+    }, 2000);
+};
+
+provide('handleSecuritySelection', handleSecuritySelection)
+provide('highlightTradePanel', highlightTradePanel)
 </script>
 
 <style scoped>

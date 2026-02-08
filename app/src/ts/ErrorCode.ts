@@ -8,6 +8,7 @@ const errorCode = {
     '-106': '设置每秒下单限额失败',
     '-107': '无效的证券代码',
     '-108': '请求中缺少type参数',
+    '-109': '当前暂停报单',
 }
 
 export default errorCode

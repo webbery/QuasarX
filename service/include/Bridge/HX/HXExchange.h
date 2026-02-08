@@ -103,6 +103,9 @@ public:
 
     virtual bool SetStockLimitation(char type, int limitation);
 
+    bool QuoteLogin();
+    // 重新订阅行情
+    bool ResubscribeQuote();
 private:
     // 查询股东用户
     bool QueryStockShareHolder(ExchangeName name);
@@ -140,6 +143,10 @@ private:
     bool QueryOptionOrders(uint64_t reqID);
 
     Boolean HasStockPermission(symbol_t symbol);
+    // 重连行情
+    bool ReconnectQuote();
+    // 重连交易通道
+    bool ReconnectTrade();
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;

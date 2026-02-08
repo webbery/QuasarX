@@ -66,12 +66,34 @@ void HXQuateSpi::OnFrontConnected()
 void HXQuateSpi::OnFrontDisconnected(int nReason)
 {
     INFO("HX quote disconnect:{}", nReason);
-    //_exchange->InitQuote();
-    //_exchange->_login_status = false;
-    //_exchange->_quote_inited = false;
-    //_exchange->_quote_login = false;
-    // _exchange->_trader_login = false;
-    // _exchange->Login(AccountType::MAIN);
+    _exchange->_quote_inited = false;
+    // 异步重连，避免阻塞回调线程
+    std::thread([this]() {
+        std::this_thread::sleep_for(std::chrono::seconds(3)); // 等待3秒后重连
+
+        int retryCount = 0;
+        const int maxRetry = 5;
+
+        while (retryCount < maxRetry) {
+            try {
+                INFO("Attempting to reconnect quote, retry: {}", retryCount + 1);
+                if (_exchange && _exchange->QuoteLogin()) {
+                    _exchange->QueryQuotes();
+                    INFO("Quote Reconnect success");
+                    break;
+                }
+            }
+            catch (...) {
+                ERROR("Quote reconnection failed, retry: {}", retryCount + 1);
+            }
+            retryCount++;
+            std::this_thread::sleep_for(std::chrono::seconds(5)); // 等待5秒后重试
+
+            if (retryCount >= maxRetry) {
+                ERROR("Quote reconnection failed after {} attempts", maxRetry);
+            }
+        }
+        }).detach();
 }
 
 void HXQuateSpi::OnRspSubSimplifyMarketData(CTORATstpSpecificSecurityField* pSpecificSecurityField, CTORATstpRspInfoField* pRspInfoField)

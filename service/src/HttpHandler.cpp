@@ -27,6 +27,10 @@ void ProcessError(char error, httplib::Response& res) {
         res.status = 400;
         result["status"] = ERROR_NO_SECURITY;
         break;
+    case ERROR_ORDER_FORBID:
+        res.status = 400;
+        result["status"] = ERROR_ORDER_FORBID;
+        break;
     default:
         LOG("ERROR not set: {}", error);
         break;

@@ -145,12 +145,18 @@ void HXTrade::OnRspOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField *pIn
         report._status = OrderStatus::CancelFail;
     }
     _exchange->OnOrderReport(id, report);
+    INFO("OnRspOrderAction");
 }
 
 void HXTrade::OnErrRtnOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField* pInputOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID)
 {
     TradeReport report;
     report._status = OrderStatus::CancelFail;
+    order_id id;
+    strcpy(id._sysID, pInputOrderActionField->SInfo);
+    id._id = pInputOrderActionField->IInfo;
+    _exchange->OnOrderReport(id, report);
+    INFO("OnErrRtnOrderAction");
 }
 
 void HXTrade::OnRspCondOrderInsert(TORASTOCKAPI::CTORATstpInputCondOrderField *pInputCondOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
@@ -162,15 +168,15 @@ void HXTrade::OnRtnCondOrder(TORASTOCKAPI::CTORATstpConditionOrderField *pCondit
 }
 
 void HXTrade::OnErrRtnCondOrderInsert(TORASTOCKAPI::CTORATstpInputCondOrderField *pInputCondOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
-
+    INFO("OnErrRtnCondOrderInsert");
 }
 
 void HXTrade::OnRspCondOrderAction(TORASTOCKAPI::CTORATstpInputCondOrderActionField *pInputCondOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
-
+    INFO("OnRspCondOrderAction");
 }
 
 void HXTrade::OnErrRtnCondOrderAction(TORASTOCKAPI::CTORATstpInputCondOrderActionField *pInputCondOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
-
+    INFO("OnErrRtnCondOrderAction");
 }
 
 void HXTrade::OnRspQryTradingAccount(TORASTOCKAPI::CTORATstpTradingAccountField* pTradingAccountField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)
@@ -223,7 +229,9 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
         }
         if (pPositionField) {
             position_t position = toPosition(*pPositionField);
-            _positions.emplace_back(std::move(position));
+            if (position._holds != 0) {
+                _positions.emplace_back(std::move(position));
+            }
         }
         SET_PROMISE(true);
     } else {
@@ -231,7 +239,9 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
             return;
         }
         position_t position = toPosition(*pPositionField);
-        _positions.emplace_back(std::move(position));
+        if (position._holds != 0) {
+            _positions.emplace_back(std::move(position));
+        }
     }
     
 }

@@ -62,7 +62,12 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     Order order;
     order._volume = quantity;
     order._time = Now();
-    order._validTime = (OrderTimeValid)params["timeType"];
+    if (params.contains("timeType")) {
+        order._validTime = (OrderTimeValid)params["timeType"];
+    }
+    else {
+        order._validTime = OrderTimeValid::Today;
+    }
     order._type = GetOrderType(params);
     auto itr = prices.begin();
     for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
@@ -220,7 +225,23 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
 
 void OrderHandler::put(const httplib::Request& req, httplib::Response& res)
 {
-
+    nlohmann::json data = nlohmann::json::parse(req.body);
+    int type = data["type"];
+    int operation = data["operation"];
+    if (type == 0) {
+        auto exchange = _server->GetAvaliableStockExchange();
+        if (operation == 0) {
+            // 暂停报单
+            exchange->EnableInsertOrder(false);
+        }
+        else if (operation == 1) {
+            // 恢复报单
+            exchange->EnableInsertOrder(true);
+        }
+        else if (operation == 2) {
+            // 一键撤单
+        }
+    }
 }
 
 bool OrderHandler::BuyOrder(const std::string& symbol, double price, int number) {
