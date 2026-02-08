@@ -5,7 +5,7 @@ import pytest
 import math
 
 # 订单测试脚本
-order_operation_tests = [
+stock_order_operation_tests = [
     # 买入并取消订单
     [
         {'operation': 'buy', 'code': '600489', 'price': -0.05, 'count': 200, 'condition': None},    # 立即以当前价+0.01买入200股
@@ -40,9 +40,12 @@ class TestOrder:
 
         return kwargs
     
-    def get_stock(self, auth_token):
+    def get_stock(self, auth_token, code = ''):
         kwargs = self.generate_args(auth_token)
-        params = {"id": self.stock_id}
+        if len(code) == 0:
+            params = {"id": self.stock_id}
+        else:
+            params = {"id": code}
         response = requests.get(f"{BASE_URL}/stocks/detail", params=params, **kwargs)
         return check_response(response)
 
@@ -52,22 +55,49 @@ class TestOrder:
         response = requests.get(f"{BASE_URL}/options/detail", params=params, **kwargs)
         return check_response(response)
 
-    def limit_order_buy_stock(self, auth_token):
+    def limit_order_buy_stock(self, auth_token, price_offset = 0):
         stock_info = self.get_stock(auth_token)
         cur_price = stock_info['price']
         lower_price = stock_info['lower']
         upper_price = stock_info['upper']
         # 希望以较低的价格下单
-        offset = (upper_price - lower_price) / 2
-        mid_price = lower_price + offset
-        order_price = max(lower_price, min(cur_price - offset, mid_price))
-        if order_price < 0.1:
-            order_price = 11.0
+        if price_offset == 0:
+            offset = (upper_price - lower_price) / 2
+            mid_price = lower_price + offset
+            order_price = max(lower_price, min(cur_price - offset, mid_price))
+        else:
+            cur_price = cur_price + price_offset
 
         kwargs = self.generate_args(auth_token)
         params = {"symbol": self.stock_id, 'type': 1, 'quantity': 200, 'prices': [order_price],
                   'direct': 0, 'kind': 0, 'timeType': 0}
         response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        return check_response(response)
+
+    def buy_stock(self, auth_token, code, offset, count):
+        stock_info = self.get_stock(auth_token, code)
+        cur_price = stock_info['price']
+        order_price = cur_price + offset
+        kwargs = self.generate_args(auth_token)
+        params = {"symbol": code, 'type': 1, 'quantity': count, 'prices': [order_price],
+                  'direct': 0, 'kind': 0, 'timeType': 0}
+        response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        return check_response(response)
+
+    def sell_stock(self, auth_token, code, offset, count):
+        stock_info = self.get_stock(auth_token, code)
+        cur_price = stock_info['price']
+        order_price = cur_price + offset
+        kwargs = self.generate_args(auth_token)
+        params = {"symbol": code, 'type': 1, 'quantity': count, 'prices': [order_price],
+                  'direct': 1, 'kind': 0, 'timeType': 0}
+        response = requests.post(f"{BASE_URL}/trade/order", json=params, **kwargs)
+        return check_response(response)
+
+    def cancel_stock(self, auth_token, code, sysID):
+        kwargs = self.generate_args(auth_token)
+        params = {'id': code, 'sysID': sysID}
+        response = requests.delete(f"{BASE_URL}/trade/order", json=params, **kwargs)
         return check_response(response)
 
     def market_order_sell_stock(self, auth_token):
@@ -91,9 +121,6 @@ class TestOrder:
         response = requests.get(f"{BASE_URL}/trade/order", params = params, **kwargs)
         return check_response(response)
     
-    def cancel_order(self, auth_token):
-        pass
-
     def market_order_buy_option(self, auth_token):
         kwargs = self.generate_args(auth_token)
         params = {"symbol": self.option_id, 'type': 1, 'quantity': 200, 'prices': [1.0],
@@ -175,13 +202,61 @@ class TestOrder:
         assert isinstance(data, list)
 
     @pytest.mark.timeout(60)
-    def test_cancel_option_order(self, auth_token):
-        pass
-
-    @pytest.mark.timeout(60)
-    def test_option_order_sell(self, auth_token):
-        pass
-
-    @pytest.mark.timeout(60)
     def test_option_order_exe(self, auth_token):
         pass
+
+    @pytest.mark.timeout(60)
+    def test_all_stock_order(self, auth_token):
+        for one_test in stock_order_operation_tests:
+            order_id = ''
+            sys_id = ''
+            for operation in one_test:
+                op = operation['operation']
+                price_offset = operation['price']
+                code = operation['code']
+                count = operation['count']
+                condition = operation['condition']
+                if condition is None: # 立即执行
+                    if op == 'buy':
+                        result = self.buy_stock(auth_token, code, price_offset, count)
+                        assert isinstance(result, object)
+                        assert "id" in result
+                        assert result['id'] != -1
+                        order_id = result['id']
+                        sys_id = result['sysID']
+                        continue
+                    if op == 'sell':
+                        result = self.sell_stock(auth_token, code, price_offset, count)
+                        assert isinstance(result, object)
+                        continue
+                if condition == 'wait':
+                    orders = self.get_stock_orders(auth_token)
+                    for order in orders:
+                        if sys_id == order['id']:
+                            if order['status'] != 1 and order['status'] != 3:
+                                break
+
+                            if op == 'cancel':
+                                result = self.cancel_stock(auth_token, code, sys_id)
+                                assert len(data) == 1:
+                                order = data[0]
+                                assert order["status"] == 7     # 取消成功
+                                break
+                if condition == 'empty':
+                    if op == 'buy':
+                        result = self.buy_stock(auth_token, code, price_offset, count)
+                        assert isinstance(result, object)
+                        assert "id" in result
+                        assert result['id'] != -1
+                        order_id = result['id']
+                        sys_id = result['sysID']
+                        continue
+                    if op == 'sell':
+                        result = self.sell_stock(auth_token, code, price_offset, count)
+                        assert isinstance(result, object)
+                        continue
+                if condition == '1d':
+                    if op == 'sell':
+                        result = self.sell_stock(auth_token, code, price_offset, count)
+                        assert isinstance(result, object)
+                        continue
