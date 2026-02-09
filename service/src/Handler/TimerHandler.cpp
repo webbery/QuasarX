@@ -204,6 +204,12 @@ void RecordHandler::WriteCSV(std::fstream& fs, const QuoteInfo& infos) {
 }
 
 bool RecordHandler::MergeBackup(const String& src, const String& dst) {
+    if (!std::filesystem::exists(src)) {
+        std::filesystem::create_directories(src);
+    }
+    if (!std::filesystem::exists(dst)) {
+        std::filesystem::create_directories(dst);
+    }
     std::filesystem::path src_root(src);
     std::filesystem::path dst_root(dst);
     for (auto& entry : std::filesystem::recursive_directory_iterator(src_root)) {

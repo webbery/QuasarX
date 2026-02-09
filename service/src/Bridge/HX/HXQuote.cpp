@@ -1,5 +1,6 @@
 #include "Bridge/HX/HXQuote.h"
 #include "Bridge/HX/HXExchange.h"
+#include "Util/log.h"
 #include "Util/system.h"
 #include "Bridge/exchange.h"
 #include "Util/string_algorithm.h"
@@ -67,9 +68,9 @@ void HXQuateSpi::OnFrontDisconnected(int nReason)
 {
     INFO("HX quote disconnect:{}", nReason);
     _exchange->_quote_inited = false;
-    // Òì²½ÖØÁ¬£¬±ÜÃâ×èÈû»Øµ÷Ïß³Ì
+    // å¼‚æ­¥é‡è¿žï¼Œé¿å…é˜»å¡žå›žè°ƒçº¿ç¨‹
     std::thread([this]() {
-        std::this_thread::sleep_for(std::chrono::seconds(3)); // µÈ´ý3ÃëºóÖØÁ¬
+        std::this_thread::sleep_for(std::chrono::seconds(3)); // ç­‰å¾…3ç§’åŽé‡è¿ž
 
         int retryCount = 0;
         const int maxRetry = 5;
@@ -84,13 +85,13 @@ void HXQuateSpi::OnFrontDisconnected(int nReason)
                 }
             }
             catch (...) {
-                ERROR("Quote reconnection failed, retry: {}", retryCount + 1);
+                WARN("Quote reconnection failed, retry: {}", retryCount + 1);
             }
             retryCount++;
-            std::this_thread::sleep_for(std::chrono::seconds(5)); // µÈ´ý5ÃëºóÖØÊÔ
+            std::this_thread::sleep_for(std::chrono::seconds(5)); // ç­‰å¾…5ç§’åŽé‡è¯•
 
             if (retryCount >= maxRetry) {
-                ERROR("Quote reconnection failed after {} attempts", maxRetry);
+                WARN("Quote reconnection failed after {} attempts", maxRetry);
             }
         }
         }).detach();

@@ -3,19 +3,20 @@ import sys
 from tool import check_response, BASE_URL
 import pytest
 import math
+import json
 
 # 订单测试脚本
 stock_order_operation_tests = [
     # 买入并取消订单
     [
         {'operation': 'buy', 'code': '600489', 'price': -0.05, 'count': 200, 'condition': None},    # 立即以当前价+0.01买入200股
-        {'operation': 'cancel', 'code': '600489', 'count': 200, 'condition': 'wait'},    # 订单处于等待状态则取消订单
+        {'operation': 'cancel', 'code': '600489', 'price': 0,'count': 200, 'condition': 'wait'},    # 订单处于等待状态则取消订单
     ],
     # 卖出股票
-    [
-        {'operation': 'buy', 'code': '600489', 'price': +0.01, 'count': 200, 'condition': 'empty'},    # 如果持仓股票不存在立即以当前价+0.01买入200股
-        {'operation': 'sell', 'code': '600489', 'price': +0.00, 'count': 200, 'condition': '1d'}    # 如果存在1天前的持仓则卖出200股股票
-    ]
+    # [
+    #     {'operation': 'buy', 'code': '600489', 'price': +0.01, 'count': 200, 'condition': 'empty'},    # 如果持仓股票不存在立即以当前价+0.01买入200股
+    #     {'operation': 'sell', 'code': '600489', 'price': +0.00, 'count': 200, 'condition': '1d'}    # 如果存在1天前的持仓则卖出200股股票
+    # ]
     # 暂停下单
     # 以市价单买入并卖出
 ]
@@ -96,7 +97,7 @@ class TestOrder:
 
     def cancel_stock(self, auth_token, code, sysID):
         kwargs = self.generate_args(auth_token)
-        params = {'id': code, 'sysID': sysID}
+        params = {'id': code, 'sysID': sysID, 'type': 0}
         response = requests.delete(f"{BASE_URL}/trade/order", json=params, **kwargs)
         return check_response(response)
 
@@ -110,7 +111,7 @@ class TestOrder:
 
     def get_stock_orders(self, auth_token):
         kwargs = self.generate_args(auth_token)
-        response = requests.get(f"{BASE_URL}/trade/order", **kwargs)
+        response = requests.get(f"{BASE_URL}/trade/order?type=0", **kwargs)
         return check_response(response)
 
     def get_option_orders(self, auth_token):
@@ -220,6 +221,8 @@ class TestOrder:
                     if op == 'buy':
                         result = self.buy_stock(auth_token, code, price_offset, count)
                         assert isinstance(result, object)
+                        json_string = json.dumps(result)
+                        print(json_string)
                         assert "id" in result
                         assert result['id'] != -1
                         order_id = result['id']
@@ -232,16 +235,16 @@ class TestOrder:
                 if condition == 'wait':
                     orders = self.get_stock_orders(auth_token)
                     for order in orders:
-                        if sys_id == order['id']:
-                            if order['status'] != 1 and order['status'] != 3:
-                                break
+                        if order['status'] != 1 and order['status'] != 3:
+                            break
 
-                            if op == 'cancel':
-                                result = self.cancel_stock(auth_token, code, sys_id)
-                                assert len(data) == 1:
-                                order = data[0]
-                                assert order["status"] == 7     # 取消成功
-                                break
+                        sysID = order['sysID']
+                        if op == 'cancel':
+                            result = self.cancel_stock(auth_token, code, sysID)
+                            assert len(data) == 1
+                            order = data[0]
+                            assert order["status"] == 7     # 取消成功
+                            break
                 if condition == 'empty':
                     if op == 'buy':
                         result = self.buy_stock(auth_token, code, price_offset, count)

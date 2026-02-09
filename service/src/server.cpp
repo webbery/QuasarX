@@ -343,6 +343,8 @@ void Server::InitDefault() {
             }
             recorder->StartRecord(true);
         }
+    } else {
+        _runType = RuningType::Real;
     }
     
     String broker_name = default_config["broker"];
@@ -829,7 +831,7 @@ void Server::TimerWorker(nng_socket sock) {
         double cpu = status["cpu"];
         Pair<double, double> val = status["mem"];
         String info = format_sse("system_status", { {"cpu", std::to_string(cpu)}, {"mem", std::to_string(val.first)}, {"total", std::to_string(val.second)}});
-        nng_send(sock, info.data(), info.size(), 0);
+        nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
     }
 #endif
     // 更新持仓

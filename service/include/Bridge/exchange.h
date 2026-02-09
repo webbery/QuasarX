@@ -336,7 +336,7 @@ enum class AccountType {
 
 class ExchangeInterface {
 public:
-  ExchangeInterface(Server* server):_server(server) {}
+  ExchangeInterface(Server* server):_server(server), _enableOrder(true) {}
   virtual ~ExchangeInterface() {}
 
   virtual const char* Name() = 0;

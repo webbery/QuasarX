@@ -16,7 +16,7 @@
 
 using namespace TORALEV1API;
 #define USER_PRODUCT_INFO "HX5ZWWQ4VI"
-
+#define ENABLE_STOCK_OPTION     false
 namespace {
     // 转交易所类型
     char toExchangeID(ExchangeName name) {
@@ -971,7 +971,9 @@ void HXExchange::QueryQuotes(){
         //SubscribeOptionQuote(option_map);
         _requested = true;
     }
-    SubscribeOptionQuote({ {0, {"000000"}} });
+    if (ENABLE_STOCK_OPTION) {
+        SubscribeOptionQuote({ {0, {"000000"}} });
+    }
     _quote_inited = true;
 }
 

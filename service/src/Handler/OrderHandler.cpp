@@ -96,7 +96,6 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._side = 0;
         for (int i = 0; i < perf; ++i) {
             auto id = broker->Buy("_custom_", symbol, order, lambda_sendResult);
-            nlohmann::json result;
             if (id._error) {
                 return ProcessError(id._error, res);
             }
