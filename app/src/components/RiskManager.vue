@@ -125,7 +125,7 @@
             </el-descriptions-item>
         </el-descriptions>
     </div>
-    <div>
+    <!-- <div>
         <el-divider><span class="title">止损设置</span></el-divider>
         <el-collapse >
             <el-collapse-item key="percent" title="百分比止损" name="1">
@@ -144,14 +144,13 @@
                 <StopLossPanel></StopLossPanel>
             </el-collapse-item>
         </el-collapse >
-    </div>
+    </div> -->
     <SymbolSelectionPanel :is-open="openSelection" @close="handleSelectionClose"></SymbolSelectionPanel>
 </div>
 </template>
 
 <script setup>
 import { onMounted, ref, defineOptions } from 'vue'
-import StopLossPanel from './StopLossPanel.vue'
 import { ElTable } from 'element-plus'
 import PercentPanel from './stoploss/PercentPanel.vue'
 import KLineView from './KLineView.vue'

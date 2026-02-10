@@ -1,4 +1,5 @@
 <template>
+  <div>
     <div class="panel-section">
         <div class="panel-title">
           <h3><i class="fas fa-radiation"></i> 风险指标</h3>
@@ -56,6 +57,7 @@
           </div>
         </div>
       </div>
+  </div>
 </template>
 <script>
 

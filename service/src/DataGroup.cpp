@@ -78,6 +78,8 @@ String to_sse_string(symbol_t symbol, const TradeReport& report) {
     break;
     }
     info["name"] = Server::GetName(name);
+    info["orderType"] = std::to_string(report._type);
+    info["timestamp"] = std::to_string(report._time);
     return format_sse("trade_report", info);
 }
 

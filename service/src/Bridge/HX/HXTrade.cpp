@@ -97,6 +97,8 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     order_id id;
     id._id = nRequestID;
     TradeReport report;
+    report._type = pInputOrderField->IInfo;
+    memcpy(&report._time, pInputOrderField->SInfo, sizeof(time_t));
     if (pRspInfoField->ErrorID == 0) {
         _investor = pInputOrderField->InvestorID;
         LOG("Order {} accept", nRequestID);
@@ -201,10 +203,11 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
             order._symbol = to_symbol(pOrderField->SecurityID);
             order._id = pOrderField->RequestID;
             order._sysID = pOrderField->OrderSysID;
+            memcpy(&order._time, pOrderField->SInfo, sizeof(time_t));
+            order._type = (OrderType)pOrderField->IInfo;
             if (pOrderField->OrderType == TORASTOCKAPI::TORA_TSTP_ORDT_Normal) {
                 // 
             }
-            order._type = OrderType::Limit;
             _orders.emplace_back(std::move(order));
         }
         if (bIsLast) {

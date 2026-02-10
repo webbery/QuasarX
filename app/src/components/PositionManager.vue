@@ -550,7 +550,7 @@ const getOrderTypeDisplayText = (orderType) => {
 };
 
 const getOrderType = (orgType) => {
-  switch(orgType) {
+  switch(parseInt(orgType)) {
     case 0: return 'market';
     case 1: return 'limit';
     case 2: return 'conditional';
@@ -562,7 +562,7 @@ const getOrderType = (orgType) => {
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '-';
-  const date = new Date(timestamp);
+  const date = new Date(timestamp * 1000);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
 };
 
@@ -817,9 +817,10 @@ const cancelOrder = (order) => {
         console.info('cancel order:', order)
         const sysID = order.sysID
         const params = {
-          id: sysID
+          sysID: sysID,
+          type: 0   // 股票
         }
-        const result = await axios.delete('/v0/trade/order', params)
+        const result = await axios.delete('/v0/trade/order', {data: params})
         if (result.status != 200) {
           message.error('撤销订单失败')
         } else {
@@ -1011,6 +1012,7 @@ const onOrderUpdate = (message) => {
         price: item['price'],
         quantity: item['quantity'],
         sysID: item["sysID"],
+        timestamp: item['timestamp'],
         // conditionType: stockOrder.conditionType,
         // triggerPrice: stockOrder.triggerPrice,
         // stopPrice: stockOrder.stopPrice,
@@ -1028,6 +1030,8 @@ const handleStockCancel = () => {
       //一键取消股票订单
       for (const order of stockOrders) {
           console.info('cancel order:', order)
+          if (order.status != 'pending')
+              continue
           const sysID = order.sysID
           const params = {
             id: sysID
@@ -1041,7 +1045,6 @@ const handleStockCancel = () => {
 
 const queryAllStockOrders = async () => {
   const response = await axios.get('/v0/trade/order', {params: {'type': 0}})
-  console.info('queryAllStockOrders:', response.data)
   for (const item of response.data) {
     let status = 'pending'
     switch (item.status) {
@@ -1057,9 +1060,10 @@ const queryAllStockOrders = async () => {
       type: (item.direct === 0? 'buy': 'sell'),
       price: item.prices[0],
       quantity: item.quantity,
-      orderType: 'limit',
+      orderType: item.orderType,
       status: status,
-      sysID: item.sysID
+      sysID: item.sysID,
+      timestamp: item.timestamp
     }
     console.info('order:', order)
     stockOrders.value.push(order)

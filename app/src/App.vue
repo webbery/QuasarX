@@ -6,9 +6,6 @@
         <span>QuasarX</span>
       </div>
       <div class="header-controls">
-        <button v-if="is_account" class="control-btn">
-          <i class="fas fa-sync-alt"></i> 刷新数据
-        </button>
         <button v-if="is_strategy" class="btn" @click="onHandleRunBacktest"
           :disabled="isBacktesting"
           :class="{ 'loading': isBacktesting }"

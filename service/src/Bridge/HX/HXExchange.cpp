@@ -295,7 +295,10 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
     order.ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
     order.Direction = (o._side == 0 ? TORA_TSTP_D_Buy : TORA_TSTP_D_Sell);
     convertOrderType(*ctx, order);
-
+    // 下单时间
+    memcpy(order.SInfo, &ctx->_order._time, sizeof(time_t));
+    // 下单类型
+    order.IInfo = (int)ctx->_order._type;
     int ret = _stockHandle._tradeAPI->ReqOrderInsert(&order, oid._id);
     if (ret != 0) {
         WARN("insert order fail.");

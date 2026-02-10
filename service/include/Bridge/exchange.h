@@ -108,7 +108,7 @@ nlohmann::json order2json(const Order& );
 
 struct TradeReport {
     OrderStatus _status;
-    // 成交类型
+    // 成交类型  OrderType
     char _type;
     char _side;
     // 交易员代码

@@ -863,6 +863,7 @@ void Server::TimerWorker(nng_socket sock) {
             order["direct"] = (int)item._side;
             order["quantity"] = item._volume;
             order["orderType"] = item._type;
+            order["timestamp"] = item._time;
             order["name"] = GetName(strSymbol);
             array.push_back(std::move(order));
         }
