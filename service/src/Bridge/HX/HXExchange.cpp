@@ -807,8 +807,9 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
 
 Boolean HXExchange::CancelOrder(order_id id, OrderContext* ctx){
     if (is_stock(ctx->_order._symbol)) {
-        if (_stockHandle._cancelLimit->tryConsume()) {
-            throw RuntimeError(ERROR_CANCEL_LIMIT);
+        if (!_stockHandle._cancelLimit->tryConsume()) {
+            id._error = ERROR_CANCEL_LIMIT;
+            return false;
         }
         CancelStockOrder(id, ctx);
     } else {
