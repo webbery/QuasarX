@@ -13,10 +13,10 @@ stock_order_operation_tests = [
         {'operation': 'cancel', 'code': '600489', 'price': 0,'count': 200, 'condition': 'wait'},    # 订单处于等待状态则取消订单
     ],
     # 卖出股票
-    # [
-    #     {'operation': 'buy', 'code': '600489', 'price': +0.01, 'count': 200, 'condition': 'empty'},    # 如果持仓股票不存在立即以当前价+0.01买入200股
-    #     {'operation': 'sell', 'code': '600489', 'price': +0.00, 'count': 200, 'condition': '1d'}    # 如果存在1天前的持仓则卖出200股股票
-    # ]
+    [
+        {'operation': 'buy', 'code': '600489', 'price': +0.01, 'count': 200, 'condition': 'empty'},    # 如果持仓股票不存在立即以当前价+0.01买入200股
+        {'operation': 'sell', 'code': '600489', 'price': +0.00, 'count': 200, 'condition': '1d'}    # 如果存在1天前的持仓则卖出200股股票
+    ]
     # 暂停下单
     # 以市价单买入并卖出
 ]

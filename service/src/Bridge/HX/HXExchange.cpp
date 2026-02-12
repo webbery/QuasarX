@@ -179,10 +179,11 @@ bool HXExchange::StockLogin()
     memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
 
     // 
-    String termInfo("PC;");
-    termInfo += GetIP() + ";IPORT=" + std::to_string(_brokerInfo._localPort);
-    strcpy(tradeUser.TerminalInfo,
-        (termInfo + ";LIP=192.168.118.107;MAC=54EE750B1713FCF8AE5CBD58;HD=TF655AY91GHRVL").c_str());
+    auto termInfo = std::format("PC;IIP={};IPORT={};LIP={};MAC={};HD={};",
+        GetIP(), std::to_string(_brokerInfo._localPort), "192.168.118.107", "54EE750B1713FCF8AE5CBD58",
+        "WKPRV00E");
+    auto mac = GetMacAddr();
+    strcpy(tradeUser.TerminalInfo, termInfo.c_str());
 
     auto reqID = ++_reqID;
     auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpRspUserLoginField>>();
