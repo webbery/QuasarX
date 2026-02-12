@@ -95,7 +95,7 @@ std::string GetIP() {
   freeaddrinfo(res); // 释放地址信息链表
   WSACleanup(); // 清理Winsock
 
-  if (ip4.size() == 1)
+  if (ip4.size() >= 1)
     return ip4.front();
   return "";
 #else
@@ -130,7 +130,7 @@ std::string GetIP() {
 
     // 释放接口地址
     freeifaddrs(ifaddr);
-    if (ip4.size() == 1)
+    if (ip4.size() >= 1)
         return ip4.front();
     return "";
 #endif

@@ -45,6 +45,7 @@ constexpr std::size_t flags = yas::mem|yas::binary;
 typedef std::tuple<std::string, double, double, double, double, double, double, double> StockRowInfo;
 
 std::string GetIP();
+String GetMacAddr();
 
 bool RunCommand(const std::string& cmd);
 bool RunCommand(const std::string& cmd, String& output);
