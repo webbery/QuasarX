@@ -201,7 +201,24 @@ bool HXExchange::StockLogin()
     // 获取股东账户信息
     QueryStockShareHolder(ExchangeName::MT_Shanghai);
     QueryStockShareHolder(ExchangeName::MT_Shenzhen);
-
+    // 初始化权限
+    TORASTOCKAPI::CTORATstpQryShareholderSpecPrivilegeField privilegeFiled;
+    memset(&privilegeFiled, 0, sizeof(privilegeFiled));
+    reqID = ++_reqID;
+    int ret = _stockHandle._tradeAPI->ReqQryShareholderSpecPrivilege(&privilegeFiled, reqID);
+    if (ret != 0) {
+        LOG("get privilege fail.");
+        return false;
+    }
+    auto prev_prom = initPromise<bool>(reqID);
+    std::future<bool> prev_fut;
+    if (!getFuture(prev_prom, prev_fut)) {
+        return false;
+    }
+    if (!prev_fut.get()) {
+        LOG("get privilege fail.");
+        return false;
+    }
     return true;
 }
 
@@ -685,7 +702,9 @@ bool HXExchange::Login(AccountType t){
     // 
     if (!_stock_login) {
         StockLogin();
+#if ENABLE_STOCK_OPTION
         OptionLogin();
+#endif
     }
     
     if (status) {
@@ -754,7 +773,7 @@ bool HXExchange::GetPosition(AccountPosition& ap){
     // 更新当前价格
     for (auto& item : positions) {
         auto qt = _quote->GetQuote(item._symbol);
-        item._curPrice = qt._askPrice[0];
+        item._curPrice = qt._close;
     }
     ap._positions = std::move(positions);
     return true;
@@ -773,7 +792,6 @@ order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
     }
 
     if (is_stock(symbol)) {
-        // 检查权限
         if (!_stockHandle._insertLimit->tryConsume()) {
             id._error = ERROR_INSERT_LIMIT;
             return id;
@@ -1000,7 +1018,7 @@ void HXExchange::StopQuery(){
             break;
         }
         if (type == 0) {
-            WARN("unsupport exchange {}", (int)symbol._exchange);
+            WARN("unsupport exchange {}: {}", (int)symbol._exchange, symb);
             continue;
         }
         subscribe_map[type].emplace_back(symb);

@@ -36,8 +36,8 @@ namespace {
         position._name = String(field.SecurityName, strlen(field.SecurityName));
         position._holds = field.CurrentPosition;
         position._validHolds = field.AvailablePosition;
-        position._price = field.HistoryPosPrice;
-        position._curPrice = field.OpenPosCost;
+        position._price = field.OpenPosCost / field.CurrentPosition;
+        position._curPrice = 0;
         return position;
     }
 }
@@ -99,6 +99,10 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     TradeReport report;
     report._type = pInputOrderField->IInfo;
     memcpy(&report._time, pInputOrderField->SInfo, sizeof(time_t));
+    report._price = pInputOrderField->LimitPrice;
+    report._quantity = pInputOrderField->VolumeTotalOriginal;
+    report._sysID = pInputOrderField->OrderSysID;
+    report._side = pInputOrderField->Direction - 48;
     if (pRspInfoField->ErrorID == 0) {
         _investor = pInputOrderField->InvestorID;
         LOG("Order {} accept", nRequestID);
@@ -107,7 +111,12 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     }
     else {
         LOG("Order {} reject: {}", nRequestID, to_utf8(pRspInfoField->ErrorMsg));
-        report._status = OrderStatus::OrderReject;
+        if (pRspInfoField->ErrorID == 341) {
+            report._status = OrderStatus::PrivilegeReject;
+        }
+        else {
+            report._status = OrderStatus::OrderReject;
+        }
         _exchange->OnOrderReport(id, report);
     }
 }
@@ -125,6 +134,13 @@ void HXTrade::OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField) {
 
 void HXTrade::OnErrRtnOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
     LOG("OnErrRtnOrderInsert {}: {}", pRspInfoField->ErrorID, to_utf8(pRspInfoField->ErrorMsg));
+    order_id id;
+    id._id = pInputOrderField->OrderRef;
+    TradeReport report;
+    if (pRspInfoField->ErrorID == 341) {
+        report._status = OrderStatus::PrivilegeReject;
+    }
+    _exchange->OnOrderReport(id, report);
 }
 
 void HXTrade::OnRtnTrade(TORASTOCKAPI::CTORATstpTradeField *pTradeField) {
@@ -197,7 +213,7 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
         if (pOrderField) {
             Order order;
             order._status = toOrderStatus(pOrderField->OrderStatus);
-            order._side = pOrderField->Direction;
+            order._side = pOrderField->Direction - 48;
             order._volume = pOrderField->VolumeTotalOriginal;
             order._order[0]._price = pOrderField->LimitPrice;
             order._symbol = to_symbol(pOrderField->SecurityID);
@@ -227,6 +243,7 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
     if (bIsLast) {
         INIT_PROMISE(bool);
         if (pRspInfoField->ErrorID != 0) {
+            LOG("OnRspQryPosition {}: {}", pRspInfoField->ErrorID, pRspInfoField->ErrorMsg);
             prom->set_exception(std::make_exception_ptr(std::runtime_error("query position fail.")));
             return;
         }
@@ -239,6 +256,7 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
         SET_PROMISE(true);
     } else {
         if (pRspInfoField->ErrorID != 0) {
+            LOG("OnRspQryPosition {}: {}", pRspInfoField->ErrorID, pRspInfoField->ErrorMsg);
             return;
         }
         position_t position = toPosition(*pPositionField);
@@ -268,24 +286,21 @@ void HXTrade::OnRspQryInvestorTradingFee(TORASTOCKAPI::CTORATstpInvestorTradingF
     }
 }
 
-void HXTrade::OnRspQryShareholderSpecPrivilege(TORASTOCKAPI::CTORATstpShareholderSpecPrivilegeField* pShareholderSpecPrivilegeField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)
+void HXTrade::OnRspQryShareholderSpecPrivilege(TORASTOCKAPI::CTORATstpShareholderSpecPrivilegeField* pSpecPrivilegeField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID, bool bIsLast)
 {
-    INFO("OnRspQryShareholderSpecPrivilege");
     INIT_PROMISE(bool);
-    if (pRspInfoField && pRspInfoField->ErrorID == 0) {
-        if (bIsLast) {
-            SET_PROMISE(true);
-        }
-        else {
-            auto field = pShareholderSpecPrivilegeField;
-            INFO("SpecPrivilege: {} - {}", field->SpecPrivilegeType, field->bForbidden);
+    if (pRspInfoField && pRspInfoField->ErrorID != 0) {
+        LOG("OnRspQryShareholderSpecPrivilege fail: {}", pRspInfoField->ErrorMsg);
+        SET_PROMISE(false);
+        return;
+    }
+    if (pSpecPrivilegeField) {
+        if (!pSpecPrivilegeField->bForbidden) {
+            _exchange->_stockHandle._privileges.insert(pSpecPrivilegeField->SpecPrivilegeType);
         }
     }
-    else {
-        LOG("OnRspQryShareholderSpecPrivilege fail: {}", pRspInfoField->ErrorMsg);
-        if (bIsLast) {
-            SET_PROMISE(false);
-        }
+    if (bIsLast) {
+        SET_PROMISE(true);
     }
 }
 
@@ -296,7 +311,7 @@ void HXTrade::OnRspQrySecurity(TORASTOCKAPI::CTORATstpSecurityField* pSecurityFi
     INIT_PROMISE(info_t);
     info_t info;
     if (pRspInfoField && pRspInfoField->ErrorID == 0) {
-        if (pSecurityField && bIsLast) {
+        if (pSecurityField) {
             std::get<0>(info) = pSecurityField->MarketID;
             std::get<1>(info) = pSecurityField->SecurityStatus;
             std::get<2>(info) = pSecurityField->SecurityType;

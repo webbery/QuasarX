@@ -51,32 +51,11 @@ String to_sse_string(symbol_t symbol, const TradeReport& report) {
     Map<String, String> info;
     auto name = get_symbol(symbol);
     info["symbol"] = name;
-    switch (report._status) {
-    case OrderStatus::OrderAccept:
-        info["status"] = "order_accept";
-    break;
-    case OrderStatus::OrderReject:
-        info["status"] = "order_reject";
-    break;
-    case OrderStatus::OrderSuccess:
-        info["status"] = "order_success";
-        // info["symbol"] = std::to_string(report._);
-        info["price"] = std::to_string(report._price);
-        info["quantity"] = std::to_string(report._quantity);
-    break;
-    case OrderStatus::OrderFail:
-        info["status"] = "order_fail";
-    break;
-    case OrderStatus::CancelSuccess:
-        info["status"] = "cancel_success";
-    break;
-    case OrderStatus::CancelFail:
-        info["status"] = "cancel_fail";
-    break;
-    default:
-        info["status"] = "unknow";
-    break;
-    }
+    info["status"] = std::to_string((int)report._status); 
+    info["price"] = std::to_string(report._price);
+    info["direct"] = std::to_string(report._side);
+    info["quantity"] = std::to_string(report._quantity);
+    info["sysID"] = report._sysID;
     info["name"] = Server::GetName(name);
     info["orderType"] = std::to_string(report._type);
     info["timestamp"] = std::to_string(report._time);

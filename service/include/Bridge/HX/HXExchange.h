@@ -43,6 +43,8 @@ struct StockHandle {
     OrderLimit* _cancelLimit;   // 撤单限流
     int8_t _maxTradeReq;    // 交易通道每秒最大请求数
     int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
+
+    Set<char> _privileges;  // 有交易权限的板块
 };
 
 struct OptionHandle {

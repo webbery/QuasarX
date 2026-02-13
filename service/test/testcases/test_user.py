@@ -175,3 +175,12 @@ class TestUser:
         response = requests.get(f"{BASE_URL}/commission", **kwargs)
         data = check_response(response)
         assert len(data) > 0
+
+    @pytest.mark.timeout(5)
+    def test_permission(self, auth_token):
+        '''
+        测试权限
+        '''
+        kwargs = self.generate_args(auth_token)
+        response = requests.get(f"{BASE_URL}/stocks/privilege?id=603331", **kwargs)
+        assert 'forbid' in response

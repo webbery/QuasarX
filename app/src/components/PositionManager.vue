@@ -67,9 +67,9 @@
                     </td>
                     <td>
                       <button class="btn btn-mini" @click="openStockOperation(position, 'buy')">买入</button>
-                      <button class="btn btn-mini" @click="openStockOperation(position, 'buy_margin')">融资买入</button>
+                      <!-- <button class="btn btn-mini" @click="openStockOperation(position, 'buy_margin')">融资买入</button> -->
                       <button class="btn btn-mini btn-danger" @click="openStockOperation(position, 'sell')">卖出</button>
-                      <button class="btn btn-mini btn-danger" @click="openStockOperation(position, 'sell_short')">融券卖出</button>
+                      <!-- <button class="btn btn-mini btn-danger" @click="openStockOperation(position, 'sell_short')">融券卖出</button> -->
                     </td>
                   </tr>
                 </tbody>
@@ -310,6 +310,7 @@ import axios from 'axios';
 import { ref, computed, onMounted, reactive, inject, onUnmounted } from 'vue'
 import sseService from '@/ts/SSEService';
 import { message } from '@/tool';
+import { sortOrders } from 'element-plus/es/components/table-v2/src/constants';
 
 const STOCK_ORDER = 'stockOrders'
 // 市场选项卡
@@ -515,6 +516,7 @@ const getOrderStatusText = (status) => {
         case 'cancelled': return '已撤单';
         case 'rejected': return '交易所已拒绝';
         case 'fail': return '已失败';
+        case 'privilege': return '无权限';
         // case 'waiting': 
         //     return order.orderType === 'conditional' ? '等待触发' : 
         //            order.orderType === 'stop' ? '监控中' : '待成交';
@@ -534,6 +536,7 @@ const getOrderStatusType = (type) => {
     case 7: status = 'cancelled'; break;
     case 8: status = 'pending'; break;
     case 9: status = 'cancelled_filled'; break;
+    case 11: status = 'privilege'; break;
     default: break;
   }
   return status;
@@ -927,6 +930,33 @@ const onOrderSuccess = (message) => {
   
 }
 
+const onTradeReport = (message) => {
+  console.info('onTradeReport: ', message)
+  // for (const item of stockOrders.value) {
+  //   if (item['sysID'] == item['sysID']) {
+  //     return
+  //   }
+  // }
+  const item = message.data
+  const order = {
+      code: item["symbol"],
+      name: item["name"],
+      type: (item["direct"] == '0'? 'buy': 'sell'),
+      orderType: getOrderType(item['orderType']),
+      price: item['price'],
+      quantity: item['quantity'],
+      sysID: item["sysID"],
+      timestamp: item['timestamp'],
+      // conditionType: stockOrder.conditionType,
+      // triggerPrice: stockOrder.triggerPrice,
+      // stopPrice: stockOrder.stopPrice,
+      // validity: stockOrder.validity,
+      // validityDate: stockOrder.validityDate,
+      status: getOrderStatusType(parseInt(item['status']))
+  };
+  stockOrders.value.push(order)
+}
+
 const toggleStockTradingEnabled = async () => {
     if (stockTradingEnabled.value) {
         openModal('暂停报单确认', '确定要暂停股票报单功能吗？暂停后无法提交新的订单，但可以撤单。', async () => {
@@ -1045,6 +1075,9 @@ const handleStockCancel = () => {
 
 const queryAllStockOrders = async () => {
   const response = await axios.get('/v0/trade/order', {params: {'type': 0}})
+  if (!response.data)
+    return
+
   for (const item of response.data) {
     let status = 'pending'
     switch (item.status) {
@@ -1075,12 +1108,14 @@ onMounted(() => {
   sseService.on('update_position', onPositionUpdate)
   sseService.on('update_order', onOrderUpdate)
   sseService.on('order_success', onOrderSuccess)
+  sseService.on('trade_report', onTradeReport)
 })
 onUnmounted(() => {
   // 清理处理器
   sseService.off('order_success', onOrderSuccess)
   sseService.off('update_position', onPositionUpdate)
   sseService.off('update_order', onOrderUpdate)
+  sseService.off('trade_report', onTradeReport)
 })
 </script>
 
@@ -1364,18 +1399,15 @@ onUnmounted(() => {
 }
 
 .status-pending {
-  background-color: #ff9800;
-  color: white;
+  color: #ff9800;
 }
 
 .status-filled {
-  background-color: var(--secondary);
-  color: white;
+  color: var(--secondary);
 }
 
 .status-cancelled {
-  background-color: #757575;
-  color: white;
+  color: #757575;
 }
 
 .status-fail,

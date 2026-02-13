@@ -67,6 +67,7 @@ enum class OrderStatus : char {
     CancelFail,         // 撤单失败
     PartSuccessCancel,  // 报单部分成交部分撤单
     OrderCached,        // 预埋单
+    PrivilegeReject,    // 无权限
     NetInterrupt,       // 网络中断
 };
 

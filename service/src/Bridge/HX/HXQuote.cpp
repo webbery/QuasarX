@@ -41,10 +41,20 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     //     return;
 
     auto name = pMarketDataField->SecurityID;
-    //if (strcmp(name, "000001") == 0) {
-    //    INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
-    //}
-    auto symb = to_symbol(name);
+    if (strcmp(name, "000001") == 0) {
+        INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
+    }
+    String exc;
+    if (pMarketDataField->ExchangeID == TORA_TSTP_EXD_SZSE) {
+        exc = "SZ";
+    }
+    else if (pMarketDataField->ExchangeID == TORA_TSTP_EXD_SSE) {
+        exc = "SH";
+    }
+    else if (pMarketDataField->ExchangeID == TORA_TSTP_EXD_BSE) {
+        exc = "BJ";
+    }
+    auto symb = to_symbol(name, exc);
     QuoteInfo& info = _tickers[symb];
     auto cur = Now();
     auto strDate = ToString(cur);
@@ -53,7 +63,7 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     InitQuoteInfo(info, symb, infos.front(), pMarketDataField);
     
     yas::shared_buffer buf = yas::save<flags>(info);
-    if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
+    if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
         printf("send quote message fail.\n");
         return;
     }
@@ -129,7 +139,7 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
     InitQuoteInfo(info, symb, infos.front(), pMarketDataField);
 
     yas::shared_buffer buf = yas::save<flags>(info);
-    if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
+    if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
         printf("send quote message fail.\n");
         return;
     }
@@ -147,7 +157,7 @@ void HXQuateSpi::InitQuoteInfo(QuoteInfo& info, symbol_t symb, const String& dat
     info._time = FromStr(strTime, "%Y-%m-%d %H:%M:%S");
     info._symbol = symb;
     info._open = pMarketDataField->OpenPrice;
-    info._close = pMarketDataField->PreClosePrice;
+    info._close = pMarketDataField->LastPrice;
     info._volume = pMarketDataField->Volume;
     info._value = pMarketDataField->Turnover;
     info._high = pMarketDataField->HighestPrice;
