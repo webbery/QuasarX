@@ -158,7 +158,14 @@ import { ref, computed, watch, onMounted, onActivated, defineProps } from 'vue'
 import axios from 'axios';
 import { getGlobalStorage } from '@/ts/globalStorage';
 import getZh from '@/ts/i18n';
-import errorCode from '@/ts/ErrorCode';
+import {errorCode,  ErrorCodeMap} from '@/ts/ErrorCode';
+
+interface SecurityInfo {
+  name: string;
+  latestPrice: number;
+  upper: number;
+  lower: number;
+}
 
 const globalStorage = getGlobalStorage()
 // 响应式数据
@@ -276,7 +283,7 @@ const parseLocalizedNumber = (localizedString: string) => {
 const onFollowLatestPriceChange = () => {
     if (followLatestPrice.value) {
         // 模拟获取最新价格
-        const latestPrice = getLatestPrice()
+        const latestPrice = price.value || 0
         price.value = latestPrice.toString()
         calculateAmount()
     }
@@ -310,14 +317,22 @@ const onCodeChange = async () => {
         // 根据代码获取证券名称和最新价格
         try {
             const securityInfo = await getSecurityInfo(code.value)
-            securityName.value = securityInfo.name
-            price.value = securityInfo.latestPrice.toString()
-            upper = securityInfo.upper
-            lower = securityInfo.lower
+            if (securityInfo === undefined) {
+                statusMessage.value = '错误: 无法获取证券信息'
+                securityName.value = ''
+                price.value = ''
+                upper = 0
+                lower = 0
+            } else {
+                securityName.value = securityInfo.name
+                price.value = securityInfo.latestPrice.toString()
+                upper = securityInfo.upper
+                lower = securityInfo.lower
 
-            statusMessage.value = `已加载 ${securityInfo.name}`
-            calculateAmount()
-        } catch (err) {
+                statusMessage.value = `已加载 ${securityInfo.name}`
+                calculateAmount()
+            }
+        } catch (err: any) {
             const response = err.response
             const data = response.data
         }
@@ -339,27 +354,25 @@ const calculateAmount = () => {
 }
 
 // 获取证券信息（模拟函数）
-const getSecurityInfo = async (code: string) => {
+const getSecurityInfo = async (code: string): Promise<SecurityInfo|undefined> => {
     const securities: any = globalStorage.getItem('securities')
     if (selectedType.value === 'stock') {
         const stocks = securities.stocks
         const name = stocks.get(code)
-        let info = undefined
         if (!!name) {
             const response = await axios.get('/v0/stocks/detail', {params: {
                 id: code
             }})
             const data = response.data
-            info = {
+            return {
                 name: name,
                 latestPrice: data.price,
                 upper: data.upper,
                 lower: data.lower
             }
         }
-        return info
     }
-    return { name: '未知证券', latestPrice: 0 }
+    return undefined
 }
 
 // 获取操作文本
@@ -385,14 +398,14 @@ const checkStockPrivilege = async (code: string) => {
                 return false
             }
         }
-    } catch (err) {
+    } catch (err: any) {
         // console.info('err: ', err)
         const response = err.response
         if (response.status === 400) {
             const data = response.data
             const code = data['status']
-            if (code in errorCode) {
-                statusMessage.value = '错误: ' + errorCode[code]
+            if (typeof code === 'string' && code in errorCode) {
+                statusMessage.value = '错误: ' + errorCode[code as keyof ErrorCodeMap]
             } else {
                 statusMessage.value = '未知错误:' + code
             }
@@ -465,20 +478,25 @@ const submitTrade = async () => {
         await updateCapital()
     } catch (error) {
         statusMessage.value = `${operationText}订单提交失败`
-        if (error.response) {
-            const data = error.response.data
-            const code = data['status']
-            if (code in errorCode) {
-                statusMessage.value = `${operationText}订单提交失败: ${errorCode[code]}`
-            } else {
-                statusMessage.value = '服务器错误: ' + (data['message'] || '未知错误')
+        if (axios.isAxiosError(error)) {
+            if (error.response) {
+                const data = error.response.data
+                const code = data['status']
+                if (code in errorCode) {
+                    statusMessage.value = `${operationText}订单提交失败: ${errorCode[code as keyof ErrorCodeMap]}`
+                } else {
+                    statusMessage.value = '服务器错误: ' + (data['message'] || '未知错误')
+                }
+            }
+            else if (error.request) {
+                statusMessage.value = '网络错误: 无法连接到服务器'
             }
         }
-        else if (error.request) {
-            statusMessage.value = '网络错误: 无法连接到服务器'
+        else if (error instanceof Error) {
+            statusMessage.value = `请求错误: ${error.message}`
         }
         else {
-            statusMessage.value = '请求错误: ' + error.message
+            statusMessage.value = '请求错误: ' + String(error)
         }
     } finally {
         isSubmitting.value = false

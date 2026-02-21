@@ -397,7 +397,7 @@ async function updatePrice(symbol: string, startDate: string, endDate: string) {
     const response = await axios.get(url, {
         params: params,
         httpsAgent: agent,
-        responseType: 'application/json',
+        // responseType: 'application/json',
         headers: { 'Authorization': token}})
     
     console.info('get price response:', response)
@@ -466,7 +466,8 @@ function initializeCharts() {
         } else {
             console.warn(`容器 ${config.id} 不可见，延迟初始化`)
             setTimeout(() => {
-                if (document.getElementById(config.id)?.offsetWidth > 0) {
+                const value = document.getElementById(config.id)?.offsetWidth
+                if (value && value > 0) {
                     initializeCharts()
                 }
             }, 300)

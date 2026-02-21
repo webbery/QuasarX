@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "types": ["node", "vue"],
     "baseUrl": "./",
     "target": "ESNext",
     "useDefineForClassFields": true,
@@ -13,6 +14,7 @@
     "lib": ["ESNext", "DOM"],
     "skipLibCheck": true,
     "noEmit": true,
+    "allowSyntheticDefaultImports": true,
     "paths": {
       "@/*": ["src/*"],
       "@ejs/*": ["electron/*"]

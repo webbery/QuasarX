@@ -12,9 +12,9 @@ class SSEService {
   private abortController: AbortController | null = null
   private messageHandlers: Map<string, Function[]> = new Map()
   
-  public messages: Ref<string[]> = ref([])
+  public messages: Ref<SSEMessage[]> = ref([])
   public isConnected: Ref<boolean> = ref(false)
-  public lastMessage: Ref<string | null> = ref(null)
+  public lastMessage: Ref<SSEMessage | null> = ref(null)
 
   public readonlyMessages = readonly(this.messages)
   public readonlyIsConnected = readonly(this.isConnected)
@@ -150,7 +150,7 @@ class SSEService {
     this.messageHandlers.clear()
   }
 
-  getMessagesByType(type: string): string[] {
+  getMessagesByType(type: string): SSEMessage[] {
     return this.messages.value.filter(msg => msg.type === type)
   }
 

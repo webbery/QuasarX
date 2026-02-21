@@ -1,4 +1,18 @@
-const errorCode = {
+export type ErrorCodeMap = {
+  '-100': string;
+  '-101': string;
+  '-102': string;
+  '-103': string;
+  '-104': string;
+  '-105': string;
+  '-106': string;
+  '-107': string;
+  '-108': string;
+  '-109': string;
+  // ... 其他错误码
+};
+
+export const errorCode: ErrorCodeMap = {
     '-100': '下单失败',
     '-101': '每日订单超限',
     '-102': '每秒撤单超限',
@@ -11,4 +25,4 @@ const errorCode = {
     '-109': '当前暂停报单',
 }
 
-export default errorCode
+// export default errorCode

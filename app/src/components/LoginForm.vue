@@ -198,13 +198,15 @@ const loadSavedLoginInfo = () => {
 
 onMounted(() => {
   const data = store.get('servers')
-  for (const item of data) {
-    console.info(item)
-    serverOptions.value.push({
-      name: item.name,
-      label: item.name,
-      value: item.address + ':19107'
-    })
+  if (data) {
+    for (const item of data) {
+      console.info(item)
+      serverOptions.value.push({
+        name: item.name,
+        label: item.name,
+        value: item.address + ':19107'
+      })
+    }
   }
 
   // 加载保存的登录信息

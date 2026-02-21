@@ -71,7 +71,7 @@ onMounted(() => {
     <template #header="{ date }">
       <span>收益日历</span>
       <span>{{ date }}</span>
-      <el-button-group>
+      <!--<el-button-group>
         <el-button size="small" @click="selectDate('prev-year')">
           Previous Year
         </el-button>
@@ -85,7 +85,7 @@ onMounted(() => {
         <el-button size="small" @click="selectDate('next-year')">
           Next Year
         </el-button>
-      </el-button-group>
+      </el-button-group>-->
     </template>
   </el-calendar>
     <el-collapse >
@@ -127,7 +127,7 @@ onMounted(() => {
             <el-button type="primary">撤单</el-button>
         </el-col>
         <el-col :span="10">
-            <el-input
+            <!--<el-input
               v-model="input3"
               style="max-width: 600px"
               placeholder="Please input"
@@ -162,6 +162,7 @@ onMounted(() => {
               </template>
             </el-input>
             <el-button type="primary">买入</el-button>
+            -->
         </el-col>
     </el-row>
         
