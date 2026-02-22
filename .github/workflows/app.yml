@@ -6,9 +6,9 @@ on:
       - master
     tags:
       - 'v*'
-  pull_request:
-    branches:
-      - master
+  # pull_request:
+  #   branches:
+  #     - master
 
 # 取消正在运行的旧工作流
 concurrency:
