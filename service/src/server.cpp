@@ -838,17 +838,24 @@ void Server::TimerWorker(nng_socket sock) {
     auto broker = GetAvaliableStockExchange();
     AccountPosition ap;
     broker->GetPosition(ap);
+    nlohmann::json holds;
     for (auto& item : ap._positions) {
+        nlohmann::json position;
+        position["id"] = get_symbol(item._symbol);
+        position["price"] = std::to_string(item._price);
+        position["curPrice"] = std::to_string(item._curPrice);
+        position["name"] = to_utf8(item._name);
+        position["quantity"] = std::to_string(item._holds);
+        position["valid_quantity"] = std::to_string(item._validHolds);
+        holds.emplace_back(std::move(position));
+    }
+    if (!ap._positions.empty()) {
         Map<String, String> data;
-        data["id"] = get_symbol(item._symbol);
-        data["price"] = std::to_string(item._price);
-        data["curPrice"] = std::to_string(item._curPrice);
-        data["name"] = to_utf8(item._name);
-        data["quantity"] = std::to_string(item._holds);
-        data["valid_quantity"] = std::to_string(item._validHolds);
+        data["data"] = holds.dump();
         String info = format_sse("update_position", data);
         nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
     }
+    
     // 更新订单
     OrderList ol;
     if (broker->GetOrders(SecurityType::Stock,ol) && !ol.empty()) {

@@ -199,7 +199,7 @@ const props = defineProps({
 });
 
 // 监听选中的股票变化
-watch(() => props.selectedSecurity, (newStock) => {
+watch(() => props.selectedSecurity, async (newStock) => {
     if (newStock) {
         console.log('收到选中的股票:', newStock);
         
@@ -226,6 +226,10 @@ watch(() => props.selectedSecurity, (newStock) => {
         price.value = newStock.currentPrice;
         followLatestPrice.value = true;
         statusMessage.value = `已选择 ${newStock.name} (${newStock.code})`;
+        // 更新上下限
+        const securityInfo = await getSecurityInfo(code.value)
+        upper = securityInfo.upper
+        lower = securityInfo.lower
     }
 }, { immediate: true });
 

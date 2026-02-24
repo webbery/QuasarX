@@ -12,9 +12,12 @@
 #include <cstring>
 #include <functional>
 #ifdef WIN32
+#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 #pragma comment(lib, "Ws2_32.lib") // 链接Winsock库
+#pragma comment(lib, "iphlpapi.lib")
 #else
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -140,6 +143,39 @@ String GetMacAddr() {
     char mac[64];
     memset(mac, 0, 64);
 #ifdef WIN32
+    PIP_ADAPTER_ADDRESSES pAddresses = NULL;
+    ULONG outBufLen = 0;
+    DWORD dwRetVal = 0;
+
+    // 第一次调用，获取所需缓冲区大小
+    GetAdaptersAddresses(AF_UNSPEC, 0, NULL, pAddresses, &outBufLen);
+    if (outBufLen == 0) {
+        return "";
+    }
+
+    pAddresses = (IP_ADAPTER_ADDRESSES*)malloc(outBufLen);
+    if (pAddresses == NULL) {
+        return "";
+    }
+
+    dwRetVal = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, pAddresses, &outBufLen);
+    if (dwRetVal == NO_ERROR) {
+        PIP_ADAPTER_ADDRESSES pCurr = pAddresses;
+        while (pCurr) {
+            // 过滤条件：非回环适配器且 MAC 地址长度为 6 字节（以太网）
+            if (pCurr->IfType != IF_TYPE_SOFTWARE_LOOPBACK &&
+                pCurr->PhysicalAddressLength == 6) {
+                unsigned char* macAddr = pCurr->PhysicalAddress;
+                sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X",
+                    macAddr[0], macAddr[1], macAddr[2],
+                    macAddr[3], macAddr[4], macAddr[5]);
+                printf("MAC地址: %s\n", mac);   // 可选调试输出
+                break;
+            }
+            pCurr = pCurr->Next;
+        }
+}
+    free(pAddresses);
 #else
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {

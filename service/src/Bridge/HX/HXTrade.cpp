@@ -105,12 +105,12 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     report._side = pInputOrderField->Direction - 48;
     if (pRspInfoField->ErrorID == 0) {
         _investor = pInputOrderField->InvestorID;
-        LOG("Order {} accept", nRequestID);
+        LOG("Order {}  code {} raccept", nRequestID, pInputOrderField->SecurityID);
         report._status = OrderStatus::OrderAccept;
         _exchange->OnOrderReport(id, report);
     }
     else {
-        LOG("Order {} reject: {}", nRequestID, to_utf8(pRspInfoField->ErrorMsg));
+        LOG("Order {}, code {} reject: {}", nRequestID, pInputOrderField->SecurityID, to_utf8(pRspInfoField->ErrorMsg));
         if (pRspInfoField->ErrorID == 341) {
             report._status = OrderStatus::PrivilegeReject;
         }
@@ -295,6 +295,7 @@ void HXTrade::OnRspQryShareholderSpecPrivilege(TORASTOCKAPI::CTORATstpShareholde
         return;
     }
     if (pSpecPrivilegeField) {
+        INFO("MarketID {} {} , valid: {}", pSpecPrivilegeField->MarketID, pSpecPrivilegeField->SpecPrivilegeType, !pSpecPrivilegeField->bForbidden);
         if (!pSpecPrivilegeField->bForbidden) {
             _exchange->_stockHandle._privileges.insert(pSpecPrivilegeField->SpecPrivilegeType);
         }

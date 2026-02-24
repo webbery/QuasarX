@@ -11,35 +11,35 @@
               <i class="fas fa-caret-up positive-change"></i>
               <span>沪深300</span>
             </div>
-            <div class="market-value positive-change">4,258.76 (+1.2%)</div>
+            <div class="market-value positive-change">{{hs300}} ({{hs300Percent}}%)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
               <i class="fas fa-caret-down negative-change"></i>
               <span>中证500</span>
             </div>
-            <div class="market-value negative-change">6,325.41 (-0.4%)</div>
+            <div class="market-value negative-change">{{zz500}} ({{zz500Percent}}%)</div>
           </div>
-          <div class="market-item">
+          <!-- <div class="market-item">
             <div class="market-name">
               <i class="fas fa-caret-up positive-change"></i>
               <span>创业板指</span>
             </div>
             <div class="market-value positive-change">2,845.33 (+2.1%)</div>
-          </div>
+          </div> -->
           <div class="market-item">
             <div class="market-name">
               <i class="fas fa-caret-up positive-change"></i>
               <span>恒生指数</span>
             </div>
-            <div class="market-value positive-change">21,458.92 (+0.8%)</div>
+            <div class="market-value positive-change">{{hs}} ({{hsPercent}}%)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
               <i class="fas fa-caret-down negative-change"></i>
               <span>标普500</span>
             </div>
-            <div class="market-value negative-change">4,125.64 (-0.3%)</div>
+            <div class="market-value negative-change">{{}} ({{}}%)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
@@ -71,6 +71,12 @@ const timer = ref(null)
 const isPolling = ref(false);
 const interval = ref(10000);
 let GlodPrice = ref(0);
+let hs300 = ref('')
+let hs300Percent = ref('0')
+let zz500 = ref('')
+let zz500Percent = ref('0')
+let hs = ref('')
+let hsPercent = ref('0')
 
 function update_rate() {
   // 更新USD/CNY利率

@@ -180,9 +180,8 @@ bool HXExchange::StockLogin()
 
     // 
     auto termInfo = std::format("PC;IIP={};IPORT={};LIP={};MAC={};HD={};",
-        GetIP(), std::to_string(_brokerInfo._localPort), "192.168.118.107", "54EE750B1713FCF8AE5CBD58",
+        GetIP(), std::to_string(_brokerInfo._localPort), "192.168.118.107", GetMacAddr(),
         "WKPRV00E");
-    auto mac = GetMacAddr();
     strcpy(tradeUser.TerminalInfo, termInfo.c_str());
 
     auto reqID = ++_reqID;
@@ -201,24 +200,9 @@ bool HXExchange::StockLogin()
     // 获取股东账户信息
     QueryStockShareHolder(ExchangeName::MT_Shanghai);
     QueryStockShareHolder(ExchangeName::MT_Shenzhen);
+    QueryStockShareHolder(ExchangeName::MT_Beijing);
     // 初始化权限
-    TORASTOCKAPI::CTORATstpQryShareholderSpecPrivilegeField privilegeFiled;
-    memset(&privilegeFiled, 0, sizeof(privilegeFiled));
-    reqID = ++_reqID;
-    int ret = _stockHandle._tradeAPI->ReqQryShareholderSpecPrivilege(&privilegeFiled, reqID);
-    if (ret != 0) {
-        LOG("get privilege fail.");
-        return false;
-    }
-    auto prev_prom = initPromise<bool>(reqID);
-    std::future<bool> prev_fut;
-    if (!getFuture(prev_prom, prev_fut)) {
-        return false;
-    }
-    if (!prev_fut.get()) {
-        LOG("get privilege fail.");
-        return false;
-    }
+    InitPermissions(ExchangeName::MT_Shanghai);
     return true;
 }
 
@@ -231,7 +215,6 @@ bool HXExchange::OptionLogin()
     strcpy(tradeUser.MacAddress, "");
     strcpy(tradeUser.OneTimePassword, "");
     strcpy(tradeUser.MacAddress, "12:34:EC:23:ED:3E");
-    strcpy(tradeUser.HDSerial, "D034-2DF22582");
     strcpy(tradeUser.HDSerial, "D034-2DF22582");
     strncpy(tradeUser.DepartmentID, tradeUser.LogInAccount, 4);
 
@@ -557,6 +540,10 @@ Boolean HXExchange::HasStockPermission(symbol_t symbol)
         need_special_permission = true;
         reason = "创业板";
     }
+    else if (market_id == TORASTOCKAPI::TORA_TSTP_STP_BJStock) {
+        need_special_permission = true;
+        reason = "北交所";
+    }
     //if (security_status & 0x0000000000000008) { // ST
     //    need_special_permission = true;
     //    reason = "风险警示";
@@ -617,7 +604,7 @@ Boolean HXExchange::HasStockPermission(symbol_t symbol)
         else if (exch == ExchangeName::MT_Beijing) {
             field.ExchangeID = TORA_TSTP_EXD_BSE;
         }
-
+        field.Direction = TORASTOCKAPI::TORA_TSTP_D_Buy;
         if (_stockHandle._tradeAPI->ReqQryShareholderSpecPrivilege(&field, reqID)) {
             INFO("Query Privileges fail.");
             _promises.erase(reqID);
@@ -633,6 +620,65 @@ Boolean HXExchange::HasStockPermission(symbol_t symbol)
         throw std::unexpected("");
     }
     // 不需要特殊权限
+    return true;
+}
+
+bool HXExchange::InitPermissions(ExchangeName name)
+{
+    TORASTOCKAPI::CTORATstpQryShareholderSpecPrivilegeField privilegeFiled;
+    memset(&privilegeFiled, 0, sizeof(privilegeFiled));
+    strcpy(privilegeFiled.InvestorID, _brokerInfo._account);
+    String& shareholder = _stockHandle._shareholder[name];
+    strcpy(privilegeFiled.ShareholderID, shareholder.c_str());
+    //privilegeFiled.Direction = '0';
+    //privilegeFiled.ExchangeID = '1';
+    switch (name)
+    {
+    case MT_Unknow:
+        break;
+    case MT_Shenzhen:
+        privilegeFiled.MarketID = TORA_TSTP_MKD_SZA;
+        break;
+    case MT_Shanghai:
+        privilegeFiled.MarketID = TORA_TSTP_MKD_SHA;
+        break;
+    case MT_Beijing:
+        privilegeFiled.MarketID = TORA_TSTP_MKD_BJMain;
+        break;
+    case MT_Zhengzhou:
+        break;
+    case MT_Dalian:
+        break;
+    case MT_Zhongjin:
+        break;
+    case MT_Guangzhou:
+        break;
+    case MT_ShanghaiFuture:
+        break;
+    case MT_ShanghaiEng:
+        break;
+    case MT_Hongkong:
+        break;
+    case MT_COUNT:
+        break;
+    default:
+        break;
+    }
+    auto reqID = ++_reqID;
+    int ret = _stockHandle._tradeAPI->ReqQryShareholderSpecPrivilege(&privilegeFiled, reqID);
+    if (ret != 0) {
+        LOG("get privilege fail.");
+        return false;
+    }
+    auto prev_prom = initPromise<bool>(reqID);
+    std::future<bool> prev_fut;
+    if (!getFuture(prev_prom, prev_fut)) {
+        return false;
+    }
+    if (!prev_fut.get()) {
+        LOG("get privilege fail.");
+        return false;
+    }
     return true;
 }
 
@@ -1193,6 +1239,9 @@ bool HXExchange::QueryStockShareHolder(ExchangeName name)
         break;
     case ExchangeName::MT_Shenzhen:
         qry_shr_account.ExchangeID = TORA_TSTP_EXD_SZSE;
+        break;
+    case ExchangeName::MT_Beijing:
+        qry_shr_account.ExchangeID = TORA_TSTP_EXD_BSE;
         break;
     default:
         break;

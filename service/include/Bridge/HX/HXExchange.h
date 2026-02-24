@@ -44,7 +44,7 @@ struct StockHandle {
     int8_t _maxTradeReq;    // 交易通道每秒最大请求数
     int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
 
-    Set<char> _privileges;  // 有交易权限的板块
+    Set<char> _privileges;  // 没有交易权限的板块
 };
 
 struct OptionHandle {
@@ -145,6 +145,8 @@ private:
     bool QueryOptionOrders(uint64_t reqID);
 
     Boolean HasStockPermission(symbol_t symbol);
+
+    bool InitPermissions(ExchangeName name);
     // 重连行情
     bool ReconnectQuote();
     // 重连交易通道

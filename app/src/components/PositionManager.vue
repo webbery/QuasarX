@@ -8,7 +8,7 @@
               <span v-if="activeMarketTab === 'stock'">股票</span>
               <span v-else-if="activeMarketTab === 'option'">期权</span>
               <span v-else-if="activeMarketTab === 'future'">期货</span>
-              总盈亏: {{  }}
+              总盈亏: {{ totalProfit }}
             </span>
 
             <div class="tab-navigation">
@@ -322,6 +322,7 @@ const stockOperationType = ref('');
 const capitalChecked = ref(false);
 const stockChecked = ref(false);
 const newStockOperation = ref(false);
+let totalProfit = ref(0)
 
 const stockOrder = reactive({
     orderType: 'limit', // 默认限价单
@@ -1003,29 +1004,25 @@ const toggleStockTradingEnabled = async () => {
 
 const onPositionUpdate = (message) => {
   console.info('onPositionUpdate sse: ', message)
-  const data = message.data;
-  let updated = false;
-  let profit = (parseFloat(data.curPrice) - parseFloat(data.price)) * parseFloat(data.quantity)
-  stockPositions.value.forEach((value) => {
-    if (value.code == data.id) {
-      updated = true;
-      value.currentPrice = parseFloat(data.curPrice).toFixed(4);
-      value.profit = parseFloat(profit).toFixed(4);
-    }
-  })
-  if (updated === false) {
+  const data = JSON.parse(message.data['data'])
+  stockPositions.value = []
+  let totalProfitValue = 0
+  for (const item of data) {
+    let profit = (parseFloat(item.curPrice) - parseFloat(item.price)) * parseFloat(item.quantity)
     const stock = {
-      code: data.id,
-      exchange: getExchange(data.id),
-      name: data.name,
-      quantity: data.quantity,
-      costPrice: parseFloat(data.price).toFixed(4),
-      currentPrice: parseFloat(data.curPrice).toFixed(4),
-      available: data.valid_quantity,
+      code: item.id,
+      exchange: getExchange(item.id),
+      name: item.name,
+      quantity: item.quantity,
+      costPrice: parseFloat(item.price).toFixed(4),
+      currentPrice: parseFloat(item.curPrice).toFixed(4),
+      available: item.valid_quantity,
       profit: parseFloat(profit).toFixed(4)
     }
     stockPositions.value.push(stock)
+    totalProfitValue += profit
   }
+  totalProfit.value = totalProfitValue.toFixed(4)
 }
 
 const onOrderUpdate = (message) => {
@@ -1056,17 +1053,18 @@ const onOrderUpdate = (message) => {
 }
 
 const handleStockCancel = () => {
-  openModal('一键撤单确认', '确定要撤销全部订单吗？', async () => {
+  openModal('一键撤单确认', '确定要撤销全部订单吗？', () => {
       //一键取消股票订单
-      for (const order of stockOrders) {
+      for (const order of stockOrders.value) {
           console.info('cancel order:', order)
           if (order.status != 'pending')
               continue
           const sysID = order.sysID
           const params = {
-            id: sysID
+            id: sysID,
+            type: 0   // 股票
           }
-          const result = await axios.delete('/v0/trade/order', params)
+          axios.delete('/v0/trade/order', {data: params})
       }
       message.success('所有撤单请求已发出')
   });
@@ -1123,7 +1121,7 @@ onUnmounted(() => {
 .position-manager {
   background-color: var(--dark-bg);
   color: var(--text);
-  min-height: 100vh;
+  /* min-height: 100vh; */
   padding: 5px;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
