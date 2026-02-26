@@ -40,6 +40,8 @@ public:
 
     virtual void StopQuery() {}
 
+    virtual void GetFee(FeeInfo& fee, symbol_t symbol) {}
+    
     QuoteInfo GetQuote(symbol_t symbol);
 
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);

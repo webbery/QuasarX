@@ -105,6 +105,8 @@ public:
 
     virtual bool SetStockLimitation(char type, int limitation);
 
+    virtual void GetFee(FeeInfo& fee, symbol_t symbol);
+
     bool QuoteLogin();
     // 重新订阅行情
     bool ResubscribeQuote();
@@ -140,9 +142,12 @@ private:
 
     void SubscribeStockQuote(const Map<char, Vector<String>>& stocks);
     void SubscribeOptionQuote(const Map<char, Vector<String>>& options);
+    void UnSubscribeStockQuote(const Map<char, Vector<String>>& stocks);
 
     bool QueryStockOrders(uint64_t reqID);
     bool QueryOptionOrders(uint64_t reqID);
+
+    void GenerateSubscribeStocks(Map<char, Vector<String>>& subs);
 
     Boolean HasStockPermission(symbol_t symbol);
 

@@ -19,6 +19,7 @@ void PositionHandler::get(const httplib::Request& req, httplib::Response& res) {
         pos["id"] = get_symbol(item._symbol);
         pos["name"] = to_utf8(item._name);
         pos["price"] = item._price;
+        pos["curPrice"] = item._curPrice;
         pos["quantity"] = item._holds;
         pos["valid_quantity"] = item._validHolds;
         result.emplace_back(std::move(pos));

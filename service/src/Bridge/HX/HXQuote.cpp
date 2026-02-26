@@ -41,9 +41,9 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     //     return;
 
     auto name = pMarketDataField->SecurityID;
-    if (strcmp(name, "000001") == 0) {
-        INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
-    }
+    // if (strcmp(name, "000001") == 0) {
+    //     INFO("recv: {} {}", pMarketDataField->ExchangeID, pMarketDataField->LastPrice);
+    // }
     String exc;
     if (pMarketDataField->ExchangeID == TORA_TSTP_EXD_SZSE) {
         exc = "SZ";
@@ -89,6 +89,9 @@ void HXQuateSpi::OnFrontDisconnected(int nReason)
             try {
                 INFO("Attempting to reconnect quote, retry: {}", retryCount + 1);
                 if (_exchange && _exchange->QuoteLogin()) {
+                    Map<char, Vector<String>> subs;
+                    _exchange->GenerateSubscribeStocks(subs);
+                    _exchange->UnSubscribeStockQuote(subs);
                     _exchange->QueryQuotes();
                     INFO("Quote Reconnect success");
                     break;

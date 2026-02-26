@@ -418,6 +418,65 @@ void HXExchange::SubscribeStockQuote(const Map<char, Vector<String>>& stocks)
     }
 }
 
+void HXExchange::UnSubscribeStockQuote(const Map<char, Vector<String>>& stocks) {
+    int ret = -1;
+    for (auto& item : stocks) {
+        char** subscribe_array = new char* [item.second.size()];
+        for (int i = 0; i < item.second.size(); ++i) {
+            subscribe_array[i] = new char[item.second[i].size() + 1] {0};
+            strncpy(subscribe_array[i], item.second[i].c_str(), item.second[i].size());
+        }
+        // 非交易时段无数据
+        ret = _quoteAPI->UnSubscribeMarketData(subscribe_array, item.second.size(), item.first);
+        for (int j = 0; j < item.second.size(); ++j) {
+            delete[] subscribe_array[j];
+        }
+        delete[] subscribe_array;
+        if (ret != 0)
+        {
+            WARN("UnSubscribeStockQuote {} fail, ret{}", item.second, ret);
+            continue;
+        }
+        else {
+            LOG("UnSubscribeStockQuote from symbol {}", item.second);
+        }
+    }
+}
+
+void HXExchange::GenerateSubscribeStocks(Map<char, Vector<String>>& subs) {
+    for (auto symb: _filter._symbols) {
+        symbol_t symbol;
+        if (symb.size() != 6) {
+            List<String> info;
+            split(symb, info, ",");
+            symbol = ETFOptionSymbol(info.front(), info.back());
+            if (symbol._year == 0)
+                continue;
+        }
+        else {
+            symbol = to_symbol(symb);
+        }
+        char type = 0;
+        switch (symbol._exchange) {
+        case MT_Shanghai: type = TORA_TSTP_EXD_SSE; break;
+        case MT_Shenzhen: type = TORA_TSTP_EXD_SZSE; break;
+        case MT_Beijing: type = TORA_TSTP_EXD_BSE; break;
+        case MT_Hongkong: type = TORA_TSTP_EXD_HK; break;
+        default:
+            break;
+        }
+        if (type == 0) {
+            WARN("unsupport exchange {}", (int)symbol._exchange);
+            continue;
+        }
+        if (is_stock(symbol)) {
+            subs[type].emplace_back(symb);
+        }
+    }
+    // 补充指数
+    subs['1'].emplace_back("000001");
+}
+
 void HXExchange::SubscribeOptionQuote(const Map<char, Vector<String>>& options)
 {
     for (auto& item : options) {
@@ -912,6 +971,7 @@ void HXExchange::CancelStockOrder(order_id id, OrderContext* ctx) {
     else {
         _orders.emplace(id._id, ctx);
     }
+    LOG("cancel stock order {}, sysID {}", ctx->_order._symbol, id._sysID);
     _stockHandle._tradeAPI->ReqOrderAction(&pInputOrderActionField, reqID);
 
 }
@@ -1001,41 +1061,7 @@ void HXExchange::QueryQuotes(){
     }
     else {
         Map<char, Vector<String>> subscribe_map, option_map;
-        for (auto symb: _filter._symbols) {
-            symbol_t symbol;
-            if (symb.size() != 6) {
-                List<String> info;
-                split(symb, info, ",");
-                symbol = ETFOptionSymbol(info.front(), info.back());
-                if (symbol._year == 0)
-                    continue;
-            }
-            else {
-                symbol = to_symbol(symb);
-            }
-            char type = 0;
-            switch (symbol._exchange) {
-            case MT_Shanghai: type = TORA_TSTP_EXD_SSE; break;
-            case MT_Shenzhen: type = TORA_TSTP_EXD_SZSE; break;
-            case MT_Beijing: type = TORA_TSTP_EXD_BSE; break;
-            case MT_Hongkong: type = TORA_TSTP_EXD_HK; break;
-            default:
-                break;
-            }
-            if (type == 0) {
-                WARN("unsupport exchange {}", (int)symbol._exchange);
-                continue;
-            }
-            if (is_stock(symbol)) {
-                subscribe_map[type].emplace_back(symb);
-            }
-            else {
-                option_map[type].emplace_back(std::move(symb));
-            }
-        }
-        // 补充指数
-        subscribe_map['1'].emplace_back("000001");
-
+        GenerateSubscribeStocks(subscribe_map);
         SubscribeStockQuote(subscribe_map);
         //SubscribeOptionQuote(option_map);
         _requested = true;
@@ -1290,3 +1316,8 @@ bool HXExchange::QueryOptionShareHolder(ExchangeName name)
     return false;
 }
 
+void HXExchange::GetFee(FeeInfo& fee, symbol_t symbol) {
+    if (is_stock(symbol)) {
+        // 当前帐号的佣金信息
+    }
+}

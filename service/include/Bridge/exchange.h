@@ -160,6 +160,11 @@ struct OrderContext {
   }
 };
 
+// 佣金相关信息
+struct FeeInfo {
+
+};
+
 #define GET_SYMBOL(context) context->_order._symbol
 
 template<>
@@ -394,6 +399,8 @@ public:
   virtual int GetStockLimitation(char type) = 0;
   // 设置订单上限，如果超过最大上限则返回失败，如果limitation设置为0则约定按最大值设置
   virtual bool SetStockLimitation(char type, int limitation) = 0;
+
+  virtual void GetFee(FeeInfo& fee, symbol_t symbol={}) = 0;
 
   Server* GetHandle() { return _server; }
   // 设置工作时间段

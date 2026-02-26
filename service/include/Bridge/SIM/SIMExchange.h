@@ -49,6 +49,7 @@ public:
   virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
   virtual Boolean HasPermission(symbol_t symbol);
   virtual void Reset();
+  virtual void GetFee(FeeInfo& fee, symbol_t symbol) {}
 
   double Progress();
   void SetCommission(const Commission& buy, const Commission& sell);

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(QuantService)
 
+option(ENABLE_ASAN "Enable AddressSanitizer" ON)
 set(CMAKE_CXX_STANDARD 23)
 # add_compile_definitions(USE_PMR)
 execute_process(
@@ -139,6 +140,12 @@ if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
 set(LINUX_LIBS xfastmdapi fasttraderapi fastsptraderapi)
 else()
+if(ENABLE_ASAN)
+    # 添加编译和链接的 ASan 标志
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+    # 可选：如果使用 CMake 3.13+ 也可用 target_compile_options / target_link_options 针对特定目标
+endif()
 set(LINUX_LIBS xmdapi traderapi sptraderapi)
 endif()
 if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")

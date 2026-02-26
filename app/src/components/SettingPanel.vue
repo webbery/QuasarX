@@ -48,7 +48,8 @@ let servers = ref([])
 
 onMounted(() => {
     let data = store.get('servers')
-    console.info(data)
+    if (!data)
+        return
     for (const item of data) {
         console.info(item)
         servers.value.push({
