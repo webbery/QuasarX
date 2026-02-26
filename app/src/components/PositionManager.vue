@@ -821,7 +821,7 @@ const cancelOrder = (order) => {
         console.info('cancel order:', order)
         const sysID = order.sysID
         const params = {
-          sysID: sysID,
+          sysID: [sysID],
           type: 0   // 股票
         }
         const result = await axios.delete('/v0/trade/order', {data: params})
@@ -1055,17 +1055,19 @@ const onOrderUpdate = (message) => {
 const handleStockCancel = () => {
   openModal('一键撤单确认', '确定要撤销全部订单吗？', () => {
       //一键取消股票订单
+      let delIds = []
       for (const order of stockOrders.value) {
           console.info('cancel order:', order)
           if (order.status != 'pending')
               continue
           const sysID = order.sysID
-          const params = {
-            id: sysID,
-            type: 0   // 股票
-          }
-          axios.delete('/v0/trade/order', {data: params})
+          delIds.push(sysID)
       }
+      const params = {
+        sysID: delIds,
+        type: 0   // 股票
+      }
+      axios.delete('/v0/trade/order', {data: params})
       message.success('所有撤单请求已发出')
   });
   

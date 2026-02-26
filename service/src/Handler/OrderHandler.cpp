@@ -201,22 +201,24 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             res.set_content("{message: 'query must contain `sysID`'}", "application/json");
             return;
         }
-        String sysID = data["sysID"];
-        Order order;
-        if (!broker->QueryOrder(sysID, order)) {
-            res.status = 400;
-            res.set_content("{message: 'order not exist}", "application/json");
-            return;
+        List<String> sysIDs = data["sysID"];
+        for (auto& sysID : sysIDs) {
+            Order order;
+            if (!broker->QueryOrder(sysID, order)) {
+                res.status = 400;
+                res.set_content("{message: 'order not exist}", "application/json");
+                return;
+            }
+            auto symbol = order._symbol;
+            order_id id;
+            // id._id = order._id;
+            strcpy(id._sysID, sysID.c_str());
+            broker->CancelOrder(id, symbol, [this, symbol](const TradeReport& report) {
+                auto sock = Server::GetSocket();
+                auto info = to_sse_string(symbol, report);
+                nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
+                });
         }
-        auto symbol = order._symbol;
-        order_id id;
-        // id._id = order._id;
-        strcpy(id._sysID, sysID.c_str());
-        broker->CancelOrder(id, symbol, [this, symbol] (const TradeReport& report) {
-            auto sock = Server::GetSocket();
-            auto info = to_sse_string(symbol, report);
-            nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
-        });
     }
     res.status = 200;
     res.set_content("{}", "application/json");

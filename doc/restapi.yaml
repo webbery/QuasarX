@@ -1003,8 +1003,10 @@ paths:
                   type: integer
                   description: 订单类型, 0-股票 1-期权 2-期货
                 sysID:
-                  type: string
+                  type: array
                   description: 订单单号,如果没有，则表示撤销当前所有订单
+                  items:
+                    type: string
       responses:
         '200':
           description: success
