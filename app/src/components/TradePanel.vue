@@ -238,6 +238,14 @@ watch(() => props.highlight, (newVal) => {
     isHighlighted.value = newVal;
 });
 
+// 监听价格类型变化：当选择限价时，确保价格可编辑
+watch(selectedPriceType, (newType) => {
+  if (newType === 'limit') {
+    followLatestPrice.value = false; // 限价单允许编辑价格
+  }
+  // 可根据业务需要补充市价、条件单的默认行为
+});
+
 // 计算属性
 const quantityUnit = computed(() => {
     // 根据类型切换单位

@@ -27,6 +27,7 @@
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #endif
 #include <vector>
 #include <fstream>
@@ -183,15 +184,44 @@ String GetMacAddr() {
         return "";
     }
 
-    struct ifreq ifr;
-    strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1); // 尝试获取"eth0"的MAC地址
-
-    if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) != -1) {
-        char* val = (char*)ifr.ifr_hwaddr.sa_data;
-        printf("MAC地址: %02X:%02X:%02X:%02X:%02X:%02X\n",
-               val[0], val[1], val[2], val[3], val[4], val[5]);
-        sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X", val[0], val[1], val[2], val[3], val[4], val[5]);
+    struct if_nameindex *if_ni, *i;
+    if_ni = if_nameindex();
+    if (if_ni == NULL) {
+        perror("if_nameindex");
+        close(sockfd);
+        return "";
     }
+
+    struct ifreq ifr;
+    for (i = if_ni; i->if_index != 0 && i->if_name != NULL; ++i) {
+        // 跳过回环接口
+        if (strcmp(i->if_name, "lo") == 0)
+            continue;
+
+        strncpy(ifr.ifr_name, i->if_name, IFNAMSIZ - 1);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+        if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) == -1) {
+            // 此接口可能无 MAC 地址或权限不足，继续尝试下一个
+            continue;
+        }
+
+        // 检查 MAC 地址长度（一般为 6 字节）
+        if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+            continue;  // 不是以太网接口
+
+        unsigned char* mac_addr = (unsigned char*)ifr.ifr_hwaddr.sa_data;
+
+        // 转换为字符串
+        snprintf(mac, sizeof(mac),
+                 "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac_addr[0], mac_addr[1], mac_addr[2],
+                 mac_addr[3], mac_addr[4], mac_addr[5]);
+
+        break;
+    }
+
+    if_freenameindex(if_ni);
     close(sockfd);
 #endif
     return mac;
