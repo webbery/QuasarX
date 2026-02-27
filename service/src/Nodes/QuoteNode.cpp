@@ -6,7 +6,7 @@
 #include <ctime>
 #include <limits>
 #include "server.h"
-#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 
 namespace {
     std::unordered_map<std::string, std::function<feature_t(const QuoteInfo&)>> propertyHandlers = {
@@ -51,7 +51,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
     
     // 设置数据源
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        StockSimulation* exchange = (StockSimulation*)_server->GetExchange(ExchangeType::EX_SIM);
+        StockHistorySimulation* exchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
         exchange->SetFilter(filer);
         String tickLevel = config["params"]["freq"]["value"];
         if (tickLevel == "1d") {

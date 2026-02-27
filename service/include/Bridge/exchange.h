@@ -217,8 +217,11 @@ using OrderList = List<Order>;
 enum ExchangeType {
     EX_XTP,
     EX_CTP,
-    EX_SIM,
     EX_HX,
+    EX_STOCK_HIST_SIM,
+    EX_STOCK_REAL_SIM,
+    EX_FUTURE_HIST_SIM,
+    EX_FUTURE_REAL_SIM,
     EX_Unknow
 };
 

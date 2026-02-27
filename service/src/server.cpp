@@ -321,7 +321,7 @@ void Server::InitDefault() {
         auto exchanger = (ExchangeHandler*)_handlers[API_EXHANGE];
         if (!exchanger->Use(name)) {
         }
-        if ((String)exchange["api"] == "sim") {
+        if ((String)exchange["api"] == STOCK_HISTORY_SIM) {
             use_sim = true;
             _runType = RuningType::Backtest;
             break;
@@ -1423,17 +1423,17 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
     return handle;
 }
 
-StockSimulation* Server::CreateSimulation(const String& name, const String& strategy, int type) {
-    auto ptr = new StockSimulation(this);
-    auto info = GetExchangeInfo(name.c_str());
-    if (!ptr->Init(info)) {
-        printf("init fail.\n");
-        delete ptr;
-        return nullptr;
-    }
-    if (!ptr->Login(AccountType::MAIN)) {
-        printf("login fail.\n");
-        return nullptr;
-    }
-    return ptr;
-}
+// StockHistorySimulation* Server::CreateSimulation(const String& name, const String& strategy, int type) {
+//     auto ptr = new StockHistorySimulation(this);
+//     auto info = GetExchangeInfo(name.c_str());
+//     if (!ptr->Init(info)) {
+//         printf("init fail.\n");
+//         delete ptr;
+//         return nullptr;
+//     }
+//     if (!ptr->Login(AccountType::MAIN)) {
+//         printf("login fail.\n");
+//         return nullptr;
+//     }
+//     return ptr;
+// }

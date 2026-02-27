@@ -1,5 +1,5 @@
 #include "Nodes/ExecuteNode.h"
-#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 #include "MarketTiming/ImmediateTiming.h"
 #include "server.h"
 
@@ -38,7 +38,7 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
     _timing = GenerateTiming((ExecuteType)type);
     
     auto exchange = _server->GetAvaliableStockExchange();
-    auto simExchagne = dynamic_cast<StockSimulation*>(exchange);
+    auto simExchagne = dynamic_cast<StockHistorySimulation*>(exchange);
     if (simExchagne) {
         simExchagne->SetSlippage(slippage);
     }

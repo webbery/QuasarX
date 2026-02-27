@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include "Nodes/TestNode.h"
 #include "boost/algorithm/string.hpp"
-#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/exchange.h"
 #include "StrategyNode.h"
 #include "StrategySubSystem.h"

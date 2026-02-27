@@ -8,11 +8,11 @@
 using DataFrame = hmdf::StdDataFrame<uint32_t>;
 class Server;
 
-// 仿真,使用历史数据并在中间进行插值模拟
-class StockSimulation : public ExchangeInterface {
+// 历史数据仿真,使用历史数据并在中间进行插值模拟
+class StockHistorySimulation : public ExchangeInterface {
 public:
-  StockSimulation(Server*);
-  ~StockSimulation();
+  StockHistorySimulation(Server*);
+  ~StockHistorySimulation();
 
   virtual const char* Name() { return "SIM"; }
   virtual bool Init(const ExchangeInfo& handle);

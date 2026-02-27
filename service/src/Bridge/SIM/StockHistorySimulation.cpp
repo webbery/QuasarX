@@ -1,4 +1,4 @@
-#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
@@ -21,25 +21,25 @@
 #include "server.h"
 #include "BrokerSubSystem.h"
 
-StockSimulation::StockSimulation(Server* server)
+StockHistorySimulation::StockHistorySimulation(Server* server)
   :ExchangeInterface(server),_cur_index(0), _worker(nullptr), _cur_id(0)
   ,_finish(false)
 {
 
 }
 
-StockSimulation::~StockSimulation() {
+StockHistorySimulation::~StockHistorySimulation() {
     
 }
 
-bool StockSimulation::Init(const ExchangeInfo& handle) {
+bool StockHistorySimulation::Init(const ExchangeInfo& handle) {
     _org_path = handle._quote_addr;
     String dbpath = handle._local_addr;
-    _worker = new std::thread(&StockSimulation::Worker, this);
+    _worker = new std::thread(&StockHistorySimulation::Worker, this);
     return true;
 }
 
-bool StockSimulation::Release() {
+bool StockHistorySimulation::Release() {
   if (_worker) {
     _worker->join();
     delete _worker;
@@ -51,7 +51,7 @@ bool StockSimulation::Release() {
   return true;
 }
 
-bool StockSimulation::Login(AccountType t){
+bool StockHistorySimulation::Login(AccountType t){
     _finish = false;
     // 加载配置中的买入/卖出手续费
     auto& config = _server->GetConfig();
@@ -59,29 +59,29 @@ bool StockSimulation::Login(AccountType t){
     return true;
 }
 
-void StockSimulation::Logout(AccountType t) {
+void StockHistorySimulation::Logout(AccountType t) {
     
 }
 
-bool StockSimulation::IsLogin() {
+bool StockHistorySimulation::IsLogin() {
   return !_finish;
 }
 
-bool StockSimulation::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
+bool StockHistorySimulation::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
 {
     return true;
 }
 
-bool StockSimulation::GetPosition(AccountPosition& pos){
+bool StockHistorySimulation::GetPosition(AccountPosition& pos){
     return true;
 }
 
-AccountAsset StockSimulation::GetAsset(){
+AccountAsset StockHistorySimulation::GetAsset(){
     AccountAsset ass;
     return ass;
 }
 
-order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
+order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
     OrderInfo info;
     info._id = ++_cur_id;
     info._order = order;
@@ -109,7 +109,7 @@ order_id StockSimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
     return id;
 }
 
-void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
+void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& report) {
     auto broker = _server->GetBrokerSubSystem();
     _reports.visit(id._id, [&report, broker](auto&& value) {
         auto ctx = value.second;
@@ -124,22 +124,22 @@ void StockSimulation::OnOrderReport(order_id id, const TradeReport& report) {
     });
 }
 
-Boolean StockSimulation::CancelOrder(order_id id, OrderContext* order){
+Boolean StockHistorySimulation::CancelOrder(order_id id, OrderContext* order){
     return true;
 }
 
-bool StockSimulation::GetOrders(SecurityType type, OrderList& ol)
+bool StockHistorySimulation::GetOrders(SecurityType type, OrderList& ol)
 {
     return true;
 }
 
-bool StockSimulation::GetOrder(const String& sysID, Order& ol)
+bool StockHistorySimulation::GetOrder(const String& sysID, Order& ol)
 {
     INFO("StockSimulation GetOrder");
     return true;
 }
 
-void StockSimulation::SetFilter(const QuoteFilter& filter) {
+void StockHistorySimulation::SetFilter(const QuoteFilter& filter) {
   _filter = filter;
   if (!std::filesystem::exists(_org_path)) {
     WARN("{} not exist.", _org_path);
@@ -147,7 +147,7 @@ void StockSimulation::SetFilter(const QuoteFilter& filter) {
   }
 }
 
-void StockSimulation::UseLevel(int level) {
+void StockHistorySimulation::UseLevel(int level) {
   if (level == 1) {
     for (auto& code : _filter._symbols) {
       LoadT1(code);
@@ -161,7 +161,7 @@ void StockSimulation::UseLevel(int level) {
 }
 
 #define CACHE_SIZE  2048
-void StockSimulation::LoadT1(const String& code) {
+void StockHistorySimulation::LoadT1(const String& code) {
     auto& security = Server::GetSecurity(code);
     auto symbol = to_symbol(code, security);
     String subdir, orgdir;
@@ -229,7 +229,7 @@ void StockSimulation::LoadT1(const String& code) {
     }
 }
 
-void StockSimulation::LoadT0(const String& code) {
+void StockHistorySimulation::LoadT0(const String& code) {
   auto& security = Server::GetSecurity(code);
   auto symbol = to_symbol(code, security);
   String subdir, orgdir;
@@ -288,12 +288,12 @@ void StockSimulation::LoadT0(const String& code) {
   }
 }
 
-void StockSimulation::QueryQuotes() {
+void StockHistorySimulation::QueryQuotes() {
   // 5s一次，请求一组信息
   _cv.notify_all();
 }
 
-bool StockSimulation::Once(uint32_t& curIndex) {
+bool StockHistorySimulation::Once(uint32_t& curIndex) {
   for (auto& df : _csvs) {
       auto num = df.second.get_index().size();
       if (curIndex >= num - 1) {
@@ -344,31 +344,31 @@ bool StockSimulation::Once(uint32_t& curIndex) {
     return true;
 }
 
-bool StockSimulation::Once(symbol_t symbol, time_t timeAxis) {
+bool StockHistorySimulation::Once(symbol_t symbol, time_t timeAxis) {
 
     return true;
 }
 
-double StockSimulation::GetAvailableFunds()
+double StockHistorySimulation::GetAvailableFunds()
 {
     return 1000000;
 }
 
-bool StockSimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
+bool StockHistorySimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
   return true;
 }
 
-Boolean StockSimulation::HasPermission(symbol_t symbol)
+Boolean StockHistorySimulation::HasPermission(symbol_t symbol)
 {
     return true;
 }
 
-void StockSimulation::Reset()
+void StockHistorySimulation::Reset()
 {
 
 }
 
-void StockSimulation::Worker() {
+void StockHistorySimulation::Worker() {
   Publish(URI_RAW_QUOTE, _sock);
   constexpr std::size_t flags = yas::mem | yas::binary;
   _finish = true;
@@ -389,22 +389,22 @@ void StockSimulation::Worker() {
   nng_close(_sock);
 }
 
-void StockSimulation::SetCommission(const Commission& buy, const Commission& sell) {
+void StockHistorySimulation::SetCommission(const Commission& buy, const Commission& sell) {
   _buy = buy;
   _sell = sell;
 }
 
-int StockSimulation::GetStockLimitation(char type)
+int StockHistorySimulation::GetStockLimitation(char type)
 {
     return 0;
 }
 
-bool StockSimulation::SetStockLimitation(char type, int limitation)
+bool StockHistorySimulation::SetStockLimitation(char type, int limitation)
 {
     return false;
 }
 
-TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quote)
+TradeReport StockHistorySimulation::OrderMatch(const Order& order, const QuoteInfo& quote)
 {
     TradeReport report;
     report._price = quote._close;
@@ -414,7 +414,7 @@ TradeReport StockSimulation::OrderMatch(const Order& order, const QuoteInfo& quo
     return report;
 }
 
-QuoteInfo StockSimulation::GetQuote(symbol_t symbol) {
+QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol) {
   auto fut = std::async(std::launch::deferred, [this]() {
     Once(_cur_index);
   });
@@ -426,7 +426,7 @@ QuoteInfo StockSimulation::GetQuote(symbol_t symbol) {
   return info;
 }
 
-double StockSimulation::Progress() {
+double StockHistorySimulation::Progress() {
   auto itr = _csvs.begin();
   auto size = itr->second.get_index().size() - 1;
   return 1.0 * _cur_index / size;

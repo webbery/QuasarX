@@ -32,11 +32,11 @@ else(WIN32)
 # )
 # FetchContent_MakeAvailable(cpr)
 
+add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
 if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 add_compile_definitions(_DEBUG)
 elseif(${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-march=native -O3)
-add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
 endif()
 add_compile_definitions(JWT_DISABLE_PICOJSON)
 

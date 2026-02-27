@@ -45,6 +45,7 @@ struct StockHandle {
     int8_t _maxQuoteReq;    // 查询通道每秒最大请求数
 
     Set<char> _privileges;  // 没有交易权限的板块
+    double _fee;            // 佣金
 };
 
 struct OptionHandle {
@@ -156,6 +157,8 @@ private:
     bool ReconnectQuote();
     // 重连交易通道
     bool ReconnectTrade();
+
+    void GetStockFee();
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;

@@ -1319,5 +1319,14 @@ bool HXExchange::QueryOptionShareHolder(ExchangeName name)
 void HXExchange::GetFee(FeeInfo& fee, symbol_t symbol) {
     if (is_stock(symbol)) {
         // 当前帐号的佣金信息
+        GetStockFee();
     }
+}
+
+void HXExchange::GetStockFee() {
+    auto reqID = ++_reqID;
+    TORASTOCKAPI::CTORATstpQryTradingFeeField pQryTradingFeeField;
+    memset(&pQryTradingFeeField, 0, sizeof(TORASTOCKAPI::CTORATstpQryTradingFeeField));
+    auto promise = initPromise<String>(reqID);
+    _stockHandle._tradeAPI->ReqQryTradingFee(&pQryTradingFeeField, reqID);
 }

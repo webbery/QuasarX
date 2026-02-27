@@ -1,6 +1,7 @@
 #include "Handler/ExchangeHandler.h"
 #include "Bridge/CTP/CTPExchange.h"
-#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/StockRealSimulation.h"
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/exchange.h"
 #include "server.h"
@@ -27,12 +28,17 @@ bool ExchangeHandler::Use(const String& name) {
     _activeFutureName = name;
     et = ExchangeType::EX_CTP;
   }
-  else if (ex_type == "sim") {
-    ret = SwitchExchange<StockSimulation>(name);
-    et = ExchangeType::EX_SIM;
+  else if (ex_type == STOCK_HISTORY_SIM) {
+    ret = SwitchExchange<StockHistorySimulation>(name);
+    et = ExchangeType::EX_STOCK_HIST_SIM;
     _activeFutureName = name;
     _activeStockName = name;
     _enableSimulation = true;
+  }
+  else if (ex_type == STOCK_REAL_SIM) {
+    ret = SwitchExchange<StockRealSimulation>(name);
+    et = ExchangeType::EX_STOCK_REAL_SIM;
+    _activeStockName = name;
   }
   else if (ex_type == HX_API) {
       ret = SwitchExchange<HXExchange>(name);
@@ -81,7 +87,7 @@ bool ExchangeHandler::Use(const String& name) {
 
 ExchangeInterface* ExchangeHandler::GetExchangeByType(ExchangeType type) {
   if (_enableSimulation) { // 模拟场景下强制返回仿真环境
-    return _type_excs[ExchangeType::EX_SIM];
+    return _type_excs[ExchangeType::EX_STOCK_HIST_SIM];
   }
   return _type_excs[type];
 }

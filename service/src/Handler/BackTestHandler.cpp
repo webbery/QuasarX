@@ -1,5 +1,5 @@
 #include "Handler/BackTestHandler.h"
-#include "Bridge/SIM/SIMExchange.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/system.h"
@@ -36,7 +36,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    auto exchange = (StockSimulation*)_server->GetExchange(ExchangeType::EX_SIM);
+    auto exchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
     if (!exchange) {
         res.status = 400;
         res.set_content("{message: 'mode[SIM] is not correct.'}", "application/json");

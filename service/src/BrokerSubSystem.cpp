@@ -451,7 +451,7 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
 
     if (_simulation) {
-        return _exchanges[ExchangeType::EX_SIM]->AddOrder(GET_SYMBOL(order), order);
+        return _exchanges[ExchangeType::EX_STOCK_HIST_SIM]->AddOrder(GET_SYMBOL(order), order);
     }
     // 邮件通知
     String content;
@@ -660,7 +660,7 @@ double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principa
   auto cost = comm->GetCommission(symbol, count);
 
   // 当前实盘价格
-  auto latest_quote = _exchanges[ExchangeType::EX_SIM]->GetQuote(symbol);
+  auto latest_quote = _exchanges[ExchangeType::EX_STOCK_HIST_SIM]->GetQuote(symbol);
   double price = latest_quote._close;
   double total = count * price + cost;
   if (total > principal)
@@ -678,7 +678,7 @@ double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principa
 }
 
 double BrokerSubSystem::SimulateMatchStockSeller(symbol_t symbol, const Order& order, TradeInfo& deal) {
-  auto latest_quote = _exchanges[ExchangeType::EX_SIM]->GetQuote(symbol);
+  auto latest_quote = _exchanges[ExchangeType::EX_STOCK_HIST_SIM]->GetQuote(symbol);
   double price = latest_quote._close;
   if (price == 0)
     return price;
