@@ -47,7 +47,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         // run(params, res);
     }
     else if (mode == 2) {
-        // 部署模拟盘到策略服务
+        // 部署策略到模拟盘
         virtual_deploy(params, res);
         // 连接策略服务
     }

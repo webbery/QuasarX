@@ -14,7 +14,7 @@ public:
   StockHistorySimulation(Server*);
   ~StockHistorySimulation();
 
-  virtual const char* Name() { return "SIM"; }
+  virtual const char* Name() { return STOCK_HISTORY_SIM; }
   virtual bool Init(const ExchangeInfo& handle);
   virtual bool Release();
 

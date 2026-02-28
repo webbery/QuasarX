@@ -16,7 +16,7 @@
                         "options": ["股票", "期货"]
                     },
                     "code": {
-                        "value": ["000001"],
+                        "value": ["sz.000001"],
                         "type": "text"
                     },
                     "freq": {
@@ -56,7 +56,7 @@
                 "nodeType": "test",
                 "params": {
                     "code": {
-                        "value": ["000001"],
+                        "value": ["sz.000001"],
                         "type": "text"
                     }
                 }
@@ -123,34 +123,10 @@
     ],
     "edges": [
         {
-            "id": "1-close->2",
+            "id": "1-close->6",
             "source": "1",
-            "target": "2",
-            "sourceHandle": "1-close",
-            "targetHandle": "2",
-            "type": "default"
-        },
-        {
-            "id": "1-close->3",
-            "source": "1",
-            "target": "3",
-            "sourceHandle": "1-close",
-            "targetHandle": "3",
-            "type": "default"
-        },
-        {
-            "id": "3->6",
-            "source": "3",
             "target": "6",
-            "sourceHandle": "3",
-            "targetHandle": "6",
-            "type": "default"
-        },
-        {
-            "id": "2->6",
-            "source": "2",
-            "target": "6",
-            "sourceHandle": "2",
+            "sourceHandle": "1-close",
             "targetHandle": "6",
             "type": "default"
         },

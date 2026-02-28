@@ -448,6 +448,10 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
     _historyTrades[ctx._order._symbol].emplace_back(std::move(act));
 }
 
+void BrokerSubSystem::CleanStrategyRecord() {
+
+}
+
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
 
     if (_simulation) {

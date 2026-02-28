@@ -169,8 +169,8 @@ void StockHistorySimulation::LoadT1(const String& code) {
         subdir = "A_hfq";
         orgdir = "AStock";
     }
-    auto file_path = _org_path + "/" + subdir + "/" + code + "_hist_data.csv";
-    auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + "_hist_data.csv";
+    auto file_path = _org_path + "/" + subdir + "/" + code + ".csv";
+    auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + ".csv";
     int index = 0;
     std::ifstream ifs, base_fs;
     ifs.open(file_path);
@@ -207,7 +207,7 @@ void StockHistorySimulation::LoadT1(const String& code) {
 
         base_fs.open(primitive_file_path);
         if (base_fs.is_open()) {
-            // 对齐时间
+            // TODO:对齐时间
             base_fs.close();
         }
         if (header.empty())
@@ -294,6 +294,11 @@ void StockHistorySimulation::QueryQuotes() {
 }
 
 bool StockHistorySimulation::Once(uint32_t& curIndex) {
+  if (_csvs.empty()) {
+    WARN("Quote is empty");
+    _finish = true;
+    return false;
+  }
   for (auto& df : _csvs) {
       auto num = df.second.get_index().size();
       if (curIndex >= num - 1) {

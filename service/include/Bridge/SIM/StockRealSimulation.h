@@ -9,9 +9,13 @@ public:
     StockRealSimulation(Server* server);
     ~StockRealSimulation();
 
+    virtual const char* Name() { return STOCK_REAL_SIM; }
+
     virtual order_id AddOrder(const symbol_t& symbol, OrderContext* order);
     virtual Boolean CancelOrder(order_id id, OrderContext* order);
     virtual void OnOrderReport(order_id id, const TradeReport& report);
     virtual bool GetOrders(SecurityType type, OrderList& ol);
     virtual bool GetOrder(const String& sysID, Order& ol);
+
+private:
 };

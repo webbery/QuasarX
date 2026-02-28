@@ -248,13 +248,14 @@ const handleLogin = () => {
     isSubmitting.value = true;
     if (validateForm()) {
         const fs = require('fs')
-        const certificate = fs.readFileSync('src/assets/server.crt', 'utf-8')
+        // const certificate = fs.readFileSync('src/assets/server.crt', 'utf-8')
         const https = require('https');
-        const httpsAgent = new https.Agent({
-          rejectUnauthorized: false, // 如果是自签名证书，需要设置这个选项为 false
-          // cert: certificate, // 证书文件
-        })
-        let url = 'https://'+ loginForm.server + '/v0/user/login'
+        // const httpsAgent = new https.Agent({
+        //   rejectUnauthorized: false, // 如果是自签名证书，需要设置这个选项为 false
+        //   // cert: certificate, // 证书文件
+        // })
+        const protoc = 'https://'
+        let url = protoc + loginForm.server + '/v0/user/login'
         fetch(url, {
           method: 'POST',
           headers: {
@@ -284,7 +285,7 @@ const handleLogin = () => {
               }
               return config
             })
-            axios.defaults.baseURL = 'https://' + loginForm.server
+            axios.defaults.baseURL = protoc + loginForm.server
             axios.defaults.headers.common['Authorization'] = token
             const agent = new https.Agent({  
                 rejectUnauthorized: false // 忽略证书错误

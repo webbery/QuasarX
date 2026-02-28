@@ -124,6 +124,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Test:
             nodeInstance = generate_node<TestNode>(node["id"], server);
+            break;
         default:
             INFO("unknow node type: {}", node_type);
             break;

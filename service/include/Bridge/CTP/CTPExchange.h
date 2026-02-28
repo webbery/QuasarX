@@ -11,7 +11,7 @@ public:
     CTPExchange(Server* server);
     ~CTPExchange();
 
-    virtual const char* Name() { return "CTP"; }
+    virtual const char* Name() { return CTP_API; }
     virtual bool Init(const ExchangeInfo& handle);
 
     virtual bool Release();

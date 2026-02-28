@@ -3,6 +3,7 @@
 #include <fstream>
 #include <utility>
 #include "Util/string_algorithm.h"
+#include "Bridge/exchange.h"
 
 using namespace std;
 
@@ -284,6 +285,10 @@ nlohmann::json& ServerConfig::GetStockLimits()
     return _config["limit"]["stock"];
 }
 
+std::string ServerConfig::GetLLMKey() {
+    return _config["server"]["llmkey"];
+}
+
 void ServerConfig::Init()
 {
     nlohmann::json config;
@@ -294,7 +299,7 @@ void ServerConfig::Init()
     broker["type"] = "stock";
     config["broker"].emplace_back(std::move(broker));
     nlohmann::json sim_exchange;
-    sim_exchange["api"] = "sim";
+    sim_exchange["api"] = STOCK_HISTORY_SIM;
     sim_exchange["name"] = "stock-sim";
     sim_exchange["pool"] = std::vector<String>();
     sim_exchange["quote"] = DATA_PATH;
@@ -314,7 +319,8 @@ void ServerConfig::Init()
         {"record", {"*"}},
         {"strategy", {}},
     };
-    server["jwt"] = "2025_09_jwt_update_key";
+    server["llmkey"] = "";
+    server["jwt"] = "";
     server["notice"] = { {"email", ""} };
     server["passwd"] = "admin";
     server["user"] = "admin";

@@ -102,7 +102,7 @@ float annual_return_ratio(const crash_flow_t& flow, const DataContext& context, 
     // 获取时间轴
     auto& times = context.GetTime();
     if (times.empty()) {
-        return annual_returns.back();
+        return 0;
     }
     
     // 1. 计算每日组合价值和现金流

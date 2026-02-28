@@ -1,8 +1,9 @@
 #pragma once
 #include "StrategyNode.h"
+#include "Function/Function.h"
 
 /**
- * @brief 用于测试策略流程
+ * @brief 用于测试策略流程,使用R^2指标及
  */
 class TestNode: public QNode {
 public:
@@ -17,4 +18,9 @@ public:
 
     virtual bool Init(const nlohmann::json& config);
     virtual bool Process(const String& strategy, DataContext& context);
+
+private:
+    Set<String> _input_keys;
+
+    R2* _pR2 = nullptr;
 };

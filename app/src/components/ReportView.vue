@@ -7,8 +7,8 @@
                     <div class="title-icon">💹</div>
                     <span>Price Trend & Trading Signals</span>
                     <div class="chart-controls">
-                        <select v-model="selectedSymbol" @change="updatePriceChart">
-                            <option value="000001">000001</option>
+                        <select @change="updatePriceChart">
+                            <option v-for="symbol in selectedSymbol" :key="symbol">{{ symbol }}</option>
                         </select>
                     </div>
                 </div>

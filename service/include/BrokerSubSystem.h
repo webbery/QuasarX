@@ -114,6 +114,9 @@ public:
     virtual void CancelOrder(order_id& id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
     // 记录交易
     void RecordTrade(const OrderContext& );
+    // 清除历史交易信息
+    void CleanStrategyRecord();
+
     // 注册统计指标
     void RegistIndicator(const String& strategy, StatisticIndicator indicator);
     void UnRegistIndicator(const String& strategy, StatisticIndicator indicator);

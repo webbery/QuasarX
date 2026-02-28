@@ -2,6 +2,7 @@
 #include "Util/datetime.h"
 #include <type_traits>
 #include <variant>
+#include <Eigen/Dense>
 
 MA::MA(short count): _count(0), _nextIndex(0), _sum(0.) {
     _buffer.resize(count, 0.0);
@@ -94,5 +95,41 @@ context_t R2::operator()(const Map<String, context_t>& args) {
     auto itr = args.begin();
     auto& prop_name = itr->first;
     auto& vec = std::get<Vector<double>>(itr->second);
-    return 0.;
+    const int32_t n = static_cast<int32_t>(vec.size());
+
+    // 检查数据量是否足够
+    if (n < _window || _window < 2) {
+        return std::nan("nan");
+    }
+    // 取最后 _window 个数据点作为因变量 y
+    auto start = vec.end() - _window;
+    Eigen::Map<const Eigen::VectorXd> y(&(*start), _window);
+    
+    // 构造自变量 x：0, 1, ..., _window-1
+    Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(_window, 0, _window - 1);
+    
+    // 构建设计矩阵 X = [1, x]
+    Eigen::MatrixXd X(_window, 2);
+    X.col(0).setOnes();
+    X.col(1) = x;
+    
+    // 使用 QR 分解求解线性回归系数
+    Eigen::VectorXd coeff = X.colPivHouseholderQr().solve(y);
+    
+    // 计算预测值、残差平方和 SSE 及总平方和 SST
+    Eigen::VectorXd y_pred = X * coeff;
+    double SSE = (y - y_pred).squaredNorm();
+    double SST = (y.array() - y.mean()).square().sum();
+    
+    // 若总平方和接近于零（所有 y 相等），返回 NaN
+    if (std::abs(SST) < 1e-12) {
+        return std::nan("nan");
+    }
+    
+    double R2 = 1.0 - SSE / SST;
+    // 因浮点误差可能略超出 [0,1]，进行截断
+    if (R2 < 0.0) R2 = 0.0;
+    if (R2 > 1.0) R2 = 1.0;
+    
+    return R2;
 }

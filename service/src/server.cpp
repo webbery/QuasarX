@@ -326,6 +326,10 @@ void Server::InitDefault() {
             _runType = RuningType::Backtest;
             break;
         }
+        else if ((String)exchange["api"] == STOCK_REAL_SIM) {
+            _runType = RuningType::Simualtion;
+            break;
+        }
     }
 
     if (!use_sim) { // 开启模拟数据的情况下，不记录数据
@@ -343,7 +347,6 @@ void Server::InitDefault() {
             }
             recorder->StartRecord(true);
         }
-    } else {
         _runType = RuningType::Real;
     }
     
@@ -373,8 +376,8 @@ void Server::InitDefault() {
 
     if (default_config.contains("strategy")) {
         auto& strategies = default_config["strategy"];
-        if (strategies.contains("sim")) {
-            for (String name: strategies["sim"]) {
+        if (strategies.contains(STOCK_HISTORY_SIM)) {
+            for (String name: strategies[STOCK_HISTORY_SIM]) {
                 _strategySystem->SetupSimulation(name);
             }
         }
@@ -422,7 +425,7 @@ bool Server::InitMarket(const std::string& path) {
     for (String name: exchangeNames) {
         auto& info = _config->GetExchangeByName(name);
         if (info["type"] == "stock") {
-            if (info["api"] == "sim") {
+            if (info["api"] == STOCK_HISTORY_SIM) {
                 InitStocks(path);
             } else {
                 // TODO: 通过接口获取
@@ -430,7 +433,7 @@ bool Server::InitMarket(const std::string& path) {
             }
         }
         else if (info["type"] == "future") {
-            if (info["api"] == "sim") {
+            if (info["api"] == FEATURE_HISTORY_SIM) {
                 InitFutures(path);
             } else {
                 // TODO: 通过接口获取
@@ -924,7 +927,7 @@ void Server::TimerWorker(nng_socket sock) {
 void Server::UpdateQuoteQueryStatus(time_t curr) {
     auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
     for (auto exchange: handler->GetExchanges()) {
-        if (strcmp(exchange.second->Name(),"SIM") == 0) {
+        if (strcmp(exchange.second->Name(), STOCK_HISTORY_SIM) == 0) {
             continue;
         }
         if (exchange.second->IsWorking(curr)) {

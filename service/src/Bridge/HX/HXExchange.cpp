@@ -123,7 +123,7 @@ HXExchange::~HXExchange(){
 }
 
 const char* HXExchange::Name(){
-    return "HX";
+    return HX_API;
 }
 
 void HXExchange::addPromise(uint64_t reqID, std::shared_ptr<void> promise) {

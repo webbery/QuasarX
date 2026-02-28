@@ -63,6 +63,8 @@ public:
 
   nlohmann::json& GetStockLimits();
 
+  std::string GetLLMKey();
+  
 private:
     void Init();
 

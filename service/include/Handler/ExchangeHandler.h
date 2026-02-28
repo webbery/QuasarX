@@ -3,12 +3,6 @@
 #include "HttpHandler.h"
 #include "server.h"
 
-#define XTP_API     "xtp"   // 
-#define CTP_API     "ctp"   // 
-#define HX_API      "hx"   // 
-#define STOCK_HISTORY_SIM "stock_hist_sim"
-#define STOCK_REAL_SIM    "stock_real_sim"
-
 class ExchangeInterface;
 class ExchangeHandler : public HttpHandler {
 public:

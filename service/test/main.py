@@ -21,6 +21,6 @@ if __name__ == "__main__":
         result = subprocess.run(["pytest", "testcases/"], check=False)
 
     # 退出
-    exit_uri = "http://localhost:19107/v0" + "/exit"
+    exit_uri = "https://localhost:19107/v0" + "/exit"
     response = requests.post(exit_uri)
     

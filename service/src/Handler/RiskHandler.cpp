@@ -321,3 +321,7 @@ void DrawdownHandler::get(const httplib::Request& req, httplib::Response& res) {
     int type = params["range"];
     String symbol = params["symbol"];
 }
+
+void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res) {
+
+}
