@@ -25,11 +25,11 @@
                         <label>别名</label>
                         <input type="text" class="form-control" v-model="serverForm.name" placeholder="别名">
                     </div>
-                    <div class="form-group" v-if="serverForm.authMethod === 'password'">
+                    <div class="form-group" >
                         <label>密码</label>
                         <input type="password" class="form-control" v-model="serverForm.password" placeholder="密码" style="margin-top: 10px;">
                     </div>
-                    <button class="btn btn-primary" @click="addServer">添加服务器</button>
+                    <button class="btn btn-primary" @click="addNewServer">添加服务器</button>
                 </div>
             </div>
             <!-- 股票设置 -->
@@ -162,11 +162,14 @@
 </template>
 <script setup>
 import axios from 'axios';
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject } from 'vue'
 import Store from 'electron-store';
 import { message } from '@/tool'
 
 const store = new Store();
+
+const addServer = inject('addServer')
+
 // 展开/收缩状态管理
 const expandedSections = ref({
     server: false,
@@ -184,7 +187,6 @@ const serverForm = ref({
     address: '',
     name: '',
     port: 19107,
-    authMethod: 'password',
     username: 'admin',
     password: '',
     privateKey: ''
@@ -195,7 +197,6 @@ const stockSettings = ref({
     perSecondOrderLimit: 20,
     perSecondCancelLimit: 5
 });
-const servers = ref(store.get('servers'));
 
 // 密码修改数据
 const passwordForm = ref({
@@ -285,7 +286,7 @@ const updateStockSettings = async () => {
     }
     updateStockSettingsLoading.value = false;
 };
-const addServer = () => {
+const addNewServer = () => {
     if (!serverForm.value.address) {
         alert('地址不能为空');
         return;
@@ -298,15 +299,14 @@ const addServer = () => {
         alert('名字不能为空');
         return;
     }
-    if (!servers.value) {
-        servers.value = []
-    }
-    servers.value.push({
-        address: serverForm.value.address,
+    const newServer = {
         name: serverForm.value.name,
-        passwd: serverForm.value.password
-    });
-    store.set('servers', servers.value)
+        address: serverForm.value.address,
+        passwd: serverForm.value.password  // 假设 SettingPanel 中使用 passwd 字段
+    }
+    addServer(newServer)
+    // 清空表单
+    serverForm.value = { address: '', name: '', password: '' }
 };
 
 const updatePassword = () => {

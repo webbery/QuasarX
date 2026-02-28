@@ -166,6 +166,7 @@ import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 import PositionManager from "./components/PositionManager.vue";
 import TradePanel from "./components/TradePanel.vue";
 import sseService from "./ts/SSEService";
+import Store from 'electron-store';
 
 // 定义视图状态常量
 const VIEWS = {
@@ -177,10 +178,12 @@ const VIEWS = {
   POSITION_VIEW: 'position',
   RISK_VIEW: 'risk'
 };
+const store = new Store()
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 let isBacktesting = ref(false);
+const servers = ref(store.get('servers') || [])
 let selectedAccount;
 
 // 根据当前视图动态计算活动组件
@@ -231,6 +234,24 @@ const onSystemStatus = (message) => {
   cpu.value = (infos['cpu'] * 100).toFixed(1);
   memUsage.value = (parseFloat(infos['mem'])*unit).toFixed(2);
   totalmem.value = (parseFloat(infos["total"])*unit).toFixed(2);
+}
+
+const addServer = (server) => {
+  servers.value.push(server)
+  store.set('servers', servers.value) // 同步到持久化存储
+}
+
+const deleteServer = (serverName) => {
+  servers.value = servers.value.filter(s => s.name !== serverName)
+  store.set('servers', servers.value)
+}
+
+const updateServer = (oldName, newData) => {
+  const index = servers.value.findIndex(s => s.name === oldName)
+  if (index !== -1) {
+    servers.value[index] = { ...servers.value[index], ...newData }
+    store.set('servers', servers.value)
+  }
 }
 
 const onLoginSucess = () => {
@@ -339,6 +360,10 @@ const handleSecuritySelection = (securityData) => {
 
 provide('handleSecuritySelection', handleSecuritySelection)
 provide('highlightTradePanel', highlightTradePanel)
+provide('servers', servers)
+provide('addServer', addServer)
+provide('deleteServer', deleteServer)
+provide('updateServer', updateServer)
 </script>
 
 <style scoped>
