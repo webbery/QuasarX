@@ -95,8 +95,10 @@ import Store from 'electron-store';
 import { message } from '@/tool';
 import sseService from '@/ts/SSEService';
 import { getGlobalStorage } from '@/ts/globalStorage';
+import { useAccountStore } from '@/stores/account'
 
 const store = new Store();
+const accountStore = useAccountStore()
 const globalStorage = getGlobalStorage()
 
 const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
@@ -293,7 +295,8 @@ const handleLogin = () => {
             axios.defaults.httpsAgent = agent
 
             // 登录成功后触发账户数据刷新
-            window.dispatchEvent(new Event('loginSuccess'))
+            // window.dispatchEvent(new Event('loginSuccess'))
+            await accountStore.fetchAccountData()
             sseService.connect(token)
             let removeInfo = selectedServer.value.label
             if (mode === 'Backtest') {

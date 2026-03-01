@@ -159,6 +159,9 @@ import axios from 'axios';
 import { getGlobalStorage } from '@/ts/globalStorage';
 import getZh from '@/ts/i18n';
 import {errorCode,  ErrorCodeMap} from '@/ts/ErrorCode';
+import { useAccountStore } from '@/stores/account'
+
+const accountStore = useAccountStore()
 
 interface SecurityInfo {
   name: string;
@@ -178,7 +181,6 @@ const selectedPriceType = ref('limit')
 const price = ref('')
 const followLatestPrice = ref(false)
 const quantity = ref('')
-const availableFunds = ref('0')
 const statusMessage = ref('')
 const isSubmitting = ref(false)
 // 高亮状态
@@ -254,6 +256,8 @@ const quantityUnit = computed(() => {
     }
     return '股'
 })
+
+const availableFunds = computed(() => accountStore.availableFunds.toLocaleString())
 
 const priceUnit = computed(() => {
     // 根据交易所和类型确定价格单位
@@ -487,7 +491,7 @@ const submitTrade = async () => {
         // TODO: 发送消息更新持仓信息
         statusMessage.value = `${operationText}订单提交成功`
         // TODO:更新可用资金
-        await updateCapital()
+        
     } catch (error) {
         statusMessage.value = `${operationText}订单提交失败`
         if (axios.isAxiosError(error)) {
@@ -565,12 +569,6 @@ const resetForm = () => {
     quantity.value = ''
     followLatestPrice.value = false
     statusMessage.value = '等待输入'
-}
-
-const updateCapital = async () => {
-    const response = await axios.get('/v0/user/funds')
-    const data = response.data
-    availableFunds.value = data.funds.toLocaleString() || 0
 }
 
 </script>

@@ -8,7 +8,7 @@
               <span v-if="activeMarketTab === 'stock'">股票</span>
               <span v-else-if="activeMarketTab === 'option'">期权</span>
               <span v-else-if="activeMarketTab === 'future'">期货</span>
-              总盈亏: {{ totalProfit }}
+              总盈亏: {{ accountStore.todayPL.toFixed(4) }}
             </span>
 
             <div class="tab-navigation">
@@ -311,8 +311,12 @@ import { ref, computed, onMounted, reactive, inject, onUnmounted } from 'vue'
 import sseService from '@/ts/SSEService';
 import { message } from '@/tool';
 import { sortOrders } from 'element-plus/es/components/table-v2/src/constants';
+import { useAccountStore } from '@/stores/account'
 
 const STOCK_ORDER = 'stockOrders'
+
+const accountStore = useAccountStore()
+
 // 市场选项卡
 const activeMarketTab = ref('stock');
 
@@ -1022,7 +1026,7 @@ const onPositionUpdate = (message) => {
     stockPositions.value.push(stock)
     totalProfitValue += profit
   }
-  totalProfit.value = totalProfitValue.toFixed(4)
+  accountStore.todayPL = totalProfitValue
 }
 
 const onOrderUpdate = (message) => {
@@ -1063,6 +1067,9 @@ const handleStockCancel = () => {
           const sysID = order.sysID
           delIds.push(sysID)
       }
+      if (delIds.length == 0)
+        return
+
       const params = {
         sysID: delIds,
         type: 0   // 股票
@@ -1108,14 +1115,14 @@ onMounted(() => {
   sseService.on('update_position', onPositionUpdate)
   sseService.on('update_order', onOrderUpdate)
   sseService.on('order_success', onOrderSuccess)
-  sseService.on('trade_report', onTradeReport)
+  // sseService.on('trade_report', onTradeReport)
 })
 onUnmounted(() => {
   // 清理处理器
   sseService.off('order_success', onOrderSuccess)
   sseService.off('update_position', onPositionUpdate)
   sseService.off('update_order', onOrderUpdate)
-  sseService.off('trade_report', onTradeReport)
+  // sseService.off('trade_report', onTradeReport)
 })
 </script>
 

@@ -386,8 +386,9 @@ void BrokerSubSystem::run() {
   ER(mdb_env_open(_env, _dbpath.c_str(), MDB_CREATE | MDB_NOTLS | MDB_NORDAHEAD | MDB_NOSUBDIR | MDB_NOLOCK | MDB_WRITEMAP, 0664));
   ER(mdb_txn_begin(_env, NULL, MDB_WRITEMAP, &_txn));
 
-  // initialize
-  auto dbi = GetDBI(1, _txn);
+  // 不同模式使用不同的数据库
+  int db_id = 1;
+  auto dbi = GetDBI(db_id, _txn);
   InitPortfolio(_txn, dbi);
   InitBrokers(_txn, dbi);
   InitHistory(_txn, dbi);
@@ -421,6 +422,7 @@ void BrokerSubSystem::run() {
         if (ctx->_flag) {
             // TODO: 日志记录
             if (ctx->_success) {
+                RecordTrade(*ctx);
                 LOG("Order Success:{}", ctx->_order);
             }
             LOG("Delete Order {}", ctx->_order._id);

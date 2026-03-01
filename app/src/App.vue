@@ -97,7 +97,10 @@
 
     <!-- 主内容区 -->
     <main class="main-content">
-      <component :is="activeComponent" ref="dynamicComponentRef"/>
+      <component :is="activeComponent" ref="dynamicComponentRef"
+        @show-history="onShowHistory"
+        @show-flow-components="onShowFlowComponents"
+      />
     </main>
 
     <!-- 右侧面板 -->
@@ -109,7 +112,8 @@
         <RiskPanel></RiskPanel>
       </div>
       <div v-else-if="is_strategy">
-        <FlowComponents></FlowComponents>
+        <StrategyPanel v-if="selectedStrategyPanel"></StrategyPanel>
+        <FlowComponents v-else></FlowComponents>
       </div>
       <div v-else-if="is_setting">
         <SettingPanel :enableOperation="useOperaion"></SettingPanel>
@@ -154,7 +158,6 @@ import RiskManagerVue from "./components/RiskManager.vue";
 import StrategyVue from "./components/Strategy.vue";
 import MarketPanel from "./components/MarketPanel.vue";
 import AccountView from "./components/AccountView.vue";
-import StrategyPanel from "./components/StrategyPanel.vue";
 import RiskPanel from "./components/RiskPanel.vue";
 import StrategyFactory from "./components/StrategyFactory.vue";
 import FlowComponents from "./components/FlowComponents.vue";
@@ -165,6 +168,7 @@ import SettingPanel from "./components/SettingPanel.vue";
 import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 import PositionManager from "./components/PositionManager.vue";
 import TradePanel from "./components/TradePanel.vue";
+import StrategyPanel from "./components/StrategyPanel.vue";
 import sseService from "./ts/SSEService";
 
 // 定义视图状态常量
@@ -181,6 +185,7 @@ const VIEWS = {
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 let isBacktesting = ref(false);
+let selectedStrategyPanel = ref(false); // 默认显示策略组件的节点面板
 let selectedAccount;
 
 // 根据当前视图动态计算活动组件
@@ -244,6 +249,14 @@ const initServerEvent = () => {
 
 const uninitServerEvent = () => {
   sseService.off('system_status', onSystemStatus)
+}
+
+const onShowHistory = () => {
+  selectedHistoryStrategy.value = true
+}
+
+const onShowFlowComponents = () => {
+  selectedHistoryStrategy.value = false
 }
 
 onMounted(() => {

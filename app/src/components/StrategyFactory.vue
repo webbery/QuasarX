@@ -72,22 +72,22 @@
           </div>
           <!-- 右下角功能按钮 -->
           <div class="flow-actions">
-            <button class="action-btn" @click="newFlow" title="新建流程图">
+            <button class="action-btn" @click="newFlow" title="新建策略图">
                 <i class="fas fa-plus"></i>
                 新建
             </button>
-            <button class="action-btn" @click="saveFlow" title="保存流程图">
+            <button class="action-btn" @click="saveFlow" title="保存策略图">
                 <i class="fas fa-save"></i>
                 保存
             </button>
-            <button class="action-btn" @click="reloadFlow" title="重新载入流程图">
+            <button class="action-btn" @click="showHistoryStrategy" title="策略面板">
                 <i class="fas fa-redo"></i>
-                重新载入
+                策略面板
             </button>
-            <!-- <button class="action-btn run-btn" @click="runBacktest" title="运行回测">
+            <button class="action-btn" @click="showStrategyNodes" title="节点面板">
                 <i class="fas fa-play"></i>
-                运行回测
-            </button> -->
+                节点面板
+            </button>
           </div>
         </div>
       </div>
@@ -123,7 +123,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted, provide, watch, nextTick } from 'vue'
+import { ref, onMounted, computed, onUnmounted, provide, watch, nextTick, defineEmits } from 'vue'
 import { useVueFlow, VueFlow, MarkerType } from '@vue-flow/core'
 import { message } from '@/tool'
 import FlowNode from './flow/FlowNode.vue'
@@ -156,6 +156,7 @@ const activeTab = ref('flow')
 const selectedNodes = ref([])
 const selectedEdges = ref([])
 const reportViewRef = ref(null)
+const emit = defineEmits(['show-history', 'show-flow-components'])
 // localStorage 键名
 const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
 const LAST_BACKTEST_RESULT = 'last_backtest_result'
@@ -344,17 +345,17 @@ const clearSelection = () => {
 }
 
 // 选择拖动相关事件
-const onSelectionDragStart = () => {
-    console.log('开始拖动选择')
-}
+// const onSelectionDragStart = () => {
+//     console.log('开始拖动选择')
+// }
 
-const onSelectionDrag = () => {
-    console.log('拖动选择中')
-}
+// const onSelectionDrag = () => {
+//     console.log('拖动选择中')
+// }
 
-const onSelectionDragStop = () => {
-    console.log('停止拖动选择')
-}
+// const onSelectionDragStop = () => {
+//     console.log('停止拖动选择')
+// }
 
 // 右键菜单
 const onSelectionContextMenu = (event) => {
@@ -923,14 +924,19 @@ const loadSavedFlow = async () => {
 }
 
 // 重新载入流程图
-const reloadFlow = () => {
-  if (confirm('确定要重新载入上次保存的流程图吗？当前未保存的更改将会丢失。')) {
-    loadSavedFlow()
-    // 重新适应视图
-    setTimeout(() => {
-      fitView({ padding: 0.25 })
-    }, 100)
-  }
+const showHistoryStrategy = () => {
+  // if (confirm('确定要重新载入上次保存的流程图吗？当前未保存的更改将会丢失。')) {
+  //   loadSavedFlow()
+  //   // 重新适应视图
+  //   setTimeout(() => {
+  //     fitView({ padding: 0.25 })
+  //   }, 100)
+  // }
+  emit('show-history') // 触发显示历史策略面板事件
+}
+
+const showStrategyNodes = () => {
+  emit('show-flow-components') // 触发显示节点组件面板事件
 }
 
 const runBacktest = async () => {
