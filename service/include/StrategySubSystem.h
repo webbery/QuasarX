@@ -4,6 +4,8 @@
 #include "Util/system.h"
 #include "StrategyNode.h"
 
+#define SCRIPTS_DIR     "scripts"
+
 class StrategyPlugin;
 class FeatureSubsystem;
 class FlowSubsystem;
@@ -50,13 +52,31 @@ public:
     ~StrategySubSystem();
 
     void Init();
-    void Init(const String& strategy, const List<QNode*>& flow);
+    void InitStrategy(const String& strategy, const nlohmann::json& script);
+    void InitStrategy(const String& strategy, const List<QNode*>& flow);
 
     void Release();
+    void ReleaseStrategy(const String& strategy);
 
+    /**
+     * 运行载入的策略
+     */
     bool Run(const String& strategy);
+    /**
+     * 停止运行策略
+     */
+    void Stop(const String& strategy);
 
     List<String> GetStrategyNames();
+
+    /**
+     * 从脚本中载入策略
+     */
+    bool InstallStrategy(const String& strategy);
+    /**
+     * 卸载内存中的策略
+     */
+    bool UninstallStrategy(const String& strategy);
 
     bool HasStrategy(const String& name);
 

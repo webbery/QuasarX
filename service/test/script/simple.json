@@ -2,6 +2,7 @@
     "id": "simple",
     "name": "测试",
     "description": "基本流水线",
+    "status": "valid",
     "nodes": [
         {
             "id": "1",

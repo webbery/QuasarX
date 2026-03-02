@@ -1103,12 +1103,12 @@ const queryAllStockOrders = async () => {
   }
 }
 onMounted(() => {
-  // 首次查询当前订单
-  queryAllStockOrders()
   sseService.on('update_position', onPositionUpdate)
   sseService.on('update_order', onOrderUpdate)
   sseService.on('order_success', onOrderSuccess)
   sseService.on('trade_report', onTradeReport)
+  // 首次查询当前订单
+  queryAllStockOrders()
 })
 onUnmounted(() => {
   // 清理处理器

@@ -1,6 +1,7 @@
 #include "Handler/OrderHandler.h"
 #include "Bridge/exchange.h"
 #include "DataGroup.h"
+#include "HttpHandler.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
 #include <cstdint>
@@ -287,4 +288,17 @@ TradeInfo OrderHandler::SellORder(symbol_t symbol, const Order& order)
     TradeInfo trades;
     broker->Sell("", symbol, order, trades);
     return trades;
+}
+
+HistoryTradeHandler::HistoryTradeHandler(Server* server)
+:HttpHandler(server) {
+
+}
+
+HistoryTradeHandler::~HistoryTradeHandler() {
+
+}
+
+void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& res) {
+
 }
