@@ -41,23 +41,13 @@ private:
   std::map<std::string, std::set<order_id>> _orders;
 };
 
-class OrderSellHandler : public HttpHandler {
+/**
+ * 历史交易数据
+ */
+class HistoryTradeHandler: public HttpHandler {
 public:
-    OrderSellHandler(Server* server);
-    ~OrderSellHandler(){}
-
-    virtual void post(const httplib::Request& req, httplib::Response& res);
-
-private:
-    int64_t SellAsyn();
-    TradeInfo Sell(symbol_t symbol, const Order& order);
-};
-
-class OrderCancelHandler : public HttpHandler {
-public:
-    OrderCancelHandler(Server* server);
-    ~OrderCancelHandler(){}
-
-    virtual void post(const httplib::Request& req, httplib::Response& res);
-
+  HistoryTradeHandler(Server* server);
+  ~HistoryTradeHandler();
+  
+    virtual void get(const httplib::Request& req, httplib::Response& res);
 };

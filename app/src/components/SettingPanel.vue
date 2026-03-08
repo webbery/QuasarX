@@ -32,7 +32,7 @@
                 <button class="btn btn-edit" @click="editServer(server)">
                     <i class="fas fa-key"></i> 修改密码
                 </button>
-                <button class="btn btn-delete" @click="deleteServer(server.name)">
+                <button class="btn btn-delete" @click="deleteOrgServer(server.name)">
                     <i class="fas fa-trash"></i> 删除
                 </button>
             </div>
@@ -41,30 +41,28 @@
 </template>
 <script setup>
 import Store from 'electron-store';
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject } from 'vue'
 
-const store = new Store();
-let servers = ref([])
+const servers = inject('servers')          // 响应式数据
+const deleteServer = inject('deleteServer')
+const updateServer = inject('updateServer')
 
 onMounted(() => {
-    let data = store.get('servers')
-    if (!data)
-        return
-    for (const item of data) {
-        console.info(item)
-        servers.value.push({
-            name: item.name,
-            address: item.address,
-            editingValue: item.name,
-            edit: false
-        })
-    }
+    
 })
-const deleteServer = (severName) => {
-    for (let item in servers.value) {
-        
+const deleteOrgServer = (serverName) => {
+    if (confirm('确定删除该服务器吗？')) {
+        deleteServer(serverName)
     }
 }
+
+const saveEditing = (server) => {
+  if (server.editingValue && server.editingValue !== server.name) {
+    updateServer(server.name, { name: server.editingValue })
+  }
+  server.edit = false
+}
+
 </script>
 <style scoped>
 .server-details {

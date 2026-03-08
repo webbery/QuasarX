@@ -41,6 +41,42 @@ class TestStrategy:
         with open(script_path, 'r', encoding='utf-8') as file:
             return json.load(file)  # data 现在是 Python 字典或列表
 
+    def post_strategy(self, auth_token):
+        pass
+
+    @pytest.mark.timeout(5)
+    def test_deploy(self, auth_token):
+        '''
+        部署并运行策略
+        '''
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+        
+        script_path = './script/ma.json'
+        script = self.load_script(script_path)
+        kwargs['json'] = {
+            'mode': 0, 'name': 'ma', 'script': script
+        }
+        response = requests.post(f"{BASE_URL}/strategy", **kwargs)
+        data = check_response(response)
+
+    @pytest.mark.timeout(5)
+    def test_run_deploy(self, auth_token):
+        '''
+        运行策略
+        '''
+        pass
+
+    @pytest.mark.timeout(5)
+    def test_stop_deploy(self, auth_token):
+        '''
+        暂停策略
+        '''
+        pass
+
     @pytest.mark.timeout(600)
     def test_run_all_script(self, auth_token):
         kwargs = {

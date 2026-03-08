@@ -1,6 +1,8 @@
 #include "Handler/OrderHandler.h"
 #include "Bridge/exchange.h"
 #include "DataGroup.h"
+#include "HttpHandler.h"
+#include "Util/system.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
 #include <cstdint>
@@ -202,6 +204,7 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             return;
         }
         List<String> sysIDs = data["sysID"];
+        List<Pair<order_id, symbol_t>> oids;
         for (auto& sysID : sysIDs) {
             Order order;
             if (!broker->QueryOrder(sysID, order)) {
@@ -213,6 +216,12 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             order_id id;
             // id._id = order._id;
             strcpy(id._sysID, sysID.c_str());
+            oids.emplace_back(std::move(Pair{id, symbol}));
+            
+        }
+        for (auto& item: oids) {
+            auto& id = item.first;
+            auto& symbol = item.second;
             broker->CancelOrder(id, symbol, [this, symbol](const TradeReport& report) {
                 auto sock = Server::GetSocket();
                 auto info = to_sse_string(symbol, report);
@@ -287,4 +296,17 @@ TradeInfo OrderHandler::SellORder(symbol_t symbol, const Order& order)
     TradeInfo trades;
     broker->Sell("", symbol, order, trades);
     return trades;
+}
+
+HistoryTradeHandler::HistoryTradeHandler(Server* server)
+:HttpHandler(server) {
+
+}
+
+HistoryTradeHandler::~HistoryTradeHandler() {
+
+}
+
+void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& res) {
+
 }

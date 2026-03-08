@@ -65,7 +65,7 @@ void HXTrade::OnRspUserLogin(TORASTOCKAPI::CTORATstpRspUserLoginField* pRspUserL
     }
     INIT_PROMISE(TORASTOCKAPI::CTORATstpRspUserLoginField);
     _exchange->Reset();
-    // µ¥Î»Ê±¼ä×î´óÍ»·¢Á÷Á¿20´ÎÇëÇó
+    // ï¿½ï¿½Î»Ê±ï¿½ï¿½ï¿½ï¿½ï¿½Í»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½20ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     _exchange->_stockHandle._cancelLimitation = pRspUserLoginField->OrderActionCommFlux;
     _exchange->_stockHandle._insertLimitation = pRspUserLoginField->OrderInsertCommFlux;
     _exchange->_stockHandle._insertLimit = new OrderLimit(pRspUserLoginField->OrderInsertCommFlux, pRspUserLoginField->OrderInsertCommFlux / 2);
@@ -163,7 +163,7 @@ void HXTrade::OnRspOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField *pIn
         report._status = OrderStatus::CancelFail;
     }
     _exchange->OnOrderReport(id, report);
-    INFO("OnRspOrderAction");
+    INFO("OnRspOrderAction {}", id._sysID);
 }
 
 void HXTrade::OnErrRtnOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField* pInputOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField* pRspInfoField, int nRequestID)
@@ -174,7 +174,7 @@ void HXTrade::OnErrRtnOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField* 
     strcpy(id._sysID, pInputOrderActionField->SInfo);
     id._id = pInputOrderActionField->IInfo;
     _exchange->OnOrderReport(id, report);
-    INFO("OnErrRtnOrderAction");
+    INFO("OnErrRtnOrderAction {}", id._sysID);
 }
 
 void HXTrade::OnRspCondOrderInsert(TORASTOCKAPI::CTORATstpInputCondOrderField *pInputCondOrderField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {

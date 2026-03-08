@@ -14,13 +14,15 @@ public:
 
   virtual void get(const httplib::Request& req, httplib::Response& res);
   virtual void post(const httplib::Request& req, httplib::Response& res);
+  virtual void del(const httplib::Request& req, httplib::Response& res);
 
 private:
-  // void run(const nlohmann::json& param, httplib::Response& res);
+  void run(const String& name, httplib::Response& res);
+  void stop(const String& name, httplib::Response& res);
 
   void train(const nlohmann::json& param, httplib::Response& res);
 
-  void virtual_deploy(const nlohmann::json& param, httplib::Response& res);
+  void deploy(const nlohmann::json& param, httplib::Response& res);
 
   void connect_strategy_service(const String& name, httplib::DataSink& sink);
 private:

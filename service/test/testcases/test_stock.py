@@ -66,6 +66,28 @@ class TestStock:
             assert 'volume' in row
             break
 
+    @pytest.mark.timeout(5)
+    def test_stock_position(self, auth_token):
+        '''
+        获取所有持仓
+        '''
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        response = requests.get(f"{BASE_URL}/position", **kwargs)
+        data = check_response(response)
+        assert isinstance(data, list)
+        for row in data:
+            assert 'id' in row
+            assert 'name' in row
+            assert 'price' in row
+            assert 'quantity' in row
+            assert 'valid_quantity' in row
+            break
+
     @pytest.mark.timeout(20)
     def test_stock_privilege(self, auth_token):
         kwargs = {

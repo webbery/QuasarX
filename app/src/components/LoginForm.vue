@@ -90,7 +90,7 @@
 </template>
 <script setup>
 import axios from 'axios'
-import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, defineEmits, defineProps, inject, computed } from 'vue'
 import Store from 'electron-store';
 import { message } from '@/tool';
 import sseService from '@/ts/SSEService';
@@ -99,6 +99,7 @@ import { useAccountStore } from '@/stores/account'
 
 const store = new Store();
 const accountStore = useAccountStore()
+const servers = inject('servers')
 const globalStorage = getGlobalStorage()
 
 const emit = defineEmits(['onStatusChange', 'closeLoginForm'])
@@ -113,13 +114,23 @@ const loginForm = reactive({
 })
 
 // 服务器选项
-const serverOptions = ref([])
+const serverOptions = computed(() => {
+  return (servers.value || []).map(item => ({
+    name: item.name,
+    label: item.name,
+    value: `${item.address}:19107`
+  }))
+})
+
+const selectedServer = computed(() => {
+  return serverOptions.value.find(s => s.value === loginForm.server) || null
+})
+
 // 记住我
 const rememberMe = ref(false)
 
 // 下拉菜单状态
 const showDropdown = ref(false)
-const selectedServer = ref(null)
 
 // 表单错误信息
 const errors = reactive({
@@ -137,7 +148,6 @@ const toggleDropdown = () => {
 
 // 选择服务器
 const selectServer = (server) => {
-  selectedServer.value = server
   loginForm.server = server.value
   showDropdown.value = false
 }
@@ -199,18 +209,6 @@ const loadSavedLoginInfo = () => {
 }
 
 onMounted(() => {
-  const data = store.get('servers')
-  if (data) {
-    for (const item of data) {
-      console.info(item)
-      serverOptions.value.push({
-        name: item.name,
-        label: item.name,
-        value: item.address + ':19107'
-      })
-    }
-  }
-
   // 加载保存的登录信息
   loadSavedLoginInfo()
 

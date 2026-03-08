@@ -19,9 +19,12 @@ public:
     ~FlowSubsystem();
 
     bool LoadFlow(const String& strategy, const List<QNode*>& topo_flow);
+    void ClearFlow(const String& strategy);
 
     void Start();
     void Start(const String& strategy);
+    void Stop(const String& strategy);
+    
 
     // void Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params);
 

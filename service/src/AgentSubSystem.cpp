@@ -47,6 +47,13 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
     return status;
 }
 
+void FlowSubsystem::ClearFlow(const String& strategy) {
+    for (auto node: _flows[strategy]._graph) {
+        delete node;
+    }
+    _flows[strategy]._graph.clear();
+}
+
 void FlowSubsystem::Start() {
     auto broker = _handle->GetBrokerSubSystem();
     for (auto& item : _flows) {
@@ -56,12 +63,8 @@ void FlowSubsystem::Start() {
 }
 
 void FlowSubsystem::Start(const String& strategy) {
+    Stop(strategy);
     auto& flow = _flows.at(strategy);
-    if (flow._worker) {
-        flow._running = false;
-        if (flow._worker->joinable()) flow._worker->join();
-        delete flow._worker;
-    }
     flow._running = true;
     flow._worker = new std::thread([strategy, this]() {
         DataContext context(strategy, _handle);
@@ -103,6 +106,16 @@ void FlowSubsystem::Start(const String& strategy) {
             WARN("invalid argument error: {}", e.what());
         }
     });
+}
+
+void FlowSubsystem::Stop(const String& strategy) {
+    auto& flow = _flows.at(strategy);
+    if (flow._worker) {
+        flow._running = false;
+        if (flow._worker->joinable()) flow._worker->join();
+        delete flow._worker;
+    }
+    flow._worker = nullptr;
 }
 
 bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {

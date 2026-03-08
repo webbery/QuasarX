@@ -43,18 +43,11 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
     
-    // Parse Script
-    auto graph = parse_strategy_script_v2(script, _server);
-    auto sorted_nodes = topo_sort(graph);
-    // convert to executable stream
-
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);
     }
-    // strategySys->AddStrategy(si);
-    // 注册统计信息
-    Set<String> featureCollections;
-    strategySys->Init(strategyName, sorted_nodes);
+    // Parse Script
+    strategySys->InitStrategy(strategyName, script);
 
     // 驱动数据
     exchange->Login(AccountType::MAIN);
@@ -90,9 +83,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
     
-    for (auto node: graph) {
-        delete node;
-    }
+    strategySys->ReleaseStrategy(strategyName);
+    
     res.status = 200;
     INFO("{}", results.dump());
     res.set_content(results.dump(), "application/json");
