@@ -102,7 +102,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         case StrategyNodeType::Feature:
             break;
         case StrategyNodeType::LSTM:
-            nodeInstance = generate_node<LSTMNode>(node["id"]);
+            // nodeInstance = generate_node<LSTMNode>(node["id"]);
             break;
         case StrategyNodeType::Function:
             nodeInstance = generate_node<FunctionNode>(node["id"], server);

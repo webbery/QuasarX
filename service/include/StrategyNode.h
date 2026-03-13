@@ -1,7 +1,7 @@
 #pragma once
 #include "DataContext.h"
 #include "json.hpp"
-#include "onnxruntime/onnxruntime_cxx_api.h"
+// #include "onnxruntime/onnxruntime_cxx_api.h"
 
 #define RegistClassName(clsName) static String className() { return #clsName; }
 
@@ -50,7 +50,7 @@ protected:
     Edges _ins;
 };
 
-
+#if 0
 class ArtificialIntelligenceNode: public QNode {
 public:
 
@@ -67,3 +67,4 @@ protected:
     Ort::Session* _session = nullptr;
     static Ort::Env _env;
 };
+#endif

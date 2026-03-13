@@ -6,6 +6,7 @@ Map<String, ArgType> QNode::out_elements() {
     return elems;
 }
 
+#if 0
 String ArtificialIntelligenceNode::ConvertServerModelPath(const String& uploadPath) {
     auto pos = uploadPath.find_last_of('/');
     String model_name = uploadPath.substr(pos + 1);
@@ -48,3 +49,4 @@ std::vector<std::vector<int64_t>> ArtificialIntelligenceNode::InitOutput() {
     }
     return output_shapes;
 }
+#endif

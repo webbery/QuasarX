@@ -132,7 +132,7 @@ StrategyNodesHandler::StrategyNodesHandler(Server* server):HttpHandler(server) {
 
 void StrategyNodesHandler::get(const httplib::Request& req, httplib::Response& res) {
     namespace hana = boost::hana;
-    auto types = hana::tuple_t<DebugNode, QuoteInputNode, SignalNode, LSTMNode, FunctionNode>;
+    auto types = hana::tuple_t<DebugNode, QuoteInputNode, SignalNode, FunctionNode>;
 
     nlohmann::json nodeParams;
     hana::for_each(types, [&nodeParams](auto t) {

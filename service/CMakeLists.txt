@@ -70,28 +70,28 @@ if (USE_CUDA)
     set(TensorRT_INCLUDE_DIRS "${TensorRT_DIR}/include")
     set(TensorRT_LIBRARIES_DIR "${TensorRT_DIR}/lib")
 else (USE_CUDA)
-    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime/core/session/onnxruntime_c_api.h
-        PATHS /usr/local/include
-        NO_DEFAULT_PATH
-    )
+    # find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime/core/session/onnxruntime_c_api.h
+    #     PATHS /usr/local/include
+    #     NO_DEFAULT_PATH
+    # )
 
-    find_library(ONNXRUNTIME_LIBRARY onnxruntime
-        PATHS /usr/local/lib
-        NO_DEFAULT_PATH
-    )
+    # find_library(ONNXRUNTIME_LIBRARY onnxruntime
+    #     PATHS /usr/local/lib
+    #     NO_DEFAULT_PATH
+    # )
 
-    if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
-        message("-- Found ONNX Runtime: ${ONNXRUNTIME_LIBRARY}")
-        include_directories(${ONNXRUNTIME_INCLUDE_DIR})
-        set(ONNXRUNTIME_LIBRARIES ${ONNXRUNTIME_LIBRARY})
-    else()
-        find_package(onnxruntime REQUIRED PATHS /usr/local/lib/cmake/onnxruntime)
-        set(onnxruntime_ROOT ${onnxruntime_DIR}/../../..)
-        include_directories(${onnxruntime_ROOT}/include)
-        link_directories(${onnxruntime_ROOT}/lib/)
-        set(ONNXRUNTIME_LIBRARIES onnxruntime)
-        # message(FATAL_ERROR "ONNX Runtime not found. Please install it first.")
-    endif()
+    # if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+    #     message("-- Found ONNX Runtime: ${ONNXRUNTIME_LIBRARY}")
+    #     include_directories(${ONNXRUNTIME_INCLUDE_DIR})
+    #     set(ONNXRUNTIME_LIBRARIES ${ONNXRUNTIME_LIBRARY})
+    # else()
+    #     find_package(onnxruntime REQUIRED PATHS /usr/local/lib/cmake/onnxruntime)
+    #     set(onnxruntime_ROOT ${onnxruntime_DIR}/../../..)
+    #     include_directories(${onnxruntime_ROOT}/include)
+    #     link_directories(${onnxruntime_ROOT}/lib/)
+    #     set(ONNXRUNTIME_LIBRARIES onnxruntime)
+    #     # message(FATAL_ERROR "ONNX Runtime not found. Please install it first.")
+    # endif()
 endif (USE_CUDA)
 
 include_directories(include third_party/include ${CUDA_INCLUDE_DIRS} ${TensorRT_INCLUDE_DIRS})
@@ -171,7 +171,7 @@ if (USE_CUDA)
     target_link_libraries(${PROJECT_NAME} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES})
 else (USE_CUDA) # onnxruntime
     # target_link_libraries(${PROJECT_NAME} onnxruntime::onnxruntime)
-    target_link_libraries(${PROJECT_NAME} onnxruntime)
+    # target_link_libraries(${PROJECT_NAME} onnxruntime)
 endif (USE_CUDA)
 install(TARGETS ${PROJECT_NAME})
 install(FILES

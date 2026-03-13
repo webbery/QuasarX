@@ -1,6 +1,7 @@
 #include "Nodes/LogisticNode.h"
 #include "Util/string_algorithm.h"
 
+#if 0
 const nlohmann::json LogisticNode::getParams() {
     return {};
 }
@@ -30,3 +31,4 @@ bool LogisticNode::Process(const String& strategy, DataContext& context) {
 
     return true;
 }
+#endif

@@ -1,9 +1,11 @@
 #include "Nodes/NeuralNetworkNode.h"
-#include "onnxruntime/onnxruntime_cxx_api.h"
 #include <algorithm>
 #include <cstring>
 #include <thread>
 #include "Util/system.h"
+
+#if 0
+#include "onnxruntime/onnxruntime_cxx_api.h"
 
 using namespace Ort;
 Env ArtificialIntelligenceNode::_env(ORT_LOGGING_LEVEL_WARNING, "AIInference");
@@ -86,6 +88,7 @@ bool LSTMNode::Process(const String& strategy, DataContext& context) {
     return true;
 }
 
+
 LSTMNode::~LSTMNode() {
     if (!_modelInputs.empty()) {
         for (auto name: _modelInputs) {
@@ -106,3 +109,12 @@ LSTMNode::~LSTMNode() {
 const nlohmann::json LSTMNode::getParams() {
     return {"model", "step", "input"};
 }
+
+#endif
+// bool LSTMNode::Init(const nlohmann::json& config) {
+//     return true;
+// }
+
+// bool LSTMNode::Process(const String& strategy, DataContext& context) {
+//     return true;
+// }

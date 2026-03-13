@@ -3,7 +3,7 @@ on: [push] # 触发事件
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-20.04
     env:
       CCACHE_DIR: /home/runner/work/ccache  # ccache 缓存目录
     steps:

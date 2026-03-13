@@ -1,7 +1,7 @@
 #pragma once
 #include "StrategyNode.h"
 
-
+#if 0
 class LSTMNode: public ArtificialIntelligenceNode {
 public:
     RegistClassName(LSTMNode);
@@ -22,3 +22,4 @@ private:
     List<String> _inputNames;
 
 };
+#endif
