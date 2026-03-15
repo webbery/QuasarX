@@ -405,8 +405,9 @@ async function updatePrice(symbol: string, startDate: string, endDate: string) {
         return;
 
     symbolPrices.value = [];
-    buySignals.value = [];
-    sellSignals.value = [];
+    // 注意：不清除 buySignals 和 sellSignals，保留交易历史数据
+    // buySignals.value = [];
+    // sellSignals.value = [];
     const data = JSON.parse(response.data)
     for (const oclhv of data) {
         const dt = oclhv['datetime']
@@ -779,9 +780,37 @@ function getChartOption(type: string) {
     }
 }
 
+// 🔄 新增：更新交易信号数据的方法
+function updateTradeSignals(buySignalsData: any[], sellSignalsData: any[]) {
+  try {
+    // 验证输入数据
+    if (!Array.isArray(buySignalsData) || !Array.isArray(sellSignalsData)) {
+      console.error('交易信号数据必须是数组', { buySignalsData, sellSignalsData })
+      return
+    }
+
+    // 更新响应式变量
+    buySignals.value = buySignalsData
+    sellSignals.value = sellSignalsData
+
+    console.info(`更新交易信号数据：买入信号 ${buySignalsData.length} 条，卖出信号 ${sellSignalsData.length} 条`)
+
+    // 触发图表更新
+    if (priceChart.value) {
+      updatePriceChart()
+      console.info('价格图表已更新交易信号')
+    } else {
+      console.warn('价格图表实例未初始化，无法更新')
+    }
+  } catch (error) {
+    console.error('更新交易信号数据时出错:', error)
+  }
+}
+
 defineExpose({
     updatePrice,
     updatePriceChart,
+    updateTradeSignals,  // 🔄 新增
     resetTableZoom
 })
 </script>

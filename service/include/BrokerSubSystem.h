@@ -98,8 +98,10 @@ public:
 
     void Release();
 
+    [[deprecated("使用异步版本 Buy(strategy, symbol, order, callback)")]]
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
+    [[deprecated("使用异步版本 Sell(strategy, symbol, order, callback)")]]
     order_id Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);

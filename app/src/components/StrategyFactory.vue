@@ -958,7 +958,50 @@ const runBacktest = async () => {
   try {
     const response = await axios.post('/v0/backtest', {script: graph})
     console.info('backtest result:', response)
-    // localStorage.setItem(LAST_BACKTEST_RESULT, response)
+
+    // 🔄 新增：解析回测结果中的交易历史数据
+    try {
+      const result = response.data
+      console.info('backtest data:', result)
+
+      // 提取买卖信号
+      const buySignals = result.buy || []
+      const sellSignals = result.sell || []
+
+      // 转换数据格式：从 [symbol, timestamp, quantity, price] 到 [dateString, price]
+      // 注意：日期格式需要与 updatePrice 函数中的格式保持一致（YYYY-MM-D，日期不补零）
+      const formatSignals = (signals) => {
+        return signals.map(signal => {
+          // signal 格式: [symbol, timestamp, quantity, price]
+          const timestamp = signal[1]  // 时间戳（秒）
+          const price = signal[3]      // 成交价格
+          // 转换为日期字符串，格式与 updatePrice 函数保持一致
+          const date = new Date(timestamp * 1000)
+          const Y = date.getFullYear() + '-'
+          const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
+          const D = date.getDate()
+          const dateStr = Y + M + D
+          return [dateStr, price]
+        })
+      }
+
+      // 传递给 ReportView 组件
+      if (reportViewRef.value && reportViewRef.value.updateTradeSignals) {
+        reportViewRef.value.updateTradeSignals(
+          formatSignals(buySignals),
+          formatSignals(sellSignals)
+        )
+        console.info('交易历史数据已传递给报表组件')
+      } else {
+        console.warn('ReportView 组件未找到 updateTradeSignals 方法')
+      }
+    } catch (parseError) {
+      console.error('解析回测交易历史数据时出错:', parseError)
+      // 不阻断主要流程，仅记录错误
+    }
+
+    // 可选：保存完整结果到本地存储
+    // localStorage.setItem(LAST_BACKTEST_RESULT, JSON.stringify(result))
   } catch (error) {
     const exceptionWhat = error.response.headers['exception_what'] || 
                            error.response.headers['EXCEPTION_WHAT'] ||

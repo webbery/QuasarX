@@ -4,6 +4,7 @@
 #include "Util/datetime.h"
 #include <ctime>
 #include <future>
+#include <functional>
 #include <yas/serialize.hpp>
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
@@ -143,9 +144,36 @@ struct TradeInfo {
     // YAS_DEFINE_STRUCT_SERIALIZE("DealInfo", _deals);
 };
 
+// 运行类型
+enum class RuningType {
+    Backtest,     // 本地回测模式
+    Simualtion,   // 券商模拟盘
+    Real,         // 实盘
+};
+
+// 交易元数据 - 使用位域优化内存
+struct alignas(8) TransactionMeta {
+    uint32_t strategy_hash;    // 策略名称的std::hash值 (4字节)
+    uint16_t backtest_run_id;  // 回测运行ID，0表示非回测 (2字节)
+    uint8_t running_type : 2;  // RuningType枚举：0=Backtest,1=Simualtion,2=Real
+    uint8_t reserved    : 6;   // 保留位，用于对齐
+
+    TransactionMeta() : strategy_hash(0), backtest_run_id(0), running_type(0), reserved(0) {}
+
+    // 便捷构造函数
+    TransactionMeta(uint32_t hash, uint16_t run_id, RuningType type)
+        : strategy_hash(hash), backtest_run_id(run_id), running_type(static_cast<uint8_t>(type)), reserved(0) {}
+};
+
 struct Transaction {
     Order _order;
     TradeInfo _deal;
+    TransactionMeta _meta;  // 交易元数据：策略、运行模式、回测ID
+
+    Transaction() : _meta() {}
+
+    Transaction(const Order& order, const TradeInfo& deal, const TransactionMeta& meta = TransactionMeta())
+        : _order(order), _deal(deal), _meta(meta) {}
 };
 
 
@@ -153,6 +181,12 @@ struct OrderContext {
   Order _order;
   // 订单交易结果
   TradeInfo _trades;
+  // 订单元数据
+  uint32_t _strategy_hash = 0;      // 策略名称的哈希值
+  uint16_t _backtest_run_id = 0;    // 回测运行ID，0表示非回测
+  uint8_t _running_type : 2;        // RuningType枚举：0=Backtest,1=Simualtion,2=Real
+  uint8_t _reserved : 6;            // 保留位
+
   // 订单结束标志
   std::atomic_bool _flag = false;
   // 订单成功标志
@@ -161,10 +195,24 @@ struct OrderContext {
   std::promise<bool> _promise;
   std::function<void (const TradeReport&)> _callback;
 
+  OrderContext() : _running_type(0), _reserved(0) {}
+
   void Update(const TradeReport& report) {
     if (_callback) {
       _callback(report);
     }
+  }
+
+  // 获取交易元数据
+  TransactionMeta GetMeta() const {
+    return TransactionMeta(_strategy_hash, _backtest_run_id, static_cast<RuningType>(_running_type));
+  }
+
+  // 设置策略信息
+  void SetStrategyInfo(const String& strategy_name, uint16_t backtest_id, RuningType run_type) {
+    _strategy_hash = std::hash<String>{}(strategy_name);
+    _backtest_run_id = backtest_id;
+    _running_type = static_cast<uint8_t>(run_type);
   }
 };
 
@@ -239,6 +287,7 @@ enum class SecurityType: char {
     Future,
     Count,
 };
+
 
 struct ExchangeInfo {
   char _local_addr[16];

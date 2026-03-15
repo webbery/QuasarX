@@ -1113,13 +1113,9 @@ onMounted(() => {
   sseService.on('update_position', onPositionUpdate)
   sseService.on('update_order', onOrderUpdate)
   sseService.on('order_success', onOrderSuccess)
-<<<<<<< HEAD
-  // sseService.on('trade_report', onTradeReport)
-=======
   sseService.on('trade_report', onTradeReport)
   // 首次查询当前订单
   queryAllStockOrders()
->>>>>>> 18c4211998c6502dacfc72d0fe2359279e0eb8ea
 })
 onUnmounted(() => {
   // 清理处理器

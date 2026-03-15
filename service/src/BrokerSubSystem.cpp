@@ -322,6 +322,13 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
               reports.emplace_back(std::move(report));
           }
           tran._deal._reports = std::move(reports);
+          // 反序列化元数据（兼容旧数据）
+          if (action.contains("meta")) {
+              auto& meta = action["meta"];
+              tran._meta.strategy_hash = meta.value("strategy_hash", 0);
+              tran._meta.backtest_run_id = meta.value("backtest_run_id", 0);
+              tran._meta.running_type = meta.value("running_type", 0);
+          }
           trans.emplace_back(std::move(tran));
       }
   }
@@ -340,6 +347,13 @@ nlohmann::json BrokerSubSystem::GetHistoryJson() {
       for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
         action[DB_ORDER_NAME][DB_PRICE_NAME].push_back(trans._order._order[i]._price);
       }
+      // 序列化元数据
+      nlohmann::json meta;
+      meta["strategy_hash"] = trans._meta.strategy_hash;
+      meta["backtest_run_id"] = trans._meta.backtest_run_id;
+      meta["running_type"] = (int)trans._meta.running_type;
+      action["meta"] = std::move(meta);
+
       for (auto& deal : trans._deal._reports) {
           nlohmann::json report;
           report[DB_TIME_NAME] = deal._time;
@@ -565,6 +579,10 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
     ctx->_order = order;
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
+    // 设置策略和运行信息
+    ctx->SetStrategyInfo(strategy,
+                         _server->GetCurrentBacktestRunId(),
+                         _server->GetRunningMode());
     AddOrderAsync(ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
@@ -642,6 +660,10 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
     ctx->_order = order;
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
+    // 设置策略和运行信息
+    ctx->SetStrategyInfo(strategy,
+                         _server->GetCurrentBacktestRunId(),
+                         _server->GetRunningMode());
     ctx->_callback = cb;
     auto id = AddOrderAsync(ctx);
     _order_queue.push(ctx);
@@ -816,6 +838,7 @@ Transaction BrokerSubSystem::Order2Transaction(const OrderContext& context) {
     Transaction act;
     act._order = context._order;
     act._deal = context._trades;
+    act._meta = context.GetMeta();  // 复制元数据
     return act;
 }
 
@@ -862,8 +885,13 @@ BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
             if (start > 0 && trade._order._time < start) continue;
             if (end > 0 && trade._order._time > end) continue;
 
-            // 策略过滤（需要扩展Transaction包含策略信息）
-            // 暂时跳过策略过滤
+            // 策略过滤
+            if (!strategy.empty()) {
+                uint32_t strategy_hash = std::hash<String>{}(strategy);
+                if (trade._meta.strategy_hash != strategy_hash) {
+                    continue;
+                }
+            }
 
             result.totalCount++;
 
