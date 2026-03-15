@@ -300,10 +300,11 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
   if (jsn.empty())
     return;
 
+  std::unique_lock<std::mutex> lck(_tradeMtx);
   for (auto& item : jsn) {
       String symbol = item["symbol"];
       auto symb = to_symbol(symbol);
-      // auto& trans = _historyTrades[symb];
+      auto& trans = _historyTrades[symb];
       for (auto& action : item[DB_TRANSACTION_NAME]) {
           Transaction tran;
           tran._order._volume = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
@@ -321,6 +322,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
               reports.emplace_back(std::move(report));
           }
           tran._deal._reports = std::move(reports);
+          trans.emplace_back(std::move(tran));
       }
   }
 }
@@ -843,4 +845,47 @@ Set<symbol_t> BrokerSubSystem::GetPoolSymbols(const String& name) {
     result.insert(to_symbol(sym));
   }
   return result;
+}
+
+BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
+                                                              const String& strategy,
+                                                              time_t start,
+                                                              time_t end,
+                                                              size_t offset,
+                                                              size_t limit) const {
+    TradeQueryResult result;
+    std::unique_lock<std::mutex> lck(_tradeMtx);
+
+    auto process_trades = [&](const List<Transaction>& trades) {
+        for (const auto& trade : trades) {
+            // 时间过滤
+            if (start > 0 && trade._order._time < start) continue;
+            if (end > 0 && trade._order._time > end) continue;
+
+            // 策略过滤（需要扩展Transaction包含策略信息）
+            // 暂时跳过策略过滤
+
+            result.totalCount++;
+
+            // 分页
+            if (offset > 0 && result.totalCount <= offset) continue;
+            if (limit > 0 && result.trades.size() >= limit) continue;
+
+            result.trades.push_back(trade);
+        }
+    };
+
+    if (symbol != 0) {
+        auto it = _historyTrades.find(symbol);
+        if (it != _historyTrades.end()) {
+            process_trades(it->second);
+        }
+    } else {
+        // 查询所有标的
+        for (const auto& pair : _historyTrades) {
+            process_trades(pair.second);
+        }
+    }
+
+    return result;
 }

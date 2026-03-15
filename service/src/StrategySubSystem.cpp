@@ -39,9 +39,9 @@ void StrategySubSystem::Init() {
             if (!entry.is_regular_file())
                 continue;
 
-            String strategy_path = entry.path();
+            String strategy_path = entry.path().string();
 
-            String strategyName = entry.path().filename();
+            String strategyName = entry.path().filename().string();
             InstallStrategy(strategyName);
             Run(strategyName);
         }

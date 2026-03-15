@@ -511,6 +511,84 @@ paths:
                     type: string
                     description: 策略停止的时间
                     example: '2020/01/01 00:00:00'
+  /trades/history:
+    get:
+      summary: Get trade history
+      description: 获取交易历史记录
+      tags:
+        - Trades
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 标的代码（可选，不指定则返回所有）
+          example: "000001.SZ"
+        - in: query
+          name: strategy
+          schema:
+            type: string
+          description: 策略名称（可选）
+          example: "ma_cross"
+        - in: query
+          name: start
+          schema:
+            type: integer
+            format: int64
+          description: 开始时间戳（秒，可选）
+          example: 1672502400
+        - in: query
+          name: end
+          schema:
+            type: integer
+            format: int64
+          description: 结束时间戳（秒，可选）
+          example: 1672588800
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+          description: 页码
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            default: 50
+            maximum: 1000
+          description: 每页大小
+      responses:
+        '200':
+          description: 交易历史记录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbol:
+                    type: string
+                    description: 标的代码（当指定symbol时返回）
+                  total_count:
+                    type: integer
+                    description: 总记录数
+                  page:
+                    type: integer
+                    description: 当前页码
+                  page_size:
+                    type: integer
+                    description: 每页大小
+                  total_pages:
+                    type: integer
+                    description: 总页数
+                  trades:
+                    type: array
+                    description: 交易记录列表
+                    items:
+                      $ref: "#/components/schemas/TradeRecord"
+        '400':
+          description: 参数错误
+        '500':
+          description: 服务器错误
 components:
   schemas:
     StockList:
@@ -582,3 +660,79 @@ components:
           example: error
       xml:
         name: customer
+    TradeRecord:
+      type: object
+      properties:
+        order:
+          $ref: "#/components/schemas/OrderInfo"
+        trades:
+          type: array
+          items:
+            $ref: "#/components/schemas/TradeDetail"
+        total_amount:
+          type: number
+          format: double
+          description: 总成交金额
+        total_quantity:
+          type: integer
+          description: 总成交数量
+        average_price:
+          type: number
+          format: double
+          description: 平均成交价格
+    OrderInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 订单ID
+        symbol:
+          type: string
+          description: 标的代码
+        volume:
+          type: integer
+          description: 委托数量
+        type:
+          type: integer
+          description: 订单类型
+        side:
+          type: integer
+          description: 买卖方向 (0=买, 1=卖)
+        time:
+          type: integer
+          format: int64
+          description: 订单时间
+        status:
+          type: integer
+          description: 订单状态
+        prices:
+          type: array
+          items:
+            type: number
+            format: double
+          description: 订单价格明细
+    TradeDetail:
+      type: object
+      properties:
+        time:
+          type: integer
+          format: int64
+          description: 成交时间
+        price:
+          type: number
+          format: double
+          description: 成交价格
+        quantity:
+          type: integer
+          description: 成交数量
+        amount:
+          type: number
+          format: double
+          description: 成交金额
+        status:
+          type: integer
+          description: 成交状态
+        sys_id:
+          type: string
+          description: 外部系统ID

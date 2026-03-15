@@ -123,6 +123,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_FEATURE         "/feature"
 #define API_SECTOR_FLOW     "/stocks/sector/flow"
 #define API_TRADE_ORDER     "/trade/order"
+#define API_TRADE_HISTORY   "/trade/history"
 #define API_POSITION        "/position"
 #define API_SERVER_EVENT    "/server/event"
 
@@ -231,6 +232,7 @@ void Server::Regist() {
 
     REGIST_GET(API_RECORD);
     REGIST_GET(API_STOCK_HISTORY);
+    REGIST_GET(API_TRADE_HISTORY);
 
     REGIST_GET(API_RISK_VAR);
     REGIST_POST(API_RISK_VAR);
@@ -1088,6 +1090,7 @@ void Server::InitHandlers() {
     RegistHandler(API_BACKTEST, BackTestHandler);
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_TRADE_ORDER, OrderHandler);
+    RegistHandler(API_TRADE_HISTORY, HistoryTradeHandler);
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
     RegistHandler(API_USER_FUNDS, UserFundHandler);
     RegistHandler(API_DATA_SYNC, DataSyncHandler);

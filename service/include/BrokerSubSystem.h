@@ -142,6 +142,25 @@ public:
 
     const List<Transaction>& GetHistoryTrades(symbol_t) const;
 
+    // 获取所有交易记录
+    const Map<symbol_t, List<Transaction>>& GetAllHistoryTrades() const {
+        return _historyTrades;
+    }
+
+    // 交易查询结构
+    struct TradeQueryResult {
+        List<Transaction> trades;
+        size_t totalCount = 0;
+    };
+
+    // 通用交易查询接口
+    TradeQueryResult QueryTrades(symbol_t symbol = 0,
+                                const String& strategy = "",
+                                time_t start = 0,
+                                time_t end = 0,
+                                size_t offset = 0,
+                                size_t limit = 0) const;
+
     Set<symbol_t> GetPoolSymbols(const String& name);
 
     void ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report);

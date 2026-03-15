@@ -26,6 +26,56 @@ namespace {
         return result;
     }
 
+    nlohmann::json TransactionToJson(const Transaction& trans) {
+        nlohmann::json result;
+
+        // 订单信息
+        nlohmann::json order_json;
+        order_json["id"] = trans._order._id;
+        order_json["symbol"] = get_symbol(trans._order._symbol);
+        order_json["volume"] = trans._order._volume;
+        order_json["type"] = static_cast<int>(trans._order._type);
+        order_json["side"] = static_cast<int>(trans._order._side);
+        order_json["time"] = trans._order._time;
+        order_json["status"] = static_cast<int>(trans._order._status);
+
+        // 订单价格明细
+        nlohmann::json prices_json = nlohmann::json::array();
+        for (int i = 0; i < MAX_ORDER_SIZE && trans._order._order[i]._price > 0; ++i) {
+            prices_json.push_back(trans._order._order[i]._price);
+        }
+        order_json["prices"] = prices_json;
+
+        result["order"] = order_json;
+
+        // 成交信息
+        nlohmann::json trades_json = nlohmann::json::array();
+        for (const auto& report : trans._deal._reports) {
+            nlohmann::json trade_json;
+            trade_json["time"] = report._time;
+            trade_json["price"] = report._price;
+            trade_json["quantity"] = report._quantity;
+            trade_json["amount"] = report._trade_amount;
+            trade_json["status"] = static_cast<int>(report._status);
+            trade_json["sys_id"] = report._sysID;
+            trades_json.push_back(trade_json);
+        }
+        result["trades"] = trades_json;
+
+        // 计算统计信息
+        double total_amount = 0;
+        int total_quantity = 0;
+        for (const auto& report : trans._deal._reports) {
+            total_amount += report._trade_amount;
+            total_quantity += report._quantity;
+        }
+        result["total_amount"] = total_amount;
+        result["total_quantity"] = total_quantity;
+        result["average_price"] = total_quantity > 0 ? total_amount / total_quantity : 0;
+
+        return result;
+    }
+
 }
 OrderType GetOrderType(nlohmann::json& params)
 {
@@ -308,5 +358,92 @@ HistoryTradeHandler::~HistoryTradeHandler() {
 }
 
 void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& res) {
+    try {
+        nlohmann::json response;
 
+        // 获取查询参数
+        std::string symbol_str = req.get_param_value("symbol", "");
+        std::string strategy = req.get_param_value("strategy", "");
+        std::string start_time = req.get_param_value("start", "");
+        std::string end_time = req.get_param_value("end", "");
+        std::string page_str = req.get_param_value("page", "1");
+        std::string page_size_str = req.get_param_value("page_size", "50");
+
+        auto* server = GetServer();
+        if (!server) {
+            res.status = 500;
+            res.set_content(R"({"error": "Server not available"})", "application/json");
+            return;
+        }
+
+        auto* broker = server->GetBrokerSubSystem();
+        if (!broker) {
+            res.status = 500;
+            res.set_content(R"({"error": "Broker subsystem not available"})", "application/json");
+            return;
+        }
+
+        // 解析页码
+        size_t page = 1;
+        size_t page_size = 50;
+        try {
+            page = std::stoul(page_str);
+            page_size = std::stoul(page_size_str);
+            page_size = std::min(page_size, static_cast<size_t>(1000)); // 限制最大页大小
+        } catch (...) {
+            // 使用默认值
+        }
+
+        // 解析时间戳
+        time_t start_t = 0, end_t = 0;
+        try {
+            if (!start_time.empty()) start_t = std::stoll(start_time);
+            if (!end_time.empty()) end_t = std::stoll(end_time);
+        } catch (...) {
+            // 时间解析失败，忽略时间过滤
+        }
+
+        // 根据参数选择查询方式
+        if (!symbol_str.empty()) {
+            // 查询指定标的的交易记录
+            symbol_t symbol = to_symbol(symbol_str);
+            auto query_result = broker->QueryTrades(symbol, strategy, start_t, end_t,
+                                                   (page - 1) * page_size, page_size);
+
+            nlohmann::json trades_json = nlohmann::json::array();
+            for (const auto& trade : query_result.trades) {
+                trades_json.push_back(TransactionToJson(trade));
+            }
+
+            response["symbol"] = symbol_str;
+            response["total_count"] = query_result.totalCount;
+            response["page"] = page;
+            response["page_size"] = page_size;
+            response["total_pages"] = (query_result.totalCount + page_size - 1) / page_size;
+            response["trades"] = trades_json;
+
+        } else {
+            // 查询所有交易记录
+            auto query_result = broker->QueryTrades(0, strategy, start_t, end_t,
+                                                   (page - 1) * page_size, page_size);
+
+            nlohmann::json trades_json = nlohmann::json::array();
+            for (const auto& trade : query_result.trades) {
+                trades_json.push_back(TransactionToJson(trade));
+            }
+
+            response["total_count"] = query_result.totalCount;
+            response["page"] = page;
+            response["page_size"] = page_size;
+            response["total_pages"] = (query_result.totalCount + page_size - 1) / page_size;
+            response["trades"] = trades_json;
+        }
+
+        res.set_content(response.dump(), "application/json");
+
+    } catch (const std::exception& e) {
+        res.status = 500;
+        nlohmann::json error = {{"error", e.what()}};
+        res.set_content(error.dump(), "application/json");
+    }
 }
