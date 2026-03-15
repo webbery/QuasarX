@@ -162,6 +162,7 @@ void serialize(Archive& ar, symbol_t& s) {
 struct ContractInfo;
 symbol_t to_symbol(const String& symbol, const String& exchange = "", contract_type t=contract_type::stock);
 symbol_t to_symbol(const String& code, const ContractInfo& security);
+symbol_t null_symbol();
 
 String get_symbol(const symbol_t&);
 
@@ -170,6 +171,7 @@ bool is_stock(symbol_t );
 bool is_etf_option(symbol_t);
 bool is_option(symbol_t );
 bool is_fund(symbol_t );
+bool is_null(symbol_t);
 
 template <>
 struct fmt::formatter<symbol_t> {

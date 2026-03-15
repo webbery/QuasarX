@@ -362,14 +362,14 @@ void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& re
         nlohmann::json response;
 
         // 获取查询参数
-        std::string symbol_str = req.get_param_value("symbol", "");
-        std::string strategy = req.get_param_value("strategy", "");
-        std::string start_time = req.get_param_value("start", "");
-        std::string end_time = req.get_param_value("end", "");
-        std::string page_str = req.get_param_value("page", "1");
-        std::string page_size_str = req.get_param_value("page_size", "50");
+        std::string symbol_str = req.get_param_value("symbol");
+        std::string strategy = req.get_param_value("strategy");
+        std::string start_time = req.get_param_value("start");
+        std::string end_time = req.get_param_value("end");
+        std::string page_str = req.get_param_value("page");
+        std::string page_size_str = req.get_param_value("page_size");
 
-        auto* server = GetServer();
+        auto* server = _server;
         if (!server) {
             res.status = 500;
             res.set_content(R"({"error": "Server not available"})", "application/json");
@@ -424,7 +424,7 @@ void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& re
 
         } else {
             // 查询所有交易记录
-            auto query_result = broker->QueryTrades(0, strategy, start_t, end_t,
+            auto query_result = broker->QueryTrades(null_symbol(), strategy, start_t, end_t,
                                                    (page - 1) * page_size, page_size);
 
             nlohmann::json trades_json = nlohmann::json::array();

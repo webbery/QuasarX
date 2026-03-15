@@ -184,7 +184,7 @@ class TestTradeHistory:
         # 回测中常用的查询模式
         params = {
             'symbol': '000001.SZ',
-            'strategy': 'ma_cross',  # 策略名称
+            'strategy': 'ma',  # 策略名称
             'start': 1672502400,     # 2023-01-01
             'end': 1672588800,       # 2023-01-02
             'page': 1,

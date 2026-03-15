@@ -154,12 +154,12 @@ public:
     };
 
     // 通用交易查询接口
-    TradeQueryResult QueryTrades(symbol_t symbol = 0,
+    TradeQueryResult QueryTrades(symbol_t symbol,
                                 const String& strategy = "",
                                 time_t start = 0,
                                 time_t end = 0,
                                 size_t offset = 0,
-                                size_t limit = 0) const;
+                                size_t limit = 0);
 
     Set<symbol_t> GetPoolSymbols(const String& name);
 

@@ -691,6 +691,13 @@ symbol_t to_symbol(const String& code, const ContractInfo& security) {
   return symbol_t();
 }
 
+symbol_t null_symbol()
+{
+    symbol_t sym;
+    memset(&sym, 0, sizeof(symbol_t));
+    return sym;
+}
+
 String get_symbol(const symbol_t& symbol) {
   if (symbol._type == contract_type::future) {
     return CTPObjectName(symbol._opt) + std::to_string(symbol._symbol);
@@ -758,6 +765,11 @@ bool is_option(symbol_t sym) {
 }
 bool is_fund(symbol_t sym) {
   return sym._type == contract_type::fund;
+}
+
+bool is_null(symbol_t sym)
+{
+    return sym._symbol == 0;
 }
 
 Set<symbol_t> get_holds(const AccountPosition& account) {

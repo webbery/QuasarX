@@ -852,7 +852,7 @@ BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
                                                               time_t start,
                                                               time_t end,
                                                               size_t offset,
-                                                              size_t limit) const {
+                                                              size_t limit) {
     TradeQueryResult result;
     std::unique_lock<std::mutex> lck(_tradeMtx);
 
@@ -875,7 +875,7 @@ BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
         }
     };
 
-    if (symbol != 0) {
+    if (!is_null(symbol)) {
         auto it = _historyTrades.find(symbol);
         if (it != _historyTrades.end()) {
             process_trades(it->second);
