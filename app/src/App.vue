@@ -100,6 +100,7 @@
       <component :is="activeComponent" ref="dynamicComponentRef"
         @show-history="onShowHistory"
         @show-flow-components="onShowFlowComponents"
+        @load-version="onLoadVersion"
       />
     </main>
 
@@ -112,7 +113,7 @@
         <RiskPanel></RiskPanel>
       </div>
       <div v-else-if="is_strategy">
-        <StrategyPanel v-if="selectedStrategyPanel"></StrategyPanel>
+        <StrategyPanel v-if="selectedStrategyPanel" @loadVersion="onLoadVersionFromPanel" @createNewVersion="onCreateNewVersion"></StrategyPanel>
         <FlowComponents v-else></FlowComponents>
       </div>
       <div v-else-if="is_setting">
@@ -273,11 +274,34 @@ const uninitServerEvent = () => {
 }
 
 const onShowHistory = () => {
-  selectedHistoryStrategy.value = true
+  selectedStrategyPanel.value = true
 }
 
 const onShowFlowComponents = () => {
-  selectedHistoryStrategy.value = false
+  selectedStrategyPanel.value = false
+}
+
+const onLoadVersion = (info) => {
+  console.info('onLoadVersion:', info)
+  // 这里可以处理版本加载后的通知逻辑
+  // 目前主要由 StrategyPanel 直接处理
+}
+
+// 从策略面板加载版本
+const onLoadVersionFromPanel = (versionId: string) => {
+  console.info('onLoadVersionFromPanel:', versionId)
+  // 调用 StrategyFactory 的 loadVersionFromHistory 方法
+  if (dynamicComponentRef.value && dynamicComponentRef.value.loadVersionFromHistory) {
+    dynamicComponentRef.value.loadVersionFromHistory(versionId)
+  }
+}
+
+// 创建新版本（从策略面板）
+const onCreateNewVersion = (strategyId: string) => {
+  console.info('onCreateNewVersion:', strategyId)
+  // 切换到流程图组件，让用户编辑新策略
+  selectedStrategyPanel.value = false
+  // 可以在这里传递 strategyId 给 StrategyFactory
 }
 
 onMounted(() => {

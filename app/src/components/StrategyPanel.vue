@@ -72,6 +72,12 @@
       </div>
     </div>
 
+    <!-- 新建策略按钮 -->
+    <div class="new-strategy-btn" @click="showNewStrategyDialog">
+      <i class="fas fa-plus"></i>
+      <span>新建策略</span>
+    </div>
+
     <!-- 自定义右键菜单 -->
     <div
       v-if="contextMenu.visible"
@@ -88,25 +94,48 @@
         {{ item.label }}
       </div>
     </div>
+
+    <!-- 新建策略对话框 -->
+    <div v-if="showDialog" class="dialog-overlay" @click="closeDialog">
+      <div class="dialog" @click.stop>
+        <h3 class="dialog-title">新建策略</h3>
+        <input
+          v-model="newStrategyName"
+          type="text"
+          class="dialog-input"
+          placeholder="请输入策略名称"
+          @keydown.enter="createStrategy"
+        />
+        <div class="dialog-actions">
+          <button class="dialog-btn cancel" @click="closeDialog">取消</button>
+          <button class="dialog-btn confirm" @click="createStrategy">创建</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useHistoryStore } from '@/stores/history' // 假设store路径
+import { useHistoryStore } from '@/stores/history'
+import { message } from '@/tool'
 import { storeToRefs } from 'pinia'
 
 // ---------- Pinia Store ----------
 const store = useHistoryStore()
 const { strategies, versions } = storeToRefs(store)
-const { updateStrategyName, removeStrategy, updateVersionRemark, removeVersion } = store
+const { addStrategy, updateStrategyName, removeStrategy, updateVersionRemark, removeVersion } = store
 
 const editingId = ref<string | null>(null)
 const editingType = ref<'strategy' | 'version' | null>(null)
 const editingValue = ref('')
 let currentInput: HTMLInputElement | null = null  // 用于聚焦
 
-// 按策略ID分组的版本
+// 新建策略对话框状态
+const showDialog = ref(false)
+const newStrategyName = ref('')
+
+// 按策略 ID 分组的版本
 const versionsByStrategy = computed(() => {
   const map: Record<string, typeof versions.value> = {}
   versions.value.filter(v => v).forEach(v => {
@@ -126,8 +155,6 @@ const formatDate = (isoString: string): string => {
 const expanded = reactive<Record<string, boolean>>({})
 const toggleStrategy = (id: string) => {
   expanded[id] = !expanded[id]
-  // console.info(strategies)
-  console.info(versions)
 }
 
 // ---------- 右键菜单 ----------
@@ -144,6 +171,7 @@ const menuItems = computed(() => {
   if (contextMenu.type === 'strategy') {
     return [
       { label: '编辑', action: 'editStrategyName' },
+      { label: '新建版本', action: 'createNewVersion' },
       { label: '删除', action: 'deleteAllVersions' }
     ]
   } else if (contextMenu.type === 'version') {
@@ -238,6 +266,11 @@ const handleMenuItemClick = async (action: string) => {
 
   if (action === 'editStrategyName') {
     startEditing('strategy', contextMenu.data.id, contextMenu.data.name)
+  } else if (action === 'createNewVersion') {
+    // 创建新版本逻辑（通知父组件）
+    emit('createNewVersion', contextMenu.data.id)
+    hideContextMenu()
+    return
   } else if (action === 'deleteAllVersions') {
     if (confirm(`确定要删除策略 "${contextMenu.data.name}" 及其所有历史版本吗？`)) {
       await removeStrategy(contextMenu.data.id)
@@ -258,6 +291,35 @@ const handleGlobalClick = () => {
   hideContextMenu()
 }
 
+// 显示新建策略对话框
+const showNewStrategyDialog = () => {
+  newStrategyName.value = ''
+  showDialog.value = true
+  nextTick(() => {
+    const input = document.querySelector('.dialog-input') as HTMLInputElement
+    if (input) input.focus()
+  })
+}
+
+// 关闭对话框
+const closeDialog = () => {
+  showDialog.value = false
+}
+
+// 创建新策略
+const createStrategy = () => {
+  const name = newStrategyName.value.trim()
+  if (!name) {
+    message.error('请输入策略名称')
+    return
+  }
+
+  const strategyId = addStrategy(name)
+  expanded[strategyId] = true
+  closeDialog()
+  message.success(`已创建策略 "${name}"`)
+}
+
 onMounted(() => {
   window.addEventListener('click', handleGlobalClick)
 })
@@ -267,13 +329,17 @@ onUnmounted(() => {
 
 // ---------- 双击版本载入 ----------
 const selectedVersionId = ref<string | null>(null)
+const currentStrategyId = ref<string | null>(null)
 const emit = defineEmits<{
   (e: 'load', version: any): void
+  (e: 'loadVersion', versionId: string): void
+  (e: 'createNewVersion', strategyId: string): void
 }>()
 
 const loadVersion = (version: any) => {
   selectedVersionId.value = version.id
   emit('load', version)
+  emit('loadVersion', version.id)
 }
 </script>
 
@@ -351,7 +417,7 @@ const loadVersion = (version: any) => {
 }
 
 .version-item.selected {
-  background-color: rgba(41, 98, 255, 0.2); /* --primary with opacity */
+  background-color: rgba(41, 98, 255, 0.2);
   border-color: var(--primary);
 }
 
@@ -445,5 +511,126 @@ const loadVersion = (version: any) => {
   margin-bottom: 0;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* 新建策略按钮 */
+.new-strategy-btn {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: linear-gradient(90deg, #2563eb, #1d4ed8);
+  color: white;
+  border-radius: 25px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+  transition: all 0.3s ease;
+}
+
+.new-strategy-btn:hover {
+  background: linear-gradient(90deg, #1d4ed8, #1e40af);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.new-strategy-btn i {
+  font-size: 1rem;
+}
+
+/* 对话框样式 */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(4px);
+}
+
+.dialog {
+  background: var(--panel-bg);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 320px;
+  max-width: 400px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
+}
+
+.dialog-title {
+  margin: 0 0 20px 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}
+
+.dialog-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--darker-bg);
+  color: var(--text);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.dialog-input:focus {
+  border-color: var(--primary);
+}
+
+.dialog-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.dialog-btn {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.dialog-btn.cancel {
+  background: var(--darker-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.dialog-btn.cancel:hover {
+  background: var(--border);
+}
+
+.dialog-btn.confirm {
+  background: linear-gradient(90deg, #2563eb, #1d4ed8);
+  color: white;
+}
+
+.dialog-btn.confirm:hover {
+  background: linear-gradient(90deg, #1d4ed8, #1e40af);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 </style>

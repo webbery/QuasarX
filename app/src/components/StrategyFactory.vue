@@ -80,6 +80,10 @@
                 <i class="fas fa-save"></i>
                 保存
             </button>
+            <button class="action-btn" @click="saveAsNewVersion" title="另存为新版本">
+                <i class="fas fa-save"></i>
+                另存为
+            </button>
             <button class="action-btn" @click="showHistoryStrategy" title="策略面板">
                 <i class="fas fa-redo"></i>
                 策略面板
@@ -131,6 +135,8 @@ import FlowConnectLine from './flow/FlowConnectLine.vue'
 import ReportView from './ReportView.vue'
 import axios from 'axios'
 import sseService from '@/ts/SSEService';
+import { useHistoryStore } from '@/stores/history'
+import { storeToRefs } from 'pinia'
 
 const {
     fitView, 
@@ -156,11 +162,23 @@ const activeTab = ref('flow')
 const selectedNodes = ref([])
 const selectedEdges = ref([])
 const reportViewRef = ref(null)
-const emit = defineEmits(['show-history', 'show-flow-components'])
+const emit = defineEmits(['show-history', 'show-flow-components', 'load-version'])
+
+// Pinia Store
+const historyStore = useHistoryStore()
+const { strategies, versions } = storeToRefs(historyStore)
+const { addStrategy, addVersion, saveVersionFlowData, loadVersionFlowData, getVersionsByStrategy } = historyStore
+
 // localStorage 键名
 const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
 const LAST_BACKTEST_RESULT = 'last_backtest_result'
 let nodeIdCounter = 10
+
+// 当前选中的策略和版本
+const currentStrategyId = ref<string | null>(null)
+const currentVersionId = ref<string | null>(null)
+const strategyNameInput = ref('')
+const showNewStrategyDialog = ref(false)
 
 // 信息面板相关状态
 const infoMessages = ref([])
@@ -832,6 +850,8 @@ const newFlow = () => {
     removeNodes(getNodes.value.map(e=>e.id))
     removeEdges(getEdges.value.map(e => e.id))
     nodeIdCounter = 1
+    currentStrategyId.value = null
+    currentVersionId.value = null
   }
 }
 // 保存流程图到localStorage
@@ -1026,7 +1046,8 @@ const runBacktest = async () => {
 }
 
 defineExpose({
-  runBacktest
+  runBacktest,
+  loadVersionFromHistory
 })
 </script>
 <style scoped>
