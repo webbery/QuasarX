@@ -108,6 +108,13 @@ public:
 
     virtual void GetFee(FeeInfo& fee, symbol_t symbol);
 
+    // 合约信息查询接口
+    virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
+    virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) override;
+    virtual bool GetAllOptionSymbols(List<SymbolInfo>& symbols) override;
+    virtual SymbolInfo GetSymbolInfo(const String& code) override;
+    virtual void RefreshSymbolList() override;
+
     bool QuoteLogin();
     // 重新订阅行情
     bool ResubscribeQuote();
@@ -159,6 +166,9 @@ private:
     bool ReconnectTrade();
 
     void GetStockFee();
+
+    // HX SDK 查询函数封装
+    bool QueryStockSymbolsFromSDK(List<SymbolInfo>& symbols);
 private:
     bool _login_status : 1;
     bool _quote_inited : 1;
@@ -187,4 +197,8 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<void>> _promises;
 
     Map<symbol_t, Set<Commission*>> _commissions;
+
+    // 符号信息缓存
+    ConcurrentMap<String, SymbolInfo> _symbolCache;
+    time_t _lastRefreshTime = 0;
 };

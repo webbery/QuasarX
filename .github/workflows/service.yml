@@ -83,27 +83,27 @@ jobs:
           sudo cp -r stage/lib /usr/local
           sudo ldconfig
 
-      - name: Cache ONNX-runtime build
-        uses: actions/cache@v4
-        id: cache-onnxruntime
-        with:
-          path: |
-            onnxruntime/build
-            /usr/local/include/onnxruntime
-            /usr/local/lib/libonnxruntime*
-          key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/build.sh') }}
-          restore-keys: |
-            ${{ runner.os }}-onnxruntime-
+      # - name: Cache ONNX-runtime build
+      #   uses: actions/cache@v4
+      #   id: cache-onnxruntime
+      #   with:
+      #     path: |
+      #       onnxruntime/build
+      #       /usr/local/include/onnxruntime
+      #       /usr/local/lib/libonnxruntime*
+      #     key: ${{ runner.os }}-onnxruntime-${{ hashFiles('**/build.sh') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-onnxruntime-
 
-      - name: build ONNX-runtime (if cache miss)
-        if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
-        run: |
-          git clone --recursive https://github.com/microsoft/onnxruntime
-          cd onnxruntime
-          git checkout v1.22.2
-          export ORT_BUILD_WITH_CACHE=1
-          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --parallel --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
-          cd build/Linux/Release && sudo make install
+      # - name: build ONNX-runtime (if cache miss)
+      #   if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
+      #   run: |
+      #     git clone --recursive https://github.com/microsoft/onnxruntime
+      #     cd onnxruntime
+      #     git checkout v1.22.2
+      #     export ORT_BUILD_WITH_CACHE=1
+      #     ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --parallel --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
+      #     cd build/Linux/Release && sudo make install
 
       - name: build third_party
         run: |

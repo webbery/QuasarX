@@ -172,6 +172,10 @@ public:
     void InitMarket(const List<Pair<String, ExchangeName>>& info);
 
     ExchangeInfo GetExchangeInfo(const String& name);
+
+    // 添加合约信息到市场列表 (由 Exchange 初始化时调用)
+    void AddSymbolToMarket(const String& code, ContractInfo&& info);
+
     // type 0-股票
     // StockHistorySimulation* CreateSimulation(const String& name, const String& strategy, int type = 0);
 private:

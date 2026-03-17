@@ -1324,9 +1324,119 @@ void HXExchange::GetFee(FeeInfo& fee, symbol_t symbol) {
 }
 
 void HXExchange::GetStockFee() {
-    auto reqID = ++_reqID;
-    TORASTOCKAPI::CTORATstpQryTradingFeeField pQryTradingFeeField;
-    memset(&pQryTradingFeeField, 0, sizeof(TORASTOCKAPI::CTORATstpQryTradingFeeField));
-    auto promise = initPromise<String>(reqID);
-    _stockHandle._tradeAPI->ReqQryTradingFee(&pQryTradingFeeField, reqID);
+    // TODO: 从 HX SDK 获取股票交易手续费
+    // TORASTOCKAPI::CTORATstpQryCommissionField qryComm = {0};
+    // _stockHandle._tradeAPI->ReqQryCommission(&qryComm, _reqID++);
+}
+
+// ============ 合约信息查询接口实现 ============
+
+bool HXExchange::GetAllStockSymbols(List<SymbolInfo>& symbols) {
+    // 优先从缓存获取 (缓存有效期 1 天)
+    time_t now = Now();
+    if (_lastRefreshTime > 0 && (now - _lastRefreshTime) < 86400) {
+        // 使用 visit_all 遍历 concurrent_flat_map
+        _symbolCache.visit_all([&symbols](std::pair<const String, SymbolInfo>& item) {
+            if (is_stock(to_symbol(item.first))) {
+                symbols.push_back(item.second);
+            }
+        });
+        if (!symbols.empty()) {
+            INFO("Loaded {} stock symbols from cache", symbols.size());
+            return true;
+        }
+    }
+
+    // 从 HX SDK 查询
+    return QueryStockSymbolsFromSDK(symbols);
+}
+
+bool HXExchange::GetAllFundSymbols(List<SymbolInfo>& symbols) {
+    // 从缓存获取
+    time_t now = Now();
+    if (_lastRefreshTime > 0 && (now - _lastRefreshTime) < 86400) {
+        _symbolCache.visit_all([&symbols](std::pair<const String, SymbolInfo>& item) {
+            if (is_fund(to_symbol(item.first))) {
+                symbols.push_back(item.second);
+            }
+        });
+        if (!symbols.empty()) {
+            INFO("Loaded {} fund symbols from cache", symbols.size());
+            return true;
+        }
+    }
+
+    // TODO: 从 HX SDK 查询基金列表
+    WARN("GetAllFundSymbols not implemented for HX, using empty list");
+    return true;
+}
+
+bool HXExchange::GetAllOptionSymbols(List<SymbolInfo>& symbols) {
+    // 从缓存获取
+    time_t now = Now();
+    if (_lastRefreshTime > 0 && (now - _lastRefreshTime) < 86400) {
+        _symbolCache.visit_all([&symbols](std::pair<const String, SymbolInfo>& item) {
+            if (is_option(to_symbol(item.first))) {
+                symbols.push_back(item.second);
+            }
+        });
+        if (!symbols.empty()) {
+            INFO("Loaded {} option symbols from cache", symbols.size());
+            return true;
+        }
+    }
+
+    // TODO: 从 HX SDK 查询期权列表
+    WARN("GetAllOptionSymbols not implemented for HX, using empty list");
+    return true;
+}
+
+SymbolInfo HXExchange::GetSymbolInfo(const String& code) {
+    // 先从缓存查找
+    SymbolInfo result;
+    _symbolCache.visit(code, [&result](std::pair<const String, SymbolInfo>& item) {
+        result = item.second;
+    });
+
+    if (!result._code.empty()) {
+        return result;
+    }
+
+    // 缓存未命中，返回空信息
+    return SymbolInfo{};
+}
+
+void HXExchange::RefreshSymbolList() {
+    // 清空缓存并重新查询
+    // concurrent_flat_map 不支持 clear(), 需要重新创建
+    ConcurrentMap<String, SymbolInfo> newCache;
+    _symbolCache = std::move(newCache);
+
+    List<SymbolInfo> stocks, funds, options;
+    GetAllStockSymbols(stocks);
+    GetAllFundSymbols(funds);
+    GetAllOptionSymbols(options);
+
+    // 填充缓存
+    for (auto& sym : stocks) {
+        _symbolCache.insert_or_assign(sym._code, sym);
+    }
+    for (auto& sym : funds) {
+        _symbolCache.insert_or_assign(sym._code, sym);
+    }
+    for (auto& sym : options) {
+        _symbolCache.insert_or_assign(sym._code, sym);
+    }
+    _lastRefreshTime = Now();
+    INFO("Refreshed symbol cache: {} stocks, {} funds, {} options",
+         stocks.size(), funds.size(), options.size());
+}
+
+bool HXExchange::QueryStockSymbolsFromSDK(List<SymbolInfo>& symbols) {
+    // 使用 HX SDK 的查询接口查询股票列表
+    // 注意：这里需要根据实际的华鑫 SDK API 调整
+
+    // TODO: 实现真实的 HX SDK 查询
+    WARN("QueryStockSymbolsFromSDK not fully implemented, returning empty list");
+    return true;
 }

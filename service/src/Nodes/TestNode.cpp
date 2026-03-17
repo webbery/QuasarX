@@ -46,5 +46,8 @@ bool TestNode::Process(const String& strategy, DataContext& context) {
             context.add("r2", timeseriel);
         }
     }
+    // 拟合日内garch，计算alpha/beta及排除日内季节性变化的收益率
+    // Forecasting intraday volatility in the US equity market. Multiplicative component GARCH
+    
     return true;
 }

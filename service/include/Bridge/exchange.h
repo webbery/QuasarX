@@ -221,6 +221,20 @@ struct FeeInfo {
 
 };
 
+// 合约信息结构
+struct SymbolInfo {
+    String _code;           // 6 位代码
+    String _name;           // 合约名称
+    ExchangeName _exchange; // 交易所
+    char _type;             // 合约类型 (AStock/ETF/Option 等)
+    char _market;           // 市场板块 (主板/创业板/科创板等)
+    String _expireDate;     // 到期日 (期权/期货)
+    String _deliveryDate;   // 交割日 (期权)
+    float _strike;          // 行权价 (期权)
+
+    SymbolInfo() : _exchange(MT_Unknow), _type(0), _market(0), _strike(0.0f) {}
+};
+
 #define GET_SYMBOL(context) context->_order._symbol
 
 template<>
@@ -461,6 +475,31 @@ public:
   virtual bool SetStockLimitation(char type, int limitation) = 0;
 
   virtual void GetFee(FeeInfo& fee, symbol_t symbol={}) = 0;
+
+  // ============ 合约信息查询接口 ============
+
+  // 获取所有股票符号列表
+  virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) {
+      return false;
+  }
+
+  // 获取所有基金符号列表
+  virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) {
+      return false;
+  }
+
+  // 获取所有期权符号列表
+  virtual bool GetAllOptionSymbols(List<SymbolInfo>& symbols) {
+      return false;
+  }
+
+  // 根据代码查询单个合约信息
+  virtual SymbolInfo GetSymbolInfo(const String& code) {
+      return SymbolInfo{};
+  }
+
+  // 刷新符号列表 (每日开盘前调用)
+  virtual void RefreshSymbolList() {}
 
   Server* GetHandle() { return _server; }
   // 设置工作时间段

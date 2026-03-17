@@ -185,8 +185,8 @@ bool Server::Init(const char* config) {
       return false;
     }
 
-    InitDatabase();
     InitHandlers();
+    InitDatabase();
     // _mode = mode;
     return true;
 }
@@ -195,7 +195,9 @@ void Server::Run() {
     Regist();
     auto port = _config->GetPort();
     INFO("Start in port {}", port);
-    _svr.listen("0.0.0.0", port);
+    if (!_svr.listen("0.0.0.0", port)) {
+        INFO("listen fail: {}", port);
+    }
     _exit = true;
     printf("Bye\n");
 }
@@ -393,26 +395,61 @@ void Server::InitDefault() {
     StartTimer();
 }
 
+void Server::AddSymbolToMarket(const String& code, ContractInfo&& info) {
+    _markets.emplace(code, std::move(info));
+}
+
 void Server::InitStocks(const String& path) {
     static bool isInit = false;
     if (isInit)
         return;
     isInit = true;
-    
-    String stock_path = path + "/symbol_market.csv";
-    if (!std::filesystem::exists(stock_path)) {
-        // 首次启动,运行初始化脚本
-        RunCommand("python tools/run_task.py 1");
-    }
-    if (!std::filesystem::exists(path + "/fund_market.csv")) {
-        RunCommand("python tools/run_task.py 2");
-    }
-    if (!std::filesystem::exists(path + "/option_market.csv")) {
-        if (!RunCommand("python tools/run_task.py 3")) {
-            
+
+    // Fallback: 如果 _markets 为空，尝试从 Exchange 重新加载
+    if (_markets.empty()) {
+        WARN("Symbol market is empty, trying to reload from exchange...");
+
+        auto exchange = GetAvaliableStockExchange();
+        if (exchange) {
+            List<SymbolInfo> symbols;
+            if (exchange->GetAllStockSymbols(symbols)) {
+                for (auto& sym : symbols) {
+                    ContractInfo info;
+                    info._type = sym._type;
+                    info._exchange = sym._exchange;
+                    info._market = sym._market;
+                    info._name = sym._name;
+                    _markets.emplace(sym._code, std::move(info));
+                }
+                INFO("Loaded {} stock symbols (fallback)", symbols.size());
+            }
+
+            if (exchange->GetAllFundSymbols(symbols)) {
+                for (auto& sym : symbols) {
+                    ContractInfo info;
+                    info._type = sym._type;
+                    info._exchange = sym._exchange;
+                    info._name = sym._name;
+                    _markets.emplace(sym._code, std::move(info));
+                }
+                INFO("Loaded {} fund symbols (fallback)", symbols.size());
+            }
+
+            if (exchange->GetAllOptionSymbols(symbols)) {
+                for (auto& sym : symbols) {
+                    ContractInfo info;
+                    info._type = sym._type;
+                    info._exchange = sym._exchange;
+                    info._name = sym._name;
+                    info._expireDate = sym._expireDate;
+                    info._deliveryDate = sym._deliveryDate;
+                    info._strike = sym._strike;
+                    _markets.emplace(sym._code, std::move(info));
+                }
+                INFO("Loaded {} option symbols (fallback)", symbols.size());
+            }
         }
     }
-    ReloadMarketData(path);
 }
 
 void Server::InitFutures(const String& path) {
@@ -996,78 +1033,53 @@ int Server::GetMaxPrepareCount() {
 
 void Server::ReloadMarketData(const String& path) {
     _markets.clear();
-    String stock_path = path + "/symbol_market.csv";
-    io::CSVReader<3> reader(stock_path);
-    reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
-    std::string code;
-    std::string exch;
-    String market;
-    String name;
-    while(reader.read_row(code, exch, name)){
-        ContractInfo info;
-        info._type = (int)ContractType::AStock;
-        if (exch == "SH") {
-            info._exchange = MT_Shanghai;
+
+    // 优先通过 Exchange 接口获取符号信息
+    auto exchange = GetAvaliableStockExchange();
+    if (exchange) {
+        List<SymbolInfo> symbols;
+
+        // 加载股票
+        if (exchange->GetAllStockSymbols(symbols)) {
+            for (auto& sym : symbols) {
+                ContractInfo info;
+                info._type = sym._type;
+                info._exchange = sym._exchange;
+                info._market = sym._market;
+                info._name = sym._name;
+                _markets.emplace(sym._code, std::move(info));
+            }
+            INFO("Reloaded {} stock symbols", symbols.size());
         }
-        else if (exch == "SZ") info._exchange = MT_Shenzhen;
-        else if (exch == "BJ") info._exchange = MT_Beijing;
-        else {
-            WARN("{} Unknow exchange {}", code.c_str(), exch.c_str());
-            continue;
+
+        // 加载基金
+        symbols.clear();
+        if (exchange->GetAllFundSymbols(symbols)) {
+            for (auto& sym : symbols) {
+                ContractInfo info;
+                info._type = sym._type;
+                info._exchange = sym._exchange;
+                info._name = sym._name;
+                _markets.emplace(sym._code, std::move(info));
+            }
+            INFO("Reloaded {} fund symbols", symbols.size());
         }
-        info._name = name;
-        _markets.emplace(code, std::move(info));
-    }
-    // 基金
-    String fund_path = path + "/fund_market.csv";
-    io::CSVReader<2> fund_reader(fund_path);
-    fund_reader.read_header(io::ignore_extra_column, "code", "name");
-    while(fund_reader.read_row(code, name)){
-        String head = code.substr(0, 2);
-        String symbol = code.substr(2);
-        ContractInfo info;
-        info._type = (int)ContractType::ETF;
-        if (head == "sh") info._exchange = MT_Shanghai;
-        else if (head == "sz") info._exchange = MT_Shenzhen;
-        else {
-            WARN("{} Unknow exchange {}", symbol, head);
-            continue;
+
+        // 加载期权
+        symbols.clear();
+        if (exchange->GetAllOptionSymbols(symbols)) {
+            for (auto& sym : symbols) {
+                ContractInfo info;
+                info._type = sym._type;
+                info._exchange = sym._exchange;
+                info._name = sym._name;
+                info._expireDate = sym._expireDate;
+                info._deliveryDate = sym._deliveryDate;
+                info._strike = sym._strike;
+                _markets.emplace(sym._code, std::move(info));
+            }
+            INFO("Reloaded {} option symbols", symbols.size());
         }
-        _markets.emplace(symbol, std::move(info));
-    }
-    // 期权
-    String expire, delivery;
-    double strike;
-    String opt_path = path + "/option_market.csv";
-    auto lambda_isPutOption = [](const String& name) {
-        if (name.find("沽") != String::npos)
-            return true;
-        auto pos = name.find_last_of("P");
-        if (pos != String::npos && pos > 3) {
-            return true;
-        }
-        return false;
-    };
-    io::CSVReader<6> opt_reader(opt_path);
-    opt_reader.read_header(io::ignore_extra_column, "交易所ID", "合约ID", "合约名称", "最后交易日", "交割日", "行权价");
-    while (opt_reader.read_row(exch, code, name, expire, delivery, strike)) {
-        ContractInfo info;
-        info._name = name;
-        if (exch == "SZSE") info._exchange = MT_Shenzhen;
-        else if (exch == "SSE") info._exchange = MT_Shanghai;
-        //else if (exch == "SHFE") info._exchange = MT_ShanghaiFuture;
-        else continue;
-        bool is_put = lambda_isPutOption(name);
-        if (is_put) {
-            info._type = (int)ContractType::AmericanOption;
-        }
-        else {
-            info._type = (1 << 7| (int)ContractType::AmericanOption);
-        }
-        info._deliveryDate = delivery;
-        info._strike = strike;
-        info._expireDate = expire;
-        _markets.emplace(code, std::move(info));
     }
 }
 
@@ -1421,11 +1433,12 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
         handle._quote_port = atoi(quote_info[1].c_str());
     }
     auto accounts = config.GetStockAccounts();
-    assert(accounts.size() > 0);
-    auto account = accounts.front().first;
-    auto accpwd = accounts.front().second;
-    strcpy(handle._account, account.c_str());
-    strcpy(handle._accpwd, accpwd.c_str());
+    if (accounts.size() > 0) {// 回测模式可以不用支持用户帐号
+        auto account = accounts.front().first;
+        auto accpwd = accounts.front().second;
+        strcpy(handle._account, account.c_str());
+        strcpy(handle._accpwd, accpwd.c_str());
+    }
     handle._localPort = config.GetPort();
     return handle;
 }

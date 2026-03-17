@@ -93,7 +93,7 @@ public:
         std::visit([&name, &value, this](auto&& v) {
             using CTX_T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<CTX_T, Vector<double>> && std::is_same_v<T, double>) {
-                v.push_back(value);
+                v.emplace_back(std::move(value));
             }
             else {
                 set(name, value);

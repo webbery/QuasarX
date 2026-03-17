@@ -17,7 +17,7 @@ class TestTradeHistory:
 
         # 查询一个存在的标的（假设有交易记录）
         params = {
-            'symbol': '000001.SZ',
+            'symbol': 'sz.000001',
             'page': 1,
             'page_size': 10
         }
@@ -42,7 +42,7 @@ class TestTradeHistory:
 
             order = trade['order']
             assert 'symbol' in order
-            assert order['symbol'] == '000001.SZ'
+            assert order['symbol'] == 'sz.000001'
             assert 'volume' in order
             assert 'type' in order
             assert 'side' in order
@@ -69,7 +69,7 @@ class TestTradeHistory:
         start_time = end_time - 24 * 3600  # 最近24小时
 
         params = {
-            'symbol': '000001.SZ',
+            'symbol': 'sz.000001',
             'start': start_time,
             'end': end_time,
             'page': 1,
@@ -92,7 +92,7 @@ class TestTradeHistory:
 
         # 第一页，每页5条
         params_page1 = {
-            'symbol': '000001.SZ',
+            'symbol': 'sz.000001',
             'page': 1,
             'page_size': 5
         }
@@ -102,7 +102,7 @@ class TestTradeHistory:
 
         # 第二页，每页5条
         params_page2 = {
-            'symbol': '000001.SZ',
+            'symbol': 'sz.000001',
             'page': 2,
             'page_size': 5
         }
@@ -183,7 +183,7 @@ class TestTradeHistory:
 
         # 回测中常用的查询模式
         params = {
-            'symbol': '000001.SZ',
+            'symbol': 'sz.000001',
             'strategy': 'ma',  # 策略名称
             'start': 1672502400,     # 2023-01-01
             'end': 1672588800,       # 2023-01-02

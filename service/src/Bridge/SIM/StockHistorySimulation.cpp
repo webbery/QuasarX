@@ -6,6 +6,7 @@
 #include "Util/system.h"
 #include "boost/lockfree/queue.hpp"
 #include "std_header.h"
+#include "csv.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -141,10 +142,15 @@ bool StockHistorySimulation::GetOrder(const String& sysID, Order& ol)
 
 void StockHistorySimulation::SetFilter(const QuoteFilter& filter) {
   _filter = filter;
+
+  // 立即触发数据加载，而不是等到 QueryQuotes
   if (!std::filesystem::exists(_org_path)) {
     WARN("{} not exist.", _org_path);
     return;
   }
+
+  // 预加载 symbol 信息到缓存
+  UseLevel(1);  // 加载日线数据
 }
 
 void StockHistorySimulation::UseLevel(int level) {
@@ -435,4 +441,184 @@ double StockHistorySimulation::Progress() {
   auto itr = _csvs.begin();
   auto size = itr->second.get_index().size() - 1;
   return 1.0 * _cur_index / size;
+}
+
+// ============ 合约信息查询接口实现 ============
+
+bool StockHistorySimulation::GetAllStockSymbols(List<SymbolInfo>& symbols) {
+    String csv_path = _org_path + "/symbol_market.csv";
+
+    // 如果 CSV 文件不存在，调用脚本生成
+    if (!std::filesystem::exists(csv_path)) {
+        WARN("{} not exist, running script to generate", csv_path);
+        String cmd = "python " + _org_path + "/../tools/run_task.py 1";
+        if (!RunCommand(cmd)) {
+            FATAL("Failed to run script to generate symbol_market.csv");
+            return false;
+        }
+    }
+
+    try {
+        io::CSVReader<3> reader(csv_path);
+        reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
+        std::string code, exch, name;
+        while (reader.read_row(code, exch, name)) {
+            SymbolInfo info;
+            info._code = code;
+            info._name = name;
+            if (exch == "SH") {
+                info._exchange = MT_Shanghai;
+            } else if (exch == "SZ") {
+                info._exchange = MT_Shenzhen;
+            } else if (exch == "BJ") {
+                info._exchange = MT_Beijing;
+            } else {
+                WARN("{}: Unknown exchange {}", code, exch);
+                continue;
+            }
+            info._type = static_cast<char>(ContractType::AStock);
+            symbols.push_back(info);
+        }
+        INFO("Loaded {} stock symbols from {}", symbols.size(), csv_path);
+        return true;
+    } catch (const std::exception& e) {
+        FATAL("Failed to load {}: {}", csv_path, e.what());
+        return false;
+    }
+}
+
+bool StockHistorySimulation::GetAllFundSymbols(List<SymbolInfo>& symbols) {
+    String csv_path = _org_path + "/fund_market.csv";
+
+    if (!std::filesystem::exists(csv_path)) {
+        WARN("{} not exist, running script to generate", csv_path);
+        String cmd = "python " + _org_path + "/../tools/run_task.py 2";
+        if (!RunCommand(cmd)) {
+            FATAL("Failed to run script to generate fund_market.csv");
+            return false;
+        }
+    }
+
+    try {
+        io::CSVReader<3> reader(csv_path);
+        reader.read_header(io::ignore_extra_column, "code", "name", "type");
+        std::string code, name, type;
+        while (reader.read_row(code, name, type)) {
+            SymbolInfo info;
+            info._code = code.substr(2); // 去掉"sh"/"sz"前缀
+            info._name = name;
+            if (code.substr(0, 2) == "sh") {
+                info._exchange = MT_Shanghai;
+            } else if (code.substr(0, 2) == "sz") {
+                info._exchange = MT_Shenzhen;
+            } else {
+                continue;
+            }
+            if (type == "ETF 基金") {
+                info._type = static_cast<char>(ContractType::ETF);
+            } else if (type == "LOF 基金") {
+                info._type = static_cast<char>(ContractType::LOF);
+            } else {
+                info._type = static_cast<char>(ContractType::ETF);
+            }
+            symbols.push_back(info);
+        }
+        INFO("Loaded {} fund symbols from {}", symbols.size(), csv_path);
+        return true;
+    } catch (const std::exception& e) {
+        FATAL("Failed to load {}: {}", csv_path, e.what());
+        return false;
+    }
+}
+
+bool StockHistorySimulation::GetAllOptionSymbols(List<SymbolInfo>& symbols) {
+    String csv_path = _org_path + "/option_market.csv";
+
+    if (!std::filesystem::exists(csv_path)) {
+        WARN("{} not exist, running script to generate", csv_path);
+        String cmd = "python " + _org_path + "/../tools/run_task.py 3";
+        if (!RunCommand(cmd)) {
+            FATAL("Failed to run script to generate option_market.csv");
+            return false;
+        }
+    }
+
+    try {
+        io::CSVReader<6> reader(csv_path);
+        reader.read_header(io::ignore_extra_column, "交易所 ID", "合约 ID", "合约名称", "最后交易日", "交割日", "行权价");
+        std::string exch, code, name, expire, delivery;
+        double strike;
+        while (reader.read_row(exch, code, name, expire, delivery, strike)) {
+            SymbolInfo info;
+            info._code = code;
+            info._name = name;
+            info._expireDate = expire;
+            info._deliveryDate = delivery;
+            info._strike = static_cast<float>(strike);
+
+            if (exch == "SZSE") {
+                info._exchange = MT_Shenzhen;
+            } else if (exch == "SSE") {
+                info._exchange = MT_Shanghai;
+            } else {
+                continue;
+            }
+
+            // 判断看涨/看跌期权
+            bool isPut = (name.find("沽") != String::npos) ||
+                        (name.find("P") != String::npos && name.find("P") > 3);
+            if (isPut) {
+                info._type = static_cast<char>(ContractType::AmericanOption);
+            } else {
+                info._type = static_cast<char>(ContractType::AmericanOption) | (1 << 7);
+            }
+
+            symbols.push_back(info);
+        }
+        INFO("Loaded {} option symbols from {}", symbols.size(), csv_path);
+        return true;
+    } catch (const std::exception& e) {
+        FATAL("Failed to load {}: {}", csv_path, e.what());
+        return false;
+    }
+}
+
+SymbolInfo StockHistorySimulation::GetSymbolInfo(const String& code) {
+    SymbolInfo info;
+
+    // 先尝试从股票中查找
+    List<SymbolInfo> stocks;
+    if (GetAllStockSymbols(stocks)) {
+        for (const auto& s : stocks) {
+            if (s._code == code) {
+                return s;
+            }
+        }
+    }
+
+    // 再尝试从基金中查找
+    List<SymbolInfo> funds;
+    if (GetAllFundSymbols(funds)) {
+        for (const auto& s : funds) {
+            if (s._code == code) {
+                return s;
+            }
+        }
+    }
+
+    // 最后尝试从期权中查找
+    List<SymbolInfo> options;
+    if (GetAllOptionSymbols(options)) {
+        for (const auto& s : options) {
+            if (s._code == code) {
+                return s;
+            }
+        }
+    }
+
+    return info;
+}
+
+void StockHistorySimulation::RefreshSymbolList() {
+    // 仿真环境不需要主动刷新，数据来自本地 CSV
 }

@@ -51,6 +51,30 @@ bool ExchangeHandler::Use(const String& name) {
   if (ret) {
     auto ptr = _exchanges[name];
     _type_excs[et] = ptr;
+
+    // 同步 symbol 信息到 Server
+    List<SymbolInfo> symbols;
+    // 获取所有类型的符号信息
+    ptr->GetAllStockSymbols(symbols);
+    ptr->GetAllFundSymbols(symbols);
+    ptr->GetAllOptionSymbols(symbols);
+
+    // 填充到 Server 的 _markets
+    for (auto& sym : symbols) {
+      ContractInfo info;
+      info._type = sym._type;
+      info._exchange = sym._exchange;
+      info._name = sym._name;
+      info._market = sym._market;
+      info._expireDate = sym._expireDate;
+      info._deliveryDate = sym._deliveryDate;
+      info._strike = sym._strike;
+      _server->AddSymbolToMarket(sym._code, std::move(info));
+    }
+    if (!symbols.empty()) {
+      INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
+    }
+
     QuoteFilter filter;
     if (exchange.contains("pool")) {
       for (String symbol: exchange["pool"]) {

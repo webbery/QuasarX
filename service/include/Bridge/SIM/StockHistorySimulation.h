@@ -58,6 +58,13 @@ public:
   virtual int GetStockLimitation(char type);
 
   virtual bool SetStockLimitation(char type, int limitation);
+
+  // 合约信息查询接口
+  virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
+  virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) override;
+  virtual bool GetAllOptionSymbols(List<SymbolInfo>& symbols) override;
+  virtual SymbolInfo GetSymbolInfo(const String& code) override;
+  virtual void RefreshSymbolList() override;
 private:
   bool Once(symbol_t symbol, time_t timeAxis);
   bool Once(uint32_t& curIndex);
