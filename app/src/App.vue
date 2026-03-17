@@ -288,7 +288,7 @@ const onLoadVersion = (info) => {
 }
 
 // 从策略面板加载版本
-const onLoadVersionFromPanel = (versionId: string) => {
+const onLoadVersionFromPanel = (versionId) => {
   console.info('onLoadVersionFromPanel:', versionId)
   // 调用 StrategyFactory 的 loadVersionFromHistory 方法
   if (dynamicComponentRef.value && dynamicComponentRef.value.loadVersionFromHistory) {
@@ -297,7 +297,7 @@ const onLoadVersionFromPanel = (versionId: string) => {
 }
 
 // 创建新版本（从策略面板）
-const onCreateNewVersion = (strategyId: string) => {
+const onCreateNewVersion = (strategyId) => {
   console.info('onCreateNewVersion:', strategyId)
   // 切换到流程图组件，让用户编辑新策略
   selectedStrategyPanel.value = false

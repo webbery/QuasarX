@@ -175,8 +175,8 @@ const LAST_BACKTEST_RESULT = 'last_backtest_result'
 let nodeIdCounter = 10
 
 // 当前选中的策略和版本
-const currentStrategyId = ref<string | null>(null)
-const currentVersionId = ref<string | null>(null)
+const currentStrategyId = ref(null)
+const currentVersionId = ref(null)
 const strategyNameInput = ref('')
 const showNewStrategyDialog = ref(false)
 
@@ -1042,6 +1042,89 @@ const runBacktest = async () => {
   const rangeDate = signalNode.data.params['回测周期']['value']
   if (symbols.length != 0) {
     reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1]);
+  }
+}
+
+// 从历史版本加载流程图
+const loadVersionFromHistory = async (version) => {
+  try {
+    let versionData = version
+    // 如果传入的是ID，则从 store 中查找对应的版本对象
+    if (typeof version === 'string' || typeof version === 'number') {
+      versionData = versions.value.find(v => v.id == version)
+      if (!versionData) {
+        message.error('未找到版本数据')
+        return
+      }
+    }
+    if (!versionData || !versionData.flowData) {
+      message.error('版本数据中没有流程图信息')
+      return
+    }
+
+    // 清空当前画布
+    removeNodes(getNodes.value.map(n => n.id))
+    removeEdges(getEdges.value.map(e => e.id))
+
+    const flowData = versionData.flowData
+    const loadedNodes = flowData.nodes || []
+    const loadedEdges = flowData.edges || []
+
+    // 添加节点
+    if (loadedNodes.length > 0) {
+      await nextTick(() => {
+        addNodes(loadedNodes.map(node => ({
+          ...node,
+          type: node.type || 'custom'
+        })))
+      })
+
+      // 更新节点计数器（假设节点ID为数字字符串）
+      const maxId = Math.max(...loadedNodes.map(node => parseInt(node.id) || 0))
+      nodeIdCounter = maxId + 1
+    }
+
+    // 添加边（需确保节点已添加）
+    nextTick(() => {
+      const validEdges = loadedEdges.filter(edge => {
+        const sourceExists = getNodes.value.some(n => n.id === edge.source)
+        const targetExists = getNodes.value.some(n => n.id === edge.target)
+        if (!sourceExists || !targetExists) {
+          console.warn(`边 ${edge.id} 引用了不存在的节点: source=${edge.source}, target=${edge.target}`)
+          return false
+        }
+        return true
+      })
+      const curEdges = validEdges.map(edge => ({
+        ...edge,
+        source: String(edge.source),
+        target: String(edge.target),
+        type: edge.type || 'default',
+        markerEnd: edge.markerEnd || {
+          type: MarkerType.ArrowClosed,
+          color: 'var(--primary)',
+        },
+        style: edge.style || {
+          stroke: 'var(--primary)',
+          strokeWidth: 2,
+        }
+      }))
+      addEdges(curEdges)
+
+      message.success(`已加载版本: ${versionData.name || versionData.id}`)
+
+      // 更新当前策略和版本ID
+      currentStrategyId.value = versionData.strategyId || null
+      currentVersionId.value = versionData.id
+
+      // 适应视图
+      setTimeout(() => {
+        fitView({ padding: 0.25 })
+      }, 100)
+    })
+  } catch (error) {
+    console.error('加载版本数据失败:', error)
+    message.error('加载版本数据失败')
   }
 }
 

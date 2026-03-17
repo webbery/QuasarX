@@ -283,7 +283,7 @@ const calculatedAmount = computed(() => {
 
 onMounted(()=> {
     console.info('onMounted')
-    updateCapital()
+    // updateCapital()
 })
 
 const parseLocalizedNumber = (localizedString: string) => {
