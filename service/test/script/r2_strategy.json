@@ -1,0 +1,200 @@
+{
+    "id": "r2_strategy",
+    "name": "R 平方趋势策略",
+    "description": "基于 R² 拟合优度的趋势判断策略：R²<0.7 时买入（震荡市），R²>0.9 时卖出（强趋势）",
+    "nodes": [
+        {
+            "id": "1",
+            "type": "custom",
+            "data": {
+                "label": "行情数据输入",
+                "nodeType": "input",
+                "params": {
+                    "source": {
+                        "value": "股票",
+                        "type": "select",
+                        "options": ["股票", "期货"]
+                    },
+                    "code": {
+                        "value": ["sz.000001"],
+                        "type": "text"
+                    },
+                    "freq": {
+                        "value": "1d",
+                        "type": "select",
+                        "options": ["1d", "5m"]
+                    },
+                    "close": {
+                        "value": "close",
+                        "type": "text"
+                    },
+                    "open": {
+                        "value": "open",
+                        "type": "text"
+                    },
+                    "high": {
+                        "value": "high",
+                        "type": "text"
+                    },
+                    "low": {
+                        "value": "low",
+                        "type": "text"
+                    },
+                    "volume": {
+                        "value": "volume",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 50, "y": 100 }
+        },
+        {
+            "id": "2",
+            "type": "custom",
+            "data": {
+                "label": "R² 计算",
+                "nodeType": "test",
+                "params": {
+                    "window": {
+                        "value": 10,
+                        "type": "number",
+                        "desc": "R² 计算窗口大小"
+                    }
+                }
+            },
+            "position": { "x": 400, "y": 100 }
+        },
+        {
+            "id": "3",
+            "type": "custom",
+            "data": {
+                "label": "信号生成",
+                "nodeType": "signal",
+                "params": {
+                    "code": {
+                        "value": ["sz.000001"],
+                        "type": "text"
+                    },
+                    "buy": {
+                        "value": "r2 < 0.7",
+                        "type": "text",
+                        "desc": "R²<0.7 表示震荡市，买入"
+                    },
+                    "sell": {
+                        "value": "r2 > 0.9",
+                        "type": "text",
+                        "desc": "R²>0.9 表示强趋势，卖出止盈"
+                    }
+                }
+            },
+            "position": { "x": 700, "y": 100 }
+        },
+        {
+            "id": "5",
+            "type": "custom",
+            "data": {
+                "label": "R2 调试输出",
+                "nodeType": "debug",
+                "params": {
+                    "suffix": {
+                        "value": "csv",
+                        "type": "select",
+                        "options": ["csv", "log"]
+                    }
+                }
+            },
+            "position": { "x": 550, "y": 250 }
+        },
+        {
+            "id": "4",
+            "type": "custom",
+            "data": {
+                "label": "交易执行",
+                "nodeType": "execution",
+                "params": {
+                    "initialCapital": {
+                        "value": 100000,
+                        "type": "number",
+                        "unit": "元"
+                    },
+                    "commission": {
+                        "value": 0.0003,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001,
+                        "unit": "%"
+                    },
+                    "stampDuty": {
+                        "value": 0.001,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001,
+                        "unit": "%"
+                    },
+                    "minFee": {
+                        "value": 5,
+                        "type": "number",
+                        "min": 0,
+                        "max": 50,
+                        "step": 1,
+                        "unit": "元"
+                    },
+                    "slippage": {
+                        "value": 0.001,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001
+                    },
+                    "type": {
+                        "value": 1,
+                        "type": "select",
+                        "options": ["立即执行市价单", "VWAP"]
+                    },
+                    "contract":{
+                        "value": 0,
+                        "type": "select",
+                        "options": ["股票", "期货", "期权"]
+                    }
+                }
+            },
+            "position": { "x": 1000, "y": 100 }
+        }
+    ],
+    "edges": [
+        {
+            "id": "1-close->2",
+            "source": "1",
+            "target": "2",
+            "sourceHandle": "1-close",
+            "targetHandle": "2",
+            "type": "default"
+        },
+        {
+            "id": "2->3",
+            "source": "2",
+            "target": "3",
+            "sourceHandle": "2",
+            "targetHandle": "3",
+            "type": "default"
+        },
+        {
+            "id": "2->5",
+            "source": "2",
+            "target": "5",
+            "sourceHandle": "2",
+            "targetHandle": "5",
+            "type": "default"
+        },
+        {
+            "id": "3->4",
+            "source": "3",
+            "target": "4",
+            "sourceHandle": "3",
+            "targetHandle": "4",
+            "type": "default"
+        }
+    ]
+}

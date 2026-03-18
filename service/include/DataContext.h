@@ -83,7 +83,7 @@ public:
 
     template<typename T>
     void set(const String& name, const T& f) {
-        _outputs[name] = f;
+        _outputs[name] = f  ;
     }
 
     void add(const String& name, feature_t value);

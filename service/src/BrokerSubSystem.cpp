@@ -857,8 +857,9 @@ void BrokerSubSystem::CleanAllIndicators(const String& strategy) {
   _indicators.clear();
 }
 
-const List<Transaction>& BrokerSubSystem::GetHistoryTrades(symbol_t symbol) const {
-  return _historyTrades.at(symbol);
+const List<Transaction>& BrokerSubSystem::GetHistoryTrades(symbol_t symbol) {
+    std::unique_lock<std::mutex> lck(_tradeMtx);
+    return _historyTrades[symbol];
 }
 
 Set<symbol_t> BrokerSubSystem::GetPoolSymbols(const String& name) {

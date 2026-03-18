@@ -18,6 +18,7 @@ public:
 
     virtual bool Init(const nlohmann::json& config);
     virtual bool Process(const String& strategy, DataContext& context);
+    virtual Map<String, ArgType> out_elements();
 
 private:
     Set<String> _input_keys;

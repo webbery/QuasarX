@@ -2,6 +2,7 @@
 #include "DataContext.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
+#include "std_header.h"
 
 TestNode::TestNode(Server* server)
 {
@@ -32,22 +33,38 @@ bool TestNode::Init(const nlohmann::json& config) {
 }
 
 bool TestNode::Process(const String& strategy, DataContext& context) {
-    // 计算R^2指标，sz.000001.close
+    // 计算 R^2 指标
     for (auto& key: _input_keys) {
         auto& closes = context.get(key);
         Map<String, context_t> arg;
         arg[key] = closes;
         auto r2 = (*_pR2)(arg);
-        if (context.exist(key)) {[[likely]]
-            context.add("r2", std::get<double>(r2));
+        // 将 r2 值添加到 context，键为"{symbol}.r2"（与输入 key 保持一致的前缀）
+        double r2_value = std::get<double>(r2);
+        if (!std::isnan(r2_value)) {
+            LOG("not nan: {}", r2_value);
+        }
+        // 从输入 key 中提取 symbol 前缀，例如 "sz.000001.close" -> "sz.000001"
+        size_t last_dot = key.find_last_of('.');
+        String symbol_prefix = (last_dot != String::npos) ? key.substr(0, last_dot) : key;
+        String r2_key = symbol_prefix + ".r2";
+        // 检查是否已存在 r2，存在则追加，否则创建新向量
+        if (context.exist(r2_key)) {
+            context.add(r2_key, r2_value);
         } else {
-            Vector<double> timeseriel;
-            timeseriel.push_back(std::get<double>(r2));
-            context.add("r2", timeseriel);
+            context.set(r2_key, Vector<double>{r2_value});
         }
     }
-    // 拟合日内garch，计算alpha/beta及排除日内季节性变化的收益率
-    // Forecasting intraday volatility in the US equity market. Multiplicative component GARCH
-    
     return true;
+}
+
+Map<String, ArgType> TestNode::out_elements() {
+    Map<String, ArgType> elems;
+    // 输出元素名称与输入保持一致的前缀格式，例如 "sz.000001.r2"
+    for (auto& key: _input_keys) {
+        size_t last_dot = key.find_last_of('.');
+        String symbol_prefix = (last_dot != String::npos) ? key.substr(0, last_dot) : key;
+        elems[symbol_prefix + ".r2"] = Double;
+    }
+    return elems;
 }

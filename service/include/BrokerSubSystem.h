@@ -142,7 +142,7 @@ public:
 
     void DeletePrediction(symbol_t, int index);
 
-    const List<Transaction>& GetHistoryTrades(symbol_t) const;
+    const List<Transaction>& GetHistoryTrades(symbol_t);
 
     // 获取所有交易记录
     const Map<symbol_t, List<Transaction>>& GetAllHistoryTrades() const {
