@@ -55,18 +55,18 @@ function saveToStorage<T>(key: string, value: T): void {
 
 // 默认示例数据（仅在没有历史数据时使用）
 const DEFAULT_STRATEGIES: Strategy[] = [
-  { id: 's1', name: '策略 A', createdAt: new Date('2023-01-01').toISOString(), updatedAt: new Date('2023-01-01').toISOString() },
-  { id: 's2', name: '策略 B', createdAt: new Date('2023-02-01').toISOString(), updatedAt: new Date('2023-02-01').toISOString() },
-  { id: 's3', name: '策略 C', createdAt: new Date('2023-03-01').toISOString(), updatedAt: new Date('2023-03-01').toISOString() }
+  // { id: 's1', name: '策略 A', createdAt: new Date('2023-01-01').toISOString(), updatedAt: new Date('2023-01-01').toISOString() },
+  // { id: 's2', name: '策略 B', createdAt: new Date('2023-02-01').toISOString(), updatedAt: new Date('2023-02-01').toISOString() },
+  // { id: 's3', name: '策略 C', createdAt: new Date('2023-03-01').toISOString(), updatedAt: new Date('2023-03-01').toISOString() }
 ]
 
 const DEFAULT_VERSIONS: Version[] = [
-  { id: 'v1', strategyId: 's1', saveTime: '2023-01-01T12:00:00', remark: formatDate('2023-01-01T12:00:00') },
-  { id: 'v2', strategyId: 's1', saveTime: '2023-02-01T15:30:00', remark: '重要版本' },
-  { id: 'v3', strategyId: 's2', saveTime: '2023-03-01T09:20:00', remark: formatDate('2023-03-01T09:20:00') },
-  { id: 'v4', strategyId: 's3', saveTime: '2023-04-01T18:45:00', remark: formatDate('2023-04-01T18:45:00') },
-  { id: 'v5', strategyId: 's3', saveTime: '2023-05-01T08:10:00', remark: '测试版本' },
-  { id: 'v6', strategyId: 's3', saveTime: '2023-06-01T22:30:00', remark: formatDate('2023-06-01T22:30:00') }
+  // { id: 'v1', strategyId: 's1', saveTime: '2023-01-01T12:00:00', remark: formatDate('2023-01-01T12:00:00') },
+  // { id: 'v2', strategyId: 's1', saveTime: '2023-02-01T15:30:00', remark: '重要版本' },
+  // { id: 'v3', strategyId: 's2', saveTime: '2023-03-01T09:20:00', remark: formatDate('2023-03-01T09:20:00') },
+  // { id: 'v4', strategyId: 's3', saveTime: '2023-04-01T18:45:00', remark: formatDate('2023-04-01T18:45:00') },
+  // { id: 'v5', strategyId: 's3', saveTime: '2023-05-01T08:10:00', remark: '测试版本' },
+  // { id: 'v6', strategyId: 's3', saveTime: '2023-06-01T22:30:00', remark: formatDate('2023-06-01T22:30:00') }
 ]
 
 export const useHistoryStore = defineStore('history', {

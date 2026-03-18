@@ -96,28 +96,14 @@
     </div>
 
     <!-- 新建策略对话框 -->
-    <div v-if="showDialog" class="dialog-overlay" @click="closeDialog">
-      <div class="dialog" @click.stop>
-        <h3 class="dialog-title">新建策略</h3>
-        <input
-          v-model="newStrategyName"
-          type="text"
-          class="dialog-input"
-          placeholder="请输入策略名称"
-          @keydown.enter="createStrategy"
-        />
-        <div class="dialog-actions">
-          <button class="dialog-btn cancel" @click="closeDialog">取消</button>
-          <button class="dialog-btn confirm" @click="createStrategy">创建</button>
-        </div>
-      </div>
-    </div>
+    <PromptDialog ref="promptDialogRef" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useHistoryStore } from '@/stores/history'
+import PromptDialog from './PromptDialog.vue'
 import { message } from '@/tool'
 import { storeToRefs } from 'pinia'
 
@@ -134,6 +120,7 @@ let currentInput: HTMLInputElement | null = null  // 用于聚焦
 // 新建策略对话框状态
 const showDialog = ref(false)
 const newStrategyName = ref('')
+const promptDialogRef = ref<InstanceType<typeof PromptDialog>>()
 
 // 按策略 ID 分组的版本
 const versionsByStrategy = computed(() => {
@@ -292,13 +279,16 @@ const handleGlobalClick = () => {
 }
 
 // 显示新建策略对话框
-const showNewStrategyDialog = () => {
-  newStrategyName.value = ''
-  showDialog.value = true
-  nextTick(() => {
-    const input = document.querySelector('.dialog-input') as HTMLInputElement
-    if (input) input.focus()
+const showNewStrategyDialog = async () => {
+  const name = await promptDialogRef.value?.show({
+    title: '新建策略',
+    placeholder: '请输入策略名称'
   })
+  if (name && name.trim()) {
+    const strategyId = addStrategy(name.trim())
+    expanded[strategyId] = true
+    message.success(`已创建策略 "${name}"`)
+  }
 }
 
 // 关闭对话框

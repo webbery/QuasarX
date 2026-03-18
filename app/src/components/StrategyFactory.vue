@@ -123,6 +123,7 @@
               取消选择
           </div>
     </div>
+    <PromptDialog ref="promptDialogRef" />
   </div>
 </template>
 
@@ -133,6 +134,7 @@ import { message } from '@/tool'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 import ReportView from './ReportView.vue'
+import PromptDialog from './PromptDialog.vue'
 import axios from 'axios'
 import sseService from '@/ts/SSEService';
 import { useHistoryStore } from '@/stores/history'
@@ -174,12 +176,14 @@ const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
 const LAST_BACKTEST_RESULT = 'last_backtest_result'
 let nodeIdCounter = 10
 
-// 当前选中的策略和版本
+const promptDialogRef = ref()
+// 当前选中的策略和版本（用于判断保存行为）
 const currentStrategyId = ref(null)
 const currentVersionId = ref(null)
 const strategyNameInput = ref('')
 const showNewStrategyDialog = ref(false)
-
+// 未保存更改标记（用于后续提示）
+const hasUnsavedChanges = ref(false)
 // 信息面板相关状态
 const infoMessages = ref([])
 const isInfoPanelCollapsed = ref(false)
@@ -193,6 +197,7 @@ const contextMenu = ref({
     y: 0,
     targetNode: null
 })
+
 
 // 监听点击事件以关闭菜单
 const closeContextMenu = () => {
@@ -285,6 +290,15 @@ watch(getSelectedNodes, (newSelectedNodes) => {
 watch(getSelectedEdges, (newSelectedEdges) => {
   selectedEdges.value = newSelectedEdges
 }, { deep: true })
+
+// 监听节点和边变化，标记未保存
+watch(() => getNodes.value, () => {
+  hasUnsavedChanges.value = true
+}, { deep: true, immediate: false })
+
+watch(() => getEdges.value, () => {
+  hasUnsavedChanges.value = true
+}, { deep: true, immediate: false })
 
 const validNodes = computed({
     get: () => getNodes.value,
@@ -625,6 +639,16 @@ const nodeTypeConfigs = {
       }
     }
   },
+  'test': {
+    "label": "测试",
+    "nodeType": "test",
+    "params": {
+      '参数': {
+        "value": "",
+        "type": "texy"
+      }
+    }
+  },
   'risk': {},
   'porfolio': {
 
@@ -846,29 +870,95 @@ const deleteSelectedEdges = () => {
 
 // 新建流程图
 const newFlow = () => {
-  if (confirm('确定要新建流程图吗？当前未保存的更改将会丢失。')) {
-    removeNodes(getNodes.value.map(e=>e.id))
-    removeEdges(getEdges.value.map(e => e.id))
-    nodeIdCounter = 1
-    currentStrategyId.value = null
-    currentVersionId.value = null
+  if (hasUnsavedChanges.value && !confirm('确定要新建流程图吗？当前未保存的更改将会丢失。')) {
+    return
   }
+  removeNodes(getNodes.value.map(e=>e.id))
+  removeEdges(getEdges.value.map(e => e.id))
+  nodeIdCounter = 1
+  currentStrategyId.value = null
+  currentVersionId.value = null
+  hasUnsavedChanges.value = false
 }
 // 保存流程图到localStorage
-const saveFlow = () => {
-  try {
-    const flowData = {
-      nodes: getNodes.value,
-      edges: getEdges.value,
-      saveTime: new Date().toISOString()
+const saveFlow = async () => {
+  if (currentStrategyId.value) {
+    // 已有策略 → 直接保存为新版本（使用默认备注：当前时间）
+    createNewVersion()
+  } else {
+    // 无策略 → 先新建策略，再保存版本
+    const strategyName = await promptDialogRef.value?.show({
+      title: '新建策略',
+      placeholder: '请输入策略名称'
+    })
+    if (!strategyName || !strategyName.trim()) {
+      message.warning('策略名称不能为空')
+      return
     }
-    localStorage.setItem(FLOW_STORAGE_KEY, JSON.stringify(flowData))
-    message.success('流程图已保存到本地存储')
-  } catch (error) {
-    console.error('保存流程图失败:', error)
-    message.error('保存流程图失败')
+    // 调用 store 添加策略
+    const newStrategyId = historyStore.addStrategy(strategyName.trim())
+    currentStrategyId.value = newStrategyId
+    // 保存为新版本（默认备注）
+    createNewVersion()
   }
 }
+
+// 创建新版本（接受备注，可选）
+const createNewVersion = async (remark) => {
+  if (!currentStrategyId.value) {
+    message.error('未关联任何策略，无法保存版本')
+    return
+  }
+
+  const flowData = {
+    nodes: getNodes.value,
+    edges: getEdges.value
+  }
+
+  const versionId = historyStore.addVersion(
+    currentStrategyId.value,
+    flowData,
+    remark
+  )
+
+  currentVersionId.value = versionId
+  hasUnsavedChanges.value = false
+  message.success('版本保存成功')
+}
+
+const formatDateForRemark = (date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hour}:${minute}`
+}
+
+const saveAsNewVersion = async () => {
+  // 如果无策略，先新建
+  if (!currentStrategyId.value) {
+    const strategyName = await promptDialogRef.value?.show({
+      title: '新建策略',
+      placeholder: '请输入策略名称'
+    })
+    if (!strategyName || !strategyName.trim()) return
+
+    const newStrategyId = historyStore.addStrategy(strategyName.trim())
+    currentStrategyId.value = newStrategyId
+  }
+
+  // 弹出备注输入框（使用浏览器自带 prompt 简化）
+  const defaultRemark = formatDateForRemark(new Date())
+  const remark = await promptDialogRef.value?.show({
+    title: '版本备注',
+    placeholder: '请输入版本备注（留空将使用当前时间）',
+    defaultValue: defaultRemark
+  })
+  if (remark === null) return
+  createNewVersion(remark.trim() || undefined)
+}
+
 // 从localStorage加载保存的流程图
 const loadSavedFlow = async () => {
   try {
@@ -1116,6 +1206,7 @@ const loadVersionFromHistory = async (version) => {
       // 更新当前策略和版本ID
       currentStrategyId.value = versionData.strategyId || null
       currentVersionId.value = versionData.id
+      hasUnsavedChanges.value = false
 
       // 适应视图
       setTimeout(() => {

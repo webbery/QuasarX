@@ -71,7 +71,6 @@
                 </div>
         </div>
     </div>
-
     <div class="category">
         <div class="category-title" @click="toggleCategory('signal')">
             <i class="fas fa-download"></i>
@@ -81,6 +80,11 @@
         <div class="components-list" v-show="openCategories.input">
             <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'data-source')">
                 <div class="component-title">EMD</div> 
+            </div>
+        </div>
+        <div class="components-list" v-show="openCategories.input">
+            <div class="component-card input-node" draggable="true" @dragstart="onDragStart($event, 'test')">
+                <div class="component-title">测试节点</div>
             </div>
         </div>
     </div>
