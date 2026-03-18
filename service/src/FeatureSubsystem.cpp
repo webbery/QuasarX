@@ -103,12 +103,12 @@ void FeatureSubsystem::run() {
 void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const Map<size_t, IFeature*>& pFeats) {
     DataFeatures messenger;
     messenger._symbols.push_back(quote._symbol);
-    Vector<feature_t> features(pFeats.size());
+    Vector<context_t> features(pFeats.size());
     Vector<String> types(pFeats.size());
     int i = 0;
     DEBUG_INFO("{}", quote);
     for (auto& feat: pFeats) {
-        feature_t val;
+        context_t val;
         if (!feat.second->deal(quote, val))
             continue;
 
@@ -249,8 +249,8 @@ void FeatureSubsystem::ClearCollections(const String& strategy) {
     }
 }
 
-Map<symbol_t, Map<String, List<feature_t>>> FeatureSubsystem::GetCollection(const String& strategy) {
-    Map<symbol_t, Map<String, List<feature_t>>> result;
+Map<symbol_t, Map<String, List<context_t>>> FeatureSubsystem::GetCollection(const String& strategy) {
+    Map<symbol_t, Map<String, List<context_t>>> result;
     auto& symbols = _tasks[strategy];
     for (auto symbol: symbols) {
         auto itr = _pipelines.find(symbol);
@@ -263,7 +263,7 @@ Map<symbol_t, Map<String, List<feature_t>>> FeatureSubsystem::GetCollection(cons
     return result;
 }
 
-const Map<String, List<feature_t>>& FeatureSubsystem::GetCollection(symbol_t symbol) const {
+const Map<String, List<context_t>>& FeatureSubsystem::GetCollection(symbol_t symbol) const {
     auto itr = _pipelines.find(symbol);
     if (itr == _pipelines.end()) {
         WARN("symbol {}'s feature not exist", symbol);
@@ -276,7 +276,7 @@ void FeatureSubsystem::UpdateExternalFeature(PipelineInfo& pipeinfo, const Quote
     auto& collections = pipeinfo._collections;
     auto& idMap = pipeinfo._externalNames;
     for (auto& item: features) {
-        feature_t output;
+        context_t output;
         item.second->deal(quote, output);
         if (output.valueless_by_exception()) {
             continue;

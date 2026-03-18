@@ -101,33 +101,6 @@ enum ExchangeName: char {
     MT_COUNT,
 };
 
-enum class contract_type: char {
-    stock = 0,
-    future = 1,
-    put = 2,
-    call = 3,
-    fund = 4,
-    index = 5,
-};
-
-struct alignas(4) symbol_t {
-    /**
-    * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC
-     */
-    contract_type _type : 8;
-    char _exchange:8;
-    unsigned short _opt : 16;
-    union {
-        struct { // option info
-            uint32_t _reserved : 12;
-            uint32_t _year : 6;
-            uint32_t _month : 4;
-            uint32_t _price : 10; // unit is 100
-        };
-        uint32_t _symbol : 32;
-    };
-};
-
 bool operator==(const symbol_t& , const symbol_t&);
 bool operator<(const symbol_t& , const symbol_t&);
 

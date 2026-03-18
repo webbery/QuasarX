@@ -12,7 +12,7 @@ bool VWAPFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-bool VWAPFeature::deal(const QuoteInfo& quote, feature_t& output) {
+bool VWAPFeature::deal(const QuoteInfo& quote, context_t& output) {
     if (!isValid(quote)) {
         output = _prevs;
         return false;

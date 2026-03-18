@@ -24,7 +24,7 @@ bool ATRFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-bool ATRFeature::deal(const QuoteInfo& quote, feature_t& output) {
+bool ATRFeature::deal(const QuoteInfo& quote, context_t& output) {
     if (!isValid(quote)) {
         output = _prevs;
         return false;

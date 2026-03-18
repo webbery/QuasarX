@@ -6,7 +6,6 @@ struct TradeReport;
 class Server;
 using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
 
-using context_t = std::variant<bool, String, uint64_t, Vector<float>, List<symbol_t>, double, Vector<double>, Vector<uint64_t>, Eigen::MatrixXd>;
 // 交易操作类型
 enum class TradeAction: char {
     HOLD,
@@ -78,15 +77,15 @@ public:
         return _outputs.at(name);
     }
 
-    // feature_t& get(const String& name); 
-    // const feature_t& get(const String& name) const;
+    // context_t& get(const String& name); 
+    // const context_t& get(const String& name) const;
 
     template<typename T>
     void set(const String& name, const T& f) {
         _outputs[name] = f  ;
     }
 
-    void add(const String& name, feature_t value);
+    void add(const String& name, context_t value);
     template<typename T>
     void add(const String& name, const T& value) {
         auto& item = _outputs[name];

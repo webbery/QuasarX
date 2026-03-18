@@ -29,7 +29,7 @@ bool EMAFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-bool EMAFeature::deal(const QuoteInfo& quote, feature_t& output) {
+bool EMAFeature::deal(const QuoteInfo& quote, context_t& output) {
     if (!isValid(quote)) {
         output = _prevs;
         return false;
@@ -75,7 +75,7 @@ bool MACDFeature::plug(Server* handle, const String& account) {
     return true;
 }
 
-bool MACDFeature::deal(const QuoteInfo& quote, feature_t& output) {
+bool MACDFeature::deal(const QuoteInfo& quote, context_t& output) {
     if (!isValid(quote)) {
         output = _prevs;
         return false;

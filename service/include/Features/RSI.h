@@ -7,16 +7,16 @@ public:
 
     virtual bool plug(Server* handle, const String& account);
 
-    virtual bool deal(const QuoteInfo& quote, feature_t&);
+    virtual bool deal(const QuoteInfo& quote, context_t&);
 
     virtual const char* desc();
 
     static constexpr StringView name();
 
 private:
-    feature_t calculateRSI() const ;
+    context_t calculateRSI() const ;
 
-    bool initialize(const QuoteInfo& quote, feature_t& output);
+    bool initialize(const QuoteInfo& quote, context_t& output);
     
 private:
     short _lastN = 14;
@@ -37,7 +37,7 @@ private:
 
 //     virtual bool plug(Server* handle, const String& account);
 
-//     virtual feature_t deal(const QuoteInfo& quote, double extra = 0);
+//     virtual context_t deal(const QuoteInfo& quote, double extra = 0);
 
 //     virtual const char* desc();
 // };

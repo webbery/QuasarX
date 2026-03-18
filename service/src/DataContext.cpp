@@ -14,15 +14,15 @@ DataContext::DataContext(const String& strategy, Server* server):_strategy(strat
     // 初始化该策略的历史记录
 }
 
-// feature_t& DataContext::get(const String& name) {
+// context_t& DataContext::get(const String& name) {
 //     return _outputs[name];
 // }
 
-// const feature_t& DataContext::get(const String& name) const {
+// const context_t& DataContext::get(const String& name) const {
 //     return _outputs.at(name);
 // }
 
-void DataContext::add(const String& name, feature_t value) {
+void DataContext::add(const String& name, context_t value) {
     std::visit([this, &name, &value](auto&& v) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, double> || std::is_same_v<T, uint64_t>) {
@@ -47,7 +47,7 @@ void DataContext::erase(const String& name) {
     _outputs.erase(name);
 }
 
-// void DataContext::set(const String& name, const feature_t& f) {
+// void DataContext::set(const String& name, const context_t& f) {
 //     _outputs[name] = f;
 // }
 

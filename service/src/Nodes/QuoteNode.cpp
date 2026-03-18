@@ -9,7 +9,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 
 namespace {
-    std::unordered_map<std::string, std::function<feature_t(const QuoteInfo&)>> propertyHandlers = {
+    std::unordered_map<std::string, std::function<context_t(const QuoteInfo&)>> propertyHandlers = {
         {"open", [](const QuoteInfo& q) { return q._open; }},
         {"close", [](const QuoteInfo& q) { return q._close; }},
         {"volume", [](const QuoteInfo& q) { return q._volume; }},

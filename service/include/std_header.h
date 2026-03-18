@@ -92,4 +92,32 @@ using Boolean = Expected<bool, int>;
 #include "Eigen/Core"
 #include "Util/log.h"
 
-using feature_t = std::variant<bool, std::string, uint64_t, double, Vector<double>, Vector<float>, Vector<uint64_t>, Eigen::MatrixXd>;
+
+enum class contract_type: char {
+    stock = 0,
+    future = 1,
+    put = 2,
+    call = 3,
+    fund = 4,
+    index = 5,
+};
+
+struct alignas(4) symbol_t {
+    /**
+    * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC
+     */
+    contract_type _type : 8;
+    char _exchange:8;
+    unsigned short _opt : 16;
+    union {
+        struct { // option info
+            uint32_t _reserved : 12;
+            uint32_t _year : 6;
+            uint32_t _month : 4;
+            uint32_t _price : 10; // unit is 100
+        };
+        uint32_t _symbol : 32;
+    };
+};
+
+using context_t = std::variant<bool, String, uint64_t, Vector<float>, List<symbol_t>, double, Vector<double>, Vector<uint64_t>, Eigen::MatrixXd>;

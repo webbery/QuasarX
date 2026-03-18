@@ -35,7 +35,7 @@ public:
 
     virtual bool plug(Server* handle, const String& account) = 0;
 
-    virtual bool deal(const QuoteInfo& quote, feature_t& output) = 0;
+    virtual bool deal(const QuoteInfo& quote, context_t& output) = 0;
 
     virtual const char* desc() = 0;
 
@@ -66,7 +66,7 @@ public:
 protected:
     // 上一次数据的时间戳,如果同一个时间戳说明数据相同，不需要再次计算
     time_t _last = 0;
-    feature_t _prevs;
+    context_t _prevs;
 };
 
 template<typename... T>

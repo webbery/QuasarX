@@ -7,7 +7,7 @@ public:
 
     virtual bool plug(Server* handle, const String& account);
 
-    virtual bool deal(const QuoteInfo& quote, feature_t&);
+    virtual bool deal(const QuoteInfo& quote, context_t&);
 
     virtual const char* desc() {
         return name().c_str();
@@ -20,7 +20,7 @@ public:
     }
 
 private:
-    int _N = 15;    // 默认统计时长15s
+    int _N = 15;    // 默锟斤拷统锟斤拷时锟斤拷15s
 
     struct price_info {
         time_t _time;

@@ -66,8 +66,8 @@ String grammar = R"(
         %whitespace     <- [ \t]*
     )";
 
-Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparationMap{
-    {">", [](const feature_t& left, const feature_t& right) {
+Map<String, std::function<bool (const context_t& , const context_t& )>> comparationMap{
+    {">", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
             using T = std::decay_t<decltype(l)>;
@@ -77,7 +77,7 @@ Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparat
         }, left);
         return val;
     }},
-    {"<", [](const feature_t& left, const feature_t& right) {
+    {"<", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
             using T = std::decay_t<decltype(l)>;
@@ -87,7 +87,7 @@ Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparat
         }, left);
         return val;
     }},
-    {"==", [](const feature_t& left, const feature_t& right) {
+    {"==", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
             using T = std::decay_t<decltype(l)>;
@@ -97,7 +97,7 @@ Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparat
         }, left);
         return val;
     }},
-    {"!=", [](const feature_t& left, const feature_t& right) {
+    {"!=", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
             using T = std::decay_t<decltype(l)>;
@@ -107,7 +107,7 @@ Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparat
         }, left);
         return val;
     }},
-    {">=", [](const feature_t& left, const feature_t& right) {
+    {">=", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
             using T = std::decay_t<decltype(l)>;
@@ -117,7 +117,7 @@ Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparat
         }, left);
         return val;
     }},
-    {"<=", [](const feature_t& left, const feature_t& right) {
+    {"<=", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
             using T = std::decay_t<decltype(l)>;
@@ -129,9 +129,9 @@ Map<String, std::function<bool (const feature_t& , const feature_t& )>> comparat
     }},
 };
 
-Map<char, std::function<feature_t(const feature_t& , const feature_t&)>> arithmeticMap{
-    {'+', [](const feature_t& left, const feature_t& right) {
-        feature_t result;
+Map<char, std::function<context_t(const context_t& , const context_t&)>> arithmeticMap{
+    {'+', [](const context_t& left, const context_t& right) {
+        context_t result;
         std::visit([right, &result](auto&& l){
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
@@ -140,8 +140,8 @@ Map<char, std::function<feature_t(const feature_t& , const feature_t&)>> arithme
         }, left);
         return result;
     }},
-    {'-', [](const feature_t& left, const feature_t& right) {
-        feature_t result;
+    {'-', [](const context_t& left, const context_t& right) {
+        context_t result;
         std::visit([right, &result](auto&& l){
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
@@ -150,8 +150,8 @@ Map<char, std::function<feature_t(const feature_t& , const feature_t&)>> arithme
         }, left);
         return result;
     }},
-    {'*', [](const feature_t& left, const feature_t& right) {
-        feature_t result;
+    {'*', [](const context_t& left, const context_t& right) {
+        context_t result;
         std::visit([right, &result](auto&& l){
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
@@ -160,8 +160,8 @@ Map<char, std::function<feature_t(const feature_t& , const feature_t&)>> arithme
         }, left);
         return result;
     }},
-    {'/', [](const feature_t& left, const feature_t& right) {
-        feature_t result;
+    {'/', [](const context_t& left, const context_t& right) {
+        context_t result;
         std::visit([right, &result](auto&& l){
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
@@ -178,7 +178,7 @@ Map<char, std::function<feature_t(const feature_t& , const feature_t&)>> arithme
     }},
 };
 
-using EvalPtr = feature_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , DataContext&);
+using EvalPtr = context_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , DataContext&);
 
 Map<String, EvalPtr> evalMap{
     {"Number", &FormulaParser::evalNumber},
@@ -196,7 +196,7 @@ Map<String, EvalPtr> evalMap{
     {"ExpressionStmt", &FormulaParser::evalStatement}
 };
 
-bool check_bool(const feature_t& feature) {
+bool check_bool(const context_t& feature) {
     bool result = false;
     std::visit([&result](auto&& val) {
         using T = std::decay_t<decltype(val)>;
@@ -225,7 +225,7 @@ void FormulaParser::topk(const Vector<symbol_t>& allSymbols, const peg::Ast& fun
     auto& kExprAst = args->nodes[1];
     
     // 计算k值
-    feature_t kValue = evalNode(symbol_t{}, *kExprAst, context);
+    context_t kValue = evalNode(symbol_t{}, *kExprAst, context);
     int k = 10; // 默认值
     if (std::holds_alternative<double>(kValue)) {
         k = static_cast<int>(std::get<double>(kValue));
@@ -375,7 +375,7 @@ void FormulaParser::precomputeCrossSectionFunctions(const Vector<symbol_t>& symb
     // return results;
 }
 
-feature_t FormulaParser::evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
+context_t FormulaParser::evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
         const Map<String, std::shared_ptr<CrossSectionResult>>& crossSectionResults) {
     return true;
 }
@@ -460,22 +460,25 @@ List<Pair<symbol_t, TradeAction>> FormulaParser::envokeMixedCase(const Vector<sy
     return decisions;
 }
 
-feature_t FormulaParser::eval(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::eval(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     return evalNode(symbol, ast, context);
 }
 
-feature_t FormulaParser::evalNumber(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalNumber(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     return ast.token_to_number<double>();
 }
 
-feature_t FormulaParser::evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    // auto name = get_symbol(symbol);
-    // auto key = name + "." + to_utf8(String(ast.token));
-    // return context.get(key);
+context_t FormulaParser::evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+    auto name = get_symbol(symbol);
+    auto key = name + "." + to_utf8(String(ast.token));
+    if (context.exist(key)) {
+        return context.get(key);
+    }
+    // 回退：返回变量名（用于后续 Trailer 处理）
     return String(ast.token);
 }
 
-feature_t FormulaParser::evalComparison(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalComparison(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     // 节点：COMPARISON -> TERM COMP_OPERATOR TERM
     // 子节点：三个，左操作数、运算符、右操作数
     auto left = eval(symbol, *ast.nodes[0], context);
@@ -484,7 +487,7 @@ feature_t FormulaParser::evalComparison(const symbol_t& symbol, const peg::Ast& 
     return comparationMap[op](left, right);
 }
 
-feature_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     // 节点：TERM -> FACTOR (TERM_OPERATOR FACTOR)*
     // 子节点：至少一个，然后是多个（运算符，因子）
     if (ast.nodes.size() == 1) {
@@ -496,11 +499,11 @@ feature_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, D
     return 0.;
 }
 
-feature_t FormulaParser::evalProgram(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalProgram(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     if (ast.nodes.empty())
         return 0.;
 
-    feature_t last_result;
+    context_t last_result;
     for (auto& stmt : ast.nodes) {
         if (stmt->name == "EOL")
             continue;
@@ -510,14 +513,14 @@ feature_t FormulaParser::evalProgram(const symbol_t& symbol, const peg::Ast& ast
     return last_result;
 }
 
-feature_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     if (ast.name == "ExpressionStmt") {
         return evalNode(symbol, *ast.nodes[0], context);
     }
     else if (ast.name == "AssignmentStmt") {
         // 处理赋值语句：identifier = expression
         String vaName(ast.nodes[0]->token);
-        feature_t value = evalNode(symbol, *ast.nodes[1], context);
+        context_t value = evalNode(symbol, *ast.nodes[1], context);
     }
     else if (ast.name == "EOF") {
         return 0.;
@@ -527,7 +530,7 @@ feature_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& a
     }
 }
 
-feature_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto value = evalNode(symbol, *ast.nodes.front(), context);
     // 处理 Trailer（包括时间索引）,此时value应该是数组
     for (size_t i = 1; i < ast.nodes.size(); ++i) {
@@ -547,7 +550,7 @@ feature_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast
     return value;
 }
 
-feature_t FormulaParser::evalTrailer(const symbol_t& symbol, const feature_t& base, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalTrailer(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context) {
     if (ast.nodes.empty()) return base;
     
     auto& trailer_type = ast.nodes[0];
@@ -559,7 +562,7 @@ feature_t FormulaParser::evalTrailer(const symbol_t& symbol, const feature_t& ba
     return base;
 }
 
-feature_t FormulaParser::evalTimeIndex(const symbol_t& symbol, const feature_t& base, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalTimeIndex(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context) {
     int time_offset = 0;
     
     // 检查是否有子节点
@@ -609,7 +612,7 @@ feature_t FormulaParser::evalTimeIndex(const symbol_t& symbol, const feature_t& 
     return getHistoricalValue(symbol, base, time_offset, context);
 }
 
-double FormulaParser::getHistoricalValue(const symbol_t& symbol, const feature_t& base, int time_offset, DataContext& context) {
+double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t& base, int time_offset, DataContext& context) {
     // 假设 base 包含变量名信息，或者需要从其他地方获取变量名
     // 这里需要根据变量名和时间偏移获取历史值
     /* 从 base 中提取变量名 */
@@ -628,7 +631,7 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const feature_t
     }
 }
 
-feature_t FormulaParser::evalOrExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalOrExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto left = evalNode(symbol, *ast.nodes[0], context);
     if (check_bool(left)) return true;  // 短路求值
 
@@ -639,7 +642,7 @@ feature_t FormulaParser::evalOrExpr(const symbol_t& symbol, const peg::Ast& ast,
     return false;
 }
 
-feature_t FormulaParser::evalAndExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalAndExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto left = evalNode(symbol, *ast.nodes[0], context);
     if (check_bool(left) == false) return false;  // 短路求值
     for (size_t i = 1; i < ast.nodes.size(); i += 2) {
@@ -649,7 +652,7 @@ feature_t FormulaParser::evalAndExpr(const symbol_t& symbol, const peg::Ast& ast
     return true;
 }
 
-feature_t FormulaParser::evalNotExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalNotExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     if (ast.nodes.size() == 2) {
         // not expr
         auto value = evalNode(symbol, *ast.nodes[1], context);
@@ -660,7 +663,7 @@ feature_t FormulaParser::evalNotExpr(const symbol_t& symbol, const peg::Ast& ast
     }
 }
 
-feature_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     if (evalMap.count(ast.name) == 0) {
         INFO("ast node `{}` not found", ast.name);
         return false;
@@ -690,7 +693,7 @@ feature_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, D
     return 0.0;
 }
 
-feature_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto funcName = ast.nodes[0]->token;
     if (funcName == "MA" && ast.nodes.size() >= 3) {
         // 获取参数：MA(close, 5)
@@ -707,10 +710,10 @@ feature_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
         }
         // 第一个参数应该是Identifier，获取变量名
         auto& firstArg = args->nodes[0];
-        feature_t scoreExprValue = evalNode(symbol, *firstArg, context);
+        context_t scoreExprValue = evalNode(symbol, *firstArg, context);
         // 解析第二个参数：k值
         auto& secondArg = args->nodes[1];
-        feature_t secondValue = evalNode(symbol, *secondArg, context);
+        context_t secondValue = evalNode(symbol, *secondArg, context);
         // 获取变量名（从第一个参数）
         String varName;
         if (std::holds_alternative<String>(scoreExprValue)) {
@@ -738,7 +741,7 @@ context_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& 
     return context->get(key);
 }
 
-feature_t FormulaParser::evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+context_t FormulaParser::evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     // 算术表达式结构：第一个操作数 [运算符 操作数]*
     auto result = evalNode(symbol, *ast.nodes[0], context);
     for (size_t i = 1; i < ast.nodes.size(); i += 2) {

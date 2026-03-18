@@ -16,7 +16,7 @@ bool RSIFeature::plug(Server* handle, const String& account){
     return true;
 }
 
-bool RSIFeature::deal(const QuoteInfo& quote, feature_t& output){
+bool RSIFeature::deal(const QuoteInfo& quote, context_t& output){
     if (!isValid(quote)) {
         output = _prevs;
         return false;
@@ -44,7 +44,7 @@ const char* RSIFeature::desc(){
     return "RSI";
 }
 
-feature_t RSIFeature::calculateRSI() const {
+context_t RSIFeature::calculateRSI() const {
     if (_avgLoss == 0.0) {
         return _avgGain > 0.? 100.0: 50.0;
     }
@@ -52,7 +52,7 @@ feature_t RSIFeature::calculateRSI() const {
     return 100.0 - (100.0 / (1.0 + rs));
 }
 
-bool RSIFeature::initialize(const QuoteInfo& quote, feature_t& output) {
+bool RSIFeature::initialize(const QuoteInfo& quote, context_t& output) {
     if (std::isnan(_prevClose)) {
         _prevClose = quote._close;
         return false;

@@ -10,7 +10,7 @@ public:
 
     virtual bool plug(Server* handle, const String& account);
 
-    virtual bool deal(const QuoteInfo& quote, feature_t&);
+    virtual bool deal(const QuoteInfo& quote, context_t&);
 
     virtual const char* desc();
 
@@ -35,7 +35,7 @@ public:
 
     virtual bool plug(Server* handle, const String& account);
 
-    virtual bool deal(const QuoteInfo& quote, feature_t&);
+    virtual bool deal(const QuoteInfo& quote, context_t&);
 
     virtual const char* desc();
 
