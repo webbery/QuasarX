@@ -78,25 +78,29 @@ void FlowSubsystem::Start(const String& strategy) {
             }
 
             uint64_t epoch = 0;
+            bool success = true;
             auto startTick = std::chrono::high_resolution_clock::now();
             while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
                 if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
+                    success = false;
                     break;
                 }
             }
             auto endtTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endtTick - startTick);
             
-            // 统计指标
-            auto endNode = dynamic_cast<ExecuteNode*>(flow._graph.back());
-            if (endNode) {
-                auto& cash_flow = endNode->GetReports();
-                flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
-                flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
-            }
-            for (auto node: flow._graph) {
-                node->Done(strategy);
+            if (success) {
+                // 统计指标
+                auto endNode = dynamic_cast<ExecuteNode*>(flow._graph.back());
+                if (endNode) {
+                    auto& cash_flow = endNode->GetReports();
+                    flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
+                    flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
+                }
+                for (auto node : flow._graph) {
+                    node->Done(strategy);
+                }
             }
             // 结束通知
             flow._running = false;

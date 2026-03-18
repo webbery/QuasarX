@@ -641,7 +641,7 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
   String strSymbol = tokens.back();
   symbol_t id;
   memset(&id, 0, sizeof(symbol_t));
-  auto code = atoi(symbol.c_str());
+  auto code = atoi(strSymbol.c_str());
   if (exchange.empty()) {
     auto ct = Server::GetContractType(strSymbol);
     switch (ct.first) {
