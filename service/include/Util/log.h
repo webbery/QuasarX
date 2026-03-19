@@ -48,7 +48,7 @@
 #else // defined(_MSC_VER) && !defined(__clang__)
 #ifndef INFO
 #define INFO(fmt_str, ...) \
-  fmt::print("{} " fmt_str "\n", ToString(Now()),##__VA_ARGS__);
+  fmt::print("{} {} " fmt_str "\n", ToString(Now()), __LINE__, ##__VA_ARGS__);
 #endif
 #ifndef LOG
 #define LOG(fmt_str, ...) \

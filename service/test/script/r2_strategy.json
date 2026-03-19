@@ -76,12 +76,12 @@
                         "type": "text"
                     },
                     "buy": {
-                        "value": "r2 < 0.7",
+                        "value": "r2[t] < 0.7",
                         "type": "text",
                         "desc": "R²<0.7 表示震荡市，买入"
                     },
                     "sell": {
-                        "value": "r2 > 0.9",
+                        "value": "r2[t] > 0.9",
                         "type": "text",
                         "desc": "R²>0.9 表示强趋势，卖出止盈"
                     }
@@ -194,6 +194,14 @@
             "target": "4",
             "sourceHandle": "3",
             "targetHandle": "4",
+            "type": "default"
+        },
+        {
+            "id": "3->5",
+            "source": "3",
+            "target": "5",
+            "sourceHandle": "3",
+            "targetHandle": "5",
             "type": "default"
         }
     ]

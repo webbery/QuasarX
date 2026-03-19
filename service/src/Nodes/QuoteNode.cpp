@@ -5,6 +5,7 @@
 #include "Util/system.h"
 #include <ctime>
 #include <limits>
+#include <stdexcept>
 #include "server.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 
@@ -78,7 +79,7 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
             auto stockExchange = _server->GetAvaliableStockExchange();
             auto quote = stockExchange->GetQuote(symbol);
             if (quote._time == 0)
-                return false;
+                throw std::runtime_error("loop back");
             else if (cur != 0 && quote._time <= cur) {
                 continue;
             }

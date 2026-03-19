@@ -16,6 +16,7 @@ public:
 
     virtual bool Init(const nlohmann::json& config);
     virtual bool Process(const String& strategy, DataContext& context);
+    virtual Map<String, ArgType> out_elements();
 
     bool ParseBuyExpression(const String& expression);
     bool ParseSellExpression(const String& expression);

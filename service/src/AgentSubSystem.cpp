@@ -8,6 +8,7 @@
 #include "yas/serialize.hpp"
 #include "BrokerSubSystem.h"
 #include "Nodes/SignalNode.h"
+#include <exception>
 #include <stdexcept>
 #include "RiskSubSystem.h"
 #include "Nodes/ScriptNode.h"
@@ -80,13 +81,15 @@ void FlowSubsystem::Start(const String& strategy) {
             uint64_t epoch = 0;
             bool success = true;
             auto startTick = std::chrono::high_resolution_clock::now();
-            while (flow._running || !Server::IsExit()) {
-                context.SetEpoch(++epoch);
-                if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
-                    success = false;
-                    break;
+            try {
+                while (flow._running || !Server::IsExit()) {
+                    context.SetEpoch(++epoch);
+                    if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
+                        success = false;
+                        break;
+                    }
                 }
-            }
+            } catch (std::exception& e) {}
             auto endtTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endtTick - startTick);
             
@@ -147,6 +150,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         if (!node->Process(strategy, context)) {
+            INFO("{} process fail", node->id());
             return false;
         }
     }

@@ -86,6 +86,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     strategySys->ReleaseStrategy(strategyName);
     
     res.status = 200;
-    INFO("{}", results.dump());
+    // INFO("{}", results.dump());
     res.set_content(results.dump(), "application/json");
 }

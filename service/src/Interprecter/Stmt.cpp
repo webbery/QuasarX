@@ -73,6 +73,8 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 val = l > std::get<double>(right);
+            } else {
+                INFO("not support operation `>` for type {}", typeid(T).name());
             }
         }, left);
         return val;
@@ -83,6 +85,8 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 val = l < std::get<double>(right);
+            } else {
+                INFO("not support operation `<` for type {}", typeid(T).name());
             }
         }, left);
         return val;
@@ -93,6 +97,8 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 val = (l == std::get<double>(right));
+            } else {
+                INFO("not support operation `==` for type {}", typeid(T).name());
             }
         }, left);
         return val;
@@ -103,6 +109,8 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 val = (l != std::get<double>(right));
+            } else {
+                INFO("not support operation `!=` for type {}", typeid(T).name());
             }
         }, left);
         return val;
@@ -113,6 +121,8 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 val = (l >= std::get<double>(right));
+            } else {
+                INFO("not support operation `>=` for type {}", typeid(T).name());
             }
         }, left);
         return val;
@@ -123,6 +133,8 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 val = (l <= std::get<double>(right));
+            } else {
+                INFO("not support operation `<=` for type {}", typeid(T).name());
             }
         }, left);
         return val;
@@ -136,6 +148,8 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>> arithme
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 result = (l + std::get<double>(right));
+            } else {
+                INFO("not support operation `+` for type {}", typeid(T).name());
             }
         }, left);
         return result;
@@ -146,6 +160,8 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>> arithme
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 result = (l - std::get<double>(right));
+            } else {
+                INFO("not support operation `-` for type {}", typeid(T).name());
             }
         }, left);
         return result;
@@ -156,6 +172,8 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>> arithme
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 result = (l * std::get<double>(right));
+            } else {
+                INFO("not support operation `*` for type {}", typeid(T).name());
             }
         }, left);
         return result;
@@ -172,6 +190,8 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>> arithme
                 } else { [[likely]]
                     result = (l / r);
                 }
+            } else {
+                INFO("not support operation `/` for type {}", typeid(T).name());
             }
         }, left);
         return result;
@@ -423,12 +443,14 @@ String FormulaParser::genPrimaryPlaceHolder(const peg::Ast& ats) {
 
 List<Pair<symbol_t, TradeAction>> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
     List<Pair<symbol_t, TradeAction>> decisions;
+    // INFO("FormulaParser::envoke - symbols count={}, variantNames count={}", symbols.size(), variantNames.size());
     if (hasCrossSectionFunctions(*_ast)) {
         return envokeMixedCase(symbols, variantNames, context);
     } else {
         for (auto symbol: symbols) {
             // try {
                 auto exprValue = eval(symbol, *_ast, context);
+                // INFO("FormulaParser::envoke - symbol={}, exprValue type={}, value={}", get_symbol(symbol), exprValue.index(), std::get<bool>(exprValue) ? "true" : "false");
                 Pair<symbol_t, TradeAction> action{
                     symbol, (std::get<bool>(exprValue)? _default: TradeAction::HOLD)
                 };
@@ -471,10 +493,14 @@ context_t FormulaParser::evalNumber(const symbol_t& symbol, const peg::Ast& ast,
 context_t FormulaParser::evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto name = get_symbol(symbol);
     auto key = name + "." + to_utf8(String(ast.token));
+    // INFO("FormulaParser::evalIdentifier - symbol={}, token={}, key={}", name, ast.token, key);
+    // INFO("FormulaParser::evalIdentifier - context.exist(key)={}", context.exist(key));
     if (context.exist(key)) {
-        return context.get(key);
+        auto val = context.get(key);
+        return val;
     }
     // 回退：返回变量名（用于后续 Trailer 处理）
+    // INFO("FormulaParser::evalIdentifier - key not found, returning token string: {}", ast.token);
     return String(ast.token);
 }
 
@@ -484,7 +510,10 @@ context_t FormulaParser::evalComparison(const symbol_t& symbol, const peg::Ast& 
     auto left = eval(symbol, *ast.nodes[0], context);
     auto right = eval(symbol, *ast.nodes[2], context);
     String op(ast.nodes[1]->token);
-    return comparationMap[op](left, right);
+    // INFO("FormulaParser::evalComparison - op={}, left type={}, right type={}", op, left.index(), right.index());
+    auto result = comparationMap[op](left, right);
+    // INFO("FormulaParser::evalComparison - result={}", (result) ? "true" : "false");
+    return result;
 }
 
 context_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
@@ -532,10 +561,11 @@ context_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& a
 
 context_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto value = evalNode(symbol, *ast.nodes.front(), context);
-    // 处理 Trailer（包括时间索引）,此时value应该是数组
+    // INFO("evalPrimary - initial value type={}, has {} trailers", value.index(), ast.nodes.size() - 1);
     for (size_t i = 1; i < ast.nodes.size(); ++i) {
         auto& trailer = ast.nodes[i];
         if (trailer->name == "Trailer") {
+            // INFO("evalPrimary - processing Trailer");
             value = evalTrailer(symbol, value, *trailer, context);
         }
         else if (trailer->name == "PureNumber") {
@@ -613,18 +643,35 @@ context_t FormulaParser::evalTimeIndex(const symbol_t& symbol, const context_t& 
 }
 
 double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t& base, int time_offset, DataContext& context) {
-    // 假设 base 包含变量名信息，或者需要从其他地方获取变量名
-    // 这里需要根据变量名和时间偏移获取历史值
-    /* 从 base 中提取变量名 */
+    // base 可能是 Vector<double> 类型（从 evalIdentifier 返回的时间序列数据）
+    // 或者 String 类型（变量名）
+    if (std::holds_alternative<Vector<double>>(base)) {
+        auto& vec = std::get<Vector<double>>(base);
+        if (vec.empty()) {
+            WARN("getHistoricalValue - empty vector");
+            return 0.0;
+        }
+        // time_offset: 0=当前，-1=前一个，-2=前两个...
+        // idx 计算：vec.size()-1 是当前值
+        int idx = (int)vec.size() - 1 + time_offset;
+        // INFO("getHistoricalValue - vec size={}, time_offset={}, idx={}", vec.size(), time_offset, idx);
+        if (idx >= 0 && idx < (int)vec.size()) {
+            return vec[idx];
+        } else {
+            WARN("getHistoricalValue - index out of range, idx={}, size={}", idx, vec.size());
+            return vec.back();
+        }
+    }
+
+    // 兼容旧的逻辑：base 是变量名
     String var_name = std::get<String>(base);
     auto name = get_symbol(symbol);
     String key = name + "." + var_name;
-    
-    // 扩展 DataContext 支持历史数据访问
+
+    // INFO("getHistoricalValue - using key: {}, time_offset={}", key, time_offset);
     auto& vec = context.get<Vector<double>>(key);
-    // time_offset 0,-1, ...
-    int idx = vec.size() - 1 - time_offset;
-    if (idx >= 0) {
+    int idx = (int)vec.size() - 1 + time_offset;
+    if (idx >= 0 && idx < (int)vec.size()) {
         return vec[idx];
     } else {
         return vec.back();

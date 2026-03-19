@@ -44,12 +44,13 @@ void DebugNode::Done(const String& strategy) {
     df.load_column("datetime", std::move(ts));
     for (auto& name: _inNames) {
         auto& feature = _context->get(name);
+        INFO("read colunm {}", name);
         std::visit([&name, &df](auto&& val) {
             using T = std::decay_t<decltype(val)>; // 移除引用和 cv
             if constexpr (std::is_same_v<T, double>) {
                 // double 标量值，直接添加到 DataFrame
                 df.load_column(name.c_str(), Vector<double>{val});
-                INFO("DebugNode::Done - collected double value: {}", val);
+                // INFO("DebugNode::Done - collected double value: {}", val);
             }
             else if constexpr (std::is_same_v<T, Vector<float>>) {
                 df.load_column(name.c_str(), std::move(val));
