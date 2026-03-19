@@ -1,4 +1,5 @@
 #include "Nodes/ExecuteNode.h"
+#include "Nodes/ExecutionPlan.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "MarketTiming/ImmediateTiming.h"
 #include "server.h"
@@ -46,6 +47,28 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
 }
 
 bool ExecuteNode::Process(const String& strategy, DataContext& context) {
+    // 从 PortfolioNode 读取执行计划
+    if (context.GetExecutionPlan()._hasChanged) {
+        const auto& plan = context.GetExecutionPlan();
+
+        for (const auto& item : plan._items) {
+            if (item._action == TradeAction::HOLD) {
+                continue;  // 保持仓位，不下单
+            }
+
+            auto* signal = new TradeSignal(item._symbol, item._action);
+            signal->SetQuantity(item._quantity);
+            signal->SetPrice(item._limitPrice);
+            context.AddSignal(signal);
+
+            //INFO("ExecuteNode: {} {} {} shares @ {}",
+            //    item._action, get_symbol(item._symbol), item._quantity, item._limitPrice);
+        }
+
+        // 执行完毕后清理执行计划
+        context.erase("execution_plan");
+    }
+
     context.ConsumeSignals();
     return true;
 }

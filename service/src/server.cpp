@@ -907,7 +907,7 @@ void Server::TimerWorker(nng_socket sock) {
             nlohmann::json order;
             String strSymbol = get_symbol(item._symbol);
             order["id"] = strSymbol;
-            order["price"] = item._order[0]._price;
+            order["price"] = item._price;
             order["sysID"] = item._sysID;
             order["status"] = (int)item._status;
             order["direct"] = (int)item._side;

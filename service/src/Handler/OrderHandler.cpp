@@ -40,11 +40,7 @@ namespace {
         order_json["status"] = static_cast<int>(trans._order._status);
 
         // 订单价格明细
-        nlohmann::json prices_json = nlohmann::json::array();
-        for (int i = 0; i < MAX_ORDER_SIZE && trans._order._order[i]._price > 0; ++i) {
-            prices_json.push_back(trans._order._order[i]._price);
-        }
-        order_json["prices"] = prices_json;
+        order_json["prices"] = trans._order._price;
 
         result["order"] = order_json;
 
@@ -105,7 +101,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     int kind = params["kind"];
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
-    List<double> prices = params["prices"];
+    double prices = params["price"];
     auto lambda_sendResult = [symbol, this](const TradeReport& report) {
         auto sock = Server::GetSocket();
         auto info = to_sse_string(symbol, report);
@@ -121,16 +117,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         order._validTime = OrderTimeValid::Today;
     }
     order._type = GetOrderType(params);
-    auto itr = prices.begin();
-    for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-        if (itr != prices.end()) {
-            order._order[i]._price = *itr;
-            ++itr;
-        }
-        else {
-            order._order[i]._price = 0;
-        }
-    }
+    order._price = prices;
     if (kind == 1) {
         order._flag = (int)params["open"];
         order._hedge = (OptionHedge)params["hedge"];

@@ -251,7 +251,7 @@ bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, doub
     order._side = 0;
     order._type = type;
     order._volume = 0;
-    order._order[0]._price = price;
+    order._price = price;
     TradeInfo dd;
     auto id = broker->Buy(strategy, symbol, order, dd);
     if (id._id != 0) {
@@ -266,7 +266,7 @@ bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, dou
     Order order;
     order._volume = 0;
     order._side = true;
-    order._order[0]._price = price;
+    order._price = price;
     TradeInfo dd;
     auto id = broker->Sell(strategy, symbol, order, dd);
     return true;

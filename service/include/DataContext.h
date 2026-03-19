@@ -1,6 +1,7 @@
 #pragma once
 #include "std_header.h"
 #include "Util/system.h"
+#include "Nodes/ExecutionPlan.h"
 
 struct TradeReport;
 class Server;
@@ -17,22 +18,37 @@ enum class TradeAction: char {
 class TradeSignal {
 public:
     TradeSignal(symbol_t symbol, TradeAction act): _symbol(symbol), _action(act) {}
-    
+
     virtual ~TradeSignal(){}
 
+    // Symbol
     symbol_t GetSymbol() const { return _symbol; }
 
-    void Consume() { _executed = true; }
-    bool IsConsume() { return _executed; }
+    // Action
+    const TradeAction& GetAction() const { return _action; }
+    void SetAction(TradeAction act) { _action = act; }
 
-    const TradeAction& Action() const { return _action; }
-    double Price() const { return _price; }
-    int Quantity() const { return _quantity; }
+    // Quantity
+    int GetQuantity() const { return _quantity; }
+    void SetQuantity(int qty) { _quantity = qty; }
+
+    // Price
+    double GetPrice() const { return _price; }
+    void SetPrice(double price) { _price = price; }
+
+    // Executed
+    void Consume() { _executed = true; }
+    bool IsConsume() const { return _executed; }
+
+    // Create time
+    std::chrono::system_clock::time_point GetCreateTime() const { return _create_time; }
+    void SetCreateTime(std::chrono::system_clock::time_point t) { _create_time = t; }
+
 private:
     symbol_t _symbol;
     TradeAction _action;
-    int _quantity;           // 数量
-    double _price;           // 建议价格
+    int _quantity = 0;           // 数量
+    double _price = 0.0;         // 建议价格
     bool _executed: 1 = false;   // 是否已执行
     std::chrono::system_clock::time_point _create_time;
 };
@@ -129,6 +145,10 @@ public:
     void UnregisterObserver(ISignalObserver* observer);
 
     void ConsumeSignals();
+
+    ExecutionPlan& GetExecutionPlan() {
+        return _executionPlan;
+    }
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -144,6 +164,7 @@ private:
 
     std::unordered_map<symbol_t, TradeSignal*> _signals;
     List<ISignalObserver*> _signalObservers;
+    ExecutionPlan _executionPlan;
 
     // TODO: 节点的输出数据，待优化
     Map<String, context_t> _outputs;

@@ -58,6 +58,7 @@ enum class StrategyNodeType {
     Function,
     Signal,
     Execution,
+    Portfolio,  // 投资组合节点
     Feature,
     Script,
     LSTM,

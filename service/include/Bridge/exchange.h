@@ -110,7 +110,7 @@ struct Order {
     OrderStatus _status;
     // 订单发起时间
     time_t _time;
-    Array<OrderDetail, MAX_ORDER_SIZE> _order;
+    double _price;
     String _sysID; // 其他SDK数据的交易ID
 };
 

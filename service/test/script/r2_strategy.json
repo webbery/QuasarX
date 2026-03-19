@@ -1,7 +1,7 @@
 {
-    "id": "r2_strategy",
-    "name": "R 平方趋势策略",
-    "description": "基于 R² 拟合优度的趋势判断策略：R²<0.7 时买入（震荡市），R²>0.9 时卖出（强趋势）",
+    "id": "r2_strategy_portfolio",
+    "name": "R 平方趋势策略(含投资组合)",
+    "description": "基于 R² 拟合优度的趋势判断策略，包含投资组合节点进行仓位管理",
     "nodes": [
         {
             "id": "1",
@@ -106,6 +106,33 @@
             "position": { "x": 550, "y": 250 }
         },
         {
+            "id": "6",
+            "type": "custom",
+            "data": {
+                "label": "投资组合",
+                "nodeType": "portfolio",
+                "params": {
+                    "positionRatio": {
+                        "value": 0.5,
+                        "type": "number",
+                        "desc": "仓位比例 (0.0~1.0)，0.5 表示 50% 仓位"
+                    },
+                    "pool": {
+                        "value": ["sz.000001"],
+                        "type": "text",
+                        "desc": "交易池标的列表"
+                    },
+                    "initialCapital": {
+                        "value": 100000,
+                        "type": "number",
+                        "unit": "元",
+                        "desc": "初始本金（回测模式专用）"
+                    }
+                }
+            },
+            "position": { "x": 850, "y": 100 }
+        },
+        {
             "id": "4",
             "type": "custom",
             "data": {
@@ -189,11 +216,11 @@
             "type": "default"
         },
         {
-            "id": "3->4",
+            "id": "3->6",
             "source": "3",
-            "target": "4",
+            "target": "6",
             "sourceHandle": "3",
-            "targetHandle": "4",
+            "targetHandle": "6",
             "type": "default"
         },
         {
@@ -202,6 +229,14 @@
             "target": "5",
             "sourceHandle": "3",
             "targetHandle": "5",
+            "type": "default"
+        },
+        {
+            "id": "6->4",
+            "source": "6",
+            "target": "4",
+            "sourceHandle": "6",
+            "targetHandle": "4",
             "type": "default"
         }
     ]

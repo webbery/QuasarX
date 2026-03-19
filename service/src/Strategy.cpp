@@ -21,6 +21,7 @@
 #include "Nodes/ScriptNode.h"
 #include "Nodes/StackNode.h"
 #include "Nodes/ExecuteNode.h"
+#include "Nodes/PortfolioNode.h"
 
 namespace {
     Map<String, StrategyNodeType> node_type_map{
@@ -31,6 +32,7 @@ namespace {
         {"signal", StrategyNodeType::Signal},
         {"debug", StrategyNodeType::Debug},
         {"execution", StrategyNodeType::Execution},
+        {"portfolio", StrategyNodeType::Portfolio},
         {"test", StrategyNodeType::Test},
     };
 
@@ -121,6 +123,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Execution:
             nodeInstance = generate_node<ExecuteNode>(node["id"], server);
+            break;
+        case StrategyNodeType::Portfolio:
+            nodeInstance = generate_node<PortfolioNode>(node["id"], server);
             break;
         case StrategyNodeType::Test:
             nodeInstance = generate_node<TestNode>(node["id"], server);

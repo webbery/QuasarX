@@ -120,6 +120,64 @@ class TestR2Strategy:
         assert isinstance(data, dict)
         assert 'features' in data
 
+    @pytest.mark.timeout(60)
+    def test_r2_backtest_with_portfolio(self, auth_token):
+        """测试带投资组合节点的回测（R² 策略 + PortfolioNode）"""
+        kwargs = {
+            'verify': False,
+            'headers': {'Authorization': auth_token} if auth_token else {}
+        }
+
+        script_path = './script/r2_strategy_portfolio.json'
+        script = self.load_script(script_path)
+
+        # 验证策略配置包含 portfolio 节点
+        node_types = [node['data']['nodeType'] for node in script['nodes']]
+        assert 'portfolio' in node_types, "策略应包含 portfolio 节点"
+
+        # 验证 portfolio 节点配置
+        portfolio_node = next(n for n in script['nodes'] if n['data']['nodeType'] == 'portfolio')
+        assert portfolio_node['data']['params']['positionRatio']['value'] == 0.5
+        assert portfolio_node['data']['params']['initialCapital']['value'] == 100000
+
+        kwargs['json'] = {
+            "script": json.dumps(script, ensure_ascii=False)
+        }
+
+        # 执行回测
+        response = requests.post(f"{BASE_URL}/backtest", **kwargs)
+        data = check_response(response)
+
+        # 验证回测结果
+        assert isinstance(data, dict)
+        assert 'features' in data, "回测结果应包含统计指标"
+
+        features = data['features']
+
+        # 验证关键指标存在
+        expected_metrics = [
+            'sharp',           # 夏普比率
+            'annual_return',   # 年化收益率
+            'total_return',    # 总收益率
+            'max_drawdown',    # 最大回撤
+            'win_rate',        # 胜率
+            'calmar_ratio'     # 卡玛比率
+        ]
+
+        for metric in expected_metrics:
+            assert metric in features, f"回测结果应包含 {metric} 指标"
+
+        # 打印指标供调试
+        print("\n=== 带投资组合的回测绩效指标 ===")
+        print(f"仓位比例: 50%")
+        print(f"初始本金: 100,000 元")
+        print(f"夏普比率 (Sharp): {features.get('sharp', 'N/A'):.4f}")
+        print(f"年化收益率 (Annual Return): {features.get('annual_return', 'N/A'):.4f}")
+        print(f"总收益率 (Total Return): {features.get('total_return', 'N/A'):.4f}")
+        print(f"最大回撤 (Max Drawdown): {features.get('max_drawdown', 'N/A'):.4f}")
+        print(f"胜率 (Win Rate): {features.get('win_rate', 'N/A'):.4f}")
+        print(f"卡玛比率 (Calmar Ratio): {features.get('calmar_ratio', 'N/A'):.4f}")
+
     @pytest.mark.timeout(30)
     def test_r2_strategy_deploy(self, auth_token):
         """测试部署 R² 策略"""

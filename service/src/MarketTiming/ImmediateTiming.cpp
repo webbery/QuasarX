@@ -9,9 +9,9 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     auto symbol = signal.GetSymbol();
     // TODO: 初始化订单
     Order order;
-    order._order[0]._price = signal.Price();
-    order._volume = signal.Quantity();
-    switch (signal.Action()) {
+    order._price = signal.GetPrice();
+    order._volume = signal.GetQuantity();
+    switch (signal.GetAction()) {
     case TradeAction::BUY:
         broker->Buy(strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();

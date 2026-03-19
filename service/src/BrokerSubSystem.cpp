@@ -319,7 +319,7 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
           tran._order._time = action[DB_ORDER_NAME][DB_TIME_NAME];
           int i = 0;
           for (double price : action[DB_ORDER_NAME][DB_PRICE_NAME]) {
-              tran._order._order[i++]._price = price;
+              tran._order._price = price;
           }
           List<TradeReport> reports;
           for (auto& trade : action[DB_TRADE_NAME]) {
@@ -353,7 +353,7 @@ nlohmann::json BrokerSubSystem::GetHistoryJson() {
       action[DB_ORDER_NAME][DB_QUANTITY_NAME] = trans._order._volume;
       action[DB_ORDER_NAME][DB_TIME_NAME] = trans._order._time;
       for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-        action[DB_ORDER_NAME][DB_PRICE_NAME].push_back(trans._order._order[i]._price);
+        action[DB_ORDER_NAME][DB_PRICE_NAME].push_back(trans._order._price);
       }
       // 序列化元数据
       nlohmann::json meta;
@@ -486,10 +486,10 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     // 邮件通知
     String content;
     if (order->_order._side == 0) {
-        content = std::format("Buy {} {}", get_symbol(GET_SYMBOL(order)), order->_order._order[0]._price);
+        content = std::format("Buy {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
     } 
     else if (order->_order._side == 1) {
-        content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._order[0]._price);
+        content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
     }
     if (!content.empty()) {
         _server->SendEmail(content);
@@ -682,7 +682,7 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
 double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, TradeInfo& deal) {
   // 一手数量
   constexpr short hand = 100;
-  double min_value = hand * order._order.front()._price;
+  double min_value = hand * order._price;
   if (principal < min_value) {
     return 0;
   }
@@ -690,7 +690,7 @@ double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principa
   auto number = order._volume;
   if (number == 0) {
     auto lower_total_price = _stockCommission._min / _stockCommission._ration;
-    number = ceil(lower_total_price / order._order[0]._price);
+    number = ceil(lower_total_price / order._price);
   }
   int count = number;
   // 计算预估手续费

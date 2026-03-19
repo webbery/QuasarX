@@ -290,7 +290,7 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
     strncpy(order.SecurityID, strCode.c_str(), strCode.size());
     order.ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
     order.VolumeTotalOriginal = ctx->_order._volume;
-    order.LimitPrice = o._order[0]._price;
+    order.LimitPrice = o._price;
 
     order.ForceCloseReason = TORA_TSTP_FCC_NotForceClose;
     order.Direction = (o._side == 0 ? TORA_TSTP_D_Buy : TORA_TSTP_D_Sell);
@@ -347,7 +347,7 @@ order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
         break;
     case OrderType::Limit: // 限价单
         pInputOrderField.OrderPriceType = TORASPAPI::TORA_TSTP_SP_OPT_LimitPrice; // 
-        pInputOrderField.LimitPrice = o._order[0]._price;
+        pInputOrderField.LimitPrice = o._price;
     default:
         INFO("Unsupport type {}", (int)ctx->_order._type);
         break;

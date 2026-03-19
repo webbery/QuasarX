@@ -31,13 +31,7 @@ nlohmann::json order2json(const Order& item)
     }
     order["kind"] = kind;
     order["type"] = item._type;
-    List<double> prices;
-    for (auto detail : item._order) {
-        if (detail._price <= 0)
-            continue;
-        prices.push_back(detail._price);
-    }
-    order["prices"] = prices;
+    order["prices"] = item._price;
     order["quantity"] = item._volume;
     order["direct"] = item._side;
     order["status"] = item._status;

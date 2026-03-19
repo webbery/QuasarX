@@ -215,7 +215,7 @@ void HXTrade::OnRspQryOrder(TORASTOCKAPI::CTORATstpOrderField* pOrderField, TORA
             order._status = toOrderStatus(pOrderField->OrderStatus);
             order._side = pOrderField->Direction - 48;
             order._volume = pOrderField->VolumeTotalOriginal;
-            order._order[0]._price = pOrderField->LimitPrice;
+            order._price = pOrderField->LimitPrice;
             order._symbol = to_symbol(pOrderField->SecurityID);
             order._id = pOrderField->RequestID;
             order._sysID = pOrderField->OrderSysID;
