@@ -26,6 +26,8 @@ public:
     bool IsConsume() { return _executed; }
 
     const TradeAction& Action() const { return _action; }
+    double Price() const { return _price; }
+    int Quantity() const { return _quantity; }
 private:
     symbol_t _symbol;
     TradeAction _action;

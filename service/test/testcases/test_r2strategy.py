@@ -48,7 +48,7 @@ class TestR2Strategy:
 
     @pytest.mark.timeout(60)
     def test_r2_backtest_single_stock(self, auth_token):
-        """测试单股票 R² 策略回测"""
+        """测试回测结果包含完整的绩效指标"""
         kwargs = {
             'verify': False,
             'headers': {'Authorization': auth_token} if auth_token else {}
@@ -65,9 +65,37 @@ class TestR2Strategy:
         response = requests.post(f"{BASE_URL}/backtest", **kwargs)
         data = check_response(response)
 
-        # 验证回测结果
+        # 验证回测结果包含所有绩效指标
         assert isinstance(data, dict)
         assert 'features' in data, "回测结果应包含统计指标"
+
+        features = data['features']
+
+        # 验证关键指标存在
+        expected_metrics = [
+            'sharp',           # 夏普比率
+            'annual_return',   # 年化收益率
+            'total_return',    # 总收益率
+            'max_drawdown',    # 最大回撤
+            'win_rate',        # 胜率
+            'calmar_ratio'     # 卡玛比率
+        ]
+
+        for metric in expected_metrics:
+            assert metric in features, f"回测结果应包含 {metric} 指标"
+
+        # 验证指标值为数值类型
+        for metric in expected_metrics:
+            assert isinstance(features[metric], (int, float)), f"{metric} 应为数值类型"
+
+        # 打印指标供调试
+        print("\n=== 回测绩效指标 ===")
+        print(f"夏普比率 (Sharp): {features.get('sharp', 'N/A'):.4f}")
+        print(f"年化收益率 (Annual Return): {features.get('annual_return', 'N/A'):.4f}")
+        print(f"总收益率 (Total Return): {features.get('total_return', 'N/A'):.4f}")
+        print(f"最大回撤 (Max Drawdown): {features.get('max_drawdown', 'N/A'):.4f}")
+        print(f"胜率 (Win Rate): {features.get('win_rate', 'N/A'):.4f}")
+        print(f"卡玛比率 (Calmar Ratio): {features.get('calmar_ratio', 'N/A'):.4f}")
 
     @pytest.mark.timeout(60)
     def test_r2_backtest_multi_stock(self, auth_token):

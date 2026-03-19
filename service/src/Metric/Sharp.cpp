@@ -248,12 +248,3 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
     
     return (annualized_return - ANNUAL_RISK_FREE_RATE) / annualized_volatility;
 }
-
-// 计算卡玛比率（Calmar Ratio）
-float calmar_ratio(const crash_flow_t& flow, const DataContext& context, double freerate) {
-    // 首先计算年化收益率（使用上面的夏普比率计算中的方法）
-    // 然后计算最大回撤
-    
-    // 这里简化为：先获取组合价值序列，然后计算
-    return 0.0f;  // 实现细节省略
-}

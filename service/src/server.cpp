@@ -1411,6 +1411,7 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
     split(quote_addr, quote_info, ":");
     strcpy(handle._quote_addr, quote_info[0].c_str());
     strcpy(handle._default_addr, trade_info[0].c_str());
+    strcpy(handle._productID, config.GetProductID().c_str());
     if (exchange.contains("account")) {
         std::string username = exchange["account"];
         strcpy(handle._username, username.c_str());

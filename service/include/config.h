@@ -65,6 +65,8 @@ public:
 
   std::string GetLLMKey();
   
+  std::string GetProductID();
+  
 private:
     void Init();
 

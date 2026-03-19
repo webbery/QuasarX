@@ -289,6 +289,10 @@ std::string ServerConfig::GetLLMKey() {
     return _config["server"]["llmkey"];
 }
 
+std::string ServerConfig::GetProductID() {
+    return _config["server"]["productID"];
+}
+
 void ServerConfig::Init()
 {
     nlohmann::json config;

@@ -304,6 +304,7 @@ enum class SecurityType: char {
 
 
 struct ExchangeInfo {
+  char _productID[16];
   char _local_addr[16];
   char _quote_addr[16];   // 对于仿真环境,该参数为行情数据存储路径
   int _quote_port;        // 对于仿真环境,表示仿真类型:1 - A股，2 - 期货

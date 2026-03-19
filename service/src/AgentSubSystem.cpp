@@ -16,6 +16,7 @@
 
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
+#include "Metric/Drawdown.h"
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     _riskSystem = new RiskSubSystem(handle);
@@ -95,11 +96,22 @@ void FlowSubsystem::Start(const String& strategy) {
             
             if (success) {
                 // 统计指标
-                auto endNode = dynamic_cast<ExecuteNode*>(flow._graph.back());
+                ExecuteNode* endNode = nullptr;
+                for (auto node: flow._graph) {
+                    auto n = dynamic_cast<ExecuteNode*>(node);
+                    if (n) {
+                        endNode = n;
+                        break;
+                    }
+                }
                 if (endNode) {
                     auto& cash_flow = endNode->GetReports();
                     flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
                     flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
+                    flow._collections[StatisticIndicator::TotalReturn] = total_return_ratio(cash_flow, context);
+                    flow._collections[StatisticIndicator::MaxDrawDown] = max_drawdown_ratio(cash_flow, context);
+                    flow._collections[StatisticIndicator::WinRate] = win_rate(cash_flow, context);
+                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(cash_flow, context, 0);
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);

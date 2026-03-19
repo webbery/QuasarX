@@ -15,7 +15,6 @@
 #include "BrokerSubSystem.h"
 
 using namespace TORALEV1API;
-#define USER_PRODUCT_INFO "HX5ZWWQ4VI"
 #define ENABLE_STOCK_OPTION     false
 namespace {
     // 转交易所类型
@@ -176,7 +175,7 @@ bool HXExchange::StockLogin()
     strncpy(tradeUser.Password, _brokerInfo._accpwd, strlen(_brokerInfo._accpwd));
     tradeUser.LogInAccountType = TORA_TSTP_LACT_AccountID;  // 
     tradeUser.AuthMode = TORA_TSTP_AM_Password;
-    memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+    memcpy(tradeUser.UserProductInfo, _brokerInfo._productID, strlen(_brokerInfo._productID));
 
     // 
     auto termInfo = std::format("PC;IIP={};IPORT={};LIP={};MAC={};HD={};",
@@ -220,7 +219,7 @@ bool HXExchange::OptionLogin()
 
     tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;  // 
     tradeUser.AuthMode = TORASPAPI::TORA_TSTP_SP_AM_Password;
-    memcpy(tradeUser.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+    memcpy(tradeUser.UserProductInfo, _brokerInfo._productID, strlen(_brokerInfo._productID));
     strcpy(tradeUser.TerminalInfo, "1123ni3498ebf");
 
     //tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;
@@ -1212,7 +1211,7 @@ bool HXExchange::QuoteLogin()
     memset(&req_user_login_field, 0, sizeof(req_user_login_field));
     strncpy(req_user_login_field.LogInAccount, _brokerInfo._username, strlen(_brokerInfo._username));
     strncpy(req_user_login_field.Password, _brokerInfo._passwd, strlen(_brokerInfo._passwd));
-    memcpy(req_user_login_field.UserProductInfo, USER_PRODUCT_INFO, strlen(USER_PRODUCT_INFO));
+    memcpy(req_user_login_field.UserProductInfo, _brokerInfo._productID, strlen(_brokerInfo._productID));
     int ret = _quoteAPI->ReqUserLogin(&req_user_login_field, _reqID);
     if (ret != 0) {
         INFO("HX login fail.");

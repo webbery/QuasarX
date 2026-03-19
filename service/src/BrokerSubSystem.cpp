@@ -242,9 +242,17 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   case StatisticIndicator::ES:
     return "ES";
   case StatisticIndicator::MaxDrawDown:
-    return "MaxDrowDown";
+    return "max_drawdown";
+  case StatisticIndicator::AnualReturn:
+    return "annual_return";
+  case StatisticIndicator::TotalReturn:
+    return "total_return";
+  case StatisticIndicator::WinRate:
+    return "win_rate";
+  case StatisticIndicator::Calmar:
+    return "calmar_ratio";
   default:
-    return "Unknow";
+    return "unknown";
   }
 }
 
