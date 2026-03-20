@@ -1,4 +1,5 @@
 #pragma once
+#include "DataContext.h"
 #include "StrategyNode.h"
 #include "Nodes/ExecutionPlan.h"
 
@@ -19,7 +20,9 @@ private:
     ExecutionPlan generatePlan(const Vector<symbol_t>& symbols,
                               const Vector<TradeAction>& actions,
                               double capital);
-
+    ExecutionPlan generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
+                              const Vector<TradeAction>& actions,
+                              double capital);
     // 根据运行模式获取可用资金
     double getAvailableCapital();
     bool isPlanChanged(const ExecutionPlan& newPlan);

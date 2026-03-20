@@ -61,7 +61,7 @@ bool StockHistorySimulation::Login(AccountType t){
 }
 
 void StockHistorySimulation::Logout(AccountType t) {
-    
+    _finish = true;
 }
 
 bool StockHistorySimulation::IsLogin() {
@@ -112,11 +112,23 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
 
 void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& report) {
     auto broker = _server->GetBrokerSubSystem();
-    _reports.visit(id._id, [&report, broker](auto&& value) {
+    _reports.visit(id._id, [&report, broker, this](auto&& value) {
         auto ctx = value.second;
         value.second->_trades._reports.emplace_back(report);
         // 交易记录
         broker->RecordTrade(*ctx);
+
+        // 更新持仓跟踪
+        {
+            std::lock_guard<std::mutex> lock(_positionMtx);
+            auto& pos = _positions[ctx->_order._symbol];
+            if (ctx->_order._side == 0) {  // 买入
+                pos += report._quantity;
+            } else {  // 卖出
+                pos -= report._quantity;
+            }
+        }
+
         // 回调通知完成
         ctx->Update(report);
         value.second->_success.store(true);
@@ -167,6 +179,61 @@ void StockHistorySimulation::UseLevel(int level) {
 }
 
 #define CACHE_SIZE  2048
+
+// 辅助函数：加载 CSV 文件到 DataFrame
+bool StockHistorySimulation::LoadCSVToDataFrame(const String& file_path,
+                                                 DataFrame& df,
+                                                 Vector<String>& header) {
+    std::ifstream ifs(file_path);
+    if (!ifs.is_open()) {
+        return false;
+    }
+
+    INFO("load {} success", file_path);
+    char cache[CACHE_SIZE] = { 0 };
+    Vector<time_t> dates;
+    Vector<float> open, close, high, low;
+    Vector<int64_t> volume;
+    header.clear();
+
+    int index = 0;
+    while (ifs.getline(cache, CACHE_SIZE)) {
+        Vector<String> row;
+        split(cache, row, ",");
+
+        if (index++ == 0) {
+            // 加载 6 列 header: date, open, close, high, low, volume
+            for (int i = 0; i < 6; ++i) {
+                header.emplace_back(row[i]);
+            }
+            continue;
+        }
+        dates.emplace_back(FromStr(row[0], "%Y-%m-%d %H:%M:%S"));
+        open.emplace_back(std::stof(row[1]));
+        close.emplace_back(std::stof(row[2]));
+        high.emplace_back(std::stof(row[3]));
+        low.emplace_back(std::stof(row[4]));
+        volume.emplace_back(std::stol(row[5]));
+    }
+    ifs.close();
+
+    if (header.empty()) {
+        return false;
+    }
+
+    Vector<uint32_t> indexes(index);
+    std::iota(indexes.begin(), indexes.end(), 1);
+    df.load_index(std::move(indexes));
+    df.load_column(header[0].c_str(), std::move(dates));
+    df.load_column(header[1].c_str(), std::move(open));
+    df.load_column(header[2].c_str(), std::move(close));
+    df.load_column(header[3].c_str(), std::move(high));
+    df.load_column(header[4].c_str(), std::move(low));
+    df.load_column(header[5].c_str(), std::move(volume));
+
+    return true;
+}
+
 void StockHistorySimulation::LoadT1(const String& code) {
     auto& security = Server::GetSecurity(code);
     auto symbol = to_symbol(code, security);
@@ -177,121 +244,32 @@ void StockHistorySimulation::LoadT1(const String& code) {
     }
     auto file_path = _org_path + "/" + subdir + "/" + code + ".csv";
     auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + ".csv";
-    int index = 0;
-    std::ifstream ifs, base_fs;
-    ifs.open(file_path);
-    if (ifs.is_open()) {
-        INFO("load {} success", file_path);
-        char cache[CACHE_SIZE] = { 0 };
-        Vector<time_t> dates;
-        Vector<float> open, close, high, low;
-        Vector<int64_t> volume;
-        Vector<String>& header = _headers[symbol];
-        header.clear();
-        while (ifs.getline(cache, CACHE_SIZE)) {
-            Vector<String> row;
-            split(cache, row, ",");
 
-            if (index++ == 0) {
-                header.emplace_back(row[0]);
-                header.emplace_back(row[1]);
-                header.emplace_back(row[2]);
-                header.emplace_back(row[3]);
-                header.emplace_back(row[4]);
-                header.emplace_back(row[5]);
-                // TODO: ask/bid
-                continue;
-            }
-            dates.emplace_back(FromStr(row[0], "%Y-%m-%d %H:%M:%S"));
-            open.emplace_back(std::stof(row[1]));
-            close.emplace_back(std::stof(row[2]));
-            high.emplace_back(std::stof(row[3]));
-            low.emplace_back(std::stof(row[4]));
-            volume.emplace_back(std::stol(row[5]));
-        }
-        ifs.close();
-
-        base_fs.open(primitive_file_path);
-        if (base_fs.is_open()) {
-            // TODO:对齐时间
-            base_fs.close();
-        }
-        if (header.empty())
-            return;
-
-        Vector<uint32_t> indexes(index);
-        std::iota(indexes.begin(), indexes.end(), 1);
-        DataFrame& df = _csvs[symbol];
-        df.load_index(std::move(indexes));
-        df.load_column(header[0].c_str(), std::move(dates));
-        df.load_column(header[1].c_str(), std::move(open));
-        df.load_column(header[2].c_str(), std::move(close));
-        df.load_column(header[3].c_str(), std::move(high));
-        df.load_column(header[4].c_str(), std::move(low));
-        df.load_column(header[5].c_str(), std::move(volume));
-    }
-    else {
+    // 加载复权数据
+    if (!LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol])) {
         INFO("load {} fail", file_path);
+        return;
+    }
+
+    // 加载原始价格数据（AStock）
+    if (!LoadCSVToDataFrame(primitive_file_path, _org_csvs[symbol], _org_headers[symbol])) {
+        WARN("load {} fail, will use adjusted price", primitive_file_path);
+        // 如果原始数据加载失败，复制复权数据作为原始数据
+        _org_csvs[symbol] = _csvs[symbol];
+        _org_headers[symbol] = _headers[symbol];
     }
 }
 
 void StockHistorySimulation::LoadT0(const String& code) {
   auto& security = Server::GetSecurity(code);
   auto symbol = to_symbol(code, security);
-  String subdir, orgdir;
+  String subdir;
   if (is_stock(symbol)) {
     subdir = "stock";
   }
   auto file_path = _org_path + "/zh/" + subdir + "/" + code + ".csv";
-  int index = 0;
-  std::ifstream ifs;
-  ifs.open(file_path);
 
-  
-  if (ifs.is_open()) {
-    Vector<time_t> dates;
-    Vector<float> open, close, high, low;
-    Vector<int64_t> volume;
-    char cache[CACHE_SIZE] = { 0 };
-    Vector<String>& header = _headers[symbol];
-    header.clear();
-    while (ifs.getline(cache, CACHE_SIZE)) {
-      Vector<String> row;
-      split(cache, row, ",");
-      
-      if (index++ == 0) {
-        header.emplace_back(row[0]);
-        header.emplace_back(row[1]);
-        header.emplace_back(row[2]);
-        header.emplace_back(row[3]);
-        header.emplace_back(row[4]);
-        header.emplace_back(row[5]);
-        // TODO: ask/bid
-        continue;
-      }
-
-      dates.emplace_back(FromStr(row[0], "%Y-%m-%d %H:%M:%S"));
-      open.emplace_back(std::stof(row[1]));
-      close.emplace_back(std::stof(row[2]));
-      high.emplace_back(std::stof(row[3]));
-      low.emplace_back(std::stof(row[4]));
-      volume.emplace_back(std::stol(row[5]));
-    }
-    ifs.close();
-    if (header.empty())
-      return;
-
-    Vector<uint32_t> indexes(index);
-    std::iota(indexes.begin(), indexes.end(), 1);
-    DataFrame& df = _csvs[symbol];
-    df.load_index(std::move(indexes));
-    df.load_column(header[0].c_str(), std::move(dates));
-    df.load_column(header[1].c_str(), std::move(open));
-    df.load_column(header[2].c_str(), std::move(close));
-    df.load_column(header[3].c_str(), std::move(high));
-    df.load_column(header[4].c_str(), std::move(low));
-    df.load_column(header[5].c_str(), std::move(volume));
-  }
+  LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol]);
 }
 
 void StockHistorySimulation::QueryQuotes() {
@@ -300,62 +278,68 @@ void StockHistorySimulation::QueryQuotes() {
 }
 
 bool StockHistorySimulation::Once(uint32_t& curIndex) {
-  if (_csvs.empty()) {
-    WARN("Quote is empty");
-    _finish = true;
-    return false;
-  }
-  for (auto& df : _csvs) {
-      auto num = df.second.get_index().size();
-      if (curIndex >= num - 1) {
+    if (_csvs.empty()) {
+        WARN("Quote is empty");
         _finish = true;
-        INFO("_finish true");
-        curIndex = 0;
         return false;
-      }
-      
-      auto& header = _headers[df.first];
-
-      auto& datetime = df.second.get_column<time_t>(header[0].c_str());
-      auto& open = df.second.get_column<float>(header[1].c_str());
-      auto& close = df.second.get_column<float>(header[2].c_str());
-      auto& high = df.second.get_column<float>(header[3].c_str());
-      auto& low = df.second.get_column<float>(header[4].c_str());
-      auto& volume = df.second.get_column<int64_t>(header[5].c_str());
-
-      
-      QuoteInfo info;
-      info._symbol = df.first;
-      info._open = open[curIndex];
-      info._close = close[curIndex];
-      info._high = high[curIndex];
-      info._low = low[curIndex];
-      info._volume = volume[curIndex];
-      info._time = datetime[curIndex];
-      
-      yas::shared_buffer buf = yas::save<flags>(info);
-      if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
-        printf("send quote message e fail.\n");
-        return false;
-      }
-      auto symbol = df.first;
-      _orders.visit(df.first, [&info, &symbol, this] (auto&& que) {
-        OrderInfo oif;
-        while (que.second->pop(oif)) {
-          TradeReport report = OrderMatch(oif._order->_order, info);
-          oif._order->_trades._symbol = symbol;
-          order_id id;
-          id._id = static_cast<uint32_t>(oif._id);
-          OnOrderReport(id, report);
+    }
+    for (auto& df : _csvs) {
+        auto num = df.second.get_index().size();
+        if (curIndex >= num - 1) {
+            _finish = true;
+            INFO("_finish true");
+            curIndex = 0;
+            return false;
         }
-      });
-      _quotes[df.first] = std::move(info);
+
+        auto& header = _headers[df.first];
+
+        auto& datetime = df.second.get_column<time_t>(header[0].c_str());
+        auto& open = df.second.get_column<float>(header[1].c_str());
+        auto& close = df.second.get_column<float>(header[2].c_str());
+        auto& high = df.second.get_column<float>(header[3].c_str());
+        auto& low = df.second.get_column<float>(header[4].c_str());
+        auto& volume = df.second.get_column<int64_t>(header[5].c_str());
+
+        QuoteInfo info;
+        info._symbol = df.first;
+        info._open = open[curIndex];
+        info._close = close[curIndex];  // 复权价，用于指标计算
+        info._high = high[curIndex];
+        info._low = low[curIndex];
+        info._volume = volume[curIndex];
+        info._time = datetime[curIndex];
+
+        // 发送复权价给 QuoteInputNode（用于指标计算）
+        yas::shared_buffer buf = yas::save<flags>(info);
+        if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
+            printf("send quote message e fail.\n");
+            return false;
+        }
+
+        // 获取原始价格用于订单撮合
+        double primitiveClose = GetPrimitivePrice(df.first, curIndex);
+        auto symbol = df.first;
+        _orders.visit(df.first, [&info, &symbol, primitiveClose, this] (auto&& que) {
+            OrderInfo oif;
+            while (que.second->pop(oif)) {
+                // 使用原始价格进行撮合
+                QuoteInfo matchQuote = info;
+                matchQuote._close = primitiveClose;
+                TradeReport report = OrderMatch(oif._order->_order, matchQuote);
+                oif._order->_trades._symbol = symbol;
+                order_id id;
+                id._id = static_cast<uint32_t>(oif._id);
+                OnOrderReport(id, report);
+            }
+        });
+        _quotes[df.first] = std::move(info);
     }
     ++curIndex;
     return true;
 }
 
-bool StockHistorySimulation::Once(symbol_t symbol, time_t timeAxis) {
+bool StockHistorySimulation::Once(symbol_t symbol, uint32_t& curIndex) {
 
     return true;
 }
@@ -426,15 +410,15 @@ TradeReport StockHistorySimulation::OrderMatch(const Order& order, const QuoteIn
 }
 
 QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol) {
-  auto fut = std::async(std::launch::deferred, [this]() {
-    Once(_cur_index);
-  });
-  fut.wait();
-  auto info = _quotes[symbol];
-  if (_finish) {
-    info._time = 0;
-  }
-  return info;
+    auto fut = std::async(std::launch::deferred, [this]() {
+        Once(_cur_index);
+    });
+    fut.wait();
+    auto info = _quotes[symbol];
+    if (_finish) {
+        info._time = 0;
+    }
+    return info;
 }
 
 double StockHistorySimulation::Progress() {
@@ -621,4 +605,48 @@ SymbolInfo StockHistorySimulation::GetSymbolInfo(const String& code) {
 
 void StockHistorySimulation::RefreshSymbolList() {
     // 仿真环境不需要主动刷新，数据来自本地 CSV
+}
+
+double StockHistorySimulation::GetPrimitivePrice(symbol_t symbol, uint32_t index) {
+    auto org_itr = _org_csvs.find(symbol);
+    if (org_itr == _org_csvs.end()) {
+        // 没有原始数据，返回复权价
+        return GetAdjPrice(symbol, index);
+    }
+    auto& org_df = org_itr->second;
+    auto& org_header = _org_headers[symbol];
+    if (org_header.empty()) {
+        return GetAdjPrice(symbol, index);
+    }
+    auto& org_close = org_df.get_column<float>(org_header[2].c_str());
+    if (index >= org_close.size()) {
+        index = org_close.size() - 1;
+    }
+    return org_close[index];
+}
+
+int64_t StockHistorySimulation::GetPositionQuantity(symbol_t symbol) const {
+    std::lock_guard<std::mutex> lock(_positionMtx);
+    auto itr = _positions.find(symbol);
+    if (itr == _positions.end()) {
+        return 0;
+    }
+    return static_cast<int64_t>(itr->second);
+}
+
+double StockHistorySimulation::GetAdjPrice(symbol_t symbol, uint32_t index) {
+    auto itr = _csvs.find(symbol);
+    if (itr == _csvs.end()) {
+        return 0.0;
+    }
+    auto& df = itr->second;
+    auto& header = _headers[symbol];
+    if (header.empty()) {
+        return 0.0;
+    }
+    auto& close = df.get_column<float>(header[2].c_str());
+    if (index >= close.size()) {
+        index = close.size() - 1;
+    }
+    return close[index];
 }

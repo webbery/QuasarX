@@ -1,4 +1,6 @@
 #include "AgentSubSystem.h"
+#include "Bridge/exchange.h"
+#include "Nodes/QuoteNode.h"
 #include "StrategyNode.h"
 #include "server.h"
 #include "Util/system.h"
@@ -116,6 +118,11 @@ void FlowSubsystem::Start(const String& strategy) {
                 for (auto node : flow._graph) {
                     node->Done(strategy);
                 }
+            }
+            // 回测失败时需要保证QuoteInputNode正常退出
+            if (_handle->GetRunningMode() == RuningType::Backtest) {
+                auto broker = _handle->GetAvaliableStockExchange();
+                broker->Logout();
             }
             // 结束通知
             flow._running = false;

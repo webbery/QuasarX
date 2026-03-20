@@ -1,8 +1,10 @@
 #include "Nodes/PortfolioNode.h"
+#include "Util/system.h"
 #include "server.h"
 #include "Bridge/exchange.h"
 #include "Util/log.h"
 #include "PortfolioSubsystem.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
@@ -44,8 +46,8 @@ bool PortfolioNode::Process(const String& strategy, DataContext& context) {
     for (const auto& symbol : _pool) {
         String signalKey = get_symbol(symbol) + ".signal";
         if (context.exist(signalKey)) {
-            const auto& signalVal = context.get(signalKey);
-            double signal = std::get<double>(signalVal);
+            const auto& signalVal = context.get<Vector<double>>(signalKey);
+            auto signal = signalVal.back();
 
             if (signal > 0) {
                 symbols.push_back(symbol);
@@ -68,22 +70,26 @@ bool PortfolioNode::Process(const String& strategy, DataContext& context) {
     double targetCapital = capital * _positionRatio;
 
     // 3. 生成执行计划
-    ExecutionPlan newPlan = generatePlan(symbols, actions, targetCapital);
+    ExecutionPlan newPlan;
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        newPlan = generatePlan(symbols, actions, targetCapital);
+    } else {
+        newPlan = generatePlan(context, symbols, actions, targetCapital);
+    }
 
     // 4. 检查是否有变化
     newPlan._hasChanged = isPlanChanged(newPlan);
 
     // 5. 如果有变化或首次执行，输出执行计划
     if (newPlan._hasChanged || _lastPlan._items.empty()) {
-        _lastPlan._items.clear();
         _lastPlan._items = std::move(newPlan._items);
         _lastPlan._totalCapital = newPlan._totalCapital;
         _lastPlan._usedCapital = newPlan._usedCapital;
         _lastPlan._hasChanged = true;
 
         context.GetExecutionPlan() = _lastPlan;
-        INFO("PortfolioNode: generated new execution plan with {} items, capital={}",
-             _lastPlan._items.size(), capital);
+        // INFO("PortfolioNode: generated new execution plan with {} items, capital={}",
+        //      _lastPlan._items.size(), capital);
     } else {
         context.GetExecutionPlan()._hasChanged = false;
         INFO("PortfolioNode: no change, keeping current positions");
@@ -116,7 +122,7 @@ ExecutionPlan PortfolioNode::generatePlan(
         item._symbol = symbols[i];
         item._action = actions[i];
 
-        auto quote = exchange->GetQuote(item._symbol);
+        QuoteInfo quote = exchange->GetQuote(item._symbol);
         double price = (quote._close > 0) ? quote._close : quote._open;
 
         if (price <= 0) {
@@ -169,16 +175,107 @@ ExecutionPlan PortfolioNode::generatePlan(
     return plan;
 }
 
+ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
+                              const Vector<TradeAction>& actions,
+                              double targetCapital) {
+    ExecutionPlan plan;
+    plan._totalCapital = targetCapital;
+    plan._usedCapital = 0.0;
+    plan._hasChanged = false;
+
+    if (symbols.empty()) {
+        return plan;
+    }
+
+    size_t count = symbols.size();
+    double perSymbolCapital = targetCapital / count;
+
+    // 获取历史数据仿真交易所，用于获取未复权价格
+    auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+        _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+
+    for (size_t i = 0; i < symbols.size(); ++i) {
+        ExecutionItem item;
+        item._symbol = symbols[i];
+        item._action = actions[i];
+
+        String symbolName = get_symbol(item._symbol);
+
+        // 获取未复权价格（原始价格）用于回测交易
+        double price = 0.0;
+        if (histExchange) {
+            price = histExchange->GetPrimitivePrice(item._symbol, context.GetEpoch());
+        }
+
+        if (price <= 0) {
+            WARN("Invalid price for symbol {} in backtest context", symbolName);
+            continue;
+        }
+
+        if (item._action == TradeAction::HOLD) {
+            // 保持持仓：从 StockHistorySimulation 获取当前持仓
+            int64_t currentQty = 0;
+            if (histExchange) {
+                currentQty = histExchange->GetPositionQuantity(item._symbol);
+            }
+            item._quantity = currentQty;
+            if (item._quantity > 0) {
+                item._limitPrice = 0;
+                item._targetValue = item._quantity * price;
+                plan._items.push_back(item);
+                plan._usedCapital += item._targetValue;
+            }
+        } else if (item._action == TradeAction::BUY) {
+            // 检查是否已有持仓
+            int64_t currentQty = 0;
+            if (histExchange) {
+                currentQty = histExchange->GetPositionQuantity(item._symbol);
+            }
+            if (currentQty > 0) {
+                // 已有持仓，跳过买入
+                INFO("Symbol {} already has position {}, skipping buy", symbolName, currentQty);
+                continue;
+            }
+            // 使用未复权价格计算固定买卖数量
+            int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
+            if (quantity < 100) {
+                WARN("Quantity {} too small for symbol {}", quantity, symbolName);
+                continue;
+            }
+            item._quantity = quantity;
+            item._limitPrice = price;  // 使用未复权收盘价作为限价
+            item._targetValue = quantity * price;
+            plan._items.push_back(item);
+            plan._usedCapital += item._targetValue;
+        } else if (item._action == TradeAction::SELL) {
+            // 卖出：获取当前持仓
+            int64_t currentQty = 0;
+            if (histExchange) {
+                currentQty = histExchange->GetPositionQuantity(item._symbol);
+            }
+            if (currentQty > 0) {
+                item._quantity = currentQty;
+                item._limitPrice = price;  // 使用未复权收盘价作为限价
+                item._targetValue = currentQty * price;
+                plan._items.push_back(item);
+                plan._usedCapital += item._targetValue;
+            }
+        }
+    }
+
+    return plan;
+}
+
 double PortfolioNode::getAvailableCapital() {
     auto runMode = _server->GetRunningMode();
 
-    // 回测模式: 使用配置的初始本金
+    // 回测模式：使用配置的初始本金
     if (runMode == RuningType::Backtest) {
         INFO("PortfolioNode: Backtest mode, using initial capital = {}", _initialCapital);
         return _initialCapital;
     }
 
-    // 仿真模式或实盘模式: 使用交易所返回的可用资金
+    // 仿真模式或实盘模式：使用交易所返回的可用资金
     auto* exchange = _server->GetAvaliableStockExchange();
     if (exchange) {
         double funds = exchange->GetAvailableFunds();
@@ -189,7 +286,7 @@ double PortfolioNode::getAvailableCapital() {
         }
     }
 
-    // 备选: 从PortfolioSubSystem获取本金
+    // 备选：从 PortfolioSubSystem 获取本金
     auto* portfolio = _server->GetPortforlioSubSystem();
     if (portfolio && !portfolio->GetAllPortfolio().empty()) {
         double principal = portfolio->GetPortfolio()._principal;
@@ -199,7 +296,7 @@ double PortfolioNode::getAvailableCapital() {
         }
     }
 
-    // 最终备选: 使用配置的初始本金
+    // 最终备选：使用配置的初始本金
     WARN("PortfolioNode: exchange funds unavailable, fallback to initial capital = {}", _initialCapital);
     return _initialCapital;
 }

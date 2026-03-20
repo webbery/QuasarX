@@ -30,6 +30,9 @@ bool DebugNode::Process(const String& strategy, DataContext& context) {
 }
 
 void DebugNode::Done(const String& strategy) {
+    if (!_context)
+        return;
+    
     // 保存数据到/data/debug/strategy 路径以便下载
     auto& cfg = _server->GetConfig();
     auto dir = cfg.GetDatabasePath() + "/data/debug/" + strategy;

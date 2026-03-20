@@ -82,7 +82,10 @@ class StockQuoteDownloader:
         end_date = datetime.datetime.now().strftime("%Y%m%d")
         try:
             # 需要加前缀如sz
-            df = ak.stock_zh_a_daily(symbol=(self.market + self.symbol), start_date=self.start_date, end_date=end_date, adjust=self.type)
+            if self.type == '':
+                df = ak.stock_zh_a_daily(symbol=(self.market + self.symbol), start_date=self.start_date, end_date=end_date)
+            else:
+                df = ak.stock_zh_a_daily(symbol=(self.market + self.symbol), start_date=self.start_date, end_date=end_date, adjust=self.type)
 
             if df.empty:
                 print(f"警告：新浪接口未返回 {self.symbol} 的数据")
@@ -199,5 +202,9 @@ class StockQuoteDownloader:
 if __name__ == "__main__":
     symbol = sys.argv[1]
     dir = sys.argv[2]
-    downloader = StockQuoteDownloader(symbol, dir, 'hfq')
+    if len(sys.argv) >= 3:
+        fq = sys.argv[2]
+    else:
+        fq = ''
+    downloader = StockQuoteDownloader(symbol, dir, fq)
     downloader.download_from_sina()
