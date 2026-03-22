@@ -1,7 +1,7 @@
 """
-R² 趋势策略测试用例
+R² 趋势策略测试用例 & 双均线趋势跟踪策略测试用例
 
-测试基于 R² 拟合优度的交易策略：
+R² 策略：
 - R² < 0.7: 震荡市，买入信号
 - R² > 0.9: 强趋势，卖出信号
 - 0.7 <= R² <= 0.9: 持有
@@ -11,6 +11,7 @@ import json
 import pytest
 import os
 from tool import check_response, BASE_URL
+
 
 
 @pytest.mark.usefixtures("auth_token")

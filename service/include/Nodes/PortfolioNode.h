@@ -23,14 +23,11 @@ private:
     ExecutionPlan generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
                               const Vector<TradeAction>& actions,
                               double capital);
-    // 根据运行模式获取可用资金
-    double getAvailableCapital();
     bool isPlanChanged(const ExecutionPlan& newPlan);
 
 private:
     Server*              _server;
     double               _positionRatio;      // 仓位比例 (0.0~1.0)
     Vector<symbol_t>     _pool;              // 交易池
-    double               _initialCapital;     // 配置的初始本金 (最低优先级)
     ExecutionPlan        _lastPlan;           // 上一次的执行计划
 };

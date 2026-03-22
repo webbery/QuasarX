@@ -24,21 +24,15 @@ String grammar = R"(
         OrExpr          <- AndExpr ('or' AndExpr)*
         AndExpr         <- NotExpr ('and' NotExpr)*
         NotExpr         <- 'not' NotExpr / CompareExpr
-        CompareExpr     <- BitwiseOrExpr (CompareOp BitwiseOrExpr)*
-        BitwiseOrExpr   <- ArithExpr
+        CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
         ArithExpr       <- Term (AddOp Term)*
-        Term            <- Factor (MulOp Factor)*
-        Factor          <- Primary (FactorOp Primary)*
+        Term            <- Primary (MulOp Primary)*
         Primary         <- Atom (Trailer)*
         Atom            <- Number / String / FunctionCall / ListExpr / Identifier / '(' Expression ')'
 
         # 时间序列访问
-        Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeIndex ']'
-        TimeIndex       <- TimeOffset
-        TimeOffset      <- HistoricalTime / CurrentTime / PureNumber
-        CurrentTime     <- 't'
-        HistoricalTime  <- 't' '-' PureNumber
-        PureNumber      <- < [0-9]+ >
+        Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeOffset ']'
+        TimeOffset      <- < 't' '-' [0-9]+ > / < 't' > / < [0-9]+ >
 
         # 函数调用
         FunctionCall    <- Identifier '(' Arguments? ')'
@@ -56,11 +50,10 @@ String grammar = R"(
         String          <- < '"' [^"]* '"' > / < "'" [^']* "'" >
 
         # 运算符定义
-        CompareOp       <- '==' / '!=' / '<' / '<=' / '>' / '>=' 
+        CompareOp       <- '<=' / '>=' / '==' / '!=' / '<' / '>'
         AddOp           <- '+' / '-'
         MulOp           <- '*' / '@' / '/' / '//' / '%'
-        FactorOp        <- '**'
-        
+
         # 语句分隔符
         EOL             <- ';' [ \t\r\n]* / !.
         %whitespace     <- [ \t]*
@@ -293,6 +286,7 @@ FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAct
     _parser.set_logger([](size_t line, size_t col, const std::string& msg) {
         auto info = fmt::format("{} {}: {}", line, col, msg);
         strategy_error("", info);
+        INFO("parse fail: {}", info);
     });
     _parser.enable_packrat_parsing();
     // _parser.enable_trace();
@@ -325,7 +319,7 @@ void FormulaParser::printAST(std::shared_ptr<peg::Ast> ast, int lvl ) {
         for (int i = 0; i < lvl; ++i) {
             tabs += "  ";
         }
-        INFO("{}Node: {}", tabs, node->name);
+        INFO("{}Node: {}, token: {}", tabs, node->name, node->token);
         printAST(node, ++lvl);
     }
 }
@@ -517,12 +511,14 @@ context_t FormulaParser::evalComparison(const symbol_t& symbol, const peg::Ast& 
 }
 
 context_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    // 节点：TERM -> FACTOR (TERM_OPERATOR FACTOR)*
-    // 子节点：至少一个，然后是多个（运算符，因子）
+    // 节点：TERM -> PRIMARY (MUL_OP PRIMARY)*
+    // 子节点：至少一个，然后是多个（运算符，操作数）
     if (ast.nodes.size() == 1) {
-        return evalArithmetic(symbol, *ast.nodes.front(), context);
+        // 只有一个 Primary 子节点，直接求值
+        return evalNode(symbol, *ast.nodes.front(), context);
     }
-    else if (ast.nodes.size() == 3) {
+    else if (ast.nodes.size() >= 3) {
+        // 有乘法/除法运算符，使用通用算术处理
         return evalArithmetic(symbol, ast, context);
     }
     return 0.;
@@ -568,13 +564,8 @@ context_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast
             // INFO("evalPrimary - processing Trailer");
             value = evalTrailer(symbol, value, *trailer, context);
         }
-        else if (trailer->name == "PureNumber") {
-            int offset = atoi(String(trailer->token).c_str());
-            value = getHistoricalValue(symbol, value, offset, context);
-            // value = evalTimeIndex(symbol, value, *trailer->nodes[0], context);
-        }
-        else if (trailer->name == "CurrentTime") {
-            value = getHistoricalValue(symbol, value, 0, context);
+        else if (trailer->name == "TimeOffset") {
+            value = evalTimeIndex(symbol, value, *trailer, context);
         }
     }
     return value;
@@ -582,63 +573,47 @@ context_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast
 
 context_t FormulaParser::evalTrailer(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context) {
     if (ast.nodes.empty()) return base;
-    
+
     auto& trailer_type = ast.nodes[0];
-    if (trailer_type->name == "TimeIndex") {
-        // 处理时间索引 [t], [t-1], [1] 等
+    if (trailer_type->name == "TimeOffset") {
+        // 处理时间索引 [t], [t-1], [0] 等
         return evalTimeIndex(symbol, base, *trailer_type, context);
     }
-    // 其他类型的 trailer...
+    // 其他类型的 trailer（如 '.identifier' 或 '(...)'）...
     return base;
 }
 
 context_t FormulaParser::evalTimeIndex(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context) {
     int time_offset = 0;
-    
-    // 检查是否有子节点
-    if (ast.nodes.empty()) {
-        // 没有子节点，直接检查 token
-        if (ast.token == "t") {
+
+    // 文法：TimeOffset <- 't' '-' [0-9]+ / 't' / [0-9]+
+    // token 可能是 "t", "t-1", "t-2", "0", "1" 等
+    String token(ast.token);
+
+    if (token == "t") {
+        // [t] - 当前时刻
+        time_offset = 0;
+    } else if (token.size() > 1 && token[0] == 't' && token[1] == '-') {
+        // [t-1], [t-2] 等 - 历史时刻
+        try {
+            double num = std::stod(token.substr(2));
+            time_offset = -static_cast<int>(num);
+        } catch (...) {
+            WARN("Invalid time offset: {}", token);
             time_offset = 0;
-        } else {
-            // 尝试解析为数字
-            try {
-                double num = std::stod(String(ast.token));
-                time_offset = -static_cast<int>(num);
-            } catch (...) {
-                WARN("Invalid time index: {}", ast.token);
-                time_offset = 0;
-            }
         }
     } else {
-        // 有子节点的情况
-        if (ast.nodes[0]->name == "TimeOffset") {
-            auto& time_offset_ast = *ast.nodes[0];
-            
-            if (time_offset_ast.token == "t") {
-                time_offset = 0;
-                // 检查是否有加减操作
-                if (time_offset_ast.nodes.size() == 2) {
-                    std::string op(time_offset_ast.nodes[0]->token);
-                    double num = std::get<double>(evalNumber(symbol, *time_offset_ast.nodes[1], context));
-                    if (op == "-") {
-                        time_offset = -static_cast<int>(num);
-                    }
-                }
-            } else {
-                // 纯数字
-                try {
-                    double num = std::stod(String(time_offset_ast.token));
-                    time_offset = -static_cast<int>(num);
-                } catch (...) {
-                    WARN("Invalid time offset: {}", time_offset_ast.token);
-                    time_offset = 0;
-                }
-            }
+        // 纯数字 [0], [1] 等 - 向前偏移（正数表示向前）
+        try {
+            double num = std::stod(token);
+            time_offset = static_cast<int>(num);
+        } catch (...) {
+            WARN("Invalid time index: {}", token);
+            time_offset = 0;
         }
     }
-    // 这里需要根据 base（标识符名称）和时间偏移获取对应的历史值
-    // 需要扩展 DataContext 支持历史数据访问
+
+    // 根据 base（标识符名称）和时间偏移获取对应的历史值
     return getHistoricalValue(symbol, base, time_offset, context);
 }
 
@@ -717,27 +692,6 @@ context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, D
     }
 
     return (this->*(evalMap[ast.name]))(symbol, ast, context);
-    
-    // else if (ast.name == "Expression") {
-        
-    //     return eval(symbol, *ast.nodes.front(), context);
-    // }
-    // else if (ast.name == "FactorOp") {
-        
-    //     return eval(symbol, *ast.nodes.front(), context);
-    // }
-    // else if (ast.name == "Term") {
-        
-    // }
-    // else if (ast.name == "Factor") {
-    //     // 节点：FACTOR -> PRIMARY (FACTOR_OPERATOR PRIMARY)*
-    //     return eval(symbol, *ast.nodes.front(), context);
-    // }
-    // else if (ast.name == "Primary") {
-    //     // 只有一个子节点，直接求值
-    //     return eval(symbol, *ast.nodes.front(), context);
-    // }
-    return 0.0;
 }
 
 context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {

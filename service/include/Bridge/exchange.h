@@ -100,9 +100,9 @@ struct Order {
     uint32_t _volume; //
     OrderType _type;
     // 买卖方向: 0 买入, 1 卖出
-    char _side: 1;
+    unsigned char _side: 1;
     // 开平仓
-    char _flag: 1;
+    unsigned char _flag: 1;
     // 是否行权单
     bool _exec: 1;
     OrderTimeValid _validTime;

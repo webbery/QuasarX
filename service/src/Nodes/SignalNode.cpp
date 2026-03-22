@@ -62,6 +62,7 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
                 decisions[item.first] = item.second;
                 TradeSignal *signal = new TradeSignal(item.first, item.second);
                 context.AddSignal(signal);
+                INFO("TradeSignal {}", (int)item.second - 1);
             }
         }
     }
@@ -70,20 +71,22 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
     // 信号值：1=买入，-1=卖出，0=持有
     for (auto& symbol : _pools) {
         String key = get_symbol(symbol) + ".signal";
-        int signalValue = 0;  // 默认持有
-        if (decisions.count(symbol)) {
-            if (decisions[symbol] == TradeAction::BUY) {
-                signalValue = 1;
-            } else if (decisions[symbol] == TradeAction::SELL) {
-                signalValue = -1;
-            }
-        }
-        // 检查是否已存在，存在则追加，否则创建新向量
-        if (context.exist(key)) {
-            context.add(key, (double)signalValue);
-        } else {
-            context.set(key, Vector<double>{(double)signalValue});
-        }
+        //int signalValue = 0;  // 默认持有
+        //if (decisions.count(symbol)) {
+        //    if (decisions[symbol] == TradeAction::BUY) {
+        //        signalValue = 1;
+        //    } else if (decisions[symbol] == TradeAction::SELL) {
+        //        signalValue = -1;
+        //    }
+        //}
+        //// 检查是否已存在，存在则追加，否则创建新向量
+        //if (context.exist(key)) {
+        //    context.add(key, (double)signalValue);
+        //} else {
+        //    context.set(key, Vector<double>{(double)signalValue});
+        //}
+        auto& sigs = context.get<Vector<double>>(key);
+        INFO("signals {}", sigs.back());
     }
     return true;
 }

@@ -67,6 +67,11 @@ public:
   // 获取指定 symbol 的持仓数量
   int64_t GetPositionQuantity(symbol_t symbol) const;
 
+  void InitializeCapital(double capital) {
+      _capital = capital;
+      _availableFunds.store(capital, std::memory_order_relaxed);
+  }
+
   // 合约信息查询接口
   virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
   virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) override;
@@ -117,4 +122,7 @@ protected:
   // 持仓跟踪：symbol -> 持仓数量
   Map<symbol_t, int64_t> _positions;
   mutable std::mutex _positionMtx;  // 保护持仓数据
+
+  double _capital;  // 总本金
+  std::atomic<double> _availableFunds{0.0};  // 可用资金
 };

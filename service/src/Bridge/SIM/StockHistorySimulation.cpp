@@ -36,7 +36,6 @@ StockHistorySimulation::~StockHistorySimulation() {
 bool StockHistorySimulation::Init(const ExchangeInfo& handle) {
     _org_path = handle._quote_addr;
     String dbpath = handle._local_addr;
-    _worker = new std::thread(&StockHistorySimulation::Worker, this);
     return true;
 }
 
@@ -83,6 +82,29 @@ AccountAsset StockHistorySimulation::GetAsset(){
 }
 
 order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
+    // 买入时检查并冻结资金
+    if (order->_order._side == 0) {  // 买入
+        double orderCost = order->_order._price * order->_order._volume;
+
+        double current = _availableFunds.load(std::memory_order_relaxed);
+        double expected = current;
+        // 使用 CAS 保证原子性：检查和扣减一起完成
+        while (true) {
+            if (expected < orderCost) {
+                // 资金不足，拒绝下单
+                WARN("资金不足：所需 {:.2f}，可用 {:.2f}", orderCost, expected);
+                order_id id;
+                id._id = 0;  // 返回0表示拒绝
+                return id;
+            }
+            if (_availableFunds.compare_exchange_strong(expected, expected - orderCost,
+                    std::memory_order_release, std::memory_order_relaxed)) {
+                break;
+            }
+            // expected 已被更新为当前值，继续循环重试
+        }
+    }
+
     OrderInfo info;
     info._id = ++_cur_id;
     info._order = order;
@@ -153,29 +175,31 @@ bool StockHistorySimulation::GetOrder(const String& sysID, Order& ol)
 }
 
 void StockHistorySimulation::SetFilter(const QuoteFilter& filter) {
-  _filter = filter;
+    _filter = filter;
 
-  // 立即触发数据加载，而不是等到 QueryQuotes
-  if (!std::filesystem::exists(_org_path)) {
-    WARN("{} not exist.", _org_path);
-    return;
-  }
+    // 立即触发数据加载，而不是等到 QueryQuotes
+    if (!std::filesystem::exists(_org_path)) {
+        WARN("{} not exist.", _org_path);
+        return;
+    }
 
-  // 预加载 symbol 信息到缓存
-  UseLevel(1);  // 加载日线数据
+    // 预加载 symbol 信息到缓存
+    //UseLevel(1);  // 加载日线数据
+    //_worker = new std::thread(&StockHistorySimulation::Worker, this);
 }
 
 void StockHistorySimulation::UseLevel(int level) {
-  if (level == 1) {
-    for (auto& code : _filter._symbols) {
-      LoadT1(code);
+    if (level == 1) {
+        for (auto& code : _filter._symbols) {
+            LoadT1(code);
+        }
     }
-  } else {
-    // 
-    for (auto& code : _filter._symbols) {
-      LoadT0(code);
+    else {
+        // 
+        for (auto& code : _filter._symbols) {
+            LoadT0(code);
+        }
     }
-  }
 }
 
 #define CACHE_SIZE  2048
@@ -312,7 +336,7 @@ bool StockHistorySimulation::Once(uint32_t& curIndex) {
 
         // 发送复权价给 QuoteInputNode（用于指标计算）
         yas::shared_buffer buf = yas::save<flags>(info);
-        if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
+        if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
             printf("send quote message e fail.\n");
             return false;
         }
@@ -327,6 +351,12 @@ bool StockHistorySimulation::Once(uint32_t& curIndex) {
                 QuoteInfo matchQuote = info;
                 matchQuote._close = primitiveClose;
                 TradeReport report = OrderMatch(oif._order->_order, matchQuote);
+
+                // 卖出成交：释放资金（买入资金在AddOrder已冻结）
+                if (oif._order->_order._side == 1) {  // 卖出
+                    _availableFunds.fetch_add(report._trade_amount, std::memory_order_release);
+                }
+
                 oif._order->_trades._symbol = symbol;
                 order_id id;
                 id._id = static_cast<uint32_t>(oif._id);
@@ -340,13 +370,74 @@ bool StockHistorySimulation::Once(uint32_t& curIndex) {
 }
 
 bool StockHistorySimulation::Once(symbol_t symbol, uint32_t& curIndex) {
+    constexpr std::size_t flags = yas::mem | yas::binary;
 
+    auto itr = _csvs.find(symbol);
+    if (itr == _csvs.end()) {
+        WARN("Symbol {} not found in loaded data", symbol);
+        return false;
+    }
+
+    auto& df = itr->second;
+    auto num = df.get_index().size();
+    if (curIndex >= num - 1) {
+        _finish = true;
+        INFO("_finish true for symbol {}", symbol);
+        curIndex = 0;
+        return false;
+    }
+
+    auto& header = _headers[symbol];
+    auto& datetime = df.get_column<time_t>(header[0].c_str());
+    auto& open = df.get_column<float>(header[1].c_str());
+    auto& close = df.get_column<float>(header[2].c_str());
+    auto& high = df.get_column<float>(header[3].c_str());
+    auto& low = df.get_column<float>(header[4].c_str());
+    auto& volume = df.get_column<int64_t>(header[5].c_str());
+
+    QuoteInfo info;
+    info._symbol = symbol;
+    info._open = open[curIndex];
+    info._close = close[curIndex];  // 复权价，用于指标计算
+    info._high = high[curIndex];
+    info._low = low[curIndex];
+    info._volume = volume[curIndex];
+    info._time = datetime[curIndex];
+
+    // 获取原始价格用于订单撮合
+    double primitiveClose = GetPrimitivePrice(symbol, curIndex);
+
+    // 处理该 symbol 的挂单
+    if (_orders.count(symbol) > 0) {
+        _orders.visit(symbol, [&info, &symbol, primitiveClose, this](auto&& que) {
+            OrderInfo oif;
+            while (que.second->pop(oif)) {
+                // 使用原始价格进行撮合
+                QuoteInfo matchQuote = info;
+                matchQuote._close = primitiveClose;
+                TradeReport report = OrderMatch(oif._order->_order, matchQuote);
+
+                // 卖出成交：释放资金（买入资金在 AddOrder 已冻结）
+                if (oif._order->_order._side == 1) {  // 卖出
+                    _availableFunds.fetch_add(report._trade_amount, std::memory_order_release);
+                }
+
+                oif._order->_trades._symbol = symbol;
+                order_id id;
+                id._id = static_cast<uint32_t>(oif._id);
+                OnOrderReport(id, report);
+            }
+        });
+    }
+
+    _quotes[symbol] = std::move(info);
+    ++curIndex;
     return true;
 }
 
 double StockHistorySimulation::GetAvailableFunds()
 {
-    return 1000000;
+    return _availableFunds.load(std::memory_order_relaxed);
 }
 
 bool StockHistorySimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
@@ -402,16 +493,17 @@ bool StockHistorySimulation::SetStockLimitation(char type, int limitation)
 TradeReport StockHistorySimulation::OrderMatch(const Order& order, const QuoteInfo& quote)
 {
     TradeReport report;
-    report._price = quote._close;
-    report._time = quote._time;
-    report._quantity = quote._volume;
+    report._price = order._price;
+    report._time = order._time;
+    report._quantity = order._volume;
     report._side = order._side;
+    report._trade_amount = order._volume * order._price;
     return report;
 }
 
 QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol) {
-    auto fut = std::async(std::launch::deferred, [this]() {
-        Once(_cur_index);
+    auto fut = std::async(std::launch::deferred, [this, symbol]() {
+        Once(symbol, _cur_index);
     });
     fut.wait();
     auto info = _quotes[symbol];

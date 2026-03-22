@@ -100,7 +100,7 @@ public:
 
     template<typename T>
     void set(const String& name, const T& f) {
-        _outputs[name] = f  ;
+        _outputs[name] = f;
     }
 
     void add(const String& name, context_t value);
@@ -149,6 +149,8 @@ public:
     ExecutionPlan& GetExecutionPlan() {
         return _executionPlan;
     }
+
+    double getAvailableCapital() const;
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -161,6 +163,7 @@ private:
     uint64_t _epoch = 0;
     const String _strategy;
     List<time_t> _times;
+    Server* _server;
 
     std::unordered_map<symbol_t, TradeSignal*> _signals;
     List<ISignalObserver*> _signalObservers;

@@ -61,8 +61,8 @@ bool ExecuteNode::Process(const String& strategy, DataContext& context) {
             signal->SetPrice(item._limitPrice);
             context.AddSignal(signal);
 
-            //INFO("ExecuteNode: {} {} {} shares @ {}",
-            //    item._action, get_symbol(item._symbol), item._quantity, item._limitPrice);
+            INFO("ExecuteNode: {} {} {} shares @ {}",
+                (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
         }
 
         // 执行完毕后清理执行计划

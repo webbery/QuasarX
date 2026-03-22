@@ -17,7 +17,7 @@ bool DebugNode::Init(const nlohmann::json& config) {
     for (auto node: _ins) {
         auto names = node.second->out_elements();
         for (auto& name: names) {
-            _inNames.push_back(name.first);
+            _inNames.insert(name.first);
         }
     }
     return true;
@@ -56,10 +56,10 @@ void DebugNode::Done(const String& strategy) {
                 // INFO("DebugNode::Done - collected double value: {}", val);
             }
             else if constexpr (std::is_same_v<T, Vector<float>>) {
-                df.load_column(name.c_str(), std::move(val));
+                df.load_column(name.c_str(), val);
             }
             else if constexpr (std::is_same_v<T, Vector<double>>) {
-                df.load_column(name.c_str(), std::move(val));
+                df.load_column(name.c_str(), val);
             } else {
                 INFO("DebugNode::Done");
             }

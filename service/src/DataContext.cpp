@@ -1,8 +1,6 @@
 #include "DataContext.h"
 #include "Util/system.h"
-#include "std_header.h"
-#include <type_traits>
-#include <variant>
+#include "server.h"
 
 DataContext::~DataContext() {
     for (auto& item: _signalObservers) {
@@ -10,7 +8,7 @@ DataContext::~DataContext() {
     }
 }
 
-DataContext::DataContext(const String& strategy, Server* server):_strategy(strategy) {
+DataContext::DataContext(const String& strategy, Server* server):_strategy(strategy), _server(server) {
     // 初始化该策略的历史记录
 }
 
@@ -108,4 +106,16 @@ void DataContext::ConsumeSignals() {
     for (auto key: erases) {
         _signals.erase(key);
     }
+}
+
+double DataContext::getAvailableCapital() const
+{
+    auto* exchange = _server->GetAvaliableStockExchange();
+    if (exchange) {
+        double funds = exchange->GetAvailableFunds();
+        if (funds > 0) {
+            return funds;
+        }
+    }
+    return 0;
 }

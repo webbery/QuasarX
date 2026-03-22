@@ -13,6 +13,7 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     order._volume = signal.GetQuantity();
     switch (signal.GetAction()) {
     case TradeAction::BUY:
+        order._side = 0;
         broker->Buy(strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
@@ -21,6 +22,7 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
             });
     break;
     case TradeAction::SELL:
+        order._side = 1;
         broker->Sell(strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);

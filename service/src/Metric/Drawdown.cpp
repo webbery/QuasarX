@@ -52,9 +52,13 @@ namespace {
 
         // 遍历每个交易日
         size_t i = 0;
+        daily_cash_flows[0] = context.getAvailableCapital();
         for (auto itr = times.begin(); itr != times.end(); ++i, ++itr) {
             time_t current_time = *itr;
 
+            if (i > 0) {
+                daily_cash_flows[i] = daily_cash_flows[i - 1];
+            }
             // 处理当前时间点的交易
             if (trades_by_time.find(current_time) != trades_by_time.end()) {
                 for (const auto& [symbol, report] : trades_by_time[current_time]) {
@@ -68,7 +72,6 @@ namespace {
                     }
                 }
             }
-
             // 计算当前组合价值
             double portfolio_value = 0.0;
             for (const auto& [symbol, quantity] : positions) {
@@ -128,7 +131,13 @@ float total_return_ratio(const crash_flow_t& flow, const DataContext& context) {
     }
 
     // 计算初始投资（第一天的价值加上第一天的现金流）
-    double initial_value = daily_values.front();
+    double initial_value = 0;
+    for (auto val : daily_values) {
+        if (val > 0) {
+            initial_value = val;
+            break;
+        }
+    }
     double initial_cash_flow = daily_cash_flows.front();
 
     // 如果初始投资为 0 或负数，返回 0
@@ -147,7 +156,8 @@ float total_return_ratio(const crash_flow_t& flow, const DataContext& context) {
 
     // 总收益率 = (期末价值 - 期初价值 - 净现金流) / 期初价值
     // 或者简化为：(期末价值 + 总现金流入 - 总现金流出) / 期初投入 - 1
-    double total_return = (final_value - initial_value - total_cash_flow) / initial_value;
+    double tatal_profit = final_value - initial_value - total_cash_flow;
+    double total_return = tatal_profit / initial_value;
 
     return static_cast<float>(total_return);
 }

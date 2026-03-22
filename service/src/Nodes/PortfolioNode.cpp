@@ -9,7 +9,6 @@
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
     , _positionRatio(0.5)
-    , _initialCapital(1000000.0)
 {
 }
 
@@ -32,7 +31,12 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
 
     // 初始本金 (回测模式专用)
     if (config["params"].contains("initialCapital")) {
-        _initialCapital = config["params"]["initialCapital"]["value"];
+        double initialCapital = config["params"]["initialCapital"]["value"];
+        auto* exchange = (_server->GetAvaliableStockExchange());
+        if (_server->GetRunningMode()==RuningType::Backtest) {
+            auto broker = dynamic_cast<StockHistorySimulation*>(exchange);
+            broker->InitializeCapital(initialCapital);
+        }
     }
 
     return true;
@@ -66,7 +70,7 @@ bool PortfolioNode::Process(const String& strategy, DataContext& context) {
     }
 
     // 2. 获取可用资金
-    double capital = getAvailableCapital();
+    double capital = context.getAvailableCapital();
     double targetCapital = capital * _positionRatio;
 
     // 3. 生成执行计划
@@ -92,7 +96,7 @@ bool PortfolioNode::Process(const String& strategy, DataContext& context) {
         //      _lastPlan._items.size(), capital);
     } else {
         context.GetExecutionPlan()._hasChanged = false;
-        INFO("PortfolioNode: no change, keeping current positions");
+        //INFO("PortfolioNode: no change, keeping current positions");
     }
 
     return true;
@@ -204,7 +208,7 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<sym
         // 获取未复权价格（原始价格）用于回测交易
         double price = 0.0;
         if (histExchange) {
-            price = histExchange->GetPrimitivePrice(item._symbol, context.GetEpoch());
+            price = histExchange->GetPrimitivePrice(item._symbol, context.GetEpoch() - 1);
         }
 
         if (price <= 0) {
@@ -264,41 +268,6 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<sym
     }
 
     return plan;
-}
-
-double PortfolioNode::getAvailableCapital() {
-    auto runMode = _server->GetRunningMode();
-
-    // 回测模式：使用配置的初始本金
-    if (runMode == RuningType::Backtest) {
-        INFO("PortfolioNode: Backtest mode, using initial capital = {}", _initialCapital);
-        return _initialCapital;
-    }
-
-    // 仿真模式或实盘模式：使用交易所返回的可用资金
-    auto* exchange = _server->GetAvaliableStockExchange();
-    if (exchange) {
-        double funds = exchange->GetAvailableFunds();
-        if (funds > 0) {
-            //INFO("PortfolioNode: {}/{} mode, using exchange funds = {}",
-            //     runMode == RuningType::Simualtion ? "Simulation" : "Real", funds);
-            return funds;
-        }
-    }
-
-    // 备选：从 PortfolioSubSystem 获取本金
-    auto* portfolio = _server->GetPortforlioSubSystem();
-    if (portfolio && !portfolio->GetAllPortfolio().empty()) {
-        double principal = portfolio->GetPortfolio()._principal;
-        if (principal > 0) {
-            INFO("PortfolioNode: using portfolio principal = {}", principal);
-            return principal;
-        }
-    }
-
-    // 最终备选：使用配置的初始本金
-    WARN("PortfolioNode: exchange funds unavailable, fallback to initial capital = {}", _initialCapital);
-    return _initialCapital;
 }
 
 bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {

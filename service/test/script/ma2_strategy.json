@@ -1,7 +1,7 @@
 {
-    "id": "r2_strategy_portfolio",
-    "name": "R 平方趋势策略(含投资组合)",
-    "description": "基于 R² 拟合优度的趋势判断策略，包含投资组合节点进行仓位管理",
+    "id": "ma2_strategy",
+    "name": "双均线趋势跟踪策略",
+    "description": "基于短期均线与长期均线交叉的趋势跟踪策略",
     "nodes": [
         {
             "id": "1",
@@ -52,13 +52,18 @@
             "id": "2",
             "type": "custom",
             "data": {
-                "label": "R² 计算",
+                "label": "双均线计算",
                 "nodeType": "test",
                 "params": {
-                    "window": {
-                        "value": 10,
+                    "shortPeriod": {
+                        "value": 5,
                         "type": "number",
-                        "desc": "R² 计算窗口大小"
+                        "desc": "短期均线周期（默认5日）"
+                    },
+                    "longPeriod": {
+                        "value": 15,
+                        "type": "number",
+                        "desc": "长期均线周期（默认15日）"
                     }
                 }
             },
@@ -76,14 +81,14 @@
                         "type": "text"
                     },
                     "buy": {
-                        "value": "r2[t] < 0.7",
+                        "value": "ma_short[t] > ma_long[t] and ma_short[t-1] <= ma_long[t-1]",
                         "type": "text",
-                        "desc": "R²<0.7 表示震荡市，买入"
+                        "desc": "金叉：短期均线上穿长期均线"
                     },
                     "sell": {
-                        "value": "r2[t] > 0.9",
+                        "value": "ma_short[t] < ma_long[t] and ma_short[t-1] >= ma_long[t-1]",
                         "type": "text",
-                        "desc": "R²>0.9 表示强趋势，卖出止盈"
+                        "desc": "死叉：短期均线下穿长期均线"
                     }
                 }
             },
@@ -93,7 +98,7 @@
             "id": "5",
             "type": "custom",
             "data": {
-                "label": "R2 调试输出",
+                "label": "MA调试输出",
                 "nodeType": "debug",
                 "params": {
                     "suffix": {
@@ -113,9 +118,9 @@
                 "nodeType": "portfolio",
                 "params": {
                     "positionRatio": {
-                        "value": 0.5,
+                        "value": 1.0,
                         "type": "number",
-                        "desc": "仓位比例 (0.0~1.0)，0.5 表示 50% 仓位"
+                        "desc": "仓位比例 (0.0~1.0)，1.0 表示满仓"
                     },
                     "pool": {
                         "value": ["bj.920108"],
