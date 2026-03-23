@@ -71,7 +71,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 bool QuoteInputNode::Process(const String& strategy, DataContext& context)
 {
     auto cur = context.Current();
-    // 
+    //
     time_t min_t = std::numeric_limits<time_t>::max();
     for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
         auto symbol = *itr;
@@ -79,7 +79,7 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
             auto stockExchange = _server->GetAvaliableStockExchange();
             auto quote = stockExchange->GetQuote(symbol);
             if (quote._time == 0)
-                throw std::runtime_error("loop back");
+                return false;
             else if (cur != 0 && quote._time <= cur) {
                 continue;
             }
@@ -97,13 +97,15 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
                 auto key = baseKey + property;
                 context.add(key, it->second(quote));
             }
+            // 保存完整的 QuoteInfo 到 context，供 ShadowTiming 使用
+            context.SetQuote(symbol, quote);
         }
         else if (is_option(symbol)) {
             WARN("not implement for input node");
             return false;
         }
     }
-    // 
+    //
     if (min_t != std::numeric_limits<time_t>::max()) {
         context.SetTime(min_t);
     }

@@ -153,66 +153,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr>
-                                    <td>年化收益率</td>
-                                    <td>15.3%</td>
-                                    <td>10.2%</td>
-                                    <td class="positive">+5.1%</td>
-                                </tr>
-                                <tr>
-                                    <td>夏普比率</td>
-                                    <td>1.45</td>
-                                    <td>1.12</td>
-                                    <td class="positive">+0.33</td>
-                                </tr>
-                                <tr>
-                                    <td>最大回撤</td>
-                                    <td>-12.4%</td>
-                                    <td>-15.7%</td>
-                                    <td class="positive">+3.3%</td>
-                                </tr>
-                                <tr>
-                                    <td>波动率</td>
-                                    <td>14.2%</td>
-                                    <td>16.8%</td>
-                                    <td class="positive">-2.6%</td>
-                                </tr>
-                                <tr>
-                                    <td>Alpha</td>
-                                    <td>4.2%</td>
-                                    <td>-</td>
-                                    <td class="positive">+4.2%</td>
-                                </tr>
-                                <tr>
-                                    <td>Beta</td>
-                                    <td>0.89</td>
-                                    <td>1.0</td>
-                                    <td class="positive">-0.11</td>
-                                </tr>
-                                <tr>
-                                    <td>胜率</td>
-                                    <td>62.3%</td>
-                                    <td>55.1%</td>
-                                    <td class="positive">+7.2%</td>
-                                </tr>
-                                <tr>
-                                    <td>平均盈亏比</td>
-                                    <td>1.8</td>
-                                    <td>1.5</td>
-                                    <td class="positive">+0.3</td>
-                                </tr>
-                                <tr>
-                                    <td>交易次数</td>
-                                    <td>156</td>
-                                    <td>128</td>
-                                    <td class="positive">+28</td>
-                                </tr>
-                                <tr>
-                                    <td>持仓天数</td>
-                                    <td>5.2</td>
-                                    <td>4.8</td>
-                                    <td class="neutral">+0.4</td>
-                                </tr>
+                                <!-- 动态数据将通过 updateMetricsTable 填充 -->
                             </tbody>
                         </table>
                     </div>
@@ -260,6 +201,8 @@ const tableScrollPosition = ref(0)
 const symbolPrices = ref<any[]>([])
 const buySignals = ref<any[]>([])
 const sellSignals = ref<any[]>([])
+// 🔄 新增：回测指标数据
+const metricsData = ref<Record<string, number>>({})
 
 watch(symbolPrices, (newPrices) => {
     if (newPrices.length > 0 && priceChart.value) {
@@ -807,10 +750,190 @@ function updateTradeSignals(buySignalsData: any[], sellSignalsData: any[]) {
   }
 }
 
+// 🔄 新增：指标名称映射（英文 -> 中文）
+const metricNameMap: Record<string, string> = {
+  total_return: '总收益率',
+  annual_return: '年化收益率',
+  max_drawdown: '最大回撤',
+  sharp: '夏普比率',
+  calmar_ratio: '卡玛比率',
+  win_rate: '胜率',
+  num_trades: '交易次数',
+  VAR: '在险价值 (VaR)',
+  ES: '预期短缺 (ES)',
+  annual_sharp: '年化夏普比率',
+  information_ratio: '信息比率',
+  volatility: '波动率',
+  alpha: 'Alpha',
+  beta: 'Beta',
+  avg_holding_days: '平均持仓天数',
+  profit_loss_ratio: '盈亏比',
+}
+
+// 🔄 新增：格式化指标值
+function formatMetricValue(key: string, value: number): string {
+  // 比率类指标（名称包含 ratio, rate, return, drawdown, volatility, alpha, beta）
+  const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp']
+  const isRatio = ratioKeys.some(k => key.toLowerCase().includes(k))
+
+  if (isRatio) {
+    // 如果是小数（绝对值小于 1），转换为百分比
+    if (Math.abs(value) < 1) {
+      return `${(value * 100).toFixed(2)}%`
+    }
+    return value.toFixed(4)
+  }
+
+  // 次数类指标（num, count, days）
+  const countKeys = ['num', 'count', 'days', 'trades']
+  const isCount = countKeys.some(k => key.toLowerCase().includes(k))
+  if (isCount) {
+    return Math.round(value).toString()
+  }
+
+  // 默认保留 4 位小数
+  return value.toFixed(4)
+}
+
+// 🔄 新增：获取基准值（用于对比）
+function getBenchmarkValue(key: string): string {
+  const benchmarks: Record<string, number> = {
+    total_return: 0.10,      // 10%
+    annual_return: 0.08,     // 8%
+    max_drawdown: -0.20,     // -20%
+    sharp: 1.0,
+    win_rate: 0.50,          // 50%
+    num_trades: 50,
+    volatility: 0.20,        // 20%
+    alpha: 0,
+    beta: 1.0,
+  }
+  const benchmark = benchmarks[key]
+  if (benchmark !== undefined) {
+    return formatMetricValue(key, benchmark)
+  }
+  return '-'
+}
+
+// 🔄 新增：计算对比值
+function getComparison(key: string, actualValue: number): { value: string, type: 'positive' | 'neutral' | 'negative' } {
+  const benchmarks: Record<string, number> = {
+    total_return: 0.10,
+    annual_return: 0.08,
+    max_drawdown: -0.20,
+    sharp: 1.0,
+    win_rate: 0.50,
+    num_trades: 50,
+    volatility: 0.20,
+  }
+
+  const benchmark = benchmarks[key]
+  if (benchmark === undefined) {
+    return { value: '-', type: 'neutral' }
+  }
+
+  const diff = actualValue - benchmark
+  const isPositive = diff > 0
+  // 对于回撤和波动率，越低越好
+  const isInverted = key === 'max_drawdown' || key === 'volatility'
+
+  let displayValue: string
+  if (isRatioKeys(key)) {
+    displayValue = `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(2)}%`
+  } else {
+    displayValue = `${diff > 0 ? '+' : '''}${diff.toFixed(2)}`
+  }
+
+  const type = isInverted ? (diff < 0 ? 'positive' : 'negative') : (isPositive ? 'positive' : 'neutral')
+  return { value: displayValue, type }
+}
+
+function isRatioKeys(key: string): boolean {
+  const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp']
+  return ratioKeys.some(k => key.toLowerCase().includes(k))
+}
+
+// 🔄 新增：更新策略指标数据
+function updateMetrics(features: Record<string, number>) {
+  try {
+    if (!features || typeof features !== 'object') {
+      console.error('指标数据必须是对象', features)
+      return
+    }
+
+    metricsData.value = features
+    console.info('策略指标数据已更新:', features)
+
+    // 更新表格数据
+    nextTick(() => {
+      updateMetricsTable()
+    })
+  } catch (error) {
+    console.error('更新策略指标数据时出错:', error)
+  }
+}
+
+// 🔄 新增：更新指标表格
+function updateMetricsTable() {
+  const tbody = document.querySelector('#scrollableTable tbody')
+  if (!tbody) return
+
+  const features = metricsData.value
+  const rows: string[] = []
+
+  // 定义指标显示顺序
+  const metricOrder = [
+    'total_return', 'annual_return', 'max_drawdown', 'sharp', 'calmar_ratio',
+    'win_rate', 'num_trades', 'VAR', 'ES', 'volatility', 'alpha', 'beta',
+    'annual_sharp', 'information_ratio', 'avg_holding_days', 'profit_loss_ratio'
+  ]
+
+  // 按照定义的顺序遍历，如果指标存在则添加行
+  metricOrder.forEach(key => {
+    if (features.hasOwnProperty(key)) {
+      const value = features[key]
+      const chineseName = metricNameMap[key] || key
+      const formattedValue = formatMetricValue(key, value)
+      const benchmark = getBenchmarkValue(key)
+      const comparison = getComparison(key, value)
+
+      rows.push(`
+        <tr>
+          <td>${chineseName}</td>
+          <td>${formattedValue}</td>
+          <td>${benchmark}</td>
+          <td class="${comparison.type}">${comparison.value}</td>
+        </tr>
+      `)
+    }
+  })
+
+  // 如果还有未排序的指标，追加到后面
+  const addedKeys = new Set(metricOrder)
+  Object.keys(features).forEach(key => {
+    if (!addedKeys.has(key)) {
+      const value = features[key]
+      const chineseName = metricNameMap[key] || key
+      const formattedValue = formatMetricValue(key, value)
+      rows.push(`
+        <tr>
+          <td>${chineseName}</td>
+          <td>${formattedValue}</td>
+          <td>-</td>
+          <td class="neutral">-</td>
+        </tr>
+      `)
+    }
+  })
+
+  tbody.innerHTML = rows.join('')
+}
+
 defineExpose({
     updatePrice,
     updatePriceChart,
     updateTradeSignals,  // 🔄 新增
+    updateMetrics,       // 🔄 新增：更新策略指标
     resetTableZoom
 })
 </script>

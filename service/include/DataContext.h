@@ -2,6 +2,7 @@
 #include "std_header.h"
 #include "Util/system.h"
 #include "Nodes/ExecutionPlan.h"
+#include "Bridge/exchange.h"  // for QuoteInfo
 
 struct TradeReport;
 class Server;
@@ -151,6 +152,11 @@ public:
     }
 
     double getAvailableCapital() const;
+
+    // QuoteInfo 存储和获取（用于影子模式）
+    void SetQuote(symbol_t symbol, const QuoteInfo& quote);
+    const QuoteInfo* GetQuote(symbol_t symbol) const;
+
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -171,4 +177,7 @@ private:
 
     // TODO: 节点的输出数据，待优化
     Map<String, context_t> _outputs;
+
+    // 当前 Bar 的 QuoteInfo（用于影子模式）
+    Map<symbol_t, QuoteInfo> _quotes;
 };

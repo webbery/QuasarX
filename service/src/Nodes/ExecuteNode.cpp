@@ -2,6 +2,7 @@
 #include "Nodes/ExecutionPlan.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "MarketTiming/ImmediateTiming.h"
+#include "MarketTiming/ShadowTiming.h"
 #include "server.h"
 
 namespace{
@@ -82,6 +83,34 @@ void ExecuteNode::Prepare(const String& strategy, DataContext& context)
 
 ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)
 {
+    // 检查是否为影子模式
+    if (_server->GetRunningMode() == RuningType::Shadow) {
+        // 影子模式：创建基础 Timing 策略并包装为 ShadowTiming
+        ShadowConfig config;
+        config.slippageRate = 0.001;  // 默认滑点 0.1%
+        config.initialCapital = 100000.0;  // 默认初始资金 10 万
+
+        // 创建基础策略（用于获取信号类型）
+        ITimingStrategy* baseTiming = nullptr;
+        switch (type)
+        {
+        case ExecuteType::ImmediatlyLimit:
+            baseTiming = new ImmediateTiming(_server, true);
+            break;
+        case ExecuteType::ImmediatlyMarket:
+            baseTiming = new ImmediateTiming(_server, false);
+            break;
+        default:
+            baseTiming = new ImmediateTiming(_server, false);
+            break;
+        }
+
+        // 包装为影子模式（不使用 baseTiming，直接由 ShadowTiming 处理）
+        delete baseTiming;  // 不需要包装，ShadowTiming 自己处理
+        return new ShadowTiming(_server, config);
+    }
+
+    // 非影子模式：使用原有逻辑
     switch (type)
     {
     case ExecuteType::ImmediatlyLimit:

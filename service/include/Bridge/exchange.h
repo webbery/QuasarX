@@ -149,6 +149,7 @@ enum class RuningType {
     Backtest,     // 本地回测模式
     Simualtion,   // 券商模拟盘
     Real,         // 实盘
+    Shadow,       // 影子模式（只记录日志不下单）
 };
 
 // 交易元数据 - 使用位域优化内存
@@ -476,6 +477,9 @@ public:
   virtual bool SetStockLimitation(char type, int limitation) = 0;
 
   virtual void GetFee(FeeInfo& fee, symbol_t symbol={}) = 0;
+
+  // 获取回测/执行进度 (0.0 - 1.0)
+  virtual double Progress() { return 0.0; }
 
   // ============ 合约信息查询接口 ============
 

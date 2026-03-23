@@ -202,8 +202,8 @@ class StockQuoteDownloader:
 if __name__ == "__main__":
     symbol = sys.argv[1]
     dir = sys.argv[2]
-    if len(sys.argv) >= 3:
-        fq = sys.argv[2]
+    if len(sys.argv) >= 4:
+        fq = sys.argv[3]
     else:
         fq = ''
     downloader = StockQuoteDownloader(symbol, dir, fq)

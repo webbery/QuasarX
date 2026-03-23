@@ -84,15 +84,13 @@ void FlowSubsystem::Start(const String& strategy) {
             uint64_t epoch = 0;
             bool success = true;
             auto startTick = std::chrono::high_resolution_clock::now();
-            try {
-                while (flow._running || !Server::IsExit()) {
-                    context.SetEpoch(++epoch);
-                    if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
-                        success = false;
-                        break;
-                    }
+            while (flow._running || !Server::IsExit()) {
+                context.SetEpoch(++epoch);
+                if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
+                    success = false;
+                    break;
                 }
-            } catch (std::exception& e) {}
+            }
             auto endtTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endtTick - startTick);
             

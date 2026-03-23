@@ -26,10 +26,22 @@
         <div class="flow-container-wrapper">
           <!-- 左下角信息面板 -->
           <div class="info-panel" :class="{ 'collapsed': isInfoPanelCollapsed }">
+            <!-- 回测进度条 -->
+            <div v-if="backtestProgress" class="progress-section">
+              <div class="progress-header">
+                <span class="progress-strategy">{{ backtestProgress.strategy }}</span>
+                <span class="progress-percent">{{ Math.round(backtestProgress.progress * 100) }}%</span>
+              </div>
+              <div class="progress-bar-container">
+                <div class="progress-bar" :style="{ width: backtestProgress.progress * 100 + '%' }"></div>
+              </div>
+              <div class="progress-message">{{ backtestProgress.message }}</div>
+            </div>
+            <!-- 消息列表 -->
             <div class="info-panel-content" ref="infoPanelContent">
-              <div 
-                v-for="(msg, index) in infoMessages" 
-                :key="index" 
+              <div
+                v-for="(msg, index) in infoMessages"
+                :key="index"
                 class="info-message"
                 :class="`type-${msg.type}`"
               >
@@ -140,6 +152,9 @@ import sseService from '@/ts/SSEService';
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 
+// 使 Math 在模板中可用
+const Math = globalThis.Math
+
 const {
     fitView, 
     addNodes, 
@@ -189,6 +204,13 @@ const infoMessages = ref([])
 const isInfoPanelCollapsed = ref(false)
 const infoPanelContent = ref(null)
 const MAX_MESSAGES = 100 // 最大消息数量
+// 回测进度状态
+const backtestProgress = ref<{
+  strategy: string
+  progress: number
+  message: string
+  lastUpdate: number
+} | null>(null)
 
 // 右键菜单状态
 const contextMenu = ref({
@@ -267,12 +289,14 @@ onMounted(() => {
     document.addEventListener('keydown', onKeyDown)
     // loadSavedFlow()
     sseService.on('strategy', onStrategyMessageUpdate)
+    sseService.on('backtest_progress', onBacktestProgressUpdate)
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', closeContextMenu)
     document.removeEventListener('keydown', onKeyDown)
     sseService.off('strategy')
+    sseService.off('backtest_progress')
 })
 
 // 提供 selectedNodes 给子组件
@@ -695,6 +719,22 @@ function onStrategyMessageUpdate(message) {
   addInfoMessage(data.message, data.type)
 }
 
+// 回测进度更新处理
+function onBacktestProgressUpdate(message) {
+  console.info('onBacktestProgressUpdate message:', message)
+  const data = message.data
+  backtestProgress.value = {
+    strategy: data.strategy,
+    progress: data.progress || 0,
+    message: data.message,
+    lastUpdate: Date.now()
+  }
+
+  // 同时在信息面板显示进度消息
+  const progressPercent = Math.round((data.progress || 0) * 100)
+  addInfoMessage(`[${data.strategy}] ${data.message} (${progressPercent}%)`, 'info')
+}
+
 // 替换对象键名的辅助函数
 function replaceKeysInObject(obj, keyMapping) {
   Object.keys(obj).forEach(key => {
@@ -1065,58 +1105,92 @@ const runBacktest = async () => {
     graph = graph.replaceAll(src, key)
   }
   console.info('graph:', graph)
+
+  // 切换回测结果面板
+  activeTab.value = 'backtest'
+
   try {
     const response = await axios.post('/v0/backtest', {script: graph})
     console.info('backtest result:', response)
 
-    // 🔄 新增：解析回测结果中的交易历史数据
-    try {
-      const result = response.data
-      console.info('backtest data:', result)
+    const result = response.data
+    console.info('backtest data:', result)
 
+    // 1. 传递指标数据到 ReportView
+    try {
+      if (reportViewRef.value && reportViewRef.value.updateMetrics) {
+        reportViewRef.value.updateMetrics(result.features || {})
+        console.info('策略指标数据已传递给报表组件')
+      } else {
+        console.warn('ReportView 组件未找到 updateMetrics 方法')
+      }
+    } catch (metricsError) {
+      console.error('传递指标数据时出错:', metricsError)
+    }
+
+    // 2. 解析回测结果中的交易历史数据
+    try {
       // 提取买卖信号
       const buySignals = result.buy || []
       const sellSignals = result.sell || []
 
       // 转换数据格式：从 [symbol, timestamp, quantity, price] 到 [dateString, price]
-      // 注意：日期格式需要与 updatePrice 函数中的格式保持一致（YYYY-MM-D，日期不补零）
       const formatSignals = (signals) => {
         return signals.map(signal => {
-          // signal 格式: [symbol, timestamp, quantity, price]
-          const timestamp = signal[1]  // 时间戳（秒）
-          const price = signal[3]      // 成交价格
-          // 转换为日期字符串，格式与 updatePrice 函数保持一致
+          const timestamp = signal[1]
+          const price = signal[3]
           const date = new Date(timestamp * 1000)
           const Y = date.getFullYear() + '-'
           const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
           const D = date.getDate()
-          const dateStr = Y + M + D
-          return [dateStr, price]
+          return [Y + M + D, price]
         })
       }
 
-      // 传递给 ReportView 组件
       if (reportViewRef.value && reportViewRef.value.updateTradeSignals) {
         reportViewRef.value.updateTradeSignals(
           formatSignals(buySignals),
           formatSignals(sellSignals)
         )
-        console.info('交易历史数据已传递给报表组件')
+        console.info(`交易历史数据已传递给报表组件：买入${buySignals.length}条，卖出${sellSignals.length}条`)
       } else {
         console.warn('ReportView 组件未找到 updateTradeSignals 方法')
       }
     } catch (parseError) {
       console.error('解析回测交易历史数据时出错:', parseError)
-      // 不阻断主要流程，仅记录错误
     }
 
-    // 可选：保存完整结果到本地存储
-    // localStorage.setItem(LAST_BACKTEST_RESULT, JSON.stringify(result))
+    // 3. 显示回测完成消息
+    const summary = result.summary || {}
+    const buyCount = summary.buy_count || (result.buy?.length || 0)
+    const sellCount = summary.sell_count || (result.sell?.length || 0)
+    const indicatorCount = summary.indicator_count || Object.keys(result.features || {}).length
+
+    addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，${indicatorCount}个指标`, 'success')
+
   } catch (error) {
-    const exceptionWhat = error.response.headers['exception_what'] || 
-                           error.response.headers['EXCEPTION_WHAT'] ||
-                           error.response.headers['Exception-What']
-    message.error(`运行失败: ${exceptionWhat}`)
+    console.error('回测失败:', error)
+    const exceptionWhat = error.response?.headers?.['exception_what'] ||
+                           error.response?.headers?.['EXCEPTION_WHAT'] ||
+                           error.response?.headers?.['Exception-What'] ||
+                           error.message ||
+                           '未知错误'
+
+    const status = error.response?.status
+    let userMessage = '回测失败'
+    if (status === 400) {
+      userMessage = '策略脚本格式错误，请检查节点配置'
+    } else if (status === 404) {
+      userMessage = '策略文件未找到'
+    } else if (status === 500) {
+      userMessage = `服务器错误：${exceptionWhat}`
+    } else {
+      userMessage = `错误：${exceptionWhat}`
+    }
+
+    message.error(userMessage)
+    addInfoMessage(userMessage, 'error')
+    return
   }
 
   // 获取信号节点的代码和日期范围
@@ -1127,12 +1201,19 @@ const runBacktest = async () => {
       break
     }
   }
-  const codes = signalNode.data.params['代码']['value']
-  const symbols = codes.split(',')
-  const rangeDate = signalNode.data.params['回测周期']['value']
-  if (symbols.length != 0) {
-    reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1]);
+
+  if (signalNode) {
+    const codes = signalNode.data.params['代码']['value']
+    const symbols = codes.split(',')
+    const rangeDate = signalNode.data.params['回测周期']['value']
+
+    if (symbols.length > 0 && rangeDate && rangeDate.length === 2) {
+      nextTick(() => {
+        reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
+      })
+    }
   }
+}
 }
 
 // 从历史版本加载流程图
@@ -1736,9 +1817,9 @@ defineExpose({
     position: absolute;
     bottom: 20px;
     left: 20px;
-    width: 320px;
+    width: 380px;
     max-height: 300px;
-    background: transparent; /* 半透明背景 */
+    background: transparent;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     border: none;
@@ -1747,6 +1828,59 @@ defineExpose({
     flex-direction: column;
     transition: all 0.3s ease;
     overflow: hidden;
+}
+
+/* 回测进度条样式 */
+.progress-section {
+    padding: 12px;
+    background: rgba(30, 33, 45, 0.95);
+    border-radius: 8px 8px 0 0;
+    border: 1px solid rgba(41, 98, 255, 0.3);
+    margin-bottom: 1px;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.progress-strategy {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.progress-percent {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--secondary);
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 10px rgba(41, 98, 255, 0.5);
+}
+
+.progress-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .info-panel.collapsed {

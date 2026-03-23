@@ -86,7 +86,6 @@ bool SignalNode::Process(const String& strategy, DataContext& context)
         //    context.set(key, Vector<double>{(double)signalValue});
         //}
         auto& sigs = context.get<Vector<double>>(key);
-        INFO("signals {}", sigs.back());
     }
     return true;
 }

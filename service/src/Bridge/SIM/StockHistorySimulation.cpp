@@ -514,9 +514,32 @@ QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol) {
 }
 
 double StockHistorySimulation::Progress() {
+  // 如果没有数据，返回 0
+  if (_csvs.empty()) {
+    return 0.0;
+  }
+
+  // 获取第一个 symbol 的数据大小作为参考
   auto itr = _csvs.begin();
-  auto size = itr->second.get_index().size() - 1;
-  return 1.0 * _cur_index / size;
+  auto size = itr->second.get_index().size();
+
+  // 避免除零
+  if (size == 0) {
+    return 0.0;
+  }
+
+  // 计算进度：当前索引 / 总大小
+  double progress = 1.0 * _cur_index / size;
+
+  // 限制在 [0, 1] 范围内
+  if (progress > 1.0) {
+    progress = 1.0;
+  }
+  if (progress < 0.0) {
+    progress = 0.0;
+  }
+
+  return progress;
 }
 
 // ============ 合约信息查询接口实现 ============

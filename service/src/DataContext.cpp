@@ -119,3 +119,15 @@ double DataContext::getAvailableCapital() const
     }
     return 0;
 }
+
+void DataContext::SetQuote(symbol_t symbol, const QuoteInfo& quote) {
+    _quotes[symbol] = quote;
+}
+
+const QuoteInfo* DataContext::GetQuote(symbol_t symbol) const {
+    auto it = _quotes.find(symbol);
+    if (it != _quotes.end()) {
+        return &it->second;
+    }
+    return nullptr;
+} 
