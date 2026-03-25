@@ -494,7 +494,7 @@ TradeReport StockHistorySimulation::OrderMatch(const Order& order, const QuoteIn
 {
     TradeReport report;
     report._price = order._price;
-    report._time = order._time;
+    report._time = quote._time;
     report._quantity = order._volume;
     report._side = order._side;
     report._trade_amount = order._volume * order._price;

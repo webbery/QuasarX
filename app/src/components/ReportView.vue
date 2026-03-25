@@ -841,7 +841,7 @@ function getComparison(key: string, actualValue: number): { value: string, type:
   if (isRatioKeys(key)) {
     displayValue = `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(2)}%`
   } else {
-    displayValue = `${diff > 0 ? '+' : '''}${diff.toFixed(2)}`
+    displayValue = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`
   }
 
   const type = isInverted ? (diff < 0 ? 'positive' : 'negative') : (isPositive ? 'positive' : 'neutral')

@@ -129,8 +129,13 @@ bool CapitalRiskManager::IsNewTradingDay(time_t currentTime) {
 
     // 检查是否是不同的自然日
     struct tm last_tm, curr_tm;
+#ifdef WIN32
+    localtime_s(&last_tm, &_config._lastTradeDate);
+    localtime_s(&curr_tm, &currentTime);
+#else
     localtime_r(&_config._lastTradeDate, &last_tm);
     localtime_r(&currentTime, &curr_tm);
+#endif
 
     if (last_tm.tm_mday != curr_tm.tm_mday ||
         last_tm.tm_mon != curr_tm.tm_mon ||

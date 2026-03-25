@@ -80,14 +80,18 @@ void FlowSubsystem::Start(const String& strategy) {
             auto startTick = std::chrono::high_resolution_clock::now();
             while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
-                if (!RunGraph(strategy, flow, context) || context.GetEpoch() == 0) {
+                if (!RunGraph(strategy, flow, context)) {
                     success = false;
                     break;
                 }
+                // 检查是否数据已用完（QuoteInputNode 正常退出）
+                if (context.GetEpoch() == 0) {
+                    break;
+                }
             }
-            auto endtTick = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endtTick - startTick);
-            
+            auto endTick = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
+
             if (success) {
                 // 统计指标
                 ExecuteNode* endNode = nullptr;
@@ -161,6 +165,15 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         if (!node->Process(strategy, context)) {
+            // 回测模式下，如果是 QuoteInputNode 因数据用完返回 false，属于正常退出
+            if (_handle->GetRunningMode() == RuningType::Backtest) {
+                if (auto quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
+                    INFO("{} data finished, backtest completed normally", node->id());
+                    // 设置 epoch 为 0，通知外层循环退出
+                    context.SetEpoch(0);
+                    return true;
+                }
+            }
             INFO("{} process fail", node->id());
             return false;
         }
@@ -171,7 +184,6 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     if (risk) {
         risk->Metric(context);
     }
-
     return true;
 }
 

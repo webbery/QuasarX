@@ -205,12 +205,7 @@ const isInfoPanelCollapsed = ref(false)
 const infoPanelContent = ref(null)
 const MAX_MESSAGES = 100 // 最大消息数量
 // 回测进度状态
-const backtestProgress = ref<{
-  strategy: string
-  progress: number
-  message: string
-  lastUpdate: number
-} | null>(null)
+const backtestProgress = ref(null)
 
 // 右键菜单状态
 const contextMenu = ref({
@@ -1213,7 +1208,6 @@ const runBacktest = async () => {
       })
     }
   }
-}
 }
 
 // 从历史版本加载流程图
