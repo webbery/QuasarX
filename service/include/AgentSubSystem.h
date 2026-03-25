@@ -62,7 +62,6 @@ private:
     bool IsUseShareMemory(const StrategyFlowInfo& flow);
 private:
     Server* _handle;
-    RiskSubSystem* _riskSystem = nullptr;
 
     struct StrategyFlowInfo {
         std::atomic_bool _running = false;

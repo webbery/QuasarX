@@ -21,11 +21,7 @@
 #include "Metric/Drawdown.h"
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
-    _riskSystem = new RiskSubSystem(handle);
     auto default_config = handle->GetConfig().GetDefault();
-    if (default_config.contains("risk")) {
-        _riskSystem->Init(default_config["risk"]);
-    }
     _stock_working_range = GetWorkingRange(ExchangeName::MT_Beijing);
 }
 
@@ -41,8 +37,6 @@ FlowSubsystem::~FlowSubsystem() {
         }
     }
     _flows.clear();
-
-    delete _riskSystem;
 }
 
 bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_flow) {
@@ -171,7 +165,13 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             return false;
         }
     }
-    // 
+
+    // 调用风控检查 - 通过 Server 获取 RiskSubSystem
+    auto risk = _handle->GetRiskSubSystem();
+    if (risk) {
+        risk->Metric(context);
+    }
+
     return true;
 }
 

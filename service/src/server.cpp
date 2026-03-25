@@ -10,6 +10,7 @@
 #include "Handler/PositionHandler.h"
 #include "Handler/PredictionHandler.h"
 #include "Handler/RiskHandler.h"
+#include "RiskSubSystem.h"
 #include "Handler/ServerEventHandler.h"
 #include "Handler/TimerHandler.h"
 #include "HttpHandler.h"
@@ -41,6 +42,7 @@
 #include "Handler/FeatureHandler.h"
 #include "Handler/SectorHandler.h"
 #include "Handler/ServerEventHandler.h"
+#include "Handler/CapitalRiskHandler.h"
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
@@ -126,6 +128,9 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_TRADE_HISTORY   "/trade/history"
 #define API_POSITION        "/position"
 #define API_SERVER_EVENT    "/server/event"
+#define API_RISK_CAPITAL    "/risk/capital"
+#define API_RISK_DAILY      "/risk/daily"
+#define API_RISK_CLOSEALL   "/risk/closeall"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -174,6 +179,9 @@ Server::~Server() {
     }
     if (_strategySystem) {
         delete _strategySystem;
+    }
+    if (_riskSystem) {
+        delete _riskSystem;
     }
     spdlog::shutdown();
 }
@@ -227,6 +235,14 @@ void Server::Regist() {
         INFO("Get {}", API_SERVER_EVENT);
         this->_handlers[API_SERVER_EVENT]->get(req, res);
     });
+
+    // 资金风控 API
+    REGIST_GET(API_RISK_CAPITAL);
+    REGIST_POST(API_RISK_CAPITAL);
+    REGIST_GET(API_RISK_DAILY);
+    REGIST_POST(API_RISK_DAILY);
+    REGIST_POST(API_RISK_CLOSEALL);
+
     REGIST_POST(API_RISK_STOP_LOSS);
     REGIST_PUT(API_RISK_STOP_LOSS);
     REGIST_GET(API_RISK_STOP_LOSS);
@@ -376,6 +392,32 @@ void Server::InitDefault() {
     auto& exchagnes = ((ExchangeHandler*)_handlers[API_EXHANGE])->GetExchangesWithType();
 
     _brokerSystem->Init(broker, exchagnes, 1000000);
+
+    // 初始化风控子系统
+    _riskSystem = new RiskSubSystem(this);
+    nlohmann::json riskConfig = nlohmann::json::object();
+    if (default_config.contains("risk")) {
+        riskConfig = default_config["risk"];
+    }
+    _riskSystem->Init(riskConfig);
+
+    // 关联资金风控 Handler 与 RiskSubSystem 中的 CapitalRiskManager
+    if (_riskSystem && _riskSystem->GetCapitalRiskManager()) {
+        auto capitalRiskManager = _riskSystem->GetCapitalRiskManager();
+        // 设置到 Handler
+        auto capitalHandler = (CapitalRiskHandler*)_handlers[API_RISK_CAPITAL];
+        if (capitalHandler) {
+            capitalHandler->SetCapitalRiskManager(capitalRiskManager);
+        }
+        auto dailyHandler = (DailyLossRiskHandler*)_handlers[API_RISK_DAILY];
+        if (dailyHandler) {
+            dailyHandler->SetCapitalRiskManager(capitalRiskManager);
+        }
+        auto closeHandler = (CloseAllPositionHandler*)_handlers[API_RISK_CLOSEALL];
+        if (closeHandler) {
+            closeHandler->SetCapitalRiskManager(capitalRiskManager);
+        }
+    }
 
     _strategySystem = new StrategySubSystem(this);
 
@@ -1087,6 +1129,9 @@ void Server::InitHandlers() {
     RegistHandler(API_EXHANGE, ExchangeHandler);
     RegistHandler(API_RECORD, RecordHandler);
     RegistHandler(API_RISK_STOP_LOSS, StopLossHandler);
+    RegistHandler(API_RISK_CAPITAL, CapitalRiskHandler);
+    RegistHandler(API_RISK_DAILY, DailyLossRiskHandler);
+    RegistHandler(API_RISK_CLOSEALL, CloseAllPositionHandler);
     RegistHandler(API_ALL_STOCK, StockHandler);
     RegistHandler(API_STOCK_DETAIL, StockDetailHandler);
     RegistHandler(API_STOCK_HISTORY, StockHistoryHandler);
@@ -1118,6 +1163,9 @@ void Server::InitHandlers() {
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});
+
+    // 关联资金风控 Handler 与 RiskSubSystem 中的 CapitalRiskManager
+    // 注意：RiskSubSystem 在 FlowSubsystem 中初始化，需要在 InitDefault 中关联
 }
 
 AccountPosition& Server::GetPosition(const String& account) {

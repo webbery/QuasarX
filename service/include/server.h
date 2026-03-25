@@ -29,6 +29,7 @@ class StrategyPlugin;
 class IStopLoss;
 class StopLossHandler;
 class BrokerSubSystem;
+class RiskSubSystem;
 class StockHistorySimulation;
 
 typedef enum {
@@ -128,6 +129,8 @@ public:
 
     PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
     StrategySubSystem* GetStrategySystem() { return _strategySystem; }
+
+    RiskSubSystem* GetRiskSubSystem() { return _riskSystem; }
 
     double GetFreeRate(time_t t);
     /**
@@ -276,6 +279,7 @@ private:
     StrategySubSystem* _strategySystem;
     PortfolioSubSystem* _portfolioSystem;
     BrokerSubSystem* _brokerSystem; //
+    RiskSubSystem* _riskSystem;
 
     // 默认持仓id
     static std::multimap<std::string, ContractInfo> _markets;

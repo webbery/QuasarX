@@ -430,6 +430,119 @@ paths:
                 type: array
                 items:
                   type: number
+  /risk/capital:
+    get:
+      summary: get capital risk config
+      description: 获取总资金风控配置和状态
+      tags:
+        - Risk
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapitalRiskConfig"
+    post:
+      summary: set capital risk config
+      description: 设置总资金止损配置
+      tags:
+        - Risk
+      requestBody:
+        description: 总资金风控参数
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapitalRiskSetRequest"
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapitalRiskConfig"
+        '400':
+          description: invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /risk/daily:
+    get:
+      summary: get daily loss risk config
+      description: 获取单日亏损风控配置和状态
+      tags:
+        - Risk
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyRiskConfig"
+    post:
+      summary: set daily loss risk config
+      description: 设置单日亏损限额配置
+      tags:
+        - Risk
+      requestBody:
+        description: 单日亏损风控参数
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DailyRiskSetRequest"
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyRiskConfig"
+        '400':
+          description: invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /risk/closeall:
+    post:
+      summary: close all positions
+      description: 手动触发全部平仓（资金风控触发时使用）
+      tags:
+        - Risk
+      requestBody:
+        description: 平仓确认参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm:
+                  type: boolean
+                  description: 确认平仓，必须为 true 才会执行
+                  example: true
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloseAllResponse"
+        '400':
+          description: confirmation required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: close failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /risk/factor/liquidity:
     get:
       summary: liquidity
@@ -1418,7 +1531,208 @@ components:
           type: integer
           description: var的id
           example: 1
-    
+
+    CapitalRiskConfig:
+      type: object
+      description: 总资金风控配置和状态
+      properties:
+        totalStopLossPercent:
+          type: number
+          description: 总资金止损线比例 (相对于初始本金)
+          example: 0.85
+        dailyMaxLossPercent:
+          type: number
+          description: 单日最大亏损限额比例 (相对于昨日权益)
+          example: 0.03
+        enableTotalStopLoss:
+          type: boolean
+          description: 是否启用总资金止损
+          example: true
+        enableDailyLossLimit:
+          type: boolean
+          description: 是否启用单日亏损限额
+          example: true
+        autoClosePosition:
+          type: boolean
+          description: 触及止损后是否自动平仓
+          example: false
+        initialCapital:
+          type: number
+          description: 初始本金
+          example: 1000000
+        lastDayEquity:
+          type: number
+          description: 昨日权益
+          example: 1000000
+        isTotalStopLossTriggered:
+          type: boolean
+          description: 是否触发总资金止损
+          example: false
+        isDailyLossTriggered:
+          type: boolean
+          description: 是否触发单日亏损限额
+          example: false
+        manualInterventionTimeoutSec:
+          type: integer
+          description: 人工介入超时时间 (秒)
+          example: 300
+        timeoutAutoClose:
+          type: boolean
+          description: 超时后是否自动平仓
+          example: true
+        currentEquity:
+          type: number
+          description: 当前总资产
+          example: 985000
+        currentDrawdown:
+          type: number
+          description: 当前回撤百分比
+          example: -0.015
+        dailyProfitLoss:
+          type: number
+          description: 当日盈亏
+          example: -15000
+        dailyLossPercent:
+          type: number
+          description: 当日亏损百分比
+          example: -0.015
+        totalStopLossLevel:
+          type: number
+          description: 总资金止损线对应的资产值
+          example: 850000
+        dailyLossLimitLevel:
+          type: number
+          description: 单日亏损限额对应的资产值
+          example: 970000
+
+    CapitalRiskSetRequest:
+      type: object
+      description: 设置总资金风控配置请求
+      required:
+        - totalStopLossPercent
+      properties:
+        totalStopLossPercent:
+          type: number
+          description: 总资金止损线比例 (相对于初始本金)
+          example: 0.85
+        enableTotalStopLoss:
+          type: boolean
+          description: 是否启用总资金止损
+          example: true
+        autoClosePosition:
+          type: boolean
+          description: 触及止损后是否自动平仓
+          example: false
+        manualInterventionTimeoutSec:
+          type: integer
+          description: 人工介入超时时间 (秒)
+          example: 300
+        timeoutAutoClose:
+          type: boolean
+          description: 超时后是否自动平仓
+          example: true
+        initialCapital:
+          type: number
+          description: 初始本金
+          example: 1000000
+
+    DailyRiskConfig:
+      type: object
+      description: 单日亏损风控配置和状态
+      properties:
+        dailyMaxLossPercent:
+          type: number
+          description: 单日最大亏损限额比例 (相对于昨日权益)
+          example: 0.03
+        enableDailyLossLimit:
+          type: boolean
+          description: 是否启用单日亏损限额
+          example: true
+        autoClosePosition:
+          type: boolean
+          description: 触及止损后是否自动平仓
+          example: false
+        manualInterventionTimeoutSec:
+          type: integer
+          description: 人工介入超时时间 (秒)
+          example: 300
+        timeoutAutoClose:
+          type: boolean
+          description: 超时后是否自动平仓
+          example: true
+        lastDayEquity:
+          type: number
+          description: 昨日权益
+          example: 1000000
+        isDailyLossTriggered:
+          type: boolean
+          description: 是否触发单日亏损限额
+          example: false
+        currentEquity:
+          type: number
+          description: 当前总资产
+          example: 985000
+        dailyProfitLoss:
+          type: number
+          description: 当日盈亏
+          example: -15000
+        dailyLossPercent:
+          type: number
+          description: 当日亏损百分比
+          example: -0.015
+        dailyLossLimitLevel:
+          type: number
+          description: 单日亏损限额对应的资产值
+          example: 970000
+
+    DailyRiskSetRequest:
+      type: object
+      description: 设置单日亏损风控配置请求
+      required:
+        - dailyMaxLossPercent
+      properties:
+        dailyMaxLossPercent:
+          type: number
+          description: 单日最大亏损限额比例 (相对于昨日权益)
+          example: 0.03
+        enableDailyLossLimit:
+          type: boolean
+          description: 是否启用单日亏损限额
+          example: true
+        autoClosePosition:
+          type: boolean
+          description: 触及止损后是否自动平仓
+          example: false
+        manualInterventionTimeoutSec:
+          type: integer
+          description: 人工介入超时时间 (秒)
+          example: 300
+        timeoutAutoClose:
+          type: boolean
+          description: 超时后是否自动平仓
+          example: true
+        lastDayEquity:
+          type: number
+          description: 昨日权益
+          example: 1000000
+
+    CloseAllResponse:
+      type: object
+      description: 全部平仓响应
+      properties:
+        success:
+          type: boolean
+          description: 是否成功
+          example: true
+        closedCount:
+          type: integer
+          description: 平仓的标的数量
+          example: 5
+        message:
+          type: string
+          description: 响应消息
+          example: 所有持仓已平仓
+
     PortfolioRequest:
       type: object
       properties:

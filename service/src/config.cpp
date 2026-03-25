@@ -24,13 +24,13 @@ ServerConfig::ServerConfig(const std::string& path):_path(path) {
     }
     _status = true;
 
-    _max_risk_id = 0;
-    for (auto& risk: _config["risk"]) {
-        int id = risk["id"];
-        if (id > _max_risk_id) {
-            _max_risk_id = id;
-        }
-    }
+    // _max_risk_id = 0;
+    // for (auto& risk: _config["risk"]) {
+    //     int id = risk["id"];
+    //     if (id > _max_risk_id) {
+    //         _max_risk_id = id;
+    //     }
+    // }
     // 
     std::string key_file("server.key");
     if (std::filesystem::exists(key_file)) {

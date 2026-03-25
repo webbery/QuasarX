@@ -1,0 +1,74 @@
+{
+  "_comment": "订单测试配置文件 - 用于配置股票订单自动化测试",
+  "_doc": {
+    "base_url": "API 基础地址",
+    "default_test_stock": "默认测试股票代码",
+    "test_stocks": "测试使用的股票列表（用于参数化测试）",
+    "default_quantity": "默认下单数量（股）",
+    "order_status_timeout": "等待订单状态超时时间（秒）",
+    "order_poll_interval": "轮询订单状态间隔（秒）",
+    "skip_cleanup": "是否跳过测试后订单清理",
+    "test_scenarios": "场景化测试配置"
+  },
+
+  "base_url": "https://localhost:19107/v0",
+  "default_test_stock": "600000",
+  "test_stocks": ["600000", "600036", "000001"],
+  "default_quantity": 100,
+  "order_status_timeout": 30,
+  "order_poll_interval": 1.0,
+  "skip_cleanup": false,
+
+  "test_scenarios": [
+    {
+      "name": "buy_and_cancel",
+      "description": "限价买入并取消订单",
+      "steps": [
+        {
+          "operation": "buy",
+          "price_offset": 0,
+          "count": 100,
+          "expected_status": [1, 3, 4],
+          "_comment": "price_offset=0 表示使用涨跌停中间价，expected_status: 1=已报，3=部分成交，4=完全成交"
+        },
+        {
+          "operation": "cancel",
+          "condition": "wait",
+          "expected_status": [7, 8],
+          "_comment": "condition=wait 表示等待订单录入后取消，expected_status: 7=已撤销，8=撤单失败"
+        }
+      ]
+    },
+    {
+      "name": "market_buy",
+      "description": "市价买入测试",
+      "steps": [
+        {
+          "operation": "market_buy",
+          "count": 100,
+          "expected_status": [1, 3, 4],
+          "_comment": "市价单通常会快速成交，期望状态：已报/部分成交/完全成交"
+        }
+      ]
+    },
+    {
+      "name": "limit_buy_low_cancel",
+      "description": "低价挂单后取消（测试未成交订单的取消）",
+      "steps": [
+        {
+          "operation": "buy",
+          "price_offset": -0.5,
+          "count": 100,
+          "expected_status": [1],
+          "_comment": "price_offset 为负表示低于当前价挂单，期望状态=1(已报) 表示挂单成功"
+        },
+        {
+          "operation": "cancel",
+          "condition": "wait",
+          "expected_status": [7],
+          "_comment": "期望状态=7(已撤销) 表示取消成功"
+        }
+      ]
+    }
+  ]
+}
