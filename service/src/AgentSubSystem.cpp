@@ -45,6 +45,10 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
     return status;
 }
 
+void FlowSubsystem::SetStrategyConfig(const String& strategy, const nlohmann::json& config) {
+    _flows[strategy]._config = config;
+}
+
 void FlowSubsystem::ClearFlow(const String& strategy) {
     for (auto node: _flows[strategy]._graph) {
         delete node;
@@ -66,6 +70,7 @@ void FlowSubsystem::Start(const String& strategy) {
     flow._running = true;
     flow._worker = new std::thread([strategy, this]() {
         DataContext context(strategy, _handle);
+
         try {
             auto& flow = _flows[strategy];
             if (IsUseShareMemory(flow)) {

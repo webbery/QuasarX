@@ -21,6 +21,9 @@ public:
     bool LoadFlow(const String& strategy, const List<QNode*>& topo_flow);
     void ClearFlow(const String& strategy);
 
+    // 设置策略配置（用于回测）
+    void SetStrategyConfig(const String& strategy, const nlohmann::json& config);
+
     void Start();
     void Start(const String& strategy);
     void Stop(const String& strategy);
