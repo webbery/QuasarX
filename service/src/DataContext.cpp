@@ -6,6 +6,9 @@ DataContext::~DataContext() {
     for (auto& item: _signalObservers) {
         delete item;
     }
+    for (auto& item: _signals) {
+        delete item.second;
+    }
 }
 
 DataContext::DataContext(const String& strategy, Server* server):_strategy(strategy), _server(server) {
@@ -130,4 +133,12 @@ const QuoteInfo* DataContext::GetQuote(symbol_t symbol) const {
         return &it->second;
     }
     return nullptr;
-} 
+}
+
+void DataContext::setInitialCapital(double capital) {
+    _initialCapital = capital;
+}
+
+double DataContext::getInitialCapital() const {
+    return _initialCapital;
+}

@@ -52,7 +52,7 @@ namespace {
 
         // 遍历每个交易日
         size_t i = 0;
-        daily_cash_flows[0] = context.getAvailableCapital();
+        daily_cash_flows[0] = context.getInitialCapital();
         for (auto itr = times.begin(); itr != times.end(); ++i, ++itr) {
             time_t current_time = *itr;
 

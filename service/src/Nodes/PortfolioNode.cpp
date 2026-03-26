@@ -42,6 +42,15 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
     return true;
 }
 
+void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
+    auto* exchange = (_server->GetAvaliableStockExchange());
+    if (_server->GetRunningMode()==RuningType::Backtest) {
+        auto broker = dynamic_cast<StockHistorySimulation*>(exchange);
+        double initialCapital = broker->GetAvailableFunds();
+        context.setInitialCapital(initialCapital);
+    }
+}
+
 bool PortfolioNode::Process(const String& strategy, DataContext& context) {
     // 1. 获取上游节点的信号
     Vector<symbol_t> symbols;

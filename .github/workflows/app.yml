@@ -35,7 +35,7 @@ jobs:
           # cache-dependency-path: package-lock.json
 
       - name: Install Dependencies
-        run: cd app && npm ci
+        run: npm ci
 
       - name: Build
         run: npm run build
@@ -108,7 +108,7 @@ jobs:
           # cache-dependency-path: package-lock.json
 
       - name: Install Dependencies
-        run: cd app && npm ci
+        run: npm ci
 
       - name: Build
         run: npm run build

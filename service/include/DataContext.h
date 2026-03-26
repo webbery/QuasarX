@@ -153,6 +153,10 @@ public:
 
     double getAvailableCapital() const;
 
+    // 初始本金管理（用于回测）
+    void setInitialCapital(double capital);
+    double getInitialCapital() const;
+
     // QuoteInfo 存储和获取（用于影子模式）
     void SetQuote(symbol_t symbol, const QuoteInfo& quote);
     const QuoteInfo* GetQuote(symbol_t symbol) const;
@@ -176,8 +180,11 @@ private:
     ExecutionPlan _executionPlan;
 
     // TODO: 节点的输出数据，待优化
-    Map<String, context_t> _outputs;
+    std::unordered_map<String, context_t> _outputs;
 
     // 当前 Bar 的 QuoteInfo（用于影子模式）
     Map<symbol_t, QuoteInfo> _quotes;
+
+    // 初始本金（用于回测）
+    double _initialCapital = 0.0;
 };
