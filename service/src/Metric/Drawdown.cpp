@@ -131,33 +131,25 @@ float total_return_ratio(const crash_flow_t& flow, const DataContext& context) {
     }
 
     // 计算初始投资（第一天的价值加上第一天的现金流）
-    double initial_value = 0;
-    for (auto val : daily_values) {
-        if (val > 0) {
-            initial_value = val;
-            break;
-        }
-    }
+    double initial_value = daily_values.front();
     double initial_cash_flow = daily_cash_flows.front();
-
+    double initial_capital = initial_value + initial_cash_flow;
     // 如果初始投资为 0 或负数，返回 0
-    if (initial_value + initial_cash_flow <= 0) {
+    if (initial_capital <= 0) {
         return 0.0f;
     }
 
     // 期末价值
     double final_value = daily_values.back();
 
-    // 总现金流（不包括第一天）
-    double total_cash_flow = 0.0;
-    for (size_t i = 1; i < daily_cash_flows.size(); ++i) {
-        total_cash_flow += daily_cash_flows[i];
-    }
+    // 期间净现金流 = 最后一天累计现金流 - 初始本金
+    // daily_cash_flows 是累计值，包含了 initial_capital 和所有交易现金流
+    double total_cash_flow = daily_cash_flows.back() - daily_cash_flows.front();
 
     // 总收益率 = (期末价值 - 期初价值 - 净现金流) / 期初价值
     // 或者简化为：(期末价值 + 总现金流入 - 总现金流出) / 期初投入 - 1
-    double tatal_profit = final_value - initial_value - total_cash_flow;
-    double total_return = tatal_profit / initial_value;
+    double total_profit = final_value - initial_capital - total_cash_flow;
+    double total_return = total_profit / initial_capital;
 
     return static_cast<float>(total_return);
 }
@@ -235,11 +227,8 @@ float calmar_ratio(const crash_flow_t& flow, const DataContext& context, double 
     // 计算总收益率
     double initial_value = daily_values.front();
     double final_value = daily_values.back();
-    double total_cash_flow = 0.0;
-
-    for (size_t i = 1; i < daily_cash_flows.size(); ++i) {
-        total_cash_flow += daily_cash_flows[i];
-    }
+    // 期间净现金流 = 最后一天累计现金流 - 初始本金
+    double total_cash_flow = daily_cash_flows.back() - daily_cash_flows.front();
 
     double total_return = (final_value - initial_value - total_cash_flow) / initial_value;
 
