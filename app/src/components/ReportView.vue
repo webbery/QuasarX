@@ -1,5 +1,32 @@
 <template>
     <div class="grid-container">
+        <!-- 工具栏：基准选择器（新增） -->
+        <div class="report-toolbar">
+            <div class="toolbar-group">
+                <label>基准对比</label>
+                <select v-model="selectedBenchmark" @change="onBenchmarkChange" class="benchmark-select">
+                    <option value="">-- 无 --</option>
+                    <option v-for="idx in benchmarkIndices" :key="idx.code" :value="idx.code">
+                        {{ idx.name }} ({{ idx.code }})
+                    </option>
+                </select>
+                <button @click="refreshBenchmark" :disabled="loading" class="btn-refresh" title="刷新基准数据">
+                    {{ loading ? '刷新中...' : '🔄' }}
+                </button>
+            </div>
+            <div class="toolbar-status" v-if="benchmarkMetrics">
+                <span class="status-item" title="年化收益率">
+                    年化：{{ (benchmarkMetrics.annual_return * 100).toFixed(2) }}%
+                </span>
+                <span class="status-item" title="最大回撤">
+                    回撤：{{ (benchmarkMetrics.max_drawdown * 100).toFixed(2) }}%
+                </span>
+                <span class="status-item" title="夏普比率">
+                    夏普：{{ benchmarkMetrics.sharp.toFixed(2) }}
+                </span>
+            </div>
+        </div>
+
          <!-- Price Trend and Trading Signals - 独占一行 -->
         <div class="chart-row">
             <div class="chart-card full-width">
@@ -15,7 +42,19 @@
                 <div class="chart-container" id="priceTrend"></div>
             </div>
         </div>
-        
+
+        <!-- 策略 vs 基准对比图（新增，仅当选择基准时显示） -->
+        <div class="chart-row" v-if="selectedBenchmark && benchmarkData.length > 0">
+            <div class="chart-card full-width">
+                <div class="chart-title">
+                    <div class="title-icon">📈</div>
+                    <span>策略 vs 基准对比</span>
+                    <span class="benchmark-label">{{ benchmarkName }}</span>
+                </div>
+                <div class="chart-container" id="benchmarkCompare"></div>
+            </div>
+        </div>
+
         <!-- Strategy Performance - 独占一行 -->
         <div class="chart-row">
             <div class="chart-card full-width">
@@ -168,6 +207,14 @@ import * as echarts from 'echarts'
 import { onMounted, nextTick, defineExpose, watch, ref, onUnmounted } from 'vue'
 import axios from 'axios';
 import https from 'https';
+import {
+  BENCHMARK_INDICES,
+  getBenchmark,
+  calculateMetrics,
+  BenchmarkMetrics,
+  KlineData,
+  clearExpiredCache,
+} from '../lib/tickflow';
 
 // 暗色主题配置保持不变
 const darkTheme = {
@@ -201,12 +248,35 @@ const tableScrollPosition = ref(0)
 const symbolPrices = ref<any[]>([])
 const buySignals = ref<any[]>([])
 const sellSignals = ref<any[]>([])
-// 🔄 新增：回测指标数据
+// 新增：回测指标数据
 const metricsData = ref<Record<string, number>>({})
+
+// 基准对比相关状态
+const selectedBenchmark = ref(localStorage.getItem('benchmark_symbol') || '')
+const benchmarkMetrics = ref<BenchmarkMetrics | null>(null)
+const benchmarkData = ref<KlineData[]>([])
+const benchmarkName = ref('')
+const loading = ref(false)
+// 回测日期范围（用于获取基准数据）
+const backtestStartDate = ref<Date | null>(null)
+const backtestEndDate = ref<Date | null>(null)
 
 watch(symbolPrices, (newPrices) => {
     if (newPrices.length > 0 && priceChart.value) {
         updatePriceChart();
+    }
+}, { deep: true });
+
+// 监听价格数据变化，提取日期范围用于基准对比
+watch(symbolPrices, (newPrices) => {
+    if (newPrices.length > 0 && selectedBenchmark.value) {
+        // 提取日期范围
+        const firstDate = new Date(newPrices[0][0]);
+        const lastDate = new Date(newPrices[newPrices.length - 1][0]);
+        backtestStartDate.value = firstDate;
+        backtestEndDate.value = lastDate;
+        // 自动加载基准数据
+        loadBenchmark(firstDate, lastDate);
     }
 }, { deep: true });
 
@@ -367,7 +437,7 @@ async function updatePrice(symbol: string, startDate: string, endDate: string) {
 
 function initializeCharts() {
     console.info('initializeCharts')
-    
+
     const chartsToInitialize = [
         { id: 'strategyPerformance', type: 'strategy' },
         { id: 'priceTrend', type: 'price' },
@@ -382,28 +452,31 @@ function initializeCharts() {
         { id: 'drawdown', type: 'drawdown' },
         { id: 'skewness', type: 'skewness' }
     ]
-    
+
     chartsToInitialize.forEach(config => {
         const element = document.getElementById(config.id)
         if (element && element.offsetWidth > 0) {
             const chart = echarts.init(element, 'dark')
-            
+
             let option;
             if (config.id === 'priceTrend') {
                 priceChart.value = chart;
                 option = getPriceOption(true, symbolPrices.value, sellSignals.value, buySignals.value)
+            } else if (config.id === 'benchmarkCompare') {
+                // 基准对比图表，通过 updateBenchmarkChart 单独初始化
+                return;
             } else {
                 option = getChartOption(config.type)
             }
             chart.setOption(option)
             chartInstances.value.push(chart)
-            
+
             // 监听容器大小变化
             const resizeObserver = new ResizeObserver(() => {
                 chart.resize()
             })
             resizeObserver.observe(element)
-            
+
             onUnmounted(() => {
                 resizeObserver.disconnect()
             })
@@ -723,7 +796,141 @@ function getChartOption(type: string) {
     }
 }
 
-// 🔄 新增：更新交易信号数据的方法
+// 基准对比相关方法
+const benchmarkIndices = BENCHMARK_INDICES;
+
+// 加载基准数据
+async function loadBenchmark(start: Date, end: Date) {
+  if (!selectedBenchmark.value) {
+    benchmarkMetrics.value = null;
+    benchmarkData.value = [];
+    benchmarkName.value = '';
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const result = await getBenchmark(selectedBenchmark.value, start, end);
+    benchmarkMetrics.value = result.metrics;
+    benchmarkData.value = result.data;
+    benchmarkName.value = result.name;
+    console.info(`[ReportView] 基准数据已加载：${result.name}`);
+    updateBenchmarkChart();
+    updateMetricsTable();
+  } catch (e) {
+    console.error('[ReportView] 获取基准数据失败:', e);
+  } finally {
+    loading.value = false;
+  }
+}
+
+// 更新基准对比图表
+function updateBenchmarkChart() {
+  const chartEl = document.getElementById('benchmarkCompare');
+  if (!chartEl || !benchmarkData.value.length || !metricsData.value.total_return) {
+    return;
+  }
+
+  let chart = chartInstances.value.find(c => (c as any)._dom === chartEl);
+
+  if (!chart) {
+    chart = echarts.init(chartEl, 'dark');
+    chartInstances.value.push(chart);
+  }
+
+  // 转换 K 线数据为累计收益曲线
+  const benchmarkCloses = benchmarkData.value.map(d => d.close);
+  const baseValue = benchmarkCloses[0];
+  const strategyBase = 100000; // 基准本金
+
+  // 基准累计收益
+  const benchmarkCumulative = benchmarkCloses.map(c => ((c - baseValue) / baseValue + 1) * strategyBase);
+
+  // 策略累计收益（简化：用总收益线性插值，实际应该使用每日净值）
+  const totalReturn = metricsData.value.total_return || 0;
+  const strategyCumulative = benchmarkCumulative.map((v, i) => {
+    const progress = i / (benchmarkCumulative.length - 1);
+    return strategyBase * (1 + totalReturn * progress);
+  });
+
+  // 日期标签
+  const dates = benchmarkData.value.map(d => {
+    const date = new Date(d.time * 1000);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(26, 34, 54, 0.9)',
+      borderColor: '#2a3449',
+      textStyle: { color: '#e0e0e0' }
+    },
+    legend: {
+      data: ['策略收益', benchmarkName.value],
+      textStyle: { color: '#e0e0e0' },
+      top: 10
+    },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLabel: { color: '#a0aec0' }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        formatter: (v: number) => ((v / strategyBase - 1) * 100).toFixed(0) + '%',
+        color: '#a0aec0'
+      },
+      splitLine: { lineStyle: { color: '#2a3449', type: 'dashed' } }
+    },
+    series: [
+      {
+        name: '策略收益',
+        type: 'line',
+        data: strategyCumulative,
+        smooth: true,
+        lineStyle: { width: 3, color: '#2962ff' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(41, 98, 255, 0.3)' },
+            { offset: 1, color: 'rgba(41, 98, 255, 0.05)' }
+          ])
+        }
+      },
+      {
+        name: benchmarkName.value,
+        type: 'line',
+        data: benchmarkCumulative,
+        smooth: true,
+        lineStyle: { width: 2, color: '#ff9800', type: 'dashed' }
+      }
+    ]
+  });
+
+  chart.resize();
+}
+
+// 基准变更
+function onBenchmarkChange() {
+  localStorage.setItem('benchmark_symbol', selectedBenchmark.value);
+  if (backtestStartDate.value && backtestEndDate.value) {
+    loadBenchmark(backtestStartDate.value, backtestEndDate.value);
+  }
+}
+
+// 刷新基准数据
+function refreshBenchmark() {
+  // 清除缓存后重新加载
+  clearExpiredCache().then(() => {
+    if (backtestStartDate.value && backtestEndDate.value) {
+      loadBenchmark(backtestStartDate.value, backtestEndDate.value);
+    }
+  });
+}
+
+// 新增：更新交易信号数据的方法
 function updateTradeSignals(buySignalsData: any[], sellSignalsData: any[]) {
   try {
     // 验证输入数据
@@ -750,7 +957,7 @@ function updateTradeSignals(buySignalsData: any[], sellSignalsData: any[]) {
   }
 }
 
-// 🔄 新增：指标名称映射（英文 -> 中文）
+// 新增：指标名称映射（英文 -> 中文）
 const metricNameMap: Record<string, string> = {
   total_return: '总收益率',
   annual_return: '年化收益率',
@@ -770,7 +977,7 @@ const metricNameMap: Record<string, string> = {
   profit_loss_ratio: '盈亏比',
 }
 
-// 🔄 新增：格式化指标值
+// 新增：格式化指标值
 function formatMetricValue(key: string, value: number): string {
   // 比率类指标（名称包含 ratio, rate, return, drawdown, volatility, alpha, beta）
   const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp']
@@ -795,8 +1002,14 @@ function formatMetricValue(key: string, value: number): string {
   return value.toFixed(4)
 }
 
-// 🔄 新增：获取基准值（用于对比）
+// 新增：获取基准值（用于对比）
 function getBenchmarkValue(key: string): string {
+  // 优先使用动态基准（TickFlow 获取的实际指数数据）
+  if (benchmarkMetrics.value && (benchmarkMetrics.value as any)[key] !== undefined) {
+    return formatMetricValue(key, (benchmarkMetrics.value as any)[key]);
+  }
+
+  // Fallback 到默认基准
   const benchmarks: Record<string, number> = {
     total_return: 0.10,      // 10%
     annual_return: 0.08,     // 8%
@@ -807,45 +1020,54 @@ function getBenchmarkValue(key: string): string {
     volatility: 0.20,        // 20%
     alpha: 0,
     beta: 1.0,
-  }
-  const benchmark = benchmarks[key]
+  };
+  const benchmark = benchmarks[key];
   if (benchmark !== undefined) {
-    return formatMetricValue(key, benchmark)
+    return formatMetricValue(key, benchmark);
   }
-  return '-'
+  return '-';
 }
 
-// 🔄 新增：计算对比值
+// 新增：计算对比值
 function getComparison(key: string, actualValue: number): { value: string, type: 'positive' | 'neutral' | 'negative' } {
-  const benchmarks: Record<string, number> = {
-    total_return: 0.10,
-    annual_return: 0.08,
-    max_drawdown: -0.20,
-    sharp: 1.0,
-    win_rate: 0.50,
-    num_trades: 50,
-    volatility: 0.20,
+  // 优先使用动态基准
+  let benchmark: number | undefined;
+  if (benchmarkMetrics.value && (benchmarkMetrics.value as any)[key] !== undefined) {
+    benchmark = (benchmarkMetrics.value as any)[key];
   }
 
-  const benchmark = benchmarks[key]
+  // 没有动态基准，使用默认
   if (benchmark === undefined) {
-    return { value: '-', type: 'neutral' }
+    const defaults: Record<string, number> = {
+      total_return: 0.10,
+      annual_return: 0.08,
+      max_drawdown: -0.20,
+      sharp: 1.0,
+      win_rate: 0.50,
+      num_trades: 50,
+      volatility: 0.20,
+    };
+    benchmark = defaults[key];
   }
 
-  const diff = actualValue - benchmark
-  const isPositive = diff > 0
+  if (benchmark === undefined) {
+    return { value: '-', type: 'neutral' };
+  }
+
+  const diff = actualValue - benchmark;
+  const isPositive = diff > 0;
   // 对于回撤和波动率，越低越好
-  const isInverted = key === 'max_drawdown' || key === 'volatility'
+  const isInverted = key === 'max_drawdown' || key === 'volatility';
 
-  let displayValue: string
+  let displayValue: string;
   if (isRatioKeys(key)) {
-    displayValue = `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(2)}%`
+    displayValue = `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(2)}%`;
   } else {
-    displayValue = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`
+    displayValue = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`;
   }
 
-  const type = isInverted ? (diff < 0 ? 'positive' : 'negative') : (isPositive ? 'positive' : 'neutral')
-  return { value: displayValue, type }
+  const type = isInverted ? (diff < 0 ? 'positive' : 'negative') : (isPositive ? 'positive' : 'neutral');
+  return { value: displayValue, type };
 }
 
 function isRatioKeys(key: string): boolean {
@@ -853,7 +1075,7 @@ function isRatioKeys(key: string): boolean {
   return ratioKeys.some(k => key.toLowerCase().includes(k))
 }
 
-// 🔄 新增：更新策略指标数据
+// 新增：更新策略指标数据
 function updateMetrics(features: Record<string, number>) {
   try {
     if (!features || typeof features !== 'object') {
@@ -873,7 +1095,17 @@ function updateMetrics(features: Record<string, number>) {
   }
 }
 
-// 🔄 新增：更新指标表格
+// 新增：更新基准数据（外部调用）
+function updateBenchmark(data: { symbol: string; name: string; startDate: Date; endDate: Date }) {
+  backtestStartDate.value = data.startDate;
+  backtestEndDate.value = data.endDate;
+  if (data.symbol) {
+    selectedBenchmark.value = data.symbol;
+    loadBenchmark(data.startDate, data.endDate);
+  }
+}
+
+// 新增：更新指标表格
 function updateMetricsTable() {
   const tbody = document.querySelector('#scrollableTable tbody')
   if (!tbody) return
@@ -932,8 +1164,9 @@ function updateMetricsTable() {
 defineExpose({
     updatePrice,
     updatePriceChart,
-    updateTradeSignals,  // 🔄 新增
-    updateMetrics,       // 🔄 新增：更新策略指标
+    updateTradeSignals,  // 新增
+    updateMetrics,       // 新增：更新策略指标
+    updateBenchmark,     // 新增：更新基准数据
     resetTableZoom
 })
 </script>
@@ -947,6 +1180,87 @@ defineExpose({
     width: 100%;
     padding: 0;
     min-height: 0;
+}
+
+/* 工具栏样式 */
+.report-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: var(--panel-bg);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    margin-bottom: 20px;
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.toolbar-group label {
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 500;
+}
+
+.benchmark-select {
+    padding: 8px 12px;
+    background: rgba(42, 52, 77, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.benchmark-select:hover {
+    border-color: #2962ff;
+}
+
+.btn-refresh {
+    padding: 8px 12px;
+    background: rgba(41, 98, 255, 0.2);
+    border: 1px solid #2962ff;
+    border-radius: 6px;
+    color: #2962ff;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s;
+}
+
+.btn-refresh:hover:not(:disabled) {
+    background: rgba(41, 98, 255, 0.3);
+}
+
+.btn-refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.toolbar-status {
+    display: flex;
+    gap: 16px;
+}
+
+.status-item {
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    background: rgba(42, 52, 77, 0.3);
+    border-radius: 4px;
+}
+
+.benchmark-label {
+    margin-left: 12px;
+    font-size: 12px;
+    color: #ff9800;
+    padding: 2px 8px;
+    background: rgba(255, 152, 0, 0.1);
+    border-radius: 4px;
 }
 
 .chart-row {
@@ -1130,6 +1444,12 @@ tbody tr:hover {
 .neutral {
     color: #ff6d00;
     font-weight: 600;
+}
+
+/* 基准值列样式 */
+.benchmark-value {
+    color: #ff9800;
+    font-weight: 500;
 }
 
 .table-controls {

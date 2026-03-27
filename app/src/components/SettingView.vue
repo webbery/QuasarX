@@ -32,6 +32,40 @@
                     <button class="btn btn-primary" @click="addNewServer">添加服务器</button>
                 </div>
             </div>
+            <!-- TickFlow API 配置（新增） -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('tickflow')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(155, 89, 182, 0.1); color: #9b59b6;">
+                            <span>📊</span>
+                        </div>
+                        <span>TickFlow 基准指数配置</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.tickflow }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.tickflow }">
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" class="form-control" v-model="tickflowApiKey" placeholder="请输入 TickFlow API Key（可选）">
+                    </div>
+                    <p class="hint">
+                        在 <a href="https://tickflow.org" target="_blank">tickflow.org</a> 获取 API Key，用于获取基准指数数据
+                    </p>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" @click="saveTickFlowConfig">保存配置</button>
+                        <button class="btn btn-secondary" @click="testTickFlowConnection" :disabled="testingConnection">
+                            {{ testingConnection ? '测试中...' : '测试连接' }}
+                        </button>
+                    </div>
+                    <div class="test-result" :class="testResult?.success ? 'success' : 'error'" v-if="testResult">
+                        <span :class="['result-icon', testResult.success ? 'success' : 'error']">
+                            {{ testResult.success ? '✓' : '✗' }}
+                        </span>
+                        {{ testResult.message }}
+                    </div>
+                </div>
+            </div>
+
             <!-- 股票设置 -->
             <div class="settings-section">
                 <div class="section-header" @click="toggleSection('stock')">
@@ -179,7 +213,8 @@ const expandedSections = ref({
     smtp: false,
     risk: false,
     fund: false,
-    task: false
+    task: false,
+    tickflow: false,  // TickFlow 配置
 });
 
 // 远程服务器数据
@@ -232,6 +267,11 @@ const smtpConfig = ref({
     password: '',
     encryption: 'ssl'
 });
+
+// TickFlow API 配置
+const tickflowApiKey = ref(localStorage.getItem('tickflow_api_key') || '');
+const testingConnection = ref(false);
+const testResult = ref<any>(null);
 
 // 任务调度
 const tasks = ref([
@@ -340,6 +380,34 @@ const updateSmtp = () => {
 
 const updateTaskSchedule = () => {
     alert('任务计划已更新!');
+};
+
+// TickFlow API 配置保存
+const saveTickFlowConfig = () => {
+    localStorage.setItem('tickflow_api_key', tickflowApiKey.value);
+    message.success('TickFlow API 配置已保存');
+};
+
+// TickFlow API 连接测试
+const testTickFlowConnection = async () => {
+    testingConnection.value = true;
+    testResult.value = null;
+
+    try {
+        const { getBenchmark } = await import('../lib/tickflow');
+        const now = new Date();
+        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+
+        await getBenchmark('SH000300', sixMonthsAgo, now);
+
+        testResult.value = { success: true, message: '连接成功，数据已获取' };
+        message.success('TickFlow API 连接测试成功');
+    } catch (e) {
+        testResult.value = { success: false, message: e.message };
+        message.error('TickFlow API 连接测试失败：' + e.message);
+    } finally {
+        testingConnection.value = false;
+    }
 };
 
 onMounted(async () => {
@@ -453,6 +521,61 @@ onMounted(async () => {
     color: var(--text);
     margin-right: 15px;
     text-align: right;
+}
+
+.hint {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 10px 0;
+}
+
+.hint a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.hint a:hover {
+    text-decoration: underline;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.test-result {
+    margin-top: 15px;
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.test-result .result-icon {
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.test-result .result-icon.success {
+    color: #00c853;
+}
+
+.test-result .result-icon.error {
+    color: #ff6d00;
+}
+
+.test-result.success {
+    background: rgba(0, 200, 83, 0.1);
+    border: 1px solid #00c853;
+}
+
+.test-result.error {
+    background: rgba(255, 109, 0, 0.1);
+    border: 1px solid #ff6d00;
 }
 
 .form-control {

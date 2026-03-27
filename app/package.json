@@ -1,8 +1,8 @@
 {
-  "name": "electron-vuevite-quick-start",
-  "productName": "Electron VueVite - Quick Start",
+  "name": "QuasarX",
+  "productName": "QuasarX",
   "version": "0.3.1",
-  "description": "Your awesome app description",
+  "description": "QuasarX is a quant aplication for quant service",
   "main": "build/electron/main.js",
   "author": {
     "name": "Heliomar P. Marques",
@@ -13,12 +13,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/heliomarpm/electron-vuevite-quick-start.git"
+    "url": "git+https://github.com/webbery/QuasarX.git"
   },
   "bugs": {
-    "url": "https://github.com/heliomarpm/electron-vuevite-quick-start/issues"
+    "url": "https://github.com/webbery/QuasarX/issues"
   },
-  "homepage": "https://github.com/heliomarpm/electron-vuevite-quick-start#readme",
+  "homepage": "",
   "keywords": [
     "electron",
     "electron-quick-start",

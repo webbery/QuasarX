@@ -230,8 +230,8 @@ watch(() => props.selectedSecurity, async (newStock) => {
         statusMessage.value = `已选择 ${newStock.name} (${newStock.code})`;
         // 更新上下限
         const securityInfo = await getSecurityInfo(code.value)
-        upper = securityInfo.upper
-        lower = securityInfo.lower
+        upper = (securityInfo? securityInfo.upper: 0)
+        lower = (securityInfo? securityInfo.lower: 0)
     }
 }, { immediate: true });
 

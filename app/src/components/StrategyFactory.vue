@@ -1123,6 +1123,37 @@ const runBacktest = async () => {
       console.error('传递指标数据时出错:', metricsError)
     }
 
+    // 1.5 传递回测日期范围到 ReportView（用于获取基准数据）
+    try {
+      // 从交易信号中提取日期范围
+      const buySignals = result.buy || []
+      const sellSignals = result.sell || []
+      const allSignals = [...buySignals, ...sellSignals]
+
+      if (allSignals.length > 0) {
+        const timestamps = allSignals.map(s => s[1])
+        const minTime = Math.min(...timestamps)
+        const maxTime = Math.max(...timestamps)
+        const startDate = new Date(minTime * 1000)
+        const endDate = new Date(maxTime * 1000)
+
+        // 获取当前选择的基准指数
+        const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
+
+        if (reportViewRef.value && reportViewRef.value.updateBenchmark) {
+          reportViewRef.value.updateBenchmark({
+            symbol: benchmarkSymbol,
+            name: '',
+            startDate,
+            endDate
+          })
+          console.info(`回测日期范围已传递给报表组件：${startDate.toISOString().split('T')[0]} ~ ${endDate.toISOString().split('T')[0]}`)
+        }
+      }
+    } catch (dateError) {
+      console.warn('传递回测日期范围时出错:', dateError)
+    }
+
     // 2. 解析回测结果中的交易历史数据
     try {
       // 提取买卖信号
