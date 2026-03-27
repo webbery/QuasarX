@@ -271,7 +271,7 @@ const smtpConfig = ref({
 // TickFlow API 配置
 const tickflowApiKey = ref(localStorage.getItem('tickflow_api_key') || '');
 const testingConnection = ref(false);
-const testResult = ref<any>(null);
+const testResult = ref(null);
 
 // 任务调度
 const tasks = ref([

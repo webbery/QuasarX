@@ -27,12 +27,12 @@ const visible = ref(false)
 const title = ref('')
 const placeholder = ref('')
 const inputValue = ref('')
-let resolvePromise: ((value: string | null) => void) | null = null
+let resolvePromise: ((result: { cancelled: boolean; value: string }) => void) | null = null
 
 const inputRef = ref<HTMLInputElement>()
 
-// 显示对话框，返回 Promise<string | null>
-const show = (options: { title: string; placeholder?: string; defaultValue?: string }): Promise<string | null> => {
+// 显示对话框，返回 Promise<{ cancelled: boolean; value: string }>
+const show = (options: { title: string; placeholder?: string; defaultValue?: string }): Promise<{ cancelled: boolean; value: string }> => {
   title.value = options.title
   placeholder.value = options.placeholder || ''
   inputValue.value = options.defaultValue || ''
@@ -50,7 +50,7 @@ const show = (options: { title: string; placeholder?: string; defaultValue?: str
 
 const handleConfirm = () => {
   if (resolvePromise) {
-    resolvePromise(inputValue.value)
+    resolvePromise({ cancelled: false, value: inputValue.value })
   }
   visible.value = false
   resolvePromise = null
@@ -58,7 +58,7 @@ const handleConfirm = () => {
 
 const handleCancel = () => {
   if (resolvePromise) {
-    resolvePromise(null)
+    resolvePromise({ cancelled: true, value: '' })
   }
   visible.value = false
   resolvePromise = null

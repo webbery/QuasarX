@@ -922,16 +922,17 @@ const saveFlow = async () => {
     createNewVersion()
   } else {
     // 无策略 → 先新建策略，再保存版本
-    const strategyName = await promptDialogRef.value?.show({
+    const result = await promptDialogRef.value?.show({
       title: '新建策略',
       placeholder: '请输入策略名称'
     })
-    if (!strategyName || !strategyName.trim()) {
+    if (result?.cancelled) return
+    if (!result?.value || !result.value.trim()) {
       message.warning('策略名称不能为空')
       return
     }
     // 调用 store 添加策略
-    const newStrategyId = historyStore.addStrategy(strategyName.trim())
+    const newStrategyId = historyStore.addStrategy(result.value.trim())
     currentStrategyId.value = newStrategyId
     // 保存为新版本（默认备注）
     createNewVersion()
@@ -949,7 +950,7 @@ const createNewVersion = async (remark) => {
     nodes: getNodes.value,
     edges: getEdges.value
   }
-
+  console.info('flow data:', flowData)
   const versionId = historyStore.addVersion(
     currentStrategyId.value,
     flowData,
@@ -973,25 +974,26 @@ const formatDateForRemark = (date) => {
 const saveAsNewVersion = async () => {
   // 如果无策略，先新建
   if (!currentStrategyId.value) {
-    const strategyName = await promptDialogRef.value?.show({
+    const result = await promptDialogRef.value?.show({
       title: '新建策略',
       placeholder: '请输入策略名称'
     })
-    if (!strategyName || !strategyName.trim()) return
+    if (result?.cancelled) return
+    if (!result?.value || !result.value.trim()) return
 
-    const newStrategyId = historyStore.addStrategy(strategyName.trim())
+    const newStrategyId = historyStore.addStrategy(result.value.trim())
     currentStrategyId.value = newStrategyId
   }
 
-  // 弹出备注输入框（使用浏览器自带 prompt 简化）
+  // 弹出备注输入框
   const defaultRemark = formatDateForRemark(new Date())
-  const remark = await promptDialogRef.value?.show({
+  const result = await promptDialogRef.value?.show({
     title: '版本备注',
     placeholder: '请输入版本备注（留空将使用当前时间）',
     defaultValue: defaultRemark
   })
-  if (remark === null) return
-  createNewVersion(remark.trim() || undefined)
+  if (result?.cancelled) return
+  createNewVersion(result.value.trim() || undefined)
 }
 
 // 从localStorage加载保存的流程图
@@ -1253,16 +1255,19 @@ const loadVersionFromHistory = async (version) => {
         return
       }
     }
-    if (!versionData || !versionData.flowData) {
+    // 加载流程图数据（flowData 单独存储在 localStorage 中）
+    const flowData = loadVersionFlowData(versionData.id)
+    if (!versionData || !flowData) {
       message.error('版本数据中没有流程图信息')
       return
     }
+    // 将 flowData 附加到 versionData 上，供后续使用
+    versionData.flowData = flowData
 
     // 清空当前画布
     removeNodes(getNodes.value.map(n => n.id))
     removeEdges(getEdges.value.map(e => e.id))
 
-    const flowData = versionData.flowData
     const loadedNodes = flowData.nodes || []
     const loadedEdges = flowData.edges || []
 

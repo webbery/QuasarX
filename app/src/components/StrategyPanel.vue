@@ -280,14 +280,15 @@ const handleGlobalClick = () => {
 
 // 显示新建策略对话框
 const showNewStrategyDialog = async () => {
-  const name = await promptDialogRef.value?.show({
+  const result = await promptDialogRef.value?.show({
     title: '新建策略',
     placeholder: '请输入策略名称'
   })
-  if (name && name.trim()) {
-    const strategyId = addStrategy(name.trim())
+  if (result?.cancelled) return
+  if (result?.value && result.value.trim()) {
+    const strategyId = addStrategy(result.value.trim())
     expanded[strategyId] = true
-    message.success(`已创建策略 "${name}"`)
+    message.success(`已创建策略 "${result.value}"`)
   }
 }
 
@@ -328,7 +329,7 @@ const emit = defineEmits<{
 
 const loadVersion = (version: any) => {
   selectedVersionId.value = version.id
-  emit('load', version)
+  emit('load', version.id)
   emit('loadVersion', version.id)
 }
 </script>
