@@ -52,8 +52,8 @@
           </div>
 
           <div class="flow-container">
-              <VueFlow 
-                  :nodes="nodes" 
+              <VueFlow
+                  :nodes="nodes"
                   :edges="edges"
                   @pane-ready="onPaneReady"
                   @drop="onDrop"
@@ -66,6 +66,7 @@
                   @selection-context-menu="onSelectionContextMenu"
                   @pane-click="onPaneClick"
                   @connect="onConnect"
+                  @edges-delete="onEdgesDelete"
                   :is-valid-connection="isValidConnection"
               >
                   <template #node-custom="nodeProps">
@@ -84,10 +85,6 @@
           </div>
           <!-- 右下角功能按钮 -->
           <div class="flow-actions">
-            <button class="action-btn" @click="newFlow" title="新建策略图">
-                <i class="fas fa-plus"></i>
-                新建
-            </button>
             <button class="action-btn" @click="saveFlow" title="保存策略图">
                 <i class="fas fa-save"></i>
                 保存
@@ -184,7 +181,6 @@ const emit = defineEmits(['show-history', 'show-flow-components', 'load-version'
 // Pinia Store
 const historyStore = useHistoryStore()
 const { strategies, versions } = storeToRefs(historyStore)
-const { addStrategy, addVersion, saveVersionFlowData, loadVersionFlowData, getVersionsByStrategy } = historyStore
 
 // localStorage 键名
 const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
@@ -279,7 +275,9 @@ const formatTime = (date) => {
 }
 
 // 添加全局点击事件监听
-onMounted(() => {
+onMounted(async () => {
+    // 初始化 IndexedDB 数据
+    await historyStore.initialize()
     document.addEventListener('click', closeContextMenu)
     document.addEventListener('keydown', onKeyDown)
     // loadSavedFlow()
@@ -467,6 +465,9 @@ const onConnect = (connection) => {
   }
   // 添加到边数组
   addEdges([newEdge])
+
+  // 检查是否是信号节点连接到数据输入节点，如果是，自动同步 code
+  syncCodeFromQuoteInput(connection.target, connection.source)
 }
 
 // const onConnectStart = (event) => {
@@ -530,6 +531,7 @@ const keyMap = {
   "stampDuty": "印花税率",
   "minFee": "最低手续费",
   "slippage": "滑点",
+  "type": "执行类型",
 }
 
 // 定义节点类型配置
@@ -566,6 +568,11 @@ const nodeTypeConfigs = {
       "volume": {
         "value": "volume",
         "type": "text"
+      },
+      "频率": {
+        "value": "1d",
+        "type": "select",
+        "options": ["1d", "1m", "5m", "15m", "30m", "1h", "4h", "1w"]
       }
     }
   },
@@ -578,6 +585,11 @@ const nodeTypeConfigs = {
         "type": "select",
         "options":["股票", "期货", "期权"]
       },
+      "代码": {
+        "value": "",
+        "type": "text",
+        "visible": false
+      },
       "买入条件": {
         "value": "MA_5-MA_15 >= 0",
         "type": "text"
@@ -588,9 +600,9 @@ const nodeTypeConfigs = {
       }
     }
   },
-  'trade': {
+  'execution': {
     "label": "执行交易",
-    "nodeType": "trade",
+    "nodeType": "execution",
     "params": {
       "初始资金": {
         "value": 100000,
@@ -628,18 +640,17 @@ const nodeTypeConfigs = {
         "max": 0.01,
         "step": 0.0001
       },
-      "类型": {
-        "value": "股票",
+      "执行类型": {
+        "value": 0,
         "type": "select",
-        "options":["股票", "期货", "期权"]
+        "options": [
+          { "label": "立即执行 (市价单)", "value": 0 },
+          { "label": "立即执行 (限价单)", "value": 1 }
+        ]
       },
-      "策略": {
-        "value": "立即执行(市价单)",
-        "type": "select",
-        "options":["立即执行(市价单)", "立即执行(限价单)", "VWAP"]
-      },
+      
       "回测周期": {
-        "value": ["2020-01-01", "2023-12-31"], // 合并为日期范围
+        "value": ["2020-01-01", "2023-12-31"],
         "type": "daterange"
       }
     }
@@ -848,6 +859,64 @@ const updateNodeData = (nodeId, paramKey, newValue) => {
         // 更新node的title
         node.data.label = newValue
       }
+    } else if (paramKey === '代码' && node.data.nodeType === 'input') {
+      syncCodeToConnectedSignalNodes(nodeId, newValue)
+    }
+  }
+}
+
+// 同步 code 到所有连接的信号节点
+const syncCodeToConnectedSignalNodes = (quoteInputNodeId, codeValue) => {
+  const connectedEdges = getEdges.value.filter(e => e.source === quoteInputNodeId)
+  for (const edge of connectedEdges) {
+    const targetNode = getNodes.value.find(n => n.id === edge.target)
+    if (targetNode && targetNode.data.nodeType === 'signal') {
+      updateNodeData(edge.target, '代码', codeValue)
+    }
+  }
+}
+// 从 QuoteInput 节点同步 code 到信号节点
+const syncCodeFromQuoteInput = (signalNodeId, quoteInputNodeId) => {
+  const signalNode = getNodes.value.find(n => n.id === signalNodeId)
+  const quoteNode = getNodes.value.find(n => n.id === quoteInputNodeId)
+
+  if (!signalNode || !quoteNode) return
+  if (signalNode.data.nodeType !== 'signal') return
+  if (quoteNode.data.nodeType !== 'input') return
+
+  // 从 QuoteInput 节点获取代码值
+  const codeParam = quoteNode.data.params['代码']
+  if (!codeParam) return
+
+  let codeValue = codeParam.value
+  // 如果 codeValue 是数组，转为逗号分隔的字符串
+  if (Array.isArray(codeValue)) {
+    codeValue = codeValue.join(',')
+  }
+
+  // 更新信号节点的 code 参数
+  updateNodeData(signalNodeId, '代码', codeValue)
+}
+
+// 处理边删除，当信号节点与 QuoteInput 断开连接时，清空 code
+const onEdgesDelete = (deletedEdges) => {
+  for (const edge of deletedEdges) {
+    const targetNode = getNodes.value.find(n => n.id === edge.target)
+    if (targetNode && targetNode.data.nodeType === 'signal') {
+      // 检查是否还有其他输入节点连接到该信号节点
+      const connectedEdges = getEdges.value.filter(e =>
+        e.target === edge.target &&
+        e.source !== edge.source
+      )
+      const hasOtherInputConnection = connectedEdges.some(e => {
+        const sourceNode = getNodes.value.find(n => n.id === e.source)
+        return sourceNode && sourceNode.data.nodeType === 'input'
+      })
+
+      // 如果没有其他输入节点连接，清空 code
+      if (!hasOtherInputConnection) {
+        updateNodeData(edge.target, '代码', '')
+      }
     }
   }
 }
@@ -903,18 +972,6 @@ const deleteSelectedEdges = () => {
   clearEdgeSelection()
 }
 
-// 新建流程图
-const newFlow = () => {
-  if (hasUnsavedChanges.value && !confirm('确定要新建流程图吗？当前未保存的更改将会丢失。')) {
-    return
-  }
-  removeNodes(getNodes.value.map(e=>e.id))
-  removeEdges(getEdges.value.map(e => e.id))
-  nodeIdCounter = 1
-  currentStrategyId.value = null
-  currentVersionId.value = null
-  hasUnsavedChanges.value = false
-}
 // 保存流程图到localStorage
 const saveFlow = async () => {
   if (currentStrategyId.value) {
@@ -932,7 +989,7 @@ const saveFlow = async () => {
       return
     }
     // 调用 store 添加策略
-    const newStrategyId = historyStore.addStrategy(result.value.trim())
+    const newStrategyId = await historyStore.addStrategy(result.value.trim())
     currentStrategyId.value = newStrategyId
     // 保存为新版本（默认备注）
     createNewVersion()
@@ -950,16 +1007,23 @@ const createNewVersion = async (remark) => {
     nodes: getNodes.value,
     edges: getEdges.value
   }
-  console.info('flow data:', flowData)
-  const versionId = historyStore.addVersion(
-    currentStrategyId.value,
-    flowData,
-    remark
-  )
+  console.info('[createNewVersion] 准备保存 flowData:', flowData)
+  console.info(`[createNewVersion] 当前策略 ID: ${currentStrategyId.value}`)
 
-  currentVersionId.value = versionId
-  hasUnsavedChanges.value = false
-  message.success('版本保存成功')
+  try {
+    const versionId = await historyStore.addVersion(
+      currentStrategyId.value,
+      flowData,
+      remark
+    )
+    console.info(`[createNewVersion] 版本已保存：${versionId}`)
+    currentVersionId.value = versionId
+    hasUnsavedChanges.value = false
+    message.success('版本保存成功')
+  } catch (error) {
+    console.error('[createNewVersion] 保存失败:', error)
+    message.error('保存失败')
+  }
 }
 
 const formatDateForRemark = (date) => {
@@ -981,7 +1045,7 @@ const saveAsNewVersion = async () => {
     if (result?.cancelled) return
     if (!result?.value || !result.value.trim()) return
 
-    const newStrategyId = historyStore.addStrategy(result.value.trim())
+    const newStrategyId = await historyStore.addStrategy(result.value.trim())
     currentStrategyId.value = newStrategyId
   }
 
@@ -1086,12 +1150,89 @@ const showStrategyNodes = () => {
   emit('show-flow-components') // 触发显示节点组件面板事件
 }
 
+// 验证流程图有效性
+const validateFlow = () => {
+  const nodes = getNodes.value
+  if (nodes.length === 0) {
+    message.error('流程图为空，请添加节点')
+    return false
+  }
+
+  const hasSignalNode = nodes.some(n => n.data.nodeType === 'signal')
+  if (!hasSignalNode) {
+    message.error('缺少信号节点，请添加至少一个信号输出节点')
+    return false
+  }
+
+  const hasDataNode = nodes.some(n => n.data.nodeType === 'input')
+  if (!hasDataNode) {
+    message.error('缺少数据节点，请添加数据输入节点')
+    return false
+  }
+
+  return true
+}
+
+// 确保有版本 ID（用于保存回测结果）
+const ensureVersionId = async () => {
+  // 如果已有版本 ID，直接返回
+  if (currentVersionId.value) {
+    return currentVersionId.value
+  }
+
+  // 如果有策略 ID 但没有版本 ID，创建临时版本
+  if (currentStrategyId.value) {
+    const flowData = {
+      nodes: getNodes.value,
+      edges: getEdges.value
+    }
+    const tempVersionId = await historyStore.createTempVersion(currentStrategyId.value, flowData)
+    currentVersionId.value = tempVersionId
+    hasUnsavedChanges.value = true
+    console.info(`[ensureVersionId] 已创建临时版本：${tempVersionId}`)
+    message.info('已创建临时版本用于保存回测结果')
+    return tempVersionId
+  }
+
+  // 如果没有策略，创建临时策略和临时版本
+  const tempStrategyName = `临时策略_${new Date().toLocaleTimeString()}`
+  const tempStrategyId = await historyStore.addStrategy(tempStrategyName)
+  currentStrategyId.value = tempStrategyId
+
+  const flowData = {
+    nodes: getNodes.value,
+    edges: getEdges.value
+  }
+  const tempVersionId = await historyStore.createTempVersion(tempStrategyId, flowData)
+  currentVersionId.value = tempVersionId
+  hasUnsavedChanges.value = true
+  console.info(`[ensureVersionId] 已创建临时策略：${tempStrategyId}, 临时版本：${tempVersionId}`)
+  message.info('已创建临时策略和版本用于保存回测结果')
+  return tempVersionId
+}
+
 const runBacktest = async () => {
-  // 获取当前图节点信息
+  // 1. 验证流程图
+  if (!validateFlow()) {
+    return
+  }
+
+  // 2. 确保有版本 ID 用于保存回测结果
+  const versionId = await ensureVersionId()
+  if (!versionId) {
+    message.error('无法创建版本，回测中止')
+    return
+  }
+
+  // 3. 获取当前图节点信息（使用动态生成的策略信息）
+  const strategyName = currentStrategyId.value
+    ? strategies.value.find(s => s.id === currentStrategyId.value)?.name || '未命名策略'
+    : '临时策略'
+
   const curGraph = {
-    "id": "graph_ma2",
-    "name": "双均线动量流水线",
-    "description": "包含数据输入、特征工程、信号输出和结果输出的完整流水线",
+    id: currentStrategyId.value ? `strategy_${currentStrategyId.value}` : `temp_${Date.now()}`,
+    name: strategyName,
+    description: '用户自定义策略',
     nodes: getNodes.value,
     edges: getEdges.value
   }
@@ -1103,17 +1244,13 @@ const runBacktest = async () => {
   }
   console.info('graph:', graph)
 
-  // 切换回测结果面板
-  activeTab.value = 'backtest'
-
   try {
     const response = await axios.post('/v0/backtest', {script: graph})
     console.info('backtest result:', response)
 
     const result = response.data
-    console.info('backtest data:', result)
 
-    // 1. 传递指标数据到 ReportView
+    // 4. 传递指标数据到 ReportView
     try {
       if (reportViewRef.value && reportViewRef.value.updateMetrics) {
         reportViewRef.value.updateMetrics(result.features || {})
@@ -1125,9 +1262,8 @@ const runBacktest = async () => {
       console.error('传递指标数据时出错:', metricsError)
     }
 
-    // 1.5 传递回测日期范围到 ReportView（用于获取基准数据）
+    // 5. 传递回测日期范围到 ReportView（用于获取基准数据）
     try {
-      // 从交易信号中提取日期范围
       const buySignals = result.buy || []
       const sellSignals = result.sell || []
       const allSignals = [...buySignals, ...sellSignals]
@@ -1139,7 +1275,6 @@ const runBacktest = async () => {
         const startDate = new Date(minTime * 1000)
         const endDate = new Date(maxTime * 1000)
 
-        // 获取当前选择的基准指数
         const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
 
         if (reportViewRef.value && reportViewRef.value.updateBenchmark) {
@@ -1156,13 +1291,11 @@ const runBacktest = async () => {
       console.warn('传递回测日期范围时出错:', dateError)
     }
 
-    // 2. 解析回测结果中的交易历史数据
+    // 6. 解析回测结果中的交易历史数据
     try {
-      // 提取买卖信号
       const buySignals = result.buy || []
       const sellSignals = result.sell || []
 
-      // 转换数据格式：从 [symbol, timestamp, quantity, price] 到 [dateString, price]
       const formatSignals = (signals) => {
         return signals.map(signal => {
           const timestamp = signal[1]
@@ -1188,13 +1321,34 @@ const runBacktest = async () => {
       console.error('解析回测交易历史数据时出错:', parseError)
     }
 
-    // 3. 显示回测完成消息
+    // 7. 保存回测结果到 historyStore
+    try {
+      const backtestResult = {
+        backtestTime: new Date().toISOString(),
+        features: result.features || {},
+        summary: result.summary || {},
+        buy: result.buy || [],
+        sell: result.sell || [],
+        script: graph
+      }
+      historyStore.saveBacktestResult(versionId, backtestResult)
+      console.info(`回测结果已保存到版本 ${versionId}`)
+    } catch (saveError) {
+      console.error('保存回测结果失败:', saveError)
+    }
+
+    // 8. 显示回测完成消息
     const summary = result.summary || {}
     const buyCount = summary.buy_count || (result.buy?.length || 0)
     const sellCount = summary.sell_count || (result.sell?.length || 0)
     const indicatorCount = summary.indicator_count || Object.keys(result.features || {}).length
 
     addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，${indicatorCount}个指标`, 'success')
+
+    // 9. 所有处理完成后再切换 Tab
+    nextTick(() => {
+      activeTab.value = 'backtest'
+    })
 
   } catch (error) {
     console.error('回测失败:', error)
@@ -1221,7 +1375,7 @@ const runBacktest = async () => {
     return
   }
 
-  // 获取信号节点的代码和日期范围
+  // 10. 获取信号节点的代码和日期范围
   let signalNode = null
   for (const node of getNodes.value) {
     if (node.data.nodeType === 'signal') {
@@ -1240,6 +1394,9 @@ const runBacktest = async () => {
         reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
       })
     }
+  } else {
+    console.warn('未找到信号节点，无法更新价格图表')
+    addInfoMessage('未找到信号节点，价格图表将不会更新', 'warning')
   }
 }
 
@@ -1255,21 +1412,31 @@ const loadVersionFromHistory = async (version) => {
         return
       }
     }
-    // 加载流程图数据（flowData 单独存储在 localStorage 中）
-    const flowData = loadVersionFlowData(versionData.id)
-    if (!versionData || !flowData) {
+    // 加载流程图数据（flowData 单独存储在 IndexedDB 中）
+    const flowData = await historyStore.loadVersionFlowData(versionData.id)
+
+    // 如果没有找到 flowData，尝试使用 version 中存储的 flowData（如果有）
+    if (!flowData && versionData.flowData) {
+      console.info(`版本 ${versionData.id} 的 flowData 来自内存缓存`)
+    }
+
+    if (!flowData && !versionData.flowData) {
       message.error('版本数据中没有流程图信息')
       return
     }
+
+    // 使用 flowData（优先使用 IndexedDB 中的，其次使用内存中的）
+    const finalFlowData = flowData || versionData.flowData
+
     // 将 flowData 附加到 versionData 上，供后续使用
-    versionData.flowData = flowData
+    versionData.flowData = finalFlowData
 
     // 清空当前画布
     removeNodes(getNodes.value.map(n => n.id))
     removeEdges(getEdges.value.map(e => e.id))
 
-    const loadedNodes = flowData.nodes || []
-    const loadedEdges = flowData.edges || []
+    const loadedNodes = finalFlowData.nodes || []
+    const loadedEdges = finalFlowData.edges || []
 
     // 添加节点
     if (loadedNodes.length > 0) {
@@ -1323,6 +1490,13 @@ const loadVersionFromHistory = async (version) => {
       setTimeout(() => {
         fitView({ padding: 0.25 })
       }, 100)
+
+      // 加载该版本的回测结果（如果有）
+      nextTick(async () => {
+        if (reportViewRef.value && reportViewRef.value.loadBacktestResultFromVersion) {
+          await reportViewRef.value.loadBacktestResultFromVersion(versionData.id)
+        }
+      })
     })
   } catch (error) {
     console.error('加载版本数据失败:', error)

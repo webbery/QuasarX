@@ -112,7 +112,7 @@
       <div v-else-if="is_risk">
         <RiskPanel></RiskPanel>
       </div>
-      <div v-else-if="is_strategy">
+      <div v-else-if="is_strategy" style="height: 100%">
         <StrategyPanel v-if="selectedStrategyPanel" @load="onLoadVersionFromPanel" @createNewVersion="onCreateNewVersion"></StrategyPanel>
         <FlowComponents v-else></FlowComponents>
       </div>

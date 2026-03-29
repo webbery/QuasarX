@@ -43,7 +43,7 @@
                 
                 <!-- 右侧输出连接点 -->
                 <Handle
-                    v-if="nodeType !== 'output' && nodeType !== 'input' && nodeType !== 'trade'"
+                    v-if="nodeType !== 'output' && nodeType !== 'input' && nodeType !== 'execution'"
                     type="source"
                     :position="Position.Right"
                     id="output"

@@ -215,6 +215,7 @@ import {
   KlineData,
   clearExpiredCache,
 } from '../lib/tickflow';
+import { useHistoryStore, type BacktestResult } from '@/stores/history'
 
 // 暗色主题配置保持不变
 const darkTheme = {
@@ -1105,6 +1106,59 @@ function updateBenchmark(data: { symbol: string; name: string; startDate: Date; 
   }
 }
 
+// 新增：从版本加载回测结果
+async function loadBacktestResultFromVersion(versionId: string) {
+  const historyStore = useHistoryStore()
+  const backtestResult = await historyStore.loadBacktestResult(versionId)
+
+  if (backtestResult) {
+    console.info(`[ReportView] 加载版本 ${versionId} 的回测结果`)
+
+    // 1. 恢复策略指标
+    updateMetrics(backtestResult.features || {})
+
+    // 2. 恢复交易信号
+    const formatSignals = (signals: any[]) => {
+      return signals.map(signal => {
+        const timestamp = signal[1]
+        const price = signal[3]
+        const date = new Date(timestamp * 1000)
+        const Y = date.getFullYear() + '-'
+        const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
+        const D = date.getDate()
+        return [Y + M + D, price]
+      })
+    }
+
+    updateTradeSignals(
+      formatSignals(backtestResult.buy || []),
+      formatSignals(backtestResult.sell || [])
+    )
+
+    // 3. 提取日期范围并加载基准数据
+    const allSignals = [...(backtestResult.buy || []), ...(backtestResult.sell || [])]
+    if (allSignals.length > 0) {
+      const timestamps = allSignals.map(s => s[1])
+      const minTime = Math.min(...timestamps)
+      const maxTime = Math.max(...timestamps)
+      const startDate = new Date(minTime * 1000)
+      const endDate = new Date(maxTime * 1000)
+
+      const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
+      updateBenchmark({
+        symbol: benchmarkSymbol,
+        name: '',
+        startDate,
+        endDate
+      })
+    }
+
+    console.info(`[ReportView] 回测结果已恢复：${backtestResult.buy?.length || 0} 笔买入，${backtestResult.sell?.length || 0} 笔卖出`)
+  } else {
+    console.info(`[ReportView] 版本 ${versionId} 没有回测结果`)
+  }
+}
+
 // 新增：更新指标表格
 function updateMetricsTable() {
   const tbody = document.querySelector('#scrollableTable tbody')
@@ -1167,6 +1221,7 @@ defineExpose({
     updateTradeSignals,  // 新增
     updateMetrics,       // 新增：更新策略指标
     updateBenchmark,     // 新增：更新基准数据
+    loadBacktestResultFromVersion,  // 新增：从版本加载回测结果
     resetTableZoom
 })
 </script>

@@ -31,7 +31,7 @@
             <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'debug')" title="将输入数据下载成指定格式">
                 <div class="component-title">调试节点</div>
             </div>
-            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'trade')" title="执行交易操作">
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'execution')" title="执行交易操作">
                 <div class="component-title">交易执行节点</div>
             </div>
             <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'risk')" title="风控定制">

@@ -1,5 +1,5 @@
 <template>
-  <div class="history-panel" @click.right.prevent @contextmenu.prevent="hideContextMenu">
+  <div class="history-panel" @click.right.prevent @contextmenu.prevent="showContextMenu($event, 'blank')">
     <!-- 树形结构区域 -->
     <div class="tree-container">
       <div
@@ -70,12 +70,6 @@
           </div>
         </transition>
       </div>
-    </div>
-
-    <!-- 新建策略按钮 -->
-    <div class="new-strategy-btn" @click="showNewStrategyDialog">
-      <i class="fas fa-plus"></i>
-      <span>新建策略</span>
     </div>
 
     <!-- 自定义右键菜单 -->
@@ -166,6 +160,10 @@ const menuItems = computed(() => {
       { label: '编辑', action: 'editRemark' },
       { label: '删除', action: 'deleteVersion' }
     ]
+  } else if (contextMenu.type === 'blank') {
+    return [
+      { label: '新建策略', action: 'createBlankStrategy' }
+    ]
   }
   return []
 })
@@ -247,9 +245,22 @@ const hideContextMenu = () => {
   contextMenu.visible = false
 }
 
+// // 显示空白区域的右键菜单（新建策略）
+// const showBlankContextMenu = (e: MouseEvent) => {
+//   // 隐藏任何已存在的菜单
+//   hideContextMenu()
+//   // 设置空白菜单
+//   contextMenu.visible = true
+//   contextMenu.x = e.clientX
+//   contextMenu.y = e.clientY
+//   contextMenu.type = 'blank'
+//   contextMenu.data = null
+// }
+
 // 点击菜单项处理
 const handleMenuItemClick = async (action: string) => {
-  if (!contextMenu.data) return
+  // createBlankStrategy 在空白区域右键时 contextMenu.data 为 null，需要放行
+  if (!contextMenu.data && action !== 'createBlankStrategy') return
 
   if (action === 'editStrategyName') {
     startEditing('strategy', contextMenu.data.id, contextMenu.data.name)
@@ -268,6 +279,8 @@ const handleMenuItemClick = async (action: string) => {
     if (confirm(`确定要删除 ${formatDate(contextMenu.data.saveTime)} 的版本吗？`)) {
       await removeVersion(contextMenu.data.id)
     }
+  } else if (action === 'createBlankStrategy') {
+    await showNewStrategyDialog()
   }
 
   hideContextMenu()
@@ -286,7 +299,7 @@ const showNewStrategyDialog = async () => {
   })
   if (result?.cancelled) return
   if (result?.value && result.value.trim()) {
-    const strategyId = addStrategy(result.value.trim())
+    const strategyId = await addStrategy(result.value.trim())
     expanded[strategyId] = true
     message.success(`已创建策略 "${result.value}"`)
   }
@@ -298,14 +311,14 @@ const closeDialog = () => {
 }
 
 // 创建新策略
-const createStrategy = () => {
+const createStrategy = async () => {
   const name = newStrategyName.value.trim()
   if (!name) {
     message.error('请输入策略名称')
     return
   }
 
-  const strategyId = addStrategy(name)
+  const strategyId = await addStrategy(name)
   expanded[strategyId] = true
   closeDialog()
   message.success(`已创建策略 "${name}"`)
@@ -502,36 +515,6 @@ const loadVersion = (version: any) => {
   margin-bottom: 0;
   padding-top: 0;
   padding-bottom: 0;
-}
-
-/* 新建策略按钮 */
-.new-strategy-btn {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: linear-gradient(90deg, #2563eb, #1d4ed8);
-  color: white;
-  border-radius: 25px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 500;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
-  transition: all 0.3s ease;
-}
-
-.new-strategy-btn:hover {
-  background: linear-gradient(90deg, #1d4ed8, #1e40af);
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
-  transform: translateX(-50%) translateY(-2px);
-}
-
-.new-strategy-btn i {
-  font-size: 1rem;
 }
 
 /* 对话框样式 */
