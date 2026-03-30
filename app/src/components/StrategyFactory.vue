@@ -467,7 +467,7 @@ const onConnect = (connection) => {
   addEdges([newEdge])
 
   // 检查是否是信号节点连接到数据输入节点，如果是，自动同步 code
-  syncCodeFromQuoteInput(connection.target, connection.source)
+  // syncCodeFromQuoteInput(connection.target, connection.source)
 }
 
 // const onConnectStart = (event) => {
@@ -859,66 +859,137 @@ const updateNodeData = (nodeId, paramKey, newValue) => {
         // 更新node的title
         node.data.label = newValue
       }
-    } else if (paramKey === '代码' && node.data.nodeType === 'input') {
-      syncCodeToConnectedSignalNodes(nodeId, newValue)
     }
   }
 }
 
-// 同步 code 到所有连接的信号节点
-const syncCodeToConnectedSignalNodes = (quoteInputNodeId, codeValue) => {
-  const connectedEdges = getEdges.value.filter(e => e.source === quoteInputNodeId)
-  for (const edge of connectedEdges) {
-    const targetNode = getNodes.value.find(n => n.id === edge.target)
-    if (targetNode && targetNode.data.nodeType === 'signal') {
-      updateNodeData(edge.target, '代码', codeValue)
-    }
-  }
-}
+// // 同步 code 到所有连接的信号节点
+// const syncCodeToConnectedSignalNodes = (quoteInputNodeId, codeValue) => {
+//   const connectedEdges = getEdges.value.filter(e => e.source === quoteInputNodeId)
+//   for (const edge of connectedEdges) {
+//     const targetNode = getNodes.value.find(n => n.id === edge.target)
+//     if (targetNode && targetNode.data.nodeType === 'signal') {
+//       updateNodeData(edge.target, 'code', codeValue)
+//     }
+//   }
+// }
 // 从 QuoteInput 节点同步 code 到信号节点
-const syncCodeFromQuoteInput = (signalNodeId, quoteInputNodeId) => {
-  const signalNode = getNodes.value.find(n => n.id === signalNodeId)
-  const quoteNode = getNodes.value.find(n => n.id === quoteInputNodeId)
+// const syncCodeFromQuoteInput = (signalNodeId, quoteInputNodeId) => {
+//   const signalNode = getNodes.value.find(n => n.id === signalNodeId)
+//   const quoteNode = getNodes.value.find(n => n.id === quoteInputNodeId)
 
-  if (!signalNode || !quoteNode) return
-  if (signalNode.data.nodeType !== 'signal') return
-  if (quoteNode.data.nodeType !== 'input') return
+//   if (!signalNode || !quoteNode) return
+//   if (signalNode.data.nodeType !== 'signal') return
+//   if (quoteNode.data.nodeType !== 'input') return
 
-  // 从 QuoteInput 节点获取代码值
-  const codeParam = quoteNode.data.params['代码']
-  if (!codeParam) return
+//   // 从 QuoteInput 节点获取代码值
+//   const codeParam = quoteNode.data.params['code']
+//   if (!codeParam) return
 
-  let codeValue = codeParam.value
-  // 如果 codeValue 是数组，转为逗号分隔的字符串
-  if (Array.isArray(codeValue)) {
-    codeValue = codeValue.join(',')
+//   let codeValue = codeParam.value
+//   // 如果 codeValue 是数组，转为逗号分隔的字符串
+//   if (Array.isArray(codeValue)) {
+//     codeValue = codeValue.join(',')
+//   }
+
+//   // 更新信号节点的 code 参数
+//   updateNodeData(signalNodeId, 'code', codeValue)
+// }
+
+// 从 input 节点出发，沿连接方向查找所有可达的 signal 节点（BFS 遍历）
+const findSignalNodesFromInput = (inputNodeId, edges, nodes) => {
+  const signalNodes = []
+  const visited = new Set()
+  const queue = [inputNodeId]
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()
+    if (visited.has(currentId)) continue
+    visited.add(currentId)
+
+    // 找到从当前节点出发的所有边
+    const outgoingEdges = edges.filter(e => e.source === currentId)
+    for (const edge of outgoingEdges) {
+      const targetId = edge.target
+      if (!visited.has(targetId)) {
+        const targetNode = nodes.find(n => n.id === targetId)
+        if (targetNode) {
+          if (targetNode.data.nodeType === 'signal') {
+            signalNodes.push(targetNode)
+          }
+          // 继续遍历下游节点
+          queue.push(targetId)
+        }
+      }
+    }
   }
 
-  // 更新信号节点的 code 参数
-  updateNodeData(signalNodeId, '代码', codeValue)
+  return signalNodes
+}
+
+// 同步 code 从 input 节点到所有可达的 signal 节点
+const syncCodeToDownstreamSignals = (inputNode, edges, nodes) => {
+  const codeValue = inputNode.data.params['代码']?.value
+  if (!codeValue) return
+
+  // 将 code 转换为带交易所前缀的格式
+  const normalizedCode = normalizeCode(codeValue)
+
+  const signalNodes = findSignalNodesFromInput(inputNode.id, edges, nodes)
+  for (const signalNode of signalNodes) {
+    updateNodeData(signalNode.id, '代码', normalizedCode)
+  }
+}
+
+// 将股票代码转换为带交易所前缀的格式 (eg: 000001 -> sz.000001, 600519 -> sh.600519)
+const normalizeCode = (code: string): string => {
+  code = code.trim()
+  // 如果已经包含交易所前缀，直接返回
+  if (code.includes('.')) {
+    return code.toLowerCase()
+  }
+  // 根据股票代码规则判断交易所
+  const firstDigit = code.charAt(0)
+  const firstTwo = code.substring(0, 2)
+  const firstThree = code.substring(0, 3)
+
+  if (firstDigit === '6' || firstThree === '688') {
+    return 'sh.' + code
+  } else if (firstDigit === '0' || firstDigit === '3') {
+    return 'sz.' + code
+  } else if (firstDigit === '4' || firstDigit === '8') {
+    return 'bj.' + code
+  } else if (firstTwo === '51' || firstTwo === '52') {
+    // ETF 基金
+    return 'sh.' + code
+  } else if (firstTwo === '15' || firstTwo === '16') {
+    return 'sz.' + code
+  }
+  // 默认返回 sz
+  return 'sz.' + code
 }
 
 // 处理边删除，当信号节点与 QuoteInput 断开连接时，清空 code
 const onEdgesDelete = (deletedEdges) => {
-  for (const edge of deletedEdges) {
-    const targetNode = getNodes.value.find(n => n.id === edge.target)
-    if (targetNode && targetNode.data.nodeType === 'signal') {
-      // 检查是否还有其他输入节点连接到该信号节点
-      const connectedEdges = getEdges.value.filter(e =>
-        e.target === edge.target &&
-        e.source !== edge.source
-      )
-      const hasOtherInputConnection = connectedEdges.some(e => {
-        const sourceNode = getNodes.value.find(n => n.id === e.source)
-        return sourceNode && sourceNode.data.nodeType === 'input'
-      })
+  // for (const edge of deletedEdges) {
+  //   const targetNode = getNodes.value.find(n => n.id === edge.target)
+  //   if (targetNode && targetNode.data.nodeType === 'signal') {
+  //     // 检查是否还有其他输入节点连接到该信号节点
+  //     const connectedEdges = getEdges.value.filter(e =>
+  //       e.target === edge.target &&
+  //       e.source !== edge.source
+  //     )
+  //     const hasOtherInputConnection = connectedEdges.some(e => {
+  //       const sourceNode = getNodes.value.find(n => n.id === e.source)
+  //       return sourceNode && sourceNode.data.nodeType === 'input'
+  //     })
 
-      // 如果没有其他输入节点连接，清空 code
-      if (!hasOtherInputConnection) {
-        updateNodeData(edge.target, '代码', '')
-      }
-    }
-  }
+  //     // 如果没有其他输入节点连接，清空 code
+  //     if (!hasOtherInputConnection) {
+  //       updateNodeData(edge.target, 'code', '')
+  //     }
+  //   }
+  // }
 }
 
 // 边点击事件
@@ -1224,7 +1295,13 @@ const runBacktest = async () => {
     return
   }
 
-  // 3. 获取当前图节点信息（使用动态生成的策略信息）
+  // 3. 同步 input 节点的 code 到所有可达的 signal 节点（确保回测前数据一致）
+  const inputNodes = getNodes.value.filter(n => n.data.nodeType === 'input')
+  for (const inputNode of inputNodes) {
+    syncCodeToDownstreamSignals(inputNode, getEdges.value, getNodes.value)
+  }
+
+  // 4. 获取当前图节点信息（使用动态生成的策略信息）
   const strategyName = currentStrategyId.value
     ? strategies.value.find(s => s.id === currentStrategyId.value)?.name || '未命名策略'
     : '临时策略'

@@ -111,6 +111,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
+    String errorMessage;
     while (exchange->IsLogin() && !_server->IsExit()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -121,6 +122,15 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             SendSSEProgress(sse_sock, strategyName, 0.3 + progress * 0.5, msg);
             lastProgress = progress;
         }
+    }
+
+    // 检查是否因错误而退出（exchange->IsLogin() 为 false 但 progress < 1.0）
+    if (!exchange->IsLogin() && lastProgress < 0.99) {
+        res.status = 500;
+        String msg = R"({"message": "Backtest failed: Load CSV data failed. Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') and the CSV file exists."})";
+        res.set_content(msg.c_str(), "application/json");
+        exchange->Logout(AccountType::MAIN);
+        return;
     }
 
     SendSSEProgress(sse_sock, strategyName, 0.85, "回测执行完成，正在收集结果");

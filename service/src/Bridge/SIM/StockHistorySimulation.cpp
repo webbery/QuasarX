@@ -271,8 +271,11 @@ void StockHistorySimulation::LoadT1(const String& code) {
 
     // 加载复权数据
     if (!LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol])) {
-        INFO("load {} fail", file_path);
-        return;
+        String err_msg = fmt::format("Failed to load backtest data for '{}': CSV file not found or invalid at '{}'. "
+                                     "Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') "
+                                     "and the CSV file exists in the data directory.", code, file_path);
+        WARN("{}", err_msg);
+        throw std::runtime_error(err_msg);
     }
 
     // 加载原始价格数据（AStock）
@@ -293,7 +296,13 @@ void StockHistorySimulation::LoadT0(const String& code) {
   }
   auto file_path = _org_path + "/zh/" + subdir + "/" + code + ".csv";
 
-  LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol]);
+  if (!LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol])) {
+      String err_msg = fmt::format("Failed to load backtest data for '{}': CSV file not found or invalid at '{}'. "
+                                   "Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') "
+                                   "and the CSV file exists in the data directory.", code, file_path);
+      WARN("{}", err_msg);
+      throw std::runtime_error(err_msg);
+  }
 }
 
 void StockHistorySimulation::QueryQuotes() {
