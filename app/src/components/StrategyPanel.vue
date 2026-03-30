@@ -1,5 +1,5 @@
 <template>
-  <div class="history-panel" @click.right.prevent @contextmenu.prevent="showContextMenu($event, 'blank')">
+  <div class="history-panel" @click.right.prevent @contextmenu.prevent="showContextMenu($event, 'blank', null)">
     <!-- 树形结构区域 -->
     <div class="tree-container">
       <div
@@ -143,7 +143,7 @@ const contextMenu = reactive({
   visible: false,
   x: 0,
   y: 0,
-  type: '' as 'strategy' | 'version',
+  type: '' as 'strategy' | 'version' | 'blank',
   data: null as any
 })
 
@@ -231,7 +231,7 @@ const clearEdit = () => {
 }
 
 // 显示菜单
-const showContextMenu = (e: MouseEvent, type: 'strategy' | 'version', data: any) => {
+const showContextMenu = (e: MouseEvent, type: 'strategy' | 'version' | 'blank', data: any) => {
   e.preventDefault()
   contextMenu.visible = true
   contextMenu.x = e.clientX

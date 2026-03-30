@@ -31,11 +31,11 @@
               <div class="progress-header">
                 <span class="progress-strategy">{{ backtestProgress.strategy }}</span>
                 <span class="progress-percent">{{ Math.round(backtestProgress.progress * 100) }}%</span>
+                <span class="progress-message">{{ backtestProgress.message }}</span>
               </div>
               <div class="progress-bar-container">
                 <div class="progress-bar" :style="{ width: backtestProgress.progress * 100 + '%' }"></div>
               </div>
-              <div class="progress-message">{{ backtestProgress.message }}</div>
             </div>
             <!-- 消息列表 -->
             <div class="info-panel-content" ref="infoPanelContent">
