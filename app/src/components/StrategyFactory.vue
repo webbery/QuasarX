@@ -942,7 +942,7 @@ const syncCodeToDownstreamSignals = (inputNode, edges, nodes) => {
 }
 
 // 将股票代码转换为带交易所前缀的格式 (eg: 000001 -> sz.000001, 600519 -> sh.600519)
-const normalizeCode = (code: string): string => {
+const normalizeCode = (code) => {
   code = code.trim()
   // 如果已经包含交易所前缀，直接返回
   if (code.includes('.')) {

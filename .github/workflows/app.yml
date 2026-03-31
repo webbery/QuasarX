@@ -116,13 +116,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Linux Artifacts
-        uses: actions/upload-artifact@v-v4
+        uses: actions/upload-artifact@v4
         with:
           name: linux-build
           path: |
             dist/*.AppImage
             dist/*.deb
-            dist/*.rpm
           if-no-files-found: ignore
 
   # ========== 发布到 GitHub Releases ==========

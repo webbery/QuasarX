@@ -74,6 +74,12 @@
           <i class="fas fa-wind"></i>
           <span>风险控制</span>
         </div>
+        <div class="nav-item" :class="{active: is_portfolio}"
+          @click="onHandlePortfolioMananger"
+        >
+          <i class="fas fa-wind"></i>
+          <span>投资组合</span>
+        </div>
         <div class="nav-item" :class="{ active: is_visual_analysis }"
           @click="onHandleVisualAnanlysis"
         >
@@ -121,6 +127,9 @@
       </div>
       <div v-else-if="is_position">
         <TradePanel :selectedSecurity="selectedSecurity" :highlight="highlightTradePanel"></TradePanel>
+      </div>
+      <div v-else-if="is_portfolio">
+        <PortfolioPanel :selectedSecurity="selectedSecurity" :highlight="highlightTradePanel"></PortfolioPanel>
       </div>
     </aside>
 
@@ -170,6 +179,8 @@ import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 import PositionManager from "./components/PositionManager.vue";
 import TradePanel from "./components/TradePanel.vue";
 import StrategyPanel from "./components/StrategyPanel.vue";
+import PortfolioView from "./components/PortfolioView.vue";
+import PortfolioPanel from "./components/PortfolioPanel.vue";
 import sseService from "./ts/SSEService";
 import Store from 'electron-store';
 
@@ -181,7 +192,8 @@ const VIEWS = {
   SETTING_VIEW: 'setting',
   VISUAL_VIEW: 'visual_analysis',
   POSITION_VIEW: 'position',
-  RISK_VIEW: 'risk'
+  RISK_VIEW: 'risk',
+  PORTFOLIO_VIEW: 'portfolio'
 };
 const store = new Store()
 // 使用响应式状态管理当前视图
@@ -208,6 +220,8 @@ let activeComponent = computed(() => {
     return PositionManager;
   if (currentView.value === VIEWS.RISK_VIEW)
     return RiskManagerVue;
+    if (currentView.value === VIEWS.PORTFOLIO_VIEW)
+    return PortfolioView;
   return AccountView;
 });
 
@@ -222,6 +236,10 @@ let useOperaion = ref(0)
 // 持仓证券的信息
 const selectedSecurity = ref(null)
 const highlightTradePanel = ref(false)    // 高亮交易面板
+// 投资组合相关
+const currentStrategyId = ref('')  // 当前策略图 ID
+const currentPortfolioConfig = ref(null)  // 当前选中的组合配置
+const portfolioConfigs = ref([])  // 组合配置列表
 
 // 根据当前视图计算按钮状态
 let is_account = computed(() => currentView.value === VIEWS.ACCOUNT);
@@ -231,6 +249,7 @@ let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW);
+let is_portfolio = computed(() => currentView.value === VIEWS.PORTFOLIO_VIEW);
 
 const unit = 1024.0/1000000000;
 
@@ -350,6 +369,10 @@ const onHandleRiskMananger = () => {
   currentView.value = VIEWS.RISK_VIEW
 }
 
+const onHandlePortfolioMananger = () => {
+  currentView.value = VIEWS.PORTFOLIO_VIEW;
+}
+
 const onHandlePosition = () => {
   currentView.value = VIEWS.POSITION_VIEW;
 }
@@ -401,6 +424,10 @@ provide('servers', servers)
 provide('addServer', addServer)
 provide('deleteServer', deleteServer)
 provide('updateServer', updateServer)
+// 投资组合相关 provide
+provide('currentStrategyId', currentStrategyId)
+provide('currentPortfolioConfig', currentPortfolioConfig)
+provide('portfolioConfigs', portfolioConfigs)
 </script>
 
 <style scoped>
