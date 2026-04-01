@@ -9,6 +9,7 @@
 #include <thread>
 #include <variant>
 #include <algorithm>
+#include <atomic>
 #include "Strategy.h"
 #include "Util/string_algorithm.h"
 #include "std_header.h"
@@ -111,29 +112,45 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
-    String errorMessage;
-    while (exchange->IsLogin() && !_server->IsExit()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto* simExchange = (StockHistorySimulation*)exchange;
 
-        // 获取并推送进度
-        double progress = exchange->Progress();
-        if (progress >= 0 && progress - lastProgress >= 0.01) { // 至少变化 1% 才推送
-            String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
-            SendSSEProgress(sse_sock, strategyName, 0.3 + progress * 0.5, msg);
-            lastProgress = progress;
+    // 启动后台线程推送进度
+    std::atomic<bool> pushRunning{true};
+    std::thread pushThread([this, &simExchange, &strategyName, &sse_sock, &lastProgress, &pushRunning]() {
+        while (pushRunning && !_server->IsExit()) {
+            double progress = simExchange->Progress();
+            if (progress >= 0 && progress - lastProgress >= 0.01) {
+                String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
+                SendSSEProgress(sse_sock, strategyName, 0.3 + progress * 0.5, msg);
+                lastProgress = progress;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
-    }
+    });
 
-    // 检查是否因错误而退出（exchange->IsLogin() 为 false 但 progress < 1.0）
-    if (!exchange->IsLogin() && lastProgress < 0.99) {
+    // 使用条件变量等待完成（阻塞等待，最多 5 分钟）
+    bool isComplete = simExchange->WaitForBacktestComplete(300);
+
+    // 停止推送线程
+    pushRunning = false;
+    pushThread.join();
+
+    // 检查完成状态
+    if (!isComplete) {
+        INFO("Backtest failed: isComplete={}, lastProgress={}", isComplete, lastProgress);
         res.status = 500;
-        String msg = R"({"message": "Backtest failed: Load CSV data failed. Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') and the CSV file exists."})";
+        String msg = R"({"message": "Backtest failed: Data loading or execution error."})";
         res.set_content(msg.c_str(), "application/json");
         exchange->Logout(AccountType::MAIN);
         return;
     }
 
-    SendSSEProgress(sse_sock, strategyName, 0.85, "回测执行完成，正在收集结果");
+    INFO("Backtest finish {}", lastProgress);
+
+    // 确保最终进度推送
+    if (lastProgress < 1.0) {
+        SendSSEProgress(sse_sock, strategyName, 0.8, "回测执行完成");
+    }
     exchange->Logout(AccountType::MAIN);
 
     // 6. 收集结果
@@ -202,6 +219,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         {"sell_count", results["sell"].size()},
         {"indicator_count", features.size()}
     };
+    INFO("add summary");
 
     strategySys->ReleaseStrategy(strategyName);
 

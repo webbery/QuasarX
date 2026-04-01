@@ -513,7 +513,6 @@ function onStrategyMessageUpdate(message) {
 
 // 回测进度更新处理
 function onBacktestProgressUpdate(message) {
-  console.info('onBacktestProgressUpdate message:', message)
   const data = message.data
   backtestProgress.value = {
     strategy: data.strategy,
@@ -522,9 +521,6 @@ function onBacktestProgressUpdate(message) {
     lastUpdate: Date.now()
   }
 
-  // 同时在信息面板显示进度消息
-  const progressPercent = Math.round((data.progress || 0) * 100)
-  addInfoMessage(`[${data.strategy}] ${data.message} (${progressPercent}%)`, 'info')
 }
 
 // 替换对象键名的辅助函数
@@ -2030,13 +2026,10 @@ defineExpose({
 }
 .info-message {
     display: flex;
-    gap: 8px;
-    padding: 6px 8px;
     margin-bottom: 4px;
     border-radius: 4px;
     background: transparent;
     animation: fadeIn 0.3s ease;
-    line-height: 1.4;
 }
 
 @keyframes fadeIn {

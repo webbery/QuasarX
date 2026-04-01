@@ -4,6 +4,8 @@
 #include "Util/system.h"
 #include <nng/nng.h>
 #include <boost/lockfree/queue.hpp>
+#include <atomic>
+#include <condition_variable>
 
 using DataFrame = hmdf::StdDataFrame<uint32_t>;
 class Server;
@@ -55,6 +57,11 @@ public:
   void SetCommission(const Commission& buy, const Commission& sell);
   void SetSlippage(float slippage) { _slippage = slippage; }
 
+  // 等待回测完成（阻塞接口，带超时）
+  bool WaitForBacktestComplete(int timeoutSeconds = 300);
+  // 检查回测是否成功完成
+  bool IsBacktestComplete() const;
+
   virtual int GetStockLimitation(char type);
 
   virtual bool SetStockLimitation(char type, int limitation);
@@ -79,7 +86,7 @@ public:
   virtual SymbolInfo GetSymbolInfo(const String& code) override;
   virtual void RefreshSymbolList() override;
 private:
-  bool Once(symbol_t symbol, uint32_t& curIndex);
+  bool Once(symbol_t symbol, std::atomic<uint32_t>& curIndex);
   // 同一时刻只能有一个线程调用
   bool Once(uint32_t& curIndex);
 
@@ -98,7 +105,8 @@ private:
 protected:
   String _org_path;
   nng_socket _sock;
-  bool _finish;
+  std::atomic<bool> _finish{false};
+  std::atomic<bool> _dataLoadSuccess{false};  // 区分正常完成和异常退出
 
   Map<symbol_t, DataFrame> _csvs;       // 复权数据（用于指标计算）
   Map<symbol_t, DataFrame> _org_csvs;  // 原始数据（用于实际买卖）
@@ -106,11 +114,18 @@ protected:
   Map<symbol_t, Vector<String>> _org_headers;
   Map<symbol_t, QuoteInfo> _quotes;
 
-  uint32_t _cur_index;
+  std::atomic<uint32_t> _cur_index{0};
   std::thread* _worker;
 
   std::mutex _mx;
   std::condition_variable _cv;
+
+  // 新增：用于等待完成的同步原语
+  mutable std::mutex _finishMtx;
+  std::condition_variable _finishCv;
+
+  // 新增：总数据量（用于准确进度计算）
+  uint32_t _totalSize{0};
 
   ConcurrentMap<symbol_t, boost::lockfree::queue<OrderInfo>*> _orders;
   std::atomic<size_t> _cur_id;

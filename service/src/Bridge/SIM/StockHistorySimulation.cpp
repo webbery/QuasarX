@@ -195,10 +195,15 @@ void StockHistorySimulation::UseLevel(int level) {
         }
     }
     else {
-        // 
+        //
         for (auto& code : _filter._symbols) {
             LoadT0(code);
         }
+    }
+    // 记录总数据量（以第一个标的为准，用于进度计算）
+    if (!_csvs.empty()) {
+        _totalSize = _csvs.begin()->second.get_index().size();
+        INFO("Set total data size: {}", _totalSize);
     }
 }
 
@@ -314,14 +319,18 @@ bool StockHistorySimulation::Once(uint32_t& curIndex) {
     if (_csvs.empty()) {
         WARN("Quote is empty");
         _finish = true;
+        _dataLoadSuccess = false;  // 标记失败
+        _finishCv.notify_all();    // 通知等待者
         return false;
     }
     for (auto& df : _csvs) {
         auto num = df.second.get_index().size();
         if (curIndex >= num - 1) {
             _finish = true;
-            INFO("_finish true");
+            _dataLoadSuccess = true;  // 标记正常完成
+            INFO("_finish true, data loaded successfully");
             curIndex = 0;
+            _finishCv.notify_all();   // 通知等待者
             return false;
         }
 
@@ -378,7 +387,7 @@ bool StockHistorySimulation::Once(uint32_t& curIndex) {
     return true;
 }
 
-bool StockHistorySimulation::Once(symbol_t symbol, uint32_t& curIndex) {
+bool StockHistorySimulation::Once(symbol_t symbol, std::atomic<uint32_t>& curIndex) {
     constexpr std::size_t flags = yas::mem | yas::binary;
 
     auto itr = _csvs.find(symbol);
@@ -391,8 +400,10 @@ bool StockHistorySimulation::Once(symbol_t symbol, uint32_t& curIndex) {
     auto num = df.get_index().size();
     if (curIndex >= num - 1) {
         _finish = true;
+        _dataLoadSuccess = true;  // 标记正常完成
         INFO("_finish true for symbol {}", symbol);
         curIndex = 0;
+        _finishCv.notify_all();   // 通知等待者
         return false;
     }
 
@@ -523,32 +534,60 @@ QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol) {
 }
 
 double StockHistorySimulation::Progress() {
-  // 如果没有数据，返回 0
-  if (_csvs.empty()) {
-    return 0.0;
-  }
+    // 如果没有数据，返回 0
+    if (_csvs.empty()) {
+        return 0.0;
+    }
 
-  // 获取第一个 symbol 的数据大小作为参考
-  auto itr = _csvs.begin();
-  auto size = itr->second.get_index().size();
+    // 优先使用预设的总大小（UseLevel 中设置）
+    if (_totalSize > 0) {
+        double progress = 1.0 * _cur_index.load() / _totalSize;
+        return std::min(1.0, std::max(0.0, progress));
+    }
 
-  // 避免除零
-  if (size == 0) {
-    return 0.0;
-  }
+    // 兜底：使用第一个 symbol 的数据大小
+    auto itr = _csvs.begin();
+    auto size = itr->second.get_index().size();
 
-  // 计算进度：当前索引 / 总大小
-  double progress = 1.0 * _cur_index / size;
+    // 避免除零
+    if (size == 0) {
+        return 0.0;
+    }
 
-  // 限制在 [0, 1] 范围内
-  if (progress > 1.0) {
-    progress = 1.0;
-  }
-  if (progress < 0.0) {
-    progress = 0.0;
-  }
+    // 计算进度：当前索引 / 总大小
+    double progress = 1.0 * _cur_index.load() / size;
 
-  return progress;
+    // 限制在 [0, 1] 范围内
+    return std::min(1.0, std::max(0.0, progress));
+}
+
+bool StockHistorySimulation::WaitForBacktestComplete(int timeoutSeconds) {
+    std::unique_lock<std::mutex> lock(_finishMtx);
+
+    // 等待完成信号或超时
+    bool completed = _finishCv.wait_for(lock,
+        std::chrono::seconds(timeoutSeconds),
+        [this]() {
+            return _finish.load() || _server->IsExit();
+        });
+
+    if (!completed) {
+        WARN("Backtest wait timeout after {} seconds", timeoutSeconds);
+        return false;
+    }
+
+    // 检查是否正常完成
+    if (!_dataLoadSuccess.load()) {
+        WARN("Backtest finished but data load failed");
+        return false;
+    }
+
+    INFO("Backtest completed successfully");
+    return true;
+}
+
+bool StockHistorySimulation::IsBacktestComplete() const {
+    return _finish.load() && _dataLoadSuccess.load();
 }
 
 // ============ 合约信息查询接口实现 ============
