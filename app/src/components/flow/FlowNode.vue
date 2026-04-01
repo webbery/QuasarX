@@ -64,17 +64,17 @@
                 <div class="param-control">
                     <!-- 下拉选择框 -->
                     <div v-if="paramConfig.type === 'select'" class="input-with-unit">
-                        <select 
+                        <select
                             :value="paramConfig.value"
                             @change="updateParam(key, $event.target.value)"
                             class="param-input param-select"
                         >
-                            <option 
-                                v-for="option in paramConfig.options" 
-                                :key="option"
-                                :value="option"
+                            <option
+                                v-for="option in paramConfig.options"
+                                :key="getOptionValue(option)"
+                                :value="getOptionValue(option)"
                             >
-                                {{ option }}
+                                {{ getOptionLabel(option) }}
                             </option>
                         </select>
                         <span v-if="paramConfig.unit" class="param-unit">{{ paramConfig.unit }}</span>
@@ -463,6 +463,22 @@ const getSelectedOptions = (currentValue, allOptions) => {
         return []
     }
     return allOptions.filter(option => currentValue.includes(option))
+}
+
+// 获取选项的值（支持对象格式）
+const getOptionValue = (option) => {
+    if (typeof option === 'object' && option !== null) {
+        return option.value
+    }
+    return option
+}
+
+// 获取选项的标签（支持对象格式）
+const getOptionLabel = (option) => {
+    if (typeof option === 'object' && option !== null) {
+        return option.label
+    }
+    return option
 }
 
 // 路径选择方法
