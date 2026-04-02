@@ -394,34 +394,46 @@ function updatePriceChart() {
     priceChart.value.setOption(option, true);
 }
 
-async function updatePrice(symbol: string, startDate: string, endDate: string) {
+async function updatePrice(symbol: string, startDate?: string, endDate?: string) {
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
     const url = 'https://' + server + '/v0/stocks/history'
-    const agent = new https.Agent({  
+    const agent = new https.Agent({
         rejectUnauthorized: false // 忽略证书错误
     });
+
+    // 如果没有传入日期参数，使用默认范围
+    let startTimestamp: number
+    let endTimestamp: number
+
+    if (startDate && endDate) {
+        // 使用传入的日期范围（格式：YYYY-MM-DD）
+        startTimestamp = Math.floor(new Date(startDate).getTime() / 1000)
+        endTimestamp = Math.floor(new Date(endDate).getTime() / 1000)
+    } else {
+        // 默认范围
+        startTimestamp = Date.parse('2010-01-01') / 1000
+        endTimestamp = Date.parse('2025-01-01') / 1000
+    }
+
     let params = {
         id: symbol,
         type: '1d',
-        start: Date.parse('2010-01-01')/1000,
-        end: Date.parse('2025-01-01')/1000,
+        start: startTimestamp,
+        end: endTimestamp,
         right: 1    // 默认使用后复权
     }
     const response = await axios.get(url, {
         params: params,
         httpsAgent: agent,
-        // responseType: 'application/json',
-        headers: { 'Authorization': token}})
-    
+        headers: { 'Authorization': token}
+    })
+
     console.info('get price response:', response)
     if (response.status != 200)
         return;
 
     symbolPrices.value = [];
-    // 注意：不清除 buySignals 和 sellSignals，保留交易历史数据
-    // buySignals.value = [];
-    // sellSignals.value = [];
     const data = JSON.parse(response.data)
     for (const oclhv of data) {
         const dt = oclhv['datetime']
@@ -431,7 +443,9 @@ async function updatePrice(symbol: string, startDate: string, endDate: string) {
         const D = date.getDate() ;
         symbolPrices.value.push([Y + M + D, oclhv['close']])
     }
-    if (priceChart.value) {
+
+    // 即使没有交易信号，也要更新图表显示收盘价
+    if (priceChart.value && symbolPrices.value.length > 0) {
         updatePriceChart();
     }
 }
@@ -1107,7 +1121,7 @@ function updateBenchmark(data: { symbol: string; name: string; startDate: Date; 
 }
 
 // 新增：从版本加载回测结果
-async function loadBacktestResultFromVersion(versionId: string) {
+async function loadBacktestResultFromVersion(versionId: string, startDate?: string, endDate?: string, symbol?: string) {
   const historyStore = useHistoryStore()
   const backtestResult = await historyStore.loadBacktestResult(versionId)
 
@@ -1135,21 +1149,43 @@ async function loadBacktestResultFromVersion(versionId: string) {
       formatSignals(backtestResult.sell || [])
     )
 
-    // 3. 提取日期范围并加载基准数据
+    // 3. 提取标的代码和日期范围
     const allSignals = [...(backtestResult.buy || []), ...(backtestResult.sell || [])]
+    let signalStartDate: Date | null = null
+    let signalEndDate: Date | null = null
+    let signalSymbol = ''
+
     if (allSignals.length > 0) {
+      // 从交易信号中提取
       const timestamps = allSignals.map(s => s[1])
       const minTime = Math.min(...timestamps)
       const maxTime = Math.max(...timestamps)
-      const startDate = new Date(minTime * 1000)
-      const endDate = new Date(maxTime * 1000)
+      signalStartDate = new Date(minTime * 1000)
+      signalEndDate = new Date(maxTime * 1000)
+      signalSymbol = backtestResult.buy?.[0]?.[0] || backtestResult.sell?.[0]?.[0] || ''
+    }
 
+    // 优先使用传入的参数，其次使用从信号中提取的值
+    const useStartDate = startDate || (signalStartDate ? formatDateTime(signalStartDate) : null)
+    const useEndDate = endDate || (signalEndDate ? formatDateTime(signalEndDate) : null)
+    const useSymbol = symbol || signalSymbol
+
+    // 4. 获取历史价格数据（即使没有交易信号）
+    if (useSymbol && useStartDate && useEndDate) {
+      console.info(`[ReportView] 获取历史价格：${useSymbol}, ${useStartDate} - ${useEndDate}`)
+      await updatePrice(useSymbol, useStartDate, useEndDate)
+    } else if (!useSymbol) {
+      console.warn(`[ReportView] 无法获取标的代码，请检查流程图输入节点是否配置了代码参数`)
+    }
+
+    // 5. 加载基准数据
+    if (signalStartDate && signalEndDate) {
       const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
       updateBenchmark({
         symbol: benchmarkSymbol,
         name: '',
-        startDate,
-        endDate
+        startDate: signalStartDate,
+        endDate: signalEndDate
       })
     }
 
@@ -1157,6 +1193,14 @@ async function loadBacktestResultFromVersion(versionId: string) {
   } else {
     console.info(`[ReportView] 版本 ${versionId} 没有回测结果`)
   }
+}
+
+// 格式化日期为 YYYY-MM-DD 格式
+function formatDateTime(date: Date): string {
+  const Y = date.getFullYear() + '-'
+  const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
+  const D = (date.getDate() < 10 ? '0' + date.getDate() : date.getDate())
+  return Y + M + D
 }
 
 // 新增：更新指标表格

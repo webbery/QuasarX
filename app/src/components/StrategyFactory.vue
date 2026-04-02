@@ -25,31 +25,7 @@
       <div v-show="activeTab === 'flow'" class="flow-panel">
         <div class="flow-container-wrapper">
           <!-- 左下角信息面板 -->
-          <div class="info-panel" :class="{ 'collapsed': isInfoPanelCollapsed }">
-            <!-- 回测进度条 -->
-            <div v-if="backtestProgress" class="progress-section">
-              <div class="progress-header">
-                <span class="progress-strategy">{{ backtestProgress.strategy }}</span>
-                <span class="progress-percent">{{ Math.round(backtestProgress.progress * 100) }}%</span>
-                <span class="progress-message">{{ backtestProgress.message }}</span>
-              </div>
-              <div class="progress-bar-container">
-                <div class="progress-bar" :style="{ width: backtestProgress.progress * 100 + '%' }"></div>
-              </div>
-            </div>
-            <!-- 消息列表 -->
-            <div class="info-panel-content" ref="infoPanelContent">
-              <div
-                v-for="(msg, index) in infoMessages"
-                :key="index"
-                class="info-message"
-                :class="`type-${msg.type}`"
-              >
-                <span class="info-timestamp">{{ formatTime(msg.timestamp) }}</span>
-                <span class="info-text">{{ msg.text }}</span>
-              </div>
-            </div>
-          </div>
+          <InfoPanel :messages="infoMessages" />
 
           <div class="flow-container">
               <VueFlow
@@ -143,15 +119,13 @@ import { message } from '@/tool'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 import ReportView from './ReportView.vue'
+import InfoPanel from './InfoPanel.vue'
 import PromptDialog from './PromptDialog.vue'
 import axios from 'axios'
 import sseService from '@/ts/SSEService';
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 import { keyMap, nodeTypeConfigs } from './flow/nodeConfigs'
-
-// 使 Math 在模板中可用
-const Math = globalThis.Math
 
 const {
     fitView, 
@@ -196,13 +170,9 @@ const strategyNameInput = ref('')
 const showNewStrategyDialog = ref(false)
 // 未保存更改标记（用于后续提示）
 const hasUnsavedChanges = ref(false)
-// 信息面板相关状态
+// 信息面板消息
 const infoMessages = ref([])
-const isInfoPanelCollapsed = ref(false)
-const infoPanelContent = ref(null)
-const MAX_MESSAGES = 100 // 最大消息数量
-// 回测进度状态
-const backtestProgress = ref(null)
+// 回测进度状态（已移除，进度作为消息处理）
 
 // 右键菜单状态
 const contextMenu = ref({
@@ -221,58 +191,54 @@ const closeContextMenu = () => {
 // 添加键盘事件监听
 const onKeyDown = (event) => {
   // 按 Delete 或 Backspace 键删除选中的元素
-  if ((event.key === 'Delete' || event.key === 'Backspace') && 
+  if ((event.key === 'Delete' || event.key === 'Backspace') &&
       (selectedNodes.value.length > 0 || selectedEdges.value.length > 0)) {
     event.preventDefault()
-    
+
     if (selectedNodes.value.length > 0) {
       deleteSelectedNodes()
     } else if (selectedEdges.value.length > 0) {
       deleteSelectedEdges()
-    } 
+    }
   }
 }
 
 // 添加信息到面板
 const addInfoMessage = (text, type = 'info') => {
   const timestamp = new Date()
-  infoMessages.value.push({
-    text,
-    type, // 'info', 'warning', 'error'
-    timestamp
-  })
-  
+  infoMessages.value.push({ text, type, timestamp })
   // 限制消息数量
-  if (infoMessages.value.length > MAX_MESSAGES) {
-    infoMessages.value = infoMessages.value.slice(-MAX_MESSAGES)
+  if (infoMessages.value.length > 100) {
+    infoMessages.value = infoMessages.value.slice(-100)
   }
-  
-  // 滚动到底部
-  nextTick(() => {
-    if (infoPanelContent.value) {
-      infoPanelContent.value.scrollTop = infoPanelContent.value.scrollHeight
-    }
-  })
+}
+
+// 更新或创建进度消息
+const updateProgressMessage = (backtestId, strategy, progress, message) => {
+  const existingProgress = infoMessages.value.find(
+    m => m.type === 'progress' && m.backtestId === backtestId
+  )
+  if (existingProgress) {
+    existingProgress.progress = progress
+    existingProgress.message = message
+  } else {
+    infoMessages.value.push({
+      type: 'progress',
+      backtestId,
+      strategy,
+      progress,
+      message,
+      timestamp: new Date()
+    })
+  }
+  if (infoMessages.value.length > 100) {
+    infoMessages.value = infoMessages.value.slice(-100)
+  }
 }
 
 // 清空消息
 const clearMessages = () => {
   infoMessages.value = []
-}
-
-// 切换信息面板折叠状态
-const toggleInfoPanel = () => {
-  isInfoPanelCollapsed.value = !isInfoPanelCollapsed.value
-}
-
-// 格式化时间显示
-const formatTime = (date) => {
-  return date.toLocaleTimeString('zh-CN', { 
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
 }
 
 // 添加全局点击事件监听
@@ -514,13 +480,8 @@ function onStrategyMessageUpdate(message) {
 // 回测进度更新处理
 function onBacktestProgressUpdate(message) {
   const data = message.data
-  backtestProgress.value = {
-    strategy: data.strategy,
-    progress: data.progress || 0,
-    message: data.message,
-    lastUpdate: Date.now()
-  }
-
+  const backtestId = data.strategy + '_' + data.start_time
+  updateProgressMessage(backtestId, data.strategy, data.progress || 0, data.message)
 }
 
 // 替换对象键名的辅助函数
@@ -1351,9 +1312,42 @@ const loadVersionFromHistory = async (version) => {
       }, 100)
 
       // 加载该版本的回测结果（如果有）
+      // 从流程图中提取回测周期和标的代码
+      let backtestStartDate
+      let backtestEndDate
+      let backtestSymbol
+
+      if (finalFlowData?.nodes) {
+        // 从信号节点提取回测周期
+        const signalNode = finalFlowData.nodes.find((n) =>
+          n.data?.params?.['回测周期']?.value
+        )
+        if (signalNode) {
+          const rangeDate = signalNode.data.params['回测周期'].value
+          if (rangeDate && rangeDate.length === 2) {
+            backtestStartDate = rangeDate[0]
+            backtestEndDate = rangeDate[1]
+            console.info(`[loadVersionFromHistory] 提取回测周期：${backtestStartDate} - ${backtestEndDate}`)
+          }
+        }
+
+        // 从输入节点（如 QuoteNode）提取标的代码
+        const inputNode = finalFlowData.nodes.find((n) =>
+          n.data?.params?.['代码']?.value
+        )
+        if (inputNode) {
+          const codes = inputNode.data.params['代码'].value
+          const symbols = codes.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+          if (symbols.length > 0) {
+            backtestSymbol = symbols[0]
+            console.info(`[loadVersionFromHistory] 提取标的代码：${backtestSymbol}`)
+          }
+        }
+      }
+
       nextTick(async () => {
         if (reportViewRef.value && reportViewRef.value.loadBacktestResultFromVersion) {
-          await reportViewRef.value.loadBacktestResultFromVersion(versionData.id)
+          await reportViewRef.value.loadBacktestResultFromVersion(versionData.id, backtestStartDate, backtestEndDate, backtestSymbol)
         }
       })
     })
@@ -1873,221 +1867,5 @@ defineExpose({
 .chart-controls {
     display: flex;
     gap: 8px;
-}
-
-/* 信息面板样式 */
-.info-panel {
-    position: absolute;
-    bottom: 20px;
-    left: 20px;
-    width: 380px;
-    max-height: 300px;
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    border: none;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    transition: all 0.3s ease;
-    overflow: hidden;
-}
-
-/* 回测进度条样式 */
-.progress-section {
-    padding: 12px;
-    background: rgba(30, 33, 45, 0.95);
-    border-radius: 8px 8px 0 0;
-    border: 1px solid rgba(41, 98, 255, 0.3);
-    margin-bottom: 1px;
-}
-
-.progress-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-}
-
-.progress-strategy {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--primary);
-}
-
-.progress-percent {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--secondary);
-}
-
-.progress-bar-container {
-    width: 100%;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    overflow: hidden;
-    margin-bottom: 8px;
-}
-
-.progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, var(--primary), var(--secondary));
-    border-radius: 3px;
-    transition: width 0.3s ease;
-    box-shadow: 0 0 10px rgba(41, 98, 255, 0.5);
-}
-
-.progress-message {
-    font-size: 12px;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.info-panel.collapsed {
-    height: 40px;
-    max-height: 40px;
-}
-
-.info-panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 12px;
-    background: rgba(41, 98, 255, 0.1);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    cursor: pointer;
-    user-select: none;
-    transition: background-color 0.2s ease;
-}
-
-.info-panel-header:hover {
-    background: rgba(41, 98, 255, 0.15);
-}
-
-.info-panel-header span {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--primary);
-}
-
-.info-panel-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.info-panel-btn {
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 12px;
-}
-
-.info-panel-btn:hover {
-    background: var(--primary);
-    color: white;
-    border-color: var(--primary);
-}
-
-.info-panel-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-    font-size: 12px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--primary) transparent;
-    background: rgba(30, 33, 45, 0.1);
-}
-
-.info-panel-content::-webkit-scrollbar {
-    width: 6px;
-}
-
-.info-panel-content::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.info-panel-content::-webkit-scrollbar-thumb {
-    background-color: var(--primary);
-    border-radius: 3px;
-}
-.info-message {
-    display: flex;
-    margin-bottom: 4px;
-    border-radius: 4px;
-    background: transparent;
-    animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-5px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.info-message.type-warning {
-  color: #ff9800;
-}
-
-.info-message.type-error {
-  color: #f44336;
-}
-
-.info-timestamp {
-    color: var(--text-secondary);
-    font-size: 10px;
-    white-space: nowrap;
-    min-width: 60px;
-    padding-top: 1px;
-}
-
-.info-text {
-    color: var(--text);
-    flex: 1;
-    word-break: break-word;
-}
-
-.type-info .info-text {
-    color: var(--text);
-}
-
-.type-success .info-text {
-    color: var(--secondary);
-}
-
-.type-warning .info-text {
-    color: #ff9800;
-}
-
-.type-error .info-text {
-    color: #f44336;
-}
-
-.info-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100px;
-    color: var(--text-secondary);
-    font-size: 14px;
-    gap: 8px;
-}
-
-.info-empty i {
-    font-size: 24px;
-    opacity: 0.5;
 }
 </style>

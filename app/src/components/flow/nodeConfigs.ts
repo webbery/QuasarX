@@ -63,7 +63,7 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         options: ["股票", "期货"]
       },
       "代码": {
-        value: ["000001"],
+        value: ["sz.000001"],
         type: "text"
       },
       "close": {
