@@ -15,6 +15,13 @@
 #include "StrategySubSystem.h"
 #include "Util/TickMap.h"
 
+// 策略验证结果结构
+struct StrategyValidationResult {
+    bool success;
+    String errorMessage;
+    String errorLocation;  // "buy", "sell", 或 "general"
+};
+
 #define HEADER_SIZE         2
 #define MAX_HISTORY_SIZE    32
 #define MAX_STREAM_SIZE     8192    // 8K
@@ -178,6 +185,11 @@ public:
 
     // 添加合约信息到市场列表 (由 Exchange 初始化时调用)
     void AddSymbolToMarket(const String& code, ContractInfo&& info);
+
+    // 策略验证：验证策略配置的类型正确性
+    // 返回 pair.first 为 true 表示验证通过，false 表示失败
+    // pair.second 包含错误信息（如果有）
+    std::pair<bool, String> ValidateStrategyConfig(const nlohmann::json& config);
 
     // type 0-股票
     // StockHistorySimulation* CreateSimulation(const String& name, const String& strategy, int type = 0);

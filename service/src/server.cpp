@@ -441,6 +441,50 @@ void Server::AddSymbolToMarket(const String& code, ContractInfo&& info) {
     _markets.emplace(code, std::move(info));
 }
 
+std::pair<bool, String> Server::ValidateStrategyConfig(const nlohmann::json& config) {
+    try {
+        // 创建临时的 FormulaParser 来验证表达式
+        // 注意：这里只验证买入和卖出表达式，不执行实际策略
+
+        // 收集可用变量（从输入节点开始）
+        // 由于验证阶段节点尚未初始化，我们只能验证表达式语法
+
+        // 创建临时节点图来收集输入变量
+        auto nodes = parse_strategy_script_v2(config, this);
+
+        // 找到输入节点并收集可用变量
+        Map<String, ArgType> availableVars;
+        //for (auto* node : nodes) {
+        //    if (auto* inputNode = dynamic_cast<QuoteInputNode*>(node)) {
+        //        auto vars = inputNode->out_elements();
+        //        for (auto& [key, type] : vars) {
+        //            // 迁移旧类型到新类型
+        //            availableVars[key] = migrateLegacyType(type);
+        //        }
+        //    }
+        //}
+
+        // 找到信号节点并验证表达式
+        //for (auto* node : nodes) {
+        //    if (auto* signalNode = dynamic_cast<SignalNode*>(node)) {
+        //        // 使用信号节点内部的 validate 方法
+        //        // 这里不需要额外操作，因为 Init 已经会调用 validate
+        //    }
+        //}
+
+        // 清理节点
+        for (auto* node : nodes) {
+            delete node;
+        }
+
+        return {true, ""};
+    } catch (const std::runtime_error& e) {
+        return {false, e.what()};
+    } catch (const std::exception& e) {
+        return {false, e.what()};
+    }
+}
+
 void Server::InitStocks(const String& path) {
     static bool isInit = false;
     if (isInit)

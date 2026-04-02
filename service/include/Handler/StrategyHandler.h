@@ -20,6 +20,8 @@ private:
   void run(const String& name, httplib::Response& res);
   void stop(const String& name, httplib::Response& res);
 
+  void validate(const nlohmann::json& param, httplib::Response& res);
+
   void train(const nlohmann::json& param, httplib::Response& res);
 
   void deploy(const nlohmann::json& param, httplib::Response& res);

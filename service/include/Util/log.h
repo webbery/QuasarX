@@ -71,3 +71,13 @@
 #endif
 #endif
 #endif //defined(_MSC_VER) && !defined(__clang__)
+
+// 抛出异常并记录日志
+#ifndef THROW_EXCEPTION
+#define THROW_EXCEPTION(fmt_str, ...) \
+    do { \
+        std::string msg = fmt::format(fmt_str, ##__VA_ARGS__); \
+        SPDLOG_ERROR("{}", msg); \
+        throw std::runtime_error(msg); \
+    } while(0)
+#endif

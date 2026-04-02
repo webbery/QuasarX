@@ -304,6 +304,6 @@ const nlohmann::json PortfolioNode::getParams() {
 
 Map<String, ArgType> PortfolioNode::out_elements() {
     Map<String, ArgType> elems;
-    elems["execution_plan"] = ArgType::Integer;
+    elems["execution_plan"] = ArgType::Integer_TimeSeries;
     return elems;
 }

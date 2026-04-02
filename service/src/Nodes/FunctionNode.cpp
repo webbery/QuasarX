@@ -134,7 +134,8 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     
     _label = (String)config["label"];
     for (auto& symbol: symbols) {
-        _outputs[symbol + "." + _label] = ArgType::Double;
+        // 函数输出是时间序列
+        _outputs[symbol + "." + _label] = ArgType::Double_TimeSeries;
     }
     return true;
 }

@@ -330,15 +330,15 @@ const isDataFieldParam = (key) => {
 
 onMounted(() => {
     document.addEventListener('click', handleClickOutside)
-    console.log(`节点 ${props.node.id} (${props.node.data.label}) 的 Handles:`, {
-        hasLeftHandle: props.node.data.label !== '数据输入',
-        leftHandleId: 'input',
-        hasRightHandle: props.node.data.label !== '结果输出' && props.node.data.label !== '数据输入',
-        rightHandleId: 'output',
-        fieldHandles: Object.keys(props.node.data.params || {})
-        .filter(key => isDataFieldParam(key))
-        .map(key => `field-${key}`)
-    })
+    // console.log(`节点 ${props.node.id} (${props.node.data.label}) 的 Handles:`, {
+    //     hasLeftHandle: props.node.data.label !== '数据输入',
+    //     leftHandleId: 'input',
+    //     hasRightHandle: props.node.data.label !== '结果输出' && props.node.data.label !== '数据输入',
+    //     rightHandleId: 'output',
+    //     fieldHandles: Object.keys(props.node.data.params || {})
+    //     .filter(key => isDataFieldParam(key))
+    //     .map(key => `field-${key}`)
+    // })
 })
 
 onUnmounted(() => {

@@ -3,6 +3,7 @@
 #include "peglib.h"
 #include "Util/system.h"
 #include "DataContext.h"
+#include "StrategyNode.h"  // 新增：用于 ArgType
 
 class Server;
 
@@ -92,6 +93,13 @@ public:
     bool parse(const String& code);
     bool parse(const String& code, TradeAction action);
 
+    // 新增：静态类型验证（在 parse 后调用）
+    // availableVars: 可用变量集合，格式为 "symbol.varname" -> ArgType
+    bool validate(const Map<String, ArgType>& availableVars);
+
+    // 获取验证错误信息
+    const String& getValidationError() const { return _validationError; }
+
     List<Pair<symbol_t, TradeAction>> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
 
 public:
@@ -148,6 +156,29 @@ private:
 
 private:
     String genPrimaryPlaceHolder(const peg::Ast& ats);
+
+    // ========== 新增：静态类型检查 ==========
+
+    // 表达式类型
+    enum class ExprType {
+        DOUBLE_SCALAR,
+        DOUBLE_TIMESERIES,
+        INTEGER_SCALAR,
+        INTEGER_TIMESERIES,
+        BOOL,
+        UNKNOWN
+    };
+
+    // 类型推断
+    ExprType inferExpressionType(const peg::Ast& ast, const Map<String, ArgType>& availableVars);
+
+    // 验证方法
+    bool validateComparison(const peg::Ast& ast, const Map<String, ArgType>& availableVars);
+    bool validateArithmetic(const peg::Ast& ast, const Map<String, ArgType>& availableVars);
+    bool validateIdentifier(const peg::Ast& ast, const Map<String, ArgType>& availableVars, ExprType& outType);
+    bool validateTimeOffset(const peg::Ast& ast, ExprType baseType);
+
+    String _validationError;  // 存储验证错误信息
 
 private:
     void topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context);

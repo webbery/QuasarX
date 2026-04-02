@@ -8,9 +8,61 @@
 class ICallable;
 
 enum ArgType {
-    Integer,
-    Double,
+    // 已弃用类型（用于向后兼容过渡）
+    Integer_Deprecated = 0,
+    Double_Deprecated = 1,
+
+    // 标量类型（单个值）
+    Double_Scalar = 2,
+    Integer_Scalar = 3,
+    Bool_Scalar = 4,
+
+    // 时间序列类型（Vector）
+    Double_TimeSeries = 5,
+    Integer_TimeSeries = 6,
+    Bool_TimeSeries = 7,
 };
+
+// 辅助函数：判断是否为时间序列类型
+inline bool isTimeSeriesType(ArgType type) {
+    return type == Double_TimeSeries || type == Integer_TimeSeries || type == Bool_TimeSeries;
+}
+
+// 辅助函数：判断是否为标量类型
+inline bool isScalarType(ArgType type) {
+    return type == Double_Scalar || type == Integer_Scalar || type == Bool_Scalar;
+}
+
+// 辅助函数：获取基础数据类型
+inline ArgType getBaseType(ArgType type) {
+    switch (type) {
+        case Double_Scalar:
+        case Double_TimeSeries:
+        case Double_Deprecated:
+            return Double_Scalar;
+        case Integer_Scalar:
+        case Integer_TimeSeries:
+        case Integer_Deprecated:
+            return Integer_Scalar;
+        case Bool_Scalar:
+        case Bool_TimeSeries:
+            return Bool_Scalar;
+        default:
+            return Double_Scalar;
+    }
+}
+
+// 辅助函数：将旧类型迁移到新类型（默认假设为时间序列）
+inline ArgType migrateLegacyType(ArgType type) {
+    switch (type) {
+        case Double_Deprecated:
+            return Double_TimeSeries;
+        case Integer_Deprecated:
+            return Integer_TimeSeries;
+        default:
+            return type;
+    }
+}
 
 class QNode {
     using Edges = MultiMap<String, QNode*>;

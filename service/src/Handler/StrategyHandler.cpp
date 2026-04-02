@@ -43,6 +43,13 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
 
 void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
+
+    // 检查是否是验证请求
+    if (params.contains("action") && params["action"] == "validate") {
+        validate(params, res);
+        return;
+    }
+
     int mode = params["mode"];
     if (mode == 2) {// 暂停
         String name = params["name"];
@@ -102,6 +109,36 @@ void StrategyHandler::run(const String& name, httplib::Response& res) {
 void StrategyHandler::stop(const String& name, httplib::Response& res) {
     auto strategySys = _server->GetStrategySystem();
     strategySys->Stop(name);
+}
+
+void StrategyHandler::validate(const nlohmann::json& param, httplib::Response& res) {
+    try {
+        // 获取策略配置
+        auto& config = param["config"];
+
+        // 调用 Server 的验证方法
+        auto [success, errorMessage] = _server->ValidateStrategyConfig(config);
+
+        nlohmann::json result;
+        if (success) {
+            result["success"] = true;
+            result["message"] = "Validation passed";
+            res.status = 200;
+        } else {
+            result["success"] = false;
+            result["error"] = errorMessage;
+            result["message"] = "Validation failed";
+            res.status = 400;
+        }
+        res.set_content(result.dump(), "application/json");
+    } catch (const std::exception& e) {
+        nlohmann::json result;
+        result["success"] = false;
+        result["error"] = e.what();
+        result["message"] = "Validation error";
+        res.status = 500;
+        res.set_content(result.dump(), "application/json");
+    }
 }
 
 void StrategyHandler::train(const nlohmann::json& params, httplib::Response& res) {

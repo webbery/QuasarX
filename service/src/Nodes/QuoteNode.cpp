@@ -118,10 +118,11 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
         auto name = get_symbol(*itr);
         auto baseKey = name + ".";
         for (auto& item: _properties[name]) {
+            // 行情数据是时间序列
             if (item == "volume") {
-                names[baseKey + item] = ArgType::Integer;
+                names[baseKey + item] = ArgType::Integer_TimeSeries;
             } else {
-                names[baseKey + item] = ArgType::Double;
+                names[baseKey + item] = ArgType::Double_TimeSeries;
             }
         }
     }

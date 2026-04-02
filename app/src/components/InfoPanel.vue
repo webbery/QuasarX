@@ -9,16 +9,16 @@
         :class="`type-${msg.type}`"
       >
         <!-- 进度条消息 -->
-        <div v-if="msg.type === 'progress'" class="progress-message-item">
-          <div class="progress-header">
+        <template v-if="msg.type === 'progress'">
+          <span class="info-timestamp">{{ formatTime(msg.timestamp) }}</span>
+          <span class="info-text">
             <span class="progress-strategy">{{ msg.strategy }}</span>
-            <span class="progress-percent">{{ Math.round(msg.progress * 100) }}%</span>
-          </div>
-          <div class="progress-bar-container">
-            <div class="progress-bar" :style="{ width: msg.progress * 100 + '%' }"></div>
-          </div>
-          <span class="progress-message">{{ msg.message }}</span>
-        </div>
+            <span class="inline-progress">
+              <span class="inline-bar" :style="{ width: msg.progress * 100 + '%' }"></span>
+            </span>
+            {{ Math.round(msg.progress * 100) }}%
+          </span>
+        </template>
 
         <!-- 普通消息 -->
         <template v-else>
@@ -160,23 +160,6 @@ watch(() => props.messages, () => {
   color: var(--secondary);
 }
 
-.progress-bar-container {
-  width: 100%;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-
-.progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), var(--secondary));
-  border-radius: 3px;
-  transition: width 0.3s ease;
-  box-shadow: 0 0 10px rgba(41, 98, 255, 0.5);
-}
-
 .progress-message {
   font-size: 12px;
   color: var(--text-secondary);
@@ -184,6 +167,27 @@ watch(() => props.messages, () => {
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
+}
+
+.inline-progress {
+  display: inline-block;
+  width: 60px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  overflow: hidden;
+  vertical-align: middle;
+  margin: 0 6px;
+  position: relative;
+}
+
+.inline-bar {
+  display: inline-block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  border-radius: 5px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 8px rgba(41, 98, 255, 0.5);
 }
 
 /* 普通消息样式 */
@@ -200,6 +204,7 @@ watch(() => props.messages, () => {
   white-space: nowrap;
   min-width: 60px;
   padding-top: 1px;
+  display: inline-block;
 }
 
 .info-text {

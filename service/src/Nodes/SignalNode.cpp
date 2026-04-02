@@ -10,6 +10,19 @@ SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _se
 bool SignalNode::Init(const nlohmann::json& config) {
     auto& buySignal = config["params"]["buy"]["value"];
     auto& sellSignal = config["params"]["sell"]["value"];
+
+    // 收集可用变量列表及其类型（从输入节点）
+    Map<String, ArgType> availableVars;
+    for (auto& item: _ins) {
+        auto names = item.second->out_elements();
+        for (auto& info: names) {
+            // info.first 是完整 key 如 "bj.920108.ma_short"
+            // info.second 是 ArgType
+            availableVars[info.first] = info.second;
+        }
+    }
+
+    // 解析并验证买入公式
     if (!_buyParser) {
         _buyParser = new FormulaParser(_server);
     }
@@ -17,8 +30,19 @@ bool SignalNode::Init(const nlohmann::json& config) {
         WARN("parse buy express fail.");
         delete _buyParser;
         _buyParser = nullptr;
-        throw std::runtime_error("parse buy express fail.");
+        throw std::runtime_error("Failed to parse buy signal expression");
     }
+    // 新增：类型验证
+    if (!_buyParser->validate(availableVars)) {
+        std::string error = "Buy signal expression type validation failed: " +
+                           _buyParser->getValidationError();
+        ERROR("{}", error);
+        delete _buyParser;
+        _buyParser = nullptr;
+        throw std::runtime_error(error);
+    }
+
+    // 解析并验证卖出公式
     if (!_sellParser) {
         _sellParser = new FormulaParser(_server);
     }
@@ -26,8 +50,18 @@ bool SignalNode::Init(const nlohmann::json& config) {
         WARN("parse sell express fail.");
         delete _sellParser;
         _sellParser = nullptr;
-        throw std::runtime_error("parse sell express fail.");
+        throw std::runtime_error("Failed to parse sell signal expression");
     }
+    // 新增：类型验证
+    if (!_sellParser->validate(availableVars)) {
+        std::string error = "Sell signal expression type validation failed: " +
+                           _sellParser->getValidationError();
+        ERROR("{}", error);
+        delete _sellParser;
+        _sellParser = nullptr;
+        throw std::runtime_error(error);
+    }
+
     auto& operatorPool = config["params"]["code"]["value"];
     for (String code: operatorPool) {
         auto& security = Server::GetSecurity(code);
@@ -121,7 +155,8 @@ Map<String, ArgType> SignalNode::out_elements() {
     Map<String, ArgType> elems;
     // 输出信号数据，格式为 "{symbol}.signal"
     for (auto& symbol : _pools) {
-        elems[get_symbol(symbol) + ".signal"] = Integer;
+        // 信号是整数时间序列
+        elems[get_symbol(symbol) + ".signal"] = ArgType::Integer_TimeSeries;
     }
     return elems;
 }

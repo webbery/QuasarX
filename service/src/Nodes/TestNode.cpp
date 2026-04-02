@@ -198,9 +198,11 @@ Map<String, ArgType> TestNode::out_elements() {
     Map<String, ArgType> elems;
     // 输出均线和信号数据
     for (const auto& code : _codes) {
-        elems[code + ".ma_short"] = Double;
-        elems[code + ".ma_long"] = Double;
-        elems[code + ".signal"] = Integer;
+        // 均线是时间序列
+        elems[code + ".ma_short"] = ArgType::Double_TimeSeries;
+        elems[code + ".ma_long"] = ArgType::Double_TimeSeries;
+        // 信号是整数时间序列
+        elems[code + ".signal"] = ArgType::Integer_TimeSeries;
     }
     return elems;
 }
