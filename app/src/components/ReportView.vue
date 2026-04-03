@@ -43,6 +43,17 @@
             </div>
         </div>
 
+        <!-- 累计收益曲线 - 独占一行 -->
+        <div class="chart-row" v-if="cumulativeReturnData.length > 0">
+            <div class="chart-card full-width">
+                <div class="chart-title">
+                    <div class="title-icon">📈</div>
+                    <span>Cumulative Return</span>
+                </div>
+                <div class="chart-container" id="cumulativeReturn"></div>
+            </div>
+        </div>
+
         <!-- 策略 vs 基准对比图（新增，仅当选择基准时显示） -->
         <div class="chart-row" v-if="selectedBenchmark && benchmarkData.length > 0">
             <div class="chart-card full-width">
@@ -214,6 +225,8 @@ import {
   BenchmarkMetrics,
   KlineData,
   clearExpiredCache,
+  calculateCumulativeReturns,
+  type CumulativeReturnPoint,
 } from '../lib/tickflow';
 import { useHistoryStore, type BacktestResult } from '@/stores/history'
 
@@ -251,6 +264,15 @@ const buySignals = ref<any[]>([])
 const sellSignals = ref<any[]>([])
 // 新增：回测指标数据
 const metricsData = ref<Record<string, number>>({})
+// 新增：累计收益曲线数据
+const cumulativeReturnData = ref<CumulativeReturnPoint[]>([])
+
+// 新增：pending 状态，用于存储图表未初始化时的数据请求
+const pendingPriceRequest = ref<{
+  symbol: string
+  startDate?: string
+  endDate?: string
+} | null>(null)
 
 // 基准对比相关状态
 const selectedBenchmark = ref(localStorage.getItem('benchmark_symbol') || '')
@@ -278,6 +300,13 @@ watch(symbolPrices, (newPrices) => {
         backtestEndDate.value = lastDate;
         // 自动加载基准数据
         loadBenchmark(firstDate, lastDate);
+    }
+}, { deep: true });
+
+// 监听价格数据和交易信号，计算累计收益曲线
+watch([symbolPrices, buySignals, sellSignals], ([prices, buys, sells]) => {
+    if (prices.length > 0 && (buys.length > 0 || sells.length > 0)) {
+        calculateAndSetCumulativeReturns(buys, sells, prices);
     }
 }, { deep: true });
 
@@ -423,6 +452,40 @@ async function updatePrice(symbol: string, startDate?: string, endDate?: string)
         end: endTimestamp,
         right: 1    // 默认使用后复权
     }
+
+    // 检查图表是否已初始化
+    if (!priceChart.value) {
+        // 图表未初始化，存储请求参数等待后续处理
+        console.info(`[updatePrice] 图表未初始化，存储 pending 请求：${symbol}`)
+        pendingPriceRequest.value = { symbol, startDate, endDate }
+        const response = await axios.get(url, {
+            params: params,
+            httpsAgent: agent,
+            headers: { 'Authorization': token}
+        })
+
+        console.info('get price response:', response)
+        if (response.status != 200)
+            return;
+
+        symbolPrices.value = [];
+        const data = JSON.parse(response.data)
+        for (const oclhv of data) {
+            const dt = oclhv['datetime']
+            const date = new Date(dt * 1000)
+            const Y = date.getFullYear() + '-';
+            const M = (date.getMonth()+1 < 10 ? '0'+(date.getMonth()+1) : date.getMonth()+1) + '-';
+            const D = date.getDate() ;
+            symbolPrices.value.push([Y + M + D, oclhv['close']])
+        }
+        // 数据已存储，等待图表初始化后更新
+        // 如果有交易信号，计算累计收益曲线
+        if ((buySignals.value.length > 0 || sellSignals.value.length > 0) && symbolPrices.value.length > 0) {
+            calculateAndSetCumulativeReturns(buySignals.value, sellSignals.value, symbolPrices.value);
+        }
+        return;
+    }
+
     const response = await axios.get(url, {
         params: params,
         httpsAgent: agent,
@@ -448,6 +511,11 @@ async function updatePrice(symbol: string, startDate?: string, endDate?: string)
     if (priceChart.value && symbolPrices.value.length > 0) {
         updatePriceChart();
     }
+
+    // 如果有交易信号，计算累计收益曲线
+    if ((buySignals.value.length > 0 || sellSignals.value.length > 0) && symbolPrices.value.length > 0) {
+        calculateAndSetCumulativeReturns(buySignals.value, sellSignals.value, symbolPrices.value);
+    }
 }
 
 function initializeCharts() {
@@ -456,6 +524,7 @@ function initializeCharts() {
     const chartsToInitialize = [
         { id: 'strategyPerformance', type: 'strategy' },
         { id: 'priceTrend', type: 'price' },
+        { id: 'cumulativeReturn', type: 'cumulativeReturn' },
         { id: 'positionChanges', type: 'position' },
         { id: 'monthlyReturn', type: 'monthly' },
         { id: 'yearlyReturn', type: 'yearly' },
@@ -495,6 +564,15 @@ function initializeCharts() {
             onUnmounted(() => {
                 resizeObserver.disconnect()
             })
+
+            // 新增：如果是价格图表初始化完成，检查是否有 pending 请求
+            if (config.id === 'priceTrend' && pendingPriceRequest.value) {
+                console.info('[initializeCharts] 处理 pending 价格请求:', pendingPriceRequest.value)
+                const { symbol, startDate, endDate } = pendingPriceRequest.value
+                updatePrice(symbol, startDate, endDate).then(() => {
+                    pendingPriceRequest.value = null
+                })
+            }
         } else {
             console.warn(`容器 ${config.id} 不可见，延迟初始化`)
             setTimeout(() => {
@@ -677,6 +755,122 @@ function getPriceOption(isSecond: boolean, chartData: any[], sellSignals: any[],
 }
 function getChartOption(type: string) {
     switch (type) {
+        case 'cumulativeReturn':
+            // 累计收益曲线 - 策略 vs 基准
+            const dates = cumulativeReturnData.value.map(d => d.date);
+            const strategyReturns = cumulativeReturnData.value.map(d => d.cumulativeReturn);
+
+            // 基准收益数据（如果有）
+            let benchmarkSeries: any[] = [];
+            let benchmarkLegend = ['策略收益'];
+
+            if (benchmarkData.value.length > 0 && benchmarkData.value.length === strategyReturns.length) {
+                const baseValue = 100000; // 基准本金
+                const benchmarkCumulative = benchmarkData.value.map((d, i) => {
+                    const firstClose = benchmarkData.value[0].close;
+                    return ((d.close - firstClose) / firstClose) * baseValue;
+                });
+
+                benchmarkSeries = [{
+                    name: '基准收益',
+                    type: 'line',
+                    data: benchmarkCumulative,
+                    smooth: true,
+                    lineStyle: {
+                        width: 2,
+                        color: '#ff9800',
+                        type: 'dashed'
+                    }
+                }];
+                benchmarkLegend = ['策略收益', '基准收益'];
+            }
+
+            return {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'cross'
+                    },
+                    backgroundColor: 'rgba(26, 34, 54, 0.9)',
+                    borderColor: '#2a3449',
+                    textStyle: {
+                        color: '#e0e0e0'
+                    },
+                    formatter: function(params: any) {
+                        const date = params[0].axisValue;
+                        let result = `<div style="margin: 0 0 5px 0; font-weight: bold;">${date}</div>`;
+                        params.forEach((item: any) => {
+                            const color = item.value >= 0 ? '#00c853' : '#ff6d00';
+                            result += `<div>${item.marker} ${item.seriesName}: <span style="color: ${color}; font-weight: bold;">${item.value.toFixed(2)}</span></div>`;
+                        });
+                        return result;
+                    }
+                },
+                legend: {
+                    data: benchmarkLegend,
+                    textStyle: {
+                        color: '#e0e0e0'
+                    },
+                    top: 10
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    data: dates,
+                    axisLine: {
+                        lineStyle: {
+                            color: '#6E7079'
+                        }
+                    },
+                    axisLabel: {
+                        color: '#a0aec0',
+                        rotate: 45,
+                        interval: Math.floor(dates.length / 20)
+                    }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLabel: {
+                        formatter: '{value}',
+                        color: '#a0aec0'
+                    },
+                    axisLine: {
+                        lineStyle: {
+                            color: '#6E7079'
+                        }
+                    },
+                    splitLine: {
+                        lineStyle: {
+                            color: '#2a3449',
+                            type: 'dashed'
+                        }
+                    }
+                },
+                series: [{
+                    name: '策略收益',
+                    type: 'line',
+                    data: strategyReturns,
+                    smooth: true,
+                    itemStyle: {
+                        color: strategyReturns[strategyReturns.length - 1] >= 0 ? '#00c853' : '#ff6d00'
+                    },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(0, 200, 83, 0.3)' },
+                            { offset: 1, color: 'rgba(0, 200, 83, 0.05)' }
+                        ])
+                    },
+                    lineStyle: {
+                        width: 3,
+                        color: strategyReturns[strategyReturns.length - 1] >= 0 ? '#00c853' : '#ff6d00'
+                    }
+                }, ...benchmarkSeries]
+            };
         case 'strategy':
             return {
                 tooltip: {
@@ -1178,7 +1372,12 @@ async function loadBacktestResultFromVersion(versionId: string, startDate?: stri
       console.warn(`[ReportView] 无法获取标的代码，请检查流程图输入节点是否配置了代码参数`)
     }
 
-    // 5. 加载基准数据
+    // 5. 计算累计收益曲线（等待价格数据加载完成后）
+    if (symbolPrices.value.length > 0) {
+      calculateAndSetCumulativeReturns(backtestResult.buy || [], backtestResult.sell || [], symbolPrices.value)
+    }
+
+    // 6. 加载基准数据
     if (signalStartDate && signalEndDate) {
       const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
       updateBenchmark({
@@ -1201,6 +1400,32 @@ function formatDateTime(date: Date): string {
   const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
   const D = (date.getDate() < 10 ? '0' + date.getDate() : date.getDate())
   return Y + M + D
+}
+
+// 计算并设置累计收益曲线
+function calculateAndSetCumulativeReturns(
+  buySignals: [string, number, number, number][],
+  sellSignals: [string, number, number, number][],
+  priceHistory: [string, number][]
+) {
+  try {
+    const result = calculateCumulativeReturns(buySignals, sellSignals, priceHistory);
+    cumulativeReturnData.value = result;
+    console.info(`[ReportView] 已计算累计收益曲线：${result.length} 个数据点`);
+
+    // 如果图表已初始化，更新它
+    nextTick(() => {
+      const chartEl = document.getElementById('cumulativeReturn');
+      if (chartEl) {
+        const chart = echarts.getInstanceByDom(chartEl);
+        if (chart) {
+          chart.setOption(getChartOption('cumulativeReturn'), true);
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[ReportView] 计算累计收益曲线失败:', error);
+  }
 }
 
 // 新增：更新指标表格
@@ -1266,7 +1491,9 @@ defineExpose({
     updateMetrics,       // 新增：更新策略指标
     updateBenchmark,     // 新增：更新基准数据
     loadBacktestResultFromVersion,  // 新增：从版本加载回测结果
-    resetTableZoom
+    calculateAndSetCumulativeReturns, // 新增：计算累计收益曲线
+    resetTableZoom,
+    initializeCharts   // 新增：暴露初始化方法
 })
 </script>
 

@@ -2,7 +2,8 @@
 #include "std_header.h"
 #include "Util/system.h"
 #include "Nodes/ExecutionPlan.h"
-#include "Bridge/exchange.h"  // for QuoteInfo
+#include "Bridge/exchange.h"
+#include "Bridge/SIM/BacktestContext.h"
 
 struct TradeReport;
 class Server;
@@ -161,6 +162,23 @@ public:
     void SetQuote(symbol_t symbol, const QuoteInfo& quote);
     const QuoteInfo* GetQuote(symbol_t symbol) const;
 
+    // ============ 多线程回测支持 ============
+
+    /**
+     * @brief 设置关联的回测运行 ID
+     */
+    void setBacktestRunId(uint16_t runId) { _backtestRunId = runId; }
+
+    /**
+     * @brief 获取关联的回测运行 ID
+     */
+    uint16_t getBacktestRunId() const { return _backtestRunId; }
+
+    /**
+     * @brief 获取回测上下文（通过 server 查找）
+     */
+    BacktestContext* getBacktestContext();
+
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -187,4 +205,7 @@ private:
 
     // 初始本金（用于回测）
     double _initialCapital = 0.0;
+
+    // 关联的回测运行 ID（0 表示未关联）
+    uint16_t _backtestRunId{0};
 };

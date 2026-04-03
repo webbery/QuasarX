@@ -27,7 +27,19 @@ public:
     void Start();
     void Start(const String& strategy);
     void Stop(const String& strategy);
-    
+
+    /**
+     * @brief 启动回测（多线程版本）
+     * @param strategy 策略名称
+     * @param symbols 标的列表
+     * @param initialCapital 初始资金
+     */
+    void StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
+
+    /**
+     * @brief 检查策略是否正在运行
+     */
+    bool IsRunning(const String& strategy) const;
 
     // void Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params);
 
@@ -75,6 +87,9 @@ private:
         List<QNode*> _graph;
         // 择时模块
         ITimingStrategy* _timing = nullptr;
+
+        // 关联的回测运行 ID（多线程回测模式）
+        uint16_t _backtestRunId = 0;
     };
 
     Map<String, StrategyFlowInfo> _flows; 

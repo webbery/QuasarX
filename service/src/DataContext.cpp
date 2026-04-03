@@ -1,6 +1,7 @@
 #include "DataContext.h"
 #include "Util/system.h"
 #include "server.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 
 DataContext::~DataContext() {
     for (auto& item: _signalObservers) {
@@ -141,4 +142,20 @@ void DataContext::setInitialCapital(double capital) {
 
 double DataContext::getInitialCapital() const {
     return _initialCapital;
+}
+
+BacktestContext* DataContext::getBacktestContext() {
+    if (_backtestRunId == 0) {
+        return nullptr;
+    }
+    auto* exchange = _server->GetAvaliableStockExchange();
+    if (!exchange) {
+        return nullptr;
+    }
+    // 转换为 StockHistorySimulation 类型以获取回测上下文
+    auto* simExchange = dynamic_cast<StockHistorySimulation*>(exchange);
+    if (!simExchange) {
+        return nullptr;
+    }
+    return simExchange->getBacktestContext(_backtestRunId);
 }

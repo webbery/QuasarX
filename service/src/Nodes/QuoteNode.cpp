@@ -73,17 +73,32 @@ bool QuoteInputNode::Process(const String& strategy, DataContext& context)
     auto cur = context.Current();
     //
     time_t min_t = std::numeric_limits<time_t>::max();
+
+    // 获取回测上下文（多线程模式）
+    BacktestContext* btContext = context.getBacktestContext();
+    auto* exchange = dynamic_cast<StockHistorySimulation*>(_server->GetAvaliableStockExchange());
+
     for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
         auto symbol = *itr;
         if (is_stock(symbol) || is_etf_option(symbol)) {
-            auto stockExchange = _server->GetAvaliableStockExchange();
-            auto quote = stockExchange->GetQuote(symbol);
+            QuoteInfo quote;
+
+            // 多线程回测模式：从上下文获取行情
+            if (btContext && exchange) {
+                quote = exchange->GetQuote(symbol, strategy);
+            }
+            // 单线程模式：原有逻辑
+            else {
+                auto stockExchange = _server->GetAvaliableStockExchange();
+                quote = stockExchange->GetQuote(symbol);
+            }
+
             if (quote._time == 0)
                 return false;
             else if (cur != 0 && quote._time <= cur) {
                 continue;
             }
-            if (quote._time < min_t) { // 注意频率不一致时的填充方式
+            if (quote._time < min_t) {
                 min_t = quote._time;
             }
 

@@ -15,6 +15,7 @@
 #include "RiskSubSystem.h"
 #include "Nodes/ScriptNode.h"
 #include "Nodes/ExecuteNode.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
@@ -145,6 +146,107 @@ void FlowSubsystem::Stop(const String& strategy) {
     flow._worker = nullptr;
 }
 
+void FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
+    Stop(strategy);
+
+    // 获取交易所并创建回测上下文
+    auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
+    if (!exchange) {
+        WARN("Failed to get stock exchange for backtest");
+        return;
+    }
+
+    // 创建回测上下文
+    uint16_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
+
+    auto& flow = _flows.at(strategy);
+    flow._running = true;
+    flow._backtestRunId = runId;
+    flow._worker = new std::thread([strategy, runId, this]() {
+        DataContext context(strategy, _handle);
+        context.setBacktestRunId(runId);
+
+        // 获取回测上下文
+        auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
+        BacktestContext* btContext = exchange ? exchange->getBacktestContext(runId) : nullptr;
+
+        try {
+            auto& flow = _flows[strategy];
+            if (IsUseShareMemory(flow)) {
+                context.EnableShareMemory(strategy);
+            }
+            for (auto node : flow._graph) {
+                node->Prepare(strategy, context);
+            }
+
+            uint64_t epoch = 0;
+            bool success = true;
+            auto startTick = std::chrono::high_resolution_clock::now();
+
+            // 使用 stepForward 推进回测时间
+            while (flow._running || !Server::IsExit()) {
+                context.SetEpoch(++epoch);
+
+                // 推进回测时间
+                if (btContext && !exchange->stepForward(btContext)) {
+                    // 数据用完
+                    INFO("Backtest data finished for strategy {}", strategy);
+                    break;
+                }
+
+                if (!RunGraph(strategy, flow, context)) {
+                    success = false;
+                    break;
+                }
+            }
+
+            auto endTick = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
+
+            if (success) {
+                // 统计指标
+                ExecuteNode* endNode = nullptr;
+                for (auto node: flow._graph) {
+                    auto n = dynamic_cast<ExecuteNode*>(node);
+                    if (n) {
+                        endNode = n;
+                        break;
+                    }
+                }
+                if (endNode) {
+                    auto& cash_flow = endNode->GetReports();
+                    flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
+                    flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
+                    flow._collections[StatisticIndicator::TotalReturn] = total_return_ratio(cash_flow, context);
+                    flow._collections[StatisticIndicator::MaxDrawDown] = max_drawdown_ratio(cash_flow, context);
+                    flow._collections[StatisticIndicator::WinRate] = win_rate(cash_flow, context);
+                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(cash_flow, context, 0);
+                }
+                for (auto node : flow._graph) {
+                    node->Done(strategy);
+                }
+            }
+
+            // 回测结束后登出
+            if (_handle->GetRunningMode() == RuningType::Backtest) {
+                auto broker = _handle->GetAvaliableStockExchange();
+                broker->Logout();
+            }
+
+            flow._running = false;
+            auto info = fmt::format("backtest finish, cost {}s, {}ms/per datum", duration.count(), (epoch == 0? 0:duration.count()*1000.0/epoch));
+            strategy_log(strategy, info);
+        } catch (const std::invalid_argument& e) {
+            WARN("invalid argument error: {}", e.what());
+        }
+
+        // 清理回测上下文
+        if (exchange) {
+            exchange->destroyBacktestContext(runId);
+        }
+    });
+}
+
 bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {
     auto& graph = flow._graph;
     for (auto node: graph) {
@@ -153,6 +255,15 @@ bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {
         }
     }
     return false;
+}
+
+bool FlowSubsystem::IsRunning(const String& strategy) const {
+    auto itr = _flows.find(strategy);
+    if (itr == _flows.end()) {
+        return false;
+    }
+    const auto& flow = itr->second;
+    return flow._running.load() || (flow._worker && flow._worker->joinable());
 }
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {

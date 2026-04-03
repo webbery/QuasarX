@@ -1,5 +1,5 @@
 <template>
-    <div class="vue-flow__node-custom" :class="[nodeClass, { 'selected': node.selected, 'multi-selected': isMultiSelected }]"
+    <div class="vue-flow__node-custom" :class="[nodeClass, { 'selected': isSelected, 'multi-selected': isMultiSelected }]"
         @click.stop="onNodeClick"
         @contextmenu="onNodeRightClick"
     >
@@ -300,9 +300,15 @@ const editingLabel = ref('')
 const titleInput = ref(null)
 const downloadStatus = ref('')
 
+// 计算节点是否被选中
+const isSelected = computed(() => {
+    return selectedNodes && selectedNodes.value &&
+           selectedNodes.value.find(n => n.id === props.node.id)
+})
+
 // 计算是否是多选状态
 const isMultiSelected = computed(() => {
-    return selectedNodes && selectedNodes.value && selectedNodes.value.length > 1 && 
+    return selectedNodes && selectedNodes.value && selectedNodes.value.length > 1 &&
            selectedNodes.value.find(n => n.id === props.node.id)
 })
 
@@ -793,6 +799,11 @@ const getFileFilters = (paramKey) => {
 
 /* 多选时的统一颜色 */
 .vue-flow__node-custom.multi-selected {
+    border-color: var(--primary);
+}
+
+/* 单选时的边框颜色 */
+.vue-flow__node-custom.selected {
     border-color: var(--primary);
 }
 

@@ -1,19 +1,17 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/BacktestContext.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
-#include "boost/lockfree/queue.hpp"
 #include "std_header.h"
 #include "csv.h"
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <future>
 #include <memory_resource>
 #include <numeric>
 #include <thread>
@@ -23,14 +21,13 @@
 #include "BrokerSubSystem.h"
 
 StockHistorySimulation::StockHistorySimulation(Server* server)
-  :ExchangeInterface(server),_cur_index(0), _worker(nullptr), _cur_id(0)
-  ,_finish(false)
+  : ExchangeInterface(server), _cur_id(0), _finish(false)
 {
 
 }
 
 StockHistorySimulation::~StockHistorySimulation() {
-    
+
 }
 
 bool StockHistorySimulation::Init(const ExchangeInfo& handle) {
@@ -40,22 +37,24 @@ bool StockHistorySimulation::Init(const ExchangeInfo& handle) {
 }
 
 bool StockHistorySimulation::Release() {
-  if (_worker) {
-    _worker->join();
-    delete _worker;
-    _worker = nullptr;
-  }
-  _orders.visit_all([](auto&& item) {
-      delete item.second;
-      });
+  Clear();
   return true;
 }
 
 bool StockHistorySimulation::Login(AccountType t){
     _finish = false;
-    // 加载配置中的买入/卖出手续费
-    auto& config = _server->GetConfig();
-    
+    Clear();
+
+    if (_freqType == 1) {
+        for (auto& code : _filter._symbols) {
+            LoadT1(code);
+        }
+    }
+    else {
+        for (auto& code : _filter._symbols) {
+            LoadT0(code);
+        }
+    }
     return true;
 }
 
@@ -88,20 +87,17 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
 
         double current = _availableFunds.load(std::memory_order_relaxed);
         double expected = current;
-        // 使用 CAS 保证原子性：检查和扣减一起完成
         while (true) {
             if (expected < orderCost) {
-                // 资金不足，拒绝下单
                 WARN("资金不足：所需 {:.2f}，可用 {:.2f}", orderCost, expected);
                 order_id id;
-                id._id = 0;  // 返回0表示拒绝
+                id._id = 0;
                 return id;
             }
             if (_availableFunds.compare_exchange_strong(expected, expected - orderCost,
                     std::memory_order_release, std::memory_order_relaxed)) {
                 break;
             }
-            // expected 已被更新为当前值，继续循环重试
         }
     }
 
@@ -109,21 +105,7 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
     info._id = ++_cur_id;
     info._order = order;
     _reports.emplace(info._id, order);
-    // _orders.try_emplace_or_visit(symbol, info, [](auto&){
-      
-    // });
-    if (_orders.count(symbol) == 0) {
-        std::pair<symbol_t, boost::lockfree::queue<OrderInfo>*> pr;
-        pr.first = symbol;
-        pr.second = new boost::lockfree::queue<OrderInfo>(MAX_ORDER_PER_SECOND);
-        pr.second->push(info);
-       _orders.emplace(std::move(pr));
-    }
-    else {
-        _orders.visit(symbol, [&info](auto&& item) {
-            item.second->push(info);
-            });
-    }
+
     order_id id;
     id._id = info._id;
     if (is_stock(symbol)) {
@@ -133,25 +115,44 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
 }
 
 void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& report) {
-    auto broker = _server->GetBrokerSubSystem();
-    _reports.visit(id._id, [&report, broker, this](auto&& value) {
-        auto ctx = value.second;
-        value.second->_trades._reports.emplace_back(report);
-        // 交易记录
-        broker->RecordTrade(*ctx);
+    // 在上下文中查找订单（多线程模式）
+    bool found = false;
+    _backtestContexts.visit_all([&found, &id, &report, this](auto& item) {
+        if (found) return;
 
-        // 更新持仓跟踪
-        {
-            std::lock_guard<std::mutex> lock(_positionMtx);
-            auto& pos = _positions[ctx->_order._symbol];
-            if (ctx->_order._side == 0) {  // 买入
-                pos += report._quantity;
+        auto* ctx = item.second.get();
+        auto* orderCtx = ctx->getOrderReport(id._id);
+        if (orderCtx) {
+            found = true;
+            orderCtx->_trades._reports.emplace_back(report);
+            orderCtx->_success.store(true);
+            orderCtx->_flag.store(true);
+            orderCtx->_promise.set_value(true);
+
+            // 更新持仓（使用上下文私有持仓）
+            if (orderCtx->_order._side == 0) {  // 买入
+                ctx->adjustPosition(orderCtx->_order._symbol, report._quantity);
             } else {  // 卖出
-                pos -= report._quantity;
+                ctx->adjustPosition(orderCtx->_order._symbol, -report._quantity);
+            }
+
+            // 记录交易
+            auto broker = _server->GetBrokerSubSystem();
+            if (broker) {
+                broker->RecordTrade(*orderCtx);
             }
         }
+    });
 
-        // 回调通知完成
+    if (found) return;
+
+    // 全局回退：使用 _reports
+    auto broker = _server->GetBrokerSubSystem();
+    _reports.visit(id._id, [&report, broker](auto&& value) {
+        auto ctx = value.second;
+        value.second->_trades._reports.emplace_back(report);
+        broker->RecordTrade(*ctx);
+
         ctx->Update(report);
         value.second->_success.store(true);
         value.second->_flag.store(true);
@@ -177,39 +178,18 @@ bool StockHistorySimulation::GetOrder(const String& sysID, Order& ol)
 void StockHistorySimulation::SetFilter(const QuoteFilter& filter) {
     _filter = filter;
 
-    // 立即触发数据加载，而不是等到 QueryQuotes
     if (!std::filesystem::exists(_org_path)) {
         WARN("{} not exist.", _org_path);
         return;
     }
-
-    // 预加载 symbol 信息到缓存
-    //UseLevel(1);  // 加载日线数据
-    //_worker = new std::thread(&StockHistorySimulation::Worker, this);
 }
 
 void StockHistorySimulation::UseLevel(int level) {
-    if (level == 1) {
-        for (auto& code : _filter._symbols) {
-            LoadT1(code);
-        }
-    }
-    else {
-        //
-        for (auto& code : _filter._symbols) {
-            LoadT0(code);
-        }
-    }
-    // 记录总数据量（以第一个标的为准，用于进度计算）
-    if (!_csvs.empty()) {
-        _totalSize = _csvs.begin()->second.get_index().size();
-        INFO("Set total data size: {}", _totalSize);
-    }
+    _freqType = level;
 }
 
 #define CACHE_SIZE  2048
 
-// 辅助函数：加载 CSV 文件到 DataFrame
 bool StockHistorySimulation::LoadCSVToDataFrame(const String& file_path,
                                                  DataFrame& df,
                                                  Vector<String>& header) {
@@ -231,7 +211,6 @@ bool StockHistorySimulation::LoadCSVToDataFrame(const String& file_path,
         split(cache, row, ",");
 
         if (index++ == 0) {
-            // 加载 6 列 header: date, open, close, high, low, volume
             for (int i = 0; i < 6; ++i) {
                 header.emplace_back(row[i]);
             }
@@ -274,7 +253,6 @@ void StockHistorySimulation::LoadT1(const String& code) {
     auto file_path = _org_path + "/" + subdir + "/" + code + ".csv";
     auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + ".csv";
 
-    // 加载复权数据
     if (!LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol])) {
         String err_msg = fmt::format("Failed to load backtest data for '{}': CSV file not found or invalid at '{}'. "
                                      "Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') "
@@ -283,10 +261,8 @@ void StockHistorySimulation::LoadT1(const String& code) {
         throw std::runtime_error(err_msg);
     }
 
-    // 加载原始价格数据（AStock）
     if (!LoadCSVToDataFrame(primitive_file_path, _org_csvs[symbol], _org_headers[symbol])) {
         WARN("load {} fail, will use adjusted price", primitive_file_path);
-        // 如果原始数据加载失败，复制复权数据作为原始数据
         _org_csvs[symbol] = _csvs[symbol];
         _org_headers[symbol] = _headers[symbol];
     }
@@ -311,148 +287,7 @@ void StockHistorySimulation::LoadT0(const String& code) {
 }
 
 void StockHistorySimulation::QueryQuotes() {
-  // 5s一次，请求一组信息
-  _cv.notify_all();
-}
-
-bool StockHistorySimulation::Once(uint32_t& curIndex) {
-    if (_csvs.empty()) {
-        WARN("Quote is empty");
-        _finish = true;
-        _dataLoadSuccess = false;  // 标记失败
-        _finishCv.notify_all();    // 通知等待者
-        return false;
-    }
-    for (auto& df : _csvs) {
-        auto num = df.second.get_index().size();
-        if (curIndex >= num - 1) {
-            _finish = true;
-            _dataLoadSuccess = true;  // 标记正常完成
-            INFO("_finish true, data loaded successfully");
-            curIndex = 0;
-            _finishCv.notify_all();   // 通知等待者
-            return false;
-        }
-
-        auto& header = _headers[df.first];
-
-        auto& datetime = df.second.get_column<time_t>(header[0].c_str());
-        auto& open = df.second.get_column<float>(header[1].c_str());
-        auto& close = df.second.get_column<float>(header[2].c_str());
-        auto& high = df.second.get_column<float>(header[3].c_str());
-        auto& low = df.second.get_column<float>(header[4].c_str());
-        auto& volume = df.second.get_column<int64_t>(header[5].c_str());
-
-        QuoteInfo info;
-        info._symbol = df.first;
-        info._open = open[curIndex];
-        info._close = close[curIndex];  // 复权价，用于指标计算
-        info._high = high[curIndex];
-        info._low = low[curIndex];
-        info._volume = volume[curIndex];
-        info._time = datetime[curIndex];
-
-        // 发送复权价给 QuoteInputNode（用于指标计算）
-        yas::shared_buffer buf = yas::save<flags>(info);
-        if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
-            printf("send quote message e fail.\n");
-            return false;
-        }
-
-        // 获取原始价格用于订单撮合
-        double primitiveClose = GetPrimitivePrice(df.first, curIndex);
-        auto symbol = df.first;
-        _orders.visit(df.first, [&info, &symbol, primitiveClose, this] (auto&& que) {
-            OrderInfo oif;
-            while (que.second->pop(oif)) {
-                // 使用原始价格进行撮合
-                QuoteInfo matchQuote = info;
-                matchQuote._close = primitiveClose;
-                TradeReport report = OrderMatch(oif._order->_order, matchQuote);
-
-                // 卖出成交：释放资金（买入资金在AddOrder已冻结）
-                if (oif._order->_order._side == 1) {  // 卖出
-                    _availableFunds.fetch_add(report._trade_amount, std::memory_order_release);
-                }
-
-                oif._order->_trades._symbol = symbol;
-                order_id id;
-                id._id = static_cast<uint32_t>(oif._id);
-                OnOrderReport(id, report);
-            }
-        });
-        _quotes[df.first] = std::move(info);
-    }
-    ++curIndex;
-    return true;
-}
-
-bool StockHistorySimulation::Once(symbol_t symbol, std::atomic<uint32_t>& curIndex) {
-    constexpr std::size_t flags = yas::mem | yas::binary;
-
-    auto itr = _csvs.find(symbol);
-    if (itr == _csvs.end()) {
-        WARN("Symbol {} not found in loaded data", symbol);
-        return false;
-    }
-
-    auto& df = itr->second;
-    auto num = df.get_index().size();
-    if (curIndex >= num - 1) {
-        _finish = true;
-        _dataLoadSuccess = true;  // 标记正常完成
-        INFO("_finish true for symbol {}", symbol);
-        curIndex = 0;
-        _finishCv.notify_all();   // 通知等待者
-        return false;
-    }
-
-    auto& header = _headers[symbol];
-    auto& datetime = df.get_column<time_t>(header[0].c_str());
-    auto& open = df.get_column<float>(header[1].c_str());
-    auto& close = df.get_column<float>(header[2].c_str());
-    auto& high = df.get_column<float>(header[3].c_str());
-    auto& low = df.get_column<float>(header[4].c_str());
-    auto& volume = df.get_column<int64_t>(header[5].c_str());
-
-    QuoteInfo info;
-    info._symbol = symbol;
-    info._open = open[curIndex];
-    info._close = close[curIndex];  // 复权价，用于指标计算
-    info._high = high[curIndex];
-    info._low = low[curIndex];
-    info._volume = volume[curIndex];
-    info._time = datetime[curIndex];
-
-    // 获取原始价格用于订单撮合
-    double primitiveClose = GetPrimitivePrice(symbol, curIndex);
-
-    // 处理该 symbol 的挂单
-    if (_orders.count(symbol) > 0) {
-        _orders.visit(symbol, [&info, &symbol, primitiveClose, this](auto&& que) {
-            OrderInfo oif;
-            while (que.second->pop(oif)) {
-                // 使用原始价格进行撮合
-                QuoteInfo matchQuote = info;
-                matchQuote._close = primitiveClose;
-                TradeReport report = OrderMatch(oif._order->_order, matchQuote);
-
-                // 卖出成交：释放资金（买入资金在 AddOrder 已冻结）
-                if (oif._order->_order._side == 1) {  // 卖出
-                    _availableFunds.fetch_add(report._trade_amount, std::memory_order_release);
-                }
-
-                oif._order->_trades._symbol = symbol;
-                order_id id;
-                id._id = static_cast<uint32_t>(oif._id);
-                OnOrderReport(id, report);
-            }
-        });
-    }
-
-    _quotes[symbol] = std::move(info);
-    ++curIndex;
-    return true;
+  // 多线程回测模式下不需要主动查询，由 stepForward 推进时间
 }
 
 double StockHistorySimulation::GetAvailableFunds()
@@ -474,30 +309,28 @@ void StockHistorySimulation::Reset()
 
 }
 
-void StockHistorySimulation::Worker() {
-  Publish(URI_RAW_QUOTE, _sock);
-  constexpr std::size_t flags = yas::mem | yas::binary;
-  _finish = true;
-  thread_local uint32_t curIndex = 0;
-  while (!_server->IsExit()) {
-    // notifys
-    std::unique_lock<std::mutex> lock(_mx);
-    auto status = _cv.wait_for(lock, std::chrono::seconds(5));
-    if (status == std::cv_status::timeout) {
-      continue;
-    }
-    if (_csvs.size() == 0) {
-        continue;
-    }
-    Once(curIndex);
-  }
-  _finish = true;
-  nng_close(_sock);
-}
-
 void StockHistorySimulation::SetCommission(const Commission& buy, const Commission& sell) {
   _buy = buy;
   _sell = sell;
+}
+
+void StockHistorySimulation::Clear() {
+    // 清空行情数据（只读共享数据）
+    _csvs.clear();
+    _org_csvs.clear();
+    _headers.clear();
+    _org_headers.clear();
+
+    // 清空所有回测上下文（多线程模式）
+    _backtestContexts.clear();
+    _nextRunId = 1;
+
+    // 清空订单和报告
+    _reports.clear();
+    _cur_id = 0;
+
+    // 重置可用资金
+    _availableFunds.store(_capital, std::memory_order_relaxed);
 }
 
 int StockHistorySimulation::GetStockLimitation(char type)
@@ -522,72 +355,26 @@ TradeReport StockHistorySimulation::OrderMatch(const Order& order, const QuoteIn
 }
 
 QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol) {
-    auto fut = std::async(std::launch::deferred, [this, symbol]() {
-        Once(symbol, _cur_index);
+    QuoteInfo empty;
+    empty._symbol = symbol;
+    empty._time = 0;
+    return empty;
+}
+
+double StockHistorySimulation::Progress(const String& strategy) {
+    // 获取指定策略的回测上下文进度
+    BacktestContext* ctx = nullptr;
+    _backtestContexts.visit_all([&ctx, &strategy](auto& item) {
+        if (item.second->getStrategyName() == strategy) {
+            ctx = item.second.get();
+        }
     });
-    fut.wait();
-    auto info = _quotes[symbol];
-    if (_finish) {
-        info._time = 0;
-    }
-    return info;
-}
 
-double StockHistorySimulation::Progress() {
-    // 如果没有数据，返回 0
-    if (_csvs.empty()) {
-        return 0.0;
+    if (ctx) {
+        return ctx->getProgress();
     }
 
-    // 优先使用预设的总大小（UseLevel 中设置）
-    if (_totalSize > 0) {
-        double progress = 1.0 * _cur_index.load() / _totalSize;
-        return std::min(1.0, std::max(0.0, progress));
-    }
-
-    // 兜底：使用第一个 symbol 的数据大小
-    auto itr = _csvs.begin();
-    auto size = itr->second.get_index().size();
-
-    // 避免除零
-    if (size == 0) {
-        return 0.0;
-    }
-
-    // 计算进度：当前索引 / 总大小
-    double progress = 1.0 * _cur_index.load() / size;
-
-    // 限制在 [0, 1] 范围内
-    return std::min(1.0, std::max(0.0, progress));
-}
-
-bool StockHistorySimulation::WaitForBacktestComplete(int timeoutSeconds) {
-    std::unique_lock<std::mutex> lock(_finishMtx);
-
-    // 等待完成信号或超时
-    bool completed = _finishCv.wait_for(lock,
-        std::chrono::seconds(timeoutSeconds),
-        [this]() {
-            return _finish.load() || _server->IsExit();
-        });
-
-    if (!completed) {
-        WARN("Backtest wait timeout after {} seconds", timeoutSeconds);
-        return false;
-    }
-
-    // 检查是否正常完成
-    if (!_dataLoadSuccess.load()) {
-        WARN("Backtest finished but data load failed");
-        return false;
-    }
-
-    INFO("Backtest completed successfully");
-    return true;
-}
-
-bool StockHistorySimulation::IsBacktestComplete() const {
-    return _finish.load() && _dataLoadSuccess.load();
+    return 0.0;
 }
 
 // ============ 合约信息查询接口实现 ============
@@ -595,7 +382,6 @@ bool StockHistorySimulation::IsBacktestComplete() const {
 bool StockHistorySimulation::GetAllStockSymbols(List<SymbolInfo>& symbols) {
     String csv_path = _org_path + "/symbol_market.csv";
 
-    // 如果 CSV 文件不存在，调用脚本生成
     if (!std::filesystem::exists(csv_path)) {
         WARN("{} not exist, running script to generate", csv_path);
         String cmd = "python " + _org_path + "/../tools/run_task.py 1";
@@ -652,7 +438,7 @@ bool StockHistorySimulation::GetAllFundSymbols(List<SymbolInfo>& symbols) {
         std::string code, name, type;
         while (reader.read_row(code, name, type)) {
             SymbolInfo info;
-            info._code = code.substr(2); // 去掉"sh"/"sz"前缀
+            info._code = code.substr(2);
             info._name = name;
             if (code.substr(0, 2) == "sh") {
                 info._exchange = MT_Shanghai;
@@ -711,7 +497,6 @@ bool StockHistorySimulation::GetAllOptionSymbols(List<SymbolInfo>& symbols) {
                 continue;
             }
 
-            // 判断看涨/看跌期权
             bool isPut = (name.find("沽") != String::npos) ||
                         (name.find("P") != String::npos && name.find("P") > 3);
             if (isPut) {
@@ -733,7 +518,6 @@ bool StockHistorySimulation::GetAllOptionSymbols(List<SymbolInfo>& symbols) {
 SymbolInfo StockHistorySimulation::GetSymbolInfo(const String& code) {
     SymbolInfo info;
 
-    // 先尝试从股票中查找
     List<SymbolInfo> stocks;
     if (GetAllStockSymbols(stocks)) {
         for (const auto& s : stocks) {
@@ -743,7 +527,6 @@ SymbolInfo StockHistorySimulation::GetSymbolInfo(const String& code) {
         }
     }
 
-    // 再尝试从基金中查找
     List<SymbolInfo> funds;
     if (GetAllFundSymbols(funds)) {
         for (const auto& s : funds) {
@@ -753,7 +536,6 @@ SymbolInfo StockHistorySimulation::GetSymbolInfo(const String& code) {
         }
     }
 
-    // 最后尝试从期权中查找
     List<SymbolInfo> options;
     if (GetAllOptionSymbols(options)) {
         for (const auto& s : options) {
@@ -770,14 +552,13 @@ void StockHistorySimulation::RefreshSymbolList() {
     // 仿真环境不需要主动刷新，数据来自本地 CSV
 }
 
-double StockHistorySimulation::GetPrimitivePrice(symbol_t symbol, uint32_t index) {
+double StockHistorySimulation::GetPrimitivePrice(symbol_t symbol, uint32_t index) const {
     auto org_itr = _org_csvs.find(symbol);
     if (org_itr == _org_csvs.end()) {
-        // 没有原始数据，返回复权价
         return GetAdjPrice(symbol, index);
     }
     auto& org_df = org_itr->second;
-    auto& org_header = _org_headers[symbol];
+    auto& org_header = _org_headers.at(symbol);
     if (org_header.empty()) {
         return GetAdjPrice(symbol, index);
     }
@@ -789,21 +570,20 @@ double StockHistorySimulation::GetPrimitivePrice(symbol_t symbol, uint32_t index
 }
 
 int64_t StockHistorySimulation::GetPositionQuantity(symbol_t symbol) const {
-    std::lock_guard<std::mutex> lock(_positionMtx);
-    auto itr = _positions.find(symbol);
-    if (itr == _positions.end()) {
-        return 0;
-    }
-    return static_cast<int64_t>(itr->second);
+    int64_t position = 0;
+    _backtestContexts.visit_all([&position, &symbol](const auto& item) {
+        position = item.second->getPosition(symbol);
+    });
+    return position;
 }
 
-double StockHistorySimulation::GetAdjPrice(symbol_t symbol, uint32_t index) {
+double StockHistorySimulation::GetAdjPrice(symbol_t symbol, uint32_t index) const {
     auto itr = _csvs.find(symbol);
     if (itr == _csvs.end()) {
         return 0.0;
     }
     auto& df = itr->second;
-    auto& header = _headers[symbol];
+    auto& header = _headers.at(symbol);
     if (header.empty()) {
         return 0.0;
     }
@@ -812,4 +592,216 @@ double StockHistorySimulation::GetAdjPrice(symbol_t symbol, uint32_t index) {
         index = close.size() - 1;
     }
     return close[index];
+}
+
+// ============ 多线程回测支持实现 ============
+
+uint16_t StockHistorySimulation::createBacktestContext(
+    const String& strategy_name,
+    const Set<symbol_t>& symbols,
+    double initial_capital)
+{
+    uint16_t runId = _nextRunId.fetch_add(1, std::memory_order_relaxed);
+
+    auto context = std::make_unique<BacktestContext>(runId, strategy_name);
+    context->setCapital(initial_capital);
+
+    for (auto symbol : symbols) {
+        context->addSymbol(symbol);
+        context->setCurIndex(symbol, 0);
+    }
+
+    if (!_csvs.empty()) {
+        context->setTotalBars(_csvs.begin()->second.get_index().size());
+    }
+
+    _backtestContexts.emplace(runId, std::move(context));
+
+    INFO("Created backtest context: runId={}, strategy={}, symbols={}, initialCapital={}",
+         runId, strategy_name, symbols.size(), initial_capital);
+
+    return runId;
+}
+
+BacktestContext* StockHistorySimulation::getBacktestContext(uint16_t run_id) {
+    BacktestContext* ctx = nullptr;
+    _backtestContexts.visit(run_id, [&ctx](auto& item) {
+        ctx = item.second.get();
+    });
+    return ctx;
+}
+
+const BacktestContext* StockHistorySimulation::getBacktestContext(uint16_t run_id) const {
+    const BacktestContext* ctx = nullptr;
+    _backtestContexts.visit(run_id, [&ctx](auto& item) {
+        ctx = item.second.get();
+    });
+    return ctx;
+}
+
+void StockHistorySimulation::destroyBacktestContext(uint16_t run_id) {
+    _backtestContexts.erase(run_id);
+}
+
+bool StockHistorySimulation::stepForward(BacktestContext* context) {
+    if (!context || context->isFinished()) {
+        return false;
+    }
+
+    bool anyMoreData = false;
+    const auto& symbols = context->getSymbols();
+
+    std::shared_lock<std::shared_mutex> dataLock(_dataMutex);
+
+    for (auto symbol : symbols) {
+        auto itr = _csvs.find(symbol);
+        if (itr == _csvs.end()) {
+            continue;
+        }
+
+        const auto& df = itr->second;
+        const auto& header = _headers.at(symbol);
+        auto curIndex = context->getCurIndex(symbol);
+
+        if (curIndex >= df.get_index().size() - 1) {
+            continue;
+        }
+
+        const auto& datetime = df.get_column<time_t>(header[0].c_str());
+        const auto& open = df.get_column<float>(header[1].c_str());
+        const auto& close = df.get_column<float>(header[2].c_str());
+        const auto& high = df.get_column<float>(header[3].c_str());
+        const auto& low = df.get_column<float>(header[4].c_str());
+        const auto& volume = df.get_column<int64_t>(header[5].c_str());
+
+        QuoteInfo info;
+        info._symbol = symbol;
+        info._open = open[curIndex];
+        info._close = close[curIndex];
+        info._high = high[curIndex];
+        info._low = low[curIndex];
+        info._volume = volume[curIndex];
+        info._time = datetime[curIndex];
+
+        context->setQuote(symbol, info);
+        context->incrementCurIndex(symbol);
+        anyMoreData = true;
+    }
+
+    dataLock.unlock();
+
+    for (auto symbol : symbols) {
+        matchOrders(context, symbol);
+    }
+
+    if (!anyMoreData) {
+        context->setFinished(true);
+    }
+
+    return anyMoreData;
+}
+
+void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symbol) {
+    auto* queue = context->getOrderQueue(symbol);
+    if (!queue) return;
+
+    const QuoteInfo* quote = context->getQuote(symbol);
+    if (!quote) return;
+
+    OrderInfo orderInfo;
+    while (queue->pop(orderInfo)) {
+        uint32_t curIndex = context->getCurIndex(symbol);
+        if (curIndex > 0) curIndex--;
+        double primitivePrice = GetPrimitivePrice(symbol, curIndex);
+
+        QuoteInfo matchQuote = *quote;
+        matchQuote._close = primitivePrice;
+
+        TradeReport report = OrderMatch(orderInfo._order->_order, matchQuote);
+
+        if (orderInfo._order->_order._side == 1) {
+            context->releaseFunds(report._trade_amount);
+        }
+
+        if (orderInfo._order->_order._side == 0) {
+            context->adjustPosition(symbol, report._quantity);
+        } else {
+            context->adjustPosition(symbol, -report._quantity);
+        }
+
+        context->addOrderReport(orderInfo._id, orderInfo._order);
+        orderInfo._order->_trades._reports.emplace_back(report);
+        orderInfo._order->_success.store(true);
+        orderInfo._order->_flag.store(true);
+        orderInfo._order->_promise.set_value(true);
+
+        auto broker = _server->GetBrokerSubSystem();
+        if (broker) {
+            broker->RecordTrade(*orderInfo._order);
+        }
+    }
+}
+
+QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol, const String& strategy) {
+    // 查找对应策略的回测上下文
+    BacktestContext* ctx = nullptr;
+    _backtestContexts.visit_all([&ctx, &strategy](auto& item) {
+        if (item.second->getStrategyName() == strategy) {
+            ctx = item.second.get();
+        }
+    });
+
+    if (ctx) {
+        const QuoteInfo* quote = ctx->getQuote(symbol);
+        if (quote) {
+            return *quote;
+        }
+    }
+
+    QuoteInfo empty;
+    empty._symbol = symbol;
+    empty._time = 0;
+    return empty;
+}
+
+order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* order, const String& strategy) {
+    // 查找对应策略的回测上下文
+    BacktestContext* ctx = nullptr;
+    _backtestContexts.visit_all([&ctx, &strategy](auto& item) {
+        if (item.second->getStrategyName() == strategy) {
+            ctx = item.second.get();
+        }
+    });
+
+    if (!ctx) {
+        WARN("Backtest context not found for strategy: {}", strategy);
+        order_id id;
+        id._id = 0;
+        return id;
+    }
+
+    // 买入时检查并冻结资金
+    if (order->_order._side == 0) {
+        double orderCost = order->_order._price * order->_order._volume;
+        if (!ctx->tryReserveFunds(orderCost)) {
+            WARN("资金不足：所需 {:.2f}，可用 {:.2f}", orderCost, ctx->getAvailableFunds());
+            order_id id;
+            id._id = 0;
+            return id;
+        }
+    }
+
+    OrderInfo info;
+    info._id = ++_cur_id;
+    info._order = order;
+
+    auto* queue = ctx->getOrCreateOrderQueue(symbol);
+    queue->push(info);
+
+    order_id id;
+    id._id = static_cast<uint32_t>(info._id);
+    if (is_stock(symbol)) {
+        id._type = 0;
+    }
+    return id;
 }

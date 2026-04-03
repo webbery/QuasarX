@@ -1,5 +1,6 @@
 #include "Nodes/SignalNode.h"
 #include "Interprecter/Stmt.h"
+#include "Util/log.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
 #include <utility>
@@ -36,7 +37,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
     if (!_buyParser->validate(availableVars)) {
         std::string error = "Buy signal expression type validation failed: " +
                            _buyParser->getValidationError();
-        ERROR("{}", error);
+        FATAL("{}", error);
         delete _buyParser;
         _buyParser = nullptr;
         throw std::runtime_error(error);
@@ -56,7 +57,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
     if (!_sellParser->validate(availableVars)) {
         std::string error = "Sell signal expression type validation failed: " +
                            _sellParser->getValidationError();
-        ERROR("{}", error);
+        FATAL("{}", error);
         delete _sellParser;
         _sellParser = nullptr;
         throw std::runtime_error(error);

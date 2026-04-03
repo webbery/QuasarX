@@ -21,6 +21,7 @@
 #include "Handler/ExchangeHandler.h"
 #include "Strategy.h"
 #include "Metric/Sharp.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 
 #define ER(expr) {int rc = 0; CHECK((rc = (expr)) == MDB_SUCCESS, #expr);  }
 #define CHECK(test, msg) ((test) ? (void)0 : ((void)fprintf(stderr, \
@@ -481,13 +482,18 @@ void BrokerSubSystem::CleanStrategyRecord() {
 order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
 
     if (_simulation) {
-        return _exchanges[ExchangeType::EX_STOCK_HIST_SIM]->AddOrder(GET_SYMBOL(order), order);
+        // 多线程回测模式：使用策略名获取上下文
+        ExchangeInterface* exchange_iface = _exchanges[ExchangeType::EX_STOCK_HIST_SIM];
+        auto* exchange = dynamic_cast<StockHistorySimulation*>(exchange_iface);
+        if (exchange) {
+            return exchange->AddOrder(GET_SYMBOL(order), order, order->_strategy_hash);
+        }
     }
     // 邮件通知
     String content;
     if (order->_order._side == 0) {
         content = std::format("Buy {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
-    } 
+    }
     else if (order->_order._side == 1) {
         content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
     }
@@ -504,7 +510,7 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     }
     order_id id;
     memset(&id, 0, sizeof(order_id));
-    return id;  
+    return id;
 }
 
 int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)

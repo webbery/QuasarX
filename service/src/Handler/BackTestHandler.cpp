@@ -96,29 +96,27 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    // 4. 执行回测
-    exchange->Login(AccountType::MAIN);
-    SendSSEProgress(sse_sock, strategyName, 0.2, "开始执行回测");
+    // 4. 执行回测（多线程版本）
+    // 获取策略的标的列表
+    auto symbols = strategySys->GetPools(strategyName);
 
-    try {
-        strategySys->Run(strategyName);
-    } catch (const std::exception& e) {
-        exchange->Logout(AccountType::MAIN);
-        res.status = 500;
-        String msg = R"({"message": "Failed to run strategy: )" + String(e.what()) + R"("})";
-        res.set_content(msg.c_str(), "application/json");
-        return;
-    }
+    // 使用 StartBacktest 启动多线程回测
+    auto* flowSubsystem = strategySys->GetFlowSubsystem();
+    double initialCapital = script.contains("params") && script["params"].contains("initialCapital")
+                            ? script["params"]["initialCapital"].get<double>()
+                            : 100000.0;
+
+    SendSSEProgress(sse_sock, strategyName, 0.2, "开始执行回测");
+    flowSubsystem->StartBacktest(strategyName, symbols, initialCapital);
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
-    auto* simExchange = (StockHistorySimulation*)exchange;
 
     // 启动后台线程推送进度
     std::atomic<bool> pushRunning{true};
-    std::thread pushThread([this, &simExchange, &strategyName, &sse_sock, &lastProgress, &pushRunning]() {
+    std::thread pushThread([exchange, &strategyName, &sse_sock, &lastProgress, &pushRunning]() {
         while (pushRunning && !_server->IsExit()) {
-            double progress = simExchange->Progress();
+            double progress = exchange->Progress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
                 SendSSEProgress(sse_sock, strategyName, 0.3 + progress * 0.5, msg);
@@ -128,22 +126,27 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     });
 
-    // 使用条件变量等待完成（阻塞等待，最多 5 分钟）
-    bool isComplete = simExchange->WaitForBacktestComplete(300);
+    // 等待回测完成（通过检查 FlowSubsystem 的运行状态）
+    auto* strategySys = _server->GetStrategySystem();
+    auto* flowSubsystem = strategySys->GetFlowSubsystem();
+    int waitCount = 0;
+    while (!_server->IsExit()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // 检查回测是否完成
+        if (!flowSubsystem->IsRunning(strategyName)) {
+            INFO("Backtest completed for strategy {}", strategyName);
+            break;
+        }
+        // 简单等待 5 分钟超时
+        if (++waitCount > 3000) {  // 3000 * 100ms = 300s
+            WARN("Backtest timeout for strategy {}", strategyName);
+            break;
+        }
+    }
 
     // 停止推送线程
     pushRunning = false;
     pushThread.join();
-
-    // 检查完成状态
-    if (!isComplete) {
-        INFO("Backtest failed: isComplete={}, lastProgress={}", isComplete, lastProgress);
-        res.status = 500;
-        String msg = R"({"message": "Backtest failed: Data loading or execution error."})";
-        res.set_content(msg.c_str(), "application/json");
-        exchange->Logout(AccountType::MAIN);
-        return;
-    }
 
     INFO("Backtest finish {}", lastProgress);
 

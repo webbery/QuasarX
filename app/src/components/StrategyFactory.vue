@@ -1195,7 +1195,7 @@ const runBacktest = async () => {
     return
   }
 
-  // 10. 获取信号节点的代码和日期范围
+    // 10. 获取信号节点的代码和日期范围
   let signalNode = null
   for (const node of getNodes.value) {
     if (node.data.nodeType === 'signal') {
@@ -1210,8 +1210,20 @@ const runBacktest = async () => {
     const rangeDate = signalNode.data.params['回测周期']['value']
 
     if (symbols.length > 0 && rangeDate && rangeDate.length === 2) {
-      nextTick(() => {
-        reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
+      // 等待 Tab 切换和图表初始化完成后再获取历史数据
+      nextTick(async () => {
+        // 等待 ReportView 组件完成初始化
+        await new Promise(resolve => setTimeout(resolve, 500))
+
+        // 调用 ReportView 的 initializeCharts 确保图表已初始化
+        if (reportViewRef.value && reportViewRef.value.initializeCharts) {
+          reportViewRef.value.initializeCharts()
+        }
+
+        // 然后再获取历史价格数据
+        if (reportViewRef.value && reportViewRef.value.updatePrice) {
+          reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
+        }
       })
     }
   } else {
