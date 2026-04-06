@@ -62,8 +62,49 @@
                 
                 <!-- 参数输入控件 -->
                 <div class="param-control">
+                    <!-- 配置选择器（带简介预览） -->
+                    <div v-if="paramConfig.type === 'config-select'" class="config-select-wrapper">
+                        <select
+                            :value="paramConfig.value"
+                            @change="updateParam(key, $event.target.value)"
+                            class="param-input param-select"
+                        >
+                            <option value="">-- 选择配置 --</option>
+                            <option v-for="config in configOptions"
+                                    :key="config.id"
+                                    :value="config.id">
+                                {{ config.name }} ({{ config.securities?.length || 0 }}个标的)
+                            </option>
+                        </select>
+
+                        <!-- 配置简介卡片 -->
+                        <div v-if="selectedConfigSummary" class="config-summary-card">
+                            <div class="summary-row">
+                                <span class="summary-label">模型:</span>
+                                <span class="summary-value">{{ selectedConfigSummary.modelTypeText }}</span>
+                            </div>
+                            <div class="summary-row">
+                                <span class="summary-label">证券数:</span>
+                                <span class="summary-value">{{ selectedConfigSummary.securities?.length || 0 }}</span>
+                            </div>
+                            <div class="summary-row">
+                                <span class="summary-label">观点数:</span>
+                                <span class="summary-value">{{ selectedConfigSummary.views?.length || 0 }}</span>
+                            </div>
+                            <div class="summary-row" v-if="selectedConfigSummary.optimizationResult">
+                                <span class="summary-label">预期收益:</span>
+                                <span class="summary-value positive">{{ selectedConfigSummary.optimizationResult.expectedReturn?.toFixed(2) || '-' }}%</span>
+                            </div>
+                        </div>
+
+                        <!-- 创建新配置按钮 -->
+                        <button class="create-config-btn" @click="openConfigManager">
+                            <i class="fas fa-plus"></i> 新建配置
+                        </button>
+                    </div>
+
                     <!-- 下拉选择框 -->
-                    <div v-if="paramConfig.type === 'select'" class="input-with-unit">
+                    <div v-else-if="paramConfig.type === 'select'" class="input-with-unit">
                         <select
                             :value="paramConfig.value"
                             @change="updateParam(key, $event.target.value)"
@@ -277,7 +318,7 @@ import { Handle, Position } from '@vue-flow/core'
 import { computed, inject, ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { ipcRenderer } from 'electron'
 
-const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file']
+const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file', 'config-select']
 
 // 定义组件属性
 const props = defineProps({
@@ -292,6 +333,9 @@ const emit = defineEmits(['update-node', 'node-click', 'node-context-menu'])
 
 // 注入选中的节点数组
 const selectedNodes = inject('selectedNodes', [])
+
+// 注入 portfolio 配置列表
+const portfolioConfigs = inject('portfolioConfigs', ref([]))
 
 // 存储打开的下拉框状态
 const openDropdowns = ref({})
@@ -332,6 +376,47 @@ const isDataFieldParam = (key) => {
     // 数据源节点的数据字段
     const dataFields = ['close', 'open', 'high', 'low', 'volume']
     return dataFields.includes(key)
+}
+
+// 计算配置选项
+const configOptions = computed(() => {
+    const configs = portfolioConfigs?.value || []
+    return configs.map(config => ({
+        id: config.id,
+        name: config.name,
+        modelType: config.modelType,
+        modelTypeText: getModelTypeText(config.modelType),
+        securities: config.securities,
+        views: config.views,
+        optimizationResult: config.optimizationResult
+    }))
+})
+
+// 模型类型文本映射
+const getModelTypeText = (modelType) => {
+    const map = {
+        'black_litterman': 'Black-Litterman',
+        'mean_variance': 'Mean-Variance',
+        'risk_parity': 'Risk Parity'
+    }
+    return map[modelType] || modelType || '-'
+}
+
+// 计算选中的配置简介
+const selectedConfigSummary = computed(() => {
+    // 查找当前节点的配置 ID 参数
+    const configId = props.node.data.params?.['配置 ID']?.value
+    if (!configId) return null
+    return configOptions.value.find(c => c.id === configId) || null
+})
+
+// 打开配置管理器
+const openConfigManager = () => {
+    // 触发自定义事件，让父组件处理
+    emit('open-portfolio-manager')
+
+    // 同时触发全局事件
+    window.dispatchEvent(new CustomEvent('open-portfolio-manager'))
 }
 
 onMounted(() => {
@@ -660,6 +745,65 @@ const getFileFilters = (paramKey) => {
 </script>
 
 <style scoped>
+/* 配置选择器样式 */
+.config-select-wrapper {
+    width: 100%;
+
+    .config-summary-card {
+        background: var(--darker-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 8px;
+        margin-top: 6px;
+        font-size: 0.75rem;
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-light);
+
+            &:last-child {
+                border-bottom: none;
+            }
+
+            .summary-label {
+                color: var(--text-secondary);
+            }
+
+            .summary-value {
+                color: var(--text);
+                font-weight: 500;
+
+                &.positive {
+                    color: var(--secondary);
+                }
+            }
+        }
+    }
+
+    .create-config-btn {
+        width: 100%;
+        margin-top: 6px;
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 6px;
+        font-size: 0.75rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        transition: all 0.2s ease;
+
+        &:hover {
+            background: var(--accent);
+        }
+    }
+}
+
 /* 多选下拉框样式 */
 .multiselect-dropdown-wrapper {
     position: relative;

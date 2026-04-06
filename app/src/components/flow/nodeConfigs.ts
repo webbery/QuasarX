@@ -8,6 +8,7 @@ export interface ParamConfig {
   step?: number
   unit?: string
   visible?: boolean
+  placeholder?: string
 }
 
 export interface NodeTypeConfig {
@@ -49,6 +50,8 @@ export const keyMap: KeyMap = {
   "minFee": "最低手续费",
   "slippage": "滑点",
   "type": "执行类型",
+  "positionRatio": "仓位比例",
+  "pool": "交易池",
 }
 
 // 节点类型配置
@@ -201,9 +204,30 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
     params: {}
   },
   'portfolio': {
-    label: 'portfolio',
+    label: '投资组合',
     nodeType: 'portfolio',
-    params: {}
+    params: {
+      "配置 ID": {
+        value: "",
+        type: "config-select",
+        options: [],
+        placeholder: "选择或创建配置"
+      },
+      "初始资金": {
+        value: 100000,
+        type: "number",
+        unit: "元",
+        min: 0,
+        step: 10000
+      },
+      "仓位比例": {
+        value: 1.0,
+        type: "number",
+        min: 0,
+        max: 1,
+        step: 0.1
+      }
+    }
   },
   'cnn': {
     label: 'CNN 模型',

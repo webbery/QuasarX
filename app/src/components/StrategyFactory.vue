@@ -124,8 +124,12 @@ import PromptDialog from './PromptDialog.vue'
 import axios from 'axios'
 import sseService from '@/ts/SSEService';
 import { useHistoryStore } from '@/stores/history'
+import { usePortfolioStore } from '@/stores/portfolio'
 import { storeToRefs } from 'pinia'
 import { keyMap, nodeTypeConfigs } from './flow/nodeConfigs'
+
+// 初始化 portfolio store
+const portfolioStore = usePortfolioStore()
 
 const {
     fitView, 
@@ -263,6 +267,8 @@ onUnmounted(() => {
 provide('selectedNodes', selectedNodes)
 // 提供 selectedEdges 给子组件
 provide('selectedEdges', selectedEdges)
+// 提供 portfolioConfigs 给 FlowNode 使用
+provide('portfolioConfigs', computed(() => portfolioStore.portfolioConfigs))
 
 // 监听 Vue Flow 的选中状态变化
 watch(getSelectedNodes, (newSelectedNodes) => {
@@ -283,6 +289,35 @@ watch(() => getNodes.value, () => {
 watch(() => getEdges.value, () => {
   hasUnsavedChanges.value = true
 }, { deep: true, immediate: false })
+
+// 监听选项卡切换，当切换到回测结果时更新价格图表
+watch(activeTab, async (newTab) => {
+  if (newTab === 'backtest' && reportViewRef.value) {
+    console.info('[StrategyFactory] 切换到回测结果选项卡')
+
+    // 等待 ReportView 组件完成初始化
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 300))
+
+    // 从信号节点获取标的代码和日期范围
+    const signalNode = getNodes.value.find(node => node.data.nodeType === 'signal')
+    const executionNode = getNodes.value.find(node => node.data.nodeType === 'execution')
+    if (signalNode && executionNode) {
+      const codes = signalNode.data.params['代码']?.value
+      const rangeDate = executionNode.data.params['回测周期']?.value
+
+      if (codes && rangeDate && rangeDate.length === 2) {
+        const symbols = codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        if (symbols.length > 0 && reportViewRef.value.updatePrice) {
+          console.info(`[StrategyFactory] 更新价格图表：${symbols[0]}, ${rangeDate[0]} - ${rangeDate[1]}`)
+          reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
+        }
+      }
+    } else {
+      console.warn('[StrategyFactory] 未找到信号节点，无法更新价格图表')
+    }
+  }
+})
 
 const validNodes = computed({
     get: () => getNodes.value,
@@ -1166,9 +1201,9 @@ const runBacktest = async () => {
     addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，${indicatorCount}个指标`, 'success')
 
     // 9. 所有处理完成后再切换 Tab
-    nextTick(() => {
-      activeTab.value = 'backtest'
-    })
+    // nextTick(() => {
+    //   activeTab.value = 'backtest'
+    // })
 
   } catch (error) {
     console.error('回测失败:', error)
@@ -1351,17 +1386,23 @@ const loadVersionFromHistory = async (version) => {
           const codes = inputNode.data.params['代码'].value
           const symbols = codes.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
           if (symbols.length > 0) {
-            backtestSymbol = symbols[0]
+            backtestSymbol = symbols.join(',')  // 传递所有标的代码，逗号分隔
             console.info(`[loadVersionFromHistory] 提取标的代码：${backtestSymbol}`)
           }
         }
       }
 
-      nextTick(async () => {
-        if (reportViewRef.value && reportViewRef.value.loadBacktestResultFromVersion) {
-          await reportViewRef.value.loadBacktestResultFromVersion(versionData.id, backtestStartDate, backtestEndDate, backtestSymbol)
-        }
-      })
+      // 调用 ReportView 的 loadBacktestResultFromVersion 加载回测结果和历史价格数据
+      if (reportViewRef.value && reportViewRef.value.loadBacktestResultFromVersion) {
+        reportViewRef.value.loadBacktestResultFromVersion(
+          versionData.id,
+          backtestStartDate,
+          backtestEndDate,
+          backtestSymbol
+        )
+      } else {
+        console.warn('[loadVersionFromHistory] ReportView 未找到 loadBacktestResultFromVersion 方法')
+      }
     })
   } catch (error) {
     console.error('加载版本数据失败:', error)

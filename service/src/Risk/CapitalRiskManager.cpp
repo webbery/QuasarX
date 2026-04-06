@@ -64,9 +64,6 @@ double CapitalRiskManager::GetCurrentEquity() {
     // 获取当前总资产（持仓市值 + 可用资金）
     double totalEquity = 0;
 
-    // 获取持仓
-    auto& portfolio = broker->GetAllHistoryTrades();
-
     // 通过 Server 获取当前持仓信息
     auto& positions = _server->GetPosition();
 

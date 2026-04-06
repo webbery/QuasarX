@@ -14,6 +14,7 @@
 #include "Util/string_algorithm.h"
 #include "std_header.h"
 #include "nng/nng.h"
+#include "AgentSubSystem.h"
 
 BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 
@@ -77,7 +78,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.set_content(R"({"message": "Backtest mode [SIM] is not available."})", "application/json");
         return;
     }
-
     // 发送开始消息
     SendSSEProgress(sse_sock, strategyName, 0.0, "回测开始");
 
@@ -96,6 +96,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    exchange->Login(AccountType::MAIN);
     // 4. 执行回测（多线程版本）
     // 获取策略的标的列表
     auto symbols = strategySys->GetPools(strategyName);
@@ -107,14 +108,14 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
                             : 100000.0;
 
     SendSSEProgress(sse_sock, strategyName, 0.2, "开始执行回测");
-    flowSubsystem->StartBacktest(strategyName, symbols, initialCapital);
+    flowSubsystem->Start(strategyName, symbols, initialCapital);
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
 
     // 启动后台线程推送进度
     std::atomic<bool> pushRunning{true};
-    std::thread pushThread([exchange, &strategyName, &sse_sock, &lastProgress, &pushRunning]() {
+    std::thread pushThread([this, exchange, &strategyName, &sse_sock, &lastProgress, &pushRunning]() {
         while (pushRunning && !_server->IsExit()) {
             double progress = exchange->Progress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
@@ -127,8 +128,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     });
 
     // 等待回测完成（通过检查 FlowSubsystem 的运行状态）
-    auto* strategySys = _server->GetStrategySystem();
-    auto* flowSubsystem = strategySys->GetFlowSubsystem();
     int waitCount = 0;
     while (!_server->IsExit()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -156,6 +155,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
     exchange->Logout(AccountType::MAIN);
 
+    // 获取回测 runId（用于获取交易记录）
+    uint16_t runId = flowSubsystem->GetBacktestRunId(strategyName);
+
     // 6. 收集结果
     nlohmann::json results;
     auto& features = results["features"];
@@ -170,19 +172,21 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
 
-    // 7. 获取交易记录并按时间排序
-    auto symbols = strategySys->GetPools(strategyName);
+    // 持久化交易记录
+    brokerSystem->PersistTrades(runId);
+
+    // 7. 获取交易记录并按时间排序（使用 runId 过滤）
     for (auto& symbol: symbols) {
         auto str = get_symbol(symbol);
-        auto& trades = brokerSystem->GetHistoryTrades(symbol);
+        auto trades = brokerSystem->GetHistoryTrades(runId, symbol);
 
         // 收集该股票的所有交易
         std::vector<std::pair<int64_t, nlohmann::json>> buyTrades;
         std::vector<std::pair<int64_t, nlohmann::json>> sellTrades;
 
-        for (auto& trans: trades) {
+        for (const auto& trans: trades) {
             String side = (trans._order._side == 0 ? "buy" : "sell");
-            for (auto& report: trans._deal._reports) {
+            for (const auto& report: trans._deal._reports) {
                 nlohmann::json item = {str, report._time, report._quantity, report._price};
                 if (side == "buy") {
                     buyTrades.emplace_back(report._time, item);

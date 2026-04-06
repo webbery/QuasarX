@@ -85,6 +85,14 @@ public:
   virtual double GetCommission(symbol_t symbol, int64_t size) { return 0; }
 };
 
+using SymbolTrades = Map<symbol_t, List<Transaction>>;
+
+// 每个 run_id 的私有数据，带锁保护
+struct RunIdData {
+    mutable std::mutex mtx;
+    SymbolTrades trades;
+};
+
 class BrokerSubSystem {
 public:
     using predictions_t = List<Pair<fixed_time_range, int>>;
@@ -114,10 +122,12 @@ public:
     virtual bool QueryOrders(SecurityType type, OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
     virtual void CancelOrder(order_id& id, symbol_t symbol, std::function<void (const TradeReport&)> cb);
-    // 记录交易
-    void RecordTrade(const OrderContext& );
+    // 记录交易（从 OrderContext 中获取 backtest_run_id）
+    void RecordTrade(const OrderContext& context);
     // 清除历史交易信息
     void CleanStrategyRecord();
+    // 持久化指定 run_id 的交易记录
+    void PersistTrades(uint16_t run_id);
 
     // 注册统计指标
     void RegistIndicator(const String& strategy, StatisticIndicator indicator);
@@ -142,12 +152,10 @@ public:
 
     void DeletePrediction(symbol_t, int index);
 
-    const List<Transaction>& GetHistoryTrades(symbol_t);
+    List<Transaction> GetHistoryTrades(uint16_t run_id, symbol_t);
 
-    // 获取所有交易记录
-    const Map<symbol_t, List<Transaction>>& GetAllHistoryTrades() const {
-        return _historyTrades;
-    }
+    // 获取所有交易记录（用于持久化）
+    std::shared_ptr<RunIdData> GetAllHistoryTrades(uint16_t run_id);
 
     // 交易查询结构
     struct TradeQueryResult {
@@ -202,15 +210,12 @@ private:
 
     ICommission* GetCommision(symbol_t symbol);
 
-    Transaction Order2Transaction(const OrderContext& context);
-
 private:
     Server* _server;
     PortfolioSubSystem* _portfolio;
     bool _simulation;
-    // 交易记录
-    std::mutex _tradeMtx;
-    Map<symbol_t, List<Transaction>> _historyTrades;
+    // 交易记录 - 双层索引：run_id -> symbol -> trades
+    ConcurrentMap<uint16_t, std::shared_ptr<RunIdData>> _historyTrades;
 
     std::mutex _indMtx;
     Map<String, Set<StatisticIndicator>> _indicators;

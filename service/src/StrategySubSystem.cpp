@@ -49,7 +49,9 @@ void StrategySubSystem::Init() {
 }
 
 bool StrategySubSystem::Run(const String& strategy) {
-    _agentSystem->Start(strategy);
+    auto strategySys = _handle->GetStrategySystem();
+    auto symbols = strategySys->GetPools(strategy);
+    _agentSystem->Start(strategy, symbols);
     return true;
 }
 

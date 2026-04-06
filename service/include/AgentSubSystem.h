@@ -25,7 +25,6 @@ public:
     void SetStrategyConfig(const String& strategy, const nlohmann::json& config);
 
     void Start();
-    void Start(const String& strategy);
     void Stop(const String& strategy);
 
     /**
@@ -34,12 +33,17 @@ public:
      * @param symbols 标的列表
      * @param initialCapital 初始资金
      */
-    void StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
+    void Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
 
     /**
      * @brief 检查策略是否正在运行
      */
     bool IsRunning(const String& strategy) const;
+
+    /**
+     * @brief 获取策略的回测运行 ID
+     */
+    uint16_t GetBacktestRunId(const String& strategy);
 
     // void Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params);
 

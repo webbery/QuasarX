@@ -37,7 +37,7 @@
             <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'risk')" title="风控定制">
                 <div class="component-title">风控节点</div>
             </div>
-            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'porfolio')" title="设计投资组合">
+            <div class="component-card strategy-node" draggable="true" @dragstart="onDragStart($event, 'portfolio')" title="设计投资组合，配置标的权重和约束条件">
                 <div class="component-title">投资组合</div>
             </div>
         </div>

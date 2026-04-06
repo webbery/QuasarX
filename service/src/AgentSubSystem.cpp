@@ -59,81 +59,12 @@ void FlowSubsystem::ClearFlow(const String& strategy) {
 
 void FlowSubsystem::Start() {
     auto broker = _handle->GetBrokerSubSystem();
+    auto strategySys = _handle->GetStrategySystem();
     for (auto& item : _flows) {
         auto name = item.first;
-        Start(name);
+        auto symbols = strategySys->GetPools(name);
+        Start(name, symbols);
     }
-}
-
-void FlowSubsystem::Start(const String& strategy) {
-    Stop(strategy);
-    auto& flow = _flows.at(strategy);
-    flow._running = true;
-    flow._worker = new std::thread([strategy, this]() {
-        DataContext context(strategy, _handle);
-
-        try {
-            auto& flow = _flows[strategy];
-            if (IsUseShareMemory(flow)) {
-                context.EnableShareMemory(strategy);
-            }
-            for (auto node : flow._graph) {
-                node->Prepare(strategy, context);
-            }
-
-            uint64_t epoch = 0;
-            bool success = true;
-            auto startTick = std::chrono::high_resolution_clock::now();
-            while (flow._running || !Server::IsExit()) {
-                context.SetEpoch(++epoch);
-                if (!RunGraph(strategy, flow, context)) {
-                    success = false;
-                    break;
-                }
-                // 检查是否数据已用完（QuoteInputNode 正常退出）
-                if (context.GetEpoch() == 0) {
-                    break;
-                }
-            }
-            auto endTick = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
-
-            if (success) {
-                // 统计指标
-                ExecuteNode* endNode = nullptr;
-                for (auto node: flow._graph) {
-                    auto n = dynamic_cast<ExecuteNode*>(node);
-                    if (n) {
-                        endNode = n;
-                        break;
-                    }
-                }
-                if (endNode) {
-                    auto& cash_flow = endNode->GetReports();
-                    flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
-                    flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
-                    flow._collections[StatisticIndicator::TotalReturn] = total_return_ratio(cash_flow, context);
-                    flow._collections[StatisticIndicator::MaxDrawDown] = max_drawdown_ratio(cash_flow, context);
-                    flow._collections[StatisticIndicator::WinRate] = win_rate(cash_flow, context);
-                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(cash_flow, context, 0);
-                }
-                for (auto node : flow._graph) {
-                    node->Done(strategy);
-                }
-            }
-            // 回测失败时需要保证QuoteInputNode正常退出
-            if (_handle->GetRunningMode() == RuningType::Backtest) {
-                auto broker = _handle->GetAvaliableStockExchange();
-                broker->Logout();
-            }
-            // 结束通知
-            flow._running = false;
-            auto info = fmt::format("backtest finish, cost {}s, {}ms/per datum", duration.count(), (epoch == 0? 0:duration.count()*1000.0/epoch));
-            strategy_log(strategy, info);
-        } catch (const std::invalid_argument& e) {
-            WARN("invalid argument error: {}", e.what());
-        }
-    });
 }
 
 void FlowSubsystem::Stop(const String& strategy) {
@@ -146,7 +77,7 @@ void FlowSubsystem::Stop(const String& strategy) {
     flow._worker = nullptr;
 }
 
-void FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
+void FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
     Stop(strategy);
 
     // 获取交易所并创建回测上下文
@@ -166,12 +97,12 @@ void FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& s
         DataContext context(strategy, _handle);
         context.setBacktestRunId(runId);
 
+        auto& flow = _flows[strategy];
         // 获取回测上下文
         auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
         BacktestContext* btContext = exchange ? exchange->getBacktestContext(runId) : nullptr;
 
         try {
-            auto& flow = _flows[strategy];
             if (IsUseShareMemory(flow)) {
                 context.EnableShareMemory(strategy);
             }
@@ -233,7 +164,6 @@ void FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& s
                 broker->Logout();
             }
 
-            flow._running = false;
             auto info = fmt::format("backtest finish, cost {}s, {}ms/per datum", duration.count(), (epoch == 0? 0:duration.count()*1000.0/epoch));
             strategy_log(strategy, info);
         } catch (const std::invalid_argument& e) {
@@ -244,6 +174,7 @@ void FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& s
         if (exchange) {
             exchange->destroyBacktestContext(runId);
         }
+        flow._running = false;
     });
 }
 
@@ -263,7 +194,21 @@ bool FlowSubsystem::IsRunning(const String& strategy) const {
         return false;
     }
     const auto& flow = itr->second;
-    return flow._running.load() || (flow._worker && flow._worker->joinable());
+    if (!flow._running.load()) {
+        if (flow._worker && flow._worker->joinable()) {
+            flow._worker->join();
+            return false;
+        }
+    }
+    return true;
+}
+
+uint16_t FlowSubsystem::GetBacktestRunId(const String& strategy) {
+    auto itr = _flows.find(strategy);
+    if (itr == _flows.end()) {
+        return 0;
+    }
+    return itr->second._backtestRunId;
 }
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {

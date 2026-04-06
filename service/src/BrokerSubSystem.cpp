@@ -39,8 +39,18 @@
 #define DB_TIME_NAME "t"
 #define DB_PRICE_NAME "p"
 
-Map<ExchangeType, ExchangeInterface*> BrokerSubSystem::_exchanges;
 
+namespace {
+    Transaction Order2Transaction(const OrderContext& context) {
+        Transaction act;
+        act._order = context._order;
+        act._deal = context._trades;
+        act._meta = context.GetMeta();  // 复制元数据
+        return act;
+    }
+}
+
+Map<ExchangeType, ExchangeInterface*> BrokerSubSystem::_exchanges;
 StockCommission::StockCommission() {
 
 }
@@ -309,170 +319,246 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
   if (jsn.empty())
     return;
 
-  std::unique_lock<std::mutex> lck(_tradeMtx);
+  // 支持新旧两种格式
+  // 旧格式：[{symbol, transactions: [...]}, ...]
+  // 新格式：[{run_id, symbol, transactions: [...]}, ...]
   for (auto& item : jsn) {
-      String symbol = item["symbol"];
-      auto symb = to_symbol(symbol);
-      auto& trans = _historyTrades[symb];
-      for (auto& action : item[DB_TRANSACTION_NAME]) {
-          Transaction tran;
-          tran._order._volume = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
-          tran._order._time = action[DB_ORDER_NAME][DB_TIME_NAME];
-          int i = 0;
-          for (double price : action[DB_ORDER_NAME][DB_PRICE_NAME]) {
-              tran._order._price = price;
+      uint16_t run_id = item.value("run_id", 0);  // 新格式有 run_id
+      if (run_id == 0) {
+          // 旧格式没有 run_id，使用索引作为区分
+          run_id = static_cast<uint16_t>(&item - &jsn[0] + 1);
+      }
+
+      // 获取或创建 RunIdData
+      auto data = std::make_shared<RunIdData>();
+      _historyTrades.emplace(run_id, data);
+
+      std::lock_guard<std::mutex> lock(data->mtx);
+
+      // 新格式：有 run_id 字段
+      String symbol = item.value("symbol", "");
+      if (item.contains("transactions")) {
+          for (auto& action : item["transactions"]) {
+              Transaction tran;
+              tran._order._volume = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
+              tran._order._time = action[DB_ORDER_NAME][DB_TIME_NAME];
+              int i = 0;
+              for (double price : action[DB_ORDER_NAME][DB_PRICE_NAME]) {
+                  tran._order._price = price;
+              }
+              List<TradeReport> reports;
+              for (auto& trade : action[DB_TRADE_NAME]) {
+                  TradeReport report;
+                  report._time = trade[DB_TIME_NAME];
+                  report._price = trade[DB_PRICE_NAME];
+                  report._quantity = trade[DB_QUANTITY_NAME];
+                  reports.emplace_back(std::move(report));
+              }
+              tran._deal._reports = std::move(reports);
+              // 反序列化元数据（兼容旧数据）
+              if (action.contains("meta")) {
+                  auto& meta = action["meta"];
+                  tran._meta.strategy_hash = meta.value("strategy_hash", 0);
+                  tran._meta.backtest_run_id = meta.value("backtest_run_id", 0);
+                  tran._meta.running_type = meta.value("running_type", 0);
+              }
+              data->trades[to_symbol(symbol)].emplace_back(std::move(tran));
           }
-          List<TradeReport> reports;
-          for (auto& trade : action[DB_TRADE_NAME]) {
-              TradeReport report;
-              report._time = trade[DB_TIME_NAME];
-              report._price = trade[DB_PRICE_NAME];
-              report._quantity = trade[DB_QUANTITY_NAME];
-              reports.emplace_back(std::move(report));
+      }
+      // 旧格式：[{symbol, transactions: [...]}, ...]
+      else if (item.contains(DB_TRANSACTION_NAME)) {
+          for (auto& action : item[DB_TRANSACTION_NAME]) {
+              Transaction tran;
+              tran._order._volume = action[DB_ORDER_NAME][DB_QUANTITY_NAME];
+              tran._order._time = action[DB_ORDER_NAME][DB_TIME_NAME];
+              int i = 0;
+              for (double price : action[DB_ORDER_NAME][DB_PRICE_NAME]) {
+                  tran._order._price = price;
+              }
+              List<TradeReport> reports;
+              for (auto& trade : action[DB_TRADE_NAME]) {
+                  TradeReport report;
+                  report._time = trade[DB_TIME_NAME];
+                  report._price = trade[DB_PRICE_NAME];
+                  report._quantity = trade[DB_QUANTITY_NAME];
+                  reports.emplace_back(std::move(report));
+              }
+              tran._deal._reports = std::move(reports);
+              // 反序列化元数据（兼容旧数据）
+              if (action.contains("meta")) {
+                  auto& meta = action["meta"];
+                  tran._meta.strategy_hash = meta.value("strategy_hash", 0);
+                  tran._meta.backtest_run_id = meta.value("backtest_run_id", 0);
+                  tran._meta.running_type = meta.value("running_type", 0);
+              }
+              data->trades[to_symbol(symbol)].emplace_back(std::move(tran));
           }
-          tran._deal._reports = std::move(reports);
-          // 反序列化元数据（兼容旧数据）
-          if (action.contains("meta")) {
-              auto& meta = action["meta"];
-              tran._meta.strategy_hash = meta.value("strategy_hash", 0);
-              tran._meta.backtest_run_id = meta.value("backtest_run_id", 0);
-              tran._meta.running_type = meta.value("running_type", 0);
-          }
-          trans.emplace_back(std::move(tran));
       }
   }
 }
 
 nlohmann::json BrokerSubSystem::GetHistoryJson() {
   nlohmann::json jsn;
-  std::unique_lock<std::mutex> lck(_tradeMtx);
-  for (auto& item: _historyTrades) {
-    nlohmann::json temp;
-    temp["symbol"] = get_symbol(item.first);
-    for (auto& trans: item.second) {
-      nlohmann::json action;
-      action[DB_ORDER_NAME][DB_QUANTITY_NAME] = trans._order._volume;
-      action[DB_ORDER_NAME][DB_TIME_NAME] = trans._order._time;
-      for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
-        action[DB_ORDER_NAME][DB_PRICE_NAME].push_back(trans._order._price);
-      }
-      // 序列化元数据
-      nlohmann::json meta;
-      meta["strategy_hash"] = trans._meta.strategy_hash;
-      meta["backtest_run_id"] = trans._meta.backtest_run_id;
-      meta["running_type"] = (int)trans._meta.running_type;
-      action["meta"] = std::move(meta);
+  // 遍历所有 run_id
+  _historyTrades.visit_all([&jsn](const auto& entry) {
+      uint16_t run_id = entry.first;
+      const auto& data = entry.second;
 
-      for (auto& deal : trans._deal._reports) {
-          nlohmann::json report;
-          report[DB_TIME_NAME] = deal._time;
-          report[DB_PRICE_NAME] = deal._price;
-          report[DB_QUANTITY_NAME] = deal._quantity;
-          action[DB_TRADE_NAME].emplace_back(std::move(report));
+      std::lock_guard<std::mutex> lock(data->mtx);
+      for (const auto& [symbol, trades] : data->trades) {
+          nlohmann::json temp;
+          temp["run_id"] = run_id;
+          temp["symbol"] = get_symbol(symbol);
+          for (const auto& trans : trades) {
+              nlohmann::json action;
+              action[DB_ORDER_NAME][DB_QUANTITY_NAME] = trans._order._volume;
+              action[DB_ORDER_NAME][DB_TIME_NAME] = trans._order._time;
+              for (int i = 0; i < MAX_ORDER_SIZE; ++i) {
+                  action[DB_ORDER_NAME][DB_PRICE_NAME].push_back(trans._order._price);
+              }
+              // 序列化元数据
+              nlohmann::json meta;
+              meta["strategy_hash"] = trans._meta.strategy_hash;
+              meta["backtest_run_id"] = trans._meta.backtest_run_id;
+              meta["running_type"] = (int)trans._meta.running_type;
+              action["meta"] = std::move(meta);
+
+              for (const auto& deal : trans._deal._reports) {
+                  nlohmann::json report;
+                  report[DB_TIME_NAME] = deal._time;
+                  report[DB_PRICE_NAME] = deal._price;
+                  report[DB_QUANTITY_NAME] = deal._quantity;
+                  action[DB_TRADE_NAME].emplace_back(std::move(report));
+              }
+              temp[DB_TRANSACTION_NAME].emplace_back(std::move(action));
+          }
+          jsn.emplace_back(std::move(temp));
       }
-      temp[DB_TRANSACTION_NAME].emplace_back(std::move(action));
-    }
-    jsn.emplace_back(std::move(temp));
-  }
+  });
   return jsn;
 }
 
 nlohmann::json BrokerSubSystem::LoadJson(const String& name, MDB_txn* txn, MDB_dbi dbi) {
-  MDB_val key; 
-  key.mv_data = (void*)name.data();
-  key.mv_size = name.size();
-  MDB_val data;
-  int rc = mdb_get(txn, dbi, &key, &data);
-  if (rc != 0)
-      return nullptr;
-  String cbor((char*)data.mv_data, data.mv_size);
-  return nlohmann::json::from_cbor(cbor);
+    MDB_val key;
+    key.mv_data = (void*)name.data();
+    key.mv_size = name.size();
+    MDB_val data;
+    int rc = mdb_get(txn, dbi, &key, &data);
+    if (rc != 0)
+        return nullptr;
+    String cbor((char*)data.mv_data, data.mv_size);
+    return nlohmann::json::from_cbor(cbor);
 }
 
 void BrokerSubSystem::SaveJson(const String& name, MDB_txn* txn, MDB_dbi dbi, const nlohmann::json& jsn) {
-  MDB_val key, data; 
-  key.mv_data = (void*)name.data();
-  key.mv_size = name.size();
+    MDB_val key, data;
+    key.mv_data = (void*)name.data();
+    key.mv_size = name.size();
 
-  auto cbor = nlohmann::json::to_cbor(jsn);
-  data.mv_data = cbor.data();
-  data.mv_size = cbor.size();
-  mdb_put(txn, dbi, &key, &data, 0);
+    auto cbor = nlohmann::json::to_cbor(jsn);
+    data.mv_data = cbor.data();
+    data.mv_size = cbor.size();
+    mdb_put(txn, dbi, &key, &data, 0);
 }
 
 void BrokerSubSystem::run() {
-  MDB_env* _env;
-  MDB_txn *_txn;
+    MDB_env* _env;
+    MDB_txn* _txn;
 
-  ER(mdb_env_create(&_env));
-  ER(mdb_env_set_maxreaders(_env, 1));
-  ER(mdb_env_set_mapsize(_env, DEFAULT_DISK_CACHE_SIZE));
-  ER(mdb_env_set_maxdbs(_env, DEFAULT_MAX_SYMBOLS));
-  ER(mdb_env_open(_env, _dbpath.c_str(), MDB_CREATE | MDB_NOTLS | MDB_NORDAHEAD | MDB_NOSUBDIR | MDB_NOLOCK | MDB_WRITEMAP, 0664));
-  ER(mdb_txn_begin(_env, NULL, MDB_WRITEMAP, &_txn));
+    ER(mdb_env_create(&_env));
+    ER(mdb_env_set_maxreaders(_env, 1));
+    ER(mdb_env_set_mapsize(_env, DEFAULT_DISK_CACHE_SIZE));
+    ER(mdb_env_set_maxdbs(_env, DEFAULT_MAX_SYMBOLS));
+    ER(mdb_env_open(_env, _dbpath.c_str(), MDB_CREATE | MDB_NOTLS | MDB_NORDAHEAD | MDB_NOSUBDIR | MDB_NOLOCK | MDB_WRITEMAP, 0664));
+    ER(mdb_txn_begin(_env, NULL, MDB_WRITEMAP, &_txn));
 
-  // 不同模式使用不同的数据库
-  int db_id = 1;
-  auto dbi = GetDBI(db_id, _txn);
-  InitPortfolio(_txn, dbi);
-  InitBrokers(_txn, dbi);
-  InitHistory(_txn, dbi);
-  InitPrediction(_txn, dbi);
+    // 不同模式使用不同的数据库
+    int db_id = 1;
+    auto dbi = GetDBI(db_id, _txn);
+    InitPortfolio(_txn, dbi);
+    InitBrokers(_txn, dbi);
+    InitHistory(_txn, dbi);
+    InitPrediction(_txn, dbi);
 
-  SetCurrentThreadName("Broker");
-  List<OrderContext*> contexts;
-  while (!_exit) {
-    auto future = std::chrono::system_clock::now() + std::chrono::seconds(5);
-    {
-      std::unique_lock<std::mutex> lck(_mutex);
-      if (_cv.wait_until(lck, future) == std::cv_status::timeout) {
-        flush(_txn, dbi);
-        continue;
-      }
-    }
-    
-
-    if (_order_queue.empty() && contexts.empty()) {
-      continue;
-    }
-
-    while (!_order_queue.empty()) {
-      OrderContext* ctx = nullptr;
-      if (_order_queue.pop(ctx)) {
-          contexts.push_back(ctx);
-      }
-    }
-    for (auto itr = contexts.begin(); itr != contexts.end();) {
-        auto ctx = *itr;
-        if (ctx->_flag) {
-            // TODO: 日志记录
-            if (ctx->_success) {
-                RecordTrade(*ctx);
-                LOG("Order Success:{}", ctx->_order);
+    SetCurrentThreadName("Broker");
+    List<OrderContext*> contexts;
+    while (!_exit) {
+        auto future = std::chrono::system_clock::now() + std::chrono::seconds(5);
+        {
+            std::unique_lock<std::mutex> lck(_mutex);
+            if (_cv.wait_until(lck, future) == std::cv_status::timeout) {
+                flush(_txn, dbi);
+                continue;
             }
-            LOG("Delete Order {}", ctx->_order._id);
-            delete ctx;
-            itr = contexts.erase(itr);
         }
-        else {
-            ++itr;
+
+
+        if (_order_queue.empty() && contexts.empty()) {
+            continue;
+        }
+
+        while (!_order_queue.empty()) {
+            OrderContext* ctx = nullptr;
+            if (_order_queue.pop(ctx)) {
+                contexts.push_back(ctx);
+            }
+        }
+        for (auto itr = contexts.begin(); itr != contexts.end();) {
+            auto ctx = *itr;
+            if (ctx->_flag) {
+                // 日志记录
+                if (ctx->_success) {
+                    RecordTrade(*ctx);
+                    LOG("Order Success:{}", ctx->_order);
+                }
+                LOG("Delete Order {}", ctx->_order._id);
+                delete ctx;
+                itr = contexts.erase(itr);
+            }
+            else {
+                ++itr;
+            }
         }
     }
-  }
-  // flush
-  flush(_txn, dbi);
+    // flush
+    flush(_txn, dbi);
 
-  for (auto& item: _dbis) {
-    mdb_dbi_close(_env, item.second);
-  }
-  mdb_txn_commit(_txn);
-  mdb_env_sync(_env, 1);
+    for (auto& item : _dbis) {
+        mdb_dbi_close(_env, item.second);
+    }
+    mdb_txn_commit(_txn);
+    mdb_env_sync(_env, 1);
 }
 
 void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
-    auto act = Order2Transaction(ctx);
-    std::unique_lock<std::mutex> lck(_tradeMtx);
-    _historyTrades[ctx._order._symbol].emplace_back(std::move(act));
+    uint16_t runId = ctx._backtest_run_id;
+
+    // 非回测模式，使用 strategy_hash 作为 key
+    if (runId == 0) {
+        runId = ctx._strategy_hash;
+    }
+
+    // 获取或创建 RunIdData
+    auto data = std::make_shared<RunIdData>();
+    _historyTrades.try_emplace(runId, data);
+
+    // 加锁并添加交易记录
+    _historyTrades.visit(runId, [&ctx](auto& entry) {
+        auto& ptr = entry.second;
+        std::lock_guard<std::mutex> lock(ptr->mtx);
+        auto act = Order2Transaction(ctx);
+        ptr->trades[ctx._order._symbol].emplace_back(std::move(act));
+    });
+}
+
+void BrokerSubSystem::PersistTrades(uint16_t run_id) {
+    // 持久化到 LMDB 数据库（在 flush 中统一处理）
+    // 这里只负责确保数据一致性
+    _historyTrades.visit(run_id, [this, run_id](auto& entry) {
+        LOG("Persist trades for run_id: {}", run_id);
+        // 触发数据库刷新
+        _update = true;
+    });
 }
 
 void BrokerSubSystem::CleanStrategyRecord() {
@@ -848,14 +934,6 @@ nlohmann::json BrokerSubSystem::GetPrediction() {
   return prediction;
 }
 
-Transaction BrokerSubSystem::Order2Transaction(const OrderContext& context) {
-    Transaction act;
-    act._order = context._order;
-    act._deal = context._trades;
-    act._meta = context.GetMeta();  // 复制元数据
-    return act;
-}
-
 void BrokerSubSystem::RegistIndicator(const String& strategy, StatisticIndicator indicator) {
   std::unique_lock<std::mutex> lck(_indMtx);
   _indicators[strategy].insert(indicator);
@@ -871,9 +949,27 @@ void BrokerSubSystem::CleanAllIndicators(const String& strategy) {
   _indicators.clear();
 }
 
-const List<Transaction>& BrokerSubSystem::GetHistoryTrades(symbol_t symbol) {
-    std::unique_lock<std::mutex> lck(_tradeMtx);
-    return _historyTrades[symbol];
+List<Transaction> BrokerSubSystem::GetHistoryTrades(uint16_t run_id, symbol_t symbol) {
+    List<Transaction> history;
+
+    _historyTrades.visit(run_id, [&history, symbol](auto& entry) {
+        auto& data = entry.second;
+        std::lock_guard<std::mutex> lock(data->mtx);
+        auto it = data->trades.find(symbol);
+        if (it != data->trades.end()) {
+            history = it->second;
+        }
+    });
+
+    return history;
+}
+
+std::shared_ptr<RunIdData> BrokerSubSystem::GetAllHistoryTrades(uint16_t run_id) {
+    std::shared_ptr<RunIdData> result = nullptr;
+    _historyTrades.visit(run_id, [&result](auto& entry) {
+        result = entry.second;
+    });
+    return result;
 }
 
 Set<symbol_t> BrokerSubSystem::GetPoolSymbols(const String& name) {
@@ -892,7 +988,6 @@ BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
                                                               size_t offset,
                                                               size_t limit) {
     TradeQueryResult result;
-    std::unique_lock<std::mutex> lck(_tradeMtx);
 
     auto process_trades = [&](const List<Transaction>& trades) {
         for (const auto& trade : trades) {
@@ -918,17 +1013,23 @@ BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
         }
     };
 
-    if (!is_null(symbol)) {
-        auto it = _historyTrades.find(symbol);
-        if (it != _historyTrades.end()) {
-            process_trades(it->second);
+    // 遍历所有 run_id
+    _historyTrades.visit_all([&](const auto& entry) {
+        const auto& data = entry.second;
+        std::lock_guard<std::mutex> lock(data->mtx);
+
+        if (!is_null(symbol)) {
+            auto it = data->trades.find(symbol);
+            if (it != data->trades.end()) {
+                process_trades(it->second);
+            }
+        } else {
+            // 查询所有标的
+            for (const auto& [sym, trades] : data->trades) {
+                process_trades(trades);
+            }
         }
-    } else {
-        // 查询所有标的
-        for (const auto& pair : _historyTrades) {
-            process_trades(pair.second);
-        }
-    }
+    });
 
     return result;
 }

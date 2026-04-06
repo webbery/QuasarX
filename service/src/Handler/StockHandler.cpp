@@ -87,7 +87,7 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
   }
   auto symbol = format_symbol(id);
   auto& config = _server->GetConfig();
-  String path = config.GetDatabasePath() + "/" + dir + "/" + symbol + "_hist_data.csv";
+  String path = config.GetDatabasePath() + "/" + dir + "/" + symbol + ".csv";
   DataFrame df;
   if (!LoadStockQuote(df, path)) {
     res.status = 400;

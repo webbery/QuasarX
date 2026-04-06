@@ -124,6 +124,7 @@ void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& repor
         auto* orderCtx = ctx->getOrderReport(id._id);
         if (orderCtx) {
             found = true;
+            orderCtx->Update(report);
             orderCtx->_trades._reports.emplace_back(report);
             orderCtx->_success.store(true);
             orderCtx->_flag.store(true);
@@ -723,22 +724,14 @@ void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symb
             context->releaseFunds(report._trade_amount);
         }
 
-        if (orderInfo._order->_order._side == 0) {
-            context->adjustPosition(symbol, report._quantity);
-        } else {
-            context->adjustPosition(symbol, -report._quantity);
-        }
-
+        // 先注册订单报告，以便 OnOrderReport 能查找到
         context->addOrderReport(orderInfo._id, orderInfo._order);
-        orderInfo._order->_trades._reports.emplace_back(report);
-        orderInfo._order->_success.store(true);
-        orderInfo._order->_flag.store(true);
-        orderInfo._order->_promise.set_value(true);
 
-        auto broker = _server->GetBrokerSubSystem();
-        if (broker) {
-            broker->RecordTrade(*orderInfo._order);
-        }
+        // 调用 OnOrderReport 统一处理订单成交报告
+        // OnOrderReport 会处理：持仓调整、交易记录、订单状态更新
+        order_id id;
+        id._id = orderInfo._id;
+        OnOrderReport(id, report);
     }
 }
 
@@ -764,17 +757,18 @@ QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol, const String& strate
     return empty;
 }
 
-order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* order, const String& strategy) {
+order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* order, uint32_t strategy_hash) {
     // 查找对应策略的回测上下文
     BacktestContext* ctx = nullptr;
-    _backtestContexts.visit_all([&ctx, &strategy](auto& item) {
-        if (item.second->getStrategyName() == strategy) {
+    _backtestContexts.visit_all([&ctx, strategy_hash](auto& item) {
+        uint32_t hs = std::hash<String>{}(item.second->getStrategyName());
+        if (hs == strategy_hash) {
             ctx = item.second.get();
         }
     });
 
     if (!ctx) {
-        WARN("Backtest context not found for strategy: {}", strategy);
+        WARN("Backtest context not found for strategy: {}", strategy_hash);
         order_id id;
         id._id = 0;
         return id;

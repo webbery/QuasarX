@@ -113,7 +113,7 @@ public:
    * @param order 订单上下文
    * @param strategy 策略名称（用于查找对应的回测上下文）
    */
-  order_id AddOrder(const symbol_t& symbol, OrderContext* order, const String& strategy);
+  order_id AddOrder(const symbol_t& symbol, OrderContext* order, uint32_t strategy_hash);
 
   /**
    * @brief 获取原始价格（未复权），用于回测时实际买卖

@@ -336,11 +336,15 @@ onMounted(() => {
   } else {
     activeComponent.value = SettingView
   }
+
+  // 监听打开配置管理器事件
+  window.addEventListener('open-portfolio-manager', onHandlePortfolioMananger)
 });
 
 onUnmounted(() => {
   localStorage.setItem('token', '')
   window.removeEventListener('loginSuccess', onLoginSucess)
+  window.removeEventListener('open-portfolio-manager', onHandlePortfolioMananger)
   uninitServerEvent()
 })
 
