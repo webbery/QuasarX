@@ -252,15 +252,17 @@ onMounted(async () => {
     document.addEventListener('click', closeContextMenu)
     document.addEventListener('keydown', onKeyDown)
     // loadSavedFlow()
+    console.log('[StrategyFactory] onMounted: 注册 SSE handlers')
     sseService.on('strategy', onStrategyMessageUpdate)
     sseService.on('backtest_progress', onBacktestProgressUpdate)
 })
 
 onUnmounted(() => {
+    console.log('[StrategyFactory] onUnmounted: 移除 SSE handlers')
     document.removeEventListener('click', closeContextMenu)
     document.removeEventListener('keydown', onKeyDown)
-    sseService.off('strategy')
-    sseService.off('backtest_progress')
+    sseService.off('strategy', onStrategyMessageUpdate)
+    sseService.off('backtest_progress', onBacktestProgressUpdate)
 })
 
 // 提供 selectedNodes 给子组件
@@ -507,13 +509,14 @@ const isValidConnection = (connection) => {
 }
 
 function onStrategyMessageUpdate(message) {
-  console.info('onStrategyMessageUpdate message:', message)
+  console.info('[StrategyFactory] onStrategyMessageUpdate 被调用，message:', message)
   const data = message.data
   addInfoMessage(data.message, data.type)
 }
 
 // 回测进度更新处理
 function onBacktestProgressUpdate(message) {
+  console.info('[StrategyFactory] onBacktestProgressUpdate 被调用，message:', message)
   const data = message.data
   const backtestId = data.strategy + '_' + data.start_time
   updateProgressMessage(backtestId, data.strategy, data.progress || 0, data.message)
@@ -1196,9 +1199,9 @@ const runBacktest = async () => {
     const summary = result.summary || {}
     const buyCount = summary.buy_count || (result.buy?.length || 0)
     const sellCount = summary.sell_count || (result.sell?.length || 0)
-    const indicatorCount = summary.indicator_count || Object.keys(result.features || {}).length
+    const sharp = result.features[5]
 
-    addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，${indicatorCount}个指标`, 'success')
+    addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，夏普率${sharp}`, 'success')
 
     // 9. 所有处理完成后再切换 Tab
     // nextTick(() => {

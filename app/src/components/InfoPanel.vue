@@ -87,7 +87,7 @@ watch(() => props.messages, () => {
   left: 20px;
   width: 380px;
   max-height: 300px;
-  background: rgba(30, 33, 45, 0.95);
+  background: transparent;
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
@@ -105,7 +105,7 @@ watch(() => props.messages, () => {
   font-size: 12px;
   scrollbar-width: thin;
   scrollbar-color: var(--primary) transparent;
-  background: rgba(30, 33, 45, 0.5);
+  background: transparent;
 }
 
 .info-panel-content::-webkit-scrollbar {

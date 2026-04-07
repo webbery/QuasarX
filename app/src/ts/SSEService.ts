@@ -116,21 +116,29 @@ class SSEService {
       this.messageHandlers.set(messageType, [])
     }
     this.messageHandlers.get(messageType)!.push(handler)
+    console.log(`[SSE] on() 注册 handler: ${messageType}, 当前 handler 数量：${this.messageHandlers.get(messageType)!.length}`)
   }
 
   off(messageType: string, handler: (message: string) => void) {
     const handlers = this.messageHandlers.get(messageType)
     if (handlers) {
+      const oldLen = handlers.length
       const index = handlers.indexOf(handler)
       if (index > -1) {
         handlers.splice(index, 1)
+        console.log(`[SSE] off() 移除 handler 成功：${messageType}, 移除前=${oldLen}, 移除后=${handlers.length}`)
+      } else {
+        console.warn(`[SSE] off() 未找到 handler: ${messageType}, 当前 handler 数量=${oldLen}`)
       }
+    } else {
+      console.warn(`[SSE] off() 没有该类型的 handler: ${messageType}`)
     }
   }
 
   private triggerHandlers(messageType: string, message: SSEMessage) {
     const handlers = this.messageHandlers.get(messageType)
     if (handlers) {
+      console.log(`[SSE] triggerHandlers: ${messageType}, handler 数量=${handlers.length}`)
       handlers.forEach(handler => {
         try {
           handler(message)

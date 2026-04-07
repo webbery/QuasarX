@@ -104,7 +104,7 @@ float max_drawdown_ratio(const crash_flow_t& flow, const DataContext& context) {
     double max_drawdown = 0.0;
 
     for (size_t i = 0; i < daily_values.size(); ++i) {
-        double value = daily_values[i];
+        double value = daily_values[i] + daily_cash_flows[i];
 
         // 更新历史最高值
         if (value > max_value) {
@@ -217,20 +217,7 @@ float win_rate(const crash_flow_t& flow, const DataContext& context) {
 }
 
 float calmar_ratio(const crash_flow_t& flow, const DataContext& context, double freerate) {
-    // 计算年化收益率
-    auto [daily_values, daily_cash_flows] = calculate_daily_values(flow, context);
-
-    if (daily_values.empty() || daily_values.size() < 2) {
-        return 0.0f;
-    }
-
-    // 计算总收益率
-    double initial_value = daily_values.front();
-    double final_value = daily_values.back();
-    // 期间净现金流 = 最后一天累计现金流 - 初始本金
-    double total_cash_flow = daily_cash_flows.back() - daily_cash_flows.front();
-
-    double total_return = (final_value - initial_value - total_cash_flow) / initial_value;
+    double total_return = total_return_ratio(flow, context);
 
     // 计算年化收益率
     auto& times = context.GetTime();
