@@ -5,6 +5,7 @@
 #include "Util/log.h"
 #include "PortfolioSubsystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Nodes/SignalNode.h"
 
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
@@ -20,22 +21,22 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
         _positionRatio = config["params"]["positionRatio"]["value"];
     }
 
-    // 交易池
+    // 交易池 - 优先从 config 读取，如果没有则从上游 SignalNode 获取
     if (config["params"].contains("pool")) {
         auto& poolConfig = config["params"]["pool"]["value"];
         for (const String& code : poolConfig) {
             auto& security = Server::GetSecurity(code);
             _pool.emplace_back(to_symbol(code, security));
         }
-    }
-
-    // 初始本金 (回测模式专用)
-    if (config["params"].contains("initialCapital")) {
-        double initialCapital = config["params"]["initialCapital"]["value"];
-        auto* exchange = (_server->GetAvaliableStockExchange());
-        if (_server->GetRunningMode()==RuningType::Backtest) {
-            auto broker = dynamic_cast<StockHistorySimulation*>(exchange);
-            broker->InitializeCapital(initialCapital);
+    } else {
+        // 从上游 SignalNode 获取交易池
+        for (auto& [port, inputNode] : _ins) {
+            if (auto* signalNode = dynamic_cast<SignalNode*>(inputNode)) {
+                auto pool = signalNode->GetPool();
+                for (const auto& symbol : pool) {
+                    _pool.emplace_back(symbol);
+                }
+            }
         }
     }
 

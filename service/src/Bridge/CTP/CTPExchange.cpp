@@ -137,7 +137,7 @@ AccountAsset CTPExchange::GetAsset(){
     return aas;
 }
 
-order_id CTPExchange::AddOrder(const symbol_t& symbol, OrderContext* order){
+order_id CTPExchange::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
     return order_id();
 }
 
@@ -221,7 +221,7 @@ void CTPExchange::UpdateCommission() {
   }
 }
 
-double CTPExchange::GetAvailableFunds()
+double CTPExchange::GetAvailableFunds(uint16_t run_id)
 {
     return 1000000;
 }

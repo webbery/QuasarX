@@ -27,7 +27,7 @@ public:
 
     virtual AccountAsset GetAsset();
     
-    virtual order_id AddOrder(const symbol_t& symbol, OrderContext* order);
+    virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
 
@@ -51,7 +51,7 @@ public:
      */
     void UpdateCommission();
 
-    virtual double GetAvailableFunds();
+    virtual double GetAvailableFunds(uint16_t);
     virtual Boolean HasPermission(symbol_t symbol);
     virtual void Reset();
 

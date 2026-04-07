@@ -122,11 +122,6 @@
                         "type": "number",
                         "desc": "仓位比例 (0.0~1.0)，1.0 表示满仓"
                     },
-                    "pool": {
-                        "value": ["bj.920108"],
-                        "type": "text",
-                        "desc": "交易池标的列表"
-                    },
                     "initialCapital": {
                         "value": 100000,
                         "type": "number",
@@ -144,11 +139,6 @@
                 "label": "交易执行",
                 "nodeType": "execution",
                 "params": {
-                    "initialCapital": {
-                        "value": 100000,
-                        "type": "number",
-                        "unit": "元"
-                    },
                     "commission": {
                         "value": 0.0003,
                         "type": "number",

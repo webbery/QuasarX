@@ -80,12 +80,15 @@ AccountAsset StockHistorySimulation::GetAsset(){
     return ass;
 }
 
-order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* order){
+order_id StockHistorySimulation::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
     // 买入时检查并冻结资金
     if (order->_order._side == 0) {  // 买入
         double orderCost = order->_order._price * order->_order._volume;
 
-        double current = _availableFunds.load(std::memory_order_relaxed);
+        double current = 0;
+        _backtestContexts.visit(run_id, [&current](std::unique_ptr<BacktestContext>&& context) {
+            current = context->getAvailableFunds();
+            });
         double expected = current;
         while (true) {
             if (expected < orderCost) {
@@ -94,10 +97,11 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
                 id._id = 0;
                 return id;
             }
-            if (_availableFunds.compare_exchange_strong(expected, expected - orderCost,
-                    std::memory_order_release, std::memory_order_relaxed)) {
-                break;
-            }
+            current -= orderCost;
+            _backtestContexts.visit(run_id, [&current](auto&& context) {
+                context->setAvailableFunds(current);
+                });
+            break;
         }
     }
 
@@ -293,7 +297,11 @@ void StockHistorySimulation::QueryQuotes() {
 
 double StockHistorySimulation::GetAvailableFunds()
 {
-    return _availableFunds.load(std::memory_order_relaxed);
+    double funds = 0;
+    _backtestContexts.visit(0, [&funds](std::unique_ptr<BacktestContext>&& context) {
+        funds = context->getAvailableFunds();
+        });
+    return funds;
 }
 
 bool StockHistorySimulation::GetCommission(symbol_t symbol, List<Commission>& comms) {
@@ -330,8 +338,6 @@ void StockHistorySimulation::Clear() {
     _reports.clear();
     _cur_id = 0;
 
-    // 重置可用资金
-    _availableFunds.store(_capital, std::memory_order_relaxed);
 }
 
 int StockHistorySimulation::GetStockLimitation(char type)

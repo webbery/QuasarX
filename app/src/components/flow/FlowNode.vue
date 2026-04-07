@@ -155,7 +155,7 @@
 
                     <!-- 文本输入框 -->
                     <div v-else-if="paramConfig.type === 'text'" class="input-with-unit">
-                        <input 
+                        <input
                             type="text"
                             :value="paramConfig.value"
                             @input="updateParam(key, $event.target.value)"
@@ -173,6 +173,20 @@
                             :id="`field-${key}`"
                             class="field-output-handle"
                         />
+                    </div>
+
+                    <!-- 多行文本域 -->
+                    <div v-else-if="paramConfig.type === 'textarea'" class="textarea-wrapper">
+                        <textarea
+                            :value="paramConfig.value"
+                            @input="updateParam(key, $event.target.value)"
+                            @keydown="onTitleInputKeydown"
+                            @mousedown.stop
+                            @dragstart.stop
+                            class="param-textarea"
+                            :placeholder="paramConfig.placeholder || ''"
+                            rows="3"
+                        ></textarea>
                     </div>
                     
                     <!-- 数字输入框 -->
@@ -1223,6 +1237,31 @@ const getFileFilters = (paramKey) => {
     align-items: center;
     width: 100%;
     position: relative;
+}
+
+.textarea-wrapper {
+    width: 100%;
+
+    .param-textarea {
+        width: 100%;
+        background: var(--darker-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 6px 8px;
+        color: var(--text);
+        font-size: 0.8rem;
+        resize: vertical;
+        font-family: inherit;
+
+        &:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        &::placeholder {
+            color: var(--text-secondary);
+        }
+    }
 }
 
 .param-input {

@@ -103,9 +103,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 使用 StartBacktest 启动多线程回测
     auto* flowSubsystem = strategySys->GetFlowSubsystem();
-    double initialCapital = script.contains("params") && script["params"].contains("initialCapital")
-                            ? script["params"]["initialCapital"].get<double>()
-                            : 100000.0;
+    // 回测模式下，固定初始资金为 50 万
+    double initialCapital = 500000.0;
 
     SendSSEProgress(sse_sock, strategyName, 0.2, "开始执行回测");
     flowSubsystem->Start(strategyName, symbols, initialCapital);

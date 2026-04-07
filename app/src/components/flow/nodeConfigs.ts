@@ -124,11 +124,6 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
     label: "执行交易",
     nodeType: "execution",
     params: {
-      "初始资金": {
-        value: 100000,
-        type: "number",
-        unit: "元"
-      },
       "佣金费率": {
         value: 0.0003,
         type: "number",
@@ -213,21 +208,10 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         options: [],
         placeholder: "选择或创建配置"
       },
-      "预设模板": {
-        value: "full_position",
-        type: "select",
-        options: [
-          { label: "满仓买入", value: "full_position" },
-          { label: "空仓卖出", value: "empty_position" }
-        ],
-        placeholder: "选择预设模板快速配置"
-      },
-      "初始资金": {
-        value: 100000,
-        type: "number",
-        unit: "元",
-        min: 0,
-        step: 10000
+      "配置简介": {
+        value: "",
+        type: "textarea",
+        placeholder: "请输入配置简介，描述策略投资目标、风险偏好等"
       },
       "仓位比例": {
         value: 1.0,
@@ -235,11 +219,6 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         min: 0,
         max: 1,
         step: 0.1
-      },
-      "交易池": {
-        value: [],
-        type: "multiselect-dropdown",
-        options: []
       }
     }
   },

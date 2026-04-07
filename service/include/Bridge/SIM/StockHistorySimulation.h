@@ -33,7 +33,7 @@ public:
 
   virtual AccountAsset GetAsset();
 
-  order_id AddOrder(const symbol_t& symbol, OrderContext* order);
+  order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
 
   virtual void OnOrderReport(order_id id, const TradeReport& report);
 
@@ -128,11 +128,6 @@ public:
   // 获取指定 symbol 的持仓数量
   int64_t GetPositionQuantity(symbol_t symbol) const;
 
-  void InitializeCapital(double capital) {
-      _capital = capital;
-      _availableFunds.store(capital, std::memory_order_relaxed);
-  }
-
   // 合约信息查询接口
   virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
   virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) override;
@@ -180,7 +175,4 @@ protected:
   Commission _buy;
   Commission _sell;
   float _slippage;  // 滑点
-
-  double _capital;  // 总本金
-  std::atomic<double> _availableFunds{0.0};  // 可用资金
 };

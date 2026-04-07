@@ -888,7 +888,7 @@ AccountAsset HXExchange::GetAsset(){
     return aa;
 }
 
-order_id HXExchange::AddOrder(const symbol_t& symbol, OrderContext* ctx){
+order_id HXExchange::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* ctx){
     order_id id;
     if (!_enableOrder) {
         id._error = ERROR_ORDER_FORBID;
@@ -1226,7 +1226,7 @@ bool HXExchange::ResubscribeQuote()
     return true;
 }
 
-double HXExchange::GetAvailableFunds()
+double HXExchange::GetAvailableFunds(uint16_t run_id)
 {
     auto reqID = ++_reqID;
     auto promise = initPromise<TORASTOCKAPI::CTORATstpTradingAccountField>(reqID);

@@ -437,13 +437,13 @@ public:
   virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info) = 0;
 
   // 获取当前可用资金
-  virtual double GetAvailableFunds() = 0;
+  virtual double GetAvailableFunds(uint16_t run_id) = 0;
 
   virtual bool GetPosition(AccountPosition&) = 0;
 
   virtual AccountAsset GetAsset() = 0;
   
-  virtual order_id AddOrder(const symbol_t& symbol, OrderContext* order) = 0;
+  virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order) = 0;
 
   virtual void OnOrderReport(order_id id, const TradeReport& report) = 0;
 
