@@ -213,6 +213,15 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         options: [],
         placeholder: "选择或创建配置"
       },
+      "预设模板": {
+        value: "full_position",
+        type: "select",
+        options: [
+          { label: "满仓买入", value: "full_position" },
+          { label: "空仓卖出", value: "empty_position" }
+        ],
+        placeholder: "选择预设模板快速配置"
+      },
       "初始资金": {
         value: 100000,
         type: "number",
@@ -226,6 +235,11 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         min: 0,
         max: 1,
         step: 0.1
+      },
+      "交易池": {
+        value: [],
+        type: "multiselect-dropdown",
+        options: []
       }
     }
   },

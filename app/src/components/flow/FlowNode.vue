@@ -732,6 +732,16 @@ const updateDateRange = (paramKey, index, newDateValue) => {
 
 // 更新参数值
 const updateParam = (paramKey, newValue) => {
+    // 特殊处理：投资组合节点的预设模板选择
+    if (props.node.data.nodeType === 'portfolio' && paramKey === '预设模板') {
+        if (newValue === 'full_position') {
+            // 满仓买入：仓位比例设为 1.0
+            emit('update-node', props.node.id, '仓位比例', 1.0)
+        } else if (newValue === 'empty_position') {
+            // 空仓卖出：仓位比例设为 0.0
+            emit('update-node', props.node.id, '仓位比例', 0.0)
+        }
+    }
     emit('update-node', props.node.id, paramKey, newValue)
 }
 
