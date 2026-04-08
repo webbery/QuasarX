@@ -21,9 +21,10 @@ BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 }
 
 // 发送 SSE 消息
-static void SendSSEProgress(nng_socket& sock, const String& strategy, double progress, const String& message) {
+static void SendSSEProgress(nng_socket& sock, const String& strategy, uint16_t runId, double progress, const String& message) {
     Map<String, String> data;
     data["strategy"] = strategy;
+    data["run_id"] = std::to_string(runId);
     data["progress"] = std::to_string(progress);
     data["message"] = message;
     auto msg = format_sse("backtest_progress", data);
@@ -78,8 +79,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.set_content(R"({"message": "Backtest mode [SIM] is not available."})", "application/json");
         return;
     }
-    // 发送开始消息
-    SendSSEProgress(sse_sock, strategyName, 0.0, "回测开始");
+    // 发送开始消息 (runId=0 表示尚未初始化)
+    SendSSEProgress(sse_sock, strategyName, 0, 0.0, "回测开始");
 
     // 3. 初始化策略
     if (strategySys->HasStrategy(strategyName)) {
@@ -88,7 +89,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     try {
         strategySys->InitStrategy(strategyName, script);
-        SendSSEProgress(sse_sock, strategyName, 0.1, "策略初始化完成");
+        SendSSEProgress(sse_sock, strategyName, 0, 0.1, "策略初始化完成");
     } catch (const std::exception& e) {
         res.status = 500;
         String msg = R"({"message": "Failed to initialize strategy: )" + String(e.what()) + R"("})";
@@ -104,22 +105,26 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 使用 StartBacktest 启动多线程回测
     auto* flowSubsystem = strategySys->GetFlowSubsystem();
     // 回测模式下，固定初始资金为 50 万
-    double initialCapital = 500000.0;
+    double initialCapital = BACKTEST_INITIAL_CAPITAL;
 
-    SendSSEProgress(sse_sock, strategyName, 0.2, "开始执行回测");
+    // 启动回测并获取 run_id
     flowSubsystem->Start(strategyName, symbols, initialCapital);
+    uint16_t runId = flowSubsystem->GetBacktestRunId(strategyName);
+    
+    // 发送进度 (带 run_id)
+    SendSSEProgress(sse_sock, strategyName, runId, 0.2, "开始执行回测");
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
 
     // 启动后台线程推送进度
     std::atomic<bool> pushRunning{true};
-    std::thread pushThread([this, exchange, &strategyName, &sse_sock, &lastProgress, &pushRunning]() {
+    std::thread pushThread([this, exchange, &strategyName, &sse_sock, &lastProgress, &pushRunning, runId]() {
         while (pushRunning && !_server->IsExit()) {
             double progress = exchange->Progress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
-                SendSSEProgress(sse_sock, strategyName, 0.3 + progress * 0.5, msg);
+                SendSSEProgress(sse_sock, strategyName, runId, 0.3 + progress * 0.5, msg);
                 lastProgress = progress;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -150,7 +155,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 确保最终进度推送
     if (lastProgress < 1.0) {
-        SendSSEProgress(sse_sock, strategyName, 0.8, "回测执行完成");
+        SendSSEProgress(sse_sock, strategyName, runId, 0.8, "回测执行完成");
     }
     exchange->Logout(AccountType::MAIN);
 
@@ -229,7 +234,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     strategySys->ReleaseStrategy(strategyName);
 
-    SendSSEProgress(sse_sock, strategyName, 1.0, "回测全部完成");
+    SendSSEProgress(sse_sock, strategyName, runId, 1.0, "回测全部完成");
 
     INFO("[Backtest] Completed: {}", features.dump());
     res.status = 200;

@@ -80,7 +80,14 @@ public:
     virtual bool GetPosition(AccountPosition&);
 
     virtual AccountAsset GetAsset();
-    
+
+    /**
+     * @brief 提交订单（华鑫证券接口）
+     * @param run_id 策略运行 ID，用于区分不同的策略实例（回测/实盘）
+     * @param symbol 合约标的
+     * @param order 订单上下文
+     * @return 订单 ID
+     */
     virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
@@ -96,6 +103,11 @@ public:
 
     virtual QuoteInfo GetQuote(symbol_t symbol);
 
+    /**
+     * @brief 获取可用资金（华鑫证券接口）
+     * @param run_id 策略运行 ID，用于区分不同的策略实例（回测/实盘）
+     * @return 可用资金金额
+     */
     virtual double GetAvailableFunds(uint16_t run_id);
 
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);

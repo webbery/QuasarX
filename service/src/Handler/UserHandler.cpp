@@ -339,7 +339,7 @@ void UserFundHandler::get(const httplib::Request& req, httplib::Response& res)
         res.status = 400;
         return;
     }
-    auto funds = exchange->GetAvailableFunds();
+    auto funds = exchange->GetAvailableFunds(0);
     nlohmann::json result;
     result["funds"] = funds;
     res.status = 200;

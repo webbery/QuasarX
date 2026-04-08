@@ -6,6 +6,7 @@
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Bridge/exchange.h"
 #include "Util/datetime.h"
+#include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "nng/nng.h"
 #include "nng/protocol/pubsub0/pub.h"
@@ -74,18 +75,30 @@ void CTPQuote::OnHeartBeatWarning(int nTimeLapse) {
 // 当客户端与交易托管系统通信连接断开时，该方法被调用
 void CTPQuote::OnFrontDisconnected(int nReason) {
   WARN("disconnected {}", nReason);
-  _conn_status = false;
-  _login_status = false;
-  // 
-  _reconnected = true;
-  _hasQuote = false;
+  {
+    std::unique_lock<std::mutex> lock(_mx);
+    _conn_status = false;
+    _login_status = false;
+    _reconnected = true;
+    _hasQuote = false;
+  }
+  _cv.notify_all();
 }
 // 当客户端发出登录请求之后，该方法会被调用，通知客户端登录是否成功
 void CTPQuote::OnRspUserLogin(CThostFtdcRspUserLoginField *pRspUserLogin,
   CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast) {
-  INFO("Login OK");
   std::unique_lock<std::mutex> lock(_mx);
-  _login_status = true;
+  if (pRspInfo && pRspInfo->ErrorID != 0) {
+#ifdef WIN32
+    WARN("Quote Login ERROR: {}", pRspInfo->ErrorMsg);
+#else
+    WARN("Quote Login ERROR: {}", to_gbk(pRspInfo->ErrorMsg));
+#endif
+    _login_status = false;
+  } else {
+    INFO("Quote Login OK");
+    _login_status = true;
+  }
   _cv.notify_all();
 }
 

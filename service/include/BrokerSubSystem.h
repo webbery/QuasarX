@@ -6,6 +6,7 @@
 #include "Util/lmdb.h"
 #include "DataGroup.h"
 #include "json.hpp"
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <shared_mutex>
@@ -117,7 +118,7 @@ public:
     order_id Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
     order_id Exercise(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
-    int64_t AddOrder(symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
+    int64_t AddOrder(uint16_t run_id, symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 
     virtual bool QueryOrders(SecurityType type, OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
@@ -183,7 +184,7 @@ private:
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);
     double SimulateMatchStockSeller(symbol_t symbol, const Order& order, TradeInfo& deal);
 
-    order_id AddOrderAsync(OrderContext* order);
+    order_id AddOrderAsync(uint16_t run_id, OrderContext* order);
 
 private:
     void run();

@@ -2,21 +2,39 @@
 #include "Bridge/exchange.h"
 #include <cstring>
 #include <filesystem>
+#include <memory>
+#include <vector>
 #include "Util/system.h"
 
 #define BROKER_ID "9999"
 
 CTPExchange::CTPExchange(Server* server)
 :ExchangeInterface(server), _quote(nullptr), _pUserMdApi(nullptr)
-, _pUserTradeApi(nullptr), _nRequestID(1) {
-    
+, _pUserTradeApi(nullptr), _trade(nullptr), _nRequestID(1) {
+
 }
 
 CTPExchange::~CTPExchange() {
+    // 先停止 API 回调，再释放资源
+    if (_pUserMdApi) {
+        _pUserMdApi->RegisterSpi(nullptr);
+        _pUserMdApi->Release();
+        _pUserMdApi = nullptr;
+    }
+    if (_pUserTradeApi) {
+        _pUserTradeApi->RegisterSpi(nullptr);
+        _pUserTradeApi->Release();
+        _pUserTradeApi = nullptr;
+    }
+    // SPI 实现对象在 API 释放后删除
     if (_quote) {
         delete _quote;
+        _quote = nullptr;
     }
-    _pUserMdApi->Release();
+    if (_trade) {
+        delete _trade;
+        _trade = nullptr;
+    }
 }
 
 bool CTPExchange::Init(const ExchangeInfo& handle){
@@ -57,20 +75,25 @@ bool CTPExchange::Init(const ExchangeInfo& handle){
 
 bool CTPExchange::Release()
 {
+  // 释放行情 API
   if (_pUserMdApi) {
+    _pUserMdApi->RegisterSpi(nullptr);
     _pUserMdApi->Release();
-    // _pUserMdApi->Join();
+    _pUserMdApi = nullptr;
   }
   if (_quote) {
-    delete  _quote;
+    delete _quote;
     _quote = nullptr;
   }
+  // 释放交易 API
   if (_pUserTradeApi) {
+    _pUserTradeApi->RegisterSpi(nullptr);
     _pUserTradeApi->Release();
-    // _pUserTradeApi->Join();
+    _pUserTradeApi = nullptr;
   }
   if (_trade) {
     delete _trade;
+    _trade = nullptr;
   }
   return true;
 }
@@ -138,6 +161,7 @@ AccountAsset CTPExchange::GetAsset(){
 }
 
 order_id CTPExchange::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
+    // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     return order_id();
 }
 
@@ -186,22 +210,24 @@ void CTPExchange::QueryQuotes(){
   if (_quote->HasQuote())
     return;
 
-  //std::cout<< "SubscribeMarketData\n";
-  char** codes = new char*[_contracts.size()];
+  // 使用智能指针管理内存，确保异常安全
+  std::vector<std::unique_ptr<char[]>> codes(_contracts.size());
   int i = 0;
   for (auto& id: _contracts) {
-    codes[i] = new char[id.size() + 1];
-    memset(codes[i], 0, id.size() + 1);
-    memcpy(codes[i], id.data(), id.size());
+    codes[i] = std::make_unique<char[]>(id.size() + 1);
+    memset(codes[i].get(), 0, id.size() + 1);
+    memcpy(codes[i].get(), id.data(), id.size());
     ++i;
   }
   if (!_contracts.empty()) {
-    _pUserMdApi->SubscribeMarketData(codes, _contracts.size());
+    // 构建原始指针数组供 API 使用
+    std::vector<char*> instrument_ids(_contracts.size());
+    for (size_t j = 0; j < _contracts.size(); ++j) {
+      instrument_ids[j] = codes[j].get();
+    }
+    _pUserMdApi->SubscribeMarketData(instrument_ids.data(), _contracts.size());
   }
-  for (i = (int)_contracts.size() - 1; i >= 0; --i) {
-    delete[] codes[i];
-  }
-  delete[] codes;
+  // unique_ptr 会自动释放内存，无需手动 delete
 }
 
 void CTPExchange::UpdateCommission() {
@@ -223,6 +249,7 @@ void CTPExchange::UpdateCommission() {
 
 double CTPExchange::GetAvailableFunds(uint16_t run_id)
 {
+    // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     return 1000000;
 }
 

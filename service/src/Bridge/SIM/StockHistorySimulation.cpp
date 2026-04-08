@@ -81,13 +81,14 @@ AccountAsset StockHistorySimulation::GetAsset(){
 }
 
 order_id StockHistorySimulation::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
+    // run_id: 回测运行 ID，用于区分不同的策略实例
     // 买入时检查并冻结资金
     if (order->_order._side == 0) {  // 买入
         double orderCost = order->_order._price * order->_order._volume;
 
         double current = 0;
-        _backtestContexts.visit(run_id, [&current](std::unique_ptr<BacktestContext>&& context) {
-            current = context->getAvailableFunds();
+        _backtestContexts.visit(run_id, [&current](auto& item) {
+            current = item.second->getAvailableFunds();
             });
         double expected = current;
         while (true) {
@@ -98,8 +99,8 @@ order_id StockHistorySimulation::AddOrder(uint16_t run_id, const symbol_t& symbo
                 return id;
             }
             current -= orderCost;
-            _backtestContexts.visit(run_id, [&current](auto&& context) {
-                context->setAvailableFunds(current);
+            _backtestContexts.visit(run_id, [&current](auto& item) {
+                item.second->setAvailableFunds(current);
                 });
             break;
         }
@@ -295,11 +296,11 @@ void StockHistorySimulation::QueryQuotes() {
   // 多线程回测模式下不需要主动查询，由 stepForward 推进时间
 }
 
-double StockHistorySimulation::GetAvailableFunds()
+double StockHistorySimulation::GetAvailableFunds(uint16_t run_id)
 {
-    double funds = 0;
-    _backtestContexts.visit(0, [&funds](std::unique_ptr<BacktestContext>&& context) {
-        funds = context->getAvailableFunds();
+    double funds = BACKTEST_INITIAL_CAPITAL;
+    _backtestContexts.visit(run_id, [&funds](auto& item) {
+        funds = item.second->getAvailableFunds();
         });
     return funds;
 }

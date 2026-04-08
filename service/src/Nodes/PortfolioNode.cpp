@@ -47,7 +47,7 @@ void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
     auto* exchange = (_server->GetAvaliableStockExchange());
     if (_server->GetRunningMode()==RuningType::Backtest) {
         auto broker = dynamic_cast<StockHistorySimulation*>(exchange);
-        double initialCapital = broker->GetAvailableFunds();
+        double initialCapital = broker->GetAvailableFunds(context.getBacktestRunId());
         context.setInitialCapital(initialCapital);
     }
 }

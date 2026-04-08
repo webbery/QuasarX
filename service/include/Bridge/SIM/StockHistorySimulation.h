@@ -33,6 +33,13 @@ public:
 
   virtual AccountAsset GetAsset();
 
+  /**
+   * @brief 提交订单（历史数据回测模式）
+   * @param run_id 回测运行 ID，用于区分不同的策略实例
+   * @param symbol 合约标的
+   * @param order 订单上下文
+   * @return 订单 ID
+   */
   order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
 
   virtual void OnOrderReport(order_id id, const TradeReport& report);
@@ -48,7 +55,12 @@ public:
 
   virtual QuoteInfo GetQuote(symbol_t);
 
-  virtual double GetAvailableFunds();
+  /**
+   * @brief 获取回测上下文可用资金
+   * @param run_id 回测运行 ID，用于区分不同的策略实例
+   * @return 可用资金金额
+   */
+  virtual double GetAvailableFunds(uint16_t run_id);
   virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
   virtual Boolean HasPermission(symbol_t symbol);
   virtual void Reset();

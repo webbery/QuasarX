@@ -436,13 +436,24 @@ public:
 
   virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info) = 0;
 
-  // 获取当前可用资金
+  /**
+   * @brief 获取指定策略的可用资金
+   * @param run_id 策略运行 ID，用于区分不同的策略实例（回测/实盘）
+   * @return 可用资金金额
+   */
   virtual double GetAvailableFunds(uint16_t run_id) = 0;
 
   virtual bool GetPosition(AccountPosition&) = 0;
 
   virtual AccountAsset GetAsset() = 0;
   
+  /**
+   * @brief 提交订单
+   * @param run_id 策略运行 ID，用于区分不同的策略实例（回测/实盘）
+   * @param symbol 合约标的
+   * @param order 订单上下文
+   * @return 订单 ID，失败时返回错误码
+   */
   virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order) = 0;
 
   virtual void OnOrderReport(order_id id, const TradeReport& report) = 0;

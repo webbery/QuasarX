@@ -889,6 +889,7 @@ AccountAsset HXExchange::GetAsset(){
 }
 
 order_id HXExchange::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* ctx){
+    // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     order_id id;
     if (!_enableOrder) {
         id._error = ERROR_ORDER_FORBID;
@@ -1228,6 +1229,7 @@ bool HXExchange::ResubscribeQuote()
 
 double HXExchange::GetAvailableFunds(uint16_t run_id)
 {
+    // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     auto reqID = ++_reqID;
     auto promise = initPromise<TORASTOCKAPI::CTORATstpTradingAccountField>(reqID);
     

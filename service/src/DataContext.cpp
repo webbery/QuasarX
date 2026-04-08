@@ -116,7 +116,7 @@ double DataContext::getAvailableCapital() const
 {
     auto* exchange = _server->GetAvaliableStockExchange();
     if (exchange) {
-        double funds = exchange->GetAvailableFunds();
+        double funds = exchange->GetAvailableFunds(_backtestRunId);
         if (funds > 0) {
             return funds;
         }

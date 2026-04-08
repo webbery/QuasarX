@@ -565,7 +565,7 @@ void BrokerSubSystem::CleanStrategyRecord() {
 
 }
 
-order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
+order_id BrokerSubSystem::AddOrderAsync(uint16_t run_id, OrderContext* order) {
 
     if (_simulation) {
         // 多线程回测模式：使用策略名获取上下文
@@ -588,24 +588,24 @@ order_id BrokerSubSystem::AddOrderAsync(OrderContext* order) {
     }
     if (is_stock(GET_SYMBOL(order)) || is_etf_option(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableStockExchange();
-        return exchange->AddOrder(GET_SYMBOL(order), order);
+        return exchange->AddOrder(run_id, GET_SYMBOL(order), order);
     }
     if (is_future(GET_SYMBOL(order))) {
         auto exchange = _server->GetAvaliableFutureExchange();
-        return exchange->AddOrder(GET_SYMBOL(order), order);
+        return exchange->AddOrder(run_id, GET_SYMBOL(order), order);
     }
     order_id id;
     memset(&id, 0, sizeof(order_id));
     return id;
 }
 
-int64_t BrokerSubSystem::AddOrder(symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)
+int64_t BrokerSubSystem::AddOrder(uint16_t run_id, symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
     GET_SYMBOL(ctx) = symbol;
     ctx->_callback = cb;
-    auto id = AddOrderAsync(ctx);
+    auto id = AddOrderAsync(run_id, ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
 
@@ -680,10 +680,11 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
     // 设置策略和运行信息
+    auto run_id = _server->GetCurrentBacktestRunId();
     ctx->SetStrategyInfo(strategy,
-                         _server->GetCurrentBacktestRunId(),
+                         run_id,
                          _server->GetRunningMode());
-    AddOrderAsync(ctx);
+    AddOrderAsync(run_id, ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
 
@@ -761,11 +762,12 @@ order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
     // 设置策略和运行信息
+    auto run_id = _server->GetCurrentBacktestRunId();
     ctx->SetStrategyInfo(strategy,
-                         _server->GetCurrentBacktestRunId(),
+                         run_id,
                          _server->GetRunningMode());
     ctx->_callback = cb;
-    auto id = AddOrderAsync(ctx);
+    auto id = AddOrderAsync(run_id, ctx);
     _order_queue.push(ctx);
     _cv.notify_all();
     return id;

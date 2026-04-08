@@ -518,7 +518,8 @@ function onStrategyMessageUpdate(message) {
 function onBacktestProgressUpdate(message) {
   console.info('[StrategyFactory] onBacktestProgressUpdate 被调用，message:', message)
   const data = message.data
-  const backtestId = data.strategy + '_' + data.start_time
+  // 使用后端返回的 run_id 作为唯一标识
+  const backtestId = `${data.strategy}_${data.run_id}`
   updateProgressMessage(backtestId, data.strategy, data.progress || 0, data.message)
 }
 
