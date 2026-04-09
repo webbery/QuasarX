@@ -103,10 +103,20 @@
 
     <!-- 主内容区 -->
     <main class="main-content">
-      <component :is="activeComponent" ref="dynamicComponentRef"
+      <!-- 风控详情特殊处理，需要传递 props -->
+      <StrategyRiskDetail
+        v-if="currentView === VIEWS.RISK_DETAIL_VIEW"
+        :strategy="getStrategyById(selectedStrategyId)"
+        :option-data="getOptionRiskData(selectedStrategyId)"
+        :stock-data="getStockRiskData(selectedStrategyId)"
+        :future-data="getFutureRiskData(selectedStrategyId)"
+        @back="onRiskDetailBack"
+      />
+      <component v-else :is="activeComponent" ref="dynamicComponentRef"
         @show-history="onShowHistory"
         @show-flow-components="onShowFlowComponents"
         @load-version="onLoadVersion"
+        @strategy-click="onStrategyRiskClick"
       />
     </main>
 
@@ -181,6 +191,10 @@ import TradePanel from "./components/TradePanel.vue";
 import StrategyPanel from "./components/StrategyPanel.vue";
 import PortfolioView from "./components/PortfolioView.vue";
 import PortfolioPanel from "./components/PortfolioPanel.vue";
+// Risk 新组件
+import RiskView from "./components/risk/RiskView.vue";
+import StrategyRiskDetail from "./components/risk/StrategyRiskDetail.vue";
+import { useMockRiskData } from "./components/risk/hooks/useMockRiskData";
 import sseService from "./ts/SSEService";
 import Store from 'electron-store';
 
@@ -193,14 +207,25 @@ const VIEWS = {
   VISUAL_VIEW: 'visual_analysis',
   POSITION_VIEW: 'position',
   RISK_VIEW: 'risk',
+  RISK_DETAIL_VIEW: 'risk_detail',
   PORTFOLIO_VIEW: 'portfolio'
 };
 const store = new Store()
+
+// 风控模拟数据 hook
+const {
+  getStrategyById,
+  getOptionRiskData,
+  getStockRiskData,
+  getFutureRiskData,
+} = useMockRiskData()
+
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 let isBacktesting = ref(false);
 let selectedStrategyPanel = ref(false); // 默认显示策略组件的节点面板
+let selectedStrategyId = ref<string | null>(null); // 当前选中的策略ID（用于风险详情）
 const servers = ref(store.get('servers') || [])
 let selectedAccount;
 
@@ -219,8 +244,10 @@ let activeComponent = computed(() => {
   if (currentView.value === VIEWS.POSITION_VIEW)
     return PositionManager;
   if (currentView.value === VIEWS.RISK_VIEW)
-    return RiskManagerVue;
-    if (currentView.value === VIEWS.PORTFOLIO_VIEW)
+    return RiskView;
+  if (currentView.value === VIEWS.RISK_DETAIL_VIEW)
+    return StrategyRiskDetail;
+  if (currentView.value === VIEWS.PORTFOLIO_VIEW)
     return PortfolioView;
   return AccountView;
 });
@@ -248,7 +275,7 @@ let is_datacenter = computed(() => currentView.value === VIEWS.DATA_CENTER);
 let is_setting = computed(() => currentView.value === VIEWS.SETTING_VIEW);
 let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW);
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
-let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW);
+let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW || currentView.value === VIEWS.RISK_DETAIL_VIEW);
 let is_portfolio = computed(() => currentView.value === VIEWS.PORTFOLIO_VIEW);
 
 const unit = 1024.0/1000000000;
@@ -371,6 +398,17 @@ const onHandleVisualAnanlysis = () => {
 
 const onHandleRiskMananger = () => {
   currentView.value = VIEWS.RISK_VIEW
+  selectedStrategyId.value = null
+}
+
+const onRiskDetailBack = () => {
+  currentView.value = VIEWS.RISK_VIEW
+  selectedStrategyId.value = null
+}
+
+const onStrategyRiskClick = (strategy) => {
+  selectedStrategyId.value = strategy.id
+  currentView.value = VIEWS.RISK_DETAIL_VIEW
 }
 
 const onHandlePortfolioMananger = () => {

@@ -80,7 +80,6 @@ import StockOrderPanel from './StockOrderPanel.vue'
 import OptionPositionPanel from './OptionPositionPanel.vue'
 import FuturePositionPanel from './FuturePositionPanel.vue'
 import ConfirmModal from './ConfirmModal.vue'
-import axios from 'axios'
 import { message } from '@/tool'
 import sseService from '@/ts/SSEService'
 
