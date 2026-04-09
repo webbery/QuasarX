@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia'
+import type { FlowData } from '../lib/strategyPool'
+import { extractSecuritiesFromFlowData, isAllStocks } from '../lib/strategyPool'
 
 export interface ViewConfig {
   id: string
@@ -53,8 +55,10 @@ export const usePortfolioStore = defineStore('portfolio', {
     portfolioConfigs: [] as PortfolioConfig[],
     // 当前选中的配置
     currentPortfolioConfig: null as PortfolioConfig | null,
-    // 可用证券池
-    availableSecurities: [] as Array<{ code: string; name: string }>
+    // 可用证券池（已废弃，改为按策略获取）
+    availableSecurities: [] as Array<{ code: string; name: string }>,
+    // 策略标的池缓存
+    strategyPools: {} as Record<string, Array<{ code: string; name: string }>>
   }),
 
   getters: {
@@ -66,6 +70,11 @@ export const usePortfolioStore = defineStore('portfolio', {
     // 获取当前配置的名称
     currentConfigName: (state) => {
       return state.currentPortfolioConfig?.name || '未选择'
+    },
+
+    // 获取当前策略的标的池
+    getCurrentStrategyPool: (state) => {
+      return state.strategyPools[state.currentStrategyId] || []
     }
   },
 
@@ -188,9 +197,33 @@ export const usePortfolioStore = defineStore('portfolio', {
       }
     },
 
-    // 设置可用证券池
+    // 设置可用证券池（已废弃，保留兼容）
     setAvailableSecurities(securities: Array<{ code: string; name: string }>) {
       this.availableSecurities = securities
+    },
+
+    // 从流程图数据加载策略标的池
+    async loadStrategyPool(strategyId: string, flowData: FlowData) {
+      try {
+        const securities = extractSecuritiesFromFlowData(flowData)
+        this.strategyPools[strategyId] = securities
+        return securities
+      } catch (error) {
+        console.error('加载策略标的池失败:', error)
+        this.strategyPools[strategyId] = []
+        return []
+      }
+    },
+
+    // 获取策略标的池（如果已缓存则直接返回）
+    getStrategyPool(strategyId: string): Array<{ code: string; name: string }> {
+      return this.strategyPools[strategyId] || []
+    },
+
+    // 检查是否是全市场股票
+    isAllStocks(securities?: Array<{ code: string; name: string }>): boolean {
+      const pool = securities || this.getCurrentStrategyPool
+      return isAllStocks(pool)
     }
   }
 })

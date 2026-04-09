@@ -77,18 +77,18 @@ void FlowSubsystem::Stop(const String& strategy) {
     flow._worker = nullptr;
 }
 
-void FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
+run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
     Stop(strategy);
 
     // 获取交易所并创建回测上下文
     auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
     if (!exchange) {
         WARN("Failed to get stock exchange for backtest");
-        return;
+        return 0;
     }
 
     // 创建回测上下文
-    uint16_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
+    run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
 
     auto& flow = _flows.at(strategy);
     flow._running = true;
@@ -176,6 +176,7 @@ void FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, 
         }
         flow._running = false;
     });
+    return runId;
 }
 
 bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {
@@ -201,14 +202,6 @@ bool FlowSubsystem::IsRunning(const String& strategy) const {
         }
     }
     return true;
-}
-
-uint16_t FlowSubsystem::GetBacktestRunId(const String& strategy) {
-    auto itr = _flows.find(strategy);
-    if (itr == _flows.end()) {
-        return 0;
-    }
-    return itr->second._backtestRunId;
 }
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {

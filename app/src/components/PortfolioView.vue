@@ -84,18 +84,62 @@
       <div class="card">
         <div class="card-header">
           <h3><i class="fas fa-list"></i> 证券池</h3>
-          <button class="btn btn-sm" @click="selectSecurities">
-            <i class="fas fa-edit"></i> 选择
-          </button>
         </div>
         <div class="card-content">
-          <div class="security-tags">
+          <div class="form-group">
+            <label>选择策略</label>
+            <select class="form-control" v-model="selectedPoolStrategyId" @change="onPoolStrategyChange">
+              <option value="">-- 选择策略 --</option>
+              <option v-for="s in strategyOptions" :key="s.id" :value="s.id">
+                {{ s.name }}
+              </option>
+            </select>
+          </div>
+          
+          <!-- 标的池展示区 -->
+          <div class="pool-description">
+            <div class="pool-description-header" @click="togglePoolExpand">
+              <span class="pool-label">
+                <i class="fas" :class="isPoolExpanded ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                标的池:
+              </span>
+              <span class="pool-count" v-if="currentStrategyPool.length > 0">
+                (共{{ currentStrategyPool.length }}只)
+              </span>
+            </div>
+            <div class="pool-description-content" v-show="isPoolExpanded">
+              <div class="pool-codes">
+                <span v-for="sec in currentStrategyPool" :key="sec.code" class="pool-code-tag">
+                  {{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}
+                </span>
+                <span v-if="currentStrategyPool.length === 0" class="empty-tip">
+                  暂无标的，请在策略流程图中配置
+                </span>
+              </div>
+            </div>
+            <!-- 收起状态的简要展示 -->
+            <div class="pool-brief" v-show="!isPoolExpanded">
+              {{ poolDisplayText }}
+            </div>
+          </div>
+          
+          <!-- 手动选择按钮（保留原有功能） -->
+          <div class="action-row">
+            <button class="btn btn-sm" @click="selectSecurities">
+              <i class="fas fa-edit"></i> 手动选择
+            </button>
+          </div>
+          
+          <!-- 已选证券标签 -->
+          <div class="security-tags" v-if="selectedSecurities.length > 0">
             <span v-for="sec in selectedSecurities" :key="sec.code" class="tag">
               {{ sec.code }} {{ sec.name }}
               <i class="fas fa-times" @click="removeSecurity(sec.code)"></i>
             </span>
-            <span v-if="selectedSecurities.length === 0" class="empty-tip">
-              暂无证券，请点击"选择"添加
+          </div>
+          <div class="security-tags" v-else>
+            <span class="empty-tip">
+              暂无证券，请从上方策略选择或点击"手动选择"添加
             </span>
           </div>
         </div>
@@ -368,7 +412,13 @@
 
 <script setup>
 import { ref, computed, onMounted, inject, watch } from 'vue';
+import { useHistoryStore } from '../stores/history';
+import { usePortfolioStore } from '../stores/portfolio';
+import { formatPoolDisplayText, isAllStocks } from '../lib/strategyPool';
 import axios from 'axios';
+
+const historyStore = useHistoryStore();
+const portfolioStore = usePortfolioStore();
 
 // 从父组件注入的数据
 const currentStrategyId = inject('currentStrategyId', ref(''));
@@ -383,6 +433,31 @@ const showSecurityDialog = ref(false);
 const showSaveDialog = ref(false);
 const configName = ref('');
 const tempSelectedSecurities = ref([]);
+
+// 标的池展开/收起状态
+const isPoolExpanded = ref(false);
+
+// 当前选择的标的池策略 ID
+const selectedPoolStrategyId = ref('');
+
+// 策略选项列表
+const strategyOptions = computed(() => {
+  return historyStore.strategies.map(s => ({
+    id: s.id,
+    name: s.name
+  }))
+});
+
+// 当前策略的标的池
+const currentStrategyPool = computed(() => {
+  if (!selectedPoolStrategyId.value) return []
+  return portfolioStore.getStrategyPool(selectedPoolStrategyId.value)
+})
+
+// 标的池显示文本
+const poolDisplayText = computed(() => {
+  return formatPoolDisplayText(currentStrategyPool.value, 5)
+})
 
 // 默认可选证券（可从策略图中获取）
 const availableSecurities = ref([
@@ -700,9 +775,66 @@ const closeSaveDialog = () => {
   showSaveDialog.value = false;
 };
 
-onMounted(() => {
-  if (currentStrategyId.value) {
-    loadPortfolioConfigs(currentStrategyId.value);
+// 切换标的池展开/收起状态
+const togglePoolExpand = () => {
+  isPoolExpanded.value = !isPoolExpanded.value;
+};
+
+// 标的池策略变化处理
+const onPoolStrategyChange = async () => {
+  if (!selectedPoolStrategyId.value) {
+    return;
+  }
+
+  // 如果已经加载过该策略的标的池，直接使用
+  const cachedPool = portfolioStore.getStrategyPool(selectedPoolStrategyId.value);
+  if (cachedPool && cachedPool.length > 0) {
+    // 已经有缓存，直接使用
+    selectedSecurities.value = [...cachedPool];
+    return;
+  }
+
+  // 获取策略的最新版本
+  const versions = historyStore.getVersionsByStrategy(selectedPoolStrategyId.value);
+  if (versions.length === 0) {
+    console.warn(`策略 ${selectedPoolStrategyId.value} 没有版本数据`);
+    return;
+  }
+
+  // 获取最新版本
+  const latestVersion = historyStore.getLatestVersion(selectedPoolStrategyId.value);
+  if (!latestVersion) {
+    console.warn(`策略 ${selectedPoolStrategyId.value} 未找到最新版本`);
+    return;
+  }
+
+  try {
+    // 加载流程图数据
+    const flowData = await historyStore.loadVersionFlowData(latestVersion.id);
+    if (flowData) {
+      // 解析标的池
+      const securities = await portfolioStore.loadStrategyPool(
+        selectedPoolStrategyId.value,
+        flowData
+      );
+      // 自动选中解析出的标的
+      if (securities && securities.length > 0) {
+        selectedSecurities.value = [...securities];
+      }
+    }
+  } catch (error) {
+    console.error('加载策略标的池失败:', error);
+  }
+};
+
+// 监听策略 ID 变化时，自动选择该策略
+watch(currentStrategyId, (newId) => {
+  if (newId) {
+    loadPortfolioConfigs(newId);
+    // 自动选择当前策略
+    selectedPoolStrategyId.value = newId;
+    // 加载该策略的标的池
+    onPoolStrategyChange();
   }
 });
 </script>
@@ -857,6 +989,100 @@ onMounted(() => {
       font-size: 0.85rem;
       color: var(--text-secondary, rgba(255, 255, 255, 0.6));
     }
+  }
+}
+
+// 标的池展示区样式
+.pool-description {
+  margin-bottom: 12px;
+  padding: 12px;
+  background-color: var(--darker-bg, #1e1e1e);
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+
+  .pool-description-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 4px 0;
+    transition: all 0.2s;
+
+    &:hover {
+      opacity: 0.8;
+    }
+
+    .pool-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--text, rgba(255, 255, 255, 0.87));
+      font-weight: 500;
+
+      i {
+        font-size: 0.75rem;
+        transition: transform 0.2s;
+      }
+    }
+
+    .pool-count {
+      font-size: 0.85rem;
+      color: var(--text-secondary, rgba(255, 255, 255, 0.6));
+    }
+  }
+
+  .pool-description-content {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border, #333);
+
+    .pool-codes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-height: 300px;
+      overflow-y: auto;
+
+      .pool-code-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        background-color: rgba(41, 98, 255, 0.15);
+        border-radius: 4px;
+        font-size: 0.85rem;
+        color: var(--text, rgba(255, 255, 255, 0.87));
+        border: 1px solid rgba(41, 98, 255, 0.2);
+      }
+
+      .empty-tip {
+        color: var(--text-secondary, rgba(255, 255, 255, 0.6));
+        font-size: 0.85rem;
+        padding: 8px 0;
+      }
+    }
+  }
+
+  .pool-brief {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background-color: rgba(41, 98, 255, 0.05);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.6));
+    // 省略号效果
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.action-row {
+  margin-bottom: 12px;
+
+  .btn {
+    padding: 6px 12px;
+    font-size: 0.85rem;
   }
 }
 

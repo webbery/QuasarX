@@ -108,8 +108,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     double initialCapital = BACKTEST_INITIAL_CAPITAL;
 
     // 启动回测并获取 run_id
-    flowSubsystem->Start(strategyName, symbols, initialCapital);
-    uint16_t runId = flowSubsystem->GetBacktestRunId(strategyName);
+    run_id_t runId = flowSubsystem->Start(strategyName, symbols, initialCapital);
     
     // 发送进度 (带 run_id)
     SendSSEProgress(sse_sock, strategyName, runId, 0.2, "开始执行回测");
@@ -158,9 +157,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         SendSSEProgress(sse_sock, strategyName, runId, 0.8, "回测执行完成");
     }
     exchange->Logout(AccountType::MAIN);
-
-    // 获取回测 runId（用于获取交易记录）
-    uint16_t runId = flowSubsystem->GetBacktestRunId(strategyName);
 
     // 6. 收集结果
     nlohmann::json results;

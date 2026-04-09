@@ -6,6 +6,9 @@
 #include <shared_mutex>
 
 #define BACKTEST_INITIAL_CAPITAL    500000
+
+using run_id_t = uint16_t;
+
 /**
  * @brief 订单信息结构（前向声明）
  */
@@ -24,7 +27,7 @@ struct OrderInfo {
  */
 class BacktestContext {
 public:
-    BacktestContext(uint16_t run_id, const String& strategy_name);
+    BacktestContext(run_id_t run_id, const String& strategy_name);
     ~BacktestContext();
 
     // 禁止复制和移动
@@ -63,7 +66,7 @@ public:
     OrderContext* getOrderReport(size_t order_id);
 
     // 回测元数据
-    uint16_t getRunId() const { return _runId; }
+    run_id_t getRunId() const { return _runId; }
     const String& getStrategyName() const { return _strategy_name; }
 
     // 进度
@@ -80,7 +83,7 @@ public:
     const Set<symbol_t>& getSymbols() const { return _symbols; }
 
 private:
-    uint16_t _runId;                    // 回测运行 ID
+    run_id_t _runId;                    // 回测运行 ID
     String _strategy_name;              // 策略名称
 
     // 每个标的独立的时间游标
