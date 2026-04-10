@@ -329,7 +329,7 @@ void CapitalRiskManager::CloseAllPositions() {
             };
 
             // 调用 Broker 卖出，使用 "system" 作为策略名，表示系统策略
-            broker->Sell("system", pos._symbol, sellOrder, callback);
+            broker->Sell(0, "system", pos._symbol, sellOrder, callback);
             INFO("[CAPITAL RISK] Send close position order for {}: {} shares @ market",
                  get_symbol(pos._symbol), pos._validHolds);
             orderCount++;

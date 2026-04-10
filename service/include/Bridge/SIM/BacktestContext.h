@@ -7,8 +7,6 @@
 
 #define BACKTEST_INITIAL_CAPITAL    500000
 
-using run_id_t = uint16_t;
-
 /**
  * @brief 订单信息结构（前向声明）
  */

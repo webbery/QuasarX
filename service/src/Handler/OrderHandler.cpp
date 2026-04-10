@@ -134,7 +134,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     if (direct == 0) {
         order._side = 0;
         for (int i = 0; i < perf; ++i) {
-            auto id = broker->Buy("_custom_", symbol, order, lambda_sendResult);
+            auto id = broker->Buy(0, "_custom_", symbol, order, lambda_sendResult);
             if (id._error) {
                 return ProcessError(id._error, res);
             }
@@ -148,7 +148,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     else if (direct == 1) {
         order._side = true;
         for (int i = 0; i < perf; ++i) {
-            auto id = broker->Sell("_custom_", symbol, order, lambda_sendResult);
+            auto id = broker->Sell(0, "_custom_", symbol, order, lambda_sendResult);
 
             if (id._error) {
                 return ProcessError(id._error, res);

@@ -113,12 +113,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted, provide, watch, nextTick, defineEmits } from 'vue'
+import { ref, onMounted, computed, onUnmounted, provide, watch, nextTick, defineEmits, inject } from 'vue'
 import { useVueFlow, VueFlow, MarkerType } from '@vue-flow/core'
 import { message } from '@/tool'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
-import ReportView from './ReportView.vue'
+import ReportView from './report/ReportView.vue'
 import InfoPanel from './InfoPanel.vue'
 import PromptDialog from './PromptDialog.vue'
 import axios from 'axios'
@@ -127,6 +127,11 @@ import { useHistoryStore } from '@/stores/history'
 import { usePortfolioStore } from '@/stores/portfolio'
 import { storeToRefs } from 'pinia'
 import { keyMap, nodeTypeConfigs } from './flow/nodeConfigs'
+
+// 注入报表配置面板控制方法（从 App.vue）
+const onShowReportConfig = inject('onShowReportConfig', () => {
+  console.warn('[StrategyFactory] onShowReportConfig 未提供')
+})
 
 // 初始化 portfolio store
 const portfolioStore = usePortfolioStore()
@@ -296,6 +301,9 @@ watch(() => getEdges.value, () => {
 watch(activeTab, async (newTab) => {
   if (newTab === 'backtest' && reportViewRef.value) {
     console.info('[StrategyFactory] 切换到回测结果选项卡')
+
+    // 显示报表配置面板
+    onShowReportConfig()
 
     // 等待 ReportView 组件完成初始化
     await nextTick()

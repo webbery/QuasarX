@@ -128,10 +128,6 @@ public:
 
     RuningType GetRunningMode() { return _runType; }
 
-    // 回测运行ID管理
-    uint16_t GetNextBacktestRunId() { return ++_backtest_run_counter; }
-    uint16_t GetCurrentBacktestRunId() const { return _backtest_run_counter; }
-
     BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
 
     PortfolioSubSystem* GetPortforlioSubSystem() { return _portfolioSystem; }
@@ -279,7 +275,6 @@ private:
     static bool _exit;
     bool _isDataLock = false;
     RuningType _runType;
-    uint16_t _backtest_run_counter = 0;  // 回测运行计数器
     int _defaultPortfolio;
 
     Map<String, HttpHandler*> _handlers;

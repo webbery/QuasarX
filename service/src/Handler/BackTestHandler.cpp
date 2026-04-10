@@ -232,7 +232,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     SendSSEProgress(sse_sock, strategyName, runId, 1.0, "回测全部完成");
 
-    INFO("[Backtest] Completed: {}", features.dump());
+    INFO("[Backtest] Completed: {}, {}", features.dump(), results["summary"].dump());
     res.status = 200;
     res.set_content(results.dump(), "application/json");
 }

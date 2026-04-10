@@ -26,14 +26,14 @@
         <!-- 股票持仓 -->
         <StockPositionPanel
           :active="activeMarketTab === 'stock'"
-          :positions="stockTrade.stockPositions"
+          :positions="stockTrade.stockPositions.value"
           @trade="handleStockTrade"
         />
 
         <StockOrderPanel
           v-if="activeMarketTab === 'stock'"
-          :orders="stockTrade.stockOrders"
-          :trading-enabled="stockTrade.stockTradingEnabled"
+          :orders="stockTrade.stockOrders.value"
+          :trading-enabled="stockTrade.stockTradingEnabled.value"
           @cancel-order="handleCancelOrder"
           @cancel-all="handleCancelAllOrders"
           @toggle-trading="handleToggleTrading"
@@ -75,11 +75,11 @@
 import { ref, reactive, onMounted, onUnmounted, provide } from 'vue'
 import { useAccountStore } from '@/stores/account'
 import { useStockTrade } from '@/components/position/composables/useStockTrade'
-import StockPositionPanel from './StockPositionPanel.vue'
-import StockOrderPanel from './StockOrderPanel.vue'
-import OptionPositionPanel from './OptionPositionPanel.vue'
-import FuturePositionPanel from './FuturePositionPanel.vue'
-import ConfirmModal from './ConfirmModal.vue'
+import StockPositionPanel from './position/StockPositionPanel.vue'
+import StockOrderPanel from './position/StockOrderPanel.vue'
+import OptionPositionPanel from './position/OptionPositionPanel.vue'
+import FuturePositionPanel from './position/FuturePositionPanel.vue'
+import ConfirmModal from './position/ConfirmModal.vue'
 import { message } from '@/tool'
 import sseService from '@/ts/SSEService'
 

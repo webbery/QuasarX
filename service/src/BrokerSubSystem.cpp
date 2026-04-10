@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 #include <yas/serialize.hpp>
+#include "Bridge/SIM/BacktestContext.h"
 #include "Bridge/exchange.h"
 #include "DataGroup.h"
 #include "PortfolioSubsystem.h"
@@ -145,27 +146,27 @@ MDB_dbi BrokerSubSystem::GetDBI(int portfolid_id, MDB_txn* txn) {
 
 order_id BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查本金
-    return AddOrderBySide(strategy, symbol, order, detail, 0);
+    // return AddOrderBySide(strategy, symbol, order, detail, 0);
 }
 
 order_id BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查持仓
-    return AddOrderBySide(strategy, symbol, order, detail, 1);
+    // return AddOrderBySide(strategy, symbol, order, detail, 1);
 }
 
-order_id BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
-    auto id = AddOrderBySide(strategy, symbol, order, 0, cb);
+order_id BrokerSubSystem::Buy(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    auto id = AddOrderBySide(run_id, strategy, symbol, order, 0, cb);
 
     return id;
 }
 
-order_id BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
-    auto id = AddOrderBySide(strategy, symbol, order, 1, cb);
+order_id BrokerSubSystem::Sell(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    auto id = AddOrderBySide(run_id, strategy, symbol, order, 1, cb);
     return id;
 }
 
-order_id BrokerSubSystem::Exercise(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
-    auto id = AddOrderBySide(strategy, symbol, order, 1, cb);
+order_id BrokerSubSystem::Exercise(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {
+    auto id = AddOrderBySide(run_id, strategy, symbol, order, 1, cb);
     return id;
 }
 
@@ -673,14 +674,13 @@ ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {
   return nullptr;
 }
 
-order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side)
+order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
     // 设置策略和运行信息
-    auto run_id = _server->GetCurrentBacktestRunId();
     ctx->SetStrategyInfo(strategy,
                          run_id,
                          _server->GetRunningMode());
@@ -756,13 +756,12 @@ void BrokerSubSystem::ProcessOrderSuccess(const String& strategy, symbol_t symbo
     }
 }
 
-order_id BrokerSubSystem::AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
+order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {
     auto ctx = new OrderContext;
     ctx->_order = order;
     ctx->_order._side = side;
     GET_SYMBOL(ctx) = symbol;
     // 设置策略和运行信息
-    auto run_id = _server->GetCurrentBacktestRunId();
     ctx->SetStrategyInfo(strategy,
                          run_id,
                          _server->GetRunningMode());

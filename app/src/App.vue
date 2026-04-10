@@ -141,6 +141,16 @@
       <div v-else-if="is_portfolio">
         <PortfolioPanel :selectedSecurity="selectedSecurity" :highlight="highlightTradePanel"></PortfolioPanel>
       </div>
+      <!-- 报表配置面板（新增） -->
+      <div v-else-if="is_strategy && showReportConfig">
+        <ReportConfigPanel
+          :chart-visibility="reportChartVisibility"
+          :show-metrics-table="reportShowMetricsTable"
+          @update:chart-visibility="updateReportChartVisibility"
+          @update:show-metrics-table="updateReportShowMetricsTable"
+          @reset="resetReportConfig"
+        />
+      </div>
     </aside>
 
     <!-- 页脚 -->
@@ -197,6 +207,8 @@ import StrategyRiskDetail from "./components/risk/StrategyRiskDetail.vue";
 import { useMockRiskData } from "./components/risk/hooks/useMockRiskData";
 import sseService from "./ts/SSEService";
 import Store from 'electron-store';
+// 报表配置面板
+import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
 
 // 定义视图状态常量
 const VIEWS = {
@@ -225,9 +237,85 @@ let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 let isBacktesting = ref(false);
 let selectedStrategyPanel = ref(false); // 默认显示策略组件的节点面板
-let selectedStrategyId = ref<string | null>(null); // 当前选中的策略ID（用于风险详情）
+let selectedStrategyId = ref(null); // 当前选中的策略ID（用于风险详情）
 const servers = ref(store.get('servers') || [])
 let selectedAccount;
+
+// === 报表配置面板状态（新增） ===
+const showReportConfig = ref(false)
+const reportChartVisibility = ref({})
+const reportShowMetricsTable = ref(true)
+
+/**
+ * 从 localStorage 加载报表配置
+ */
+function loadReportConfig() {
+  try {
+    const stored = localStorage.getItem('quasarx_report_config')
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      reportChartVisibility.value = parsed.chartVisibility || {}
+      reportShowMetricsTable.value = parsed.showMetricsTable ?? true
+    }
+  } catch (e) {
+    console.warn('[App] 加载报表配置失败', e)
+  }
+}
+
+/**
+ * 保存报表配置到 localStorage
+ */
+function saveReportConfig() {
+  try {
+    const config = {
+      chartVisibility: reportChartVisibility.value,
+      showMetricsTable: reportShowMetricsTable.value
+    }
+    localStorage.setItem('quasarx_report_config', JSON.stringify(config))
+  } catch (e) {
+    console.warn('[App] 保存报表配置失败', e)
+  }
+}
+
+/**
+ * 显示报表配置面板
+ */
+function onShowReportConfig() {
+  showReportConfig.value = true
+}
+
+/**
+ * 隐藏报表配置面板
+ */
+function onHideReportConfig() {
+  showReportConfig.value = false
+}
+
+/**
+ * 更新图表可见性
+ */
+function updateReportChartVisibility(newVisibility) {
+  reportChartVisibility.value = newVisibility
+  saveReportConfig()
+}
+
+/**
+ * 更新指标表格显示
+ */
+function updateReportShowMetricsTable(value) {
+  reportShowMetricsTable.value = value
+  saveReportConfig()
+}
+
+/**
+ * 重置报表配置
+ */
+function resetReportConfig() {
+  if (confirm('确定要重置报表配置为默认值吗？')) {
+    localStorage.removeItem('quasarx_report_config')
+    loadReportConfig()
+  }
+}
 
 // 根据当前视图动态计算活动组件
 let activeComponent = computed(() => {
@@ -364,6 +452,9 @@ onMounted(() => {
     activeComponent.value = SettingView
   }
 
+  // 加载报表配置
+  loadReportConfig()
+
   // 监听打开配置管理器事件
   window.addEventListener('open-portfolio-manager', onHandlePortfolioMananger)
 });
@@ -470,6 +561,14 @@ provide('updateServer', updateServer)
 provide('currentStrategyId', currentStrategyId)
 provide('currentPortfolioConfig', currentPortfolioConfig)
 provide('portfolioConfigs', portfolioConfigs)
+// 报表配置相关 provide（新增）
+provide('showReportConfig', showReportConfig)
+provide('onShowReportConfig', onShowReportConfig)
+provide('onHideReportConfig', onHideReportConfig)
+provide('reportChartVisibility', reportChartVisibility)
+provide('reportShowMetricsTable', reportShowMetricsTable)
+provide('updateReportChartVisibility', updateReportChartVisibility)
+provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
 </script>
 
 <style scoped>

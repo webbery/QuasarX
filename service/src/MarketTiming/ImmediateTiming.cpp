@@ -11,10 +11,11 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     Order order;
     order._price = signal.GetPrice();
     order._volume = signal.GetQuantity();
+    auto run_id = context.getBacktestRunId();
     switch (signal.GetAction()) {
     case TradeAction::BUY:
         order._side = 0;
-        broker->Buy(strategy, symbol, order, [symbol, this](const TradeReport& report) {
+        broker->Buy(run_id, strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
             nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
@@ -23,7 +24,7 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     break;
     case TradeAction::SELL:
         order._side = 1;
-        broker->Sell(strategy, symbol, order, [symbol, this](const TradeReport& report) {
+        broker->Sell(run_id, strategy, symbol, order, [symbol, this](const TradeReport& report) {
             auto sock = Server::GetSocket();
             auto info = to_sse_string(symbol, report);
             nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);

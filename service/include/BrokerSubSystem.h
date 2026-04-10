@@ -113,10 +113,10 @@ public:
     [[deprecated("使用异步版本 Sell(strategy, symbol, order, callback)")]]
     order_id Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
-    order_id Buy(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
+    order_id Buy(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
-    order_id Sell(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
-    order_id Exercise(const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
+    order_id Sell(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
+    order_id Exercise(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
     int64_t AddOrder(uint16_t run_id, symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 
@@ -177,8 +177,8 @@ public:
     void ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report);
 
 private:
-    order_id AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
-    order_id AddOrderBySide(const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);
+    order_id AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
+    order_id AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);
 
     // 模拟撮合
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);
