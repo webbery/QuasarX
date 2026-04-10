@@ -1685,11 +1685,9 @@ defineExpose({
 .backtest-panel {
     flex: 1;
     display: flex;
-    padding: 20px;
-    overflow-y: auto;
+    flex-direction: column;
     width: 100%;
-    scrollbar-width: thin;
-    scrollbar-color: var(--primary) transparent;
+    min-height: 0;
 }
 
 .backtest-container {
