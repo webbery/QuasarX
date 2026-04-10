@@ -262,6 +262,7 @@ function initDragScroll() {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  width: 100%;
 }
 
 .chart-card:hover {
@@ -271,7 +272,8 @@ function initDragScroll() {
 }
 
 .chart-card.full-width {
-  grid-column: 1 / -1;
+  /* 作为 grid-row 的子元素，不再需要 grid-column */
+  width: 100%;
 }
 
 .chart-title {

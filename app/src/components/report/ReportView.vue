@@ -54,14 +54,14 @@
       <template v-if="hasLegacyCharts">
         <LegacyCharts ref="legacyChartsRef" />
       </template>
-    </div>
 
-    <!-- 指标表格 -->
-    <div class="chart-row full-width" v-if="showMetricsTable">
-      <MetricsTable
-        :metrics="metricsData"
-        :benchmark-metrics="benchmarkMetrics"
-      />
+      <!-- 指标表格 - 移入 grid-container 内部，确保正确的文档流 -->
+      <div class="chart-row full-width" v-if="showMetricsTable">
+        <MetricsTable
+          :metrics="metricsData"
+          :benchmark-metrics="benchmarkMetrics"
+        />
+      </div>
     </div>
   </div>
 </template>

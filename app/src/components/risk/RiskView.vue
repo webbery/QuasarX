@@ -72,34 +72,60 @@ function openGlobalConfig() {
 
 <style scoped lang="scss">
 .risk-view {
-  padding: 16px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   height: 100%;
   overflow-y: auto;
+  background: var(--dark-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary) transparent;
 }
 
 .strategy-list-section {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 
   .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 
     h3 {
       margin: 0;
-      font-size: 16px;
-      color: var(--el-text-color-primary);
+      font-size: 18px;
+      color: var(--text);
+      font-weight: 600;
+
+      i {
+        margin-right: 8px;
+        color: var(--primary);
+      }
+    }
+
+    .config-btn {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+
+      &:hover {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #fff;
+      }
 
       i {
         margin-right: 6px;
-        color: var(--el-color-primary);
       }
     }
   }

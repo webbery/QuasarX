@@ -183,9 +183,6 @@
 </template>
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide } from "vue";
-import LabVue from "./components/Lab.vue";
-import RiskManagerVue from "./components/RiskManager.vue";
-import StrategyVue from "./components/Strategy.vue";
 import MarketPanel from "./components/MarketPanel.vue";
 import AccountView from "./components/AccountView.vue";
 import RiskPanel from "./components/RiskPanel.vue";

@@ -35,20 +35,22 @@ defineProps<{
 
 <style scoped lang="scss">
 .common-risk-panel {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
   margin-bottom: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 
   h4 {
-    margin: 0 0 12px;
-    font-size: 15px;
-    color: var(--el-text-color-primary);
+    margin: 0 0 16px;
+    font-size: 16px;
+    color: var(--text);
+    font-weight: 600;
 
     i {
-      margin-right: 6px;
-      color: var(--el-color-primary);
+      margin-right: 8px;
+      color: var(--primary);
     }
   }
 }
@@ -56,29 +58,37 @@ defineProps<{
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 16px;
 }
 
 .metric-card {
-  background: var(--el-fill-color-lighter);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 12px;
+  background: var(--darker-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
   text-align: center;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(41, 98, 255, 0.15);
+  }
 
   .metric-label {
     font-size: 12px;
-    color: var(--el-text-color-secondary);
-    margin-bottom: 6px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .metric-value {
-    font-size: 20px;
-    font-weight: bold;
-    color: var(--el-text-color-primary);
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
 
     &.negative {
-      color: #f56c6c;
+      color: #ff5252;
     }
   }
 }

@@ -50,19 +50,22 @@ function getConcentrationClass(value: number): string {
 
 <style scoped lang="scss">
 .stock-risk-panel {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
   margin-bottom: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 
   h4 {
     margin: 0 0 16px;
-    font-size: 15px;
+    font-size: 16px;
+    color: var(--text);
+    font-weight: 600;
 
     i {
-      margin-right: 6px;
-      color: var(--el-color-success);
+      margin-right: 8px;
+      color: var(--secondary);
     }
   }
 }
@@ -70,45 +73,53 @@ function getConcentrationClass(value: number): string {
 .stock-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+  gap: 16px;
 }
 
 .stock-item {
-  background: var(--el-fill-color-lighter);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 12px;
+  background: var(--darker-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
   text-align: center;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(41, 98, 255, 0.15);
+  }
 
   .stock-label {
     font-size: 12px;
-    color: var(--el-text-color-secondary);
-    margin-bottom: 6px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .stock-value {
-    font-size: 20px;
-    font-weight: bold;
-    color: var(--el-text-color-primary);
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
 
     .unit {
       font-size: 12px;
       font-weight: normal;
-      color: var(--el-text-color-placeholder);
+      color: var(--text-secondary);
     }
   }
 
   .stock-desc {
-    font-size: 11px;
-    color: var(--el-text-color-placeholder);
-    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
   }
 
   .stock-bar {
     width: 80%;
-    margin: 8px auto 0;
+    margin: 10px auto 0;
     height: 6px;
-    background: var(--el-fill-color);
+    background: var(--border);
     border-radius: 3px;
     overflow: hidden;
 
@@ -117,9 +128,9 @@ function getConcentrationClass(value: number): string {
       border-radius: 3px;
       transition: width 0.3s;
 
-      &.low { background: #67c23a; }
-      &.medium { background: #e6a23c; }
-      &.high { background: #f56c6c; }
+      &.low { background: var(--secondary); }
+      &.medium { background: var(--accent); }
+      &.high { background: #ff5252; }
     }
   }
 }

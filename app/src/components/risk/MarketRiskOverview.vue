@@ -82,25 +82,27 @@ const model = computed({
 
 <style scoped lang="scss">
 .market-risk-overview {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 
   .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 
     h3 {
       margin: 0;
-      font-size: 16px;
-      color: var(--el-text-color-primary);
+      font-size: 18px;
+      color: var(--text);
+      font-weight: 600;
 
       i {
-        margin-right: 6px;
-        color: var(--el-color-primary);
+        margin-right: 8px;
+        color: var(--primary);
       }
     }
 
@@ -112,79 +114,82 @@ const model = computed({
   .cards {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
+    gap: 16px;
   }
 }
 
 .risk-card {
-  background: var(--el-fill-color-lighter);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--darker-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
   text-align: center;
-  transition: box-shadow 0.2s;
+  transition: all 0.2s;
 
   &:hover {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    border-color: var(--primary);
   }
 
   .card-icon {
-    font-size: 20px;
-    color: var(--el-color-primary);
-    margin-bottom: 6px;
+    font-size: 24px;
+    color: var(--primary);
+    margin-bottom: 8px;
   }
 
   .card-label {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    margin-bottom: 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .card-value {
-    font-size: 24px;
-    font-weight: bold;
-    margin: 6px 0;
-    color: var(--el-text-color-primary);
+    font-size: 28px;
+    font-weight: 700;
+    margin: 8px 0;
+    color: var(--text);
   }
 
   .card-change {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 15px;
+    font-weight: 600;
 
     &.up {
-      color: #f56c6c; // A股涨=红
+      color: var(--secondary); // A股涨=绿
     }
 
     &.down {
-      color: #67c23a; // A股跌=绿
+      color: #ff5252; // A股跌=红
     }
   }
 
   .card-sub {
-    font-size: 11px;
-    color: var(--el-text-color-placeholder);
-    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
   }
 
   .up {
-    color: #f56c6c;
+    color: var(--secondary);
   }
 
   .down {
-    color: #67c23a;
+    color: #ff5252;
   }
 
   .sentiment-bar {
     height: 6px;
-    background: var(--el-fill-color);
+    background: var(--border);
     border-radius: 3px;
-    margin-top: 10px;
+    margin-top: 12px;
     overflow: hidden;
 
     .sentiment-fill {
       height: 100%;
       border-radius: 3px;
-      background: linear-gradient(90deg, #67c23a 0%, #e6a23c 50%, #f56c6c 100%);
+      background: linear-gradient(90deg, var(--secondary) 0%, var(--accent) 50%, #ff5252 100%);
       transition: width 0.5s ease;
     }
   }

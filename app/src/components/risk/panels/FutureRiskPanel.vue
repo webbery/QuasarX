@@ -17,9 +17,9 @@
       <div class="future-item">
         <div class="future-label">期限结构</div>
         <div class="future-value">
-          <el-tag :type="contangoTagType(data.contangoBackwardation)" size="small">
+          <span class="tag" :class="contangoTagClass(data.contangoBackwardation)">
             {{ contangoLabel(data.contangoBackwardation) }}
-          </el-tag>
+          </span>
         </div>
         <div class="future-desc">期货期限结构</div>
       </div>
@@ -47,13 +47,13 @@ function getLeverageClass(leverage: number): string {
   return 'low-leverage'
 }
 
-function contangoTagType(type: string): 'danger' | 'warning' | 'success' {
-  const map: Record<string, 'danger' | 'warning' | 'success'> = {
-    contango: 'warning',
-    backwardation: 'danger',
-    flat: 'success',
+function contangoTagClass(type: string): string {
+  const map: Record<string, string> = {
+    contango: 'tag-warning',
+    backwardation: 'tag-danger',
+    flat: 'tag-success',
   }
-  return map[type] || 'info'
+  return map[type] || 'tag-info'
 }
 
 function contangoLabel(type: string): string {
@@ -68,19 +68,22 @@ function contangoLabel(type: string): string {
 
 <style scoped lang="scss">
 .future-risk-panel {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
   margin-bottom: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 
   h4 {
     margin: 0 0 16px;
-    font-size: 15px;
+    font-size: 16px;
+    color: var(--text);
+    font-weight: 600;
 
     i {
-      margin-right: 6px;
-      color: var(--el-color-info);
+      margin-right: 8px;
+      color: var(--primary);
     }
   }
 }
@@ -88,52 +91,93 @@ function contangoLabel(type: string): string {
 .future-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 16px;
 }
 
 .future-item {
-  background: var(--el-fill-color-lighter);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 12px;
+  background: var(--darker-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
   text-align: center;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(41, 98, 255, 0.15);
+  }
 
   .future-label {
     font-size: 12px;
-    color: var(--el-text-color-secondary);
-    margin-bottom: 6px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .future-value {
-    font-size: 20px;
-    font-weight: bold;
-    color: var(--el-text-color-primary);
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
 
     &.high-leverage {
-      color: #f56c6c;
+      color: #ff5252;
     }
 
     &.medium-leverage {
-      color: #e6a23c;
+      color: var(--accent);
     }
 
     &.low-leverage {
-      color: #67c23a;
+      color: var(--secondary);
     }
 
     &.positive {
-      color: #f56c6c;
+      color: var(--secondary);
     }
 
     &.negative {
-      color: #67c23a;
+      color: #ff5252;
     }
   }
 
   .future-desc {
-    font-size: 11px;
-    color: var(--el-text-color-placeholder);
-    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+  }
+}
+
+// 标签样式
+.tag {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  font-weight: 500;
+
+  &.tag-success {
+    background: rgba(0, 200, 83, 0.15);
+    color: var(--secondary);
+    border: 1px solid var(--secondary);
+  }
+
+  &.tag-warning {
+    background: rgba(255, 109, 0, 0.15);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  &.tag-danger {
+    background: rgba(255, 82, 82, 0.15);
+    color: #ff5252;
+    border: 1px solid #ff5252;
+  }
+
+  &.tag-info {
+    background: rgba(41, 98, 255, 0.15);
+    color: var(--primary);
+    border: 1px solid var(--primary);
   }
 }
 

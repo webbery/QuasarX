@@ -120,57 +120,66 @@ function handleSave() {
 <style scoped lang="scss">
 .risk-config-drawer {
   padding: 0 8px;
+  color: var(--text);
 }
 
 .config-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 0;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 16px 0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
 
   h4 {
     margin: 0;
-    font-size: 16px;
+    font-size: 18px;
+    color: var(--text);
+    font-weight: 600;
   }
 }
 
 .metric-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .metric-item {
-  background: var(--el-fill-color-lighter);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 12px;
+  background: var(--darker-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--primary);
+  }
 
   .metric-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 
     .metric-unit {
-      font-size: 12px;
-      color: var(--el-text-color-placeholder);
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 500;
     }
   }
 
   .metric-thresholds {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 16px;
 
     .threshold-group {
       label {
         display: block;
-        font-size: 12px;
-        color: var(--el-text-color-secondary);
-        margin-bottom: 4px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
       }
     }
   }
@@ -183,6 +192,7 @@ function handleSave() {
 .drawer-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
+  padding: 16px 0;
 }
 </style>
