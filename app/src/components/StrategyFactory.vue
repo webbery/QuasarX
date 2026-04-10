@@ -504,15 +504,22 @@ const isValidConnection = (connection) => {
   if (connection.source === connection.target) {
     return false
   }
-  
+
+  // 验证连接方向：起点(source)只能连接到终点(target)
+  // sourceHandle 应该是输出点('output')，targetHandle 应该是输入点('input')
+  if (connection.sourceHandle !== 'output' || connection.targetHandle !== 'input') {
+    console.warn('无效连接：起点只能连接到终点', connection)
+    return false
+  }
+
   // 防止重复连接
-  const existingConnection = getEdges.value.find(edge => 
-    edge.source === connection.source && 
+  const existingConnection = getEdges.value.find(edge =>
+    edge.source === connection.source &&
     edge.target === connection.target &&
     edge.sourceHandle === connection.sourceHandle &&
     edge.targetHandle === connection.targetHandle
   )
-  
+
   return !existingConnection
 }
 

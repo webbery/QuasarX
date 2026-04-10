@@ -37,6 +37,7 @@
             v-else-if="chart.id === 'skewness'"
             :skewness="metricsData.skewness || 0.35"
             :kurtosis="metricsData.kurtosis || 3.12"
+            :prices="dataState.symbolPrices.value"
           />
 
           <!-- 其他图表占位（后续迁移时添加） -->
