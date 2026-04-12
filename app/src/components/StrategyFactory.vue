@@ -506,8 +506,11 @@ const isValidConnection = (connection) => {
   }
 
   // 验证连接方向：起点(source)只能连接到终点(target)
-  // sourceHandle 应该是输出点('output')，targetHandle 应该是输入点('input')
-  if (connection.sourceHandle !== 'output' || connection.targetHandle !== 'input') {
+  // 普通节点: sourceHandle='output' -> targetHandle='input'
+  // 数据输入节点: sourceHandle='field-close'/'field-open'/'field-high'/'field-low'/'field-volume' -> targetHandle='input'
+  const dataFieldHandles = ['field-close', 'field-open', 'field-high', 'field-low', 'field-volume']
+  const isValidSource = connection.sourceHandle === 'output' || dataFieldHandles.includes(connection.sourceHandle)
+  if (!isValidSource || connection.targetHandle !== 'input') {
     console.warn('无效连接：起点只能连接到终点', connection)
     return false
   }
@@ -1125,10 +1128,21 @@ const runBacktest = async () => {
     const result = response.data
 
     // 4. 传递指标数据到 ReportView
+    // 合并 features 和 summary 中的指标（summary 作为 features 的补充/兜底）
     try {
       if (reportViewRef.value && reportViewRef.value.updateMetrics) {
-        reportViewRef.value.updateMetrics(result.features || {})
-        console.info('策略指标数据已传递给报表组件')
+        const features = result.features || {}
+        const summary = result.summary || {}
+        // summary 中的性能指标作为 features 的补充
+        const summaryMetricKeys = ['sharp', 'annual_return', 'total_return', 'max_drawdown', 'win_rate', 'calmar_ratio']
+        const mergedMetrics = { ...features }
+        for (const key of summaryMetricKeys) {
+          if (summary[key] !== undefined && (mergedMetrics[key] === undefined || mergedMetrics[key] === 0)) {
+            mergedMetrics[key] = summary[key]
+          }
+        }
+        reportViewRef.value.updateMetrics(mergedMetrics)
+        console.info('策略指标数据已传递给报表组件', mergedMetrics)
       } else {
         console.warn('ReportView 组件未找到 updateMetrics 方法')
       }
@@ -1185,7 +1199,9 @@ const runBacktest = async () => {
       if (reportViewRef.value && reportViewRef.value.updateTradeSignals) {
         reportViewRef.value.updateTradeSignals(
           formatSignals(buySignals),
-          formatSignals(sellSignals)
+          formatSignals(sellSignals),
+          buySignals,
+          sellSignals
         )
         console.info(`交易历史数据已传递给报表组件：买入${buySignals.length}条，卖出${sellSignals.length}条`)
       } else {
@@ -1215,7 +1231,7 @@ const runBacktest = async () => {
     const summary = result.summary || {}
     const buyCount = summary.buy_count || (result.buy?.length || 0)
     const sellCount = summary.sell_count || (result.sell?.length || 0)
-    const sharp = result.features[5]
+    const sharp = result.features['sharp']
 
     addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，夏普率${sharp}`, 'success')
 
@@ -1620,32 +1636,6 @@ defineExpose({
     box-shadow: 0 0 5px 1px rgba(208, 109, 0, 0.8);
     transform: translateY(-1px);
     z-index: 1000;
-}
-
-.node-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-}
-
-.node-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: 10px;
-    color: white;
-    font-size: 12px;
-    background-color: var(--primary);
-}
-
-.node-title {
-    font-weight: 600;
-    color: var(--text);
 }
 
 .node-content {

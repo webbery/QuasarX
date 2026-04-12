@@ -146,12 +146,12 @@ MDB_dbi BrokerSubSystem::GetDBI(int portfolid_id, MDB_txn* txn) {
 
 order_id BrokerSubSystem::Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查本金
-    // return AddOrderBySide(strategy, symbol, order, detail, 0);
+     return AddOrderBySide(0, strategy, symbol, order, detail, 0);
 }
 
 order_id BrokerSubSystem::Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail) {
     // 检查持仓
-    // return AddOrderBySide(strategy, symbol, order, detail, 1);
+     return AddOrderBySide(0, strategy, symbol, order, detail, 1);
 }
 
 order_id BrokerSubSystem::Buy(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb) {

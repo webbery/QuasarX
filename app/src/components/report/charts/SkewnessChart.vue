@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../composables/useECharts'
 import { generateNormalDistribution } from '@/lib/statistics'
@@ -143,7 +143,7 @@ function triggerCalculation() {
   }
 
   isCalculating.value = true
-  worker.postMessage({ prices: props.prices })
+  worker.postMessage({ prices: toRaw(props.prices) })
 }
 
 // === 图表配置 ===
@@ -305,8 +305,7 @@ watch(
   () => props.prices,
   () => {
     triggerCalculation()
-  },
-  { deep: true }
+  }
 )
 
 // 监听后端传入值变化（备用）

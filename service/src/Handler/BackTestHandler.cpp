@@ -220,11 +220,39 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 
     // 9. 添加回测概要信息
+    // 从 _collections 中提取性能指标（可能存储为 float(index 0) 或 List<float>(index 1)）
+    float sharp_val = 0, annual_return_val = 0, total_return_val = 0;
+    float max_drawdown_val = 0, win_rate_val = 0, calmar_val = 0;
+    for (auto& item : indicators) {
+        float val = 0;
+        if (item.second.index() == 0) {
+            val = std::get<float>(item.second);
+        } else {
+            // List<float> 取最后一个值（最新值）
+            auto& lst = std::get<1>(item.second);
+            if (!lst.empty()) val = lst.back();
+        }
+        switch (item.first) {
+        case StatisticIndicator::Sharp: sharp_val = val; break;
+        case StatisticIndicator::AnualReturn: annual_return_val = val; break;
+        case StatisticIndicator::TotalReturn: total_return_val = val; break;
+        case StatisticIndicator::MaxDrawDown: max_drawdown_val = val; break;
+        case StatisticIndicator::WinRate: win_rate_val = val; break;
+        case StatisticIndicator::Calmar: calmar_val = val; break;
+        default: break;
+        }
+    }
     results["summary"] = {
         {"strategy_name", strategyName},
         {"buy_count", results["buy"].size()},
         {"sell_count", results["sell"].size()},
-        {"indicator_count", features.size()}
+        {"indicator_count", features.size()},
+        {"sharp", sharp_val},
+        {"annual_return", annual_return_val},
+        {"total_return", total_return_val},
+        {"max_drawdown", max_drawdown_val},
+        {"win_rate", win_rate_val},
+        {"calmar_ratio", calmar_val}
     };
     INFO("add summary");
 

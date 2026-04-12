@@ -27,7 +27,6 @@
             :benchmark-data="benchmarkData"
             :benchmark-name="benchmarkName"
             :selected-benchmark="selectedBenchmark"
-            :metrics-data="metricsData"
             @benchmark-change="onBenchmarkChange"
             @refresh-benchmark="refreshBenchmark"
           />

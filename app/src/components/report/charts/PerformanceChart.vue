@@ -14,15 +14,6 @@
             {{ idx.name }} ({{ idx.code }})
           </option>
         </select>
-        <button
-          v-if="localBenchmark"
-          class="btn-refresh"
-          @click="handleRefresh"
-          :disabled="loading"
-          title="刷新基准数据"
-        >
-          🔄
-        </button>
         <span v-if="benchmarkName" class="benchmark-label">{{ benchmarkName }}</span>
       </div>
     </div>
@@ -42,7 +33,6 @@ interface Props {
   benchmarkData: any[]
   benchmarkName: string
   selectedBenchmark: string
-  metricsData: Record<string, number>
 }
 
 interface Emits {
@@ -60,22 +50,6 @@ const loading = ref(false)
 const { chartRef, initChart, updateChart } = useECharts(true)
 
 // === 数据计算 ===
-
-/**
- * 计算策略累计收益曲线
- * 如果有真实信号，使用真实数据；否则使用测试数据（线性插值）
- */
-const strategyCumulativeReturns = computed(() => {
-  const totalReturn = props.metricsData.total_return || 0
-  const numDates = props.dates.length || 12
-
-  // 简化：用总收益线性插值生成月度收益曲线
-  // TODO: 如果后端能提供月度收益数据，应该直接使用
-  return props.dates.map((_, i) => {
-    const progress = numDates > 1 ? i / (numDates - 1) : 0
-    return Number((totalReturn * progress * 100).toFixed(2))
-  })
-})
 
 /**
  * 计算基准累计收益曲线
@@ -99,7 +73,7 @@ function buildChartOption() {
     {
       name: '策略收益',
       type: 'line',
-      data: strategyCumulativeReturns.value,
+      data: props.strategyReturns,
       smooth: true,
       lineStyle: { width: 3, color: '#2962ff' },
       areaStyle: {

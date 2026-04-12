@@ -44,6 +44,27 @@ function handleSymbolChange() {
 }
 
 function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[]) {
+  // 构建日期到索引的映射
+  const dateIndexMap = new Map<string, number>()
+  chartData.forEach((item: any, index: number) => {
+    dateIndexMap.set(item[0], index)
+  })
+
+  // 将信号数据转换为与 chartData 对齐的扁平数组
+  // category 类型 x 轴按索引自动定位，只需在对应索引位置填入价格，其余为 null
+  const mappedBuySignals = Array(chartData.length).fill(null)
+  const mappedSellSignals = Array(chartData.length).fill(null)
+
+  buySignals.forEach((signal: any[]) => {
+    const idx = dateIndexMap.get(signal[0])
+    if (idx !== undefined) mappedBuySignals[idx] = chartData[idx][1]
+  })
+
+  sellSignals.forEach((signal: any[]) => {
+    const idx = dateIndexMap.get(signal[0])
+    if (idx !== undefined) mappedSellSignals[idx] = chartData[idx][1]
+  })
+
   return {
     tooltip: {
       trigger: 'axis',
@@ -58,7 +79,8 @@ function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[])
         let result = `<div style="margin: 0 0 5px 0; font-weight: bold;">${params[0].axisValue}</div>`
         params.forEach((item: any) => {
           if (item.seriesName === '价格') {
-            result += `<div>${item.marker} ${item.seriesName}: <span style="color: #2962ff; font-weight: bold;">${item.value[1].toFixed(2)}</span></div>`
+            const price = typeof item.value === 'number' ? item.value : item.value[1]
+            result += `<div>${item.marker} ${item.seriesName}: <span style="color: #2962ff; font-weight: bold;">${price.toFixed(2)}</span></div>`
           } else if (item.seriesName === '买入信号') {
             result += `<div style="color: #00c853;">${item.marker} ${item.seriesName}</div>`
           } else if (item.seriesName === '卖出信号') {
@@ -101,19 +123,6 @@ function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[])
         textStyle: { color: '#a0aec0' }
       }
     ],
-    brush: {
-      toolbox: ['lineX', 'clear'],
-      xAxisIndex: 0
-    },
-    toolbox: {
-      feature: {
-        dataZoom: { yAxisIndex: false },
-        restore: {},
-        saveAsImage: { pixelRatio: 2 }
-      },
-      right: 10,
-      top: 10
-    },
     xAxis: {
       type: 'category',
       data: chartData.map((item: any) => item[0]),
@@ -148,7 +157,7 @@ function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[])
       {
         name: '买入信号',
         type: 'scatter',
-        data: buySignals,
+        data: mappedBuySignals,
         symbol: 'triangle',
         symbolSize: 16,
         itemStyle: { color: '#00c853' },
@@ -157,7 +166,7 @@ function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[])
       {
         name: '卖出信号',
         type: 'scatter',
-        data: sellSignals,
+        data: mappedSellSignals,
         symbol: 'triangle',
         symbolSize: 16,
         symbolRotate: 180,

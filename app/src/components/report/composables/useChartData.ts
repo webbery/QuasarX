@@ -22,6 +22,10 @@ export interface UseChartDataReturn {
   buySignals: Ref<any[]>
   /** 卖出信号 [date, price][] */
   sellSignals: Ref<any[]>
+  /** 原始买入信号 [symbol, timestamp, quantity, price][] */
+  rawBuySignals: Ref<any[]>
+  /** 原始卖出信号 [symbol, timestamp, quantity, price][] */
+  rawSellSignals: Ref<any[]>
   /** 基准指标数据 */
   benchmarkMetrics: Ref<BenchmarkMetrics | null>
   /** 加载状态 */
@@ -31,7 +35,7 @@ export interface UseChartDataReturn {
   /** 更新价格数据 */
   updatePrice: (symbol: string, startDate?: string, endDate?: string) => Promise<void>
   /** 更新交易信号 */
-  updateTradeSignals: (buySignalsData: any[], sellSignalsData: any[]) => void
+  updateTradeSignals: (buySignalsData: any[], sellSignalsData: any[], rawBuy?: any[], rawSell?: any[]) => void
   /** 更新策略指标 */
   updateMetrics: (features: Record<string, number>) => void
   /** 更新基准数据 */
@@ -75,6 +79,8 @@ export function useChartData(
   const symbolPrices = ref<any[]>([])
   const buySignals = ref<any[]>([])
   const sellSignals = ref<any[]>([])
+  const rawBuySignals = ref<any[]>([])
+  const rawSellSignals = ref<any[]>([])
   const benchmarkMetrics = ref<BenchmarkMetrics | null>(null)
   const loading = ref(false)
 
@@ -125,9 +131,15 @@ export function useChartData(
 
       if (response.status !== 200) return
 
+      if (!Array.isArray(response.data) || response.data.length === 0) {
+        console.warn('[useChartData] 价格数据为空或格式不正确')
+        return
+      }
+
       symbolPrices.value = []
       for (const oclhv of response.data) {
         const dt = oclhv['datetime']
+        if (dt === undefined) continue
         const date = new Date(dt * 1000)
         const Y = date.getFullYear() + '-'
         const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
@@ -158,7 +170,15 @@ export function useChartData(
   /**
    * 更新交易信号
    */
-  function updateTradeSignals(buySignalsData: any[], sellSignalsData: any[]) {
+  function updateTradeSignals(
+    buySignalsData: any[],
+    sellSignalsData: any[],
+    rawBuy?: any[],
+    rawSell?: any[]
+  ) {
+    rawBuySignals.value = rawBuy || []
+    rawSellSignals.value = rawSell || []
+
     if (!Array.isArray(buySignalsData) || !Array.isArray(sellSignalsData)) {
       console.error('交易信号数据必须是数组', { buySignalsData, sellSignalsData })
       return
@@ -168,6 +188,9 @@ export function useChartData(
     sellSignals.value = sellSignalsData
 
     console.info(`[useChartData] 交易信号已更新：买入 ${buySignalsData.length} 条，卖出 ${sellSignalsData.length} 条`)
+
+    // 触发收益重算
+    updateStrategyPerformanceData()
   }
 
   /**
@@ -271,7 +294,9 @@ export function useChartData(
 
     updateTradeSignals(
       formatSignals(backtestResult.buy || []),
-      formatSignals(backtestResult.sell || [])
+      formatSignals(backtestResult.sell || []),
+      backtestResult.buy || [],   // 原始数据
+      backtestResult.sell || []   // 原始数据
     )
 
     // 3. 提取标的代码和日期范围
@@ -328,20 +353,136 @@ export function useChartData(
 
   /**
    * 计算策略累计收益（从买卖信号 + 价格）
-   * 
-   * 如果买卖信号为空，使用测试数据（基于总收益线性插值）
+   *
+   * 算法：
+   * 1. 合并买卖信号为 Trade 数组，按 timestamp 排序
+   * 2. 初始资金 = 首日所有买入的总成本（quantity × price）
+   * 3. 遍历价格日期，对每个日期：
+   *    - 处理该日期及之前的所有交易
+   *    - 组合价值 = 现金 + Σ(持仓qty × 当日收盘价)
+   *    - 收益率 = (组合价值 - 初始资金) / 初始资金 × 100
+   * 4. 降级处理：无信号时仍用线性插值
    */
   function calculateStrategyCumulativeReturns(): number[] {
     const totalReturn = reportState.metricsData.value.total_return || 0
 
     // 如果有真实的买卖信号和价格数据，计算真实累计收益
-    if (buySignals.value.length > 0 && symbolPrices.value.length > 0) {
-      // TODO: 实现真实累计收益计算
-      // 当前简化处理：使用线性插值
+    if (rawBuySignals.value.length > 0 && symbolPrices.value.length > 0) {
       console.info('[useChartData] 使用真实信号计算累计收益')
+
+      // 构建价格映射：date_string -> close
+      const priceMap = new Map<string, number>()
+      for (const [date, close] of symbolPrices.value) {
+        priceMap.set(date, close)
+      }
+
+      // 将原始信号转为 Trade 对象并按 timestamp 排序
+      interface Trade {
+        symbol: string
+        timestamp: number
+        quantity: number
+        price: number
+        dateStr: string
+        type: 'buy' | 'sell'
+      }
+
+      const toTrade = (signal: any, type: 'buy' | 'sell'): Trade => {
+        const [symbol, timestamp, quantity, price] = signal
+        const d = new Date(timestamp * 1000)
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        return { symbol, timestamp, quantity, price, dateStr, type }
+      }
+
+      const allTrades: Trade[] = [
+        ...rawBuySignals.value.map(s => toTrade(s, 'buy')),
+        ...rawSellSignals.value.map(s => toTrade(s, 'sell'))
+      ].sort((a, b) => a.timestamp - b.timestamp)
+
+      // 获取所有交易日期（去重，排序）
+      const tradeDates = [...new Set(allTrades.map(t => t.dateStr))].sort()
+
+      // 计算初始资金 = 第一笔交易日所有买入的总成本
+      const firstTradeDate = tradeDates[0]
+      const initialCapital = allTrades
+        .filter(t => t.type === 'buy' && t.dateStr === firstTradeDate)
+        .reduce((sum, t) => sum + t.quantity * t.price, 0)
+
+      if (initialCapital <= 0) {
+        console.warn('[useChartData] 初始资金计算异常，降级为线性插值')
+      } else {
+        // 只保留交易期内的价格日期
+        const minTradeDate = allTrades[0].dateStr
+        const maxTradeDate = allTrades[allTrades.length - 1].dateStr
+        const sortedPriceDates = symbolPrices.value
+          .map(p => p[0])
+          .filter(d => d >= minTradeDate && d <= maxTradeDate)
+          .sort()
+
+        const returns: number[] = []
+        const dates: string[] = []
+
+        let cash = initialCapital // 初始资金池
+        const positions = new Map<string, number>() // symbol -> quantity
+
+        let tradeIndex = 0
+        let prevPortfolioValue = initialCapital // 前一日组合价值（用于时间加权收益）
+
+        for (const dateStr of sortedPriceDates) {
+          // 计算交易前的组合价值（反映真实价格变动）
+          let portfolioValueBeforeTrades = cash
+          for (const [symbol, qty] of positions) {
+            const closePrice = priceMap.get(dateStr)
+            if (closePrice !== undefined) {
+              portfolioValueBeforeTrades += qty * closePrice
+            }
+          }
+
+          // 时间加权收益率：与前一日的组合价值比较
+          if (dateStr === minTradeDate) {
+            returns.push(0) // 首日归零
+          } else {
+            const dailyReturn = ((portfolioValueBeforeTrades - prevPortfolioValue) / prevPortfolioValue) * 100
+            returns.push(Number(dailyReturn.toFixed(2)))
+          }
+
+          // 处理该日期的所有交易
+          while (tradeIndex < allTrades.length && allTrades[tradeIndex].dateStr <= dateStr) {
+            const trade = allTrades[tradeIndex]
+            const currentQty = positions.get(trade.symbol) || 0
+
+            if (trade.type === 'buy') {
+              positions.set(trade.symbol, currentQty + trade.quantity)
+              cash -= trade.quantity * trade.price
+            } else {
+              const newQty = Math.max(currentQty - trade.quantity, 0)
+              if (newQty === 0) positions.delete(trade.symbol)
+              else positions.set(trade.symbol, newQty)
+              cash += trade.quantity * trade.price
+            }
+
+            tradeIndex++
+          }
+
+          // 更新前一日组合价值（交易后的价值）
+          prevPortfolioValue = cash
+          for (const [symbol, qty] of positions) {
+            const closePrice = priceMap.get(dateStr)
+            if (closePrice !== undefined) {
+              prevPortfolioValue += qty * closePrice
+            }
+          }
+
+          dates.push(dateStr)
+        }
+
+        // 更新策略性能日期为实际日期字符串
+        reportState.strategyPerformanceDates.value = dates
+
+        return returns
+      }
     }
 
-    // 默认：使用总收益线性插值（测试数据）
+    // 降级：使用总收益线性插值（无信号时的默认行为）
     const numDates = reportState.strategyPerformanceDates.value.length || 12
     const returns: number[] = []
 
@@ -453,6 +594,8 @@ export function useChartData(
     symbolPrices,
     buySignals,
     sellSignals,
+    rawBuySignals,
+    rawSellSignals,
     benchmarkMetrics,
     loading,
     // 数据获取方法
