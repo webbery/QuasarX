@@ -13,6 +13,7 @@
 #include <array>
 #include <variant>
 #include <expected>
+#include <queue>
 
 #ifdef _WIN32
 #pragma warning(disable: 4828)
@@ -33,6 +34,9 @@ using MultiMap = std::multimap<K, V>;
 
 template <typename T>
 using List = std::pmr::list<T>;
+
+template <typename T>
+using Queue = std::queue<T>;
 
 template <typename T>
 using Set = std::set<T>;
@@ -58,6 +62,9 @@ using MultiMap = std::multimap<K, V>;
 
 template <typename T>
 using List = std::list<T>;
+
+template <typename T>
+using Queue = std::queue<T>;
 
 template <typename T>
 using Set = std::set<T>;

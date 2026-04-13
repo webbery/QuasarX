@@ -1,0 +1,281 @@
+{
+    "id": "ma_function_strategy",
+    "name": "双均线趋势跟踪策略(FunctionNode版)",
+    "description": "使用 FunctionNode 计算均线 + SignalNode 生成交叉信号 + DebugNode 调试输出",
+    "nodes": [
+        {
+            "id": "1",
+            "type": "custom",
+            "data": {
+                "label": "行情数据输入",
+                "nodeType": "input",
+                "params": {
+                    "source": {
+                        "value": "股票",
+                        "type": "select",
+                        "options": ["股票", "期货"]
+                    },
+                    "code": {
+                        "value": ["bj.920108"],
+                        "type": "text"
+                    },
+                    "freq": {
+                        "value": "1d",
+                        "type": "select",
+                        "options": ["1d", "5m"]
+                    },
+                    "close": {
+                        "value": "close",
+                        "type": "text"
+                    },
+                    "open": {
+                        "value": "open",
+                        "type": "text"
+                    },
+                    "high": {
+                        "value": "high",
+                        "type": "text"
+                    },
+                    "low": {
+                        "value": "low",
+                        "type": "text"
+                    },
+                    "volume": {
+                        "value": "volume",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 50, "y": 100 }
+        },
+        {
+            "id": "2",
+            "type": "custom",
+            "data": {
+                "label": "ma_short",
+                "nodeType": "function",
+                "params": {
+                    "method": {
+                        "value": "MA",
+                        "type": "select",
+                        "options": ["MA"]
+                    },
+                    "smoothTime": {
+                        "value": 5,
+                        "type": "number"
+                    }
+                }
+            },
+            "position": { "x": 400, "y": 50 }
+        },
+        {
+            "id": "3",
+            "type": "custom",
+            "data": {
+                "label": "ma_long",
+                "nodeType": "function",
+                "params": {
+                    "method": {
+                        "value": "MA",
+                        "type": "select",
+                        "options": ["MA"]
+                    },
+                    "smoothTime": {
+                        "value": 15,
+                        "type": "number"
+                    }
+                }
+            },
+            "position": { "x": 400, "y": 150 }
+        },
+        {
+            "id": "4",
+            "type": "custom",
+            "data": {
+                "label": "交叉信号",
+                "nodeType": "signal",
+                "params": {
+                    "code": {
+                        "value": ["bj.920108"],
+                        "type": "text"
+                    },
+                    "buy": {
+                        "value": "ma_short[t] > ma_long[t] and ma_short[t-1] <= ma_long[t-1]",
+                        "type": "text",
+                        "desc": "金叉：短期均线上穿长期均线"
+                    },
+                    "sell": {
+                        "value": "ma_short[t] < ma_long[t] and ma_short[t-1] >= ma_long[t-1]",
+                        "type": "text",
+                        "desc": "死叉：短期均线下穿长期均线"
+                    }
+                }
+            },
+            "position": { "x": 700, "y": 100 }
+        },
+        {
+            "id": "5",
+            "type": "custom",
+            "data": {
+                "label": "调试输出",
+                "nodeType": "debug",
+                "params": {
+                    "suffix": {
+                        "value": "csv",
+                        "type": "select",
+                        "options": ["csv", "log"]
+                    }
+                }
+            },
+            "position": { "x": 700, "y": 250 }
+        },
+        {
+            "id": "6",
+            "type": "custom",
+            "data": {
+                "label": "投资组合",
+                "nodeType": "portfolio",
+                "params": {
+                    "positionRatio": {
+                        "value": 1.0,
+                        "type": "number",
+                        "desc": "仓位比例 (0.0~1.0)，1.0 表示满仓"
+                    },
+                    "initialCapital": {
+                        "value": 100000,
+                        "type": "number",
+                        "unit": "元",
+                        "desc": "初始本金（回测模式专用）"
+                    }
+                }
+            },
+            "position": { "x": 950, "y": 100 }
+        },
+        {
+            "id": "7",
+            "type": "custom",
+            "data": {
+                "label": "交易执行",
+                "nodeType": "execution",
+                "params": {
+                    "commission": {
+                        "value": 0.0003,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001,
+                        "unit": "%"
+                    },
+                    "stampDuty": {
+                        "value": 0.001,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001,
+                        "unit": "%"
+                    },
+                    "minFee": {
+                        "value": 5,
+                        "type": "number",
+                        "min": 0,
+                        "max": 50,
+                        "step": 1,
+                        "unit": "元"
+                    },
+                    "slippage": {
+                        "value": 0.001,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001
+                    },
+                    "type": {
+                        "value": 1,
+                        "type": "select",
+                        "options": ["立即执行市价单", "VWAP"]
+                    },
+                    "contract": {
+                        "value": 0,
+                        "type": "select",
+                        "options": ["股票", "期货", "期权"]
+                    }
+                }
+            },
+            "position": { "x": 1100, "y": 100 }
+        }
+    ],
+    "edges": [
+        {
+            "id": "1-close->2",
+            "source": "1",
+            "target": "2",
+            "sourceHandle": "1-close",
+            "targetHandle": "2",
+            "type": "default"
+        },
+        {
+            "id": "1-close->3",
+            "source": "1",
+            "target": "3",
+            "sourceHandle": "1-close",
+            "targetHandle": "3",
+            "type": "default"
+        },
+        {
+            "id": "2->4",
+            "source": "2",
+            "target": "4",
+            "sourceHandle": "2",
+            "targetHandle": "4",
+            "type": "default"
+        },
+        {
+            "id": "3->4",
+            "source": "3",
+            "target": "4",
+            "sourceHandle": "3",
+            "targetHandle": "4",
+            "type": "default"
+        },
+        {
+            "id": "2->5",
+            "source": "2",
+            "target": "5",
+            "sourceHandle": "2",
+            "targetHandle": "5",
+            "type": "default"
+        },
+        {
+            "id": "3->5",
+            "source": "3",
+            "target": "5",
+            "sourceHandle": "3",
+            "targetHandle": "5",
+            "type": "default"
+        },
+        {
+            "id": "4->5",
+            "source": "4",
+            "target": "5",
+            "sourceHandle": "4",
+            "targetHandle": "5",
+            "type": "default"
+        },
+        {
+            "id": "4->6",
+            "source": "4",
+            "target": "6",
+            "sourceHandle": "4",
+            "targetHandle": "6",
+            "type": "default"
+        },
+        {
+            "id": "6->7",
+            "source": "6",
+            "target": "7",
+            "sourceHandle": "6",
+            "targetHandle": "7",
+            "type": "default"
+        }
+    ]
+}

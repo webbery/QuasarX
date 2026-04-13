@@ -3,23 +3,21 @@
 
 import { ref, nextTick } from 'vue'
 
-export function useNodeEditing(nodeLabel: string, nodeType: string) {
+export function useNodeEditing(nodeLabel: string) {
   const isEditing = ref(false)
   const editingLabel = ref('')
   const titleInput = ref<HTMLInputElement | null>(null)
 
   function startEditing() {
-    if (nodeType === 'function') {
-      isEditing.value = true
-      editingLabel.value = nodeLabel
+    isEditing.value = true
+    editingLabel.value = nodeLabel
 
-      nextTick(() => {
-        if (titleInput.value) {
-          titleInput.value.focus()
-          titleInput.value.select()
-        }
-      })
-    }
+    nextTick(() => {
+      if (titleInput.value) {
+        titleInput.value.focus()
+        titleInput.value.select()
+      }
+    })
   }
 
   function saveEditing(): string | null {

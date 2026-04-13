@@ -88,7 +88,7 @@ ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)
         // 影子模式：创建基础 Timing 策略并包装为 ShadowTiming
         ShadowConfig config;
         config.slippageRate = 0.001;  // 默认滑点 0.1%
-        config.initialCapital = 100000.0;  // 默认初始资金 10 万
+        config.initialCapital = BACKTEST_INITIAL_CAPITAL;  // 默认初始资金 50 万
 
         // 创建基础策略（用于获取信号类型）
         ITimingStrategy* baseTiming = nullptr;

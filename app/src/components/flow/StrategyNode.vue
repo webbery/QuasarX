@@ -220,8 +220,7 @@ const { isSelected, isMultiSelected, selectionIndex } = useNodeSelection(
 )
 
 const { isEditing, editingLabel, startEditing, saveEditing, cancelEditing, handleKeydown } = useNodeEditing(
-    props.node.data.label,
-    props.node.data.nodeType
+    props.node.data.label
 )
 
 const { toggleDropdown, closeAllDropdowns, isDropdownOpen } = useNodeDropdown()

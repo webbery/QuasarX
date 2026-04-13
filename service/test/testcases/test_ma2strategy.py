@@ -123,20 +123,21 @@ class TestMa2Strategy:
 
     @pytest.mark.timeout(60)
     def test_ma2_with_different_periods(self, auth_token):
-        """测试不同参数的双均线策略"""
+        """测试不同均线周期的策略"""
         kwargs = {
             'verify': False,
             'headers': {'Authorization': auth_token} if auth_token else {}
         }
 
-        script_path = './script/ma2_strategy.json'
+        script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
 
-        # 修改为不同的均线周期
+        # 修改为 10/30 周期
         for node in script['nodes']:
-            if node['data']['nodeType'] == 'test':
-                node['data']['params']['shortPeriod']['value'] = 10
-                node['data']['params']['longPeriod']['value'] = 30
+            if node['data']['nodeType'] == 'function' and node['data']['label'] == 'ma_short':
+                node['data']['params']['smoothTime']['value'] = 10
+            if node['data']['nodeType'] == 'function' and node['data']['label'] == 'ma_long':
+                node['data']['params']['smoothTime']['value'] = 30
 
         kwargs['json'] = {
             "script": json.dumps(script, ensure_ascii=False)
@@ -146,3 +147,56 @@ class TestMa2Strategy:
         data = check_response(response)
         assert isinstance(data, dict)
         assert 'features' in data
+
+    @pytest.mark.timeout(60)
+    def test_ma2_backtest_graph_stock(self, auth_token):
+        """测试双均线策略回测结果包含完整的绩效指标"""
+        kwargs = {
+            'verify': False,
+            'headers': {'Authorization': auth_token} if auth_token else {}
+        }
+
+        script_path = './script/ma_graph_strategy.json'
+        script = self.load_script(script_path)
+
+        kwargs['json'] = {
+            "script": json.dumps(script, ensure_ascii=False)
+        }
+
+        # 执行回测
+        response = requests.post(f"{BASE_URL}/backtest", **kwargs)
+        data = check_response(response)
+
+        # 验证回测结果包含所有绩效指标
+        assert isinstance(data, dict)
+        assert 'features' in data, "回测结果应包含统计指标"
+
+        features = data['features']
+
+        # 验证关键指标存在
+        expected_metrics = [
+            'sharp',           # 夏普比率
+            'annual_return',   # 年化收益率
+            'total_return',    # 总收益率
+            'max_drawdown',    # 最大回撤
+            'win_rate',        # 胜率
+            'calmar_ratio'     # 卡玛比率
+        ]
+
+        for metric in expected_metrics:
+            assert metric in features, f"回测结果应包含 {metric} 指标"
+
+        # 验证指标值为数值类型
+        for metric in expected_metrics:
+            assert isinstance(features[metric], (int, float)), f"{metric} 应为数值类型"
+
+        # 打印指标供调试
+        print("\n=== 双均线策略回测绩效指标 ===")
+        print(f"短期均线周期: 5 日")
+        print(f"长期均线周期: 15 日")
+        print(f"夏普比率 (Sharp): {features.get('sharp', 'N/A'):.4f}")
+        print(f"年化收益率 (Annual Return): {features.get('annual_return', 'N/A'):.4f}")
+        print(f"总收益率 (Total Return): {features.get('total_return', 'N/A'):.4f}")
+        print(f"最大回撤 (Max Drawdown): {features.get('max_drawdown', 'N/A'):.4f}")
+        print(f"胜率 (Win Rate): {features.get('win_rate', 'N/A'):.4f}")
+        print(f"卡玛比率 (Calmar Ratio): {features.get('calmar_ratio', 'N/A'):.4f}")

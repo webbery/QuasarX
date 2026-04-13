@@ -403,6 +403,7 @@ const toggleNodeSelection = (node) => {
 // 清空选择
 const clearSelection = () => {
     removeSelectedNodes(selectedNodes.value)
+    removeSelectedEdges(selectedEdges.value)
 }
 
 // 选择拖动相关事件
@@ -795,13 +796,14 @@ const onEdgesDelete = (deletedEdges) => {
 // 边点击事件
 const onEdgeClick = (event) => {
   const { edge, event: mouseEvent } = event
-  
+  mouseEvent.stopPropagation()
+
   // 如果按住了 Ctrl 或 Cmd 键，则切换选择状态
   if (mouseEvent.ctrlKey || mouseEvent.metaKey) {
     toggleEdgeSelection(edge)
   } else {
     // 如果没有按修饰键，则清空选择并选择当前边
-    clearEdgeSelection()
+    clearSelection()
     selectEdge(edge)
   }
 }
@@ -1648,14 +1650,19 @@ defineExpose({
     color: var(--text-secondary);
 }
 
+.vue-flow__edge {
+    cursor: pointer;
+}
+
 .vue-flow__edge-path {
     stroke: var(--border);
     stroke-width: 2;
 }
 
 .vue-flow__edge.selected .vue-flow__edge-path {
-    stroke: var(--accent);
-    stroke-width: 3;
+    stroke: #ff6b35;
+    stroke-width: 4;
+    filter: drop-shadow(0 0 6px rgba(255, 107, 53, 0.6));
 }
 
 .vue-flow__edge.animated path {
