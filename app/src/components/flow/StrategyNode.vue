@@ -393,5 +393,499 @@ const handleClickOutside = (event: MouseEvent) => {
     align-items: center;
 }
 
-/* 其余样式从原 FlowNode.vue 复制 */
+/* ============================================
+   Flow Node Input/Select/Date 美化样式
+   与 index.html 主题一致
+   ============================================ */
+
+/* 输入框+单位容器 */
+.input-with-unit {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+/* 通用输入框样式 */
+.param-input {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 5px 10px;
+    font-size: 0.8rem;
+    outline: none;
+    transition: all 0.2s ease;
+    width: 100%;
+}
+
+.param-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.param-input:hover:not(:focus) {
+    border-color: rgba(41, 98, 255, 0.5);
+}
+
+/* 文本输入框 */
+.param-text {
+    color: var(--text);
+}
+
+/* 数字输入框 */
+.param-number {
+    color: var(--text);
+    -moz-appearance: textfield;
+}
+
+.param-number::-webkit-outer-spin-button,
+.param-number::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* 日期输入框 */
+.param-date {
+    color: var(--text);
+    color-scheme: dark;
+}
+
+.param-date::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+}
+
+/* 下拉选择框 */
+.param-select {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 5px 10px;
+    font-size: 0.8rem;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0aec0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 28px;
+}
+
+.param-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+}
+
+.param-select:hover:not(:focus) {
+    border-color: rgba(41, 98, 255, 0.5);
+}
+
+.param-select option {
+    background: var(--panel-bg);
+    color: var(--text);
+    padding: 8px;
+}
+
+/* 单位标签 */
+.param-unit {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* 多选下拉框容器 */
+.multiselect-dropdown-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.multiselect-dropdown {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 30px;
+}
+
+.multiselect-dropdown:hover {
+    border-color: rgba(41, 98, 255, 0.5);
+}
+
+.selected-options-display {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.selected-option-tag {
+    background: rgba(41, 98, 255, 0.2);
+    border: 1px solid rgba(41, 98, 255, 0.4);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.7rem;
+    color: var(--primary);
+    white-space: nowrap;
+}
+
+.placeholder {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.dropdown-arrow {
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+    margin-left: 6px;
+}
+
+.dropdown-arrow.open {
+    transform: rotate(180deg);
+}
+
+.dropdown-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.dropdown-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    font-size: 0.8rem;
+    color: var(--text);
+}
+
+.dropdown-option:hover {
+    background: rgba(41, 98, 255, 0.15);
+}
+
+.dropdown-option input[type="checkbox"] {
+    accent-color: var(--primary);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.option-label {
+    flex: 1;
+}
+
+/* 多选框组 */
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text);
+}
+
+.checkbox-item input[type="checkbox"] {
+    accent-color: var(--primary);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.checkbox-item label {
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: color 0.15s ease;
+}
+
+.checkbox-item:hover label {
+    color: var(--text);
+}
+
+/* 日期范围选择器 */
+.date-range-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.date-range-inputs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+
+.date-range-separator {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    flex-shrink: 0;
+}
+
+/* 配置选择器 */
+.config-select-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.config-summary-card {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+}
+
+.summary-label {
+    color: var(--text-secondary);
+}
+
+.summary-value {
+    color: var(--text);
+    font-weight: 500;
+}
+
+.summary-value.positive {
+    color: var(--secondary);
+}
+
+.create-config-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: rgba(41, 98, 255, 0.1);
+    border: 1px dashed rgba(41, 98, 255, 0.4);
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: var(--primary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.create-config-btn:hover {
+    background: rgba(41, 98, 255, 0.2);
+    border-style: solid;
+}
+
+/* 参数值默认显示 */
+.param-value {
+    color: var(--text);
+    font-size: 0.8rem;
+}
+
+/* 文本域 */
+.textarea-wrapper {
+    width: 100%;
+}
+
+.param-textarea {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    outline: none;
+    resize: vertical;
+    min-height: 60px;
+    font-family: inherit;
+    transition: all 0.2s ease;
+}
+
+.param-textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+}
+
+.param-textarea::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* 目录选择器 */
+.directory-input,
+.file-input {
+    width: 100%;
+}
+
+.directory-path-display,
+.file-path-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    transition: all 0.2s ease;
+}
+
+.directory-path-display:hover,
+.file-path-display:hover {
+    border-color: rgba(41, 98, 255, 0.5);
+}
+
+.path-text {
+    flex: 1;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.directory-select-btn,
+.file-select-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(41, 98, 255, 0.1);
+    border: 1px solid rgba(41, 98, 255, 0.3);
+    border-radius: 4px;
+    color: var(--primary);
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.directory-select-btn:hover,
+.file-select-btn:hover {
+    background: rgba(41, 98, 255, 0.2);
+    border-color: var(--primary);
+}
+
+.directory-select-btn i,
+.file-select-btn i {
+    font-size: 0.8rem;
+}
+
+/* 下载按钮 */
+.download-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.download-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, var(--primary), #1d4ed8);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.download-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(41, 98, 255, 0.3);
+}
+
+.download-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.download-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.download-btn i {
+    font-size: 0.85rem;
+}
+
+.download-status {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+/* 连接线样式 */
+.connection-handle {
+    width: 12px !important;
+    height: 12px !important;
+    border-radius: 50% !important;
+    border: 2px solid var(--panel-bg) !important;
+    transition: all 0.2s ease !important;
+}
+
+.left-handle {
+    background: var(--secondary) !important;
+    left: -6px !important;
+}
+
+.right-handle {
+    background: var(--primary) !important;
+    right: -6px !important;
+}
+
+.connection-handle:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 8px rgba(41, 98, 255, 0.5);
+}
+
+.node-connection-row {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+.left-handle,
+.right-handle {
+    pointer-events: auto;
+}
 </style>

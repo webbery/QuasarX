@@ -132,6 +132,9 @@ import { keyMap, nodeTypeConfigs } from './flow/nodeConfigs'
 const onShowReportConfig = inject('onShowReportConfig', () => {
   console.warn('[StrategyFactory] onShowReportConfig 未提供')
 })
+const onHideReportConfig = inject('onHideReportConfig', () => {
+  console.warn('[StrategyFactory] onHideReportConfig 未提供')
+})
 
 // 初始化 portfolio store
 const portfolioStore = usePortfolioStore()
@@ -299,6 +302,10 @@ watch(() => getEdges.value, () => {
 
 // 监听选项卡切换，当切换到回测结果时更新价格图表
 watch(activeTab, async (newTab) => {
+  if (newTab !== 'backtest') {
+    onHideReportConfig()
+  }
+
   if (newTab === 'backtest' && reportViewRef.value) {
     console.info('[StrategyFactory] 切换到回测结果选项卡')
 

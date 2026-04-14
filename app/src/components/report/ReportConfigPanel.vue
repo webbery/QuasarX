@@ -2,14 +2,8 @@
 <!-- 报表配置面板 - 右侧抽屉式配置界面 -->
 
 <template>
-  <div class="config-panel" :class="{ collapsed: isCollapsed }">
-    <!-- 展开/收起按钮 -->
-    <button class="toggle-btn" @click="toggleCollapse" :title="isCollapsed ? '展开配置' : '收起配置'">
-      {{ isCollapsed ? '⚙️' : '✕' }}
-    </button>
-
-    <!-- 配置内容 -->
-    <div class="config-content" v-show="!isCollapsed">
+  <div class="config-panel">
+    <div class="config-content">
       <div class="config-header">
         <h3>📊 图表配置</h3>
         <p class="config-desc">选择要在报表中显示的图表</p>
@@ -87,7 +81,6 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const isCollapsed = ref(false)
 const localShowMetricsTable = ref(props.showMetricsTable)
 
 // 排序后的图表列表
@@ -122,10 +115,6 @@ function confirmReset() {
   }
 }
 
-function toggleCollapse() {
-  isCollapsed.value = !isCollapsed.value
-}
-
 function updateMetricsTableSetting() {
   emit('update:showMetricsTable', localShowMetricsTable.value)
 }
@@ -138,46 +127,11 @@ watch(() => props.showMetricsTable, (val) => {
 
 <style scoped>
 .config-panel {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 320px;
+  width: 100%;
+  height: 100%;
   background: var(--panel-bg, #1a2236);
-  border-left: 1px solid var(--border, #2a3449);
-  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
-  z-index: 1000;
-  transition: transform 0.3s ease;
   display: flex;
   flex-direction: column;
-}
-
-.config-panel.collapsed {
-  transform: translateX(calc(100% - 40px));
-}
-
-.toggle-btn {
-  position: absolute;
-  left: -40px;
-  top: 20px;
-  width: 40px;
-  height: 40px;
-  background: var(--panel-bg, #1a2236);
-  border: 1px solid var(--border, #2a3449);
-  border-right: none;
-  border-radius: 8px 0 0 8px;
-  color: var(--text, #e0e0e0);
-  font-size: 18px;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.toggle-btn:hover {
-  background: rgba(41, 98, 255, 0.2);
-  border-color: #2962ff;
 }
 
 .config-content {
@@ -358,12 +312,5 @@ watch(() => props.showMetricsTable, (val) => {
 
 .config-content::-webkit-scrollbar-thumb:hover {
   background: rgba(41, 98, 255, 0.7);
-}
-
-/* 响应式 */
-@media (max-width: 768px) {
-  .config-panel {
-    width: 280px;
-  }
 }
 </style>

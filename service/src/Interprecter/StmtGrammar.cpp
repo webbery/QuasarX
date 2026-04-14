@@ -32,7 +32,7 @@ String grammar = R"(
         Expression      <- OrExpr
         OrExpr          <- AndExpr ('or' AndExpr)*
         AndExpr         <- NotExpr ('and' NotExpr)*
-        NotExpr         <- 'not' NotExpr / '!' NotExpr / CompareExpr
+        NotExpr         <- 'not' NotExpr / '!' NotExpr / CompareExpr { no_ast_opt }
         CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
         ArithExpr       <- Term (AddOp Term)*
         Term            <- Primary (MulOp Primary)*

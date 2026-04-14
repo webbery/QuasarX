@@ -128,6 +128,15 @@
       <div v-else-if="is_risk">
         <RiskPanel></RiskPanel>
       </div>
+      <div v-else-if="is_strategy && showReportConfig" style="height: 100%">
+        <ReportConfigPanel
+          :chart-visibility="reportChartVisibility"
+          :show-metrics-table="reportShowMetricsTable"
+          @update:chart-visibility="updateReportChartVisibility"
+          @update:show-metrics-table="updateReportShowMetricsTable"
+          @reset="resetReportConfig"
+        />
+      </div>
       <div v-else-if="is_strategy" style="height: 100%">
         <StrategyPanel v-if="selectedStrategyPanel" @load="onLoadVersionFromPanel" @createNewVersion="onCreateNewVersion"></StrategyPanel>
         <FlowComponents v-else></FlowComponents>
@@ -140,16 +149,6 @@
       </div>
       <div v-else-if="is_portfolio">
         <PortfolioPanel :selectedSecurity="selectedSecurity" :highlight="highlightTradePanel"></PortfolioPanel>
-      </div>
-      <!-- 报表配置面板（新增） -->
-      <div v-else-if="is_strategy && showReportConfig">
-        <ReportConfigPanel
-          :chart-visibility="reportChartVisibility"
-          :show-metrics-table="reportShowMetricsTable"
-          @update:chart-visibility="updateReportChartVisibility"
-          @update:show-metrics-table="updateReportShowMetricsTable"
-          @reset="resetReportConfig"
-        />
       </div>
     </aside>
 
