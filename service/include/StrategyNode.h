@@ -80,8 +80,10 @@ inline ArgType migrateLegacyType(ArgType type) {
 
 // 行情数据缺失时的处理方式
 enum class MissingHandleType : char {
-    Skip,       // 跳过（默认），缺失时不写入
-    Linear,     // 线性插值，用前后 bar 插值补齐
+    Skip,           // 跳过（默认），缺失时不写入
+    Linear,         // 线性插值，用前后 bar 插值补齐
+    ForwardFill,    // 前向填充，用上一个已知值填充
+    BackwardFill,   // 后向填充，用下一个已知值填充
 };
 
 class QNode {

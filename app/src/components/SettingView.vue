@@ -66,6 +66,58 @@
                 </div>
             </div>
 
+            <!-- Agent 模型配置（新增） -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('agent')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(142, 68, 173, 0.1); color: #8e44ad;">
+                            <span>🤖</span>
+                        </div>
+                        <span>Agent 大语言模型配置</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.agent }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.agent }">
+                    <div class="form-group">
+                        <label>服务 URL</label>
+                        <input type="text" class="form-control" v-model="agentConfig.url" placeholder="例如：https://api.openai.com 或 http://localhost:11434">
+                    </div>
+                    <div class="form-group">
+                        <label>协议类型</label>
+                        <select class="form-control" v-model="agentConfig.protocol">
+                            <option value="openai">OpenAI 兼容</option>
+                            <option value="anthropic">Anthropic Claude</option>
+                            <option value="custom">自定义</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" class="form-control" v-model="agentConfig.apiKey" placeholder="请输入 API Key">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" v-model="agentConfig.enabled" style="margin-right: 8px;"> 启用大语言模型功能
+                        </label>
+                    </div>
+                    <p class="hint">
+                        支持 OpenAI、Anthropic Claude 以及兼容 OpenAI 协议的模型（如 Ollama、LocalAI 等）
+                    </p>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" @click="saveAgentConfig">保存配置</button>
+                        <button class="btn btn-secondary" @click="testAgentConnection" :disabled="testingAgentConnection">
+                            {{ testingAgentConnection ? '测试中...' : '测试连接' }}
+                        </button>
+                        <button class="btn btn-danger" @click="clearAgentConfig">清除配置</button>
+                    </div>
+                    <div class="test-result" :class="agentTestResult?.success ? 'success' : 'error'" v-if="agentTestResult">
+                        <span :class="['result-icon', agentTestResult.success ? 'success' : 'error']">
+                            {{ agentTestResult.success ? '✓' : '✗' }}
+                        </span>
+                        {{ agentTestResult.message }}
+                    </div>
+                </div>
+            </div>
+
             <!-- 股票设置 -->
             <div class="settings-section">
                 <div class="section-header" @click="toggleSection('stock')">
@@ -215,6 +267,7 @@ const expandedSections = ref({
     fund: false,
     task: false,
     tickflow: false,  // TickFlow 配置
+    agent: false,     // Agent 模型配置
 });
 
 // 远程服务器数据
@@ -272,6 +325,19 @@ const smtpConfig = ref({
 const tickflowApiKey = ref(localStorage.getItem('tickflow_api_key') || '');
 const testingConnection = ref(false);
 const testResult = ref(null);
+
+// Agent 模型配置
+import { getAgentConfig, saveAgentConfig as saveAgentConfigUtil, removeAgentConfig, testAgentConnection as testAgentConnectionUtil } from '@/lib/agent';
+
+const agentConfig = ref({
+  url: '',
+  protocol: 'openai',
+  apiKey: '',
+  enabled: false
+});
+
+const testingAgentConnection = ref(false);
+const agentTestResult = ref(null);
 
 // 任务调度
 const tasks = ref([
@@ -421,12 +487,68 @@ const testTickFlowConnection = async () => {
     }
 };
 
+// Agent 模型配置保存
+const saveAgentConfig = () => {
+  if (!agentConfig.value.url) {
+    message.error('服务 URL 不能为空');
+    return;
+  }
+  if (!agentConfig.value.apiKey) {
+    message.error('API Key 不能为空');
+    return;
+  }
+  
+  saveAgentConfigUtil(agentConfig.value);
+  message.success('Agent 模型配置已保存');
+};
+
+// Agent 模型配置清除
+const clearAgentConfig = () => {
+  removeAgentConfig();
+  agentConfig.value = {
+    url: '',
+    protocol: 'openai',
+    apiKey: '',
+    enabled: false
+  };
+  agentTestResult.value = null;
+  message.success('Agent 模型配置已清除');
+};
+
+// Agent 模型连接测试
+const testAgentConnection = async () => {
+  testingAgentConnection.value = true;
+  agentTestResult.value = null;
+
+  try {
+    const result = await testAgentConnectionUtil(agentConfig.value);
+    agentTestResult.value = result;
+    
+    if (result.success) {
+      message.success('Agent 连接测试成功');
+    } else {
+      message.error('Agent 连接测试失败：' + result.message);
+    }
+  } catch (e) {
+    agentTestResult.value = { success: false, message: e.message };
+    message.error('Agent 连接测试失败：' + e.message);
+  } finally {
+    testingAgentConnection.value = false;
+  }
+};
+
 onMounted(async () => {
     const res = await axios.get('/v0/stocks/params')
     const limitation = res.data
     stockSettings.value.dailyOrderLimit = limitation.daily_limit
     stockSettings.value.perSecondOrderLimit = limitation.order_limit
     stockSettings.value.perSecondCancelLimit = limitation.cancel_limit
+    
+    // 加载 Agent 配置
+    const savedAgentConfig = getAgentConfig();
+    if (savedAgentConfig) {
+      agentConfig.value = savedAgentConfig;
+    }
 })
 </script>
 <style scoped>
@@ -587,6 +709,51 @@ onMounted(async () => {
 .test-result.error {
     background: rgba(255, 109, 0, 0.1);
     border: 1px solid #ff6d00;
+}
+
+/* 按钮样式 */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background: var(--primary, #2962ff);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover, #1e4bd8);
+}
+
+.btn-secondary {
+    background: rgba(41, 98, 255, 0.1);
+    border: 1px solid var(--border);
+    color: var(--primary, #2962ff);
+}
+
+.btn-secondary:hover {
+    background: rgba(41, 98, 255, 0.2);
+}
+
+.btn-danger {
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid #e74c3c;
+    color: #e74c3c;
+}
+
+.btn-danger:hover {
+    background: rgba(231, 76, 60, 0.2);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .form-control {

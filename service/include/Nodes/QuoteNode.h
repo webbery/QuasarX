@@ -55,6 +55,22 @@ private:
     void interpolateAndWrite(DataContext& context, const symbol_t& symbol,
                              const QuoteInfo& nextQuote, time_t targetTime);
 
+    /**
+     * @brief 前向填充：用上一个已知 bar 的值填充到 targetTime 并写入 context
+     * @param symbol 标的符号
+     * @param targetTime 目标时间戳
+     */
+    void forwardFillAndWrite(DataContext& context, const symbol_t& symbol, time_t targetTime);
+
+    /**
+     * @brief 后向填充：用下一个已知 bar 的值填充到 targetTime 并写入 context
+     * @param nextQuote 下一个 bar 的 quote
+     * @param symbol 标的符号
+     * @param targetTime 目标时间戳
+     */
+    void backwardFillAndWrite(DataContext& context, const QuoteInfo& nextQuote,
+                              const symbol_t& symbol, time_t targetTime);
+
     void addQuoteProperty(DataContext& context, const String& key, double val);
 private:
     Set<symbol_t> _symbols;

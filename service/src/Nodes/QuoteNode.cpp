@@ -66,6 +66,35 @@ void QuoteInputNode::interpolateAndWrite(DataContext& context, const symbol_t& s
     }
 }
 
+/**
+ * @brief 前向填充：用上一个已知 bar 的值填充到 targetTime 并写入 context
+ */
+void QuoteInputNode::forwardFillAndWrite(DataContext& context, const symbol_t& symbol, time_t targetTime) {
+    auto it = _lastQuotes.find(symbol);
+    if (it == _lastQuotes.end()) return;
+
+    const auto& lastQuote = it->second;
+    auto name = get_symbol(symbol);
+    auto baseKey = name + ".";
+    for (auto& property : _properties[name]) {
+        double v = getProp(lastQuote, property);
+        addQuoteProperty(context, baseKey + property, v);
+    }
+}
+
+/**
+ * @brief 后向填充：用下一个已知 bar 的值填充到 targetTime 并写入 context
+ */
+void QuoteInputNode::backwardFillAndWrite(DataContext& context, const QuoteInfo& nextQuote,
+        const symbol_t& symbol, time_t targetTime) {
+    auto name = get_symbol(symbol);
+    auto baseKey = name + ".";
+    for (auto& property : _properties[name]) {
+        double v = getProp(nextQuote, property);
+        addQuoteProperty(context, baseKey + property, v);
+    }
+}
+
 bool QuoteInputNode::Init(const nlohmann::json& config) {
     auto& codes = config["params"]["code"]["value"];
     QuoteFilter filer;
@@ -105,7 +134,15 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
     // 读取缺失数据处理方式
     if (config["params"].contains("missingHandle")) {
         String mode = config["params"]["missingHandle"]["value"];
-        _missingHandle = (mode == "linear") ? MissingHandleType::Linear : MissingHandleType::Skip;
+        if (mode == "linear") {
+            _missingHandle = MissingHandleType::Linear;
+        } else if (mode == "forward") {
+            _missingHandle = MissingHandleType::ForwardFill;
+        } else if (mode == "backward") {
+            _missingHandle = MissingHandleType::BackwardFill;
+        } else {
+            _missingHandle = MissingHandleType::Skip;
+        }
     }
 
     return true;
@@ -138,21 +175,62 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
     }
 
     // 第二步：根据模式处理数据
-    if (allAligned || _missingHandle == MissingHandleType::Linear) {
+    if (allAligned) {
+        // 所有 symbol 时间戳一致，直接写入
+        for (auto& [symbol, quote] : _curQuotes) {
+            writeQuote(context, quote);
+            _lastQuotes[symbol] = quote;
+        }
+        context.SetTime(min_t);
+        return NodeProcessResult::Success;
+    }
+
+    // 时间戳不对齐，根据缺失处理模式处理
+    if (_missingHandle == MissingHandleType::Linear) {
         for (auto& [symbol, quote] : _curQuotes) {
             if (quote._time == min_t) {
                 // 时间戳对齐：直接写入
                 writeQuote(context, quote);
                 _lastQuotes[symbol] = quote;
-            } else if (_missingHandle == MissingHandleType::Linear) {
-                // 时间戳不对齐且启用线性插值：用前后 bar 插值
+            } else {
+                // 时间戳不对齐：用前后 bar 插值
                 interpolateAndWrite(context, symbol, quote, min_t);
             }
         }
         context.SetTime(min_t);
         return NodeProcessResult::Success;
     }
-    
+
+    if (_missingHandle == MissingHandleType::ForwardFill) {
+        for (auto& [symbol, quote] : _curQuotes) {
+            if (quote._time == min_t) {
+                // 时间戳对齐：直接写入
+                writeQuote(context, quote);
+                _lastQuotes[symbol] = quote;
+            } else {
+                // 时间戳不对齐：用上一个已知值填充
+                forwardFillAndWrite(context, symbol, min_t);
+            }
+        }
+        context.SetTime(min_t);
+        return NodeProcessResult::Success;
+    }
+
+    if (_missingHandle == MissingHandleType::BackwardFill) {
+        for (auto& [symbol, quote] : _curQuotes) {
+            if (quote._time == min_t) {
+                // 时间戳对齐：直接写入
+                writeQuote(context, quote);
+                _lastQuotes[symbol] = quote;
+            } else {
+                // 时间戳不对齐：用下一个已知值填充
+                backwardFillAndWrite(context, quote, symbol, min_t);
+            }
+        }
+        context.SetTime(min_t);
+        return NodeProcessResult::Success;
+    }
+
     // Skip 模式且不对齐：整批跳过，不写入任何数据
     return NodeProcessResult::Skip;
 }

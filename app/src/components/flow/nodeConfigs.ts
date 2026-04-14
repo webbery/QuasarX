@@ -39,6 +39,7 @@ export const keyMap: KeyMap = {
   "InformationRatio": "信息比率",
   "BacktestRange": "回测周期",
   "freq": "频率",
+  "missingHandle": "缺失处理",
   "buy": "买入条件",
   "sell": "卖出条件",
   "1d": "日频",
@@ -99,7 +100,9 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         type: "select",
         options: [
           { label: "跳过", value: "skip" },
-          { label: "线性插值", value: "linear" }
+          { label: "线性插值", value: "linear" },
+          { label: "前向填充", value: "forward" },
+          { label: "后向填充", value: "backward" }
         ]
       }
     }
