@@ -47,7 +47,7 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
     return true;
 }
 
-bool ExecuteNode::Process(const String& strategy, DataContext& context) {
+NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& context) {
     // 从 PortfolioNode 读取执行计划
     if (context.GetExecutionPlan()._hasChanged) {
         const auto& plan = context.GetExecutionPlan();
@@ -71,7 +71,7 @@ bool ExecuteNode::Process(const String& strategy, DataContext& context) {
     }
 
     context.ConsumeSignals();
-    return true;
+    return NodeProcessResult::Success;
 }
 
 void ExecuteNode::Prepare(const String& strategy, DataContext& context)

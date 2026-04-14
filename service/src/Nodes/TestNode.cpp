@@ -86,7 +86,7 @@ double TestNode::calcMa(double value, Vector<double>& buffer, double& sum, int p
     return sum / period;
 }
 
-bool TestNode::Process(const String& strategy, DataContext& context) {
+NodeProcessResult TestNode::Process(const String& strategy, DataContext& context) {
     // 遍历所有输入键（收盘价序列）
     for (auto& key: _input_keys) {
         auto& closes = context.get<Vector<double>>(key);
@@ -191,7 +191,7 @@ bool TestNode::Process(const String& strategy, DataContext& context) {
                  symbol_prefix, lastSignal, lastShortMa, lastLongMa);
         }
     }
-    return true;
+    return NodeProcessResult::Success;
 }
 
 Map<String, ArgType> TestNode::out_elements() {

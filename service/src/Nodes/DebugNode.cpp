@@ -23,10 +23,10 @@ bool DebugNode::Init(const nlohmann::json& config) {
     return true;
 }
 
-bool DebugNode::Process(const String& strategy, DataContext& context) {
+NodeProcessResult DebugNode::Process(const String& strategy, DataContext& context) {
     _context = &context;
 
-    return true;
+    return NodeProcessResult::Success;
 }
 
 void DebugNode::Done(const String& strategy) {

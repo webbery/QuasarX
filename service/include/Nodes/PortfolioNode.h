@@ -13,7 +13,7 @@ public:
     ~PortfolioNode();
 
     virtual bool Init(const nlohmann::json& config) override;
-    virtual bool Process(const String& strategy, DataContext& context) override;
+    virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
     virtual void Prepare(const String& strategy, DataContext& context)override;
     virtual Map<String, ArgType> out_elements() override;
 

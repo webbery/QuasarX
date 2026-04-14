@@ -1,5 +1,5 @@
 #pragma once
-#include "DataGroup.h"
+#include "std_header.h"
 
 namespace finance {
 

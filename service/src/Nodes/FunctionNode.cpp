@@ -1,7 +1,6 @@
 #include "Nodes/FunctionNode.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
-#include "DataGroup.h"
 #include "server.h"
 #include "boost/algorithm/string/join.hpp"
 #include "boost/algorithm/string/replace.hpp"
@@ -115,13 +114,17 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         _params.merge(input_names);
     }
 
-    Set<String> symbols;
+    // 构建输入到输出的映射，并收集所有 symbol
+    _label = (String)config["label"];
     for (auto& item: _params) {
         auto& name = item.first;
         Vector<String> tokens;
         split(name, tokens, ".");
-        tokens.pop_back();
-        symbols.insert(boost::algorithm::join(tokens, "."));
+        tokens.pop_back();  // 去掉属性名
+        String symbol = boost::algorithm::join(tokens, ".");
+        
+        // 建立映射: "sh600519.close" -> "sh600519.ReturnRate"
+        _param_to_output_map[name] = symbol + "." + _label;
     }
 
     String name = config["params"]["method"]["value"];
@@ -131,38 +134,77 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         throw std::runtime_error(info.c_str());
     }
     _callable = itr->second(*this, config);
-    
-    _label = (String)config["label"];
-    for (auto& symbol: symbols) {
+
+    for (auto& [input_key, output_key] : _param_to_output_map) {
         // 函数输出是时间序列
-        _outputs[symbol + "." + _label] = ArgType::Double_TimeSeries;
+        _outputs[output_key] = ArgType::Double_TimeSeries;
     }
     return true;
 }
 
-bool FunctionNode::Process(const String& strategy, DataContext& context)
+NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& context)
 {
     if (!_callable) {[[unlikely]]
         WARN("Node: function is not set");
-        return false;
+        return NodeProcessResult::Error;
     }
 
+    // 1. 收集所有 symbol 的输入数据
     Map<String, context_t> arguments;
+    Vector<String> output_keys;  // 保存输出 key 的顺序
+    
     for (auto& item: _params) {
         auto& value = context.get(item.first);
         arguments[item.first] = value;
     }
-    auto result = (*_callable)(arguments);
-    for (auto& item: _outputs) {
-        if (context.exist(item.first)) {
-            context.add(item.first, std::get<double>(result));
-        } else {
-            Vector<double> timeseriel;
-            timeseriel.push_back(std::get<double>(result));
-            context.set(item.first, timeseriel);
-        }
+    
+    // 2. 按 _param_to_output_map 的顺序构建输出 key 列表
+    for (auto& [input_key, output_key] : _param_to_output_map) {
+        output_keys.push_back(output_key);
     }
-    return true;
+    
+    // 3. 调用函数计算
+    auto result = (*_callable)(arguments);
+    
+    // 4. 根据结果类型处理，按顺序写入输出
+    auto ret = std::visit([this, &output_keys, &context, &strategy](const auto& val) -> NodeProcessResult {
+        using T = std::decay_t<decltype(val)>;
+        
+        if constexpr (std::is_same_v<T, double>) {
+            // 标量：所有输出 key 都用同一个值
+            for (auto& key : output_keys) {
+                if (context.exist(key)) {
+                    context.add(key, val);
+                } else {
+                    Vector<double> timeseries;
+                    timeseries.push_back(val);
+                    context.set(key, timeseries);
+                }
+            }
+        } else if constexpr (std::is_same_v<T, Vector<double>>) {
+            // 向量：按顺序分配给每个输出 key
+            if (val.size() != output_keys.size()) {
+                WARN("Function result size {} != output keys size {}", val.size(), output_keys.size());
+                return NodeProcessResult::Skip;
+            }
+            for (size_t i = 0; i < output_keys.size(); ++i) {
+                if (context.exist(output_keys[i])) {
+                    context.add(output_keys[i], val[i]);
+                } else {
+                    Vector<double> timeseries;
+                    timeseries.push_back(val[i]);
+                    context.set(output_keys[i], timeseries);
+                }
+            }
+        } else {
+            WARN("Function returned unsupported type");
+            return NodeProcessResult::Error;
+        }
+        
+        return NodeProcessResult::Success;
+    }, result);
+    
+    return ret;
 }
 
 Map<String, ArgType> FunctionNode::out_elements() {

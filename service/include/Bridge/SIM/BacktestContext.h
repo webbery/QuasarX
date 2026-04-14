@@ -76,6 +76,12 @@ public:
     bool isFinished() const { return _finished; }
     void setFinished(bool finished) { _finished = finished; }
 
+    // 共同时间范围（多标的时间对齐）
+    time_t getCommonStartTime() const { return _commonStartTime; }
+    void setCommonStartTime(time_t t) { _commonStartTime = t; }
+    time_t getCommonEndTime() const { return _commonEndTime; }
+    void setCommonEndTime(time_t t) { _commonEndTime = t; }
+
     // 涉及的所有标的
     void addSymbol(symbol_t symbol);
     const Set<symbol_t>& getSymbols() const { return _symbols; }
@@ -111,6 +117,10 @@ private:
     // 进度跟踪
     std::atomic<size_t> _totalBars{0};
     std::atomic<bool> _finished{false};
+
+    // 共同时间范围（多标的时间对齐）
+    time_t _commonStartTime = 0;
+    time_t _commonEndTime = 0;
 
     // 涉及的标的列表
     Set<symbol_t> _symbols;

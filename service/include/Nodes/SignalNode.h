@@ -1,7 +1,6 @@
 #pragma once
 #include "StrategyNode.h"
 #include "Util/system.h"
-#include "DataGroup.h"
 
 class FormulaParser;
 class Server;
@@ -15,7 +14,7 @@ public:
     ~SignalNode();
 
     virtual bool Init(const nlohmann::json& config);
-    virtual bool Process(const String& strategy, DataContext& context);
+    virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
     virtual Map<String, ArgType> out_elements();
 
     bool ParseBuyExpression(const String& expression);

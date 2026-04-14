@@ -10,7 +10,6 @@
 #include <yas/serialize.hpp>
 #include "Bridge/SIM/BacktestContext.h"
 #include "Bridge/exchange.h"
-#include "DataGroup.h"
 #include "PortfolioSubsystem.h"
 #include "Util/lmdb.h"
 #include "Util/string_algorithm.h"

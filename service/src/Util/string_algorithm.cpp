@@ -11,6 +11,8 @@
 #endif
 #include <fstream>
 #include <strstream>
+#include "Bridge/exchange.h"
+#include "server.h"
 namespace {
     std::atomic<uint64_t> _sseID{ 0 };
 }
@@ -226,4 +228,52 @@ String format_sse(const String& event, const Map<String, String>& data)
     value += "id:" + std::to_string(++_sseID) + "\n";
     value += "data:" + payload.dump() + "\n\n";
     return value;
+}
+
+String to_sse_string(symbol_t symbol, const TradeReport& report) {
+    String str;
+    Map<String, String> info;
+    auto name = get_symbol(symbol);
+    info["symbol"] = name;
+    info["status"] = std::to_string((int)report._status); 
+    info["price"] = std::to_string(report._price);
+    info["direct"] = std::to_string(report._side);
+    info["quantity"] = std::to_string(report._quantity);
+    info["sysID"] = report._sysID;
+    info["name"] = Server::GetName(name);
+    info["orderType"] = std::to_string(report._type);
+    info["timestamp"] = std::to_string(report._time);
+    return format_sse("trade_report", info);
+}
+
+nlohmann::json order2json(const Order& item)
+{
+    nlohmann::json order;
+    String name = get_symbol(item._symbol);
+    order["id"] = item._id;
+    order["symbol"] = name;
+    int kind = 0;
+    switch (item._symbol._type)
+    {
+    case contract_type::future:
+        kind = 2;
+        break;
+    case contract_type::put:
+    case contract_type::call:
+        kind = 1;
+        break;
+    case contract_type::stock:
+    default:
+        kind = 0;
+        break;
+    }
+    order["kind"] = kind;
+    order["type"] = item._type;
+    order["prices"] = item._price;
+    order["quantity"] = item._volume;
+    order["direct"] = item._side;
+    order["status"] = item._status;
+    order["sysID"] = item._sysID;
+    order["name"] = Server::GetName(name);
+    return order;
 }

@@ -6,7 +6,6 @@
 #include <nng/protocol/pubsub0/sub.h>
 #include "Bridge/exchange.h"
 #include <yas/serialize.hpp>
-#include "DataGroup.h"
 #include "HttpHandler.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"

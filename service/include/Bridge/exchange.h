@@ -121,7 +121,7 @@ struct TradeReport {
     // 成交类型  OrderType
     char _type;
     char _side;
-    // 交易员代码
+    // 交易员代码 
     Array<char, 7> _trader_code;
     int _quantity;
     //成交编号 其他SDK数据的交易ID

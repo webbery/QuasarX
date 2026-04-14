@@ -62,6 +62,20 @@ enum class SignalSource: char {
     MANUAL
 };
 
+/**
+    * @brief 获取 context_t 的实际类型名称
+    * @param ctx 上下文数据
+    * @return 类型名称字符串（如 "double", "vector<double>", "string" 等）
+    */
+String get_context_type_name(const context_t& ctx);
+
+/**
+    * @brief 格式化 context_t 的调试信息（类型 + 大小/值）
+    * @param ctx 上下文数据
+    * @return 格式化的调试信息字符串
+    */
+String format_context_info(const context_t& ctx);
+
 class ITimingStrategy;
 class DataContext;
 class ISignalObserver {

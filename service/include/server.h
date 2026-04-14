@@ -1,11 +1,10 @@
 #pragma once
 #include "std_header.h"
-#include "DataGroup.h"
+#include "config.h"
 #include "Handler/RiskHandler.h"
 #include "Util/system.h"
 #include "json.hpp"
 #include "HttpHandler.h"
-#include "config.h"
 #include "Bridge/exchange.h"
 #include <ctime>
 #include <nng/nng.h>

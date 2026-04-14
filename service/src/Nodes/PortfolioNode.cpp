@@ -1,4 +1,5 @@
 #include "Nodes/PortfolioNode.h"
+#include "StrategyNode.h"
 #include "Util/system.h"
 #include "server.h"
 #include "Bridge/exchange.h"
@@ -52,7 +53,7 @@ void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
     }
 }
 
-bool PortfolioNode::Process(const String& strategy, DataContext& context) {
+NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& context) {
     // 1. 获取上游节点的信号
     Vector<symbol_t> symbols;
     Vector<TradeAction> actions;
@@ -109,7 +110,7 @@ bool PortfolioNode::Process(const String& strategy, DataContext& context) {
         //INFO("PortfolioNode: no change, keeping current positions");
     }
 
-    return true;
+    return NodeProcessResult::Success;
 }
 
 ExecutionPlan PortfolioNode::generatePlan(

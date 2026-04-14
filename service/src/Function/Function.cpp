@@ -70,17 +70,45 @@ Return::Return(int32_t count): _cnts(count){
 
 }
 
+/**
+ * @brief 计算多个标的的收益率
+ * 
+ * 使用对数收益率公式: log(P(t) / P(t-n))
+ * 其中 n = _cnts (由 range 参数映射而来)
+ * 
+ * @param args 输入参数，包含多个标的的价格时间序列
+ *             key 格式: "symbol.property" (如 "sh600519.close")
+ *             value: Vector<double> 价格序列
+ * @return Vector<double> 所有标的的对数收益率
+ */
 context_t Return::operator()(const Map<String, context_t>& args) {
-    if (args.size() != 1) {
-        return std::nan("nan");
+    Vector<double> returns;
+    
+    // 遍历所有标的的数据
+    for (auto& [key, value] : args) {
+        // INFO("type: {}", get_context_type_name(value));
+        auto& vec = std::get<Vector<double>>(value);
+        // 计算收益率: log(P(t) / P(t-_cnts))
+        size_t n = vec.size();
+        if (n <= _cnts) {
+            returns.push_back(std::nan("nan"));
+            continue;
+        }
+
+        double currentPrice = vec[n - 1];
+        double pastPrice = vec[n - 1 - _cnts];
+        
+        // 价格无效时跳过
+        if (pastPrice <= 0) {
+            returns.push_back(std::nan("nan"));
+            continue;
+        }
+        
+        // 对数收益率
+        returns.push_back(std::log(currentPrice / pastPrice));
     }
-    auto itr = args.begin();
-    auto& prop_name = itr->first;
-    auto& vec = std::get<Vector<double>>(itr->second);
-    if (vec.size() < _cnts) {
-        return std::nan("nan");
-    }
-    return 0.;
+    
+    return returns;
 }
 
 R2::R2(int32_t window)

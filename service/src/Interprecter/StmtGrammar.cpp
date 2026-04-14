@@ -32,7 +32,7 @@ String grammar = R"(
         Expression      <- OrExpr
         OrExpr          <- AndExpr ('or' AndExpr)*
         AndExpr         <- NotExpr ('and' NotExpr)*
-        NotExpr         <- 'not' NotExpr / CompareExpr
+        NotExpr         <- 'not' NotExpr / '!' NotExpr / CompareExpr
         CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
         ArithExpr       <- Term (AddOp Term)*
         Term            <- Primary (MulOp Primary)*
@@ -50,8 +50,8 @@ String grammar = R"(
         # 数据结构
         ListExpr        <- '[' Expression (',' Expression)* ']'
 
-        # 标识符和数字
-        Identifier      <- < [a-zA-Z_][a-zA-Z_0-9]* >
+        # 标识符和数字（排除关键字）
+        Identifier      <- !('not' / 'and' / 'or' / 'true' / 'false') < [a-zA-Z_][a-zA-Z_0-9]* >
         Number          <- < '-'? [0-9]+ ('.' [0-9-9]+)? >
         String          <- < '"' [^"]* '"' > / < "'" [^']* "'" >
 

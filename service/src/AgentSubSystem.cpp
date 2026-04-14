@@ -216,24 +216,50 @@ Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
 }
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
+    bool shouldSkipEpoch = false;
+    
     // 根据策略图生成信号
     for (auto node: flow._graph) {
-        if (!node->Process(strategy, context)) {
-            // 回测模式下，如果是 QuoteInputNode 因数据用完返回 false，属于正常退出
-            if (_handle->GetRunningMode() == RuningType::Backtest) {
-                if (auto quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
-                    INFO("{} data finished, backtest completed normally", node->id());
-                    // 设置 epoch 为 0，通知外层循环退出
-                    context.SetEpoch(0);
-                    return true;
+        auto result = node->Process(strategy, context);
+        
+        switch (result) {
+            case NodeProcessResult::Success:
+                // 继续下一个节点
+                break;
+                
+            case NodeProcessResult::Skip:
+                // 时间不对齐等场景，跳过本轮
+                shouldSkipEpoch = true;
+                break;
+                
+            case NodeProcessResult::Finished:
+                // 回测模式下，QuoteInputNode 数据正常结束
+                if (_handle->GetRunningMode() == RuningType::Backtest) {
+                    if (auto quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
+                        INFO("{} data finished, backtest completed normally", node->id());
+                        context.SetEpoch(0);
+                        return true;
+                    }
                 }
-            }
-            INFO("{} process fail", node->id());
-            return false;
+                // 其他情况视为错误
+                INFO("{} process finished unexpectedly", node->id());
+                return false;
+                
+            case NodeProcessResult::Error:
+                INFO("{} process failed with error", node->id());
+                return false;
         }
+        
+        // 如果标记为跳过，提前终止后续节点执行
+        if (shouldSkipEpoch) break;
     }
-
-    // 调用风控检查 - 通过 Server 获取 RiskSubSystem
+    
+    if (shouldSkipEpoch) {
+        DEBUG_INFO("Skipping epoch due to time misalignment in strategy {}", strategy);
+        return true;  // 返回 true 继续运行，但不执行风控
+    }
+    
+    // 仅在本轮未跳过时执行风控检查
     auto risk = _handle->GetRiskSubSystem();
     if (risk) {
         risk->Metric(context);
@@ -247,73 +273,6 @@ void FlowSubsystem::RegistIndicator(const String& strategy) {
     broker->RegistIndicator(strategy, StatisticIndicator::VaR);
     broker->RegistIndicator(strategy, StatisticIndicator::Sharp);
 }
-
-// void FlowSubsystem::RunBacktest(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-//     if (strategy->isT0()) {
-
-//     }
-//     else {
-//         ProcessToday(strategyName, input);
-//         PredictTomorrow(strategyName, strategy, input);
-//     }
-// }
-
-// void FlowSubsystem::RunInstant(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-//     // process feature(daily or second)
-//     //auto result = strategy->Process(input._data);
-//     if (strategy->isT0()) {
-
-//     }
-//     else {
-        
-//     }
-// }
-
-// void FlowSubsystem::ProcessToday(const String& strategy, const DataFeatures& data) {
-//     auto broker = _handle->GetBrokerSubSystem();
-//     // 如果是daily，那么在第二天操作
-//     auto symb = data._symbols[0];
-//     fixed_time_range tr;
-//     int op = 0;
-//     if (!broker->GetNextPrediction(symb, tr, op))
-//         return;
-
-//     auto current = Now();
-//     if (tr == current) {
-//         // thread_local char 
-//         if (op & (int)ContractOperator::Buy) {
-//             if (tr.IsDaily()) {
-//                 if (DailyBuy(strategy, symb, data)) {
-//                     broker->DoneForecast(symb, op);
-//                 }
-//             }
-//             else {
-//                 ImmediatelyBuy(strategy, symb, std::get<double>(data._data.front()), OrderType::Market);
-//             }
-//         }
-//         if (op & (int)ContractOperator::Sell) {
-//             if (tr.IsDaily()) {
-//                 if (DailySell(strategy, symb, data)) {
-//                     broker->DoneForecast(symb, op);
-//                 }
-//             }
-//             else {
-//                 ImmediatelySell(strategy, symb, std::get<double>(data._data.front()), OrderType::Market);
-//             }
-//         }
-//         if (op & (int)ContractOperator::Short) {
-//             DEBUG_INFO("Short");
-//         }
-//     }
-// }
-
-// void FlowSubsystem::PredictTomorrow(const String& strategyName, QStrategy* strategy, const DataFeatures& input) {
-//     //auto result = strategy->Process(input._data);
-//     auto broker = _handle->GetBrokerSubSystem();
-//     //auto value = std::get<double>(result);
-//     //int op = value > 0.5? (int)ContractOperator::Buy : (int)ContractOperator::Sell;
-//     //broker->PredictWithDays(input._symbol, 1, op);
-// }
 
 bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type) {
     auto broker = _handle->GetBrokerSubSystem();

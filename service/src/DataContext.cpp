@@ -159,3 +159,74 @@ BacktestContext* DataContext::getBacktestContext() {
     }
     return simExchange->getBacktestContext(_backtestRunId);
 }
+
+/**
+ * @brief 获取 context_t 的实际类型名称
+ * 
+ * 使用 std::visit 访问 variant 的实际类型，返回对应的类型名称字符串。
+ * 支持的类型：bool, String, uint64_t, double, Vector<float>, Vector<double>,
+ *            Vector<uint64_t>, List<symbol_t>, Eigen::MatrixXd
+ */
+String get_context_type_name(const context_t& ctx) {
+    return std::visit([](const auto& v) -> String {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return "bool";
+        } else if constexpr (std::is_same_v<T, String>) {
+            return "string";
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            return "uint64";
+        } else if constexpr (std::is_same_v<T, double>) {
+            return "double";
+        } else if constexpr (std::is_same_v<T, Vector<float>>) {
+            return "vector<float>";
+        } else if constexpr (std::is_same_v<T, Vector<double>>) {
+            return "vector<double>";
+        } else if constexpr (std::is_same_v<T, Vector<uint64_t>>) {
+            return "vector<uint64>";
+        } else if constexpr (std::is_same_v<T, List<symbol_t>>) {
+            return "list<symbol_t>";
+        } else if constexpr (std::is_same_v<T, Eigen::MatrixXd>) {
+            return "matrix";
+        } else {
+            return "unknown";
+        }
+    }, ctx);
+}
+
+/**
+ * @brief 格式化 context_t 的调试信息
+ * 
+ * 返回格式：
+ * - 标量: "type: value" (如 "double: 123.45")
+ * - 向量: "type[size]" (如 "vector<double>[100]")
+ * - 字符串: "string: 'value'"
+ * - 矩阵: "matrix[rows x cols]"
+ */
+String format_context_info(const context_t& ctx) {
+    return std::visit([](const auto& v) -> String {
+        using T = std::decay_t<decltype(v)>;
+        
+        if constexpr (std::is_same_v<T, bool>) {
+            return fmt::format("bool: {}", v);
+        } else if constexpr (std::is_same_v<T, String>) {
+            return fmt::format("string: '{}'", v.length() > 50 ? v.substr(0, 50) + "..." : v);
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            return fmt::format("uint64: {}", v);
+        } else if constexpr (std::is_same_v<T, double>) {
+            return fmt::format("double: {:.6f}", v);
+        } else if constexpr (std::is_same_v<T, Vector<float>>) {
+            return fmt::format("vector<float>[{}]", v.size());
+        } else if constexpr (std::is_same_v<T, Vector<double>>) {
+            return fmt::format("vector<double>[{}]", v.size());
+        } else if constexpr (std::is_same_v<T, Vector<uint64_t>>) {
+            return fmt::format("vector<uint64>[{}]", v.size());
+        } else if constexpr (std::is_same_v<T, List<symbol_t>>) {
+            return fmt::format("list<symbol_t>[{}]", v.size());
+        } else if constexpr (std::is_same_v<T, Eigen::MatrixXd>) {
+            return fmt::format("matrix[{} x {}]", v.rows(), v.cols());
+        } else {
+            return "unknown";
+        }
+    }, ctx);
+}

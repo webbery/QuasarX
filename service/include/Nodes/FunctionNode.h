@@ -12,7 +12,7 @@ public:
 
     virtual bool Init(const nlohmann::json& config);
 
-    virtual bool Process(const String& strategy, DataContext& context);
+    virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
 
     virtual Map<String, ArgType> out_elements();
     
@@ -34,6 +34,8 @@ private:
     Map<String, ArgType> _params;
     // 输出的数据名
     Map<String, ArgType> _outputs;
+    // 输入 key 到输出 key 的映射（保证多标的顺序对应）
+    Map<String, String> _param_to_output_map;
 
     String _label;
 };

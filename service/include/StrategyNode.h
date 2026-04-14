@@ -7,6 +7,20 @@
 
 class ICallable;
 
+/**
+ * @brief 节点处理结果枚举
+ * Success: 正常执行完成
+ * Skip: 本轮跳过（时间不对齐、超时等），不执行后续节点和风控
+ * Finished: 数据已用完（仅回测模式正常结束）
+ * Error: 执行错误，终止策略
+ */
+enum class NodeProcessResult {
+    Success,
+    Skip,
+    Finished,
+    Error
+};
+
 enum ArgType {
     // 已弃用类型（用于向后兼容过渡）
     Integer_Deprecated = 0,
@@ -64,15 +78,22 @@ inline ArgType migrateLegacyType(ArgType type) {
     }
 }
 
+// 行情数据缺失时的处理方式
+enum class MissingHandleType : char {
+    Skip,       // 跳过（默认），缺失时不写入
+    Linear,     // 线性插值，用前后 bar 插值补齐
+};
+
 class QNode {
     using Edges = MultiMap<String, QNode*>;
 public:
     virtual ~QNode(){}
     virtual bool Init(const nlohmann::json& config) = 0;
     /**
-     * @brief 对输入数据做处理，并返回处理后的数据
+     * @brief 对输入数据做处理，并返回处理结果状态
+     * @return NodeProcessResult 返回处理状态：Success/Skip/Finished/Error
      */
-    virtual bool Process(const String& strategy, DataContext& context) = 0;
+    virtual NodeProcessResult Process(const String& strategy, DataContext& context) = 0;
     virtual void Connect(QNode* next, const String& from, const String& to) {
         _outs.insert({from, next});
         next->_ins.insert({to, this});

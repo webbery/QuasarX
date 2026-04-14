@@ -18,13 +18,13 @@ bool StackNode::Init(const nlohmann::json& config) {
     return true;
 }
 
-bool StackNode::Process(const String& strategy, DataContext& context) {
+NodeProcessResult StackNode::Process(const String& strategy, DataContext& context) {
     if (_hstack) {
         HStack(context);
     } else { [[likely]]
         Stack(context);
     }
-    return true;
+    return NodeProcessResult::Success;
 }
 
 void StackNode::Stack(DataContext& context) {

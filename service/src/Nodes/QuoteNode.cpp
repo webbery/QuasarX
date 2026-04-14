@@ -9,18 +9,61 @@
 #include "server.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 
-namespace {
-    std::unordered_map<std::string, std::function<context_t(const QuoteInfo&)>> propertyHandlers = {
-        {"open", [](const QuoteInfo& q) { return q._open; }},
-        {"close", [](const QuoteInfo& q) { return q._close; }},
-        {"volume", [](const QuoteInfo& q) { return q._volume; }},
-        {"turnover", [](const QuoteInfo& q) { return q._turnover; }},
-        {"high", [](const QuoteInfo& q) { return q._high; }},
-        {"low", [](const QuoteInfo& q) { return q._low; }}
-    };
+QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 }
 
-QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
+/**
+ * @brief 从 QuoteInfo 提取指定属性值
+ */
+double QuoteInputNode::getProp(const QuoteInfo& quote, const String& property) const {
+    if (property == "open") return quote._open;
+    if (property == "close") return quote._close;
+    if (property == "high") return quote._high;
+    if (property == "low") return quote._low;
+    if (property == "volume") return (double)quote._volume;
+    return 0.0;
+}
+
+/**
+ * @brief 将单个 symbol 的行情数据写入 context
+ */
+void QuoteInputNode::writeQuote(DataContext& context, const QuoteInfo& quote) {
+    auto name = get_symbol(quote._symbol);
+    auto baseKey = name + ".";
+    for (auto& property : _properties[name]) {
+        auto key = baseKey + property;
+        addQuoteProperty(context, key, getProp(quote, property));
+    }
+}
+
+void QuoteInputNode::addQuoteProperty(DataContext& context, const String& key, double val) {
+    if (context.exist(key)) {
+        context.add(key, val);
+    } else {
+        context.add(key, Vector<double>{val});
+    }
+}
+
+/**
+ * @brief 线性插值：用上一个 bar 和当前 bar 插值到 targetTime 并写入 context
+ */
+void QuoteInputNode::interpolateAndWrite(DataContext& context, const symbol_t& symbol,
+        const QuoteInfo& nextQuote, time_t targetTime) {
+    auto it = _lastQuotes.find(symbol);
+    if (it == _lastQuotes.end()) return;
+
+    const auto& lastQuote = it->second;
+    time_t range = nextQuote._time - lastQuote._time;
+    if (range == 0) return;
+
+    double ratio = (double)(targetTime - lastQuote._time) / range;
+    auto name = get_symbol(symbol);
+    auto baseKey = name + ".";
+    for (auto& property : _properties[name]) {
+        double v = getProp(lastQuote, property) + (getProp(nextQuote, property) - getProp(lastQuote, property)) * ratio;
+        context.add(baseKey + property, v);
+        addQuoteProperty(context, baseKey + property, v);
+    }
 }
 
 bool QuoteInputNode::Init(const nlohmann::json& config) {
@@ -30,15 +73,13 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         auto& security = Server::GetSecurity(code);
         auto symbol = to_symbol(code, security);
         _symbols.insert(symbol);
-        
         filer._symbols.emplace(code);
     }
+
     Set<String> visited_propers;
     for (auto& item: _outs) {
         auto& handle = item.first;
-        if (visited_propers.count(handle))
-            continue;
-
+        if (visited_propers.count(handle)) continue;
         visited_propers.insert(handle);
         Vector<String> froms;
         split(handle, froms, "-");
@@ -48,8 +89,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
             }
         }
     }
-    
-    
+
     // 设置数据源
     if (_server->GetRunningMode() == RuningType::Backtest) {
         StockHistorySimulation* exchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
@@ -57,74 +97,64 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         String tickLevel = config["params"]["freq"]["value"];
         if (tickLevel == "1d") {
             exchange->UseLevel(1);
-        }
-        else {
+        } else {
             exchange->UseLevel(0);
         }
-    } else {
-        // TODO:
+    }
+
+    // 读取缺失数据处理方式
+    if (config["params"].contains("missingHandle")) {
+        String mode = config["params"]["missingHandle"]["value"];
+        _missingHandle = (mode == "linear") ? MissingHandleType::Linear : MissingHandleType::Skip;
     }
 
     return true;
 }
 
-bool QuoteInputNode::Process(const String& strategy, DataContext& context)
+NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& context)
 {
-    auto cur = context.Current();
-    //
-    time_t min_t = std::numeric_limits<time_t>::max();
-
-    // 获取回测上下文（多线程模式）
-    BacktestContext* btContext = context.getBacktestContext();
     auto* exchange = dynamic_cast<StockHistorySimulation*>(_server->GetAvaliableStockExchange());
 
-    for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
-        auto symbol = *itr;
-        if (is_stock(symbol) || is_etf_option(symbol)) {
-            QuoteInfo quote;
+    // 第一步：收集所有 symbol 当前 bar 的 quote，同时找出最小时间戳
+    time_t min_t = std::numeric_limits<time_t>::max();
+    bool allAligned = true;
 
-            // 多线程回测模式：从上下文获取行情
-            if (btContext && exchange) {
-                quote = exchange->GetQuote(symbol, strategy);
-            }
-            // 单线程模式：原有逻辑
-            else {
-                auto stockExchange = _server->GetAvaliableStockExchange();
-                quote = stockExchange->GetQuote(symbol);
-            }
+    for (auto& symbol : _symbols) {
+        QuoteInfo quote = exchange->GetQuote(symbol, context.getBacktestRunId());
+        // time == 0 表示该 symbol 数据已用完
+        if (quote._time == 0) return NodeProcessResult::Finished;
 
-            if (quote._time == 0)
-                return false;
-            else if (cur != 0 && quote._time <= cur) {
-                continue;
-            }
-            if (quote._time < min_t) {
-                min_t = quote._time;
-            }
+        _curQuotes[symbol] = quote;
+        // 找出最小时间戳
+        if (quote._time < min_t) min_t = quote._time;
+    }
 
-            auto name = get_symbol(symbol);
-            auto baseKey = name + ".";
-            for (auto& property : _properties[name]) {
-                auto it = propertyHandlers.find(property);
-                if (it == propertyHandlers.end())
-                    continue;
-
-                auto key = baseKey + property;
-                context.add(key, it->second(quote));
-            }
-            // 保存完整的 QuoteInfo 到 context，供 ShadowTiming 使用
-            context.SetQuote(symbol, quote);
-        }
-        else if (is_option(symbol)) {
-            WARN("not implement for input node");
-            return false;
+    // 检查是否所有 symbol 时间戳一致（与最小时间戳对齐）
+    for (auto& [symbol, quote] : _curQuotes) {
+        if (quote._time != min_t) {
+            allAligned = false;
+            break;
         }
     }
-    //
-    if (min_t != std::numeric_limits<time_t>::max()) {
+
+    // 第二步：根据模式处理数据
+    if (allAligned || _missingHandle == MissingHandleType::Linear) {
+        for (auto& [symbol, quote] : _curQuotes) {
+            if (quote._time == min_t) {
+                // 时间戳对齐：直接写入
+                writeQuote(context, quote);
+                _lastQuotes[symbol] = quote;
+            } else if (_missingHandle == MissingHandleType::Linear) {
+                // 时间戳不对齐且启用线性插值：用前后 bar 插值
+                interpolateAndWrite(context, symbol, quote, min_t);
+            }
+        }
         context.SetTime(min_t);
+        return NodeProcessResult::Success;
     }
-    return true;
+    
+    // Skip 模式且不对齐：整批跳过，不写入任何数据
+    return NodeProcessResult::Skip;
 }
 
 Map<String, ArgType> QuoteInputNode::out_elements() {
@@ -133,7 +163,6 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
         auto name = get_symbol(*itr);
         auto baseKey = name + ".";
         for (auto& item: _properties[name]) {
-            // 行情数据是时间序列
             if (item == "volume") {
                 names[baseKey + item] = ArgType::Integer_TimeSeries;
             } else {
@@ -145,5 +174,5 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
 }
 
 const nlohmann::json QuoteInputNode::getParams() {
-    return {"code", "freq"};
+    return {"code", "freq", "missingHandle"};
 }

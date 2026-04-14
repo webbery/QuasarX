@@ -3,6 +3,7 @@
 #include "DataFrame/DataFrame.h"
 #include "Util/system.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "std_header.h"
 #include <nng/nng.h>
 #include <atomic>
 #include <shared_mutex>
@@ -117,7 +118,7 @@ public:
    * @param symbol 标的
    * @param strategy 策略名称（用于查找对应的回测上下文）
    */
-  QuoteInfo GetQuote(symbol_t symbol, const String& strategy);
+  QuoteInfo GetQuote(symbol_t symbol, run_id_t run_id);
 
   /**
    * @brief 线程安全的订单提交（多线程回测模式）

@@ -16,7 +16,7 @@
                         "options": ["股票", "期货"]
                     },
                     "code": {
-                        "value": ["bj.920108"],
+                        "value": ["sz.000001"],
                         "type": "text"
                     },
                     "freq": {
@@ -96,7 +96,7 @@
                 "nodeType": "signal",
                 "params": {
                     "code": {
-                        "value": ["bj.920108"],
+                        "value": ["sz.000001"],
                         "type": "text"
                     },
                     "buy": {

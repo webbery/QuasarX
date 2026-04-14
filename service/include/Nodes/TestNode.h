@@ -20,7 +20,7 @@ public:
     ~TestNode();
 
     virtual bool Init(const nlohmann::json& config);
-    virtual bool Process(const String& strategy, DataContext& context);
+    virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
     virtual Map<String, ArgType> out_elements();
 
 private:

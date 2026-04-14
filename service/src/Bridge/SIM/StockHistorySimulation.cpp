@@ -9,6 +9,7 @@
 #include "csv.h"
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -222,7 +223,12 @@ bool StockHistorySimulation::LoadCSVToDataFrame(const String& file_path,
             }
             continue;
         }
-        dates.emplace_back(FromStr(row[0], "%Y-%m-%d %H:%M:%S"));
+        // 智能判断日期格式：如果长度<=10则只有日期，否则包含时间
+        const char* timeFmt = (row[0].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
+        if (row[0] == "2022-03-11") {
+            INFO("{} {} {}", file_path, timeFmt, FromStr(row[0], timeFmt));
+        }
+        dates.emplace_back(FromStr(row[0], timeFmt));
         open.emplace_back(std::stof(row[1]));
         close.emplace_back(std::stof(row[2]));
         high.emplace_back(std::stof(row[3]));
@@ -604,6 +610,18 @@ double StockHistorySimulation::GetAdjPrice(symbol_t symbol, uint32_t index) cons
 
 // ============ 多线程回测支持实现 ============
 
+/**
+ * @brief 创建回测上下文，并计算所有标的的共同时间范围
+ * 
+ * 核心逻辑：
+ * 1. 遍历所有 symbol，获取每个 symbol CSV 的起始和结束时间
+ * 2. 计算共同时间范围：
+ *    - commonStartTime = 所有标的起始时间的最大值
+ *    - commonEndTime = 所有标的结束时间的最小值
+ * 3. 将每个 symbol 的 curIndex 设置到 commonStartTime 对应的位置
+ * 
+ * 这样确保多标的回测时，所有标的数据在时间上是对齐的。
+ */
 uint16_t StockHistorySimulation::createBacktestContext(
     const String& strategy_name,
     const Set<symbol_t>& symbols,
@@ -614,9 +632,73 @@ uint16_t StockHistorySimulation::createBacktestContext(
     auto context = std::make_unique<BacktestContext>(runId, strategy_name);
     context->setCapital(initial_capital);
 
+    // 第一步：计算所有标的的共同时间范围
+    time_t maxStartTime = 0;  // 所有标的起始时间的最大值（确保所有标的都有数据）
+    time_t minEndTime = std::numeric_limits<time_t>::max();  // 所有标的结束时间的最小值（确保不超出任何标的范围）
+
     for (auto symbol : symbols) {
         context->addSymbol(symbol);
-        context->setCurIndex(symbol, 0);
+
+        // 获取该标的 CSV 数据
+        auto itr = _csvs.find(symbol);
+        if (itr != _csvs.end()) {
+            const auto& df = itr->second;
+            const auto& header = _headers.at(symbol);
+
+            if (df.get_index().size() > 0) {
+                const auto& datetime = df.get_column<time_t>(header[0].c_str());
+
+                // 获取该标的起始和结束时间
+                time_t startTime = datetime[0];
+                time_t endTime = datetime[df.get_index().size() - 1];
+
+                // 更新共同时间范围
+                if (startTime > maxStartTime) {
+                    maxStartTime = startTime;
+                }
+                if (endTime < minEndTime) {
+                    minEndTime = endTime;
+                }
+
+                INFO("Symbol {}: start={}, end={}",
+                     get_symbol(symbol),
+                     ToString(startTime, "%Y-%m-%d %H:%M:%S"),
+                     ToString(endTime, "%Y-%m-%d %H:%M:%S"));
+            }
+        }
+    }
+
+    // 设置共同时间范围到 context
+    context->setCommonStartTime(maxStartTime);
+    context->setCommonEndTime(minEndTime);
+
+    INFO("Common time range: start={}, end={}",
+         ToString(maxStartTime, "%Y-%m-%d %H:%M:%S"),
+         ToString(minEndTime, "%Y-%m-%d %H:%M:%S"));
+
+    // 第二步：将每个 symbol 的索引设置到对应共同起始时间的位置
+    // 这样确保回测开始时，所有标的数据在时间上对齐
+    for (auto symbol : symbols) {
+        auto itr = _csvs.find(symbol);
+        if (itr != _csvs.end()) {
+            const auto& df = itr->second;
+            const auto& header = _headers.at(symbol);
+            const auto& datetime = df.get_column<time_t>(header[0].c_str());
+
+            // 找到第一个时间 >= maxStartTime 的索引
+            uint32_t startIndex = 0;
+            for (uint32_t i = 0; i < datetime.size(); ++i) {
+                if (datetime[i] >= maxStartTime) {
+                    startIndex = i;
+                    break;
+                }
+            }
+
+            context->setCurIndex(symbol, startIndex);
+            INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
+        } else {
+            context->setCurIndex(symbol, 0);
+        }
     }
 
     if (!_csvs.empty()) {
@@ -651,9 +733,54 @@ void StockHistorySimulation::destroyBacktestContext(uint16_t run_id) {
     _backtestContexts.erase(run_id);
 }
 
+/**
+ * @brief 推进回测时间，为每个 symbol 加载下一个 bar 的数据
+ * 
+ * 逻辑：
+ * 1. 检查是否已超过共同结束时间
+ * 2. 遍历所有 symbol，读取当前索引对应的数据
+ * 3. 将数据写入 context 的 quote 缓存
+ * 4. 推进每个 symbol 的索引
+ * 
+ * @return true 如果还有更多数据，false 如果回测应该结束
+ */
 bool StockHistorySimulation::stepForward(BacktestContext* context) {
     if (!context || context->isFinished()) {
         return false;
+    }
+
+    // 检查是否所有标的都已到达或超过共同结束时间
+    time_t commonEndTime = context->getCommonEndTime();
+    if (commonEndTime > 0) {
+        bool allAtEnd = true;
+        const auto& symbols = context->getSymbols();
+
+        for (auto symbol : symbols) {
+            auto itr = _csvs.find(symbol);
+            if (itr == _csvs.end()) {
+                continue;
+            }
+
+            const auto& df = itr->second;
+            const auto& header = _headers.at(symbol);
+            auto curIndex = context->getCurIndex(symbol);
+
+            // 如果该标的还没到末尾，说明还有数据
+            if (curIndex < df.get_index().size()) {
+                const auto& datetime = df.get_column<time_t>(header[0].c_str());
+                if (curIndex < datetime.size() && datetime[curIndex] <= commonEndTime) {
+                    allAtEnd = false;
+                    break;
+                }
+            }
+        }
+
+        // 所有标的都已到达结束时间，终止回测
+        if (allAtEnd) {
+            INFO("All symbols reached common end time, backtest completed");
+            context->setFinished(true);
+            return false;
+        }
     }
 
     bool anyMoreData = false;
@@ -742,13 +869,11 @@ void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symb
     }
 }
 
-QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol, const String& strategy) {
+QuoteInfo StockHistorySimulation::GetQuote(symbol_t symbol, run_id_t run_id) {
     // 查找对应策略的回测上下文
     BacktestContext* ctx = nullptr;
-    _backtestContexts.visit_all([&ctx, &strategy](auto& item) {
-        if (item.second->getStrategyName() == strategy) {
-            ctx = item.second.get();
-        }
+    _backtestContexts.visit(run_id, [&ctx](auto& item) {
+        ctx = item.second.get();
     });
 
     if (ctx) {

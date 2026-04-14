@@ -47,11 +47,13 @@ FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAct
 
 bool FormulaParser::parse(const String& code) {
     _codes = cleanInputString(code);
+    INFO("Parsing: '{}'", _codes);
     if (_parser.parse(_codes, _ast)) {
+        // printAST(_ast);
         _ast = _parser.optimize_ast(_ast);
 
 #ifdef _DEBUG
-        INFO("AST nodes count: {}", _ast->nodes.size());
+        INFO("** Node: {}, token: {}", _ast->name, _ast->token);
         printAST(_ast);
 #endif
         return true;

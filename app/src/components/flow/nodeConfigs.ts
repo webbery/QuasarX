@@ -93,6 +93,14 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
         value: "1d",
         type: "select",
         options: ["1d", "1m", "5m", "15m", "30m", "1h", "4h", "1w"]
+      },
+      "缺失处理": {
+        value: "skip",
+        type: "select",
+        options: [
+          { label: "跳过", value: "skip" },
+          { label: "线性插值", value: "linear" }
+        ]
       }
     }
   },

@@ -1,6 +1,6 @@
 #pragma once
 #include "StrategyNode.h"
-#include "DataGroup.h"
+#include "std_header.h"
 
 class DebugNode: public QNode {
 public:
@@ -11,7 +11,7 @@ public:
 
     virtual bool Init(const nlohmann::json& config);
 
-    virtual bool Process(const String& strategy, DataContext& context);
+    virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
 
     virtual void Done(const String& strategy);
 

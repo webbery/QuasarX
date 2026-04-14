@@ -129,3 +129,7 @@ struct alignas(4) symbol_t {
 
 using run_id_t = uint16_t;
 using context_t = std::variant<bool, String, uint64_t, Vector<float>, List<symbol_t>, double, Vector<double>, Vector<uint64_t>, Eigen::MatrixXd>;
+
+// DataFrame 类型定义
+#include "DataFrame/DataFrame.h"
+typedef hmdf::StdDataFrame<uint32_t> DataFrame;
