@@ -21,9 +21,6 @@ public:
     bool LoadFlow(const String& strategy, const List<QNode*>& topo_flow);
     void ClearFlow(const String& strategy);
 
-    // 设置策略配置（用于回测）
-    void SetStrategyConfig(const String& strategy, const nlohmann::json& config);
-
     void Start();
     void Stop(const String& strategy);
 
@@ -49,6 +46,22 @@ public:
     const Map<StatisticIndicator, std::variant<float, List<float>>>& GetCollection(const String& strategy) const;
     
     Set<symbol_t> GetPools(const String& strategy);
+
+    /**
+     * @brief 获取策略的预热期 epoch 数
+     */
+    int GetWarmupEpochs(const String& strategy) const {
+        auto it = _flows.find(strategy);
+        return it != _flows.end() ? it->second._warmupEpochs : 0;
+    }
+
+    /**
+     * @brief 设置策略的预热期 epoch 数（由 StrategySubSystem 调用）
+     */
+    void SetWarmupEpochs(const String& strategy, int epochs) {
+        _flows[strategy]._warmupEpochs = epochs;
+    }
+
 private:
 
     bool ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type);
@@ -72,7 +85,6 @@ private:
     struct StrategyFlowInfo {
         std::atomic_bool _running = false;
         std::thread* _worker = nullptr;
-        nlohmann::json _config;
 
         Map<StatisticIndicator, std::variant<float, List<float>>> _collections;
         List<QNode*> _graph;
@@ -81,6 +93,9 @@ private:
 
         // 关联的回测运行 ID（多线程回测模式）
         uint16_t _backtestRunId = 0;
+
+        // 预热期配置（回测模式下跳过信号生成的 epoch 数）
+        int _warmupEpochs = 0;
     };
 
     Map<String, StrategyFlowInfo> _flows; 

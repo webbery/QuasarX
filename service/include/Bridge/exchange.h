@@ -114,8 +114,6 @@ struct Order {
     String _sysID; // 其他SDK数据的交易ID
 };
 
-nlohmann::json order2json(const Order& );
-
 struct TradeReport {
     OrderStatus _status;
     // 成交类型  OrderType

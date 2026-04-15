@@ -1,5 +1,7 @@
 #include "AgentSubSystem.h"
 #include "Bridge/exchange.h"
+#include "Nodes/FunctionNode.h"
+#include "Nodes/PortfolioNode.h"
 #include "Nodes/QuoteNode.h"
 #include "StrategyNode.h"
 #include "server.h"
@@ -46,10 +48,6 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
     return status;
 }
 
-void FlowSubsystem::SetStrategyConfig(const String& strategy, const nlohmann::json& config) {
-    _flows[strategy]._config = config;
-}
-
 void FlowSubsystem::ClearFlow(const String& strategy) {
     for (auto node: _flows[strategy]._graph) {
         delete node;
@@ -93,6 +91,15 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
     auto& flow = _flows.at(strategy);
     flow._running = true;
     flow._backtestRunId = runId;
+
+    // 从 StrategySubSystem 获取预热期（已在 InitStrategy 时推断）
+    int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
+    flow._warmupEpochs = warmupEpochs;
+
+    if (warmupEpochs > 0) {
+        INFO("[Backtest] Warmup period: {} epochs", warmupEpochs);
+    }
+
     flow._worker = new std::thread([strategy, runId, this]() {
         DataContext context(strategy, _handle);
         context.setBacktestRunId(runId);
@@ -217,9 +224,21 @@ Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
     bool shouldSkipEpoch = false;
-    
+
+    // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
+    bool inWarmup = (context.GetEpoch() <= flow._warmupEpochs);
+
     // 根据策略图生成信号
     for (auto node: flow._graph) {
+        // 跳过预热期的信号、执行和投资组合节点
+        if (inWarmup) {
+            if (dynamic_cast<SignalNode*>(node) || 
+                dynamic_cast<ExecuteNode*>(node) || 
+                dynamic_cast<PortfolioNode*>(node)) {
+                continue;
+            }
+        }
+
         auto result = node->Process(strategy, context);
         
         switch (result) {
@@ -255,7 +274,6 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     }
     
     if (shouldSkipEpoch) {
-        DEBUG_INFO("Skipping epoch due to time misalignment in strategy {}", strategy);
         return true;  // 返回 true 继续运行，但不执行风控
     }
     

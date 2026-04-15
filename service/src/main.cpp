@@ -1,3 +1,4 @@
+#include "spdlog/common.h"
 #include <memory_resource>
 #ifdef WIN32
 #else
@@ -125,7 +126,11 @@ void init_logger() {
     combined_logger->set_pattern("[%m-%d %H:%M:%S.%e] [%^%l%$] [thread %t] [%s:%#] %v");
 
     // 5. 设置全局日志级别（可选，logger会继承这个级别）
+#ifdef _DEBUG
+    combined_logger->set_level(spdlog::level::debug);
+#else
     combined_logger->set_level(spdlog::level::trace);
+#endif
     // 警告则刷新
     combined_logger->flush_on(spdlog::level::warn);
     // 每60秒刷新日志

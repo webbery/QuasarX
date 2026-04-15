@@ -51,7 +51,7 @@
         {
             "id": "2",
             "type": "custom",
-            "data": { 
+            "data": {
                 "label": "ReturnRate",
                 "nodeType": "function",
                 "params": {
@@ -61,7 +61,7 @@
                         "options": ["Return"]
                     },
                     "range": {
-                        "value": "1m",
+                        "value": "5d",
                         "type": "select",
                         "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
                     }
@@ -72,7 +72,7 @@
         {
             "id": "3",
             "type": "custom",
-            "data": { 
+            "data": {
                 "label": "STD",
                 "nodeType": "function",
                 "params": {
@@ -82,7 +82,7 @@
                         "options": ["STD"]
                     },
                     "range": {
-                        "value": "1m",
+                        "value": "5d",
                         "type": "select",
                         "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
                     }

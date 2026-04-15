@@ -122,7 +122,7 @@ void FeatureSubsystem::send_feature(nng_socket& s, const QuoteInfo& quote, const
         types[i] = feat.second->desc();
         ++i;
     }
-    DEBUG_INFO("REAL: {}", features);
+    // DEBUG_INFO("REAL: {}", features);
     // messenger._price = quote._close;
     messenger._data = std::move(features);
     messenger._names = std::move(types);

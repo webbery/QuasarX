@@ -10,6 +10,56 @@
 #include <variant>
 #include "PortfolioSubsystem.h"
 
+namespace {
+    // timeHorizon 映射：统一转换为秒（用于计算 warmup epoch 数）
+    static const Map<String, int> timeHorizonSeconds{
+        {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600},
+        {"1d", 86400}, {"3d", 259200}, {"5d", 432000},
+    };
+
+    // 从策略配置推断预热期 epoch 数
+    int InferWarmupEpochsFromConfig(const nlohmann::json& config) {
+        int maxWarmup = 0;
+
+        if (!config.contains("nodes")) return maxWarmup;
+
+        // 1. 找到 Input 节点的 freq
+        String inputFreq;
+        for (auto& node : config["nodes"]) {
+            String nodeType = node["data"].value("nodeType", "");
+            if (nodeType == "input") {
+                auto& params = node["data"]["params"];
+                inputFreq = (String)params["freq"]["value"];
+                break;
+            }
+        }
+
+        if (inputFreq.empty() || !timeHorizonSeconds.count(inputFreq)) {
+            return maxWarmup;
+        }
+
+        int freqSeconds = timeHorizonSeconds.at(inputFreq);
+
+        // 2. 遍历 Function 节点，计算最大 warmup
+        for (auto& node : config["nodes"]) {
+            String nodeType = node["data"]["nodeType"];
+            if (nodeType != "function") continue;
+
+            auto& params = node["data"]["params"];
+            String range = params["range"]["value"];
+
+            if (timeHorizonSeconds.count(range)) {
+                int rangeSeconds = timeHorizonSeconds.at(range);
+                // 计算需要的 epoch 数（向上取整）
+                int epochs = (rangeSeconds + freqSeconds - 1) / freqSeconds;
+                maxWarmup = std::max(maxWarmup, epochs);
+            }
+        }
+
+        return maxWarmup;
+    }
+}
+
 #define INIT_STRATEGY(classname) {\
     auto strategy = new classname();\
     _strategies[strategy->Name()] = strategy;\
@@ -92,6 +142,11 @@ Map<StatisticIndicator, std::variant<float, List<float>>>  StrategySubSystem::Ge
     return _agentSystem->GetCollection(strategy);
 }
 
+int StrategySubSystem::GetWarmupEpochs(const String& strategy) const {
+    auto it = _strategyWarmupEpochs.find(strategy);
+    return it != _strategyWarmupEpochs.end() ? it->second : 0;
+}
+
 // AgentStrategyInfo StrategySubSystem::ParseJsonScript(const String& content) {
 //     AgentStrategyInfo info;
 //     nlohmann::json script_content = nlohmann::json::parse(content);
@@ -146,6 +201,7 @@ void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& histor
 void StrategySubSystem::DeleteStrategy(const String& name) {
     _featureSystem->ErasePipeline(name);
     _strategies.erase(name);
+    _strategyWarmupEpochs.erase(name);
 }
 
 void StrategySubSystem::InitStrategy(const String& strategy, const List<QNode*>& flow) {
@@ -156,4 +212,12 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
     auto nodes = parse_strategy_script_v2(script, _handle);
     auto sorted_nodes = topo_sort(nodes);
     InitStrategy(strategyName, sorted_nodes);
+    
+    // 推断并保存预热期 epoch 数
+    int warmup = InferWarmupEpochsFromConfig(script);
+    _strategyWarmupEpochs[strategyName] = warmup;
+    
+    if (warmup > 0) {
+        INFO("[StrategySubSystem] Inferred warmup for '{}': {} epochs", strategyName, warmup);
+    }
 }

@@ -1,13 +1,8 @@
 #include "Handler/OrderHandler.h"
-#include "Bridge/exchange.h"
-#include "HttpHandler.h"
 #include "Util/system.h"
 #include "server.h"
-#include "Util/string_algorithm.h"
 #include <cstdint>
 #include <string>
-#include <thread>
-#include <tuple>
 #include "BrokerSubSystem.h"
 
 namespace {
@@ -180,6 +175,7 @@ void OrderHandler::get(const httplib::Request& req, httplib::Response& res) {
             res.status = 500;
         }
         else {
+            extern nlohmann::json order2json(const Order& item);
             for (auto& item : ol) {
                 auto order = order2json(item);
                 result.emplace_back(std::move(order));
