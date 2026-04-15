@@ -337,7 +337,7 @@ export function useChartData(
 
     // 5. 加载基准数据
     if (signalStartDate && signalEndDate) {
-      const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
+      const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000001'
       updateBenchmark({
         symbol: benchmarkSymbol,
         name: '',
@@ -512,27 +512,14 @@ export function useChartData(
    * 更新策略性能日期标签（从价格数据或回测日期范围生成）
    */
   function updateStrategyPerformanceDates(prices?: any[]) {
-    // 如果有价格数据，优先使用价格数据生成日期标签
+    // 如果有价格数据，使用日级日期字符串
     if (prices && prices.length > 0) {
-      const monthMap = new Map<string, number>()
-      prices.forEach((item: any) => {
-        const date = new Date(item[0])
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-        if (!monthMap.has(monthKey)) {
-          monthMap.set(monthKey, monthMap.size)
-        }
-      })
-
-      // 生成显示标签（如 "1 月"、"2 月"）
-      reportState.strategyPerformanceDates.value = Array.from(monthMap.keys()).map(key => {
-        const [, month] = key.split('-')
-        return `${parseInt(month)}月`
-      })
-      console.info(`[useChartData] 从价格数据生成日期标签：${reportState.strategyPerformanceDates.value.length} 个月份`)
+      reportState.strategyPerformanceDates.value = prices.map((item: any) => item[0])
+      console.info(`[useChartData] 从价格数据生成日期标签：${reportState.strategyPerformanceDates.value.length} 天`)
       return
     }
 
-    // 如果没有价格数据，使用 backtestStartDate 和 backtestEndDate
+    // 如果没有价格数据，使用 backtestStartDate 和 backtestEndDate 生成日级标签
     if (reportState.backtestStartDate.value && reportState.backtestEndDate.value) {
       const start = reportState.backtestStartDate.value
       const end = reportState.backtestEndDate.value
@@ -540,13 +527,15 @@ export function useChartData(
 
       const current = new Date(start)
       while (current <= end) {
-        const month = current.getMonth() + 1
-        dates.push(`${month}月`)
-        current.setMonth(current.getMonth() + 1)
+        const Y = current.getFullYear()
+        const M = String(current.getMonth() + 1).padStart(2, '0')
+        const D = String(current.getDate()).padStart(2, '0')
+        dates.push(`${Y}-${M}-${D}`)
+        current.setDate(current.getDate() + 1)
       }
 
       reportState.strategyPerformanceDates.value = dates
-      console.info(`[useChartData] 从回测日期生成标签：${reportState.strategyPerformanceDates.value.length} 个月份`)
+      console.info(`[useChartData] 从回测日期生成日级标签：${reportState.strategyPerformanceDates.value.length} 天`)
     }
   }
 

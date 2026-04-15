@@ -262,7 +262,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     // 仅在本轮未跳过时执行风控检查
     auto risk = _handle->GetRiskSubSystem();
     if (risk) {
-        risk->Metric(context);
+        //risk->Metric(context);
     }
     return true;
 }

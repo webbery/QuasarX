@@ -394,13 +394,24 @@ const testTickFlowConnection = async () => {
     testResult.value = null;
 
     try {
-        const { getBenchmark } = await import('../lib/tickflow');
-        const now = new Date();
-        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+        const baseUrl = tickflowApiKey.value
+            ? 'https://api.tickflow.org'
+            : 'https://free-api.tickflow.org';
 
-        await getBenchmark('SH000300', sixMonthsAgo, now);
+        const headers = { 'Accept': 'application/json' };
+        if (tickflowApiKey.value) {
+            headers['x-api-key'] = tickflowApiKey.value;
+        }
 
-        testResult.value = { success: true, message: '连接成功，数据已获取' };
+        const response = await fetch(`${baseUrl}/v1/exchanges`, { headers });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const count = Array.isArray(data) ? data.length : (data.data ? data.data.length : '未知');
+        testResult.value = { success: true, message: `连接成功，共 ${count} 个交易所` };
         message.success('TickFlow API 连接测试成功');
     } catch (e) {
         testResult.value = { success: false, message: e.message };

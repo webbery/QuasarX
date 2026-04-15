@@ -1172,7 +1172,7 @@ const runBacktest = async () => {
         const startDate = new Date(minTime * 1000)
         const endDate = new Date(maxTime * 1000)
 
-        const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000300'
+        const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000001'
 
         if (reportViewRef.value && reportViewRef.value.updateBenchmark) {
           reportViewRef.value.updateBenchmark({

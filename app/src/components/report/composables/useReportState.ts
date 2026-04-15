@@ -67,7 +67,7 @@ function getDefaultConfig(): ReportConfig {
   })
   return {
     chartVisibility,
-    defaultBenchmark: localStorage.getItem('benchmark_symbol') || '',
+    defaultBenchmark: localStorage.getItem('benchmark_symbol') || 'SH000001',
     showMetricsTable: true
   }
 }
@@ -111,7 +111,7 @@ function saveConfigToStorage(config: ReportConfig) {
 export function useReportState(): UseReportStateReturn {
   // === 核心状态 ===
   const selectedSymbol = ref<string[]>([])
-  const selectedBenchmark = ref(localStorage.getItem('benchmark_symbol') || '')
+  const selectedBenchmark = ref(localStorage.getItem('benchmark_symbol') || 'SH000001')
   const metricsData = ref<Record<string, number>>({})
   const strategyPerformanceDates = ref<string[]>([])
   const strategyPerformanceData = ref<number[]>([])

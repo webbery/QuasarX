@@ -2,7 +2,7 @@
 // TickFlow API 客户端 - 基于日线数据的基准指数获取与缓存
 
 export interface KlineData {
-  time: number;        // 时间戳（秒）
+  time: number;        // 时间戳（毫秒）
   open: number;
   high: number;
   low: number;
@@ -36,13 +36,13 @@ export interface BenchmarkIndex {
 
 // 支持的基准指数列表
 export const BENCHMARK_INDICES: BenchmarkIndex[] = [
+  { code: 'SH000001', name: '上证指数', description: '上证全市场基准' },
   { code: 'SH000300', name: '沪深 300', description: 'A 股大盘蓝筹基准' },
   { code: 'SH000905', name: '中证 500', description: '中盘成长基准' },
   { code: 'SH000852', name: '中证 1000', description: '小盘基准' },
   { code: 'SH000016', name: '上证 50', description: '超大盘基准' },
   { code: 'SZ399001', name: '深证成指', description: '深证市场基准' },
   { code: 'SZ399006', name: '创业板指', description: '成长创业基准' },
-  { code: 'SH000001', name: '上证指数', description: '上证全市场基准' },
 ];
 
 const DB_NAME = 'quasarx-benchmark';
@@ -77,9 +77,9 @@ function openDB(): Promise<IDBDatabase> {
 }
 
 function getCacheKey(symbol: string, start: number, end: number): string {
-  // 按天粒度缓存
-  const startDay = Math.floor(start / 86400);
-  const endDay = Math.floor(end / 86400);
+  // 按天粒度缓存（输入为毫秒级时间戳）
+  const startDay = Math.floor(start / 86400000);
+  const endDay = Math.floor(end / 86400000);
   return `${symbol.toUpperCase()}:${startDay}:${endDay}`;
 }
 
@@ -206,7 +206,7 @@ export function calculateMetrics(data: KlineData[]): BenchmarkMetrics {
   const totalReturn = (closes[closes.length - 1] - closes[0]) / closes[0];
 
   // 年化收益率
-  const days = (data[data.length - 1].time - data[0].time) / 86400;
+  const days = (data[data.length - 1].time - data[0].time) / 86400000;
   const years = days / 365.25;
   const annualReturn = years > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
 
@@ -247,21 +247,37 @@ export function calculateMetrics(data: KlineData[]): BenchmarkMetrics {
   };
 }
 
+// ============ Symbol 格式转换 ============
+function convertSymbolToApiFormat(symbol: string): string {
+  // SH000300 → 000300.SH, SZ399001 → 399001.SZ
+  const match = symbol.match(/^([A-Z]+)(\d+)$/);
+  if (!match) return symbol;
+  const [, prefix, code] = match;
+  const exchange = prefix === 'SH' ? 'SH' : 'SZ';
+  return `${code}.${exchange}`;
+}
+
 // ============ API 调用 ============
 export async function fetchBenchmark(symbol: string, start: number, end: number): Promise<BenchmarkResult> {
   const apiKey = getApiKey();
+
+  // 转换 symbol 格式：SH000300 → 000300.SH, SZ399001 → 399001.SZ
+  const apiSymbol = convertSymbolToApiFormat(symbol);
+
   const params = new URLSearchParams({
-    symbol,
-    period: '1d',  // 日线数据
-    start: start.toString(),
-    end: end.toString(),
+    symbol: apiSymbol,
+    period: '1d',
+    count: '10000', // 最大数量
+    start_time: start.toString(),
+    end_time: end.toString(),
+    adjust: 'backward',
   });
 
   const url = `https://api.tickflow.org/v1/klines?${params.toString()}`;
 
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
+    headers['x-api-key'] = apiKey;
   }
 
   const res = await fetch(url, { headers });
@@ -272,14 +288,27 @@ export async function fetchBenchmark(symbol: string, start: number, end: number)
 
   const result = await res.json();
 
-  // 适配 TickFlow API 响应格式
   if (result.code !== undefined && result.code !== 0) {
     throw new Error(`TickFlow API 错误：${result.msg || '未知错误'}`);
   }
 
-  // 支持两种响应格式：{code, data} 或 {data: [...]}
-  const klineData = result.data || result;
-  const data: KlineData[] = Array.isArray(klineData) ? klineData : [];
+  // 解析响应格式：{"data": {"close": [...], "timestamp": [...], "open": [...], "high": [...], "low": [...], "volume": [...]}}
+  const dataObj = result.data || {};
+  const timestamps = dataObj.timestamp || [];
+  const closes = dataObj.close || [];
+  const opens = dataObj.open || [];
+  const highs = dataObj.high || [];
+  const lows = dataObj.low || [];
+  const volumes = dataObj.volume || [];
+
+  const data: KlineData[] = timestamps.map((t: number, i: number) => ({
+    time: t,
+    open: opens[i] || 0,
+    high: highs[i] || 0,
+    low: lows[i] || 0,
+    close: closes[i] || 0,
+    volume: volumes[i] || 0,
+  }));
 
   if (data.length === 0) {
     throw new Error('未获取到 K 线数据');
@@ -303,8 +332,8 @@ export async function getBenchmark(
   startDate: Date,
   endDate: Date
 ): Promise<BenchmarkResult> {
-  const start = Math.floor(startDate.getTime() / 1000);
-  const end = Math.floor(endDate.getTime() / 1000);
+  const start = startDate.getTime();  // 毫秒级时间戳
+  const end = endDate.getTime();      // 毫秒级时间戳
 
   // 1. 尝试读取缓存
   const cached = await getCached(symbol, start, end);

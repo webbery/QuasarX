@@ -52,6 +52,24 @@ const { chartRef, initChart, updateChart } = useECharts(true)
 // === 数据计算 ===
 
 /**
+ * 从基准数据生成 x 轴日期标签
+ * 优先使用基准数据的时间戳，确保所有数据点都能显示
+ */
+const xAxisDates = computed(() => {
+  if (props.benchmarkData.length > 0) {
+    return props.benchmarkData.map((d: any) => {
+      const ms = d.time
+      const date = new Date(ms > 9999999999 ? ms : ms * 1000)
+      const Y = date.getFullYear()
+      const M = String(date.getMonth() + 1).padStart(2, '0')
+      const D = String(date.getDate()).padStart(2, '0')
+      return `${Y}-${M}-${D}`
+    })
+  }
+  return props.dates
+})
+
+/**
  * 计算基准累计收益曲线
  */
 const benchmarkCumulativeReturns = computed(() => {
@@ -64,16 +82,53 @@ const benchmarkCumulativeReturns = computed(() => {
 })
 
 /**
+ * 将策略收益对齐到基准日期轴
+ * 当策略收益点数与基准不一致时，进行插值/填充
+ */
+const alignedStrategyReturns = computed(() => {
+  const benchLen = benchmarkCumulativeReturns.value.length
+  const stratLen = props.strategyReturns.length
+
+  if (benchLen === 0) return props.strategyReturns
+  if (benchLen === stratLen) return props.strategyReturns
+
+  // 策略点数少于基准：线性插值到基准长度
+  if (stratLen < benchLen && stratLen > 1) {
+    const result: number[] = []
+    for (let i = 0; i < benchLen; i++) {
+      const srcIdx = (i / (benchLen - 1)) * (stratLen - 1)
+      const lo = Math.floor(srcIdx)
+      const hi = Math.ceil(srcIdx)
+      const frac = srcIdx - lo
+      const val = stratLen > 1
+        ? props.strategyReturns[lo] * (1 - frac) + props.strategyReturns[hi] * frac
+        : props.strategyReturns[0]
+      result.push(Number(val.toFixed(2)))
+    }
+    return result
+  }
+
+  // 策略点数多于基准：截断
+  if (stratLen > benchLen) {
+    return props.strategyReturns.slice(0, benchLen)
+  }
+
+  return props.strategyReturns
+})
+
+/**
  * 构建 ECharts 配置
  */
 function buildChartOption() {
   const hasBenchmark = props.benchmarkData.length > 0
+  const dates = xAxisDates.value
+  const stratReturns = alignedStrategyReturns.value
 
   const series: any[] = [
     {
       name: '策略收益',
       type: 'line',
-      data: props.strategyReturns,
+      data: stratReturns,
       smooth: true,
       lineStyle: { width: 3, color: '#2962ff' },
       areaStyle: {
@@ -125,9 +180,22 @@ function buildChartOption() {
     },
     xAxis: {
       type: 'category',
-      data: props.dates,
+      data: dates,
       axisLine: { lineStyle: { color: '#6E7079' } },
-      axisLabel: { color: '#a0aec0' }
+      axisLabel: {
+        color: '#a0aec0',
+        formatter: (value: string) => {
+          if (!value) return value
+          // 已经是 YYYY-MM-DD 格式，直接返回
+          if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+          const date = new Date(value)
+          if (isNaN(date.getTime())) return value
+          const Y = date.getFullYear()
+          const M = String(date.getMonth() + 1).padStart(2, '0')
+          const D = String(date.getDate()).padStart(2, '0')
+          return `${Y}-${M}-${D}`
+        }
+      }
     },
     yAxis: {
       type: 'value',
@@ -158,7 +226,7 @@ function handleRefresh() {
 
 // 监听数据变化，更新图表
 watch(
-  [() => props.dates, () => props.strategyReturns, () => props.benchmarkData, () => props.benchmarkName],
+  [() => props.dates, () => props.strategyReturns, () => props.benchmarkData, () => props.benchmarkName, xAxisDates, alignedStrategyReturns],
   () => {
     updateChart(buildChartOption(), true)
   },
