@@ -156,6 +156,190 @@ pytest ../test/testcases/test_order.py::TestOrder::test_stock_order_buy -v
 
 策略图 JSON Schema 详见 [doc/flow.md](doc/flow.md)
 
+### 信号语法 (Signal Node)
+
+SignalNode 用于根据策略指标生成交易信号（买入/卖出），支持使用**公式表达式**定义买卖条件。
+
+#### 基本结构
+
+```json
+{
+  "nodeType": "signal",
+  "params": {
+    "code": ["sz.000001", "sz.002825"],
+    "buy": "topk(ReturnRate[t], 2)",
+    "sell": "bottomk(ReturnRate[t], 2)"
+  }
+}
+```
+
+#### 公式语法
+
+信号公式使用 PEG (Parsing Expression Grammar) 定义的类 C 表达式语法，支持以下特性：
+
+**1. 变量引用**
+
+引用上游节点计算的指标，格式为 `变量名[时间索引]`：
+
+```
+ReturnRate[t]        # 当前时刻的收益率
+MA_5[t-1]            # 5日均线的上一个时刻值
+close[t]             # 当前收盘价
+```
+
+时间索引支持：
+- `[t]` - 当前时刻
+- `[t-N]` - 前 N 个时刻（如 `[t-5]`）
+- `[N]` - 绝对索引
+
+**2. 比较运算符**
+
+```
+ReturnRate[t] > 0.05          # 收益率大于5%
+MA_5[t] > MA_10[t]           # 短期均线金叉
+close[t] / open[t] > 1.02    # 涨幅超过2%
+```
+
+支持的比较操作符：`<=` `>=` `==` `!=` `<` `>`
+
+**3. 逻辑运算符**
+
+```
+ReturnRate[t] > 0.03 and STD[t] < 0.02    # 收益>3% 且 波动率<2%
+MA_5[t] > MA_10[t] or close[t] > high[t-1]  # 金叉或突破昨日高点
+not (ReturnRate[t] < -0.05)                 # 收益不低于-5%
+! (close[t] < open[t])                      # 非阴线（! 等价于 not）
+```
+
+支持的逻辑操作符：`and` `or` `not` `!`
+
+> **注意**：`not` 和 `!` 优先级高于比较运算符，例如 `not a > b` 等价于 `not (a > b)`
+
+**4. 截面函数 (Cross-Section Functions)**
+
+用于多股票排序和筛选：
+
+| 函数 | 说明 | 示例 |
+|------|------|------|
+| `topk(expr, k)` | 选择指标值最大的前 k 只股票 | `topk(ReturnRate[t], 2)` → 收益最高的2只 |
+| `bottomk(expr, k)` | 选择指标值最小的前 k 只股票 | `bottomk(STD[t], 2)` → 波动率最低的2只 |
+| `rank(expr)` | 返回指标的排名 (0~1) | `rank(ReturnRate[t]) > 0.8` → 排名前20% |
+| `zscore(expr)` | 标准化处理 (Z-Score) | `zscore(close[t]) > 2` → 超过2个标准差 |
+| `pct(expr, p)` | 分位数计算 | `pct(ReturnRate[t], 0.9)` → 90分位数 |
+
+**5. 数学运算**
+
+```
+close[t] - open[t]           # 加减法
+MA_5[t] * volume[t]          # 乘法
+ReturnRate[t] / STD[t]       # 除法（计算夏普比率）
+close[t] @ MA_5[t]           # 矩阵乘法
+```
+
+支持的算术操作符：`+` `-` `*` `@` `/` `//` `%`
+
+**6. 函数调用**
+
+```
+MA(close[t], 5)              # 5日移动平均线
+STD(ReturnRate[t], 10)       # 10日收益率标准差
+```
+
+#### 完整语法定义
+
+```peg
+# 程序结构
+Program         <- Statement*
+Statement       <- ExpressionStmt / AssignmentStmt
+ExpressionStmt  <- Expression EOL
+AssignmentStmt  <- Identifier '=' Expression EOL
+
+# 表达式定义（优先级从低到高）
+Expression      <- OrExpr
+OrExpr          <- AndExpr ('or' AndExpr)*
+AndExpr         <- NotExpr ('and' NotExpr)*
+NotExpr         <- NotPrefix / CompareExpr
+NotPrefix       <- ('not' / '!') NotExpr
+CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
+ArithExpr       <- Term (AddOp Term)*
+Term            <- Primary (MulOp Primary)*
+Primary         <- Atom (Trailer)*
+Atom            <- Number / String / FunctionCall / ListExpr / Identifier / '(' Expression ')'
+
+# 时间序列访问
+Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeOffset ']'
+TimeOffset      <- < 't' '-' [0-9]+ > / < 't' > / < [0-9]+ >
+
+# 函数调用
+FunctionCall    <- Identifier '(' Arguments? ')'
+Arguments       <- Expression (',' Expression)*
+
+# 数据结构
+ListExpr        <- '[' Expression (',' Expression)* ']'
+
+# 标识符和数字
+Identifier      <- !('not' / 'and' / 'or' / 'true' / 'false') < [a-zA-Z_][a-zA-Z_0-9]* >
+Number          <- < '-'? [0-9]+ ('.' [0-9-9]+)? >
+String          <- < '"' [^"]* '"' > / < "'" [^']* "'" >
+
+# 运算符
+CompareOp       <- '<=' / '>=' / '==' / '!=' / '<' / '>'
+AddOp           <- '+' / '-'
+MulOp           <- '*' / '@' / '/' / '//' / '%'
+
+# 语句分隔符
+EOL             <- ';' [ \t\r\n]* / !.
+```
+
+#### 常用策略示例
+
+**CTA 趋势跟踪**
+```json
+{
+  "buy": "topk(ReturnRate[t], 2)",
+  "sell": "bottomk(ReturnRate[t], 2)"
+}
+```
+
+**均值回归**
+```json
+{
+  "buy": "zscore(close[t]) < -2",
+  "sell": "zscore(close[t]) > 2"
+}
+```
+
+**多因子选股**
+```json
+{
+  "buy": "rank(ReturnRate[t]) > 0.7 and rank(volume[t]) > 0.5",
+  "sell": "rank(ReturnRate[t]) < 0.3"
+}
+```
+
+**动量突破**
+```json
+{
+  "buy": "close[t] > high[t-5] and volume[t] > volume[t-1] * 1.5",
+  "sell": "close[t] < MA_5[t]"
+}
+```
+
+#### 执行逻辑
+
+- **买入优先级**：当同一股票同时触发买入和卖出信号时，系统会输出警告日志并跳过该信号
+- **信号值输出**：
+  - `1` = 买入信号
+  - `-1` = 卖出信号
+  - `0` = 持有/无信号
+- **多股票池**：`code` 参数定义策略操作的股票范围，截面函数会在该范围内排序
+
+#### 注意事项
+
+1. **避免使用 `not topk(...)` 作为卖出条件**：这会导致与买入信号的逻辑冲突（同一股票可能同时触发买卖）。应使用 `bottomk(...)` 或其他独立指标。
+2. **时间索引**：`[t]` 表示当前时刻，`[t-1]` 表示上一时刻，`[t-N]` 表示前 N 个时刻
+3. **类型验证**：系统会在策略启动时验证公式中的变量类型和可用性
+
 ### 数据流
 
 ```

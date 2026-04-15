@@ -227,18 +227,8 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
             String nodeId = _varToNodeId[funcName];
             auto it = _csGraph.nodes.find(nodeId);
             if (it != _csGraph.nodes.end() && it->second.computed && it->second.outputs.count(symbol)) {
-                DEBUG_INFO("[evalFunctionCall] Using cached result for {}, symbol={}, returning value",
-                           funcName, get_symbol(symbol));
                 return it->second.outputs.at(symbol);
-            } else {
-                DEBUG_INFO("[evalFunctionCall] {} cache miss: node_found={}, computed={}, has_output={}",
-                           funcName,
-                           it != _csGraph.nodes.end(),
-                           it != _csGraph.nodes.end() ? it->second.computed : false,
-                           it != _csGraph.nodes.end() ? it->second.outputs.count(symbol) : 0);
             }
-        } else {
-            DEBUG_INFO("[evalFunctionCall] {} not found in _varToNodeId", funcName);
         }
         return false;
     }

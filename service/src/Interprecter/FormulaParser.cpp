@@ -130,6 +130,18 @@ bool FormulaParser::hasCrossSectionFunctions(const peg::Ast& ast) {
     return false;
 }
 
+// 从 AST 节点中递归提取 Number 值
+static std::optional<double> tryExtractNumber(const std::shared_ptr<peg::Ast>& node) {
+    if (node->name == "Number") {
+        return node->token_to_number<double>();
+    }
+    // NotExpr 内层可能是 Number（如 "not 2" 这种异常但存在的语法）
+    if (node->name == "NotExpr" && !node->nodes.empty()) {
+        return tryExtractNumber(node->nodes.back());
+    }
+    return std::nullopt;
+}
+
 // 从表达式提取截面函数并建图（递归）
 std::string FormulaParser::extractAndBuildGraph(const peg::Ast& node, int& counter) {
     if (node.name == "FunctionCall") {
@@ -164,8 +176,8 @@ std::string FormulaParser::extractAndBuildGraph(const peg::Ast& node, int& count
                 // 第二个参数（如果有，如 topk 的 k 值）
                 if (argsNode->nodes.size() > 1) {
                     auto& secondArg = argsNode->nodes[1];
-                    if (secondArg->name == "Number") {
-                        csNode.param = secondArg->token_to_number<double>();
+                    if (auto num = tryExtractNumber(secondArg)) {
+                        csNode.param = *num;
                     }
                 }
             }
@@ -192,23 +204,9 @@ void FormulaParser::buildCrossSectionGraph(const peg::Ast& ast) {
     int nodeCounter = 0;
     extractAndBuildGraph(ast, nodeCounter);
 
-    // 调试日志：输出图构建结果
-    DEBUG_INFO("[buildCrossSectionGraph] total nodes={}, _varToNodeId size={}", _csGraph.nodes.size(), _varToNodeId.size());
-    for (auto& [name, nodeId] : _varToNodeId) {
-        DEBUG_INFO("[buildCrossSectionGraph]   varName={} -> nodeId={}", name, nodeId);
-    }
-    for (auto& [nodeId, node] : _csGraph.nodes) {
-        DEBUG_INFO("[buildCrossSectionGraph]   node={}, type={}, deps={}", nodeId, (int)node.type, node.dependencies.size());
-    }
-
     // 拓扑排序
     if (!_csGraph.topologicalSort()) {
         WARN("CrossSectionGraph has cycle!");
-    } else {
-        DEBUG_INFO("[buildCrossSectionGraph] topo order:");
-        for (auto& nodeId : _csGraph.evalOrder) {
-            DEBUG_INFO("[buildCrossSectionGraph]   {}", nodeId);
-        }
     }
 }
 
@@ -281,12 +279,6 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         }
         k = std::max(1, std::min(k, static_cast<int>(scores.size())));
 
-        // 调试日志：分数收集和排序结果
-        DEBUG_INFO("[computeNode TOPK] node={}, scores size={}, k={}", node.name, scores.size(), k);
-        for (auto& [sym, score] : scores) {
-            DEBUG_INFO("[computeNode TOPK]   symbol={}, score={}", get_symbol(sym), score);
-        }
-
         // 部分排序选前 k
         std::partial_sort(scores.begin(), scores.begin() + k, scores.end(),
             [](const auto& a, const auto& b) { return a.second > b.second; });
@@ -296,14 +288,8 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
             topKSymbols.insert(scores[i].first);
         }
 
-        DEBUG_INFO("[computeNode TOPK] topk symbols:");
-        for (auto& sym : topKSymbols) {
-            DEBUG_INFO("[computeNode TOPK]   {}", get_symbol(sym));
-        }
-
         for (auto symbol : symbols) {
             node.outputs[symbol] = (topKSymbols.count(symbol) > 0);
-            DEBUG_INFO("[computeNode TOPK] output symbol={}, value={}", get_symbol(symbol), std::get<bool>(node.outputs[symbol]));
         }
         break;
     }
@@ -314,8 +300,6 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
             k = static_cast<int>(std::get<double>(node.param));
         }
         k = std::max(1, std::min(k, static_cast<int>(scores.size())));
-
-        DEBUG_INFO("[computeNode BOTTOMK] node={}, scores size={}, k={}", node.name, scores.size(), k);
 
         // 部分排序选后 k（从小到大排序）
         std::partial_sort(scores.begin(), scores.begin() + k, scores.end(),
@@ -389,11 +373,9 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
 
 // 执行整个图
 void FormulaParser::computeCrossSectionGraph(const Vector<symbol_t>& symbols, DataContext& context) {
-    DEBUG_INFO("[computeCrossSectionGraph] symbols size={}, evalOrder size={}", symbols.size(), _csGraph.evalOrder.size());
     // 按拓扑序计算所有节点
     for (auto& nodeId : _csGraph.evalOrder) {
         auto& node = _csGraph.nodes.at(nodeId);
-        DEBUG_INFO("[computeCrossSectionGraph] computing node={}, type={}", nodeId, (int)node.type);
         computeNode(node, symbols, context);
     }
 }
@@ -501,11 +483,7 @@ List<Pair<symbol_t, TradeAction>> FormulaParser::envoke(const Vector<symbol_t>& 
             auto exprValue = eval(symbol, *_ast, context);
             bool boolValue = std::get<bool>(exprValue);
             TradeAction action = (boolValue ? _default : TradeAction::HOLD);
-            
-            String symStr = get_symbol(symbol);
-            DEBUG_INFO("[envoked] symbol={}, expr_result={}, action={}", 
-                       symStr, boolValue, (int)action);
-            
+
             Pair<symbol_t, TradeAction> decision{symbol, action};
             decisions.emplace_back(std::move(decision));
         }
@@ -527,28 +505,6 @@ List<Pair<symbol_t, TradeAction>> FormulaParser::envokeMixedCase(const Vector<sy
         context_t exprValue = evalNode(symbol, *_ast, context);
         bool boolValue = statement::check_bool(exprValue);
         TradeAction action = (boolValue ? _default : TradeAction::HOLD);
-
-        // 调试日志：输出每个 symbol 的表达式求值结果
-        String symStr = get_symbol(symbol);
-
-        // 输出 exprValue 的详细类型和值
-        String valueStr;
-        if (std::holds_alternative<bool>(exprValue)) {
-            valueStr = fmt::format("bool({})", std::get<bool>(exprValue) ? "true" : "false");
-        } else if (std::holds_alternative<double>(exprValue)) {
-            valueStr = fmt::format("double({})", std::get<double>(exprValue));
-        } else if (std::holds_alternative<String>(exprValue)) {
-            valueStr = fmt::format("String({})", std::get<String>(exprValue));
-        } else if (std::holds_alternative<Vector<double>>(exprValue)) {
-            auto& vec = std::get<Vector<double>>(exprValue);
-            valueStr = fmt::format("Vector<double>(size={})", vec.size());
-        } else {
-            valueStr = "unknown";
-        }
-
-        DEBUG_INFO("[envokedMixedCase] symbol={}, expr_result={}, action={}, exprValue={}",
-                   symStr, boolValue, (int)action, valueStr);
-        
         decisions.emplace_back(symbol, action);
     }
 
