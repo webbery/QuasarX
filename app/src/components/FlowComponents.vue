@@ -119,6 +119,10 @@
                     title="包含一些常见函数如MA、RSI等金融特征及归一化计算">
                     <div class="component-title">运算节点</div>
                 </div>
+                <div class="component-card operation-node" draggable="true" @dragstart="onDragStart($event, 'spread')"
+                    title="配对交易价差计算，支持简单价差、对数价差和滚动回归">
+                    <div class="component-title">价差节点</div>
+                </div>
             </div>
         </div>
         <div class="components-list" v-show="openCategories.input">

@@ -28,6 +28,7 @@ export const keyMap: KeyMap = {
   "formula": "公式",
   "method": "方法",
   "smoothTime": "平滑时间",
+  "range": "范围",
   "indicator": "输出指标",
   "sharp": "夏普比率",
   "maxDrawdown": "最大回撤",
@@ -53,6 +54,10 @@ export const keyMap: KeyMap = {
   "type": "执行类型",
   "positionRatio": "仓位比例",
   "pool": "交易池",
+  "stockA": "标的A",
+  "stockB": "标的B",
+  "beta": "对冲比例β",
+  "window": "窗口大小",
 }
 
 // 节点类型配置
@@ -255,12 +260,73 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
       "方法": {
         value: "MA",
         type: "select",
-        options: ["MA"]
+        options: [
+          { label: "MA (移动平均)", value: "MA" },
+          { label: "STD (标准差)", value: "STD" },
+          { label: "Return (收益率)", value: "Return" },
+          { label: "R2 (拟合优度)", value: "R2" },
+          { label: "ZScore (标准化)", value: "ZScore" }
+        ]
+      },
+      "范围": {
+        value: "1d",
+        type: "select",
+        options: [
+          { label: "6秒", value: "6s" },
+          { label: "30秒", value: "30s" },
+          { label: "1分钟", value: "1m" },
+          { label: "5分钟", value: "5m" },
+          { label: "1小时", value: "1h" },
+          { label: "1天", value: "1d" },
+          { label: "3天", value: "3d" },
+          { label: "5天", value: "5d" }
+        ]
       },
       "平滑时间": {
         value: 5,
-        type: "text",
+        type: "number",
         unit: "天"
+      }
+    }
+  },
+  'spread': {
+    label: "价差计算",
+    nodeType: "spread",
+    params: {
+      "标的A": {
+        value: "sz.600000",
+        type: "text",
+        placeholder: "输入标的A的代码（如 sz.600000）"
+      },
+      "标的B": {
+        value: "sz.600036",
+        type: "text",
+        placeholder: "输入标的B的代码（如 sz.600036）"
+      },
+      "方法": {
+        value: "rolling_regression",
+        type: "select",
+        options: [
+          { label: "简单价差 (A - B)", value: "simple_diff" },
+          { label: "对数价差 (ln(A) - ln(B))", value: "log_diff" },
+          { label: "滚动回归 (A - β×B)", value: "rolling_regression" }
+        ]
+      },
+      "窗口大小": {
+        value: 60,
+        type: "number",
+        min: 10,
+        max: 500,
+        step: 10,
+        unit: "天"
+      },
+      "对冲比例β": {
+        value: 1.0,
+        type: "number",
+        min: 0.1,
+        max: 10.0,
+        step: 0.1,
+        visible: true
       }
     }
   }

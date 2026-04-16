@@ -32,7 +32,7 @@ String grammar = R"(
         Expression      <- OrExpr
         OrExpr          <- AndExpr ('or' AndExpr)*
         AndExpr         <- NotExpr ('and' NotExpr)*
-        NotExpr         <- NotPrefix / CompareExpr { no_ast_opt }
+        NotExpr         <- NotPrefix / CompareExpr
         NotPrefix       <- ('not' / '!') NotExpr { no_ast_opt }
         CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
         ArithExpr       <- Term (AddOp Term)*
@@ -235,8 +235,8 @@ Map<String, EvalPtr> evalMap{
     {"Statement", &FormulaParser::evalStatement},
     {"AndExpr", &FormulaParser::evalAndExpr},
     {"OrExpr", &FormulaParser::evalOrExpr},
-    {"NotExpr", &FormulaParser::evalNotExpr},
-    {"NotPrefix", &FormulaParser::evalNotExpr},
+    // {"NotExpr", &FormulaParser::evalNotExpr},
+    {"NotPrefix", &FormulaParser::evalNotPrefix},
     {"Primary", &FormulaParser::evalPrimary},
     {"ArithExpr", &FormulaParser::evalArithmetic},
     {"ExpressionStmt", &FormulaParser::evalStatement}

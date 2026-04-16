@@ -122,7 +122,8 @@ public:
     context_t evalProgram(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalOrExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalAndExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
-    context_t evalNotExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
+    // context_t evalNotExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
+    context_t evalNotPrefix(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalStatement(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalPrimary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalArithmetic(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);

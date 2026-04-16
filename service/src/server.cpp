@@ -15,9 +15,11 @@
 #include "Handler/TimerHandler.h"
 #include "HttpHandler.h"
 #include "PortfolioSubsystem.h"
+#include "StrategyNode.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
+#include "boost/algorithm/string/join.hpp"
 #include "csv.h"
 #include <fstream>
 #include <nng/protocol/reqrep0/rep.h>
@@ -28,6 +30,10 @@
 #include "Handler/OrderHandler.h"
 #include "Handler/StrategyHandler.h"
 #include "Handler/StockHandler.h"
+#include "Nodes/QuoteNode.h"
+#include "Nodes/SignalNode.h"
+#include "Nodes/PortfolioNode.h"
+#include "Nodes/ExecuteNode.h"
 #include "Handler/BrokerHandler.h"
 #include "Handler/ExchangeHandler.h"
 #include "Handler/RiskHandler.h"
@@ -47,6 +53,7 @@
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
+#include <boost/algorithm/string.hpp>
 
 #define THREAD_URL  "inproc://thread"
 #define ERROR_RESPONSE  "not a valid request"
@@ -443,39 +450,102 @@ void Server::AddSymbolToMarket(const String& code, ContractInfo&& info) {
 
 std::pair<bool, String> Server::ValidateStrategyConfig(const nlohmann::json& config) {
     try {
-        // 创建临时的 FormulaParser 来验证表达式
-        // 注意：这里只验证买入和卖出表达式，不执行实际策略
-
-        // 收集可用变量（从输入节点开始）
-        // 由于验证阶段节点尚未初始化，我们只能验证表达式语法
-
-        // 创建临时节点图来收集输入变量
+        auto lambda_delete = [] (const List<QNode*>& nodes) {
+            // 清理节点
+            for (auto* node : nodes) {
+                delete node;
+            }
+        };
+        // 1. 解析策略图
         auto nodes = parse_strategy_script_v2(config, this);
 
-        // 找到输入节点并收集可用变量
-        Map<String, ArgType> availableVars;
-        //for (auto* node : nodes) {
-        //    if (auto* inputNode = dynamic_cast<QuoteInputNode*>(node)) {
-        //        auto vars = inputNode->out_elements();
-        //        for (auto& [key, type] : vars) {
-        //            // 迁移旧类型到新类型
-        //            availableVars[key] = migrateLegacyType(type);
-        //        }
-        //    }
-        //}
-
-        // 找到信号节点并验证表达式
-        //for (auto* node : nodes) {
-        //    if (auto* signalNode = dynamic_cast<SignalNode*>(node)) {
-        //        // 使用信号节点内部的 validate 方法
-        //        // 这里不需要额外操作，因为 Init 已经会调用 validate
-        //    }
-        //}
-
-        // 清理节点
+        // 2. 验证图的完整性：必须包含 Input/Signal/Portfolio/Execution 节点
+        // 统计各类节点数量
+        int inputCount = 0, signalCount = 0, portfolioCount = 0, executionCount = 0;
         for (auto* node : nodes) {
-            delete node;
+            if (dynamic_cast<QuoteInputNode*>(node)) inputCount++;
+            else if (dynamic_cast<SignalNode*>(node)) signalCount++;
+            else if (dynamic_cast<PortfolioNode*>(node)) portfolioCount++;
+            else if (dynamic_cast<ExecuteNode*>(node)) executionCount++;
         }
+
+        // 检查必需节点
+        List<String> missingNodes;
+        if (inputCount == 0) missingNodes.push_back("Input(行情数据输入)");
+        if (signalCount == 0) missingNodes.push_back("Signal(信号节点)");
+        if (portfolioCount == 0) missingNodes.push_back("Portfolio(投资组合节点)");
+        if (executionCount == 0) missingNodes.push_back("Execution(执行器节点)");
+
+        if (!missingNodes.empty()) {
+            lambda_delete(nodes);
+            String info = boost::algorithm::join(missingNodes, ", ");
+            String errorMsg = std::format("strategy graph not correct, {} is lost", info);
+            WARN("{}", errorMsg);
+            return {false, errorMsg};
+        }
+
+        // 3. 验证图的连通性: 从 Input 节点出发，BFS 遍历检查是否能到达 Signal、Portfolio、Execution
+        Set<QNode*> visited;
+        Vector<QNode*> queue;
+
+        // 找到所有 Input 节点作为起点
+        for (auto* node : nodes) {
+            if (dynamic_cast<QuoteInputNode*>(node)) {
+                if (!visited.count(node)) {
+                    visited.insert(node);
+                    queue.push_back(node);
+                }
+            }
+        }
+
+        // BFS 遍历
+        size_t head = 0;
+        while (head < queue.size()) {
+            auto* current = queue[head++];
+            const auto& outs = current->outs();
+            for (const auto& [handle, nextNode] : outs) {
+                if (!visited.count(nextNode)) {
+                    visited.insert(nextNode);
+                    queue.push_back(nextNode);
+                }
+            }
+        }
+
+        // 检查是否有未访问的节点(不连通)
+        if (visited.size() != nodes.size()) {
+            lambda_delete(nodes);
+            String errorMsg = std::format("策略图存在孤立的节点，总节点数={}，可到达节点数={}", 
+                nodes.size(), visited.size());
+            WARN("{}", errorMsg);
+            return {false, errorMsg};
+        }
+
+        // 4. 检查 Input 是否能到达 Signal/Portfolio/Execution
+        bool canReachSignal = false, canReachPortfolio = false, canReachExecution = false;
+        for (auto* node : visited) {
+            if (dynamic_cast<SignalNode*>(node)) canReachSignal = true;
+            else if (dynamic_cast<PortfolioNode*>(node)) canReachPortfolio = true;
+            else if (dynamic_cast<ExecuteNode*>(node)) canReachExecution = true;
+        }
+
+        List<String> unreachableNodes;
+        if (!canReachSignal) unreachableNodes.push_back("Signal");
+        if (!canReachPortfolio) unreachableNodes.push_back("Portfolio");
+        if (!canReachExecution) unreachableNodes.push_back("Execution");
+
+        if (!unreachableNodes.empty()) {
+            lambda_delete(nodes);
+            String info = boost::algorithm::join(unreachableNodes, ",");
+            String errorMsg = std::format("Input 节点无法到达: {}", info);
+            WARN("{}", errorMsg);
+            return {false, errorMsg};
+        }
+
+        // 5. 清理临时节点
+        lambda_delete(nodes);
+
+        INFO("策略图验证通过: {} Input, {} Signal, {} Portfolio, {} Execution",
+            inputCount, signalCount, portfolioCount, executionCount);
 
         return {true, ""};
     } catch (const std::runtime_error& e) {

@@ -82,6 +82,16 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 发送开始消息 (runId=0 表示尚未初始化)
     SendSSEProgress(sse_sock, strategyName, 0, 0.0, "回测开始");
 
+    // 2.5 验证策略图的完整性（回测前必须验证）
+    auto [validateSuccess, validateErrorMsg] = _server->ValidateStrategyConfig(script);
+    if (!validateSuccess) {
+        res.status = 400;
+        String msg = R"({"message": "策略图验证失败: )" + String(validateErrorMsg) + R"("})";
+        res.set_content(msg.c_str(), "application/json");
+        return;
+    }
+    INFO("[Backtest] Strategy graph validation passed for: {}", strategyName);
+
     // 3. 初始化策略
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);

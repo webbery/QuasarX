@@ -88,7 +88,7 @@ context_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& a
     }
     else if (ast.name == "AssignmentStmt") {
         String vaName(ast.nodes[0]->token);
-        context_t value = evalNode(symbol, *ast.nodes[1], context);
+        return evalNode(symbol, *ast.nodes[1], context);
     }
     else if (ast.name == "EOF") {
         return 0.;
@@ -200,13 +200,18 @@ context_t FormulaParser::evalAndExpr(const symbol_t& symbol, const peg::Ast& ast
     return true;
 }
 
-context_t FormulaParser::evalNotExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    if (ast.nodes.size() == 2) {
-        auto value = evalNode(symbol, *ast.nodes[1], context);
-        return !statement::check_bool(value);
-    } else {
-        return evalNode(symbol, *ast.nodes[0], context);
-    }
+// context_t FormulaParser::evalNotExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+//     if (ast.nodes.size() == 2) {
+//         auto value = evalNode(symbol, *ast.nodes[1], context);
+//         return !statement::check_bool(value);
+//     } else {
+//         return evalNode(symbol, *ast.nodes[0], context);
+//     }
+// }
+
+context_t FormulaParser::evalNotPrefix(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+    auto value = evalNode(symbol, *ast.nodes[0], context);
+    return !statement::check_bool(value);
 }
 
 context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
@@ -214,7 +219,6 @@ context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, D
         INFO("ast node `{}` not found", ast.name);
         return false;
     }
-
     return (this->*(statement::evalMap[ast.name]))(symbol, ast, context);
 }
 

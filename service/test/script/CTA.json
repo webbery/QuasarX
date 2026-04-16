@@ -70,27 +70,6 @@
             "position": { "x": 550, "y": 100 }
         },
         {
-            "id": "3",
-            "type": "custom",
-            "data": {
-                "label": "STD",
-                "nodeType": "function",
-                "params": {
-                    "method": {
-                        "value": "STD",
-                        "type": "select",
-                        "options": ["STD"]
-                    },
-                    "range": {
-                        "value": "5d",
-                        "type": "select",
-                        "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
-                    }
-                }
-            },
-            "position": { "x": 800, "y": 50 }
-        },
-        {
             "id": "6",
             "type": "custom",
             "data": {
@@ -114,9 +93,27 @@
             "position": { "x": 800, "y": 150 }
         },
         {
+            "id": "7",
+            "type": "custom",
+            "data": {
+                "label": "投资组合",
+                "nodeType": "portfolio",
+                "params": {
+                    "positionRatio": {
+                        "value": 0.8,
+                        "type": "number",
+                        "min": 0,
+                        "max": 1,
+                        "step": 0.1
+                    }
+                }
+            },
+            "position": { "x": 1050, "y": 150 }
+        },
+        {
             "id": "4",
             "type": "custom",
-            "data": { 
+            "data": {
                 "label": "执行器",
                 "nodeType": "execution",
                 "params": {
@@ -139,7 +136,7 @@
                     }
                 }
             },
-            "position": { "x": 800, "y": 50 }
+            "position": { "x": 1300, "y": 150 }
         }
     ],
     "edges": [
@@ -160,10 +157,18 @@
             "type": "default"
         },
         {
-            "id": "6->4",
+            "id": "6->7",
             "source": "6",
-            "target": "4",
+            "target": "7",
             "sourceHandle": "6",
+            "targetHandle": "7",
+            "type": "default"
+        },
+        {
+            "id": "7->4",
+            "source": "7",
+            "target": "4",
+            "sourceHandle": "7",
             "targetHandle": "4",
             "type": "default"
         }

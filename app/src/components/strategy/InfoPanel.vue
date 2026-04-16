@@ -1,5 +1,16 @@
 <template>
   <div class="info-panel">
+    <!-- 标题栏 -->
+    <div class="info-panel-header">
+      <span class="info-panel-title">
+        <i class="fas fa-info-circle"></i>
+        消息
+      </span>
+      <button class="info-panel-clear-btn" @click="clearMessages" title="清空消息">
+        <i class="fas fa-trash"></i>
+      </button>
+    </div>
+
     <!-- 消息列表 -->
     <div class="info-panel-content" ref="contentRef">
       <div
@@ -31,7 +42,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import sseService from '@/ts/SSEService'
 
 // 使 Math 在模板中可用
 const Math = globalThis.Math
@@ -53,13 +65,13 @@ interface TextMessage {
 
 type Message = ProgressMessage | TextMessage
 
-const props = defineProps<{
-  messages: Message[]
-}>()
-
+// 消息状态
+const messages = ref<Message[]>([])
 const contentRef = ref<HTMLElement | null>(null)
 
-// 格式化时间显示
+/**
+ * 格式化时间显示
+ */
 const formatTime = (date: Date): string => {
   return date.toLocaleTimeString('zh-CN', {
     hour12: false,
@@ -69,14 +81,97 @@ const formatTime = (date: Date): string => {
   })
 }
 
+/**
+ * 添加信息消息
+ */
+const addInfoMessage = (text: string, type: 'info' | 'warning' | 'error' | 'success' = 'info') => {
+  const timestamp = new Date()
+  messages.value.push({ text, type, timestamp })
+  // 限制消息数量
+  if (messages.value.length > 100) {
+    messages.value = messages.value.slice(-100)
+  }
+}
+
+/**
+ * 更新或创建进度消息
+ */
+const updateProgressMessage = (backtestId: string, strategy: string, progress: number, message: string) => {
+  const existingProgress = messages.value.find(
+    m => m.type === 'progress' && (m as ProgressMessage).backtestId === backtestId
+  ) as ProgressMessage | undefined
+  
+  if (existingProgress) {
+    existingProgress.progress = progress
+    existingProgress.message = message
+  } else {
+    messages.value.push({
+      type: 'progress',
+      backtestId,
+      strategy,
+      progress,
+      message,
+      timestamp: new Date()
+    })
+  }
+  if (messages.value.length > 100) {
+    messages.value = messages.value.slice(-100)
+  }
+}
+
+/**
+ * 清空所有消息
+ */
+const clearMessages = () => {
+  messages.value = []
+}
+
 // 监听消息变化自动滚动到底部
-watch(() => props.messages, () => {
+watch(() => messages.value, () => {
   nextTick(() => {
     if (contentRef.value) {
       contentRef.value.scrollTop = contentRef.value.scrollHeight
     }
   })
 }, { deep: true })
+
+/**
+ * SSE 策略消息处理
+ */
+const onStrategyMessage = (message: any) => {
+  const data = message.data
+  addInfoMessage(data.message, data.type)
+}
+
+/**
+ * SSE 回测进度消息处理
+ */
+const onBacktestProgress = (message: any) => {
+  const data = message.data
+  // 使用后端返回的 run_id 作为唯一标识
+  const backtestId = `${data.strategy}_${data.run_id}`
+  updateProgressMessage(backtestId, data.strategy, data.progress || 0, data.message)
+}
+
+// 生命周期：注册 SSE 监听
+onMounted(() => {
+  sseService.on('strategy', onStrategyMessage)
+  sseService.on('backtest_progress', onBacktestProgress)
+})
+
+// 生命周期：移除 SSE 监听
+onUnmounted(() => {
+  sseService.off('strategy', onStrategyMessage)
+  sseService.off('backtest_progress', onBacktestProgress)
+})
+
+// 对外暴露方法
+defineExpose({
+  addInfoMessage,
+  clearMessages,
+  updateProgressMessage,
+  messages
+})
 </script>
 
 <style scoped>
@@ -96,6 +191,39 @@ watch(() => props.messages, () => {
   flex-direction: column;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   overflow: hidden;
+}
+
+.info-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(30, 33, 45, 0.5);
+}
+
+.info-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-panel-clear-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.info-panel-clear-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
 }
 
 .info-panel-content {

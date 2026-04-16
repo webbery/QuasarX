@@ -24,6 +24,12 @@ export const NODE_TYPE_CONFIG: Record<string, NodeTypeConfig> = {
     hasInput: true,
     hasOutput: false
   },
+  '价差计算': {
+    color: '#f59e0b',
+    icon: 'fas fa-balance-scale',
+    hasInput: true,
+    hasOutput: true
+  },
   'default': {
     icon: 'fas fa-cube',
     hasInput: true,

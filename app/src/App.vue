@@ -12,6 +12,13 @@
         >
           <i :class="isBacktesting ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>{{ isBacktesting ? '回测中...' : '执行回测' }}
         </button>
+        <button v-if="is_strategy" class="btn" @click="onHandleExportStrategy" title="导出当前策略">
+          <i class="fas fa-download"></i> 导出
+        </button>
+        <label v-if="is_strategy" class="btn btn-file" title="导入策略文件">
+          <i class="fas fa-upload"></i> 导入
+          <input type="file" accept=".json" hidden @change="onHandleImportStrategy" />
+        </label>
         <button v-if="is_backtest" class="btn">
           <i class="fas fa-sync-alt"></i> 部署模拟盘
         </button>
@@ -182,6 +189,10 @@
 </template>
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide } from "vue";
+import { message } from "./tool";
+import { useHistoryStore } from './stores/history'
+import { storeToRefs } from 'pinia'
+import { exportStrategy, importStrategy } from './components/strategy/composables/useStrategyImportExport'
 import MarketPanel from "./components/MarketPanel.vue";
 import AccountView from "./components/AccountView.vue";
 import RiskPanel from "./components/RiskPanel.vue";
@@ -537,6 +548,38 @@ const onHandleRunBacktest = async () => {
   }
 }
 
+// === 策略导入导出 ===
+const historyStore = useHistoryStore()
+const { strategies, versions } = storeToRefs(historyStore)
+
+/**
+ * 导出当前策略
+ */
+const onHandleExportStrategy = async () => {
+  if (!selectedStrategyId.value) {
+    message.warning('请先选择一个策略')
+    return
+  }
+  await exportStrategy(selectedStrategyId.value, strategies.value, versions.value, historyStore)
+}
+
+/**
+ * 导入策略文件
+ */
+const onHandleImportStrategy = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  // 重置 input 以便可以重复选择同一文件
+  event.target.value = ''
+
+  const newStrategyId = await importStrategy(file, historyStore)
+  if (newStrategyId) {
+    // 导入成功，选中新导入的策略
+    selectedStrategyId.value = newStrategyId
+  }
+}
+
 const handleSecuritySelection = (securityData) => {
     selectedSecurity.value = securityData;
     highlightTradePanel.value = true;
@@ -586,6 +629,12 @@ provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
   background: linear-gradient(90deg, #1d4ed8, #1e40af);
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
   transform: translateY(-2px);
+}
+
+/* 文件导入按钮样式 */
+.btn-file {
+  cursor: pointer;
+  display: inline-flex;
 }
 
 /* 禁用状态样式 */

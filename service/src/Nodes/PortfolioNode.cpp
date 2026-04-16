@@ -301,7 +301,7 @@ bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {
 }
 
 const nlohmann::json PortfolioNode::getParams() {
-    return {"positionRatio", "pool", "initialCapital"};
+    return {"positionRatio", "pool"};
 }
 
 Map<String, ArgType> PortfolioNode::out_elements() {

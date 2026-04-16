@@ -67,6 +67,7 @@ enum class StrategyNodeType {
     Debug,
     Stack,
     Test,
+    Spread,     // 价差计算节点（配对交易）
 };
 
 struct AgentStrategyInfo;

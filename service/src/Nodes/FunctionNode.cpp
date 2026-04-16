@@ -78,6 +78,10 @@ namespace {
             String cnt = (String)config["params"]["range"]["value"];
             return new R2(timeHorizon.at(cnt));
         }},
+        {"ZScore", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            String cnt = (String)config["params"]["range"]["value"];
+            return new ZScore(timeHorizon.at(cnt));
+        }},
     };
 }
 

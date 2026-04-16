@@ -122,7 +122,8 @@ export async function testAgentConnection(config: AgentConfig): Promise<{ succes
       return { success: false, message: `连接失败: ${errorMsg} (${response.status})` };
     }
   } catch (e) {
-    return { success: false, message: `连接失败: ${e.message}` };
+    const errorMessage = e instanceof Error ? e.message : String(e)
+    return { success: false, message: `连接失败: ${errorMessage}` };
   }
 }
 
