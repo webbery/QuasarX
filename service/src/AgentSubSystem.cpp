@@ -1,5 +1,6 @@
 #include "AgentSubSystem.h"
 #include "Bridge/exchange.h"
+#include "KBarBuilder.h"
 #include "Nodes/FunctionNode.h"
 #include "Nodes/PortfolioNode.h"
 #include "Nodes/QuoteNode.h"
@@ -78,14 +79,22 @@ void FlowSubsystem::Stop(const String& strategy) {
 run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
     Stop(strategy);
 
-    // 获取交易所并创建回测上下文
+    RuningType mode = _handle->GetRunningMode();
+
+    if (mode == RuningType::Backtest) {
+        return StartBacktest(strategy, symbols, initialCapital);
+    } else {
+        return StartRealtime(strategy, symbols, initialCapital);
+    }
+}
+
+run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
     auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
     if (!exchange) {
         WARN("Failed to get stock exchange for backtest");
         return 0;
     }
 
-    // 创建回测上下文
     run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
 
     auto& flow = _flows.at(strategy);
@@ -184,6 +193,94 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
         flow._running = false;
     });
     return runId;
+}
+
+/**
+ * @brief 启动实盘策略（K-bar 聚合驱动）
+ *
+ * 流程：
+ * 1. 订阅 NNG 原始行情
+ * 2. 逐 tick 送入 KBarBuilder 聚合
+ * 3. 当多标的 bar 对齐时，拉动策略图执行
+ */
+run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
+    auto& flow = _flows.at(strategy);
+    flow._running = true;
+
+    // 从 QuoteInputNode 配置中读取频率
+    BarFreq freq = BarFreq::Day;
+    for (auto* node : flow._graph) {
+        if (auto* qn = dynamic_cast<QuoteInputNode*>(node)) {
+            // 默认日线频率，后续可从节点配置读取
+            break;
+        }
+    }
+
+    auto kbarBuilder = std::make_shared<KBarBuilder>(freq, 5);
+    kbarBuilder->SetSymbols(symbols);
+    flow._kbarBuilder = kbarBuilder;
+
+    INFO("[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s",
+         KBarBuilder::FreqToString(freq), symbols.size());
+
+    flow._worker = new std::thread([strategy, symbols, kbarBuilder, this]() {
+        DataContext context(strategy, _handle);
+        auto& flow = _flows[strategy];
+
+        // 订阅原始行情
+        nng_socket recvSock;
+        if (!Subscribe(URI_RAW_QUOTE, recvSock)) {
+            WARN("[Realtime] Failed to subscribe to raw quote channel");
+            flow._running = false;
+            return;
+        }
+
+        try {
+            // Prepare 阶段
+            for (auto node : flow._graph) {
+                node->Prepare(strategy, context);
+            }
+
+            Map<symbol_t, QuoteInfo> snapshot;
+            uint64_t epoch = 0;
+
+            while (flow._running || !Server::IsExit()) {
+                // 阻塞读取 tick（Subscribe 默认 5s 超时）
+                QuoteInfo tick;
+                if (!ReadQuote(recvSock, tick)) continue;
+
+                // 只处理策略涉及的标的
+                if (!symbols.count(tick._symbol)) continue;
+
+                // 聚合 tick
+                kbarBuilder->OnTick(tick);
+
+                // 拉动检查：是否有新的 bar 对齐快照
+                if (!kbarBuilder->GetSnapshot(snapshot)) continue;
+
+                // 将快照写入 context
+                context.SetEpoch(++epoch);
+                for (auto& [symbol, quote] : snapshot) {
+                    context.SetQuote(symbol, quote);
+                }
+                time_t barTime = snapshot.begin()->second._time;
+                context.SetTime(barTime);
+
+                // 执行策略图
+                if (!RunGraph(strategy, flow, context)) {
+                    WARN("[Realtime] RunGraph failed for strategy {}", strategy);
+                    break;
+                }
+            }
+        } catch (const std::invalid_argument& e) {
+            WARN("invalid argument error: {}", e.what());
+        }
+
+        nng_close(recvSock);
+        flow._running = false;
+    });
+
+    return 0;  // 实盘无 runId
 }
 
 bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {

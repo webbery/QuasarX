@@ -150,6 +150,28 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 
 NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& context)
 {
+    // 实盘模式：QuoteInfo 已由引擎通过 KBarBuilder 写入 context
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        bool anyQuote = false;
+        time_t min_t = std::numeric_limits<time_t>::max();
+        for (auto& symbol : _symbols) {
+            const QuoteInfo* q = context.GetQuote(symbol);
+            if (q && q->_time > 0) {
+                _curQuotes[symbol] = *q;
+                writeQuote(context, *q);
+                _lastQuotes[symbol] = *q;
+                if (q->_time < min_t) min_t = q->_time;
+                anyQuote = true;
+            }
+        }
+        if (anyQuote) {
+            context.SetTime(min_t);
+            return NodeProcessResult::Success;
+        }
+        return NodeProcessResult::Skip;
+    }
+
+    // 回测模式：从 StockHistorySimulation 获取当前 bar 的行情数据
     auto* exchange = dynamic_cast<StockHistorySimulation*>(_server->GetAvaliableStockExchange());
 
     // 第一步：收集所有 symbol 当前 bar 的 quote，同时找出最小时间戳

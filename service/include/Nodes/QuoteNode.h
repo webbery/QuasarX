@@ -14,15 +14,18 @@ public:
 
     /**
     * @brief 处理行情数据，实现多标的时间对齐
-    * 
-    * 核心逻辑：
-    * 1. 收集所有 symbol 当前 bar 的 quote，找出最小时间戳 min_t
+    *
+    * 实盘模式：QuoteInfo 已由引擎通过 KBarBuilder 写入 context，
+    *          本节点仅负责转发到 context 的 vector 中。
+    *
+    * 回测模式：
+    * 1. 从 StockHistorySimulation 收集所有 symbol 当前 bar 的 quote，找出最小时间戳 min_t
     * 2. 检查所有 symbol 是否与 min_t 对齐
     * 3. 根据 missingHandle 模式处理：
     *    - Skip 模式：如果时间不对齐，跳过整个 epoch（不写入任何数据）
     *    - Linear 模式：对齐的 symbol 直接写入，不对齐的线性插值
     * 4. 检测是否有任何 symbol 已到达末尾（time==0），返回 Finished
-    * 
+    *
     * @return NodeProcessResult::Success 成功
     *         NodeProcessResult::Skip 时间不对齐，跳过本轮
     *         NodeProcessResult::Finished 数据已用完

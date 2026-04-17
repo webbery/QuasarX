@@ -1,5 +1,6 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "Bridge/exchange.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
@@ -120,6 +121,27 @@ order_id StockHistorySimulation::AddOrder(uint16_t run_id, const symbol_t& symbo
     return id;
 }
 
+bool StockHistorySimulation::OrderReport(BacktestContext* context, order_id id, const TradeReport& report) {
+    auto* orderCtx = context->getOrderReport(id._id);
+    if (!orderCtx)
+        return false;
+    orderCtx->Update(report);
+    orderCtx->_trades._reports.emplace_back(report);
+    orderCtx->_success.store(true);
+    orderCtx->_flag.store(true);
+    orderCtx->_promise.set_value(true);
+
+    // 更新持仓（使用上下文私有持仓）
+    context->adjustPosition(orderCtx->_order._symbol, 
+        report._side == 0 ? report._quantity : -report._quantity);
+
+    // 记录交易
+    auto broker = _server->GetBrokerSubSystem();
+    if (broker) {
+        broker->RecordTrade(*orderCtx);
+    }
+    return true;
+}
 void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& report) {
     // 在上下文中查找订单（多线程模式）
     bool found = false;
@@ -127,28 +149,7 @@ void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& repor
         if (found) return;
 
         auto* ctx = item.second.get();
-        auto* orderCtx = ctx->getOrderReport(id._id);
-        if (orderCtx) {
-            found = true;
-            orderCtx->Update(report);
-            orderCtx->_trades._reports.emplace_back(report);
-            orderCtx->_success.store(true);
-            orderCtx->_flag.store(true);
-            orderCtx->_promise.set_value(true);
-
-            // 更新持仓（使用上下文私有持仓）
-            if (orderCtx->_order._side == 0) {  // 买入
-                ctx->adjustPosition(orderCtx->_order._symbol, report._quantity);
-            } else {  // 卖出
-                ctx->adjustPosition(orderCtx->_order._symbol, -report._quantity);
-            }
-
-            // 记录交易
-            auto broker = _server->GetBrokerSubSystem();
-            if (broker) {
-                broker->RecordTrade(*orderCtx);
-            }
-        }
+        found = OrderReport(ctx, id, report);
     });
 
     if (found) return;
@@ -865,7 +866,7 @@ void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symb
         // OnOrderReport 会处理：持仓调整、交易记录、订单状态更新
         order_id id;
         id._id = orderInfo._id;
-        OnOrderReport(id, report);
+        OrderReport(context, id, report);
     }
 }
 

@@ -35,7 +35,9 @@ namespace {
             if (qty == 0) continue;
 
             auto it = price_data.find(symbol);
-            if (it == price_data.end() || it->second.empty()) continue;
+            if (it == price_data.end() || it->second.empty()) {
+                continue;
+            }
 
             // 找到结束时间对应的价格
             auto range = std::equal_range(times.begin(), times.end(), period.end_time);

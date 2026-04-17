@@ -4,7 +4,7 @@
 #include <numeric>
 
 SpreadNode::SpreadNode()
-: _method("simple_diff")
+: _method(SpreadMethod::SIMPLE_DIFF)
 , _window(60)
 , _fixedBeta(1.0)
 , _dynamicBeta(false)
@@ -19,7 +19,16 @@ SpreadNode::~SpreadNode() {
 bool SpreadNode::Init(const nlohmann::json& config) {
     // 读取计算方法
     if (config["params"].contains("method")) {
-        _method = config["params"]["method"]["value"];
+        String method = config["params"]["method"]["value"];
+        if (method == "simple_diff") {
+            _method = SpreadMethod::SIMPLE_DIFF;
+        }
+        else if (method == "log_diff") {
+            _method = SpreadMethod::LOG_DIFF;
+        }
+        else if (method == "rolling_regression") {
+            _method = SpreadMethod::ROLLING_REGRESSION;
+        }
     }
     
     // 读取滚动窗口大小
@@ -33,7 +42,7 @@ bool SpreadNode::Init(const nlohmann::json& config) {
     }
     
     // 判断是否动态β
-    _dynamicBeta = (_method == "rolling_regression");
+    _dynamicBeta = (_method == SpreadMethod::ROLLING_REGRESSION);
     
     // 如果是滚动回归，初始化缓冲区
     if (_dynamicBeta) {
@@ -42,9 +51,6 @@ bool SpreadNode::Init(const nlohmann::json& config) {
         _count = 0;
         _nextIndex = 0;
     }
-    
-    INFO("SpreadNode initialized: method={}, window={}, beta={}", 
-         _method, _window, _fixedBeta);
     
     return true;
 }
@@ -154,15 +160,16 @@ NodeProcessResult SpreadNode::Process(const String& strategy, DataContext& conte
     
     // 计算价差
     double spread = 0.0;
-    if (_method == "simple_diff") {
-        spread = calculateSimpleSpread(priceA, priceB);
-    } else if (_method == "log_diff") {
+    switch (_method) {
+    case SpreadMethod::LOG_DIFF:
         spread = calculateLogSpread(priceA, priceB);
-    } else if (_method == "rolling_regression") {
+    break;
+    case SpreadMethod::ROLLING_REGRESSION:
         spread = calculateRollingRegression(priceA, priceB);
-    } else {
-        WARN("Unknown spread method: {}", _method);
-        return NodeProcessResult::Error;
+    break;
+    default:
+        spread = calculateSimpleSpread(priceA, priceB);
+    break;
     }
     
     // 检查价差计算结果

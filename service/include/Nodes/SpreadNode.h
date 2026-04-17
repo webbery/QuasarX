@@ -1,6 +1,12 @@
 #pragma once
 #include "StrategyNode.h"
 
+enum class SpreadMethod {
+    SIMPLE_DIFF,
+    LOG_DIFF,
+    ROLLING_REGRESSION,
+};
+
 /**
  * 价差计算节点 - 用于配对交易策略
  * 
@@ -36,7 +42,7 @@ private:
     double calculateRollingRegression(double priceA, double priceB);
 
 private:
-    String _method;              // 计算方法
+    SpreadMethod _method;              // 计算方法
     int32_t _window;             // 滚动回归窗口大小
     double _fixedBeta;           // 固定β值（非滚动模式）
     bool _dynamicBeta;           // 是否动态计算β

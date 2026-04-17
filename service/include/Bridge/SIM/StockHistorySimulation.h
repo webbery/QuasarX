@@ -159,6 +159,8 @@ private:
   // TODO: 订单撮合
   TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);
 
+  bool OrderReport(BacktestContext* context, order_id id, const TradeReport& report);
+
   // 清空所有回测数据（行情、订单、持仓等）
   void Clear();
 
