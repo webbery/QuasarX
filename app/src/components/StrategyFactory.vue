@@ -242,9 +242,38 @@ const handleLoadVersionFromHistory = async (version) => {
 
 // 对外暴露
 const emit = defineEmits(['show-history', 'show-flow-components', 'load-version'])
+
+/**
+ * 如果当前画布显示的正是被删除的策略，则清空
+ */
+const clearCanvasIfStrategyMatches = (strategyId) => {
+  if (currentStrategyId.value === strategyId) {
+    console.info(`[StrategyFactory] 策略 ${strategyId} 已删除，清空画布`)
+    removeNodes(getNodes.value.map(n => n.id))
+    removeEdges(getEdges.value.map(e => e.id))
+    currentStrategyId.value = null
+    currentVersionId.value = null
+  }
+}
+
+/**
+ * 如果当前画布显示的正是被删除的版本，则清空
+ */
+const clearCanvasIfVersionMatches = (versionId) => {
+  if (currentVersionId.value === versionId) {
+    console.info(`[StrategyFactory] 版本 ${versionId} 已删除，清空画布`)
+    removeNodes(getNodes.value.map(n => n.id))
+    removeEdges(getEdges.value.map(e => e.id))
+    currentStrategyId.value = null
+    currentVersionId.value = null
+  }
+}
+
 defineExpose({
   runBacktest: handleRunBacktest,
-  loadVersionFromHistory: handleLoadVersionFromHistory
+  loadVersionFromHistory: handleLoadVersionFromHistory,
+  clearCanvasIfStrategyMatches,
+  clearCanvasIfVersionMatches
 })
 </script>
 

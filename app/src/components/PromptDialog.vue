@@ -3,7 +3,9 @@
     <div v-if="visible" class="dialog-overlay" @click="handleCancel">
       <div class="dialog" @click.stop>
         <h3 class="dialog-title">{{ title }}</h3>
+        <p v-if="!inputMode" class="dialog-message">{{ message }}</p>
         <input
+          v-if="inputMode"
           ref="inputRef"
           v-model="inputValue"
           type="text"
@@ -24,21 +26,23 @@
 import { ref, nextTick } from 'vue'
 
 const visible = ref(false)
+const inputMode = ref(true)
 const title = ref('')
+const message = ref('')
 const placeholder = ref('')
 const inputValue = ref('')
 let resolvePromise: ((result: { cancelled: boolean; value: string }) => void) | null = null
 
 const inputRef = ref<HTMLInputElement>()
 
-// 显示对话框，返回 Promise<{ cancelled: boolean; value: string }>
+// 显示输入对话框，返回 Promise<{ cancelled: boolean; value: string }>
 const show = (options: { title: string; placeholder?: string; defaultValue?: string }): Promise<{ cancelled: boolean; value: string }> => {
+  inputMode.value = true
   title.value = options.title
   placeholder.value = options.placeholder || ''
   inputValue.value = options.defaultValue || ''
   visible.value = true
 
-  // 自动聚焦
   nextTick(() => {
     inputRef.value?.focus()
   })
@@ -48,9 +52,23 @@ const show = (options: { title: string; placeholder?: string; defaultValue?: str
   })
 }
 
+// 显示确认对话框，返回 Promise<{ cancelled: boolean }>
+const confirm = (options: { title: string; message: string }): Promise<boolean> => {
+  inputMode.value = false
+  title.value = options.title
+  message.value = options.message
+  visible.value = true
+
+  return new Promise((resolve) => {
+    resolvePromise = resolve
+  })
+}
+
 const handleConfirm = () => {
   if (resolvePromise) {
-    resolvePromise({ cancelled: false, value: inputValue.value })
+    resolvePromise(inputMode.value
+      ? { cancelled: false, value: inputValue.value }
+      : true)
   }
   visible.value = false
   resolvePromise = null
@@ -58,14 +76,16 @@ const handleConfirm = () => {
 
 const handleCancel = () => {
   if (resolvePromise) {
-    resolvePromise({ cancelled: true, value: '' })
+    resolvePromise(inputMode.value
+      ? { cancelled: true, value: '' }
+      : false)
   }
   visible.value = false
   resolvePromise = null
 }
 
 // 暴露方法给父组件
-defineExpose({ show })
+defineExpose({ show, confirm })
 </script>
 
 <style scoped>
@@ -100,6 +120,14 @@ defineExpose({ show })
   font-weight: 600;
   color: var(--text);
   text-align: center;
+}
+
+.dialog-message {
+  margin: 0 0 24px 0;
+  font-size: 1rem;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.6;
 }
 
 .dialog-input {

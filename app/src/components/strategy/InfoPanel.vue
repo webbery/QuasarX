@@ -1,16 +1,5 @@
 <template>
   <div class="info-panel">
-    <!-- 标题栏 -->
-    <div class="info-panel-header">
-      <span class="info-panel-title">
-        <i class="fas fa-info-circle"></i>
-        消息
-      </span>
-      <button class="info-panel-clear-btn" @click="clearMessages" title="清空消息">
-        <i class="fas fa-trash"></i>
-      </button>
-    </div>
-
     <!-- 消息列表 -->
     <div class="info-panel-content" ref="contentRef">
       <div

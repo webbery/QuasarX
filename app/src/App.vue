@@ -145,7 +145,7 @@
         />
       </div>
       <div v-else-if="is_strategy" style="height: 100%">
-        <StrategyPanel v-if="selectedStrategyPanel" @load="onLoadVersionFromPanel" @createNewVersion="onCreateNewVersion"></StrategyPanel>
+        <StrategyPanel v-if="selectedStrategyPanel" @load="onLoadVersionFromPanel" @createNewVersion="onCreateNewVersion" @delete-strategy="onDeleteStrategy" @delete-version="onDeleteVersion"></StrategyPanel>
         <FlowComponents v-else></FlowComponents>
       </div>
       <div v-else-if="is_setting">
@@ -443,6 +443,20 @@ const onCreateNewVersion = (strategyId) => {
   // 切换到流程图组件，让用户编辑新策略
   selectedStrategyPanel.value = false
   // 可以在这里传递 strategyId 给 StrategyFactory
+}
+
+// 删除策略后，清空画布（如果当前显示的正是被删除的策略）
+const onDeleteStrategy = (strategyId) => {
+  if (dynamicComponentRef.value && dynamicComponentRef.value.clearCanvasIfStrategyMatches) {
+    dynamicComponentRef.value.clearCanvasIfStrategyMatches(strategyId)
+  }
+}
+
+// 删除版本后，清空画布（如果当前显示的正是被删除的版本）
+const onDeleteVersion = (versionId) => {
+  if (dynamicComponentRef.value && dynamicComponentRef.value.clearCanvasIfVersionMatches) {
+    dynamicComponentRef.value.clearCanvasIfVersionMatches(versionId)
+  }
 }
 
 onMounted(() => {

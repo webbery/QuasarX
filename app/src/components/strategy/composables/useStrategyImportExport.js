@@ -1,5 +1,6 @@
 import { message } from '@/tool'
 import { useHistoryStore } from '@/stores/history'
+import { keyMap } from '@/components/flow/nodeConfigs'
 
 /**
  * 导出文件格式标识
@@ -51,7 +52,7 @@ export async function exportStrategy(strategyId, strategies, versions, historySt
       format: EXPORT_FORMAT,
       version: EXPORT_VERSION,
       exportTime: new Date().toISOString(),
-      strategyName: strategy.name,
+      name: strategy.name,
       strategyCreatedAt: strategy.createdAt,
       versions: exportedVersions
     }
@@ -78,6 +79,161 @@ export async function exportStrategy(strategyId, strategies, versions, historySt
 }
 
 /**
+ * 检测是否为后端配置格式（如 CTA.json）
+ * @param {Object} data - 解析后的 JSON 数据
+ * @returns {boolean}
+ */
+function isBackendFormat(data) {
+  return !data.format && data.nodes && Array.isArray(data.nodes) && data.name
+}
+
+/**
+ * 将节点 params 中的英文 key 转换为中文 key
+ */
+function convertNodeKeys(nodes) {
+  return nodes.map(node => {
+    if (!node.data?.params) return node
+
+    const convertedParams = {}
+    for (const key in node.data.params) {
+      const cnKey = keyMap[key] || key
+      convertedParams[cnKey] = node.data.params[key]
+    }
+
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        params: convertedParams
+      }
+    }
+  })
+}
+
+/**
+ * 将后端边的 handle ID 转换为前端格式
+ * 后端: sourceHandle 为 "nodeId-fieldName" 或 "nodeId"，targetHandle 为 "nodeId"
+ * 前端: 字段输出 handle 为 "field-xxx"，普通输出 handle 为 "output"，输入 handle 为 "input"
+ */
+function normalizeEdgeHandles(edges, nodes) {
+  // 找出 input 类型节点的 ID
+  const inputNodeIds = new Set(
+    nodes.filter(n => n.data?.nodeType === 'input').map(n => n.id)
+  )
+
+  return edges.map(edge => {
+    let { sourceHandle, targetHandle } = edge
+
+    // 转换 sourceHandle
+    if (sourceHandle) {
+      if (sourceHandle.includes('-')) {
+        // "1-close" -> "field-close"
+        const fieldName = sourceHandle.split('-').slice(1).join('-')
+        sourceHandle = `field-${fieldName}`
+      } else {
+        // "2" -> "output"
+        sourceHandle = 'output'
+      }
+    }
+
+    // 转换 targetHandle -> "input"
+    if (targetHandle) {
+      targetHandle = 'input'
+    }
+
+    return { ...edge, sourceHandle, targetHandle }
+  })
+}
+
+/**
+ * 将后端配置格式转换为前端导入格式
+ * @param {Object} data - 后端配置数据
+ * @returns {Object} 转换后的前端格式
+ */
+function convertBackendToFrontend(data) {
+  const now = new Date().toISOString()
+  const convertedNodes = convertNodeKeys(data.nodes || [])
+  const normalizedEdges = normalizeEdgeHandles(data.edges || [], convertedNodes)
+
+  return {
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    exportTime: now,
+    name: data.name,
+    strategyCreatedAt: now,
+    versions: [{
+      id: `${data.id}_v1`,
+      name: data.name,
+      remark: data.description || '',
+      saveTime: now,
+      flowData: { nodes: convertedNodes, edges: normalizedEdges },
+      backtestResult: null
+    }]
+  }
+}
+
+/**
+ * 处理导入数据（核心逻辑）
+ * @param {Object} data - 已解析的 JSON 数据
+ * @param {Object} historyStore - history store 实例
+ * @returns {string|null} 新创建的策略 ID，失败返回 null
+ */
+async function processImportData(data, historyStore) {
+  // 自动识别并转换后端格式
+  if (isBackendFormat(data)) {
+    console.info('[importStrategy] 检测到后端配置格式，自动转换')
+    data = convertBackendToFrontend(data)
+  }
+
+  // 验证格式
+  if (!validateStrategyFormat(data)) {
+    message.error('文件格式不正确，无法导入')
+    return null
+  }
+
+  // 检查策略名是否冲突，冲突则自动重命名
+  let strategyName = data.name
+  const existingStrategy = historyStore.strategies.find(s => s.name === strategyName)
+  if (existingStrategy) {
+    strategyName = `${strategyName}_${Date.now()}`
+    console.info(`[importStrategy] 策略名冲突，自动重命名为：${strategyName}`)
+  }
+
+  // 创建策略
+  const newStrategyId = await historyStore.addStrategy(strategyName)
+
+  // 导入所有版本
+  let importedCount = 0
+  for (const versionData of data.versions) {
+    try {
+      // 创建版本
+      const newVersionId = await historyStore.addVersion(
+        newStrategyId,
+        versionData.flowData || undefined,
+        versionData.remark
+      )
+
+      // 保存回测结果（如果有）
+      if (versionData.backtestResult) {
+        await historyStore.saveBacktestResult(newVersionId, versionData.backtestResult)
+      }
+
+      importedCount++
+    } catch (versionError) {
+      console.error(`[importStrategy] 导入版本 ${versionData.id} 失败:`, versionError)
+    }
+  }
+
+  // 刷新策略列表
+  await historyStore.initialize()
+
+  message.success(`策略 "${strategyName}" 已导入，共 ${importedCount} 个版本`)
+  console.info(`[importStrategy] 策略导入成功：${strategyName}, ${importedCount}/${data.versions.length} 个版本`)
+
+  return newStrategyId
+}
+
+/**
  * 从 JSON 文件导入策略
  * @param {File} file - JSON 文件
  * @param {Object} historyStore - history store 实例
@@ -89,52 +245,8 @@ export async function importStrategy(file, historyStore) {
     const text = await file.text()
     const data = JSON.parse(text)
 
-    // 2. 验证格式
-    if (!validateStrategyFormat(data)) {
-      message.error('文件格式不正确，无法导入')
-      return null
-    }
-
-    // 3. 检查策略名是否冲突，冲突则自动重命名
-    let strategyName = data.strategyName
-    const existingStrategy = historyStore.strategies.find(s => s.name === strategyName)
-    if (existingStrategy) {
-      strategyName = `${strategyName}_${Date.now()}`
-      console.info(`[importStrategy] 策略名冲突，自动重命名为：${strategyName}`)
-    }
-
-    // 4. 创建策略
-    const newStrategyId = await historyStore.addStrategy(strategyName)
-
-    // 5. 导入所有版本
-    let importedCount = 0
-    for (const versionData of data.versions) {
-      try {
-        // 创建版本
-        const newVersionId = await historyStore.addVersion(
-          newStrategyId,
-          versionData.flowData || undefined,
-          versionData.remark
-        )
-
-        // 保存回测结果（如果有）
-        if (versionData.backtestResult) {
-          await historyStore.saveBacktestResult(newVersionId, versionData.backtestResult)
-        }
-
-        importedCount++
-      } catch (versionError) {
-        console.error(`[importStrategy] 导入版本 ${versionData.id} 失败:`, versionError)
-      }
-    }
-
-    // 6. 刷新策略列表
-    await historyStore.initialize()
-
-    message.success(`策略 "${strategyName}" 已导入，共 ${importedCount} 个版本`)
-    console.info(`[importStrategy] 策略导入成功：${strategyName}, ${importedCount}/${data.versions.length} 个版本`)
-    
-    return newStrategyId
+    // 2. 处理导入
+    return await processImportData(data, historyStore)
   } catch (error) {
     console.error('[importStrategy] 导入失败:', error)
     message.error('导入失败：' + (error.message || '文件格式错误'))
@@ -161,7 +273,7 @@ function validateStrategyFormat(data) {
   }
 
   // 检查策略名称
-  if (!data.strategyName || typeof data.strategyName !== 'string') {
+  if (!data.name || typeof data.name !== 'string') {
     console.warn('[validateStrategyFormat] 缺少策略名称')
     return false
   }

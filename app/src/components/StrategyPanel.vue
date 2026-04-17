@@ -270,14 +270,24 @@ const handleMenuItemClick = async (action: string) => {
     hideContextMenu()
     return
   } else if (action === 'deleteAllVersions') {
-    if (confirm(`确定要删除策略 "${contextMenu.data.name}" 及其所有历史版本吗？`)) {
+    const confirmed = await promptDialogRef.value?.confirm({
+      title: '删除策略',
+      message: `确定要删除策略 "${contextMenu.data.name}" 及其所有历史版本吗？`
+    })
+    if (confirmed) {
       await removeStrategy(contextMenu.data.id)
+      emit('delete-strategy', contextMenu.data.id)
     }
   } else if (action === 'editRemark') {
     startEditing('version', contextMenu.data.id, contextMenu.data.remark)
   } else if (action === 'deleteVersion') {
-    if (confirm(`确定要删除 ${formatDate(contextMenu.data.saveTime)} 的版本吗？`)) {
+    const confirmed = await promptDialogRef.value?.confirm({
+      title: '删除版本',
+      message: `确定要删除 ${formatDate(contextMenu.data.saveTime)} 的版本吗？`
+    })
+    if (confirmed) {
       await removeVersion(contextMenu.data.id)
+      emit('delete-version', contextMenu.data.id)
     }
   } else if (action === 'createBlankStrategy') {
     await showNewStrategyDialog()
@@ -338,6 +348,8 @@ const emit = defineEmits<{
   (e: 'load', version: any): void
   (e: 'loadVersion', versionId: string): void
   (e: 'createNewVersion', strategyId: string): void
+  (e: 'delete-strategy', strategyId: string): void
+  (e: 'delete-version', versionId: string): void
 }>()
 
 const loadVersion = (version: any) => {
