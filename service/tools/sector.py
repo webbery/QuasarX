@@ -86,6 +86,11 @@ def get_sector_history_flow(sector_name):
         new_df.to_csv(sector_file, index=False)
         return new_df
 
+def get_sector_today_quote():
+    """获取行业板块实时行情数据（按涨跌幅排名）"""
+    sector_board_df = ak.stock_board_industry_name_em()
+    return sector_board_df
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', "--type", type=str, default='')
@@ -96,6 +101,10 @@ if __name__ == "__main__":
         result = get_sector_today_flow()
         for _, row in result.iterrows():
             print(row['名称'], row['今日主力净流入-净额'], row['今日超大单净流入-净额'], row['今日大单净流入-净额'], row['今日中单净流入-净额'], row['今日小单净流入-净额'])
+    elif args.type == 'quote':
+        result = get_sector_today_quote()
+        for _, row in result.iterrows():
+            print(row['排名'], row['板块名称'], row['上涨家数'], row['下跌家数'], row['涨跌额'], row['涨跌幅'])
     else:
         sector_name = args.sector
         result = get_sector_history_flow(sector_name)

@@ -26,9 +26,9 @@ public:
     
 private:
 
-private:
     Server* _server;
     FormulaParser* _buyParser;
     FormulaParser* _sellParser;
     Vector<symbol_t> _pools;
+    bool _allowShort = false;  // 是否允许做空
 };

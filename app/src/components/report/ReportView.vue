@@ -14,8 +14,9 @@
             :prices="dataState.symbolPrices.value"
             :buy-signals="dataState.buySignals.value"
             :sell-signals="dataState.sellSignals.value"
-            :symbols="selectedSymbol"
-            :selected-symbol="selectedSymbol[0]"
+            :raw-buy-signals="dataState.rawBuySignals.value"
+            :raw-sell-signals="dataState.rawSellSignals.value"
+            :selected-symbol="selectedSymbol[0] || ''"
             @symbol-change="onSymbolChange"
           />
 
@@ -36,7 +37,7 @@
             v-else-if="chart.id === 'skewness'"
             :skewness="metricsData.skewness || 0.35"
             :kurtosis="metricsData.kurtosis || 3.12"
-            :prices="dataState.symbolPrices.value"
+            :prices="getFirstSymbolPrices"
           />
 
           <!-- 其他图表占位（后续迁移时添加） -->
@@ -66,9 +67,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useReportState, type UseReportStateReturn } from './composables/useReportState'
-import { useChartData, type UseChartDataReturn } from './composables/useChartData'
+import { useChartData } from './composables/useChartData'
 import MetricsTable from './MetricsTable.vue'
 
 // 导入图表组件（已迁移的）
@@ -96,11 +97,10 @@ const {
 } = reportState
 
 const {
-  symbolPrices,
-  buySignals,
-  sellSignals,
   benchmarkMetrics,
   updatePrice,
+  setSelectedSymbol,
+  updatePriceForAll,
   updateTradeSignals,
   updateMetrics,
   updateBenchmark,
@@ -118,15 +118,26 @@ const hasLegacyCharts = computed(() => {
   return false // 暂时返回 false，后续迁移完成后删除
 })
 
+const getFirstSymbolPrices = computed(() => {
+  const prices = dataState.symbolPrices.value
+  const firstKey = Object.keys(prices)[0]
+  return firstKey ? prices[firstKey] : []
+})
+
 // === 事件处理 ===
 function onSymbolChange(newSymbol: string) {
   if (newSymbol && selectedSymbol.value.length > 0) {
     selectedSymbol.value[0] = newSymbol
-    // 触发价格更新
-    if (dataState.symbolPrices.value.length > 0) {
-      const firstDate = dataState.symbolPrices.value[0][0]
-      const lastDate = dataState.symbolPrices.value[dataState.symbolPrices.value.length - 1][0]
-      updatePrice(newSymbol, firstDate, lastDate)
+    // 按需加载：如果该标的价格不存在，从服务器下载
+    const prices = dataState.symbolPrices.value
+    if (!prices[newSymbol]) {
+      // 使用已有价格数据的日期范围
+      const firstKey = Object.keys(prices)[0]
+      if (firstKey && prices[firstKey].length > 0) {
+        const firstDate = prices[firstKey][0][0]
+        const lastDate = prices[firstKey][prices[firstKey].length - 1][0]
+        updatePrice(newSymbol, firstDate, lastDate)
+      }
     }
   }
 }
@@ -161,6 +172,8 @@ function initializeCharts() {
 defineExpose({
   // 原有 API
   updatePrice,
+  setSelectedSymbol,
+  updatePriceForAll,
   updatePriceChart: () => {
     // 委托给子组件处理
     console.info('[ReportView] updatePriceChart 已调用')

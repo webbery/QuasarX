@@ -156,6 +156,37 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SectorItem"
+  /stocks/sector/quote:
+    get:
+      summary: 行业板块实时行情
+      description: 获取当前所有行业板块的实时行情数据，按涨跌幅排名
+      tags:
+        - Sector
+      responses:
+        '200':
+          description: 行业板块行情列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  date:
+                    type: string
+                    description: 日期
+                    example: "2025-06-03"
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SectorQuote"
+        default:
+          description: Unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /stocks/verbose:
     get:
       summary: stock verbose info
@@ -2088,7 +2119,33 @@ components:
         quantity:
           type: integer
           description: 数量
-    
+    SectorQuote:
+      type: object
+      properties:
+        rank:
+          type: integer
+          description: 板块排名（按涨跌幅）
+          example: 1
+        name:
+          type: string
+          description: 板块名称
+          example: "半导体"
+        up_count:
+          type: integer
+          description: 上涨家数
+          example: 45
+        down_count:
+          type: integer
+          description: 下跌家数
+          example: 12
+        change_amount:
+          type: number
+          description: 涨跌额
+          example: 15.23
+        change_pct:
+          type: number
+          description: 涨跌幅（单位：%）
+          example: 2.35
     Error:
       type: object
       properties:

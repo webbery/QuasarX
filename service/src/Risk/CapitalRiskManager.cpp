@@ -260,7 +260,6 @@ void CapitalRiskManager::SendAlert(const String& message, bool isTotalStopLoss) 
 
     // TODO: 发送邮件/短信通知
     _server->SendEmail(message);
-    // _server->SendEmail(message);
 }
 
 void CapitalRiskManager::ExecuteClosePosition() {

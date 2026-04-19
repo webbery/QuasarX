@@ -53,14 +53,23 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
         const auto& plan = context.GetExecutionPlan();
 
         for (const auto& item : plan._items) {
+            auto* signal = context.getSignalBySymbol(item._symbol);
             if (item._action == TradeAction::HOLD) {
+                if (signal) {
+                    signal->SetAction(TradeAction::HOLD);
+                }
                 continue;  // 保持仓位，不下单
             }
 
-            auto* signal = new TradeSignal(item._symbol, item._action);
+            if (signal) {
+                signal->SetAction(item._action);
+            }
+            else {
+                signal = new TradeSignal(item._symbol, item._action);
+                context.AddSignal(signal);
+            }
             signal->SetQuantity(item._quantity);
             signal->SetPrice(item._limitPrice);
-            context.AddSignal(signal);
 
             INFO("ExecuteNode: {} {} {} shares @ {}",
                 (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);

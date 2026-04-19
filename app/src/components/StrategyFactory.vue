@@ -179,9 +179,14 @@ watch(activeTab, async (newTab) => {
       const rangeDate = executionNode.data.params['回测周期']?.value
 
       if (codes && rangeDate && rangeDate.length === 2) {
-        const symbols = codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        const symbols = Array.isArray(codes) ? codes : codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
         if (symbols.length > 0 && reportViewRef.value.updatePrice) {
-          console.info(`[StrategyFactory] 更新价格图表：${symbols[0]}, ${rangeDate[0]} - ${rangeDate[1]}`)
+          console.info(`[StrategyFactory] 更新价格图表：标的 ${symbols.join(', ')}, 默认加载 ${symbols[0]}, ${rangeDate[0]} - ${rangeDate[1]}`)
+          // 设置所有标的到 select 选项
+          if (reportViewRef.value.setSelectedSymbol) {
+            reportViewRef.value.setSelectedSymbol(symbols)
+          }
+          // 只加载第一个标的的价格
           reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
         }
       }

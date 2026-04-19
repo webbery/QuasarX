@@ -5,10 +5,17 @@
 
 /**
  * 将股票代码转换为带交易所前缀的格式
- * @param {string} code - 股票代码
- * @returns {string} 格式化后的代码 (如: 000001 -> sz.000001)
+ * @param {string|string[]} code - 股票代码
+ * @returns {string|string[]} 格式化后的代码 (如: 000001 -> sz.000001)
  */
 export function normalizeCode(code) {
+  if (Array.isArray(code)) {
+    return code.map(c => normalizeOne(c))
+  }
+  return normalizeOne(code)
+}
+
+function normalizeOne(code) {
   code = code.trim()
   // 如果已经包含交易所前缀，直接返回
   if (code.includes('.')) {

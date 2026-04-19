@@ -30,6 +30,10 @@ public:
     const TradeAction& GetAction() const { return _action; }
     void SetAction(TradeAction act) { _action = act; }
 
+    unsigned char _flag = 0;  // 0=开仓, 1=平仓
+    void SetFlag(unsigned char f) { _flag = f; }
+    unsigned char GetFlag() const { return _flag; }
+
     // Quantity
     int GetQuantity() const { return _quantity; }
     void SetQuantity(int qty) { _quantity = qty; }
@@ -193,11 +197,11 @@ public:
      */
     BacktestContext* getBacktestContext();
 
+    TradeSignal* getSignalBySymbol(symbol_t);
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
 
-    TradeSignal* getSignalBySymbol(symbol_t);
 
      // 标记信号为已执行
     bool markSignalExecuted(const std::string& signal_id);

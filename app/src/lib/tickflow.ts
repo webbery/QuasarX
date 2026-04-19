@@ -50,13 +50,21 @@ const DB_VERSION = 1;
 const STORE_NAME = 'kline';
 const CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 小时缓存
 
-// ============ API Key 管理 ============
+// ============ API Key & Source 管理 ============
 export function getApiKey(): string {
   return localStorage.getItem('tickflow_api_key') || '';
 }
 
 export function setApiKey(key: string): void {
   localStorage.setItem('tickflow_api_key', key);
+}
+
+export function getApiBaseUrl(): string {
+  const key = localStorage.getItem('tickflow_api_key');
+  if (!key) {
+    return 'https://free-api.tickflow.org';
+  }
+  return 'https://api.tickflow.org';
 }
 
 // ============ IndexedDB 封装 ============
@@ -247,6 +255,72 @@ export function calculateMetrics(data: KlineData[]): BenchmarkMetrics {
   };
 }
 
+// ============ 实时行情 ============
+export interface QuoteExt {
+  type: string;
+  amplitude: number;
+  change_amount: number;     // 涨跌额
+  change_pct: number;        // 涨跌幅 (%)
+  name: string;
+  turnover_rate: number;
+}
+
+export interface QuoteData {
+  symbol: string;
+  amount: number;
+  high: number;
+  last_price: number;
+  low: number;
+  open: number;
+  prev_close: number;        // 前收盘价
+  region: string;
+  timestamp: number;
+  volume: number;
+  ext?: QuoteExt;
+  session?: string;
+}
+
+export interface QuoteResult {
+  code: number;
+  msg: string;
+  data: QuoteData[];
+}
+
+export async function fetchQuotes(symbols: string[]): Promise<QuoteData[]> {
+  const apiKey = getApiKey();
+  const baseUrl = getApiBaseUrl();
+
+  const apiSymbols = symbols.map(s => convertSymbolToApiFormat(s));
+  const params = new URLSearchParams({ symbols: apiSymbols.join(',') });
+
+  const url = `${baseUrl}/v1/quotes?${params.toString()}`;
+
+  const headers: Record<string, string> = { 'Accept': 'application/json' };
+  if (apiKey) {
+    headers['x-api-key'] = apiKey;
+  }
+
+  const res = await fetch(url, { headers });
+
+  if (!res.ok) {
+    throw new Error(`TickFlow Quotes API 错误：${res.status} ${res.statusText}`);
+  }
+
+  const result: QuoteResult = await res.json();
+
+  if (result.code !== undefined && result.code !== 0) {
+    throw new Error(`TickFlow Quotes API 错误：${result.msg || '未知错误'}`);
+  }
+
+  // 将 ext 中的字段提升到顶层以便使用
+  return (result.data || []).map(q => {
+    if (q.ext) {
+      return { ...q, ext: q.ext };
+    }
+    return q;
+  });
+}
+
 // ============ Symbol 格式转换 ============
 function convertSymbolToApiFormat(symbol: string): string {
   // SH000300 → 000300.SH, SZ399001 → 399001.SZ
@@ -273,7 +347,7 @@ export async function fetchBenchmark(symbol: string, start: number, end: number)
     adjust: 'backward',
   });
 
-  const url = `https://api.tickflow.org/v1/klines?${params.toString()}`;
+  const url = `${getApiBaseUrl()}/v1/klines?${params.toString()}`;
 
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (apiKey) {

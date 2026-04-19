@@ -29,6 +29,7 @@ private:
 private:
     Server*              _server;
     double               _positionRatio;      // 仓位比例 (0.0~1.0)
-    Vector<symbol_t>     _pool;              // 交易池
+    Set<symbol_t>        _pool;              // 交易池（自动去重）
     ExecutionPlan        _lastPlan;           // 上一次的执行计划
+    bool                 _allowShort = false; // 是否允许做空
 };

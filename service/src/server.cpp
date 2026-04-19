@@ -47,6 +47,7 @@
 #include "Handler/DataHandler.h"
 #include "Handler/FeatureHandler.h"
 #include "Handler/SectorHandler.h"
+#include "Handler/SectorQuoteHandler.h"
 #include "Handler/ServerEventHandler.h"
 #include "Handler/CapitalRiskHandler.h"
 #include "StrategySubSystem.h"
@@ -131,6 +132,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_SERVER_CONFIG   "/server/config"
 #define API_FEATURE         "/feature"
 #define API_SECTOR_FLOW     "/stocks/sector/flow"
+#define API_SECTOR_QUOTE    "/stocks/sector/quote"
 #define API_TRADE_ORDER     "/trade/order"
 #define API_TRADE_HISTORY   "/trade/history"
 #define API_POSITION        "/position"
@@ -291,6 +293,7 @@ void Server::Regist() {
     REGIST_GET(API_INDEX);
     REGIST_GET(API_SERVER_CONFIG);
     REGIST_GET(API_SECTOR_FLOW);
+    REGIST_GET(API_SECTOR_QUOTE);
     REGIST_GET(API_TRADE_ORDER);
     REGIST_GET(API_USER_FUNDS);
     REGIST_GET(API_POSITION);
@@ -1269,6 +1272,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SERVER_CONFIG, SystemConfigHandler);
     RegistHandler(API_FEATURE, FeatureHandler);
     RegistHandler(API_SECTOR_FLOW, SectorHandler);
+    RegistHandler(API_SECTOR_QUOTE, SectorQuoteHandler);
     RegistHandler(API_SERVER_EVENT, ServerEventHandler);
     RegistHandler(API_POSITION, PositionHandler);
     RegistHandler(API_USER_SWITCH, UserSwitchHandler);

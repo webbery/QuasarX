@@ -1,12 +1,11 @@
 // app/src/components/report/composables/useChartData.ts
 // 数据获取逻辑 - 封装所有 API 调用和数据处理
 
-import { ref, watch, nextTick, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import axios from 'axios'
 import https from 'https'
 import {
   getBenchmark,
-  calculateMetrics,
   BenchmarkMetrics,
   KlineData,
   clearExpiredCache,
@@ -16,8 +15,8 @@ import type { UseReportStateReturn } from './useReportState'
 
 export interface UseChartDataReturn {
   // === 数据状态 ===
-  /** 价格数据 [date, close][] */
-  symbolPrices: Ref<any[]>
+  /** 价格数据 Record<symbol, [date, close][]> */
+  symbolPrices: Ref<Record<string, [string, number][]>>
   /** 买入信号 [date, price][] */
   buySignals: Ref<any[]>
   /** 卖出信号 [date, price][] */
@@ -32,8 +31,14 @@ export interface UseChartDataReturn {
   loading: Ref<boolean>
 
   // === 数据获取方法 ===
-  /** 更新价格数据 */
+  /** 更新单个标的价格数据 */
   updatePrice: (symbol: string, startDate?: string, endDate?: string) => Promise<void>
+  /** 设置所有标的（用于填充 select 选项） */
+  setSelectedSymbol: (symbols: string[]) => void
+  /** 更新多个标的的价格数据 */
+  updatePriceForAll: (symbols: string[], startDate?: string, endDate?: string) => Promise<void>
+  /** 获取单个标的的价格数据 */
+  getPricesForSymbol: (symbol: string) => [string, number][]
   /** 更新交易信号 */
   updateTradeSignals: (buySignalsData: any[], sellSignalsData: any[], rawBuy?: any[], rawSell?: any[]) => void
   /** 更新策略指标 */
@@ -53,7 +58,7 @@ export interface UseChartDataReturn {
   /** 计算基准累计收益 */
   calculateBenchmarkCumulativeReturns: () => number[]
   /** 更新策略性能日期标签 */
-  updateStrategyPerformanceDates: (prices?: any[]) => void
+  updateStrategyPerformanceDates: (prices?: [string, number][]) => void
   /** 更新策略性能数据 */
   updateStrategyPerformanceData: () => void
 }
@@ -76,7 +81,7 @@ export function useChartData(
   reportState: UseReportStateReturn
 ): UseChartDataReturn {
   // === 数据状态 ===
-  const symbolPrices = ref<any[]>([])
+  const symbolPrices = ref<Record<string, [string, number][]>>({})
   const buySignals = ref<any[]>([])
   const sellSignals = ref<any[]>([])
   const rawBuySignals = ref<any[]>([])
@@ -136,7 +141,7 @@ export function useChartData(
         return
       }
 
-      symbolPrices.value = []
+      const prices: [string, number][] = []
       for (const oclhv of response.data) {
         const dt = oclhv['datetime']
         if (dt === undefined) continue
@@ -144,26 +149,51 @@ export function useChartData(
         const Y = date.getFullYear() + '-'
         const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
         const D = date.getDate()
-        symbolPrices.value.push([Y + M + D, oclhv['close']])
+        prices.push([Y + M + D, oclhv['close']])
       }
+      symbolPrices.value[symbol] = prices
 
       // 设置标记，等待图表初始化后更新
       needsPriceChartUpdate.value = true
-      console.info('[useChartData] 价格数据已加载:', symbolPrices.value.length, '条')
+      console.info('[useChartData] 价格数据已加载:', symbol, prices.length, '条')
 
       // 如果有 pending 请求，触发基准数据加载
-      if (reportState.selectedBenchmark.value && symbolPrices.value.length > 0) {
-        const firstDate = new Date(symbolPrices.value[0][0])
-        const lastDate = new Date(symbolPrices.value[symbolPrices.value.length - 1][0])
+      if (reportState.selectedBenchmark.value && prices.length > 0) {
+        const firstDate = new Date(prices[0][0])
+        const lastDate = new Date(prices[prices.length - 1][0])
         reportState.backtestStartDate.value = firstDate
         reportState.backtestEndDate.value = lastDate
         loadBenchmark(firstDate, lastDate)
       }
 
       // 更新策略性能日期
-      updateStrategyPerformanceDates(symbolPrices.value)
+      updateStrategyPerformanceDates(prices)
     } catch (error) {
       console.error('[useChartData] 获取价格数据失败:', error)
+    }
+  }
+
+  /**
+   * 设置所有标的（用于填充 select 选项）
+   */
+  function setSelectedSymbol(symbols: string[]) {
+    reportState.selectedSymbol.value = symbols
+    console.info(`[useChartData] 设置标的列表：${symbols.join(', ')}`)
+  }
+
+  /**
+   * 获取单个标的的价格数据
+   */
+  function getPricesForSymbol(symbol: string): [string, number][] {
+    return symbolPrices.value[symbol] || []
+  }
+
+  /**
+   * 更新多个标的的价格数据
+   */
+  async function updatePriceForAll(symbols: string[], startDate?: string, endDate?: string) {
+    for (const symbol of symbols) {
+      await updatePrice(symbol, startDate, endDate)
     }
   }
 
@@ -330,7 +360,8 @@ export function useChartData(
     // 4. 获取历史价格数据
     if (useSymbol && useStartDate && useEndDate) {
       console.info(`[useChartData] 获取历史价格：${useSymbol}, ${useStartDate} - ${useEndDate}`)
-      await updatePrice(useSymbol, useStartDate, useEndDate)
+      const symbols = useSymbol.split(',').map(s => s.trim()).filter(s => s.length > 0)
+      await updatePriceForAll(symbols, useStartDate, useEndDate)
     } else if (!useSymbol) {
       console.warn(`[useChartData] 无法获取标的代码，请检查流程图输入节点是否配置了代码参数`)
     }
@@ -367,13 +398,15 @@ export function useChartData(
     const totalReturn = reportState.metricsData.value.total_return || 0
 
     // 如果有真实的买卖信号和价格数据，计算真实累计收益
-    if (rawBuySignals.value.length > 0 && symbolPrices.value.length > 0) {
+    if (rawBuySignals.value.length > 0 && Object.keys(symbolPrices.value).length > 0) {
       console.info('[useChartData] 使用真实信号计算累计收益')
 
-      // 构建价格映射：date_string -> close
+      // 构建价格映射：date_string -> close (遍历所有标的)
       const priceMap = new Map<string, number>()
-      for (const [date, close] of symbolPrices.value) {
-        priceMap.set(date, close)
+      for (const symbol of Object.keys(symbolPrices.value)) {
+        for (const [date, close] of symbolPrices.value[symbol]) {
+          priceMap.set(date, close)
+        }
       }
 
       // 将原始信号转为 Trade 对象并按 timestamp 排序
@@ -413,8 +446,14 @@ export function useChartData(
         // 只保留交易期内的价格日期
         const minTradeDate = allTrades[0].dateStr
         const maxTradeDate = allTrades[allTrades.length - 1].dateStr
-        const sortedPriceDates = symbolPrices.value
-          .map(p => p[0])
+        // 收集所有标的的价格日期
+        const allPriceDates = new Set<string>()
+        for (const symbol of Object.keys(symbolPrices.value)) {
+          for (const [date] of symbolPrices.value[symbol]) {
+            allPriceDates.add(date)
+          }
+        }
+        const sortedPriceDates = [...allPriceDates]
           .filter(d => d >= minTradeDate && d <= maxTradeDate)
           .sort()
 
@@ -511,7 +550,7 @@ export function useChartData(
   /**
    * 更新策略性能日期标签（从价格数据或回测日期范围生成）
    */
-  function updateStrategyPerformanceDates(prices?: any[]) {
+  function updateStrategyPerformanceDates(prices?: [string, number][]) {
     // 如果有价格数据，使用日级日期字符串
     if (prices && prices.length > 0) {
       reportState.strategyPerformanceDates.value = prices.map((item: any) => item[0])
@@ -551,13 +590,14 @@ export function useChartData(
 
   // 监听 symbolPrices 变化，更新策略性能日期和基准数据
   watch(symbolPrices, (newPrices) => {
-    if (newPrices.length > 0) {
-      updateStrategyPerformanceDates(newPrices)
+    const keys = Object.keys(newPrices)
+    if (keys.length > 0 && newPrices[keys[0]].length > 0) {
+      updateStrategyPerformanceDates(newPrices[keys[0]])
 
       // 如果选择了基准，加载基准数据
       if (reportState.selectedBenchmark.value) {
-        const firstDate = new Date(newPrices[0][0])
-        const lastDate = new Date(newPrices[newPrices.length - 1][0])
+        const firstDate = new Date(newPrices[keys[0]][0][0])
+        const lastDate = new Date(newPrices[keys[0]][newPrices[keys[0]].length - 1][0])
         reportState.backtestStartDate.value = firstDate
         reportState.backtestEndDate.value = lastDate
         loadBenchmark(firstDate, lastDate)
@@ -589,6 +629,9 @@ export function useChartData(
     loading,
     // 数据获取方法
     updatePrice,
+    setSelectedSymbol,
+    updatePriceForAll,
+    getPricesForSymbol,
     updateTradeSignals,
     updateMetrics,
     updateBenchmark,

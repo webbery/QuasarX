@@ -8,10 +8,10 @@
         <div class="market-list">
           <div class="market-item">
             <div class="market-name">
-              <i class="fas fa-caret-up positive-change"></i>
-              <span>沪深300</span>
+              <i :class="indexIconClass"></i>
+              <span>上证指数</span>
             </div>
-            <div class="market-value positive-change">{{hs300}} ({{hs300Percent}}%)</div>
+            <div class="market-value" :class="indexChangeClass">{{ indexDisplay }} ({{ indexPercentDisplay }}%)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
@@ -39,7 +39,7 @@
               <i class="fas fa-caret-down negative-change"></i>
               <span>标普500</span>
             </div>
-            <div class="market-value negative-change">{{}} ({{}}%)</div>
+            <div class="market-value negative-change">-- (--)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
@@ -60,8 +60,38 @@
 </template>
 
 <script setup >
-import { onMounted, ref, onBeforeUnmount } from 'vue'
-const axios = require('axios');  
+import { onMounted, ref, onBeforeUnmount, computed } from 'vue'
+import { useIndexQuotes } from '@/composables/useIndexQuotes'
+const axios = require('axios');
+
+// 上证指数实时数据
+const { lastPrice, changePct, loading } = useIndexQuotes('SH000001')
+
+const indexDisplay = computed(() => {
+  if (loading.value && lastPrice.value === 0) return '--'
+  return lastPrice.value > 0 ? lastPrice.value.toFixed(2) : '--'
+})
+
+const indexPercentDisplay = computed(() => {
+  if (loading.value && lastPrice.value === 0) return '--'
+  if (lastPrice.value === 0) return '--'
+  const pct = changePct.value ?? 0
+  return (pct >= 0 ? '+' : '') + pct.toFixed(2)
+})
+
+const indexIconClass = computed(() => {
+  const pct = changePct.value ?? 0
+  if (pct > 0) return 'fas fa-caret-up positive-change'
+  if (pct < 0) return 'fas fa-caret-down negative-change'
+  return 'fas fa-minus no-change'
+})
+
+const indexChangeClass = computed(() => {
+  const pct = changePct.value ?? 0
+  if (pct > 0) return 'positive-change'
+  if (pct < 0) return 'negative-change'
+  return 'no-change'
+})
 
 let prev_rate = 0
 let usd_cny_rate = ref('0')
@@ -166,15 +196,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling();
 });
-
-async function getSP500() {
-  const response = await fetch(url);
-  // const text = await response.text();
-  // 解析数据格式："var hq_str_gb_gspc=\"标普500,3094.668,...\";"
-  // const data = text.split('"')[1].split(',');
-  console.log('最新点位：', response);
-}
-// getSP500();
 </script>
 
 <style scoped>

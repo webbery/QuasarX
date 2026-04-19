@@ -22,12 +22,17 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
         _positionRatio = config["params"]["positionRatio"]["value"];
     }
 
+    // 是否允许做空
+    if (config["params"].contains("allowShort")) {
+        _allowShort = config["params"]["allowShort"]["value"];
+    }
+
     // 交易池 - 优先从 config 读取，如果没有则从上游 SignalNode 获取
     if (config["params"].contains("pool")) {
         auto& poolConfig = config["params"]["pool"]["value"];
         for (const String& code : poolConfig) {
             auto& security = Server::GetSecurity(code);
-            _pool.emplace_back(to_symbol(code, security));
+            _pool.insert(to_symbol(code, security));
         }
     } else {
         // 从上游 SignalNode 获取交易池
@@ -35,7 +40,7 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
             if (auto* signalNode = dynamic_cast<SignalNode*>(inputNode)) {
                 auto pool = signalNode->GetPool();
                 for (const auto& symbol : pool) {
-                    _pool.emplace_back(symbol);
+                    _pool.insert(symbol);
                 }
             }
         }
@@ -76,7 +81,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
 
     // 如果没有信号，保持现有仓位
     if (symbols.empty()) {
-        symbols = _pool;
+        symbols.assign(_pool.begin(), _pool.end());
         actions.resize(symbols.size(), TradeAction::HOLD);
     }
 
@@ -158,16 +163,38 @@ ExecutionPlan PortfolioNode::generatePlan(
                 }
             }
         } else if (item._action == TradeAction::BUY) {
-            int quantity = static_cast<int>(perSymbolCapital / price / 100) * 100;
-            if (quantity < 100) {
-                WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
-                continue;
+            auto& position = _server->GetPosition("");
+            int currentQty = 0;
+            for (const auto& pos : position._positions) {
+                if (pos._symbol == item._symbol) {
+                    currentQty = static_cast<int>(pos._holds);
+                    break;
+                }
             }
-            item._quantity = quantity;
-            item._limitPrice = 0;
-            item._targetValue = quantity * price;
-            plan._items.push_back(item);
-            plan._usedCapital += item._targetValue;
+            if (currentQty < 0) {
+                // 有空仓，BUY = 平空
+                item._quantity = -currentQty;
+                item._flag = 1; // 平仓
+                item._limitPrice = 0;
+                item._targetValue = item._quantity * price;
+                plan._items.push_back(item);
+            } else if (currentQty > 0) {
+                // 已有多仓，跳过
+                continue;
+            } else {
+                // 无仓，BUY = 开多
+                int quantity = static_cast<int>(perSymbolCapital / price / 100) * 100;
+                if (quantity < 100) {
+                    WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                    continue;
+                }
+                item._quantity = quantity;
+                item._flag = 0; // 开仓
+                item._limitPrice = 0;
+                item._targetValue = quantity * price;
+                plan._items.push_back(item);
+                plan._usedCapital += item._targetValue;
+            }
         } else if (item._action == TradeAction::SELL) {
             auto& position = _server->GetPosition("");
             int currentQty = 0;
@@ -178,11 +205,22 @@ ExecutionPlan PortfolioNode::generatePlan(
                 }
             }
             if (currentQty > 0) {
+                // 平多
                 item._quantity = currentQty;
+                item._flag = 1; // 平仓
                 item._limitPrice = 0;
                 item._targetValue = currentQty * price;
                 plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
+            } else if (currentQty == 0 && _allowShort) {
+                // 做空（开仓）
+                int quantity = static_cast<int>(perSymbolCapital / price / 100) * 100;
+                if (quantity >= 100) {
+                    item._quantity = quantity;
+                    item._flag = 0; // 开仓
+                    item._limitPrice = 0;
+                    item._targetValue = quantity * price;
+                    plan._items.push_back(item);
+                }
             }
         }
     }
@@ -241,39 +279,59 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<sym
                 plan._usedCapital += item._targetValue;
             }
         } else if (item._action == TradeAction::BUY) {
-            // 检查是否已有持仓
             int64_t currentQty = 0;
             if (histExchange) {
                 currentQty = histExchange->GetPositionQuantity(item._symbol);
             }
-            if (currentQty > 0) {
-                // 已有持仓，跳过买入
+            if (currentQty < 0) {
+                // 有空仓，BUY = 平空
+                item._quantity = static_cast<int>(-currentQty);
+                item._flag = 1; // 平仓
+                item._limitPrice = price;
+                item._targetValue = item._quantity * price;
+                plan._items.push_back(item);
+            } else if (currentQty > 0) {
+                // 已有多仓，跳过
                 INFO("Symbol {} already has position {}, skipping buy", symbolName, currentQty);
                 continue;
+            } else {
+                // 无仓，BUY = 开多
+                int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
+                if (quantity < 100) {
+                    WARN("Quantity {} too small for symbol {}", quantity, symbolName);
+                    continue;
+                }
+                item._quantity = quantity;
+                item._flag = 0; // 开仓
+                item._limitPrice = price;
+                item._targetValue = quantity * price;
+                plan._items.push_back(item);
+                plan._usedCapital += item._targetValue;
             }
-            // 使用未复权价格计算固定买卖数量
-            int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
-            if (quantity < 100) {
-                WARN("Quantity {} too small for symbol {}", quantity, symbolName);
-                continue;
-            }
-            item._quantity = quantity;
-            item._limitPrice = price;  // 使用未复权收盘价作为限价
-            item._targetValue = quantity * price;
-            plan._items.push_back(item);
-            plan._usedCapital += item._targetValue;
         } else if (item._action == TradeAction::SELL) {
-            // 卖出：获取当前持仓
             int64_t currentQty = 0;
             if (histExchange) {
                 currentQty = histExchange->GetPositionQuantity(item._symbol);
             }
             if (currentQty > 0) {
+                // 平多
                 item._quantity = currentQty;
-                item._limitPrice = price;  // 使用未复权收盘价作为限价
+                item._flag = 1; // 平仓
+                item._limitPrice = price;
                 item._targetValue = currentQty * price;
                 plan._items.push_back(item);
                 plan._usedCapital += item._targetValue;
+            } else if (currentQty == 0 && _allowShort) {
+                // 做空（开仓）
+                int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
+                if (quantity >= 100) {
+                    item._quantity = quantity;
+                    item._flag = 0; // 开仓
+                    item._limitPrice = price;
+                    item._targetValue = quantity * price;
+                    plan._items.push_back(item);
+                    plan._usedCapital += item._targetValue;
+                }
             }
         }
     }
@@ -292,7 +350,8 @@ bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {
 
         if (oldItem._symbol != newItem._symbol ||
             oldItem._action != newItem._action ||
-            oldItem._quantity != newItem._quantity) {
+            oldItem._quantity != newItem._quantity ||
+            oldItem._flag != newItem._flag) {
             return true;
         }
     }
@@ -301,7 +360,7 @@ bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {
 }
 
 const nlohmann::json PortfolioNode::getParams() {
-    return {"positionRatio", "pool"};
+    return {"positionRatio", "pool", "allowShort"};
 }
 
 Map<String, ArgType> PortfolioNode::out_elements() {

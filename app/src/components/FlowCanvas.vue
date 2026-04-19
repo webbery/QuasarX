@@ -28,7 +28,24 @@
 
       <!-- 自定义连接线样式 -->
       <template #connection-line="connectionProps">
-        <FlowConnectLine v-bind="connectionProps" />
+        <FlowConnectLine v-bind="connectionProps" @edge-click="handleConnectionClick" />
+      </template>
+
+      <!-- 自定义边样式：使用 edge-default（Vue Flow 默认 edge type） -->
+      <template #edge-default="edgeProps">
+        <FlowConnectLine
+          :id="edgeProps.id"
+          :source-x="edgeProps.sourceX"
+          :source-y="edgeProps.sourceY"
+          :target-x="edgeProps.targetX"
+          :target-y="edgeProps.targetY"
+          :source-position="edgeProps.sourcePosition"
+          :target-position="edgeProps.targetPosition"
+          :connection-line-style="edgeProps.style"
+          :selected="edgeProps.selected"
+          :edge="edgeProps"
+          @edge-click="handleEdgeClickFromCustom"
+        />
       </template>
     </VueFlow>
   </div>
@@ -36,6 +53,7 @@
 
 <script setup>
 import { VueFlow } from '@vue-flow/core'
+import { watch } from 'vue'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 
@@ -88,6 +106,17 @@ const handleNodeContextMenu = (event) => {
 }
 
 const handleEdgeClick = (event) => {
+  console.log('[FlowCanvas] VueFlow native edge-click:', event)
+  emit('edge-click', event)
+}
+
+const handleEdgeClickFromCustom = (event) => {
+  console.log('[FlowCanvas] Custom edge-click from FlowConnectLine:', event)
+  emit('edge-click', event)
+}
+
+const handleConnectionClick = (event) => {
+  console.log('[FlowCanvas] Connection-line click:', event)
   emit('edge-click', event)
 }
 
@@ -126,6 +155,11 @@ const handleNodeClick = (event) => {
 const handleUpdateNode = (nodeId, paramKey, newValue) => {
   emit('update-node', nodeId, paramKey, newValue)
 }
+
+// 调试：监听 edges 变化
+watch(() => props.edges, (newEdges) => {
+  console.log('[FlowCanvas] Edges changed, count:', newEdges?.length, 'edges:', newEdges?.map(e => ({ id: e.id, selected: e.selected })))
+}, { deep: true, immediate: true })
 
 // 暴露 fitView 方法供父组件调用
 const fitView = (options) => {

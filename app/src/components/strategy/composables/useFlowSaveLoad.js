@@ -389,7 +389,7 @@ export function useFlowSaveLoad(state, operations) {
           )
           if (inputNode) {
             const codes = inputNode.data.params['代码'].value
-            const symbols = codes.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+            const symbols = Array.isArray(codes) ? codes : codes.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
             if (symbols.length > 0) {
               backtestSymbol = symbols.join(',')  // 传递所有标的代码，逗号分隔
               console.info(`[loadVersionFromHistory] 提取标的代码：${backtestSymbol}`)

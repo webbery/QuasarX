@@ -3,6 +3,7 @@
 #include "Util/log.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
 #include <utility>
 
 SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
@@ -69,6 +70,11 @@ bool SignalNode::Init(const nlohmann::json& config) {
         auto symbol = to_symbol(code, security);
         _pools.emplace_back(symbol);
     }
+
+    if (config["params"].contains("allowShort")) {
+        _allowShort = config["params"]["allowShort"]["value"];
+    }
+
     return true;
 }
 
@@ -84,6 +90,35 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
 
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
+
+    // 如果不允许做空，过滤无持仓标的的 SELL 信号
+    if (!_allowShort) {
+        Set<symbol_t> heldSymbols;
+        if (_server->GetRunningMode() == RuningType::Backtest) {
+            auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+                _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+            if (histExchange) {
+                for (const auto& symbol : _pools) {
+                    if (histExchange->GetPositionQuantity(symbol) != 0) {
+                        heldSymbols.insert(symbol);
+                    }
+                }
+            }
+        } else {
+            auto& positions = _server->GetPosition("");
+            for (const auto& pos : positions._positions) {
+                if (pos._holds != 0) {
+                    heldSymbols.insert(pos._symbol);
+                }
+            }
+        }
+        for (auto it = sells.begin(); it != sells.end(); ++it) {
+            if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
+                INFO("{} SELL signal filtered (no position held, shorting disabled)", it->first);
+                it->second = TradeAction::HOLD;
+            }
+        }
+    }
 
     Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
@@ -147,7 +182,7 @@ SignalNode::~SignalNode() {
 }
 
 const nlohmann::json SignalNode::getParams() {
-    return {"buy", "sell", "code"};
+    return {"buy", "sell", "code", "allowShort"};
 }
 
 Map<String, ArgType> SignalNode::out_elements() {

@@ -1,18 +1,19 @@
 import { ref, computed } from 'vue'
 import type { MarketType, MarketRiskData, StrategyRiskItem, OptionRiskData, StockRiskData, FutureRiskData } from '../types/risk'
+import { useIndexQuotes } from '@/composables/useIndexQuotes'
 
 /** 市场风险模拟数据 */
 const MARKET_DATA: Record<MarketType, MarketRiskData> = {
   astock: {
     marketType: 'astock',
-    indexName: '沪深300',
-    indexValue: 3850.20,
-    changePercent: 1.23,
-    volatility: 18.52,
-    advanceCount: 1234,
-    declineCount: 876,
-    sentimentIndex: 32,
-    sentimentLabel: '恐惧',
+    indexName: '上证指数',
+    indexValue: 0,
+    changePercent: 0,
+    volatility: 0,
+    advanceCount: 0,
+    declineCount: 0,
+    sentimentIndex: 0,
+    sentimentLabel: '',
   },
   future: {
     marketType: 'future',
@@ -196,7 +197,21 @@ const FUTURE_RISK_DATA: Record<string, FutureRiskData> = {
 export function useMockRiskData() {
   const selectedMarket = ref<MarketType>('astock')
 
-  const marketData = computed(() => MARKET_DATA[selectedMarket.value])
+  // 上证指数实时数据
+  const { lastPrice: livePrice, changePct: liveChange } = useIndexQuotes('SH000001')
+
+  const marketData = computed((): MarketRiskData => {
+    const base = MARKET_DATA[selectedMarket.value]
+    if (selectedMarket.value === 'astock') {
+      return {
+        ...base,
+        indexName: '上证指数',
+        indexValue: Number(livePrice.value) || 0,
+        changePercent: Number(liveChange.value) || 0,
+      }
+    }
+    return base
+  })
 
   const strategies = ref<StrategyRiskItem[]>([...STRATEGIES])
 

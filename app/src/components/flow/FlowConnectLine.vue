@@ -1,28 +1,67 @@
 <template>
     <g>
+        <defs>
+            <marker
+                id="arrow-default"
+                markerWidth="10"
+                markerHeight="7"
+                refX="9"
+                refY="3.5"
+                orient="auto"
+                markerUnits="userSpaceOnUse"
+            >
+                <polygon
+                    points="0 0, 10 3.5, 0 7"
+                    fill="var(--primary)"
+                />
+            </marker>
+            <marker
+                id="arrow-selected"
+                markerWidth="10"
+                markerHeight="7"
+                refX="9"
+                refY="3.5"
+                orient="auto"
+                markerUnits="userSpaceOnUse"
+            >
+                <polygon
+                    points="0 0, 10 3.5, 0 7"
+                    fill="#ff6b35"
+                />
+            </marker>
+        </defs>
         <path
             :d="connectionLinePath"
             fill="none"
-            :stroke="connectionLineStyle?.stroke || 'var(--primary)'"
-            :stroke-width="connectionLineStyle?.strokeWidth || 2"
-            @click="onClick"
+            :stroke="props.selected ? '#ff6b35' : (connectionLineStyle?.stroke || 'var(--primary)')"
+            :stroke-width="props.selected ? 4 : (connectionLineStyle?.strokeWidth || 2)"
+            :marker-end="props.selected ? 'url(#arrow-selected)' : 'url(#arrow-default)'"
+            :class="{ 'connection-line': true, selected: props.selected }"
+            @click.stop="onClick"
         />
         <circle
             v-if="targetPosition"
             :cx="targetPosition.x"
             :cy="targetPosition.y"
             r="4"
-            :fill="connectionLineStyle?.stroke || 'var(--primary)'"
+            :fill="props.selected ? '#ff6b35' : (connectionLineStyle?.stroke || 'var(--primary)')"
         />
     </g>
 </template>
 
 <script setup>
-import { computed, inject } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { getBezierPath } from '@vue-flow/core'
+
+// 定义组件事件
+const emit = defineEmits(['edge-click', 'edge-select'])
 
 // 定义组件属性
 const props = defineProps({
+    id: {
+        type: String,
+        default: ''
+    },
     connectionLineStyle: {
         type: Object,
         default: () => ({})
@@ -33,25 +72,55 @@ const props = defineProps({
     targetX: Number,
     targetY: Number,
     sourcePosition: String,
-    targetPosition: String
+    targetPosition: String,
+    selected: {
+        type: Boolean,
+        default: false
+    },
+    // 可能由 Vue Flow 传入的原始 edge 对象
+    edge: {
+        type: Object,
+        default: null
+    },
+    source: String,
+    target: String,
+    sourceHandle: String,
+    targetHandle: String
 })
 
-// 计算连接线路径 - 使用更安全的方式
+console.log('[FlowConnectLine] === MOUNTED ===, props keys:', Object.keys(props), 'selected:', props.selected, 'id:', props.id)
+
+// 调试：打印 props 变化
+watch(() => ({ ...props }), (newProps) => {
+    console.log('[FlowConnectLine] Props updated:', {
+        id: newProps.id,
+        selected: newProps.selected,
+        sourceX: newProps.sourceX,
+        sourceY: newProps.sourceY,
+        targetX: newProps.targetX,
+        targetY: newProps.targetY,
+        hasEdge: !!newProps.edge,
+        style: newProps.connectionLineStyle,
+        allKeys: Object.keys(newProps)
+    })
+}, { deep: true, immediate: true })
+
+// 计算连接线路径
 const connectionLinePath = computed(() => {
-    // 优先使用直接传递的坐标
-    if (props.sourceX !== undefined && props.sourceY !== undefined && 
+    if (props.sourceX !== undefined && props.sourceY !== undefined &&
         props.targetX !== undefined && props.targetY !== undefined) {
-        return getBezierPath({
+        const path = getBezierPath({
             sourceX: props.sourceX,
             sourceY: props.sourceY,
-            sourcePosition: props.sourcePosition || 'right', // 默认位置
+            sourcePosition: props.sourcePosition || 'right',
             targetX: props.targetX,
             targetY: props.targetY,
-            targetPosition: props.targetPosition || 'left',   // 默认位置
+            targetPosition: props.targetPosition || 'left',
         })
+        console.log('[FlowConnectLine] Path computed OK, id:', props.id)
+        return path
     }
-    console.info('connection line path')
-    // 如果都没有有效数据，返回空路径
+    console.warn('[FlowConnectLine] Missing coordinates, returning empty path. sourceX:', props.sourceX, 'targetX:', props.targetX)
     return ''
 })
 
@@ -63,20 +132,27 @@ const targetPosition = computed(() => ({
 
 // 事件处理
 const onClick = (event) => {
-  emit('edge-click', { edge: props, event })
+  console.log('[FlowConnectLine] >>> PATH CLICKED! id:', props.id, 'selected:', props.selected, 'event:', event)
+  event.stopPropagation()
+  emit('edge-click', {
+    id: props.id,
+    edge: props.edge,
+    event,
+    selected: props.selected
+  })
 }
 
 </script>
 <style scoped>
 .connection-line {
-  stroke-dasharray: 5;
-  animation: dashdraw 0.5s linear infinite;
+  cursor: pointer;
+  transition: stroke 0.2s, stroke-width 0.2s;
 }
 
-@keyframes dashdraw {
-  from {
-    stroke-dashoffset: 10;
-  }
+.connection-line.selected {
+  stroke: #ff6b35 !important;
+  stroke-width: 4 !important;
+  filter: drop-shadow(0 0 6px rgba(255, 107, 53, 0.6));
 }
 
 .connection-target {

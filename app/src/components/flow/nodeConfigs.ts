@@ -58,6 +58,7 @@ export const keyMap: KeyMap = {
   "stockB": "标的B",
   "beta": "对冲比例β",
   "window": "窗口大小",
+  "allowShort": "允许做空",
 }
 
 // 节点类型配置
@@ -133,6 +134,10 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
       "卖出条件": {
         value: "MA_5-MA_15 < 0",
         type: "text"
+      },
+      "允许做空": {
+        value: false,
+        type: "boolean"
       }
     }
   },

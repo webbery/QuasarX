@@ -84,8 +84,8 @@ AccountAsset StockHistorySimulation::GetAsset(){
 
 order_id StockHistorySimulation::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
     // run_id: 回测运行 ID，用于区分不同的策略实例
-    // 买入时检查并冻结资金
-    if (order->_order._side == 0) {  // 买入
+    // 买入开仓时检查并冻结资金
+    if (order->_order._side == 0 && order->_order._flag == 0) {  // 开多
         double orderCost = order->_order._price * order->_order._volume;
 
         double current = 0;
@@ -132,8 +132,16 @@ bool StockHistorySimulation::OrderReport(BacktestContext* context, order_id id, 
     orderCtx->_promise.set_value(true);
 
     // 更新持仓（使用上下文私有持仓）
-    context->adjustPosition(orderCtx->_order._symbol, 
-        report._side == 0 ? report._quantity : -report._quantity);
+    const auto& order = orderCtx->_order;
+    int delta = 0;
+    if (order._side == 0) { // BUY
+        delta = (order._flag == 0) ? report._quantity : -report._quantity;
+        // 开多 +qty, 平空 -qty
+    } else { // SELL
+        delta = (order._flag == 0) ? -report._quantity : report._quantity;
+        // 做空 -qty, 平多 +qty
+    }
+    context->adjustPosition(orderCtx->_order._symbol, delta);
 
     // 记录交易
     auto broker = _server->GetBrokerSubSystem();
@@ -855,7 +863,7 @@ void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symb
 
         TradeReport report = OrderMatch(orderInfo._order->_order, matchQuote);
 
-        if (orderInfo._order->_order._side == 1) {
+        if (orderInfo._order->_order._flag == 1) {  // 平仓（平多/平空都释放对应冻结资金）
             context->releaseFunds(report._trade_amount);
         }
 
@@ -907,8 +915,8 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
         return id;
     }
 
-    // 买入时检查并冻结资金
-    if (order->_order._side == 0) {
+    // 买入开仓时检查并冻结资金
+    if (order->_order._side == 0 && order->_order._flag == 0) {
         double orderCost = order->_order._price * order->_order._volume;
         if (!ctx->tryReserveFunds(orderCost)) {
             WARN("资金不足：所需 {:.2f}，可用 {:.2f}", orderCost, ctx->getAvailableFunds());

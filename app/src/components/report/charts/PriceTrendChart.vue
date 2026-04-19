@@ -8,7 +8,7 @@
       <span>Price Trend & Trading Signals</span>
       <div class="chart-controls">
         <select v-model="localSymbol" @change="handleSymbolChange">
-          <option v-for="symbol in symbols" :key="symbol" :value="symbol">{{ symbol }}</option>
+          <option v-for="symbol in priceSymbols" :key="symbol" :value="symbol">{{ symbol }}</option>
         </select>
       </div>
     </div>
@@ -17,16 +17,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts } from '../composables/useECharts'
 
 interface Props {
-  prices: any[]
+  prices: Record<string, [string, number][]>
   buySignals: any[]
   sellSignals: any[]
-  symbols: string[]
-  selectedSymbol: string
+  rawBuySignals?: any[]   // [symbol, timestamp, quantity, price][]
+  rawSellSignals?: any[]  // [symbol, timestamp, quantity, price][]
+  selectedSymbol?: string
 }
 
 interface Emits {
@@ -36,14 +37,26 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const localSymbol = ref(props.selectedSymbol)
+const priceSymbols = computed(() => Object.keys(props.prices))
+
+// Resolve localSymbol: use selectedSymbol if it exists in prices, otherwise default to first key
+const localSymbol = ref('')
+function resolveLocalSymbol() {
+  if (!props.prices[localSymbol.value]) {
+    const first = Object.keys(props.prices)[0]
+    if (first) {
+      localSymbol.value = first
+    }
+  }
+}
+
 const { chartRef, initChart, updateChart } = useECharts(true)
 
 function handleSymbolChange() {
   emit('symbolChange', localSymbol.value)
 }
 
-function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[]) {
+function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[], rawSell?: any[], rawBuy?: any[], targetSymbol?: string) {
   // 构建日期到索引的映射
   const dateIndexMap = new Map<string, number>()
   chartData.forEach((item: any, index: number) => {
@@ -52,18 +65,46 @@ function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[])
 
   // 将信号数据转换为与 chartData 对齐的扁平数组
   // category 类型 x 轴按索引自动定位，只需在对应索引位置填入价格，其余为 null
-  const mappedBuySignals = Array(chartData.length).fill(null)
-  const mappedSellSignals = Array(chartData.length).fill(null)
 
-  buySignals.forEach((signal: any[]) => {
-    const idx = dateIndexMap.get(signal[0])
-    if (idx !== undefined) mappedBuySignals[idx] = chartData[idx][1]
-  })
+  // 按标的过滤原始信号的辅助函数
+  function filterSignalsBySymbol(rawSigs: any[], sym: string): number[] {
+    const result = Array(chartData.length).fill(null)
+    const filtered = rawSigs.filter(s => s[0] === sym)
+    filtered.forEach(signal => {
+      const ts = signal[1] // timestamp in seconds
+      const date = new Date(ts * 1000)
+      const Y = date.getFullYear()
+      const M = (date.getMonth() + 1) < 10 ? '0' + (date.getMonth() + 1) : '' + (date.getMonth() + 1)
+      const D = '' + date.getDate()
+      const dateStr = `${Y}-${M}-${D}`
+      const idx = dateIndexMap.get(dateStr)
+      if (idx !== undefined) result[idx] = chartData[idx][1]
+    })
+    return result
+  }
 
-  sellSignals.forEach((signal: any[]) => {
-    const idx = dateIndexMap.get(signal[0])
-    if (idx !== undefined) mappedSellSignals[idx] = chartData[idx][1]
-  })
+  // 优先使用 raw signals 按标的过滤，回退到旧的 formatted signals
+  const useRaw = (rawBuy?.length ?? 0) > 0 || (rawSell?.length ?? 0) > 0
+  const mappedBuySignals = useRaw
+    ? (targetSymbol ? filterSignalsBySymbol(rawBuy || [], targetSymbol) : Array(chartData.length).fill(null))
+    : (() => {
+        const mapped = Array(chartData.length).fill(null)
+        buySignals.forEach((signal: any[]) => {
+          const idx = dateIndexMap.get(signal[0])
+          if (idx !== undefined) mapped[idx] = chartData[idx][1]
+        })
+        return mapped
+      })()
+  const mappedSellSignals = useRaw
+    ? (targetSymbol ? filterSignalsBySymbol(rawSell || [], targetSymbol) : Array(chartData.length).fill(null))
+    : (() => {
+        const mapped = Array(chartData.length).fill(null)
+        sellSignals.forEach((signal: any[]) => {
+          const idx = dateIndexMap.get(signal[0])
+          if (idx !== undefined) mapped[idx] = chartData[idx][1]
+        })
+        return mapped
+      })()
 
   return {
     tooltip: {
@@ -179,18 +220,31 @@ function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[])
 
 // 监听数据变化，更新图表
 watch(
-  [() => props.prices, () => props.buySignals, () => props.sellSignals],
+  [() => props.prices, () => props.buySignals, () => props.sellSignals, () => props.rawBuySignals, () => props.rawSellSignals],
   ([prices, buys, sells]) => {
-    if (prices.length > 0) {
-      updateChart(getPriceOption(prices, sells, buys), true)
+    resolveLocalSymbol()
+    const chartData = prices[localSymbol.value]
+    if (chartData && chartData.length > 0) {
+      updateChart(getPriceOption(chartData, sells, buys, props.rawSellSignals, props.rawBuySignals, localSymbol.value), true)
     }
   },
   { deep: true }
 )
 
-// 同步 selectedSymbol
+// 同步 selectedSymbol 并更新图表
 watch(() => props.selectedSymbol, (val) => {
-  localSymbol.value = val
+  if (val) {
+    localSymbol.value = val
+  }
+  resolveLocalSymbol()
+  // selectedSymbol 变化时重新渲染图表（切换标的需要重新过滤信号）
+  const prices = props.prices
+  const chartData = prices[localSymbol.value]
+  if (chartData && chartData.length > 0) {
+    const buys = props.buySignals
+    const sells = props.sellSignals
+    updateChart(getPriceOption(chartData, sells, buys, props.rawSellSignals, props.rawBuySignals, localSymbol.value), true)
+  }
 })
 
 onMounted(() => {

@@ -14,17 +14,17 @@
       <div class="risk-card">
         <div class="card-icon"><i class="fas fa-chart-line"></i></div>
         <div class="card-label">{{ props.data.indexName }}</div>
-        <div class="card-value">{{ props.data.indexValue.toFixed(2) }}</div>
-        <div class="card-change" :class="props.data.changePercent >= 0 ? 'up' : 'down'">
-          <i :class="props.data.changePercent >= 0 ? 'fas fa-caret-up' : 'fas fa-caret-down'"></i>
-          {{ props.data.changePercent >= 0 ? '+' : '' }}{{ props.data.changePercent.toFixed(2) }}%
+        <div class="card-value">{{ (props.data.indexValue ?? 0).toFixed(2) }}</div>
+        <div class="card-change" :class="(props.data.changePercent ?? 0) >= 0 ? 'up' : 'down'">
+          <i :class="(props.data.changePercent ?? 0) >= 0 ? 'fas fa-caret-up' : 'fas fa-caret-down'"></i>
+          {{ (props.data.changePercent ?? 0) >= 0 ? '+' : '' }}{{ (props.data.changePercent ?? 0).toFixed(2) }}%
         </div>
       </div>
       <!-- 波动率卡片 -->
       <div class="risk-card">
         <div class="card-icon"><i class="fas fa-wave-square"></i></div>
         <div class="card-label">波动率</div>
-        <div class="card-value">{{ props.data.volatility.toFixed(2) }}</div>
+        <div class="card-value">{{ (props.data.volatility ?? 0).toFixed(2) }}</div>
         <div class="card-sub">IV Index</div>
       </div>
       <!-- 涨跌统计卡片 -->
