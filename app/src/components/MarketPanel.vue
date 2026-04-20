@@ -55,153 +55,19 @@
             </div>
             <div class="market-value " :class="rate_status_class">{{ usd_cny_rate }} ({{ up_rate }}%)</div>
           </div>
-        </div>
-    </div>
-
-    <!-- 无风险利率与货币市场指标 -->
-    <div class="panel-section">
-        <div class="panel-title">
-          <h3><i class="fas fa-landmark"></i> 无风险利率与货币市场</h3>
-          <span class="update-time">{{ lastUpdateTime }}</span>
-        </div>
-
-        <div class="rate-indicators">
-          <!-- Shibor 利率 -->
-          <div class="rate-group">
-            <div class="rate-group-title">
-              <i class="fas fa-yen-sign"></i>
-              <span>Shibor 上海银行间同业拆放利率</span>
+          <div class="market-item">
+            <div class="market-name">
+              <i class="fas fa-caret-up positive-change"></i>
+              <span>Shibor 1W</span>
             </div>
-            <div class="rate-grid">
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>O/N 隔夜</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shiborON.change)">
-                    {{ shiborON.change >= 0 ? '+' : '' }}{{ shiborON.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shiborON.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>1W 1周</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor1W.change)">
-                    {{ shibor1W.change >= 0 ? '+' : '' }}{{ shibor1W.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor1W.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>2W 2周</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor2W.change)">
-                    {{ shibor2W.change >= 0 ? '+' : '' }}{{ shibor2W.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor2W.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>1M 1个月</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor1M.change)">
-                    {{ shibor1M.change >= 0 ? '+' : '' }}{{ shibor1M.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor1M.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>3M 3个月</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor3M.change)">
-                    {{ shibor3M.change >= 0 ? '+' : '' }}{{ shibor3M.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor3M.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>6M 6个月</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor6M.change)">
-                    {{ shibor6M.change >= 0 ? '+' : '' }}{{ shibor6M.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor6M.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>9M 9个月</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor9M.change)">
-                    {{ shibor9M.change >= 0 ? '+' : '' }}{{ shibor9M.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor9M.value.toFixed(4) }}%</div>
-              </div>
-              <div class="rate-item">
-                <div class="rate-label">
-                  <span>1Y 1年</span>
-                  <span class="rate-badge" :class="getRateChangeClass(shibor1Y.change)">
-                    {{ shibor1Y.change >= 0 ? '+' : '' }}{{ shibor1Y.change.toFixed(2) }}BP
-                  </span>
-                </div>
-                <div class="rate-value">{{ shibor1Y.value.toFixed(4) }}%</div>
-              </div>
-            </div>
+            <div class="market-value " :class="rate_status_class"> {{ shibor1W.change >= 0 ? '+' : '' }}{{ shibor1W.change.toFixed(2) }}BP ({{ shiborON.value.toFixed(4) }}%)</div>
           </div>
-
-          <!-- DR007 存款类金融机构质押式回购利率 -->
-          <div class="rate-group">
-            <div class="rate-group-title">
-              <i class="fas fa-coins"></i>
-              <span>DR007 存款类金融机构7天期回购利率</span>
+          <div class="market-item">
+            <div class="market-name">
+              <i class="fas fa-caret-up positive-change"></i>
+              <span>DR007</span>
             </div>
-            <div class="dr007-display">
-              <div class="dr007-main">
-                <div class="dr007-value">{{ dr007.value.toFixed(4) }}%</div>
-                <div class="dr007-change" :class="getRateChangeClass(dr007.change)">
-                  {{ dr007.change >= 0 ? '↑' : '↓' }} {{ Math.abs(dr007.change).toFixed(2) }}BP
-                </div>
-              </div>
-              <div class="dr007-stats">
-                <div class="dr007-stat">
-                  <span class="stat-label">今日开盘</span>
-                  <span class="stat-value">{{ dr007.open.toFixed(4) }}%</span>
-                </div>
-                <div class="dr007-stat">
-                  <span class="stat-label">今日最高</span>
-                  <span class="stat-value">{{ dr007.high.toFixed(4) }}%</span>
-                </div>
-                <div class="dr007-stat">
-                  <span class="stat-label">今日最低</span>
-                  <span class="stat-value">{{ dr007.low.toFixed(4) }}%</span>
-                </div>
-                <div class="dr007-stat">
-                  <span class="stat-label">昨日收盘</span>
-                  <span class="stat-value">{{ dr007.prevClose.toFixed(4) }}%</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 利率曲线示意 -->
-          <div class="rate-group">
-            <div class="rate-group-title">
-              <i class="fas fa-chart-area"></i>
-              <span>Shibor 利率曲线</span>
-            </div>
-            <div class="rate-curve-placeholder">
-              <i class="fas fa-chart-line"></i>
-              <span>利率曲线图表（待实现）</span>
-              <div class="curve-data-preview">
-                <span class="curve-point">O/N: {{ shiborON.value.toFixed(2) }}%</span>
-                <span class="curve-point">1W: {{ shibor1W.value.toFixed(2) }}%</span>
-                <span class="curve-point">2W: {{ shibor2W.value.toFixed(2) }}%</span>
-                <span class="curve-point">1M: {{ shibor1M.value.toFixed(2) }}%</span>
-                <span class="curve-point">3M: {{ shibor3M.value.toFixed(2) }}%</span>
-                <span class="curve-point">6M: {{ shibor6M.value.toFixed(2) }}%</span>
-                <span class="curve-point">9M: {{ shibor9M.value.toFixed(2) }}%</span>
-                <span class="curve-point">1Y: {{ shibor1Y.value.toFixed(2) }}%</span>
-              </div>
-            </div>
+            <div class="market-value " :class="rate_status_class"> {{ dr007.change >= 0 ? '↑' : '↓' }} {{ Math.abs(dr007.change).toFixed(2) }}BP ({{ dr007.value.toFixed(4) }}%)</div>
           </div>
         </div>
     </div>
@@ -209,11 +75,23 @@
 
 <script setup >
 import { onMounted, ref, onBeforeUnmount, computed } from 'vue'
-import { useIndexQuotes } from '@/composables/useIndexQuotes'
+import { useQuoteStore } from '@/stores/quoteStore'
 const axios = require('axios');
 
-// 上证指数实时数据
-const { lastPrice, changePct, loading } = useIndexQuotes('SH000001')
+// 上证指数实时数据 — 从统一行情 store 读取
+const quoteStore = useQuoteStore()
+const shQuote = computed(() => quoteStore.getQuote('SH000001'))
+const lastPrice = computed(() => shQuote.value.lastPrice)
+const changePct = computed(() => shQuote.value.changePct)
+const loading = computed(() => quoteStore.loading)
+
+onMounted(() => {
+  quoteStore.subscribe('SH000001')
+})
+
+onBeforeUnmount(() => {
+  quoteStore.unsubscribe('SH000001')
+})
 
 const indexDisplay = computed(() => {
   if (loading.value && lastPrice.value === 0) return '--'

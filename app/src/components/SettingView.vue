@@ -44,19 +44,7 @@
                     <div class="section-arrow" :class="{ rotated: expandedSections.tickflow }">▼</div>
                 </div>
                 <div class="section-content" :class="{ expanded: expandedSections.tickflow }">
-                    <div class="form-group">
-                        <label>API 源</label>
-                        <div class="api-source-toggle">
-                            <el-switch
-                                v-model="usePaidApi"
-                                active-text="付费 API"
-                                inactive-text="免费 API"
-                                @change="onApiSourceChange"
-                            />
-                            <span class="api-hint">{{ usePaidApi ? '使用 api.tickflow.org（需 API Key）' : '使用 free-api.tickflow.org（无需 Key）' }}</span>
-                        </div>
-                    </div>
-                    <div class="form-group" v-if="usePaidApi">
+                    <div class="form-group" >
                         <label>API Key</label>
                         <input type="password" class="form-control" v-model="tickflowApiKey" placeholder="请输入 TickFlow API Key（可选）">
                     </div>
@@ -335,15 +323,8 @@ const smtpConfig = ref({
 
 // TickFlow API 配置
 const tickflowApiKey = ref(localStorage.getItem('tickflow_api_key') || '');
-const usePaidApi = ref(localStorage.getItem('tickflow_use_paid_api') === 'true');
 const testingConnection = ref(false);
 const testResult = ref(null);
-
-// API 源切换
-const onApiSourceChange = () => {
-  localStorage.setItem('tickflow_use_paid_api', usePaidApi.value ? 'true' : 'false');
-  message.success(usePaidApi.value ? '已切换到付费 API' : '已切换到免费 API');
-};
 
 // Agent 模型配置
 import { getAgentConfig, saveAgentConfig as saveAgentConfigUtil, removeAgentConfig, testAgentConnection as testAgentConnectionUtil } from '@/lib/agent';
@@ -479,7 +460,7 @@ const testTickFlowConnection = async () => {
     testResult.value = null;
 
     try {
-        const baseUrl = usePaidApi.value
+        const baseUrl = (tickflowApiKey.value.length > 0)
             ? 'https://api.tickflow.org'
             : 'https://free-api.tickflow.org';
 

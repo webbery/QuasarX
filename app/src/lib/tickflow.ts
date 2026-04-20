@@ -322,7 +322,7 @@ export async function fetchQuotes(symbols: string[]): Promise<QuoteData[]> {
 }
 
 // ============ Symbol 格式转换 ============
-function convertSymbolToApiFormat(symbol: string): string {
+export function convertSymbolToApiFormat(symbol: string): string {
   // SH000300 → 000300.SH, SZ399001 → 399001.SZ
   const match = symbol.match(/^([A-Z]+)(\d+)$/);
   if (!match) return symbol;

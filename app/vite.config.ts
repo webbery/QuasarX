@@ -16,7 +16,7 @@ export default defineConfig(({ command, mode }) => {
   
   return {
     server: {
-      port: 13678,
+      port: 23678,
       proxy: {
         '/v0': {
           target: 'https://localhost:19107/v0',

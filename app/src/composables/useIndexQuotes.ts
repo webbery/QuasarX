@@ -1,58 +1,34 @@
-import { ref, onMounted, onUnmounted } from 'vue'
-import { fetchQuotes } from '@/lib/tickflow'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { useQuoteStore } from '@/stores/quoteStore'
 
 /**
- * 获取上证指数实时行情
- * 每 10 秒轮询一次 TickFlow /v1/quotes API
+ * 获取指定指数的实时行情
+ * 底层复用 quoteStore 的统一定时器，不再单独创建 setInterval
  */
 export function useIndexQuotes(symbol: string = 'SH000001') {
-  const lastPrice = ref<number>(0)
-  const changePct = ref<number>(0)
-  const change = ref<number>(0)
-  const timestamp = ref<number>(0)
-  const high = ref<number>(0)
-  const low = ref<number>(0)
-  const open = ref<number>(0)
-  const loading = ref<boolean>(false)
-  const error = ref<string>('')
+  const store = useQuoteStore()
+  const quote = computed(() => store.getQuote(symbol))
 
-  let timer: ReturnType<typeof setInterval> | null = null
-
-  async function fetch() {
-    loading.value = true
-    error.value = ''
-    try {
-      const quotes = await fetchQuotes([symbol])
-      if (quotes.length > 0) {
-        const q = quotes[0]
-        lastPrice.value = q.last_price ?? 0
-        changePct.value = 100 * (q.ext?.change_pct ??  0)
-        change.value = q.ext?.change_amount ?? 0
-        timestamp.value = q.timestamp ?? 0
-        high.value = q.high ?? 0
-        low.value = q.low ?? 0
-        open.value = q.open ?? 0
-      } else {
-        error.value = '未获取到行情数据'
-      }
-    } catch (e: any) {
-      error.value = e.message || '获取行情失败'
-      console.warn('[useIndexQuotes]', error.value)
-    } finally {
-      loading.value = false
-    }
-  }
+  const lastPrice = computed(() => quote.value.lastPrice)
+  const changePct = computed(() => quote.value.changePct)
+  const change = computed(() => quote.value.changeAmount)
+  const timestamp = computed(() => quote.value.timestamp)
+  const high = computed(() => quote.value.high)
+  const low = computed(() => quote.value.low)
+  const open = computed(() => quote.value.open)
+  const loading = computed(() => store.loading)
+  const error = computed(() => '')
 
   function start() {
-    fetch()
-    timer = setInterval(fetch, 10000)
+    store.subscribe(symbol)
   }
 
   function stop() {
-    if (timer) {
-      clearInterval(timer)
-      timer = null
-    }
+    store.unsubscribe(symbol)
+  }
+
+  function fetch() {
+    store.fetchAll()
   }
 
   onMounted(() => {
@@ -73,7 +49,6 @@ export function useIndexQuotes(symbol: string = 'SH000001') {
     open,
     loading,
     error,
-    // exposed for manual control
     fetch,
     start,
     stop,
