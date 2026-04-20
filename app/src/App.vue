@@ -101,9 +101,13 @@
           <i class="fas fa-database"></i>
           <span>数据中心</span>
         </div>
-        <div class="nav-item">
+        <!-- <div class="nav-item">
           <i class="fas fa-satellite"></i>
           <span>另类数据</span>
+        </div> -->
+        <div class="nav-item" :class="{ active: is_knowledgebase }" @click="onHandleKnowledgeBase">
+          <i class="fas fa-satellite"></i>
+          <span>知识库</span>
         </div>
       </div>
     </nav>
@@ -120,8 +124,6 @@
         @back="onRiskDetailBack"
       />
       <component v-else :is="activeComponent" ref="dynamicComponentRef"
-        @show-history="onShowHistory"
-        @show-flow-components="onShowFlowComponents"
         @load-version="onLoadVersion"
         @strategy-click="onStrategyRiskClick"
       />
@@ -145,8 +147,17 @@
         />
       </div>
       <div v-else-if="is_strategy" style="height: 100%">
-        <StrategyPanel v-if="selectedStrategyPanel" @load="onLoadVersionFromPanel" @createNewVersion="onCreateNewVersion" @delete-strategy="onDeleteStrategy" @delete-version="onDeleteVersion"></StrategyPanel>
-        <FlowComponents v-else></FlowComponents>
+        <RightPanelTabs v-model="rightPanelTab" />
+        <div class="right-panel-content">
+          <StrategyPanel 
+            v-if="rightPanelTab === 'strategy'" 
+            @load="onLoadVersionFromPanel" 
+            @createNewVersion="onCreateNewVersion" 
+            @delete-strategy="onDeleteStrategy" 
+            @delete-version="onDeleteVersion"
+          />
+          <FlowComponents v-else />
+        </div>
       </div>
       <div v-else-if="is_setting">
         <SettingPanel :enableOperation="useOperaion"></SettingPanel>
@@ -188,7 +199,7 @@
     </teleport>
 </template>
 <script setup >
-import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide } from "vue";
+import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch } from "vue";
 import { message } from "./tool";
 import { useHistoryStore } from './stores/history'
 import { storeToRefs } from 'pinia'
@@ -206,6 +217,7 @@ import VisualAnalysisView from "./components/VisualAnalysisView.vue";
 import PositionManager from "./components/PositionManager.vue";
 import TradePanel from "./components/TradePanel.vue";
 import StrategyPanel from "./components/StrategyPanel.vue";
+import RightPanelTabs from "./components/RightPanelTabs.vue";
 import PortfolioView from "./components/PortfolioView.vue";
 import PortfolioPanel from "./components/PortfolioPanel.vue";
 // Risk 新组件
@@ -216,6 +228,8 @@ import sseService from "./ts/SSEService";
 import Store from 'electron-store';
 // 报表配置面板
 import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
+// 知识库
+import KnowledgeBaseView from './components/knowledge/KnowledgeBaseView.vue';
 
 // 定义视图状态常量
 const VIEWS = {
@@ -227,7 +241,8 @@ const VIEWS = {
   POSITION_VIEW: 'position',
   RISK_VIEW: 'risk',
   RISK_DETAIL_VIEW: 'risk_detail',
-  PORTFOLIO_VIEW: 'portfolio'
+  PORTFOLIO_VIEW: 'portfolio',
+  KNOWLEDGE_BASE: 'knowledge_base',
 };
 const store = new Store()
 
@@ -243,8 +258,14 @@ const {
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
 let isBacktesting = ref(false);
-let selectedStrategyPanel = ref(false); // 默认显示策略组件的节点面板
+let rightPanelTab = ref(localStorage.getItem('rightPanelTab') || 'components');
 let selectedStrategyId = ref(null); // 当前选中的策略ID（用于风险详情）
+
+// 监听右侧面板 Tab 变化并持久化
+watch(rightPanelTab, (newTab) => {
+  localStorage.setItem('rightPanelTab', newTab)
+})
+
 const servers = ref(store.get('servers') || [])
 let selectedAccount;
 
@@ -344,6 +365,8 @@ let activeComponent = computed(() => {
     return StrategyRiskDetail;
   if (currentView.value === VIEWS.PORTFOLIO_VIEW)
     return PortfolioView;
+  if (currentView.value === VIEWS.KNOWLEDGE_BASE)
+    return KnowledgeBaseView;
   return AccountView;
 });
 
@@ -372,6 +395,7 @@ let is_visual_analysis = computed(() => currentView.value === VIEWS.VISUAL_VIEW)
 let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW || currentView.value === VIEWS.RISK_DETAIL_VIEW);
 let is_portfolio = computed(() => currentView.value === VIEWS.PORTFOLIO_VIEW);
+let is_knowledgebase = computed(() => currentView.value === VIEWS.KNOWLEDGE_BASE);
 
 const unit = 1024.0/1000000000;
 
@@ -414,20 +438,6 @@ const uninitServerEvent = () => {
   sseService.off('system_status', onSystemStatus)
 }
 
-const onShowHistory = () => {
-  selectedStrategyPanel.value = true
-}
-
-const onShowFlowComponents = () => {
-  selectedStrategyPanel.value = false
-}
-
-const onLoadVersion = (info) => {
-  console.info('onLoadVersion:', info)
-  // 这里可以处理版本加载后的通知逻辑
-  // 目前主要由 StrategyPanel 直接处理
-}
-
 // 从策略面板加载版本
 const onLoadVersionFromPanel = (versionId) => {
   console.info('onLoadVersionFromPanel:', versionId)
@@ -440,8 +450,6 @@ const onLoadVersionFromPanel = (versionId) => {
 // 创建新版本（从策略面板）
 const onCreateNewVersion = (strategyId) => {
   console.info('onCreateNewVersion:', strategyId)
-  // 切换到流程图组件，让用户编辑新策略
-  selectedStrategyPanel.value = false
   // 可以在这里传递 strategyId 给 StrategyFactory
 }
 
@@ -525,6 +533,10 @@ const onStrategyRiskClick = (strategy) => {
 
 const onHandlePortfolioMananger = () => {
   currentView.value = VIEWS.PORTFOLIO_VIEW;
+}
+
+const onHandleKnowledgeBase = () => {
+  currentView.value = VIEWS.KNOWLEDGE_BASE;
 }
 
 const onHandlePosition = () => {

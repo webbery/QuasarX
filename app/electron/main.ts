@@ -1,12 +1,13 @@
 import { app, BrowserWindow, shell, screen, session, ipcMain, dialog } from 'electron';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import Store from 'electron-store';
 import { productName, description, version } from "../package.json";
 
 import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
 import axios from 'axios';
 import https from 'https';
-import { cpSync, mkdirSync } from 'fs';
+import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
+import { readFile } from 'fs/promises';
 
 /**
  * ** The built directory structure
@@ -176,6 +177,154 @@ function createReadCSVPromise(filepath, ) {
 }
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
+
+// ============================================================
+// Knowledge Base IPC Handlers
+// ============================================================
+
+/**
+ * 获取 knowledge 目录路径
+ * 使用可执行文件所在目录作为基准
+ */
+function getKnowledgeDir(): string {
+  // 开发环境使用 app 目录，生产环境使用可执行文件所在目录
+  const basePath = process.env.VITE_DEV_SERVER_URL
+    ? join(__dirname, '../..')
+    : dirname(app.getPath('exe'));
+  const knowledgeDir = join(basePath, 'knowledge');
+  if (!existsSync(knowledgeDir)) {
+    mkdirSync(knowledgeDir, { recursive: true });
+  }
+  return knowledgeDir;
+}
+
+/**
+ * 生成安全的文件名（冲突时追加时间戳）
+ */
+function getSafeFileName(dir: string, fileName: string): string {
+  let safeName = fileName;
+  let counter = 0;
+  while (existsSync(join(dir, safeName))) {
+    const nameWithoutExt = fileName.replace(/\.[^.]+$/, '');
+    const ext = fileName.match(/\.[^.]+$/)?.[0] || '';
+    counter += 1;
+    safeName = `${nameWithoutExt}_${Date.now()}${counter}${ext}`;
+  }
+  return safeName;
+}
+
+/**
+ * 保存 PDF 文件到 knowledge 目录
+ * @param {Buffer} fileData - PDF 文件数据
+ * @param {string} fileName - 原始文件名
+ * @returns {object} { success: boolean, fileName: string, path: string, error?: string }
+ */
+ipcMain.handle('knowledge-save-pdf', async (_, fileData: Buffer, fileName: string) => {
+  try {
+    const dir = getKnowledgeDir();
+    const safeName = getSafeFileName(dir, fileName);
+    const filePath = join(dir, safeName);
+    writeFileSync(filePath, Buffer.from(fileData));
+    return { success: true, fileName: safeName, path: filePath };
+  } catch (error: any) {
+    console.error('[knowledge-save-pdf] 错误:', error);
+    return { success: false, fileName: '', path: '', error: error.message };
+  }
+});
+
+/**
+ * 列出 knowledge 目录下的所有 PDF 文件
+ * @returns {object[]} [{ name: string, size: number, mtime: number, path: string }]
+ */
+ipcMain.handle('knowledge-list-pdfs', async () => {
+  try {
+    const dir = getKnowledgeDir();
+    const files = readdirSync(dir);
+    const pdfs = files
+      .filter(f => f.toLowerCase().endsWith('.pdf'))
+      .map(f => {
+        const filePath = join(dir, f);
+        const stat = statSync(filePath);
+        return {
+          name: f,
+          size: stat.size,
+          mtime: stat.mtimeMs,
+          path: filePath,
+        };
+      });
+    return { success: true, pdfs };
+  } catch (error: any) {
+    console.error('[knowledge-list-pdfs] 错误:', error);
+    return { success: false, pdfs: [], error: error.message };
+  }
+});
+
+/**
+ * 删除 knowledge 目录下的 PDF 文件
+ * @param {string} fileName - 文件名
+ * @returns {object} { success: boolean, error?: string }
+ */
+ipcMain.handle('knowledge-delete-pdf', async (_, fileName: string) => {
+  try {
+    const dir = getKnowledgeDir();
+    const filePath = join(dir, fileName);
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+      return { success: true };
+    }
+    return { success: false, error: '文件不存在' };
+  } catch (error: any) {
+    console.error('[knowledge-delete-pdf] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * 读取 PDF 文件内容（用于下载）
+ * @param {string} fileName - 文件名
+ * @returns {object} { success: boolean, data?: Buffer, error?: string }
+ */
+ipcMain.handle('knowledge-read-pdf', async (_, fileName: string) => {
+  try {
+    const dir = getKnowledgeDir();
+    const filePath = join(dir, fileName);
+    const data = readFileSync(filePath);
+    return { success: true, data: data.toString('base64') };
+  } catch (error: any) {
+    console.error('[knowledge-read-pdf] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * 获取 knowledge 目录路径
+ */
+ipcMain.handle('knowledge-get-dir', async () => {
+  return { success: true, path: getKnowledgeDir() };
+});
+
+/**
+ * 解析 PDF 文本内容
+ * @param {Buffer} fileData - PDF 文件数据
+ * @returns {object} { success: boolean, text: string, pages: number, error?: string }
+ */
+ipcMain.handle('parse-pdf', async (_, fileData: number[]) => {
+  try {
+    const pdf = require('pdf-parse-new');
+    const buffer = Buffer.from(fileData);
+    const data = await pdf(buffer);
+    return {
+      success: true,
+      text: data.text || '',
+      pages: data.numpages || 0,
+      info: data.info || {},
+      metadata: data.metadata || {},
+    };
+  } catch (error: any) {
+    console.error('[parse-pdf] 错误:', error);
+    return { success: false, text: '', pages: 0, error: error.message };
+  }
+});
 async function MergeCSV(orgCSV, newCSV) {
     console.info('merge from', orgCSV, 'to', newCSV)
     const fs = require('fs');

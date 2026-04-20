@@ -323,10 +323,10 @@ void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
   // 旧格式：[{symbol, transactions: [...]}, ...]
   // 新格式：[{run_id, symbol, transactions: [...]}, ...]
   for (auto& item : jsn) {
-      uint16_t run_id = item.value("run_id", 0);  // 新格式有 run_id
+      run_id_t run_id = item.value("run_id", 0);  // 新格式有 run_id
       if (run_id == 0) {
           // 旧格式没有 run_id，使用索引作为区分
-          run_id = static_cast<uint16_t>(&item - &jsn[0] + 1);
+          run_id = static_cast<run_id_t>(&item - &jsn[0] + 1);
       }
 
       // 获取或创建 RunIdData
@@ -401,7 +401,7 @@ nlohmann::json BrokerSubSystem::GetHistoryJson() {
   nlohmann::json jsn;
   // 遍历所有 run_id
   _historyTrades.visit_all([&jsn](const auto& entry) {
-      uint16_t run_id = entry.first;
+      run_id_t run_id = entry.first;
       const auto& data = entry.second;
 
       std::lock_guard<std::mutex> lock(data->mtx);
@@ -531,11 +531,11 @@ void BrokerSubSystem::run() {
 }
 
 void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
-    uint16_t runId = ctx._backtest_run_id;
+    run_id_t runId = ctx._backtest_run_id;
 
     // 非回测模式，使用 strategy_hash 作为 key
     if (runId == 0) {
-        runId = ctx._strategy_hash;
+        runId = static_cast<run_id_t>(ctx._strategy_hash);
     }
 
     // 获取或创建 RunIdData
@@ -551,7 +551,7 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
     });
 }
 
-void BrokerSubSystem::PersistTrades(uint16_t run_id) {
+void BrokerSubSystem::PersistTrades(run_id_t run_id) {
     // 持久化到 LMDB 数据库（在 flush 中统一处理）
     // 这里只负责确保数据一致性
     _historyTrades.visit(run_id, [this, run_id](auto& entry) {
@@ -565,7 +565,7 @@ void BrokerSubSystem::CleanStrategyRecord() {
 
 }
 
-order_id BrokerSubSystem::AddOrderAsync(uint16_t run_id, OrderContext* order) {
+order_id BrokerSubSystem::AddOrderAsync(run_id_t run_id, OrderContext* order) {
 
     if (_simulation) {
         // 多线程回测模式：使用策略名获取上下文
@@ -599,7 +599,7 @@ order_id BrokerSubSystem::AddOrderAsync(uint16_t run_id, OrderContext* order) {
     return id;
 }
 
-int64_t BrokerSubSystem::AddOrder(uint16_t run_id, symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)
+int64_t BrokerSubSystem::AddOrder(run_id_t run_id, symbol_t symbol, const Order& order, std::function<void(const TradeReport&)> cb)
 {
     auto ctx = new OrderContext;
     ctx->_order = order;
@@ -949,7 +949,7 @@ void BrokerSubSystem::CleanAllIndicators(const String& strategy) {
   _indicators.clear();
 }
 
-List<Transaction> BrokerSubSystem::GetHistoryTrades(uint16_t run_id, symbol_t symbol) {
+List<Transaction> BrokerSubSystem::GetHistoryTrades(run_id_t run_id, symbol_t symbol) {
     List<Transaction> history;
 
     _historyTrades.visit(run_id, [&history, symbol](auto& entry) {
@@ -964,7 +964,7 @@ List<Transaction> BrokerSubSystem::GetHistoryTrades(uint16_t run_id, symbol_t sy
     return history;
 }
 
-std::shared_ptr<RunIdData> BrokerSubSystem::GetAllHistoryTrades(uint16_t run_id) {
+std::shared_ptr<RunIdData> BrokerSubSystem::GetAllHistoryTrades(run_id_t run_id) {
     std::shared_ptr<RunIdData> result = nullptr;
     _historyTrades.visit(run_id, [&result](auto& entry) {
         result = entry.second;

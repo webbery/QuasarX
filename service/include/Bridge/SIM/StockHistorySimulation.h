@@ -41,7 +41,7 @@ public:
    * @param order 订单上下文
    * @return 订单 ID
    */
-  order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
+  order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order);
 
   virtual void OnOrderReport(order_id id, const TradeReport& report);
 
@@ -61,7 +61,7 @@ public:
    * @param run_id 回测运行 ID，用于区分不同的策略实例
    * @return 可用资金金额
    */
-  virtual double GetAvailableFunds(uint16_t run_id);
+  virtual double GetAvailableFunds(run_id_t run_id);
   virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
   virtual Boolean HasPermission(symbol_t symbol);
   virtual void Reset();
@@ -83,7 +83,7 @@ public:
    * @param initial_capital 初始资金
    * @return 回测上下文 ID（用于后续获取）
    */
-  uint16_t createBacktestContext(
+  run_id_t createBacktestContext(
       const String& strategy_name,
       const Set<symbol_t>& symbols,
       double initial_capital = 100000.0
@@ -94,17 +94,17 @@ public:
    * @param run_id 回测运行 ID
    * @return 回测上下文指针，不存在返回 nullptr
    */
-  BacktestContext* getBacktestContext(uint16_t run_id);
+  BacktestContext* getBacktestContext(run_id_t run_id);
 
   /**
    * @brief 获取指定回测上下文（const 版本）
    */
-  const BacktestContext* getBacktestContext(uint16_t run_id) const;
+  const BacktestContext* getBacktestContext(run_id_t run_id) const;
 
   /**
    * @brief 销毁回测上下文
    */
-  void destroyBacktestContext(uint16_t run_id);
+  void destroyBacktestContext(run_id_t run_id);
 
   /**
    * @brief 推进指定回测上下文的时间

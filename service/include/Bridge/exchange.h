@@ -153,14 +153,14 @@ enum class RuningType {
 // 交易元数据 - 使用位域优化内存
 struct alignas(8) TransactionMeta {
     uint32_t strategy_hash;    // 策略名称的std::hash值 (4字节)
-    uint16_t backtest_run_id;  // 回测运行ID，0表示非回测 (2字节)
+    run_id_t backtest_run_id;  // 回测运行ID，0表示非回测 (4字节)
     uint8_t running_type : 2;  // RuningType枚举：0=Backtest,1=Simualtion,2=Real
     uint8_t reserved    : 6;   // 保留位，用于对齐
 
     TransactionMeta() : strategy_hash(0), backtest_run_id(0), running_type(0), reserved(0) {}
 
     // 便捷构造函数
-    TransactionMeta(uint32_t hash, uint16_t run_id, RuningType type)
+    TransactionMeta(uint32_t hash, run_id_t run_id, RuningType type)
         : strategy_hash(hash), backtest_run_id(run_id), running_type(static_cast<uint8_t>(type)), reserved(0) {}
 };
 
@@ -182,7 +182,7 @@ struct OrderContext {
   TradeInfo _trades;
   // 订单元数据
   uint32_t _strategy_hash = 0;      // 策略名称的哈希值
-  uint16_t _backtest_run_id = 0;    // 回测运行ID，0表示非回测
+  run_id_t _backtest_run_id = 0;    // 回测运行ID，0表示非回测
   uint8_t _running_type : 2;        // RuningType枚举：0=Backtest,1=Simualtion,2=Real
   uint8_t _reserved : 6;            // 保留位
 
@@ -208,7 +208,7 @@ struct OrderContext {
   }
 
   // 设置策略信息
-  void SetStrategyInfo(const String& strategy_name, uint16_t backtest_id, RuningType run_type) {
+  void SetStrategyInfo(const String& strategy_name, run_id_t backtest_id, RuningType run_type) {
     _strategy_hash = std::hash<String>{}(strategy_name);
     _backtest_run_id = backtest_id;
     _running_type = static_cast<uint8_t>(run_type);
@@ -439,7 +439,7 @@ public:
    * @param run_id 策略运行 ID，用于区分不同的策略实例（回测/实盘）
    * @return 可用资金金额
    */
-  virtual double GetAvailableFunds(uint16_t run_id) = 0;
+  virtual double GetAvailableFunds(run_id_t run_id) = 0;
 
   virtual bool GetPosition(AccountPosition&) = 0;
 
@@ -452,7 +452,7 @@ public:
    * @param order 订单上下文
    * @return 订单 ID，失败时返回错误码
    */
-  virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order) = 0;
+  virtual order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order) = 0;
 
   virtual void OnOrderReport(order_id id, const TradeReport& report) = 0;
 

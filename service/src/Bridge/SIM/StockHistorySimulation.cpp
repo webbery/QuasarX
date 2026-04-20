@@ -82,7 +82,7 @@ AccountAsset StockHistorySimulation::GetAsset(){
     return ass;
 }
 
-order_id StockHistorySimulation::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
+order_id StockHistorySimulation::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order){
     // run_id: 回测运行 ID，用于区分不同的策略实例
     // 买入开仓时检查并冻结资金
     if (order->_order._side == 0 && order->_order._flag == 0) {  // 开多
@@ -311,7 +311,7 @@ void StockHistorySimulation::QueryQuotes() {
   // 多线程回测模式下不需要主动查询，由 stepForward 推进时间
 }
 
-double StockHistorySimulation::GetAvailableFunds(uint16_t run_id)
+double StockHistorySimulation::GetAvailableFunds(run_id_t run_id)
 {
     double funds = BACKTEST_INITIAL_CAPITAL;
     _backtestContexts.visit(run_id, [&funds](auto& item) {
@@ -631,7 +631,7 @@ double StockHistorySimulation::GetAdjPrice(symbol_t symbol, uint32_t index) cons
  * 
  * 这样确保多标的回测时，所有标的数据在时间上是对齐的。
  */
-uint16_t StockHistorySimulation::createBacktestContext(
+run_id_t StockHistorySimulation::createBacktestContext(
     const String& strategy_name,
     const Set<symbol_t>& symbols,
     double initial_capital)
@@ -722,7 +722,7 @@ uint16_t StockHistorySimulation::createBacktestContext(
     return runId;
 }
 
-BacktestContext* StockHistorySimulation::getBacktestContext(uint16_t run_id) {
+BacktestContext* StockHistorySimulation::getBacktestContext(run_id_t run_id) {
     BacktestContext* ctx = nullptr;
     _backtestContexts.visit(run_id, [&ctx](auto& item) {
         ctx = item.second.get();
@@ -730,7 +730,7 @@ BacktestContext* StockHistorySimulation::getBacktestContext(uint16_t run_id) {
     return ctx;
 }
 
-const BacktestContext* StockHistorySimulation::getBacktestContext(uint16_t run_id) const {
+const BacktestContext* StockHistorySimulation::getBacktestContext(run_id_t run_id) const {
     const BacktestContext* ctx = nullptr;
     _backtestContexts.visit(run_id, [&ctx](auto& item) {
         ctx = item.second.get();
@@ -738,7 +738,7 @@ const BacktestContext* StockHistorySimulation::getBacktestContext(uint16_t run_i
     return ctx;
 }
 
-void StockHistorySimulation::destroyBacktestContext(uint16_t run_id) {
+void StockHistorySimulation::destroyBacktestContext(run_id_t run_id) {
     _backtestContexts.erase(run_id);
 }
 

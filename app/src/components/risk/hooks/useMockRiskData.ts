@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import type { MarketType, MarketRiskData, StrategyRiskItem, OptionRiskData, StockRiskData, FutureRiskData } from '../types/risk'
 import { useIndexQuotes } from '@/composables/useIndexQuotes'
+import { useSectorAdvanceDecline } from '@/composables/useSectorAdvanceDecline'
 
 /** 市场风险模拟数据 */
 const MARKET_DATA: Record<MarketType, MarketRiskData> = {
@@ -200,6 +201,9 @@ export function useMockRiskData() {
   // 上证指数实时数据
   const { lastPrice: livePrice, changePct: liveChange } = useIndexQuotes('SH000001')
 
+  // 行业板块涨跌家数
+  const { advanceCount: sectorAdvanceCount, declineCount: sectorDeclineCount } = useSectorAdvanceDecline()
+
   const marketData = computed((): MarketRiskData => {
     const base = MARKET_DATA[selectedMarket.value]
     if (selectedMarket.value === 'astock') {
@@ -208,6 +212,8 @@ export function useMockRiskData() {
         indexName: '上证指数',
         indexValue: Number(livePrice.value) || 0,
         changePercent: Number(liveChange.value) || 0,
+        advanceCount: Number(sectorAdvanceCount.value) || 0,
+        declineCount: Number(sectorDeclineCount.value) || 0,
       }
     }
     return base

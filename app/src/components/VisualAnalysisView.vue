@@ -104,8 +104,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as echarts from 'echarts'
-import https from 'https';
-import axios from 'axios'
+import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
 
 const unit = 100000000 // 单位:亿
 // 响应式数据
@@ -143,16 +142,16 @@ const generateFlowData = async () => {
     // 计算总流入流出
     for (let flows of inflows) {
       for (let flow of flows.value) {
-        flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+        flow['all'] = calculateTotalFlow(flow)
       }
     }
     for (let flows of outflows) {
       for (let flow of flows.value) {
-        flow['all'] = flow['main'] + flow['supbig'] + flow['big'] + flow['mid'] + flow['small']
+        flow['all'] = calculateTotalFlow(flow)
       }
     }
     console.info('inflows:', inflows)
-  
+
   // 根据选择过滤数据
   if (flowDirection.value === 'inflow') {
     return inflows
@@ -634,22 +633,8 @@ const exportHeatmap = () => {
 }
 
 const getSectorData = async () => {
-    const server = localStorage.getItem('remote')
-    const token = localStorage.getItem('token')
-    const url = 'https://' + server + '/v0/stocks/sector/flow?type=0'
-    const agent = new https.Agent({  
-        rejectUnauthorized: false // 忽略证书错误
-    });
-    const response = await axios.get(url, {
-        httpsAgent: agent,
-        responseType: 'application/json',
-        headers: { 'Authorization': token}})
-    console.info('response', response)
-    if (response.status === 200) {
-        return JSON.parse(response.data)
-    }
-    console.info('get sector data error')
-    return null
+    const data = await fetchSectorFlow(0)
+    return data
 }
 
 // 监听数据变化

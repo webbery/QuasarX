@@ -117,7 +117,7 @@ public:
     order_id Sell(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
     order_id Exercise(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, std::function<void (const TradeReport&)> cb);
 
-    int64_t AddOrder(uint16_t run_id, symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
+    int64_t AddOrder(run_id_t run_id, symbol_t, const Order& order, std::function<void(const TradeReport&)> cb);
 
     virtual bool QueryOrders(SecurityType type, OrderList& ol);
     virtual int QueryOrder(const String& sysID, Order& order);
@@ -127,7 +127,7 @@ public:
     // 清除历史交易信息
     void CleanStrategyRecord();
     // 持久化指定 run_id 的交易记录
-    void PersistTrades(uint16_t run_id);
+    void PersistTrades(run_id_t run_id);
 
     // 注册统计指标
     void RegistIndicator(const String& strategy, StatisticIndicator indicator);
@@ -152,10 +152,10 @@ public:
 
     void DeletePrediction(symbol_t, int index);
 
-    List<Transaction> GetHistoryTrades(uint16_t run_id, symbol_t);
+    List<Transaction> GetHistoryTrades(run_id_t run_id, symbol_t);
 
     // 获取所有交易记录（用于持久化）
-    std::shared_ptr<RunIdData> GetAllHistoryTrades(uint16_t run_id);
+    std::shared_ptr<RunIdData> GetAllHistoryTrades(run_id_t run_id);
 
     // 交易查询结构
     struct TradeQueryResult {
@@ -183,7 +183,7 @@ private:
     double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);
     double SimulateMatchStockSeller(symbol_t symbol, const Order& order, TradeInfo& deal);
 
-    order_id AddOrderAsync(uint16_t run_id, OrderContext* order);
+    order_id AddOrderAsync(run_id_t run_id, OrderContext* order);
 
 private:
     void run();
@@ -215,7 +215,7 @@ private:
     PortfolioSubSystem* _portfolio;
     bool _simulation;
     // 交易记录 - 双层索引：run_id -> symbol -> trades
-    ConcurrentMap<uint16_t, std::shared_ptr<RunIdData>> _historyTrades;
+    ConcurrentMap<run_id_t, std::shared_ptr<RunIdData>> _historyTrades;
 
     std::mutex _indMtx;
     Map<String, Set<StatisticIndicator>> _indicators;

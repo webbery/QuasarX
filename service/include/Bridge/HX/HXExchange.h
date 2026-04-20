@@ -88,7 +88,7 @@ public:
      * @param order 订单上下文
      * @return 订单 ID
      */
-    virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
+    virtual order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order);
 
     virtual void OnOrderReport(order_id id, const TradeReport& report);
 
@@ -108,7 +108,7 @@ public:
      * @param run_id 策略运行 ID，用于区分不同的策略实例（回测/实盘）
      * @return 可用资金金额
      */
-    virtual double GetAvailableFunds(uint16_t run_id);
+    virtual double GetAvailableFunds(run_id_t run_id);
 
     virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
     virtual Boolean HasPermission(symbol_t symbol);

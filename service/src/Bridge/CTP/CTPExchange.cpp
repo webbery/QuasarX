@@ -160,7 +160,7 @@ AccountAsset CTPExchange::GetAsset(){
     return aas;
 }
 
-order_id CTPExchange::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order){
+order_id CTPExchange::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order){
     // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     return order_id();
 }
@@ -247,7 +247,7 @@ void CTPExchange::UpdateCommission() {
   }
 }
 
-double CTPExchange::GetAvailableFunds(uint16_t run_id)
+double CTPExchange::GetAvailableFunds(run_id_t run_id)
 {
     // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     return 1000000;

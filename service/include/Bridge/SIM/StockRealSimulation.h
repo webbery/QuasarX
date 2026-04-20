@@ -18,7 +18,7 @@ public:
      * @param order 订单上下文
      * @return 订单 ID
      */
-    virtual order_id AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order);
+    virtual order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order);
     virtual Boolean CancelOrder(order_id id, OrderContext* order);
     virtual void OnOrderReport(order_id id, const TradeReport& report);
     virtual bool GetOrders(SecurityType type, OrderList& ol);

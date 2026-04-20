@@ -40,17 +40,20 @@
     "server": "cd server/openapi3graphql-server && node index.js"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.4.4",
     "@element-plus/icons-vue": "^2.3.1",
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@fortawesome/vue-fontawesome": "^3.0.0-5",
     "@microsoft/fetch-event-source": "^2.0.1",
     "@vue-flow/core": "^1.46.0",
+    "@xenova/transformers": "^2.17.2",
     "axios": "^1.7.9",
     "dayspan-vuetify": "^0.4.0",
     "echarts": "^5.6.0",
     "electron-store": "^10.1.0",
     "element-plus": "^2.9.5",
     "node-stream-zip": "^1.15.0",
+    "pdf-parse-new": "^2.0.0",
     "pinia": "^3.0.4",
     "plotly.js-dist": "^3.0.1",
     "vue": "^3.5.10"

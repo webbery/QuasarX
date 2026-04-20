@@ -31,7 +31,9 @@ const title = ref('')
 const message = ref('')
 const placeholder = ref('')
 const inputValue = ref('')
-let resolvePromise: ((result: { cancelled: boolean; value: string }) => void) | null = null
+
+let resolveShow: ((result: { cancelled: boolean; value: string }) => void) | null = null
+let resolveConfirm: ((result: boolean) => void) | null = null
 
 const inputRef = ref<HTMLInputElement>()
 
@@ -48,11 +50,11 @@ const show = (options: { title: string; placeholder?: string; defaultValue?: str
   })
 
   return new Promise((resolve) => {
-    resolvePromise = resolve
+    resolveShow = resolve
   })
 }
 
-// 显示确认对话框，返回 Promise<{ cancelled: boolean }>
+// 显示确认对话框，返回 Promise<boolean>
 const confirm = (options: { title: string; message: string }): Promise<boolean> => {
   inputMode.value = false
   title.value = options.title
@@ -60,28 +62,30 @@ const confirm = (options: { title: string; message: string }): Promise<boolean> 
   visible.value = true
 
   return new Promise((resolve) => {
-    resolvePromise = resolve
+    resolveConfirm = resolve
   })
 }
 
 const handleConfirm = () => {
-  if (resolvePromise) {
-    resolvePromise(inputMode.value
-      ? { cancelled: false, value: inputValue.value }
-      : true)
+  if (inputMode.value && resolveShow) {
+    resolveShow({ cancelled: false, value: inputValue.value })
+    resolveShow = null
+  } else if (!inputMode.value && resolveConfirm) {
+    resolveConfirm(true)
+    resolveConfirm = null
   }
   visible.value = false
-  resolvePromise = null
 }
 
 const handleCancel = () => {
-  if (resolvePromise) {
-    resolvePromise(inputMode.value
-      ? { cancelled: true, value: '' }
-      : false)
+  if (inputMode.value && resolveShow) {
+    resolveShow({ cancelled: true, value: '' })
+    resolveShow = null
+  } else if (!inputMode.value && resolveConfirm) {
+    resolveConfirm(false)
+    resolveConfirm = null
   }
   visible.value = false
-  resolvePromise = null
 }
 
 // 暴露方法给父组件

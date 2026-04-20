@@ -888,7 +888,7 @@ AccountAsset HXExchange::GetAsset(){
     return aa;
 }
 
-order_id HXExchange::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* ctx){
+order_id HXExchange::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* ctx){
     // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     order_id id;
     if (!_enableOrder) {
@@ -1227,7 +1227,7 @@ bool HXExchange::ResubscribeQuote()
     return true;
 }
 
-double HXExchange::GetAvailableFunds(uint16_t run_id)
+double HXExchange::GetAvailableFunds(run_id_t run_id)
 {
     // run_id: 策略运行 ID，用于区分不同的策略实例（回测/实盘）
     auto reqID = ++_reqID;

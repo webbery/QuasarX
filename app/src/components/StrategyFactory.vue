@@ -28,13 +28,6 @@
           @update-node="updateNodeData"
         />
 
-        <FlowActions
-          @save="handleSaveFlow"
-          @save-as="handleSaveAsNewVersion"
-          @show-history="$emit('show-history')"
-          @show-nodes="$emit('show-flow-components')"
-        />
-
         <FlowContextMenu
           :visible="contextMenu.visible"
           :x="contextMenu.x"
@@ -61,7 +54,6 @@ import ReportView from './report/ReportView.vue'
 import InfoPanel from './strategy/InfoPanel.vue'
 import FlowCanvas from './FlowCanvas.vue'
 import FlowTabHeader from './FlowTabHeader.vue'
-import FlowActions from './FlowActions.vue'
 import FlowContextMenu from './FlowContextMenu.vue'
 import PromptDialog from './PromptDialog.vue'
 import { message } from '@/tool'
@@ -196,6 +188,21 @@ watch(activeTab, async (newTab) => {
 
 // 键盘事件
 const onKeyDown = (event) => {
+  // Ctrl+S / Cmd+S: 保存
+  if ((event.ctrlKey || event.metaKey) && event.key === 's' && !event.shiftKey) {
+    event.preventDefault()
+    handleSaveFlow()
+    return
+  }
+  
+  // Ctrl+Shift+S / Cmd+Shift+S: 另存为
+  if ((event.ctrlKey || event.metaKey) && event.key === 's' && event.shiftKey) {
+    event.preventDefault()
+    handleSaveAsNewVersion()
+    return
+  }
+  
+  // Delete/Backspace: 删除选中节点或边
   if ((event.key === 'Delete' || event.key === 'Backspace') &&
       (selectedNodes.value.length > 0 || selectedEdges.value.length > 0)) {
     event.preventDefault()
@@ -246,7 +253,7 @@ const handleLoadVersionFromHistory = async (version) => {
 }
 
 // 对外暴露
-const emit = defineEmits(['show-history', 'show-flow-components', 'load-version'])
+const emit = defineEmits(['load-version'])
 
 /**
  * 如果当前画布显示的正是被删除的策略，则清空

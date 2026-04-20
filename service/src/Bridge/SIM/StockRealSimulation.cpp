@@ -10,7 +10,7 @@ StockRealSimulation::~StockRealSimulation() {
 
 }
 
-order_id StockRealSimulation::AddOrder(uint16_t run_id, const symbol_t& symbol, OrderContext* order) {
+order_id StockRealSimulation::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order) {
     // run_id: 策略运行 ID，用于区分不同的策略实例（实盘仿真模式）
     order_id id;
     return id;

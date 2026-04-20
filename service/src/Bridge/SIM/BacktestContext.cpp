@@ -1,7 +1,7 @@
 #include "Bridge/SIM/BacktestContext.h"
 #include <atomic>
 
-BacktestContext::BacktestContext(uint16_t run_id, const String& strategy_name)
+BacktestContext::BacktestContext(run_id_t run_id, const String& strategy_name)
     : _runId(run_id)
     , _strategy_name(strategy_name)
     , _availableFunds(100000.0)
