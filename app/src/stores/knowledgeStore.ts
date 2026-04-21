@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { aiContextBuilder } from '@/lib/AIContextBuilder'
 
 export interface DocumentChunk {
   index: number;
@@ -97,6 +98,7 @@ export const useKnowledgeStore = defineStore('knowledge', {
      */
     addDocument(doc: KnowledgeDocument) {
       this.documents.push(doc);
+      this._registerToAI();
     },
 
     /**
@@ -104,6 +106,7 @@ export const useKnowledgeStore = defineStore('knowledge', {
      */
     addDocuments(docs: KnowledgeDocument[]) {
       this.documents.push(...docs);
+      this._registerToAI();
     },
 
     /**
@@ -195,6 +198,38 @@ export const useKnowledgeStore = defineStore('knowledge', {
       this.documents = [];
       this.selectedDocs.clear();
       this.currentPage = 1;
+    },
+    
+    _registerToAI() {
+      const store = this
+      
+      aiContextBuilder.registry.register({
+        id: 'knowledge:documents',
+        name: '知识文档库',
+        description: 'PDF解析后的知识文档',
+        tags: ['knowledge', 'documents', 'pdf', 'research'],
+        getter: () => store.documents.map(d => ({
+          id: d.id,
+          fileName: d.fileName,
+          title: d.title,
+          summary: d.summary,
+          status: d.status,
+          hitCount: d.hitCount,
+          pages: d.pages,
+          chunkCount: d.chunks.length
+        })),
+        searchMethod: async (query: string) => {
+          // 简单的文本搜索
+          const results = store.documents.filter(d => 
+            d.title.toLowerCase().includes(query.toLowerCase()) ||
+            d.summary.toLowerCase().includes(query.toLowerCase()) ||
+            d.fileName.toLowerCase().includes(query.toLowerCase())
+          )
+          return results
+        },
+        updateFrequency: '手动更新',
+        aiContext: '包含量化交易、风险管理、策略设计的知识文档'
+      })
     },
   },
 });

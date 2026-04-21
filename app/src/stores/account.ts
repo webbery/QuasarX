@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
+import { aiContextBuilder } from '@/lib/AIContextBuilder'
 
 export const useAccountStore = defineStore('account', {
   state: () => ({
@@ -28,14 +29,41 @@ export const useAccountStore = defineStore('account', {
         // this.kamaRatio = data.kamaRatio || 0
         // this.maxDrawDown = data.maxDrawDown || 0
         console.info(' after todayPL:', this.todayPL)
-    } catch (error) {
+        
+        // 注册到 AI 数据源
+        this._registerToAI()
+      } catch (error) {
         console.error('获取账户数据失败:', error)
       }
     },
     // 手动更新可用资金（例如交易后直接更新）
     setAvailableFunds(value: number) {
       this.availableFunds = value
+      this._registerToAI()
     },
     // 也可以直接调用 fetchAccountData 全量更新
+    
+    _registerToAI() {
+      const store = this
+      
+      aiContextBuilder.registry.register({
+        id: 'api:account',
+        name: '账户资金',
+        description: '账户资金状况和业绩指标',
+        tags: ['account', 'funds', 'capital', 'performance'],
+        getter: () => ({
+          availableFunds: store.availableFunds,
+          frozenFunds: store.frozenFunds,
+          totalValue: store.totalValue,
+          increasePercent: store.increasePercent,
+          todayPL: store.todayPL,
+          sharpRatio: store.sharpRatio,
+          kamaRatio: store.kamaRatio,
+          maxDrawDown: store.maxDrawDown
+        }),
+        updateFrequency: '实时',
+        aiContext: '包含可用资金、冻结资金、总资产、今日盈亏、夏普比率、最大回撤等'
+      })
+    },
   }
 })

@@ -76,6 +76,7 @@
 <script setup >
 import { onMounted, ref, onBeforeUnmount, computed } from 'vue'
 import { useQuoteStore } from '@/stores/quoteStore'
+import { useShiborStore } from '@/stores/shiborStore'
 const axios = require('axios');
 
 // 上证指数实时数据 — 从统一行情 store 读取
@@ -85,12 +86,25 @@ const lastPrice = computed(() => shQuote.value.lastPrice)
 const changePct = computed(() => shQuote.value.changePct)
 const loading = computed(() => quoteStore.loading)
 
+// SHIBOR 数据 — 从 shiborStore 读取
+const shiborStore = useShiborStore()
+const shiborON = computed(() => shiborStore.getTerm('隔夜'))
+const shibor1W = computed(() => shiborStore.getTerm('1周'))
+const shibor2W = computed(() => shiborStore.getTerm('2周'))
+const shibor1M = computed(() => shiborStore.getTerm('1个月'))
+const shibor3M = computed(() => shiborStore.getTerm('3个月'))
+const shibor6M = computed(() => shiborStore.getTerm('6个月'))
+const shibor9M = computed(() => shiborStore.getTerm('9个月'))
+const shibor1Y = computed(() => shiborStore.getTerm('1年'))
+
 onMounted(() => {
   quoteStore.subscribe('SH000001')
+  shiborStore.subscribe('MarketPanel')
 })
 
 onBeforeUnmount(() => {
   quoteStore.unsubscribe('SH000001')
+  shiborStore.unsubscribe('MarketPanel')
 })
 
 const indexDisplay = computed(() => {
@@ -143,16 +157,6 @@ const lastUpdateTime = computed(() => {
   const minutes = String(now.getMinutes()).padStart(2, '0')
   return `更新于 ${hours}:${minutes}`
 })
-
-// Shibor 各期限利率数据（模拟）
-const shiborON = ref({ value: 1.8234, change: -2.15 })   // 隔夜
-const shibor1W = ref({ value: 2.0156, change: 3.42 })    // 1周
-const shibor2W = ref({ value: 2.1823, change: 5.67 })    // 2周
-const shibor1M = ref({ value: 2.2945, change: 1.23 })    // 1个月
-const shibor3M = ref({ value: 2.4512, change: -0.89 })   // 3个月
-const shibor6M = ref({ value: 2.6234, change: -1.45 })   // 6个月
-const shibor9M = ref({ value: 2.7456, change: 0.34 })    // 9个月
-const shibor1Y = ref({ value: 2.8923, change: -0.56 })   // 1年
 
 // DR007 数据（模拟）
 const dr007 = ref({

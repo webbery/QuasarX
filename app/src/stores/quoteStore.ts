@@ -3,6 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { fetchQuotes, convertSymbolToApiFormat, type QuoteData } from '@/lib/tickflow'
+import { aiContextBuilder } from '@/lib/AIContextBuilder'
 
 // TickFlow 返回的原始行情结构
 interface QuoteResult {
@@ -109,6 +110,9 @@ export const useQuoteStore = defineStore('quote', {
             })
           }
         }
+        
+        // 注册到 AI 数据源
+        this._registerToAI()
       } catch (e: any) {
         console.warn('[quoteStore]', e.message)
       } finally {
@@ -126,6 +130,24 @@ export const useQuoteStore = defineStore('quote', {
       if (this.subscribers.size > 0 || !this.timer) return
       clearInterval(this.timer)
       this.timer = null
+    },
+    
+    _registerToAI() {
+      // 将行情数据注册到 AI 数据源
+      const quotesArray = Array.from(this.quotes.entries()).map(([symbol, quote]) => ({
+        symbol,
+        ...quote
+      }))
+      
+      aiContextBuilder.registry.register({
+        id: 'data:quotes',
+        name: '实时行情',
+        description: '股票实时报价和涨跌数据',
+        tags: ['quote', 'market', 'price', 'realtime'],
+        getter: () => quotesArray,
+        updateFrequency: '10秒',
+        aiContext: '包含股票代码、名称、最新价、涨跌幅、成交量、最高价、最低价、开盘价等字段'
+      })
     },
   },
 })
