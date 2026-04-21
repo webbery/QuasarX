@@ -148,7 +148,11 @@ void ShiborHandler::get(const httplib::Request& req, httplib::Response& res) {
             auto now = std::chrono::system_clock::now();
             auto time_t_now = std::chrono::system_clock::to_time_t(now);
             struct tm tm_buf;
+#ifdef _WIN32
+            localtime_s(&tm_buf, &time_t_now);
+#else
             localtime_r(&time_t_now, &tm_buf);
+#endif
             char date_buf[11];
             std::strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &tm_buf);
             target_date = date_buf;

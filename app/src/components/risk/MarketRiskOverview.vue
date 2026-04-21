@@ -53,7 +53,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { useQuoteStore } from '@/stores/quoteStore'
 import type { MarketType } from './types/risk'
 
 const props = defineProps<{
@@ -77,6 +78,20 @@ const emit = defineEmits<{
 const model = computed({
   get: () => props.marketType,
   set: (v: MarketType) => emit('update:marketType', v),
+})
+
+// 沪深300指数实时价格 — 从 quoteStore 订阅，用于 IV Index 计算
+const quoteStore = useQuoteStore()
+const hs300Quote = computed(() => quoteStore.getQuote('SH000300'))
+/** 沪深300当前价格，供外部组件或后续IV计算使用 */
+const hs300Price = computed(() => hs300Quote.value.lastPrice)
+
+onMounted(() => {
+  quoteStore.subscribe('SH000300')
+})
+
+onBeforeUnmount(() => {
+  quoteStore.unsubscribe('SH000300')
 })
 </script>
 

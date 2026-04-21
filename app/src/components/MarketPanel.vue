@@ -60,14 +60,14 @@
               <i class="fas fa-caret-up positive-change"></i>
               <span>Shibor 1W</span>
             </div>
-            <div class="market-value " :class="rate_status_class"> {{ shibor1W.change >= 0 ? '+' : '' }}{{ shibor1W.change.toFixed(2) }}BP ({{ shiborON.value.toFixed(4) }}%)</div>
+            <div class="market-value " :class="rate_status_class"> {{ shibor1W?.change >= 0 ? '+' : '' }}{{ shibor1W?.change?.toFixed(2) ?? '--' }}BP ({{ shiborON?.value?.toFixed(4) ?? '--' }}%)</div>
           </div>
           <div class="market-item">
             <div class="market-name">
               <i class="fas fa-caret-up positive-change"></i>
               <span>DR007</span>
             </div>
-            <div class="market-value " :class="rate_status_class"> {{ dr007.change >= 0 ? '↑' : '↓' }} {{ Math.abs(dr007.change).toFixed(2) }}BP ({{ dr007.value.toFixed(4) }}%)</div>
+            <div class="market-value " :class="rate_status_class"> {{ dr007?.change >= 0 ? '↑' : '↓' }} {{ Math.abs(dr007?.change ?? 0).toFixed(2) }}BP ({{ dr007?.value?.toFixed(4) ?? '--' }}%)</div>
           </div>
         </div>
     </div>
