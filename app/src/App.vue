@@ -191,12 +191,26 @@
           <span>内存: {{memUsage}}G/{{totalmem}}G</span>
         </div>
       </div>
+      
+      <!-- Live2D AI 助手按钮 -->
+      <button 
+        class="live2d-toggle-btn" 
+        @click="live2dStore.toggle()"
+        :class="{ active: live2dStore.visible }"
+        title="AI 助手"
+      >
+        <i class="fas fa-robot"></i>
+        <span>助手</span>
+      </button>
     </footer>
 
     <teleport to="body">
       <LoginForm :showLoginModal="showLogin" @onStatusChange="onStatusChange" @closeLoginForm="onLoginClose">
       </LoginForm>
     </teleport>
+    
+    <!-- Live2D AI 助手 -->
+    <Live2DAssistant />
 </template>
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch } from "vue";
@@ -230,6 +244,11 @@ import Store from 'electron-store';
 import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
 // 知识库
 import KnowledgeBaseView from './components/knowledge/KnowledgeBaseView.vue';
+// Live2D AI 助手
+import Live2DAssistant from './components/live2d/Live2DAssistant.vue'
+import { useLive2DStore } from './stores/live2dStore'
+
+const live2dStore = useLive2DStore()
 
 // 定义视图状态常量
 const VIEWS = {
@@ -486,6 +505,13 @@ onMounted(() => {
 
   // 监听打开配置管理器事件
   window.addEventListener('open-portfolio-manager', onHandlePortfolioMananger)
+  
+  // Live2D 情境感知：首次显示时根据当前视图触发问候
+  if (live2dStore.visible && live2dStore.settings.autoGreet) {
+    setTimeout(() => {
+      live2dStore.addGreeting()
+    }, 1500)
+  }
 });
 
 onUnmounted(() => {
@@ -689,5 +715,38 @@ provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
   color: rgb(103, 254, 141);
   border: none;
   cursor: pointer;
+}
+
+/* Live2D 助手按钮样式 */
+.live2d-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 16px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  margin-left: 12px;
+}
+
+.live2d-toggle-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: translateY(-1px);
+}
+
+.live2d-toggle-btn.active {
+  background: rgba(59, 130, 246, 0.3);
+  border-color: #3b82f6;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+.live2d-toggle-btn i {
+  font-size: 14px;
 }
 </style>
