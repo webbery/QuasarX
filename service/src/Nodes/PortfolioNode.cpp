@@ -108,6 +108,42 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         _lastPlan._hasChanged = true;
 
         context.GetExecutionPlan() = _lastPlan;
+
+        // 保存执行计划摘要到 context，供 DebugNode 在 Done 阶段读取
+        // 格式: {symbol}.plan_action (1=BUY, -1=SELL, 0=HOLD), {symbol}.plan_qty, {symbol}.plan_price
+        auto& times = context.GetTime();
+        size_t idx = times.empty() ? 0 : times.size() - 1;
+        for (const auto& item : _lastPlan._items) {
+            String sym = get_symbol(item._symbol);
+            int actionVal = 0;
+            switch (item._action) {
+                case TradeAction::BUY:  actionVal = 1; break;
+                case TradeAction::SELL: actionVal = -1; break;
+                case TradeAction::HOLD: actionVal = 0; break;
+            }
+            String actionKey = sym + ".plan_action";
+            String qtyKey = sym + ".plan_qty";
+            String priceKey = sym + ".plan_price";
+
+            double price = (item._limitPrice > 0) ? item._limitPrice : 0.0;
+
+            if (context.exist(actionKey)) {
+                context.add(actionKey, (double)actionVal);
+                context.add(qtyKey, (double)item._quantity);
+                context.add(priceKey, price);
+            } else {
+                // 首次写入，填充之前的值为 0
+                Vector<double> actionVec(idx, 0.0);
+                Vector<double> qtyVec(idx, 0.0);
+                Vector<double> priceVec(idx, 0.0);
+                actionVec.push_back((double)actionVal);
+                qtyVec.push_back((double)item._quantity);
+                priceVec.push_back(price);
+                context.set(actionKey, std::move(actionVec));
+                context.set(qtyKey, std::move(qtyVec));
+                context.set(priceKey, std::move(priceVec));
+            }
+        }
         // INFO("PortfolioNode: generated new execution plan with {} items, capital={}",
         //      _lastPlan._items.size(), capital);
     } else {
@@ -365,6 +401,13 @@ const nlohmann::json PortfolioNode::getParams() {
 
 Map<String, ArgType> PortfolioNode::out_elements() {
     Map<String, ArgType> elems;
-    elems["execution_plan"] = ArgType::Integer_TimeSeries;
+    // 声明执行计划摘要数据，供 DebugNode 读取
+    // 每个 symbol 有: .plan_action (1=BUY, -1=SELL, 0=HOLD), .plan_qty, .plan_price
+    for (const auto& sym : _pool) {
+        String s = get_symbol(sym);
+        elems[s + ".plan_action"] = ArgType::Double_TimeSeries;
+        elems[s + ".plan_qty"] = ArgType::Double_TimeSeries;
+        elems[s + ".plan_price"] = ArgType::Double_TimeSeries;
+    }
     return elems;
 }

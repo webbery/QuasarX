@@ -74,9 +74,6 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             INFO("ExecuteNode: {} {} {} shares @ {}",
                 (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
         }
-
-        // 执行完毕后清理执行计划
-        context.erase("execution_plan");
     }
 
     context.ConsumeSignals();

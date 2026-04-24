@@ -46,6 +46,10 @@ void DebugNode::Done(const String& strategy) {
     auto ts = Vector<time_t>(times.begin(), times.end());
     df.load_column("datetime", std::move(ts));
     for (auto& name: _inNames) {
+        if (!_context->exist(name)) {
+            WARN("DebugNode: key {} not found in context, skipping", name);
+            continue;
+        }
         auto& feature = _context->get(name);
         INFO("read colunm {}", name);
         std::visit([&name, &df](auto&& val) {
