@@ -7,6 +7,7 @@
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "DataFrame/DataFrameTypes.h"
+#include "ExchangeManager.h"
 #include "Handler/PositionHandler.h"
 #include "Handler/PredictionHandler.h"
 #include "Handler/RiskHandler.h"
@@ -109,6 +110,8 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RECORD          "/record"
 #define API_ALL_FUTURE      "/future/simple"
 #define API_ALL_OPTION      "/option/simple"
+#define API_OPTION_HISTORY  "/option/history"
+#define API_OPTION_DETAIL   "/option/detail"
 #define API_STOCK_DETAIL    "/stocks/detail"
 #define API_STOCK_HISTORY   "/stocks/history"
 #define API_ALL_STOCK       "/stocks/simple"
@@ -174,6 +177,9 @@ _defaultPortfolio(1), _timer(nullptr)
 }
 
 Server::~Server() {
+    if (_exchangeMgr) {
+        delete _exchangeMgr;
+    }
     if (_timer) {
         _timer->join();
         delete _timer;
@@ -304,6 +310,7 @@ void Server::Regist() {
     REGIST_GET(API_STRATEGY_NODE); 
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
+    REGIST_GET(API_OPTION_HISTORY);
 
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_SERVER_CONFIG);
@@ -1260,6 +1267,7 @@ void Server::InitHandlers() {
     RegistHandler(API_MONTECARLO, MonteCarloHandler);
     RegistHandler(API_ALL_FUTURE, FutureHandler);
     RegistHandler(API_ALL_OPTION, OptionHandler);
+    RegistHandler(API_OPTION_HISTORY, OptionHistoryHandler);
     RegistHandler(API_STRATEGY, StrategyHandler);
     RegistHandler(API_STRATEGY_NODES, StrategyNodesHandler);
     RegistHandler(API_STRATEGY_NODE, StrategyNodeHandler);

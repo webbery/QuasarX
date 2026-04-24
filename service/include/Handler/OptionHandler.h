@@ -15,3 +15,10 @@ public:
 
     virtual void get(const httplib::Request& req, httplib::Response& res);
 };
+
+class OptionHistoryHandler: public HttpHandler {
+public:
+    OptionHistoryHandler(Server* server): HttpHandler(server) {}
+
+    virtual void get(const httplib::Request& req, httplib::Response& res);
+};

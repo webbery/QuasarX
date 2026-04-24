@@ -103,6 +103,7 @@ void HXTrade::OnRspOrderInsert(TORASTOCKAPI::CTORATstpInputOrderField *pInputOrd
     report._quantity = pInputOrderField->VolumeTotalOriginal;
     report._sysID = pInputOrderField->OrderSysID;
     report._side = pInputOrderField->Direction - 48;
+    report._flag = (report._side == 0? 0: 1);
     if (pRspInfoField->ErrorID == 0) {
         _investor = pInputOrderField->InvestorID;
         LOG("Order {}  code {} raccept", nRequestID, pInputOrderField->SecurityID);
@@ -126,6 +127,7 @@ void HXTrade::OnRtnOrder(TORASTOCKAPI::CTORATstpOrderField *pOrderField) {
     TradeReport report;
     report._sysID = pOrderField->OrderSysID;
     report._status = toOrderStatus(pOrderField->OrderStatus);
+    report._flag = (report._side == 0? 0: 1);
     //INFO("order status: {}", (int)report._status);
     if (report._status != OrderStatus::OrderUnknow) {
         _exchange->OnOrderReport(id, report);

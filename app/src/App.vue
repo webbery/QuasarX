@@ -192,11 +192,11 @@
         </div>
       </div>
       
-      <!-- Live2D AI 助手按钮 -->
-      <button 
-        class="live2d-toggle-btn" 
-        @click="live2dStore.toggle()"
-        :class="{ active: live2dStore.visible }"
+      <!-- AI 助手按钮 -->
+      <button
+        class="chat-toggle-btn"
+        @click="chatStore.toggle()"
+        :class="{ active: chatStore.visible }"
         title="AI 助手"
       >
         <i class="fas fa-robot"></i>
@@ -209,8 +209,8 @@
       </LoginForm>
     </teleport>
     
-    <!-- Live2D AI 助手 -->
-    <Live2DAssistant />
+    <!-- AI 聊天框 -->
+    <ChatBox />
 </template>
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch } from "vue";
@@ -244,11 +244,11 @@ import Store from 'electron-store';
 import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
 // 知识库
 import KnowledgeBaseView from './components/knowledge/KnowledgeBaseView.vue';
-// Live2D AI 助手
-import Live2DAssistant from './components/live2d/Live2DAssistant.vue'
-import { useLive2DStore } from './stores/live2dStore'
+// AI 聊天框
+import ChatBox from './components/ChatBox.vue'
+import { useChatStore } from './stores/chatStore'
 
-const live2dStore = useLive2DStore()
+const chatStore = useChatStore()
 
 // 定义视图状态常量
 const VIEWS = {
@@ -505,13 +505,6 @@ onMounted(() => {
 
   // 监听打开配置管理器事件
   window.addEventListener('open-portfolio-manager', onHandlePortfolioMananger)
-  
-  // Live2D 情境感知：首次显示时根据当前视图触发问候
-  if (live2dStore.visible && live2dStore.settings.autoGreet) {
-    setTimeout(() => {
-      live2dStore.addGreeting()
-    }, 1500)
-  }
 });
 
 onUnmounted(() => {
@@ -717,8 +710,8 @@ provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
   cursor: pointer;
 }
 
-/* Live2D 助手按钮样式 */
-.live2d-toggle-btn {
+/* AI 聊天框按钮样式 */
+.chat-toggle-btn {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -734,19 +727,19 @@ provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
   margin-left: 12px;
 }
 
-.live2d-toggle-btn:hover {
+.chat-toggle-btn:hover {
   background: rgba(59, 130, 246, 0.2);
   border-color: rgba(59, 130, 246, 0.5);
   transform: translateY(-1px);
 }
 
-.live2d-toggle-btn.active {
+.chat-toggle-btn.active {
   background: rgba(59, 130, 246, 0.3);
   border-color: #3b82f6;
   box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
 }
 
-.live2d-toggle-btn i {
+.chat-toggle-btn i {
   font-size: 14px;
 }
 </style>

@@ -111,6 +111,22 @@
             "position": { "x": 1050, "y": 150 }
         },
         {
+            "id": "8",
+            "type": "custom",
+            "data": {
+                "label": "调试输出",
+                "nodeType": "debug",
+                "params": {
+                    "suffix": {
+                        "value": "csv",
+                        "type": "select",
+                        "options": ["csv", "log"]
+                    }
+                }
+            },
+            "position": { "x": 1050, "y": 300 }
+        },
+        {
             "id": "4",
             "type": "custom",
             "data": {
@@ -170,6 +186,14 @@
             "target": "4",
             "sourceHandle": "7",
             "targetHandle": "4",
+            "type": "default"
+        },
+        {
+            "id": "7->8",
+            "source": "7",
+            "target": "8",
+            "sourceHandle": "7",
+            "targetHandle": "8",
             "type": "default"
         }
     ]

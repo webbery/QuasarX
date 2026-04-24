@@ -5,6 +5,42 @@
 #include <cmath>
 
 namespace {
+    // 多空分离持仓模型
+    struct Position {
+        int long_qty = 0;   // 多头持仓
+        int short_qty = 0;  // 空头持仓
+
+        bool empty() const { return long_qty == 0 && short_qty == 0; }
+    };
+
+    // 根据交易报告更新持仓（多空分离模型）
+    void update_position(std::map<symbol_t, Position>& positions,
+                         symbol_t symbol,
+                         const TradeReport& report) {
+        auto& pos = positions[symbol];
+        int qty = report._quantity;
+
+        if (report._side == 0) {  // 买入
+            if (report._flag == 0) {
+                // 买入开多
+                pos.long_qty += qty;
+            } else {
+                // 买入平空
+                pos.short_qty -= qty;
+                if (pos.short_qty < 0) pos.short_qty = 0;
+            }
+        } else {  // 卖出
+            if (report._flag == 0) {
+                // 卖出开空
+                pos.short_qty += qty;
+            } else {
+                // 卖出平多
+                pos.long_qty -= qty;
+                if (pos.long_qty < 0) pos.long_qty = 0;
+            }
+        }
+    }
+
     // 计算每日投资组合价值
     std::pair<std::vector<double>, std::vector<double>>
     calculate_daily_values(const crash_flow_t& flow, const DataContext& context) {
@@ -24,8 +60,8 @@ namespace {
         std::vector<double> daily_values(times.size(), 0.0);
         std::vector<double> daily_cash_flows(times.size(), 0.0);
 
-        // 持仓记录：symbol -> 持仓数量
-        std::map<symbol_t, int> positions;
+        // 持仓记录：symbol -> 持仓（多空分离）
+        std::map<symbol_t, Position> positions;
 
         // 价格数据缓存
         std::map<symbol_t, std::vector<double>> price_data;
@@ -63,26 +99,28 @@ namespace {
             if (trades_by_time.find(current_time) != trades_by_time.end()) {
                 for (const auto& [symbol, report] : trades_by_time[current_time]) {
                     // 更新持仓
+                    update_position(positions, symbol, report);
+
+                    // 现金流：买入=流出(负)，卖出=流入(正)
                     if (report._side == 0) {  // 买入
-                        positions[symbol] += report._quantity;
-                        daily_cash_flows[i] -= report._trade_amount;  // 现金流出
-                    } else if (report._side == 1) {  // 卖出
-                        positions[symbol] -= report._quantity;
-                        daily_cash_flows[i] += report._trade_amount;  // 现金流入
+                        daily_cash_flows[i] -= report._trade_amount;
+                    } else {  // 卖出
+                        daily_cash_flows[i] += report._trade_amount;
                     }
                 }
             }
-            // 计算当前组合价值
+            // 计算当前组合价值（多空分离）
             double portfolio_value = 0.0;
-            for (const auto& [symbol, quantity] : positions) {
-                if (quantity == 0) continue;
+            for (const auto& [symbol, pos] : positions) {
+                if (pos.empty()) continue;
 
                 auto it = price_data.find(symbol);
                 if (it == price_data.end()) continue;
 
                 const auto& closes = it->second;
                 if (i < closes.size()) {
-                    portfolio_value += quantity * closes[i];
+                    // 多头市值为正，空头市值为负
+                    portfolio_value += pos.long_qty * closes[i] - pos.short_qty * closes[i];
                 }
             }
 
@@ -177,33 +215,50 @@ float win_rate(const crash_flow_t& flow, const DataContext& context) {
                   });
 
         // 配对交易：买入后卖出算一笔完整交易
+        // 注意：做空场景下，先卖出开空再买入平空也算一笔完整交易
         double total_buy_cost = 0.0;
         int total_buy_qty = 0;
+        double total_sell_value = 0.0;
+        int total_sell_qty = 0;
 
         for (const auto& report : reports) {
-            if (report._side == 0) {
-                // 买入
-                total_buy_cost += report._trade_amount;
-                total_buy_qty += report._quantity;
-            } else if (report._side == 1 && total_buy_qty > 0) {
-                // 卖出
-                double sell_amount = report._trade_amount;
-
-                // 计算这笔卖出的盈亏
-                // 假设 FIFO 原则
-                int sell_qty = report._quantity;
-                if (sell_qty <= total_buy_qty) {
-                    // 完全盈利或亏损
-                    double avg_buy_price = total_buy_cost / total_buy_qty;
-                    double profit = (sell_amount / sell_qty - avg_buy_price) * sell_qty;
+            if (report._side == 0) {  // 买入
+                if (report._flag == 1 && total_sell_qty > 0) {
+                    // 买入平空：与之前的空仓配对
+                    int match_qty = std::min(report._quantity, total_sell_qty);
+                    double avg_sell_price = total_sell_value / total_sell_qty;
+                    double profit = (avg_sell_price - report._price) * match_qty;
 
                     if (profit > 0) {
                         winning_trades++;
                     }
                     total_trades++;
 
-                    total_buy_qty -= sell_qty;
-                    total_buy_cost -= avg_buy_price * sell_qty;
+                    total_sell_qty -= match_qty;
+                    total_sell_value -= avg_sell_price * match_qty;
+                } else if (report._flag == 0) {
+                    // 买入开多：记录成本
+                    total_buy_cost += report._trade_amount;
+                    total_buy_qty += report._quantity;
+                }
+            } else {  // 卖出
+                if (report._flag == 1 && total_buy_qty > 0) {
+                    // 卖出平多：与之前的多仓配对
+                    int match_qty = std::min(report._quantity, total_buy_qty);
+                    double avg_buy_price = total_buy_cost / total_buy_qty;
+                    double profit = (report._price - avg_buy_price) * match_qty;
+
+                    if (profit > 0) {
+                        winning_trades++;
+                    }
+                    total_trades++;
+
+                    total_buy_qty -= match_qty;
+                    total_buy_cost -= avg_buy_price * match_qty;
+                } else if (report._flag == 0) {
+                    // 卖出开空：记录卖空价值
+                    total_sell_value += report._trade_amount;
+                    total_sell_qty += report._quantity;
                 }
             }
         }

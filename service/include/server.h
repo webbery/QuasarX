@@ -31,6 +31,7 @@ class Commander;
 class StrategySubSystem;
 class PortfolioSubSystem;
 class ExchangeHandler;
+class ExchangeManager;
 class StrategyPlugin;
 class IStopLoss;
 class StopLossHandler;
@@ -133,6 +134,8 @@ public:
     StrategySubSystem* GetStrategySystem() { return _strategySystem; }
 
     RiskSubSystem* GetRiskSubSystem() { return _riskSystem; }
+
+    ExchangeManager* GetExchangeManager() { return _exchangeMgr; }
 
     double GetFreeRate(time_t t);
     /**
@@ -280,6 +283,7 @@ private:
 
     ServerConfig* _config;
 
+    ExchangeManager* _exchangeMgr = nullptr;
     ExchangeInterface* _trade_exchange;
 
     StrategySubSystem* _strategySystem;

@@ -5,47 +5,79 @@
 #include <algorithm>
 
 namespace {
+    // 多空分离持仓模型
+    struct Position {
+        int long_qty = 0;   // 多头持仓
+        int short_qty = 0;  // 空头持仓
+
+        bool empty() const { return long_qty == 0 && short_qty == 0; }
+    };
+
     // 辅助结构：子区间数据
     struct SubPeriod {
         time_t start_time;  // 开始时间
         time_t end_time;    // 结束时间
-        double start_value; // 开始市值
-        double end_value;   // 结束市值
-        std::map<symbol_t, int> positions; // 持仓数量
+        double start_value; // 开始组合市值
+        double end_value;   // 结束组合市值
+        std::map<symbol_t, Position> positions; // 持仓
     };
+
+    // 计算组合市值
+    double calc_portfolio_value(const std::map<symbol_t, Position>& positions,
+                                 const std::map<symbol_t, Vector<double>>& price_data,
+                                 const List<time_t>& times,
+                                 time_t target_time) {
+        double value = 0.0;
+        int idx = -1, i = 0;
+        // 找到时间索引
+        for (auto itr = times.begin(); itr != times.end(); ++itr, ++i) {
+            if (*itr >= target_time) {
+                idx = static_cast<int>(i);
+                break;
+            }
+        }
+        if (idx < 0) return 0.0;
+
+        for (const auto& [symbol, pos] : positions) {
+            if (pos.empty()) continue;
+
+            auto it = price_data.find(symbol);
+            if (it == price_data.end() || it->second.empty()) continue;
+            if (idx >= static_cast<int>(it->second.size())) continue;
+
+            double price = it->second[idx];
+            // 多头市值为正，空头市值为负
+            value += pos.long_qty * price - pos.short_qty * price;
+        }
+        return value;
+    }
 
     // 计算没有现金流场景下的收益率
     float non_flow_return_rate(const SubPeriod& period,
                                 const std::map<symbol_t, Vector<double>>& price_data,
                                 const List<time_t>& times) {
         // 如果没有持仓，返回 0
-        if (period.positions.empty()) {
+        bool has_position = false;
+        for (const auto& [sym, pos] : period.positions) {
+            if (!pos.empty()) { has_position = true; break; }
+        }
+        if (!has_position) {
             return 0.0;
         }
 
         double start_total = period.start_value;
-        if (start_total <= 0) {
+        // start_value == 0 时无意义，返回 0
+        if (start_total == 0.0) {
             return 0.0;
         }
 
-        double end_total = 0.0;
+        // 计算结束时的组合市值
+        double end_total = calc_portfolio_value(period.positions, price_data, times, period.end_time);
 
-        // 计算结束时的总市值
-        for (auto& [symbol, qty] : period.positions) {
-            if (qty == 0) continue;
-
-            auto it = price_data.find(symbol);
-            if (it == price_data.end() || it->second.empty()) {
-                continue;
-            }
-
-            // 找到结束时间对应的价格
-            auto range = std::equal_range(times.begin(), times.end(), period.end_time);
-            if (range.first == range.second)
-                continue;
-
-            auto end_price = it->second.at(std::distance(times.begin(), range.first));
-            end_total += qty * end_price;
+        // 如果起始或结束市值为负（空头市值 > 多头市值），返回 0
+        // 这在正常杠杆策略中不应出现
+        if (start_total < 0 || end_total < 0) {
+            return 0.0;
         }
 
         return (end_total - start_total) / start_total;
@@ -61,11 +93,38 @@ namespace {
         }
         return -1;
     }
+
+    // 根据交易报告更新持仓（多空分离模型）
+    void update_position(std::map<symbol_t, Position>& positions,
+                         symbol_t symbol,
+                         const TradeReport& report) {
+        auto& pos = positions[symbol];
+        int qty = report._quantity;
+
+        if (report._side == 0) {  // 买入
+            if (report._flag == 0) {
+                // 买入开多
+                pos.long_qty += qty;
+            } else {
+                // 买入平空
+                pos.short_qty -= qty;
+                if (pos.short_qty < 0) pos.short_qty = 0;
+            }
+        } else {  // 卖出
+            if (report._flag == 0) {
+                // 卖出开空
+                pos.short_qty += qty;
+            } else {
+                // 卖出平多
+                pos.long_qty -= qty;
+                if (pos.long_qty < 0) pos.long_qty = 0;
+            }
+        }
+    }
 }
 
 float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double freerate) {
     const double ANNUAL_RISK_FREE_RATE = freerate;
-    const double DAILY_RISK_FREE_RATE = ANNUAL_RISK_FREE_RATE / YEAR_DAY;
 
     Set<symbol_t> symbols;
     // 现金流成交记录
@@ -112,10 +171,10 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
     trade_times.unique();  // 去重
 
     std::vector<double> sub_period_returns;
-    std::map<symbol_t, int> current_positions;  // 当前持仓
+    std::map<symbol_t, Position> current_positions;  // 当前持仓（多空分离）
 
     // 构建时间到持仓的映射：用于计算每日波动率
-    std::map<time_t, std::map<symbol_t, int>> time_positions;
+    std::map<time_t, std::map<symbol_t, Position>> time_positions;
     time_positions[times.front()] = current_positions;  // 初始空仓
     // 4. 分割区间并计算每个子区间的收益率
     for (auto itr = trade_times.begin(); itr != trade_times.end(); ) {
@@ -132,32 +191,14 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
         period.end_time = period_end;
         // 获取区间开始时的持仓（来自上一个区间结束）
         period.positions = current_positions;
-        // 计算区间开始时的市值
-        period.start_value = 0.0;
-        for (const auto& [symbol, qty] : period.positions) {
-            auto it = price_data.find(symbol);
-            if (it == price_data.end()) continue;
-
-            // 找到开始时间对应的价格
-            int start_idx = find_time_index(times, period_start);
-            if (start_idx < 0 || start_idx >= static_cast<int>(it->second.size())) {
-                continue;
-            }
-
-            double start_price = it->second[start_idx];
-            period.start_value += qty * start_price;
-        }
+        // 计算区间开始时的组合市值
+        period.start_value = calc_portfolio_value(current_positions, price_data, times, period_start);
 
         // 处理这个区间内的所有交易，更新持仓
         for (const auto& [symbol, report_list] : reports) {
             for (const auto& report : report_list) {
                 if (report._time >= period_start && report._time < period_end) {
-                    // 更新持仓
-                    if (report._side == 0) {  // 买入
-                        current_positions[symbol] += report._quantity;
-                    } else if (report._side == 1) {  // 卖出
-                        current_positions[symbol] -= report._quantity;
-                    }
+                    update_position(current_positions, symbol, report);
                 }
             }
         }
@@ -202,7 +243,7 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
     std::vector<double> daily_returns;
 
     // 按时间顺序遍历，计算每日组合价值和收益率
-    std::map<symbol_t, int> running_positions;  // 逐日持仓
+    std::map<symbol_t, Position> running_positions;  // 逐日持仓（多空分离）
     std::map<time_t, std::vector<std::pair<symbol_t, TradeReport>>> trades_by_time;
     for (const auto& [symbol, report_list] : reports) {
         for (const auto& report : report_list) {
@@ -220,23 +261,20 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
         // 处理当前时间点的交易，更新持仓
         if (trades_by_time.find(current_time) != trades_by_time.end()) {
             for (const auto& [symbol, report] : trades_by_time[current_time]) {
-                if (report._side == 0) {  // 买入
-                    running_positions[symbol] += report._quantity;
-                } else if (report._side == 1) {  // 卖出
-                    running_positions[symbol] -= report._quantity;
-                }
+                update_position(running_positions, symbol, report);
             }
         }
 
-        // 计算当前组合价值
+        // 计算当前组合价值（多空分离）
         double current_portfolio_value = 0.0;
-        for (const auto& [symbol, qty] : running_positions) {
-            if (qty == 0) continue;
+        for (const auto& [symbol, pos] : running_positions) {
+            if (pos.empty()) continue;
             auto it = price_data.find(symbol);
             if (it == price_data.end()) continue;
             const auto& closes = it->second;
             if (day_idx < closes.size()) {
-                current_portfolio_value += qty * closes[day_idx];
+                double price = closes[day_idx];
+                current_portfolio_value += pos.long_qty * price - pos.short_qty * price;
             }
         }
 

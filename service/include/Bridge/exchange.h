@@ -119,7 +119,9 @@ struct TradeReport {
     // 成交类型  OrderType
     char _type;
     char _side;
-    // 交易员代码 
+    // 开平仓: 0=开仓, 1=平仓
+    char _flag;
+    // 交易员代码
     Array<char, 7> _trader_code;
     int _quantity;
     //成交编号 其他SDK数据的交易ID

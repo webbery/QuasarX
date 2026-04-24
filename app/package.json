@@ -54,8 +54,6 @@
     "node-stream-zip": "^1.15.0",
     "pdf-parse-new": "^2.0.0",
     "pinia": "^3.0.4",
-    "pixi-live2d-display": "^0.4.0",
-    "pixi.js": "^7.4.3",
     "plotly.js-dist": "^3.0.1",
     "vue": "^3.5.10"
   },
