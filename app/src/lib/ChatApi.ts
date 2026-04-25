@@ -4,7 +4,7 @@
  * 对接现有的 agent.ts 和 rag.ts
  */
 
-import { sendAgentMessage } from '@/lib/agent'
+import { sendAgentMessage, getAgentConfig } from '@/lib/agent'
 import { ragQuery } from '@/ts/rag'
 
 export interface AskOptions {
@@ -27,10 +27,16 @@ export async function askAI(
 ): Promise<string> {
   const { context, onChunk, onDone, onError } = options
 
+  // 检查 Agent 配置
+  const agentConfig = getAgentConfig()
+  if (!agentConfig) {
+    return '请先在设置中配置 AI 服务。打开 设置 > Agent 大语言模型配置，填写服务 URL、协议和 API Key。'
+  }
+
   try {
     // 构建系统 Prompt
     let systemPrompt = '你是 QuasarX 量化交易助手的 AI 助手。请提供专业、简洁的回答。'
-    
+
     // 注入背景知识上下文
     if (context) {
       systemPrompt += `\n\n${context}`
@@ -63,7 +69,7 @@ export async function askAI(
     }
 
     // 返回友好错误提示
-    return '抱歉，AI 服务暂时不可用，请检查设置中的 API 配置。'
+    return `抱歉，AI 服务暂时不可用。错误详情: ${(error as Error).message}`
   }
 }
 

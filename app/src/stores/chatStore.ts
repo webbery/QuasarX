@@ -127,14 +127,14 @@ export const useChatStore = defineStore('chat', () => {
       let sectorText = ''
       try {
         const sectors = await fetchSectorQuotes()
-        const { advance, decline } = calculateTotalAdvanceDecline(sectors)
-        
+        const { totalUp, totalDown } = calculateTotalAdvanceDecline(sectors)
+
         // 排序获取领涨/跌板块
         const sorted = [...sectors].sort((a, b) => b.change_pct - a.change_pct)
         const topGainers = sorted.slice(-3).reverse()
         const topLosers = sorted.slice(0, 3)
-        
-        sectorText = `\n• 市场广度：上涨 ${advance} 家，下跌 ${decline} 家`
+
+        sectorText = `\n• 市场广度：上涨 ${totalUp} 家，下跌 ${totalDown} 家`
         
         if (topGainers.length > 0) {
           sectorText += `\n• 领涨板块：${topGainers.map(s => `${s.name}(+${s.change_pct.toFixed(2)}%)`).join('、')}`

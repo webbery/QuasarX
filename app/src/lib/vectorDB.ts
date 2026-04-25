@@ -5,8 +5,6 @@
  */
 
 import { PGlite } from '@electric-sql/pglite';
-import { getKnowledgeDir } from './pdfFileManager';
-import { join } from 'path';
 
 export interface VectorChunk {
   id: string;           // 唯一 ID
@@ -28,29 +26,13 @@ const EMBEDDING_DIM = 384;  // 使用轻量 embedding 模型维度
 let dbInstance: PGlite | null = null;
 
 /**
- * 获取向量数据库文件路径
- * 存储在 knowledge/vector.db 目录下
- */
-function getDbPath(dataDir: string): string {
-  const dbDir = join(dataDir, 'vector.db');
-  return `file://${dbDir}`;
-}
-
-/**
  * 获取 PGlite 数据库实例
- * 数据库文件存储在 knowledge/vector.db/ 目录下
+ * 使用 IndexedDB 作为后端存储
  */
 async function getDB(): Promise<PGlite> {
   if (dbInstance) return dbInstance;
 
-  // 获取 knowledge 目录路径
-  const dirResult = await getKnowledgeDir();
-  if (!('path' in dirResult)) {
-    throw new Error('无法获取知识库目录');
-  }
-
-  const dbPath = getDbPath(dirResult.path);
-  dbInstance = await PGlite.create(dbPath);
+  dbInstance = await PGlite.create('idb://quasarx-vector-db');
 
   // 创建表结构
   await dbInstance.exec(`

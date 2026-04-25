@@ -89,19 +89,13 @@
                             <option value="anthropic">Anthropic Claude</option>
                             <option value="custom">自定义</option>
                         </select>
+                        <label>模型</label>
+                        <input type="text" class="form-control" v-model="agentConfig.model" placeholder="例如：https://api.openai.com 或 http://localhost:11434">
                     </div>
                     <div class="form-group">
                         <label>API Key</label>
                         <input type="password" class="form-control" v-model="agentConfig.apiKey" placeholder="请输入 API Key">
                     </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" v-model="agentConfig.enabled" style="margin-right: 8px;"> 启用大语言模型功能
-                        </label>
-                    </div>
-                    <p class="hint">
-                        支持 OpenAI、Anthropic Claude 以及兼容 OpenAI 协议的模型（如 Ollama、LocalAI 等）
-                    </p>
                     <div class="form-actions">
                         <button class="btn btn-primary" @click="saveAgentConfig">保存配置</button>
                         <button class="btn btn-secondary" @click="testAgentConnection" :disabled="testingAgentConnection">
@@ -333,7 +327,7 @@ const agentConfig = ref({
   url: '',
   protocol: 'openai',
   apiKey: '',
-  enabled: false
+  model: ''
 });
 
 const testingAgentConnection = ref(false);
@@ -508,8 +502,7 @@ const clearAgentConfig = () => {
   agentConfig.value = {
     url: '',
     protocol: 'openai',
-    apiKey: '',
-    enabled: false
+    apiKey: ''
   };
   agentTestResult.value = null;
   message.success('Agent 模型配置已清除');
@@ -538,16 +531,24 @@ const testAgentConnection = async () => {
 };
 
 onMounted(async () => {
-    const res = await axios.get('/v0/stocks/params')
-    const limitation = res.data
-    stockSettings.value.dailyOrderLimit = limitation.daily_limit
-    stockSettings.value.perSecondOrderLimit = limitation.order_limit
-    stockSettings.value.perSecondCancelLimit = limitation.cancel_limit
-    
+    try {
+        const res = await axios.get('/v0/stocks/params')
+        const limitation = res.data
+        stockSettings.value.dailyOrderLimit = limitation.daily_limit
+        stockSettings.value.perSecondOrderLimit = limitation.order_limit
+        stockSettings.value.perSecondCancelLimit = limitation.cancel_limit
+    } catch (e) {
+        console.error('[Setting] 加载股票参数失败:', e)
+    }
+
     // 加载 Agent 配置
-    const savedAgentConfig = getAgentConfig();
-    if (savedAgentConfig) {
-      agentConfig.value = savedAgentConfig;
+    try {
+        const savedAgentConfig = getAgentConfig();
+        if (savedAgentConfig) {
+            agentConfig.value = savedAgentConfig;
+        }
+    } catch (e) {
+        console.error('[Setting] 加载 Agent 配置失败:', e)
     }
 })
 </script>

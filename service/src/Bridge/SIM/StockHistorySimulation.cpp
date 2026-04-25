@@ -133,14 +133,8 @@ bool StockHistorySimulation::OrderReport(BacktestContext* context, order_id id, 
 
     // 更新持仓（使用上下文私有持仓）
     const auto& order = orderCtx->_order;
-    int delta = 0;
-    if (order._side == 0) { // BUY
-        delta = (order._flag == 0) ? report._quantity : -report._quantity;
-        // 开多 +qty, 平空 -qty
-    } else { // SELL
-        delta = (order._flag == 0) ? -report._quantity : report._quantity;
-        // 做空 -qty, 平多 +qty
-    }
+    // BUY 增加持仓（开多或平空都是 +qty），SELL 减少持仓（开空或平多都是 -qty）
+    int delta = (order._side == 0) ? report._quantity : -report._quantity;
     context->adjustPosition(orderCtx->_order._symbol, delta);
 
     // 记录交易

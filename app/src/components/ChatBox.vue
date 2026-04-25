@@ -6,7 +6,7 @@
       :style="containerStyle"
     >
       <!-- 头部 -->
-      <div class="chat-header">
+      <div class="chat-header" @mousedown="startDrag">
         <div class="chat-title">
           <i class="fas fa-robot"></i>
           <span>QuasarX AI 助手</span>
@@ -96,6 +96,29 @@ const containerStyle = computed(() => ({
   bottom: `${containerPosition.value.bottom}px`,
 }))
 
+function startDrag(e: MouseEvent) {
+  isDragging.value = true
+  dragStart.value = { x: e.clientX, y: e.clientY }
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    if (!isDragging.value) return
+    const dx = moveEvent.clientX - dragStart.value.x
+    const dy = moveEvent.clientY - dragStart.value.y
+    containerPosition.value.right -= dx
+    containerPosition.value.bottom -= dy
+    dragStart.value = { x: moveEvent.clientX, y: moveEvent.clientY }
+  }
+
+  const onMouseUp = () => {
+    isDragging.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
 // 自动滚动到底部
 watch(() => chatStore.messages, async () => {
   await nextTick()
@@ -177,6 +200,12 @@ function formatTime(timestamp: number): string {
   padding: 12px 16px;
   background: linear-gradient(135deg, #3b82f6, #1d4ed8);
   color: white;
+  cursor: grab;
+  user-select: none;
+}
+
+.chat-header:active {
+  cursor: grabbing;
 }
 
 .chat-title {
@@ -352,6 +381,25 @@ function formatTime(timestamp: number): string {
   outline: none;
   max-height: 80px;
   font-family: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.input-area textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.input-area textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.input-area textarea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.input-area textarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .input-area textarea:focus {

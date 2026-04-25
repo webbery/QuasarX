@@ -130,12 +130,6 @@
       </table>
     </div>
 
-    <!-- 拖拽提示区 -->
-    <div class="drop-zone">
-      <i class="fas fa-cloud-upload-alt"></i>
-      <p>拖拽 PDF 文件到此处添加新文档</p>
-    </div>
-
     <!-- 分页 -->
     <div class="pagination-wrapper">
       <div class="pagination-info">

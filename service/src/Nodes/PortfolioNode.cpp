@@ -108,47 +108,56 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         _lastPlan._hasChanged = true;
 
         context.GetExecutionPlan() = _lastPlan;
-
-        // 保存执行计划摘要到 context，供 DebugNode 在 Done 阶段读取
-        // 格式: {symbol}.plan_action (1=BUY, -1=SELL, 0=HOLD), {symbol}.plan_qty, {symbol}.plan_price
-        auto& times = context.GetTime();
-        size_t idx = times.empty() ? 0 : times.size() - 1;
-        for (const auto& item : _lastPlan._items) {
-            String sym = get_symbol(item._symbol);
-            int actionVal = 0;
-            switch (item._action) {
-                case TradeAction::BUY:  actionVal = 1; break;
-                case TradeAction::SELL: actionVal = -1; break;
-                case TradeAction::HOLD: actionVal = 0; break;
-            }
-            String actionKey = sym + ".plan_action";
-            String qtyKey = sym + ".plan_qty";
-            String priceKey = sym + ".plan_price";
-
-            double price = (item._limitPrice > 0) ? item._limitPrice : 0.0;
-
-            if (context.exist(actionKey)) {
-                context.add(actionKey, (double)actionVal);
-                context.add(qtyKey, (double)item._quantity);
-                context.add(priceKey, price);
-            } else {
-                // 首次写入，填充之前的值为 0
-                Vector<double> actionVec(idx, 0.0);
-                Vector<double> qtyVec(idx, 0.0);
-                Vector<double> priceVec(idx, 0.0);
-                actionVec.push_back((double)actionVal);
-                qtyVec.push_back((double)item._quantity);
-                priceVec.push_back(price);
-                context.set(actionKey, std::move(actionVec));
-                context.set(qtyKey, std::move(qtyVec));
-                context.set(priceKey, std::move(priceVec));
-            }
-        }
-        // INFO("PortfolioNode: generated new execution plan with {} items, capital={}",
-        //      _lastPlan._items.size(), capital);
     } else {
         context.GetExecutionPlan()._hasChanged = false;
-        //INFO("PortfolioNode: no change, keeping current positions");
+    }
+
+    // 6. 保存执行计划摘要到 context（每次 Process 都写入，确保数据完整）
+    // 格式: {symbol}.plan_action (1=BUY, -1=SELL, 0=HOLD), {symbol}.plan_qty, {symbol}.plan_price
+    // 构建当前 bar 所有 symbol 的 action/qty/price 映射
+    std::map<symbol_t, std::tuple<int, int64_t, double>> symData;
+    // 先初始化所有 symbol 为 HOLD
+    for (const auto& sym : _pool) {
+        symData[sym] = {0, 0, 0.0};
+    }
+    // 填充有计划的 symbol
+    for (const auto& item : _lastPlan._items) {
+        int actionVal = 0;
+        switch (item._action) {
+            case TradeAction::BUY:  actionVal = 1; break;
+            case TradeAction::SELL: actionVal = -1; break;
+            case TradeAction::HOLD: actionVal = 0; break;
+        }
+        double price = (item._limitPrice > 0) ? item._limitPrice : 0.0;
+        symData[item._symbol] = {actionVal, item._quantity, price};
+    }
+    // 写入 context
+    auto& times = context.GetTime();
+    size_t idx = times.empty() ? 0 : times.size() - 1;
+    for (const auto& [sym, data] : symData) {
+        String symStr = get_symbol(sym);
+        auto [actionVal, qty, price] = data;
+
+        String actionKey = symStr + ".plan_action";
+        String qtyKey = symStr + ".plan_qty";
+        String priceKey = symStr + ".plan_price";
+
+        if (context.exist(actionKey)) {
+            context.add(actionKey, (double)actionVal);
+            context.add(qtyKey, (double)qty);
+            context.add(priceKey, price);
+        } else {
+            // 首次写入，填充之前的值为 0
+            Vector<double> actionVec(idx, 0.0);
+            Vector<double> qtyVec(idx, 0.0);
+            Vector<double> priceVec(idx, 0.0);
+            actionVec.push_back((double)actionVal);
+            qtyVec.push_back((double)qty);
+            priceVec.push_back(price);
+            context.set(actionKey, std::move(actionVec));
+            context.set(qtyKey, std::move(qtyVec));
+            context.set(priceKey, std::move(priceVec));
+        }
     }
 
     return NodeProcessResult::Success;
