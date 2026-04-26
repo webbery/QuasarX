@@ -6,6 +6,7 @@
 #include <sstream>
 #include <chrono>
 #include <ctime>
+#include <iomanip>
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Util/log.h"
@@ -127,9 +128,9 @@ void OptionHistoryHandler::get(const httplib::Request& req, httplib::Response& r
 
     // 解析时间范围
     auto parse_timestamp = [](const String& time_str) -> int64_t {
+        std::istringstream ss(time_str);
         struct tm tm_buf;
-        memset(&tm_buf, 0, sizeof(tm_buf));
-        strptime(time_str.c_str(), "%Y-%m-%d %H:%M:%S", &tm_buf);
+        ss >> std::get_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
         return static_cast<int64_t>(mktime(&tm_buf));
     };
 

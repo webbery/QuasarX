@@ -168,7 +168,7 @@ import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
 import { savePdf, listPdfs, deletePdf, downloadPdf } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
-import { storeChunks } from '../../lib/vectorDB';
+import { storeChunks, deleteChunks } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
 import { message } from '../../tool';
 
@@ -307,6 +307,8 @@ async function onDelete(doc: any) {
   if (!confirm(`确定要删除 "${doc.title}" 吗？`)) return;
 
   try {
+    // 删除向量数据库中的记录
+    await deleteChunks(doc.id);
     // 删除本地文件
     await deletePdf(doc.fileName);
     // 删除 store 记录

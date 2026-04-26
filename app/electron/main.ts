@@ -3,11 +3,11 @@ import { join, dirname } from 'path';
 import Store from 'electron-store';
 import { productName, description, version } from "../package.json";
 
-import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
+// import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
 import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
-import { readFile } from 'fs/promises';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB } from './vectorDB';
 
 /**
  * ** The built directory structure
@@ -101,6 +101,13 @@ app.whenReady().then(async () => {
         allWindows.length === 0 ? createWindow() : allWindows[0].focus();
     });
 
+    // Initialize VectorDB
+    try {
+        await initVectorDB(getKnowledgeDir());
+    } catch (e) {
+        console.error('[VectorDB] init failed:', e);
+    }
+
     ipcMain.handle('open-directory-dialog', async (event, options) => {
         const result = await dialog.showOpenDialog({
             title: options?.title || '选择目录',
@@ -170,8 +177,9 @@ app.whenReady().then(async () => {
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
-app.on('window-all-closed', () => {
-    mainWindow = null
+app.on('window-all-closed', async () => {
+    mainWindow = null;
+    await shutdownVectorDB();
     if (process.platform !== 'darwin') app.quit();
 });
 
@@ -184,7 +192,6 @@ function createReadCSVPromise(filepath, ) {
 // ============================================================
 // Knowledge Base IPC Handlers
 // ============================================================
-
 /**
  * 获取 knowledge 目录路径
  * 使用可执行文件所在目录作为基准
@@ -433,3 +440,59 @@ async function RecursiveMergeCSVFile(to_dir, from_dir) {
         }
     }
 }
+
+// ============================================================
+// Vector Database IPC Handlers (Main Process)
+// ============================================================
+
+ipcMain.handle('vector-store-chunks', async (_, { docId, fileName, chunks }: {
+  docId: string; fileName: string; chunks: { index: number; content: string }[]
+}) => {
+  try {
+    await storeChunks(docId, fileName, chunks);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[vector-store-chunks] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('vector-delete-chunks', async (_, docId: string) => {
+  try {
+    await deleteChunks(docId);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[vector-delete-chunks] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('vector-search', async (_, { queryText, topK }: { queryText: string; topK?: number }) => {
+  try {
+    const results = await vectorSearch(queryText, topK ?? 5);
+    return { success: true, results };
+  } catch (error: any) {
+    console.error('[vector-search] 错误:', error);
+    return { success: false, results: [], error: error.message };
+  }
+});
+
+ipcMain.handle('vector-clear-all', async () => {
+  try {
+    await clearAll();
+    return { success: true };
+  } catch (error: any) {
+    console.error('[vector-clear-all] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('vector-get-stats', async () => {
+  try {
+    const stats = await getStats();
+    return { success: true, ...stats };
+  } catch (error: any) {
+    console.error('[vector-get-stats] 错误:', error);
+    return { success: false, totalChunks: 0, totalDocs: 0, error: error.message };
+  }
+});
