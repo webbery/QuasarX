@@ -919,7 +919,6 @@ void HXExchange::OnOrderReport(order_id id, const TradeReport& report){
     _orders.visit(id._id, [&report,broker](concurrent_order_map::value_type& value) {
         auto ctx = value.second;
         LOG("OnOrderReport {}", ctx->_order._id);
-        broker->RecordTrade(*ctx);
         ctx->_trades._reports.emplace_back(report);
         ctx->Update(report);
         if (OrderStatus::OrderAccept != report._status) {

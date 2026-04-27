@@ -84,6 +84,22 @@ AccountAsset StockHistorySimulation::GetAsset(){
 
 order_id StockHistorySimulation::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order){
     // run_id: 回测运行 ID，用于区分不同的策略实例
+    
+    // 验证订单有效性
+    if (order->_order._volume <= 0) {
+        WARN("订单数量无效：symbol={}, volume={}", get_symbol(symbol), order->_order._volume);
+        order_id id;
+        id._id = 0;
+        return id;
+    }
+    
+    if (order->_order._price <= 0) {
+        WARN("订单价格无效：symbol={}, price={}", get_symbol(symbol), order->_order._price);
+        order_id id;
+        id._id = 0;
+        return id;
+    }
+    
     // 买入开仓时检查并冻结资金
     if (order->_order._side == 0 && order->_order._flag == 0) {  // 开多
         double orderCost = order->_order._price * order->_order._volume;
@@ -127,9 +143,6 @@ bool StockHistorySimulation::OrderReport(BacktestContext* context, order_id id, 
         return false;
     orderCtx->Update(report);
     orderCtx->_trades._reports.emplace_back(report);
-    orderCtx->_success.store(true);
-    orderCtx->_flag.store(true);
-    orderCtx->_promise.set_value(true);
 
     // 更新持仓（使用上下文私有持仓）
     const auto& order = orderCtx->_order;
@@ -137,11 +150,11 @@ bool StockHistorySimulation::OrderReport(BacktestContext* context, order_id id, 
     int delta = (order._side == 0) ? report._quantity : -report._quantity;
     context->adjustPosition(orderCtx->_order._symbol, delta);
 
-    // 记录交易
-    auto broker = _server->GetBrokerSubSystem();
-    if (broker) {
-        broker->RecordTrade(*orderCtx);
-    }
+    // 设置完成标志（确保 _trades 已经完整后，由 Broker 线程统一调用 RecordTrade）
+    orderCtx->_success.store(true);
+    orderCtx->_flag.store(true);
+    orderCtx->_promise.set_value(true);
+
     return true;
 }
 void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& report) {
@@ -157,11 +170,9 @@ void StockHistorySimulation::OnOrderReport(order_id id, const TradeReport& repor
     if (found) return;
 
     // 全局回退：使用 _reports
-    auto broker = _server->GetBrokerSubSystem();
-    _reports.visit(id._id, [&report, broker](auto&& value) {
+    _reports.visit(id._id, [&report](auto&& value) {
         auto ctx = value.second;
         value.second->_trades._reports.emplace_back(report);
-        broker->RecordTrade(*ctx);
 
         ctx->Update(report);
         value.second->_success.store(true);
@@ -633,6 +644,12 @@ run_id_t StockHistorySimulation::createBacktestContext(
 {
     uint16_t runId = _nextRunId.fetch_add(1, std::memory_order_relaxed);
 
+    // 清除旧的回测交易记录（防止多次运行同一策略时数据累积）
+    auto broker = _server->GetBrokerSubSystem();
+    if (broker) {
+        broker->ClearHistoryTrades(runId);
+    }
+
     auto context = std::make_unique<BacktestContext>(runId, strategy_name);
     context->setCapital(initial_capital);
 
@@ -905,6 +922,23 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
 
     if (!ctx) {
         WARN("Backtest context not found for strategy: {}", strategy_hash);
+        order_id id;
+        id._id = 0;
+        return id;
+    }
+
+    // 验证订单有效性
+    if (order->_order._volume <= 0) {
+        WARN("订单数量无效：symbol={}, volume={}, strategy={}", 
+             get_symbol(symbol), order->_order._volume, ctx->getStrategyName());
+        order_id id;
+        id._id = 0;
+        return id;
+    }
+    
+    if (order->_order._price <= 0) {
+        WARN("订单价格无效：symbol={}, price={}, strategy={}", 
+             get_symbol(symbol), order->_order._price, ctx->getStrategyName());
         order_id id;
         id._id = 0;
         return id;

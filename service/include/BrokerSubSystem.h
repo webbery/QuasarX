@@ -126,6 +126,8 @@ public:
     void RecordTrade(const OrderContext& context);
     // 清除历史交易信息
     void CleanStrategyRecord();
+    // 清除指定 run_id 的历史交易记录（防止多次回测累积）
+    void ClearHistoryTrades(run_id_t run_id);
     // 持久化指定 run_id 的交易记录
     void PersistTrades(run_id_t run_id);
 

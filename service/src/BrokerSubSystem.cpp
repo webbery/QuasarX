@@ -545,6 +545,9 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
     // 加锁并添加交易记录
     _historyTrades.visit(runId, [&ctx](auto& entry) {
         auto& ptr = entry.second;
+        if (ctx._trades._reports.front()._quantity == 0) {
+          printf("111111\n");
+        }
         std::lock_guard<std::mutex> lock(ptr->mtx);
         auto act = Order2Transaction(ctx);
         ptr->trades[ctx._order._symbol].emplace_back(std::move(act));
@@ -559,6 +562,10 @@ void BrokerSubSystem::PersistTrades(run_id_t run_id) {
         // 触发数据库刷新
         _update = true;
     });
+}
+
+void BrokerSubSystem::ClearHistoryTrades(run_id_t run_id) {
+    _historyTrades.erase(run_id);
 }
 
 void BrokerSubSystem::CleanStrategyRecord() {
