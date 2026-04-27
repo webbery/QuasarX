@@ -62,7 +62,10 @@ export default defineConfig(({ command, mode }) => {
               minify: isBuild,
               outDir: 'build/electron',
               rollupOptions: {
-                //external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios'],
+                output: {
+                  format: 'esm',
+                },
               },
             },
           },
@@ -70,7 +73,7 @@ export default defineConfig(({ command, mode }) => {
         {
           entry: 'electron/preload.ts',
           onstart(options) {
-            // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete, 
+            // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete,
             // instead of restarting the entire Electron App.
             options.reload()
           },
@@ -81,6 +84,9 @@ export default defineConfig(({ command, mode }) => {
               outDir: 'build/electron',
               rollupOptions: {
                 // external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+                output: {
+                  format: 'esm',
+                },
               },
             },
           },

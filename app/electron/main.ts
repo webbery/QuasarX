@@ -1,7 +1,16 @@
 import { app, BrowserWindow, shell, screen, session, ipcMain, dialog } from 'electron';
 import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import Store from 'electron-store';
 import { productName, description, version } from "../package.json";
+
+// ESM 兼容：__dirname 替代
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// ESM 兼容：require 替代（仅用于纯 CJS 模块）
+const require = createRequire(import.meta.url);
 
 // import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
 import axios from 'axios';
