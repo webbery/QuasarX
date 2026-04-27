@@ -6,7 +6,7 @@
 import { mkdirSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import * as lancedb from '@lancedb/lancedb';
-import { pipeline } from '@xenova/transformers';
+import { pipeline, env } from '@xenova/transformers';
 
 const EMBEDDING_MODEL = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
 const EMBEDDING_DIM = 384;
@@ -210,4 +210,90 @@ export async function shutdownVectorDB(): Promise<void> {
   table = null;
   db = null;
   console.log('[VectorDB] shutdown');
+}
+
+/**
+ * 模型缓存路径（在 knowledge 目录下）
+ */
+function getModelCacheDir(knowledgeDir: string): string {
+  // Xenova 模型缓存目录结构：cacheDir/Xenova/<model-name>/
+  return join(knowledgeDir, '.model-cache');
+}
+
+/**
+ * 检测模型是否已缓存
+ * 检查关键文件 onnx/model_quantized.onnx 或 onnx/model.onnx 是否存在
+ */
+function isModelCached(cacheDir: string): boolean {
+  const modelDir = join(cacheDir, 'Xenova', 'paraphrase-multilingual-MiniLM-L12-v2', 'onnx');
+  // 量化模型优先检查 model_quantized.onnx
+  return existsSync(join(modelDir, 'model_quantized.onnx')) || existsSync(join(modelDir, 'model.onnx'));
+}
+
+/**
+ * 预加载嵌入模型
+ * @param knowledgeDir - 知识库目录路径
+ * @param onStatus - 可选的状态回调，用于向渲染进程推送进度
+ * @returns {Promise<boolean>} - 是否成功加载
+ */
+export async function preloadModel(
+  knowledgeDir: string,
+  onStatus?: (status: { type: string; text?: string; progress?: number }) => void
+): Promise<boolean> {
+  const cacheDir = getModelCacheDir(knowledgeDir);
+  env.cacheDir = cacheDir;
+
+  const cached = isModelCached(cacheDir);
+
+  if (cached) {
+    // 已缓存，静默加载
+    console.log('[VectorDB] model already cached, loading silently...');
+    try {
+      extractor = await pipeline('feature-extraction', EMBEDDING_MODEL, {
+        quantized: true,
+      });
+      console.log('[VectorDB] model preloaded from cache');
+      return true;
+    } catch (e) {
+      console.error('[VectorDB] failed to load cached model:', e);
+      // 缓存损坏，回退到重新下载
+      console.log('[VectorDB] cache may be corrupted, will re-download');
+    }
+  }
+
+  // 未缓存，启动下载并上报进度
+  console.log('[VectorDB] model not cached, starting download...');
+  if (onStatus) onStatus({ type: 'downloading', text: '开始下载嵌入模型...' });
+
+  let lastProgressText = '';
+  let lastProgress = 0;
+
+  try {
+    extractor = await pipeline('feature-extraction', EMBEDDING_MODEL, {
+      quantized: true,
+      progress_callback: (progress: any) => {
+        if (progress.status === 'download' && onStatus) {
+          lastProgressText = `正在下载 ${progress.file || ''}`;
+          onStatus({ type: 'downloading', text: lastProgressText });
+        } else if (progress.status === 'progress' && onStatus) {
+          lastProgress = Math.round(progress.progress || 0);
+          onStatus({ type: 'progress', progress: lastProgress, text: `${lastProgress}% ${progress.file || ''}` });
+        } else if (progress.status === 'done' && onStatus) {
+          onStatus({ type: 'downloading', text: `已加载 ${progress.file || ''}` });
+        } else if (progress.status === 'ready') {
+          console.log('[VectorDB] model download complete');
+          if (onStatus) onStatus({ type: 'ready' });
+        }
+      },
+    });
+
+    console.log('[VectorDB] model preloaded successfully');
+    if (onStatus) onStatus({ type: 'ready' });
+    return true;
+  } catch (e: any) {
+    console.error('[VectorDB] model preload failed:', e.message);
+    if (onStatus) onStatus({ type: 'error', text: `模型加载失败: ${e.message}` });
+    extractor = null;
+    return false;
+  }
 }

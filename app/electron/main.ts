@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
-import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB } from './vectorDB';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel } from './vectorDB';
 
 /**
  * ** The built directory structure
@@ -116,6 +116,19 @@ app.whenReady().then(async () => {
     } catch (e) {
         console.error('[VectorDB] init failed:', e);
     }
+
+    // 后台预加载嵌入模型（不阻塞窗口显示）
+    (async () => {
+        const knowledgeDir = getKnowledgeDir();
+        try {
+            await preloadModel(knowledgeDir, (status) => {
+                // 将模型加载进度推送到渲染进程
+                mainWindow?.webContents.send('model-load-status', status);
+            });
+        } catch (e: any) {
+            console.warn('[VectorDB] preloadModel background task failed:', e.message);
+        }
+    })();
 
     ipcMain.handle('open-directory-dialog', async (event, options) => {
         const result = await dialog.showOpenDialog({

@@ -33,6 +33,21 @@
       </div>
     </header>
 
+    <!-- 模型加载进度条（仅下载中时显示） -->
+    <div v-if="modelLoadStatus && (modelLoadStatus.type === 'downloading' || modelLoadStatus.type === 'progress')" class="model-load-banner">
+      <div class="model-load-content">
+        <i class="fas fa-download model-load-icon"></i>
+        <span class="model-load-text">{{ modelLoadStatus.text || '正在加载嵌入模型...' }}</span>
+        <el-progress
+          v-if="modelLoadStatus.progress !== undefined"
+          :percentage="modelLoadStatus.progress"
+          :stroke-width="6"
+          :show-text="false"
+          class="model-progress-bar"
+        />
+      </div>
+    </div>
+
     <!-- 左侧导航 -->
     <nav class="sidebar">
       <div class="nav-section">
@@ -249,6 +264,9 @@ import ChatBox from './components/ChatBox.vue'
 import { useChatStore } from './stores/chatStore'
 
 const chatStore = useChatStore()
+
+// ---- 模型加载状态 ----
+const modelLoadStatus = ref(null);
 
 // 定义视图状态常量
 const VIEWS = {
@@ -505,6 +523,22 @@ onMounted(() => {
 
   // 监听打开配置管理器事件
   window.addEventListener('open-portfolio-manager', onHandlePortfolioMananger)
+
+  // 监听嵌入模型加载状态
+  window.addEventListener('message', (event) => {
+    if (event.data?.payload === 'model-load-status') {
+      modelLoadStatus.value = event.data.data;
+      console.info('modelLoadStatus.value:', modelLoadStatus.value)
+      // ready 或 error 后，3秒自动隐藏
+      if (event.data.data?.type === 'ready' || event.data.data?.type === 'error') {
+        setTimeout(() => {
+          if (modelLoadStatus.value?.type === event.data.data?.type) {
+            modelLoadStatus.value = null;
+          }
+        }, 3000);
+      }
+    }
+  });
 });
 
 onUnmounted(() => {
@@ -741,5 +775,50 @@ provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
 
 .chat-toggle-btn i {
   font-size: 14px;
+}
+
+/* 嵌入模型加载进度条样式 */
+.model-load-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: linear-gradient(90deg, #1e3a5f, #2563eb);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.model-load-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+
+.model-load-icon {
+  font-size: 14px;
+  animation: spin 1s linear infinite;
+}
+
+.model-load-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-progress-bar {
+  width: 200px;
+  flex-shrink: 0;
+}
+
+.model-progress-bar :deep(.el-progress-bar__outer) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.model-progress-bar :deep(.el-progress-bar__inner) {
+  background: #60a5fa;
 }
 </style>

@@ -6,6 +6,8 @@
  * https://www.electronjs.org/docs/latest/tutorial/sandbox
  */
 
+import { ipcRenderer } from 'electron';
+
 function domReady(condition: DocumentReadyState[] = ['complete', 'interactive']) {
     return new Promise((resolve) => {
         if (condition.includes(document.readyState)) {
@@ -127,12 +129,17 @@ setTimeout(() => {
  */
 window.onmessage = (event) => {
     if (event.data.payload === 'removeLoading') {
-        appLoaded = true; 
+        appLoaded = true;
         /**
-         * execute the removeLoading function if timeout is true 
+         * execute the removeLoading function if timeout is true
          * (that is, if the timeout has already been reached)
          */
-        timeout && removeLoading(); 
+        timeout && removeLoading();
     }
     console.info(event.data.payload)
 };
+
+/**  ---------- Forward Model Load Status from Main to Renderer ----------- */
+ipcRenderer.on('model-load-status', (_event, status) => {
+    window.postMessage({ payload: 'model-load-status', data: status }, '*');
+});
