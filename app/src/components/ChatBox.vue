@@ -48,12 +48,6 @@
             </div>
           </div>
         </div>
-
-        <!-- 空状态 -->
-        <div v-if="chatStore.messages.length === 0 && !chatStore.isLoading" class="empty-state">
-          <i class="fas fa-comments"></i>
-          <p>有什么可以帮您的？</p>
-        </div>
       </div>
 
       <!-- 输入框 -->
@@ -150,9 +144,10 @@ async function sendMessage() {
   chatStore.isLoading = true
 
   try {
-    // 调用 AI，注入行情上下文
+    // 调用 AI，注入行情上下文和对话历史
     const response = await askAI(text, {
       context: chatStore.marketContext,
+      history: chatStore.messages.slice(0, -1), // 传递除当前消息外的所有历史
     })
 
     chatStore.isLoading = false

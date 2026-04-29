@@ -126,7 +126,7 @@ export async function testAgentConnection(config: AgentConfig): Promise<{ succes
 }
 
 /**
- * 使用 Agent 发送消息
+ * 使用 Agent 发送消息（单条消息便捷方法）
  * @param message 用户消息
  * @param systemPrompt 系统提示词（可选）
  * @returns AI 回复
@@ -135,17 +135,28 @@ export async function sendAgentMessage(
   message: string,
   systemPrompt?: string
 ): Promise<string> {
-  const config = getAgentConfig();
-  if (!config) {
-    throw new Error('Agent 未配置，请先在设置中配置');
-  }
-
   const messages: Array<{ role: string; content: string }> = [];
-  
+
   if (systemPrompt) {
     messages.push({ role: 'system', content: systemPrompt });
   }
   messages.push({ role: 'user', content: message });
+
+  return sendAgentMessages(messages);
+}
+
+/**
+ * 使用 Agent 发送完整消息数组（支持多轮对话）
+ * @param messages 消息数组
+ * @returns AI 回复
+ */
+export async function sendAgentMessages(
+  messages: Array<{ role: string; content: string }>
+): Promise<string> {
+  const config = getAgentConfig();
+  if (!config) {
+    throw new Error('Agent 未配置，请先在设置中配置');
+  }
 
   let url: string;
   let headers: Record<string, string>;
@@ -159,11 +170,11 @@ export async function sendAgentMessage(
         'Authorization': `Bearer ${config.apiKey}`
       };
       body = {
-        model: 'gpt-3.5-turbo',
+        model: config.model,
         messages
       };
       break;
-    
+
     case 'anthropic': {
       const anthropic = new Anthropic({
         apiKey: config.apiKey,
@@ -192,7 +203,10 @@ export async function sendAgentMessage(
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`
       };
-      body = { messages };
+      body = {
+        model: config.model,
+        messages
+      };
   }
 
   const response = await fetch(url, {

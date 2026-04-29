@@ -2,7 +2,8 @@ import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
-import { rmSync } from 'node:fs'
+import { rmSync, mkdirSync, copyFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
@@ -13,7 +14,7 @@ export default defineConfig(({ command, mode }) => {
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG
 
   process.env = { ...process.env, ...loadEnv(mode, process.cwd()) };
-  
+
   return {
     server: {
       port: 23678,
@@ -68,27 +69,18 @@ export default defineConfig(({ command, mode }) => {
                 },
               },
             },
-          },
-        },
-        {
-          entry: 'electron/preload.ts',
-          onstart(options) {
-            // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete,
-            // instead of restarting the entire Electron App.
-            options.reload()
-          },
-          vite: {
-            build: {
-              sourcemap: sourcemap ? 'inline' : undefined, // #332
-              minify: isBuild,
-              outDir: 'build/electron',
-              rollupOptions: {
-                // external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
-                output: {
-                  format: 'esm',
-                },
+            plugins: [{
+              name: 'copy-preload',
+              closeBundle() {
+                const src = join(__dirname, 'electron/preload.cjs');
+                const dst = join(__dirname, 'build/electron/preload.cjs');
+                if (existsSync(src)) {
+                  mkdirSync('build/electron', { recursive: true });
+                  copyFileSync(src, dst);
+                  console.log('[copy] preload.cjs → build/electron/');
+                }
               },
-            },
+            }],
           },
         }
       ]),

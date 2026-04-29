@@ -55,19 +55,23 @@ function createWindow() {
             nodeIntegration: true,
             contextIsolation: false,
             webSecurity: false, // 禁用同源策略
-            preload: join(__dirname, 'preload.js')
+            preload: join(__dirname, 'preload.cjs')
         }
     });
 
     // 隐藏菜单栏
     mainWindow.setMenu(null);
 
-    if (process.env.VITE_DEV_SERVER_URL) {
-        mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
-        mainWindow.webContents.openDevTools()
-        mainWindow.maximize()
+    if (!process.env.VITE_DEV_SERVER_URL) {
+      mainWindow.loadFile(join(process.env.BUILD_APP, 'index.html'))
     } else {
-        mainWindow.loadFile(join(process.env.BUILD_APP, 'index.html'))
+      mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+      mainWindow.maximize()
+
+      // 页面加载完成后再打开 DevTools，避免过早调用导致失效
+      mainWindow.webContents.on('dom-ready', () => {
+          mainWindow.webContents.openDevTools();
+      }, { once: true });
     }
 
     // Make all links open with the browser, not with the application

@@ -8,8 +8,8 @@ import { join } from 'path';
 import * as lancedb from '@lancedb/lancedb';
 import { pipeline, env } from '@xenova/transformers';
 
-const EMBEDDING_MODEL = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
-const EMBEDDING_DIM = 384;
+const EMBEDDING_MODEL = 'Xenova/distiluse-base-multilingual-cased-v2';
+const EMBEDDING_DIM = 768;
 
 let db: lancedb.Connection | null = null;
 let table: lancedb.Table | null = null;
@@ -128,6 +128,7 @@ export async function vectorSearch(
   if (!table) throw new Error('VectorDB not initialized');
 
   const queryEmbedding = await embed(queryText);
+  console.info('generate queryEmbedding.')
   const queryVector = new Float32Array(queryEmbedding);
 
   // LanceDB 向量检索
@@ -136,23 +137,24 @@ export async function vectorSearch(
     .limit(topK)
     .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata']);
 
+  console.info('find result:', results)
   // 转换为兼容的返回格式
   const searchResults: any[] = [];
-  const rows = await results.toArray();
-  for (const row of rows) {
-    searchResults.push({
-      chunk: {
-        id: row.id,
-        docId: row.doc_id,
-        fileName: row.file_name,
-        chunkIndex: row.chunk_index,
-        content: row.content,
-        embedding: [], // LanceDB 不返回原始向量，除非显式 select
-        metadata: JSON.parse(row.metadata || '{}'),
-      },
-      similarity: row._distance !== undefined ? 1 - row._distance : 0, // LanceDB 返回的是距离，转为相似度
-    });
-  }
+  // const rows = await results.toArray();
+  // for (const row of rows) {
+  //   searchResults.push({
+  //     chunk: {
+  //       id: row.id,
+  //       docId: row.doc_id,
+  //       fileName: row.file_name,
+  //       chunkIndex: row.chunk_index,
+  //       content: row.content,
+  //       embedding: [], // LanceDB 不返回原始向量，除非显式 select
+  //       metadata: JSON.parse(row.metadata || '{}'),
+  //     },
+  //     similarity: row._distance !== undefined ? 1 - row._distance : 0, // LanceDB 返回的是距离，转为相似度
+  //   });
+  // }
 
   // 按相似度降序排序
   searchResults.sort((a, b) => b.similarity - a.similarity);
@@ -214,9 +216,9 @@ export async function shutdownVectorDB(): Promise<void> {
 
 /**
  * 模型缓存路径（在 knowledge 目录下）
+ * Transformers.js 默认缓存结构：cacheDir/<model-id-with-underscores>/onnx/
  */
 function getModelCacheDir(knowledgeDir: string): string {
-  // Xenova 模型缓存目录结构：cacheDir/Xenova/<model-name>/
   return join(knowledgeDir, '.model-cache');
 }
 
@@ -225,7 +227,9 @@ function getModelCacheDir(knowledgeDir: string): string {
  * 检查关键文件 onnx/model_quantized.onnx 或 onnx/model.onnx 是否存在
  */
 function isModelCached(cacheDir: string): boolean {
-  const modelDir = join(cacheDir, 'Xenova', 'paraphrase-multilingual-MiniLM-L12-v2', 'onnx');
+  // 从 EMBEDDING_MODEL 提取模型目录名（如 'iic/gte_xxx' → 'iic_gte_xxx' 或 'Xenova/xxx' → 'Xenova_xxx'）
+  const modelFolder = EMBEDDING_MODEL.replace('/', '_');
+  const modelDir = join(cacheDir, modelFolder, 'onnx');
   // 量化模型优先检查 model_quantized.onnx
   return existsSync(join(modelDir, 'model_quantized.onnx')) || existsSync(join(modelDir, 'model.onnx'));
 }

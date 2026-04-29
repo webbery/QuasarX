@@ -33,21 +33,6 @@
       </div>
     </header>
 
-    <!-- 模型加载进度条（仅下载中时显示） -->
-    <div v-if="modelLoadStatus && (modelLoadStatus.type === 'downloading' || modelLoadStatus.type === 'progress')" class="model-load-banner">
-      <div class="model-load-content">
-        <i class="fas fa-download model-load-icon"></i>
-        <span class="model-load-text">{{ modelLoadStatus.text || '正在加载嵌入模型...' }}</span>
-        <el-progress
-          v-if="modelLoadStatus.progress !== undefined"
-          :percentage="modelLoadStatus.progress"
-          :stroke-width="6"
-          :show-text="false"
-          class="model-progress-bar"
-        />
-      </div>
-    </div>
-
     <!-- 左侧导航 -->
     <nav class="sidebar">
       <div class="nav-section">
@@ -206,7 +191,21 @@
           <span>内存: {{memUsage}}G/{{totalmem}}G</span>
         </div>
       </div>
-      
+
+      <!-- 模型下载进度（仅下载中时显示） -->
+      <div v-if="modelLoadStatus && (modelLoadStatus.type === 'downloading' || modelLoadStatus.type === 'progress')"
+           class="model-progress-inline">
+        <i class="fas fa-download"></i>
+        <span class="model-progress-text">{{ modelLoadStatus.text || '下载中...' }}</span>
+        <el-progress
+          v-if="modelLoadStatus.progress !== undefined"
+          :percentage="modelLoadStatus.progress"
+          :stroke-width="4"
+          :show-text="false"
+          class="inline-progress-bar"
+        />
+      </div>
+
       <!-- AI 助手按钮 -->
       <button
         class="chat-toggle-btn"
@@ -777,48 +776,58 @@ provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
   font-size: 14px;
 }
 
-/* 嵌入模型加载进度条样式 */
-.model-load-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 9999;
-  background: linear-gradient(90deg, #1e3a5f, #2563eb);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.model-load-content {
+/* 模型下载进度（内联于 footer，助手左侧） */
+.model-progress-inline {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 20px;
-  color: #e2e8f0;
-  font-size: 13px;
+  gap: 8px;
+  padding: 4px 12px;
+  background: rgba(37, 99, 235, 0.15);
+  border-radius: 16px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  margin-left: auto;
+  margin-right: 8px;
+  max-width: 300px;
+  animation: fade-in-scale 0.3s ease;
 }
 
-.model-load-icon {
-  font-size: 14px;
+.model-progress-inline i {
+  font-size: 12px;
+  color: #60a5fa;
   animation: spin 1s linear infinite;
 }
 
-.model-load-text {
-  flex: 1;
+.model-progress-text {
+  font-size: 11px;
+  color: #60a5fa;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 140px;
 }
 
-.model-progress-bar {
-  width: 200px;
+.inline-progress-bar {
+  width: 80px;
   flex-shrink: 0;
 }
 
-.model-progress-bar :deep(.el-progress-bar__outer) {
-  background: rgba(255, 255, 255, 0.2);
+.inline-progress-bar :deep(.el-progress-bar__outer) {
+  background: rgba(255, 255, 255, 0.1);
 }
 
-.model-progress-bar :deep(.el-progress-bar__inner) {
+.inline-progress-bar :deep(.el-progress-bar__inner) {
   background: #60a5fa;
+  border-radius: 2px;
+}
+
+@keyframes fade-in-scale {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 </style>

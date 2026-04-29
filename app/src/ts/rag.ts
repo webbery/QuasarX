@@ -26,16 +26,54 @@ export interface RAGSource {
 }
 
 /**
- * 默认系统提示词
+ * 构建系统提示词
+ * 根据是否有知识库内容，动态调整提示词
  */
-const DEFAULT_SYSTEM_PROMPT = `你是一个量化交易助手，基于以下知识库中的文档内容回答用户的问题。
-请仅使用提供的上下文信息作答，如果上下文信息不足以回答问题，请明确告知用户。
-回答时请标明信息来源出自哪个文档。`;
+export function buildSystemPrompt(
+  skillResultContent?: string,
+  conversationSummary?: string
+): string {
+  const hasKnowledge = skillResultContent && 
+                       skillResultContent.includes('【知识库相关内容】');
+  
+  return `你拥有丰富的金融专业知识和市场分析能力。
+
+=== 你的知识来源 ===
+1. **自身知识**：你拥有广泛的金融、投资、量化交易等领域的通用知识
+2. **知识库**（如下方提供）：来自用户上传的本地文档
+3. **对话历史**（如下方提供）：之前的对话内容
+
+${hasKnowledge ? `
+=== 回答规则 ===
+- 下方提供了"知识库相关内容"，请优先参考它来回答
+- 回答时请标明信息来源出自哪个文档
+- 如果知识库内容不够充分，可以补充你自己的专业知识
+- 回答时应明确指出哪些信息来自知识库，哪些来自你自己的知识
+` : `
+=== 回答规则 ===
+- 当前知识库中没有找到与用户问题直接相关的内容
+- 请使用你自己的专业知识和通用知识回答用户问题
+- 如果涉及专业领域，请明确说明这是基于你的专业知识而非知识库
+`}
+
+${conversationSummary ? `
+=== 对话历史摘要 ===
+${conversationSummary}
+
+请结合之前的对话内容，保持上下文连贯性。
+` : ''}
+
+请回答用户的问题。`;
+}
 
 /**
- * 组装 RAG Prompt
+ * 组装 RAG Prompt（旧版兼容接口）
  */
-function buildPrompt(query: string, sources: RAGSource[], systemPrompt: string): { prompt: string; context: string } {
+function buildPrompt(
+  query: string, 
+  sources: RAGSource[], 
+  systemPrompt: string
+): { prompt: string; context: string } {
   // 构建上下文文本
   let contextText = '';
   sources.forEach((source, idx) => {
@@ -52,7 +90,7 @@ ${contextText}
 === 用户问题 ===
 ${query}
 
-请基于以上知识库上下文回答用户的问题。`;
+请回答用户的问题。`;
 
   return {
     prompt,
@@ -105,40 +143,61 @@ export async function ragRetrieve(
 /**
  * 执行完整的 RAG 流程（检索 + LLM 生成）
  * @param query 用户查询
- * @param topK 检索文档块数量
- * @param systemPrompt 自定义系统提示词
  * @param llmCallback LLM 调用回调函数（由调用方提供具体的 LLM API 调用逻辑）
+ * @param topK 检索文档块数量
+ * @param systemPrompt 自定义系统提示词（可选，如果不提供则使用 buildSystemPrompt）
+ * @param skillResult Skill 执行结果（可选）
+ * @param conversationSummary 对话历史摘要（可选）
  * @returns RAG 完整响应
  */
 export async function ragQuery(
   query: string,
   llmCallback: (prompt: string) => Promise<string>,
   topK: number = 5,
-  systemPrompt: string = DEFAULT_SYSTEM_PROMPT
+  systemPrompt?: string,
+  skillResult?: string,
+  conversationSummary?: string
 ): Promise<RAGResponse> {
   // 1. 检索阶段
   const { sources, context } = await ragRetrieve(query, topK);
 
-  if (sources.length === 0) {
-    // 没有检索到相关内容
-    return {
-      answer: '抱歉，知识库中没有找到与您问题相关的内容。请尝试上传相关文档后再提问。',
-      sources: [],
-      context: '',
-    };
+  // 2. 组装 Prompt
+  let finalPrompt: string;
+  
+  if (systemPrompt) {
+    // 使用自定义系统提示词（旧版兼容）
+    const { prompt } = buildPrompt(query, sources, systemPrompt);
+    finalPrompt = prompt;
+  } else {
+    // 使用新版提示词结构
+    const skillContent = skillResult || (sources.length > 0 ? buildKnowledgeContext(sources) : '');
+    finalPrompt = buildSystemPrompt(skillContent, conversationSummary);
+    
+    // 添加用户问题
+    finalPrompt += `\n\n=== 用户问题 ===\n${query}\n\n请回答用户的问题。`;
   }
 
-  // 2. 组装 Prompt
-  const { prompt } = buildPrompt(query, sources, systemPrompt);
-
   // 3. 调用 LLM
-  const answer = await llmCallback(prompt);
+  const answer = await llmCallback(finalPrompt);
 
   return {
     answer,
     sources,
     context,
   };
+}
+
+/**
+ * 构建知识库上下文字符串
+ */
+function buildKnowledgeContext(sources: RAGSource[]): string {
+  if (sources.length === 0) return '';
+  
+  const knowledgeContent = sources.map((source, idx) => {
+    return `--- 文档 ${idx + 1}: ${source.fileName} (相似度: ${(source.similarity * 100).toFixed(1)}%) ---\n${source.content}`;
+  }).join('\n\n');
+  
+  return `【知识库相关内容】\n\n${knowledgeContent}`;
 }
 
 /**

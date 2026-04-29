@@ -17,6 +17,11 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const isLoading = ref(false)
   const marketContext = ref('')
+  
+  // 最大对话轮数限制
+  const MAX_MESSAGES = 500
+  // localStorage 保存的最近消息数（避免存储过大）
+  const STORAGE_MESSAGES = 100
 
   // 从 localStorage 加载配置
   function loadFromStorage() {
@@ -37,7 +42,7 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const data = {
         visible: visible.value,
-        messages: messages.value.slice(-50), // 只保存最近 50 条消息
+        messages: messages.value.slice(-STORAGE_MESSAGES), // 只保存最近消息
       }
       localStorage.setItem('quasarx_chat', JSON.stringify(data))
     } catch (e) {
@@ -73,9 +78,9 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
     }
     messages.value.push(message)
-    // 限制消息历史长度
-    if (messages.value.length > 50) {
-      messages.value = messages.value.slice(-50)
+    // 限制消息历史长度到 500 轮
+    if (messages.value.length > MAX_MESSAGES) {
+      messages.value = messages.value.slice(-MAX_MESSAGES)
     }
     saveToStorage()
   }
@@ -88,21 +93,64 @@ export const useChatStore = defineStore('chat', () => {
 
   // 添加问候语
   function addGreeting() {
-    const hour = new Date().getHours()
-    let greeting = '你好！'
-    if (hour < 12) {
-      greeting = '早上好！'
-    } else if (hour < 18) {
-      greeting = '下午好！'
-    } else {
-      greeting = '晚上好！'
-    }
-    greeting += '我是 QuasarX AI 助手，有什么可以帮您的吗？'
+  }
 
-    addMessage({
-      role: 'assistant',
-      content: greeting,
-    })
+  /**
+   * 获取最近 N 条对话历史
+   * @param count 获取数量
+   * @returns 对话历史数组
+   */
+  function getConversationHistory(count: number = 20): ChatMessage[] {
+    return messages.value.slice(-count)
+  }
+
+  /**
+   * 压缩对话历史为摘要
+   * 当对话过长时调用 LLM 生成摘要
+   * @param llmCallback LLM 回调函数
+   * @returns 摘要文本
+   */
+  async function summarizeConversation(
+    llmCallback: (prompt: string) => Promise<string>
+  ): Promise<string> {
+    if (messages.value.length <= 20) {
+      // 消息不多，不需要压缩
+      return ''
+    }
+
+    // 提取需要压缩的部分（前 80% 的消息）
+    const compressCount = Math.floor(messages.value.length * 0.8)
+    const toCompress = messages.value.slice(0, compressCount)
+    
+    if (toCompress.length < 10) {
+      // 太少，不需要压缩
+      return ''
+    }
+
+    try {
+      const conversationText = toCompress
+        .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
+        .join('\n\n')
+
+      const summaryPrompt = `请将以下对话历史压缩为简洁的摘要，保留关键信息、上下文和重要决定。摘要应能帮助理解之前的对话内容：
+
+${conversationText}
+
+请用简洁的语言概括上述对话的核心内容和上下文。摘要：`
+
+      const summary = await llmCallback(summaryPrompt)
+      
+      // 移除已压缩的消息，只保留最近的
+      messages.value = messages.value.slice(compressCount)
+      saveToStorage()
+      
+      console.log(`[ChatStore] 对话已压缩：${toCompress.length} 条 → 摘要`)
+      return summary
+    } catch (error) {
+      console.error('[ChatStore] 对话摘要生成失败:', error)
+      // 失败时不移除消息，返回空摘要
+      return ''
+    }
   }
 
   // 注入当日行情背景
@@ -210,5 +258,7 @@ ${strategyRiskText}
     addMessage,
     clearMessages,
     addGreeting,
+    getConversationHistory,
+    summarizeConversation,
   }
 })
