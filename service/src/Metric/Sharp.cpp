@@ -51,6 +51,19 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
     INFO("[Sharp] time axis length: {}", times.size());
     INFO("[Sharp] initialCapital: {}", context.getInitialCapital());
 
+    // 打印 crash_flow_t 的每笔交易记录（与调试输出.csv 对比）
+    INFO("[Sharp] ====== crash_flow_t Details ======");
+    for (const auto& [symbol, report] : flow) {
+        INFO("[Sharp] crash_flow: symbol={}, time={}, side={}, qty={}, price={}, amount={}",
+             get_symbol(symbol),
+             report._time,
+             report._side == 0 ? "BUY" : "SELL",
+             report._quantity,
+             report._price,
+             report._trade_amount);
+    }
+    INFO("[Sharp] ====== crash_flow_t Details End ======");
+
     // 2. 准备价格数据
     std::map<symbol_t, Vector<double>> price_data;
     int price_fail_count = 0;
@@ -109,13 +122,14 @@ float sharp_ratio(const crash_flow_t& flow, const DataContext& context, double f
         // 计算当日组合价值 = 现金 + 持仓市值
         double market_value = 0.0;
         for (const auto& [symbol, qty] : positions) {
-            if (qty <= 0) continue;  // 空仓跳过
+            if (qty == 0) continue;  // 空仓跳过
 
             auto it = price_data.find(symbol);
             if (it == price_data.end() || it->second.empty()) continue;
 
             // 使用安全价格获取（越界时用最后一个价格）
             double price = get_safe_price(it->second, day_idx);
+            INFO("{} {} {} {}", current_time, get_symbol(symbol), price, qty);
             market_value += qty * price;
         }
 

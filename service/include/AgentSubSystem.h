@@ -54,21 +54,6 @@ public:
     
     Set<symbol_t> GetPools(const String& strategy);
 
-    /**
-     * @brief 获取策略的预热期 epoch 数
-     */
-    int GetWarmupEpochs(const String& strategy) const {
-        auto it = _flows.find(strategy);
-        return it != _flows.end() ? it->second._warmupEpochs : 0;
-    }
-
-    /**
-     * @brief 设置策略的预热期 epoch 数（由 StrategySubSystem 调用）
-     */
-    void SetWarmupEpochs(const String& strategy, int epochs) {
-        _flows[strategy]._warmupEpochs = epochs;
-    }
-
 private:
 
     /**
@@ -105,9 +90,6 @@ private:
 
         // 关联的回测运行 ID（多线程回测模式）
         uint16_t _backtestRunId = 0;
-
-        // 预热期配置（回测模式下跳过信号生成的 epoch 数）
-        int _warmupEpochs = 0;
 
         // K-bar 聚合器（实盘模式）
         std::shared_ptr<KBarBuilder> _kbarBuilder;

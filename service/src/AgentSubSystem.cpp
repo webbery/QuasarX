@@ -5,6 +5,7 @@
 #include "Nodes/PortfolioNode.h"
 #include "Nodes/QuoteNode.h"
 #include "StrategyNode.h"
+#include "Util/log.h"
 #include "server.h"
 #include "Util/system.h"
 #include "StrategySubSystem.h"
@@ -15,6 +16,7 @@
 #include "Nodes/SignalNode.h"
 #include <exception>
 #include <stdexcept>
+#include <typeinfo>
 #include "RiskSubSystem.h"
 #include "Nodes/ScriptNode.h"
 #include "Nodes/ExecuteNode.h"
@@ -101,17 +103,17 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
     flow._running = true;
     flow._backtestRunId = runId;
 
-    // 从 StrategySubSystem 获取预热期（已在 InitStrategy 时推断）
-    int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
-    flow._warmupEpochs = warmupEpochs;
-
-    if (warmupEpochs > 0) {
-        INFO("[Backtest] Warmup period: {} epochs", warmupEpochs);
-    }
-
     flow._worker = new std::thread([strategy, runId, this]() {
         DataContext context(strategy, _handle);
         context.setBacktestRunId(runId);
+
+        // 设置 warmup epochs 到 context
+        int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
+        context.SetWarmupEpochs(warmupEpochs);
+
+        if (warmupEpochs > 0) {
+            INFO("[Backtest] Warmup period: {} epochs", warmupEpochs);
+        }
 
         auto& flow = _flows[strategy];
         // 获取回测上下文
@@ -140,7 +142,6 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     INFO("Backtest data finished for strategy {}", strategy);
                     break;
                 }
-
                 if (!RunGraph(strategy, flow, context)) {
                     success = false;
                     break;
@@ -323,7 +324,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     bool shouldSkipEpoch = false;
 
     // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
-    bool inWarmup = (context.GetEpoch() <= flow._warmupEpochs);
+    bool inWarmup = context.IsInWarmup();
 
     // 根据策略图生成信号
     for (auto node: flow._graph) {
@@ -335,7 +336,6 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
                 continue;
             }
         }
-
         auto result = node->Process(strategy, context);
         
         switch (result) {

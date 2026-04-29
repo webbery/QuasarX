@@ -6,6 +6,7 @@
 #include "Util/log.h"
 #include "PortfolioSubsystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/BacktestContext.h"
 #include "Nodes/SignalNode.h"
 
 PortfolioNode::PortfolioNode(Server* server)
@@ -91,10 +92,17 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
 
     // 3. 生成执行计划
     ExecutionPlan newPlan;
-    if (_server->GetRunningMode() != RuningType::Backtest) {
+    if (_server->GetRunningMode() != RuningType::Backtest) { [[likely]]
         newPlan = generatePlan(symbols, actions, targetCapital);
     } else {
-        newPlan = generatePlan(context, symbols, actions, targetCapital);
+        // 回测模式：获取 BacktestContext 以获取正确的 symbol 索引
+        BacktestContext* btContext = nullptr;
+        auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+            _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+        if (histExchange) {
+            btContext = histExchange->getBacktestContext(context.getBacktestRunId());
+        }
+        newPlan = generatePlan(context, symbols, actions, targetCapital, btContext);
     }
 
     // 4. 检查是否有变化
@@ -127,11 +135,14 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             case TradeAction::BUY:  actionVal = 1; break;
             case TradeAction::SELL: actionVal = -1; break;
             case TradeAction::HOLD: actionVal = 0; break;
-        }
+            case TradeAction::EXEC:
+              break;
+            }
         double price = (item._limitPrice > 0) ? item._limitPrice : 0.0;
         symData[item._symbol] = {actionVal, item._quantity, price};
     }
     // 写入 context
+    int warmup = context.GetWarmupEpochs();
     auto& times = context.GetTime();
     size_t idx = times.empty() ? 0 : times.size() - 1;
     for (const auto& [sym, data] : symData) {
@@ -147,10 +158,13 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             context.add(qtyKey, (double)qty);
             context.add(priceKey, price);
         } else {
-            // 首次写入，填充之前的值为 0
-            Vector<double> actionVec(idx, 0.0);
-            Vector<double> qtyVec(idx, 0.0);
-            Vector<double> priceVec(idx, 0.0);
+            // 首次写入，预填充 warmup 占位符
+            // warmup 期间 PortfolioNode 被跳过，但 QuoteInputNode 仍然写入了时间
+            // 需要预填充 warmup 个 0 值，使数据长度与时间序列对齐
+            size_t fillCount = (warmup > 0 && idx > 0) ? idx : 0;
+            Vector<double> actionVec(fillCount, 0.0);
+            Vector<double> qtyVec(fillCount, 0.0);
+            Vector<double> priceVec(fillCount, 0.0);
             actionVec.push_back((double)actionVal);
             qtyVec.push_back((double)qty);
             priceVec.push_back(price);
@@ -275,7 +289,8 @@ ExecutionPlan PortfolioNode::generatePlan(
 
 ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
                               const Vector<TradeAction>& actions,
-                              double targetCapital) {
+                              double targetCapital,
+                              BacktestContext* btContext) {
     ExecutionPlan plan;
     plan._totalCapital = targetCapital;
     plan._usedCapital = 0.0;
@@ -300,9 +315,15 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<sym
         String symbolName = get_symbol(item._symbol);
 
         // 获取未复权价格（原始价格）用于回测交易
+        // 使用 BacktestContext 中每个 symbol 独立的 curIndex，而非全局 epoch
+        // stepForward 已经 incrementCurIndex，所以当前 bar 的索引是 curIndex - 1
         double price = 0.0;
-        if (histExchange) {
-            price = histExchange->GetPrimitivePrice(item._symbol, context.GetEpoch() - 1);
+        if (histExchange && btContext) {
+            uint32_t curIndex = btContext->getCurIndex(item._symbol);
+            auto t = context.Current();
+            if (curIndex > 0) {
+                price = histExchange->GetPrimitivePrice(item._symbol, curIndex - 1);
+            }
         }
 
         if (price <= 0) {

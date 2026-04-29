@@ -3,6 +3,7 @@
 #include "StrategyNode.h"
 #include "Nodes/ExecutionPlan.h"
 
+class BacktestContext;
 class PortfolioNode : public QNode {
 public:
     RegistClassName(PortfolioNode);
@@ -23,7 +24,8 @@ private:
                               double capital);
     ExecutionPlan generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
                               const Vector<TradeAction>& actions,
-                              double capital);
+                              double capital,
+                              BacktestContext* btContext);
     bool isPlanChanged(const ExecutionPlan& newPlan);
 
 private:
