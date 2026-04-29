@@ -152,7 +152,16 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         if (context.exist(key)) {
             context.add(key, (double)signalValue);
         } else {
-            context.set(key, Vector<double>{(double)signalValue});
+            // 首次写入，预填充 warmup 占位符
+            // warmup 期间 SignalNode 被跳过，但 QuoteInputNode 仍然写入了时间
+            // 需要预填充 warmup 个 0 值，使数据长度与时间序列对齐
+            int warmup = context.GetWarmupEpochs();
+            Vector<double> signalVec;
+            if (warmup > 0) {
+                signalVec.assign(warmup, 0.0);  // warmup 期间信号为 0（持有）
+            }
+            signalVec.push_back((double)signalValue);
+            context.set(key, std::move(signalVec));
         }
     }
     return NodeProcessResult::Success;

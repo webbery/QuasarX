@@ -46,9 +46,13 @@ public:
     void Consume() { _executed = true; }
     bool IsConsume() const { return _executed; }
 
-    // Create time
+    // Create time (system clock, only for realtime mode)
     std::chrono::system_clock::time_point GetCreateTime() const { return _create_time; }
     void SetCreateTime(std::chrono::system_clock::time_point t) { _create_time = t; }
+
+    // Backtest time (bar time, only valid in backtest mode)
+    time_t GetBacktestTime() const { return _backtestTime; }
+    void SetBacktestTime(time_t t) { _backtestTime = t; }
 
 private:
     symbol_t _symbol;
@@ -57,6 +61,7 @@ private:
     double _price = 0.0;         // 建议价格
     bool _executed: 1 = false;   // 是否已执行
     std::chrono::system_clock::time_point _create_time;
+    time_t _backtestTime = 0;    // 回测时间 (信号触发时的 Bar 时间)
 };
 
 enum class SignalSource: char {
@@ -198,6 +203,33 @@ public:
     BacktestContext* getBacktestContext();
 
     TradeSignal* getSignalBySymbol(symbol_t);
+
+    // ============ Warmup 管理 ============
+
+    /**
+     * @brief 设置预热期数（回测模式下 FunctionNode 需要预热的 epoch 数）
+     */
+    void SetWarmupEpochs(int epochs) { _warmupEpochs = epochs; }
+
+    /**
+     * @brief 获取预热期数
+     */
+    int GetWarmupEpochs() const { return _warmupEpochs; }
+
+    /**
+     * @brief 检查当前是否处于预热期
+     */
+    bool IsInWarmup() const { return _epoch <= (uint64_t)_warmupEpochs; }
+
+    /**
+     * @brief 获取排除 warmup 后的有效 epoch 计数
+     *         warmup 期间返回 0
+     */
+    int GetEffectiveEpoch() const {
+        if (_epoch <= (uint64_t)_warmupEpochs) return 0;
+        return (int)(_epoch - _warmupEpochs);
+    }
+
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -226,4 +258,7 @@ private:
 
     // 关联的回测运行 ID（0 表示未关联）
     uint16_t _backtestRunId{0};
+
+    // 预热期数（回测模式下 FunctionNode 需要预热的 epoch 数）
+    int _warmupEpochs = 0;
 };

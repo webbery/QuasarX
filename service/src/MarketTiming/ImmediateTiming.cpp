@@ -8,9 +8,22 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
 {
     auto broker = _server->GetBrokerSubSystem();
     auto symbol = signal.GetSymbol();
+
+    // 捕获信号触发时的时间 (回测模式下使用)
+    time_t signalTime = signal.GetBacktestTime();
+
+    // 从 DataContext 获取当前价格 (回测模式优先使用 context 中的价格)
+    double price = signal.GetPrice();
+    if (_server->GetRunningMode() == RuningType::Backtest) {
+        const QuoteInfo* quote = context.GetQuote(symbol);
+        if (quote && quote->_close > 0) {
+            price = quote->_close;
+        }
+    }
+
     // TODO: 初始化订单
     Order order;
-    order._price = signal.GetPrice();
+    order._price = price;
     order._volume = signal.GetQuantity();
     auto run_id = context.getBacktestRunId();
     switch (signal.GetAction()) {
@@ -26,11 +39,16 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
             }
             order._flag = (pos < 0) ? 1 : 0;
         }
-        broker->Buy(run_id, strategy, symbol, order, [symbol, this](const TradeReport& report) {
+        broker->Buy(run_id, strategy, symbol, order, [symbol, this, signalTime](const TradeReport& report) {
             auto sock = Server::GetSocket();
-            auto info = to_sse_string(symbol, report);
+            // 回测模式下使用信号触发时间覆盖 TradeReport._time
+            TradeReport fixedReport = report;
+            if (signalTime > 0) {
+                fixedReport._time = signalTime;
+            }
+            auto info = to_sse_string(symbol, fixedReport);
             nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
-            _reports.emplace_back(std::make_pair(symbol, report));
+            _reports.emplace_back(std::make_pair(symbol, fixedReport));
             });
     break;
     case TradeAction::SELL:
@@ -45,11 +63,16 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
             }
             order._flag = (pos > 0) ? 1 : 0;
         }
-        broker->Sell(run_id, strategy, symbol, order, [symbol, this](const TradeReport& report) {
+        broker->Sell(run_id, strategy, symbol, order, [symbol, this, signalTime](const TradeReport& report) {
             auto sock = Server::GetSocket();
-            auto info = to_sse_string(symbol, report);
+            // 回测模式下使用信号触发时间覆盖 TradeReport._time
+            TradeReport fixedReport = report;
+            if (signalTime > 0) {
+                fixedReport._time = signalTime;
+            }
+            auto info = to_sse_string(symbol, fixedReport);
             nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
-            _reports.emplace_back(std::make_pair(symbol, report));
+            _reports.emplace_back(std::make_pair(symbol, fixedReport));
             });
     break;
     case TradeAction::EXEC:

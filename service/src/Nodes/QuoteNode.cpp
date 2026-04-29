@@ -34,6 +34,8 @@ void QuoteInputNode::writeQuote(DataContext& context, const QuoteInfo& quote) {
         auto key = baseKey + property;
         addQuoteProperty(context, key, getProp(quote, property));
     }
+    // 同步到 QuoteInfo 缓存，供其他模块通过 context.GetQuote() 获取
+    context.SetQuote(quote._symbol, quote);
 }
 
 void QuoteInputNode::addQuoteProperty(DataContext& context, const String& key, double val) {

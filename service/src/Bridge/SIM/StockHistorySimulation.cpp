@@ -239,9 +239,6 @@ bool StockHistorySimulation::LoadCSVToDataFrame(const String& file_path,
         }
         // 智能判断日期格式：如果长度<=10则只有日期，否则包含时间
         const char* timeFmt = (row[0].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
-        if (row[0] == "2022-03-11") {
-            INFO("{} {} {}", file_path, timeFmt, FromStr(row[0], timeFmt));
-        }
         dates.emplace_back(FromStr(row[0], timeFmt));
         open.emplace_back(std::stof(row[1]));
         close.emplace_back(std::stof(row[2]));
@@ -591,6 +588,7 @@ double StockHistorySimulation::GetPrimitivePrice(symbol_t symbol, uint32_t index
     if (org_header.empty()) {
         return GetAdjPrice(symbol, index);
     }
+
     auto& org_close = org_df.get_column<float>(org_header[2].c_str());
     if (index >= org_close.size()) {
         index = org_close.size() - 1;
@@ -833,7 +831,7 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
         QuoteInfo info;
         info._symbol = symbol;
         info._open = open[curIndex];
-        info._close = close[curIndex];
+        info._close = close[curIndex];  // 后复权价
         info._high = high[curIndex];
         info._low = low[curIndex];
         info._volume = volume[curIndex];

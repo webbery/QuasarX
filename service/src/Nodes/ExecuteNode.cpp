@@ -71,6 +71,11 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             signal->SetQuantity(item._quantity);
             signal->SetPrice(item._limitPrice);
 
+            // 设置回测时间 (从 DataContext 获取当前 Bar 时间)
+            if (_server->GetRunningMode() == RuningType::Backtest) {
+                signal->SetBacktestTime(context.Current());
+            }
+
             INFO("ExecuteNode: {} {} {} shares @ {}",
                 (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
         }
