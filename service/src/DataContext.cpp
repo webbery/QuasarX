@@ -68,7 +68,10 @@ time_t DataContext::Current() {
 }
 
 TradeSignal* DataContext::getSignalBySymbol(symbol_t symbol) {
-    return _signals[symbol];
+    auto itr = _signals.find(symbol);
+    if (itr == _signals.end())
+        return nullptr;
+    return itr->second;
 }
 
 void DataContext::AddSignal(TradeSignal* signal) {
@@ -108,6 +111,7 @@ void DataContext::ConsumeSignals() {
         erases.insert(item.first);
     }
     for (auto key: erases) {
+        delete _signals[key];
         _signals.erase(key);
     }
 }

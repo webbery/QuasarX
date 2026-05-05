@@ -158,7 +158,6 @@ watch(activeTab, async (newTab) => {
   }
 
   if (newTab === 'backtest' && reportViewRef.value) {
-    console.info('[StrategyFactory] 切换到回测结果选项卡')
     onShowReportConfig()
 
     await nextTick()

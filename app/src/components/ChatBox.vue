@@ -30,7 +30,11 @@
             <i :class="msg.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
           </div>
           <div class="message-content">
-            <div class="message-text">{{ msg.content }}</div>
+            <div
+              class="message-text"
+              :class="{ 'markdown-body': msg.role === 'assistant' }"
+              v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content"
+            ></div>
             <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
           </div>
         </div>
@@ -75,6 +79,9 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chatStore'
 import { askAI } from '@/lib/ChatApi'
+import MarkdownIt from 'markdown-it'
+
+const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
 
 const chatStore = useChatStore()
 const inputText = ref('')
@@ -169,6 +176,11 @@ function formatTime(timestamp: number): string {
   const hours = date.getHours().toString().padStart(2, '0')
   const minutes = date.getMinutes().toString().padStart(2, '0')
   return `${hours}:${minutes}`
+}
+
+// 渲染 markdown（仅用于助手消息）
+function renderMarkdown(text: string): string {
+  return md.render(text)
 }
 </script>
 
@@ -298,6 +310,95 @@ function formatTime(timestamp: number): string {
   background: rgba(59, 130, 246, 0.1);
   color: #e5e7eb;
   border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+/* Markdown 渲染样式（仅助手消息） */
+.message-text.markdown-body {
+  padding: 10px 14px;
+}
+
+.message-text.markdown-body :deep(p) {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.message-text.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-text.markdown-body :deep(code) {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.message-text.markdown-body :deep(pre) {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.message-text.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.message-text.markdown-body :deep(ul),
+.message-text.markdown-body :deep(ol) {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.message-text.markdown-body :deep(li) {
+  margin: 2px 0;
+  font-size: 13px;
+}
+
+.message-text.markdown-body :deep(strong) {
+  color: #93c5fd;
+}
+
+.message-text.markdown-body :deep(a) {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+.message-text.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.message-text.markdown-body :deep(th),
+.message-text.markdown-body :deep(td) {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.message-text.markdown-body :deep(th) {
+  background: rgba(59, 130, 246, 0.15);
+  font-weight: 600;
+}
+
+.message-text.markdown-body :deep(blockquote) {
+  border-left: 3px solid #3b82f6;
+  padding-left: 10px;
+  margin: 6px 0;
+  color: #9ca3af;
+}
+
+.message-text.markdown-body :deep(hr) {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 10px 0;
 }
 
 .message.user .message-text {

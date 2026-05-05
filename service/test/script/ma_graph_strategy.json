@@ -60,9 +60,9 @@
                         "type": "select",
                         "options": ["MA"]
                     },
-                    "smoothTime": {
-                        "value": 5,
-                        "type": "number"
+                    "range": {
+                        "value": "5d",
+                        "type": "text"
                     }
                 }
             },
@@ -80,9 +80,9 @@
                         "type": "select",
                         "options": ["MA"]
                     },
-                    "smoothTime": {
-                        "value": 15,
-                        "type": "number"
+                    "range": {
+                        "value": "15d",
+                        "type": "text"
                     }
                 }
             },
@@ -140,12 +140,6 @@
                         "value": 1.0,
                         "type": "number",
                         "desc": "仓位比例 (0.0~1.0)，1.0 表示满仓"
-                    },
-                    "initialCapital": {
-                        "value": 100000,
-                        "type": "number",
-                        "unit": "元",
-                        "desc": "初始本金（回测模式专用）"
                     }
                 }
             },

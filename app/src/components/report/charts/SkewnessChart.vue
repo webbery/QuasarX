@@ -6,6 +6,7 @@
     <div class="chart-title">
       <div class="title-icon">⚖️</div>
       <span>Skewness & Kurtosis</span>
+      <span v-if="symbolName" class="symbol-tag">{{ symbolName }}</span>
       <span v-if="isCalculating" class="loading-indicator">计算中...</span>
       <span v-else-if="calculationTime" class="calc-time">{{ calculationTime }}ms</span>
     </div>
@@ -40,13 +41,16 @@ interface Props {
   returnsData?: number[]
   /** 价格数据 [date, close][] - 用于前端计算 */
   prices?: Array<[string, number]>
+  /** 标的代码名称 */
+  symbolName?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
   skewness: 0.35,
   kurtosis: 3.12,
   returnsData: () => [],
-  prices: () => []
+  prices: () => [],
+  symbolName: ''
 })
 
 const { chartRef, initChart, updateChart } = useECharts(true)
@@ -119,8 +123,9 @@ function initWorker() {
         histogram: result.histogram
       }
       calculationTime.value = String(result.duration)
+      const sym = result.symbol ? ` (${result.symbol})` : ''
       console.info(
-        `[SkewnessChart] Worker 计算完成: ${result.dataPoints} 个数据点, 耗时 ${result.duration}ms`
+        `[SkewnessChart] Worker 计算完成${sym}: ${result.dataPoints} 个数据点, 耗时 ${result.duration}ms`
       )
       updateChart(buildChartOption(), true)
     } else {
@@ -143,7 +148,7 @@ function triggerCalculation() {
   }
 
   isCalculating.value = true
-  worker.postMessage({ prices: toRaw(props.prices) })
+  worker.postMessage({ prices: toRaw(props.prices), symbol: props.symbolName || undefined })
 }
 
 // === 图表配置 ===
@@ -304,6 +309,8 @@ function buildChartOption() {
 watch(
   () => props.prices,
   () => {
+    // 价格数据变化时重新计算
+    calculatedStats.value = null // 清除旧结果，确保图表更新
     triggerCalculation()
   }
 )
@@ -372,6 +379,16 @@ onUnmounted(() => {
   justify-content: center;
   background: rgba(41, 98, 255, 0.1);
   border-radius: 8px;
+}
+
+.symbol-tag {
+  font-size: 12px;
+  color: #2962ff;
+  background: rgba(41, 98, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-weight: 600;
 }
 
 .loading-indicator {

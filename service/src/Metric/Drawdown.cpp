@@ -5,39 +5,16 @@
 #include <cmath>
 
 namespace {
-    // 多空分离持仓模型
-    struct Position {
-        int long_qty = 0;   // 多头持仓
-        int short_qty = 0;  // 空头持仓
-
-        bool empty() const { return long_qty == 0 && short_qty == 0; }
-    };
-
-    // 根据交易报告更新持仓（多空分离模型）
-    void update_position(std::map<symbol_t, Position>& positions,
+    // 单一整数持仓模型（与 Sharp.cpp 一致）
+    // 正数 = 多头持仓，0 = 空仓
+    void update_position(std::map<symbol_t, int>& positions,
                          symbol_t symbol,
                          const TradeReport& report) {
-        auto& pos = positions[symbol];
-        int qty = report._quantity;
-
-        if (report._side == 0) {  // 买入
-            if (report._flag == 0) {
-                // 买入开多
-                pos.long_qty += qty;
-            } else {
-                // 买入平空
-                pos.short_qty -= qty;
-                if (pos.short_qty < 0) pos.short_qty = 0;
-            }
-        } else {  // 卖出
-            if (report._flag == 0) {
-                // 卖出开空
-                pos.short_qty += qty;
-            } else {
-                // 卖出平多
-                pos.long_qty -= qty;
-                if (pos.long_qty < 0) pos.long_qty = 0;
-            }
+        if (report._side == 0) {  // 买入 → 增加持仓
+            positions[symbol] += report._quantity;
+        } else {  // 卖出 → 减少持仓
+            positions[symbol] -= report._quantity;
+            if (positions[symbol] < 0) positions[symbol] = 0;  // 防止负持仓
         }
     }
 
@@ -60,8 +37,8 @@ namespace {
         std::vector<double> daily_values(times.size(), 0.0);
         std::vector<double> daily_cash_flows(times.size(), 0.0);
 
-        // 持仓记录：symbol -> 持仓（多空分离）
-        std::map<symbol_t, Position> positions;
+        // 持仓记录：symbol -> 持仓数量（单一整数模型）
+        std::map<symbol_t, int> positions;
 
         // 价格数据缓存
         std::map<symbol_t, std::vector<double>> price_data;
@@ -79,7 +56,6 @@ namespace {
         }
 
         // 按时间顺序处理交易记录
-        // 首先将交易记录按时间分组
         std::map<time_t, std::vector<std::pair<symbol_t, TradeReport>>> trades_by_time;
 
         for (const auto& [symbol, report] : flow) {
@@ -109,18 +85,17 @@ namespace {
                     }
                 }
             }
-            // 计算当前组合价值（多空分离）
+            // 计算当前组合价值（单一整数模型：持仓市值 = qty * price）
             double portfolio_value = 0.0;
-            for (const auto& [symbol, pos] : positions) {
-                if (pos.empty()) continue;
+            for (const auto& [symbol, qty] : positions) {
+                if (qty == 0) continue;
 
                 auto it = price_data.find(symbol);
                 if (it == price_data.end()) continue;
 
                 const auto& closes = it->second;
                 if (i < closes.size()) {
-                    // 多头市值为正，空头市值为负
-                    portfolio_value += pos.long_qty * closes[i] - pos.short_qty * closes[i];
+                    portfolio_value += qty * closes[i];
                 }
             }
 

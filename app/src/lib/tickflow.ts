@@ -210,10 +210,10 @@ export function calculateMetrics(data: KlineData[]): BenchmarkMetrics {
     dailyReturns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
   }
 
-  // 总收益率
+  // 总收益率（首尾价格比）
   const totalReturn = (closes[closes.length - 1] - closes[0]) / closes[0];
 
-  // 年化收益率
+  // 年化收益率（几何年化，与后端 Drawdown.cpp 口径一致）
   const days = (data[data.length - 1].time - data[0].time) / 86400000;
   const years = days / 365.25;
   const annualReturn = years > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
@@ -227,17 +227,21 @@ export function calculateMetrics(data: KlineData[]): BenchmarkMetrics {
     if (drawdown < maxDrawdown) maxDrawdown = drawdown;
   }
 
-  // 波动率 (年化)
-  const meanReturn = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
-  const variance = dailyReturns.reduce((sum, r) => sum + Math.pow(r - meanReturn, 2), 0) / dailyReturns.length;
-  const volatility = Math.sqrt(variance * 252);
+  // === 夏普比率计算 ===
+  // 【与后端 Sharp.cpp 口径统一】使用算术平均年化
+  const meanDailyReturn = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
+  const variance = dailyReturns.reduce((sum, r) => sum + Math.pow(r - meanDailyReturn, 2), 0) / (dailyReturns.length - 1);
+  const stdDailyReturn = Math.sqrt(variance);
 
-  // 夏普比率 (无风险利率 3%)
-  const rf = 0.03;
-  const excessReturn = annualReturn - rf;
-  const sharp = volatility > 0 ? excessReturn / volatility : 0;
+  // 年化（算术）
+  const annualizedReturn = meanDailyReturn * 252;  // 252 交易日
+  const annualizedVolatility = stdDailyReturn * Math.sqrt(252);
 
-  // 卡玛比率
+  // 夏普比率 = (年化收益 - 无风险利率) / 年化波动率
+  const rf = 0.03;  // 无风险利率 3%
+  const sharp = annualizedVolatility > 0 ? (annualizedReturn - rf) / annualizedVolatility : 0;
+
+  // 卡玛比率（几何年化收益 / 最大回撤绝对值）
   const calmar = Math.abs(maxDrawdown) > 0 ? annualReturn / Math.abs(maxDrawdown) : 0;
 
   // 胜率
@@ -248,7 +252,7 @@ export function calculateMetrics(data: KlineData[]): BenchmarkMetrics {
     annual_return: parseFloat(annualReturn.toFixed(4)),
     max_drawdown: parseFloat(maxDrawdown.toFixed(4)),
     sharp: parseFloat(sharp.toFixed(2)),
-    volatility: parseFloat(volatility.toFixed(4)),
+    volatility: parseFloat(annualizedVolatility.toFixed(4)),
     total_return: parseFloat(totalReturn.toFixed(4)),
     calmar_ratio: parseFloat(calmar.toFixed(2)),
     win_rate: parseFloat(winRate.toFixed(4)),

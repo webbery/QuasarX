@@ -301,3 +301,120 @@ export async function preloadModel(
     return false;
   }
 }
+
+// ============================================================
+// Intent Vector Store (意图向量)
+// ============================================================
+
+let intentTable: lancedb.Table | null = null;
+
+/**
+ * 初始化意图向量表
+ */
+export async function initIntentTable(): Promise<void> {
+  if (!db) throw new Error('VectorDB not initialized');
+
+  const tableNames = await db.tableNames();
+  if (tableNames.includes('intents')) {
+    intentTable = await db.openTable('intents');
+    console.log('[VectorDB] opened existing intents table');
+  } else {
+    const emptyData = [
+      {
+        id: '__init__',
+        text: '__init__',
+        vector: new Float32Array(EMBEDDING_DIM),
+        ruleId: '__init__',
+      },
+    ];
+    intentTable = await db.createTable('intents', emptyData);
+    await intentTable.delete("id = '__init__'");
+    console.log('[VectorDB] created intents table');
+  }
+}
+
+/**
+ * 全量索引意图规则
+ */
+export async function storeIntents(
+  rules: { id: string; text: string; ruleId: string }[]
+): Promise<void> {
+  if (!intentTable) throw new Error('Intent table not initialized');
+
+  // 先清空
+  const allResults = await intentTable.query().select(['id']).toArray();
+  if (allResults.length > 0) {
+    const ids = allResults.map((r: any) => `'${r.id}'`).join(',');
+    await intentTable.delete(`id IN (${ids})`);
+  }
+
+  if (rules.length === 0) return;
+
+  const rows: any[] = [];
+  for (const rule of rules) {
+    const embedding = await embed(rule.text);
+    rows.push({
+      id: rule.id,
+      text: rule.text,
+      vector: new Float32Array(embedding),
+      ruleId: rule.ruleId,
+    });
+  }
+
+  await intentTable.add(rows);
+  console.log(`[VectorDB] stored ${rows.length} intent vectors`);
+}
+
+/**
+ * 增量更新意图向量
+ */
+export async function patchIntents(
+  toDelete: string[],  // ruleId 列表
+  toAdd: { id: string; text: string; ruleId: string }[]
+): Promise<void> {
+  if (!intentTable) throw new Error('Intent table not initialized');
+
+  // 删除指定 ruleId 的行
+  for (const ruleId of toDelete) {
+    await intentTable.delete(`ruleId = '${ruleId}'`);
+  }
+
+  // 添加新行
+  if (toAdd.length > 0) {
+    const rows: any[] = [];
+    for (const item of toAdd) {
+      const embedding = await embed(item.text);
+      rows.push({
+        id: item.id,
+        text: item.text,
+        vector: new Float32Array(embedding),
+        ruleId: item.ruleId,
+      });
+    }
+    await intentTable.add(rows);
+  }
+}
+
+/**
+ * 意图向量相似度检索
+ */
+export async function searchIntents(
+  queryText: string,
+  topK: number = 3
+): Promise<Array<{ ruleId: string; score: number }>> {
+  if (!intentTable) throw new Error('Intent table not initialized');
+
+  const queryEmbedding = await embed(queryText);
+  const queryVector = new Float32Array(queryEmbedding);
+
+  const results = await intentTable
+    .vectorSearch(queryVector)
+    .limit(topK)
+    .select(['id', 'ruleId', 'text']);
+
+  const arr = await results.toArray();
+  return arr.map((r: any) => ({
+    ruleId: r.ruleId,
+    score: 1 - r._distance,
+  }));
+}

@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
-import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel } from './vectorDB';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents } from './vectorDB';
 
 /**
  * ** The built directory structure
@@ -520,5 +520,55 @@ ipcMain.handle('vector-get-stats', async () => {
   } catch (error: any) {
     console.error('[vector-get-stats] 错误:', error);
     return { success: false, totalChunks: 0, totalDocs: 0, error: error.message };
+  }
+});
+
+// ============================================================
+// Intent Vector Database IPC Handlers
+// ============================================================
+
+ipcMain.handle('intent-init', async () => {
+  try {
+    await initIntentTable();
+    return { success: true };
+  } catch (error: any) {
+    console.error('[intent-init] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('intent-index', async (_, rules: { id: string; text: string; ruleId: string }[]) => {
+  try {
+    await storeIntents(rules);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[intent-index] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('intent-patch', async (_, { toDelete, toAdd }: {
+  toDelete: string[];
+  toAdd: { id: string; text: string; ruleId: string }[];
+}) => {
+  try {
+    await patchIntents(toDelete, toAdd);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[intent-patch] 错误:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('intent-search', async (_, { queryText, topK }: {
+  queryText: string;
+  topK?: number;
+}) => {
+  try {
+    const results = await searchIntents(queryText, topK ?? 3);
+    return { success: true, results };
+  } catch (error: any) {
+    console.error('[intent-search] 错误:', error);
+    return { success: false, results: [], error: error.message };
   }
 });

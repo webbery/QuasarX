@@ -1,18 +1,48 @@
 /**
  * Chat API 接口封装
  *
- * 整合 Skill 系统、RAG 知识库、多轮对话和对话摘要压缩
+ * 整合意图路由、Skill 系统、RAG 知识库、多轮对话和对话摘要压缩
  */
 
 import { sendAgentMessages, getAgentConfig } from '@/lib/agent'
 import { routeAndExecute, registerSkill } from '@/lib/skillRouter'
 import { defaultKnowledgeSkill } from '@/skills/defaultKnowledgeSkill'
 import { buildSystemPrompt } from '@/ts/rag'
+import { IntentRouter } from '@/lib/IntentRouter'
+import { ApiLayer } from '@/lib/ApiLayer'
 import type { ChatMessage } from '@/stores/chatStore'
 import type { SkillContext, SkillResult } from '@/types/skill'
 
 // 注册默认 Skill
 registerSkill(defaultKnowledgeSkill)
+
+// 意图路由实例（延迟初始化）
+let _intentRouter: IntentRouter | null = null
+let _apiLayer: ApiLayer | null = null
+let _intentInitPromise: Promise<void> | null = null
+
+function getIntentRouter(): IntentRouter {
+  if (!_intentRouter) {
+    _intentRouter = new IntentRouter()
+  }
+  return _intentRouter
+}
+
+function getApiLayer(): ApiLayer {
+  if (!_apiLayer) {
+    _apiLayer = new ApiLayer()
+  }
+  return _apiLayer
+}
+
+/**
+ * 确保意图路由已初始化（首次调用时异步加载）
+ */
+async function ensureIntentReady(): Promise<void> {
+  if (_intentInitPromise) return
+  _intentInitPromise = getIntentRouter().init()
+  await _intentInitPromise
+}
 
 export interface AskOptions {
   context?: string              // 背景知识上下文（如行情数据）
@@ -48,6 +78,36 @@ export async function askAI(
   }
 
   try {
+    // ========== 步骤 0: 意图路由（向量匹配 + 自动编排） ==========
+    let dataInjection = ''
+    try {
+      await ensureIntentReady()
+      const intentMatches = await getIntentRouter().match(question)
+
+      if (intentMatches.length > 0) {
+        // 自动编排：根据 provides/requires 构建执行顺序
+        const orchestrated = getIntentRouter().orchestrate(intentMatches)
+
+        if (orchestrated.steps.length > 0) {
+          console.log(
+            `[ChatApi] 意图编排: ${orchestrated.steps.map(s => s.rule.id).join(' → ')}${orchestrated.hasCycle ? ' (存在循环依赖)' : ''}`
+          )
+
+          // 构建执行步骤
+          const steps = orchestrated.steps.map(match => ({
+            match,
+            resolvedParams: {}, // resolveParams 在 ApiLayer 内部处理
+          }))
+
+          const apiResult = await getApiLayer().executePipeline(steps)
+          dataInjection = `\n${apiResult.formatted}\n`
+        }
+      }
+    } catch (e) {
+      // 意图路由失败不影响主流程，静默降级
+      console.warn('[ChatApi] 意图路由失败:', e)
+    }
+
     // ========== 步骤 1: 构建 Skill 上下文 ==========
     const skillContext: SkillContext = {
       marketContext: context || '',
@@ -57,10 +117,10 @@ export async function askAI(
     // ========== 步骤 2: Skill 路由匹配 ==========
     console.log(`[ChatApi] 开始 Skill 路由匹配: "${question.substring(0, 50)}..."`)
     const skillResult = await routeAndExecute(question, skillContext)
-    
+
     let skillContent = ''
     let skillSources: string[] = []
-    
+
     if (skillResult) {
       console.log(`[ChatApi] Skill 匹配成功: ${skillResult.metadata?.knowledgeUsed ? '知识库' : '其他 Skill'}`)
       skillContent = skillResult.content
@@ -71,33 +131,40 @@ export async function askAI(
 
     // ========== 步骤 3: 对话历史处理 ==========
     let conversationSummary = ''
-    
+
     if (history && history.length > 20) {
       // 对话历史过长，需要压缩
       console.log(`[ChatApi] 对话历史过长 (${history.length} 条)，需要压缩`)
       // 注意：摘要压缩需要在调用方进行，因为需要 LLM 回调
       // 这里暂时保留完整历史，由后续流程处理
     }
-    
+
     // 获取最近的历史用于上下文（最多保留最近 10 轮对话 = 20 条消息）
     const recentHistory = history ? history.slice(-20) : []
 
-    // ========== 步骤 4: 构建系统提示词 ==========
-    const systemPrompt = buildSystemPrompt(skillContent, conversationSummary)
+    // ========== 步骤 4: 构建系统提示词（注入意图数据） ==========
+    const systemPrompt = buildSystemPrompt(skillContent, conversationSummary) + dataInjection
 
     // ========== 步骤 5: 构建完整消息数组 ==========
     const messages: Array<{ role: string; content: string }> = []
-    
+
     // 系统提示词
     messages.push({ role: 'system', content: systemPrompt })
-    
+
     // 对话历史
     for (const msg of recentHistory) {
       messages.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content: msg.content })
     }
-    
+
     // 用户当前问题
     messages.push({ role: 'user', content: question })
+
+    // ===== 调试：打印完整 prompt =====
+    console.log('===== [ChatApi] 发送给 LLM 的完整 Prompt =====')
+    for (const m of messages) {
+      console.log(`[${m.role}]:\n${m.content}\n---`)
+    }
+    console.log('=============================================')
 
     console.log(`[ChatApi] 发送 ${messages.length} 条消息给 LLM`)
 
@@ -149,6 +216,33 @@ export async function askAIWithSummary(
   }
 
   try {
+    // ========== 步骤 0: 意图路由（向量匹配 + 自动编排） ==========
+    let dataInjection = ''
+    try {
+      await ensureIntentReady()
+      const intentMatches = await getIntentRouter().match(question)
+
+      if (intentMatches.length > 0) {
+        const orchestrated = getIntentRouter().orchestrate(intentMatches)
+
+        if (orchestrated.steps.length > 0) {
+          console.log(
+            `[ChatApi] 意图编排: ${orchestrated.steps.map(s => s.rule.id).join(' → ')}${orchestrated.hasCycle ? ' (存在循环依赖)' : ''}`
+          )
+
+          const steps = orchestrated.steps.map(match => ({
+            match,
+            resolvedParams: {},
+          }))
+
+          const apiResult = await getApiLayer().executePipeline(steps)
+          dataInjection = `\n${apiResult.formatted}\n`
+        }
+      }
+    } catch (e) {
+      console.warn('[ChatApi] 意图路由失败:', e)
+    }
+
     // ========== 步骤 1: 构建 Skill 上下文 ==========
     const skillContext: SkillContext = {
       marketContext: context || '',
@@ -158,9 +252,9 @@ export async function askAIWithSummary(
     // ========== 步骤 2: Skill 路由匹配 ==========
     console.log(`[ChatApi] 开始 Skill 路由匹配: "${question.substring(0, 50)}..."`)
     const skillResult = await routeAndExecute(question, skillContext)
-    
+
     let skillContent = ''
-    
+
     if (skillResult) {
       console.log(`[ChatApi] Skill 匹配成功`)
       skillContent = skillResult.content
@@ -169,11 +263,11 @@ export async function askAIWithSummary(
     // ========== 步骤 3: 对话历史压缩 ==========
     let conversationSummary = ''
     let effectiveHistory = history || []
-    
+
     if (effectiveHistory.length > 20) {
       // 需要压缩对话历史
       console.log(`[ChatApi] 对话历史过长 (${effectiveHistory.length} 条)，开始压缩`)
-      
+
       const conversationText = effectiveHistory
         .slice(0, -10)  // 保留最近 10 条消息
         .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
@@ -195,22 +289,29 @@ ${conversationText}
       }
     }
 
-    // ========== 步骤 4: 构建系统提示词 ==========
-    const systemPrompt = buildSystemPrompt(skillContent, conversationSummary)
+    // ========== 步骤 4: 构建系统提示词（注入意图数据） ==========
+    const systemPrompt = buildSystemPrompt(skillContent, conversationSummary) + dataInjection
 
     // ========== 步骤 5: 构建完整消息数组 ==========
     const messages: Array<{ role: string; content: string }> = []
-    
+
     // 系统提示词
     messages.push({ role: 'system', content: systemPrompt })
-    
+
     // 对话历史（压缩后的）
     for (const msg of effectiveHistory) {
       messages.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content: msg.content })
     }
-    
+
     // 用户当前问题
     messages.push({ role: 'user', content: question })
+
+    // ===== 调试：打印完整 prompt =====
+    console.log('===== [ChatApi] 发送给 LLM 的完整 Prompt =====')
+    for (const m of messages) {
+      console.log(`[${m.role}]:\n${m.content}\n---`)
+    }
+    console.log('=============================================')
 
     console.log(`[ChatApi] 发送 ${messages.length} 条消息给 LLM`)
 

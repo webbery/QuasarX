@@ -822,20 +822,39 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
         }
 
         const auto& datetime = df.get_column<time_t>(header[0].c_str());
-        const auto& open = df.get_column<float>(header[1].c_str());
-        const auto& close = df.get_column<float>(header[2].c_str());
-        const auto& high = df.get_column<float>(header[3].c_str());
-        const auto& low = df.get_column<float>(header[4].c_str());
         const auto& volume = df.get_column<int64_t>(header[5].c_str());
 
+        // 优先使用原始价格（未复权），用于实际交易撮合
+        // 如果原始数据不存在，回退到后复权价格（保持兼容）
+        auto org_itr = _org_csvs.find(symbol);
         QuoteInfo info;
         info._symbol = symbol;
-        info._open = open[curIndex];
-        info._close = close[curIndex];  // 后复权价
-        info._high = high[curIndex];
-        info._low = low[curIndex];
         info._volume = volume[curIndex];
         info._time = datetime[curIndex];
+
+        if (org_itr != _org_csvs.end() && !_org_headers.at(symbol).empty()) {
+            const auto& org_df = org_itr->second;
+            const auto& org_header = _org_headers.at(symbol);
+            // 确保索引不越界
+            uint32_t org_index = curIndex;
+            if (org_index >= org_df.get_index().size()) {
+                org_index = org_df.get_index().size() - 1;
+            }
+            info._open = org_df.get_column<float>(org_header[1].c_str())[org_index];
+            info._close = org_df.get_column<float>(org_header[2].c_str())[org_index];
+            info._high = org_df.get_column<float>(org_header[3].c_str())[org_index];
+            info._low = org_df.get_column<float>(org_header[4].c_str())[org_index];
+        } else {
+            // 回退到后复权价格
+            const auto& open = df.get_column<float>(header[1].c_str());
+            const auto& close = df.get_column<float>(header[2].c_str());
+            const auto& high = df.get_column<float>(header[3].c_str());
+            const auto& low = df.get_column<float>(header[4].c_str());
+            info._open = open[curIndex];
+            info._close = close[curIndex];
+            info._high = high[curIndex];
+            info._low = low[curIndex];
+        }
 
         context->setQuote(symbol, info);
         context->incrementCurIndex(symbol);
@@ -864,14 +883,7 @@ void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symb
 
     OrderInfo orderInfo;
     while (queue->pop(orderInfo)) {
-        uint32_t curIndex = context->getCurIndex(symbol);
-        if (curIndex > 0) curIndex--;
-        double primitivePrice = GetPrimitivePrice(symbol, curIndex);
-
-        QuoteInfo matchQuote = *quote;
-        matchQuote._close = primitivePrice;
-
-        TradeReport report = OrderMatch(orderInfo._order->_order, matchQuote);
+        TradeReport report = OrderMatch(orderInfo._order->_order, *quote);
 
         if (orderInfo._order->_order._flag == 1) {  // 平仓（平多/平空都释放对应冻结资金）
             context->releaseFunds(report._trade_amount);

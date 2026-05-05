@@ -9,19 +9,31 @@
 #include "Function/Normalization.h"
 #include "Util/finance.h"
 #include <algorithm>
+#include <regex>
 #include <stdexcept>
 
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 namespace {
     static const Map<String, int> timeHorizon{
-        {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, 
+        {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, {"15d", 15},
     };
 
     Map<String, std::function<ICallable* (const FunctionNode&, const nlohmann::json&)>> intrinsic_functions{
         {"MA", [] (const FunctionNode& node, const nlohmann::json& config) {
-            int cnt = config["params"]["smoothTime"]["value"];
-            return new MA(cnt);
+            // range: 平滑时间参数（时间范围，格式：正整数 + s/m/h/d 后缀，如 "5d", "30m"）
+            // 解析规则：提取数字部分作为 MA 周期，单位后缀仅作语义提示
+            String range = (String)config["params"]["range"]["value"];
+            std::regex re(R"(\d+)");
+            std::smatch match;
+            if (std::regex_search(range, match, re)) {
+                int period = std::stoi(match.str());
+                if (period <= 0) {
+                    throw std::runtime_error("MA range period must be positive, got: " + range);
+                }
+                return new MA(period);
+            }
+            throw std::runtime_error("Invalid MA range format: " + range + ", expected format like '5d', '30m', '1h'");
         }},
         {"MinMax", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
             // 根据输入节点的要素，获取上下限

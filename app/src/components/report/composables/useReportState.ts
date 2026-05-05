@@ -25,8 +25,8 @@ export interface UseReportStateReturn {
   metricsData: Ref<Record<string, number>>
   /** 策略性能图表的日期标签 */
   strategyPerformanceDates: Ref<string[]>
-  /** 策略性能数据 */
-  strategyPerformanceData: Ref<number[]>
+  /** 策略日收益率数据 */
+  strategyDailyReturns: Ref<number[]>
   /** 基准数据 */
   benchmarkData: Ref<any[]>
   /** 基准名称 */
@@ -114,7 +114,7 @@ export function useReportState(): UseReportStateReturn {
   const selectedBenchmark = ref(localStorage.getItem('benchmark_symbol') || 'SH000001')
   const metricsData = ref<Record<string, number>>({})
   const strategyPerformanceDates = ref<string[]>([])
-  const strategyPerformanceData = ref<number[]>([])
+  const strategyDailyReturns = ref<number[]>([])
   const benchmarkData = ref<any[]>([])
   const benchmarkName = ref('')
   const backtestStartDate = ref<Date | null>(null)
@@ -185,7 +185,7 @@ export function useReportState(): UseReportStateReturn {
     selectedBenchmark,
     metricsData,
     strategyPerformanceDates,
-    strategyPerformanceData,
+    strategyDailyReturns,
     benchmarkData,
     benchmarkName,
     backtestStartDate,

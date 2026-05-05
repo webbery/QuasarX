@@ -1,0 +1,101 @@
+{
+  "intents": [
+    {
+      "id": "date-today",
+      "api": "system",
+      "description": "获取今天的日期",
+      "examples": [
+        "今天几号",
+        "今天是什么日期",
+        "今天日期",
+        "几号了"
+      ],
+      "provides": ["date"],
+      "requires": [],
+      "params": { "fn": "get-date" }
+    },
+    {
+      "id": "date-time",
+      "api": "system",
+      "description": "获取当前时间",
+      "examples": [
+        "现在几点",
+        "当前时间",
+        "几点了"
+      ],
+      "provides": ["time"],
+      "requires": [],
+      "params": { "fn": "get-time" }
+    },
+    {
+      "id": "quote-current",
+      "api": "quote",
+      "description": "获取当前股票市场的实时行情和指数信息",
+      "examples": [
+        "今天什么行情",
+        "大盘怎么样",
+        "看看今天指数",
+        "市场现在情况如何",
+        "今天股市涨了吗",
+        "行情怎么样"
+      ],
+      "provides": ["quote"],
+      "requires": [],
+      "params": { "scope": "current" }
+    },
+    {
+      "id": "quote-by-date",
+      "api": "quote",
+      "description": "查询指定日期的行情数据",
+      "examples": [
+        "昨天行情",
+        "上周市场表现",
+        "历史行情查询"
+      ],
+      "provides": ["quote"],
+      "requires": ["date"],
+      "params": { "scope": "$date" }
+    },
+    {
+      "id": "account-risk",
+      "api": "account",
+      "description": "查询账户的风险指标，包括回撤、夏普比率、风险敞口",
+      "examples": [
+        "我的风险有多大",
+        "账户风险怎么样",
+        "看看我的回撤",
+        "当前风险敞口是多少"
+      ],
+      "provides": ["account_risk"],
+      "requires": [],
+      "params": { "type": "risk" }
+    },
+    {
+      "id": "position-analysis",
+      "api": "position",
+      "description": "分析当前持仓情况，包括仓位分布和盈亏",
+      "examples": [
+        "持仓分析",
+        "我的仓位情况",
+        "看看持仓盈亏",
+        "仓位分布"
+      ],
+      "provides": ["position"],
+      "requires": [],
+      "params": { "type": "analysis" }
+    },
+    {
+      "id": "system-info",
+      "api": "system",
+      "description": "获取系统环境信息",
+      "examples": [
+        "我的系统信息",
+        "电脑配置",
+        "系统环境"
+      ],
+      "provides": ["platform"],
+      "requires": [],
+      "params": { "fn": "get-platform" }
+    }
+  ]
+}

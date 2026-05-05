@@ -6,11 +6,12 @@ import { calculateReturns, computeStatistics } from '@/lib/statistics'
 // Worker 全局类型
 interface WorkerMessage {
   prices: Array<[string, number]> // [date, close][]
+  symbol?: string // 标的代码（可选，用于日志）
 }
 
 self.onmessage = function (e: MessageEvent<WorkerMessage>) {
   const startTime = performance.now()
-  const { prices } = e.data
+  const { prices, symbol } = e.data
 
   try {
     // 1. 提取价格数据
@@ -37,7 +38,8 @@ self.onmessage = function (e: MessageEvent<WorkerMessage>) {
       std: stats.std,
       histogram: stats.histogram,
       dataPoints: prices.length,
-      duration: Number(duration.toFixed(2))
+      duration: Number(duration.toFixed(2)),
+      symbol: symbol || 'unknown'
     })
   } catch (error) {
     self.postMessage({

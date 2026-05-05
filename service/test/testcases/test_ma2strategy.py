@@ -55,7 +55,7 @@ class TestMa2Strategy:
             'headers': {'Authorization': auth_token} if auth_token else {}
         }
 
-        script_path = './script/ma2_strategy.json'
+        script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
 
         kwargs['json'] = {

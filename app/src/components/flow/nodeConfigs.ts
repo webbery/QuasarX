@@ -9,6 +9,8 @@ export interface ParamConfig {
   unit?: string
   visible?: boolean
   placeholder?: string
+  pattern?: string        // 正则表达式，用于验证输入
+  errorMsg?: string       // 验证失败时的错误提示
 }
 
 export interface NodeTypeConfig {
@@ -29,6 +31,7 @@ export const keyMap: KeyMap = {
   "method": "方法",
   "smoothTime": "平滑时间",
   "range": "范围",
+  "timeRange": "时间范围",
   "indicator": "输出指标",
   "sharp": "夏普比率",
   "maxDrawdown": "最大回撤",
@@ -284,13 +287,18 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
           { label: "1小时", value: "1h" },
           { label: "1天", value: "1d" },
           { label: "3天", value: "3d" },
-          { label: "5天", value: "5d" }
-        ]
+          { label: "5天", value: "5d" },
+          { label: "15天", value: "15d" }
+        ],
+        visible: false  // 仅 STD/Return/R2/ZScore 使用，MA 使用时间范围
       },
-      "平滑时间": {
-        value: 5,
-        type: "number",
-        unit: "天"
+      "时间范围": {
+        value: "5d",
+        type: "text",
+        placeholder: "如 5d、30m、1h（正整数 + s/m/h/d 后缀）",
+        pattern: "^\\d+[smhd]$",
+        errorMsg: "格式错误，必须为正整数 + s/m/h/d 后缀（如 5d、30m、1h）",
+        visible: true
       }
     }
   },

@@ -88,6 +88,6 @@ export default defineConfig(({ command, mode }) => {
       renderer(),
     ],
     clearScreen: true,
-    
+
   }
 })

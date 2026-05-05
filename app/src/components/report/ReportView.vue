@@ -24,10 +24,11 @@
           <PerformanceChart
             v-else-if="chart.id === 'performance'"
             :dates="strategyPerformanceDates"
-            :strategy-returns="strategyPerformanceData"
+            :daily-returns="strategyDailyReturns"
             :benchmark-data="benchmarkData"
             :benchmark-name="benchmarkName"
             :selected-benchmark="selectedBenchmark"
+            :is-estimated="strategyReturnsEstimated"
             @benchmark-change="onBenchmarkChange"
             @refresh-benchmark="refreshBenchmark"
           />
@@ -37,7 +38,8 @@
             v-else-if="chart.id === 'skewness'"
             :skewness="metricsData.skewness || 0.35"
             :kurtosis="metricsData.kurtosis || 3.12"
-            :prices="getFirstSymbolPrices"
+            :prices="getActiveSymbolPrices"
+            :symbol-name="activeSymbolName"
           />
 
           <!-- 其他图表占位（后续迁移时添加） -->
@@ -88,7 +90,7 @@ const {
   selectedBenchmark,
   metricsData,
   strategyPerformanceDates,
-  strategyPerformanceData,
+  strategyDailyReturns,
   benchmarkData,
   benchmarkName,
   chartVisibility,
@@ -98,6 +100,7 @@ const {
 
 const {
   benchmarkMetrics,
+  strategyReturnsEstimated,
   updatePrice,
   setSelectedSymbol,
   updatePriceForAll,
@@ -118,10 +121,14 @@ const hasLegacyCharts = computed(() => {
   return false // 暂时返回 false，后续迁移完成后删除
 })
 
-const getFirstSymbolPrices = computed(() => {
+const getActiveSymbolPrices = computed(() => {
   const prices = dataState.symbolPrices.value
-  const firstKey = Object.keys(prices)[0]
-  return firstKey ? prices[firstKey] : []
+  const activeSymbol = selectedSymbol.value[0]
+  return activeSymbol && prices[activeSymbol] ? prices[activeSymbol] : []
+})
+
+const activeSymbolName = computed(() => {
+  return selectedSymbol.value[0] || ''
 })
 
 // === 事件处理 ===

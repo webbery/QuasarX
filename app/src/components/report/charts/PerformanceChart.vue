@@ -6,6 +6,7 @@
     <div class="chart-title">
       <div class="title-icon">📈</div>
       <span>Strategy Performance</span>
+      <span v-if="isEstimated" class="estimated-badge">⚠️ 估算值</span>
       <div class="chart-controls">
         <label>基准</label>
         <select v-model="localBenchmark" @change="handleBenchmarkChange" class="benchmark-select">
@@ -29,10 +30,11 @@ import { BENCHMARK_INDICES } from '@/lib/tickflow'
 
 interface Props {
   dates: string[]
-  strategyReturns: number[]
+  dailyReturns: number[]
   benchmarkData: any[]
   benchmarkName: string
   selectedBenchmark: string
+  isEstimated?: boolean
 }
 
 interface Emits {
@@ -70,50 +72,96 @@ const xAxisDates = computed(() => {
 })
 
 /**
- * 计算基准累计收益曲线
+ * 计算基准日收益率
  */
-const benchmarkCumulativeReturns = computed(() => {
+const benchmarkDailyReturns = computed(() => {
   if (props.benchmarkData.length === 0) return []
 
-  const firstClose = props.benchmarkData[0].close
-  return props.benchmarkData.map((d: any) =>
-    Number((((d.close - firstClose) / firstClose) * 100).toFixed(2))
-  )
+  const returns: number[] = [0] // 第一天收益率为 0
+  for (let i = 1; i < props.benchmarkData.length; i++) {
+    const prevClose = props.benchmarkData[i - 1].close
+    const currClose = props.benchmarkData[i].close
+    const dailyReturn = ((currClose - prevClose) / prevClose) * 100
+    returns.push(Number(dailyReturn.toFixed(4)))
+  }
+  return returns
 })
 
 /**
- * 将策略收益对齐到基准日期轴
- * 当策略收益点数与基准不一致时，进行插值/填充
+ * 计算基准累计收益曲线（从日收益率连乘）
  */
-const alignedStrategyReturns = computed(() => {
+const benchmarkCumulativeReturns = computed(() => {
+  const returns = benchmarkDailyReturns.value
+  if (returns.length === 0) return []
+
+  const result: number[] = []
+  let cumulative = 1
+
+  for (const dailyReturn of returns) {
+    cumulative *= (1 + dailyReturn / 100)
+    result.push(Number(((cumulative - 1) * 100).toFixed(2)))
+  }
+
+  return result
+})
+
+/**
+ * 将日收益率对齐到基准日期轴
+ * 当日收益率点数与基准不一致时，使用前向填充或截断
+ */
+const alignedDailyReturns = computed(() => {
   const benchLen = benchmarkCumulativeReturns.value.length
-  const stratLen = props.strategyReturns.length
+  const dailyReturns = props.dailyReturns ?? []
+  const stratLen = dailyReturns.length
 
-  if (benchLen === 0) return props.strategyReturns
-  if (benchLen === stratLen) return props.strategyReturns
+  if (benchLen === 0) return dailyReturns
+  if (benchLen === stratLen) return dailyReturns
 
-  // 策略点数少于基准：线性插值到基准长度
-  if (stratLen < benchLen && stratLen > 1) {
+  // 日收益率点数少于基准：前向填充到基准长度
+  if (stratLen < benchLen && stratLen > 0) {
     const result: number[] = []
+    const ratio = stratLen / benchLen
+    let lastValue = dailyReturns[0]
+
     for (let i = 0; i < benchLen; i++) {
-      const srcIdx = (i / (benchLen - 1)) * (stratLen - 1)
-      const lo = Math.floor(srcIdx)
-      const hi = Math.ceil(srcIdx)
-      const frac = srcIdx - lo
-      const val = stratLen > 1
-        ? props.strategyReturns[lo] * (1 - frac) + props.strategyReturns[hi] * frac
-        : props.strategyReturns[0]
-      result.push(Number(val.toFixed(2)))
+      // 计算当前基准点对应的策略索引
+      const srcIdx = Math.floor(i * ratio)
+
+      if (srcIdx < stratLen) {
+        // 有对应的日收益率数据，更新 lastValue
+        lastValue = dailyReturns[srcIdx]
+      }
+      // 否则继续使用 lastValue（前向填充）
+
+      result.push(lastValue)
     }
     return result
   }
 
-  // 策略点数多于基准：截断
+  // 日收益率点数多于基准：截断
   if (stratLen > benchLen) {
-    return props.strategyReturns.slice(0, benchLen)
+    return dailyReturns.slice(0, benchLen)
   }
 
-  return props.strategyReturns
+  return dailyReturns
+})
+
+/**
+ * 计算累计收益率（从日收益率连乘）
+ */
+const cumulativeReturns = computed(() => {
+  const returns = alignedDailyReturns.value
+  if (returns.length === 0) return []
+
+  const result: number[] = []
+  let cumulative = 1 // 初始净值 = 1
+
+  for (const dailyReturn of returns) {
+    cumulative *= (1 + dailyReturn / 100) // 日收益率是百分比，需要除以 100
+    result.push(Number(((cumulative - 1) * 100).toFixed(2))) // 转换为百分比形式
+  }
+
+  return result
 })
 
 /**
@@ -122,13 +170,14 @@ const alignedStrategyReturns = computed(() => {
 function buildChartOption() {
   const hasBenchmark = props.benchmarkData.length > 0
   const dates = xAxisDates.value
-  const stratReturns = alignedStrategyReturns.value
+  const dailyReturns = alignedDailyReturns.value
+  const cumReturns = cumulativeReturns.value
 
   const series: any[] = [
     {
-      name: '策略收益',
+      name: '累计收益',
       type: 'line',
-      data: stratReturns,
+      data: cumReturns,
       smooth: true,
       lineStyle: { width: 3, color: '#2962ff' },
       areaStyle: {
@@ -161,14 +210,14 @@ function buildChartOption() {
         let result = `<div style="margin: 0 0 5px 0; font-weight: bold;">${params[0].axisValue}</div>`
         params.forEach((item: any) => {
           const value = typeof item.value === 'number' ? item.value.toFixed(2) : item.value
-          const color = item.seriesName === '策略收益' ? '#2962ff' : '#ff9800'
+          const color = item.seriesName === '累计收益' ? '#2962ff' : '#ff9800'
           result += `<div>${item.marker} ${item.seriesName}: <span style="color: ${color}; font-weight: bold;">${value}%</span></div>`
         })
         return result
       }
     },
     legend: {
-      data: hasBenchmark ? ['策略收益', props.benchmarkName] : ['策略收益'],
+      data: hasBenchmark ? ['累计收益', props.benchmarkName] : ['累计收益'],
       textStyle: { color: '#e0e0e0' },
       top: 10
     },
@@ -226,7 +275,7 @@ function handleRefresh() {
 
 // 监听数据变化，更新图表
 watch(
-  [() => props.dates, () => props.strategyReturns, () => props.benchmarkData, () => props.benchmarkName, xAxisDates, alignedStrategyReturns],
+  [() => props.dates, () => props.dailyReturns, () => props.benchmarkData, () => props.benchmarkName, xAxisDates, cumulativeReturns],
   () => {
     updateChart(buildChartOption(), true)
   },
@@ -348,6 +397,21 @@ onMounted(() => {
   padding: 2px 8px;
   background: rgba(255, 152, 0, 0.1);
   border-radius: 4px;
+}
+
+.estimated-badge {
+  font-size: 12px;
+  color: #ff6d00;
+  padding: 2px 8px;
+  background: rgba(255, 109, 0, 0.15);
+  border-radius: 4px;
+  font-weight: 500;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .chart-container {
