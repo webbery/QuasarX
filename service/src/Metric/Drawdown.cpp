@@ -1,4 +1,5 @@
 #include "Metric/Drawdown.h"
+#include "Metric/Return.h"
 #include "Util/system.h"
 #include "Bridge/exchange.h"
 #include <algorithm>
@@ -247,7 +248,14 @@ float win_rate(const crash_flow_t& flow, const DataContext& context) {
 }
 
 float calmar_ratio(const crash_flow_t& flow, const DataContext& context, double freerate) {
-    double total_return = total_return_ratio(flow, context);
+    auto [daily_values, daily_cash_flows] = calculate_daily_values(flow, context);
+    if (daily_values.empty()) {
+        return 0.0f;
+    }
+
+    // 使用简化版总回报计算（回测场景：无外部资金进出）
+    double initial_capital = context.getInitialCapital();
+    double total_return = simple_total_return(daily_values, initial_capital);
 
     // 计算年化收益率
     auto& times = context.GetTime();

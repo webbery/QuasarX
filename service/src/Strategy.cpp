@@ -40,6 +40,7 @@ namespace {
 
     Map<String, StatisticIndicator> statistics{
         {"sharp", StatisticIndicator::Sharp},
+        {"annual_sharp", StatisticIndicator::AnualSharp},
         {"VAR", StatisticIndicator::VaR},
         {"ES", StatisticIndicator::ES},
         {"winRate", StatisticIndicator::WinRate},

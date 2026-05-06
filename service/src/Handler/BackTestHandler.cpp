@@ -243,7 +243,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             if (!lst.empty()) val = lst.back();
         }
         switch (item.first) {
-        case StatisticIndicator::Sharp: sharp_val = val; break;
+        case StatisticIndicator::Sharp:
+        case StatisticIndicator::AnualSharp:
+            sharp_val = val; break;
         case StatisticIndicator::AnualReturn: annual_return_val = val; break;
         case StatisticIndicator::TotalReturn: total_return_val = val; break;
         case StatisticIndicator::MaxDrawDown: max_drawdown_val = val; break;

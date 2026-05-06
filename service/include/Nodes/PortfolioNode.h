@@ -19,11 +19,9 @@ public:
     virtual Map<String, ArgType> out_elements() override;
 
 private:
-    ExecutionPlan generatePlan(const Vector<symbol_t>& symbols,
-                              const Vector<TradeAction>& actions,
+    ExecutionPlan generatePlan(const Map<symbol_t, TradeAction>& decisions,
                               double capital);
-    ExecutionPlan generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
-                              const Vector<TradeAction>& actions,
+    ExecutionPlan generatePlan(DataContext& context, const Map<symbol_t, TradeAction>& decisions,
                               double capital,
                               BacktestContext* btContext);
     bool isPlanChanged(const ExecutionPlan& newPlan);

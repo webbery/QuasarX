@@ -1,4 +1,5 @@
 #include "Nodes/PortfolioNode.h"
+#include "DataContext.h"
 #include "StrategyNode.h"
 #include "Util/system.h"
 #include "server.h"
@@ -8,6 +9,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "Nodes/SignalNode.h"
+#include "std_header.h"
 
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
@@ -61,8 +63,7 @@ void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
 
 NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& context) {
     // 1. 获取上游节点的信号
-    Vector<symbol_t> symbols;
-    Vector<TradeAction> actions;
+    Map<symbol_t, TradeAction> decisions;
 
     for (const auto& symbol : _pool) {
         String signalKey = get_symbol(symbol) + ".signal";
@@ -71,19 +72,20 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             auto signal = signalVal.back();
 
             if (signal > 0) {
-                symbols.push_back(symbol);
-                actions.push_back(TradeAction::BUY);
+                decisions[symbol] = TradeAction::BUY;
             } else if (signal < 0) {
-                symbols.push_back(symbol);
-                actions.push_back(TradeAction::SELL);
+                decisions[symbol] = TradeAction::SELL;
+            } else {
+                decisions[symbol] = TradeAction::HOLD;
             }
         }
     }
 
     // 如果没有信号，保持现有仓位
-    if (symbols.empty()) {
-        symbols.assign(_pool.begin(), _pool.end());
-        actions.resize(symbols.size(), TradeAction::HOLD);
+    if (decisions.empty()) {
+        for (const auto& symbol : _pool) {
+            decisions[symbol] = TradeAction::HOLD;
+        }
     }
 
     // 2. 获取可用资金
@@ -93,7 +95,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // 3. 生成执行计划
     ExecutionPlan newPlan;
     if (_server->GetRunningMode() != RuningType::Backtest) { [[likely]]
-        newPlan = generatePlan(symbols, actions, targetCapital);
+        newPlan = generatePlan(decisions, targetCapital);
     } else {
         // 回测模式：获取 BacktestContext 以获取正确的 symbol 索引
         BacktestContext* btContext = nullptr;
@@ -102,7 +104,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         if (histExchange) {
             btContext = histExchange->getBacktestContext(context.getBacktestRunId());
         }
-        newPlan = generatePlan(context, symbols, actions, targetCapital, btContext);
+        newPlan = generatePlan(context, decisions, targetCapital, btContext);
     }
 
     // 4. 检查是否有变化
@@ -178,8 +180,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
 }
 
 ExecutionPlan PortfolioNode::generatePlan(
-    const Vector<symbol_t>& symbols,
-    const Vector<TradeAction>& actions,
+    const Map<symbol_t, TradeAction>& decisions,
     double targetCapital
 ) {
     ExecutionPlan plan;
@@ -187,19 +188,19 @@ ExecutionPlan PortfolioNode::generatePlan(
     plan._usedCapital = 0.0;
     plan._hasChanged = false;
 
-    if (symbols.empty()) {
+    if (decisions.empty()) {
         return plan;
     }
 
-    size_t count = symbols.size();
+    size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
 
     auto* exchange = _server->GetAvaliableStockExchange();
 
-    for (size_t i = 0; i < symbols.size(); ++i) {
+    for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;
-        item._symbol = symbols[i];
-        item._action = actions[i];
+        item._symbol = symbol;
+        item._action = action;
 
         QuoteInfo quote = exchange->GetQuote(item._symbol);
         double price = (quote._close > 0) ? quote._close : quote._open;
@@ -287,8 +288,7 @@ ExecutionPlan PortfolioNode::generatePlan(
     return plan;
 }
 
-ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<symbol_t>& symbols,
-                              const Vector<TradeAction>& actions,
+ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol_t, TradeAction>& decisions,
                               double targetCapital,
                               BacktestContext* btContext) {
     ExecutionPlan plan;
@@ -296,21 +296,21 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Vector<sym
     plan._usedCapital = 0.0;
     plan._hasChanged = false;
 
-    if (symbols.empty()) {
+    if (decisions.empty()) {
         return plan;
     }
 
-    size_t count = symbols.size();
+    size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
 
     // 获取历史数据仿真交易所，用于获取未复权价格
     auto* histExchange = dynamic_cast<StockHistorySimulation*>(
         _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
 
-    for (size_t i = 0; i < symbols.size(); ++i) {
+    for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;
-        item._symbol = symbols[i];
-        item._action = actions[i];
+        item._symbol = symbol;
+        item._action = action;
 
         String symbolName = get_symbol(item._symbol);
 

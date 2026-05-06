@@ -163,9 +163,23 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 }
                 if (endNode) {
                     auto& cash_flow = endNode->GetReports();
-                    flow._collections[StatisticIndicator::Sharp] = sharp_ratio(cash_flow, context, 0);
-                    flow._collections[StatisticIndicator::AnualReturn] = annual_return_ratio(cash_flow, context);
-                    flow._collections[StatisticIndicator::TotalReturn] = total_return_ratio(cash_flow, context);
+                    auto [portfolio_values, crash_values] = build_portfolio_values(cash_flow, context);
+                    auto daily_returns = simple_daily_return(portfolio_values, crash_values);
+                    auto total_return = simple_total_return(portfolio_values, context.getInitialCapital());
+                    flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
+
+                    // 计算年化收益率
+                    int count = static_cast<int>(daily_returns.size());
+                    auto annual_return = compute_annualized_return(total_return, count);
+                    flow._collections[StatisticIndicator::AnualReturn] = annual_return;
+
+                    double annual_vol = compute_annualized_volatility(daily_returns);
+
+                    // 计算夏普比率
+                    double risk_free_rate = 0.0;  // 无风险利率，可改为从配置读取
+                    float sharp = compute_sharp_ratio(annual_return, annual_vol, risk_free_rate);
+                    flow._collections[StatisticIndicator::Sharp] = sharp;
+
                     flow._collections[StatisticIndicator::MaxDrawDown] = max_drawdown_ratio(cash_flow, context);
                     flow._collections[StatisticIndicator::WinRate] = win_rate(cash_flow, context);
                     flow._collections[StatisticIndicator::Calmar] = calmar_ratio(cash_flow, context, 0);
