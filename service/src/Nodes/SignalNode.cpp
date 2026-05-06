@@ -1,4 +1,5 @@
 #include "Nodes/SignalNode.h"
+#include "DataContext.h"
 #include "Interprecter/Stmt.h"
 #include "Util/log.h"
 #include "server.h"
@@ -90,36 +91,49 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
 
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
-
     // 如果不允许做空，过滤无持仓标的的 SELL 信号
-    if (!_allowShort) {
-        Set<symbol_t> heldSymbols;
-        if (_server->GetRunningMode() == RuningType::Backtest) {
-            auto* histExchange = dynamic_cast<StockHistorySimulation*>(
-                _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
-            if (histExchange) {
-                for (const auto& symbol : _pools) {
-                    if (histExchange->GetPositionQuantity(symbol) != 0) {
-                        heldSymbols.insert(symbol);
-                    }
-                }
-            }
-        } else {
-            auto& positions = _server->GetPosition("");
-            for (const auto& pos : positions._positions) {
-                if (pos._holds != 0) {
-                    heldSymbols.insert(pos._symbol);
+    Map<symbol_t, int64_t> heldSymbols;
+    if (_server->GetRunningMode() == RuningType::Backtest) {
+        auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+            _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+        if (histExchange) {
+            for (const auto& symbol : _pools) {
+                auto cnt = histExchange->GetPositionQuantity(symbol);
+                if (cnt != 0) {
+                    heldSymbols[symbol] = cnt;
                 }
             }
         }
+    } else {
+        auto& positions = _server->GetPosition("");
+        for (const auto& pos : positions._positions) {
+            if (pos._holds != 0) {
+                heldSymbols[pos._symbol] = pos._holds;
+            }
+        }
+    }
+    if (!_allowShort) {
         for (auto it = sells.begin(); it != sells.end(); ++it) {
+            // if (it->second == TradeAction::SELL) INFO("{} SELL signal", it->first);
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                INFO("{} SELL signal filtered (no position held, shorting disabled)", it->first);
+                // INFO("{} SELL signal filtered (no position held, shorting disabled)", it->first);
                 it->second = TradeAction::HOLD;
             }
         }
     }
-
+    // 如果已经持仓,不再追加买入
+    for (auto& item: buys) {
+        if (item.second == TradeAction::BUY && heldSymbols.count(item.first)) {
+            item.second = TradeAction::HOLD;
+        }
+    }
+    // INFO("==============");
+    // for (auto it = buys.begin(); it != buys.end(); ++it) {
+    //     if (it->second == TradeAction::BUY) INFO("{} BUY signal {}", it->first, heldSymbols[it->first]);
+    // }
+    // for (auto it = sells.begin(); it != sells.end(); ++it) {
+    //     if (it->second == TradeAction::SELL) INFO("{} SELL signal {}", it->first, heldSymbols[it->first]);
+    // }
     Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
         for (auto& item: trade) {
@@ -131,7 +145,6 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
                 decisions[item.first] = item.second;
                 TradeSignal *signal = new TradeSignal(item.first, item.second);
                 context.AddSignal(signal);
-                INFO("{} TradeSignal {}", item.first, (int)item.second - 1);
             }
         }
     }
