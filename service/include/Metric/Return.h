@@ -26,11 +26,10 @@ double simple_total_return(const std::vector<double>& daily_values, double initi
 
 /*
  * @brief 计算每日收益率序列
- * @param flow 现金流/交易记录
- * @param context 数据上下文
+ * @param daily_values 
  * @return 每日收益率序列，首日为 0.0
  */
-Vector<double> simple_daily_return(const Vector<double>& daily_values, const Vector<double>& daily_cash_flows);
+Vector<double> simple_daily_return(const Vector<double>& daily_values);
 /*
  * @brief 从每日收益率序列计算年化收益率
  * @param daily_returns 每日收益率序列

@@ -164,7 +164,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 if (endNode) {
                     auto& cash_flow = endNode->GetReports();
                     auto [portfolio_values, crash_values] = build_portfolio_values(cash_flow, context);
-                    auto daily_returns = simple_daily_return(portfolio_values, crash_values);
+                    auto daily_returns = simple_daily_return(portfolio_values);
                     auto total_return = simple_total_return(portfolio_values, context.getInitialCapital());
                     flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
 
@@ -180,9 +180,10 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     float sharp = compute_sharp_ratio(annual_return, annual_vol, risk_free_rate);
                     flow._collections[StatisticIndicator::Sharp] = sharp;
 
-                    flow._collections[StatisticIndicator::MaxDrawDown] = max_drawdown_ratio(cash_flow, context);
-                    flow._collections[StatisticIndicator::WinRate] = win_rate(cash_flow, context);
-                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(cash_flow, context, 0);
+                    auto max_dd = max_drawdown_ratio(portfolio_values);
+                    flow._collections[StatisticIndicator::MaxDrawDown] = max_dd;
+                    flow._collections[StatisticIndicator::WinRate] = win_rate(daily_returns);
+                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(annual_return, max_dd);
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);

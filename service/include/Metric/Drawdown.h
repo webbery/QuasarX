@@ -13,7 +13,7 @@
  * 3. 计算每个时点的回撤 = (最高价值 - 当前价值) / 最高价值
  * 4. 返回最大回撤值
  */
-float max_drawdown_ratio(const crash_flow_t& flow, const DataContext& context);
+float max_drawdown_ratio(const Vector<double>& portfolio_values);
 
 /*
  * @brief 计算总收益率
@@ -30,27 +30,16 @@ float total_return_ratio(const crash_flow_t& flow, const DataContext& context);
 
 /*
  * @brief 计算胜率
- * @param flow 现金流/交易记录
- * @param context 数据上下文
  * @return 胜率 (0 到 1 之间的小数，如 0.6 表示 60% 胜率)
  *
  * 计算原理:
- * 1. 识别每笔完整的交易（买入 + 卖出）
- * 2. 计算每笔交易的盈亏
  * 3. 胜率 = 盈利交易数 / 总交易数
  */
-float win_rate(const crash_flow_t& flow, const DataContext& context);
+float win_rate(const Vector<double>& daily_values);
 
 /*
  * @brief 计算卡玛比率 (Calmar Ratio)
- * @param flow 现金流/交易记录
- * @param context 数据上下文
- * @param freerate 无风险利率（年化）
- * @return 卡玛比率 = 年化收益率 / 最大回撤
- *
  * 计算原理:
- * 1. 计算年化收益率
- * 2. 计算最大回撤
- * 3. 卡玛比率 = 年化收益率 / 最大回撤绝对值
+ * 卡玛比率 = 年化收益率 / 最大回撤绝对值
  */
-float calmar_ratio(const crash_flow_t& flow, const DataContext& context, double freerate);
+float calmar_ratio(double annual_return, double max_dd);

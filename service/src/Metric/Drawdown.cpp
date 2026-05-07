@@ -107,9 +107,7 @@ namespace {
     }
 }
 
-float max_drawdown_ratio(const crash_flow_t& flow, const DataContext& context) {
-    auto [daily_values, daily_cash_flows] = calculate_daily_values(flow, context);
-
+float max_drawdown_ratio(const Vector<double>& daily_values) {
     if (daily_values.empty()) {
         return 0.0f;
     }
@@ -118,7 +116,7 @@ float max_drawdown_ratio(const crash_flow_t& flow, const DataContext& context) {
     double max_drawdown = 0.0;
 
     for (size_t i = 0; i < daily_values.size(); ++i) {
-        double value = daily_values[i] + daily_cash_flows[i];
+        double value = daily_values[i];
 
         // 更新历史最高值
         if (value > max_value) {
@@ -168,122 +166,29 @@ float total_return_ratio(const crash_flow_t& flow, const DataContext& context) {
     return static_cast<float>(total_return);
 }
 
-float win_rate(const crash_flow_t& flow, const DataContext& context) {
-    if (flow.empty()) {
-        return 0.0f;
-    }
-
-    // 按 symbol 分组交易记录
-    std::map<symbol_t, std::vector<TradeReport>> trades_by_symbol;
-    for (const auto& [symbol, report] : flow) {
-        trades_by_symbol[symbol].push_back(report);
-    }
-
-    int total_trades = 0;
-    int winning_trades = 0;
-
-    // 对每个 symbol，配对买入和卖出交易
-    for (auto& [symbol, reports] : trades_by_symbol) {
-        // 按时间排序
-        std::sort(reports.begin(), reports.end(),
-                  [](const TradeReport& a, const TradeReport& b) {
-                      return a._time < b._time;
-                  });
-
-        // 配对交易：买入后卖出算一笔完整交易
-        // 注意：做空场景下，先卖出开空再买入平空也算一笔完整交易
-        double total_buy_cost = 0.0;
-        int total_buy_qty = 0;
-        double total_sell_value = 0.0;
-        int total_sell_qty = 0;
-
-        for (const auto& report : reports) {
-            if (report._side == 0) {  // 买入
-                if (report._flag == 1 && total_sell_qty > 0) {
-                    // 买入平空：与之前的空仓配对
-                    int match_qty = std::min(report._quantity, total_sell_qty);
-                    double avg_sell_price = total_sell_value / total_sell_qty;
-                    double profit = (avg_sell_price - report._price) * match_qty;
-
-                    if (profit > 0) {
-                        winning_trades++;
-                    }
-                    total_trades++;
-
-                    total_sell_qty -= match_qty;
-                    total_sell_value -= avg_sell_price * match_qty;
-                } else if (report._flag == 0) {
-                    // 买入开多：记录成本
-                    total_buy_cost += report._trade_amount;
-                    total_buy_qty += report._quantity;
-                }
-            } else {  // 卖出
-                if (report._flag == 1 && total_buy_qty > 0) {
-                    // 卖出平多：与之前的多仓配对
-                    int match_qty = std::min(report._quantity, total_buy_qty);
-                    double avg_buy_price = total_buy_cost / total_buy_qty;
-                    double profit = (report._price - avg_buy_price) * match_qty;
-
-                    if (profit > 0) {
-                        winning_trades++;
-                    }
-                    total_trades++;
-
-                    total_buy_qty -= match_qty;
-                    total_buy_cost -= avg_buy_price * match_qty;
-                } else if (report._flag == 0) {
-                    // 卖出开空：记录卖空价值
-                    total_sell_value += report._trade_amount;
-                    total_sell_qty += report._quantity;
-                }
-            }
-        }
-    }
-
-    if (total_trades == 0) {
-        return 0.0f;
-    }
-
-    return static_cast<float>(winning_trades) / total_trades;
-}
-
-float calmar_ratio(const crash_flow_t& flow, const DataContext& context, double freerate) {
-    auto [daily_values, daily_cash_flows] = calculate_daily_values(flow, context);
+float win_rate(const Vector<double>& daily_values) {
     if (daily_values.empty()) {
         return 0.0f;
     }
 
-    // 使用简化版总回报计算（回测场景：无外部资金进出）
-    double initial_capital = context.getInitialCapital();
-    double total_return = simple_total_return(daily_values, initial_capital);
+    int total_days = static_cast<int>(daily_values.size());
+    int win_days = 0;
 
-    // 计算年化收益率
-    auto& times = context.GetTime();
-    if (times.empty()) {
-        return 0.0f;
+    for (double ret : daily_values) {
+        if (ret > 0.0) {
+            win_days++;
+        }
     }
 
-    time_t start_time = times.front();
-    time_t end_time = times.back();
-    double total_days = static_cast<double>(end_time - start_time) / (24 * 3600);
+    return static_cast<float>(win_days) / total_days;
+}
 
-    if (total_days <= 0) {
-        return 0.0f;
-    }
-
-    double annualized_return = 0.0;
-    if (total_return > -1.0) {
-        annualized_return = std::pow(1.0 + total_return, YEAR_DAY / total_days) - 1.0;
-    }
-
-    // 计算最大回撤
-    float max_dd = max_drawdown_ratio(flow, context);
-
+float calmar_ratio(double annual_return, double max_dd) {
     // 卡玛比率 = 年化收益率 / 最大回撤绝对值
     if (max_dd <= 0) {
         // 如果没有回撤，返回一个较大的值或年化收益率本身
-        return annualized_return > 0 ? 10.0f : 0.0f;
+        return annual_return > 0 ? 10.0f : 0.0f;
     }
 
-    return static_cast<float>(annualized_return / max_dd);
+    return static_cast<float>(annual_return / max_dd);
 }

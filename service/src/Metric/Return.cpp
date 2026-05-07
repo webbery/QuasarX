@@ -355,17 +355,17 @@ float compute_annualized_return(double total_return, int count) {
     return 0.0f;
 }
 
-Vector<double> simple_daily_return(const Vector<double>& daily_values, const Vector<double>& daily_cash_flows) {
-    // 计算每日收益率: R_t = (V_t - V_{t-1} - CF_t) / V_{t-1}
+Vector<double> simple_daily_return(const Vector<double>& daily_values) {
+    // 计算每日收益率: R_t = (V_t - V_{t-1}) / V_{t-1}
     size_t cnt = (int)daily_values.size() - 1;
     Vector<double> rets(cnt);
-    rets[0] = 0;  // 第一天收益率为 0
-    for (size_t i = 1; i < cnt; ++i) {
-        double prev = daily_values[i - 1];
-        double curr = daily_values[i];
-        double cf = daily_cash_flows[i];
+    for (size_t i = 0; i < cnt; ++i) {
+        double prev = daily_values[i];
+        double curr = daily_values[i + 1];
+        // double cf = daily_cash_flows[i];
         if (prev != 0.0) {
-            rets[i] = (curr - prev - cf) / prev;
+            auto r = (curr - prev) / prev;
+            rets[i] = r;
         } else {
             rets[i] = 0.0;
         }
