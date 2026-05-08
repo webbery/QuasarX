@@ -218,9 +218,58 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
     }
   },
   'risk': {
-    label: 'risk',
-    nodeType: 'risk',
-    params: {}
+    label: '风控保护',
+    nodeType: 'protection',
+    params: {
+      "止损开关": {
+        value: false,
+        type: "boolean"
+      },
+      "止损比例": {
+        value: 0.05,
+        type: "number",
+        min: 0.01,
+        max: 0.5,
+        step: 0.01,
+        unit: "%"
+      },
+      "止盈开关": {
+        value: false,
+        type: "boolean"
+      },
+      "止盈比例": {
+        value: 0.15,
+        type: "number",
+        min: 0.01,
+        max: 1.0,
+        step: 0.01,
+        unit: "%"
+      },
+      "追踪止损开关": {
+        value: false,
+        type: "boolean"
+      },
+      "追踪止损比例": {
+        value: 0.03,
+        type: "number",
+        min: 0.01,
+        max: 0.3,
+        step: 0.01,
+        unit: "%"
+      },
+      "时间止损开关": {
+        value: false,
+        type: "boolean"
+      },
+      "最大持仓Bar数": {
+        value: 20,
+        type: "number",
+        min: 1,
+        max: 1000,
+        step: 1,
+        unit: "根"
+      }
+    }
   },
   'portfolio': {
     label: '投资组合',
