@@ -5,6 +5,7 @@ import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import { CHART_REGISTRY, type ChartDefinition } from '../config/chartRegistry'
 
 const CONFIG_STORAGE_KEY = 'quasarx_report_config'
+const LAYOUT_STORAGE_KEY = 'quasarx_report_layout'
 
 export interface ReportConfig {
   /** 图表可见性配置 */
@@ -13,6 +14,12 @@ export interface ReportConfig {
   defaultBenchmark: string
   /** 是否显示指标表格 */
   showMetricsTable: boolean
+}
+
+/** 图表布局项（只控制顺序和可见性，span 由 CHART_REGISTRY 决定） */
+export interface ChartLayoutItem {
+  id: string
+  visible: boolean
 }
 
 export interface UseReportStateReturn {
@@ -43,6 +50,14 @@ export interface UseReportStateReturn {
   showMetricsTable: Ref<boolean>
   /** 当前可见的图表列表（按 order 排序） */
   visibleCharts: ComputedRef<ChartDefinition[]>
+
+  // === 拖拽布局 ===
+  /** 图表布局顺序（localStorage 持久化） */
+  layout: Ref<ChartLayoutItem[]>
+  /** 保存布局 */
+  saveLayout: () => void
+  /** 重置布局（恢复默认顺序） */
+  resetLayout: () => void
 
   // === 配置管理 ===
   /** 加载配置（从 localStorage） */
@@ -125,6 +140,33 @@ export function useReportState(): UseReportStateReturn {
   const chartVisibility = ref<Record<string, boolean>>(initialConfig.chartVisibility)
   const showMetricsTable = ref(initialConfig.showMetricsTable)
 
+  // === 拖拽布局 ===
+  const defaultLayout = (): ChartLayoutItem[] =>
+    CHART_REGISTRY.map(c => ({ id: c.id, visible: c.defaultVisible }))
+
+  const layout = ref<ChartLayoutItem[]>(loadLayoutFromStorage() ?? defaultLayout())
+
+  function loadLayoutFromStorage(): ChartLayoutItem[] | null {
+    try {
+      const stored = localStorage.getItem(LAYOUT_STORAGE_KEY)
+      if (stored) return JSON.parse(stored) as ChartLayoutItem[]
+    } catch { /* ignore */ }
+    return null
+  }
+
+  function saveLayout(): void {
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout.value))
+    } catch (e) {
+      console.warn('[useReportState] 保存布局失败', e)
+    }
+  }
+
+  function resetLayout(): void {
+    layout.value = defaultLayout()
+    saveLayout()
+  }
+
   // === 计算属性 ===
   const visibleCharts = computed<ChartDefinition[]>(() => {
     return CHART_REGISTRY
@@ -194,6 +236,10 @@ export function useReportState(): UseReportStateReturn {
     chartVisibility,
     showMetricsTable,
     visibleCharts,
+    // 拖拽布局
+    layout,
+    saveLayout,
+    resetLayout,
     // 配置管理
     loadConfig,
     saveConfig,

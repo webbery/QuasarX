@@ -4,6 +4,7 @@
 #include "Nodes/ExecutionPlan.h"
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "RiskContext.h"
 
 struct TradeReport;
 class Server;
@@ -175,6 +176,10 @@ public:
         return _executionPlan;
     }
 
+    RiskContext* GetRiskContext() {
+        return &_risk_context;
+    }
+
     double getAvailableCapital() const;
 
     // 初始本金管理（用于回测）
@@ -252,6 +257,9 @@ private:
 
     // 当前 Bar 的 QuoteInfo（用于影子模式）
     Map<symbol_t, QuoteInfo> _quotes;
+
+    // 风控上下文（独立于节点数据通道）
+    RiskContext _risk_context;
 
     // 初始本金（用于回测）
     double _initialCapital = 0.0;

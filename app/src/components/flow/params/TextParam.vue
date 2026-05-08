@@ -34,7 +34,7 @@ const props = defineProps<{
   value: any
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   update: [value: any]
   keydown: [event: KeyboardEvent]
 }>()
@@ -49,7 +49,7 @@ const isDataField = computed(() => {
 const onInput = (event: Event) => {
   const value = (event.target as HTMLInputElement).value
   showError.value = false  // 输入时隐藏错误
-  props.update(value)
+  emit('update', value)
 }
 
 const validate = () => {

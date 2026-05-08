@@ -10,6 +10,7 @@
 #include "Bridge/SIM/BacktestContext.h"
 #include "Nodes/SignalNode.h"
 #include "std_header.h"
+#include <cmath>
 
 PortfolioNode::PortfolioNode(Server* server)
     : _server(server)
@@ -28,6 +29,27 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
     // 是否允许做空
     if (config["params"].contains("allowShort")) {
         _allowShort = config["params"]["allowShort"]["value"];
+    }
+
+    // ── 新增：仓位 sizing 方法（默认 Equal，保持原有行为） ──
+    if (config["params"].contains("sizing_method")) {
+        String method = config["params"]["sizing_method"]["value"];
+        if (method == "kelly") {
+            _sizing_method = SizingMethod::Kelly;
+        } else if (method == "volatility_target") {
+            _sizing_method = SizingMethod::VolatilityTarget;
+        } else {
+            _sizing_method = SizingMethod::Equal;
+        }
+    }
+    if (config["params"].contains("max_single_pct")) {
+        _max_single_pct = config["params"]["max_single_pct"]["value"];
+    }
+    if (config["params"].contains("max_total_pct")) {
+        _max_total_pct = config["params"]["max_total_pct"]["value"];
+    }
+    if (config["params"].contains("volatility_target")) {
+        _vol_target = config["params"]["volatility_target"]["value"];
     }
 
     // 交易池 - 优先从 config 读取，如果没有则从上游 SignalNode 获取
@@ -88,9 +110,15 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         }
     }
 
+    // ── 新增：风控短路检查 ──
+    applyRiskContext(context, decisions);
+
     // 2. 获取可用资金
     double capital = context.getAvailableCapital();
     double targetCapital = capital * _positionRatio;
+
+    // ── 新增：仓位 sizing 调整 ──
+    applySizingWeights(context, decisions, targetCapital);
 
     // 3. 生成执行计划
     ExecutionPlan newPlan;
@@ -425,8 +453,109 @@ bool PortfolioNode::isPlanChanged(const ExecutionPlan& newPlan) {
     return false;
 }
 
+// ── 风控短路：RiskContext.triggered 为 true 时，全部改为 SELL ──
+void PortfolioNode::applyRiskContext(DataContext& context, Map<symbol_t, TradeAction>& decisions) {
+    auto* rc = context.GetRiskContext();
+    if (!rc || !rc->triggered) {
+        return;
+    }
+
+    INFO("[PortfolioNode] RiskContext triggered (type={}), converting all decisions to SELL",
+         to_string(rc->trigger_type));
+    for (auto& [symbol, action] : decisions) {
+        if (action != TradeAction::SELL) {
+            action = TradeAction::SELL;
+        }
+    }
+}
+
+// ── 按 sizing_method 调整仓位权重 ──
+void PortfolioNode::applySizingWeights(DataContext& context, Map<symbol_t, TradeAction>& decisions, double targetCapital) {
+    // 默认 Equal 模式：不改变现有行为
+    if (_sizing_method == SizingMethod::Equal) {
+        return;
+    }
+
+    // 获取可用标的列表（仅 BUY 信号）
+    Vector<symbol_t> buySymbols;
+    for (const auto& [symbol, action] : decisions) {
+        if (action == TradeAction::BUY) {
+            buySymbols.push_back(symbol);
+        }
+    }
+    if (buySymbols.empty()) {
+        return;
+    }
+
+    Map<symbol_t, double> weights;
+
+    if (_sizing_method == SizingMethod::Kelly) {
+        // Kelly 公式: w* = (bp - q) / (b * σ²)
+        // 简化版：使用历史胜率估算
+        for (const auto& symbol : buySymbols) {
+            String key = get_symbol(symbol) + ".win_rate";
+            if (context.exist(key)) {
+                auto wr_var = context.get<Vector<double>>(key);
+                if (!wr_var.empty()) {
+                    double win_rate = wr_var.back();
+                    double avg_win = 0.02;  // TODO: 从上下文读取
+                    double avg_loss = 0.02; // TODO: 从上下文读取
+                    if (avg_loss > 0) {
+                        double b = avg_win / avg_loss;
+                        double q = 1.0 - win_rate;
+                        double kelly_pct = (b * win_rate - q) / b;
+                        weights[symbol] = std::max(0.0, kelly_pct);
+                    }
+                }
+            } else {
+                // 无数据，等权分配
+                weights[symbol] = 1.0 / buySymbols.size();
+            }
+        }
+    } else if (_sizing_method == SizingMethod::VolatilityTarget) {
+        // 目标波动率: w = vol_target / σ
+        for (const auto& symbol : buySymbols) {
+            String key = get_symbol(symbol) + ".volatility";
+            if (context.exist(key)) {
+                auto vol_var = context.get<Vector<double>>(key);
+                if (!vol_var.empty()) {
+                    double sigma = vol_var.back();
+                    if (sigma > 0) {
+                        weights[symbol] = _vol_target / sigma;
+                    }
+                }
+            } else {
+                weights[symbol] = 1.0 / buySymbols.size();
+            }
+        }
+    }
+
+    if (weights.empty()) {
+        return;
+    }
+
+    // 截断：单标的上限
+    double total_weight = 0.0;
+    for (auto& [symbol, w] : weights) {
+        w = std::min(w, _max_single_pct);
+        total_weight += w;
+    }
+
+    // 截断：总仓位上限
+    if (total_weight > _max_total_pct) {
+        double scale = _max_total_pct / total_weight;
+        for (auto& [symbol, w] : weights) {
+            w *= scale;
+        }
+    }
+
+    // 将权重信息写入 context，供 generatePlan 参考
+    // TODO: 后续可在 generatePlan 中直接使用 weights 调整 quantity
+    (void)weights; // 当前仅计算，实际仓位调整逻辑待后续完善
+}
+
 const nlohmann::json PortfolioNode::getParams() {
-    return {"positionRatio", "pool", "allowShort"};
+    return {"positionRatio", "pool", "allowShort", "sizing_method", "max_single_pct", "max_total_pct", "volatility_target"};
 }
 
 Map<String, ArgType> PortfolioNode::out_elements() {

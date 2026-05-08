@@ -99,7 +99,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     try {
         strategySys->InitStrategy(strategyName, script);
-        SendSSEProgress(sse_sock, strategyName, 0, 0.1, "策略初始化完成");
     } catch (const std::exception& e) {
         res.status = 500;
         String msg = R"({"message": "Failed to initialize strategy: )" + String(e.what()) + R"("})";
@@ -121,7 +120,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     run_id_t runId = flowSubsystem->Start(strategyName, symbols, initialCapital);
     
     // 发送进度 (带 run_id)
-    SendSSEProgress(sse_sock, strategyName, runId, 0.2, "开始执行回测");
+    SendSSEProgress(sse_sock, strategyName, runId, 0.1, "开始执行回测");
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
@@ -133,7 +132,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             double progress = exchange->Progress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
-                SendSSEProgress(sse_sock, strategyName, runId, 0.3 + progress * 0.5, msg);
+                SendSSEProgress(sse_sock, strategyName, runId, 0.2 + progress * 0.5, msg);
                 lastProgress = progress;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -164,7 +163,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 确保最终进度推送
     if (lastProgress < 1.0) {
-        SendSSEProgress(sse_sock, strategyName, runId, 0.8, "回测执行完成");
+        SendSSEProgress(sse_sock, strategyName, runId, 0.7, "回测执行完成");
     }
     exchange->Logout(AccountType::MAIN);
 

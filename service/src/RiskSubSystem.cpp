@@ -60,10 +60,6 @@ bool RiskSubSystem::Init(nlohmann::json& config) {
     return true;
 }
 
-void RiskSubSystem::UpdateRisk(IRiskMetric* risk) {
-
-}
-
 void RiskSubSystem::Metric(const DataContext& context) {
     // 调用资金风控检查
     if (_capitalRiskManager) {

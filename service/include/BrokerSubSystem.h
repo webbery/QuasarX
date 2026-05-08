@@ -52,6 +52,27 @@ enum class StatisticIndicator: char {
   NumTrades,
   Extreme,
   TotalReturn,
+
+  // Bootstrap 蒙特卡洛风险分析指标
+  BootRuinProb50,       // 爆仓概率 (<50%)
+  BootRuinProb30,       // 爆仓概率 (<30%)
+  BootReturnP5,         // 收益率 5% 分位数
+  BootReturnP50,        // 收益率中位数
+  BootReturnP95,        // 收益率 95% 分位数
+  BootMaxDDP50,         // 最大回撤中位数
+  BootMaxDDP95,         // 最大回撤 95% 分位数
+  BootMedianAnnualRet,  // 中位数年化收益
+  BootTail1PctAvgDD,    // 最差 1% 平均回撤
+  BootMethod,           // 0=Standard, 1=Block
+  BootBlockSize,        // Block 大小
+  BootAutocorrelation,  // 自相关系数
+  BootNSimulations,     // 模拟次数
+  // 压力测试
+  BootStressRuinProb50,
+  BootStressRuinProb30,
+  BootStressReturnP5,
+  BootStressReturnP50,
+  BootStressMaxDDP50,
 };
 
 class ICommission {

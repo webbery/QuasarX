@@ -15,7 +15,6 @@
 #include "Util/string_algorithm.h"
 #include "json.hpp"
 #include "Util/system.h"
-#include "Risk/RiskMetric.h"
 #include "server.h"
 #include <boost/math/distributions/normal.hpp>
 #include "Handler/ExchangeHandler.h"
@@ -262,6 +261,45 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
     return "win_rate";
   case StatisticIndicator::Calmar:
     return "calmar_ratio";
+
+  // Bootstrap 蒙特卡洛风险分析指标
+  case StatisticIndicator::BootRuinProb50:
+    return "boot_ruin_prob_50";
+  case StatisticIndicator::BootRuinProb30:
+    return "boot_ruin_prob_30";
+  case StatisticIndicator::BootReturnP5:
+    return "boot_return_p5";
+  case StatisticIndicator::BootReturnP50:
+    return "boot_return_p50";
+  case StatisticIndicator::BootReturnP95:
+    return "boot_return_p95";
+  case StatisticIndicator::BootMaxDDP50:
+    return "boot_max_dd_p50";
+  case StatisticIndicator::BootMaxDDP95:
+    return "boot_max_dd_p95";
+  case StatisticIndicator::BootMedianAnnualRet:
+    return "boot_median_annual_ret";
+  case StatisticIndicator::BootTail1PctAvgDD:
+    return "boot_tail_1pct_avg_dd";
+  case StatisticIndicator::BootMethod:
+    return "boot_method";
+  case StatisticIndicator::BootBlockSize:
+    return "boot_block_size";
+  case StatisticIndicator::BootAutocorrelation:
+    return "boot_autocorrelation";
+  case StatisticIndicator::BootNSimulations:
+    return "boot_n_simulations";
+  case StatisticIndicator::BootStressRuinProb50:
+    return "boot_stress_ruin_prob_50";
+  case StatisticIndicator::BootStressRuinProb30:
+    return "boot_stress_ruin_prob_30";
+  case StatisticIndicator::BootStressReturnP5:
+    return "boot_stress_return_p5";
+  case StatisticIndicator::BootStressReturnP50:
+    return "boot_stress_return_p50";
+  case StatisticIndicator::BootStressMaxDDP50:
+    return "boot_stress_max_dd_p50";
+
   default:
     return "unknown";
   }
@@ -545,9 +583,6 @@ void BrokerSubSystem::RecordTrade(const OrderContext& ctx) {
     // 加锁并添加交易记录
     _historyTrades.visit(runId, [&ctx](auto& entry) {
         auto& ptr = entry.second;
-        if (ctx._trades._reports.front()._quantity == 0) {
-          printf("111111\n");
-        }
         std::lock_guard<std::mutex> lock(ptr->mtx);
         auto act = Order2Transaction(ctx);
         ptr->trades[ctx._order._symbol].emplace_back(std::move(act));

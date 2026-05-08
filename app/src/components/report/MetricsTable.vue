@@ -1,29 +1,20 @@
 <!-- app/src/components/report/MetricsTable.vue -->
-<!-- 策略指标表格组件 -->
+<!-- 策略指标表格组件 - 多列分组布局 -->
 
 <template>
   <div class="chart-card full-width">
     <div class="chart-title">
       <div class="title-icon">📋</div>
-      <span>Strategy Static Table</span>
+      <span>Strategy Metrics</span>
     </div>
-    <div class="table-container">
-      <div class="table-wrapper" ref="tableWrapperRef">
-        <table>
-          <thead>
-            <tr>
-              <th>指标</th>
-              <th>数值</th>
-              <th>基准</th>
-              <th>对比</th>
-            </tr>
-          </thead>
+    <div class="metrics-grid">
+      <div v-for="group in metricGroups" :key="group.title" class="metric-group">
+        <div class="group-title">{{ group.title }}</div>
+        <table class="group-table">
           <tbody>
-            <tr v-for="row in tableRows" :key="row.key">
-              <td>{{ row.name }}</td>
-              <td>{{ row.value }}</td>
-              <td class="benchmark-value">{{ row.benchmark }}</td>
-              <td :class="row.comparison.type">{{ row.comparison.value }}</td>
+            <tr v-for="item in group.items" :key="item.key">
+              <td>{{ item.name }}</td>
+              <td :class="getValueClass(item.key, item.value)">{{ item.displayValue }}</td>
             </tr>
           </tbody>
         </table>
@@ -33,18 +24,55 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import type { BenchmarkMetrics } from '@/lib/tickflow'
+import { computed } from 'vue'
 
 interface Props {
   metrics: Record<string, number>
-  benchmarkMetrics: BenchmarkMetrics | null
 }
 
 const props = defineProps<Props>()
-const tableWrapperRef = ref<HTMLElement | null>(null)
 
-// === 常量定义 ===
+// === 指标分组与排序 ===
+
+interface MetricGroupDef {
+  title: string
+  keys: string[]
+}
+
+const metricGroupsDef: MetricGroupDef[] = [
+  {
+    title: '收益与风险',
+    keys: [
+      'total_return', 'annual_return', 'max_drawdown', 'volatility',
+      'sharp', 'calmar_ratio', 'win_rate', 'num_trades',
+    ],
+  },
+  {
+    title: '尾部风险',
+    keys: [
+      'VAR', 'ES',
+      'boot_ruin_prob_50', 'boot_ruin_prob_30',
+      'boot_return_p5', 'boot_return_p50', 'boot_return_p95',
+      'boot_max_dd_p50', 'boot_max_dd_p95',
+      'boot_median_annual_ret', 'boot_tail_1pct_avg_dd',
+    ],
+  },
+  {
+    title: 'Bootstrap 元信息',
+    keys: [
+      'boot_method', 'boot_block_size',
+      'boot_autocorrelation', 'boot_n_simulations',
+    ],
+  },
+  {
+    title: '压力测试 (Vol × 1.5)',
+    keys: [
+      'boot_stress_ruin_prob_50', 'boot_stress_ruin_prob_30',
+      'boot_stress_return_p5', 'boot_stress_return_p50',
+      'boot_stress_max_dd_p50',
+    ],
+  },
+]
 
 const metricNameMap: Record<string, string> = {
   total_return: '总收益率',
@@ -63,30 +91,43 @@ const metricNameMap: Record<string, string> = {
   beta: 'Beta',
   avg_holding_days: '平均持仓天数',
   profit_loss_ratio: '盈亏比',
+  // Bootstrap 蒙特卡洛 - 正常场景
+  boot_ruin_prob_50: '爆仓概率 (<50%)',
+  boot_ruin_prob_30: '爆仓概率 (<30%)',
+  boot_return_p5: '收益率 P5',
+  boot_return_p50: '收益率中位数',
+  boot_return_p95: '收益率 P95',
+  boot_max_dd_p50: '最大回撤中位数',
+  boot_max_dd_p95: '最大回撤 P95',
+  boot_median_annual_ret: '中位数年化收益',
+  boot_tail_1pct_avg_dd: '最差1%平均回撤',
+  boot_method: 'Bootstrap 方法',
+  boot_block_size: '块大小',
+  boot_autocorrelation: '自相关系数',
+  boot_n_simulations: '模拟次数',
+  // Bootstrap 蒙特卡洛 - 压力测试
+  boot_stress_ruin_prob_50: '压力爆仓 (<50%)',
+  boot_stress_ruin_prob_30: '压力爆仓 (<30%)',
+  boot_stress_return_p5: '压力收益率 P5',
+  boot_stress_return_p50: '压力收益率中位数',
+  boot_stress_max_dd_p50: '压力最大回撤',
 }
 
-const metricOrder = [
-  'total_return', 'annual_return', 'max_drawdown', 'sharp', 'calmar_ratio',
-  'win_rate', 'num_trades', 'VAR', 'ES', 'volatility', 'alpha', 'beta',
-  'annual_sharp', 'information_ratio', 'avg_holding_days', 'profit_loss_ratio'
-]
-
-const defaultBenchmarks: Record<string, number> = {
-  total_return: 0.10,
-  annual_return: 0.08,
-  max_drawdown: -0.20,
-  sharp: 1.0,
-  win_rate: 0.50,
-  num_trades: 50,
-  volatility: 0.20,
-  alpha: 0,
-  beta: 1.0,
-}
-
-// === 工具函数 ===
+// === 格式化 ===
 
 function formatMetricValue(key: string, value: number): string {
-  const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp']
+  // 特殊格式化
+  if (key === 'boot_method') {
+    return value === 0 ? '标准' : 'Block'
+  }
+  if (key === 'boot_block_size' || key === 'boot_n_simulations') {
+    return Math.round(value).toString()
+  }
+  if (key === 'boot_autocorrelation') {
+    return value.toFixed(4)
+  }
+
+  const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp', 'prob']
   const isRatio = ratioKeys.some(k => key.toLowerCase().includes(k))
 
   if (isRatio) {
@@ -96,7 +137,7 @@ function formatMetricValue(key: string, value: number): string {
     return value.toFixed(4)
   }
 
-  const countKeys = ['num', 'count', 'days', 'trades']
+  const countKeys = ['num', 'count', 'days', 'trades', 'size', 'simulations', 'block']
   const isCount = countKeys.some(k => key.toLowerCase().includes(k))
   if (isCount) {
     return Math.round(value).toString()
@@ -105,150 +146,54 @@ function formatMetricValue(key: string, value: number): string {
   return value.toFixed(4)
 }
 
-function getBenchmarkValue(key: string): string {
-  // 优先使用动态基准
-  if (props.benchmarkMetrics && (props.benchmarkMetrics as any)[key] !== undefined) {
-    return formatMetricValue(key, (props.benchmarkMetrics as any)[key])
-  }
+// === 样式辅助 ===
 
-  // Fallback 到默认基准
-  const benchmark = defaultBenchmarks[key]
-  if (benchmark !== undefined) {
-    return formatMetricValue(key, benchmark)
-  }
-  return '-'
-}
+function getValueClass(key: string, value: number): string {
+  // 正向指标：越大越好（绿色）
+  const positiveKeys = ['sharp', 'calmar', 'return', 'win_rate', 'alpha', 'profit', 'median_annual', 'return_p50', 'return_p95']
+  const isPositive = positiveKeys.some(k => key.toLowerCase().includes(k))
 
-function getComparison(key: string, actualValue: number): { value: string, type: 'positive' | 'neutral' | 'negative' } {
-  let benchmark: number | undefined
+  // 负向指标：越小越好（红色）
+  const negativeKeys = ['drawdown', 'ruin_prob', 'stress_ruin', 'volatility', 'beta', 'tail_1pct', 'stress_return_p5', 'stress_max_dd']
+  const isNegative = negativeKeys.some(k => key.toLowerCase().includes(k))
 
-  // 优先使用动态基准
-  if (props.benchmarkMetrics && (props.benchmarkMetrics as any)[key] !== undefined) {
-    benchmark = (props.benchmarkMetrics as any)[key]
-  }
-
-  // 没有动态基准，使用默认
-  if (benchmark === undefined) {
-    benchmark = defaultBenchmarks[key]
-  }
-
-  if (benchmark === undefined) {
-    return { value: '-', type: 'neutral' }
-  }
-
-  const diff = actualValue - benchmark
-  const isPositive = diff > 0
-  const isInverted = key === 'max_drawdown' || key === 'volatility'
-
-  const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp']
-  const isRatio = ratioKeys.some(k => key.toLowerCase().includes(k))
-
-  let displayValue: string
-  if (isRatio) {
-    displayValue = `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(2)}%`
-  } else {
-    displayValue = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`
-  }
-
-  const type = isInverted ? (diff < 0 ? 'positive' : 'negative') : (isPositive ? 'positive' : 'neutral')
-  return { value: displayValue, type }
+  if (isPositive && value > 0) return 'value-positive'
+  if (isNegative && value > 0.05) return 'value-negative' // 回撤/爆仓概率 > 5% 标红
+  return ''
 }
 
 // === 计算属性 ===
 
-interface TableRow {
+interface MetricItem {
   key: string
   name: string
-  value: string
-  benchmark: string
-  comparison: { value: string, type: 'positive' | 'neutral' | 'negative' }
+  value: number
+  displayValue: string
 }
 
-const tableRows = computed<TableRow[]>(() => {
-  const features = props.metrics
-  const rows: TableRow[] = []
-
-  // 按照定义的顺序添加行
-  metricOrder.forEach(key => {
-    if (features.hasOwnProperty(key)) {
-      const value = features[key]
-      const chineseName = metricNameMap[key] || key
-      const formattedValue = formatMetricValue(key, value)
-      const benchmark = getBenchmarkValue(key)
-      const comparison = getComparison(key, value)
-
-      rows.push({
-        key,
-        name: chineseName,
-        value: formattedValue,
-        benchmark,
-        comparison
-      })
-    }
-  })
-
-  // 如果还有未排序的指标，追加到后面
-  const addedKeys = new Set(metricOrder)
-  Object.keys(features).forEach(key => {
-    if (!addedKeys.has(key)) {
-      const value = features[key]
-      const chineseName = metricNameMap[key] || key
-      const formattedValue = formatMetricValue(key, value)
-
-      rows.push({
-        key,
-        name: chineseName,
-        value: formattedValue,
-        benchmark: '-',
-        comparison: { value: '-', type: 'neutral' }
-      })
-    }
-  })
-
-  return rows
-})
-
-// === 交互逻辑 ===
-
-onMounted(() => {
-  if (tableWrapperRef.value) {
-    initDragScroll()
-  }
-})
-
-function initDragScroll() {
-  const tableWrapper = tableWrapperRef.value
-  if (!tableWrapper) return
-
-  let isDragging = false
-  let startX = 0
-  let scrollLeft = 0
-
-  tableWrapper.addEventListener('mousedown', (e: MouseEvent) => {
-    isDragging = true
-    startX = e.pageX - tableWrapper.offsetLeft
-    scrollLeft = tableWrapper.scrollLeft
-    tableWrapper.style.cursor = 'grabbing'
-  })
-
-  tableWrapper.addEventListener('mousemove', (e: MouseEvent) => {
-    if (!isDragging) return
-    e.preventDefault()
-    const x = e.pageX - tableWrapper.offsetLeft
-    const walk = (x - startX) * 2
-    tableWrapper.scrollLeft = scrollLeft - walk
-  })
-
-  tableWrapper.addEventListener('mouseup', () => {
-    isDragging = false
-    tableWrapper.style.cursor = 'grab'
-  })
-
-  tableWrapper.addEventListener('mouseleave', () => {
-    isDragging = false
-    tableWrapper.style.cursor = 'grab'
-  })
+interface GroupedMetrics {
+  title: string
+  items: MetricItem[]
 }
+
+const metricGroups = computed<GroupedMetrics[]>(() => {
+  return metricGroupsDef.map(group => {
+    const items: MetricItem[] = []
+    for (const key of group.keys) {
+      if (props.metrics.hasOwnProperty(key)) {
+        const value = props.metrics[key]
+        items.push({
+          key,
+          name: metricNameMap[key] || key,
+          value,
+          displayValue: formatMetricValue(key, value),
+        })
+      }
+    }
+    return { title: group.title, items }
+  }).filter(g => g.items.length > 0)
+})
+
 </script>
 
 <style scoped>
@@ -272,7 +217,6 @@ function initDragScroll() {
 }
 
 .chart-card.full-width {
-  /* 作为 grid-row 的子元素，不再需要 grid-column */
   width: 100%;
 }
 
@@ -299,94 +243,87 @@ function initDragScroll() {
   border-radius: 8px;
 }
 
-.table-container {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
+/* === 多列网格 === */
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
 }
 
-.table-wrapper {
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-radius: 8px;
-  border: 1px solid var(--border, #2a3449);
-  cursor: grab;
-  transition: transform 0.3s ease;
+@media (max-width: 1400px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
-.table-wrapper:active {
-  cursor: grabbing;
+@media (max-width: 1000px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-.table-wrapper::-webkit-scrollbar {
-  height: 8px;
-}
+/* === 分组卡片 === */
 
-.table-wrapper::-webkit-scrollbar-track {
+.metric-group {
   background: rgba(42, 52, 77, 0.3);
-  border-radius: 4px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border, #2a3449);
 }
 
-.table-wrapper::-webkit-scrollbar-thumb {
-  background: rgba(41, 98, 255, 0.5);
-  border-radius: 4px;
+.group-title {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ff9800;
+  background: rgba(42, 52, 77, 0.6);
+  border-bottom: 1px solid var(--border, #2a3449);
 }
 
-.table-wrapper::-webkit-scrollbar-thumb:hover {
-  background: rgba(41, 98, 255, 0.7);
-}
-
-table {
+.group-table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0;
-  min-width: 800px;
 }
 
-th, td {
-  padding: 14px 16px;
-  text-align: left;
-  border-bottom: 1px solid var(--border, #2a3449);
-  white-space: nowrap;
+.group-table tbody tr {
+  border-bottom: 1px solid rgba(42, 52, 77, 0.4);
 }
 
-th {
-  background-color: rgba(42, 52, 77, 0.5);
-  font-weight: 600;
-  color: var(--text, #e0e0e0);
-  font-size: 14px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
+.group-table tbody tr:last-child {
+  border-bottom: none;
 }
 
-td {
-  color: var(--text, #e0e0e0);
-  font-size: 14px;
-}
-
-tbody tr:hover {
+.group-table tbody tr:hover {
   background-color: rgba(42, 52, 77, 0.3);
 }
 
-.positive {
-  color: #00c853;
-  font-weight: 600;
+.group-table td:first-child {
+  padding: 10px 14px;
+  color: var(--text-secondary, #a0aec0);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-.neutral {
-  color: #ff6d00;
-  font-weight: 600;
-}
-
-.negative {
-  color: #ff1744;
-  font-weight: 600;
-}
-
-.benchmark-value {
-  color: #ff9800;
+.group-table td:last-child {
+  padding: 10px 14px;
+  text-align: right;
   font-weight: 500;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text, #e0e0e0);
+}
+
+/* === 值着色 === */
+
+.value-positive {
+  color: #00c853 !important;
+  font-weight: 600;
+}
+
+.value-negative {
+  color: #ff1744 !important;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {

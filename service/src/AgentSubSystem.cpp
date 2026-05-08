@@ -25,6 +25,7 @@
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
 #include "Metric/Drawdown.h"
+#include "Metric/RiskMetric.h"
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     auto default_config = handle->GetConfig().GetDefault();
@@ -184,6 +185,36 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     flow._collections[StatisticIndicator::MaxDrawDown] = max_dd;
                     flow._collections[StatisticIndicator::WinRate] = win_rate(daily_returns);
                     flow._collections[StatisticIndicator::Calmar] = calmar_ratio(annual_return, max_dd);
+
+                    // 尾部风险指标
+                    flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns, 0.95);
+                    flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns, 0.95);
+
+                    // Bootstrap 蒙特卡洛风险分析
+                    auto boot = bootstrap_analysis(daily_returns, 1.0, 20000, 0);
+                    flow._collections[StatisticIndicator::BootRuinProb50]       = boot._ruin_prob_50;
+                    flow._collections[StatisticIndicator::BootRuinProb30]       = boot._ruin_prob_30;
+                    flow._collections[StatisticIndicator::BootReturnP5]         = boot._return_p5;
+                    flow._collections[StatisticIndicator::BootReturnP50]        = boot._return_p50;
+                    flow._collections[StatisticIndicator::BootReturnP95]        = boot._return_p95;
+                    flow._collections[StatisticIndicator::BootMaxDDP50]         = boot._max_dd_p50;
+                    flow._collections[StatisticIndicator::BootMaxDDP95]         = boot._max_dd_p95;
+                    flow._collections[StatisticIndicator::BootMedianAnnualRet]  = boot._median_annual_ret;
+                    flow._collections[StatisticIndicator::BootTail1PctAvgDD]    = boot._tail_1pct_avg_dd;
+                    flow._collections[StatisticIndicator::BootMethod]           = static_cast<float>(boot._method);
+                    flow._collections[StatisticIndicator::BootBlockSize]        = static_cast<float>(boot._block_size);
+                    flow._collections[StatisticIndicator::BootAutocorrelation]  = boot._autocorrelation;
+                    flow._collections[StatisticIndicator::BootNSimulations]     = static_cast<float>(boot._n_simulations);
+                    // 压力测试
+                    flow._collections[StatisticIndicator::BootStressRuinProb50] = boot._stress_ruin_prob_50;
+                    flow._collections[StatisticIndicator::BootStressRuinProb30] = boot._stress_ruin_prob_30;
+                    flow._collections[StatisticIndicator::BootStressReturnP5]   = boot._stress_return_p5;
+                    flow._collections[StatisticIndicator::BootStressReturnP50]  = boot._stress_return_p50;
+                    flow._collections[StatisticIndicator::BootStressMaxDDP50]   = boot._stress_max_dd_p50;
+
+                    // 输出极端场景信息到日志
+                    // std::string boot_log = bootstrap_result_to_string(boot);
+                    // INFO("Bootstrap Analysis:\n{}", boot_log);
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);

@@ -5,7 +5,6 @@
 
 class Server;
 class IStopLoss;
-class IRiskMetric;
 class CapitalRiskManager;
 
 class RiskSubSystem {
@@ -14,8 +13,6 @@ public:
     ~RiskSubSystem();
 
     bool Init(nlohmann::json& config);
-
-    void UpdateRisk(IRiskMetric* risk);
 
     /**
      * 风控检查 - 在策略图执行后调用

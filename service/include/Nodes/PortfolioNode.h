@@ -2,6 +2,7 @@
 #include "DataContext.h"
 #include "StrategyNode.h"
 #include "Nodes/ExecutionPlan.h"
+#include "RiskContext.h"
 
 class BacktestContext;
 class PortfolioNode : public QNode {
@@ -25,6 +26,22 @@ private:
                               double capital,
                               BacktestContext* btContext);
     bool isPlanChanged(const ExecutionPlan& newPlan);
+
+    // ── 仓位 sizing 方法（默认关闭，保持原有等权行为） ──
+    enum class SizingMethod {
+        Equal,              // 默认：等权分配
+        Kelly,              // Kelly 公式
+        VolatilityTarget    // 目标波动率反推
+    };
+    SizingMethod _sizing_method = SizingMethod::Equal;
+    double _max_single_pct = 1.0;     // 单标的上限（默认不限制）
+    double _max_total_pct = 1.0;      // 总仓位上限（默认不限制）
+    double _vol_target = 0.02;        // 日波动目标（VolatilityTarget 模式用）
+
+    // 风控短路检查：RiskContext.triggered 为 true 时，将 decisions 全部改为 SELL
+    void applyRiskContext(DataContext& context, Map<symbol_t, TradeAction>& decisions);
+    // 按 sizing_method 调整仓位权重
+    void applySizingWeights(DataContext& context, Map<symbol_t, TradeAction>& decisions, double targetCapital);
 
 private:
     Server*              _server;

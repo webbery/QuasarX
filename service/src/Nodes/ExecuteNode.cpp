@@ -4,6 +4,7 @@
 #include "MarketTiming/ImmediateTiming.h"
 #include "MarketTiming/ShadowTiming.h"
 #include "server.h"
+#include "RiskContext.h"
 
 namespace{
     class BasicSignalObserver : public ISignalObserver {
@@ -48,6 +49,52 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
 }
 
 NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& context) {
+    // ── 风控短路处理：RiskContext triggered 时执行紧急平仓 ──
+    auto* rc = context.GetRiskContext();
+    if (rc && rc->triggered && rc->action == RiskAction::Close) {
+        INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+
+        // 获取当前所有持仓并生成平仓信号
+        if (_server->GetRunningMode() == RuningType::Backtest) {
+            auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+                _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+            if (histExchange) {
+                auto run_id = context.getBacktestRunId();
+                auto btCtx = histExchange->getBacktestContext(run_id);
+                if (btCtx) {
+                    for (const auto& symbol : btCtx->getSymbols()) {
+                        int64_t qty = btCtx->getPosition(symbol);
+                        if (qty > 0) {
+                            auto* signal = new TradeSignal(symbol, TradeAction::SELL);
+                            signal->SetQuantity(qty);
+                            signal->SetFlag(1); // 平仓
+                            if (context.Current() > 0) {
+                                signal->SetBacktestTime(context.Current());
+                            }
+                            context.AddSignal(signal);
+                            INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
+                        }
+                    }
+                }
+            }
+        } else {
+            auto& ap = _server->GetPosition("");
+            for (const auto& pos : ap._positions) {
+                if (pos._holds > 0) {
+                    auto* signal = new TradeSignal(pos._symbol, TradeAction::SELL);
+                    signal->SetQuantity(pos._holds);
+                    signal->SetFlag(1); // 平仓
+                    context.AddSignal(signal);
+                    INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(pos._symbol), pos._holds);
+                }
+            }
+        }
+
+        context.ConsumeSignals();
+        rc->reset();
+        return NodeProcessResult::Success;
+    }
+
     // 从 PortfolioNode 读取执行计划
     if (context.GetExecutionPlan()._hasChanged) {
         const auto& plan = context.GetExecutionPlan();
