@@ -1,9 +1,5 @@
-// app/src/stores/shiborStore.ts
-// SHIBOR 利率数据 - 单一定时器，多组件共享
-
 import { defineStore } from 'pinia'
 import axios from 'axios'
-import { aiContextBuilder } from '@/lib/AIContextBuilder'
 
 export interface ShiborItem {
   date: string
@@ -105,9 +101,6 @@ export const useShiborStore = defineStore('shibor', {
         this.lastUpdate = Date.now()
 
         console.log(`[shiborStore] 更新成功: ${response.data.date}, ${response.data.count} 条`)
-        
-        // 注册到 AI 数据源
-        this._registerToAI()
       } catch (e: any) {
         console.error('[shiborStore] 获取 SHIBOR 数据失败:', e.message)
       } finally {
@@ -134,20 +127,6 @@ export const useShiborStore = defineStore('shibor', {
       this.timer = null
 
       console.log('[shiborStore] 停止定时更新（无订阅者）')
-    },
-    
-    _registerToAI() {
-      const data = Object.values(this.data)
-      
-      aiContextBuilder.registry.register({
-        id: 'data:shibor',
-        name: 'SHIBOR利率',
-        description: '上海银行间同业拆借利率',
-        tags: ['shibor', 'interest_rate', 'macro', 'finance'],
-        getter: () => data,
-        updateFrequency: '每日',
-        aiContext: '包含日期、期限（隔夜/1周/2周等）、利率、变化值'
-      })
     },
   },
 })

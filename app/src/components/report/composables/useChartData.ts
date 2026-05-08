@@ -491,57 +491,25 @@ export function useChartData(
         dateToTrades.get(assignedTs)!.push(trade)
       }
 
-      // 策略表现计算
+      // 策略表现计算（对齐后端 C++ build_portfolio_values + simple_daily_returns）
+      // 核心逻辑：
+      // 1. 维护现金账户：买入扣现金，卖出加现金
+      // 2. 组合价值 = 现金 + 持仓市值
+      // 3. 净现金流 CF_t = 买入(负) + 卖出(正)，与后端一致
+      // 4. R_t = (V_t - V_{t-1} - CF_t) / V_{t-1}  (Modified Dietz)
       const positions = new Map<string, number>()   // symbol -> 持仓数量
-      let totalCash = INITIAL_CAPITAL               // 初始资金 100 万
-      let prevPortfolioValue = 0
+      let totalCash = INITIAL_CAPITAL               // 初始资金（与后端 initial_capital 一致）
       const returns: number[] = []
-      let initialValueSet = false
       const prevPriceMap = new Map<string, number>() // symbol -> 前一日价格
+      let prevPortfolioValue: number | null = null   // V_{t-1}，首日无前一值
 
       for (const ts of sortedPriceDates) {
-        // 日初组合价值（上日日终价值）
-        const V_start = prevPortfolioValue
-
-        // 当日净现金流（用后复权收盘价，若缺失则使用前一日价格）
-        let netCashFlow = 0
         const dayTrades = dateToTrades.get(ts) || []
 
-        // 第一遍遍历：计算净现金流，同时进行交易合法性验证
+        // === 第一步：计算当日净现金流（对齐后端 daily_cash_flows[i]）===
+        // 买入 = 负流出，卖出 = 正流入
+        let netCashFlow = 0
         for (const trade of dayTrades) {
-          // 合法性检查：quantity 必须 > 0
-          if (trade.quantity <= 0) {
-            console.warn(
-              `[useChartData] 非法交易数量: ${trade.symbol} ${trade.type} quantity=${trade.quantity} at ${formatTimestampToDate(ts)}, 已跳过`
-            )
-            continue
-          }
-
-          let px = priceMap.get(trade.symbol)?.get(ts)
-          if (px === undefined) {
-            // 使用前一日价格
-            px = prevPriceMap.get(trade.symbol)
-            if (px === undefined) {
-              console.warn(`[useChartData] 价格数据缺失: ${trade.symbol} at ${formatTimestampToDate(ts)}`)
-              continue
-            }
-          }
-
-          // 价格合法性检查
-          if (px <= 0) {
-            console.warn(
-              `[useChartData] 非法价格: ${trade.symbol} px=${px} at ${formatTimestampToDate(ts)}, 已跳过`
-            )
-            continue
-          }
-
-          const cash = trade.quantity * px
-          trade.type === 'buy' ? netCashFlow -= cash : netCashFlow += cash
-        }
-
-        // 第二遍遍历：更新持仓与现金
-        for (const trade of dayTrades) {
-          // 跳过非法交易
           if (trade.quantity <= 0) continue
 
           let px = priceMap.get(trade.symbol)?.get(ts)
@@ -549,7 +517,25 @@ export function useChartData(
             px = prevPriceMap.get(trade.symbol)
             if (px === undefined) continue
           }
+          if (px <= 0) continue
 
+          const cash = trade.quantity * px
+          if (trade.type === 'buy') {
+            netCashFlow -= cash   // 资金流出组合
+          } else {
+            netCashFlow += cash   // 资金流入组合
+          }
+        }
+
+        // === 第二步：更新持仓与现金（对齐后端 update_position + cash 更新）===
+        for (const trade of dayTrades) {
+          if (trade.quantity <= 0) continue
+
+          let px = priceMap.get(trade.symbol)?.get(ts)
+          if (px === undefined) {
+            px = prevPriceMap.get(trade.symbol)
+            if (px === undefined) continue
+          }
           if (px <= 0) continue
 
           const delta = trade.type === 'buy' ? trade.quantity : -trade.quantity
@@ -567,68 +553,39 @@ export function useChartData(
           if (newQty === 0) positions.delete(trade.symbol)
           else positions.set(trade.symbol, newQty)
 
+          // 更新现金：买入扣现金，卖出加现金（与后端一致）
           totalCash += (trade.type === 'buy' ? -1 : 1) * trade.quantity * px
         }
 
-        // 日终组合价值
+        // === 第三步：计算日终组合价值 V_t = cash + 持仓市值 ===
         let V_end = totalCash
-        const positionDetails: string[] = [] // 用于诊断信息
-
         for (const [symbol, qty] of positions) {
           let px = priceMap.get(symbol)?.get(ts)
           if (px === undefined) {
-            // 使用前一日价格
             px = prevPriceMap.get(symbol)
-            if (px === undefined) {
-              console.warn(`[useChartData] 持仓标的价格缺失，使用前一日价格: ${symbol} at ${formatTimestampToDate(ts)}`)
-              continue
-            }
+            if (px === undefined) continue
           }
           const marketValue = qty * px
           V_end += marketValue
-          positionDetails.push(`${symbol}: ${qty}股 × ${px.toFixed(2)} = ${marketValue.toFixed(2)}`)
           // 更新前一日价格缓存
           prevPriceMap.set(symbol, px)
         }
 
-        // 诊断信息：当 V_end < 0 时输出详细信息
-        if (V_end < 0) {
-          const tradeDetails = dayTrades
-            .filter(t => t.quantity > 0)
-            .map(t => {
-              const px = priceMap.get(t.symbol)?.get(ts) ?? prevPriceMap.get(t.symbol) ?? 0
-              return `${t.symbol} ${t.type} ${t.quantity}股 @ ${px.toFixed(2)} = ${(t.quantity * px).toFixed(2)}`
-            })
-
-          console.error(
-            `[useChartData] V_end 为负值: ${V_end.toFixed(2)}\n` +
-            `  现金余额: ${totalCash.toFixed(2)}\n` +
-            `  持仓明细:\n    ${positionDetails.join('\n    ') || '无持仓'}\n` +
-            `  当日交易:\n    ${tradeDetails.join('\n    ') || '无交易'}`
-          )
-        }
-
-        // 收益率计算
-        if (!initialValueSet) {
-          // 使用初始资金作为初始价值
-          prevPortfolioValue = INITIAL_CAPITAL
-          initialValueSet = true
-          returns.push(0)
-          continue
-        }
-
-        // 保护：当 V_start <= 0 时，跳过当日收益率计算
-        if (V_start <= 0) {
-          console.warn(`[useChartData] V_start 为 0 或负值，跳过当日收益率计算: V_start=${V_start}, V_end=${V_end}`)
+        // === 第四步：计算日收益率 ===
+        if (prevPortfolioValue === null || prevPortfolioValue === 0) {
+          // 第一个交易日：无基准，返回 0
           returns.push(0)
           prevPortfolioValue = V_end
           continue
         }
 
-        const dailyReturn = (V_end - V_start - netCashFlow) / V_start
+        const V_start = prevPortfolioValue
 
-        // 异常值检测：日收益率超过 ±10%
-        if (Math.abs(dailyReturn) > 0.1) {
+        // Modified Dietz: R_t = (V_t - V_{t-1} - CF_t) / V_{t-1}
+        const dailyReturn = (V_end - V_start) / V_start
+
+        // 异常值检测：日收益率超过 ±50%
+        if (Math.abs(dailyReturn) > 0.5) {
           console.warn(
             `[useChartData] 异常日收益率检测: ${(dailyReturn * 100).toFixed(2)}%, ` +
             `V_start=${V_start.toFixed(2)}, V_end=${V_end.toFixed(2)}, netCashFlow=${netCashFlow.toFixed(2)}`

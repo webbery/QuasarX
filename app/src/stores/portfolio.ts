@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import type { FlowData } from '../lib/strategyPool'
 import { extractSecuritiesFromFlowData, isAllStocks } from '../lib/strategyPool'
-import { aiContextBuilder } from '@/lib/AIContextBuilder'
 
 export interface ViewConfig {
   id: string
@@ -99,9 +98,6 @@ export const usePortfolioStore = defineStore('portfolio', {
           // const response = await axios.get(`/v0/portfolio?strategyId=${strategyId}`)
           // this.portfolioConfigs = response.data
         }
-        
-        // 注册到 AI 数据源
-        this._registerToAI()
       } catch (error) {
         console.error('加载组合配置失败:', error)
       }
@@ -148,9 +144,6 @@ export const usePortfolioStore = defineStore('portfolio', {
 
       // 保存到本地存储
       await this.saveToStorage()
-      
-      // 注册到 AI 数据源
-      this._registerToAI()
 
       return newConfig
     },
@@ -166,9 +159,6 @@ export const usePortfolioStore = defineStore('portfolio', {
         }
         this.currentPortfolioConfig = JSON.parse(JSON.stringify(this.portfolioConfigs[index]))
         await this.saveToStorage()
-        
-        // 注册到 AI 数据源
-        this._registerToAI()
       }
     },
 
@@ -194,9 +184,6 @@ export const usePortfolioStore = defineStore('portfolio', {
           config.updatedAt = Date.now()
         }
         await this.saveToStorage()
-        
-        // 注册到 AI 数据源
-        this._registerToAI()
       }
     },
 
@@ -237,31 +224,6 @@ export const usePortfolioStore = defineStore('portfolio', {
     isAllStocks(securities?: Array<{ code: string; name: string }>): boolean {
       const pool = securities || this.getCurrentStrategyPool
       return isAllStocks(pool)
-    },
-    
-    _registerToAI() {
-      const store = this
-      
-      aiContextBuilder.registry.register({
-        id: 'data:portfolio',
-        name: '投资组合',
-        description: '策略持仓配置和权重',
-        tags: ['portfolio', 'position', 'weights', 'allocation'],
-        getter: () => ({
-          strategyId: store.currentStrategyId,
-          configs: store.portfolioConfigs.map(c => ({
-            id: c.id,
-            name: c.name,
-            modelType: c.modelType,
-            securities: c.securities,
-            views: c.views,
-            optimizationResult: c.optimizationResult
-          })),
-          currentConfig: store.currentPortfolioConfig
-        }),
-        updateFrequency: '手动',
-        aiContext: '包含投资组合配置、证券权重、优化结果等'
-      })
     },
   }
 })

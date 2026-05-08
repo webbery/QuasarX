@@ -110,7 +110,7 @@ function setAllVisible(visible: boolean) {
 }
 
 function confirmReset() {
-  if (confirm('确定要重置为默认配置吗？')) {
+  if (confirm('确定要重置为默认配置吗？这将重置图表可见性、指标显示和图表顺序。')) {
     emit('reset')
   }
 }

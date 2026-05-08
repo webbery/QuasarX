@@ -58,6 +58,16 @@ export const CHART_REGISTRY: ChartDefinition[] = [
     defaultOrder: 2,
     span: 'half',
     component: () => import('../charts/SkewnessChart.vue')
+  },
+  {
+    id: 'metricsTable',
+    label: 'Strategy Metrics',
+    icon: '📋',
+    description: '策略指标表格（多列分组布局）',
+    defaultVisible: true,
+    defaultOrder: 3,
+    span: 'full',
+    component: () => import('../MetricsTable.vue')
   }
   // TODO: 迁移完成后续图表后在此添加
   // - PositionChanges

@@ -7,7 +7,12 @@
       <div class="title-icon">📋</div>
       <span>Strategy Metrics</span>
     </div>
-    <div class="metrics-grid">
+    <div v-if="metricGroups.length === 0" class="empty-state">
+      <div class="empty-icon">📊</div>
+      <div class="empty-text">暂无指标数据</div>
+      <div class="empty-hint">请执行回测或加载策略版本</div>
+    </div>
+    <div v-else class="metrics-grid">
       <div v-for="group in metricGroups" :key="group.title" class="metric-group">
         <div class="group-title">{{ group.title }}</div>
         <table class="group-table">
@@ -24,13 +29,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 
 interface Props {
   metrics: Record<string, number>
 }
 
 const props = defineProps<Props>()
+
+onMounted(() => {
+  console.log('[MetricsTable] 组件已挂载, metrics 键数量 =', Object.keys(props.metrics).length)
+})
 
 // === 指标分组与排序 ===
 
@@ -116,49 +125,100 @@ const metricNameMap: Record<string, string> = {
 // === 格式化 ===
 
 function formatMetricValue(key: string, value: number): string {
-  // 特殊格式化
+  // === 特殊处理 ===
+  // Bootstrap 方法
   if (key === 'boot_method') {
     return value === 0 ? '标准' : 'Block'
   }
-  if (key === 'boot_block_size' || key === 'boot_n_simulations') {
+  // 整数类型
+  if (key === 'boot_block_size' || key === 'boot_n_simulations' || key === 'num_trades') {
     return Math.round(value).toString()
   }
+  // 自相关系数（保留4位小数）
   if (key === 'boot_autocorrelation') {
     return value.toFixed(4)
   }
 
-  const ratioKeys = ['ratio', 'rate', 'return', 'drawdown', 'volatility', 'alpha', 'beta', 'sharp', 'prob']
-  const isRatio = ratioKeys.some(k => key.toLowerCase().includes(k))
-
-  if (isRatio) {
-    if (Math.abs(value) < 1) {
-      return `${(value * 100).toFixed(2)}%`
-    }
-    return value.toFixed(4)
+  // === 夏普比率：小数显示，保留两位小数 ===
+  if (key === 'sharp' || key === 'calmar_ratio' || key === 'information_ratio') {
+    return value.toFixed(2)
   }
 
-  const countKeys = ['num', 'count', 'days', 'trades', 'size', 'simulations', 'block']
-  const isCount = countKeys.some(k => key.toLowerCase().includes(k))
-  if (isCount) {
-    return Math.round(value).toString()
+  // === 百分比显示的指标 ===
+  
+  // 收益率类：年化、总收益、压力测试收益率、Bootstrap 收益率
+  const returnKeys = ['annual_return', 'total_return', 'stress_return', 'boot_return', 'median_annual_ret']
+  const isReturn = returnKeys.some(k => key.includes(k))
+  if (isReturn) {
+    return `${(value * 100).toFixed(2)}%`
   }
 
-  return value.toFixed(4)
+  // 回撤类：最大回撤、压力测试回撤、Bootstrap 最大回撤
+  const drawdownKeys = ['max_drawdown', 'stress_max_dd', 'boot_max_dd', 'tail_1pct_avg_dd']
+  const isDrawdown = drawdownKeys.some(k => key.includes(k))
+  if (isDrawdown) {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // 波动率
+  if (key === 'volatility') {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // 胜率
+  if (key === 'win_rate') {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // Alpha / Beta
+  if (key === 'alpha' || key === 'beta') {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // 风险价值 / 预期短缺
+  if (key === 'VAR' || key === 'ES') {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // 爆仓概率类
+  if (key.includes('ruin_prob') || key.includes('stress_ruin')) {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // === 默认：小数显示，保留两位小数 ===
+  return value.toFixed(2)
 }
 
 // === 样式辅助 ===
 
 function getValueClass(key: string, value: number): string {
-  // 正向指标：越大越好（绿色）
-  const positiveKeys = ['sharp', 'calmar', 'return', 'win_rate', 'alpha', 'profit', 'median_annual', 'return_p50', 'return_p95']
-  const isPositive = positiveKeys.some(k => key.toLowerCase().includes(k))
+  const lowerKey = key.toLowerCase()
 
-  // 负向指标：越小越好（红色）
-  const negativeKeys = ['drawdown', 'ruin_prob', 'stress_ruin', 'volatility', 'beta', 'tail_1pct', 'stress_return_p5', 'stress_max_dd']
-  const isNegative = negativeKeys.some(k => key.toLowerCase().includes(k))
+  // === 爆仓概率类：> 5% 标红 ===
+  const ruinProbKeys = ['ruin_prob', 'stress_ruin']
+  const isRuinProb = ruinProbKeys.some(k => lowerKey.includes(k))
+  if (isRuinProb && value > 0.05) return 'value-negative'
 
-  if (isPositive && value > 0) return 'value-positive'
-  if (isNegative && value > 0.05) return 'value-negative' // 回撤/爆仓概率 > 5% 标红
+  // === 压力测试负面结果：收益率 < -10% 或 回撤 > 15% 标红 ===
+  const isStressReturn = lowerKey.includes('stress_return') && value < -0.1
+  if (isStressReturn) return 'value-negative'
+
+  const isStressDrawdown = lowerKey.includes('stress_max_dd') && value > 0.15
+  if (isStressDrawdown) return 'value-negative'
+
+  // === 极端亏损：年化收益 < -20% 标红 ===
+  const isExtremeLoss = lowerKey.includes('annual_return') && value < -0.2
+  if (isExtremeLoss) return 'value-negative'
+
+  // === 极端亏损：最大回撤 > 20% 标红 ===
+  const isExtremeDrawdown = lowerKey.includes('max_drawdown') && value > 0.2
+  if (isExtremeDrawdown) return 'value-negative'
+
+  // === 收益率分布尾部：P5 < -20% 标红 ===
+  const isTailLoss = lowerKey.includes('return_p5') && value < -0.2
+  if (isTailLoss) return 'value-negative'
+
+  // === 其他所有指标：默认颜色 ===
   return ''
 }
 
@@ -177,7 +237,7 @@ interface GroupedMetrics {
 }
 
 const metricGroups = computed<GroupedMetrics[]>(() => {
-  return metricGroupsDef.map(group => {
+  const result = metricGroupsDef.map(group => {
     const items: MetricItem[] = []
     for (const key of group.keys) {
       if (props.metrics.hasOwnProperty(key)) {
@@ -192,6 +252,10 @@ const metricGroups = computed<GroupedMetrics[]>(() => {
     }
     return { title: group.title, items }
   }).filter(g => g.items.length > 0)
+
+  console.log('[MetricsTable] metricGroups 计算: 总分组数 =', result.length, '总指标数 =', result.reduce((sum, g) => sum + g.items.length, 0))
+
+  return result
 })
 
 </script>
@@ -241,6 +305,34 @@ const metricGroups = computed<GroupedMetrics[]>(() => {
   justify-content: center;
   background: rgba(41, 98, 255, 0.1);
   border-radius: 8px;
+}
+
+/* === 空状态 === */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-secondary, #a0aec0);
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.empty-text {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.empty-hint {
+  font-size: 13px;
+  opacity: 0.7;
 }
 
 /* === 多列网格 === */

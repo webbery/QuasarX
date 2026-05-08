@@ -34,7 +34,12 @@ export default defineConfig(({ command, mode }) => {
     resolve: {
       alias: {
         "@": `${__dirname}/src`,
+        "@anthropic-ai/sdk/lib/transform-json-schema": `${__dirname}/node_modules/@anthropic-ai/sdk/lib/transform-json-schema.js`,
       },
+    },
+    optimizeDeps: {
+      include: ['@anthropic-ai/sdk'],
+      exclude: ['@lancedb/lancedb'],
     },
     css: {
       preprocessorOptions: {
@@ -63,7 +68,7 @@ export default defineConfig(({ command, mode }) => {
               minify: isBuild,
               outDir: 'build/electron',
               rollupOptions: {
-                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios'],
+                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios', '@langchain/core', '@langchain/openai', '@langchain/anthropic', 'langchain', '@anthropic-ai/sdk'],
                 output: {
                   format: 'esm',
                 },

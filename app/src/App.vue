@@ -372,11 +372,12 @@ function updateReportShowMetricsTable(value) {
 }
 
 /**
- * 重置报表配置
+ * 重置报表配置（含布局）
  */
 function resetReportConfig() {
-  if (confirm('确定要重置报表配置为默认值吗？')) {
+  if (confirm('确定要重置报表配置为默认值吗？这将重置图表可见性、指标显示和图表顺序。')) {
     localStorage.removeItem('quasarx_report_config')
+    localStorage.removeItem('quasarx_report_layout')
     loadReportConfig()
   }
 }

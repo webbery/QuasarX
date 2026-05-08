@@ -3,13 +3,6 @@
 
 <template>
   <div class="report-container">
-    <!-- 工具栏 -->
-    <div class="toolbar">
-      <button class="reset-layout-btn" @click="onResetLayout" title="重置布局">
-        ↻ 重置布局
-      </button>
-    </div>
-
     <!-- 可拖拽图表列表 -->
     <div class="grid-container" ref="gridContainer">
       <div
@@ -74,7 +67,6 @@ const {
   benchmarkName,
   showMetricsTable,
   layout,
-  resetLayout,
   saveLayout,
 } = reportState
 
@@ -125,11 +117,12 @@ const orderedItems = computed<OrderedItem[]>(() => {
     // metricsTable 特殊处理
     if (item.id === 'metricsTable') {
       if (showMetricsTable.value) {
+        const currentMetrics = metricsData.value
         items.push({
           id: 'metricsTable',
           span: 'full',
           component: MetricsTable,
-          props: { metrics: metricsData },
+          props: { metrics: currentMetrics },
         })
       }
       continue
@@ -230,10 +223,6 @@ function reorderItems(fromIndex: number, toIndex: number) {
   arr.splice(toIndex, 0, moved)
   layout.value = arr
   saveLayout()
-}
-
-function onResetLayout() {
-  resetLayout()
 }
 
 // === 事件处理 ===
@@ -352,32 +341,6 @@ defineExpose({
 
 .report-container::-webkit-scrollbar-thumb:hover {
   background: var(--primary-dark, #1e4fd9);
-}
-
-/* === 工具栏 === */
-
-.toolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 20px;
-  background: var(--panel-bg, #1a2236);
-  border-bottom: 1px solid var(--border, #2a3449);
-}
-
-.reset-layout-btn {
-  padding: 6px 16px;
-  font-size: 13px;
-  border: 1px solid var(--border, #2a3449);
-  border-radius: 6px;
-  background: rgba(42, 52, 77, 0.5);
-  color: var(--text, #e0e0e0);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.reset-layout-btn:hover {
-  background: rgba(41, 98, 255, 0.2);
-  border-color: #2962ff;
 }
 
 /* === 图表网格 === */
@@ -529,10 +492,6 @@ defineExpose({
   .grid-container {
     padding: 12px;
     gap: 12px;
-  }
-
-  .toolbar {
-    padding: 8px 12px;
   }
 
   .drag-handle {

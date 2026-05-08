@@ -144,7 +144,29 @@ export function useReportState(): UseReportStateReturn {
   const defaultLayout = (): ChartLayoutItem[] =>
     CHART_REGISTRY.map(c => ({ id: c.id, visible: c.defaultVisible }))
 
-  const layout = ref<ChartLayoutItem[]>(loadLayoutFromStorage() ?? defaultLayout())
+  const layout = ref<ChartLayoutItem[]>(migrateLayout(loadLayoutFromStorage()) ?? defaultLayout())
+
+  /**
+   * 迁移布局：为旧布局自动添加新增的图表（如 metricsTable）
+   */
+  function migrateLayout(oldLayout: ChartLayoutItem[] | null): ChartLayoutItem[] | null {
+    if (!oldLayout) return null
+
+    try {
+      // 检查是否缺少 metricsTable
+      const hasMetricsTable = oldLayout.some(item => item.id === 'metricsTable')
+      if (!hasMetricsTable) {
+        console.info('[useReportState] 检测到旧布局缺少 metricsTable，自动添加')
+        // 在末尾添加 metricsTable
+        oldLayout.push({ id: 'metricsTable', visible: true })
+      }
+
+      return oldLayout
+    } catch (e) {
+      console.warn('[useReportState] 布局迁移失败，使用默认布局', e)
+      return null
+    }
+  }
 
   function loadLayoutFromStorage(): ChartLayoutItem[] | null {
     try {

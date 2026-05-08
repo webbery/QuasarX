@@ -166,8 +166,9 @@ watch(activeTab, async (newTab) => {
     const signalNode = getNodes.value.find(node => node.data.nodeType === 'signal')
     const executionNode = getNodes.value.find(node => node.data.nodeType === 'execution')
     if (signalNode && executionNode) {
-      const codes = signalNode.data.params['代码']?.value
-      const rangeDate = executionNode.data.params['回测周期']?.value
+      // 兼容中文和英文键名
+      const codes = signalNode.data.params['代码']?.value || signalNode.data.params['code']?.value
+      const rangeDate = executionNode.data.params['回测周期']?.value || executionNode.data.params['range']?.value
 
       if (codes && rangeDate && rangeDate.length === 2) {
         const symbols = Array.isArray(codes) ? codes : codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
