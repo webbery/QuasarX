@@ -370,16 +370,24 @@ export function useFlowSaveLoad(state, operations) {
         let backtestSymbol
 
         if (finalFlowData?.nodes) {
-          // 从信号节点提取回测周期
-          const signalNode = finalFlowData.nodes.find((n) =>
-            n.data?.params?.['回测周期']?.value
-          )
-          if (signalNode) {
-            const rangeDate = signalNode.data.params['回测周期'].value
-            if (rangeDate && rangeDate.length === 2) {
-              backtestStartDate = rangeDate[0]
-              backtestEndDate = rangeDate[1]
-              console.info(`[loadVersionFromHistory] 提取回测周期：${backtestStartDate} - ${backtestEndDate}`)
+          // 从策略根级 backtest 字段提取回测周期（新方式）
+          if (finalFlowData.backtest && finalFlowData.backtest.start && finalFlowData.backtest.end) {
+            backtestStartDate = finalFlowData.backtest.start
+            backtestEndDate = finalFlowData.backtest.end
+            console.info(`[loadVersionFromHistory] 提取回测周期（根级）：${backtestStartDate} - ${backtestEndDate}`)
+          }
+          // 兼容旧版本：从节点的"回测周期"参数读取（如果根级未配置）
+          if (!backtestStartDate || !backtestEndDate) {
+            const nodeWithRange = finalFlowData.nodes.find((n) =>
+              n.data?.params?.['回测周期']?.value
+            )
+            if (nodeWithRange) {
+              const rangeDate = nodeWithRange.data.params['回测周期'].value
+              if (rangeDate && rangeDate.length === 2) {
+                backtestStartDate = rangeDate[0]
+                backtestEndDate = rangeDate[1]
+                console.info(`[loadVersionFromHistory] 提取回测周期（节点兼容）：${backtestStartDate} - ${backtestEndDate}`)
+              }
             }
           }
 

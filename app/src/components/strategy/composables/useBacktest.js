@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia'
  * 回测执行与结果处理 composable
  * 处理回测执行、结果解析、图表更新等
  */
-export function useBacktest(state, saveLoad, codeSync) {
+export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) {
   const {
     getNodes,
     getEdges,
@@ -70,6 +70,10 @@ export function useBacktest(state, saveLoad, codeSync) {
       id: currentStrategyId.value ? `strategy_${currentStrategyId.value}` : `temp_${Date.now()}`,
       name: strategyName,
       description: '用户自定义策略',
+      backtest: backtestRangeRef ? {
+        start: backtestRangeRef.value[0],
+        end: backtestRangeRef.value[1]
+      } : undefined,
       nodes: getNodes.value,
       edges: getEdges.value
     }

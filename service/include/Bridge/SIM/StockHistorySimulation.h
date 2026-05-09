@@ -150,6 +150,23 @@ public:
 
   // 获取回测进度（基于策略）
   double Progress(const String& strategy);
+
+  // ============ 回测时间范围配置 ============
+  /**
+   * @brief 设置回测时间范围（可选，不设置则使用数据文件的全范围）
+   */
+  void SetBacktestTimeRange(time_t start, time_t end);
+  bool HasBacktestTimeRange() const;
+  time_t GetBacktestStartTime() const;
+  time_t GetBacktestEndTime() const;
+
+  // ============ 后复权数据访问 ============
+  /**
+   * @brief 获取指定标的的后复权收盘价和 datetime 序列
+   * @return pair<datetimes, close_prices>
+   */
+  std::pair<std::vector<time_t>, std::vector<double>> GetHFQCloseData(symbol_t symbol) const;
+
 private:
   // ============ 多线程支持方法 ============
   void matchOrders(BacktestContext* context, symbol_t symbol);
@@ -190,4 +207,9 @@ protected:
   Commission _buy;
   Commission _sell;
   float _slippage;  // 滑点
+
+  // 回测时间范围配置（可选）
+  bool _hasBacktestTimeRange = false;
+  time_t _backtestStartTime = 0;
+  time_t _backtestEndTime = 0;
 };

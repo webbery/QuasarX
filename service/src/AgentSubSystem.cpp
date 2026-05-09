@@ -164,7 +164,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 }
                 if (endNode) {
                     auto& cash_flow = endNode->GetReports();
-                    auto [portfolio_values, crash_values] = build_portfolio_values(cash_flow, context);
+                    auto [portfolio_values, crash_values] = build_portfolio_values(cash_flow, context, _handle);
                     auto daily_returns = simple_daily_return(portfolio_values);
                     auto total_return = simple_total_return(portfolio_values, context.getInitialCapital());
                     flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
@@ -213,8 +213,8 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     flow._collections[StatisticIndicator::BootStressMaxDDP50]   = boot._stress_max_dd_p50;
 
                     // 输出极端场景信息到日志
-                    // std::string boot_log = bootstrap_result_to_string(boot);
-                    // INFO("Bootstrap Analysis:\n{}", boot_log);
+                    std::string boot_log = bootstrap_result_to_string(boot);
+                    INFO("Bootstrap Analysis:\n{}", boot_log);
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);

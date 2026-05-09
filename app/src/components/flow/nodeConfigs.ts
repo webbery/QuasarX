@@ -41,7 +41,6 @@ export const keyMap: KeyMap = {
   "numTrades": "交易次数",
   "CalmarRatio": "卡玛比率",
   "InformationRatio": "信息比率",
-  "BacktestRange": "回测周期",
   "freq": "频率",
   "missingHandle": "缺失处理",
   "buy": "买入条件",
@@ -62,6 +61,20 @@ export const keyMap: KeyMap = {
   "beta": "对冲比例β",
   "window": "窗口大小",
   "allowShort": "允许做空",
+  // 风控保护节点参数
+  "stop_loss_enabled": "止损开关",
+  "stop_loss_percent": "止损比例",
+  "take_profit_enabled": "止盈开关",
+  "take_profit_percent": "止盈比例",
+  "trailing_stop_enabled": "追踪止损开关",
+  "trailing_stop_percent": "追踪止损比例",
+  "time_stop_enabled": "时间止损开关",
+  "max_bars": "最大持仓Bar数",
+  // 仓位 sizing 参数
+  "sizing_method": "仓位计算方法",
+  "max_single_pct": "单标的上限",
+  "max_total_pct": "总仓位上限",
+  "volatility_target": "波动率目标",
 }
 
 // 节点类型配置
@@ -186,10 +199,6 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
           { label: "立即执行 (市价单)", value: 0 },
           { label: "立即执行 (限价单)", value: 1 }
         ]
-      },
-      "回测周期": {
-        value: ["2020-01-01", "2023-12-31"],
-        type: "daterange"
       }
     }
   },

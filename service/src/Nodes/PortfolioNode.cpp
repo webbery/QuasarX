@@ -32,8 +32,14 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
     }
 
     // ── 新增：仓位 sizing 方法（默认 Equal，保持原有行为） ──
-    if (config["params"].contains("sizing_method")) {
-        String method = config["params"]["sizing_method"]["value"];
+    // 支持中文键（前端格式）和英文键（toServerKey 转换后 / 嵌套格式）
+    if (config["params"].contains("仓位计算方法") || config["params"].contains("sizing_method")) {
+        String method;
+        if (config["params"].contains("仓位计算方法")) {
+            method = (String)config["params"]["仓位计算方法"]["value"];
+        } else {
+            method = (String)config["params"]["sizing_method"]["value"];
+        }
         if (method == "kelly") {
             _sizing_method = SizingMethod::Kelly;
         } else if (method == "volatility_target") {
@@ -42,14 +48,26 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
             _sizing_method = SizingMethod::Equal;
         }
     }
-    if (config["params"].contains("max_single_pct")) {
-        _max_single_pct = config["params"]["max_single_pct"]["value"];
+    if (config["params"].contains("单标的上限") || config["params"].contains("max_single_pct")) {
+        if (config["params"].contains("单标的上限")) {
+            _max_single_pct = config["params"]["单标的上限"]["value"];
+        } else {
+            _max_single_pct = config["params"]["max_single_pct"]["value"];
+        }
     }
-    if (config["params"].contains("max_total_pct")) {
-        _max_total_pct = config["params"]["max_total_pct"]["value"];
+    if (config["params"].contains("总仓位上限") || config["params"].contains("max_total_pct")) {
+        if (config["params"].contains("总仓位上限")) {
+            _max_total_pct = config["params"]["总仓位上限"]["value"];
+        } else {
+            _max_total_pct = config["params"]["max_total_pct"]["value"];
+        }
     }
-    if (config["params"].contains("volatility_target")) {
-        _vol_target = config["params"]["volatility_target"]["value"];
+    if (config["params"].contains("波动率目标") || config["params"].contains("volatility_target")) {
+        if (config["params"].contains("波动率目标")) {
+            _vol_target = config["params"]["波动率目标"]["value"];
+        } else {
+            _vol_target = config["params"]["volatility_target"]["value"];
+        }
     }
 
     // 交易池 - 优先从 config 读取，如果没有则从上游 SignalNode 获取

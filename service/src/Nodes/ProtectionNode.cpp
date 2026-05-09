@@ -16,12 +16,13 @@ ProtectionNode::~ProtectionNode() {
 bool ProtectionNode::Init(const nlohmann::json& config) {
     auto& params = config["params"];
 
-    // 支持两种格式：
-    // 1. 嵌套格式（直接 JSON 配置）: "stop_loss": { "enabled": true, "percent": 0.05 }
-    // 2. 扁平格式（前端导出）: "止损开关": { "value": true }, "止损比例": { "value": 0.05 }
+    // 支持三种格式：
+    // 1. 前端中文扁平格式: "止损开关": { "value": true }, "止损比例": { "value": 0.05 }
+    // 2. 后端导出英文格式: "stop_loss_enabled": { "value": true }, "stop_loss_percent": 0.05
+    // 3. 嵌套格式: "stop_loss": { "enabled": true, "percent": 0.05 }
 
-    // 扁平格式（前端参数名 → 后端配置）
-    if (params.contains("止损开关") && params.contains("止损比例")) {
+    if (params.contains("止损开关")) {
+        // 前端中文格式
         _sl.enabled = params["止损开关"]["value"];
         _sl.percent = params["止损比例"]["value"];
         _tp.enabled = params["止盈开关"]["value"];
@@ -30,8 +31,18 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         _ts.percent = params["追踪止损比例"]["value"];
         _time.enabled = params["时间止损开关"]["value"];
         _time.max_bars = params["最大持仓Bar数"]["value"];
+    } else if (params.contains("stop_loss_enabled")) {
+        // 后端导出英文扁平格式
+        _sl.enabled = params["stop_loss_enabled"]["value"];
+        _sl.percent = params["stop_loss_percent"]["value"];
+        _tp.enabled = params["take_profit_enabled"]["value"];
+        _tp.percent = params["take_profit_percent"]["value"];
+        _ts.enabled = params["trailing_stop_enabled"]["value"];
+        _ts.percent = params["trailing_stop_percent"]["value"];
+        _time.enabled = params["time_stop_enabled"]["value"];
+        _time.max_bars = params["max_bars"]["value"];
     } else if (params.contains("stop_loss")) {
-        // 嵌套格式
+        // 嵌套格式（直接 JSON 配置）
         _sl.enabled = params["stop_loss"]["enabled"];
         _sl.percent = params["stop_loss"]["percent"];
         _tp.enabled = params["take_profit"]["enabled"];

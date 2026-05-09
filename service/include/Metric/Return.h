@@ -1,6 +1,8 @@
 #pragma once
 #include "DataContext.h"
 
+class Server;
+
 /*
  * @brief 计算动态年化回报率
  * @param flow 现金流/交易记录
@@ -39,4 +41,4 @@ Vector<double> simple_daily_return(const Vector<double>& daily_values);
 float compute_annualized_return(double total_return, int count);
 
 std::pair<std::vector<double>, std::vector<double>>
-build_portfolio_values(const crash_flow_t& flow, const DataContext& context);
+build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Server* server = nullptr);

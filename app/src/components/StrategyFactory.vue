@@ -7,6 +7,15 @@
       <div class="flow-container-wrapper">
         <InfoPanel ref="infoPanelRef" />
 
+        <!-- 回测配置栏（顶部） -->
+        <div class="backtest-config-bar">
+          <label class="config-label">回测周期</label>
+          <DateRangeParam
+            :value="backtestRange"
+            @update="updateBacktestRange"
+          />
+        </div>
+
         <FlowCanvas
           ref="flowCanvasRef"
           :nodes="getNodes"
@@ -56,6 +65,7 @@ import FlowCanvas from './FlowCanvas.vue'
 import FlowTabHeader from './FlowTabHeader.vue'
 import FlowContextMenu from './FlowContextMenu.vue'
 import PromptDialog from './PromptDialog.vue'
+import DateRangeParam from './flow/params/DateRangeParam.vue'
 import { message } from '@/tool'
 import { usePortfolioStore } from '@/stores/portfolio'
 import { useFlowState } from '@/components/strategy/composables/useFlowState'
@@ -118,8 +128,8 @@ const {
   historyStore, strategies, versions
 } = saveLoad
 
-// 初始化 backtest
-const backtest = useBacktest(state, saveLoad, codeSync)
+// 初始化 backtest（传入 backtestRange 引用）
+const backtest = useBacktest(state, saveLoad, codeSync, backtestRange)
 const { runBacktest } = backtest
 
 // Refs
@@ -128,9 +138,17 @@ const flowCanvasRef = ref(null)
 const reportViewRef = ref(null)
 const promptDialogRef = ref(null)
 
-// 提供 selectedNodes/Edges 给子组件
+// 回测时间范围配置（根级别，不配置则使用数据文件全范围）
+const backtestRange = ref(['2020-01-01', '2025-12-31'])
+
+const updateBacktestRange = (range) => {
+  backtestRange.value = range
+}
+
+// 提供 selectedNodes/Edges 和 backtestRange 给子组件
 provide('selectedNodes', selectedNodes)
 provide('selectedEdges', selectedEdges)
+provide('backtestRange', backtestRange)
 provide('portfolioConfigs', computed(() => portfolioStore.portfolioConfigs))
 
 // 监听 Vue Flow 的选中状态变化
@@ -290,6 +308,24 @@ defineExpose({
 </script>
 
 <style scoped>
+/* 回测配置栏 */
+.backtest-config-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border-color);
+  min-height: 44px;
+}
+
+.backtest-config-bar .config-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  margin: 0;
+}
+
 .main-container {
   height: 100%;
   display: flex;

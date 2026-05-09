@@ -655,6 +655,13 @@ run_id_t StockHistorySimulation::createBacktestContext(
     time_t maxStartTime = 0;  // 所有标的起始时间的最大值（确保所有标的都有数据）
     time_t minEndTime = std::numeric_limits<time_t>::max();  // 所有标的结束时间的最小值（确保不超出任何标的范围）
 
+    // 如果配置了回测时间范围，输出日志
+    if (_hasBacktestTimeRange) {
+        INFO("[Backtest] Configured time range: {} ~ {}",
+             ToString(_backtestStartTime, "%Y-%m-%d"),
+             ToString(_backtestEndTime, "%Y-%m-%d"));
+    }
+
     for (auto symbol : symbols) {
         context->addSymbol(symbol);
 
@@ -674,8 +681,10 @@ run_id_t StockHistorySimulation::createBacktestContext(
                 // 更新共同时间范围
                 if (startTime > maxStartTime) {
                     maxStartTime = startTime;
+                    maxStartTime = startTime;
                 }
                 if (endTime < minEndTime) {
+                    minEndTime = endTime;
                     minEndTime = endTime;
                 }
 
@@ -688,6 +697,12 @@ run_id_t StockHistorySimulation::createBacktestContext(
     }
 
     // 设置共同时间范围到 context
+    if (_backtestStartTime != 0) {
+        maxStartTime = _backtestStartTime;
+    }
+    if (_backtestEndTime != 0) {
+        minEndTime = _backtestEndTime;
+    }
     context->setCommonStartTime(maxStartTime);
     context->setCommonEndTime(minEndTime);
 
@@ -978,4 +993,50 @@ order_id StockHistorySimulation::AddOrder(const symbol_t& symbol, OrderContext* 
         id._type = 0;
     }
     return id;
+}
+
+// ============ 回测时间范围配置 ============
+
+void StockHistorySimulation::SetBacktestTimeRange(time_t start, time_t end) {
+    _hasBacktestTimeRange = true;
+    _backtestStartTime = start;
+    _backtestEndTime = end;
+}
+
+bool StockHistorySimulation::HasBacktestTimeRange() const {
+    return _hasBacktestTimeRange;
+}
+
+time_t StockHistorySimulation::GetBacktestStartTime() const {
+    return _backtestStartTime;
+}
+
+time_t StockHistorySimulation::GetBacktestEndTime() const {
+    return _backtestEndTime;
+}
+
+std::pair<std::vector<time_t>, std::vector<double>>
+StockHistorySimulation::GetHFQCloseData(symbol_t symbol) const {
+    std::shared_lock<std::shared_mutex> lock(const_cast<std::shared_mutex&>(_dataMutex));
+    
+    auto itr = _csvs.find(symbol);
+    if (itr == _csvs.end()) {
+        return {};
+    }
+    
+    const auto& df = itr->second;
+    const auto& header = _headers.at(symbol);
+    
+    // header: date,open,close,high,low,volume
+    if (header.size() < 3) {
+        return {};
+    }
+    
+    const auto& datetime = df.get_column<time_t>(header[0].c_str());
+    const auto& close = df.get_column<float>(header[2].c_str());
+    
+    std::vector<time_t> dts(datetime.begin(), datetime.end());
+    std::vector<double> closes(close.begin(), close.end());
+    
+    return {std::move(dts), std::move(closes)};
 }

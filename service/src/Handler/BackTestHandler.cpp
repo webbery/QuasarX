@@ -3,6 +3,7 @@
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/system.h"
+#include "Util/datetime.h"
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>
@@ -90,6 +91,23 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.set_content(msg.c_str(), "application/json");
         return;
     }
+
+    // 2.6 解析回测时间范围（可选，不配置则使用数据文件的全范围）
+    if (script.contains("backtest") && script["backtest"].contains("start") && script["backtest"].contains("end")) {
+        String startStr = script["backtest"]["start"].get<std::string>();
+        String endStr = script["backtest"]["end"].get<std::string>();
+
+        time_t startT = FromStr(startStr, "%Y-%m-%d");
+        time_t endT = FromStr(endStr, "%Y-%m-%d");
+
+        if (startT > 0 && endT > 0 && endT > startT) {
+            exchange->SetBacktestTimeRange(startT, endT);
+            INFO("[Backtest] Time range configured: {} ~ {}", startStr, endStr);
+        } else {
+            WARN("[Backtest] Invalid time range: {} ~ {}, using data range", startStr, endStr);
+        }
+    }
+
     INFO("[Backtest] Strategy graph validation passed for: {}", strategyName);
 
     // 3. 初始化策略

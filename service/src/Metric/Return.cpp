@@ -1,14 +1,16 @@
+#include "std_header.h"
 #include "Metric/Return.h"
 #include "Util/system.h"
 #include "Bridge/exchange.h"
-#include "std_header.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
+#include "server.h"
 
 namespace {
     // 多空分离持仓模型
     struct Pos { int long_qty = 0; int short_qty = 0; };
 
     // 多空分离持仓模型
-    struct Position {
+    struct _Position {
         int long_qty = 0;   // 多头持仓
         int short_qty = 0;  // 空头持仓
 
@@ -16,7 +18,7 @@ namespace {
     };
 
     // 根据交易报告更新持仓（多空分离模型）
-    void update_position(std::map<symbol_t, Position>& positions,
+    void update_position(std::map<symbol_t, _Position>& positions,
                          symbol_t symbol,
                          const TradeReport& report) {
         auto& pos = positions[symbol];
@@ -175,7 +177,7 @@ float annual_return_ratio(const crash_flow_t& flow, const DataContext& context, 
     std::vector<double> daily_cash_flows(times.size(), 0.0);
 
     // 持仓记录：symbol -> 持仓（多空分离）
-    std::map<symbol_t, Position> positions;
+    std::map<symbol_t, _Position> positions;
 
     // 价格数据缓存
     std::map<symbol_t, std::vector<double>> price_data;
@@ -375,9 +377,35 @@ Vector<double> simple_daily_return(const Vector<double>& daily_values) {
 
 // 计算每日投资组合价值（现金 + 持仓市值）
 // 返回: {daily_values, daily_cash_flows}
+// 
+// 注意：
+// - 现金流使用交易报告中的原始金额（基于原始价格）
+// - 持仓市值使用后复权价格评估，避免除权缺口导致的收益率跳变
+// ========== 调整系数法计算组合价值 ==========
+//
+// 【问题背景】
+// 回测中使用后复权价格评估持仓市值可以避免除权缺口导致的收益率跳变，
+// 但后复权价格远高于原始价格（如 sz.000001 约 123 倍），导致组合价值
+// 在买入/卖出瞬间发生数量级跳变。
+//
+// 【解决方案：调整系数法】
+// 将后复权价格归一化到原始价格体系，公式：
+//   调整后持仓市值 = Σ(持仓数量 × 后复权价格 / 调整系数)
+//   组合总价值 = 现金 + 调整后持仓市值
+//
+// 【调整系数计算原理】
+//   adjustment_ratio = mean(后复权价格 / 原始价格)
+// 即在回测期间的所有交易日上，计算后复权价格与原始价格的比值，取平均值。
+// 这个比值反映了该股票上市以来的累积复权效应，相对稳定（标准差通常 < 1%）。
+//
+// 【为什么这样做】
+// 1. 保持后复权价格的收益率连续性（无除权缺口）
+// 2. 使持仓市值与现金处于同一数量级（原始价格体系）
+// 3. 买入/卖出瞬间组合价值平滑，不会产生虚假的收益率跳变
+// ============================================================
+
 std::pair<std::vector<double>, std::vector<double>>
-build_portfolio_values(const crash_flow_t& flow, const DataContext& context) {
-    // 获取时间轴
+build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Server* server) {
     auto& times = context.GetTime();
     if (times.empty()) {
         return {{}, {}};
@@ -389,20 +417,116 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context) {
     // 持仓记录（多空分离）
     std::map<symbol_t, Pos> positions;
 
+    // 收集所有涉及的 symbol
+    std::set<symbol_t> all_symbols;
+    for (const auto& [symbol, report] : flow) {
+        all_symbols.insert(symbol);
+    }
+
     // 交易记录按时间分组
     std::map<time_t, std::vector<std::pair<symbol_t, TradeReport>>> trades_by_time;
     for (const auto& [symbol, report] : flow) {
         trades_by_time[report._time].push_back({symbol, report});
     }
 
-    // 最新成交价
-    std::map<symbol_t, double> last_prices;
+    // ---- 第 1 步：从 StockHistorySimulation 获取后复权收盘价序列 ----
+    struct HFQData {
+        std::vector<time_t> datetimes;
+        std::vector<double> closes;
+    };
+    std::map<symbol_t, HFQData> hfq_data;
 
-    // 初始资金
+    if (server) {
+        auto* exchange = dynamic_cast<StockHistorySimulation*>(server->GetAvaliableStockExchange());
+        if (exchange) {
+            for (auto symbol : all_symbols) {
+                try {
+                    auto [dts, closes] = exchange->GetHFQCloseData(symbol);
+                    if (!dts.empty()) {
+                        hfq_data[symbol] = {std::move(dts), std::move(closes)};
+                    }
+                } catch (...) {
+                    // 如果获取失败，跳过该标的
+                }
+            }
+        }
+    }
+
+    // ---- 第 2 步：计算调整系数 ----
+    // adjustment_ratio[symbol] = avg(后复权价格 / 原始价格)
+    // 通过 times[i] 匹配 context 中的原始价格和 HFQ 数据中的后复权价格
+    std::map<symbol_t, double> adjustment_ratios;
+
+    for (auto symbol : all_symbols) {
+        auto hfq_it = hfq_data.find(symbol);
+        if (hfq_it == hfq_data.end() || hfq_it->second.datetimes.empty()) continue;
+
+        const auto& hfq_dts = hfq_it->second.datetimes;
+        const auto& hfq_closes = hfq_it->second.closes;
+
+        // 从 context 获取原始价格序列（QuoteNode 写入的 {symbol}.close）
+        String name = get_symbol(symbol);
+        String closeKey = name + ".close";
+
+        try {
+            const auto& orig_prices = context.get<Vector<double>>(closeKey);
+
+            double sum_ratio = 0.0;
+            int count = 0;
+
+            // 遍历回测时间轴，在每个时间点上计算后复权/原始价格的比值
+            size_t i = 0;
+            for (auto itr = times.begin(); itr != times.end() && i < orig_prices.size(); ++itr, ++i) {
+                time_t ts = *itr;
+                double orig = orig_prices[i];
+                if (orig <= 0.0) continue;
+
+                // 在 HFQ 数据中查找 <= ts 的最近后复权价格
+                double hfq_price = 0.0;
+                for (int j = (int)hfq_dts.size() - 1; j >= 0; --j) {
+                    if (hfq_dts[j] <= ts) {
+                        hfq_price = hfq_closes[j];
+                        break;
+                    }
+                }
+
+                if (hfq_price > 0.0) {
+                    sum_ratio += hfq_price / orig;
+                    count++;
+                }
+            }
+
+            if (count > 0) {
+                adjustment_ratios[symbol] = sum_ratio / count;
+            }
+        } catch (...) {
+            // 如果 context 中没有原始价格数据，跳过该标的
+        }
+    }
+
+    // ---- 第 3 步：辅助函数 ----
+    // 根据 timestamp 查找对应的后复权价格
+    auto get_hfq_price = [&](const symbol_t& symbol, time_t ts) -> double {
+        auto it = hfq_data.find(symbol);
+        if (it == hfq_data.end() || it->second.datetimes.empty()) {
+            return 0.0;
+        }
+        const auto& dts = it->second.datetimes;
+        const auto& prices = it->second.closes;
+        // 从后往前找最近的 <= ts 的价格
+        for (int j = (int)dts.size() - 1; j >= 0; --j) {
+            if (dts[j] <= ts) {
+                return prices[j];
+            }
+        }
+        return prices.empty() ? 0.0 : prices[0];
+    };
+
+    // ---- 第 4 步：遍历每个交易日，计算组合价值 ----
+    std::map<symbol_t, double> last_trade_prices;
     double initial_capital = context.getInitialCapital();
     double cash = initial_capital;
 
-    // 遍历每个交易日
     size_t i = 0;
     for (auto itr = times.begin(); itr != times.end(); ++i, ++itr) {
         time_t current_time = *itr;
@@ -428,21 +552,44 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context) {
                     cash += report._trade_amount;
                 }
 
-                last_prices[symbol] = report._price;
+                last_trade_prices[symbol] = report._price;
             }
         }
 
         // 组合价值 = 现金 + 持仓市值
+        // 持仓市值使用调整系数归一化：pos_value = qty × hfq_price / adjustment_ratio
         double portfolio_value = cash;
+        double total_position_value = 0.0;
+
         for (const auto& [symbol, pos] : positions) {
             if (pos.long_qty == 0 && pos.short_qty == 0) continue;
-            auto it = last_prices.find(symbol);
-            if (it == last_prices.end()) continue;
-            portfolio_value += pos.long_qty * it->second - pos.short_qty * it->second;
+
+            double hfq_price = get_hfq_price(symbol, current_time);
+            if (hfq_price > 0.0) {
+                double ratio = 1.0;
+                auto ratio_it = adjustment_ratios.find(symbol);
+                if (ratio_it != adjustment_ratios.end()) {
+                    ratio = ratio_it->second;
+                }
+                // 使用调整系数归一化持仓市值
+                total_position_value += (pos.long_qty - pos.short_qty) * hfq_price / ratio;
+            } else {
+                // 回退：使用原始价格（从 last_trade_prices 获取）
+                auto it = last_trade_prices.find(symbol);
+                if (it != last_trade_prices.end()) {
+                    total_position_value += (pos.long_qty - pos.short_qty) * it->second;
+                }
+            }
         }
+
+        portfolio_value += total_position_value;
         daily_values[i] = portfolio_value;
-        // INFO("[BuildPortfolio] day={} time={} portfolio_value={:.2f} cash={:.2f} cash_flow={:.2f}",
-        //      i, current_time, portfolio_value, cash, daily_cash_flows[i]);
+
+        // 打印前15天的调试信息（与 Python 端输出格式对齐）
+        if (i < 15) {
+            INFO("[BuildPortfolio] Day {} ({}) cash={:.0f} pos_value={:.0f} total={:.0f} cash_flow={:.0f}",
+                 i + 1, current_time, cash, total_position_value, portfolio_value, daily_cash_flows[i]);
+        }
     }
 
     return {daily_values, daily_cash_flows};
