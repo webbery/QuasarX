@@ -5,6 +5,9 @@
       class="chat-box"
       :style="containerStyle"
     >
+      <!-- 左边框调整手柄 -->
+      <div class="resize-handle resize-handle-left" @mousedown="startResizeLeft"></div>
+      
       <!-- 头部 -->
       <div class="chat-header" @mousedown="startDrag">
         <div class="chat-title">
@@ -29,12 +32,29 @@
           <div class="message-avatar">
             <i :class="msg.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
           </div>
-          <div class="message-content">
+          <div class="message-content" :class="{ 'has-thoughts': msg.thoughts?.length }">
+            <!-- 思考展开/收缩链接 -->
+            <div v-if="msg.thoughts?.length" class="thought-toggle">
+              <a @click="toggleThoughts(msg.id)" class="thought-link">
+                {{ expandedThoughts.has(msg.id) ? '收起思考' : `展开思考 (${msg.thoughts.length}步)` }}
+              </a>
+            </div>
+
+            <!-- 最终结果（标准字体） -->
             <div
               class="message-text"
               :class="{ 'markdown-body': msg.role === 'assistant' }"
               v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content"
             ></div>
+
+            <!-- 思考内容（灰体字，可展开） -->
+            <div v-if="expandedThoughts.has(msg.id) && msg.thoughts" class="thought-steps">
+              <div v-for="step in msg.thoughts" :key="step.id" class="thought-step">
+                <span class="thought-icon">💭</span>
+                <span class="thought-content">{{ step.content }}</span>
+              </div>
+            </div>
+
             <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
           </div>
         </div>
@@ -77,7 +97,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { useChatStore } from '@/stores/chatStore'
+import { useChatStore, type ThoughtStep } from '@/stores/chatStore'
 import { askAI } from '@/lib/ChatApi'
 import MarkdownIt from 'markdown-it'
 
@@ -87,14 +107,31 @@ const chatStore = useChatStore()
 const inputText = ref('')
 const messageListRef = ref<HTMLDivElement>()
 
+// 思考展开/收缩状态
+const expandedThoughts = ref(new Set<string>())
+
+function toggleThoughts(messageId: string) {
+  if (expandedThoughts.value.has(messageId)) {
+    expandedThoughts.value.delete(messageId)
+  } else {
+    expandedThoughts.value.add(messageId)
+  }
+}
+
 // 拖拽相关
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 const containerPosition = ref({ right: 20, bottom: 80 })
 
+// 调整大小相关
+const isResizing = ref(false)
+const resizeStartX = ref(0)
+const containerWidth = ref(380) // 默认宽度
+
 const containerStyle = computed(() => ({
   right: `${containerPosition.value.right}px`,
   bottom: `${containerPosition.value.bottom}px`,
+  width: `${containerWidth.value}px`,
 }))
 
 function startDrag(e: MouseEvent) {
@@ -112,6 +149,35 @@ function startDrag(e: MouseEvent) {
 
   const onMouseUp = () => {
     isDragging.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
+// 开始调整大小（左边框）
+function startResizeLeft(e: MouseEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  isResizing.value = true
+  resizeStartX.value = e.clientX
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    if (!isResizing.value) return
+    
+    const dx = moveEvent.clientX - resizeStartX.value
+    // 向左拖动（dx 为负）时增加宽度，向右拖动（dx 为正）时减少宽度
+    const newWidth = containerWidth.value - dx
+    
+    // 限制最小宽度 280px，最大宽度 800px
+    containerWidth.value = Math.min(Math.max(newWidth, 280), 800)
+    resizeStartX.value = moveEvent.clientX
+  }
+
+  const onMouseUp = () => {
+    isResizing.value = false
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
   }
@@ -152,7 +218,7 @@ async function sendMessage() {
 
   try {
     // 调用 AI，注入行情上下文和对话历史
-    const response = await askAI(text, {
+    const result = await askAI(text, {
       context: chatStore.marketContext,
       history: chatStore.messages.slice(0, -1), // 传递除当前消息外的所有历史
     })
@@ -162,7 +228,8 @@ async function sendMessage() {
     // 添加 AI 回复
     chatStore.addMessage({
       role: 'assistant',
-      content: response,
+      content: result.answer,
+      thoughts: result.thoughts.length > 0 ? result.thoughts : undefined,
     })
   } catch (error) {
     chatStore.isLoading = false
@@ -198,6 +265,26 @@ function renderMarkdown(text: string): string {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* 左边框调整手柄 */
+.resize-handle-left {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 10;
+  transition: background-color 0.2s;
+}
+
+.resize-handle-left:hover {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.resize-handle-left:active {
+  background: rgba(59, 130, 246, 0.5);
 }
 
 .chat-header {
@@ -296,6 +383,66 @@ function renderMarkdown(text: string): string {
 
 .message-content {
   max-width: 75%;
+}
+
+.message-content.has-thoughts {
+  position: relative;
+}
+
+.thought-toggle {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 11px;
+  z-index: 10;
+}
+
+.thought-link {
+  color: #60a5fa;
+  cursor: pointer;
+  text-decoration: none;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.thought-link:hover {
+  background: rgba(0, 0, 0, 0.5);
+  text-decoration: underline;
+}
+
+.thought-steps {
+  margin-top: 8px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  border-left: 3px solid #6b7280;
+}
+
+.thought-step {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: flex-start;
+}
+
+.thought-step:last-child {
+  margin-bottom: 0;
+}
+
+.thought-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.thought-content {
+  color: #9ca3af;
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.5;
+  word-wrap: break-word;
 }
 
 .message-text {

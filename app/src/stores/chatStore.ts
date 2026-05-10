@@ -5,11 +5,19 @@ import { useAccountStore } from './account'
 import { fetchSectorQuotes, calculateTotalAdvanceDecline } from '@/lib/sectorApi'
 import { useMockRiskData } from '@/components/risk/hooks/useMockRiskData'
 
+export interface ThoughtStep {
+  id: string
+  content: string        // 思考内容（灰体字）
+  toolName?: string      // 调用的工具名称
+  timestamp: number
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
+  thoughts?: ThoughtStep[]  // 思考步骤
 }
 
 export const useChatStore = defineStore('chat', () => {

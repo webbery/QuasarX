@@ -112,6 +112,41 @@
                 </div>
             </div>
 
+            <!-- Tavily 搜索配置（新增） -->
+            <div class="settings-section">
+                <div class="section-header" @click="toggleSection('tavily')">
+                    <div class="section-title">
+                        <div class="section-icon" style="background-color: rgba(52, 152, 219, 0.1); color: #3498db;">
+                            <span>🔍</span>
+                        </div>
+                        <span>Tavily 网络搜索配置</span>
+                    </div>
+                    <div class="section-arrow" :class="{ rotated: expandedSections.tavily }">▼</div>
+                </div>
+                <div class="section-content" :class="{ expanded: expandedSections.tavily }">
+                    <div class="form-group">
+                        <label>Tavily API Key</label>
+                        <input type="password" class="form-control" v-model="tavilyApiKey" placeholder="请输入 Tavily API Key（可选）">
+                    </div>
+                    <p class="hint">
+                        在 <a href="https://tavily.com" target="_blank">tavily.com</a> 获取 API Key，用于网络搜索功能。免费额度：1000 次/月
+                    </p>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" @click="saveTavilyConfig">保存配置</button>
+                        <button class="btn btn-secondary" @click="testTavilyConnection" :disabled="testingTavilyConnection">
+                            {{ testingTavilyConnection ? '测试中...' : '测试连接' }}
+                        </button>
+                        <button class="btn btn-danger" @click="clearTavilyConfig">清除配置</button>
+                    </div>
+                    <div class="test-result" :class="tavilyTestResult?.success ? 'success' : 'error'" v-if="tavilyTestResult">
+                        <span :class="['result-icon', tavilyTestResult.success ? 'success' : 'error']">
+                            {{ tavilyTestResult.success ? '✓' : '✗' }}
+                        </span>
+                        {{ tavilyTestResult.message }}
+                    </div>
+                </div>
+            </div>
+
             <!-- 股票设置 -->
             <div class="settings-section">
                 <div class="section-header" @click="toggleSection('stock')">
@@ -262,6 +297,7 @@ const expandedSections = ref({
     task: false,
     tickflow: false,  // TickFlow 配置
     agent: false,     // Agent 模型配置
+    tavily: false,    // Tavily 搜索配置
 });
 
 // 远程服务器数据
@@ -332,6 +368,66 @@ const agentConfig = ref({
 
 const testingAgentConnection = ref(false);
 const agentTestResult = ref(null);
+
+// Tavily 搜索配置
+const tavilyApiKey = ref(localStorage.getItem('tavily_api_key') || '');
+const testingTavilyConnection = ref(false);
+const tavilyTestResult = ref(null);
+
+// Tavily 配置保存
+const saveTavilyConfig = () => {
+    localStorage.setItem('tavily_api_key', tavilyApiKey.value);
+    message.success('Tavily API 配置已保存');
+};
+
+// Tavily 配置清除
+const clearTavilyConfig = () => {
+    localStorage.removeItem('tavily_api_key');
+    tavilyApiKey.value = '';
+    tavilyTestResult.value = null;
+    message.success('Tavily API 配置已清除');
+};
+
+// Tavily API 连接测试
+const testTavilyConnection = async () => {
+    testingTavilyConnection.value = true;
+    tavilyTestResult.value = null;
+
+    try {
+        if (!tavilyApiKey.value) {
+            throw new Error('API Key 不能为空');
+        }
+
+        const response = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                api_key: tavilyApiKey.value,
+                query: 'test',
+                max_results: 1,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail?.error || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        tavilyTestResult.value = { 
+            success: true, 
+            message: `连接成功！账户状态正常` 
+        };
+        message.success('Tavily API 连接测试成功');
+    } catch (e) {
+        tavilyTestResult.value = { success: false, message: e.message };
+        message.error('Tavily API 连接测试失败：' + e.message);
+    } finally {
+        testingTavilyConnection.value = false;
+    }
+};
 
 // 任务调度
 const tasks = ref([
@@ -549,6 +645,12 @@ onMounted(async () => {
         }
     } catch (e) {
         console.error('[Setting] 加载 Agent 配置失败:', e)
+    }
+
+    // 加载 Tavily 配置
+    const savedTavilyKey = localStorage.getItem('tavily_api_key');
+    if (savedTavilyKey) {
+        tavilyApiKey.value = savedTavilyKey;
     }
 })
 </script>

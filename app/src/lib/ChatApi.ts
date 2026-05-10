@@ -8,8 +8,14 @@ import { getAgentConfig, createLLM } from "@/lib/agent"
 import { getAllTools } from "@/lib/tools"
 import { systemPrompt } from "@/lib/prompts/system"
 import { getOrCompressHistory } from "@/lib/history"
-import type { ChatMessage } from "@/stores/chatStore"
-import { HumanMessage, SystemMessage } from "@langchain/core/messages"
+import type { ChatMessage, ThoughtStep } from "@/stores/chatStore"
+import { HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages"
+import type { StructuredToolInterface } from "@langchain/core/tools"
+
+export interface AskAIResult {
+  answer: string
+  thoughts: ThoughtStep[]
+}
 
 export interface AskOptions {
   context?: string              // 背景知识上下文（保留兼容）
@@ -35,13 +41,17 @@ export interface AskOptions {
 export async function askAI(
   question: string,
   options: AskOptions = {}
-): Promise<string> {
+): Promise<AskAIResult> {
   const { history, onChunk, onDone, onError } = options
+  const thoughts: ThoughtStep[] = []
 
   // 检查 Agent 配置
   const agentConfig = getAgentConfig()
   if (!agentConfig) {
-    return "请先在设置中配置 AI 服务。打开 设置 > Agent 大语言模型配置，填写服务 URL、协议和 API Key。"
+    return {
+      answer: "请先在设置中配置 AI 服务。打开 设置 > Agent 大语言模型配置，填写服务 URL、协议和 API Key。",
+      thoughts: []
+    }
   }
 
   try {
@@ -67,59 +77,131 @@ export async function askAI(
       new HumanMessage(question),
     ]
 
-    // 步骤 6: 调用 LLM（Tool Calling 自动执行）
+    // 步骤 6: Tool Calling 循环执行
     console.log(`[Agent] 发送消息给 LLM (${messages.length} 条), 已绑定 ${tools.length} 个工具`)
 
-    const response = await llmWithTools.invoke(messages, {
-      callbacks: [{
-        handleLLMEnd(output) {
-          // LLM 输出后：检查是否有 tool_calls
-          const msg = output.generations[0]?.[0]?.message
-          if (!msg) return
+    const maxToolCalls = 10 // 防止无限循环
+    let toolCallCount = 0
 
-          // 收集 tool_calls（可能在 additional_kwargs 或 content 数组中）
-          const toolCalls = msg.additional_kwargs?.tool_calls
-            ?? (Array.isArray(msg.content)
-              ? msg.content.filter((c: any) => c.type === "tool_use")
-              : [])
+    while (toolCallCount < maxToolCalls) {
+      // 调用 LLM
+      const response = await llmWithTools.invoke(messages)
 
-          if (toolCalls.length > 0) {
-            console.log("[Agent] LLM 决定调用工具:")
-            for (const tc of toolCalls) {
-              // 兼容 OpenAI 格式 (function.arguments) 和 Anthropic 格式 (input)
-              const args = tc.function?.arguments
-                ?? (tc.input ? JSON.stringify(tc.input) : "{}")
-              const name = tc.function?.name ?? tc.name ?? "unknown"
-              console.log(`  ├── Tool: ${name}`)
-              console.log(`  └── Args: ${args}`)
-            }
+      // 提取消息内容
+      const msgContent = response.content
+      const hasTextContent = typeof msgContent === "string" && msgContent.trim().length > 0
+      const hasTextBlock = Array.isArray(msgContent) && msgContent.some((c: any) => c.type === "text" || c.type === "text_block")
+
+      // 收集 thinking 内容
+      if (Array.isArray(msgContent)) {
+        for (const c of msgContent) {
+          if (c.type === "thinking" && c.thinking) {
+            thoughts.push({
+              id: c.id || `thought_${Date.now()}_${thoughts.length}`,
+              content: c.thinking,
+              toolName: c.name,
+              timestamp: Date.now()
+            })
+          }
+        }
+      }
+
+      // 收集 tool_calls
+      const toolCalls = response.additional_kwargs?.tool_calls
+        ?? (Array.isArray(msgContent)
+          ? msgContent.filter((c: any) => c.type === "tool_use")
+          : [])
+
+      // 如果没有工具调用，说明 LLM 已经完成回复
+      if (!toolCalls || toolCalls.length === 0) {
+        console.log("[Agent] LLM 完成回复，无更多工具调用")
+        break
+      }
+
+      toolCallCount++
+      console.log(`[Agent] 第 ${toolCallCount} 轮工具调用，共 ${toolCalls.length} 个工具`)
+
+      // 执行每个工具调用
+      const toolResults: ToolMessage[] = []
+      for (const tc of toolCalls) {
+        // 兼容 OpenAI 和 Anthropic 格式
+        const toolName = tc.function?.name ?? tc.name ?? "unknown"
+        const argsStr = tc.function?.arguments ?? (tc.input ? JSON.stringify(tc.input) : "{}")
+        const toolCallId = tc.id ?? `call_${Date.now()}`
+
+        console.log(`[Agent] 执行工具: ${toolName}, 参数: ${argsStr}`)
+
+        try {
+          // 查找对应的工具
+          const tool = tools.find((t: StructuredToolInterface) => t.name === toolName)
+          if (!tool) {
+            console.error(`[Agent] 未找到工具: ${toolName}`)
+            toolResults.push(new ToolMessage({
+              content: `错误：未找到工具 "${toolName}"`,
+              tool_call_id: toolCallId,
+            }))
+            continue
           }
 
-          // 提取文本内容（content 可能是数组）
-          const textBlock = Array.isArray(msg.content)
-            ? msg.content.find((c: any) => c.type === "text")?.text ?? ""
-            : (typeof msg.content === "string" ? msg.content : "")
+          // 解析参数并执行
+          const args = typeof argsStr === "string" ? JSON.parse(argsStr) : argsStr
+          const result = await tool.invoke(args)
 
-          if (textBlock && toolCalls.length === 0) {
-            const preview = textBlock.substring(0, 100)
-            console.log(`[Agent] LLM 直接回复（未调用工具）: "${preview}${textBlock.length > 100 ? "..." : ""}"`)
-          } else if (textBlock && toolCalls.length > 0) {
-            const preview = textBlock.substring(0, 100)
-            console.log(`[Agent] LLM 附带文本: "${preview}${textBlock.length > 100 ? "..." : ""}"`)
-          }
-        },
-        handleToolEnd(output) {
-          // Tool 执行完成后
-          const preview = typeof output === "string" ? output : JSON.stringify(output)
-          console.log(`[Tool Result] ${preview.substring(0, 200)}${preview.length > 200 ? "..." : ""}`)
-        },
-      }]
-    })
+          console.log(`[Agent] 工具 ${toolName} 执行成功，结果长度: ${typeof result === "string" ? result.length : JSON.stringify(result).length}`)
+
+          toolResults.push(new ToolMessage({
+            content: typeof result === "string" ? result : JSON.stringify(result),
+            tool_call_id: toolCallId,
+          }))
+        } catch (error) {
+          console.error(`[Agent] 工具 ${toolName} 执行失败:`, error)
+          toolResults.push(new ToolMessage({
+            content: `工具执行错误: ${(error as Error).message}`,
+            tool_call_id: toolCallId,
+          }))
+        }
+      }
+
+      // 将 LLM 的回复和工具结果添加到消息历史
+      messages.push(response)
+      messages.push(...toolResults)
+    }
+
+    if (toolCallCount >= maxToolCalls) {
+      console.warn(`[Agent] 达到最大工具调用次数限制 (${maxToolCalls})，停止执行`)
+    }
+
+    // 获取最终回复
+    const finalResponse = messages[messages.length - 1]
 
     // 提取回复内容
-    const answer = typeof response.content === "string"
-      ? response.content
-      : (response.content as Array<{ type?: string; text?: string }>).map((c: any) => c.text ?? "").join("")
+    // content 可能是字符串或数组（包含 text, thinking, tool_use 等类型）
+    let answer = ""
+    const finalContent = finalResponse?.content
+    
+    if (typeof finalContent === "string") {
+      answer = finalContent
+    } else if (Array.isArray(finalContent)) {
+      // 优先提取 text 类型的块
+      const textBlocks = (finalContent as Array<{ type?: string; text?: string }>)
+        .filter((c: any) => c.type === "text" || c.type === "text_block")
+        .map((c: any) => c.text ?? "")
+        .join("")
+      
+      // 如果没有 text 块，尝试其他字段
+      answer = textBlocks || (finalContent as Array<any>)
+        .map((c: any) => c.text ?? c.content ?? "")
+        .join("")
+    }
+
+    // 如果最终回复是工具结果，说明 LLM 没有给出文本回复
+    if (!answer && finalResponse instanceof ToolMessage) {
+      answer = typeof finalResponse.content === "string" 
+        ? finalResponse.content 
+        : JSON.stringify(finalResponse.content)
+    }
+
+    console.log(`[Agent] 最终回复长度: ${answer.length}, 预览: "${answer.substring(0, 100)}${answer.length > 100 ? "..." : ""}"`)
 
     if (onChunk) {
       onChunk(answer)
@@ -129,7 +211,7 @@ export async function askAI(
       onDone(answer)
     }
 
-    return answer
+    return { answer, thoughts }
   } catch (error) {
     console.error("[Chat] AI 请求失败:", error)
 
@@ -137,35 +219,24 @@ export async function askAI(
       onError(error as Error)
     }
 
-    return `抱歉，AI 服务暂时不可用。错误详情: ${(error as Error).message}`
+    return {
+      answer: `抱歉，AI 服务暂时不可用。错误详情: ${(error as Error).message}`,
+      thoughts: []
+    }
   }
-}
-
-/**
- * 向 AI 助手提问（兼容旧版接口，支持 LLM 回调用于摘要压缩）
- *
- * @deprecated 使用 askAI() 即可，摘要压缩已自动处理
- */
-export async function askAIWithSummary(
-  question: string,
-  _llmCallback: (prompt: string) => Promise<string>,
-  options: AskOptions = {}
-): Promise<string> {
-  // 直接委托给 askAI，摘要压缩在 getOrCompressHistory 中自动处理
-  return askAI(question, options)
 }
 
 /**
  * 快捷提问 - 行情分析
  */
-export async function askMarketAnalysis(): Promise<string> {
+export async function askMarketAnalysis(): Promise<AskAIResult> {
   return askAI("请分析当前市场行情，包括：\n1. 主要指数走势\n2. 板块涨跌情况\n3. 市场情绪指标")
 }
 
 /**
  * 快捷提问 - 策略建议
  */
-export async function askStrategyAdvice(strategyName?: string): Promise<string> {
+export async function askStrategyAdvice(strategyName?: string): Promise<AskAIResult> {
   const question = strategyName
     ? `请为策略"${strategyName}"提供优化建议`
     : "请提供一些策略设计的基本原则和建议"
@@ -176,13 +247,13 @@ export async function askStrategyAdvice(strategyName?: string): Promise<string> 
 /**
  * 快捷提问 - 风险预警
  */
-export async function askRiskWarning(): Promise<string> {
+export async function askRiskWarning(): Promise<AskAIResult> {
   return askAI("请分析我当前的风险状况，并提供风险管理建议")
 }
 
 /**
  * 快捷提问 - 持仓诊断
  */
-export async function askPositionDiagnosis(): Promise<string> {
+export async function askPositionDiagnosis(): Promise<AskAIResult> {
   return askAI("请分析我当前的持仓结构，并提供调仓建议")
 }
