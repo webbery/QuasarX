@@ -166,7 +166,7 @@
 
 <script setup lang="ts">
 import { computed, inject, ref, onMounted, onUnmounted, type PropType } from 'vue'
-import { getNodeIcon, getNodeColor } from './config/nodeTypeConfig'
+import { getNodeIcon, getNodeColor } from '@/lib/nodes'
 import { useNodeSelection } from './composables/useNodeSelection'
 import { useNodeEditing } from './composables/useNodeEditing'
 import { useNodeDropdown } from './composables/useNodeDropdown'

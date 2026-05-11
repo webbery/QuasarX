@@ -20,6 +20,7 @@ import { datetimeTool } from "./datetime"
 import { platformTool } from "./platform"
 import { knowledgeTool } from "./knowledge"
 import { webSearchTool } from "./webSearch"
+import { strategyTool } from "./strategy"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -29,6 +30,7 @@ const builtinTools: StructuredToolInterface[] = [
   platformTool,
   knowledgeTool,
   webSearchTool,
+  strategyTool,
 ]
 
 // === 插件 Tool 加载 ===

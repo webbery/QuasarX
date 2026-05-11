@@ -459,10 +459,19 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
 
     for (auto symbol : all_symbols) {
         auto hfq_it = hfq_data.find(symbol);
-        if (hfq_it == hfq_data.end() || hfq_it->second.datetimes.empty()) continue;
+        if (hfq_it == hfq_data.end() || hfq_it->second.datetimes.empty()) {
+            INFO("[AdjustRatio] Symbol {}: no HFQ data, skipping", get_symbol(symbol));
+            continue;
+        }
 
         const auto& hfq_dts = hfq_it->second.datetimes;
         const auto& hfq_closes = hfq_it->second.closes;
+
+        // 调试：打印 HFQ 数据样本
+        INFO("[AdjustRatio] Symbol {} HFQ: {} rows, first_ts={}, first_close={:.2f}, last_ts={}, last_close={:.2f}",
+             get_symbol(symbol), hfq_dts.size(),
+             hfq_dts.front(), hfq_closes.front(),
+             hfq_dts.back(), hfq_closes.back());
 
         // 从 context 获取原始价格序列（QuoteNode 写入的 {symbol}.close）
         String name = get_symbol(symbol);
@@ -470,16 +479,21 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
 
         try {
             const auto& orig_prices = context.get<Vector<double>>(closeKey);
+            INFO("[AdjustRatio] Symbol {} orig_prices: {} rows, first={:.2f}, last={:.2f}",
+                 get_symbol(symbol), orig_prices.size(),
+                 orig_prices.empty() ? 0.0 : orig_prices.front(),
+                 orig_prices.empty() ? 0.0 : orig_prices.back());
 
             double sum_ratio = 0.0;
             int count = 0;
+            int nan_count = 0;
 
             // 遍历回测时间轴，在每个时间点上计算后复权/原始价格的比值
             size_t i = 0;
             for (auto itr = times.begin(); itr != times.end() && i < orig_prices.size(); ++itr, ++i) {
                 time_t ts = *itr;
                 double orig = orig_prices[i];
-                if (orig <= 0.0) continue;
+                if (orig <= 0.0 || std::isnan(orig)) continue;
 
                 // 在 HFQ 数据中查找 <= ts 的最近后复权价格
                 double hfq_price = 0.0;
@@ -490,17 +504,32 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
                     }
                 }
 
-                if (hfq_price > 0.0) {
+                if (hfq_price > 0.0 && !std::isnan(hfq_price)) {
                     sum_ratio += hfq_price / orig;
                     count++;
+                    if (count <= 3) {
+                        INFO("[AdjustRatio] Sample {} ts={} orig={:.2f} hfq={:.2f} ratio={:.4f}",
+                             count, ts, orig, hfq_price, hfq_price / orig);
+                    }
+                } else {
+                    if (std::isnan(hfq_price)) nan_count++;
                 }
             }
 
+            INFO("[AdjustRatio] Symbol {} sum_ratio={:.2f} count={} nan_count={}",
+                 get_symbol(symbol), sum_ratio, count, nan_count);
+
             if (count > 0) {
                 adjustment_ratios[symbol] = sum_ratio / count;
+                INFO("[AdjustRatio] Symbol {} FINAL ratio={:.4f}",
+                     get_symbol(symbol), adjustment_ratios[symbol]);
+            } else {
+                WARN("[AdjustRatio] Symbol {} NO valid samples, ratio=1.0", get_symbol(symbol));
             }
+        } catch (const std::exception& e) {
+            INFO("[AdjustRatio] Symbol {} exception: {}", get_symbol(symbol), e.what());
         } catch (...) {
-            // 如果 context 中没有原始价格数据，跳过该标的
+            INFO("[AdjustRatio] Symbol {} unknown exception", get_symbol(symbol));
         }
     }
 
@@ -513,7 +542,6 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
         }
         const auto& dts = it->second.datetimes;
         const auto& prices = it->second.closes;
-        // 从后往前找最近的 <= ts 的价格
         for (int j = (int)dts.size() - 1; j >= 0; --j) {
             if (dts[j] <= ts) {
                 return prices[j];
@@ -571,10 +599,9 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
                 if (ratio_it != adjustment_ratios.end()) {
                     ratio = ratio_it->second;
                 }
-                // 使用调整系数归一化持仓市值
                 total_position_value += (pos.long_qty - pos.short_qty) * hfq_price / ratio;
             } else {
-                // 回退：使用原始价格（从 last_trade_prices 获取）
+                // 回退：使用原始价格
                 auto it = last_trade_prices.find(symbol);
                 if (it != last_trade_prices.end()) {
                     total_position_value += (pos.long_qty - pos.short_qty) * it->second;
@@ -585,7 +612,7 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
         portfolio_value += total_position_value;
         daily_values[i] = portfolio_value;
 
-        // 打印前15天的调试信息（与 Python 端输出格式对齐）
+        // 打印前15天的调试信息
         if (i < 15) {
             INFO("[BuildPortfolio] Day {} ({}) cash={:.0f} pos_value={:.0f} total={:.0f} cash_flow={:.0f}",
                  i + 1, current_time, cash, total_position_value, portfolio_value, daily_cash_flows[i]);

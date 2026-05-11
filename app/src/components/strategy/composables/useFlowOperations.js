@@ -1,6 +1,6 @@
 import { nextTick } from 'vue'
 import { MarkerType } from '@vue-flow/core'
-import { nodeTypeConfigs } from '../../flow/nodeConfigs'
+import { getNode } from '@/lib/nodes'
 
 /**
  * 流程图操作 composable
@@ -310,27 +310,52 @@ export function useFlowOperations(state) {
    */
   const onDrop = (event) => {
     const { dataTransfer, clientX, clientY } = event
-    const nodeType = dataTransfer?.getData('application/vueflow')
-    
-    if (nodeType && nodeTypeConfigs[nodeType]) {
-      const position = screenToFlowCoordinate({
-        x: clientX,
-        y: clientY,
-      })
+    const nodeId = dataTransfer?.getData('application/vueflow')
 
-      const newNode = {
-        id: `${nodeIdCounter.value++}`,
-        type: 'custom',
-        position,
-        data: {
-          label: nodeTypeConfigs[nodeType].label,
-          nodeType: nodeTypeConfigs[nodeType].nodeType,
-          params: JSON.parse(JSON.stringify(nodeTypeConfigs[nodeType].params)) // 深拷贝参数
-        }
-      }
-
-      addNodes([newNode])
+    const entry = getNode(nodeId)
+    if (!entry) {
+      console.warn(`[Flow] 未找到节点类型配置: ${nodeId}`)
+      return
     }
+
+    const position = screenToFlowCoordinate({
+      x: clientX,
+      y: clientY,
+    })
+
+    // 从注册表构建参数
+    const params = {}
+    for (const p of entry.params) {
+      const optArr = Array.isArray(p.options)
+        ? (typeof p.options[0] === 'object' ? p.options : p.options)
+        : undefined
+      params[p.label] = {
+        value: p.default,
+        type: p.type,
+        options: optArr,
+        visible: p.visible ?? true,
+        ...(p.placeholder && { placeholder: p.placeholder }),
+        ...(p.pattern && { pattern: p.pattern }),
+        ...(p.errorMsg && { errorMsg: p.errorMsg }),
+        ...(p.min !== undefined && { min: p.min }),
+        ...(p.max !== undefined && { max: p.max }),
+        ...(p.step !== undefined && { step: p.step }),
+        ...(p.unit && { unit: p.unit }),
+      }
+    }
+
+    const newNode = {
+      id: `${nodeIdCounter.value++}`,
+      type: 'custom',
+      position,
+      data: {
+        label: entry.label,
+        nodeType: entry.nodeType,
+        params,
+      },
+    }
+
+    addNodes([newNode])
   }
 
   /**

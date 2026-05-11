@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { keyMap } from '../../flow/nodeConfigs'
+import { convertLabelsToKeys } from '@/lib/nodes'
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 
@@ -79,10 +79,7 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
     }
     let graph = JSON.stringify(curGraph)
     // 替换中文键名
-    for (const key in keyMap) {
-      const src = keyMap[key]
-      graph = graph.replaceAll(src, key)
-    }
+    graph = convertLabelsToKeys(graph)
 
     try {
       const response = await axios.post('/v0/backtest', { script: graph })

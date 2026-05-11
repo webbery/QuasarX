@@ -1,6 +1,6 @@
 import { message } from '@/tool'
 import { useHistoryStore } from '@/stores/history'
-import { keyMap } from '@/components/flow/nodeConfigs'
+import { convertKeysToLabels } from '@/lib/nodes'
 
 /**
  * 导出文件格式标识
@@ -94,11 +94,7 @@ function convertNodeKeys(nodes) {
   return nodes.map(node => {
     if (!node.data?.params) return node
 
-    const convertedParams = {}
-    for (const key in node.data.params) {
-      const cnKey = keyMap[key] || key
-      convertedParams[cnKey] = node.data.params[key]
-    }
+    const convertedParams = convertKeysToLabels(node.data.params)
 
     return {
       ...node,
