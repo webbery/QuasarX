@@ -350,7 +350,8 @@ void StockHistorySimulation::Clear() {
 
     // 清空所有回测上下文（多线程模式）
     _backtestContexts.clear();
-    _nextRunId = 1;
+
+    // 注意：不再重置 _nextRunId，保持全局递增以区分不同回测实例
 
     // 清空订单和报告
     _reports.clear();

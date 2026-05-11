@@ -243,7 +243,27 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
    * 更新价格图表
    */
   const updatePriceChart = (reportViewRef, addInfoMessage) => {
-    // 获取信号节点的代码和日期范围
+    // 优先从 Input 节点获取代码
+    const inputNodes = getNodes.value.filter(n => n.data.nodeType === 'input')
+    for (const inputNode of inputNodes) {
+      const codes = inputNode.data.params['code']?.value || inputNode.data.params['代码']?.value
+      if (codes) {
+        const symbols = Array.isArray(codes) ? codes : codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        if (symbols.length > 0 && reportViewRef?.value?.updatePrice && backtestRangeRef?.value) {
+          const rangeDate = backtestRangeRef.value
+          // 设置所有标的到 select 选项
+          if (reportViewRef.value.setSelectedSymbol) {
+            reportViewRef.value.setSelectedSymbol(symbols)
+          }
+          // 只加载第一个标的的价格
+          reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
+          console.info(`[useBacktest] 从 Input 节点获取标的: ${symbols.join(', ')}, 范围: ${rangeDate[0]} - ${rangeDate[1]}`)
+          return
+        }
+      }
+    }
+
+    // 回退：从 Signal 节点获取代码（兼容旧策略）
     let signalNode = null
     for (const node of getNodes.value) {
       if (node.data.nodeType === 'signal') {
@@ -253,25 +273,23 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
     }
 
     if (signalNode) {
-      // 兼容中文和英文键名
-      const codes = signalNode.data.params['代码']?.value || signalNode.data.params['code']?.value
-      const rangeDate = signalNode.data.params['回测周期']?.value || signalNode.data.params['range']?.value
-
-      if (codes && rangeDate && rangeDate.length === 2) {
+      const codes = signalNode.data.params['code']?.value || signalNode.data.params['代码']?.value
+      if (codes) {
         const symbols = Array.isArray(codes) ? codes : codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
-        if (symbols.length > 0 && reportViewRef?.value?.updatePrice) {
-          // 设置所有标的到 select 选项
+        if (symbols.length > 0 && reportViewRef?.value?.updatePrice && backtestRangeRef?.value) {
+          const rangeDate = backtestRangeRef.value
           if (reportViewRef.value.setSelectedSymbol) {
             reportViewRef.value.setSelectedSymbol(symbols)
           }
-          // 只加载第一个标的的价格
           reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
+          console.info(`[useBacktest] 从 Signal 节点获取标的: ${symbols.join(', ')}, 范围: ${rangeDate[0]} - ${rangeDate[1]}`)
+          return
         }
       }
-    } else {
-      console.warn('未找到信号节点，无法更新价格图表')
-      addInfoMessage('未找到信号节点，价格图表将不会更新', 'warning')
     }
+
+    console.warn('未找到 Input 或 Signal 节点的代码配置，无法更新价格图表')
+    addInfoMessage('未找到标的代码配置，价格图表将不会更新', 'warning')
   }
 
   /**

@@ -415,8 +415,10 @@ export async function getStats(): Promise<{ totalChunks: number; totalDocs: numb
  */
 export async function shutdownVectorDB(): Promise<void> {
   // LanceDB 无需显式关闭连接
+  chunksTable = null;
+  summaryTable = null;
+  intentTable = null;
   extractor = null;
-  table = null;
   db = null;
   console.log('[VectorDB] shutdown');
 }

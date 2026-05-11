@@ -54,6 +54,15 @@ public:
     
     Set<symbol_t> GetPools(const String& strategy);
 
+    /**
+     * @brief 获取回测每日收益数据（回测结束后调用）
+     */
+    struct BacktestDailyReturns {
+        Vector<time_t> dates;
+        Vector<double> returns;
+    };
+    BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
+
 private:
 
     /**
@@ -90,6 +99,10 @@ private:
 
         // 关联的回测运行 ID（多线程回测模式）
         uint16_t _backtestRunId = 0;
+
+        // 每日收益率数据（回测结束后从 context 提取，供 BackTestHandler 使用）
+        Vector<time_t> _returnDates;
+        Vector<double> _dailyReturns;
 
         // K-bar 聚合器（实盘模式）
         std::shared_ptr<KBarBuilder> _kbarBuilder;

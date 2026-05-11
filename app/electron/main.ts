@@ -17,7 +17,8 @@ import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly } from './vectorDB';
-import { agentRouter, IndexAgent } from './agent/AgentRouter';
+import { agentRouter } from './agent/AgentRouter';
+import { IndexAgent } from './agent/IndexAgent';
 import type { AgentConfig } from '../src/lib/agent';
 
 /**

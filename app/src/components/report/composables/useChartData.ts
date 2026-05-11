@@ -61,8 +61,6 @@ export interface UseChartDataReturn {
   calculateBenchmarkCumulativeReturns: () => number[]
   /** 更新策略性能日期标签 */
   updateStrategyPerformanceDates: (prices?: [string, number][]) => void
-  /** 更新策略性能数据 */
-  updateStrategyPerformanceData: () => void
 }
 
 /**
@@ -237,8 +235,10 @@ export function useChartData(
       strategyReturnsEstimated.value = false
       console.info(`[useChartData] 后端收益率已注入：${returns.length} 个点`)
     } else {
-      // 无后端数据，触发前端计算
-      updateStrategyPerformanceData()
+      // 无后端数据，清空（不再前端计算）
+      reportState.strategyDailyReturns.value = []
+      reportState.strategyPerformanceDates.value = []
+      console.warn('[useChartData] 后端未提供收益率数据，Strategy Performance 将为空')
     }
   }
 
@@ -253,9 +253,6 @@ export function useChartData(
 
     reportState.metricsData.value = features
     console.info('[useChartData] 策略指标已更新:', features)
-
-    // 更新策略性能数据
-    updateStrategyPerformanceData()
   }
 
   /**
@@ -402,230 +399,15 @@ export function useChartData(
   // === 数据计算方法 ===
 
   /**
-   * 计算策略日收益率（从买卖信号 + 价格）
+   * 计算策略日收益率
    *
-   * 修复后的算法（Modified Dietz 时间加权收益率）：
-   * 1. 按标的分离资金池和持仓，避免多标的串扰
-   * 2. priceMap 使用双层结构 Map<symbol, Map<date, close>>
-   * 3. 每个标的独立计算持仓市值，最后汇总
-   * 4. 使用组合总价值计算每日收益率，而非单个标的
-   * 5. 初始资金设为 100 万，避免 totalCash 为负
-   *
-   * 算法流程：
-   * 1. 合并买卖信号为 Trade 数组，按 timestamp 排序
-   * 2. 按标的追踪独立持仓和现金变动
-   * 3. 每日组合总价值 = Σ(各标的持仓市值) + 总现金余额
-   * 4. 日收益率 = (今日组合价值 - 昨日组合价值 - 净流入) / 昨日组合价值
-   * 5. 返回日收益率数组（百分比形式）
+   * 后端已通过 daily_returns / daily_dates 提供，前端不再自行计算。
+   * 此函数仅保留作为占位，防止外部调用方崩溃。
    */
   function calculateStrategyDailyReturns(): number[] {
-    const INITIAL_CAPITAL = 1000000 // 初始资金 100 万
-
-    const totalReturn = reportState.metricsData.value.total_return || 0
-
-    // 如果有真实的买卖信号和价格数据，计算真实日收益率
-    if (rawBuySignals.value.length > 0 && Object.keys(symbolPrices.value).length > 0) {
-      console.info('[useChartData] 使用真实信号计算日收益率')
-      strategyReturnsEstimated.value = false
-
-      // 【修复 1】双层价格映射：Map<symbol, Map<dateTimestamp, close>>
-      const priceMap = new Map<string, Map<number, number>>()
-      for (const symbol of Object.keys(symbolPrices.value)) {
-        const symbolPriceMap = new Map<number, number>()
-        for (const [dateStr, close] of symbolPrices.value[symbol]) {
-          const ts = new Date(dateStr).getTime() // 将 "YYYY-MM-DD" 转为毫秒时间戳
-          symbolPriceMap.set(ts, close)
-        }
-        priceMap.set(symbol, symbolPriceMap)
-      }
-
-      // 将原始信号转为 Trade 对象，使用毫秒时间戳
-      interface Trade {
-        symbol: string
-        date: number        // 交易发生日的毫秒时间戳（由信号时间戳得到日期）
-        quantity: number
-        type: 'buy' | 'sell'
-      }
-
-      const allTrades: Trade[] = [
-        ...rawBuySignals.value.map((s: any[]) => {
-          const seconds = s[1]                    // Unix 秒级时间戳
-          const dateTs = seconds * 1000           // 转为毫秒
-          return {
-            symbol: s[0],
-            date: dateTs,
-            quantity: s[2],
-            type: 'buy' as const
-          }
-        }),
-        ...rawSellSignals.value.map((s: any[]) => {
-          const seconds = s[1]
-          const dateTs = seconds * 1000
-          return {
-            symbol: s[0],
-            date: dateTs,
-            quantity: s[2],
-            type: 'sell' as const
-          }
-        })
-      ]
-
-      // 辅助函数：毫秒时间戳 → "YYYY-MM-DD"
-      function formatTimestampToDate(ts: number): string {
-        const d = new Date(ts)
-        const Y = d.getFullYear()
-        const M = String(d.getMonth() + 1).padStart(2, '0')
-        const D = String(d.getDate()).padStart(2, '0')
-        return `${Y}-${M}-${D}`
-      }
-
-      // 收集所有价格日期（毫秒时间戳），并排序
-      const allPriceDates = new Set<number>()
-      for (const symbol of Object.keys(symbolPrices.value)) {
-        for (const [dateStr] of symbolPrices.value[symbol]) {
-          allPriceDates.add(new Date(dateStr).getTime())
-        }
-      }
-      const sortedPriceDates = [...allPriceDates].sort((a, b) => a - b)
-
-      // 将交易分配到最近的下一个价格日期
-      function assignDate(tradeTs: number): number {
-        // 二分查找第一个 >= tradeTs 的价格日期
-        let left = 0, right = sortedPriceDates.length - 1
-        while (left < right) {
-          const mid = (left + right) >> 1
-          if (sortedPriceDates[mid] < tradeTs) left = mid + 1
-          else right = mid
-        }
-        return sortedPriceDates[left] ?? tradeTs
-      }
-
-      const dateToTrades = new Map<number, Trade[]>()
-      for (const trade of allTrades) {
-        const assignedTs = assignDate(trade.date)
-        if (!dateToTrades.has(assignedTs)) dateToTrades.set(assignedTs, [])
-        dateToTrades.get(assignedTs)!.push(trade)
-      }
-
-      // 策略表现计算（对齐后端 C++ build_portfolio_values + simple_daily_returns）
-      // 核心逻辑：
-      // 1. 维护现金账户：买入扣现金，卖出加现金
-      // 2. 组合价值 = 现金 + 持仓市值
-      // 3. 净现金流 CF_t = 买入(负) + 卖出(正)，与后端一致
-      // 4. R_t = (V_t - V_{t-1} - CF_t) / V_{t-1}  (Modified Dietz)
-      const positions = new Map<string, number>()   // symbol -> 持仓数量
-      let totalCash = INITIAL_CAPITAL               // 初始资金（与后端 initial_capital 一致）
-      const returns: number[] = []
-      const prevPriceMap = new Map<string, number>() // symbol -> 前一日价格
-      let prevPortfolioValue: number | null = null   // V_{t-1}，首日无前一值
-
-      for (const ts of sortedPriceDates) {
-        const dayTrades = dateToTrades.get(ts) || []
-
-        // === 第一步：计算当日净现金流（对齐后端 daily_cash_flows[i]）===
-        // 买入 = 负流出，卖出 = 正流入
-        let netCashFlow = 0
-        for (const trade of dayTrades) {
-          if (trade.quantity <= 0) continue
-
-          let px = priceMap.get(trade.symbol)?.get(ts)
-          if (px === undefined) {
-            px = prevPriceMap.get(trade.symbol)
-            if (px === undefined) continue
-          }
-          if (px <= 0) continue
-
-          const cash = trade.quantity * px
-          if (trade.type === 'buy') {
-            netCashFlow -= cash   // 资金流出组合
-          } else {
-            netCashFlow += cash   // 资金流入组合
-          }
-        }
-
-        // === 第二步：更新持仓与现金（对齐后端 update_position + cash 更新）===
-        for (const trade of dayTrades) {
-          if (trade.quantity <= 0) continue
-
-          let px = priceMap.get(trade.symbol)?.get(ts)
-          if (px === undefined) {
-            px = prevPriceMap.get(trade.symbol)
-            if (px === undefined) continue
-          }
-          if (px <= 0) continue
-
-          const delta = trade.type === 'buy' ? trade.quantity : -trade.quantity
-          const currentQty = positions.get(trade.symbol) || 0
-          const newQty = currentQty + delta
-
-          // 持仓数量不能为负
-          if (newQty < 0) {
-            console.warn(
-              `[useChartData] 持仓数量为负: ${trade.symbol} newQty=${newQty}, 当前=${currentQty}, delta=${delta}, 已跳过`
-            )
-            continue
-          }
-
-          if (newQty === 0) positions.delete(trade.symbol)
-          else positions.set(trade.symbol, newQty)
-
-          // 更新现金：买入扣现金，卖出加现金（与后端一致）
-          totalCash += (trade.type === 'buy' ? -1 : 1) * trade.quantity * px
-        }
-
-        // === 第三步：计算日终组合价值 V_t = cash + 持仓市值 ===
-        let V_end = totalCash
-        for (const [symbol, qty] of positions) {
-          let px = priceMap.get(symbol)?.get(ts)
-          if (px === undefined) {
-            px = prevPriceMap.get(symbol)
-            if (px === undefined) continue
-          }
-          const marketValue = qty * px
-          V_end += marketValue
-          // 更新前一日价格缓存
-          prevPriceMap.set(symbol, px)
-        }
-
-        // === 第四步：计算日收益率 ===
-        if (prevPortfolioValue === null || prevPortfolioValue === 0) {
-          // 第一个交易日：无基准，返回 0
-          returns.push(0)
-          prevPortfolioValue = V_end
-          continue
-        }
-
-        const V_start = prevPortfolioValue
-
-        // Modified Dietz: R_t = (V_t - V_{t-1} - CF_t) / V_{t-1}
-        const dailyReturn = (V_end - V_start) / V_start
-
-        // 异常值检测：日收益率超过 ±50%
-        if (Math.abs(dailyReturn) > 0.5) {
-          console.warn(
-            `[useChartData] 异常日收益率检测: ${(dailyReturn * 100).toFixed(2)}%, ` +
-            `V_start=${V_start.toFixed(2)}, V_end=${V_end.toFixed(2)}, netCashFlow=${netCashFlow.toFixed(2)}`
-          )
-        }
-
-        returns.push(Number((dailyReturn * 100).toFixed(4)))
-        prevPortfolioValue = V_end
-      }
-
-      reportState.strategyPerformanceDates.value = sortedPriceDates.map(ts => formatTimestampToDate(ts))
-      return returns
-    }
-
-    // 降级：使用0（无信号时的默认行为）
-    strategyReturnsEstimated.value = true
-    const numDates = reportState.strategyPerformanceDates.value.length || 12
-    const returns: number[] = []
-
-    for (let i = 0; i < numDates; i++) {
-      returns.push(0)
-    }
-
-    return returns
+    return reportState.strategyDailyReturns.value.length > 0
+      ? [...reportState.strategyDailyReturns.value]
+      : []
   }
 
   /**
@@ -673,14 +455,6 @@ export function useChartData(
     }
   }
 
-  /**
-   * 更新策略性能数据
-   */
-  function updateStrategyPerformanceData() {
-    reportState.strategyDailyReturns.value = calculateStrategyDailyReturns()
-    console.info(`[useChartData] 策略性能数据已更新：${reportState.strategyDailyReturns.value.length} 个点`)
-  }
-
   // === Watchers：监听状态变化自动处理 ===
 
   // 监听 symbolPrices 变化，更新策略性能日期和基准数据
@@ -700,14 +474,13 @@ export function useChartData(
     }
   }, { deep: true })
 
-  // 监听回测日期范围变化，更新策略性能数据
+  // 监听回测日期范围变化，更新日期标签
   watch(
     [reportState.backtestStartDate, reportState.backtestEndDate],
     ([start, end]) => {
       if (start && end) {
         console.info('[useChartData] 回测日期范围已更新:', formatDateTime(start), 'to', formatDateTime(end))
         updateStrategyPerformanceDates()
-        updateStrategyPerformanceData()
       }
     },
     { immediate: false }
@@ -737,7 +510,6 @@ export function useChartData(
     // 数据计算
     calculateStrategyDailyReturns,
     calculateBenchmarkCumulativeReturns,
-    updateStrategyPerformanceDates,
-    updateStrategyPerformanceData
+    updateStrategyPerformanceDates
   }
 }

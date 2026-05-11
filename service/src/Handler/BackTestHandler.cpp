@@ -136,7 +136,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     run_id_t runId = flowSubsystem->Start(strategyName, symbols, initialCapital);
     
     // 发送进度 (带 run_id)
-    SendSSEProgress(sse_sock, strategyName, runId, 0.1, "开始执行回测");
+    SendSSEProgress(sse_sock, strategyName, runId, 0.0, "开始执行回测");
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
@@ -148,7 +148,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             double progress = exchange->Progress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
-                SendSSEProgress(sse_sock, strategyName, runId, 0.2 + progress * 0.5, msg);
+                SendSSEProgress(sse_sock, strategyName, runId, 0.1 + progress * 0.5, msg);
                 lastProgress = progress;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -179,9 +179,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 确保最终进度推送
     if (lastProgress < 1.0) {
-        SendSSEProgress(sse_sock, strategyName, runId, 0.7, "回测执行完成");
+        SendSSEProgress(sse_sock, strategyName, runId, 0.6, "回测执行完成");
     }
     exchange->Logout(AccountType::MAIN);
+    SendSSEProgress(sse_sock, strategyName, runId, 0.7, "PersistTrades");
 
     // 6. 收集结果
     nlohmann::json results;
@@ -281,33 +282,26 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         {"win_rate", win_rate_val},
         {"calmar_ratio", calmar_val}
     };
-    INFO("add summary");
+    SendSSEProgress(sse_sock, strategyName, runId, 0.8, "add summary");
 
-    // === 10. 收集每日收益率数据（AgentSubSystem 已计算好）===
+    // === 10. 收集每日收益率数据（从 FlowSubsystem 获取，此时 context 已被销毁）===
     {
-        auto* simExchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
-        if (simExchange) {
-            auto* ctx = simExchange->getBacktestContext(runId);
-            if (ctx && ctx->dailySnapshotCount() > 0) {
-                // AgentSubSystem 已计算好收益率，直接取出
-                auto dates = ctx->takeReturnDates();
-                auto returns = ctx->takeDailyReturns();
+        auto dailyReturnsData = flowSubsystem->GetBacktestDailyReturns(strategyName);
+        INFO("[Backtest] GetBacktestDailyReturns: dates={}, returns={}",
+             dailyReturnsData.dates.size(), dailyReturnsData.returns.size());
+        if (!dailyReturnsData.returns.empty() && !dailyReturnsData.dates.empty()) {
+            nlohmann::json dailyReturnsArray = nlohmann::json::array();
+            nlohmann::json dailyDatesArray = nlohmann::json::array();
 
-                if (!returns.empty() && !dates.empty()) {
-                    nlohmann::json dailyReturnsArray = nlohmann::json::array();
-                    nlohmann::json dailyDatesArray = nlohmann::json::array();
-
-                    for (size_t i = 0; i < returns.size(); ++i) {
-                        dailyReturnsArray.emplace_back(returns[i]);
-                        dailyDatesArray.emplace_back(dates[i]);
-                    }
-
-                    results["daily_returns"] = std::move(dailyReturnsArray);
-                    results["daily_dates"] = std::move(dailyDatesArray);
-
-                    INFO("[Backtest] Daily returns collected: {} data points", returns.size());
-                }
+            for (size_t i = 0; i < dailyReturnsData.returns.size(); ++i) {
+                dailyReturnsArray.emplace_back(dailyReturnsData.returns[i]);
+                dailyDatesArray.emplace_back(dailyReturnsData.dates[i]);
             }
+
+            results["daily_returns"] = std::move(dailyReturnsArray);
+            results["daily_dates"] = std::move(dailyDatesArray);
+
+            INFO("[Backtest] Daily returns collected: {} data points", dailyReturnsData.returns.size());
         }
     }
 

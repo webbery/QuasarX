@@ -128,6 +128,9 @@ const {
   historyStore, strategies, versions
 } = saveLoad
 
+// 回测时间范围配置（根级别，不配置则使用数据文件全范围）
+const backtestRange = ref(['2020-01-01', '2025-12-31'])
+
 // 初始化 backtest（传入 backtestRange 引用）
 const backtest = useBacktest(state, saveLoad, codeSync, backtestRange)
 const { runBacktest } = backtest
@@ -137,9 +140,6 @@ const infoPanelRef = ref(null)
 const flowCanvasRef = ref(null)
 const reportViewRef = ref(null)
 const promptDialogRef = ref(null)
-
-// 回测时间范围配置（根级别，不配置则使用数据文件全范围）
-const backtestRange = ref(['2020-01-01', '2025-12-31'])
 
 const updateBacktestRange = (range) => {
   backtestRange.value = range

@@ -22,7 +22,7 @@
         title="结束日期"
       />
     </div>
-    <span v-if="paramConfig.unit" class="param-unit">{{ paramConfig.unit }}</span>
+    <span v-if="paramConfig?.unit" class="param-unit">{{ paramConfig.unit }}</span>
   </div>
 </template>
 

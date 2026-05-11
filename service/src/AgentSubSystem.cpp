@@ -185,9 +185,10 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
 
                     // 将日收益率和日期存回 BacktestContext，供 BackTestHandler 返回给前端
                     // 注意：daily_returns 后面还要用，所以拷贝而非 move
+                    // 先保存 dates（避免 takeDates move 后导致 dailySnapshotCount 为 0）
                     if (btContext && btContext->dailySnapshotCount() > 0) {
-                        auto dates = btContext->takeDates();
-                        btContext->setDailyReturns(std::move(dates), Vector<double>(daily_returns.begin(), daily_returns.end()));
+                        auto datesCopy = btContext->getDates();  // 拷贝日期
+                        btContext->setDailyReturns(std::move(datesCopy), Vector<double>(daily_returns.begin(), daily_returns.end()));
                     }
 
                     // 计算年化收益率
@@ -252,6 +253,18 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
             strategy_log(strategy, info);
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
+        }
+
+        // 清理回测上下文前，提取每日收益数据供 BackTestHandler 使用
+        INFO("[Backtest] Extracting daily returns: snapshotCount={}, returnsSize={}",
+             btContext ? btContext->dailySnapshotCount() : 0,
+             btContext ? btContext->getDailyReturns().size() : 0);
+        if (btContext && btContext->dailySnapshotCount() > 0 && btContext->getDailyReturns().size() > 0) {
+            flow._returnDates = btContext->getReturnDates();
+            flow._dailyReturns = btContext->getDailyReturns();
+            INFO("[Backtest] Extracted {} daily returns to flow", flow._dailyReturns.size());
+        } else {
+            WARN("[Backtest] No daily returns to extract from context");
         }
 
         // 清理回测上下文
@@ -385,6 +398,14 @@ Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
         }
     }
     return Set<symbol_t>();
+}
+
+FlowSubsystem::BacktestDailyReturns FlowSubsystem::GetBacktestDailyReturns(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) {
+        return {};
+    }
+    return { it->second._returnDates, it->second._dailyReturns };
 }
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
