@@ -24,12 +24,14 @@ export class LanceDBRetriever extends BaseRetriever {
     const results = await vectorSearch(query, this.topK)
     return results.map(r =>
       new Document({
-        pageContent: r.chunk.content,
+        pageContent: r.summary
+          ? `【摘要】${r.summary}\n\n${r.chunks.map(c => c.content).join('\n\n')}`
+          : r.chunks.map(c => c.content).join('\n\n'),
         metadata: {
-          fileName: r.chunk.fileName,
-          chunkIndex: r.chunk.chunkIndex,
+          fileName: r.fileName,
+          docId: r.docId,
           similarity: r.similarity,
-          docId: r.chunk.docId,
+          chunkCount: r.chunks.length,
         },
       })
     )

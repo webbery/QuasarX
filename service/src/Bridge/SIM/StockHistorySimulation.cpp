@@ -736,7 +736,10 @@ run_id_t StockHistorySimulation::createBacktestContext(
     }
 
     if (!_csvs.empty()) {
-        context->setTotalBars(_csvs.begin()->second.get_index().size());
+        size_t totalBars = _csvs.begin()->second.get_index().size();
+        context->setTotalBars(totalBars);
+        // 预分配每日快照容量，避免反复 realloc
+        context->reserveDailySnapshots(totalBars);
     }
 
     _backtestContexts.emplace(runId, std::move(context));
@@ -878,8 +881,89 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
 
     dataLock.unlock();
 
+    // === 计算当前时间点的调整系数（用于持仓市值归一化）===
+    for (auto symbol : symbols) {
+        auto hfq_itr = _csvs.find(symbol);
+        auto org_itr = _org_csvs.find(symbol);
+        auto org_header_it = _org_headers.find(symbol);
+
+        if (hfq_itr == _csvs.end() || org_itr == _org_csvs.end() ||
+            org_header_it == _org_headers.end() || org_header_it->second.empty()) {
+            // 无原始价格数据，调整系数默认为 1.0
+            context->setCurrentAdjRatio(symbol, 1.0);
+            continue;
+        }
+
+        const auto& hfq_df = hfq_itr->second;
+        const auto& hfq_header = _headers.at(symbol);
+        const auto& org_df = org_itr->second;
+        const auto& org_header = org_header_it->second;
+
+        // curIndex 已被 increment，需要回退到当前 bar 的索引
+        auto curIndex = context->getCurIndex(symbol);
+        uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
+
+        if (priceIndex < hfq_df.get_index().size() && priceIndex < org_df.get_index().size()) {
+            double hfqClose = hfq_df.get_column<float>(hfq_header[2].c_str())[priceIndex];
+            double origClose = org_df.get_column<float>(org_header[2].c_str())[priceIndex];
+            double ratio = (origClose > 0.0 && hfqClose > 0.0) ? hfqClose / origClose : 1.0;
+            context->setCurrentAdjRatio(symbol, ratio);
+        } else {
+            context->setCurrentAdjRatio(symbol, 1.0);
+        }
+    }
+
     for (auto symbol : symbols) {
         matchOrders(context, symbol);
+    }
+
+    // === 记录每日组合快照（用于收益率计算）===
+    // 在订单成交后记录，此时持仓和现金状态完整
+    // 使用当前时间点的调整系数：持仓市值 = 数量 × 后复权价格 / ratio（归一化到原始价格体系）
+    {
+        double totalMarketValue = 0.0;
+
+        // 遍历所有标的，计算持仓市值
+        for (auto symbol : symbols) {
+            int64_t position = context->getPosition(symbol);
+            if (position <= 0) continue;
+
+            auto itr = _csvs.find(symbol);
+            if (itr == _csvs.end()) continue;
+            const auto& header_it = _headers.find(symbol);
+            if (header_it == _headers.end() || header_it->second.empty()) continue;
+
+            const auto& df = itr->second;
+            const auto& header = header_it->second;
+            // curIndex 已被 increment，需要回退到当前 bar 的索引
+            auto curIndex = context->getCurIndex(symbol);
+            uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
+            if (priceIndex < df.get_index().size()) {
+                double hfqClose = df.get_column<float>(header[2].c_str())[priceIndex];
+                double ratio = context->getCurrentAdjRatio(symbol);
+                totalMarketValue += position * hfqClose / ratio;
+            }
+        }
+
+        // 当前可用资金（已包含当日所有交易的资金变动）
+        double currentAvailable = context->getAvailableFunds();
+
+        // 组合总价值 = 可用现金 + 持仓市值
+        double portfolioValue = currentAvailable + totalMarketValue;
+
+        // 使用第一个标的的当前时间作为日期戳
+        time_t snapshotDate = 0;
+        for (auto symbol : symbols) {
+            const QuoteInfo* quote = context->getQuote(symbol);
+            if (quote && quote->_time > 0) {
+                snapshotDate = quote->_time;
+                break;
+            }
+        }
+
+        if (snapshotDate > 0) {
+            context->recordDailySnapshot(snapshotDate, portfolioValue);
+        }
     }
 
     if (!anyMoreData) {

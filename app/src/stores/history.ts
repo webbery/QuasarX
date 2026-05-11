@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import type { TimeSeries, HistogramData } from '@/lib/chartData'
 
 export interface Strategy {
   id: string
@@ -18,6 +19,19 @@ export interface BacktestResult {
   }
   buy: [symbol: string, timestamp: number, quantity: number, price: number][]
   sell: [symbol: string, timestamp: number, quantity: number, price: number][]
+  script?: string             // 策略图 JSON 字符串
+  // 后端返回的每日收益率数据（Modified Dietz 方法）
+  dailyReturns?: number[]     // 每日收益率序列（小数形式，如 0.015 = 1.5%）
+  dailyDates?: number[]       // 每日对应的 Unix 时间戳（秒）
+  // 完整图表数据（供 Agent 和 ReportView 共享使用）
+  chartData?: {
+    price: TimeSeries | null
+    performance: TimeSeries | null
+    drawdown: TimeSeries | null
+    monthlyReturns: TimeSeries | null
+    distribution: HistogramData | null
+    dailyReturns: number[] | null
+  }
 }
 
 export interface Version {
@@ -170,7 +184,8 @@ const DEFAULT_VERSIONS: Version[] = []
 export const useHistoryStore = defineStore('history', {
   state: () => ({
     strategies: [] as Strategy[],
-    versions: [] as Version[]
+    versions: [] as Version[],
+    latestBacktestVersionId: null as string | null  // 最近一次回测的版本 ID
   }),
 
   actions: {
@@ -287,6 +302,14 @@ export const useHistoryStore = defineStore('history', {
         await dbPut(STORES.VERSIONS, JSON.parse(JSON.stringify(version)))
         await dbPut(STORES.BACKTEST_RESULTS, JSON.parse(JSON.stringify({ versionId, ...backtestResult })))
       }
+      // 更新最近一次回测版本 ID
+      this.latestBacktestVersionId = versionId
+    },
+
+    // 获取最近一次回测结果
+    async getLatestBacktestResult(): Promise<BacktestResult | null> {
+      if (!this.latestBacktestVersionId) return null
+      return await this.loadBacktestResult(this.latestBacktestVersionId)
     },
 
     // 加载版本的回测结果

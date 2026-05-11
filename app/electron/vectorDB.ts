@@ -10,9 +10,11 @@ import { pipeline, env } from '@xenova/transformers';
 
 const EMBEDDING_MODEL = 'Xenova/distiluse-base-multilingual-cased-v2';
 const EMBEDDING_DIM = 768;
+const SCHEMA_VERSION = 1;
 
 let db: lancedb.Connection | null = null;
-let table: lancedb.Table | null = null;
+let chunksTable: lancedb.Table | null = null;
+let summaryTable: lancedb.Table | null = null;
 let extractor: any = null;
 let dbDir: string = '';
 
@@ -50,28 +52,49 @@ export async function initVectorDB(baseDir: string) {
   // 连接 LanceDB
   db = await lancedb.connect(dbDir);
 
-  // 检查或创建表
+  // 初始化 chunks 表
   const tableNames = await db.tableNames();
   if (tableNames.includes('chunks')) {
-    table = await db.openTable('chunks');
+    chunksTable = await db.openTable('chunks');
     console.log('[VectorDB] opened existing chunks table');
   } else {
-    // 创建空表（需要一个初始向量来定义 schema）
     const emptyData = [
       {
         id: '__init__',
         doc_id: '__init__',
         file_name: '__init__',
         chunk_index: 0,
+        version: SCHEMA_VERSION,
         content: '__init__',
         vector: new Float32Array(EMBEDDING_DIM),
         metadata: '{}',
       },
     ];
-    table = await db.createTable('chunks', emptyData);
-    // 删除初始化行
-    await table.delete("id = '__init__'");
+    chunksTable = await db.createTable('chunks', emptyData);
+    await chunksTable.delete("id = '__init__'");
     console.log('[VectorDB] created chunks table');
+  }
+
+  // 初始化 summary_index 表
+  if (tableNames.includes('summary_index')) {
+    summaryTable = await db.openTable('summary_index');
+    console.log('[VectorDB] opened existing summary_index table');
+  } else {
+    const emptySummaryData = [
+      {
+        id: '__init__',
+        doc_id: '__init__',
+        file_name: '__init__',
+        version: SCHEMA_VERSION,
+        summary: '__init__',
+        chunk_ids: '[]',
+        vector: new Float32Array(EMBEDDING_DIM),
+        metadata: '{"status":"pending"}',
+      },
+    ];
+    summaryTable = await db.createTable('summary_index', emptySummaryData);
+    await summaryTable.delete("id = '__init__'");
+    console.log('[VectorDB] created summary_index table');
   }
 }
 
@@ -83,7 +106,7 @@ export async function storeChunks(
   fileName: string,
   chunksArr: { index: number; content: string }[]
 ): Promise<void> {
-  if (!table) throw new Error('VectorDB not initialized');
+  if (!chunksTable) throw new Error('VectorDB not initialized');
 
   const rows: any[] = [];
   for (const chunk of chunksArr) {
@@ -95,6 +118,7 @@ export async function storeChunks(
       doc_id: docId,
       file_name: fileName,
       chunk_index: chunk.index,
+      version: SCHEMA_VERSION,
       content: chunk.content,
       vector: new Float32Array(embedding),
       metadata: JSON.stringify({}),
@@ -102,63 +126,227 @@ export async function storeChunks(
   }
 
   if (rows.length > 0) {
-    await table.add(rows);
+    await chunksTable.add(rows);
     console.log(`[VectorDB] stored ${rows.length} chunks for ${fileName}`);
   }
 }
 
 /**
- * 删除指定文档的所有向量
+ * 存储文档摘要到 summary_index 表
  */
-export async function deleteChunks(docId: string): Promise<void> {
-  if (!table) throw new Error('VectorDB not initialized');
+export async function storeSummary(params: {
+  docId: string;
+  fileName: string;
+  summary: string;
+  chunkIds: string[];
+}): Promise<void> {
+  if (!summaryTable) throw new Error('VectorDB not initialized');
 
-  const filter = `doc_id = '${docId}'`;
-  await table.delete(filter);
-  console.log(`[VectorDB] deleted chunks for doc: ${docId}`);
+  // 先删除旧摘要（如果存在）
+  await summaryTable.delete(`doc_id = '${params.docId}'`);
+
+  const id = `${params.docId}_summary`;
+  const embedding = await embed(params.summary);
+
+  await summaryTable.add([{
+    id,
+    doc_id: params.docId,
+    file_name: params.fileName,
+    version: SCHEMA_VERSION,
+    summary: params.summary,
+    chunk_ids: JSON.stringify(params.chunkIds),
+    vector: new Float32Array(embedding),
+    metadata: JSON.stringify({
+      status: 'ready',
+      generatedAt: new Date().toISOString(),
+    }),
+  }]);
+
+  console.log(`[VectorDB] stored summary for ${params.fileName}`);
 }
 
 /**
- * 向量检索
+ * 更新摘要状态（用于标记失败/重试）
+ */
+export async function updateSummaryStatus(
+  docId: string,
+  status: 'pending' | 'ready' | 'failed'
+): Promise<void> {
+  if (!summaryTable) throw new Error('VectorDB not initialized');
+
+  const existing = await summaryTable
+    .query()
+    .where(`doc_id = '${docId}'`)
+    .select(['id', 'metadata'])
+    .toArray();
+
+  if (existing.length > 0) {
+    const row = existing[0];
+    const meta = JSON.parse(row.metadata || '{}');
+    meta.status = status;
+    await summaryTable.update({
+      where: `doc_id = '${docId}'`,
+      values: { metadata: JSON.stringify(meta) },
+    } as any);
+  }
+}
+
+/**
+ * 仅删除文档摘要（保留 chunks）
+ */
+export async function deleteSummaryOnly(docId: string): Promise<void> {
+  if (!summaryTable) throw new Error('VectorDB not initialized');
+  await summaryTable.delete(`doc_id = '${docId}'`);
+}
+
+/**
+ * 获取文档摘要状态
+ */
+export async function getSummaryStatus(docId: string): Promise<{
+  exists: boolean;
+  status?: string;
+  summary?: string;
+}> {
+  if (!summaryTable) throw new Error('VectorDB not initialized');
+
+  const existing = await summaryTable
+    .query()
+    .where(`doc_id = '${docId}'`)
+    .select(['id', 'summary', 'metadata'])
+    .toArray();
+
+  if (existing.length === 0) {
+    return { exists: false };
+  }
+
+  const row = existing[0];
+  const meta = JSON.parse(row.metadata || '{}');
+  return {
+    exists: true,
+    status: meta.status || 'pending',
+    summary: row.summary,
+  };
+}
+
+/**
+ * 删除指定文档的所有向量（包括 chunks 和 summary）
+ */
+export async function deleteChunks(docId: string): Promise<void> {
+  if (!chunksTable) throw new Error('VectorDB not initialized');
+
+  await chunksTable.delete(`doc_id = '${docId}'`);
+  if (summaryTable) {
+    await summaryTable.delete(`doc_id = '${docId}'`);
+  }
+  console.log(`[VectorDB] deleted chunks and summary for doc: ${docId}`);
+}
+
+/**
+ * 向量检索（两步检索：summary_index → chunks）
+ *
+ * 1. 对 summary_index 做向量搜索，命中 topK 摘要
+ * 2. 通过 chunk_ids 从 chunks 表加载完整原文
+ * 3. 降级：summary_index 为空时回退到 chunks 搜索
  */
 export async function vectorSearch(
   queryText: string,
   topK: number = 5
 ): Promise<any[]> {
-  if (!table) throw new Error('VectorDB not initialized');
+  if (!chunksTable) throw new Error('VectorDB not initialized');
 
   const queryEmbedding = await embed(queryText);
-  console.info('generate queryEmbedding.')
   const queryVector = new Float32Array(queryEmbedding);
 
-  // LanceDB 向量检索
-  const results = await table
+  // 检查 summary_index 是否有数据
+  let useSummaryFallback = false;
+  if (!summaryTable) {
+    useSummaryFallback = true;
+  } else {
+    const summaryCount = await summaryTable.query().select(['id']).toArray();
+    if (summaryCount.length === 0) {
+      useSummaryFallback = true;
+    }
+  }
+
+  // 降级模式：直接搜索 chunks
+  if (useSummaryFallback) {
+    console.log('[VectorDB] summary_index 为空，降级为 chunks 直接搜索');
+    const results = await chunksTable
+      .vectorSearch(queryVector)
+      .limit(topK)
+      .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata', 'vector']);
+
+    const rows = await results.toArray();
+    return rows.map((row: any) => ({
+      chunk: {
+        id: row.id,
+        docId: row.doc_id,
+        fileName: row.file_name,
+        chunkIndex: row.chunk_index,
+        content: row.content,
+        embedding: row.vector ? Array.from(row.vector) : [],
+        metadata: JSON.parse(row.metadata || '{}'),
+      },
+      similarity: row._distance !== undefined ? 1 - row._distance : 0,
+      summary: '',
+      mode: 'fallback',
+    }));
+  }
+
+  // 正常模式：summary_index 搜索（召回更多候选，再截取前 topK 个加载 chunks）
+  // 先搜 50 个摘要用于召回排序
+  const RECALL_TOP_K = 50;
+
+  const summaryResults = await summaryTable
     .vectorSearch(queryVector)
-    .limit(topK)
-    .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata']);
+    .limit(RECALL_TOP_K)
+    .select(['id', 'doc_id', 'file_name', 'summary', 'chunk_ids', 'metadata']);
 
-  console.info('find result:', results)
-  // 转换为兼容的返回格式
-  const searchResults: any[] = [];
-  // const rows = await results.toArray();
-  // for (const row of rows) {
-  //   searchResults.push({
-  //     chunk: {
-  //       id: row.id,
-  //       docId: row.doc_id,
-  //       fileName: row.file_name,
-  //       chunkIndex: row.chunk_index,
-  //       content: row.content,
-  //       embedding: [], // LanceDB 不返回原始向量，除非显式 select
-  //       metadata: JSON.parse(row.metadata || '{}'),
-  //     },
-  //     similarity: row._distance !== undefined ? 1 - row._distance : 0, // LanceDB 返回的是距离，转为相似度
-  //   });
-  // }
+  const summaryRows = await summaryResults.toArray();
+  if (summaryRows.length === 0) {
+    return [];
+  }
 
-  // 按相似度降序排序
-  searchResults.sort((a, b) => b.similarity - a.similarity);
-  return searchResults;
+  // 按相关性排序后，只取前 topK 个加载完整 chunks
+  const topDocs = summaryRows.slice(0, topK);
+
+  // 根据命中的摘要加载完整 chunks
+  const fullDocs: any[] = [];
+  for (const hit of topDocs) {
+    const chunkIds = JSON.parse(hit.chunk_ids || '[]');
+    if (chunkIds.length === 0) continue;
+
+    const chunkIdList = chunkIds.map((id: string) => `'${id}'`).join(',');
+    const chunkResults = await chunksTable
+      .query()
+      .where(`id IN (${chunkIdList})`)
+      .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata'])
+      .toArray();
+
+    // 按 chunk_index 排序
+    chunkResults.sort((a: any, b: any) => a.chunk_index - b.chunk_index);
+
+    const meta = JSON.parse(hit.metadata || '{}');
+    fullDocs.push({
+      docId: hit.doc_id,
+      fileName: hit.file_name,
+      summary: hit.summary,
+      chunks: chunkResults.map((c: any) => ({
+        id: c.id,
+        docId: c.doc_id,
+        fileName: c.file_name,
+        chunkIndex: c.chunk_index,
+        content: c.content,
+        metadata: JSON.parse(c.metadata || '{}'),
+      })),
+      similarity: hit._distance !== undefined ? 1 - hit._distance : 0,
+      summaryStatus: meta.status || 'ready',
+      mode: 'summary',
+    });
+  }
+
+  fullDocs.sort((a, b) => b.similarity - a.similarity);
+  return fullDocs;
 }
 
 /**
@@ -167,39 +355,58 @@ export async function vectorSearch(
 export async function clearAll(): Promise<void> {
   if (!db) throw new Error('VectorDB not initialized');
 
-  // LanceDB 没有直接的 drop table，通过 delete 所有数据实现清空
-  if (table) {
-    // 删除所有行（LanceDB 不支持无条件 delete，需要先查询所有 id）
-    const allResults = await table
+  // 清空 chunks 表
+  if (chunksTable) {
+    const allResults = await chunksTable
       .query()
       .select(['id'])
       .toArray();
 
     if (allResults.length > 0) {
       const ids = allResults.map((r: any) => `'${r.id}'`).join(',');
-      await table.delete(`id IN (${ids})`);
+      await chunksTable.delete(`id IN (${ids})`);
     }
     console.log('[VectorDB] cleared all chunks');
+  }
+
+  // 清空 summary_index 表
+  if (summaryTable) {
+    const allResults = await summaryTable
+      .query()
+      .select(['id'])
+      .toArray();
+
+    if (allResults.length > 0) {
+      const ids = allResults.map((r: any) => `'${r.id}'`).join(',');
+      await summaryTable.delete(`id IN (${ids})`);
+    }
+    console.log('[VectorDB] cleared all summaries');
   }
 }
 
 /**
  * 获取统计信息
  */
-export async function getStats(): Promise<{ totalChunks: number; totalDocs: number }> {
-  if (!table) throw new Error('VectorDB not initialized');
+export async function getStats(): Promise<{ totalChunks: number; totalDocs: number; totalSummaries: number }> {
+  if (!chunksTable) throw new Error('VectorDB not initialized');
 
-  // LanceDB 不直接支持 count，需要通过 query 获取
-  const allResults = await table.query().select(['doc_id']).toArray();
+  const allResults = await chunksTable.query().select(['doc_id']).toArray();
   const totalChunks = allResults.length;
   const docIds = new Set<string>();
   for (const row of allResults) {
     docIds.add(row.doc_id);
   }
 
+  let totalSummaries = 0;
+  if (summaryTable) {
+    const summaryResults = await summaryTable.query().select(['id']).toArray();
+    totalSummaries = summaryResults.length;
+  }
+
   return {
     totalChunks,
     totalDocs: docIds.size,
+    totalSummaries,
   };
 }
 

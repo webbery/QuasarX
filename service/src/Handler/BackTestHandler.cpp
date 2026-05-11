@@ -80,8 +80,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.set_content(R"({"message": "Backtest mode [SIM] is not available."})", "application/json");
         return;
     }
-    // 发送开始消息 (runId=0 表示尚未初始化)
-    SendSSEProgress(sse_sock, strategyName, 0, 0.0, "回测开始");
 
     // 2.5 验证策略图的完整性（回测前必须验证）
     auto [validateSuccess, validateErrorMsg] = _server->ValidateStrategyConfig(script);
@@ -284,6 +282,34 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         {"calmar_ratio", calmar_val}
     };
     INFO("add summary");
+
+    // === 10. 收集每日收益率数据（AgentSubSystem 已计算好）===
+    {
+        auto* simExchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
+        if (simExchange) {
+            auto* ctx = simExchange->getBacktestContext(runId);
+            if (ctx && ctx->dailySnapshotCount() > 0) {
+                // AgentSubSystem 已计算好收益率，直接取出
+                auto dates = ctx->takeReturnDates();
+                auto returns = ctx->takeDailyReturns();
+
+                if (!returns.empty() && !dates.empty()) {
+                    nlohmann::json dailyReturnsArray = nlohmann::json::array();
+                    nlohmann::json dailyDatesArray = nlohmann::json::array();
+
+                    for (size_t i = 0; i < returns.size(); ++i) {
+                        dailyReturnsArray.emplace_back(returns[i]);
+                        dailyDatesArray.emplace_back(dates[i]);
+                    }
+
+                    results["daily_returns"] = std::move(dailyReturnsArray);
+                    results["daily_dates"] = std::move(dailyDatesArray);
+
+                    INFO("[Backtest] Daily returns collected: {} data points", returns.size());
+                }
+            }
+        }
+    }
 
     strategySys->ReleaseStrategy(strategyName);
 

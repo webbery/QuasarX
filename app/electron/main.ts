@@ -16,7 +16,9 @@ const require = createRequire(import.meta.url);
 import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
-import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents } from './vectorDB';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly } from './vectorDB';
+import { agentRouter, IndexAgent } from './agent/AgentRouter';
+import type { AgentConfig } from '../src/lib/agent';
 
 /**
  * ** The built directory structure
@@ -119,6 +121,14 @@ app.whenReady().then(async () => {
         await initVectorDB(getKnowledgeDir());
     } catch (e) {
         console.error('[VectorDB] init failed:', e);
+    }
+
+    // Initialize AgentRouter
+    try {
+        agentRouter.register('index', new IndexAgent());
+        console.log('[AgentRouter] IndexAgent registered');
+    } catch (e) {
+        console.error('[AgentRouter] init failed:', e);
     }
 
     // 后台预加载嵌入模型（不阻塞窗口显示）
@@ -519,7 +529,78 @@ ipcMain.handle('vector-get-stats', async () => {
     return { success: true, ...stats };
   } catch (error: any) {
     console.error('[vector-get-stats] 错误:', error);
-    return { success: false, totalChunks: 0, totalDocs: 0, error: error.message };
+    return { success: false, totalChunks: 0, totalDocs: 0, totalSummaries: 0, error: error.message };
+  }
+});
+
+// ============================================================
+// Summary Generation IPC Handlers (AgentRouter)
+// ============================================================
+
+ipcMain.handle('generate-summary', async (_, params: {
+  docId: string;
+  fileName: string;
+  fullText: string;
+  chunkIds: string[];
+  llmConfig: AgentConfig;
+}) => {
+  try {
+    const { docId, fileName, fullText, chunkIds, llmConfig } = params;
+
+    // 标记为 pending
+    try { await updateSummaryStatus(docId, 'pending'); } catch {}
+
+    // 通过 AgentRouter 调用 IndexAgent 生成摘要
+    const summary = await agentRouter.dispatch('index', fullText, { llmConfig });
+
+    // 存储摘要
+    await storeSummary({ docId, fileName, summary, chunkIds });
+
+    console.log(`[generate-summary] summary generated for ${fileName}`);
+    return { success: true, summary };
+  } catch (error: any) {
+    console.error('[generate-summary] 错误:', error);
+    // 标记为 failed
+    try { await updateSummaryStatus(params.docId, 'failed'); } catch {}
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('retry-summary', async (_, params: {
+  docId: string;
+  fileName: string;
+  fullText: string;
+  chunkIds: string[];
+  llmConfig: AgentConfig;
+}) => {
+  try {
+    const { docId, fileName, fullText, chunkIds, llmConfig } = params;
+
+    // 只删除旧摘要（保留 chunks）
+    await deleteSummaryOnly(docId);
+
+    const summary = await agentRouter.dispatch('index', fullText, { llmConfig });
+    await storeSummary({ docId, fileName, summary, chunkIds });
+
+    console.log(`[retry-summary] summary regenerated for ${fileName}`);
+    return { success: true, summary };
+  } catch (error: any) {
+    console.error('[retry-summary] 错误:', error);
+    try { await updateSummaryStatus(params.docId, 'failed'); } catch {}
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-summary-status', async (_, docIds: string[]) => {
+  try {
+    const statuses: Record<string, { exists: boolean; status?: string; summary?: string }> = {};
+    for (const docId of docIds) {
+      statuses[docId] = await getSummaryStatus(docId);
+    }
+    return { success: true, statuses };
+  } catch (error: any) {
+    console.error('[get-summary-status] 错误:', error);
+    return { success: false, error: error.message };
   }
 });
 

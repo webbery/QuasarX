@@ -13,11 +13,14 @@
         知识库
       </h2>
       <div class="header-actions">
-        <button class="btn-export" @click="onExportSelected" :disabled="selectedCount === 0">
-          <i class="fas fa-file-export"></i> 导出选中 ({{ selectedCount }})
+        <button class="btn-index" @click="onGenerateSelected" :disabled="selectedCount === 0">
+          <i class="fas fa-magic"></i> 生成索引 ({{ selectedCount }})
         </button>
-        <button class="btn-export" @click="onExportAll">
-          <i class="fas fa-file-pdf"></i> 全部导出
+        <button class="btn-index" @click="onGenerateAll">
+          <i class="fas fa-layer-group"></i> 全部生成索引
+        </button>
+        <button class="btn-export" @click="onExportSelected" :disabled="selectedCount === 0">
+          <i class="fas fa-file-export"></i> 导出 ({{ selectedCount }})
         </button>
       </div>
     </div>
@@ -64,12 +67,17 @@
                 <i v-else class="fas fa-sort"></i>
               </span>
             </th>
-            <th class="col-status">状态</th>
+            <th class="col-index-status">索引状态</th>
             <th class="col-actions">操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="doc in store.paginatedDocuments" :key="doc.id" class="doc-row">
+          <tr
+            v-for="doc in store.paginatedDocuments"
+            :key="doc.id"
+            class="doc-row"
+            @contextmenu.prevent="onContextMenu($event, doc)"
+          >
             <td class="col-checkbox">
               <input
                 type="checkbox"
@@ -86,25 +94,38 @@
             <td class="col-uploadtime">{{ formatTime(doc.uploadTime) }}</td>
             <td class="col-pages">{{ doc.pages }}</td>
             <td class="col-hitcount">{{ doc.hitCount }}</td>
-            <td class="col-status">
-              <span
-                class="status-badge"
-                :class="{
-                  'status-parsing': doc.status === 'parsing',
-                  'status-ready': doc.status === 'ready',
-                  'status-error': doc.status === 'error',
-                }"
-              >
-                <template v-if="doc.status === 'parsing'">
-                  <i class="fas fa-spinner fa-spin"></i> 解析中
-                </template>
-                <template v-else-if="doc.status === 'ready'">
-                  <i class="fas fa-check-circle"></i> 已完成
-                </template>
-                <template v-else>
-                  <i class="fas fa-exclamation-circle"></i> 错误
-                </template>
-              </span>
+            <td class="col-index-status">
+              <!-- 索引状态 -->
+              <template v-if="doc.summaryStatus === 'indexing'">
+                <span class="index-badge index-pending">
+                  <i class="fas fa-spinner fa-spin"></i>
+                  <span class="index-text">生成中</span>
+                </span>
+              </template>
+              <template v-else-if="doc.summaryStatus === 'ready'">
+                <span class="index-badge index-ready">
+                  <i class="fas fa-check-circle"></i>
+                  <span class="index-text">已索引</span>
+                </span>
+              </template>
+              <template v-else-if="doc.summaryStatus === 'failed'">
+                <span class="index-badge index-failed">
+                  <i class="fas fa-exclamation-triangle"></i>
+                  <span class="index-text">未生成</span>
+                  <button class="btn-retry-inline" @click="onRetryIndex(doc)" title="重新生成">
+                    <i class="fas fa-redo"></i>
+                  </button>
+                </span>
+              </template>
+              <template v-else>
+                <span class="index-badge index-none">
+                  <i class="fas fa-clock"></i>
+                  <span class="index-text">未索引</span>
+                  <button class="btn-retry-inline" @click="onGenerateSingle(doc)" title="生成索引">
+                    <i class="fas fa-magic"></i>
+                  </button>
+                </span>
+              </template>
             </td>
             <td class="col-actions">
               <button class="action-btn" @click="onViewDetail(doc)" title="查看详情">
@@ -159,6 +180,12 @@
       v-model:visible="showDetailDialog"
       :document="selectedDocument"
     />
+
+    <!-- 右键上下文菜单 -->
+    <ContextMenu
+      ref="contextMenuRef"
+      @action="onContextAction"
+    />
   </div>
 </template>
 
@@ -168,13 +195,17 @@ import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
 import { savePdf, listPdfs, deletePdf, downloadPdf } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
-import { storeChunks, deleteChunks } from '../../lib/vectorDB';
+import { storeChunks, deleteChunks, retrySummary, getSummaryStatus } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
+import ContextMenu from './ContextMenu.vue';
+import type { ContextMenuAction } from './ContextMenu.vue';
 import { message } from '../../tool';
+import { getAgentConfig } from '../../lib/agent';
 
 const store = useKnowledgeStore();
 const showDetailDialog = ref(false);
 const selectedDocument = ref<any>(null);
+const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null);
 
 const selectedCount = computed(() => store.selectedDocs.size);
 const isAllSelected = computed(() => {
@@ -195,7 +226,37 @@ function formatTime(timestamp: number): string {
 }
 
 /**
- * 拖拽事件处理
+ * 右键菜单
+ */
+function onContextMenu(event: MouseEvent, doc: KnowledgeDocument) {
+  contextMenuRef.value?.open(event, doc);
+}
+
+/**
+ * 右键菜单动作分发
+ */
+function onContextAction(action: ContextMenuAction, doc: KnowledgeDocument) {
+  switch (action) {
+    case 'generateIndex':
+      onGenerateSingle(doc);
+      break;
+    case 'retryIndex':
+      onRetryIndex(doc);
+      break;
+    case 'view':
+      onViewDetail(doc);
+      break;
+    case 'download':
+      onDownload(doc);
+      break;
+    case 'delete':
+      onDelete(doc);
+      break;
+  }
+}
+
+/**
+ * 拖拽事件
  */
 function onDragOver() {
   store.setDragging(true);
@@ -217,7 +278,6 @@ async function onDrop(event: DragEvent) {
       continue;
     }
 
-    // 创建文档记录
     const docId = `doc_${Date.now()}_${i}`;
     store.addDocument({
       id: docId,
@@ -229,22 +289,20 @@ async function onDrop(event: DragEvent) {
       summary: '',
       hitCount: 0,
       chunks: [],
+      summaryStatus: 'pending',
     });
 
-    // 异步解析和保存
     processPdfFile(file, docId);
   }
 }
 
 /**
- * 处理 PDF 文件：保存到本地 + 解析 + 存储向量
+ * 处理 PDF 文件
  */
 async function processPdfFile(file: File, docId: string) {
   try {
-    // 1. 读取文件
     const arrayBuffer = await file.arrayBuffer();
 
-    // 2. 保存到 knowledge 目录
     const saveResult = await savePdf(arrayBuffer, file.name);
     if (!saveResult.success) {
       store.updateDocumentStatus(docId, 'error', '保存文件失败');
@@ -252,7 +310,6 @@ async function processPdfFile(file: File, docId: string) {
       return;
     }
 
-    // 3. 解析 PDF
     const parseResult = await parsePdf(arrayBuffer);
     if (!parseResult.text || parseResult.text === '[PDF 解析失败]') {
       store.updateDocumentStatus(docId, 'error', '解析 PDF 失败');
@@ -260,10 +317,11 @@ async function processPdfFile(file: File, docId: string) {
       return;
     }
 
-    // 4. 存储向量
+    const chunkIds = parseResult.chunks.map(c => `${docId}_${c.index}`);
     await storeChunks(docId, saveResult.fileName, parseResult.chunks);
 
-    // 5. 更新文档状态为 ready
+    store.setFullText(docId, parseResult.text);
+
     store.updateDocumentStatus(
       docId,
       'ready',
@@ -271,6 +329,9 @@ async function processPdfFile(file: File, docId: string) {
       parseResult.chunks,
       parseResult.pages
     );
+
+    // 异步触发摘要生成
+    triggerSummaryGeneration(docId, saveResult.fileName, parseResult.text, chunkIds);
 
     message.success(`"${file.name}" 解析完成`);
   } catch (error: any) {
@@ -281,9 +342,183 @@ async function processPdfFile(file: File, docId: string) {
 }
 
 /**
+ * 异步生成摘要
+ */
+async function triggerSummaryGeneration(
+  docId: string,
+  fileName: string,
+  fullText: string,
+  chunkIds: string[]
+) {
+  const llmConfig = getAgentConfig();
+  if (!llmConfig) {
+    store.updateSummaryStatus(docId, 'failed');
+    message.warning(`"${fileName}" 未配置 AI 服务，无法生成索引`);
+    return;
+  }
+
+  try {
+    store.updateSummaryStatus(docId, 'indexing');
+
+    const result = await retrySummary({
+      docId,
+      fileName,
+      fullText,
+      chunkIds,
+      llmConfig,
+    });
+
+    if (result.success) {
+      store.updateSummaryStatus(docId, 'ready');
+    } else {
+      store.updateSummaryStatus(docId, 'failed');
+      message.error(`"${fileName}" 索引生成失败: ${result.error}`);
+    }
+  } catch (error: any) {
+    console.error('[KnowledgeBase] 摘要生成失败:', error);
+    store.updateSummaryStatus(docId, 'failed');
+    message.error(`"${fileName}" 索引生成失败`);
+  }
+}
+
+/**
+ * 单个文档生成索引
+ */
+async function onGenerateSingle(doc: KnowledgeDocument) {
+  if (!doc.fullText || doc.chunks.length === 0) {
+    message.warning(`"${doc.title}" 缺少完整文本，无法生成索引`);
+    return;
+  }
+  const chunkIds = doc.chunks.map(c => `${doc.id}_${c.index}`);
+  await triggerSummaryGeneration(doc.id, doc.fileName, doc.fullText, chunkIds);
+}
+
+/**
+ * 单个文档重试
+ */
+async function onRetryIndex(doc: KnowledgeDocument) {
+  if (!doc.fullText || doc.chunks.length === 0) {
+    message.warning(`"${doc.title}" 缺少完整文本，无法重新生成索引`);
+    return;
+  }
+  const llmConfig = getAgentConfig();
+  if (!llmConfig) {
+    message.warning('未配置 AI 服务，无法生成索引');
+    return;
+  }
+
+  try {
+    store.updateSummaryStatus(doc.id, 'indexing');
+    const result = await retrySummary({
+      docId: doc.id,
+      fileName: doc.fileName,
+      fullText: doc.fullText!,
+      chunkIds: doc.chunks.map(c => `${doc.id}_${c.index}`),
+      llmConfig,
+    });
+
+    if (result.success) {
+      store.updateSummaryStatus(doc.id, 'ready');
+      message.success(`"${doc.title}" 索引重新生成成功`);
+    } else {
+      store.updateSummaryStatus(doc.id, 'failed');
+      message.error(`"${doc.title}" 索引重新生成失败: ${result.error}`);
+    }
+  } catch (error: any) {
+    console.error('[KnowledgeBase] 摘要重试失败:', error);
+    store.updateSummaryStatus(doc.id, 'failed');
+    message.error(`"${doc.title}" 索引重试失败`);
+  }
+}
+
+/**
+ * 批量生成索引（选中）
+ */
+async function onGenerateSelected() {
+  const selected = store.paginatedDocuments.filter(d => store.selectedDocs.has(d.id));
+  if (selected.length === 0) {
+    message.warning('请先选中要生成索引的文档');
+    return;
+  }
+  await batchGenerateIndexes(selected);
+}
+
+/**
+ * 全部生成索引
+ */
+async function onGenerateAll() {
+  if (store.totalDocuments === 0) {
+    message.warning('知识库为空');
+    return;
+  }
+  const needIndex = store.sortedDocuments.filter(
+    d => d.summaryStatus !== 'ready' && d.summaryStatus !== 'indexing' && d.fullText && d.chunks.length > 0
+  );
+  if (needIndex.length === 0) {
+    message.info('所有文档均已索引');
+    return;
+  }
+  await batchGenerateIndexes(needIndex);
+}
+
+/**
+ * 批量异步生成索引（并发度 3）
+ */
+async function batchGenerateIndexes(docs: KnowledgeDocument[]) {
+  const llmConfig = getAgentConfig();
+  if (!llmConfig) {
+    message.warning('未配置 AI 服务，无法生成索引');
+    return;
+  }
+
+  let successCount = 0;
+  let failCount = 0;
+  const queue = [...docs];
+  const concurrency = 3;
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const doc = queue.shift()!;
+      if (!doc.fullText || doc.chunks.length === 0) {
+        store.updateSummaryStatus(doc.id, 'failed');
+        failCount++;
+        continue;
+      }
+
+      try {
+        store.updateSummaryStatus(doc.id, 'indexing');
+        const result = await retrySummary({
+          docId: doc.id,
+          fileName: doc.fileName,
+          fullText: doc.fullText,
+          chunkIds: doc.chunks.map(c => `${doc.id}_${c.index}`),
+          llmConfig,
+        });
+
+        if (result.success) {
+          store.updateSummaryStatus(doc.id, 'ready');
+          successCount++;
+        } else {
+          store.updateSummaryStatus(doc.id, 'failed');
+          failCount++;
+        }
+      } catch {
+        store.updateSummaryStatus(doc.id, 'failed');
+        failCount++;
+      }
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(concurrency, docs.length) }, () => worker());
+  await Promise.all(workers);
+
+  message.success(`索引生成完成：成功 ${successCount} 个，失败 ${failCount} 个`);
+}
+
+/**
  * 查看详情
  */
-function onViewDetail(doc: any) {
+function onViewDetail(doc: KnowledgeDocument) {
   selectedDocument.value = doc;
   showDetailDialog.value = true;
 }
@@ -291,7 +526,7 @@ function onViewDetail(doc: any) {
 /**
  * 下载 PDF
  */
-async function onDownload(doc: any) {
+async function onDownload(doc: KnowledgeDocument) {
   try {
     await downloadPdf(doc.fileName);
     message.success(`"${doc.title}" 开始下载`);
@@ -303,15 +538,12 @@ async function onDownload(doc: any) {
 /**
  * 删除文档
  */
-async function onDelete(doc: any) {
+async function onDelete(doc: KnowledgeDocument) {
   if (!confirm(`确定要删除 "${doc.title}" 吗？`)) return;
 
   try {
-    // 删除向量数据库中的记录
     await deleteChunks(doc.id);
-    // 删除本地文件
     await deletePdf(doc.fileName);
-    // 删除 store 记录
     store.removeDocument(doc.id);
     message.success(`已删除 "${doc.title}"`);
   } catch (error: any) {
@@ -342,38 +574,52 @@ async function onExportSelected() {
 }
 
 /**
- * 全部导出
- */
-async function onExportAll() {
-  if (store.totalDocuments === 0) {
-    message.warning('知识库为空');
-    return;
-  }
-  for (const doc of store.sortedDocuments) {
-    await onDownload(doc);
-  }
-  message.success(`已导出 ${store.totalDocuments} 个文档`);
-}
-
-/**
- * 组件挂载时加载已有 PDF 列表
+ * 组件挂载时加载 PDF 列表
  */
 onMounted(async () => {
   try {
     const result = await listPdfs();
     if (result.success && result.pdfs.length > 0) {
-      const existingDocs: KnowledgeDocument[] = result.pdfs.map((pdf) => ({
-        id: `doc_${pdf.name}_${pdf.mtime}`,
-        fileName: pdf.name,
-        title: pdf.name.replace(/\.pdf$/i, ''),
-        uploadTime: pdf.mtime,
-        pages: 0,
-        status: 'ready' as const,
-        summary: '（未解析，建议重新处理）',
-        hitCount: 0,
-        chunks: [],
-      }));
-      store.addDocuments(existingDocs);
+      const docIds: string[] = [];
+      const docMap = new Map<string, KnowledgeDocument>();
+
+      for (const pdf of result.pdfs) {
+        const docId = `doc_${pdf.name}_${pdf.mtime}`;
+        docIds.push(docId);
+        const doc: KnowledgeDocument = {
+          id: docId,
+          fileName: pdf.name,
+          title: pdf.name.replace(/\.pdf$/i, ''),
+          uploadTime: pdf.mtime,
+          pages: 0,
+          status: 'ready',
+          summary: '（未解析，建议重新处理）',
+          hitCount: 0,
+          chunks: [],
+          summaryStatus: 'pending',
+        };
+        store.addDocument(doc);
+        docMap.set(docId, doc);
+      }
+
+      // 异步查询摘要状态
+      try {
+        const statusResult = await getSummaryStatus(docIds);
+        if (statusResult.success) {
+          for (const [docId, statusInfo] of Object.entries(statusResult.statuses)) {
+            const doc = docMap.get(docId);
+            if (doc) {
+              if (statusInfo.exists) {
+                doc.summaryStatus = (statusInfo.status as any) || 'ready';
+              } else {
+                doc.summaryStatus = 'pending';
+              }
+            }
+          }
+        }
+      } catch {
+        // 状态查询失败不影响列表显示
+      }
     }
   } catch (error) {
     console.error('[KnowledgeBase] 加载 PDF 列表失败:', error);
@@ -425,6 +671,31 @@ onMounted(async () => {
 .header-actions {
   display: flex;
   gap: 10px;
+}
+
+.btn-index {
+  background: linear-gradient(90deg, #7c3aed, #6d28d9);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-index:hover:not(:disabled) {
+  background: linear-gradient(90deg, #6d28d9, #5b21b6);
+  transform: translateY(-1px);
+}
+
+.btn-index:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .btn-export {
@@ -531,8 +802,9 @@ onMounted(async () => {
   text-align: center;
 }
 
-.col-status {
-  width: 100px;
+.col-index-status {
+  width: 140px;
+  text-align: center;
 }
 
 .col-actions {
@@ -559,29 +831,58 @@ onMounted(async () => {
   max-width: 300px;
 }
 
-/* Status badges */
-.status-badge {
+/* Index status badges */
+.index-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: 5px;
+  padding: 4px 10px;
   border-radius: 12px;
   font-size: 12px;
+  white-space: nowrap;
 }
 
-.status-parsing {
+.index-text {
+  margin-right: 2px;
+}
+
+.index-pending {
   background: rgba(251, 191, 36, 0.15);
   color: #fbbf24;
 }
 
-.status-ready {
+.index-ready {
   background: rgba(74, 222, 128, 0.15);
   color: #4ade80;
 }
 
-.status-error {
+.index-failed {
   background: rgba(239, 68, 68, 0.15);
   color: #ef4444;
+}
+
+.index-none {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.btn-retry-inline {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  opacity: 0.7;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-retry-inline:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Action buttons */
@@ -625,34 +926,6 @@ onMounted(async () => {
 .empty-message i {
   font-size: 32px;
   margin-bottom: 8px;
-}
-
-/* ========== Drop Zone ========== */
-.drop-zone {
-  margin-top: 12px;
-  padding: 20px;
-  border: 2px dashed rgba(96, 165, 250, 0.3);
-  border-radius: 8px;
-  text-align: center;
-  color: #606080;
-  transition: all 0.3s;
-}
-
-.drop-zone i {
-  font-size: 24px;
-  margin-bottom: 6px;
-  color: #60a5fa;
-}
-
-.drop-zone p {
-  margin: 0;
-  font-size: 14px;
-}
-
-.knowledge-container.drag-over .drop-zone {
-  border-color: #60a5fa;
-  background: rgba(96, 165, 250, 0.08);
-  color: #60a5fa;
 }
 
 /* ========== Pagination ========== */
@@ -706,7 +979,6 @@ onMounted(async () => {
   text-align: center;
 }
 
-/* Checkbox style */
 input[type="checkbox"] {
   accent-color: #60a5fa;
   cursor: pointer;

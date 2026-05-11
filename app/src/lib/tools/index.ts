@@ -21,6 +21,9 @@ import { platformTool } from "./platform"
 import { knowledgeTool } from "./knowledge"
 import { webSearchTool } from "./webSearch"
 import { strategyTool } from "./strategy"
+import { backtestTool } from "./backtest"
+import { mutationTool } from "./mutation"
+import { calculatorTool } from "./calculator"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -31,6 +34,9 @@ const builtinTools: StructuredToolInterface[] = [
   knowledgeTool,
   webSearchTool,
   strategyTool,
+  backtestTool,
+  mutationTool,
+  calculatorTool,
 ]
 
 // === 插件 Tool 加载 ===

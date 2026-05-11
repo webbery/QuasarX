@@ -86,6 +86,47 @@ public:
     void addSymbol(symbol_t symbol);
     const Set<symbol_t>& getSymbols() const { return _symbols; }
 
+    // === 每日收益率记录（SoA 布局，零锁，单线程调用）===
+    // 预分配容量，避免反复 realloc
+    void reserveDailySnapshots(size_t n) {
+        _dates.reserve(n);
+        _portfolioValues.reserve(n);
+    }
+
+    // 当前时间点的调整系数（stepForward 每轮计算并覆盖）
+    // 计算方式：当前时间点 后复权价格 / 原始价格
+    // 用途：持仓市值 = 数量 × 后复权价格 / 调整系数（归一化到原始价格体系）
+    void setCurrentAdjRatio(symbol_t symbol, double ratio) noexcept { _currentAdjRatios[symbol] = ratio; }
+    double getCurrentAdjRatio(symbol_t symbol) const noexcept {
+        auto it = _currentAdjRatios.find(symbol);
+        return (it != _currentAdjRatios.end()) ? it->second : 1.0;
+    }
+
+    // 完美转发 emplace，避免拷贝
+    void recordDailySnapshot(time_t date, double portfolio_value) noexcept {
+        _dates.emplace_back(date);
+        _portfolioValues.emplace_back(portfolio_value);
+    }
+
+    // 只读访问（无锁，因为 stepForward 单线程调用）
+    size_t dailySnapshotCount() const noexcept { return _dates.size(); }
+    const Vector<time_t>& getDates() const noexcept { return _dates; }
+    const Vector<double>& getPortfolioValues() const noexcept { return _portfolioValues; }
+
+    // 直接 move 取出（BackTestHandler 收集结果时调用，此后不再访问）
+    Vector<time_t> takeDates() noexcept { return std::move(_dates); }
+    Vector<double> takePortfolioValues() noexcept { return std::move(_portfolioValues); }
+
+    // 存储计算后的日收益率（AgentSubSystem 计算后存入，BackTestHandler 读取）
+    void setDailyReturns(Vector<time_t> dates, Vector<double> returns) noexcept {
+        _returnDates = std::move(dates);
+        _dailyReturns = std::move(returns);
+    }
+    const Vector<time_t>& getReturnDates() const noexcept { return _returnDates; }
+    const Vector<double>& getDailyReturns() const noexcept { return _dailyReturns; }
+    Vector<time_t> takeReturnDates() noexcept { return std::move(_returnDates); }
+    Vector<double> takeDailyReturns() noexcept { return std::move(_dailyReturns); }
+
 private:
     run_id_t _runId;                    // 回测运行 ID
     String _strategy_name;              // 策略名称
@@ -125,4 +166,15 @@ private:
     // 涉及的标的列表
     Set<symbol_t> _symbols;
     mutable std::mutex _symbolsMtx;
+
+    // 每日收益率记录（SoA 布局，零锁，单线程调用）
+    Vector<time_t> _dates;
+    Vector<double> _portfolioValues;
+
+    // 当前时间点调整系数（stepForward 每轮计算并覆盖）
+    Map<symbol_t, double> _currentAdjRatios;
+
+    // 计算后的日收益率（AgentSubSystem → BackTestHandler 传递）
+    Vector<time_t> _returnDates;
+    Vector<double> _dailyReturns;
 };

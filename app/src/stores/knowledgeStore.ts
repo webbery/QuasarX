@@ -16,6 +16,9 @@ export interface KnowledgeDocument {
   summary: string;
   hitCount: number;         // 向量检索命中次数
   chunks: DocumentChunk[];
+  // 摘要索引状态
+  summaryStatus?: 'pending' | 'indexing' | 'ready' | 'failed';
+  fullText?: string;        // 用于 LLM 摘要生成的完整文本
 }
 
 export type SortField = 'uploadTime' | 'hitCount';
@@ -124,6 +127,26 @@ export const useKnowledgeStore = defineStore('knowledge', {
         if (summary !== undefined) doc.summary = summary;
         if (chunks !== undefined) doc.chunks = chunks;
         if (pages !== undefined) doc.pages = pages;
+      }
+    },
+
+    /**
+     * 更新文档摘要索引状态
+     */
+    updateSummaryStatus(id: string, summaryStatus: 'pending' | 'indexing' | 'ready' | 'failed') {
+      const doc = this.documents.find(d => d.id === id);
+      if (doc) {
+        doc.summaryStatus = summaryStatus;
+      }
+    },
+
+    /**
+     * 设置文档完整文本（用于异步摘要生成）
+     */
+    setFullText(id: string, fullText: string) {
+      const doc = this.documents.find(d => d.id === id);
+      if (doc) {
+        doc.fullText = fullText;
       }
     },
 

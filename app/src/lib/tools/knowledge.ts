@@ -1,6 +1,8 @@
 /**
  * 知识库检索 Tool
  * 检索用户上传的本地知识库文档
+ *
+ * 使用摘要索引模式：返回摘要 + 完整 chunks
  */
 
 import { tool } from "@langchain/core/tools"
@@ -19,17 +21,18 @@ export const knowledgeTool = tool(
 
       // 更新命中次数
       const knowledgeStore = useKnowledgeStore()
-      const hitDocIds = new Set<string>()
-      for (const result of results) {
-        if (!hitDocIds.has(result.chunk.docId)) {
-          hitDocIds.add(result.chunk.docId)
-          knowledgeStore.incrementHitCount(result.chunk.docId)
-        }
-      }
 
       // 构建返回文本
       const docs = results.map((r, idx) => {
-        return `--- 文档 ${idx + 1}: ${r.chunk.fileName} (相似度: ${(r.similarity * 100).toFixed(1)}%) ---\n${r.chunk.content}`
+        knowledgeStore.incrementHitCount(r.docId)
+
+        const fullContent = r.chunks.map((c) => c.content).join("\n\n")
+
+        return `--- 文档 ${idx + 1}: ${r.fileName} (相关度: ${(r.similarity * 100).toFixed(1)}%) ---
+【摘要】${r.summary}
+
+【正文】
+${fullContent}`
       }).join("\n\n")
 
       return `【知识库相关内容】\n\n${docs}`
@@ -40,7 +43,7 @@ export const knowledgeTool = tool(
   },
   {
     name: "knowledge",
-    description: "检索本地知识库文档，查找与用户问题相关的专业知识。适用于金融、量化交易等专业领域问题。",
+    description: "检索本地知识库文档，查找与用户问题相关的专业知识。适用于金融、量化交易等专业领域问题。返回内容包含摘要和正文。",
     schema: z.object({
       query: z.string().describe("检索关键词，通常是用户的核心问题"),
       topK: z.number().default(5).describe("返回结果数量，默认 5"),

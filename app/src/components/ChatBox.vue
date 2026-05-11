@@ -32,30 +32,32 @@
           <div class="message-avatar">
             <i :class="msg.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
           </div>
-          <div class="message-content" :class="{ 'has-thoughts': msg.thoughts?.length }">
-            <!-- 思考展开/收缩链接 -->
-            <div v-if="msg.thoughts?.length" class="thought-toggle">
-              <a @click="toggleThoughts(msg.id)" class="thought-link">
+          <div class="message-body">
+            <!-- 消息气泡（正文） -->
+            <div class="message-content">
+              <div
+                class="message-text"
+                :class="{ 'markdown-body': msg.role === 'assistant' }"
+                v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content"
+              ></div>
+              <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
+            </div>
+
+            <!-- 思考步骤（气泡下方，独立区域，点击展开/收起） -->
+            <div v-if="msg.thoughts?.length" class="thoughts-wrapper">
+              <a @click="toggleThoughts(msg.id)" class="thought-toggle-link">
+                <i :class="expandedThoughts.has(msg.id) ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
                 {{ expandedThoughts.has(msg.id) ? '收起思考' : `展开思考 (${msg.thoughts.length}步)` }}
               </a>
+              <transition name="thought-slide">
+                <div v-if="expandedThoughts.has(msg.id)" class="thought-steps-list">
+                  <div v-for="step in msg.thoughts" :key="step.id" class="thought-step">
+                    <span class="thought-icon">💭</span>
+                    <span class="thought-content">{{ step.content }}</span>
+                  </div>
+                </div>
+              </transition>
             </div>
-
-            <!-- 最终结果（标准字体） -->
-            <div
-              class="message-text"
-              :class="{ 'markdown-body': msg.role === 'assistant' }"
-              v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content"
-            ></div>
-
-            <!-- 思考内容（灰体字，可展开） -->
-            <div v-if="expandedThoughts.has(msg.id) && msg.thoughts" class="thought-steps">
-              <div v-for="step in msg.thoughts" :key="step.id" class="thought-step">
-                <span class="thought-icon">💭</span>
-                <span class="thought-content">{{ step.content }}</span>
-              </div>
-            </div>
-
-            <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
           </div>
         </div>
 
@@ -81,7 +83,7 @@
           @keydown.enter.exact.prevent="sendMessage"
           placeholder="输入问题..."
           :disabled="chatStore.isLoading"
-          rows="1"
+          rows="3"
         ></textarea>
         <button
           @click="sendMessage"
@@ -126,7 +128,7 @@ const containerPosition = ref({ right: 20, bottom: 80 })
 // 调整大小相关
 const isResizing = ref(false)
 const resizeStartX = ref(0)
-const containerWidth = ref(380) // 默认宽度
+const containerWidth = ref(480) // 默认宽度
 
 const containerStyle = computed(() => ({
   right: `${containerPosition.value.right}px`,
@@ -171,8 +173,8 @@ function startResizeLeft(e: MouseEvent) {
     // 向左拖动（dx 为负）时增加宽度，向右拖动（dx 为正）时减少宽度
     const newWidth = containerWidth.value - dx
     
-    // 限制最小宽度 280px，最大宽度 800px
-    containerWidth.value = Math.min(Math.max(newWidth, 280), 800)
+    // 限制最小宽度 380px，最大宽度 900px
+    containerWidth.value = Math.min(Math.max(newWidth, 380), 900)
     resizeStartX.value = moveEvent.clientX
   }
 
@@ -255,9 +257,9 @@ function renderMarkdown(text: string): string {
 .chat-box {
   position: fixed;
   z-index: 9999;
-  width: 380px;
-  height: 600px;
-  max-height: calc(100vh - 120px);
+  width: 480px;
+  height: 700px;
+  max-height: calc(100vh - 100px);
   background: #1e1e2e;
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -357,6 +359,10 @@ function renderMarkdown(text: string): string {
   flex-direction: row-reverse;
 }
 
+.message.user .message-body {
+  align-items: flex-end;
+}
+
 .message-avatar {
   width: 28px;
   height: 28px;
@@ -381,39 +387,61 @@ function renderMarkdown(text: string): string {
   font-size: 14px;
 }
 
-.message-content {
+.message-body {
+  display: flex;
+  flex-direction: column;
   max-width: 75%;
+  gap: 4px;
 }
 
-.message-content.has-thoughts {
-  position: relative;
+.message-content {
+  /* 正文气泡 */
 }
 
-.thought-toggle {
-  position: absolute;
-  top: 4px;
-  right: 8px;
-  font-size: 11px;
-  z-index: 10;
+.thoughts-wrapper {
+  padding-left: 4px;
 }
 
-.thought-link {
+.thought-toggle-link {
   color: #60a5fa;
   cursor: pointer;
   text-decoration: none;
-  background: rgba(0, 0, 0, 0.3);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 6px;
   border-radius: 4px;
   transition: all 0.2s;
 }
 
-.thought-link:hover {
-  background: rgba(0, 0, 0, 0.5);
-  text-decoration: underline;
+.thought-toggle-link:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 
-.thought-steps {
-  margin-top: 8px;
+.thought-toggle-link i {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+/* 思考步骤滑入动画 */
+.thought-slide-enter-active,
+.thought-slide-leave-active {
+  transition: all 0.25s ease-out;
+}
+
+.thought-slide-enter-from {
+  opacity: 0;
+  max-height: 0;
+}
+
+.thought-slide-leave-to {
+  opacity: 0;
+  max-height: 0;
+}
+
+.thought-steps-list {
+  margin-top: 4px;
   padding: 10px;
   background: rgba(0, 0, 0, 0.15);
   border-radius: 6px;
@@ -607,22 +635,25 @@ function renderMarkdown(text: string): string {
 .input-area {
   display: flex;
   gap: 8px;
-  padding: 10px;
+  padding: 12px;
   background: rgba(40, 40, 55, 0.9);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  align-items: flex-end;
 }
 
 .input-area textarea {
   flex: 1;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
+  border-radius: 12px;
   color: #e5e7eb;
   font-size: 13px;
+  line-height: 1.5;
   resize: none;
   outline: none;
-  max-height: 80px;
+  min-height: 72px;
+  max-height: 180px;
   font-family: inherit;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;

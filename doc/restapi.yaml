@@ -1898,6 +1898,38 @@ components:
         features:
           type: object
           description: 收集的特征信息,包括每只合约的特征,以及总的统计特征
+        summary:
+          type: object
+          description: 回测概要指标
+          properties:
+            strategy_name:
+              type: string
+            buy_count:
+              type: integer
+            sell_count:
+              type: integer
+            sharp:
+              type: number
+            annual_return:
+              type: number
+            total_return:
+              type: number
+            max_drawdown:
+              type: number
+            win_rate:
+              type: number
+            calmar_ratio:
+              type: number
+        daily_returns:
+          type: array
+          items:
+            type: number
+          description: 每日收益率序列（Modified Dietz 方法，小数形式，如 0.015 = 1.5%）
+        daily_dates:
+          type: array
+          items:
+            type: integer
+          description: 每日收益率对应的日期（Unix 时间戳，秒）
     
     MonteCarloRequest:
       type: object

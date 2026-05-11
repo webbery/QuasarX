@@ -15,5 +15,6 @@ import './configs/portfolio'
 import './configs/ml'
 import './configs/utility'
 
-export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes } from './registry'
+export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
+export { CATEGORY_ICONS } from './types'
 export type { NodeRegistryEntry, ParamSchema, NodeCategory } from './types'

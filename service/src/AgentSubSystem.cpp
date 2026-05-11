@@ -163,11 +163,32 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     }
                 }
                 if (endNode) {
-                    auto& cash_flow = endNode->GetReports();
-                    auto [portfolio_values, crash_values] = build_portfolio_values(cash_flow, context, _handle);
+                    // 使用 BacktestContext 中的每日快照计算指标（替代 build_portfolio_values）
+                    // 性能优化：避免重建组合价值，直接使用 stepForward 中记录的快照
+                    Vector<double> portfolio_values;
+
+                    if (btContext && btContext->dailySnapshotCount() > 0) {
+                        // 直接 move 快照数据（SoA 布局，零拷贝）
+                        portfolio_values = btContext->takePortfolioValues();
+                        INFO("[Backtest] Using BacktestContext snapshots: {} days", portfolio_values.size());
+                    } else {
+                        // 降级：使用原有的 build_portfolio_values
+                        auto& cash_flow = endNode->GetReports();
+                        auto [pv, cf] = build_portfolio_values(cash_flow, context, _handle);
+                        portfolio_values.assign(pv.begin(), pv.end());
+                        INFO("[Backtest] Fallback to build_portfolio_values: {} days", portfolio_values.size());
+                    }
+
                     auto daily_returns = simple_daily_return(portfolio_values);
                     auto total_return = simple_total_return(portfolio_values, context.getInitialCapital());
                     flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
+
+                    // 将日收益率和日期存回 BacktestContext，供 BackTestHandler 返回给前端
+                    // 注意：daily_returns 后面还要用，所以拷贝而非 move
+                    if (btContext && btContext->dailySnapshotCount() > 0) {
+                        auto dates = btContext->takeDates();
+                        btContext->setDailyReturns(std::move(dates), Vector<double>(daily_returns.begin(), daily_returns.end()));
+                    }
 
                     // 计算年化收益率
                     int count = static_cast<int>(daily_returns.size());

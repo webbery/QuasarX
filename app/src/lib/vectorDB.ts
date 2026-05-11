@@ -1,6 +1,6 @@
 /**
  * 向量数据库客户端（IPC 包装器）
- * 渲染进程通过 IPC 与主进程的 PGlite 通信
+ * 渲染进程通过 IPC 与主进程的 LanceDB 通信
  */
 
 import { ipcRenderer } from 'electron';
@@ -21,6 +21,18 @@ export interface SearchResult {
 }
 
 /**
+ * 摘要搜索结果（新模式）
+ */
+export interface SummarySearchResult {
+  docId: string;
+  fileName: string;
+  summary: string;
+  chunks: VectorChunk[];
+  similarity: number;
+  mode: 'summary' | 'fallback';
+}
+
+/**
  * 存储文档的文本块及其嵌入向量
  * @param docId 文档 ID
  * @param fileName 文件名
@@ -36,7 +48,7 @@ export async function storeChunks(
 }
 
 /**
- * 删除文档相关的所有向量数据
+ * 删除文档相关的所有向量数据（包括 chunks 和 summary）
  * @param docId 文档 ID
  */
 export async function deleteChunks(docId: string): Promise<void> {
@@ -45,18 +57,56 @@ export async function deleteChunks(docId: string): Promise<void> {
 }
 
 /**
- * 向量检索：根据查询文本检索最相似的文本块
- * @param queryText 查询文本
- * @param topK 返回结果数量
- * @returns 搜索结果列表
+ * 向量检索：根据查询文本检索最相似的文档
+ * 新模式：返回 { docId, fileName, summary, chunks[], similarity, mode }
+ * 兼容旧模式：返回 { chunk, similarity }
  */
 export async function search(
   queryText: string,
   topK: number = 5
-): Promise<SearchResult[]> {
+): Promise<SummarySearchResult[]> {
   const result = await ipcRenderer.invoke('vector-search', { queryText, topK });
   if (!result.success) throw new Error(result.error);
   return result.results;
+}
+
+/**
+ * 异步生成文档摘要
+ */
+export async function generateSummary(params: {
+  docId: string;
+  fileName: string;
+  fullText: string;
+  chunkIds: string[];
+  llmConfig: { url: string; protocol: string; apiKey: string; model: string };
+}): Promise<{ success: boolean; summary?: string; error?: string }> {
+  const result = await ipcRenderer.invoke('generate-summary', params);
+  return result;
+}
+
+/**
+ * 重试生成文档摘要
+ */
+export async function retrySummary(params: {
+  docId: string;
+  fileName: string;
+  fullText: string;
+  chunkIds: string[];
+  llmConfig: { url: string; protocol: string; apiKey: string; model: string };
+}): Promise<{ success: boolean; summary?: string; error?: string }> {
+  const result = await ipcRenderer.invoke('retry-summary', params);
+  return result;
+}
+
+/**
+ * 获取文档摘要状态
+ */
+export async function getSummaryStatus(docIds: string[]): Promise<{
+  success: boolean;
+  statuses: Record<string, { exists: boolean; status?: string; summary?: string }>;
+}> {
+  const result = await ipcRenderer.invoke('get-summary-status', docIds);
+  return result;
 }
 
 /**
@@ -70,8 +120,8 @@ export async function clearAll(): Promise<void> {
 /**
  * 获取向量数据统计信息
  */
-export async function getStats(): Promise<{ totalChunks: number; totalDocs: number }> {
+export async function getStats(): Promise<{ totalChunks: number; totalDocs: number; totalSummaries: number }> {
   const result = await ipcRenderer.invoke('vector-get-stats');
   if (!result.success) throw new Error(result.error);
-  return { totalChunks: result.totalChunks, totalDocs: result.totalDocs };
+  return { totalChunks: result.totalChunks, totalDocs: result.totalDocs, totalSummaries: result.totalSummaries };
 }

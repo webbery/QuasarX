@@ -92,7 +92,7 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
       // 6. 传递回测日期范围到 ReportView（用于获取基准数据）
       updateBenchmarkInReportView(result, reportViewRef)
 
-      // 7. 解析回测结果中的交易历史数据
+      // 7. 解析回测结果中的交易历史数据（含后端收益率）
       updateTradeSignalsInReportView(result, reportViewRef)
 
       // 8. 保存回测结果到 historyStore
@@ -186,12 +186,18 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
         })
       }
 
+      // 后端收益率数据（可选）
+      const dailyReturnsData = result.daily_returns && result.daily_dates
+        ? { returns: result.daily_returns, dates: result.daily_dates }
+        : undefined
+
       if (reportViewRef?.value && reportViewRef.value.updateTradeSignals) {
         reportViewRef.value.updateTradeSignals(
           formatSignals(buySignals),
           formatSignals(sellSignals),
           buySignals,
-          sellSignals
+          sellSignals,
+          dailyReturnsData
         )
       } else {
         console.warn('ReportView 组件未找到 updateTradeSignals 方法')

@@ -42,7 +42,7 @@ export interface UseChartDataReturn {
   /** 获取单个标的的价格数据 */
   getPricesForSymbol: (symbol: string) => [string, number][]
   /** 更新交易信号 */
-  updateTradeSignals: (buySignalsData: any[], sellSignalsData: any[], rawBuy?: any[], rawSell?: any[]) => void
+  updateTradeSignals: (buySignalsData: any[], sellSignalsData: any[], rawBuy?: any[], rawSell?: any[], dailyReturnsData?: { returns: number[]; dates: number[] }) => void
   /** 更新策略指标 */
   updateMetrics: (features: Record<string, number>) => void
   /** 更新基准数据 */
@@ -202,12 +202,14 @@ export function useChartData(
 
   /**
    * 更新交易信号
+   * @param dailyReturnsData 可选，后端返回的每日收益率 { returns: number[] (小数), dates: number[] (Unix秒) }
    */
   function updateTradeSignals(
     buySignalsData: any[],
     sellSignalsData: any[],
     rawBuy?: any[],
-    rawSell?: any[]
+    rawSell?: any[],
+    dailyReturnsData?: { returns: number[]; dates: number[] }
   ) {
     rawBuySignals.value = rawBuy || []
     rawSellSignals.value = rawSell || []
@@ -222,8 +224,22 @@ export function useChartData(
 
     console.info(`[useChartData] 交易信号已更新：买入 ${buySignalsData.length} 条，卖出 ${sellSignalsData.length} 条`)
 
-    // 触发收益重算
-    updateStrategyPerformanceData()
+    // 如果后端提供了收益率数据，直接使用（覆盖前端计算）
+    if (dailyReturnsData && dailyReturnsData.returns && dailyReturnsData.returns.length > 0) {
+      const { returns, dates } = dailyReturnsData
+      // 后端小数 → 前端百分比
+      reportState.strategyDailyReturns.value = returns.map(r => Number((r * 100).toFixed(4)))
+      // 时间戳 → YYYY-MM-DD
+      reportState.strategyPerformanceDates.value = dates.map(ts => {
+        const d = new Date(ts * 1000)
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      })
+      strategyReturnsEstimated.value = false
+      console.info(`[useChartData] 后端收益率已注入：${returns.length} 个点`)
+    } else {
+      // 无后端数据，触发前端计算
+      updateStrategyPerformanceData()
+    }
   }
 
   /**

@@ -28,7 +28,7 @@ double simple_total_return(const std::vector<double>& daily_values, double initi
 
 /*
  * @brief 计算每日收益率序列
- * @param daily_values 
+ * @param daily_values
  * @return 每日收益率序列，首日为 0.0
  */
 Vector<double> simple_daily_return(const Vector<double>& daily_values);
