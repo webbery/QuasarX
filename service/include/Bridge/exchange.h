@@ -10,13 +10,14 @@
 #include <yas/std_traits.hpp>
 #include <boost/unordered/concurrent_flat_map.hpp>
 
-#define XTP_API     "xtp"   // 
-#define CTP_API     "ctp"   // 
-#define HX_API      "hx"   // 
+#define XTP_API     "xtp"   //
+#define CTP_API     "ctp"   //
+#define HX_API      "hx"   //
 #define STOCK_HISTORY_SIM   "stock_hist_sim"
 #define STOCK_REAL_SIM      "stock_real_sim"
 #define FEATURE_HISTORY_SIM "feature_hist_sim"
 #define FEATURE_REAL_SIM    "feature_real_sim"
+#define TICKFLOW_QUOTE_API  "tickflow"
 
 template <typename K, typename V>
 using ConcurrentMap = boost::concurrent_flat_map<K, V>;
@@ -293,6 +294,7 @@ enum ExchangeType {
     EX_STOCK_REAL_SIM,
     EX_FUTURE_HIST_SIM,
     EX_FUTURE_REAL_SIM,
+    EX_TICKFLOW_QUOTE,
     EX_Unknow
 };
 

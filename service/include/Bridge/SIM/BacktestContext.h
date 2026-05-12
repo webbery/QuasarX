@@ -1,5 +1,6 @@
 #pragma once
 #include "Bridge/exchange.h"
+#include "Bridge/SIM/StockPositionManager.h"
 #include "std_header.h"
 #include <boost/lockfree/queue.hpp>
 #include <atomic>
@@ -37,15 +38,15 @@ public:
     void setCurIndex(symbol_t symbol, uint32_t index);
     uint32_t incrementCurIndex(symbol_t symbol);
 
-    // 持仓跟踪
+    // 持仓跟踪（委托给 StockPositionManager）
     int64_t getPosition(symbol_t symbol) const;
     void setPosition(symbol_t symbol, int64_t qty);
     void adjustPosition(symbol_t symbol, int delta);
 
     // 资金管理
-    double getCapital() const { return _capital; }
-    void setCapital(double capital);
-    double getAvailableFunds() const;
+    double getCapital() const { return _positionMgr.getCapital(); }
+    void setCapital(double capital) { _positionMgr.SetInitialCapital(capital); }
+    double getAvailableFunds() const { return _positionMgr.GetAvailableFunds(); }
     void setAvailableFunds(double funds);
     bool tryReserveFunds(double amount);
     void releaseFunds(double amount);
@@ -135,13 +136,8 @@ private:
     Map<symbol_t, std::atomic<uint32_t>*> _curIndices;
     mutable std::mutex _indexMtx;
 
-    // 持仓状态
-    Map<symbol_t, std::atomic<int64_t>*> _positions;
-    mutable std::mutex _positionMtx;
-
-    // 资金状态
-    double _capital = 100000.0;
-    std::atomic<double> _availableFunds;
+    // 持仓状态（由 StockPositionManager 统一管理）
+    StockPositionManager _positionMgr;
 
     // 当前 Bar 的报价（每个线程私有，无需锁）
     Map<symbol_t, QuoteInfo> _quotes;

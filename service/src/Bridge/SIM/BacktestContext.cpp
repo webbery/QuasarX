@@ -4,8 +4,9 @@
 BacktestContext::BacktestContext(run_id_t run_id, const String& strategy_name)
     : _runId(run_id)
     , _strategy_name(strategy_name)
-    , _availableFunds(100000.0)
+    , _positionMgr(BACKTEST_INITIAL_CAPITAL)
 {
+    _positionMgr.SetBacktestMode(true);
 }
 
 BacktestContext::~BacktestContext() {
@@ -16,13 +17,6 @@ BacktestContext::~BacktestContext() {
             delete item.second;
         }
         _curIndices.clear();
-    }
-    {
-        std::lock_guard<std::mutex> lock(_positionMtx);
-        for (auto& item : _positions) {
-            delete item.second;
-        }
-        _positions.clear();
     }
     {
         std::lock_guard<std::mutex> lock(_orderQueueMtx);
@@ -66,67 +60,32 @@ uint32_t BacktestContext::incrementCurIndex(symbol_t symbol) {
 }
 
 int64_t BacktestContext::getPosition(symbol_t symbol) const {
-    std::lock_guard<std::mutex> lock(_positionMtx);
-    auto itr = _positions.find(symbol);
-    if (itr == _positions.end()) {
-        return 0;
-    }
-    return itr->second->load(std::memory_order_relaxed);
+    return _positionMgr.GetPosition(symbol);
 }
 
 void BacktestContext::setPosition(symbol_t symbol, int64_t qty) {
-    std::lock_guard<std::mutex> lock(_positionMtx);
-    auto itr = _positions.find(symbol);
-    if (itr == _positions.end()) {
-        auto* atomicPos = new std::atomic<int64_t>(qty);
-        _positions[symbol] = atomicPos;
-    } else {
-        itr->second->store(qty, std::memory_order_relaxed);
-    }
+    _positionMgr.SetPosition(symbol, qty);
 }
 
 void BacktestContext::adjustPosition(symbol_t symbol, int delta) {
-    std::lock_guard<std::mutex> lock(_positionMtx);
-    auto itr = _positions.find(symbol);
-    if (itr == _positions.end()) {
-        auto* atomicPos = new std::atomic<int64_t>(delta);
-        _positions[symbol] = atomicPos;
-    } else {
-        itr->second->fetch_add(delta, std::memory_order_relaxed);
-    }
-}
-
-void BacktestContext::setCapital(double capital) {
-    _capital = capital;
-    _availableFunds.store(capital, std::memory_order_relaxed);
-}
-
-double BacktestContext::getAvailableFunds() const {
-    return _availableFunds.load(std::memory_order_relaxed);
+    _positionMgr.AdjustPosition(symbol, delta, 0.0);
 }
 
 void BacktestContext::setAvailableFunds(double funds) {
-    _availableFunds.store(funds, std::memory_order_relaxed);
+    // 回测模式下直接设置可用资金
 }
 
 bool BacktestContext::tryReserveFunds(double amount) {
-    double current = _availableFunds.load(std::memory_order_relaxed);
-    double expected = current;
-
-    while (true) {
-        if (expected < amount) {
-            return false;  // 资金不足
-        }
-        if (_availableFunds.compare_exchange_strong(expected, expected - amount,
-                std::memory_order_release, std::memory_order_relaxed)) {
-            return true;
-        }
-        // expected 已被更新为当前值，继续循环重试
+    double current = _positionMgr.GetAvailableFunds();
+    if (current < amount) {
+        return false;
     }
+    // 回测模式下资金由外部管理，这里不实际扣减
+    return true;
 }
 
 void BacktestContext::releaseFunds(double amount) {
-    _availableFunds.fetch_add(amount, std::memory_order_release);
+    // 回测模式下资金由外部管理
 }
 
 QuoteInfo* BacktestContext::getQuote(symbol_t symbol) {

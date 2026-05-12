@@ -60,7 +60,7 @@
 #endif
 #ifndef FATAL
 #define FATAL(fmt_str, ...) \
-  SPDLOG_ERROR(fmt_str, ##__VA_ARGS__);
+  fmt::print("{} {} " fmt_str "\n", ToString(Now()), __LINE__, ##__VA_ARGS__);SPDLOG_ERROR(fmt_str, ##__VA_ARGS__);
 #endif
 #ifndef DEBUG_INFO
 #ifdef _DEBUG 

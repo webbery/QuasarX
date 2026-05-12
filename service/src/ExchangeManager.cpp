@@ -3,6 +3,7 @@
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/StockRealSimulation.h"
+#include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/log.h"
@@ -80,6 +81,13 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
         ptr = new StockRealSimulation(_server);
         ret = ptr->Init(exchangeCfg);
         _activeStockName = name;
+    }
+    else if (type == EX_TICKFLOW_QUOTE) {
+        ptr = new TickFlowBridge(_server);
+        ret = ptr->Init(exchangeCfg);
+        if (ret) {
+            _activeStockName = name;
+        }
     }
     else {
         WARN("Unknown exchange type: {}", (int)type);
@@ -298,6 +306,10 @@ void ExchangeManager::UpdateQuoteQueryStatus(time_t curr) {
     for (auto& [name, exch] : _exchanges) {
         // 跳过模拟回测
         if (strcmp(exch->Name(), STOCK_HISTORY_SIM) == 0) {
+            continue;
+        }
+        // TickFlowBridge 有内部定时器，不需要外部调用
+        if (strcmp(exch->Name(), "TickFlowBridge") == 0) {
             continue;
         }
         if (exch->IsWorking(curr)) {

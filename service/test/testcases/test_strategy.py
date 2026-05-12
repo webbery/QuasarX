@@ -88,7 +88,9 @@ class TestStrategy:
         no_reply = ['ml.json']
         script_dir = './script'
         for item_name in os.listdir(script_dir):
-            item_name = 'CTA.json'
+            if item_name == 'ml.json':
+                continue
+
             item_path = os.path.join(script_dir, item_name)
             print('run script:', item_name)
             script = self.load_script(item_path)
@@ -113,5 +115,4 @@ class TestStrategy:
             assert len(data['features']) > 0
             features = data['features']
             assert 'sharp' in features
-            break
     

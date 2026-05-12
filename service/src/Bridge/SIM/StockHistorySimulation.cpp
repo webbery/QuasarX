@@ -8,6 +8,7 @@
 #include "Util/system.h"
 #include "std_header.h"
 #include "csv.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -35,6 +36,19 @@ StockHistorySimulation::~StockHistorySimulation() {
 bool StockHistorySimulation::Init(const ExchangeInfo& handle) {
     _org_path = handle._quote_addr;
     String dbpath = handle._local_addr;
+
+    // 默认佣金配置（股票）: 佣金费率 0.01345%, 最低 5 元, 印花税 0.1%
+    _buy._valid = true;
+    _buy._status = true;
+    _buy._direction = 0;  // BUY
+    _buy._type = 0;       // 按金额收取比例
+    _buy._ration = 0.0001345;
+    _buy._min = 5.0;
+    _buy._stamp = 0.001;  // 买入印花税（A 股买入不收，但预留字段）
+
+    _sell = _buy;
+    _sell._direction = 1; // SELL
+
     return true;
 }
 
@@ -372,12 +386,24 @@ bool StockHistorySimulation::SetStockLimitation(char type, int limitation)
 TradeReport StockHistorySimulation::OrderMatch(const Order& order, const QuoteInfo& quote)
 {
     TradeReport report;
-    report._price = order._price;
     report._time = quote._time;
     report._quantity = order._volume;
     report._side = order._side;
     report._flag = order._flag;
-    report._trade_amount = order._volume * order._price;
+
+    // 计算实际成交价（含滑点）
+    double fillPrice = order._price;
+    if (_slippageModel && order._price > 0) {
+        SlippageContext ctx{order, quote, order._price};
+        double slip = _slippageModel->calculate(ctx);
+        if (order._side == 0) {
+            fillPrice = order._price + slip;  // BUY: 买贵一点
+        } else {
+            fillPrice = order._price - slip;  // SELL: 卖便宜一点
+        }
+    }
+    report._price = fillPrice;
+    report._trade_amount = order._volume * fillPrice;
     return report;
 }
 
@@ -974,6 +1000,30 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
     return anyMoreData;
 }
 
+// ============================================================
+// 交易成本计算辅助函数
+// ============================================================
+namespace {
+    /**
+     * 计算佣金: max(minFee, tradeAmount × rate)
+     * 仅处理 _type == 0（按金额收取比例），其他类型返回 0
+     */
+    double calcCommission(const TradeReport& report, const Commission& comm) {
+        if (comm._type != 0 || !comm._valid) return 0;
+        double fee = report._trade_amount * comm._ration;
+        return std::max((double)comm._min, fee);
+    }
+
+    /**
+     * 计算印花税: tradeAmount × stampRate
+     * 仅股票卖出时收取（side=1），买入不收
+     */
+    double calcStampTax(const TradeReport& report, const Commission& comm) {
+        if (report._side != 1 || comm._stamp == 0) return 0;  // 仅卖出收印花税
+        return report._trade_amount * comm._stamp;
+    }
+}
+
 void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symbol) {
     auto* queue = context->getOrderQueue(symbol);
     if (!queue) return;
@@ -984,9 +1034,20 @@ void StockHistorySimulation::matchOrders(BacktestContext* context, symbol_t symb
     OrderInfo orderInfo;
     while (queue->pop(orderInfo)) {
         TradeReport report = OrderMatch(orderInfo._order->_order, *quote);
+        const auto& order = orderInfo._order->_order;
 
-        if (orderInfo._order->_order._flag == 1) {  // 平仓（平多/平空都释放对应冻结资金）
-            context->releaseFunds(report._trade_amount);
+        // 计算交易成本（佣金 + 印花税）
+        const Commission& comm = (order._side == 0) ? _buy : _sell;
+        double commission = calcCommission(report, comm);
+        double stampTax = calcStampTax(report, comm);
+        double totalCost = commission + stampTax;
+
+        if (order._flag == 1) {  // 平仓（平多/平空都释放对应冻结资金，扣除成本）
+            context->releaseFunds(report._trade_amount - totalCost);
+        } else {  // 开仓
+            // 已冻结 order._price × volume，现在额外扣除成本 + 滑点造成的差额
+            double slipDiff = report._trade_amount - (order._volume * order._price);
+            context->releaseFunds(-(slipDiff + totalCost));  // 负数 = 扣款
         }
 
         // 先注册订单报告，以便 OnOrderReport 能查找到

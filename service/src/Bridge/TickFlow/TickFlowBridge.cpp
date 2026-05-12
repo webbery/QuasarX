@@ -1,0 +1,371 @@
+#include "Util/log.h"
+#include "Util/string_algorithm.h"
+#include "std_header.h"
+#include "Bridge/TickFlow/TickFlowBridge.h"
+#include "Bridge/SIM/BacktestContext.h"
+#include "Util/system.h"
+#include "json.hpp"
+#include "server.h"
+#include <format>
+
+TickFlowBridge::TickFlowBridge(Server* server)
+    : ExchangeInterface(server),
+      _base_url("https://api.tickflow.org"),
+      _universes{"CN_Equity_A"},
+      _interval_ms(10000),
+      _running(false),
+      _login_success(false),
+      _error_count(0),
+      _pause_phase(0),
+      _paused(false),
+      _positionMgr(BACKTEST_INITIAL_CAPITAL) {
+}
+
+TickFlowBridge::~TickFlowBridge() {
+    StopTimerInternal();
+}
+
+const char* TickFlowBridge::Name() {
+    return "TickFlowBridge";
+}
+
+bool TickFlowBridge::Init(const ExchangeInfo& handle) {
+    // API Key 拼接：_username 存前缀（如 "tk_"），_passwd 存 32 位主体
+    // 完整 token 形如: tk_9f008d2914ab4dbda62ac83a063ff6f6
+    _api_key = String(handle._username) + String(handle._passwd, 32);
+    if (_api_key.empty()) {
+        FATAL("TickFlow API key is empty, bridge disabled");
+        return false;
+    }
+
+    _base_url = "https://api.tickflow.org";
+    _universes = {"CN_Equity_A"};
+    _interval_ms = 10000;
+
+    InitHttpClient();
+    _login_success = true;
+    StartTimer();
+
+    INFO("TickFlowBridge initialized, api_key loaded, interval={}ms", _interval_ms);
+    return true;
+}
+
+void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
+    _filter = filter;
+
+    // 初始化符号映射表
+    for (const auto& code : filter._symbols) {
+        symbol_t sym = TickFlowToSymbol(code);
+        if (is_null(sym)) {
+            _symbol_to_code[sym] = code;
+            _code_to_symbol[code] = sym;
+        }
+    }
+    INFO("SetFilter: {} symbols loaded", filter._symbols.size());
+}
+
+bool TickFlowBridge::Release() {
+    StopTimerInternal();
+    _login_success = false;
+    _quotes.clear();
+    return true;
+}
+
+void TickFlowBridge::InitHttpClient() {
+    _http_client = std::make_unique<httplib::Client>("https://api.tickflow.org");
+    _http_client->set_connection_timeout(10);
+    _http_client->set_read_timeout(15);
+}
+
+// ==================== 符号转换 ====================
+
+String TickFlowBridge::SymbolToTickFlow(symbol_t s) {
+    auto it = _symbol_to_code.find(s);
+    if (it != _symbol_to_code.end()) {
+        return it->second;
+    }
+    // 回退：手动构造
+    const Map<char, String> exchange_rev = {
+        {MT_Shenzhen, "SZ"}, {MT_Shanghai, "SH"}, {MT_Beijing, "BJ"}
+    };
+    char exchange_code[3] = "SH";
+    auto exc_it = exchange_rev.find(s._exchange);
+    if (exc_it != exchange_rev.end()) {
+        exchange_code[0] = exc_it->second[0];
+        exchange_code[1] = exc_it->second[1];
+    }
+    return std::format("{:06d}.{}", (uint32_t)s._symbol, exchange_code);
+}
+
+symbol_t TickFlowBridge::TickFlowToSymbol(const String& code) {
+    auto it = _code_to_symbol.find(code);
+    if (it != _code_to_symbol.end()) {
+        return it->second;
+    }
+
+    // TickFlow 格式: 600000.SH -> 翻转为 SH.600000 再调用 to_symbol
+    List<String> tokens;
+    split(code, tokens, ".");
+    String adapted = (tokens.size() == 2) ? (tokens.back() + "." + tokens.front()) : code;
+    symbol_t sym = to_symbol(adapted);
+
+    // 缓存映射
+    _code_to_symbol[code] = sym;
+    _symbol_to_code[sym] = code;
+    return sym;
+}
+
+// ==================== 资金/持仓 ====================
+
+double TickFlowBridge::GetAvailableFunds(run_id_t run_id) {
+    return _positionMgr.GetAvailableFunds();
+}
+
+AccountAsset TickFlowBridge::GetAsset() {
+    return _positionMgr.GetAsset();
+}
+
+bool TickFlowBridge::GetPosition(AccountPosition& pos) {
+    return _positionMgr.GetPosition(pos);
+}
+
+// ==================== 订单模拟成交 ====================
+
+order_id TickFlowBridge::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order) {
+    String side = order->_order._side == 0 ? "BUY" : "SELL";
+    String symbol_str = SymbolToTickFlow(symbol);
+
+    INFO("Order (no-op): {} {} @ {:.4f} volume={}", side, symbol_str, order->_order._price, order->_order._volume);
+
+    // 更新模拟持仓
+    double price = order->_order._price;
+    int64_t qty = order->_order._volume;
+    if (order->_order._side == 0) {
+        _positionMgr.Buy(symbol, qty, price);
+    } else {
+        _positionMgr.Sell(symbol, qty, price);
+    }
+
+    // 构造成交回报
+    TradeReport report{};
+    report._status = OrderStatus::OrderSuccess;
+    report._price = price;
+    report._quantity = qty;
+    report._time = std::time(nullptr);
+    report._type = static_cast<char>(OrderType::Limit);
+    report._side = order->_order._side;
+    report._flag = order->_order._flag;
+
+    // 触发回调和邮件通知
+    OnOrderReport({}, report);
+
+    // 标记订单成功
+    order->_flag = true;
+    order->_success = true;
+    try {
+        order->_promise.set_value(true);
+    } catch (...) {}
+
+    return order_id{};
+}
+
+void TickFlowBridge::OnOrderReport(order_id id, const TradeReport& report) {
+    // 邮件通知（持仓已在 AddOrder 中更新）
+    if (_server) {
+        String content;
+        if (report._side == 0) {
+            content = std::format("Buy {} {}", report._price, report._quantity);
+        } else {
+            content = std::format("Sell {} {}", report._price, report._quantity);
+        }
+        if (!content.empty()) {
+            _server->SendEmail(content);
+        }
+    }
+}
+
+// ==================== 行情 ====================
+
+QuoteInfo TickFlowBridge::GetQuote(symbol_t symbol) {
+    QuoteInfo quote{};
+    _quotes.visit(symbol, [&quote](std::pair<const symbol_t, QuoteInfo>& entry) {
+        quote = entry.second;
+    });
+    return quote;
+}
+
+void TickFlowBridge::QueryQuotes() {
+    // 手动触发一次请求（可选）
+    FetchQuotes();
+}
+
+void TickFlowBridge::StopQuery() {
+    StopTimerInternal();
+}
+
+// ==================== HTTP 请求 ====================
+
+void TickFlowBridge::FetchQuotes() {
+    if (!_login_success || _filter._symbols.empty()) return;
+
+    // 检查暂停状态
+    {
+        std::lock_guard<std::mutex> lock(_error_mutex);
+        if (_paused) {
+            auto now = std::chrono::steady_clock::now();
+            if (now < _pause_until) {
+                return;  // 仍在暂停中
+            } else {
+                _paused = false;
+                _error_count = 0;
+                INFO("Pause expired, resuming TickFlow requests");
+            }
+        }
+    }
+
+    constexpr int BATCH_SIZE = 5;
+    auto symbols = Vector<String>(_filter._symbols.begin(), _filter._symbols.end());
+
+    for (size_t i = 0; i < symbols.size(); i += BATCH_SIZE) {
+        Vector<String> batch(symbols.begin() + i,
+                            symbols.begin() + std::min(i + BATCH_SIZE, symbols.size()));
+
+        // 构建请求体
+        nlohmann::json body;
+        body["symbols"] = batch;
+        body["universes"] = _universes;
+
+        String body_str = body.dump();
+
+        // 发送 POST 请求
+        httplib::Headers headers = {
+            {"Content-Type", "application/json"},
+            {"x-api-key", _api_key}
+        };
+        auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
+
+        if (!res) {
+            WARN("HTTP request failed (no response)");
+            HandleApiError("HTTP request timeout");
+            return;
+        }
+
+        if (res->status == 200) {
+            ParseResponse(res->body);
+            std::lock_guard<std::mutex> lock(_error_mutex);
+            _error_count = 0;
+            _pause_phase = 0;
+        } else if (res->status == 429 || res->status == 401 || res->status == 403) {
+            String msg = std::format("TickFlow API error: status={}, body={}", res->status, res->body);
+            WARN("{}", msg.c_str());
+            HandleApiError(msg.c_str());
+            return;
+        } else {
+            WARN("Unexpected status: {}", res->status);
+            HandleApiError(std::format("HTTP {}", res->status).c_str());
+            return;
+        }
+
+        // 批次间隔
+        if (i + BATCH_SIZE < symbols.size()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }
+}
+
+void TickFlowBridge::ParseResponse(const String& response) {
+    try {
+        auto json = nlohmann::json::parse(response);
+        if (!json.contains("data") || !json["data"].is_array()) {
+            WARN("Invalid response format");
+            return;
+        }
+
+        int count = 0;
+        for (auto& item : json["data"]) {
+            QuoteInfo quote{};
+
+            String code = item.value("symbol", "");
+            quote._symbol = TickFlowToSymbol(code);
+
+            quote._time = item.value("timestamp", 0);
+            quote._open = item.value("open", 0.0);
+            quote._close = item.value("last_price", 0.0);
+            quote._high = item.value("high", 0.0);
+            quote._low = item.value("low", 0.0);
+            quote._volume = item.value("volume", 0);
+            quote._turnover = item.value("amount", 0.0);
+
+            // 涨跌停价：未知，填 0
+            quote._upper = 0.0;
+            quote._lower = 0.0;
+
+            // 买卖 5 档：API 不提供，填充 0
+            quote._bidPrice.fill(0);
+            quote._bidVolume.fill(0);
+            quote._askPrice.fill(0);
+            quote._askVolume.fill(0);
+
+            quote._source = 'T';  // TickFlow 来源标记
+            quote._confidence = 100;
+
+            _quotes.insert({quote._symbol, quote});
+            count++;
+        }
+
+        INFO("Updated {} quotes", count);
+    } catch (const std::exception& e) {
+        WARN("Parse error: {}", e.what());
+    }
+}
+
+// ==================== 错误处理 ====================
+
+void TickFlowBridge::HandleApiError(const String& reason) {
+    std::lock_guard<std::mutex> lock(_error_mutex);
+    _error_count++;
+
+    // 3次→暂停1分钟 → 3次→暂停5分钟 → 3次→邮件通知并永久暂停
+    if (_error_count >= 3) {
+        if (_pause_phase == 0) {
+            _pause_phase = 1;
+            _paused = true;
+            _pause_until = std::chrono::steady_clock::now() + std::chrono::minutes(1);
+            WARN("3 consecutive errors, pausing for 1 minute. Reason: {}", reason.c_str());
+        } else if (_pause_phase == 1) {
+            _pause_phase = 2;
+            _paused = true;
+            _pause_until = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+            WARN("3 consecutive errors after resume, pausing for 5 minutes. Reason: {}", reason.c_str());
+        } else if (_pause_phase == 2) {
+            _pause_phase = 3;
+            _paused = true;
+            String msg = std::format("[TickFlowBridge] Bridge permanently paused due to persistent errors: {}", reason);
+            FATAL("{}", msg.c_str());
+            _server->SendEmail(msg.c_str());
+        }
+
+        _error_count = 0;
+    }
+}
+
+// ==================== 定时器 ====================
+
+void TickFlowBridge::StartTimer() {
+    _running = true;
+    _timer_thread = std::thread([this]() {
+        while (_running) {
+            FetchQuotes();
+            for (int i = 0; i < _interval_ms && _running; i += 100) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    });
+}
+
+void TickFlowBridge::StopTimerInternal() {
+    _running = false;
+    if (_timer_thread.joinable()) {
+        _timer_thread.join();
+    }
+}

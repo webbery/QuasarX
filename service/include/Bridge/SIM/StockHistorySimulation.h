@@ -1,5 +1,6 @@
 #pragma once
 #include "Bridge/exchange.h"
+#include "Bridge/SlippageModel.h"
 #include "DataFrame/DataFrame.h"
 #include "Util/system.h"
 #include "Bridge/SIM/BacktestContext.h"
@@ -68,7 +69,7 @@ public:
   virtual void GetFee(FeeInfo& fee, symbol_t symbol) {}
 
   void SetCommission(const Commission& buy, const Commission& sell);
-  void SetSlippage(float slippage) { _slippage = slippage; }
+  void SetSlippageModel(std::unique_ptr<ISlippageModel> model) { _slippageModel = std::move(model); }
 
   virtual int GetStockLimitation(char type);
 
@@ -206,7 +207,7 @@ protected:
   ConcurrentMap<size_t, OrderContext*> _reports;
   Commission _buy;
   Commission _sell;
-  float _slippage;  // 滑点
+  std::unique_ptr<ISlippageModel> _slippageModel;
 
   // 回测时间范围配置（可选）
   bool _hasBacktestTimeRange = false;

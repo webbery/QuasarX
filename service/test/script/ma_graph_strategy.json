@@ -176,6 +176,11 @@
                         "step": 1,
                         "unit": "元"
                     },
+                    "slippageModel": {
+                        "value": 0,
+                        "type": "select",
+                        "options": [0, 1]
+                    },
                     "slippage": {
                         "value": 0.001,
                         "type": "number",

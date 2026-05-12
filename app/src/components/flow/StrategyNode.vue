@@ -292,6 +292,18 @@ const updateParam = (paramKey: string, newValue: any) => {
             emit('update-node', props.node.id, '仓位比例', 0.0)
         }
     }
+
+    // 滑点模型联动：切换模型时显隐对应参数
+    if (paramKey === 'slippageModel' && props.node.data.nodeType === 'execution') {
+        const useImpact = newValue === 1
+        const params = props.node.data.params
+        // 固定滑点 vs 冲击滑点互斥显示
+        params.slippage.visible = !useImpact
+        params.slippageBase.visible = useImpact
+        params.slippageImpactK.visible = useImpact
+        params.slippageAlpha.visible = useImpact
+    }
+
     emit('update-node', props.node.id, paramKey, newValue)
 }
 
@@ -326,6 +338,16 @@ const selectFile = async (paramKey: string) => {
 }
 
 onMounted(() => {
+    // 初始化滑点参数可见性
+    if (props.node.data.nodeType === 'execution') {
+        const params = props.node.data.params
+        const useImpact = params.slippageModel?.value === 1
+        if (params.slippage) params.slippage.visible = !useImpact
+        if (params.slippageBase) params.slippageBase.visible = useImpact
+        if (params.slippageImpactK) params.slippageImpactK.visible = useImpact
+        if (params.slippageAlpha) params.slippageAlpha.visible = useImpact
+    }
+
     document.addEventListener('click', handleClickOutside)
 })
 

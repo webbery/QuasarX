@@ -1,6 +1,7 @@
 #include "Nodes/ExecuteNode.h"
 #include "Nodes/ExecutionPlan.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SlippageModel.h"
 #include "MarketTiming/ImmediateTiming.h"
 #include "MarketTiming/ShadowTiming.h"
 #include "server.h"
@@ -36,14 +37,29 @@ ExecuteNode::ExecuteNode(Server* server):_server(server), _timing(nullptr){
 
 bool ExecuteNode::Init(const nlohmann::json& config) {
     int type = config["params"]["type"]["value"];
-    double slippage = config["params"]["slippage"]["value"];
+    auto& slippageConfig = config["params"]["slippageModel"];
+    int modelType = slippageConfig["value"].get<int>();
+
+    // 构建滑点模型 JSON 配置
+    nlohmann::json slipJson;
+    slipJson["type"] = modelType;
+
+    if (modelType == 0) {
+        // 固定比例：使用 slippage.value
+        slipJson["ratio"] = config["params"]["slippage"]["value"].get<double>();
+    } else {
+        // 成交量冲击：使用 base / impact_k / alpha
+        slipJson["base"] = config["params"]["slippageBase"]["value"].get<double>();
+        slipJson["impact_k"] = config["params"]["slippageImpactK"]["value"].get<double>();
+        slipJson["alpha"] = config["params"]["slippageAlpha"]["value"].get<double>();
+    }
 
     _timing = GenerateTiming((ExecuteType)type);
-    
+
     auto exchange = _server->GetAvaliableStockExchange();
-    auto simExchagne = dynamic_cast<StockHistorySimulation*>(exchange);
-    if (simExchagne) {
-        simExchagne->SetSlippage(slippage);
+    auto simExchange = dynamic_cast<StockHistorySimulation*>(exchange);
+    if (simExchange) {
+        simExchange->SetSlippageModel(SlippageFactory::create(slipJson));
     }
     return true;
 }

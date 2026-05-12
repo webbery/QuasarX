@@ -1594,6 +1594,10 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
         std::string username = exchange["account"];
         strcpy(handle._username, username.c_str());
     }
+    if (exchange.contains("username")) {
+        std::string username = exchange["username"];
+        strcpy(handle._username, username.c_str());
+    }
     if (exchange.contains("passwd")) {
         std::string passwd = exchange["passwd"];
         strcpy(handle._passwd, passwd.c_str());
