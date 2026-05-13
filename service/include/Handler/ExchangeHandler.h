@@ -34,6 +34,9 @@ public:
 private:
   ExchangeInfo GetExchangeInfo(const char* name);
 
+  /// @brief TickFlow 专用初始化函数
+  bool UseTickFlow(const String& name);
+
   template<typename T>
   bool SwitchExchange(const String& name) {
     if (!_exchanges[name]) {

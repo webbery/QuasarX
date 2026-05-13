@@ -3,6 +3,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/StockRealSimulation.h"
 #include "Bridge/HX/HXExchange.h"
+#include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/exchange.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
@@ -45,6 +46,11 @@ bool ExchangeHandler::Use(const String& name) {
       _activeStockName = name;
       et = ExchangeType::EX_HX;
   }
+  else if (ex_type == TICKFLOW_QUOTE_API) {
+      ret = UseTickFlow(name);
+      _activeStockName = name;
+      et = ExchangeType::EX_TICKFLOW_QUOTE;
+  }
   else {
       WARN("not support exchange {}", ex_type);
   }
@@ -52,61 +58,103 @@ bool ExchangeHandler::Use(const String& name) {
     auto ptr = _exchanges[name];
     _type_excs[et] = ptr;
 
-    // 同步 symbol 信息到 Server
-    List<SymbolInfo> symbols;
-    // 获取所有类型的符号信息
-    ptr->GetAllStockSymbols(symbols);
-    ptr->GetAllFundSymbols(symbols);
-    ptr->GetAllOptionSymbols(symbols);
+    // TickFlowBridge 特殊处理：不需要同步符号信息到 Server
+    if (ex_type == TICKFLOW_QUOTE_API) {
+        // 只设置过滤条件
+        QuoteFilter filter;
+        if (exchange.contains("pool")) {
+            for (String symbol: exchange["pool"]) {
+                filter._symbols.insert(symbol);
+            }
+        }
+        ptr->SetFilter(filter);
+    } else {
+        // 同步 symbol 信息到 Server
+        List<SymbolInfo> symbols;
+        // 获取所有类型的符号信息
+        ptr->GetAllStockSymbols(symbols);
+        ptr->GetAllFundSymbols(symbols);
+        ptr->GetAllOptionSymbols(symbols);
 
-    // 填充到 Server 的 _markets
-    for (auto& sym : symbols) {
-      ContractInfo info;
-      info._type = sym._type;
-      info._exchange = sym._exchange;
-      info._name = sym._name;
-      info._market = sym._market;
-      info._expireDate = sym._expireDate;
-      info._deliveryDate = sym._deliveryDate;
-      info._strike = sym._strike;
-      _server->AddSymbolToMarket(sym._code, std::move(info));
-    }
-    if (!symbols.empty()) {
-      INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
-    }
+        // 填充到 Server 的 _markets
+        for (auto& sym : symbols) {
+            ContractInfo info;
+            info._type = sym._type;
+            info._exchange = sym._exchange;
+            info._name = sym._name;
+            info._market = sym._market;
+            info._expireDate = sym._expireDate;
+            info._deliveryDate = sym._deliveryDate;
+            info._strike = sym._strike;
+            _server->AddSymbolToMarket(sym._code, std::move(info));
+        }
+        if (!symbols.empty()) {
+            INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
+        }
 
-    QuoteFilter filter;
-    if (exchange.contains("pool")) {
-      for (String symbol: exchange["pool"]) {
-        filter._symbols.insert(symbol);
-      }
-    }
-    if (exchange.contains("utc_active")) {
-      for (auto& range: exchange["utc_active"]) {
-        String working_range = range;
-        Vector<String> time_range;
-        split(working_range, time_range, "-");
-        String& start_datetime = time_range[0];
-        Vector<String> components;
-        split(start_datetime, components, ":");
-        if (components.size() == 0)
-          break;
+        QuoteFilter filter;
+        if (exchange.contains("pool")) {
+            for (String symbol: exchange["pool"]) {
+                filter._symbols.insert(symbol);
+            }
+        }
+        if (exchange.contains("utc_active")) {
+            for (auto& range: exchange["utc_active"]) {
+                String working_range = range;
+                Vector<String> time_range;
+                split(working_range, time_range, "-");
+                String& start_datetime = time_range[0];
+                Vector<String> components;
+                split(start_datetime, components, ":");
+                if (components.size() == 0)
+                    break;
 
-        auto start_hour = (char)atoi(components[0].c_str());
-        auto start_minute = (char)atoi(components[1].c_str());
-        components.clear();
-        split(time_range[1], components, ":");
-        if (components.size() == 0)
-          break;
-        auto stop_hour = (char)atoi(components[0].c_str());
-        auto stop_minute = (char)atoi(components[1].c_str());
-        ptr->SetWorkingRange(start_hour, stop_hour, start_minute, stop_minute);
-      }
-      // filter._range.first = 
-    }
-    ptr->SetFilter(filter);
+                auto start_hour = (char)atoi(components[0].c_str());
+                auto start_minute = (char)atoi(components[1].c_str());
+                components.clear();
+                split(time_range[1], components, ":");
+                if (components.size() == 0)
+                    break;
+                auto stop_hour = (char)atoi(components[0].c_str());
+                auto stop_minute = (char)atoi(components[1].c_str());
+                ptr->SetWorkingRange(start_hour, stop_hour, start_minute, stop_minute);
+            }
+        }
+        ptr->SetFilter(filter);
+    } // end else (non-TickFlow)
   }
   return ret;
+}
+
+bool ExchangeHandler::UseTickFlow(const String& name) {
+    if (!_exchanges[name]) {
+        auto ptr = new TickFlowBridge(_server);
+        auto& config = _server->GetConfig();
+        auto exchange = config.GetExchangeByName(name);
+
+        // 构造 ExchangeInfo（TickFlow 特化：只需要 username + passwd）
+        ExchangeInfo info;
+        memset(&info, 0, sizeof(ExchangeInfo));
+        if (exchange.contains("username")) {
+            std::string username = exchange["username"];
+            strncpy(info._username, username.c_str(), sizeof(info._username) - 1);
+        }
+        if (exchange.contains("passwd")) {
+            std::string passwd = exchange["passwd"];
+            strncpy(info._passwd, passwd.c_str(), sizeof(info._passwd) - 1);
+        }
+
+        if (!ptr->Init(info)) {
+            WARN("TickFlowBridge init failed for {}", name);
+            delete ptr;
+            return false;
+        }
+        _exchanges[name] = ptr;
+    }
+    auto ptr = _exchanges[name];
+    // TickFlowBridge::Login 总是返回 true
+    _server->SetActiveExchange(ptr);
+    return true;
 }
 
 ExchangeInterface* ExchangeHandler::GetExchangeByType(ExchangeType type) {

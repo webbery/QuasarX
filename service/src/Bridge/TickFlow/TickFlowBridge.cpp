@@ -12,8 +12,7 @@ TickFlowBridge::TickFlowBridge(Server* server)
     : ExchangeInterface(server),
       _base_url("https://api.tickflow.org"),
       _universes{"CN_Equity_A"},
-      _interval_ms(10000),
-      _running(false),
+      _interval_ms(9500),
       _login_success(false),
       _error_count(0),
       _pause_phase(0),
@@ -22,7 +21,6 @@ TickFlowBridge::TickFlowBridge(Server* server)
 }
 
 TickFlowBridge::~TickFlowBridge() {
-    StopTimerInternal();
 }
 
 const char* TickFlowBridge::Name() {
@@ -39,12 +37,11 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     }
 
     _base_url = "https://api.tickflow.org";
-    _universes = {"CN_Equity_A"};
-    _interval_ms = 10000;
+    // _universes = {"CN_Equity_A"};
+    _interval_ms = 9500;
 
     InitHttpClient();
     _login_success = true;
-    StartTimer();
 
     INFO("TickFlowBridge initialized, api_key loaded, interval={}ms", _interval_ms);
     return true;
@@ -65,7 +62,6 @@ void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
 }
 
 bool TickFlowBridge::Release() {
-    StopTimerInternal();
     _login_success = false;
     _quotes.clear();
     return true;
@@ -75,6 +71,15 @@ void TickFlowBridge::InitHttpClient() {
     _http_client = std::make_unique<httplib::Client>("https://api.tickflow.org");
     _http_client->set_connection_timeout(10);
     _http_client->set_read_timeout(15);
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    const char* ca_path = "/etc/ssl/certs/ca-certificates.crt";
+    if (std::filesystem::exists(ca_path)) {
+        _http_client->set_ca_cert_path(ca_path);
+        INFO("SSL CA cert loaded from: {}", ca_path);
+    } else {
+        WARN("SSL CA cert file not found: {}. SSL verification may fail.", ca_path);
+    }
+#endif
 }
 
 // ==================== 符号转换 ====================
@@ -195,12 +200,19 @@ QuoteInfo TickFlowBridge::GetQuote(symbol_t symbol) {
 }
 
 void TickFlowBridge::QueryQuotes() {
-    // 手动触发一次请求（可选）
+    // 频率控制：检查距离上次请求的时间间隔
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_request).count();
+    if (elapsed < _interval_ms) {
+        return;  // 未到指定间隔，跳过
+    }
+    _last_request = now;
+    
     FetchQuotes();
 }
 
 void TickFlowBridge::StopQuery() {
-    StopTimerInternal();
+    // 由外部调度，无需内部停止
 }
 
 // ==================== HTTP 请求 ====================
@@ -233,9 +245,10 @@ void TickFlowBridge::FetchQuotes() {
         // 构建请求体
         nlohmann::json body;
         body["symbols"] = batch;
-        body["universes"] = _universes;
+        // body["universes"] = _universes;
 
         String body_str = body.dump();
+        INFO("POST: {}", body_str);
 
         // 发送 POST 请求
         httplib::Headers headers = {
@@ -245,8 +258,21 @@ void TickFlowBridge::FetchQuotes() {
         auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
 
         if (!res) {
-            WARN("HTTP request failed (no response)");
-            HandleApiError("HTTP request timeout");
+            // 打印详细错误信息
+            auto err = res.error();
+            const char* err_str = "Unknown";
+            switch (err) {
+                case httplib::Error::Connection: err_str = "Connection"; break;
+                case httplib::Error::ConnectionTimeout: err_str = "ConnectionTimeout"; break;
+                case httplib::Error::Read: err_str = "Read"; break;
+                case httplib::Error::Write: err_str = "Write"; break;
+                case httplib::Error::SSLConnection: err_str = "SSLConnection"; break;
+                case httplib::Error::Canceled: err_str = "Canceled"; break;
+                case httplib::Error::ProxyConnection: err_str = "ProxyConnection"; break;
+                default: break;
+            }
+            WARN("HTTP request failed: error={}({})", err_str, static_cast<int>(err));
+            HandleApiError(std::format("HTTP error: {}({})", err_str, static_cast<int>(err)).c_str());
             return;
         }
 
@@ -346,26 +372,5 @@ void TickFlowBridge::HandleApiError(const String& reason) {
         }
 
         _error_count = 0;
-    }
-}
-
-// ==================== 定时器 ====================
-
-void TickFlowBridge::StartTimer() {
-    _running = true;
-    _timer_thread = std::thread([this]() {
-        while (_running) {
-            FetchQuotes();
-            for (int i = 0; i < _interval_ms && _running; i += 100) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        }
-    });
-}
-
-void TickFlowBridge::StopTimerInternal() {
-    _running = false;
-    if (_timer_thread.joinable()) {
-        _timer_thread.join();
     }
 }

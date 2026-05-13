@@ -308,10 +308,6 @@ void ExchangeManager::UpdateQuoteQueryStatus(time_t curr) {
         if (strcmp(exch->Name(), STOCK_HISTORY_SIM) == 0) {
             continue;
         }
-        // TickFlowBridge 有内部定时器，不需要外部调用
-        if (strcmp(exch->Name(), "TickFlowBridge") == 0) {
-            continue;
-        }
         if (exch->IsWorking(curr)) {
             if (exch->IsLogin()) {
                 exch->QueryQuotes();

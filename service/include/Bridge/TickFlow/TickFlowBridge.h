@@ -2,7 +2,6 @@
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
 #include "httplib.h"
-#include <thread>
 #include <atomic>
 #include <mutex>
 
@@ -54,10 +53,6 @@ private:
     void FetchQuotes();
     void ParseResponse(const String& response);
 
-    // 定时器
-    void StartTimer();
-    void StopTimerInternal();
-
     // 符号转换
     String SymbolToTickFlow(symbol_t s);
     symbol_t TickFlowToSymbol(const String& code);
@@ -81,9 +76,8 @@ private:
     Map<symbol_t, String> _symbol_to_code;
     Map<String, symbol_t> _code_to_symbol;
 
-    // 定时器
-    std::thread _timer_thread;
-    std::atomic<bool> _running;
+    // 请求频率控制
+    std::chrono::steady_clock::time_point _last_request;
     std::atomic<bool> _login_success;
 
     // HTTP 客户端

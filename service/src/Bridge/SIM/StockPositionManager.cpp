@@ -1,11 +1,6 @@
 #include "Bridge/SIM/StockPositionManager.h"
 #include "Bridge/SIM/BacktestContext.h"
-#include "spdlog/spdlog.h"
 #include <cmath>
-
-#define INFO(msg, ...)  spdlog::info("[StockPositionManager] " msg, ##__VA_ARGS__)
-#define WARN(msg, ...)  spdlog::warn("[StockPositionManager] " msg, ##__VA_ARGS__)
-#define ERROR(msg, ...) spdlog::error("[StockPositionManager] " msg, ##__VA_ARGS__)
 
 StockPositionManager::StockPositionManager(double initialCapital)
     : _availableFunds(initialCapital)
@@ -146,9 +141,9 @@ double StockPositionManager::GetAvailableFunds() const {
 AccountAsset StockPositionManager::GetAsset() const {
     std::lock_guard<std::mutex> lock(_mutex);
     AccountAsset asset{};
-    asset._cash = _availableFunds;
+    asset.buying_power = _availableFunds;
     // TODO: 计算持仓市值
-    asset._total = _availableFunds;
+    asset.total_asset = _availableFunds;
     return asset;
 }
 
@@ -156,11 +151,12 @@ bool StockPositionManager::GetPosition(AccountPosition& pos) const {
     std::lock_guard<std::mutex> lock(_mutex);
     pos._positions.clear();
     for (const auto& [symbol, sp] : _positions) {
-        PositionInfo pi{};
-        pi._symbol = symbol;
-        pi._qty = sp._qty;
-        pi._cost = sp._cost;
-        pos._positions.push_back(pi);
+        position_t p{};
+        p._symbol = symbol;
+        p._holds = sp._qty;
+        p._validHolds = sp._qty;
+        p._price = sp._cost;
+        pos._positions.push_back(p);
     }
     return !pos._positions.empty();
 }
