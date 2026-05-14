@@ -46,12 +46,22 @@ public:
     bool SetStockLimitation(char type, int limitation) override { return true; }
     void GetFee(FeeInfo& fee, symbol_t symbol) override {}
 
+    // ============ 合约信息查询接口 ============
+    bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
+    bool GetAllFundSymbols(List<SymbolInfo>& symbols) override { return false; }
+    bool GetAllOptionSymbols(List<SymbolInfo>& symbols) override { return false; }
+    SymbolInfo GetSymbolInfo(const String& code) override;
+    void RefreshSymbolList() override {}
+
     bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info) override { return false; }
 
 private:
     // HTTP 请求
     void FetchQuotes();
     void ParseResponse(const String& response);
+
+    // 标的列表获取
+    bool FetchStockSymbolsFromExchange(const String& exchangeCode, List<SymbolInfo>& symbols);
 
     // 符号转换
     String SymbolToTickFlow(symbol_t s);

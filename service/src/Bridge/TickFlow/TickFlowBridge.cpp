@@ -388,3 +388,113 @@ void TickFlowBridge::HandleApiError(const String& reason) {
         _error_count = 0;
     }
 }
+
+// ==================== 合约信息查询 ====================
+
+bool TickFlowBridge::GetAllStockSymbols(List<SymbolInfo>& symbols) {
+    if (!_login_success) {
+        WARN("TickFlowBridge not logged in");
+        return false;
+    }
+
+    // 依次获取 SH、SZ、BJ 三大交易所
+    static const Vector<String> exchanges = {"SH", "SZ", "BJ"};
+
+    for (const auto& exch : exchanges) {
+        size_t before = symbols.size();
+        if (FetchStockSymbolsFromExchange(exch, symbols)) {
+            INFO("Fetched {} stock symbols from exchange {}", symbols.size() - before, exch);
+        } else {
+            WARN("Failed to fetch stock symbols from exchange {}", exch);
+        }
+    }
+
+    INFO("Total loaded {} stock symbols from TickFlow", symbols.size());
+    return !symbols.empty();
+}
+
+bool TickFlowBridge::FetchStockSymbolsFromExchange(const String& exchangeCode, List<SymbolInfo>& symbols) {
+    // 构建 URL: /v1/exchanges/{exchange}/instruments
+    String url = std::format("/v1/exchanges/{}/instruments", exchangeCode);
+
+    httplib::Headers headers = {
+        {"x-api-key", _api_key}
+    };
+
+    auto res = _http_client->Get(url.c_str(), headers);
+
+    if (!res) {
+        auto err = res.error();
+        const char* err_str = "Unknown";
+        switch (err) {
+            case httplib::Error::Connection: err_str = "Connection"; break;
+            case httplib::Error::ConnectionTimeout: err_str = "ConnectionTimeout"; break;
+            case httplib::Error::Read: err_str = "Read"; break;
+            case httplib::Error::Write: err_str = "Write"; break;
+            case httplib::Error::SSLConnection: err_str = "SSLConnection"; break;
+            default: break;
+        }
+        WARN("HTTP request failed for exchange {}: error={}", exchangeCode, err_str);
+        return false;
+    }
+
+    if (res->status != 200) {
+        WARN("TickFlow API error for exchange {}: status={}, body={}", exchangeCode, res->status, res->body);
+        return false;
+    }
+
+    try {
+        auto json = nlohmann::json::parse(res->body);
+        if (!json.contains("data") || !json["data"].is_array()) {
+            WARN("Invalid response format for exchange {}", exchangeCode);
+            return false;
+        }
+
+        // 交易所代码映射
+        static const Map<String, ExchangeName> exchangeMap = {
+            {"SH", MT_Shanghai},
+            {"SZ", MT_Shenzhen},
+            {"BJ", MT_Beijing}
+        };
+
+        auto exchange_it = exchangeMap.find(exchangeCode);
+        ExchangeName exName = (exchange_it != exchangeMap.end()) ? exchange_it->second : MT_Unknow;
+
+        for (const auto& item : json["data"]) {
+            SymbolInfo info;
+            info._code = item.value("code", "");
+            info._name = item.value("name", "");
+            info._exchange = exName;
+            info._type = static_cast<char>(ContractType::AStock);
+
+            // 过滤空代码
+            if (info._code.empty()) {
+                continue;
+            }
+
+            symbols.push_back(info);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        WARN("Parse error for exchange {}: {}", exchangeCode, e.what());
+        return false;
+    }
+}
+
+SymbolInfo TickFlowBridge::GetSymbolInfo(const String& code) {
+    SymbolInfo info;
+    info._code = code;
+    info._type = static_cast<char>(ContractType::AStock);
+
+    // 根据代码推断交易所
+    auto dotPos = code.rfind('.');
+    if (dotPos != String::npos && dotPos + 2 <= code.size()) {
+        String exch = code.substr(dotPos + 1);
+        if (exch == "SH") info._exchange = MT_Shanghai;
+        else if (exch == "SZ") info._exchange = MT_Shenzhen;
+        else if (exch == "BJ") info._exchange = MT_Beijing;
+    }
+
+    return info;
+}

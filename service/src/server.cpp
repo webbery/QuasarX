@@ -636,6 +636,25 @@ bool Server::InitMarket(const std::string& path) {
         if (info["type"] == "stock") {
             if (info["api"] == STOCK_HISTORY_SIM) {
                 InitStocks(path);
+            } else if (info["api"] == TICKFLOW_QUOTE_API) {
+                // 通过 TickFlow 接口获取标的列表
+                auto exchange = GetAvaliableStockExchange();
+                if (exchange) {
+                    List<SymbolInfo> symbols;
+                    if (exchange->GetAllStockSymbols(symbols)) {
+                        for (auto& sym : symbols) {
+                            ContractInfo ci;
+                            ci._type = sym._type;
+                            ci._exchange = sym._exchange;
+                            ci._name = sym._name;
+                            _markets.emplace(sym._code, std::move(ci));
+                        }
+                        INFO("Loaded {} stock symbols from TickFlow", symbols.size());
+                    } else {
+                        WARN("Failed to load stock symbols from TickFlow, fallback to local data");
+                        InitStocks(path);
+                    }
+                }
             } else {
                 // TODO: 通过接口获取
                 InitStocks(path);
