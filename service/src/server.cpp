@@ -13,7 +13,7 @@
 #include "Handler/RiskHandler.h"
 #include "RiskSubSystem.h"
 #include "Handler/ServerEventHandler.h"
-#include "Handler/TimerHandler.h"
+#include "Handler/RecordHandler.h"
 #include "HttpHandler.h"
 #include "PortfolioSubsystem.h"
 #include "StrategyNode.h"

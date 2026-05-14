@@ -161,26 +161,23 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('merge-csv', async (_, url, token, dstZip, mergeSrc) => {
         console.info('merge', url, dstZip, mergeSrc)
-        const agent = new https.Agent({  
+        const agent = new https.Agent({
             rejectUnauthorized: false // 忽略证书错误
         });
         const response = await axios.get(url, {
             httpsAgent: agent,
             responseType: 'arraybuffer',
             headers: { 'Authorization': token}})
-        // console.info('response', response)
         if (response.status === 200) {
             const fs = require('fs');
-            // console.info('data len:', response.data.length, typeof(dstZip), typeof(response.data))
-            fs.writeFileSync(dstZip, response.data, 'binary');
+            const path = require('path');
             const StreamZip = require('node-stream-zip');
             // 解压zip文件
             const zip = new StreamZip.async({ file: dstZip });
-            // 异步解压全部文件
-            await zip.extract(null, 'zip_temp'); // 第一个参数为 null 表示解压所有
+            await zip.extract(null, 'zip_temp');
             await zip.close();
-            // 递归遍历合并数据到目标文件夹下
-            await RecursiveMergeCSVFile(mergeSrc, 'zip_temp')
+            // 递归复制 CBOR 文件到目标文件夹（覆盖已有文件）
+            await RecursiveCopyCbor(mergeSrc, 'zip_temp')
             return true;
         } else {
             return false;
@@ -372,107 +369,32 @@ ipcMain.handle('parse-pdf', async (_, fileData: number[]) => {
     return { success: false, text: '', pages: 0, error: error.message };
   }
 });
-async function MergeCSV(orgCSV, newCSV) {
-    console.info('merge from', orgCSV, 'to', newCSV)
-    const fs = require('fs');
-    const readline = require('readline');
 
-    let lastLine = '';
-    const readLastimePromise = new Promise((resolve, reject) => {
-        const rl = readline.createInterface({
-            input: fs.createReadStream(orgCSV),
-            crlfDelay: Infinity
-        });
-
-        let orgIndex = 0;
-
-        rl.on('line', (line) => {
-            orgIndex += 1;
-            if (line.length === 0 || orgIndex === 1) {
-                return;
-            }
-            console.info(line);
-            lastLine = line;
-        });
-
-        rl.on('close', () => {
-            // 读取完成
-            resolve(lastLine);
-        });
-
-        rl.on('error', (err) => {
-            reject(err);
-        });
-    });
-
-    // 读取org最后一行时间
-    await readLastimePromise;
-
-    const tokens = lastLine.split(',')
-    const last_time = new Date(tokens[0]).getTime();
-    // 找新的csv中时间在last time之后的
-    let appendLines = ''
-    await new Promise((resolve, reject) => {
-        const new_rl = readline.createInterface({
-            input: fs.createReadStream(newCSV)
-        })
-        let newIndx = 0
-        new_rl.on('line', (line) => {
-            newIndx += 1
-            if (line.length == 0 || newIndx == 1)
-                return;
-
-            const tokens = line.split(',')
-            const cur_time = new Date(tokens[0]).getTime();
-            if (cur_time > last_time) {
-                appendLines += line + '\n'
-            }
-        })
-        new_rl.on('close', () => {
-            // 读取完成
-            resolve(appendLines);
-        });
-        new_rl.on('error', (err) => {
-            reject(err);
-        });
-    })
-    
-    if (appendLines.length > 0) {
-        fs.appendFile(orgCSV, appendLines, err => {
-            if (err) {
-                console.log(err);
-            }
-            else {}
-        });
-    }
-}
-
-async function RecursiveMergeCSVFile(to_dir, from_dir) {
+async function RecursiveCopyCbor(to_dir, from_dir) {
     const path = require('path');
     const fs = require('fs');
-    console.info(from_dir, to_dir)
+    const { mkdirSync, cpSync } = require('fs');
+    console.info('copy cbor from', from_dir, 'to', to_dir)
     const subdirs = fs.readdirSync(from_dir)
     for (const item of subdirs) {
         const srcPath = path.join(from_dir, item);
         const dstPath = path.join(to_dir, item);
         const st = fs.statSync(srcPath);
-        // console.info('dir:', srcPath, dstPath)
         if (!fs.existsSync(dstPath)) {
             if (st.isDirectory()) {
-                // 创建文件夹
-                mkdirSync(dstPath, {recursive: true});
-                RecursiveMergeCSVFile(dstPath, srcPath);
+                mkdirSync(dstPath, { recursive: true });
+                RecursiveCopyCbor(dstPath, srcPath);
             }
-            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.csv') {
-                // 直接复制文件过去
+            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.cbor') {
                 cpSync(srcPath, dstPath);
             }
         } else {
             if (st.isDirectory()) {
-                RecursiveMergeCSVFile(dstPath, srcPath);
+                RecursiveCopyCbor(dstPath, srcPath);
             }
-            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.csv') {
-                await MergeCSV(srcPath, dstPath);
+            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.cbor') {
+                // CBOR 直接覆盖
+                cpSync(srcPath, dstPath);
             }
         }
     }

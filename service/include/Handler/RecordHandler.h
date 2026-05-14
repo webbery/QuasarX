@@ -4,6 +4,7 @@
 #include "nng/nng.h"
 #include <fstream>
 #include <thread>
+#include <mutex>
 
 class Server;
 class RecordHandler: public HttpHandler {
@@ -26,10 +27,15 @@ private:
     std::fstream& GetFileStream(const symbol_t& name);
 
     String GetTypePath(symbol_t sym);
-    // 合并备份数据
-    bool MergeBackup(const String& src, const String& dst);
 
-    bool MergeCSV(const String& src, const String& dst);
+    // CBOR Tick 记录
+    void PushCborTick(const QuoteInfo& quote);
+    void FlushCborBuffer();
+    String CborFileName(const QuoteInfo& tick);
+
+    // HTTP 查询接口
+    void HandleTicksQuery(const httplib::Request &req, httplib::Response &res);
+
 private:
     nng_socket sock;
 
@@ -41,4 +47,13 @@ private:
 
     std::map<symbol_t, std::fstream> _fs_map;
     bool _close;
+
+    // CBOR Tick 缓冲区
+    struct CborBuffer {
+        Vector<QuoteInfo> ticks;
+        time_t lastFlush;
+    };
+    std::map<symbol_t, CborBuffer> _cborBuffers;
+    std::mutex _cborMtx;
+    String _cborBasePath;
 };

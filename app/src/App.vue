@@ -63,9 +63,9 @@
           <i class="fas fa-industry"></i>
           <span>策略工厂</span>
         </div>
-        <div class="nav-item">
+        <div class="nav-item" @click="onHandleStrategyTracker" :class="{ active: is_strategy_tracker }">
           <i class="fas fa-bolt"></i>
-          <span>策略监控</span>
+          <span>策略追踪</span>
         </div>
       </div>
 
@@ -236,6 +236,7 @@ import MarketPanel from "./components/MarketPanel.vue";
 import AccountView from "./components/AccountView.vue";
 import RiskPanel from "./components/RiskPanel.vue";
 import StrategyFactory from "./components/StrategyFactory.vue";
+import StrategyTracker from "./components/StrategyTracker.vue";
 import FlowComponents from "./components/FlowComponents.vue";
 import DataCenter from "./components/DataCenter.vue";
 import LoginForm from "./components/LoginForm.vue";
@@ -279,6 +280,7 @@ const VIEWS = {
   RISK_DETAIL_VIEW: 'risk_detail',
   PORTFOLIO_VIEW: 'portfolio',
   KNOWLEDGE_BASE: 'knowledge_base',
+  STRATEGY_TRACKER: 'strategy_tracker',
 };
 const store = new Store()
 
@@ -404,6 +406,8 @@ let activeComponent = computed(() => {
     return PortfolioView;
   if (currentView.value === VIEWS.KNOWLEDGE_BASE)
     return KnowledgeBaseView;
+  if (currentView.value === VIEWS.STRATEGY_TRACKER)
+    return StrategyTracker;
   return AccountView;
 });
 
@@ -433,6 +437,7 @@ let is_position = computed(()=> currentView.value=== VIEWS.POSITION_VIEW);
 let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW || currentView.value === VIEWS.RISK_DETAIL_VIEW);
 let is_portfolio = computed(() => currentView.value === VIEWS.PORTFOLIO_VIEW);
 let is_knowledgebase = computed(() => currentView.value === VIEWS.KNOWLEDGE_BASE);
+let is_strategy_tracker = computed(() => currentView.value === VIEWS.STRATEGY_TRACKER);
 
 const unit = 1024.0/1000000000;
 
@@ -594,6 +599,10 @@ const onHandleKnowledgeBase = () => {
 
 const onHandlePosition = () => {
   currentView.value = VIEWS.POSITION_VIEW;
+}
+
+const onHandleStrategyTracker = () => {
+  currentView.value = VIEWS.STRATEGY_TRACKER;
 }
 const onLoginSwitch = () => {
   showLogin.value = !showLogin.value

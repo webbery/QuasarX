@@ -10,13 +10,12 @@ DataSyncHandler::DataSyncHandler(Server* server): HttpHandler(server) {
 void DataSyncHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto& cfg = _server->GetConfig();
     auto datapath = cfg.GetDatabasePath();
-    auto bakup_path = datapath + "/zh.backup";
-    nlohmann::json data;
-    if (std::filesystem::exists(bakup_path) && !_server->IsDataLock()) {
-        // 压缩
+    auto daily_path = datapath + "/daily";
+    
+    if (std::filesystem::exists(daily_path) && !_server->IsDataLock()) {
         auto zip_path = datapath + "/bak.zip";
         String excp;
-        if (!CreateZip(bakup_path, zip_path, excp)) {
+        if (!CreateZip(daily_path, zip_path, excp)) {
             res.status = 401;
             res.set_content(String("{error: '") + excp + "'}", "application/json");
             return;

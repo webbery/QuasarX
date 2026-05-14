@@ -1,17 +1,17 @@
 <template>
     <div class="input-group">
-            <label for="sync-path">同步文件夹路径</label>
+            <label for="sync-path">数据文件夹路径</label>
             <input
-                type="text" 
-                placeholder="请选择或输入要同步的文件夹路径"
+                type="text"
+                placeholder="请选择或输入要保存数据的文件夹路径"
                 v-model="selectedFolderPath"
                 readonly
             >
         </div>
-        
+
         <div class="button-group">
             <button class="selection" @click="onHandleSelection">
-                <i class="fas fa-folder-open"></i>选择本地同步文件夹
+                <i class="fas fa-folder-open"></i>选择本地数据文件夹
             </button>
             <button class="btn" @click="onHandleDownload">
                 <i class="fas fa-sync-alt"></i>同步数据
