@@ -174,6 +174,22 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
     try {
         nlohmann::json script;
         ifs >> script;
+
+        // 版本检查：如果 version 字段不存在或低于最低兼容版本，则拒绝加载
+        if (!script.contains("version") || !script["version"].is_number()) {
+            WARN("[StrategySubSystem] Strategy '{}' rejected: missing 'version' field", strategyName);
+            ifs.close();
+            return false;
+        }
+
+        int version = script["version"].get<int>();
+        if (version < MIN_STRATEGY_VERSION) {
+            WARN("[StrategySubSystem] Strategy '{}' rejected: version {} is below minimum required ({})",
+                 strategyName, version, MIN_STRATEGY_VERSION);
+            ifs.close();
+            return false;
+        }
+
         InitStrategy(strategyName, script);
     } catch (const nlohmann::json::parse_error& e) {
         ifs.close();
@@ -209,14 +225,26 @@ void StrategySubSystem::InitStrategy(const String& strategy, const List<QNode*>&
 }
  
 void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann::json& script) {
+    // 版本检查
+    if (!script.contains("version") || !script["version"].is_number()) {
+        WARN("[StrategySubSystem] Strategy '{}' rejected: missing 'version' field", strategyName);
+        return;
+    }
+    int version = script["version"].get<int>();
+    if (version < MIN_STRATEGY_VERSION) {
+        WARN("[StrategySubSystem] Strategy '{}' rejected: version {} is below minimum required ({})",
+             strategyName, version, MIN_STRATEGY_VERSION);
+        return;
+    }
+
     auto nodes = parse_strategy_script_v2(script, _handle);
     auto sorted_nodes = topo_sort(nodes);
     InitStrategy(strategyName, sorted_nodes);
-    
+
     // 推断并保存预热期 epoch 数
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;
-    
+
     if (warmup > 0) {
         INFO("[StrategySubSystem] Inferred warmup for '{}': {} epochs", strategyName, warmup);
     }

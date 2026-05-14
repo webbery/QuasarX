@@ -12,12 +12,19 @@ export interface ThoughtStep {
   timestamp: number
 }
 
+export interface TokenUsage {
+  promptTokens: number   // 输入 token 数
+  completionTokens: number  // 输出 token 数
+  totalTokens: number    // 总 token 数
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
   thoughts?: ThoughtStep[]  // 思考步骤
+  tokenUsage?: TokenUsage   // Token 使用量
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -79,10 +86,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // 添加消息
-  function addMessage(msg: Omit<ChatMessage, 'id' | 'timestamp'>) {
+  function addMessage(msg: Omit<ChatMessage, 'id' | 'timestamp'> & { id?: string }): ChatMessage {
     const message: ChatMessage = {
       ...msg,
-      id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
+      id: msg.id ?? (Date.now().toString() + Math.random().toString(36).slice(2, 8)),
       timestamp: Date.now(),
     }
     messages.value.push(message)
@@ -91,6 +98,8 @@ export const useChatStore = defineStore('chat', () => {
       messages.value = messages.value.slice(-MAX_MESSAGES)
     }
     saveToStorage()
+    // 返回响应式代理（数组中的最后一个元素）
+    return messages.value[messages.value.length - 1]
   }
 
   // 清空消息

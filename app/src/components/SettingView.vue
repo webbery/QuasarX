@@ -46,7 +46,12 @@
                 <div class="section-content" :class="{ expanded: expandedSections.tickflow }">
                     <div class="form-group" >
                         <label>API Key</label>
-                        <input type="password" class="form-control" v-model="tickflowApiKey" placeholder="请输入 TickFlow API Key（可选）">
+                        <div class="password-input-wrapper">
+                            <input :type="showTickflowKey ? 'text' : 'password'" class="form-control" v-model="tickflowApiKey" placeholder="请输入 TickFlow API Key（可选）">
+                            <button class="eye-toggle-btn" @click="showTickflowKey = !showTickflowKey" type="button">
+                                <i :class="showTickflowKey ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'"></i>
+                            </button>
+                        </div>
                     </div>
                     <p class="hint">
                         在 <a href="https://tickflow.org" target="_blank">tickflow.org</a> 获取 API Key，用于获取基准指数数据
@@ -94,7 +99,12 @@
                     </div>
                     <div class="form-group">
                         <label>API Key</label>
-                        <input type="password" class="form-control" v-model="agentConfig.apiKey" placeholder="请输入 API Key">
+                        <div class="password-input-wrapper">
+                            <input :type="showAgentKey ? 'text' : 'password'" class="form-control" v-model="agentConfig.apiKey" placeholder="请输入 API Key">
+                            <button class="eye-toggle-btn" @click="showAgentKey = !showAgentKey" type="button">
+                                <i :class="showAgentKey ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="form-actions">
                         <button class="btn btn-primary" @click="saveAgentConfig">保存配置</button>
@@ -126,7 +136,12 @@
                 <div class="section-content" :class="{ expanded: expandedSections.tavily }">
                     <div class="form-group">
                         <label>Tavily API Key</label>
-                        <input type="password" class="form-control" v-model="tavilyApiKey" placeholder="请输入 Tavily API Key（可选）">
+                        <div class="password-input-wrapper">
+                            <input :type="showTavilyKey ? 'text' : 'password'" class="form-control" v-model="tavilyApiKey" placeholder="请输入 Tavily API Key（可选）">
+                            <button class="eye-toggle-btn" @click="showTavilyKey = !showTavilyKey" type="button">
+                                <i :class="showTavilyKey ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'"></i>
+                            </button>
+                        </div>
                     </div>
                     <p class="hint">
                         在 <a href="https://tavily.com" target="_blank">tavily.com</a> 获取 API Key，用于网络搜索功能。免费额度：1000 次/月
@@ -353,6 +368,7 @@ const smtpConfig = ref({
 
 // TickFlow API 配置
 const tickflowApiKey = ref(localStorage.getItem('tickflow_api_key') || '');
+const showTickflowKey = ref(false);  // 密码显示/隐藏切换
 const testingConnection = ref(false);
 const testResult = ref(null);
 
@@ -367,10 +383,12 @@ const agentConfig = ref({
 });
 
 const testingAgentConnection = ref(false);
+const showAgentKey = ref(false);  // 密码显示/隐藏切换
 const agentTestResult = ref(null);
 
 // Tavily 搜索配置
 const tavilyApiKey = ref(localStorage.getItem('tavily_api_key') || '');
+const showTavilyKey = ref(false);  // 密码显示/隐藏切换
 const testingTavilyConnection = ref(false);
 const tavilyTestResult = ref(null);
 
@@ -886,6 +904,53 @@ onMounted(async () => {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+}
+
+/* 密码输入框包装器 */
+.password-input-wrapper {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+.password-input-wrapper .form-control {
+    padding-right: 40px;  /* 为眼睛按钮留出空间 */
+}
+
+/* 眼睛切换按钮 */
+.eye-toggle-btn {
+    position: absolute;
+    right: 8px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.eye-toggle-btn:hover {
+    background: rgba(41, 98, 255, 0.15);
+}
+
+.eye-toggle-btn:active {
+    background: rgba(41, 98, 255, 0.25);
+}
+
+.eye-toggle-btn i {
+    pointer-events: none;
+    color: var(--text-secondary);
+    font-size: 16px;
+}
+
+.eye-toggle-btn:hover i {
+    color: var(--primary);
 }
 
 textarea.form-control {

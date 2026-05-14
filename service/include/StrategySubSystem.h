@@ -6,6 +6,9 @@
 
 #define SCRIPTS_DIR     "scripts"
 
+// 策略最低兼容版本，低于此版本的策略将不会被加载
+constexpr int MIN_STRATEGY_VERSION = 1;
+
 class StrategyPlugin;
 class FeatureSubsystem;
 class FlowSubsystem;

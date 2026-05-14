@@ -141,7 +141,7 @@ bool ExchangeHandler::UseTickFlow(const String& name) {
         }
         if (exchange.contains("passwd")) {
             std::string passwd = exchange["passwd"];
-            strncpy(info._passwd, passwd.c_str(), sizeof(info._passwd) - 1);
+            memcpy(info._passwd, passwd.data(), sizeof(info._passwd));
         }
 
         if (!ptr->Init(info)) {

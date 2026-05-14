@@ -8,13 +8,22 @@ import { getAgentConfig, createLLM } from "@/lib/agent"
 import { getAllTools } from "@/lib/tools"
 import { systemPrompt } from "@/lib/prompts/system"
 import { getOrCompressHistory } from "@/lib/history"
-import type { ChatMessage, ThoughtStep } from "@/stores/chatStore"
+import type { ChatMessage, ThoughtStep, TokenUsage } from "@/stores/chatStore"
 import { HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages"
 import type { StructuredToolInterface } from "@langchain/core/tools"
 
 export interface AskAIResult {
   answer: string
   thoughts: ThoughtStep[]
+  tokenUsage?: TokenUsage  // Token 使用量
+}
+
+export interface AskAIProgress {
+  thoughts: ThoughtStep[]    // 当前思考步骤列表
+  thoughtCount: number       // 当前思考步骤数
+  tokenUsage?: TokenUsage    // 累计 token 使用量
+  stage: 'thinking' | 'tool' | 'done'  // 当前阶段
+  toolName?: string          // 当前调用的工具名称（stage 为 'tool' 时）
 }
 
 export interface AskOptions {
@@ -23,6 +32,7 @@ export interface AskOptions {
   onChunk?: (text: string) => void
   onDone?: (fullText: string) => void
   onError?: (error: Error) => void
+  onProgress?: (progress: AskAIProgress) => void  // 实时进度回调
 }
 
 /**
@@ -42,8 +52,15 @@ export async function askAI(
   question: string,
   options: AskOptions = {}
 ): Promise<AskAIResult> {
-  const { history, onChunk, onDone, onError } = options
+  const { history, onChunk, onDone, onError, onProgress } = options
   const thoughts: ThoughtStep[] = []
+
+  // 累计 token 使用量
+  let accumulatedTokenUsage: TokenUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0
+  }
 
   // 检查 Agent 配置
   const agentConfig = getAgentConfig()
@@ -80,7 +97,7 @@ export async function askAI(
     // 步骤 6: Tool Calling 循环执行
     console.log(`[Agent] 发送消息给 LLM (${messages.length} 条), 已绑定 ${tools.length} 个工具`)
 
-    const maxToolCalls = 10 // 防止无限循环
+    const maxToolCalls = 1000 // 防止无限循环
     let toolCallCount = 0
 
     while (toolCallCount < maxToolCalls) {
@@ -104,6 +121,16 @@ export async function askAI(
             })
           }
         }
+      }
+
+      // 发送 thinking 内容更新进度
+      if (onProgress && thoughts.length > 0) {
+        onProgress({
+          thoughts: [...thoughts],
+          thoughtCount: thoughts.length,
+          tokenUsage: { ...accumulatedTokenUsage },
+          stage: 'thinking'
+        })
       }
 
       // 收集 tool_calls
@@ -131,6 +158,17 @@ export async function askAI(
 
         console.log(`[Agent] 执行工具: ${toolName}, 参数: ${argsStr}`)
 
+        // 发送工具调用进度
+        if (onProgress) {
+          onProgress({
+            thoughts: [...thoughts],
+            thoughtCount: thoughts.length,
+            tokenUsage: { ...accumulatedTokenUsage },
+            stage: 'tool',
+            toolName
+          })
+        }
+
         try {
           // 查找对应的工具
           const tool = tools.find((t: StructuredToolInterface) => t.name === toolName)
@@ -140,25 +178,69 @@ export async function askAI(
               content: `错误：未找到工具 "${toolName}"`,
               tool_call_id: toolCallId,
             }))
+            thoughts.push({
+              id: `thought_tool_${Date.now()}_${thoughts.length}`,
+              content: `❌ 工具调用失败：未找到工具 "${toolName}"`,
+              toolName,
+              timestamp: Date.now()
+            })
             continue
           }
 
           // 解析参数并执行
           const args = typeof argsStr === "string" ? JSON.parse(argsStr) : argsStr
           const result = await tool.invoke(args)
+          const resultStr = typeof result === "string" ? result : JSON.stringify(result)
 
-          console.log(`[Agent] 工具 ${toolName} 执行成功，结果长度: ${typeof result === "string" ? result.length : JSON.stringify(result).length}`)
+          console.log(`[Agent] 工具 ${toolName} 执行成功，结果长度: ${resultStr.length}`)
 
           toolResults.push(new ToolMessage({
-            content: typeof result === "string" ? result : JSON.stringify(result),
+            content: resultStr,
             tool_call_id: toolCallId,
           }))
+
+          // 添加工具执行结果到思考步骤（显示工具名称和结果预览）
+          const preview = resultStr.length > 200 ? resultStr.substring(0, 200) + "..." : resultStr
+          thoughts.push({
+            id: `thought_tool_${Date.now()}_${thoughts.length}`,
+            content: `🔧 调用工具: ${toolName}\n\n${preview}`,
+            toolName,
+            timestamp: Date.now()
+          })
+
+          // 发送工具执行完成进度
+          if (onProgress) {
+            onProgress({
+              thoughts: [...thoughts],
+              thoughtCount: thoughts.length,
+              tokenUsage: { ...accumulatedTokenUsage },
+              stage: 'thinking',
+              toolName
+            })
+          }
         } catch (error) {
           console.error(`[Agent] 工具 ${toolName} 执行失败:`, error)
           toolResults.push(new ToolMessage({
             content: `工具执行错误: ${(error as Error).message}`,
             tool_call_id: toolCallId,
           }))
+          thoughts.push({
+            id: `thought_tool_${Date.now()}_${thoughts.length}`,
+            content: `❌ 工具 "${toolName}" 执行错误: ${(error as Error).message}`,
+            toolName,
+            timestamp: Date.now()
+          })
+
+          // 发送工具执行错误进度
+          if (onProgress) {
+            onProgress({
+              thoughts: [...thoughts],
+              thoughtCount: thoughts.length,
+              tokenUsage: { ...accumulatedTokenUsage },
+              stage: 'thinking',
+              toolName
+            })
+          }
         }
       }
 
@@ -173,6 +255,47 @@ export async function askAI(
 
     // 获取最终回复
     const finalResponse = messages[messages.length - 1]
+
+    // 提取 Token 使用量（从 LLM 响应元数据中）
+    let currentTokenUsage: TokenUsage | undefined
+    const responseMetadata = (finalResponse as any)?.response_metadata
+    const usageMetadata = (finalResponse as any)?.usage_metadata
+
+    if (responseMetadata?.usage) {
+      // OpenAI 格式: response_metadata.usage
+      const usage = responseMetadata.usage
+      currentTokenUsage = {
+        promptTokens: usage.prompt_tokens ?? 0,
+        completionTokens: usage.completion_tokens ?? 0,
+        totalTokens: usage.total_tokens ?? (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0)
+      }
+    } else if (usageMetadata) {
+      // LangChain 统一格式: usage_metadata
+      currentTokenUsage = {
+        promptTokens: usageMetadata.input_tokens ?? 0,
+        completionTokens: usageMetadata.output_tokens ?? 0,
+        totalTokens: usageMetadata.total_tokens ?? (usageMetadata.input_tokens ?? 0) + (usageMetadata.output_tokens ?? 0)
+      }
+    }
+
+    // 累加 token 使用量
+    if (currentTokenUsage) {
+      accumulatedTokenUsage.promptTokens += currentTokenUsage.promptTokens
+      accumulatedTokenUsage.completionTokens += currentTokenUsage.completionTokens
+      accumulatedTokenUsage.totalTokens += currentTokenUsage.totalTokens
+      console.log(`[Agent] 本轮 Token 使用: prompt=${currentTokenUsage.promptTokens}, completion=${currentTokenUsage.completionTokens}, total=${currentTokenUsage.totalTokens}`)
+      console.log(`[Agent] 累计 Token 使用: prompt=${accumulatedTokenUsage.promptTokens}, completion=${accumulatedTokenUsage.completionTokens}, total=${accumulatedTokenUsage.totalTokens}`)
+    }
+
+    // 发送最终进度
+    if (onProgress) {
+      onProgress({
+        thoughts: [...thoughts],
+        thoughtCount: thoughts.length,
+        tokenUsage: { ...accumulatedTokenUsage },
+        stage: 'done'
+      })
+    }
 
     // 提取回复内容
     // content 可能是字符串或数组（包含 text, thinking, tool_use 等类型）
@@ -211,7 +334,11 @@ export async function askAI(
       onDone(answer)
     }
 
-    return { answer, thoughts }
+    return {
+      answer,
+      thoughts,
+      tokenUsage: accumulatedTokenUsage.totalTokens > 0 ? accumulatedTokenUsage : undefined
+    }
   } catch (error) {
     console.error("[Chat] AI 请求失败:", error)
 
@@ -221,7 +348,8 @@ export async function askAI(
 
     return {
       answer: `抱歉，AI 服务暂时不可用。错误详情: ${(error as Error).message}`,
-      thoughts: []
+      thoughts: [],
+      tokenUsage: undefined
     }
   }
 }

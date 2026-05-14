@@ -4,6 +4,9 @@ import { message } from '@/tool'
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 
+// 策略脚本版本号，与后端 MIN_STRATEGY_VERSION 保持一致
+const STRATEGY_SCRIPT_VERSION = 1
+
 /**
  * 流程图保存/加载 composable
  * 处理策略和版本的保存、加载、创建等操作
@@ -33,6 +36,15 @@ export function useFlowSaveLoad(state, operations) {
 
   // localStorage 键名
   const FLOW_STORAGE_KEY = 'vue-flow-saved-strategy'
+
+  /**
+   * 构建带版本号的 flowData（用于发送到后端）
+   */
+  const buildFlowData = () => ({
+    version: STRATEGY_SCRIPT_VERSION,
+    nodes: getNodes.value,
+    edges: getEdges.value
+  })
 
   /**
    * 格式化日期为备注字符串

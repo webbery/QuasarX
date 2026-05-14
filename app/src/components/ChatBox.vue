@@ -23,54 +23,86 @@
 
       <!-- 消息列表 -->
       <div class="message-list" ref="messageListRef">
-        <div
+        <template
           v-for="msg in chatStore.messages"
           :key="msg.id"
-          class="message"
-          :class="msg.role"
         >
-          <div class="message-avatar">
-            <i :class="msg.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
-          </div>
-          <div class="message-body">
-            <!-- 消息气泡（正文） -->
-            <div class="message-content">
-              <div
-                class="message-text"
-                :class="{ 'markdown-body': msg.role === 'assistant' }"
-                v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content"
-              ></div>
-              <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
+          <!-- 有内容时才显示消息气泡和头像 -->
+          <div
+            v-if="msg.content"
+            class="message"
+            :class="msg.role"
+          >
+            <div class="message-avatar">
+              <i :class="msg.role === 'user' ? 'fas fa-user' : 'fas fa-robot'"></i>
             </div>
-
-            <!-- 思考步骤（气泡下方，独立区域，点击展开/收起） -->
-            <div v-if="msg.thoughts?.length" class="thoughts-wrapper">
-              <a @click="toggleThoughts(msg.id)" class="thought-toggle-link">
-                <i :class="expandedThoughts.has(msg.id) ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
-                {{ expandedThoughts.has(msg.id) ? '收起思考' : `展开思考 (${msg.thoughts.length}步)` }}
-              </a>
-              <transition name="thought-slide">
-                <div v-if="expandedThoughts.has(msg.id)" class="thought-steps-list">
-                  <div v-for="step in msg.thoughts" :key="step.id" class="thought-step">
-                    <span class="thought-icon">💭</span>
-                    <span class="thought-content">{{ step.content }}</span>
-                  </div>
+            <div class="message-body">
+              <div class="message-content">
+                <div
+                  class="message-text"
+                  :class="{ 'markdown-body': msg.role === 'assistant' }"
+                  v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content"
+                ></div>
+                <div class="message-meta">
+                  <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+                  <span v-if="msg.role === 'assistant' && msg.tokenUsage" class="token-usage" :title="`Prompt: ${msg.tokenUsage.promptTokens}, Completion: ${msg.tokenUsage.completionTokens}`">
+                    🧮 {{ msg.tokenUsage.totalTokens }} tokens
+                  </span>
                 </div>
-              </transition>
+              </div>
+
+              <!-- 思考步骤（气泡下方） -->
+              <div v-if="msg.thoughts?.length" class="thoughts-wrapper">
+                <a @click="toggleThoughts(msg.id)" class="thought-toggle-link">
+                  <i :class="expandedThoughts.has(msg.id) ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
+                  {{ expandedThoughts.has(msg.id) ? '收起思考' : `展开思考 (${msg.thoughts.length}步)` }}
+                </a>
+                <transition name="thought-slide">
+                  <div v-if="expandedThoughts.has(msg.id)" class="thought-steps-list">
+                    <div v-for="(step, index) in msg.thoughts" :key="step.id" class="thought-step">
+                      <span class="thought-step-header">
+                        <span class="thought-icon">💭</span>
+                        <span class="thought-step-number">第{{ index + 1 }}步</span>
+                      </span>
+                      <span class="thought-content">{{ step.content }}</span>
+                    </div>
+                  </div>
+                </transition>
+              </div>
             </div>
           </div>
-        </div>
+        </template>
 
-        <!-- 加载中提示 -->
+        <!-- 加载中提示 + 思考步骤（等待回复时显示） -->
         <div v-if="chatStore.isLoading" class="message assistant">
           <div class="message-avatar">
             <i class="fas fa-robot"></i>
           </div>
-          <div class="message-content">
-            <div class="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
+          <div class="message-body">
+            <div class="message-content">
+              <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+            <!-- 等待期间的思考步骤 -->
+            <div v-if="loadingThoughts?.length" class="thoughts-wrapper">
+              <a @click="toggleThoughts('loading')" class="thought-toggle-link">
+                <i :class="expandedThoughts.has('loading') ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
+                {{ expandedThoughts.has('loading') ? '收起思考' : `展开思考 (${loadingThoughts.length}步)` }}
+              </a>
+              <transition name="thought-slide">
+                <div v-if="expandedThoughts.has('loading')" class="thought-steps-list">
+                  <div v-for="(step, index) in loadingThoughts" :key="step.id" class="thought-step">
+                    <span class="thought-step-header">
+                      <span class="thought-icon">💭</span>
+                      <span class="thought-step-number">第{{ index + 1 }}步</span>
+                    </span>
+                    <span class="thought-content">{{ step.content }}</span>
+                  </div>
+                </div>
+              </transition>
             </div>
           </div>
         </div>
@@ -99,8 +131,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { useChatStore, type ThoughtStep } from '@/stores/chatStore'
-import { askAI } from '@/lib/ChatApi'
+import { useChatStore, type ThoughtStep, type TokenUsage } from '@/stores/chatStore'
+import { askAI, type AskAIProgress } from '@/lib/ChatApi'
 import MarkdownIt from 'markdown-it'
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
@@ -108,6 +140,9 @@ const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
 const chatStore = useChatStore()
 const inputText = ref('')
 const messageListRef = ref<HTMLDivElement>()
+
+// 加载期间的思考步骤（临时状态，不保存到消息历史）
+const loadingThoughts = ref<ThoughtStep[]>([])
 
 // 思考展开/收缩状态
 const expandedThoughts = ref(new Set<string>())
@@ -218,24 +253,53 @@ async function sendMessage() {
   inputText.value = ''
   chatStore.isLoading = true
 
+  // 创建助手消息（用于实时更新思考步骤和 token）
+  const assistantMsg = chatStore.addMessage({
+    role: 'assistant',
+    content: '',
+    thoughts: [],
+    tokenUsage: undefined,
+  })
+
+  // 清空加载期间的临时思考状态
+  loadingThoughts.value = []
+
   try {
     // 调用 AI，注入行情上下文和对话历史
     const result = await askAI(text, {
       context: chatStore.marketContext,
       history: chatStore.messages.slice(0, -1), // 传递除当前消息外的所有历史
+      onProgress: (progress: AskAIProgress) => {
+        // 实时更新加载期间的思考步骤和 token
+        loadingThoughts.value = [...progress.thoughts]
+        if (assistantMsg) {
+          assistantMsg.tokenUsage = progress.tokenUsage ? { ...progress.tokenUsage } : undefined
+        }
+      }
     })
 
     chatStore.isLoading = false
 
-    // 添加 AI 回复
-    chatStore.addMessage({
-      role: 'assistant',
-      content: result.answer,
-      thoughts: result.thoughts.length > 0 ? result.thoughts : undefined,
-    })
+    // 更新消息内容为最终回复
+    if (assistantMsg) {
+      assistantMsg.content = result.answer
+      assistantMsg.thoughts = result.thoughts.length > 0 ? result.thoughts : []
+      assistantMsg.tokenUsage = result.tokenUsage
+    }
+
+    // 清空加载期间的临时思考状态
+    loadingThoughts.value = []
   } catch (error) {
     chatStore.isLoading = false
     console.error('[Chat] 发送消息失败:', error)
+
+    // 更新消息内容为错误信息
+    if (assistantMsg) {
+      assistantMsg.content = `抱歉，AI 服务暂时不可用：${(error as Error).message}`
+    }
+
+    // 清空加载期间的临时思考状态
+    loadingThoughts.value = []
   }
 }
 
@@ -450,19 +514,34 @@ function renderMarkdown(text: string): string {
 
 .thought-step {
   display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
 }
 
 .thought-step:last-child {
   margin-bottom: 0;
 }
 
+.thought-step-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .thought-icon {
   flex-shrink: 0;
   font-size: 14px;
-  margin-top: 2px;
+}
+
+.thought-step-number {
+  font-size: 11px;
+  color: #60a5fa;
+  font-weight: 500;
+  font-style: normal;
 }
 
 .thought-content {
@@ -471,6 +550,7 @@ function renderMarkdown(text: string): string {
   font-style: italic;
   line-height: 1.5;
   word-wrap: break-word;
+  padding-left: 20px;
 }
 
 .message-text {
@@ -586,6 +666,29 @@ function renderMarkdown(text: string): string {
   color: #6b7280;
   margin-top: 4px;
   padding: 0 4px;
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
+.token-usage {
+  font-size: 10px;
+  color: #9ca3af;
+  background: rgba(156, 163, 175, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: help;
+  transition: all 0.2s;
+}
+
+.token-usage:hover {
+  background: rgba(156, 163, 175, 0.2);
+  color: #e5e7eb;
 }
 
 .message.assistant .message-time {

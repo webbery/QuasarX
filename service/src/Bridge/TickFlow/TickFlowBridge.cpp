@@ -7,6 +7,9 @@
 #include "json.hpp"
 #include "server.h"
 #include <format>
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+#include <openssl/x509.h>
+#endif
 
 TickFlowBridge::TickFlowBridge(Server* server)
     : ExchangeInterface(server),
@@ -72,6 +75,18 @@ void TickFlowBridge::InitHttpClient() {
     _http_client->set_connection_timeout(10);
     _http_client->set_read_timeout(15);
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+#ifdef _WIN32
+    // Windows: 从系统证书存储加载根证书到 X509_STORE
+    auto* store = X509_STORE_new();
+    if (store && httplib::detail::load_system_certs_on_windows(store)) {
+        _http_client->set_ca_cert_store(store);
+        //INFO("SSL: loaded {} certs from Windows system store",
+        //     X509_STORE_get_num_certificates(store));
+    } else {
+        if (store) X509_STORE_free(store);
+        WARN("SSL: failed to load Windows system certificates");
+    }
+#else
     const char* ca_path = "/etc/ssl/certs/ca-certificates.crt";
     if (std::filesystem::exists(ca_path)) {
         _http_client->set_ca_cert_path(ca_path);
@@ -79,6 +94,7 @@ void TickFlowBridge::InitHttpClient() {
     } else {
         WARN("SSL CA cert file not found: {}. SSL verification may fail.", ca_path);
     }
+#endif
 #endif
 }
 
@@ -253,7 +269,7 @@ void TickFlowBridge::FetchQuotes() {
         // 发送 POST 请求
         httplib::Headers headers = {
             {"Content-Type", "application/json"},
-            {"x-api-key", _api_key}
+            { "x-api-key", _api_key }
         };
         auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
 
@@ -338,8 +354,6 @@ void TickFlowBridge::ParseResponse(const String& response) {
             _quotes.insert({quote._symbol, quote});
             count++;
         }
-
-        INFO("Updated {} quotes", count);
     } catch (const std::exception& e) {
         WARN("Parse error: {}", e.what());
     }

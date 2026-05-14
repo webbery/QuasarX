@@ -3,6 +3,9 @@ import { convertLabelsToKeys } from '@/lib/nodes'
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 
+// 策略脚本版本号，与后端 MIN_STRATEGY_VERSION 保持一致
+const STRATEGY_SCRIPT_VERSION = 1
+
 /**
  * 回测执行与结果处理 composable
  * 处理回测执行、结果解析、图表更新等
@@ -67,6 +70,7 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
       : '临时策略'
 
     const curGraph = {
+      version: STRATEGY_SCRIPT_VERSION,
       id: currentStrategyId.value ? `strategy_${currentStrategyId.value}` : `temp_${Date.now()}`,
       name: strategyName,
       description: '用户自定义策略',
