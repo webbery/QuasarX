@@ -24,6 +24,7 @@
 #include "Nodes/PortfolioNode.h"
 #include "Nodes/SpreadNode.h"
 #include "Nodes/ProtectionNode.h"
+#include "Nodes/EMDNode.h"
 
 namespace {
     Map<String, StrategyNodeType> node_type_map{
@@ -38,6 +39,7 @@ namespace {
         {"test", StrategyNodeType::Test},
         {"spread", StrategyNodeType::Spread},
         {"protection", StrategyNodeType::Protection},
+        {"emd", StrategyNodeType::EMD},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -140,6 +142,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Protection:
             nodeInstance = generate_node<ProtectionNode>(node["id"], server);
+            break;
+        case StrategyNodeType::EMD:
+            nodeInstance = generate_node<EMDNode>(node["id"], server);
             break;
         default:
             WARN("Unknown node type: {}", node_type);

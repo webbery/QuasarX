@@ -1,8 +1,7 @@
-#include "Util/log.h"
-#include "Util/string_algorithm.h"
-#include "std_header.h"
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "Util/log.h"
+#include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "json.hpp"
 #include "server.h"
@@ -24,6 +23,9 @@ TickFlowBridge::TickFlowBridge(Server* server)
 }
 
 TickFlowBridge::~TickFlowBridge() {
+    if (_sock.id != 0) {
+        nng_close(_sock);
+    }
 }
 
 const char* TickFlowBridge::Name() {
@@ -44,6 +46,15 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     _interval_ms = 9500;
 
     InitHttpClient();
+
+    // 初始化 pub socket，发布行情到 URI_RAW_QUOTE
+    if (!Publish(URI_RAW_QUOTE, _sock)) {
+        FATAL("TickFlowBridge failed to publish to URI_RAW_QUOTE");
+        return false;
+    }
+    _pub_inited = true;
+    INFO("TickFlowBridge pub socket initialized, uri={}", URI_RAW_QUOTE);
+
     _login_success = true;
 
     INFO("TickFlowBridge initialized, api_key loaded, interval={}ms", _interval_ms);
@@ -231,6 +242,18 @@ void TickFlowBridge::StopQuery() {
     // 由外部调度，无需内部停止
 }
 
+void TickFlowBridge::PublishQuote(const QuoteInfo& quote) {
+    if (!_pub_inited || _sock.id == 0) {
+        return;
+    }
+
+    constexpr std::size_t flags = yas::mem | yas::binary;
+    yas::shared_buffer buf = yas::save<flags>(quote);
+    if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
+        WARN("TickFlowBridge: failed to publish quote for {}", get_symbol(quote._symbol));
+    }
+}
+
 // ==================== HTTP 请求 ====================
 
 void TickFlowBridge::FetchQuotes() {
@@ -331,6 +354,7 @@ void TickFlowBridge::ParseResponse(const String& response) {
         }
 
         int count = 0;
+        int published = 0;
         for (auto& item : json["data"]) {
             QuoteInfo quote{};
 
@@ -360,7 +384,12 @@ void TickFlowBridge::ParseResponse(const String& response) {
 
             _quotes.insert({quote._symbol, quote});
             count++;
+
+            // 发布到 URI_RAW_QUOTE，供 RecordHandler 等订阅者使用
+            PublishQuote(quote);
+            published++;
         }
+        DEBUG_INFO("[TickFlow] Parsed {} quotes, published {} to URI_RAW_QUOTE", count, published);
     } catch (const std::exception& e) {
         WARN("Parse error: {}", e.what());
     }

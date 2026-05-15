@@ -14,6 +14,7 @@ import './configs/spread'
 import './configs/portfolio'
 import './configs/ml'
 import './configs/utility'
+import './configs/emd'
 
 export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
 export { CATEGORY_ICONS } from './types'

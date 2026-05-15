@@ -77,6 +77,15 @@ void RecordHandler::run() {
         QuoteInfo quote;
         yas::load<flags>(buf, quote);
         nng_free(buff, sz);
+
+        // symbol 过滤：空集合 = 全记录，非空 = 只记录匹配的
+        if (!_symbols.empty()) {
+            String symStr = get_symbol(quote._symbol);
+            if (symStr == "0" || _symbols.find(symStr) == _symbols.end()) {
+                continue;
+            }
+        }
+
         ++ticks[quote._symbol];
         auto& fstr = GetFileStream(quote._symbol);
         WriteCSV(fstr, quote);

@@ -2,6 +2,7 @@
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
 #include "httplib.h"
+#include "nng/nng.h"
 #include <atomic>
 #include <mutex>
 
@@ -73,6 +74,9 @@ private:
     // 构建 HTTP 客户端
     void InitHttpClient();
 
+    // 发布行情到 URI_RAW_QUOTE
+    void PublishQuote(const QuoteInfo& quote);
+
 private:
     String _api_key;
     String _base_url;
@@ -102,4 +106,8 @@ private:
 
     // 模拟持仓
     StockPositionManager _positionMgr;
+
+    // nng pub socket，用于发布行情到 URI_RAW_QUOTE
+    nng_socket _sock = {0};
+    bool _pub_inited = false;
 };

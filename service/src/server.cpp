@@ -379,16 +379,24 @@ void Server::InitDefault() {
         if (default_config.contains("record") && !default_config["record"].empty()) {
             auto recorder = (RecordHandler*)_handlers[API_RECORD];
             Set<String> symbols;
+            bool recordAll = false;
             for (auto& item: default_config["record"]) {
                 if (item == "*") {
+                    recordAll = true;
                     break;
                 }
                 symbols.insert((String)item);
             }
-            if (!symbols.empty()) {
+            if (recordAll) {
+                // "*" 表示全记录：不设置过滤集合，RecordHandler 记录所有收到的 tick
+                recorder->SetSymbols({});
+                recorder->StartRecord(true);
+            } else if (!symbols.empty()) {
+                // 指定 symbol 列表：只记录匹配的 tick
                 recorder->SetSymbols(symbols);
+                recorder->StartRecord(true);
             }
-            recorder->StartRecord(true);
+            // 空数组 []：不启动记录（RecordHandler 对象仍由 _handlers 持有，正常析构）
         }
         _runType = RuningType::Real;
     }
