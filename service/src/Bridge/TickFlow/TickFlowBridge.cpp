@@ -264,17 +264,19 @@ void TickFlowBridge::FetchQuotes() {
         // body["universes"] = _universes;
 
         String body_str = body.dump();
-        INFO("POST: {}", body_str);
 
         // 发送 POST 请求
         httplib::Headers headers = {
             {"Content-Type", "application/json"},
             { "x-api-key", _api_key }
         };
+
+        DEBUG_INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
+                   _api_key.empty() ? "(empty)" : _api_key.substr(0, 8), body_str);
+
         auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
 
         if (!res) {
-            // 打印详细错误信息
             auto err = res.error();
             const char* err_str = "Unknown";
             switch (err) {
@@ -290,6 +292,11 @@ void TickFlowBridge::FetchQuotes() {
             WARN("HTTP request failed: error={}({})", err_str, static_cast<int>(err));
             HandleApiError(std::format("HTTP error: {}({})", err_str, static_cast<int>(err)).c_str());
             return;
+        }
+
+        DEBUG_INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
+        if (res->status != 200) {
+            DEBUG_INFO("[TickFlow] Response body: {}", res->body);
         }
 
         if (res->status == 200) {

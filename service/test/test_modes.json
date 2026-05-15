@@ -1,0 +1,47 @@
+{
+  "_comment": "测试模式配置 — 定义每个模式包含的测试项，可直接编辑",
+  "_doc": {
+    "modes": "每个 key 为模式名，value 包含 label/config/tests 字段",
+    "tests": "测试文件名列表（不含 .py 后缀），用户可自行增删"
+  },
+  "modes": {
+    "stock_hist_sim": {
+      "label": "历史回测模式",
+      "config": "stock_hist_sim.json",
+      "description": "使用历史 K 线数据进行回测",
+      "tests": [
+        "test_capital_risk",
+        "test_prediction",
+        "test_r2strategy",
+        "test_risk",
+        "test_shadow_mode",
+        "test_shibor",
+        "test_strategy",
+        "test_trade_history",
+        "test_stock",
+        "test_user",
+        "test_mc"
+      ]
+    },
+    "tickflow": {
+      "label": "实时行情模式",
+      "config": "tickflow.json",
+      "description": "通过 TickFlow API 获取实时行情",
+      "tests": [
+        "test_sectorquote",
+        "test_tick_record",
+        "test_data"
+      ]
+    },
+    "hx": {
+      "label": "华鑫实盘仿真模式",
+      "config": "hx.json",
+      "description": "华鑫真实交易接口（需配置账号密码）",
+      "requires_input": ["username", "passwd"],
+      "tests": [
+        "test_order",
+        "test_serverevent"
+      ]
+    }
+  }
+}

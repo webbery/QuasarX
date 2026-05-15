@@ -1,0 +1,72 @@
+{
+    "broker": [
+        {
+            "commission": {
+                "fee": 0.0001345,
+                "min": 5.0,
+                "stamp": 0.001
+            },
+            "db": "data/broker",
+            "name": "astock",
+            "type": "stock"
+        }
+    ],
+    "exchange": [
+        {
+            "api": "tickflow",
+            "desc": "TickFlow Real-time Quote",
+            "name": "tickflow-quote",
+            "passwd": "",
+            "pool": [
+                "600000.SH",
+                "000001.SZ"
+            ],
+            "type": "stock",
+            "username": "tk_"
+        }
+    ],
+    "risk": {
+        "capitalRisk": {
+            "totalStopLossPercent": 0.85,
+            "enableTotalStopLoss": true,
+            "initialCapital": 1000000,
+            "dailyMaxLossPercent": 0.03,
+            "enableDailyLossLimit": true,
+            "lastDayEquity": 1000000,
+            "autoClosePosition": false,
+            "manualInterventionTimeoutSec": 300,
+            "timeoutAutoClose": true
+        }
+    },
+    "server": {
+        "productID": "HX5ZWWQ4VI",
+        "addr": "localhost",
+        "db_path": "data",
+        "default": {
+            "broker": "astock",
+            "daily": "20:00",
+            "exchange": [
+                "tickflow-quote"
+            ],
+            "freerate": 0.0175,
+            "record": [
+                "*"
+            ],
+            "strategy": null
+        },
+        "jwt": "",
+        "llmkey": "",
+        "notice": {
+            "email": ""
+        },
+        "passwd": "admin",
+        "port": 19107,
+        "smtp": {
+            "addr": "",
+            "auth": "",
+            "mail": ""
+        },
+        "ssl": "",
+        "user": "admin"
+    }
+}

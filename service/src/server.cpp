@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include "Handler/AssetHandler.h"
 #include "Handler/OrderHandler.h"
+#include "Handler/NavHandler.h"
 #include "Handler/StrategyHandler.h"
 #include "Handler/StockHandler.h"
 #include "Nodes/QuoteNode.h"
@@ -145,6 +146,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_CAPITAL    "/risk/capital"
 #define API_RISK_DAILY      "/risk/daily"
 #define API_RISK_CLOSEALL   "/risk/closeall"
+#define API_NAV_HISTORY     "/nav/history"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -411,7 +413,7 @@ void Server::InitDefault() {
 
     auto& exchagnes = ((ExchangeHandler*)_handlers[API_EXHANGE])->GetExchangesWithType();
 
-    _brokerSystem->Init(broker, exchagnes, 1000000);
+    _brokerSystem->Init(broker, exchagnes);
 
     // 初始化风控子系统
     _riskSystem = new RiskSubSystem(this);
@@ -1295,6 +1297,7 @@ void Server::InitHandlers() {
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_TRADE_ORDER, OrderHandler);
     RegistHandler(API_TRADE_HISTORY, HistoryTradeHandler);
+    RegistHandler(API_NAV_HISTORY, NavHandler);
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
     RegistHandler(API_USER_FUNDS, UserFundHandler);
     RegistHandler(API_DATA_SYNC, DataSyncHandler);

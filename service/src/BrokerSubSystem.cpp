@@ -74,7 +74,7 @@ BrokerSubSystem::BrokerSubSystem(Server* server, bool is_simulation)
     _portfolio = server->GetPortforlioSubSystem();
 }
 
-bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers, double principal) {
+bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers) {
   String dbpath = config["db"];
   if (_simulation) {
     auto real_path = dbpath + "/" + (String)config["name"] + ".db";
@@ -92,8 +92,7 @@ bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType,
     WARN("commission is not set for type: {}", String(config["type"]));
     return false;
   }
-  
-  _principal = principal;
+
   if (_exchanges.empty()) {
     _exchanges = brokers;
   }
@@ -336,19 +335,24 @@ nlohmann::json BrokerSubSystem::GetPortfolioJson() {
 
 nlohmann::json BrokerSubSystem::GetBrokers() {
   nlohmann::json result;
-  result["principal"] = _principal;
-  return result;
-}
-
-void BrokerSubSystem::InitBrokers(MDB_txn* txn, MDB_dbi dbi) {
-  String brokerName("broker");
-  auto jsn = LoadJson(brokerName, txn, dbi);
-  if (jsn.empty())
-    return;
-
-  if (jsn.count("principal")) {
-    _principal = (double)jsn["principal"];
+  // 从 PortfolioSubSystem 聚合真实资金数据
+  double totalPrincipal = 0;
+  double totalProfit = 0;
+  nlohmann::json portfolios = nlohmann::json::array();
+  for (const auto& [id, info] : _portfolio->_portfolios) {
+    totalPrincipal += info._principal;
+    totalProfit += info._profit;
+    nlohmann::json p;
+    p["id"] = id;
+    p["principal"] = info._principal;
+    p["profit"] = info._profit;
+    p["pools"] = info._pools;
+    portfolios.emplace_back(std::move(p));
   }
+  result["totalPrincipal"] = totalPrincipal;
+  result["totalProfit"] = totalProfit;
+  result["portfolios"] = portfolios;
+  return result;
 }
 
 void BrokerSubSystem::InitHistory(MDB_txn* txn, MDB_dbi dbi) {
@@ -514,7 +518,6 @@ void BrokerSubSystem::run() {
     int db_id = 1;
     auto dbi = GetDBI(db_id, _txn);
     InitPortfolio(_txn, dbi);
-    InitBrokers(_txn, dbi);
     InitHistory(_txn, dbi);
     InitPrediction(_txn, dbi);
 
@@ -813,61 +816,6 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
     return id;
 }
 
-double BrokerSubSystem::SimulateMatchStockBuyer(symbol_t symbol, double principal, const Order& order, TradeInfo& deal) {
-  // 一手数量
-  constexpr short hand = 100;
-  double min_value = hand * order._price;
-  if (principal < min_value) {
-    return 0;
-  }
-
-  auto number = order._volume;
-  if (number == 0) {
-    auto lower_total_price = _stockCommission._min / _stockCommission._ration;
-    number = ceil(lower_total_price / order._price);
-  }
-  int count = number;
-  // 计算预估手续费
-  auto comm = GetCommision(symbol);
-  auto cost = comm->GetCommission(symbol, count);
-
-  // 当前实盘价格
-  auto latest_quote = _exchanges[ExchangeType::EX_STOCK_HIST_SIM]->GetQuote(symbol);
-  double price = latest_quote._close;
-  double total = count * price + cost;
-  if (total > principal)
-    return 0;
-
-  // TODO: 模拟只能买入部分/不能买入的场景
-  
-
-  TradeReport dd;
-  dd._price = price;
-  dd._quantity = number;
-  dd._time = Now();
-  deal._reports.push_back(std::move(dd));
-  return price;
-}
-
-double BrokerSubSystem::SimulateMatchStockSeller(symbol_t symbol, const Order& order, TradeInfo& deal) {
-  auto latest_quote = _exchanges[ExchangeType::EX_STOCK_HIST_SIM]->GetQuote(symbol);
-  double price = latest_quote._close;
-  if (price == 0)
-    return price;
-  // TODO: 模拟卖出一部分/无法卖出的场景
-
-  // 全部卖出的场景
-  double total = order._volume * price;
-  _principal += total;
-
-  TradeReport dd;
-  dd._price = price;
-  dd._quantity = order._volume;
-  dd._time = Now();
-  deal._reports.push_back(std::move(dd));
-
-  return price;
-}
 
 void BrokerSubSystem::PredictWithDays(symbol_t symb, int N, int op) {
   auto current = Now();
@@ -1072,6 +1020,90 @@ BrokerSubSystem::TradeQueryResult BrokerSubSystem::QueryTrades(symbol_t symbol,
             }
         }
     });
+
+    return result;
+}
+
+// ============== 净值动态计算 ==============
+
+BrokerSubSystem::NavResult BrokerSubSystem::QueryNav(run_id_t runId, time_t start, time_t end) {
+    NavResult result;
+
+    // 获取交易记录
+    auto data = GetAllHistoryTrades(runId);
+    if (!data || data->trades.empty()) {
+        return result;
+    }
+
+    // 收集所有交易，按时间排序
+    struct TradeEntry {
+        time_t time;
+        symbol_t symbol;
+        int side;
+        double price;
+        int64_t qty;
+    };
+    Vector<TradeEntry> allTrades;
+
+    std::lock_guard<std::mutex> lock(data->mtx);
+    for (const auto& [sym, trades] : data->trades) {
+        for (const auto& trans : trades) {
+            for (const auto& report : trans._deal._reports) {
+                allTrades.push_back({
+                    report._time,
+                    trans._order._symbol,
+                    trans._order._side,
+                    report._price,
+                    report._quantity
+                });
+            }
+        }
+    }
+
+    std::sort(allTrades.begin(), allTrades.end(), [](const TradeEntry& a, const TradeEntry& b) {
+        return a.time < b.time;
+    });
+
+    // 计算初始资金
+    double cash = 100000.0;
+
+    // 按日聚合
+    Map<time_t, double> dailyNav;
+    Map<symbol_t, int64_t> positions;
+
+    for (const auto& trade : allTrades) {
+        if (trade.side == 0) {
+            cash -= trade.price * trade.qty;
+            positions[trade.symbol] += trade.qty;
+        } else {
+            cash += trade.price * trade.qty;
+            positions[trade.symbol] -= trade.qty;
+        }
+
+        // 按日期聚合
+        std::tm* tm = localtime(&trade.time);
+        tm->tm_hour = 0;
+        tm->tm_min = 0;
+        tm->tm_sec = 0;
+        time_t date = mktime(tm);
+
+        // 计算当日净值
+        double nav = cash;
+        for (const auto& [sym, qty] : positions) {
+            if (qty > 0) {
+                nav += qty * trade.price;
+            }
+        }
+        dailyNav[date] = nav;
+    }
+
+    // 过滤时间范围
+    for (const auto& [date, nav] : dailyNav) {
+        if (date >= start && date <= end) {
+            result.dates.push_back(date);
+            result.values.push_back(nav);
+        }
+    }
 
     return result;
 }

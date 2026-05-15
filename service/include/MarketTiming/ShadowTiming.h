@@ -48,11 +48,14 @@ public:
     // 获取可用资金
     double GetAvailableFunds() const { return virtualAvailable.load(); }
 
-    // 获取总资产
-    double GetTotalAsset() const { return virtualCapital.load(); }
+    // 获取总资产（可用资金 + 持仓市值）
+    double GetTotalAsset(const QuoteInfo& latestBar) const;
+
+    // 记录净值快照
+    void RecordSnapshot(time_t date, double totalValue);
 
 private:
-    std::atomic<double> virtualCapital;     // 虚拟总资产
+    double virtualCapital;                     // 初始虚拟资金
     std::atomic<double> virtualAvailable;   // 虚拟可用资金
     Map<symbol_t, int64_t> shadowPositions; // 影子持仓
     mutable std::mutex accountMutex;
@@ -103,6 +106,11 @@ private:
      */
     void LogShadowSignal(const String& strategy, const TradeSignal& signal,
                          const ShadowFillResult& fillResult);
+
+    /**
+     * 记录净值快照
+     */
+    void RecordNavSnapshot(time_t date, double totalValue);
 
     /**
      * 初始化日志文件

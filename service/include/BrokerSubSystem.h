@@ -123,7 +123,7 @@ public:
 
     virtual ~BrokerSubSystem() { Release(); }
 
-    bool Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers, double capital = 0);
+    bool Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers);
 
     void Release();
 
@@ -194,6 +194,15 @@ public:
                                 size_t offset = 0,
                                 size_t limit = 0);
 
+    // 净值查询结果
+    struct NavResult {
+        Vector<time_t> dates;
+        Vector<double> values;
+    };
+
+    // 根据交易记录动态计算净值曲线
+    NavResult QueryNav(run_id_t runId, time_t start, time_t end);
+
     Set<symbol_t> GetPoolSymbols(const String& name);
 
     void ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report);
@@ -201,10 +210,6 @@ public:
 private:
     order_id AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side);
     order_id AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb);
-
-    // 模拟撮合
-    double SimulateMatchStockBuyer(symbol_t symbol, double capital, const Order& order, TradeInfo& deal);
-    double SimulateMatchStockSeller(symbol_t symbol, const Order& order, TradeInfo& deal);
 
     order_id AddOrderAsync(run_id_t run_id, OrderContext* order);
 
@@ -219,7 +224,6 @@ private:
     MDB_dbi GetDBI(int portfolid_id, MDB_txn* txn);
 
     void InitPortfolio(MDB_txn* txn, MDB_dbi);
-    void InitBrokers(MDB_txn* txn, MDB_dbi);
     void InitHistory(MDB_txn* txn, MDB_dbi);
     void InitPrediction(MDB_txn* txn, MDB_dbi);
 
@@ -256,8 +260,6 @@ private:
     bool _update : 1;
     bool _exit : 1;
     float _slip;
-    // 本金
-    double _principal;
     String _dbpath;
     std::thread* _thread;
     std::mutex _mutex;

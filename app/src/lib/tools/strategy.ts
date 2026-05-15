@@ -17,54 +17,102 @@ import { useHistoryStore } from "@/stores/history"
 // === 策略图 CRUD（使用 historyStore 管理）===
 
 /** 验证策略图 JSON 结构是否完整有效 */
-function validateStrategyGraph(data: any): { valid: boolean; errors: string[] } {
+function validateStrategyGraph(data: any): { valid: boolean; errors: string[]; suggestions: string[] } {
   const errors: string[] = []
+  const suggestions: string[] = []
 
-  // 1. 检查 data 是否为对象
   if (!data || typeof data !== "object") {
-    return { valid: false, errors: ["策略图数据为空或格式错误"] }
+    return {
+      valid: false,
+      errors: ["策略图数据为空或格式错误"],
+      suggestions: ["确保 data 参数是有效的 JSON 对象，包含 nodes 和 edges 数组"]
+    }
   }
 
-  // 2. 检查 nodes 数组
   if (!data.nodes || !Array.isArray(data.nodes) || data.nodes.length === 0) {
     errors.push("缺少 nodes 数组或 nodes 为空")
+    suggestions.push("策略图必须包含 nodes 数组，至少需要 4 个节点：Input、Signal、Portfolio、Execution")
   } else {
-    // 检查每个节点是否有 id 和 data.nodeType
+    // 检查每个节点的结构
     data.nodes.forEach((node: any, index: number) => {
-      if (!node.id) errors.push(`节点[${index}] 缺少 id`)
-      if (!node.data?.nodeType) errors.push(`节点[${index}] 缺少 data.nodeType`)
+      if (!node.id) {
+        errors.push(`节点[${index}] 缺少 id`)
+        suggestions.push(`每个节点必须有唯一的字符串 id，如 "${index + 1}"`)
+      }
+      if (!node.type) {
+        errors.push(`节点[${index}] 缺少 type 字段`)
+        suggestions.push('每个节点必须有 type: "custom" 字段')
+      }
+      if (!node.data?.nodeType) {
+        errors.push(`节点[${index}] 缺少 data.nodeType`)
+        suggestions.push("每个节点必须有 data.nodeType，可选值: input, signal, portfolio, execution, function, xgboost, protection 等")
+      }
+      if (node.data && !node.data.label) {
+        errors.push(`节点[${index}] 缺少 data.label`)
+        suggestions.push('每个节点必须有 data.label，如 "数据输入"、"交易信号生成" 等')
+      }
+      if (!node.position) {
+        errors.push(`节点[${index}] 缺少 position`)
+        suggestions.push("每个节点必须有 position: { x: 数字, y: 数字 }，建议按流向从左到右排列")
+      }
     })
 
     // 检查必需节点类型
     const nodeTypes = data.nodes.map((n: any) => n.data?.nodeType)
-    if (!nodeTypes.includes("input")) errors.push("缺少必需节点类型: input (数据输入)")
-    if (!nodeTypes.includes("signal")) errors.push("缺少必需节点类型: signal (信号生成)")
-    if (!nodeTypes.includes("portfolio")) errors.push("缺少必需节点类型: portfolio (投资组合)")
-    if (!nodeTypes.includes("execution")) errors.push("缺少必需节点类型: execution (交易执行)")
+    if (!nodeTypes.includes("input")) {
+      errors.push("缺少必需节点类型: input (数据输入)")
+      suggestions.push('添加: { id: "1", type: "custom", data: { label: "数据输入", nodeType: "input", params: { source: "股票", code: ["sz.000001"], freq: "1d" } }, position: { x: 100, y: 200 } }')
+    }
+    if (!nodeTypes.includes("signal")) {
+      errors.push("缺少必需节点类型: signal (信号生成)")
+      suggestions.push('添加: { id: "2", type: "custom", data: { label: "交易信号生成", nodeType: "signal", params: { buy: "close[t] > MA_5[t]", sell: "close[t] < MA_5[t]" } }, position: { x: 400, y: 200 } }')
+    }
+    if (!nodeTypes.includes("portfolio")) {
+      errors.push("缺少必需节点类型: portfolio (投资组合)")
+      suggestions.push('添加: { id: "3", type: "custom", data: { label: "投资组合", nodeType: "portfolio", params: { positionRatio: 1.0 } }, position: { x: 700, y: 200 } }')
+    }
+    if (!nodeTypes.includes("execution")) {
+      errors.push("缺少必需节点类型: execution (交易执行)")
+      suggestions.push('添加: { id: "4", type: "custom", data: { label: "执行交易", nodeType: "execution", params: { commission: 0.0003, stampDuty: 0.001 } }, position: { x: 1000, y: 200 } }')
+    }
   }
 
-  // 3. 检查 edges 数组
   if (!data.edges || !Array.isArray(data.edges)) {
     errors.push("缺少 edges 数组")
+    suggestions.push("策略图必须包含 edges 数组，定义节点之间的连接关系")
   } else {
     const nodeIds = new Set(data.nodes?.map((n: any) => n.id) || [])
 
-    // 检查每条边的结构
     data.edges.forEach((edge: any, index: number) => {
-      if (!edge.source) errors.push(`边[${index}] 缺少 source`)
-      if (!edge.target) errors.push(`边[${index}] 缺少 target`)
+      if (!edge.source) {
+        errors.push(`边[${index}] 缺少 source`)
+        suggestions.push("每条边必须有 source 字段（源节点 ID）")
+      }
+      if (!edge.target) {
+        errors.push(`边[${index}] 缺少 target`)
+        suggestions.push("每条边必须有 target 字段（目标节点 ID）")
+      }
+      if (!edge.sourceHandle) {
+        errors.push(`边[${index}] 缺少 sourceHandle`)
+        suggestions.push("【关键】Input 节点的 sourceHandle 格式为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用节点 ID（如 \"2\"）")
+      }
+      if (!edge.targetHandle) {
+        errors.push(`边[${index}] 缺少 targetHandle`)
+        suggestions.push("targetHandle 通常等于目标节点的 ID（如 \"2\", \"3\"）")
+      }
 
-      // 检查 source 和 target 是否指向存在的节点
       if (edge.source && !nodeIds.has(edge.source)) {
         errors.push(`边[${index}] 的 source "${edge.source}" 指向不存在的节点`)
+        suggestions.push("检查 source 值是否与实际节点 ID 匹配")
       }
       if (edge.target && !nodeIds.has(edge.target)) {
         errors.push(`边[${index}] 的 target "${edge.target}" 指向不存在的节点`)
+        suggestions.push("检查 target 值是否与实际节点 ID 匹配")
       }
     })
   }
 
-  return { valid: errors.length === 0, errors }
+  return { valid: errors.length === 0, errors, suggestions }
 }
 
 /** 获取所有已保存策略 */
@@ -107,10 +155,13 @@ async function updateStrategy(id: string, data: any): Promise<string> {
   const validation = validateStrategyGraph(flowData)
   if (!validation.valid) {
     return [
-      `❌ 策略图 "${strategy.name}" (${id}) 更新失败：结构验证未通过`,
+      `策略图 "${strategy.name}" (${id}) 更新失败：结构验证未通过`,
       ``,
-      `**错误信息：**`,
-      ...validation.errors.map(e => `- ${e}`)
+      `错误信息：`,
+      ...validation.errors.map(e => `- ${e}`),
+      ``,
+      `修正建议：`,
+      ...validation.suggestions.map(s => `- ${s}`)
     ].join('\n')
   }
 
@@ -126,7 +177,7 @@ async function updateStrategy(id: string, data: any): Promise<string> {
     `- 节点数: ${flowData.nodes.length}`,
     `- 边数: ${flowData.edges.length}`,
     ``,
-    `**策略图结构：**`,
+    `策略图结构：`,
     `\`\`\`json`,
     JSON.stringify(flowData, null, 2),
     `\`\`\``
@@ -154,15 +205,13 @@ async function createStrategy(name: string, data: any): Promise<string> {
   const validation = validateStrategyGraph(flowData)
   if (!validation.valid) {
     return [
-      `❌ 策略图 "${name}" 创建失败：结构验证未通过`,
+      `策略图 "${name}" 创建失败：结构验证未通过`,
       ``,
-      `**错误信息：**`,
+      `错误信息：`,
       ...validation.errors.map(e => `- ${e}`),
       ``,
-      `**请检查：**`,
-      `- 策略图 JSON 格式是否完整`,
-      `- 是否包含所有必需节点类型（Input、Signal、Portfolio、Execution）`,
-      `- 所有边的 source/target 是否指向存在的节点`
+      `修正建议：`,
+      ...validation.suggestions.map(s => `- ${s}`)
     ].join('\n')
   }
 
@@ -180,7 +229,7 @@ async function createStrategy(name: string, data: any): Promise<string> {
     `- 节点数: ${flowData.nodes.length}`,
     `- 边数: ${flowData.edges.length}`,
     ``,
-    `**策略图结构：**`,
+    `策略图结构：`,
     `\`\`\`json`,
     JSON.stringify(flowData, null, 2),
     `\`\`\``
@@ -194,26 +243,30 @@ function getSignalSyntaxDoc(): string {
 
 Signal 节点使用类 C 表达式语法生成买卖信号，公式分为 \`buy\` 和 \`sell\` 两部分。
 
-## 变量引用限制（重要！）
+## 变量来源（核心规则）
 
-**公式中的变量名只能是当前 Signal 节点的前驱节点输出名。**
+**公式中的变量名只能来自 Signal 节点的前驱节点（直接相连的上游节点）的输出。**
 
-- 变量必须来自与 Signal 节点直接相连的上游节点
-- 不能使用未连接的节点输出或任意变量名
-- 变量名格式：\`{字母及下划线开头的变量名}\`，例如 \`ma_short\`
-- 常见前驱节点输出示例：
-  - Input 节点：\`close\`, \`volume\`
-  - Function 节点：\`ma_short\`, \`std\`
-  - ML 节点：\`prediction\`
+### 如何确定可用变量
 
-**如何查看可用变量**：使用 \`action="get_node_info"\` 查看前驱节点的 \`outputs\` 字段。
+1. 查看 Signal 节点的上游节点是谁（通过 edges 的 target 指向 Signal 节点）
+2. 使用 \`strategy(action="get_node_info", keyword="上游节点类型")\` 查看该节点的 outputs 字段
+3. 这些 outputs 就是公式中可以使用的变量名
 
-## 变量引用格式
+### 常见前驱节点及其输出
+
+| 前驱节点类型 | 可用变量 | 示例 |
+|-------------|---------|------|
+| Input（数据输入） | close, open, high, low, volume | \`close[t]\`, \`volume[t]\` |
+| Function（指标计算） | 根据方法不同而不同 | MA: \`MA_5[t]\`, STD: \`STD_20[t]\`, Return: \`ReturnRate[t]\` |
+| ML 模型 | prediction | \`prediction[t]\` |
+
+### 变量引用格式
+
 格式：\`变量名[时间索引]\`
 - \`close[t]\` — 当前时刻收盘价
-- \`MA_5[t-1]\` — 前1个时刻的5日均线
-- \`ReturnRate[t-5]\` — 前5个时刻的收益率
-- \`volume[t]\` — 当前时刻成交量
+- \`MA_5[t-1]\` — 前 1 个时刻的 5 日均线
+- \`ReturnRate[t-5]\` — 前 5 个时刻的收益率
 
 时间索引支持：
 - \`[t]\` — 当前时刻（最新值）
@@ -266,12 +319,12 @@ buy: MA_5[t] > MA_10[t] or close[t] > high[t-1]
 
 ## 重要注意事项
 1. **变量必须来自前驱节点**：公式中的变量名只能是 Signal 节点的前驱节点输出，不能使用未连接的节点输出
-2. **比较运算必须带时间索引**：\`close[t] > 3000\` ✅，\`close > 3000\` ❌（不能直接比较 Vector）
-3. **\`not\` 优先级高于比较运算符**：\`not a > b\` 等价于 \`not (a > b)\`
-4. **避免 \`not topk(...)\` 作为卖出条件**：应使用 \`bottomk(...)\` 替代
-5. **同一股票同时触发买卖**：系统会输出警告并跳过该信号
-6. **不允许做空时**：无持仓股票的 SELL 信号会被过滤为 HOLD
-7. **已持仓不追加**：已持仓股票的 BUY 信号会被过滤为 HOLD`
+2. **比较运算必须带时间索引**：\`close[t] > 3000\` 正确，\`close > 3000\` 错误（不能直接比较 Vector）
+3. \`not\` 优先级高于比较运算符：\`not a > b\` 等价于 \`not (a > b)\`
+4. 避免 \`not topk(...)\` 作为卖出条件：应使用 \`bottomk(...)\` 替代
+5. 同一股票同时触发买卖：系统会输出警告并跳过该信号
+6. 不允许做空时：无持仓股票的 SELL 信号会被过滤为 HOLD
+7. 已持仓不追加：已持仓股票的 BUY 信号会被过滤为 HOLD`
 }
 
 // === 策略图约束规则 ===
@@ -279,58 +332,43 @@ buy: MA_5[t] > MA_10[t] or close[t] > high[t-1]
 function getFlowConstraints(): string {
   return `# 策略图（Flow）约束规则
 
-## 必需节点（至少各 1 个）
-创建策略图时，必须包含以下节点类型：
+## 节点结构
 
-1. **数据输入节点 (Input)** — 提供行情数据源
-   - nodeType: \`input\`
-   - 至少 1 个，提供股票池和频率配置
+每个节点必须包含以下字段：
 
-2. **交易信号生成节点 (Signal)** — 根据指标生成买卖信号
-   - nodeType: \`signal\`
-   - 至少 1 个，包含 buy/sell 公式表达式
-
-3. **投资组合节点 (Portfolio)** — 管理仓位和资金分配
-   - nodeType: \`portfolio\`
-   - 至少 1 个，负责资金管理和持仓跟踪
-
-4. **执行交易节点 (Execution)** — 执行实际订单
-   - nodeType: \`execution\`
-   - 至少 1 个，负责下单执行
-
-## 图结构约束
-- **数据流向**：Input → (Function/ML) → Signal → Portfolio → Execution
-- **连通性**：所有节点必须能从 Input 节点到达（不能有孤立节点）
-- **无环**：图不能有循环依赖（系统会执行拓扑排序检测）
-- **禁止自环**：节点不能连接到自身
-
-## 典型策略图结构
-
-\`\`\`
-[Input 数据输入]
-    │
-    ▼
-[Function 指标计算] ─── (可选，可多个)
-    │
-    ▼
-[Signal 信号生成] ←── 使用 buy/sell 公式
-    │
-    ▼
-[Portfolio 投资组合]
-    │
-    ▼
-[Execution 交易执行]
+\`\`\`json
+{
+  "id": "1",
+  "type": "custom",
+  "data": {
+    "label": "数据输入",
+    "nodeType": "input",
+    "params": { ... }
+  },
+  "position": { "x": 100, "y": 200 }
+}
 \`\`\`
 
-## 节点连接规则
-- Input 节点的输出只能连接到后续处理节点
-- Signal 节点接收上游指标数据，输出买卖信号
-- Portfolio 节点接收 Signal 信号，管理仓位
-- Execution 节点接收 Portfolio 指令，执行下单
+**字段说明**：
+- \`id\`：字符串，唯一标识，建议用数字字符串如 "1", "2", "3"
+- \`type\`：固定为 \`"custom"\`，不可修改
+- \`data.label\`：节点显示名称，需与 nodeType 匹配（见下表）
+- \`data.nodeType\`：节点类型，决定节点行为
+- \`data.params\`：节点参数，根据 nodeType 不同而不同
+- \`position\`：布局坐标，建议从左到右排列（x 递增）
+
+## 必需节点
+
+创建策略图时，必须包含以下 4 类节点：
+
+| nodeType | data.label | 必填参数 | 示例 |
+|----------|------------|----------|------|
+| \`input\` | "数据输入" | source, code, freq | \`{ source: "股票", code: ["sz.000001"], freq: "1d" }\` |
+| \`signal\` | "交易信号生成" | buy, sell | \`{ buy: "close[t] > MA_5[t]", sell: "close[t] < MA_5[t]" }\` |
+| \`portfolio\` | "投资组合" | positionRatio | \`{ positionRatio: 1.0 }\` |
+| \`execution\` | "执行交易" | commission, stampDuty | \`{ commission: 0.0003, stampDuty: 0.001 }\` |
 
 ## Edge（连线）结构
-
-每条连线使用 Vue Flow 标准格式：
 
 \`\`\`json
 {
@@ -339,41 +377,62 @@ function getFlowConstraints(): string {
   "target": "2",
   "sourceHandle": "1-close",
   "targetHandle": "2",
-  "type": "default"
+  "type": "default",
+  "markerEnd": { "type": "arrowclosed" },
+  "style": { "stroke": "#666" }
 }
 \`\`\`
 
-**字段含义**：
-- \`source\` / \`target\`：节点 ID（字符串，如 \`"1"\`, \`"2"\`）
-- \`sourceHandle\`：源节点的输出端点名称
-- \`targetHandle\`：目标节点的输入端点名称
+**端点命名规则（极易出错）**：
 
-**端点命名规则（重要！）**：
-
-1. **Quote Input 节点（数据输入）**：
-   - 输出端点格式：\`{节点id}-{字段名}\`
+1. **Input 节点的输出端点**：格式为 \`{节点id}-{字段名}\`
    - 示例：\`"1-close"\`, \`"1-open"\`, \`"1-high"\`, \`"1-low"\`, \`"1-volume"\`
-   - 节点 ID 通常为 \`"1"\`
 
-2. **其他所有节点**（Function、Signal、Portfolio、Execution 等）：
-   - 输入端点 = 节点 ID（如 \`"2"\`）
-   - 输出端点 = 节点 ID（如 \`"2"\`）
+2. **其他所有节点的输入/输出端点**：直接使用节点 ID
+   - 示例：\`"2"\`, \`"3"\`, \`"4"\`
 
 **Edge ID 格式**：\`{source}-{sourceHandle}->{target}\`
 
-## 示例策略图 JSON 结构
+## 数据流向
+
+\`\`\`
+[Input] → [Function/ML 可选] → [Signal] → [Portfolio] → [Execution]
+\`\`\`
+
+## 完整示例（均线交叉策略）
+
 \`\`\`json
 {
   "nodes": [
-    {"id": "1", "data": {"nodeType": "input", "params": {...}}},
-    {"id": "2", "data": {"nodeType": "signal", "params": {...}}},
-    {"id": "3", "data": {"nodeType": "portfolio", "params": {...}}},
-    {"id": "4", "data": {"nodeType": "execution", "params": {...}}}
+    {
+      "id": "1",
+      "type": "custom",
+      "data": { "label": "数据输入", "nodeType": "input", "params": { "source": "股票", "code": ["sz.000001"], "freq": "1d" } },
+      "position": { "x": 100, "y": 200 }
+    },
+    {
+      "id": "2",
+      "type": "custom",
+      "data": { "label": "交易信号生成", "nodeType": "signal", "params": { "buy": "MA_5[t] >= MA_15[t]", "sell": "MA_5[t] < MA_15[t]" } },
+      "position": { "x": 400, "y": 200 }
+    },
+    {
+      "id": "3",
+      "type": "custom",
+      "data": { "label": "投资组合", "nodeType": "portfolio", "params": { "positionRatio": 1.0 } },
+      "position": { "x": 700, "y": 200 }
+    },
+    {
+      "id": "4",
+      "type": "custom",
+      "data": { "label": "执行交易", "nodeType": "execution", "params": { "commission": 0.0003, "stampDuty": 0.001 } },
+      "position": { "x": 1000, "y": 200 }
+    }
   ],
   "edges": [
-    {"id": "1-close->2", "source": "1", "target": "2", "sourceHandle": "1-close", "targetHandle": "2"},
-    {"id": "2->3", "source": "2", "target": "3", "sourceHandle": "2", "targetHandle": "3"},
-    {"id": "3->4", "source": "3", "target": "4", "sourceHandle": "3", "targetHandle": "4"}
+    { "id": "1-close->2", "source": "1", "target": "2", "sourceHandle": "1-close", "targetHandle": "2", "type": "default", "markerEnd": { "type": "arrowclosed" }, "style": { "stroke": "#666" } },
+    { "id": "2->3", "source": "2", "target": "3", "sourceHandle": "2", "targetHandle": "3", "type": "default", "markerEnd": { "type": "arrowclosed" }, "style": { "stroke": "#666" } },
+    { "id": "3->4", "source": "3", "target": "4", "sourceHandle": "3", "targetHandle": "4", "type": "default", "markerEnd": { "type": "arrowclosed" }, "style": { "stroke": "#666" } }
   ]
 }
 \`\`\``
@@ -427,13 +486,13 @@ export const strategyTool = tool(
         // 为 Signal 节点添加特殊提示
         if (n.nodeType === "signal" || n.id === "signal") {
           info.push('')
-          info.push('💡 此节点使用 Signal 公式语法（buy/sell 表达式）。使用 `action="signal_syntax"` 获取完整语法文档。')
+          info.push('[提示] 此节点使用 Signal 公式语法（buy/sell 表达式）。使用 `action="signal_syntax"` 获取完整语法文档。')
         }
 
         // 为其他关键节点添加策略图约束提示
         if (["input", "execution", "portfolio", "function", "xgboost", "spread", "protection"].includes(n.nodeType)) {
           info.push('')
-          info.push('💡 创建策略图时需遵循节点约束规则。使用 `action="flow_constraints"` 获取完整约束规则。')
+          info.push('[提示] 创建策略图时需遵循节点约束规则。使用 `action="flow_constraints"` 获取完整约束规则。')
         }
 
         return info.join('\n')
@@ -483,7 +542,7 @@ export const strategyTool = tool(
   },
   {
     name: "strategy",
-    description: "策略管理工具。可查询节点类型信息，以及创建/获取/更新/删除策略图。action='list_nodes' 列出所有可用节点类型；action='get_node_info' 获取单个节点详情（keyword=节点id）；action='list_strategies' 列出已保存策略；action='get_strategy' 获取策略图 JSON（keyword=策略id）；action='create_strategy' 创建新策略图（data=JSON）；action='update_strategy' 更新策略图（keyword=id, data=JSON）；action='delete_strategy' 删除策略图（keyword=id）；action='signal_syntax' 获取 Signal 节点公式语法文档（buy/sell 表达式规则）；action='flow_constraints' 获取策略图约束规则（必需节点、连通性、数据流向）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML → Signal → Portfolio → Execution\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",

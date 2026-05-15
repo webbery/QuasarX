@@ -1,74 +1,131 @@
 {
-  "_comment": "订单测试配置文件 - 用于配置股票订单自动化测试",
+  "_comment": "全局测试配置文件 — 控制测试模块启用/关闭 + 各模块专属参数",
   "_doc": {
+    "enabled_modules": "启用的测试模块列表，空数组表示运行全部",
+    "disabled_modules": "禁用的测试模块列表（优先级高于 enabled_modules）",
     "base_url": "API 基础地址",
-    "default_test_stock": "默认测试股票代码",
-    "test_stocks": "测试使用的股票列表（用于参数化测试）",
-    "default_quantity": "默认下单数量（股）",
-    "order_status_timeout": "等待订单状态超时时间（秒）",
-    "order_poll_interval": "轮询订单状态间隔（秒）",
-    "skip_cleanup": "是否跳过测试后订单清理",
-    "test_scenarios": "场景化测试配置"
+    "exit_on_finish": "测试结束后是否自动发送 /exit 请求关闭服务",
+    "modules": "每个模块的专属配置，key 为模块短名，value 为模块参数"
   },
 
+  "enabled_modules": [],
+  "disabled_modules": ["mc", "prediction", "order", "trade_history", "capital_risk"],
   "base_url": "https://localhost:19107/v0",
-  "default_test_stock": "600000",
-  "test_stocks": ["600000", "600036", "000001"],
-  "default_quantity": 100,
-  "order_status_timeout": 30,
-  "order_poll_interval": 1.0,
-  "skip_cleanup": false,
+  "exit_on_finish": true,
 
-  "test_scenarios": [
-    {
-      "name": "buy_and_cancel",
-      "description": "限价买入并取消订单",
-      "steps": [
+  "modules": {
+    "user": {
+      "_doc": "用户/认证/服务器配置测试",
+      "enabled": true
+    },
+    "stock": {
+      "_doc": "股票行情/板块资金流/持仓/资金/佣金",
+      "enabled": true
+    },
+    "order": {
+      "_doc": "订单交易测试",
+      "enabled": true,
+      "default_test_stock": "600000",
+      "test_stocks": ["600000", "600036", "000001"],
+      "default_quantity": 100,
+      "order_status_timeout": 30,
+      "order_poll_interval": 1.0,
+      "skip_cleanup": false,
+      "test_scenarios": [
         {
-          "operation": "buy",
-          "price_offset": 0,
-          "count": 100,
-          "expected_status": [1, 3, 4],
-          "_comment": "price_offset=0 表示使用涨跌停中间价，expected_status: 1=已报，3=部分成交，4=完全成交"
+          "name": "buy_and_cancel",
+          "description": "限价买入并取消订单",
+          "steps": [
+            {
+              "operation": "buy",
+              "price_offset": 0,
+              "count": 100,
+              "expected_status": [1, 3, 4]
+            },
+            {
+              "operation": "cancel",
+              "condition": "wait",
+              "expected_status": [7, 8]
+            }
+          ]
         },
         {
-          "operation": "cancel",
-          "condition": "wait",
-          "expected_status": [7, 8],
-          "_comment": "condition=wait 表示等待订单录入后取消，expected_status: 7=已撤销，8=撤单失败"
+          "name": "market_buy",
+          "description": "市价买入测试",
+          "steps": [
+            {
+              "operation": "market_buy",
+              "count": 100,
+              "expected_status": [1, 3, 4]
+            }
+          ]
+        },
+        {
+          "name": "limit_buy_low_cancel",
+          "description": "低价挂单后取消",
+          "steps": [
+            {
+              "operation": "buy",
+              "price_offset": -0.5,
+              "count": 100,
+              "expected_status": [1]
+            },
+            {
+              "operation": "cancel",
+              "condition": "wait",
+              "expected_status": [7]
+            }
+          ]
         }
       ]
     },
-    {
-      "name": "market_buy",
-      "description": "市价买入测试",
-      "steps": [
-        {
-          "operation": "market_buy",
-          "count": 100,
-          "expected_status": [1, 3, 4],
-          "_comment": "市价单通常会快速成交，期望状态：已报/部分成交/完全成交"
-        }
-      ]
+    "strategy": {
+      "_doc": "策略管理（列表/部署/回测，含 CTA/双均线/R²）",
+      "enabled": false
     },
-    {
-      "name": "limit_buy_low_cancel",
-      "description": "低价挂单后取消（测试未成交订单的取消）",
-      "steps": [
-        {
-          "operation": "buy",
-          "price_offset": -0.5,
-          "count": 100,
-          "expected_status": [1],
-          "_comment": "price_offset 为负表示低于当前价挂单，期望状态=1(已报) 表示挂单成功"
-        },
-        {
-          "operation": "cancel",
-          "condition": "wait",
-          "expected_status": [7],
-          "_comment": "期望状态=7(已撤销) 表示取消成功"
-        }
-      ]
+    "r2strategy": {
+      "_doc": "R² 趋势策略回测",
+      "enabled": false
+    },
+    "risk": {
+      "_doc": "风控管理（止损/VaR）",
+      "enabled": false
+    },
+    "capital_risk": {
+      "_doc": "资金风控（总资金止损/单日亏损）",
+      "enabled": true
+    },
+    "shadow_mode": {
+      "_doc": "影子模式日志/虚拟账户",
+      "enabled": true
+    },
+    "data": {
+      "_doc": "数据同步",
+      "enabled": true
+    },
+    "shibor": {
+      "_doc": "SHIBOR 利率",
+      "enabled": true
+    },
+    "sectorquote": {
+      "_doc": "行业板块实时行情",
+      "enabled": true
+    },
+    "serverevent": {
+      "_doc": "SSE 事件流",
+      "enabled": true
+    },
+    "trade_history": {
+      "_doc": "交易历史查询",
+      "enabled": true
+    },
+    "prediction": {
+      "_doc": "预测操作",
+      "enabled": false
+    },
+    "mc": {
+      "_doc": "空文件占位",
+      "enabled": false
     }
-  ]
+  }
 }

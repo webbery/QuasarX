@@ -69,7 +69,16 @@
                 :sell-signals="tickSellSignals"
             />
 
-            <div v-else class="empty-state">
+            <!-- 净值曲线 -->
+            <div v-if="navChartData.length > 0" class="chart-card full-width">
+                <div class="chart-title">
+                    <div class="title-icon">📈</div>
+                    <span>净值曲线</span>
+                </div>
+                <div class="chart-container" ref="navChartRef"></div>
+            </div>
+
+            <div v-else-if="rawTicks.length === 0" class="empty-state">
                 <i class="fas fa-chart-line"></i>
                 <p>暂无数据</p>
                 <span>设置查询条件后点击"查询"</span>
@@ -79,7 +88,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
+import * as echarts from 'echarts'
 import PriceTrendChart from './report/charts/PriceTrendChart.vue'
 
 const activeTab = ref('realtime')
@@ -94,7 +104,10 @@ const rawTicks = ref([])  // 原始 CBOR tick 数据（用于导出）
 const tickChartData = ref([])
 const tickBuySignals = ref([])
 const tickSellSignals = ref([])
+const navChartData = ref([])  // 净值曲线数据 [date, value]
 const queryLoading = ref(false)
+const navChartRef = ref(null)
+let navChartInstance = null
 
 onMounted(() => {
     // TODO: 从后端获取运行中的策略列表
@@ -109,6 +122,7 @@ async function onQueryTicks() {
     tickChartData.value = []
     tickBuySignals.value = []
     tickSellSignals.value = []
+    navChartData.value = []
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -158,6 +172,26 @@ async function onQueryTicks() {
                     } else if (side === 1) {
                         tickSellSignals.value.push(signal)
                     }
+                }
+            }
+        }
+
+        // 3. 查询净值曲线
+        if (selectedStrategy.value) {
+            const navUrl = `https://${server}/v0/nav/history?strategy=${selectedStrategy.value}&start=${startTs}&end=${endTs}`
+            const navRes = await fetch(navUrl, {
+                headers: { 'Authorization': token }
+            })
+            if (navRes.ok) {
+                const navData = await navRes.json()
+                if (navData.dates && navData.values) {
+                    navChartData.value = navData.dates.map((d, i) => {
+                        const dt = new Date(d * 1000)
+                        const Y = dt.getFullYear()
+                        const M = String(dt.getMonth() + 1).padStart(2, '0')
+                        const D = String(dt.getDate()).padStart(2, '0')
+                        return [`${Y}-${M}-${D}`, navData.values[i]]
+                    })
                 }
             }
         }
@@ -214,6 +248,69 @@ function onExportCSV() {
     a.click()
     URL.revokeObjectURL(url)
 }
+
+// 净值曲线图表
+function getNavOption(data) {
+    return {
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(26, 34, 54, 0.9)',
+            borderColor: '#2a3449',
+            textStyle: { color: '#e0e0e0' },
+            formatter: function(params) {
+                const val = params[0].value
+                return `${params[0].axisValue}<br/>净值: <span style="color: #10b981; font-weight: bold;">${val.toFixed(2)}</span>`
+            }
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: data.map(d => d[0]),
+            axisLine: { lineStyle: { color: '#6E7079' } },
+            axisLabel: { color: '#a0aec0' },
+            splitLine: { show: false }
+        },
+        yAxis: {
+            type: 'value',
+            scale: true,
+            axisLine: { lineStyle: { color: '#6E7079' } },
+            axisLabel: { color: '#a0aec0' },
+            splitLine: { lineStyle: { color: '#2a3449', type: 'dashed' } }
+        },
+        series: [{
+            name: '净值',
+            type: 'line',
+            data: data.map(d => d[1]),
+            lineStyle: { width: 2 },
+            itemStyle: { color: '#10b981' },
+            smooth: true,
+            showSymbol: false,
+            areaStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                    { offset: 0, color: 'rgba(16, 185, 129, 0.3)' },
+                    { offset: 1, color: 'rgba(16, 185, 129, 0.05)' }
+                ])
+            }
+        }]
+    }
+}
+
+watch(navChartData, (newData) => {
+    if (newData.length > 0) {
+        nextTick(() => {
+            if (!navChartRef.value) return
+            if (!navChartInstance) {
+                navChartInstance = echarts.init(navChartRef.value, null, { renderer: 'canvas' })
+            }
+            navChartInstance.setOption(getNavOption(newData))
+        })
+    }
+}, { deep: true })
 </script>
 
 <style scoped>
@@ -373,5 +470,48 @@ function onExportCSV() {
 .btn-export:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+/* 净值曲线图表卡片 */
+.chart-card {
+    background: var(--panel-bg, #1a2236);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid var(--border, #2a3449);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+}
+
+.chart-card.full-width {
+    grid-column: 1 / -1;
+}
+
+.chart-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text, #e0e0e0);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border, #2a3449);
+}
+
+.title-icon {
+    font-size: 20px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(16, 185, 129, 0.1);
+    border-radius: 8px;
+}
+
+.chart-container {
+    height: 300px;
+    width: 100%;
 }
 </style>
