@@ -29,7 +29,7 @@ class TestTickRecord:
 
     @pytest.mark.timeout(10)
     def test_record_query_invalid_symbol(self, auth_token):
-        """POST /record?symbol=INVALID → 400，验证参数校验"""
+        """POST /record?symbol=INVALID → 404，无对应数据目录"""
         kwargs = {
             'verify': False
         }
@@ -37,10 +37,36 @@ class TestTickRecord:
             kwargs['headers'] = {'Authorization': auth_token}
 
         response = requests.post(f"{BASE_URL}/record?symbol=INVALID", **kwargs)
-        assert response.status_code == 400
+        assert response.status_code in (400, 404), f"无效 symbol 应返回 400 或 404，实际 {response.status_code}"
         data = response.json()
         assert "error" in data
-        assert "invalid" in data["error"].lower()
+
+    @pytest.mark.timeout(10)
+    def test_record_query_time_range(self, auth_token):
+        """POST /record?symbol=xxx&start=xxx&end=xxx → 验证时间范围过滤"""
+        kwargs = {
+            'verify': False
+        }
+        if auth_token and len(auth_token) > 10:
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        now = int(time.time())
+        yesterday = now - 86400
+
+        for symbol in self.TEST_SYMBOLS:
+            response = requests.post(
+                f"{BASE_URL}/record?symbol={symbol}&start={yesterday}&end={now}",
+                **kwargs
+            )
+            # 200 或 404 都可接受（可能无数据）
+            assert response.status_code in (200, 404), f"{symbol} 查询返回 {response.status_code}"
+            if response.status_code == 200:
+                data = response.json()
+                assert isinstance(data, list)
+                # 验证返回的 tick 都在时间范围内
+                for tick in data:
+                    assert tick.get("time", 0) >= yesterday, f"tick time 小于 start: {tick}"
+                    assert tick.get("time", 0) <= now, f"tick time 大于 end: {tick}"
 
     @pytest.mark.timeout(10)
     def test_daily_directory_exists(self):

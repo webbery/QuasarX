@@ -1,6 +1,7 @@
 #include "Handler/RecordHandler.h"
+#include <algorithm>
 #include <filesystem>
-#include <ios>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <nng/protocol/pubsub0/sub.h>
@@ -12,12 +13,37 @@
 #include "server.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
-#include <fstream>
 #include "json.hpp"
 
+#ifdef _DEBUG
+#define MAX_FLUSH_CBOR_SIZE     5
+#else
+#define MAX_FLUSH_CBOR_SIZE     50
+#endif
+
 namespace {
-  
+
+// 根据 symbol 获取类型路径
+String GetTypePath(symbol_t sym) {
+  if (is_future(sym)) {
+    return "/zh/future";
+  }
+  else if (is_stock(sym)) {
+    return "/zh/stock";
+  }
+  else if (is_option(sym)) {
+    return "/zh/option";
+  }
+  else if (is_fund(sym)) {
+    return "/zh/fund";
+  } else {
+    WARN("not support type for symbol.");
+    return "/zh/temp";
+  }
 }
+
+}
+
 RecordHandler::RecordHandler(Server* server):HttpHandler(server), _main(nullptr){
 
 }
@@ -56,7 +82,6 @@ void RecordHandler::run() {
     std::filesystem::create_directories(_cborBasePath);
 
     constexpr std::size_t flags = yas::mem | yas::binary;
-    Map<symbol_t, uint32_t> ticks;
     short rest_cnt = 0;
     while (!_close) {
         char* buff = NULL;
@@ -66,9 +91,14 @@ void RecordHandler::run() {
             nng_free(buff, sz);
             rest_cnt += 1;
             if (rest_cnt % 10 == 0) {
-              for (auto& item : _fs_map) {
-                item.second.flush();
-              }
+                // 定期 flush CBOR 缓冲区
+                time_t now = std::time(nullptr);
+                for (auto& [sym, buf] : _cborBuffers) {
+                    if (!buf.ticks.empty() && (now - buf.lastFlush) >= 600) {
+                        // 触发超时 flush
+                        buf.lastFlush = 0; // 强制下一次循环 flush
+                    }
+                }
             }
             continue;
         }
@@ -86,15 +116,6 @@ void RecordHandler::run() {
             }
         }
 
-        ++ticks[quote._symbol];
-        auto& fstr = GetFileStream(quote._symbol);
-        WriteCSV(fstr, quote);
-        if (ticks[quote._symbol] % 10 == 0) {
-            // 刷一次数据到磁盘
-            if (fstr.good()) {
-              fstr.flush();
-            }
-        }
         // CBOR 缓冲记录
         PushCborTick(quote);
         rest_cnt = 0;
@@ -102,156 +123,50 @@ void RecordHandler::run() {
     nng_close(sock);
     sock.id = 0;
 
-    //关闭文件
-    for (auto& item : _fs_map) {
-        item.second.flush();
-        item.second.close();
-    }
     printf("record stop.\n");
-}
-
-String RecordHandler::GetTypePath(symbol_t sym) {
-  if (is_future(sym)) {
-    return "/zh/future";
-  }
-  else if (is_stock(sym)) {
-    return "/zh/stock";
-  }
-  else if (is_option(sym)) {
-    return "/zh/option";
-  }
-  else if (is_fund(sym)) {
-    return "/zh/fund";
-  } else {
-    WARN("not support type for symbol.");
-    return "/zh/temp";
-  }
-}
-
-std::fstream& RecordHandler::GetFileStream(const symbol_t& name) {
-  auto itr = _fs_map.find(name);
-  if (itr == _fs_map.end()) {
-    auto& config = _server->GetConfig();
-    auto datapath = config.GetDatabasePath() + GetTypePath(name);
-    if (!std::filesystem::exists(datapath)) {
-      std::filesystem::create_directories(datapath);
-    }
-    // 打开csv文件并定位到末尾
-    auto& fs = _fs_map[name];
-    auto symbol = get_symbol(name);
-    if (symbol == "0")
-      return fs;
-
-    String filepath = datapath + "/" + format_symbol(symbol) + ".csv";
-    if (!std::filesystem::exists(filepath)) {
-      fs.open(filepath, std::ios_base::app | std::ios_base::ate | std::ios_base::out);
-      String header("datetime,open,close,high,low,volume,turnover,");
-      for (int i = 0; i < MAX_ORDER_SIZE_LVL2; ++i) {
-        header += "bid" + std::to_string(i+1) + ",";
-        header += "ask" + std::to_string(i+1) + ",";
-        header += "ask_volume" + std::to_string(i+1) + ",";
-        header += "bid_volume" + std::to_string(i+1) + ",";
-      }
-      header += "\n";
-      fs.write(header.c_str(), header.size());
-    } else {
-      fs.open(filepath, std::ios_base::app | std::ios_base::ate | std::ios_base::out);
-    }
-    return fs;
-  }
-  return itr->second;
 }
 
 void RecordHandler::SetSymbols(const Set<String>& symbols) {
   _symbols = symbols;
 }
 
-void RecordHandler::WriteCSV(std::fstream& fs, const QuoteInfo& infos) {
-  if (!fs.is_open())
-    return;
-
-  String line;
-  // line += get_symbol(infos._symbol);
-  // line += ",";
-  line += ToString(infos._time);
-  line += ",";
-  line += std::format("{:.4f}", infos._open);
-  line += ",";
-  line += std::format("{:.4f}", infos._close);
-  line += ",";
-  line += std::format("{:.4f}", infos._high);
-  line += ",";
-  line += std::format("{:.4f}", infos._low);
-  line += ",";
-  line += std::format("{}", infos._volume);
-  line += ",";
-  line += std::format("{}", infos._turnover);
-  for (int i = 0; i < MAX_ORDER_SIZE_LVL2; ++i) {
-    if (infos._bidPrice[i] > std::numeric_limits<double>::epsilon() || infos._askPrice[i] > std::numeric_limits<double>::epsilon()) {
-      line += ",";
-      line += std::format("{:.4f}", infos._bidPrice[i]);
-      line += ",";
-      line += std::format("{:.4f}", infos._askPrice[i]);
-      line += ",";
-      line += std::format("{}", infos._askVolume[i]);
-      line += ",";
-      line += std::format("{}", infos._bidVolume[i]);
-    } else {
-      break;
-    }
-  }
-  
-  line += "\n";
-  fs.write(line.c_str(), line.size());
-}
-
 // ============== CBOR Tick 记录 ==============
 
 void RecordHandler::PushCborTick(const QuoteInfo& quote) {
-    std::lock_guard<std::mutex> lock(_cborMtx);
     auto& buf = _cborBuffers[quote._symbol];
     buf.ticks.push_back(quote);
 
     // 50 条触发 flush
-    if (buf.ticks.size() >= 50) {
+    if (buf.ticks.size() >= MAX_FLUSH_CBOR_SIZE) {
         FlushCborBuffer();
     }
 }
 
 String RecordHandler::CborFileName(const QuoteInfo& tick) {
-    // 日期
-    std::tm* tm = localtime(&tick._time);
+    // 日期（本地时间）：YYYYMMDD
+    std::time_t t = static_cast<std::time_t>(tick._time);
+    std::tm* tm = localtime(&t);
     char dateBuf[16];
-    std::strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", tm);
+    std::strftime(dateBuf, sizeof(dateBuf), "%Y%m%d", tm);
     String date(dateBuf);
 
-    // 市场（如 SH/SZ/BJ）
-    char market[3] = "SH";
-    const Map<char, String> marketMap = {
-        {MT_Shenzhen, "SZ"}, {MT_Shanghai, "SH"}, {MT_Beijing, "BJ"}
-    };
-    auto it = marketMap.find(tick._symbol._exchange);
-    if (it != marketMap.end()) {
-        market[0] = it->second[0];
-        market[1] = it->second[1];
-    }
+    // 代码（已包含交易所后缀，如 600000.SH）
+    String code = format_symbol(get_symbol(tick._symbol));
 
-    return date + "." + market + "." + format_symbol(get_symbol(tick._symbol)) + ".cbor";
+    return date + "." + code + ".cbor";
 }
 
 void RecordHandler::FlushCborBuffer() {
-    std::lock_guard<std::mutex> lock(_cborMtx);
     time_t now = std::time(nullptr);
 
     for (auto& [sym, buf] : _cborBuffers) {
-        if (buf.ticks.empty()) continue;
+        if (buf.ticks.empty() || is_null(sym)) continue;
 
         // 10 分钟超时或缓冲区满，触发 flush
         bool timeout = (now - buf.lastFlush) >= 600;
-        if (!timeout && buf.ticks.size() < 50) continue;
+        if (!timeout && buf.ticks.size() < MAX_FLUSH_CBOR_SIZE) continue;
 
         auto symbol = get_symbol(sym);
-        if (symbol == "0") continue;
 
         // 按类型分目录: /daily/zh/stock/
         String typePath = GetTypePath(sym);
@@ -326,34 +241,36 @@ void RecordHandler::HandleTicksQuery(const httplib::Request &req, httplib::Respo
         return;
     }
 
-    symbol_t sym = to_symbol(symbol);
-    if (is_null(sym)) {
-        res.status = 400;
-        res.set_content(nlohmann::json{{"error", "invalid symbol format"}}.dump(), "application/json");
-        return;
-    }
+    // 规范 code：去掉交易所后缀，补齐 6 位
+    String code = format_symbol(symbol.substr(0, symbol.find('.')));
 
+    // 解析时间范围
     time_t start = startStr.empty() ? 0 : std::stoll(startStr);
     time_t end = endStr.empty() ? std::numeric_limits<time_t>::max() : std::stoll(endStr);
 
-    String typePath = GetTypePath(sym);
-    String dirPath = _cborBasePath + typePath;
+    // 根据 code 推断类型目录
+    String typePath;
+    if (code.starts_with("60") || code.starts_with("68")) typePath = "/zh/stock";
+    else if (code.starts_with("00") || code.starts_with("30")) typePath = "/zh/stock";
+    else if (code.starts_with("8") || code.starts_with("4")) typePath = "/zh/stock";
+    else { typePath = "/zh/temp"; }
 
+    String dirPath = _cborBasePath + typePath;
     if (!std::filesystem::exists(dirPath)) {
         res.status = 404;
         res.set_content(nlohmann::json{{"error", "no data for symbol"}}.dump(), "application/json");
         return;
     }
 
-    // 查找匹配的文件：*.SZ.600000.cbor 或 *.SH.symbol.cbor
-    String searchPattern = "*." + format_symbol(symbol) + ".cbor";
+    // 查找匹配的文件：YYYYMMDD.sh.600000.cbor
     Vector<String> files;
+    String suffix = "." + code + ".cbor";
     for (auto& entry : std::filesystem::directory_iterator(dirPath)) {
         if (entry.is_regular_file()) {
             String fname = entry.path().filename().string();
-            // 匹配末尾 .symbol.cbor
-            if (fname.size() > format_symbol(symbol).size() + 5 &&
-                fname.substr(fname.size() - format_symbol(symbol).size() - 5) == "." + format_symbol(symbol) + ".cbor") {
+            if (!fname.ends_with(".cbor")) continue;
+            // 匹配 .CODE.cbor 结尾（交易所前缀如 sh/sz 在中间）
+            if (fname.size() > suffix.size() + 1 && fname.substr(fname.size() - suffix.size() - 1) == "." + suffix) {
                 files.push_back(entry.path().string());
             }
         }
@@ -365,6 +282,9 @@ void RecordHandler::HandleTicksQuery(const httplib::Request &req, httplib::Respo
         return;
     }
 
+    // 按文件名排序（YYYYMMDD 前缀自然排序 = 时间顺序）
+    std::sort(files.begin(), files.end());
+
     nlohmann::json result = nlohmann::json::array();
     for (auto& filepath : files) {
         std::fstream fs(filepath, std::ios::in | std::ios::binary);
@@ -373,7 +293,7 @@ void RecordHandler::HandleTicksQuery(const httplib::Request &req, httplib::Respo
         while (fs.good()) {
             uint32_t len = 0;
             fs.read(reinterpret_cast<char*>(&len), sizeof(len));
-            if (len == 0 || len > 1024 * 1024) break;
+            if (len == 0 || len > 4096) break;
 
             Vector<uint8_t> cbor(len);
             fs.read(reinterpret_cast<char*>(cbor.data()), len);

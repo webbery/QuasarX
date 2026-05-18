@@ -143,3 +143,6 @@ window.onmessage = (event) => {
 ipcRenderer.on('model-load-status', (_event, status) => {
     window.postMessage({ payload: 'model-load-status', data: status }, '*');
 });
+
+/**  ---------- Expose IPC Renderer to window ----------- */
+(window as any).ipcRenderer = ipcRenderer;

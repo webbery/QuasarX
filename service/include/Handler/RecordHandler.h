@@ -2,7 +2,6 @@
 #include "HttpHandler.h"
 #include "Util/system.h"
 #include "nng/nng.h"
-#include <fstream>
 #include <thread>
 #include <mutex>
 
@@ -22,13 +21,6 @@ public:
     virtual void post(const httplib::Request &req, httplib::Response &res);
 
 private:
-    void WriteCSV(std::fstream& fs, const QuoteInfo& infos);
-
-    std::fstream& GetFileStream(const symbol_t& name);
-
-    String GetTypePath(symbol_t sym);
-
-    // CBOR Tick 记录
     void PushCborTick(const QuoteInfo& quote);
     void FlushCborBuffer();
     String CborFileName(const QuoteInfo& tick);
@@ -45,7 +37,6 @@ private:
 
     Set<String> _symbols;
 
-    std::map<symbol_t, std::fstream> _fs_map;
     bool _close;
 
     // CBOR Tick 缓冲区
@@ -54,6 +45,5 @@ private:
         time_t lastFlush;
     };
     std::map<symbol_t, CborBuffer> _cborBuffers;
-    std::mutex _cborMtx;
     String _cborBasePath;
 };

@@ -32,6 +32,8 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const isLoading = ref(false)
   const marketContext = ref('')
+  // 是否使用 LangGraph 多 Agent 模式（默认启用）
+  const useLangGraph = ref(true)
   
   // 最大对话轮数限制
   const MAX_MESSAGES = 500
@@ -270,6 +272,7 @@ ${strategyRiskText}
     messages,
     isLoading,
     marketContext,
+    useLangGraph,
     toggle,
     setVisible,
     addMessage,

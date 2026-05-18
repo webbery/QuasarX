@@ -1,7 +1,11 @@
 /**
- * Chat API 接口封装（LangChain 重构版）
+ * Chat API 接口封装（LangChain 单轮 Tool Calling 模式）
  *
- * 使用 LangChain Tool Calling 模式，Agent 自主决定调用哪些 Tool
+ * @deprecated 已迁移到 LangGraph 多 Agent Supervisor 架构。
+ * 新代码请使用 `window.ipcRenderer.invoke('langgraph-chat', text)` 调用。
+ * 本文件保留作为回退兼容，当 LangGraph 不可用时仍可正常使用。
+ *
+ * 原说明：使用 LangChain Tool Calling 模式，Agent 自主决定调用哪些 Tool
  */
 
 import { getAgentConfig, createLLM } from "@/lib/agent"
@@ -43,7 +47,10 @@ export interface AskOptions {
  * 2. 对话历史处理（自动摘要压缩）
  * 3. 构建消息 + 调用 LLM
  * 4. Agent 自主决定调用哪些 Tool
- *
+ */
+
+/**
+ * @deprecated 使用 LangGraph 多 Agent 替代方案：`ipcRenderer.invoke('langgraph-chat', text)`
  * @param question 用户问题
  * @param options 可选配置
  * @returns AI 回复

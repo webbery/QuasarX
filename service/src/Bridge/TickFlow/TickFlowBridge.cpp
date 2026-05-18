@@ -360,8 +360,8 @@ void TickFlowBridge::ParseResponse(const String& response) {
 
             String code = item.value("symbol", "");
             quote._symbol = TickFlowToSymbol(code);
-
-            quote._time = item.value("timestamp", 0);
+            // INFO("quote {}", item.dump());
+            quote._time = (size_t)item["timestamp"]/1000;
             quote._open = item.value("open", 0.0);
             quote._close = item.value("last_price", 0.0);
             quote._high = item.value("high", 0.0);

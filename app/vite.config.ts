@@ -63,12 +63,17 @@ export default defineConfig(({ command, mode }) => {
               : options.startup();
           },
           vite: {
+            resolve: {
+              alias: {
+                "@": `${__dirname}/src`,
+              },
+            },
             build: {
               sourcemap,
               minify: isBuild,
               outDir: 'build/electron',
               rollupOptions: {
-                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios', '@langchain/core', '@langchain/openai', '@langchain/anthropic', 'langchain', '@anthropic-ai/sdk'],
+                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios', '@langchain/core', '@langchain/openai', '@langchain/anthropic', '@langchain/langgraph', '@langchain/langgraph-checkpoint', 'langchain', '@anthropic-ai/sdk'],
                 output: {
                   format: 'esm',
                 },
