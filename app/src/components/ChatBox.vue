@@ -6,7 +6,7 @@
       <div class="chat-header" @mousedown="startDrag">
         <div class="chat-title">
           <i class="fas fa-robot"></i>
-          <span>QuasarX AI 助手</span>
+          <span>AI 助手</span>
         </div>
         <div class="chat-actions">
           <button @click="handleClear" title="清空聊天" class="action-btn">
@@ -132,16 +132,21 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore, type ThoughtStep, type TokenUsage } from '@/stores/chatStore'
 import { askAI, type AskAIProgress } from '@/lib/ChatApi'
 import MarkdownIt from 'markdown-it'
+import { runSupervisorGraph, IndexedDBSaver } from '@/lib/agent'
+import { AIMessage } from '@langchain/core/messages'
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
 const chatStore = useChatStore()
 const inputText = ref('')
 const messageListRef = ref<HTMLDivElement>()
 
+// LangGraph checkpointer 单例
+const checkpointer = new IndexedDBSaver()
+
 // Tab 状态
 const activeTab = ref<'chat' | 'agent'>('chat')
 
-// Agent 工作流事件
+// Agent 工作流事件（直接由 runSupervisorGraph 回调填充）
 interface AgentEvent {
   agent: string;
   content: string;
@@ -166,16 +171,6 @@ function eventLabel(t: string) { return eventLabels[t] || t }
 function toggleThoughts(id: string) {
   expandedThoughts.value.has(id) ? expandedThoughts.value.delete(id) : expandedThoughts.value.add(id)
 }
-
-// IPC 事件监听
-function onAgentEvent(_e: any, evt: AgentEvent) {
-  agentEvents.value.push(evt)
-  if (activeTab.value === 'agent' && messageListRef.value) {
-    nextTick(() => { messageListRef.value!.scrollTop = messageListRef.value!.scrollHeight })
-  }
-}
-onMounted(() => { window.ipcRenderer?.on('agent-event', onAgentEvent) })
-onUnmounted(() => { window.ipcRenderer?.removeListener('agent-event', onAgentEvent) })
 
 // 拖拽 & 调整大小
 const isDragging = ref(false), dragStart = ref({ x: 0, y: 0 })
@@ -206,7 +201,7 @@ watch(() => chatStore.messages, async () => {
 function handleClear() {
   if (confirm('确定要清空聊天吗？')) {
     chatStore.clearMessages(); chatStore.addGreeting(); agentEvents.value = []
-    window.ipcRenderer?.invoke('langgraph-clear-session')
+    checkpointer.deleteThread('default')
   }
 }
 
@@ -223,12 +218,56 @@ async function sendMessage() {
   try {
     const useLangGraph = chatStore.useLangGraph ?? true
 
-    if (useLangGraph && window.ipcRenderer) {
-      const result = await window.ipcRenderer.invoke('langgraph-chat', text)
+    if (useLangGraph) {
+      // 直接调用 LangGraph（渲染进程）
+      const onEvent = (evt: AgentEvent) => {
+        console.log(`[LangGraph Event] ${evt.agent} → ${evt.eventType}:`, evt.content.substring(0, 100))
+        agentEvents.value.push(evt)
+        // 如果是 thought 事件，更新 loading thoughts
+        if (evt.eventType === 'thought') {
+          loadingThoughts.value = [...agentEvents.value.filter((e) => e.eventType === 'thought').map((e, i) => ({ id: `lg-${i}`, content: e.content, timestamp: e.timestamp } as ThoughtStep))]
+        }
+        // 当 Agent 产生回复时，立即更新聊天界面
+        if (evt.eventType === 'response' && assistantMsg) {
+          assistantMsg.content = evt.content
+        }
+        // 自动滚动 agent timeline
+        if (activeTab.value === 'agent' && messageListRef.value) {
+          nextTick(() => { messageListRef.value!.scrollTop = messageListRef.value!.scrollHeight })
+        }
+      }
+
+      console.log('[LangGraph] 开始执行，用户输入:', text.substring(0, 50))
+      const result = await runSupervisorGraph(text, 'default', checkpointer, onEvent)
+
+      // 提取最终回复：优先用 finalResponse，如果为空则从 messages 中找最后一条 AIMessage
+      let finalAnswer = result.finalResponse || ''
+      if (!finalAnswer && result.messages && result.messages.length > 0) {
+        const lastAIMessage = [...result.messages].reverse().find(m => m instanceof AIMessage)
+        if (lastAIMessage) {
+          if (typeof lastAIMessage.content === 'string') {
+            finalAnswer = lastAIMessage.content
+          } else if (Array.isArray(lastAIMessage.content)) {
+            finalAnswer = lastAIMessage.content
+              .map((block: any) => block.type === 'text' ? block.text : '')
+              .join('')
+          }
+        }
+      }
+
+      // 如果 messages 中也没有，从 agentEvents 中找最后一条 response 事件
+      if (!finalAnswer) {
+        const lastResponseEvent = [...agentEvents.value].reverse().find(e => e.eventType === 'response')
+        if (lastResponseEvent) {
+          finalAnswer = lastResponseEvent.content
+        }
+      }
+
+      console.log('[LangGraph] 执行完成，最终回复:', finalAnswer?.substring(0, 100))
       chatStore.isLoading = false
       if (assistantMsg) {
-        assistantMsg.content = result.answer
-        assistantMsg.thoughts = agentEvents.value.filter((e: AgentEvent) => e.eventType === 'thought').map((e: AgentEvent, i: number) => ({ id: `lg-${i}`, content: e.content, timestamp: e.timestamp }))
+        assistantMsg.content = finalAnswer || 'Agent 未返回回复'
+        assistantMsg.thoughts = agentEvents.value.filter((e) => e.eventType === 'thought').map((e, i) => ({ id: `lg-${i}`, content: e.content, timestamp: e.timestamp } as ThoughtStep))
       }
     } else {
       const result = await askAI(text, {
@@ -248,6 +287,7 @@ async function sendMessage() {
     }
     loadingThoughts.value = []
   } catch (error) {
+    console.error('[LangGraph] 执行异常:', error)
     chatStore.isLoading = false
     if (assistantMsg) assistantMsg.content = `抱歉，AI 服务暂时不可用：${(error as Error).message}`
     loadingThoughts.value = []

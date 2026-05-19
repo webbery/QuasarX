@@ -9,20 +9,20 @@
 
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { StructuredToolInterface } from "@langchain/core/tools";
-import { createLLM, getAgentConfig, AgentConfig } from "../../src/lib/agent";
+import { createLLM, getAgentConfig, AgentConfig } from ".";
 
 // Tool 导入
-import { quoteTool } from "../../src/lib/tools/quote";
-import { accountTool } from "../../src/lib/tools/account";
-import { positionTool } from "../../src/lib/tools/position";
-import { datetimeTool } from "../../src/lib/tools/datetime";
-import { platformTool } from "../../src/lib/tools/platform";
-import { knowledgeTool } from "../../src/lib/tools/knowledge";
-import { webSearchTool } from "../../src/lib/tools/webSearch";
-import { strategyTool } from "../../src/lib/tools/strategy";
-import { backtestTool } from "../../src/lib/tools/backtest";
-import { mutationTool } from "../../src/lib/tools/mutation";
-import { calculatorTool } from "../../src/lib/tools/calculator";
+import { quoteTool } from "../tools/quote";
+import { accountTool } from "../tools/account";
+import { positionTool } from "../tools/position";
+import { datetimeTool } from "../tools/datetime";
+import { platformTool } from "../tools/platform";
+import { knowledgeTool } from "../tools/knowledge";
+import { webSearchTool } from "../tools/webSearch";
+import { strategyTool } from "../tools/strategy";
+import { backtestTool } from "../tools/backtest";
+import { mutationTool } from "../tools/mutation";
+import { calculatorTool } from "../tools/calculator";
 
 import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent } from "./types";
 
@@ -88,15 +88,54 @@ async function runAgentLoop(
   onEvent?: (event: AgentEvent) => void,
   maxToolCalls = 30,
 ): Promise<string> {
-  const llm = createAgentLLM(agentType, tools);
+  let llm: any;
+  try {
+    llm = createAgentLLM(agentType, tools);
+  } catch (err) {
+    console.error(`[LangGraph] ${agentType} 创建 LLM 失败:`, err);
+    onEvent?.({
+      agent: agentType,
+      content: `LLM 初始化失败: ${err instanceof Error ? err.message : String(err)}`,
+      eventType: "error",
+      timestamp: Date.now(),
+    });
+    return "AI 服务不可用，请检查 LLM 配置。";
+  }
+
   let currentMessages = [...messages];
   let toolCallCount = 0;
 
   while (toolCallCount < maxToolCalls) {
-    const response = await llm.invoke(currentMessages);
+    let response: any;
+    try {
+      response = await llm.invoke(currentMessages);
+    } catch (err) {
+      console.error(`[LangGraph] ${agentType} LLM 调用失败:`, err);
+      onEvent?.({
+        agent: agentType,
+        content: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
+        eventType: "error",
+        timestamp: Date.now(),
+      });
+      return "AI 服务暂时不可用，请稍后重试。";
+    }
 
     // 收集 thinking 内容
-    if (response.additional_kwargs?.thinking) {
+    // Anthropic 格式: thinking 在 content 数组中
+    // OpenAI 格式: thinking 在 additional_kwargs 中
+    if (Array.isArray(response.content)) {
+      for (const block of response.content) {
+        if (block.type === 'thinking' && block.thinking) {
+          onEvent?.({
+            agent: agentType,
+            content: block.thinking,
+            eventType: "thought",
+            timestamp: Date.now(),
+          });
+          break;
+        }
+      }
+    } else if (response.additional_kwargs?.thinking) {
       onEvent?.({
         agent: agentType,
         content: response.additional_kwargs.thinking as string,
@@ -109,7 +148,7 @@ async function runAgentLoop(
     const toolCalls = response.tool_calls;
     if (!toolCalls || toolCalls.length === 0) {
       // 无 Tool 调用，返回最终回复
-      const content = typeof response.content === "string" ? response.content : response.content.map((c) => (c as any).text || "").join("");
+      const content = typeof response.content === "string" ? response.content : response.content.map((c: any) => (c as any).text || "").join("");
       onEvent?.({
         agent: agentType,
         content,
@@ -218,6 +257,7 @@ export function createAgentNode(
 
     return {
       messages: [new AIMessage({ content: response, additional_kwargs: { agent: agentType } })],
+      shouldEnd: true,
       iterationCount: state.iterationCount + 1,
     };
   };

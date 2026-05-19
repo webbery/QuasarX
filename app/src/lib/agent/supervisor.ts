@@ -13,12 +13,13 @@
 
 import { StateGraph } from "@langchain/langgraph";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
-import { createLLM, getAgentConfig } from "../../src/lib/agent";
+import { createLLM, getAgentConfig } from ".";
 
 import { GraphState, GraphStateType, AgentType, RouterDecision, AGENT_SYSTEM_PROMPTS } from "./types";
 import { createAgentNode } from "./agents";
 import { internalTools, INTERNAL_TOOL_AGENT_MAP } from "./internalTools";
 import { AgentEvent } from "./types";
+import { IndexedDBSaver } from "./checkpointer";
 
 /** Supervisor LLM（仅用于路由决策，不绑定 Tool） */
 function createSupervisorLLM() {
@@ -38,7 +39,22 @@ function createSupervisorLLM() {
  * 分析当前状态，决定下一步交给哪个 Agent，或直接回复
  */
 async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEvent) => void): Promise<Partial<GraphStateType>> {
-  const { messages, userInput, iterationCount, maxIterations } = state;
+  const { messages, userInput, iterationCount, maxIterations, shouldEnd } = state;
+
+  // 如果 Agent 已经产生回复，直接结束图循环
+  if (shouldEnd) {
+    emitEvent?.({
+      agent: "supervisor",
+      content: "检测到 Agent 已产生回复，提前结束图循环",
+      eventType: "thought",
+      timestamp: Date.now(),
+    });
+    return {
+      routerDecision: "respond",
+      activeAgent: null,
+      finalResponse: "",
+    };
+  }
 
   // 构建 Supervisor 消息
   const systemPrompt = AGENT_SYSTEM_PROMPTS.supervisor;
@@ -58,11 +74,61 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
     supervisorMessages.push(new HumanMessage(userInput));
   }
 
-  const llm = createSupervisorLLM();
-  const response = await llm.invoke(supervisorMessages);
+  let llm: any;
+  try {
+    llm = createSupervisorLLM();
+  } catch (err) {
+    console.error('[LangGraph] Supervisor 创建 LLM 失败:', err);
+    emitEvent?.({
+      agent: "supervisor",
+      content: `LLM 初始化失败: ${err instanceof Error ? err.message : String(err)}`,
+      eventType: "error",
+      timestamp: Date.now(),
+    });
+    return {
+      routerDecision: "respond",
+      activeAgent: null,
+      finalResponse: "",
+    };
+  }
+
+  let response: any;
+  try {
+    response = await llm.invoke(supervisorMessages);
+  } catch (err) {
+    console.error('[LangGraph] Supervisor LLM 调用失败:', err);
+    emitEvent?.({
+      agent: "supervisor",
+      content: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
+      eventType: "error",
+      timestamp: Date.now(),
+    });
+    return {
+      routerDecision: "respond",
+      activeAgent: null,
+      finalResponse: "",
+    };
+  }
 
   // 解析路由决策
-  const content = typeof response.content === "string" ? response.content : "";
+  // 提取 LLM 的实际文本输出
+  // Anthropic 格式: [{ type: 'thinking', ... }, { type: 'text', text: '{"next": "chat"}' }]
+  // OpenAI 格式: 直接是字符串
+  let content = "";
+  if (typeof response.content === "string") {
+    content = response.content;
+  } else if (Array.isArray(response.content)) {
+    // 从 Anthropic 格式中提取 text 块（跳过 thinking 块）
+    for (const block of response.content) {
+      if (block.type === 'text' && block.text) {
+        content = block.text;
+        break;
+      }
+    }
+  }
+
+  console.log('[Supervisor] LLM 原始输出:', content.substring(0, 200))
+
   let decision: RouterDecision = "respond";
   let finalResponse = "";
 
@@ -163,7 +229,7 @@ function checkInternalToolRouting(state: GraphStateType): string {
 /**
  * 构建并编译 Supervisor StateGraph
  *
- * @param emitEvent 事件回调，用于向 renderer 推送 Agent 工作流事件
+ * @param emitEvent 事件回调，用于向 UI 推送 Agent 工作流事件
  * @returns 编译后的图
  */
 export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
@@ -203,9 +269,11 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
   // === 添加边 ===
 
   // 入口 → Supervisor
+  // @ts-ignore - LangGraph 类型推断需要，但节点名称是有效的
   workflow.addEdge("__start__", "supervisor");
 
   // Supervisor → 条件路由
+  // @ts-ignore - LangGraph 类型推断需要，但节点名称是有效的
   workflow.addConditionalEdges("supervisor", routeToAgent, {
     chatAgent: "chatAgent",
     strategyAgent: "strategyAgent",
@@ -215,6 +283,7 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
   });
 
   // 各 Agent 完成后 → 检查内部 Tool 调用或返回 Supervisor
+  // @ts-ignore - LangGraph 类型推断需要
   workflow.addConditionalEdges("chatAgent", checkInternalToolRouting, {
     supervisor: "supervisor",
     chatAgent: "chatAgent",
@@ -223,6 +292,7 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
     portfolioAgent: "portfolioAgent",
   });
 
+  // @ts-ignore - LangGraph 类型推断需要
   workflow.addConditionalEdges("strategyAgent", checkInternalToolRouting, {
     supervisor: "supervisor",
     chatAgent: "chatAgent",
@@ -231,6 +301,7 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
     portfolioAgent: "portfolioAgent",
   });
 
+  // @ts-ignore - LangGraph 类型推断需要
   workflow.addConditionalEdges("riskAgent", checkInternalToolRouting, {
     supervisor: "supervisor",
     chatAgent: "chatAgent",
@@ -239,6 +310,7 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
     portfolioAgent: "portfolioAgent",
   });
 
+  // @ts-ignore - LangGraph 类型推断需要
   workflow.addConditionalEdges("portfolioAgent", checkInternalToolRouting, {
     supervisor: "supervisor",
     chatAgent: "chatAgent",
@@ -266,7 +338,7 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
 export async function runSupervisorGraph(
   userInput: string,
   sessionId: string,
-  checkpointer: any,
+  checkpointer: IndexedDBSaver,
   emitEvent?: (event: AgentEvent) => void,
 ) {
   const graph = buildSupervisorGraph(emitEvent);
@@ -278,6 +350,7 @@ export async function runSupervisorGraph(
     iterationCount: 0,
     maxIterations: 50,
     agentEvents: [],
+    shouldEnd: false,
     finalResponse: "",
     sessionId,
     userInput,

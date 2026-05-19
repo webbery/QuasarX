@@ -7,7 +7,7 @@ export type AgentType = "supervisor" | "chat" | "strategy" | "risk" | "portfolio
 /** Supervisor 路由决策 */
 export type RouterDecision = "chat" | "strategy" | "risk" | "portfolio" | "respond";
 
-/** Agent 工作流事件（推送到前端） */
+/** Agent 工作流事件（推送到 UI 展示） */
 export interface AgentEvent {
   /** 来源 Agent */
   agent: AgentType;
@@ -57,6 +57,12 @@ export const GraphState = Annotation.Root({
     default: () => [],
   }),
 
+  /** 是否应该提前结束图循环（Agent 已产生回复时设置） */
+  shouldEnd: Annotation<boolean>({
+    reducer: (_state, update) => update,
+    default: () => false,
+  }),
+
   /** 最终回复内容（Supervisor 决定 respond 时填充） */
   finalResponse: Annotation<string>({
     reducer: (_state, update) => update,
@@ -99,7 +105,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
 可用的专业 Agent：
 - **chat**: 一般性问答、知识检索、网络搜索、日期时间、平台信息、计算
 - **strategy**: 策略创建、策略优化、回测执行、技术指标分析
-- **risk**: 风控分析、账户风险评估、持仓风险、突变检测
+- **risk**: 风控分析、账户风险、持仓风险、突变检测
 - **portfolio**: 投资组合管理、组合收益分析、资产配置建议
 
 路由规则：
