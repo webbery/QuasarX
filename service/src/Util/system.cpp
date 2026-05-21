@@ -315,20 +315,12 @@ bool RunCommand(const std::string& cmd, String& output) {
     if (pid == 0) { // 子进程
         close(pipefd[0]); // 关闭读端
         dup2(pipefd[1], STDOUT_FILENO); // 将标准输出重定向到管道
+        dup2(pipefd[1], STDERR_FILENO); // 标准错误也重定向到管道
         close(pipefd[1]);
 
-        Vector<String> args;
-        split(cmd, args, " ");
-        // 准备参数数组供 execvp 使用
-        std::vector<char*> argv;
-        for (const auto& arg : args) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr); // 参数数组必须以 nullptr 结尾
-
-        // 执行程序（第一个参数为程序路径）
-        execvp(argv[0], argv.data());
-        exit(1); // 如果 execvp 失败
+        // 使用 /bin/sh -c 执行完整命令，支持 &&、管道等 shell 语法
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        exit(1); // 如果 execl 失败
     } else { // 父进程
         close(pipefd[1]); // 关闭写端
 

@@ -42,7 +42,6 @@ void SectorQuoteHandler::get(const httplib::Request& req, httplib::Response& res
     result["status"] = "success";
     result["data"] = sectors;
     result["date"] = ToString(Now(), "%Y-%m-%d");
-
     res.status = 200;
     res.set_content(result.dump(), "application/json");
 }

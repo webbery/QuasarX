@@ -83,7 +83,7 @@ class TestTickRecord:
             cfg = json.load(f)
 
         db_path = cfg.get("server", {}).get("db_path", "data")
-        base_dir = Path(__file__).parent.parent / "build"
+        base_dir = Path(__file__).parent.parent.parent / "build"
         daily_dir = base_dir / db_path / "daily" / "zh" / "stock"
 
         assert daily_dir.exists(), f"tick 存储目录不存在: {daily_dir}"
