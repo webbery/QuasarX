@@ -26,6 +26,7 @@
 #include "Metric/Sharp.h"
 #include "Metric/Drawdown.h"
 #include "Metric/RiskMetric.h"
+#include "Metric/Covariance.h"
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     auto default_config = handle->GetConfig().GetDefault();
@@ -208,6 +209,9 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     flow._collections[StatisticIndicator::WinRate] = win_rate(daily_returns);
                     flow._collections[StatisticIndicator::Calmar] = calmar_ratio(annual_return, max_dd);
 
+                    // 样本外拟合能力 R²
+                    flow._collections[StatisticIndicator::R2] = static_cast<float>(compute_r_squared(portfolio_values));
+
                     // 尾部风险指标
                     flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns, 0.95);
                     flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns, 0.95);
@@ -233,6 +237,51 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     flow._collections[StatisticIndicator::BootStressReturnP5]   = boot._stress_return_p5;
                     flow._collections[StatisticIndicator::BootStressReturnP50]  = boot._stress_return_p50;
                     flow._collections[StatisticIndicator::BootStressMaxDDP50]   = boot._stress_max_dd_p50;
+
+                    // 多资产协方差诊断（仅资产数 > 1 时计算）
+                    if (btContext && btContext->assetSnapshotCount() > 0) {
+                        const auto& symbols = btContext->getSymbols();
+                        int nAssets = static_cast<int>(symbols.size());
+                        if (nAssets > 1) {
+                            const auto& assetDates = btContext->getAssetSnapshotDates();
+                            const auto& assetValues = btContext->getAssetValues();
+                            int T = static_cast<int>(assetDates.size());
+
+                            // 构建每个资产的日收益率序列
+                            std::vector<std::vector<double>> assetReturns(nAssets);
+                            for (int j = 0; j < nAssets; j++) {
+                                auto it = symbols.begin();
+                                std::advance(it, j);
+                                symbol_t sym = *it;
+                                assetReturns[j].reserve(T - 1);
+
+                                for (int i = 1; i < T; i++) {
+                                    double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
+                                    double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
+                                    if (prevVal > 0.0) {
+                                        assetReturns[j].push_back((currVal - prevVal) / prevVal);
+                                    } else {
+                                        assetReturns[j].push_back(0.0);
+                                    }
+                                }
+                            }
+
+                            // 计算协方差和质量评估
+                            auto cov = compute_covariance(assetReturns);
+                            if (cov.n_assets > 0) {
+                                auto quality = evaluate_covariance_quality(cov);
+                                flow._collections[StatisticIndicator::CovConditionNumber] = static_cast<float>(quality.conditionNumber);
+                                flow._collections[StatisticIndicator::CovMinCorr] = static_cast<float>(cov.minCorrelation);
+                                flow._collections[StatisticIndicator::CovMaxCorr] = static_cast<float>(cov.maxCorrelation);
+                                flow._collections[StatisticIndicator::CovPositiveDefinite] = quality.isPositiveDefinite ? 1.0f : 0.0f;
+                                flow._collections[StatisticIndicator::CovObservations] = static_cast<float>(cov.n_observations);
+                                flow._collections[StatisticIndicator::CovNAzets] = static_cast<float>(cov.n_assets);
+                                flow._collections[StatisticIndicator::CovNearCollinear] = static_cast<float>(cov.nearCollinearPairs);
+                                INFO("[Backtest] Covariance: assets={}, obs={}, κ={:.1f}, grade={}, positive_definite={}",
+                                     cov.n_assets, cov.n_observations, quality.conditionNumber, quality.gradeString(), quality.isPositiveDefinite);
+                            }
+                        }
+                    }
 
                     // 输出极端场景信息到日志
                     std::string boot_log = bootstrap_result_to_string(boot);

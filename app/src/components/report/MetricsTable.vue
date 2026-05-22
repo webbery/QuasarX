@@ -53,7 +53,7 @@ const metricGroupsDef: MetricGroupDef[] = [
     title: '收益与风险',
     keys: [
       'total_return', 'annual_return', 'max_drawdown', 'volatility',
-      'sharp', 'calmar_ratio', 'win_rate', 'num_trades',
+      'sharp', 'calmar_ratio', 'win_rate', 'num_trades', 'r_squared',
     ],
   },
   {
@@ -81,6 +81,15 @@ const metricGroupsDef: MetricGroupDef[] = [
       'boot_stress_max_dd_p50',
     ],
   },
+  {
+    title: '协方差诊断',
+    keys: [
+      'cov_n_assets', 'cov_observations',
+      'cov_condition_number', 'cov_positive_definite',
+      'cov_min_correlation', 'cov_max_correlation',
+      'cov_near_collinear_pairs',
+    ],
+  },
 ]
 
 const metricNameMap: Record<string, string> = {
@@ -100,6 +109,7 @@ const metricNameMap: Record<string, string> = {
   beta: 'Beta',
   avg_holding_days: '平均持仓天数',
   profit_loss_ratio: '盈亏比',
+  r_squared: '样本外 R²',
   // Bootstrap 蒙特卡洛 - 正常场景
   boot_ruin_prob_50: '爆仓概率 (<50%)',
   boot_ruin_prob_30: '爆仓概率 (<30%)',
@@ -120,6 +130,14 @@ const metricNameMap: Record<string, string> = {
   boot_stress_return_p5: '压力收益率 P5',
   boot_stress_return_p50: '压力收益率中位数',
   boot_stress_max_dd_p50: '压力最大回撤',
+  // 协方差诊断
+  cov_n_assets: '资产数',
+  cov_observations: '有效观测数',
+  cov_condition_number: '条件数 (κ)',
+  cov_positive_definite: '正定性',
+  cov_min_correlation: '最小相关系数',
+  cov_max_correlation: '最大相关系数',
+  cov_near_collinear_pairs: '高相关配对 (|ρ|>0.95)',
 }
 
 // === 格式化 ===
@@ -136,6 +154,25 @@ function formatMetricValue(key: string, value: number): string {
   }
   // 自相关系数（保留4位小数）
   if (key === 'boot_autocorrelation') {
+    return value.toFixed(4)
+  }
+
+  // 样本外 R²（保留4位小数）
+  if (key === 'r_squared') {
+    return value.toFixed(4)
+  }
+
+  // 协方差诊断
+  if (key === 'cov_n_assets' || key === 'cov_observations' || key === 'cov_near_collinear_pairs') {
+    return Math.round(value).toString()
+  }
+  if (key === 'cov_positive_definite') {
+    return value > 0.5 ? '✓ 是' : '✗ 否'
+  }
+  if (key === 'cov_condition_number') {
+    return value < 1000 ? value.toFixed(2) : value.toFixed(0)
+  }
+  if (key === 'cov_min_correlation' || key === 'cov_max_correlation') {
     return value.toFixed(4)
   }
 
@@ -217,6 +254,19 @@ function getValueClass(key: string, value: number): string {
   // === 收益率分布尾部：P5 < -20% 标红 ===
   const isTailLoss = lowerKey.includes('return_p5') && value < -0.2
   if (isTailLoss) return 'value-negative'
+
+  // === 样本外 R² < 0 标红（拟合劣于均值，策略噪声大） ===
+  if (lowerKey === 'r_squared' && value < 0) return 'value-negative'
+
+  // === 协方差诊断 ===
+  if (lowerKey === 'cov_condition_number' && value >= 1000) return 'value-negative'
+  if (lowerKey === 'cov_positive_definite' && value < 0.5) return 'value-negative'
+  if (lowerKey === 'cov_max_correlation' && value > 0.95) return 'value-negative'
+  // 有效观测数/资产数 < 5 标红（数据不充分）
+  if (lowerKey === 'cov_observations') {
+    const nAssets = props.metrics['cov_n_assets'] ?? 2
+    if (value < nAssets * 5) return 'value-negative'
+  }
 
   // === 其他所有指标：默认颜色 ===
   return ''

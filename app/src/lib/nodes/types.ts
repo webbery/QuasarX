@@ -38,6 +38,7 @@ export type NodeCategory =
   | 'execution'   // 交易执行
   | 'ml'          // 机器学习模型
   | 'risk'        // 风控
+  | 'causal'      // 因果推理（HMM 市场状态识别）
   | 'utility'     // 工具（调试/测试）
 
 // === 分类默认图标 ===
@@ -49,6 +50,7 @@ export const CATEGORY_ICONS: Record<NodeCategory, string> = {
   execution:'fas fa-exchange-alt', // 执行：交换/交易
   ml:       'fas fa-brain',       // ML：大脑
   risk:     'fas fa-shield-alt',  // 风控：盾牌
+  causal:   'fas fa-project-diagram', // 因果推理：网络图
   utility:  'fas fa-wrench',      // 工具：扳手
 }
 

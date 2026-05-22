@@ -299,6 +299,25 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   case StatisticIndicator::BootStressMaxDDP50:
     return "boot_stress_max_dd_p50";
 
+  case StatisticIndicator::R2:
+    return "r_squared";
+
+  // 协方差诊断
+  case StatisticIndicator::CovConditionNumber:
+    return "cov_condition_number";
+  case StatisticIndicator::CovMinCorr:
+    return "cov_min_correlation";
+  case StatisticIndicator::CovMaxCorr:
+    return "cov_max_correlation";
+  case StatisticIndicator::CovPositiveDefinite:
+    return "cov_positive_definite";
+  case StatisticIndicator::CovObservations:
+    return "cov_observations";
+  case StatisticIndicator::CovNAzets:
+    return "cov_n_assets";
+  case StatisticIndicator::CovNearCollinear:
+    return "cov_near_collinear_pairs";
+
   default:
     return "unknown";
   }

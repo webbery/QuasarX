@@ -949,16 +949,26 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
     // 使用当前时间点的调整系数：持仓市值 = 数量 × 后复权价格 / ratio（归一化到原始价格体系）
     {
         double totalMarketValue = 0.0;
+        Map<symbol_t, double> assetValues;  // 每个标的的持仓市值
 
         // 遍历所有标的，计算持仓市值
         for (auto symbol : symbols) {
             int64_t position = context->getPosition(symbol);
-            if (position <= 0) continue;
+            if (position <= 0) {
+                assetValues[symbol] = 0.0;
+                continue;
+            }
 
             auto itr = _csvs.find(symbol);
-            if (itr == _csvs.end()) continue;
+            if (itr == _csvs.end()) {
+                assetValues[symbol] = 0.0;
+                continue;
+            }
             const auto& header_it = _headers.find(symbol);
-            if (header_it == _headers.end() || header_it->second.empty()) continue;
+            if (header_it == _headers.end() || header_it->second.empty()) {
+                assetValues[symbol] = 0.0;
+                continue;
+            }
 
             const auto& df = itr->second;
             const auto& header = header_it->second;
@@ -968,7 +978,11 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
             if (priceIndex < df.get_index().size()) {
                 double hfqClose = df.get_column<float>(header[2].c_str())[priceIndex];
                 double ratio = context->getCurrentAdjRatio(symbol);
-                totalMarketValue += position * hfqClose / ratio;
+                double assetValue = position * hfqClose / ratio;
+                assetValues[symbol] = assetValue;
+                totalMarketValue += assetValue;
+            } else {
+                assetValues[symbol] = 0.0;
             }
         }
 
@@ -990,6 +1004,7 @@ bool StockHistorySimulation::stepForward(BacktestContext* context) {
 
         if (snapshotDate > 0) {
             context->recordDailySnapshot(snapshotDate, portfolioValue);
+            context->recordDailyAssetSnapshot(snapshotDate, assetValues);
         }
     }
 

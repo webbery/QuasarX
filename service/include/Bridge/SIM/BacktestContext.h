@@ -128,6 +128,18 @@ public:
     Vector<time_t> takeReturnDates() noexcept { return std::move(_returnDates); }
     Vector<double> takeDailyReturns() noexcept { return std::move(_dailyReturns); }
 
+    // === 多资产每日快照（按标的独立记录持仓市值）===
+    void reserveDailyAssetSnapshots(size_t n) {
+        _assetValues.reserve(n);
+    }
+    void recordDailyAssetSnapshot(time_t date, const Map<symbol_t, double>& asset_values) noexcept {
+        _assetSnapshotDates.emplace_back(date);
+        _assetValues.emplace_back(asset_values);
+    }
+    size_t assetSnapshotCount() const noexcept { return _assetSnapshotDates.size(); }
+    const Vector<time_t>& getAssetSnapshotDates() const noexcept { return _assetSnapshotDates; }
+    const Vector<Map<symbol_t, double>>& getAssetValues() const noexcept { return _assetValues; }
+
 private:
     run_id_t _runId;                    // 回测运行 ID
     String _strategy_name;              // 策略名称
@@ -173,4 +185,8 @@ private:
     // 计算后的日收益率（AgentSubSystem → BackTestHandler 传递）
     Vector<time_t> _returnDates;
     Vector<double> _dailyReturns;
+
+    // 多资产每日快照（每个标的独立的持仓市值）
+    Vector<time_t> _assetSnapshotDates;
+    Vector<Map<symbol_t, double>> _assetValues;
 };

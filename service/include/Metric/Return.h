@@ -40,5 +40,12 @@ Vector<double> simple_daily_return(const Vector<double>& daily_values);
  */
 float compute_annualized_return(double total_return, int count);
 
+/*
+ * @brief 计算样本外拟合能力 R²（组合价值曲线对时间线性回归的拟合优度）
+ * @param portfolio_values 每日组合价值序列
+ * @return R² 值，越接近 1 说明策略收益趋势越稳定
+ */
+double compute_r_squared(const std::vector<double>& portfolio_values);
+
 std::pair<std::vector<double>, std::vector<double>>
 build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Server* server = nullptr);

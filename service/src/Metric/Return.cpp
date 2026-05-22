@@ -621,3 +621,42 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
 
     return {daily_values, daily_cash_flows};
 }
+
+// 计算样本外拟合能力 R²（组合价值曲线对时间线性回归的拟合优度）
+// 公式: R² = 1 - SSE/SST，其中 SSE 为残差平方和，SST 为总平方和
+// R² 越接近 1 说明策略收益趋势越稳定；接近 0 或为负说明噪声大
+double compute_r_squared(const std::vector<double>& portfolio_values) {
+    int n = static_cast<int>(portfolio_values.size());
+    if (n < 2) return 0.0;
+
+    // 计算 y 的均值
+    double mean_y = 0.0;
+    for (double v : portfolio_values) mean_y += v;
+    mean_y /= n;
+
+    // 计算 x 的均值 (x = 0, 1, ..., n-1)
+    double mean_x = (n - 1) / 2.0;
+
+    // 计算 sxx = Σ(x_i - mean_x)², sxy = Σ(x_i - mean_x)(y_i - mean_y)
+    double sxx = 0.0, sxy = 0.0;
+    for (int i = 0; i < n; i++) {
+        double dx = i - mean_x;
+        double dy = portfolio_values[i] - mean_y;
+        sxx += dx * dx;
+        sxy += dx * dy;
+    }
+
+    if (sxx == 0.0) return 0.0;
+
+    // 计算 SST = Σ(y_i - mean_y)²
+    double sst = 0.0;
+    for (double v : portfolio_values) {
+        double d = v - mean_y;
+        sst += d * d;
+    }
+
+    if (sst == 0.0) return 0.0;
+
+    // R² = (sxy)² / (sxx * sst)  等价于 1 - SSE/SST
+    return (sxy * sxy) / (sxx * sst);
+}

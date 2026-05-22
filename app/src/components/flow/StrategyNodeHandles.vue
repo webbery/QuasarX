@@ -12,9 +12,49 @@
       class="connection-handle left-handle input-handle"
     />
 
-    <!-- 右侧输出连接点 -->
+    <!-- HMM 特殊处理：多个独立输出 handles -->
+    <template v-if="nodeType === 'hmm'">
+      <div class="hmm-outputs">
+        <Handle
+          type="source"
+          :position="Position.Right"
+          id="hmm_state"
+          class="connection-handle right-handle output-handle hmm-handle"
+        />
+        <span class="hmm-handle-label">状态</span>
+      </div>
+      <div class="hmm-outputs">
+        <Handle
+          type="source"
+          :position="Position.Right"
+          id="hmm_probs"
+          class="connection-handle right-handle output-handle hmm-handle"
+        />
+        <span class="hmm-handle-label">概率</span>
+      </div>
+      <div class="hmm-outputs">
+        <Handle
+          type="source"
+          :position="Position.Right"
+          id="hmm_transition"
+          class="connection-handle right-handle output-handle hmm-handle"
+        />
+        <span class="hmm-handle-label">转移</span>
+      </div>
+      <div class="hmm-outputs">
+        <Handle
+          type="source"
+          :position="Position.Right"
+          id="hmm_duration"
+          class="connection-handle right-handle output-handle hmm-handle"
+        />
+        <span class="hmm-handle-label">持续</span>
+      </div>
+    </template>
+
+    <!-- 其他节点：单一输出连接点 -->
     <Handle
-      v-if="shouldShowOutput"
+      v-if="shouldShowOutput && nodeType !== 'hmm'"
       type="source"
       :position="Position.Right"
       id="output"
@@ -35,3 +75,17 @@ const shouldShowOutput = computed(() => {
   return !['output', 'input', 'execution'].includes(props.nodeType)
 })
 </script>
+
+<style scoped>
+.hmm-outputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+}
+.hmm-handle-label {
+  font-size: 10px;
+  color: var(--text-secondary, #a0aec0);
+  user-select: none;
+}
+</style>

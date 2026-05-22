@@ -37,7 +37,7 @@ export function getNodesByCategory(category: NodeCategory): NodeRegistryEntry[] 
 export function getAllCategories(): NodeCategory[] {
   const cats = new Set(getAllNodes().map(n => n.category))
   // 固定排序
-  const order: NodeCategory[] = ['input', 'process', 'signal', 'execution', 'ml', 'risk', 'utility']
+  const order: NodeCategory[] = ['input', 'process', 'signal', 'execution', 'ml', 'risk', 'causal', 'utility']
   return order.filter(c => cats.has(c))
 }
 

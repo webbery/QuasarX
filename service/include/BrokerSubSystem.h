@@ -73,6 +73,15 @@ enum class StatisticIndicator: char {
   BootStressReturnP5,
   BootStressReturnP50,
   BootStressMaxDDP50,
+  R2,  // 样本外拟合能力 (组合价值对时间线性回归的 R²)
+  // 协方差诊断
+  CovConditionNumber,    // 条件数
+  CovMinCorr,            // 最小相关系数
+  CovMaxCorr,            // 最大相关系数
+  CovPositiveDefinite,   // 是否正定 (0/1)
+  CovObservations,       // 有效观测数
+  CovNAzets,            // 资产数
+  CovNearCollinear,      // |ρ| > 0.95 配对数
 };
 
 class ICommission {
