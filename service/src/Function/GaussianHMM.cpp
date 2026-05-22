@@ -18,6 +18,16 @@ double GaussianHMM::log_sum_exp(const Eigen::VectorXd& log_vals) {
     return max_val + std::log((log_vals.array() - max_val).exp().sum());
 }
 
+// Helper: exp(sum) in log space
+static double rowwise_exp_sum(const Eigen::VectorXd& log_vals) {
+    double max_v = log_vals.maxCoeff();
+    double sum = 0.0;
+    for (int i = 0; i < log_vals.size(); i++) {
+        sum += std::exp(log_vals(i) - max_v);
+    }
+    return max_v + std::log(sum);
+}
+
 // ============================================================
 // 发射概率: log N(x | μ_j, diag(Σ_j))
 // obs: T×D, 返回 T×N
@@ -63,7 +73,7 @@ void GaussianHMM::forward(const Eigen::MatrixXd& obs, Eigen::MatrixXd& alpha, Ei
         alpha(0, j) = std::log(std::max(pi_(j), 1e-300)) + log_b(0, j);
     }
     // scaling
-    double c = alpha(0, rowwise_exp_sum(alpha.row(0)));
+    double c = rowwise_exp_sum(alpha.row(0));
     scales(0) = c;
     alpha.row(0).array() -= c;  // log 空间减 c 等价于除以 exp(c)
 
@@ -84,16 +94,6 @@ void GaussianHMM::forward(const Eigen::MatrixXd& obs, Eigen::MatrixXd& alpha, Ei
         scales(t) = max_a + std::log(sum_exp);
         alpha.row(t).array() -= scales(t);
     }
-}
-
-// Helper: exp(sum) in log space
-static double rowwise_exp_sum(const Eigen::VectorXd& log_vals) {
-    double max_v = log_vals.maxCoeff();
-    double sum = 0.0;
-    for (int i = 0; i < log_vals.size(); i++) {
-        sum += std::exp(log_vals(i) - max_v);
-    }
-    return max_v + std::log(sum);
 }
 
 // ============================================================

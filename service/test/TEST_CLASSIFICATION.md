@@ -41,7 +41,6 @@ python run_tests.py --dry-run
 |----------|----------|
 | `test_capital_risk.py` | 风控配置 CRUD（总资金止损、日亏损限额、全部平仓） |
 | `test_prediction.py` | 预测操作设置（`/predict/operation`） |
-| `test_r2strategy.py` | R² 策略回测（单股/多股/组合、绩效指标验证） |
 | `test_risk.py` | 风险管理（止损/VaR/回撤，大部分已注释） |
 | `test_shadow_mode.py` | 影子模式（日志解析、虚拟账户、回测集成） |
 | `test_shibor.py` | SHIBOR 利率数据查询 |

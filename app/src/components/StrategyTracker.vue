@@ -5,8 +5,10 @@
             <label>追踪策略：</label>
             <select v-model="selectedStrategy">
                 <option value="">-- 选择策略 --</option>
-                <option v-for="s in strategyList" :key="s.id" :value="s.id">
+                <option v-for="s in strategyList" :key="s.name" :value="s.name">
                     {{ s.name }}
+                    <span v-if="s.running" style="color: #4ade80;">● 运行中</span>
+                    <span v-else style="color: #f87171;">○ 已停止</span>
                 </option>
             </select>
         </div>
@@ -57,6 +59,7 @@
 
 <script setup>
 import { ref, onMounted, watch, nextTick } from 'vue'
+import axios from 'axios'
 import * as echarts from 'echarts'
 import PriceTrendChart from './report/charts/PriceTrendChart.vue'
 import ReviewPanel from './review/ReviewPanel.vue'
@@ -68,9 +71,15 @@ const strategyList = ref([])
 // ReviewPanel 引用
 const reviewPanelRef = ref(null)
 
-onMounted(() => {
-    // TODO: 从后端获取运行中的策略列表
-    strategyList.value = []
+onMounted(async () => {
+    try {
+        const res = await axios.get('/v0/strategy')
+        const data = Array.isArray(res.data) ? res.data : (res.data.strategies || [])
+        strategyList.value = data
+    } catch (e) {
+        console.warn('获取策略列表失败', e)
+        strategyList.value = []
+    }
 })
 
 // 监听策略选择和 Tab 切换，自动加载复盘数据

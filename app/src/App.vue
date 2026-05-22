@@ -19,9 +19,19 @@
           <i class="fas fa-upload"></i> 导入
           <input type="file" accept=".json" hidden @change="onHandleImportStrategy" />
         </label>
-        <button v-if="is_backtest" class="btn">
-          <i class="fas fa-sync-alt"></i> 部署模拟盘
-        </button>
+        <!-- 部署/停止/启动 按钮（根据服务端策略状态动态显示） -->
+        <template v-if="is_backtest && currentStrategyName">
+          <button v-if="!hasServerStrategy" class="btn" @click="onHandleDeploy" :disabled="isDeploying">
+            <i :class="isDeploying ? 'fa-spinner fa-spin' : 'fa-cloud-upload-alt'"></i>
+            {{ isDeploying ? '部署中...' : '部署模拟盘' }}
+          </button>
+          <button v-else-if="isRunningOnServer" class="btn btn-danger" @click="onHandleStopStrategy" :disabled="isStopping">
+            <i class="fas fa-stop"></i> 停止
+          </button>
+          <button v-else-if="isStoppedOnServer" class="btn btn-success" @click="onHandleStartStrategy" :disabled="isStarting">
+            <i class="fas fa-play"></i> 启动
+          </button>
+        </template>
         <button v-if="is_backtest" class="control-btn">
           <i class="fas fa-cloud-upload-alt"></i> 导出报告
         </button>
@@ -180,7 +190,7 @@
         </div>
         <div class="status-item">
           <div class="status-dot"></div>
-          <span>策略运行中 (3)</span>
+          <span>策略运行中 ({{ runningCount }})</span>
         </div>
         <div class="status-item">
           <i class="fas fa-microchip"></i>
@@ -228,6 +238,7 @@
 </template>
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch } from "vue";
+import axios from 'axios';
 import { message } from "./tool";
 import { useHistoryStore } from './stores/history'
 import { storeToRefs } from 'pinia'
@@ -544,6 +555,10 @@ onMounted(() => {
       }
     }
   });
+
+  // 启动服务端策略状态轮询
+  fetchServerStrategies()
+  _strategyTimer = setInterval(fetchServerStrategies, 10000)
 });
 
 onUnmounted(() => {
@@ -551,6 +566,10 @@ onUnmounted(() => {
   window.removeEventListener('loginSuccess', onLoginSucess)
   window.removeEventListener('open-portfolio-manager', onHandlePortfolioMananger)
   uninitServerEvent()
+  if (_strategyTimer) {
+    clearInterval(_strategyTimer)
+    _strategyTimer = null
+  }
 })
 
 const emits = defineEmits(["refush", "onSettingChanged"]);
@@ -639,6 +658,109 @@ const onHandleRunBacktest = async () => {
 // === 策略导入导出 ===
 const historyStore = useHistoryStore()
 const { strategies, versions } = storeToRefs(historyStore)
+
+// === 服务端策略状态 ===
+const serverStrategies = ref([])  // [{name, running}, ...]
+const isDeploying = ref(false)
+const isStopping = ref(false)
+const isStarting = ref(false)
+let _strategyTimer = null
+
+/** 当前画布策略名（从 IndexedDB 获取） */
+const currentStrategyName = computed(() => {
+  if (!currentStrategyId.value) return ''
+  const s = strategies.value.find(s => s.id === currentStrategyId.value)
+  return s?.name || ''
+})
+
+/** 服务端是否存在该策略 */
+const hasServerStrategy = computed(() =>
+  currentStrategyName.value
+    ? serverStrategies.value.some(s => s.name === currentStrategyName.value)
+    : false
+)
+
+/** 策略是否在服务端运行中 */
+const isRunningOnServer = computed(() =>
+  currentStrategyName.value
+    ? serverStrategies.value.some(s => s.name === currentStrategyName.value && s.running)
+    : false
+)
+
+/** 策略是否已部署但停止 */
+const isStoppedOnServer = computed(() =>
+  hasServerStrategy.value && !isRunningOnServer.value
+)
+
+/** 运行中的策略数量 */
+const runningCount = computed(() =>
+  serverStrategies.value.filter(s => s.running).length
+)
+
+/** 从服务端获取策略状态 */
+const fetchServerStrategies = async () => {
+  try {
+    const res = await axios.get('/v0/strategy')
+    serverStrategies.value = Array.isArray(res.data) ? res.data : (res.data.strategies || [])
+  } catch (e) {
+    console.warn('获取策略状态失败', e)
+  }
+}
+
+/** 部署策略 */
+const onHandleDeploy = async () => {
+  if (!currentStrategyName.value || !dynamicComponentRef.value?.getStrategyGraph) {
+    message.warning('请先选择一个策略')
+    return
+  }
+  isDeploying.value = true
+  try {
+    const graph = dynamicComponentRef.value.getStrategyGraph()
+    const res = await axios.post('/v0/strategy', {
+      mode: 0,
+      name: currentStrategyName.value,
+      script: graph
+    })
+    if (res.data.message === 'success') {
+      message.success(`策略 "${currentStrategyName.value}" 已部署`)
+      await fetchServerStrategies()
+    }
+  } catch (e) {
+    message.error('部署失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    isDeploying.value = false
+  }
+}
+
+/** 停止策略 */
+const onHandleStopStrategy = async () => {
+  if (!currentStrategyName.value) return
+  isStopping.value = true
+  try {
+    await axios.post('/v0/strategy', { mode: 2, name: currentStrategyName.value })
+    message.info(`策略 "${currentStrategyName.value}" 已停止`)
+    await fetchServerStrategies()
+  } catch (e) {
+    message.error('停止失败: ' + e.message)
+  } finally {
+    isStopping.value = false
+  }
+}
+
+/** 启动策略 */
+const onHandleStartStrategy = async () => {
+  if (!currentStrategyName.value) return
+  isStarting.value = true
+  try {
+    await axios.post('/v0/strategy', { mode: 1, name: currentStrategyName.value })
+    message.success(`策略 "${currentStrategyName.value}" 已启动`)
+    await fetchServerStrategies()
+  } catch (e) {
+    message.error('启动失败: ' + e.message)
+  } finally {
+    isStarting.value = false
+  }
+}
 
 /**
  * 导出当前策略

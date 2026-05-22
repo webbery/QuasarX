@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <yas/serialize.hpp>
+#include "AgentSubSystem.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "json.hpp"
@@ -36,9 +37,19 @@ StrategyHandler::~StrategyHandler() {
 void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
 {
     auto sys = _server->GetStrategySystem();
-    nlohmann::json info = sys->GetStrategyNames();
+    auto flow = sys->GetFlowSubsystem();
+    auto names = sys->GetStrategyNames();
+
+    nlohmann::json result = nlohmann::json::array();
+    for (auto& name : names) {
+        nlohmann::json item;
+        item["name"] = name;
+        item["running"] = flow ? flow->IsRunning(name) : false;
+        result.push_back(item);
+    }
+
     res.status = 200;
-    res.set_content(info.dump(), "application/json");
+    res.set_content(result.dump(), "application/json");
 }
 
 void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) {
@@ -95,20 +106,47 @@ void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res
     auto strategySys = _server->GetStrategySystem();
     strategySys->InitStrategy(name, param["script"]);
     strategySys->Run(name);
+
+    bool running = false;
+    if (auto flow = strategySys->GetFlowSubsystem()) {
+        running = flow->IsRunning(name);
+    }
     res.status = 200;
     nlohmann::json result;
     result["message"] = "success";
+    result["name"] = name;
+    result["running"] = running;
     res.set_content(result.dump(), "application/json");
 }
 
 void StrategyHandler::run(const String& name, httplib::Response& res) {
     auto strategySys = _server->GetStrategySystem();
     strategySys->Run(name);
+
+    bool running = false;
+    if (auto flow = strategySys->GetFlowSubsystem()) {
+        running = flow->IsRunning(name);
+    }
+    nlohmann::json result;
+    result["message"] = "success";
+    result["name"] = name;
+    result["running"] = running;
+    res.set_content(result.dump(), "application/json");
 }
 
 void StrategyHandler::stop(const String& name, httplib::Response& res) {
     auto strategySys = _server->GetStrategySystem();
     strategySys->Stop(name);
+
+    bool running = false;
+    if (auto flow = strategySys->GetFlowSubsystem()) {
+        running = flow->IsRunning(name);
+    }
+    nlohmann::json result;
+    result["message"] = "success";
+    result["name"] = name;
+    result["running"] = running;
+    res.set_content(result.dump(), "application/json");
 }
 
 void StrategyHandler::validate(const nlohmann::json& param, httplib::Response& res) {

@@ -15,7 +15,6 @@
         "test_r2strategy",
         "test_risk",
         "test_shadow_mode",
-        "test_shibor",
         "test_strategy",
         "test_trade_history",
         "test_stock",
@@ -30,7 +29,8 @@
       "tests": [
         "test_sectorquote",
         "test_tick_record",
-        "test_data"
+        "test_data",
+        "test_shibor"
       ]
     },
     "hx": {
