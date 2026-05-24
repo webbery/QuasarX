@@ -67,6 +67,7 @@
                 <i v-else class="fas fa-sort"></i>
               </span>
             </th>
+            <th class="col-tags">标签</th>
             <th class="col-index-status">索引状态</th>
             <th class="col-actions">操作</th>
           </tr>
@@ -94,6 +95,14 @@
             <td class="col-uploadtime">{{ formatTime(doc.uploadTime) }}</td>
             <td class="col-pages">{{ doc.pages }}</td>
             <td class="col-hitcount">{{ doc.hitCount }}</td>
+            <td class="col-tags">
+              <div class="tags-container">
+                <span v-for="tag in (doc.tags || [])" :key="tag" class="tag-chip">{{ tag }}</span>
+                <button class="btn-edit-tags" @click="onEditTags(doc)" title="编辑标签">
+                  <i class="fas fa-pen"></i>
+                </button>
+              </div>
+            </td>
             <td class="col-index-status">
               <!-- 索引状态 -->
               <template v-if="doc.summaryStatus === 'indexing'">
@@ -140,7 +149,7 @@
             </td>
           </tr>
           <tr v-if="store.paginatedDocuments.length === 0">
-            <td colspan="7" class="empty-row">
+            <td colspan="8" class="empty-row">
               <div class="empty-message">
                 <i class="fas fa-inbox"></i>
                 <p>暂无文档</p>
@@ -186,6 +195,13 @@
       ref="contextMenuRef"
       @action="onContextAction"
     />
+
+    <!-- 标签编辑弹窗 -->
+    <EditTagsDialog
+      v-model:visible="showTagsDialog"
+      :document="editingTagsDoc"
+      @save="onSaveTags"
+    />
   </div>
 </template>
 
@@ -193,19 +209,25 @@
 import { ref, computed, onMounted } from 'vue';
 import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
-import { savePdf, listPdfs, deletePdf, downloadPdf } from '../../lib/pdfFileManager';
+import { savePdf, listPdfs, deletePdf, downloadPdf, calculateFileHash } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
 import { storeChunks, deleteChunks, retrySummary, getSummaryStatus } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
 import ContextMenu from './ContextMenu.vue';
+import EditTagsDialog from './EditTagsDialog.vue';
 import type { ContextMenuAction } from './ContextMenu.vue';
 import { message } from '../../tool';
 import { getAgentConfig } from '../../lib/agent';
+import { updateTags as updateTagsInDB } from '../../lib/vectorDB';
 
 const store = useKnowledgeStore();
 const showDetailDialog = ref(false);
 const selectedDocument = ref<any>(null);
 const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null);
+
+// 标签编辑
+const showTagsDialog = ref(false);
+const editingTagsDoc = ref<KnowledgeDocument | null>(null);
 
 const selectedCount = computed(() => store.selectedDocs.size);
 const isAllSelected = computed(() => {
@@ -278,6 +300,16 @@ async function onDrop(event: DragEvent) {
       continue;
     }
 
+    // 先计算文件 hash
+    const arrayBuffer = await file.arrayBuffer();
+    const fileHash = await calculateFileHash(arrayBuffer);
+
+    // 检查是否已有相同文件
+    if (store.documents.some(d => d.fileHash === fileHash)) {
+      message.warning(`"${file.name}" 已存在于知识库中，已跳过`);
+      continue;
+    }
+
     const docId = `doc_${Date.now()}_${i}`;
     store.addDocument({
       id: docId,
@@ -290,6 +322,8 @@ async function onDrop(event: DragEvent) {
       hitCount: 0,
       chunks: [],
       summaryStatus: 'pending',
+      fileHash,
+      tags: [],
     });
 
     processPdfFile(file, docId);
@@ -370,6 +404,10 @@ async function triggerSummaryGeneration(
 
     if (result.success) {
       store.updateSummaryStatus(docId, 'ready');
+      // 保存标签
+      if (result.tags && result.tags.length > 0) {
+        store.updateTags(docId, result.tags);
+      }
     } else {
       store.updateSummaryStatus(docId, 'failed');
       message.error(`"${fileName}" 索引生成失败: ${result.error}`);
@@ -574,6 +612,27 @@ async function onExportSelected() {
 }
 
 /**
+ * 打开标签编辑弹窗
+ */
+function onEditTags(doc: KnowledgeDocument) {
+  editingTagsDoc.value = doc;
+  showTagsDialog.value = true;
+}
+
+/**
+ * 保存标签
+ */
+async function onSaveTags(doc: KnowledgeDocument, tags: string[]) {
+  try {
+    await updateTagsInDB(doc.id, tags);
+    store.updateTags(doc.id, tags);
+    message.success(`"${doc.title}" 标签已更新`);
+  } catch (error: any) {
+    message.error(`标签更新失败: ${error.message}`);
+  }
+}
+
+/**
  * 组件挂载时加载 PDF 列表
  */
 onMounted(async () => {
@@ -597,6 +656,8 @@ onMounted(async () => {
           hitCount: 0,
           chunks: [],
           summaryStatus: 'pending',
+          fileHash: pdf.hash,
+          tags: [],
         };
         store.addDocument(doc);
         docMap.set(docId, doc);
@@ -611,8 +672,10 @@ onMounted(async () => {
             if (doc) {
               if (statusInfo.exists) {
                 doc.summaryStatus = (statusInfo.status as any) || 'ready';
+                doc.tags = statusInfo.tags || [];
               } else {
                 doc.summaryStatus = 'pending';
+                doc.tags = [];
               }
             }
           }
@@ -802,6 +865,10 @@ onMounted(async () => {
   text-align: center;
 }
 
+.col-tags {
+  width: 180px;
+}
+
 .col-index-status {
   width: 140px;
   text-align: center;
@@ -883,6 +950,44 @@ onMounted(async () => {
 .btn-retry-inline:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* ========== Tags ========== */
+.tags-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.tag-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+  white-space: nowrap;
+}
+
+.btn-edit-tags {
+  background: none;
+  border: none;
+  color: #606080;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  opacity: 0.5;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-edit-tags:hover {
+  opacity: 1;
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.1);
 }
 
 /* Action buttons */

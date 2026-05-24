@@ -45,8 +45,13 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
     slipJson["type"] = modelType;
 
     if (modelType == 0) {
-        // 固定比例：使用 slippage.value
-        slipJson["ratio"] = config["params"]["slippage"]["value"].get<double>();
+        // 固定比例：使用 slippage.value，默认值为 0
+        double slippageValue = 0.0;
+        if (config["params"].contains("slippage") &&
+            config["params"]["slippage"].contains("value")) {
+            slippageValue = config["params"]["slippage"]["value"].get<double>();
+        }
+        slipJson["ratio"] = slippageValue;
     } else {
         // 成交量冲击：使用 base / impact_k / alpha
         slipJson["base"] = config["params"]["slippageBase"]["value"].get<double>();

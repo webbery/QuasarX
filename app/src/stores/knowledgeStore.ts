@@ -19,6 +19,8 @@ export interface KnowledgeDocument {
   // 摘要索引状态
   summaryStatus?: 'pending' | 'indexing' | 'ready' | 'failed';
   fullText?: string;        // 用于 LLM 摘要生成的完整文本
+  tags: string[];           // 文档标签（最多 5 个）
+  fileHash: string;         // 文件 SHA-256 hash（用于去重）
 }
 
 export type SortField = 'uploadTime' | 'hitCount';
@@ -218,6 +220,16 @@ export const useKnowledgeStore = defineStore('knowledge', {
       this.documents = [];
       this.selectedDocs.clear();
       this.currentPage = 1;
+    },
+
+    /**
+     * 更新文档标签
+     */
+    updateTags(id: string, tags: string[]) {
+      const doc = this.documents.find(d => d.id === id);
+      if (doc) {
+        doc.tags = tags.slice(0, 5); // 限制最多 5 个
+      }
     },
   },
 });

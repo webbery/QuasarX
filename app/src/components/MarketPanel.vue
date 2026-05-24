@@ -98,12 +98,12 @@ const shibor9M = computed(() => shiborStore.getTerm('9个月'))
 const shibor1Y = computed(() => shiborStore.getTerm('1年'))
 
 onMounted(() => {
-  quoteStore.subscribe('SH000001')
+  // quoteStore.subscribe('SH000001')  // 已关闭 TickFlow 请求
   shiborStore.subscribe('MarketPanel')
 })
 
 onBeforeUnmount(() => {
-  quoteStore.unsubscribe('SH000001')
+  // quoteStore.unsubscribe('SH000001')  // 已关闭 TickFlow 请求
   shiborStore.unsubscribe('MarketPanel')
 })
 

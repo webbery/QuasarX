@@ -139,6 +139,7 @@ export async function storeSummary(params: {
   fileName: string;
   summary: string;
   chunkIds: string[];
+  tags?: string[];
 }): Promise<void> {
   if (!summaryTable) throw new Error('VectorDB not initialized');
 
@@ -147,6 +148,11 @@ export async function storeSummary(params: {
 
   const id = `${params.docId}_summary`;
   const embedding = await embed(params.summary);
+
+  // 规范化标签：trim + 去重 + 限制最多 5 个
+  const normalizedTags = params.tags
+    ? [...new Set(params.tags.map(t => t.trim()).filter(t => t.length > 0))].slice(0, 5)
+    : [];
 
   await summaryTable.add([{
     id,
@@ -159,10 +165,40 @@ export async function storeSummary(params: {
     metadata: JSON.stringify({
       status: 'ready',
       generatedAt: new Date().toISOString(),
+      tags: normalizedTags,
     }),
   }]);
 
-  console.log(`[VectorDB] stored summary for ${params.fileName}`);
+  console.log(`[VectorDB] stored summary for ${params.fileName}, tags: ${normalizedTags.join(', ')}`);
+}
+
+/**
+ * 更新文档标签
+ */
+export async function updateTags(docId: string, tags: string[]): Promise<void> {
+  if (!summaryTable) throw new Error('VectorDB not initialized');
+
+  // 规范化标签
+  const normalizedTags = [...new Set(tags.map(t => t.trim()).filter(t => t.length > 0))].slice(0, 5);
+
+  const existing = await summaryTable
+    .query()
+    .where(`doc_id = '${docId}'`)
+    .select(['id', 'metadata'])
+    .toArray();
+
+  if (existing.length > 0) {
+    const row = existing[0];
+    const meta = JSON.parse(row.metadata || '{}');
+    meta.tags = normalizedTags;
+    await summaryTable.update({
+      where: `doc_id = '${docId}'`,
+      values: { metadata: JSON.stringify(meta) },
+    } as any);
+    console.log(`[VectorDB] updated tags for doc ${docId}: ${normalizedTags.join(', ')}`);
+  } else {
+    console.warn(`[VectorDB] doc ${docId} not found in summary_index`);
+  }
 }
 
 /**
@@ -206,6 +242,7 @@ export async function getSummaryStatus(docId: string): Promise<{
   exists: boolean;
   status?: string;
   summary?: string;
+  tags?: string[];
 }> {
   if (!summaryTable) throw new Error('VectorDB not initialized');
 
@@ -225,6 +262,7 @@ export async function getSummaryStatus(docId: string): Promise<{
     exists: true,
     status: meta.status || 'pending',
     summary: row.summary,
+    tags: meta.tags || [],
   };
 }
 
@@ -244,13 +282,16 @@ export async function deleteChunks(docId: string): Promise<void> {
 /**
  * 向量检索（两步检索：summary_index → chunks）
  *
- * 1. 对 summary_index 做向量搜索，命中 topK 摘要
- * 2. 通过 chunk_ids 从 chunks 表加载完整原文
- * 3. 降级：summary_index 为空时回退到 chunks 搜索
+ * 1. 对 summary_index 做向量搜索，召回 50 个候选
+ * 2. 若提供 tags，对标签匹配的文档加分（+0.15 相似度）
+ * 3. 按 similarity + tagBonus 重新排序，取 topK
+ * 4. 通过 chunk_ids 从 chunks 表加载完整原文
+ * 5. 降级：summary_index 为空时回退到 chunks 搜索
  */
 export async function vectorSearch(
   queryText: string,
-  topK: number = 5
+  topK: number = 5,
+  tags?: string[]
 ): Promise<any[]> {
   if (!chunksTable) throw new Error('VectorDB not initialized');
 
@@ -293,8 +334,8 @@ export async function vectorSearch(
     }));
   }
 
-  // 正常模式：summary_index 搜索（召回更多候选，再截取前 topK 个加载 chunks）
-  // 先搜 50 个摘要用于召回排序
+  // 正常模式：summary_index 搜索（召回更多候选，再加权排序）
+  // 先召回 50 个摘要用于排序
   const RECALL_TOP_K = 50;
 
   const summaryResults = await summaryTable
@@ -307,8 +348,29 @@ export async function vectorSearch(
     return [];
   }
 
-  // 按相关性排序后，只取前 topK 个加载完整 chunks
-  const topDocs = summaryRows.slice(0, topK);
+  // 计算标签加成并重新排序
+  const scoredRows = summaryRows.map((row: any) => {
+    const baseSimilarity = row._distance !== undefined ? 1 - row._distance : 0;
+    let tagBonus = 0;
+
+    if (tags && tags.length > 0) {
+      const meta = JSON.parse(row.metadata || '{}');
+      const docTags = (meta.tags || []).map((t: string) => t.toLowerCase());
+      // 任一标签匹配就加分
+      const matchCount = tags.filter(t => docTags.includes(t.toLowerCase())).length;
+      if (matchCount > 0) {
+        tagBonus = 0.15 * matchCount; // 每个匹配标签 +0.15
+      }
+    }
+
+    return { ...row, _baseSimilarity: baseSimilarity, _tagBonus: tagBonus, _score: baseSimilarity + tagBonus };
+  });
+
+  // 按 _score 降序排序
+  scoredRows.sort((a: any, b: any) => b._score - a._score);
+
+  // 取前 topK 个加载完整 chunks
+  const topDocs = scoredRows.slice(0, topK);
 
   // 根据命中的摘要加载完整 chunks
   const fullDocs: any[] = [];
@@ -331,6 +393,7 @@ export async function vectorSearch(
       docId: hit.doc_id,
       fileName: hit.file_name,
       summary: hit.summary,
+      tags: meta.tags || [],
       chunks: chunkResults.map((c: any) => ({
         id: c.id,
         docId: c.doc_id,
@@ -339,13 +402,14 @@ export async function vectorSearch(
         content: c.content,
         metadata: JSON.parse(c.metadata || '{}'),
       })),
-      similarity: hit._distance !== undefined ? 1 - hit._distance : 0,
+      similarity: hit._baseSimilarity,
+      tagBonus: hit._tagBonus,
       summaryStatus: meta.status || 'ready',
       mode: 'summary',
     });
   }
 
-  fullDocs.sort((a, b) => b.similarity - a.similarity);
+  // 已经按 _score 排序，不需要再次排序
   return fullDocs;
 }
 

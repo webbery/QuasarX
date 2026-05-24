@@ -30,6 +30,7 @@ export interface SummarySearchResult {
   chunks: VectorChunk[];
   similarity: number;
   mode: 'summary' | 'fallback';
+  tags?: string[];
 }
 
 /**
@@ -58,14 +59,15 @@ export async function deleteChunks(docId: string): Promise<void> {
 
 /**
  * 向量检索：根据查询文本检索最相似的文档
- * 新模式：返回 { docId, fileName, summary, chunks[], similarity, mode }
+ * 新模式：返回 { docId, fileName, summary, chunks[], similarity, tags, mode }
  * 兼容旧模式：返回 { chunk, similarity }
  */
 export async function search(
   queryText: string,
-  topK: number = 5
+  topK: number = 5,
+  tags?: string[]
 ): Promise<SummarySearchResult[]> {
-  const result = await ipcRenderer.invoke('vector-search', { queryText, topK });
+  const result = await ipcRenderer.invoke('vector-search', { queryText, topK, tags });
   if (!result.success) throw new Error(result.error);
   return result.results;
 }
@@ -93,7 +95,7 @@ export async function retrySummary(params: {
   fullText: string;
   chunkIds: string[];
   llmConfig: { url: string; protocol: string; apiKey: string; model: string };
-}): Promise<{ success: boolean; summary?: string; error?: string }> {
+}): Promise<{ success: boolean; summary?: string; tags?: string[]; error?: string }> {
   const result = await ipcRenderer.invoke('retry-summary', params);
   return result;
 }
@@ -103,7 +105,7 @@ export async function retrySummary(params: {
  */
 export async function getSummaryStatus(docIds: string[]): Promise<{
   success: boolean;
-  statuses: Record<string, { exists: boolean; status?: string; summary?: string }>;
+  statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[] }>;
 }> {
   const result = await ipcRenderer.invoke('get-summary-status', docIds);
   return result;
@@ -124,4 +126,12 @@ export async function getStats(): Promise<{ totalChunks: number; totalDocs: numb
   const result = await ipcRenderer.invoke('vector-get-stats');
   if (!result.success) throw new Error(result.error);
   return { totalChunks: result.totalChunks, totalDocs: result.totalDocs, totalSummaries: result.totalSummaries };
+}
+
+/**
+ * 更新文档标签
+ */
+export async function updateTags(docId: string, tags: string[]): Promise<void> {
+  const result = await ipcRenderer.invoke('knowledge-update-tags', { docId, tags });
+  if (!result.success) throw new Error(result.error);
 }

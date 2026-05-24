@@ -41,6 +41,31 @@ function createSupervisorLLM() {
 async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEvent) => void): Promise<Partial<GraphStateType>> {
   const { messages, userInput, iterationCount, maxIterations, shouldEnd } = state;
 
+  // ★ 调试日志：打印收到的 state
+  console.log('[LangGraph Supervisor Debug - State]', {
+    messagesLength: messages.length,
+    messagesPreview: messages.map(m => ({
+      type: m.constructor.name,
+      role: m._getType?.() || 'unknown',
+      contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
+      additional_kwargs: m.additional_kwargs,
+    })),
+    userInput: userInput?.substring(0, 80),
+    iterationCount,
+    shouldEnd,
+    sessionId: state.sessionId,
+  });
+
+  // 调试：打印收到的 messages
+  console.log('[LangGraph Supervisor] 接收到的 messages:', {
+    count: messages.length,
+    types: messages.map(m => m.constructor.name),
+    preview: messages.slice(-4).map(m => {
+      const content = typeof m.content === 'string' ? m.content.substring(0, 50) : '[complex]';
+      return `${m.constructor.name}: ${content}`;
+    }),
+  });
+
   // 如果 Agent 已经产生回复，直接结束图循环
   if (shouldEnd) {
     emitEvent?.({
@@ -230,9 +255,13 @@ function checkInternalToolRouting(state: GraphStateType): string {
  * 构建并编译 Supervisor StateGraph
  *
  * @param emitEvent 事件回调，用于向 UI 推送 Agent 工作流事件
+ * @param checkpointer Checkpoint 持久化器（用于多轮对话上下文恢复）
  * @returns 编译后的图
  */
-export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
+export function buildSupervisorGraph(
+  emitEvent?: (event: AgentEvent) => void,
+  checkpointer?: IndexedDBSaver,
+) {
   const workflow = new StateGraph(GraphState);
 
   // === 添加节点 ===
@@ -321,8 +350,7 @@ export function buildSupervisorGraph(emitEvent?: (event: AgentEvent) => void) {
 
   // 编译图
   return workflow.compile({
-    // recursion_limit 控制最大循环次数
-    // 默认 25，我们设为 50
+    checkpointer,
   });
 }
 
@@ -341,7 +369,25 @@ export async function runSupervisorGraph(
   checkpointer: IndexedDBSaver,
   emitEvent?: (event: AgentEvent) => void,
 ) {
-  const graph = buildSupervisorGraph(emitEvent);
+  const graph = buildSupervisorGraph(emitEvent, checkpointer);
+
+  // 调试：尝试从 checkpoint 恢复历史
+  const debugConfig = { configurable: { thread_id: sessionId } };
+  const savedTuple = await checkpointer.getTuple(debugConfig);
+  if (savedTuple) {
+    // ★ 详细日志：打印 checkpoint 中的消息
+    const checkpointMessages = savedTuple.checkpoint.channel_values?.messages || [];
+    console.log('[LangGraph Checkpoint] 找到历史 checkpoint:', {
+      checkpointId: savedTuple.config.configurable?.checkpoint_id,
+      messagesCount: checkpointMessages.length,
+      messagesPreview: checkpointMessages.map((m: any) => ({
+        type: m.lc?.id?.[m.lc.id.length - 1] || m.constructor?.name || 'unknown',
+        contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
+      })),
+    });
+  } else {
+    console.log('[LangGraph Checkpoint] 未找到历史，首次对话');
+  }
 
   const initialState: GraphStateType = {
     messages: [],
@@ -356,11 +402,27 @@ export async function runSupervisorGraph(
     userInput,
   };
 
+  console.log('[LangGraph] 初始状态:', {
+    initialMessagesLength: initialState.messages.length,
+    userInput: initialState.userInput?.substring(0, 50),
+    sessionId: initialState.sessionId,
+  });
+
   const result = await graph.invoke(initialState, {
     configurable: {
       thread_id: sessionId,
     },
     recursionLimit: 50,
+  });
+
+  console.log('[LangGraph] 执行完成，最终状态:', {
+    resultMessagesLength: result.messages?.length || 0,
+    resultMessagesPreview: result.messages?.slice(-4).map((m: any) => ({
+      type: m.constructor?.name || 'unknown',
+      contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
+    })),
+    finalResponse: result.finalResponse?.substring(0, 80),
+    shouldEnd: result.shouldEnd,
   });
 
   return result;

@@ -20,7 +20,7 @@ export interface ParamSchema {
   options?: Array<{ label: string; value: any }> | string[]
   min?: number
   max?: number
-  step?: number
+  step?: number | string  // 支持 number 或 'any' 字符串
   unit?: string
   visible?: boolean       // 默认是否可见
   placeholder?: string

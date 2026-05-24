@@ -58,70 +58,58 @@ bool ExchangeHandler::Use(const String& name) {
     auto ptr = _exchanges[name];
     _type_excs[et] = ptr;
 
-    // TickFlowBridge 特殊处理：不需要同步符号信息到 Server
-    if (ex_type == TICKFLOW_QUOTE_API) {
-        // 只设置过滤条件
-        QuoteFilter filter;
-        if (exchange.contains("pool")) {
-            for (String symbol: exchange["pool"]) {
-                filter._symbols.insert(symbol);
-            }
-        }
-        ptr->SetFilter(filter);
-    } else {
-        // 同步 symbol 信息到 Server
-        List<SymbolInfo> symbols;
-        // 获取所有类型的符号信息
-        ptr->GetAllStockSymbols(symbols);
-        ptr->GetAllFundSymbols(symbols);
-        ptr->GetAllOptionSymbols(symbols);
+    // 同步 symbol 信息到 Server（所有 exchange 统一处理）
+    List<SymbolInfo> symbols;
+    // 获取所有类型的符号信息
+    ptr->GetAllStockSymbols(symbols);
+    ptr->GetAllFundSymbols(symbols);
+    ptr->GetAllOptionSymbols(symbols);
 
-        // 填充到 Server 的 _markets
-        for (auto& sym : symbols) {
-            ContractInfo info;
-            info._type = sym._type;
-            info._exchange = sym._exchange;
-            info._name = sym._name;
-            info._market = sym._market;
-            info._expireDate = sym._expireDate;
-            info._deliveryDate = sym._deliveryDate;
-            info._strike = sym._strike;
-            _server->AddSymbolToMarket(sym._code, std::move(info));
-        }
-        if (!symbols.empty()) {
-            INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
-        }
+    // 填充到 Server 的 _markets
+    for (auto& sym : symbols) {
+        ContractInfo info;
+        info._type = sym._type;
+        info._exchange = sym._exchange;
+        info._name = sym._name;
+        info._market = sym._market;
+        info._expireDate = sym._expireDate;
+        info._deliveryDate = sym._deliveryDate;
+        info._strike = sym._strike;
+        _server->AddSymbolToMarket(sym._code, std::move(info));
+    }
+    if (!symbols.empty()) {
+        INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
+    }
 
-        QuoteFilter filter;
-        if (exchange.contains("pool")) {
-            for (String symbol: exchange["pool"]) {
-                filter._symbols.insert(symbol);
-            }
+    QuoteFilter filter;
+    if (exchange.contains("pool")) {
+        for (String symbol: exchange["pool"]) {
+            filter._symbols.insert(symbol);
         }
-        if (exchange.contains("utc_active")) {
-            for (auto& range: exchange["utc_active"]) {
-                String working_range = range;
-                Vector<String> time_range;
-                split(working_range, time_range, "-");
-                String& start_datetime = time_range[0];
-                Vector<String> components;
-                split(start_datetime, components, ":");
-                if (components.size() == 0)
-                    break;
+    }
+    if (exchange.contains("utc_active")) {
+        for (auto& range: exchange["utc_active"]) {
+            String working_range = range;
+            Vector<String> time_range;
+            split(working_range, time_range, "-");
+            String& start_datetime = time_range[0];
+            Vector<String> components;
+            split(start_datetime, components, ":");
+            if (components.size() == 0)
+                break;
 
-                auto start_hour = (char)atoi(components[0].c_str());
-                auto start_minute = (char)atoi(components[1].c_str());
-                components.clear();
-                split(time_range[1], components, ":");
-                if (components.size() == 0)
-                    break;
-                auto stop_hour = (char)atoi(components[0].c_str());
-                auto stop_minute = (char)atoi(components[1].c_str());
-                ptr->SetWorkingRange(start_hour, stop_hour, start_minute, stop_minute);
-            }
+            auto start_hour = (char)atoi(components[0].c_str());
+            auto start_minute = (char)atoi(components[1].c_str());
+            components.clear();
+            split(time_range[1], components, ":");
+            if (components.size() == 0)
+                break;
+            auto stop_hour = (char)atoi(components[0].c_str());
+            auto stop_minute = (char)atoi(components[1].c_str());
+            ptr->SetWorkingRange(start_hour, stop_hour, start_minute, stop_minute);
         }
-        ptr->SetFilter(filter);
-    } // end else (non-TickFlow)
+    }
+    ptr->SetFilter(filter);
   }
   return ret;
 }

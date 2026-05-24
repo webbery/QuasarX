@@ -1,9 +1,9 @@
 <template>
-    <div>
+    <div class="settings-wrapper">
         <div class="expand-all">
             <button @click="toggleAllSections">{{ allExpanded ? '收起所有' : '展开所有' }}</button>
         </div>
-        
+
         <div class="settings-panel">
             <!-- 添加远程服务器 -->
             <div class="settings-section">
@@ -673,6 +673,33 @@ onMounted(async () => {
 })
 </script>
 <style scoped>
+/* 外层容器 - 自动滚动条 */
+.settings-wrapper {
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+/* 自定义滚动条样式 */
+.settings-wrapper::-webkit-scrollbar {
+    width: 8px;
+}
+
+.settings-wrapper::-webkit-scrollbar-track {
+    background: var(--darker-bg);
+    border-radius: 4px;
+}
+
+.settings-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(41, 98, 255, 0.3);
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.settings-wrapper::-webkit-scrollbar-thumb:hover {
+    background: rgba(41, 98, 255, 0.5);
+}
+
 .expand-all {
     text-align: right;
     margin-bottom: 15px;

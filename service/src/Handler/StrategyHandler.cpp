@@ -95,13 +95,77 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
 void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res) {
     String scripts = param["script"].dump();
     String name = param["name"];
-    // 保存到部署文件夹下,
-    std::ofstream ofs;
-    String script_filename(SCRIPTS_DIR);
-    script_filename += "/" + name;
-    ofs.open(script_filename);
+
+    // 使用 std::filesystem::path 正确拼接路径（跨平台）
+    std::filesystem::path scripts_dir(SCRIPTS_DIR);
+
+    // 确保 scripts 目录存在
+    try {
+        if (!std::filesystem::exists(scripts_dir)) {
+            std::filesystem::create_directories(scripts_dir);
+            INFO("[StrategyHandler] Created scripts directory: {}", scripts_dir.string());
+        }
+    } catch (const std::filesystem::filesystem_error& e) {
+        WARN("[StrategyHandler] Failed to create scripts directory: {}", e.what());
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Failed to create scripts directory";
+        err["error"] = e.what();
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    // Windows 下需要将 UTF-8 策略名转换为 UTF-16 才能正确处理中文路径
+#ifdef _WIN32
+    std::wstring wname = utf8_to_utf16(name);
+    if (wname.empty()) {
+        WARN("[StrategyHandler] Failed to convert strategy name to UTF-16: {}", name);
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Failed to convert strategy name encoding";
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    std::filesystem::path full_path = scripts_dir / std::filesystem::path(wname);
+    std::wstring full_path_wstr = full_path.wstring();
+
+    INFO("[StrategyHandler] Deploying strategy '{}' (UTF-16 path)", name);
+
+    // Windows 下使用 _wfopen 打开文件（支持中文路径）
+    FILE* fp = _wfopen(full_path_wstr.c_str(), L"wb, ccs=UTF-8");
+    if (!fp) {
+        WARN("[StrategyHandler] Failed to open script file for writing: {}", name);
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Failed to save strategy file";
+        err["path"] = name;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+    fwrite(scripts.c_str(), 1, scripts.size(), fp);
+    fclose(fp);
+#else
+    std::filesystem::path full_path = scripts_dir / name;
+    String full_path_str = full_path.string();
+    INFO("[StrategyHandler] Deploying strategy '{}' to {}", name, full_path_str);
+
+    std::ofstream ofs(full_path_str, std::ios::out | std::ios::trunc);
+    if (!ofs.is_open()) {
+        WARN("[StrategyHandler] Failed to open script file for writing: {}", full_path_str);
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Failed to save strategy file";
+        err["path"] = full_path_str;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
     ofs << scripts;
     ofs.close();
+#endif
+
+    INFO("[StrategyHandler] Strategy '{}' saved successfully", name);
+
     // 运行
     auto strategySys = _server->GetStrategySystem();
     strategySys->InitStrategy(name, param["script"]);

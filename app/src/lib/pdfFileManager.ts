@@ -10,6 +10,7 @@ export interface PdfFileInfo {
   size: number;
   mtime: number;
   path: string;
+  hash: string;  // SHA-256 hash
 }
 
 export interface SavePdfResult {
@@ -29,6 +30,16 @@ export interface ReadPdfResult {
   success: boolean;
   data: string;  // base64 encoded
   error?: string;
+}
+
+/**
+ * 计算文件的 SHA-256 hash（用于去重）
+ */
+export async function calculateFileHash(fileData: ArrayBuffer): Promise<string> {
+  const buffer = new Uint8Array(fileData);
+  const hash = await crypto.subtle.digest('SHA-256', buffer);
+  const hashArray = Array.from(new Uint8Array(hash));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**

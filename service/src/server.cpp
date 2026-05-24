@@ -645,7 +645,46 @@ bool Server::InitMarket(const std::string& path) {
         auto& info = _config->GetExchangeByName(name);
         if (info["type"] == "stock") {
             if (info["api"] == STOCK_HISTORY_SIM) {
-                InitStocks(path);
+                // STOCK_HISTORY_SIM 模式：直接从 symbol_market.csv 读取标的列表
+                INFO("InitMarket for STOCK_HISTORY_SIM mode, loading from symbol_market.csv");
+                
+                // 如果配置中没有 quote_addr，使用默认路径
+                auto csv_path = path + "/symbol_market.csv";
+                
+                if (std::filesystem::exists(csv_path)) {
+                    try {
+                        io::CSVReader<3> reader(csv_path);
+                        reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
+                        std::string code, exch, name;
+                        int symbolCount = 0;
+                        while (reader.read_row(code, exch, name)) {
+                            ContractInfo ci;
+                            ci._type = static_cast<char>(ContractType::AStock);
+                            ci._name = name;
+                            
+                            if (exch == "SH") {
+                                ci._exchange = MT_Shanghai;
+                            } else if (exch == "SZ") {
+                                ci._exchange = MT_Shenzhen;
+                            } else if (exch == "BJ") {
+                                ci._exchange = MT_Beijing;
+                            } else {
+                                WARN("{}: Unknown exchange {}", code, exch);
+                                continue;
+                            }
+                            
+                            _markets.emplace(code, std::move(ci));
+                            symbolCount++;
+                        }
+                        INFO("Loaded {} stock symbols from {}", symbolCount, csv_path);
+                    } catch (const std::exception& e) {
+                        WARN("Failed to load {}: {}, fallback to InitStocks", csv_path, e.what());
+                        InitStocks(path);
+                    }
+                } else {
+                    WARN("{} not found, fallback to InitStocks", csv_path);
+                    InitStocks(path);
+                }
             } else if (info["api"] == TICKFLOW_QUOTE_API) {
                 // 通过 TickFlow 接口获取标的列表
                 auto exchange = GetAvaliableStockExchange();

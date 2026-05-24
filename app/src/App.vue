@@ -12,18 +12,12 @@
         >
           <i :class="isBacktesting ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>{{ isBacktesting ? '回测中...' : '执行回测' }}
         </button>
-        <button v-if="is_strategy" class="btn" @click="onHandleExportStrategy" title="导出当前策略">
-          <i class="fas fa-download"></i> 导出
-        </button>
-        <label v-if="is_strategy" class="btn btn-file" title="导入策略文件">
-          <i class="fas fa-upload"></i> 导入
-          <input type="file" accept=".json" hidden @change="onHandleImportStrategy" />
-        </label>
-        <!-- 部署/停止/启动 按钮（根据服务端策略状态动态显示） -->
-        <template v-if="is_backtest && currentStrategyName">
+        
+        <!-- 部署/停止/启动 按钮（根据服务端策略状态动态显示，回测模式或未登录时不显示） -->
+        <template v-if="is_strategy && currentStrategyName && !isBacktestMode && isLoggedIn">
           <button v-if="!hasServerStrategy" class="btn" @click="onHandleDeploy" :disabled="isDeploying">
             <i :class="isDeploying ? 'fa-spinner fa-spin' : 'fa-cloud-upload-alt'"></i>
-            {{ isDeploying ? '部署中...' : '部署模拟盘' }}
+            {{ isDeploying ? '部署中...' : '部署' }}
           </button>
           <button v-else-if="isRunningOnServer" class="btn btn-danger" @click="onHandleStopStrategy" :disabled="isStopping">
             <i class="fas fa-stop"></i> 停止
@@ -32,7 +26,14 @@
             <i class="fas fa-play"></i> 启动
           </button>
         </template>
-        <button v-if="is_backtest" class="control-btn">
+        <button v-if="is_strategy" class="control-btn" @click="onHandleExportStrategy" title="导出当前策略">
+          <i class="fas fa-download"></i> 导出策略
+        </button>
+        <label v-if="is_strategy" class="control-btn btn-file" title="导入策略文件">
+          <i class="fas fa-upload"></i> 导入策略
+          <input type="file" accept=".json" hidden @change="onHandleImportStrategy" />
+        </label>
+        <button v-if="is_strategy" class="control-btn">
           <i class="fas fa-cloud-upload-alt"></i> 导出报告
         </button>
         <select v-if="is_position" class="form-control" style="width: auto;" v-model="selectedAccount">
@@ -450,6 +451,15 @@ let is_portfolio = computed(() => currentView.value === VIEWS.PORTFOLIO_VIEW);
 let is_knowledgebase = computed(() => currentView.value === VIEWS.KNOWLEDGE_BASE);
 let is_strategy_tracker = computed(() => currentView.value === VIEWS.STRATEGY_TRACKER);
 
+/** 是否为回测模式（回测模式下不显示部署/启动/停止按钮） */
+const isBacktestMode = computed(() => runningMode.value.includes('回测'));
+
+/** 是否已登录（有 token 表示已登录） */
+const isLoggedIn = computed(() => {
+  const token = localStorage.getItem('token')
+  return token && token.length > 0
+});
+
 const unit = 1024.0/1000000000;
 
 const onSystemStatus = (message) => {
@@ -555,6 +565,9 @@ onMounted(() => {
       }
     }
   });
+
+  // 初始化 history store（加载策略和版本列表）
+  historyStore.initialize()
 
   // 启动服务端策略状态轮询
   fetchServerStrategies()

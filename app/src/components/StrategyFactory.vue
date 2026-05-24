@@ -73,6 +73,7 @@ import { useFlowOperations } from '@/components/strategy/composables/useFlowOper
 import { useFlowSaveLoad } from '@/components/strategy/composables/useFlowSaveLoad'
 import { useBacktest } from '@/components/strategy/composables/useBacktest'
 import * as codeSync from '@/components/strategy/composables/useCodeSync'
+import { convertLabelsToKeys } from '@/lib/nodes'
 
 // 注入报表配置面板控制方法（从 App.vue）
 const onShowReportConfig = inject('onShowReportConfig', () => {
@@ -127,6 +128,16 @@ const {
   loadVersionFromHistory, validateFlow, ensureVersionId,
   historyStore, strategies, versions
 } = saveLoad
+
+// 注入父组件的 currentStrategyId（用于同步部署/启动/停止按钮状态）
+const parentStrategyId = inject('currentStrategyId', null)
+
+// 监听子组件 currentStrategyId 变化，同步到父组件
+watch(currentStrategyId, (newId) => {
+  if (parentStrategyId) {
+    parentStrategyId.value = newId
+  }
+})
 
 // 回测时间范围配置（根级别，不配置则使用数据文件全范围）
 const backtestRange = ref(['2020-01-01', '2025-12-31'])
@@ -299,11 +310,48 @@ const clearCanvasIfVersionMatches = (versionId) => {
   }
 }
 
+/**
+ * 获取当前策略图数据（用于部署到服务端）
+ * 返回 JSON 对象（非字符串），供 axios 自动序列化
+ */
+const getStrategyGraph = () => {
+  // 获取策略名称
+  const strategyName = currentStrategyId.value
+    ? strategies.value.find(s => s.id === currentStrategyId.value)?.name || ''
+    : ''
+
+  if (!strategyName) {
+    console.warn('[StrategyFactory] 未找到策略名称，无法获取图数据')
+    return null
+  }
+
+  // 构建图数据（与 runBacktest 中的结构一致）
+  const curGraph = {
+    version: 1,
+    id: `strategy_${currentStrategyId.value}`,
+    name: strategyName,
+    description: '用户自定义策略',
+    backtest: backtestRange.value ? {
+      start: backtestRange.value[0],
+      end: backtestRange.value[1]
+    } : undefined,
+    nodes: getNodes.value,
+    edges: getEdges.value
+  }
+
+  // 先序列化为 JSON 字符串，转换中文键名为英文键名，再解析回对象
+  const graphJson = JSON.stringify(curGraph)
+  const convertedJson = convertLabelsToKeys(graphJson)
+  return JSON.parse(convertedJson)
+}
+
+// 对外暴露
 defineExpose({
   runBacktest: handleRunBacktest,
   loadVersionFromHistory: handleLoadVersionFromHistory,
   clearCanvasIfStrategyMatches,
-  clearCanvasIfVersionMatches
+  clearCanvasIfVersionMatches,
+  getStrategyGraph
 })
 </script>
 

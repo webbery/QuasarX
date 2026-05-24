@@ -16,7 +16,8 @@ const require = createRequire(import.meta.url);
 import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
-import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly } from './vectorDB';
+import { createHash } from 'crypto';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags } from './vectorDB';
 import { agentRouter } from './agent/AgentRouter';
 import { IndexAgent } from './agent/IndexAgent';
 import type { AgentConfig } from '../src/lib/agent';
@@ -84,19 +85,21 @@ function createWindow() {
     })
 }
 
+// Ignore SSL certificate errors (MUST be called before app.whenReady)
+app.commandLine.appendSwitch('ignore-certificate-errors');
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
     if (process.env.VITE_DEV_SERVER_URL) {
-        // Install Vue Devtools  
+        // Install Vue Devtools
         // try {
         //     await installExtension(VUEJS_DEVTOOLS);
         // } catch (e) {
         //     console.error("Vue Devtools failed to install:", e.toString());
         // }
     }
-    app.commandLine.appendSwitch('ignore-certificate-errors');
 
     createWindow();
 
@@ -289,11 +292,14 @@ ipcMain.handle('knowledge-list-pdfs', async () => {
       .map(f => {
         const filePath = join(dir, f);
         const stat = statSync(filePath);
+        const fileBuffer = readFileSync(filePath);
+        const hash = createHash('sha256').update(fileBuffer).digest('hex');
         return {
           name: f,
           size: stat.size,
           mtime: stat.mtimeMs,
           path: filePath,
+          hash,
         };
       });
     return { success: true, pdfs };
@@ -345,6 +351,22 @@ ipcMain.handle('knowledge-read-pdf', async (_, fileName: string) => {
  */
 ipcMain.handle('knowledge-get-dir', async () => {
   return { success: true, path: getKnowledgeDir() };
+});
+
+/**
+ * 更新文档标签
+ */
+ipcMain.handle('knowledge-update-tags', async (_, { docId, tags }: {
+  docId: string;
+  tags: string[];
+}) => {
+  try {
+    await updateTags(docId, tags);
+    return { success: true };
+  } catch (error: any) {
+    console.error('[knowledge-update-tags] 错误:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 /**
@@ -426,9 +448,9 @@ ipcMain.handle('vector-delete-chunks', async (_, docId: string) => {
   }
 });
 
-ipcMain.handle('vector-search', async (_, { queryText, topK }: { queryText: string; topK?: number }) => {
+ipcMain.handle('vector-search', async (_, { queryText, topK, tags }: { queryText: string; topK?: number; tags?: string[] }) => {
   try {
-    const results = await vectorSearch(queryText, topK ?? 5);
+    const results = await vectorSearch(queryText, topK ?? 5, tags);
     return { success: true, results };
   } catch (error: any) {
     console.error('[vector-search] 错误:', error);
@@ -473,14 +495,18 @@ ipcMain.handle('generate-summary', async (_, params: {
     // 标记为 pending
     try { await updateSummaryStatus(docId, 'pending'); } catch {}
 
-    // 通过 AgentRouter 调用 IndexAgent 生成摘要
-    const summary = await agentRouter.dispatch('index', fullText, { llmConfig });
+    // 通过 AgentRouter 调用 IndexAgent 生成摘要和标签
+    const result = await agentRouter.dispatch('index', fullText, { llmConfig }) as { summary: string; tags: string[] };
 
-    // 存储摘要
-    await storeSummary({ docId, fileName, summary, chunkIds });
+    // 兼容旧格式（如果 IndexAgent 返回字符串而非对象）
+    const summary = typeof result === 'string' ? result : result.summary;
+    const tags = typeof result === 'string' ? [] : (result.tags || []);
 
-    console.log(`[generate-summary] summary generated for ${fileName}`);
-    return { success: true, summary };
+    // 存储摘要和标签
+    await storeSummary({ docId, fileName, summary, chunkIds, tags });
+
+    console.log(`[generate-summary] summary generated for ${fileName}, tags: ${tags.join(', ')}`);
+    return { success: true, summary, tags };
   } catch (error: any) {
     console.error('[generate-summary] 错误:', error);
     // 标记为 failed
@@ -502,11 +528,16 @@ ipcMain.handle('retry-summary', async (_, params: {
     // 只删除旧摘要（保留 chunks）
     await deleteSummaryOnly(docId);
 
-    const summary = await agentRouter.dispatch('index', fullText, { llmConfig });
-    await storeSummary({ docId, fileName, summary, chunkIds });
+    const result = await agentRouter.dispatch('index', fullText, { llmConfig }) as { summary: string; tags: string[] };
 
-    console.log(`[retry-summary] summary regenerated for ${fileName}`);
-    return { success: true, summary };
+    // 兼容旧格式
+    const summary = typeof result === 'string' ? result : result.summary;
+    const tags = typeof result === 'string' ? [] : (result.tags || []);
+
+    await storeSummary({ docId, fileName, summary, chunkIds, tags });
+
+    console.log(`[retry-summary] summary regenerated for ${fileName}, tags: ${tags.join(', ')}`);
+    return { success: true, summary, tags };
   } catch (error: any) {
     console.error('[retry-summary] 错误:', error);
     try { await updateSummaryStatus(params.docId, 'failed'); } catch {}
@@ -516,7 +547,7 @@ ipcMain.handle('retry-summary', async (_, params: {
 
 ipcMain.handle('get-summary-status', async (_, docIds: string[]) => {
   try {
-    const statuses: Record<string, { exists: boolean; status?: string; summary?: string }> = {};
+    const statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[] }> = {};
     for (const docId of docIds) {
       statuses[docId] = await getSummaryStatus(docId);
     }

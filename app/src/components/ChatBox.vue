@@ -238,6 +238,12 @@ async function sendMessage() {
       }
 
       console.log('[LangGraph] 开始执行，用户输入:', text.substring(0, 50))
+      console.log('[LangGraph] chatStore.messages 数量:', chatStore.messages.length)
+      console.log('[LangGraph] chatStore.messages 预览:', chatStore.messages.map(m => ({
+        role: m.role,
+        content: m.content.substring(0, 50),
+      })))
+      
       const result = await runSupervisorGraph(text, 'default', checkpointer, onEvent)
 
       // 提取最终回复：优先用 finalResponse，如果为空则从 messages 中找最后一条 AIMessage

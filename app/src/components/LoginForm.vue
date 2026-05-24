@@ -247,13 +247,7 @@ const validateForm = () => {
 const handleLogin = () => {
     isSubmitting.value = true;
     if (validateForm()) {
-        const fs = require('fs')
-        // const certificate = fs.readFileSync('src/assets/server.crt', 'utf-8')
         const https = require('https');
-        // const httpsAgent = new https.Agent({
-        //   rejectUnauthorized: false, // 如果是自签名证书，需要设置这个选项为 false
-        //   // cert: certificate, // 证书文件
-        // })
         const protoc = 'https://'
         let url = protoc + loginForm.server + '/v0/user/login'
         fetch(url, {
@@ -277,7 +271,7 @@ const handleLogin = () => {
 
             // 保存登录信息
             saveLoginInfo()
-            
+
             // 设置拦截器
             axios.interceptors.request.use((config) => {
               if (token) {
@@ -287,13 +281,12 @@ const handleLogin = () => {
             })
             axios.defaults.baseURL = protoc + loginForm.server
             axios.defaults.headers.common['Authorization'] = token
-            const agent = new https.Agent({  
+            const agent = new https.Agent({
                 rejectUnauthorized: false // 忽略证书错误
             });
             axios.defaults.httpsAgent = agent
 
             // 登录成功后触发账户数据刷新
-            // window.dispatchEvent(new Event('loginSuccess'))
             await accountStore.fetchAccountData()
             sseService.connect(token)
             let removeInfo = selectedServer.value.label
