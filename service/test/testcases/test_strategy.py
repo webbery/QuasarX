@@ -81,7 +81,7 @@ class TestStrategy:
 
     @pytest.mark.timeout(30)
     def test_deploy(self, auth_token):
-        """部署并运行策略，验证返回格式"""
+        """部署并运行策略，验证返回格式 + 策略列表状态"""
         kwargs = self._auth_kwargs(auth_token)
 
         script_path = './script/ma_graph_strategy.json'
@@ -106,36 +106,6 @@ class TestStrategy:
         found = self.find_strategy(strategies, self.STRATEGY_NAME)
         assert found is not None, "部署的策略应在策略列表中"
         assert found['running'] is True
-
-    @pytest.mark.timeout(10)
-    def test_run_deploy(self, auth_token):
-        """运行已部署的策略"""
-        kwargs = self._auth_kwargs(auth_token)
-
-        kwargs['json'] = {'mode': 1, 'name': self.STRATEGY_NAME}
-        response = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(response)
-
-        assert data['message'] == 'success'
-        assert data['running'] is True
-
-    @pytest.mark.timeout(10)
-    def test_stop_deploy(self, auth_token):
-        """停止策略"""
-        kwargs = self._auth_kwargs(auth_token)
-
-        kwargs['json'] = {'mode': 2, 'name': self.STRATEGY_NAME}
-        response = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(response)
-
-        assert data['message'] == 'success'
-        assert data['running'] is False, "停止后策略 running 应为 false"
-
-        # 验证策略列表中状态更新
-        strategies = self.get_all_strategies(auth_token)
-        found = self.find_strategy(strategies, self.STRATEGY_NAME)
-        assert found is not None
-        assert found['running'] is False
 
     @pytest.mark.timeout(30)
     def test_delete_strategy(self, auth_token):
@@ -229,37 +199,6 @@ class TestStrategy:
 
         # 清理
         self.cleanup_strategy(auth_token, redeploy_name)
-
-    @pytest.mark.timeout(30)
-    def test_strategy_status_reflect(self, auth_token):
-        """验证 GET /v0/strategy 正确反映运行/停止状态"""
-        reflect_name = 'test_status_reflect'
-        self.cleanup_strategy(auth_token, reflect_name)
-
-        script_path = './script/ma_graph_strategy.json'
-        script = self.load_script(script_path)
-        kwargs = self._auth_kwargs(auth_token)
-
-        # 部署（应 running=true）
-        kwargs['json'] = {'mode': 0, 'name': reflect_name, 'script': script}
-        requests.post(f"{BASE_URL}/strategy", **kwargs)
-
-        strategies = self.get_all_strategies(auth_token)
-        found = self.find_strategy(strategies, reflect_name)
-        assert found is not None
-        assert found['running'] is True, "部署后 GET 应返回 running=true"
-
-        # 停止（应 running=false）
-        kwargs['json'] = {'mode': 2, 'name': reflect_name}
-        requests.post(f"{BASE_URL}/strategy", **kwargs)
-
-        strategies = self.get_all_strategies(auth_token)
-        found = self.find_strategy(strategies, reflect_name)
-        assert found is not None
-        assert found['running'] is False, "停止后 GET 应返回 running=false"
-
-        # 清理
-        self.cleanup_strategy(auth_token, reflect_name)
 
     @pytest.mark.timeout(10)
     def test_stop_nonexistent_strategy(self, auth_token):

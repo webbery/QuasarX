@@ -200,6 +200,9 @@ void SystemConfigHandler::post(const httplib::Request& req, httplib::Response& r
     case 2: // 添加交易所
         if (!AddExchange(config, params["data"])) {
             res.status = 400;
+            nlohmann::json error;
+            error["error"] = "添加交易所失败：请检查必填字段(utc_active)是否完整，或该交易所已存在";
+            res.set_content(error.dump(), "application/json");
             return;
         }
         break;
@@ -250,6 +253,11 @@ bool SystemConfigHandler::AddExchange(nlohmann::json& config, const nlohmann::js
         if (item["name"] == params["name"]) { // exist
             return false;
         }
+    }
+    // 检查必填字段
+    if (!params.contains("utc_active")) {
+        WARN("AddExchange: utc_active field is required");
+        return false;
     }
     nlohmann::json exchange;
     exchange["account"] = params["account"];

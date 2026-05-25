@@ -376,7 +376,8 @@ export async function runSupervisorGraph(
   const savedTuple = await checkpointer.getTuple(debugConfig);
   if (savedTuple) {
     // ★ 详细日志：打印 checkpoint 中的消息
-    const checkpointMessages = savedTuple.checkpoint.channel_values?.messages || [];
+    const channelValues = savedTuple.checkpoint.channel_values as Record<string, any> | undefined;
+    const checkpointMessages: any[] = Array.isArray(channelValues?.messages) ? channelValues.messages : [];
     console.log('[LangGraph Checkpoint] 找到历史 checkpoint:', {
       checkpointId: savedTuple.config.configurable?.checkpoint_id,
       messagesCount: checkpointMessages.length,

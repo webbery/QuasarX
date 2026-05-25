@@ -55,24 +55,8 @@ class TestUser:
                 'account': '400012020102',
                 'passwd': '111111',
                 "api": "xtp",
-                "key": "dsdfsfserweh345"
-            }
-        }
-        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
-        check_response(response)
-
-    @pytest.mark.timeout(5)
-    def test_delete_exchange(self, auth_token):
-        kwargs = {
-            'verify': False  # 始终禁用 SSL 验证
-        }
-        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
-            kwargs['headers'] = {'Authorization': auth_token}
-
-        json = {
-            'type': 4,
-            'data': {
-                'name': 'XTP-test'
+                "key": "dsdfsfserweh345",
+                "utc_active": "01:30-05:00;07:00-11:30"
             }
         }
         response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
@@ -184,3 +168,22 @@ class TestUser:
         kwargs = self.generate_args(auth_token)
         response = requests.get(f"{BASE_URL}/stocks/privilege?id=603331", **kwargs)
         assert 'forbid' in response
+
+    # ===== 删除操作（放在最后，避免影响其他测试） =====
+
+    @pytest.mark.timeout(5)
+    def test_delete_exchange(self, auth_token):
+        kwargs = {
+            'verify': False  # 始终禁用 SSL 验证
+        }
+        if auth_token and len(auth_token) > 10:  # 确保 token 非空且长度有效
+            kwargs['headers'] = {'Authorization': auth_token}
+
+        json = {
+            'type': 4,
+            'data': {
+                'name': 'XTP-test'
+            }
+        }
+        response = requests.post(f"{BASE_URL}/server/config", json=json, **kwargs)
+        check_response(response)

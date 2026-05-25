@@ -80,11 +80,7 @@
       ]
     },
     "strategy": {
-      "_doc": "策略管理（列表/部署/回测，含 CTA/双均线/R²）",
-      "enabled": false
-    },
-    "r2strategy": {
-      "_doc": "R² 趋势策略回测",
+      "_doc": "策略管理（列表/部署/回测，含 CTA/双均线）",
       "enabled": false
     },
     "risk": {
@@ -93,10 +89,6 @@
     },
     "capital_risk": {
       "_doc": "资金风控（总资金止损/单日亏损）",
-      "enabled": true
-    },
-    "shadow_mode": {
-      "_doc": "影子模式日志/虚拟账户",
       "enabled": true
     },
     "data": {

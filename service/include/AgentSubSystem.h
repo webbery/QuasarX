@@ -35,6 +35,12 @@ public:
     run_id_t Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
 
     /**
+     * @brief 设置策略为影子模式（在 LoadFlow 之前调用）
+     * @note 不调用此方法时，策略默认跟随全局模式
+     */
+    void SetShadowMode(const String& strategy);
+
+    /**
      * @brief 启动实盘策略（K-bar 聚合驱动）
      */
     run_id_t StartRealtime(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
@@ -85,12 +91,20 @@ private:
 
     bool IsUseShareMemory(const StrategyFlowInfo& flow);
 
+    /**
+     * @brief 设置策略级别的运行模式（在 LoadFlow 之前调用）
+     */
+    void SetStrategyRunningMode(const String& strategy, RuningType mode);
+
 private:
     Server* _handle;
 
     struct StrategyFlowInfo {
         std::atomic_bool _running = false;
         std::thread* _worker = nullptr;
+
+        // 策略级别的影子模式标志（默认 false，跟随全局模式）
+        bool isShadowMode = false;
 
         Map<StatisticIndicator, std::variant<float, List<float>>> _collections;
         List<QNode*> _graph;

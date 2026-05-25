@@ -241,6 +241,11 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
     auto sorted_nodes = topo_sort(nodes);
     InitStrategy(strategyName, sorted_nodes);
 
+    // 解析策略级影子模式标志
+    if (script.contains("shadow") && script["shadow"] == true) {
+        _agentSystem->SetShadowMode(strategyName);
+    }
+
     // 推断并保存预热期 epoch 数
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;

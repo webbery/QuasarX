@@ -2,6 +2,7 @@
     "id": "ma_function_strategy",
     "name": "双均线趋势跟踪策略(FunctionNode版)",
     "description": "使用 FunctionNode 计算均线 + SignalNode 生成交叉信号 + DebugNode 调试输出",
+    "shadow": true,
     "nodes": [
         {
             "id": "1",

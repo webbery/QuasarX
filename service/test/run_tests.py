@@ -8,7 +8,7 @@
     python run_tests.py --mode tickflow         # 只运行实时行情模式
     python run_tests.py --mode hx               # 只运行华鑫实盘模式
     python run_tests.py --list                  # 列出所有模式及测试项
-    python run_tests.py --tests r2strategy      # 运行包含 r2strategy 的测试
+    python run_tests.py --tests strategy        # 运行包含 strategy 的测试
     python run_tests.py --no-service            # 不自启服务（手动启动）
     python run_tests.py --dry-run               # 只打印计划，不执行
 """
@@ -278,8 +278,12 @@ class ServiceManager:
 # ==================== 测试执行 ====================
 
 def run_test_module(test_name: str, specific_tests: list = None) -> dict:
-    """运行单个测试模块，返回结果"""
-    test_file = TESTCASES_DIR / f"{test_name}.py"
+    """运行单个测试模块，返回结果
+
+    支持子目录路径格式，如 "hx/test_hx_trade" 会解析为 testcases/hx/test_hx_trade.py
+    """
+    # 支持子目录路径：将 "/" 替换为 os.sep
+    test_file = TESTCASES_DIR / f"{test_name.replace('/', os.sep)}.py"
 
     if not test_file.exists():
         return {"name": test_name, "status": "SKIP", "reason": "文件不存在"}
@@ -479,8 +483,8 @@ def main():
   python run_tests.py --mode tickflow           只运行实时行情模式
   python run_tests.py --mode hx                 只运行华鑫实盘模式
   python run_tests.py --list                    列出所有模式
-  python run_tests.py --tests r2strategy        运行包含 r2strategy 的测试
-  python run_tests.py --tests r2strategy shadow 运行多个匹配项
+  python run_tests.py --tests strategy          运行包含 strategy 的测试
+  python run_tests.py --tests strategy shadow   运行多个匹配项
   python run_tests.py --no-service              不自启服务
   python run_tests.py --dry-run                 只打印计划
         """,

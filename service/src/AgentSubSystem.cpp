@@ -60,6 +60,11 @@ void FlowSubsystem::ClearFlow(const String& strategy) {
     _flows[strategy]._graph.clear();
 }
 
+void FlowSubsystem::SetShadowMode(const String& strategy) {
+    _flows[strategy].isShadowMode = true;
+    INFO("[FlowSubsystem] Strategy '{}' configured as Shadow mode", strategy);
+}
+
 void FlowSubsystem::Start() {
     auto broker = _handle->GetBrokerSubSystem();
     auto strategySys = _handle->GetStrategySystem();
@@ -84,6 +89,10 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
     Stop(strategy);
 
     RuningType mode = _handle->GetRunningMode();
+    auto it = _flows.find(strategy);
+    if (it != _flows.end() && it->second.isShadowMode) {
+        mode = RuningType::Shadow;
+    }
 
     if (mode == RuningType::Backtest) {
         return StartBacktest(strategy, symbols, initialCapital);
@@ -350,10 +359,18 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     kbarBuilder->SetSymbols(symbols);
     flow._kbarBuilder = kbarBuilder;
 
-    INFO("[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s",
-         KBarBuilder::FreqToString(freq), symbols.size());
+    bool shadowMode = flow.isShadowMode;
+    INFO("[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
+         KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
 
-    flow._worker = new std::thread([strategy, symbols, kbarBuilder, this]() {
+    flow._worker = new std::thread([strategy, symbols, kbarBuilder, shadowMode, this]() {
+        // ★ 影子模式：临时设置全局运行模式（仅在当前 worker 线程生命周期内有效）
+        RuningType originalMode = _handle->GetRunningMode();
+        if (shadowMode) {
+            _handle->SetRunningMode(RuningType::Shadow);
+            INFO("[Realtime] Shadow mode activated for strategy '{}'", strategy);
+        }
+
         DataContext context(strategy, _handle);
         auto& flow = _flows[strategy];
 
@@ -408,6 +425,12 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
 
         nng_close(recvSock);
         flow._running = false;
+
+        // ★ 恢复原始运行模式
+        if (shadowMode) {
+            _handle->SetRunningMode(originalMode);
+            INFO("[Realtime] Shadow mode deactivated, restored to {}", (int)originalMode);
+        }
     });
 
     return 0;  // 实盘无 runId

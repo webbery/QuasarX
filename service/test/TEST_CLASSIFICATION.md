@@ -43,10 +43,8 @@ python run_tests.py --dry-run
 | `test_prediction.py` | 预测操作设置（`/predict/operation`） |
 | `test_risk.py` | 风险管理（止损/VaR/回撤，大部分已注释） |
 | `test_shadow_mode.py` | 影子模式（日志解析、虚拟账户、回测集成） |
-| `test_shibor.py` | SHIBOR 利率数据查询 |
 | `test_strategy.py` | 策略部署 + 批量回测（遍历 `script/*.json`） |
 | `test_trade_history.py` | 交易历史查询（分页/时间过滤/回测场景） |
-| `test_stock.py` | 股票列表、个股行情、历史K线、科创板权限、板块资金流 |
 | `test_user.py` | 服务状态、指数行情、配置获取/更新、权限测试 |
 | `test_mc.py` | 空文件（预留） |
 
@@ -57,6 +55,7 @@ python run_tests.py --dry-run
 | `test_sectorquote.py` | 行业板块实时行情（`/stocks/sector/quote`） |
 | `test_tick_record.py` | Tick 数据存储（`/record` 接口 + CBOR 目录验证） |
 | `test_data.py` | SSE 流式数据同步（`/data/sync` ZIP 下载） |
+| `test_shibor.py` | SHIBOR 利率数据查询 |
 
 ### 3. HX（华鑫实盘仿真模式）
 
@@ -66,6 +65,7 @@ python run_tests.py --dry-run
 | `test_serverevent.py` | SSE 事件流（系统状态、持仓更新、订单更新） |
 | `test_stock.py` | `test_stock_position`（真实持仓）、`test_daily_limit`（交易速率限制） |
 | `test_user.py` | `test_get_position`（真实持仓）、`test_get_funds`（真实资金）、`test_get_commission`（佣金费率）、`test_add_exchange`/`test_delete_exchange`（交易所配置管理） |
+| `test_stock.py` | 股票列表、个股行情、历史K线、科创板权限、板块资金流 |
 
 ## 运行测试
 

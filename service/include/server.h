@@ -127,6 +127,7 @@ public:
     HttpHandler* GetHandler(const String& name);
 
     RuningType GetRunningMode() { return _runType; }
+    void SetRunningMode(RuningType mode) { _runType = mode; }
 
     BrokerSubSystem* GetBrokerSubSystem() { return _brokerSystem; }
 

@@ -327,6 +327,141 @@ buy: MA_5[t] > MA_10[t] or close[t] > high[t-1]
 7. 已持仓不追加：已持仓股票的 BUY 信号会被过滤为 HOLD`
 }
 
+// === HMM 市场状态识别使用指南 ===
+
+function getHMMUsageGuide(): string {
+  return `# HMM 市场状态识别使用指南
+
+## 何时使用
+- 需要识别市场状态（牛市/熊市/震荡）并据此调整策略行为
+- 需要根据状态转移概率预测未来市场走向
+- 需要在不同市场状态下使用不同的交易逻辑（如牛市追涨、熊市防守）
+
+## 典型策略流
+\`\`\`
+[Input 数据输入] → [HMM 市场状态识别] → [Signal 交易信号] → [Portfolio] → [Execution]
+                        ↓
+                  输出 4 个变量到 context
+\`\`\`
+
+## 输出变量说明（Signal 公式中可用）
+
+| 变量名 | 类型 | 说明 |
+|--------|------|------|
+| \`hmm_state\` | 整数时间序列 | 当前最可能的隐状态编号（0, 1, 2...），如 n_states=3 则值为 0/1/2 |
+| \`hmm_probs\` | 向量时间序列 | 各状态的概率分布，长度为 n_states，如 [0.7, 0.2, 0.1] 表示 70% 概率为状态 0 |
+| \`hmm_transition\` | 向量时间序列 | 状态转移矩阵展平，长度为 n_states²，按行优先排列：A[0,0], A[0,1], ..., A[N-1,N-1] |
+| \`hmm_duration\` | 向量时间序列 | 各状态的期望持续时间（天），长度为 n_states |
+
+## 训练机制
+- **离线批量训练**：每 \`retrain_interval\` 天用过去 \`train_window\` 天数据重新训练
+- **预热期**：前 \`warmup_period\` 天不输出状态（模型未训练）
+- **滑动窗口**：缓冲区满后每次左移一位追加新观测
+
+## Signal 公式中的用法
+
+HMM 输出的是**时间序列**，在 Signal 公式中需带时间索引 \`[t]\` 引用：
+
+\`\`\`
+// 基于状态编号的简单规则
+buy: hmm_state[t] == 0    // 状态 0 时买入（假设 0 = 牛市）
+sell: hmm_state[t] == 2   // 状态 2 时卖出（假设 2 = 熊市）
+
+// 基于状态概率的高置信度规则
+buy: hmm_state[t] == 0 and hmm_probs[t] > 0.7   // 高置信度牛市
+
+// 结合技术指标的状态过滤
+buy: close[t] > MA_5[t] and hmm_state[t] == 0   // 金叉 + 牛市状态
+sell: close[t] < MA_5[t] and hmm_state[t] == 2  // 死叉 + 熊市状态
+
+// 基于状态转移的预测（转移矩阵展平后索引）
+// 例：n_states=3 时，A[0,1] 在 hmm_transition[1]，A[1,2] 在 hmm_transition[5]
+\`\`\`
+
+## 参数建议
+- **n_states**：一般 2-3 即可
+  - 2 状态：牛/熊
+  - 3 状态：牛/震荡/熊（推荐）
+- **train_window**：252（一年交易日）
+- **retrain_interval**：60（约一季度重训一次）
+- **warmup_period**：60（给模型足够的预热时间）
+- **features**：建议包含 close 和一个波动率指标，如 \`close,volatility\`
+
+## 注意事项
+1. 状态编号（0, 1, 2）的具体含义由模型训练决定，**不保证** 0=牛市、1=震荡、2=熊市
+2. 建议先用简单策略测试，观察输出状态与实际市场状态的对应关系
+3. 预热期内 HMM 节点返回 Skip，下游 Signal 节点收不到数据会跳过处理
+4. HMM 节点必须在 Input 节点之后，Signal 节点之前`
+}
+
+// === EMD 分解使用指南 ===
+
+function getEMDUsageGuide(): string {
+  return `# EMD 分解使用指南
+
+## 何时使用
+- 需要将非平稳时间序列（如价格、收益率）分解为多个本征模态函数（IMF）
+- 需要降噪或多尺度分析（如分离高频噪声和低频趋势）
+- 需要提取不同时间尺度的特征供 Signal 节点使用
+
+## 典型策略流
+\`\`\`
+[Input 数据输入] → [EMD 分解] → [Signal 交易信号] → [Portfolio] → [Execution]
+                        ↓
+                  输出多个 IMF 分量到 context
+\`\`\`
+
+## 输出变量说明（Signal 公式中可用）
+
+EMD 节点对每个输入时间序列输出 \`numIMFs\` 个 IMF 分量，命名规则为：
+
+| 变量名 | 说明 |
+|--------|------|
+| \`{label}.IMF_0\` | 第 0 个 IMF 分量（最高频，波动最大） |
+| \`{label}.IMF_1\` | 第 1 个 IMF 分量 |
+| \`{label}.IMF_2\` | 第 2 个 IMF 分量 |
+| \`...\` | ... |
+| \`{label}.IMF_{N-1}\` | 第 N-1 个 IMF 分量（最低频，接近趋势） |
+
+- \`label\` 是 EMD 节点在策略图中的标签名（可在节点参数中修改）
+- 分量编号从 0 开始，\`IMF_0\` 频率最高，编号越大频率越低
+- 所有输出均为**双精度浮点时间序列**（Double_TimeSeries）
+
+## Signal 公式中的用法
+
+EMD 输出的是**时间序列**，在 Signal 公式中需带时间索引 \`[t]\` 引用：
+
+\`\`\`
+// 使用最高频分量作为动量指标
+buy: node1.IMF_0[t] > 0.5
+sell: node1.IMF_0[t] < -0.5
+
+// 使用低频分量判断趋势方向
+buy: node1.IMF_3[t] > 0  // 低频分量为正，上升趋势
+sell: node1.IMF_3[t] < 0 // 低频分量为负，下降趋势
+
+// 组合多个分量
+buy: node1.IMF_0[t] > 0 and node1.IMF_2[t] > 0  // 高频和低频同向
+sell: node1.IMF_0[t] < node1.IMF_1[t]  // 高频低于中频，短期走弱
+
+// 与原始价格结合使用
+buy: close[t] > MA_5[t] and node1.IMF_0[t] > 0  // 金叉 + 高频动量为正
+\`\`\`
+
+## 参数建议
+- **numIMFs**：一般 3~8 即可
+  - 3~5：适合短期交易，保留主要波动特征
+  - 5~8：适合多尺度分析，分离更精细
+  - 过大（>10）会导致计算缓慢且分量物理意义不清晰
+- **输入数据**：建议使用收益率而非原始价格，或先做标准化
+
+## 注意事项
+1. IMF 分量的物理意义由数据本身决定，不保证 IMF_0 一定是噪声或趋势
+2. EMD 分解计算量较大，建议在前置节点做好数据过滤（如只选关注的股票）
+3. EMD 节点必须在 Input 节点之后，Signal 节点之前
+4. 分解后的 IMF 分量数量等于输入的 numIMFs 参数，Signal 公式中可用的变量名由节点的 label 决定`
+}
+
 // === 策略图约束规则 ===
 
 function getFlowConstraints(): string {
@@ -489,6 +624,18 @@ export const strategyTool = tool(
           info.push('[提示] 此节点使用 Signal 公式语法（buy/sell 表达式）。使用 `action="signal_syntax"` 获取完整语法文档。')
         }
 
+        // 为 HMM 节点添加特殊提示
+        if (n.nodeType === "hmm" || n.id === "hmm") {
+          info.push('')
+          info.push('[提示] HMM 市场状态识别节点有详细的使用指南。使用 `action="hmm_usage"` 获取完整说明（输出变量含义、Signal 公式用法、参数建议）。')
+        }
+
+        // 为 EMD 节点添加特殊提示
+        if (n.nodeType === "emd" || n.id === "emd") {
+          info.push('')
+          info.push('[提示] EMD 分解节点有详细的使用指南。使用 `action="emd_usage"` 获取完整说明（输出变量命名规则、Signal 公式用法、参数建议）。')
+        }
+
         // 为其他关键节点添加策略图约束提示
         if (["input", "execution", "portfolio", "function", "xgboost", "spread", "protection"].includes(n.nodeType)) {
           info.push('')
@@ -536,18 +683,26 @@ export const strategyTool = tool(
         return getFlowConstraints()
       }
 
+      case "hmm_usage": {
+        return getHMMUsageGuide()
+      }
+
+      case "emd_usage": {
+        return getEMDUsageGuide()
+      }
+
       default:
-        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints`
+        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage`
     }
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML → Signal → Portfolio → Execution\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别，放在 Input 和 Signal 之间）、EMD（信号分解）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
         "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
-        "signal_syntax", "flow_constraints"
+        "signal_syntax", "flow_constraints", "hmm_usage", "emd_usage"
       ]).describe("操作类型"),
       keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
       data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy 时必填）"),

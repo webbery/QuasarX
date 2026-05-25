@@ -15,6 +15,7 @@ import './configs/portfolio'
 import './configs/ml'
 import './configs/utility'
 import './configs/emd'
+import './configs/hmm'
 
 export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
 export { CATEGORY_ICONS } from './types'
