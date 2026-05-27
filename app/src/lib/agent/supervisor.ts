@@ -42,29 +42,28 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
   const { messages, userInput, iterationCount, maxIterations, shouldEnd } = state;
 
   // ★ 调试日志：打印收到的 state
-  console.log('[LangGraph Supervisor Debug - State]', {
+  console.log('=== [Supervisor Node] 开始执行 ===');
+  console.log('[Supervisor] 输入状态:', {
     messagesLength: messages.length,
-    messagesPreview: messages.map(m => ({
-      type: m.constructor.name,
-      role: m._getType?.() || 'unknown',
-      contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
-      additional_kwargs: m.additional_kwargs,
-    })),
-    userInput: userInput?.substring(0, 80),
+    userInput: userInput?.substring(0, 100),
     iterationCount,
+    maxIterations,
     shouldEnd,
     sessionId: state.sessionId,
+    activeAgent: state.activeAgent,
+    routerDecision: state.routerDecision,
   });
 
-  // 调试：打印收到的 messages
-  console.log('[LangGraph Supervisor] 接收到的 messages:', {
-    count: messages.length,
-    types: messages.map(m => m.constructor.name),
-    preview: messages.slice(-4).map(m => {
-      const content = typeof m.content === 'string' ? m.content.substring(0, 50) : '[complex]';
-      return `${m.constructor.name}: ${content}`;
-    }),
-  });
+  // 详细打印 messages 内容
+  if (messages.length > 0) {
+    console.log('[Supervisor] 历史消息详情:');
+    messages.forEach((m, idx) => {
+      const content = typeof m.content === 'string' ? m.content.substring(0, 120) : '[complex]';
+      console.log(`  [${idx}] ${m.constructor.name} (role: ${m._getType?.() || 'unknown'}): ${content}`);
+    });
+  } else {
+    console.log('[Supervisor] ⚠️ 历史消息为空，本次仅依赖当前 userInput');
+  }
 
   // 如果 Agent 已经产生回复，直接结束图循环
   if (shouldEnd) {
@@ -191,10 +190,17 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
 
   emitEvent?.({
     agent: "supervisor",
-    content: `路由决策: ${decision}`,
+    content: `路由决策: ${decision}${iterationCount > 0 ? ` (第${iterationCount}轮)` : ''}`,
     eventType: "thought",
     timestamp: Date.now(),
   });
+
+  console.log('[Supervisor] 路由决策输出:', {
+    decision,
+    finalResponse: finalResponse?.substring(0, 80),
+    willEnd: decision === 'respond',
+  });
+  console.log('=== [Supervisor Node] 执行结束 ===\n');
 
   return {
     routerDecision: decision,
@@ -361,6 +367,7 @@ export function buildSupervisorGraph(
  * @param sessionId 会话 ID
  * @param checkpointer Checkpoint 持久化器
  * @param emitEvent 事件回调
+ * @param historyMessages 手动注入的历史消息历史（优先级高于 checkpoint 恢复）
  * @returns 最终状态
  */
 export async function runSupervisorGraph(
@@ -368,6 +375,7 @@ export async function runSupervisorGraph(
   sessionId: string,
   checkpointer: IndexedDBSaver,
   emitEvent?: (event: AgentEvent) => void,
+  historyMessages?: Array<HumanMessage | AIMessage>,
 ) {
   const graph = buildSupervisorGraph(emitEvent, checkpointer);
 
@@ -375,7 +383,6 @@ export async function runSupervisorGraph(
   const debugConfig = { configurable: { thread_id: sessionId } };
   const savedTuple = await checkpointer.getTuple(debugConfig);
   if (savedTuple) {
-    // ★ 详细日志：打印 checkpoint 中的消息
     const channelValues = savedTuple.checkpoint.channel_values as Record<string, any> | undefined;
     const checkpointMessages: any[] = Array.isArray(channelValues?.messages) ? channelValues.messages : [];
     console.log('[LangGraph Checkpoint] 找到历史 checkpoint:', {
@@ -383,6 +390,7 @@ export async function runSupervisorGraph(
       messagesCount: checkpointMessages.length,
       messagesPreview: checkpointMessages.map((m: any) => ({
         type: m.lc?.id?.[m.lc.id.length - 1] || m.constructor?.name || 'unknown',
+        role: m._getType?.(),
         contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
       })),
     });
@@ -390,8 +398,17 @@ export async function runSupervisorGraph(
     console.log('[LangGraph Checkpoint] 未找到历史，首次对话');
   }
 
+  // 决定使用哪组历史消息：优先使用手动注入的 historyMessages
+  const initialMessages = historyMessages || [];
+  console.log('[LangGraph] 初始状态构建:', {
+    source: historyMessages ? '手动注入 (chatStore)' : '空数组',
+    messagesLength: initialMessages.length,
+    userInput: userInput?.substring(0, 50),
+    sessionId,
+  });
+
   const initialState: GraphStateType = {
-    messages: [],
+    messages: initialMessages,
     activeAgent: null,
     routerDecision: null,
     iterationCount: 0,
@@ -403,12 +420,6 @@ export async function runSupervisorGraph(
     userInput,
   };
 
-  console.log('[LangGraph] 初始状态:', {
-    initialMessagesLength: initialState.messages.length,
-    userInput: initialState.userInput?.substring(0, 50),
-    sessionId: initialState.sessionId,
-  });
-
   const result = await graph.invoke(initialState, {
     configurable: {
       thread_id: sessionId,
@@ -416,14 +427,16 @@ export async function runSupervisorGraph(
     recursionLimit: 50,
   });
 
-  console.log('[LangGraph] 执行完成，最终状态:', {
+  console.log('[LangGraph] 执行完成:', {
     resultMessagesLength: result.messages?.length || 0,
     resultMessagesPreview: result.messages?.slice(-4).map((m: any) => ({
       type: m.constructor?.name || 'unknown',
+      role: m._getType?.(),
       contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80) : '[complex]',
     })),
     finalResponse: result.finalResponse?.substring(0, 80),
     shouldEnd: result.shouldEnd,
+    iterationCount: result.iterationCount,
   });
 
   return result;

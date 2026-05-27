@@ -133,7 +133,7 @@ import { useChatStore, type ThoughtStep, type TokenUsage } from '@/stores/chatSt
 import { askAI, type AskAIProgress } from '@/lib/ChatApi'
 import MarkdownIt from 'markdown-it'
 import { runSupervisorGraph, IndexedDBSaver } from '@/lib/agent'
-import { AIMessage } from '@langchain/core/messages'
+import { AIMessage, HumanMessage } from '@langchain/core/messages'
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
 const chatStore = useChatStore()
@@ -162,7 +162,7 @@ const agentLabels: Record<string, string> = {
   risk: '🛡️ Risk', portfolio: '📊 Portfolio',
 }
 const eventLabels: Record<string, string> = {
-  thought: '💭 思考', tool_call: '🔧 调用工具', tool_result: '📥 工具返回',
+  thought: '💭 思考', tool_call: '[调用工具]', tool_result: '[工具返回]',
   response: '✅ 回复', error: '❌ 错误',
 }
 function agentLabel(a: string) { return agentLabels[a] || a }
@@ -198,10 +198,13 @@ watch(() => chatStore.messages, async () => {
   await nextTick(); if (messageListRef.value) messageListRef.value.scrollTop = messageListRef.value.scrollHeight
 }, { deep: true })
 
-function handleClear() {
+async function handleClear() {
   if (confirm('确定要清空聊天吗？')) {
     chatStore.clearMessages(); chatStore.addGreeting(); agentEvents.value = []
-    checkpointer.deleteThread('default')
+    // 删除旧 thread 的 checkpoint
+    await checkpointer.deleteThread('default')
+    // 写入一个空的初始 checkpoint，确保下次 invoke 不会恢复旧历史
+    console.log('[LangGraph] 已清空 checkpoint，新对话开始')
   }
 }
 
@@ -243,8 +246,18 @@ async function sendMessage() {
         role: m.role,
         content: m.content.substring(0, 50),
       })))
-      
-      const result = await runSupervisorGraph(text, 'default', checkpointer, onEvent)
+
+      // 从 chatStore 构建历史消息（排除当前轮次的空 assistant 消息）
+      const historyMessages: Array<HumanMessage | AIMessage> = chatStore.messages
+        .filter(m => m.role === 'user' || (m.role === 'assistant' && m.content))
+        .map(m => m.role === 'user'
+          ? new HumanMessage(m.content)
+          : new AIMessage(m.content)
+        )
+
+      console.log('[LangGraph] 注入历史消息数量:', historyMessages.length)
+
+      const result = await runSupervisorGraph(text, 'default', checkpointer, onEvent, historyMessages)
 
       // 提取最终回复：优先用 finalResponse，如果为空则从 messages 中找最后一条 AIMessage
       let finalAnswer = result.finalResponse || ''
