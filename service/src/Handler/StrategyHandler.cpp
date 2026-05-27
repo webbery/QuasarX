@@ -40,11 +40,13 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
     auto flow = sys->GetFlowSubsystem();
     auto names = sys->GetStrategyNames();
 
+    bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
+
     nlohmann::json result = nlohmann::json::array();
     for (auto& name : names) {
         nlohmann::json item;
         item["name"] = name;
-        item["running"] = flow ? flow->IsRunning(name) : false;
+        item["running"] = isBacktest ? true : (flow ? flow->IsRunning(name) : false);
         result.push_back(item);
     }
 
@@ -175,6 +177,10 @@ void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res
     if (auto flow = strategySys->GetFlowSubsystem()) {
         running = flow->IsRunning(name);
     }
+    // 回测模式下策略跑完后线程已退出，IsRunning 会返回 false，需按全局运行模式判断
+    if (_server->GetRunningMode() == RuningType::Backtest) {
+        running = true;
+    }
     res.status = 200;
     nlohmann::json result;
     result["message"] = "success";
@@ -191,6 +197,9 @@ void StrategyHandler::run(const String& name, httplib::Response& res) {
     if (auto flow = strategySys->GetFlowSubsystem()) {
         running = flow->IsRunning(name);
     }
+    if (_server->GetRunningMode() == RuningType::Backtest) {
+        running = true;
+    }
     nlohmann::json result;
     result["message"] = "success";
     result["name"] = name;
@@ -205,6 +214,9 @@ void StrategyHandler::stop(const String& name, httplib::Response& res) {
     bool running = false;
     if (auto flow = strategySys->GetFlowSubsystem()) {
         running = flow->IsRunning(name);
+    }
+    if (_server->GetRunningMode() == RuningType::Backtest) {
+        running = true;
     }
     nlohmann::json result;
     result["message"] = "success";

@@ -43,10 +43,12 @@ python run_tests.py --dry-run
 | `test_prediction.py` | 预测操作设置（`/predict/operation`） |
 | `test_risk.py` | 风险管理（止损/VaR/回撤，大部分已注释） |
 | `test_shadow_mode.py` | 影子模式（日志解析、虚拟账户、回测集成） |
-| `test_strategy.py` | 策略部署 + 批量回测（遍历 `script/*.json`） |
+| `test_strategy.py` | **回测模式**: 策略列表/部署/批量回测；**非回测模式**: 策略生命周期管理（删除/停止/重复部署） |
 | `test_trade_history.py` | 交易历史查询（分页/时间过滤/回测场景） |
 | `test_user.py` | 服务状态、指数行情、配置获取/更新、权限测试 |
 | `test_mc.py` | 空文件（预留） |
+
+> 💡 **test_strategy.py 按模式拆分**: 通过登录响应中的 `mode` 字段判断运行模式，回测模式仅运行策略列表/部署/批量回测测试，非回测模式运行策略生命周期管理测试。
 
 ### 2. tickflow（实时行情模式）
 

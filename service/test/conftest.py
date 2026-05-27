@@ -3,6 +3,10 @@ import pytest
 
 class AuthAPI:
     """模拟认证API"""
+    def __init__(self):
+        self._mode = None
+        self._token = None
+
     def login(self):
         """模拟登录请求"""
         params = {"name": 'admin', 'pwd': 'admin'}
@@ -12,11 +16,42 @@ class AuthAPI:
         assert isinstance(data, object)
         assert 'mode' in data
         token = data['tk']
+        self._token = token
+        self._mode = data['mode']
         assert len(token) > 0
         return token
 
+    @property
+    def token(self):
+        """认证 token 字符串"""
+        return self._token
+
+    @property
+    def mode(self):
+        """当前服务运行模式，如 'backtest' / 'simulation' / 'realtime'"""
+        return self._mode
+
+    def is_backtest_mode(self):
+        """判断是否为回测模式"""
+        return self._mode and 'backtest' in str(self._mode).lower()
+
+
 @pytest.fixture(scope="session")
-def auth_token(request):
-    """提供认证API实例"""
-    return AuthAPI().login()
+def auth_api():
+    """提供 AuthAPI 实例，包含 mode 信息"""
+    api = AuthAPI()
+    api.login()
+    return api
+
+
+@pytest.fixture(scope="session")
+def auth_token(auth_api):
+    """提供认证 token 字符串（保持向后兼容）"""
+    return auth_api.token
+
+
+@pytest.fixture(scope="session")
+def is_backtest(auth_api):
+    """判断当前是否为回测模式"""
+    return auth_api.is_backtest_mode()
     

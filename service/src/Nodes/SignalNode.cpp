@@ -127,13 +127,12 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             item.second = TradeAction::HOLD;
         }
     }
-    // INFO("==============");
-    // for (auto it = buys.begin(); it != buys.end(); ++it) {
-    //     if (it->second == TradeAction::BUY) INFO("{} BUY signal {}", it->first, heldSymbols[it->first]);
-    // }
-    // for (auto it = sells.begin(); it != sells.end(); ++it) {
-    //     if (it->second == TradeAction::SELL) INFO("{} SELL signal {}", it->first, heldSymbols[it->first]);
-    // }
+    for (auto it = buys.begin(); it != buys.end(); ++it) {
+        if (it->second == TradeAction::BUY) INFO("{} BUY signal {}", it->first, heldSymbols[it->first]);
+    }
+    for (auto it = sells.begin(); it != sells.end(); ++it) {
+        if (it->second == TradeAction::SELL) INFO("{} SELL signal {}", it->first, heldSymbols[it->first]);
+    }
     Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
         for (auto& item: trade) {

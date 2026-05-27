@@ -73,7 +73,10 @@ void CapitalRiskHandler::post(const httplib::Request& req, httplib::Response& re
                 res.set_content(R"({"error": "initialCapital must be positive"})", "application/json");
                 return;
             }
-            _riskManager->SetInitialCapital(capital);
+            config._initialCapital = capital;
+            if (config._lastDayEquity == 0) {
+                config._lastDayEquity = capital;
+            }
         }
 
         _riskManager->SetConfig(config);
@@ -165,7 +168,7 @@ void DailyLossRiskHandler::post(const httplib::Request& req, httplib::Response& 
                 res.set_content(R"({"error": "lastDayEquity must be positive"})", "application/json");
                 return;
             }
-            _riskManager->SetLastDayEquity(equity);
+            config._lastDayEquity = equity;
         }
 
         _riskManager->SetConfig(config);

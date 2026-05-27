@@ -67,8 +67,8 @@ void BacktestContext::setPosition(symbol_t symbol, int64_t qty) {
     _positionMgr.SetPosition(symbol, qty);
 }
 
-void BacktestContext::adjustPosition(symbol_t symbol, int delta) {
-    _positionMgr.AdjustPosition(symbol, delta, 0.0);
+void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price) {
+    _positionMgr.AdjustPosition(symbol, delta, price);
 }
 
 void BacktestContext::setAvailableFunds(double funds) {

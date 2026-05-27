@@ -677,9 +677,9 @@ paths:
                 $ref: "#/components/schemas/StrategyMetrics"
   /strategy:
     get:
-      summary: 获取所有策略的名字
-      description: 获取所有策略的名字
-      tags: 
+      summary: 获取所有策略列表
+      description: 获取所有策略的名称和运行状态
+      tags:
         - Strategy
       responses:
         '200':
@@ -689,13 +689,11 @@ paths:
               schema:
                 type: array
                 items:
-                  type: string
-                  description: 策略的名字
-                  example: random
+                  $ref: "#/components/schemas/StrategyStatus"
     post:
-      summary: 部署指定的某个策略
-      description: 部署指定的某个策略
-      tags: 
+      summary: 部署/运行/停止指定的某个策略
+      description: 根据 mode 参数执行不同操作：0-部署并运行策略，1-运行已部署的策略，2-停止运行中的策略
+      tags:
         - Strategy
       requestBody:
         description: 参数
@@ -707,6 +705,39 @@ paths:
       responses:
         '200':
           description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StrategyResponse"
+    delete:
+      summary: 删除指定的某个策略
+      description: 停止并删除指定的策略及其脚本文件
+      tags:
+        - Strategy
+      requestBody:
+        description: 参数
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 策略名称
+              required:
+                - name
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: success
   /backtest:
     post:
       summary: 对某个策略做回测
@@ -1869,6 +1900,36 @@ components:
           description: 策略停止的时间
           example: '2020/01/01 00:00:00'
     
+    StrategyStatus:
+      type: object
+      description: 策略状态信息
+      properties:
+        name:
+          type: string
+          description: 策略名称
+          example: random
+        running:
+          type: boolean
+          description: 策略是否正在运行
+          example: true
+
+    StrategyResponse:
+      type: object
+      description: 策略操作响应
+      properties:
+        message:
+          type: string
+          description: 操作结果消息
+          example: success
+        name:
+          type: string
+          description: 策略名称
+          example: xgboost
+        running:
+          type: boolean
+          description: 策略当前运行状态
+          example: true
+
     StrategyRequest:
       type: object
       properties:
@@ -1878,8 +1939,12 @@ components:
           example: 'xgboost'
         mode:
           type: integer
-          description: 模式, 0-训练模式, 1-(部署)实盘模式, 2-模拟盘模式
+          description: 模式, 0-部署并运行, 1-运行已部署的策略, 2-停止运行中的策略
           example: 0
+        script:
+          type: object
+          description: 策略图 JSON (仅在 mode=0 部署时需要)
+          example: {}
         params:
           type: object
           description: 训练模式下的参数

@@ -1,8 +1,13 @@
 {
     "id": "ma_function_strategy",
     "name": "双均线趋势跟踪策略(FunctionNode版)",
+    "version": 1,
     "description": "使用 FunctionNode 计算均线 + SignalNode 生成交叉信号 + DebugNode 调试输出",
     "shadow": true,
+    "backtest": {
+        "start": "2024-01-01",
+        "end": "2024-12-31"
+    },
     "nodes": [
         {
             "id": "1",
@@ -235,22 +240,6 @@
             "target": "4",
             "sourceHandle": "3",
             "targetHandle": "4",
-            "type": "default"
-        },
-        {
-            "id": "2->5",
-            "source": "2",
-            "target": "5",
-            "sourceHandle": "2",
-            "targetHandle": "5",
-            "type": "default"
-        },
-        {
-            "id": "3->5",
-            "source": "3",
-            "target": "5",
-            "sourceHandle": "3",
-            "targetHandle": "5",
             "type": "default"
         },
         {

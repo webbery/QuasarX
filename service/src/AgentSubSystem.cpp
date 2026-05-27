@@ -90,10 +90,6 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
 
     RuningType mode = _handle->GetRunningMode();
     auto it = _flows.find(strategy);
-    if (it != _flows.end() && it->second.isShadowMode) {
-        mode = RuningType::Shadow;
-    }
-
     if (mode == RuningType::Backtest) {
         return StartBacktest(strategy, symbols, initialCapital);
     } else {

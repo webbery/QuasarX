@@ -41,7 +41,7 @@ public:
     // 持仓跟踪（委托给 StockPositionManager）
     int64_t getPosition(symbol_t symbol) const;
     void setPosition(symbol_t symbol, int64_t qty);
-    void adjustPosition(symbol_t symbol, int delta);
+    void adjustPosition(symbol_t symbol, int delta, double price);
 
     // 资金管理
     double getCapital() const { return _positionMgr.getCapital(); }

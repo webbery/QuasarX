@@ -48,7 +48,7 @@ class TestStrategy:
             pass
 
     @pytest.mark.timeout(10)
-    def test_strategy(self, auth_token):
+    def test_strategy(self, auth_token, is_backtest):
         """测试获取策略列表，验证新返回格式 [{name, running}, ...]"""
         kwargs = self._auth_kwargs(auth_token)
         response = requests.get(f"{BASE_URL}/strategy", **kwargs)
@@ -61,6 +61,10 @@ class TestStrategy:
             assert 'name' in item, "策略列表项缺少 'name' 字段"
             assert 'running' in item, "策略列表项缺少 'running' 字段"
             assert isinstance(item['running'], bool), "'running' 字段应为布尔值"
+
+            # 回测模式下 running 应始终为 true
+            if is_backtest:
+                assert item['running'] is True, "回测模式下 running 应为 True"
 
     @pytest.mark.timeout(10)
     def test_upload_model(self, auth_token):
@@ -80,8 +84,11 @@ class TestStrategy:
         check_response(response)
 
     @pytest.mark.timeout(30)
-    def test_deploy(self, auth_token):
+    def test_deploy(self, auth_token, is_backtest):
         """部署并运行策略，验证返回格式 + 策略列表状态"""
+        if is_backtest:
+            pytest.skip("回测模式下不支持策略部署操作")
+
         kwargs = self._auth_kwargs(auth_token)
 
         script_path = './script/ma_graph_strategy.json'
@@ -108,8 +115,11 @@ class TestStrategy:
         assert found['running'] is True
 
     @pytest.mark.timeout(30)
-    def test_delete_strategy(self, auth_token):
+    def test_delete_strategy(self, auth_token, is_backtest):
         """删除策略，验证从列表中消失"""
+        if is_backtest:
+            pytest.skip("回测模式下不支持策略删除操作")
+
         # 先部署一个用于删除的策略
         cleanup_name = 'test_delete_target'
         self.cleanup_strategy(auth_token, cleanup_name)
@@ -133,8 +143,11 @@ class TestStrategy:
         assert found is None, "删除的策略不应在策略列表中"
 
     @pytest.mark.timeout(60)
-    def test_strategy_lifecycle(self, auth_token):
+    def test_strategy_lifecycle(self, auth_token, is_backtest):
         """完整生命周期测试：部署 → 停止 → 再运行 → 再停止 → 删除"""
+        if is_backtest:
+            pytest.skip("回测模式下不支持策略生命周期操作（stop/run）")
+
         lifecycle_name = 'test_lifecycle'
         self.cleanup_strategy(auth_token, lifecycle_name)
 
@@ -176,8 +189,11 @@ class TestStrategy:
         assert self.find_strategy(strategies, lifecycle_name) is None
 
     @pytest.mark.timeout(30)
-    def test_redeploy_overwrite(self, auth_token):
+    def test_redeploy_overwrite(self, auth_token, is_backtest):
         """重复部署同名策略，应覆盖成功"""
+        if is_backtest:
+            pytest.skip("回测模式下不支持重复部署操作")
+
         redeploy_name = 'test_redeploy'
         self.cleanup_strategy(auth_token, redeploy_name)
 
@@ -201,8 +217,11 @@ class TestStrategy:
         self.cleanup_strategy(auth_token, redeploy_name)
 
     @pytest.mark.timeout(10)
-    def test_stop_nonexistent_strategy(self, auth_token):
+    def test_stop_nonexistent_strategy(self, auth_token, is_backtest):
         """停止不存在的策略，服务不应崩溃"""
+        if is_backtest:
+            pytest.skip("回测模式下不支持停止操作")
+
         kwargs = self._auth_kwargs(auth_token)
         kwargs['json'] = {'mode': 2, 'name': 'nonexistent_strategy_12345'}
 
@@ -214,10 +233,14 @@ class TestStrategy:
             pytest.fail("停止不存在策略时服务无响应")
 
     @pytest.mark.timeout(600)
-    def test_run_all_script(self, auth_token):
+    def test_run_all_script(self, auth_token, is_backtest):
+        """批量回测所有策略脚本，验证回测结果"""
+        if not is_backtest:
+            pytest.skip("批量回测仅在回测模式下运行")
+
         kwargs = self._auth_kwargs(auth_token)
 
-        no_reply = ['ml.json']
+        no_reply = ['ml.json', 'CTA']
         script_dir = './script'
         for item_name in os.listdir(script_dir):
             if item_name == 'ml.json':
