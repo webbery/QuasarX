@@ -1,216 +1,50 @@
 #pragma once
-#include "Bridge/exchange.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SlippageModel.h"
-#include "DataFrame/DataFrame.h"
-#include "Util/system.h"
-#include "Bridge/SIM/BacktestContext.h"
-#include "std_header.h"
-#include <nng/nng.h>
-#include <atomic>
-#include <shared_mutex>
-#include <memory>
 
-using DataFrame = hmdf::StdDataFrame<uint32_t>;
-class Server;
+#define STOCK_HISTORY_SIM "stock_hist_sim"
 
-// 历史数据仿真，使用历史数据并在中间进行插值模拟
-class StockHistorySimulation : public ExchangeInterface {
+/**
+ * @brief 股票历史数据回测
+ *
+ * 继承 HistorySimulationBase，实现股票特有逻辑：
+ * - LoadT1(): 日线数据 (A_hfq / AStock)
+ * - LoadT0(): 分钟级数据 (stock/)
+ * - 股票佣金/印花税默认配置
+ */
+class StockHistorySimulation : public HistorySimulationBase {
 public:
-  StockHistorySimulation(Server*);
-  ~StockHistorySimulation();
+    StockHistorySimulation(Server* server);
+    ~StockHistorySimulation();
 
-  virtual const char* Name() { return STOCK_HISTORY_SIM; }
-  virtual bool Init(const ExchangeInfo& handle);
-  virtual bool Release();
+    virtual const char* Name() override { return STOCK_HISTORY_SIM; }
 
-  virtual bool Login(AccountType t);
-  virtual bool IsLogin();
-  virtual void Logout(AccountType t);
+    bool Init(const ExchangeInfo& handle) override;
 
-  virtual bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info);
-  virtual void SetFilter(const QuoteFilter& filter);
-  void UseLevel(int level);
+    virtual bool GetPosition(AccountPosition&) override;
+    virtual AccountAsset GetAsset() override;
 
-  virtual bool GetPosition(AccountPosition&);
+    /// @brief 设置交易模式 (T0/T1)
+    void UseLevel(TradingMode mode) { _tradingMode = mode; }
 
-  virtual AccountAsset GetAsset();
+    /// @brief 获取当前交易模式
+    TradingMode GetTradingMode() const { return _tradingMode; }
 
-  /**
-   * @brief 提交订单（历史数据回测模式）
-   * @param run_id 回测运行 ID，用于区分不同的策略实例
-   * @param symbol 合约标的
-   * @param order 订单上下文
-   * @return 订单 ID
-   */
-  order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order);
+    /// @brief 设置 T0 数据频率 (1m/5m/15m)，仅分钟级回测使用
+    void SetT0Freq(const String& freq) { _t0Freq = freq; }
 
-  virtual void OnOrderReport(order_id id, const TradeReport& report);
-
-  virtual Boolean CancelOrder(order_id id, OrderContext* order);
-
-  virtual bool GetOrders(SecurityType type, OrderList& ol);
-  virtual bool GetOrder(const String& sysID, Order& ol);
-
-  virtual void QueryQuotes();
-
-  virtual void StopQuery() {}
-
-  virtual QuoteInfo GetQuote(symbol_t);
-
-  /**
-   * @brief 获取回测上下文可用资金
-   * @param run_id 回测运行 ID，用于区分不同的策略实例
-   * @return 可用资金金额
-   */
-  virtual double GetAvailableFunds(run_id_t run_id);
-  virtual bool GetCommission(symbol_t symbol, List<Commission>& comms);
-  virtual Boolean HasPermission(symbol_t symbol);
-  virtual void Reset();
-  virtual void GetFee(FeeInfo& fee, symbol_t symbol) {}
-
-  void SetCommission(const Commission& buy, const Commission& sell);
-  void SetSlippageModel(std::unique_ptr<ISlippageModel> model) { _slippageModel = std::move(model); }
-
-  virtual int GetStockLimitation(char type);
-
-  virtual bool SetStockLimitation(char type, int limitation);
-
-  // ============ 多线程回测支持接口 ============
-
-  /**
-   * @brief 创建新的回测上下文
-   * @param strategy_name 策略名称
-   * @param symbols 该策略涉及的标的列表
-   * @param initial_capital 初始资金
-   * @return 回测上下文 ID（用于后续获取）
-   */
-  run_id_t createBacktestContext(
-      const String& strategy_name,
-      const Set<symbol_t>& symbols,
-      double initial_capital = 100000.0
-  );
-
-  /**
-   * @brief 获取指定回测上下文
-   * @param run_id 回测运行 ID
-   * @return 回测上下文指针，不存在返回 nullptr
-   */
-  BacktestContext* getBacktestContext(run_id_t run_id);
-
-  /**
-   * @brief 获取指定回测上下文（const 版本）
-   */
-  const BacktestContext* getBacktestContext(run_id_t run_id) const;
-
-  /**
-   * @brief 销毁回测上下文
-   */
-  void destroyBacktestContext(run_id_t run_id);
-
-  /**
-   * @brief 推进指定回测上下文的时间
-   * @param context 回测上下文
-   * @return 是否还有下一个时间点
-   */
-  bool stepForward(BacktestContext* context);
-
-  /**
-   * @brief 获取指定回测上下文的报价
-   * @param symbol 标的
-   * @param strategy 策略名称（用于查找对应的回测上下文）
-   */
-  QuoteInfo GetQuote(symbol_t symbol, run_id_t run_id);
-
-  /**
-   * @brief 线程安全的订单提交（多线程回测模式）
-   * @param symbol 标的
-   * @param order 订单上下文
-   * @param strategy 策略名称（用于查找对应的回测上下文）
-   */
-  order_id AddOrder(const symbol_t& symbol, OrderContext* order, uint32_t strategy_hash);
-
-  /**
-   * @brief 获取原始价格（未复权），用于回测时实际买卖
-   */
-  double GetPrimitivePrice(symbol_t symbol, uint32_t index) const;
-
-  /**
-   * @brief 获取复权价格，用于指标计算
-   */
-  double GetAdjPrice(symbol_t symbol, uint32_t index) const;
-
-  // 获取指定 symbol 的持仓数量
-  int64_t GetPositionQuantity(symbol_t symbol) const;
-
-  // 合约信息查询接口
-  virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
-  virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) override;
-  virtual bool GetAllOptionSymbols(List<SymbolInfo>& symbols) override;
-  virtual SymbolInfo GetSymbolInfo(const String& code) override;
-  virtual void RefreshSymbolList() override;
-
-  // 获取回测进度（基于策略）
-  double Progress(const String& strategy);
-
-  // ============ 回测时间范围配置 ============
-  /**
-   * @brief 设置回测时间范围（可选，不设置则使用数据文件的全范围）
-   */
-  void SetBacktestTimeRange(time_t start, time_t end);
-  bool HasBacktestTimeRange() const;
-  time_t GetBacktestStartTime() const;
-  time_t GetBacktestEndTime() const;
-
-  // ============ 后复权数据访问 ============
-  /**
-   * @brief 获取指定标的的后复权收盘价和 datetime 序列
-   * @return pair<datetimes, close_prices>
-   */
-  std::pair<std::vector<time_t>, std::vector<double>> GetHFQCloseData(symbol_t symbol) const;
-
-private:
-  // ============ 多线程支持方法 ============
-  void matchOrders(BacktestContext* context, symbol_t symbol);
-  bool LoadCSVToDataFrame(const String& file_path, DataFrame& df, Vector<String>& header);
-  void LoadT0(const String& code);
-  void LoadT1(const String& code);
-  // TODO: 订单撮合
-  TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);
-
-  bool OrderReport(BacktestContext* context, order_id id, const TradeReport& report);
-
-  // 清空所有回测数据（行情、订单、持仓等）
-  void Clear();
+    /// @brief 获取后复权收盘价和 datetime 序列
+    std::pair<std::vector<time_t>, std::vector<double>> GetHFQCloseData(symbol_t symbol) const override;
 
 protected:
-  String _org_path;
-  nng_socket _sock;
-  std::atomic<bool> _finish{false};
-  std::atomic<bool> _dataLoadSuccess{false};
+    bool LoadData(const String& code) override;
+    std::pair<Commission, Commission> GetDefaultCommission() const override;
+    void OnDataLoaded() override;
 
-  // ============ 只读共享数据（线程安全）============
-  mutable std::shared_mutex _dataMutex;
-  Map<symbol_t, DataFrame> _csvs;       // 复权数据（用于指标计算）
-  Map<symbol_t, DataFrame> _org_csvs;   // 原始数据（用于实际买卖）
-  Map<symbol_t, Vector<String>> _headers;
-  Map<symbol_t, Vector<String>> _org_headers;
+private:
+    void LoadT0(const String& code);
+    void LoadT1(const String& code);
 
-  int _freqType;  // 数据频率（1-day, 0-)
-
-  // ============ 线程隔离数据 ============
-  // 回测上下文池
-  ConcurrentMap<uint16_t, std::unique_ptr<BacktestContext>> _backtestContexts;
-  std::atomic<uint16_t> _nextRunId{1};
-
-  // ============ 全局状态 ============
-  std::atomic<size_t> _cur_id;
-  ConcurrentMap<size_t, OrderContext*> _reports;
-  Commission _buy;
-  Commission _sell;
-  std::unique_ptr<ISlippageModel> _slippageModel;
-
-  // 回测时间范围配置（可选）
-  bool _hasBacktestTimeRange = false;
-  time_t _backtestStartTime = 0;
-  time_t _backtestEndTime = 0;
+    TradingMode _tradingMode;  // 交易模式（T0/T1，决定数据加载方式）
+    String _t0Freq;            // T0 数据频率（1m/5m/15m），仅分钟级使用
 };

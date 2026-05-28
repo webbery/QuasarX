@@ -1,4 +1,8 @@
 {
+    "etf": {
+        "t0": [],
+        "t1": []
+    },
     "broker": [
         {
             "commission": {

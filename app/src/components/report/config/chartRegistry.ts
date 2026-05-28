@@ -68,6 +68,16 @@ export const CHART_REGISTRY: ChartDefinition[] = [
     defaultOrder: 3,
     span: 'full',
     component: () => import('../MetricsTable.vue')
+  },
+  {
+    id: 'monteCarloPaths',
+    label: 'Monte Carlo Paths',
+    icon: '🎲',
+    description: '蒙特卡洛模拟路径可视化（最差/最好/基准对比）',
+    defaultVisible: false,
+    defaultOrder: 4,
+    span: 'full',
+    component: () => import('../charts/MonteCarloPathsChart.vue')
   }
   // TODO: 迁移完成后续图表后在此添加
   // - PositionChanges

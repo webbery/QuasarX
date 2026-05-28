@@ -21,12 +21,14 @@
 #include "Nodes/ScriptNode.h"
 #include "Nodes/ExecuteNode.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 
 #include "Metric/Return.h"
 #include "Metric/Sharp.h"
 #include "Metric/Drawdown.h"
 #include "Metric/RiskMetric.h"
 #include "Metric/Covariance.h"
+#include "Metric/MonteCarloSimulator.h"
 
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     auto default_config = handle->GetConfig().GetDefault();
@@ -98,7 +100,7 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
 }
 
 run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
-    auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
+    auto* exchange = dynamic_cast<HistorySimulationBase*>(_handle->GetAvaliableStockExchange());
     if (!exchange) {
         WARN("Failed to get stock exchange for backtest");
         return 0;
@@ -124,7 +126,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
 
         auto& flow = _flows[strategy];
         // 获取回测上下文
-        auto* exchange = dynamic_cast<StockHistorySimulation*>(_handle->GetAvaliableStockExchange());
+        auto* exchange = dynamic_cast<HistorySimulationBase*>(_handle->GetAvaliableStockExchange());
         BacktestContext* btContext = exchange ? exchange->getBacktestContext(runId) : nullptr;
 
         try {
@@ -221,27 +223,96 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns, 0.95);
                     flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns, 0.95);
 
-                    // Bootstrap 蒙特卡洛风险分析
-                    auto boot = bootstrap_analysis(daily_returns, 1.0, 20000, 0);
-                    flow._collections[StatisticIndicator::BootRuinProb50]       = boot._ruin_prob_50;
-                    flow._collections[StatisticIndicator::BootRuinProb30]       = boot._ruin_prob_30;
-                    flow._collections[StatisticIndicator::BootReturnP5]         = boot._return_p5;
-                    flow._collections[StatisticIndicator::BootReturnP50]        = boot._return_p50;
-                    flow._collections[StatisticIndicator::BootReturnP95]        = boot._return_p95;
-                    flow._collections[StatisticIndicator::BootMaxDDP50]         = boot._max_dd_p50;
-                    flow._collections[StatisticIndicator::BootMaxDDP95]         = boot._max_dd_p95;
-                    flow._collections[StatisticIndicator::BootMedianAnnualRet]  = boot._median_annual_ret;
-                    flow._collections[StatisticIndicator::BootTail1PctAvgDD]    = boot._tail_1pct_avg_dd;
-                    flow._collections[StatisticIndicator::BootMethod]           = static_cast<float>(boot._method);
-                    flow._collections[StatisticIndicator::BootBlockSize]        = static_cast<float>(boot._block_size);
-                    flow._collections[StatisticIndicator::BootAutocorrelation]  = boot._autocorrelation;
-                    flow._collections[StatisticIndicator::BootNSimulations]     = static_cast<float>(boot._n_simulations);
-                    // 压力测试
-                    flow._collections[StatisticIndicator::BootStressRuinProb50] = boot._stress_ruin_prob_50;
-                    flow._collections[StatisticIndicator::BootStressRuinProb30] = boot._stress_ruin_prob_30;
-                    flow._collections[StatisticIndicator::BootStressReturnP5]   = boot._stress_return_p5;
-                    flow._collections[StatisticIndicator::BootStressReturnP50]  = boot._stress_return_p50;
-                    flow._collections[StatisticIndicator::BootStressMaxDDP50]   = boot._stress_max_dd_p50;
+                    // MonteCarlo Bootstrap 风险分析
+                    auto* exchange = dynamic_cast<HistorySimulationBase*>(_handle->GetAvaliableStockExchange());
+                    TradingMode trading_mode = exchange ? exchange->GetTradingMode() : TradingMode::T1;
+                    int bars_per_year = (trading_mode == TradingMode::T1) ? 252 : 60480;
+
+                    McSimConfig mcConfig;
+                    mcConfig.trading_mode = trading_mode;  // 元信息，不改变抽样逻辑
+                    mcConfig.bars_per_year = bars_per_year;
+                    mcConfig.n_simulations = 20000;
+
+                    MonteCarloSimulator mc;
+                    mc.Init(mcConfig);
+                    mc.FeedReturns(std::vector<double>(daily_returns.begin(), daily_returns.end()));
+                    auto mcResult = mc.Run();
+
+                    flow._collections[StatisticIndicator::BootRuinProb50]       = mcResult.ruin_prob_high;
+                    flow._collections[StatisticIndicator::BootRuinProb30]       = mcResult.ruin_prob_low;
+                    flow._collections[StatisticIndicator::BootReturnP5]         = mcResult.return_p5;
+                    flow._collections[StatisticIndicator::BootReturnP50]        = mcResult.return_p50;
+                    flow._collections[StatisticIndicator::BootReturnP95]        = mcResult.return_p95;
+                    flow._collections[StatisticIndicator::BootMaxDDP50]         = mcResult.max_dd_p50;
+                    flow._collections[StatisticIndicator::BootMaxDDP95]         = mcResult.max_dd_p95;
+                    flow._collections[StatisticIndicator::BootMedianAnnualRet]  = mcResult.median_annual_ret;
+                    flow._collections[StatisticIndicator::BootTail1PctAvgDD]    = mcResult.tail_1pct_avg_dd;
+                    flow._collections[StatisticIndicator::BootMethod]           = static_cast<float>(mcResult.method);
+                    flow._collections[StatisticIndicator::BootBlockSize]        = static_cast<float>(mcResult.block_size);
+                    flow._collections[StatisticIndicator::BootAutocorrelation]  = mcResult.autocorrelation;
+                    flow._collections[StatisticIndicator::BootNSimulations]     = static_cast<float>(mcResult.n_simulations);
+                    // 压力测试（基础）
+                    flow._collections[StatisticIndicator::BootStressRuinProb50] = mcResult.stress_ruin_prob_high;
+                    flow._collections[StatisticIndicator::BootStressRuinProb30] = mcResult.stress_ruin_prob_low;
+                    flow._collections[StatisticIndicator::BootStressReturnP5]   = mcResult.stress_return_p5;
+                    flow._collections[StatisticIndicator::BootStressReturnP50]  = mcResult.stress_return_p50;
+                    flow._collections[StatisticIndicator::BootStressMaxDDP50]   = mcResult.stress_max_dd_p50;
+                    // 流动性压力测试
+                    flow._collections[StatisticIndicator::BootLiqStressRuinProb50] = mcResult.liq_stress_ruin_prob_high;
+                    flow._collections[StatisticIndicator::BootLiqStressReturnP5]   = mcResult.liq_stress_return_p5;
+                    flow._collections[StatisticIndicator::BootLiqStressMaxDDP50]   = mcResult.liq_stress_max_dd_p50;
+                    // 波动率聚集压力测试
+                    flow._collections[StatisticIndicator::BootVolClusterStressRuinProb50] = mcResult.vol_cluster_stress_ruin_prob_high;
+                    flow._collections[StatisticIndicator::BootVolClusterStressReturnP5]   = mcResult.vol_cluster_stress_return_p5;
+                    flow._collections[StatisticIndicator::BootVolClusterStressMaxDDP50]   = mcResult.vol_cluster_stress_max_dd_p50;
+
+                    // 输出极端场景信息到日志
+                    INFO("MonteCarlo Analysis:\n{}", mcResult.toString());
+
+                    // 保存路径数据供前端可视化
+                    auto& mcPaths = flow._mcPaths;
+                    // 最差路径
+                    for (const auto& p : mcResult.worst_paths) {
+                        FlowSubsystem::McPathDetail d;
+                        d.total_return = p.total_return;
+                        d.max_drawdown = p.max_drawdown;
+                        d.win_rate = p.win_rate;
+                        d.longest_win_streak = p.longest_win_streak;
+                        d.longest_loss_streak = p.longest_loss_streak;
+                        d.max_dd_bar_index = p.max_dd_bar_index;
+                        d.vol_ratio = p.vol_ratio;
+                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
+                        mcPaths.worst_paths.push_back(d);
+                    }
+                    // 最好路径
+                    for (const auto& p : mcResult.best_paths) {
+                        FlowSubsystem::McPathDetail d;
+                        d.total_return = p.total_return;
+                        d.max_drawdown = p.max_drawdown;
+                        d.win_rate = p.win_rate;
+                        d.longest_win_streak = p.longest_win_streak;
+                        d.longest_loss_streak = p.longest_loss_streak;
+                        d.max_dd_bar_index = p.max_dd_bar_index;
+                        d.vol_ratio = p.vol_ratio;
+                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
+                        mcPaths.best_paths.push_back(d);
+                    }
+                    // 基准路径
+                    auto convertPathDetail = [](const PathDetail& p) -> FlowSubsystem::McPathDetail {
+                        FlowSubsystem::McPathDetail d;
+                        d.total_return = p.total_return;
+                        d.max_drawdown = p.max_drawdown;
+                        d.win_rate = p.win_rate;
+                        d.longest_win_streak = p.longest_win_streak;
+                        d.longest_loss_streak = p.longest_loss_streak;
+                        d.max_dd_bar_index = p.max_dd_bar_index;
+                        d.vol_ratio = p.vol_ratio;
+                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
+                        return d;
+                    };
+                    mcPaths.median_path = convertPathDetail(mcResult.median_path);
+                    mcPaths.p10_path = convertPathDetail(mcResult.p10_path);
+                    mcPaths.p90_path = convertPathDetail(mcResult.p90_path);
 
                     // 多资产协方差诊断（仅资产数 > 1 时计算）
                     if (btContext && btContext->assetSnapshotCount() > 0) {
@@ -273,7 +344,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
 
                             // 计算协方差和质量评估
                             auto cov = compute_covariance(assetReturns);
-                            if (cov.n_assets > 0) {
+                            if (cov.n_assets > 1) {
                                 auto quality = evaluate_covariance_quality(cov);
                                 flow._collections[StatisticIndicator::CovConditionNumber] = static_cast<float>(quality.conditionNumber);
                                 flow._collections[StatisticIndicator::CovMinCorr] = static_cast<float>(cov.minCorrelation);
@@ -288,9 +359,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                         }
                     }
 
-                    // 输出极端场景信息到日志
-                    std::string boot_log = bootstrap_result_to_string(boot);
-                    INFO("Bootstrap Analysis:\n{}", boot_log);
+                    // 输出极端场景信息到日志（已在上面通过 mcResult.toString() 输出）
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);
@@ -474,6 +543,14 @@ FlowSubsystem::BacktestDailyReturns FlowSubsystem::GetBacktestDailyReturns(const
         return {};
     }
     return { it->second._returnDates, it->second._dailyReturns };
+}
+
+FlowSubsystem::BacktestMcPaths FlowSubsystem::GetBacktestMcPaths(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) {
+        return {};
+    }
+    return it->second._mcPaths;
 }
 
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {

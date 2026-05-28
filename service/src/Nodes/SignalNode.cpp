@@ -5,6 +5,7 @@
 #include "server.h"
 #include "BrokerSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 #include <utility>
 
 SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
@@ -94,7 +95,7 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     // 如果不允许做空，过滤无持仓标的的 SELL 信号
     Map<symbol_t, int64_t> heldSymbols;
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
         if (histExchange) {
             for (const auto& symbol : _pools) {

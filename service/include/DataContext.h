@@ -65,12 +65,12 @@ private:
     time_t _backtestTime = 0;    // 回测时间 (信号触发时的 Bar 时间)
 };
 
-enum class SignalSource: char {
-    STRATEGY_DAILY,
-    STRATEGY_HOURLY,
-    STRATEGY_MINUTE,
-    MANUAL
-};
+// enum class SignalSource: char {
+//     STRATEGY_DAILY,
+//     STRATEGY_HOURLY,
+//     STRATEGY_MINUTE,
+//     MANUAL
+// };
 
 /**
     * @brief 获取 context_t 的实际类型名称

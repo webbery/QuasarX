@@ -67,12 +67,20 @@ enum class StatisticIndicator: char {
   BootBlockSize,        // Block 大小
   BootAutocorrelation,  // 自相关系数
   BootNSimulations,     // 模拟次数
-  // 压力测试
+  // 压力测试（基础：波动率 × N）
   BootStressRuinProb50,
   BootStressRuinProb30,
   BootStressReturnP5,
   BootStressReturnP50,
   BootStressMaxDDP50,
+  // 流动性压力测试（尾部收益率折扣）
+  BootLiqStressRuinProb50,
+  BootLiqStressReturnP5,
+  BootLiqStressMaxDDP50,
+  // 波动率聚集压力测试（更大 Block Size）
+  BootVolClusterStressRuinProb50,
+  BootVolClusterStressReturnP5,
+  BootVolClusterStressMaxDDP50,
   R2,  // 样本外拟合能力 (组合价值对时间线性回归的 R²)
   // 协方差诊断
   CovConditionNumber,    // 条件数

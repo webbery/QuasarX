@@ -13,6 +13,8 @@ public:
 
   bool IsOK() {return _status;}
 
+  const nlohmann::json& GetRawConfig() const { return _config; }
+
   std::string GetHost();
   std::string GetHost() const;
   uint16_t GetPort();

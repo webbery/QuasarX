@@ -2,12 +2,16 @@
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
+#include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
+#include "Bridge/SIM/ETFHistorySimulation.h"
 #include "Util/system.h"
 #include <ctime>
 #include <limits>
 #include <stdexcept>
 #include "server.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 
 QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 }
@@ -123,13 +127,30 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 
     // 设置数据源
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        StockHistorySimulation* exchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
-        exchange->SetFilter(filer);
-        String tickLevel = config["params"]["freq"]["value"];
-        if (tickLevel == "1d") {
-            exchange->UseLevel(1);
+        String source = "股票";
+        if (config["params"].contains("source")) {
+            source = (String)config["params"]["source"]["value"];
+        }
+
+        String freq = config["params"]["freq"]["value"];
+
+        if (source == "ETF") {
+            ETFHistorySimulation* etfExchange =
+                (ETFHistorySimulation*)_server->GetExchange(ExchangeType::EX_ETF_HIST_SIM);
+            if (etfExchange) {
+                etfExchange->SetFilter(filer);
+                etfExchange->UseFreq(freq);
+            }
         } else {
-            exchange->UseLevel(0);
+            StockHistorySimulation* exchange =
+                (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
+            exchange->SetFilter(filer);
+            if (freq == "1d") {
+                exchange->UseLevel(TradingMode::T1);
+            } else {
+                exchange->UseLevel(TradingMode::T0);
+                exchange->SetT0Freq(freq);
+            }
         }
     }
 
@@ -174,7 +195,7 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
     }
 
     // 回测模式：从 StockHistorySimulation 获取当前 bar 的行情数据
-    auto* exchange = dynamic_cast<StockHistorySimulation*>(_server->GetAvaliableStockExchange());
+    auto* exchange = dynamic_cast<HistorySimulationBase*>(_server->GetAvaliableStockExchange());
 
     // 第一步：收集所有 symbol 当前 bar 的 quote，同时找出最小时间戳
     time_t min_t = std::numeric_limits<time_t>::max();

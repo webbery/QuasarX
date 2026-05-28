@@ -3,6 +3,7 @@
 #include "Util/system.h"
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 #include "server.h"
 
 namespace {
@@ -437,7 +438,7 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
     std::map<symbol_t, HFQData> hfq_data;
 
     if (server) {
-        auto* exchange = dynamic_cast<StockHistorySimulation*>(server->GetAvaliableStockExchange());
+        auto* exchange = dynamic_cast<HistorySimulationBase*>(server->GetAvaliableStockExchange());
         if (exchange) {
             for (auto symbol : all_symbols) {
                 try {

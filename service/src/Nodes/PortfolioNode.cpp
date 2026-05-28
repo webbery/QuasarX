@@ -7,6 +7,7 @@
 #include "Util/log.h"
 #include "PortfolioSubsystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "Nodes/SignalNode.h"
 #include "std_header.h"
@@ -95,7 +96,7 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
 void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
     auto* exchange = (_server->GetAvaliableStockExchange());
     if (_server->GetRunningMode()==RuningType::Backtest) {
-        auto broker = dynamic_cast<StockHistorySimulation*>(exchange);
+        auto broker = dynamic_cast<HistorySimulationBase*>(exchange);
         double initialCapital = broker->GetAvailableFunds(context.getBacktestRunId());
         context.setInitialCapital(initialCapital);
     }
@@ -145,7 +146,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     } else {
         // 回测模式：获取 BacktestContext 以获取正确的 symbol 索引
         BacktestContext* btContext = nullptr;
-        auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
         if (histExchange) {
             btContext = histExchange->getBacktestContext(context.getBacktestRunId());
@@ -350,7 +351,7 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
     double perSymbolCapital = targetCapital / count;
 
     // 获取历史数据仿真交易所，用于获取未复权价格
-    auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+    auto* histExchange = dynamic_cast<HistorySimulationBase*>(
         _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
 
     for (const auto& [symbol, action] : decisions) {

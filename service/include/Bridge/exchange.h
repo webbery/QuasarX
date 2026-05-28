@@ -15,6 +15,7 @@
 #define HX_API      "hx"   //
 #define STOCK_HISTORY_SIM   "stock_hist_sim"
 #define STOCK_REAL_SIM      "stock_real_sim"
+#define ETF_HISTORY_SIM     "etf_hist_sim"
 #define FEATURE_HISTORY_SIM "feature_hist_sim"
 #define FEATURE_REAL_SIM    "feature_real_sim"
 #define TICKFLOW_QUOTE_API  "tickflow"
@@ -44,6 +45,12 @@ enum class UserPermission : short {
     FutureOption = 16,  // 期货期权
     SecondStock = 32,   // 创业板股票
     SciTechStock = 64,  // 科创板股票
+};
+
+// 交易模式（T+0 / T+1）
+enum class TradingMode : uint8_t {
+    T0 = 0,  // T+0：当天买入可当天卖出（期货、可转债、美股）
+    T1 = 1,  // T+1：当天买入次日才能卖出（A股股票）
 };
 
 struct OrderDetail {
@@ -295,6 +302,7 @@ enum ExchangeType {
     EX_FUTURE_HIST_SIM,
     EX_FUTURE_REAL_SIM,
     EX_TICKFLOW_QUOTE,
+    EX_ETF_HIST_SIM,
     EX_Unknow
 };
 

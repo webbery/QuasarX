@@ -1,5 +1,7 @@
 #include "Handler/BackTestHandler.h"
+#include "AgentSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/ETFHistorySimulation.h"
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/system.h"
@@ -74,10 +76,30 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    auto exchange = (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
+    // 根据策略图的 source 参数动态路由到对应 Exchange
+    ExchangeType targetExchange = ExchangeType::EX_STOCK_HIST_SIM;
+    if (script.contains("graph") && script["graph"].contains("nodes")) {
+        for (auto& node : script["graph"]["nodes"]) {
+            if (node.contains("data") && node["data"].contains("nodeType") &&
+                node["data"]["nodeType"] == "input" &&
+                node["data"].contains("params") &&
+                node["data"]["params"].contains("source")) {
+                String source = node["data"]["params"]["source"]["value"];
+                if (source == "ETF") {
+                    targetExchange = ExchangeType::EX_ETF_HIST_SIM;
+                }
+                break;
+            }
+        }
+    }
+
+    HistorySimulationBase* exchange = dynamic_cast<HistorySimulationBase*>(_server->GetExchange(targetExchange));
     if (!exchange) {
+        String msg = targetExchange == ExchangeType::EX_ETF_HIST_SIM
+            ? R"({"message": "ETF backtest mode is not available."})"
+            : R"({"message": "Backtest mode [SIM] is not available."})";
         res.status = 400;
-        res.set_content(R"({"message": "Backtest mode [SIM] is not available."})", "application/json");
+        res.set_content(msg, "application/json");
         return;
     }
 
@@ -302,6 +324,77 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             results["daily_dates"] = std::move(dailyDatesArray);
 
             INFO("[Backtest] Daily returns collected: {} data points", dailyReturnsData.returns.size());
+        }
+    }
+
+    // === 11. 收集蒙特卡洛模拟路径数据（供前端可视化）===
+    {
+        auto mcPaths = flowSubsystem->GetBacktestMcPaths(strategyName);
+        if (!mcPaths.worst_paths.empty() || !mcPaths.best_paths.empty()) {
+            nlohmann::json mcPathsJson;
+
+            // 最差路径
+            nlohmann::json worstArray = nlohmann::json::array();
+            for (const auto& p : mcPaths.worst_paths) {
+                nlohmann::json item;
+                item["total_return"] = p.total_return;
+                item["max_drawdown"] = p.max_drawdown;
+                item["win_rate"] = p.win_rate;
+                item["longest_win_streak"] = p.longest_win_streak;
+                item["longest_loss_streak"] = p.longest_loss_streak;
+                item["max_dd_bar_index"] = p.max_dd_bar_index;
+                item["vol_ratio"] = p.vol_ratio;
+                item["equity_curve"] = nlohmann::json::array();
+                for (double v : p.equity_curve) {
+                    item["equity_curve"].emplace_back(v);
+                }
+                worstArray.emplace_back(item);
+            }
+            mcPathsJson["worst"] = std::move(worstArray);
+
+            // 最好路径
+            nlohmann::json bestArray = nlohmann::json::array();
+            for (const auto& p : mcPaths.best_paths) {
+                nlohmann::json item;
+                item["total_return"] = p.total_return;
+                item["max_drawdown"] = p.max_drawdown;
+                item["win_rate"] = p.win_rate;
+                item["longest_win_streak"] = p.longest_win_streak;
+                item["longest_loss_streak"] = p.longest_loss_streak;
+                item["max_dd_bar_index"] = p.max_dd_bar_index;
+                item["vol_ratio"] = p.vol_ratio;
+                item["equity_curve"] = nlohmann::json::array();
+                for (double v : p.equity_curve) {
+                    item["equity_curve"].emplace_back(v);
+                }
+                bestArray.emplace_back(item);
+            }
+            mcPathsJson["best"] = std::move(bestArray);
+
+            // 基准路径
+            auto serializePathDetail = [](const FlowSubsystem::McPathDetail& p) -> nlohmann::json {
+                nlohmann::json item;
+                item["total_return"] = p.total_return;
+                item["max_drawdown"] = p.max_drawdown;
+                item["win_rate"] = p.win_rate;
+                item["longest_win_streak"] = p.longest_win_streak;
+                item["longest_loss_streak"] = p.longest_loss_streak;
+                item["max_dd_bar_index"] = p.max_dd_bar_index;
+                item["vol_ratio"] = p.vol_ratio;
+                item["equity_curve"] = nlohmann::json::array();
+                for (double v : p.equity_curve) {
+                    item["equity_curve"].emplace_back(v);
+                }
+                return item;
+            };
+            mcPathsJson["median"] = serializePathDetail(mcPaths.median_path);
+            mcPathsJson["p10"] = serializePathDetail(mcPaths.p10_path);
+            mcPathsJson["p90"] = serializePathDetail(mcPaths.p90_path);
+
+            results["mc_paths"] = std::move(mcPathsJson);
+
+            int totalPaths = mcPaths.worst_paths.size() + mcPaths.best_paths.size() + 3;
+            INFO("[Backtest] MonteCarlo paths collected: {} paths", totalPaths);
         }
     }
 

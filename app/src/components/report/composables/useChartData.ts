@@ -10,7 +10,7 @@ import {
   KlineData,
   clearExpiredCache,
 } from '@/lib/tickflow'
-import { useHistoryStore, type BacktestResult } from '@/stores/history'
+import { useHistoryStore, type BacktestResult, type McPathsData } from '@/stores/history'
 import type { UseReportStateReturn } from './useReportState'
 
 export interface UseChartDataReturn {
@@ -27,6 +27,8 @@ export interface UseChartDataReturn {
   rawSellSignals: Ref<any[]>
   /** 基准指标数据 */
   benchmarkMetrics: Ref<BenchmarkMetrics | null>
+  /** 蒙特卡洛模拟路径数据 */
+  mcPaths: Ref<McPathsData | null>
   /** 加载状态 */
   loading: Ref<boolean>
   /** 策略收益曲线是否为估算（无真实信号时的线性插值） */
@@ -45,6 +47,8 @@ export interface UseChartDataReturn {
   updateTradeSignals: (buySignalsData: any[], sellSignalsData: any[], rawBuy?: any[], rawSell?: any[], dailyReturnsData?: { returns: number[]; dates: number[] }) => void
   /** 更新策略指标 */
   updateMetrics: (features: Record<string, number>) => void
+  /** 更新蒙特卡洛路径数据 */
+  updateMcPaths: (paths: McPathsData) => void
   /** 更新基准数据 */
   updateBenchmark: (data: { symbol: string; name: string; startDate: Date; endDate: Date }) => void
   /** 加载基准数据 */
@@ -87,6 +91,7 @@ export function useChartData(
   const rawBuySignals = ref<any[]>([])
   const rawSellSignals = ref<any[]>([])
   const benchmarkMetrics = ref<BenchmarkMetrics | null>(null)
+  const mcPaths = ref<McPathsData | null>(null)
   const loading = ref(false)
   const strategyReturnsEstimated = ref(false)
 
@@ -253,6 +258,19 @@ export function useChartData(
 
     reportState.metricsData.value = features
     console.info('[useChartData] 策略指标已更新:', features)
+  }
+
+  /**
+   * 更新蒙特卡洛路径数据
+   */
+  function updateMcPaths(paths: McPathsData) {
+    if (!paths) {
+      mcPaths.value = null
+      return
+    }
+    mcPaths.value = paths
+    const totalPaths = (paths.worst?.length || 0) + (paths.best?.length || 0) + 3
+    console.info(`[useChartData] 蒙特卡洛路径已更新: ${totalPaths} 条`)
   }
 
   /**
@@ -494,6 +512,7 @@ export function useChartData(
     rawBuySignals,
     rawSellSignals,
     benchmarkMetrics,
+    mcPaths,
     loading,
     strategyReturnsEstimated,
     // 数据获取方法
@@ -503,6 +522,7 @@ export function useChartData(
     getPricesForSymbol,
     updateTradeSignals,
     updateMetrics,
+    updateMcPaths,
     updateBenchmark,
     loadBenchmark,
     refreshBenchmark,

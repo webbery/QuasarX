@@ -2,6 +2,7 @@
 #include "Util/system.h"
 #include "server.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 
 DataContext::~DataContext() {
     for (auto& item: _signalObservers) {
@@ -157,7 +158,7 @@ BacktestContext* DataContext::getBacktestContext() {
         return nullptr;
     }
     // 转换为 StockHistorySimulation 类型以获取回测上下文
-    auto* simExchange = dynamic_cast<StockHistorySimulation*>(exchange);
+    auto* simExchange = dynamic_cast<HistorySimulationBase*>(exchange);
     if (!simExchange) {
         return nullptr;
     }

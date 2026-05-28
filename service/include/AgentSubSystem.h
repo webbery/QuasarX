@@ -69,6 +69,30 @@ public:
     };
     BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
 
+    /**
+     * @brief 蒙特卡洛模拟路径数据（供前端可视化）
+     */
+    struct McPathDetail {
+        double total_return = 0;
+        double max_drawdown = 0;
+        double win_rate = 0;
+        int longest_win_streak = 0;
+        int longest_loss_streak = 0;
+        size_t max_dd_bar_index = 0;
+        double vol_ratio = 1.0;
+        Vector<double> equity_curve;
+    };
+
+    struct BacktestMcPaths {
+        Vector<McPathDetail> worst_paths;
+        Vector<McPathDetail> best_paths;
+        McPathDetail median_path;
+        McPathDetail p10_path;
+        McPathDetail p90_path;
+    };
+
+    BacktestMcPaths GetBacktestMcPaths(const String& strategy) const;
+
 private:
 
     /**
@@ -117,6 +141,9 @@ private:
         // 每日收益率数据（回测结束后从 context 提取，供 BackTestHandler 使用）
         Vector<time_t> _returnDates;
         Vector<double> _dailyReturns;
+
+        // 蒙特卡洛模拟路径数据（供前端可视化）
+        BacktestMcPaths _mcPaths;
 
         // K-bar 聚合器（实盘模式）
         std::shared_ptr<KBarBuilder> _kbarBuilder;

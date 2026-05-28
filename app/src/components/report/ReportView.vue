@@ -49,6 +49,7 @@ import MetricsTable from './MetricsTable.vue'
 import PriceTrendChart from './charts/PriceTrendChart.vue'
 import PerformanceChart from './charts/PerformanceChart.vue'
 import SkewnessChart from './charts/SkewnessChart.vue'
+import MonteCarloPathsChart from './charts/MonteCarloPathsChart.vue'
 import LegacyCharts from './LegacyCharts.vue'
 import { CHART_REGISTRY } from './config/chartRegistry'
 
@@ -100,6 +101,7 @@ const chartComponentMap: Record<string, ChartComponent> = {
   performance: PerformanceChart,
   skewness: SkewnessChart,
   metricsTable: MetricsTable,
+  monteCarloPaths: MonteCarloPathsChart,
 }
 
 interface OrderedItem {
@@ -163,6 +165,15 @@ const orderedItems = computed<OrderedItem[]>(() => {
         kurtosis: metricsData.value.kurtosis || 3.12,
         prices: getActiveSymbolPrices.value,
         'symbol-name': activeSymbolName.value,
+      }
+    } else if (item.id === 'monteCarloPaths') {
+      props = {
+        worstPaths: dataState.mcPaths.value?.worst || [],
+        bestPaths: dataState.mcPaths.value?.best || [],
+        medianPath: dataState.mcPaths.value?.median || null,
+        p10Path: dataState.mcPaths.value?.p10 || null,
+        p90Path: dataState.mcPaths.value?.p90 || null,
+        barCount: strategyDailyReturns.value.length || 252,
       }
     }
 

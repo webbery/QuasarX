@@ -1,6 +1,7 @@
 #include "Nodes/ExecuteNode.h"
 #include "Nodes/ExecutionPlan.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SlippageModel.h"
 #include "MarketTiming/ImmediateTiming.h"
 #include "MarketTiming/ShadowTiming.h"
@@ -62,7 +63,7 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
     _timing = GenerateTiming((ExecuteType)type);
 
     auto exchange = _server->GetAvaliableStockExchange();
-    auto simExchange = dynamic_cast<StockHistorySimulation*>(exchange);
+    auto simExchange = dynamic_cast<HistorySimulationBase*>(exchange);
     if (simExchange) {
         simExchange->SetSlippageModel(SlippageFactory::create(slipJson));
     }
@@ -77,7 +78,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
 
         // 获取当前所有持仓并生成平仓信号
         if (_server->GetRunningMode() == RuningType::Backtest) {
-            auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+            auto* histExchange = dynamic_cast<HistorySimulationBase*>(
                 _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
             if (histExchange) {
                 auto run_id = context.getBacktestRunId();

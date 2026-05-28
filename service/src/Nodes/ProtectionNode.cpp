@@ -3,6 +3,7 @@
 #include "RiskContext.h"
 #include "BrokerSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "Util/log.h"
 #include "server.h"
@@ -58,7 +59,7 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
 
 static int64_t get_position_quantity(Server* server, DataContext& context, symbol_t symbol) {
     if (server->GetRunningMode() == RuningType::Backtest) {
-        auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
         if (histExchange) {
             return histExchange->GetPositionQuantity(symbol);
@@ -94,7 +95,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
     // 获取当前所有有持仓的标的
     Set<symbol_t> current_symbols;
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        auto* histExchange = dynamic_cast<StockHistorySimulation*>(
+        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
         if (histExchange) {
             auto run_id = context.getBacktestRunId();

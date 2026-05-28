@@ -462,6 +462,88 @@ buy: close[t] > MA_5[t] and node1.IMF_0[t] > 0  // 金叉 + 高频动量为正
 4. 分解后的 IMF 分量数量等于输入的 numIMFs 参数，Signal 公式中可用的变量名由节点的 label 决定`
 }
 
+
+// === Resample 数据重采样使用指南 ===
+
+function getResampleUsageGuide(): string {
+  return `# 数据重采样节点使用指南
+
+## 何时使用
+- 需要将高频数据（秒级/分钟级）转换为低频数据（小时/日级）供趋势判断模块使用
+- 需要多时间框架分析（如 1min 交易信号 + 1h 趋势判断）
+- HMM/EMD 等因果推理节点需要在较低频率上运行以减少噪声
+
+## 典型策略流
+\`\`\`
+[Input freq=1min] → [Resample target_freq=1h] → [HMM n_states=3] → [Signal] → [Portfolio] → [Execution]
+                         ↓
+                   每小时输出一次聚合后的 bar 数据
+\`\`\`
+
+## 数据流说明
+
+**输入**：上游节点每个 bar 输出的所有属性（如 close/open/high/low/volume）
+
+**处理**：
+- 内部缓存每个 bar 的数据
+- 当达到目标频率边界时，输出聚合后的 bar
+- 未达到边界时，返回 Skip（下游节点不执行）
+
+**输出**：为每个输入属性生成对应的重采样输出，命名规则为 \`{原key}_resampled\`
+- close → close_resampled
+- open → open_resampled
+- volume → volume_resampled
+- ...
+
+## OHLCV 聚合规则
+
+| 属性类型 | 聚合方式 | 说明 |
+|----------|---------|------|
+| price 类（close/open/high/low） | OHLC 标准聚合 | open=首值, high=最大值, low=最小值, close=末值 |
+| volume 类（包含 volume/vol 关键字） | 求和 | 所有 bar 的 volume 累加 |
+| 其他属性 | 取末值 | 使用最后一个 bar 的值 |
+
+## 支持的频率选项
+
+| 选项 | 说明 | 间隔（秒） |
+|------|------|-----------|
+| 1m | 1 分钟 | 60 |
+| 5m | 5 分钟 | 300 |
+| 15m | 15 分钟 | 900 |
+| 30m | 30 分钟 | 1800 |
+| 1h | 1 小时 | 3600 |
+| 2h | 2 小时 | 7200 |
+| 4h | 4 小时 | 14400 |
+| 1d | 1 天 | 86400 |
+
+## 参数建议
+- **target_freq**：根据下游节点的决策频率选择
+  - HMM 趋势判断：推荐 \`1h\` 或 \`4h\`
+  - 日线策略：推荐 \`1d\`
+  - 短线交易：推荐 \`5m\` 或 \`15m\`
+
+## Signal 公式中的用法
+
+Resample 输出的是**时间序列**，在 Signal 公式中需带时间索引 \`[t]\` 引用：
+
+\`\`\`
+// 使用重采样后的收盘价
+buy: close_resampled[t] > MA_20[t]
+sell: close_resampled[t] < MA_20[t]
+
+// 结合 HMM 状态的多频率策略
+buy: hmm_state[t] == 0 and close_resampled[t] > open_resampled[t]
+sell: volume_resampled[t] > MA_volume_20[t] * 1.5
+\`\`\`
+
+## 注意事项
+1. ResampleNode 不会改变 Input 节点的原始频率，只是在内部缓存并聚合
+2. 未完成聚合的 bar 不会触发下游节点（返回 Skip）
+3. 输出 key 带有 \`_resampled\` 后缀，避免与上游原始数据冲突
+4. 下游节点（如 HMM、Function）需要引用带后缀的 key（如 \`close_resampled\`）
+5. 建议将 ResampleNode 放在 Input 和 HMM/Function 之间`
+}
+
 // === 策略图约束规则 ===
 
 function getFlowConstraints(): string {
@@ -636,6 +718,12 @@ export const strategyTool = tool(
           info.push('[提示] EMD 分解节点有详细的使用指南。使用 `action="emd_usage"` 获取完整说明（输出变量命名规则、Signal 公式用法、参数建议）。')
         }
 
+        // 为 Resample 节点添加特殊提示
+        if (n.nodeType === "resample" || n.id === "resample") {
+          info.push('')
+          info.push('[提示] 数据重采样节点有详细的使用指南。使用 `action="resample_usage"` 获取完整说明（聚合规则、频率选项、Signal 公式用法）。')
+        }
+
         // 为其他关键节点添加策略图约束提示
         if (["input", "execution", "portfolio", "function", "xgboost", "spread", "protection"].includes(n.nodeType)) {
           info.push('')
@@ -691,18 +779,22 @@ export const strategyTool = tool(
         return getEMDUsageGuide()
       }
 
+      case "resample_usage": {
+        return getResampleUsageGuide()
+      }
+
       default:
-        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage`
+        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage`
     }
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别，放在 Input 和 Signal 之间）、EMD（信号分解）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
         "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
-        "signal_syntax", "flow_constraints", "hmm_usage", "emd_usage"
+        "signal_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage"
       ]).describe("操作类型"),
       keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
       data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy 时必填）"),

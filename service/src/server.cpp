@@ -5,6 +5,7 @@
 #include <ctime>
 #include <filesystem>
 #include "Bridge/exchange.h"
+#include "Bridge/SIM/ETFHistorySimulation.h"
 #include "BrokerSubSystem.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "ExchangeManager.h"
@@ -373,6 +374,23 @@ void Server::InitDefault() {
             _runType = RuningType::Simualtion;
             break;
         }
+    }
+
+    // 解析 etf.t0/etf.t1 配置并传递给 ETFHistorySimulation
+    auto etfExchanger = dynamic_cast<ETFHistorySimulation*>(GetExchange(ExchangeType::EX_ETF_HIST_SIM));
+    if (etfExchanger) {
+        Set<String> t0Codes, t1Codes;
+        const auto& rawConfig = _config->GetRawConfig();
+        if (rawConfig.contains("etf")) {
+            if (rawConfig["etf"].contains("t0")) {
+                for (auto& c : rawConfig["etf"]["t0"]) t0Codes.insert(c.get<String>());
+            }
+            if (rawConfig["etf"].contains("t1")) {
+                for (auto& c : rawConfig["etf"]["t1"]) t1Codes.insert(c.get<String>());
+            }
+        }
+        etfExchanger->SetEtfCodes(t0Codes, t1Codes);
+        INFO("[ETF] Loaded T0 codes: {}, T1 codes: {}", t0Codes.size(), t1Codes.size());
     }
 
     if (!use_sim) { // 开启模拟数据的情况下，不记录数据
@@ -852,6 +870,12 @@ ExchangeInterface* Server::GetAvaliableStockExchange()
         return nullptr;
     auto& exchanges = handler->GetExchanges();
     return exchanges.at(name);
+}
+
+ExchangeInterface* Server::GetAvaliableEtfExchange()
+{
+    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
+    return handler->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM);
 }
 
 ExchangeInterface* Server::GetAvaliableFutureExchange()

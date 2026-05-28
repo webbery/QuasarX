@@ -113,6 +113,7 @@ public:
 
     ExchangeInterface* GetExchange(ExchangeType type);
     ExchangeInterface* GetAvaliableStockExchange();
+    ExchangeInterface* GetAvaliableEtfExchange();
     ExchangeInterface* GetAvaliableFutureExchange();
 
     float GetInterestRate(time_t datetime);

@@ -1,6 +1,7 @@
 #include "Handler/ExchangeHandler.h"
 #include "Bridge/CTP/CTPExchange.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/ETFHistorySimulation.h"
 #include "Bridge/SIM/StockRealSimulation.h"
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/TickFlow/TickFlowBridge.h"
@@ -32,6 +33,13 @@ bool ExchangeHandler::Use(const String& name) {
   else if (ex_type == STOCK_HISTORY_SIM) {
     ret = SwitchExchange<StockHistorySimulation>(name);
     et = ExchangeType::EX_STOCK_HIST_SIM;
+    _activeFutureName = name;
+    _activeStockName = name;
+    _enableSimulation = true;
+  }
+  else if (ex_type == ETF_HISTORY_SIM) {
+    ret = SwitchExchange<ETFHistorySimulation>(name);
+    et = ExchangeType::EX_ETF_HIST_SIM;
     _activeFutureName = name;
     _activeStockName = name;
     _enableSimulation = true;
@@ -147,6 +155,9 @@ bool ExchangeHandler::UseTickFlow(const String& name) {
 
 ExchangeInterface* ExchangeHandler::GetExchangeByType(ExchangeType type) {
   if (_enableSimulation) { // 模拟场景下强制返回仿真环境
+    if (type == ExchangeType::EX_ETF_HIST_SIM) {
+      return _type_excs[ExchangeType::EX_ETF_HIST_SIM];
+    }
     return _type_excs[ExchangeType::EX_STOCK_HIST_SIM];
   }
   return _type_excs[type];

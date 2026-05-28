@@ -83,6 +83,11 @@ public:
     time_t getCommonEndTime() const { return _commonEndTime; }
     void setCommonEndTime(time_t t) { _commonEndTime = t; }
 
+    // 跨日检测（T+0/T+1 控制用）
+    time_t getLastTradeDay() const { return _lastTradeDay; }
+    void setLastTradeDay(time_t day) { _lastTradeDay = day; }
+    void onDayChange() { _positionMgr.OnDayChange(); }
+
     // 涉及的所有标的
     void addSymbol(symbol_t symbol);
     const Set<symbol_t>& getSymbols() const { return _symbols; }
@@ -170,6 +175,9 @@ private:
     // 共同时间范围（多标的时间对齐）
     time_t _commonStartTime = 0;
     time_t _commonEndTime = 0;
+
+    // 上一个交易日（用于跨日检测）
+    time_t _lastTradeDay = 0;
 
     // 涉及的标的列表
     Set<symbol_t> _symbols;

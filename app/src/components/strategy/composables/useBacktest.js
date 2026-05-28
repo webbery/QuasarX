@@ -93,6 +93,9 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
       // 5. 传递指标数据到 ReportView
       updateMetricsInReportView(result, reportViewRef)
 
+      // 5b. 传递蒙特卡洛路径数据到 ReportView
+      updateMcPathsInReportView(result, reportViewRef)
+
       // 6. 传递回测日期范围到 ReportView（用于获取基准数据）
       updateBenchmarkInReportView(result, reportViewRef)
 
@@ -135,6 +138,22 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
       }
     } catch (metricsError) {
       console.error('传递指标数据时出错:', metricsError)
+    }
+  }
+
+  /**
+   * 更新报表中的蒙特卡洛路径数据
+   */
+  const updateMcPathsInReportView = (result, reportViewRef) => {
+    try {
+      if (reportViewRef?.value && reportViewRef.value.updateMcPaths) {
+        const mcPaths = result.mc_paths
+        if (mcPaths) {
+          reportViewRef.value.updateMcPaths(mcPaths)
+        }
+      }
+    } catch (mcPathsError) {
+      console.error('传递蒙特卡洛路径数据时出错:', mcPathsError)
     }
   }
 
@@ -222,7 +241,10 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
         summary: result.summary || {},
         buy: result.buy || [],
         sell: result.sell || [],
-        script: graph
+        script: graph,
+        mcPaths: result.mc_paths || undefined,
+        dailyReturns: result.daily_returns || undefined,
+        dailyDates: result.daily_dates || undefined,
       }
       historyStore.saveBacktestResult(versionId, backtestResult)
       console.info(`回测结果已保存到版本 ${versionId}`)

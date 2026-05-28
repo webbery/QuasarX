@@ -75,6 +75,9 @@ public:
     /// @brief 重置（用于策略重启）
     void Reset();
 
+    /// @brief 每日开盘前调用，重置当日买入记录（T+1 控制用）
+    void OnDayChange();
+
 private:
     /// @brief 计算交易费用（佣金 + 印花税）
     double CalcFees(double amount, bool isSell) const;
@@ -86,4 +89,7 @@ private:
     double _commissionRate;  // 佣金费率
     double _stampTaxRate;    // 印花税率（仅卖出）
     bool _backtestMode;      // 回测模式标志
+
+    // T+1 控制：当日买入不能当日卖出
+    Map<symbol_t, int64_t> _todayBuyQty;  // 当日买入数量
 };

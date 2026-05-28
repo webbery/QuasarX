@@ -47,6 +47,9 @@ void StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) {
         pos._qty = newQty;
     }
 
+    // T+1 控制：记录当日买入
+    _todayBuyQty[symbol] += qty;
+
     INFO("BUY symbol={} qty={} price={} fees={}", symbol, qty, price, fees);
 }
 
@@ -67,6 +70,21 @@ void StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
     if (pos._qty < qty) {
         WARN("Insufficient position: have={} sell={}", pos._qty, qty);
         qty = pos._qty;  // 卖出全部持仓
+    }
+
+    // T+1 限制：当日买入不能当日卖出
+    auto buyIt = _todayBuyQty.find(symbol);
+    if (buyIt != _todayBuyQty.end() && buyIt->second > 0) {
+        int64_t canSell = pos._qty - buyIt->second;
+        if (canSell < qty) {
+            WARN("T+1 restriction: can only sell {} of {} today (bought {} today)",
+                 canSell, qty, buyIt->second);
+            qty = std::max((int64_t)0, canSell);
+        }
+    }
+
+    if (qty <= 0) {
+        return;
     }
 
     double amount = qty * price;
@@ -173,6 +191,12 @@ void StockPositionManager::Reset() {
     std::lock_guard<std::mutex> lock(_mutex);
     _positions.clear();
     _availableFunds = _initialCapital;
+    _todayBuyQty.clear();
+}
+
+void StockPositionManager::OnDayChange() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _todayBuyQty.clear();
 }
 
 // ==================== 内部方法 ====================

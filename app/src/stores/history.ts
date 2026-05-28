@@ -23,6 +23,8 @@ export interface BacktestResult {
   // 后端返回的每日收益率数据（Modified Dietz 方法）
   dailyReturns?: number[]     // 每日收益率序列（小数形式，如 0.015 = 1.5%）
   dailyDates?: number[]       // 每日对应的 Unix 时间戳（秒）
+  // 蒙特卡洛模拟路径数据（用于策略归因分析）
+  mcPaths?: McPathsData
   // 完整图表数据（供 Agent 和 ReportView 共享使用）
   chartData?: {
     price: TimeSeries | null
@@ -32,6 +34,31 @@ export interface BacktestResult {
     distribution: HistogramData | null
     dailyReturns: number[] | null
   }
+}
+
+/**
+ * 蒙特卡洛模拟单条路径详情
+ */
+export interface McPathDetail {
+  total_return: number
+  max_drawdown: number
+  win_rate: number
+  longest_win_streak: number
+  longest_loss_streak: number
+  max_dd_bar_index: number
+  vol_ratio: number
+  equity_curve: number[]  // 归一化资金曲线
+}
+
+/**
+ * 蒙特卡洛模拟路径数据集合
+ */
+export interface McPathsData {
+  worst: McPathDetail[]   // 最差路径
+  best: McPathDetail[]    // 最好路径
+  median: McPathDetail    // 中位数路径
+  p10: McPathDetail       // P10 路径
+  p90: McPathDetail       // P90 路径
 }
 
 export interface Version {

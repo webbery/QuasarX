@@ -21,6 +21,7 @@
 #include "Strategy.h"
 #include "Metric/Sharp.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/HistorySimulationBase.h"
 
 #define ER(expr) {int rc = 0; CHECK((rc = (expr)) == MDB_SUCCESS, #expr);  }
 #define CHECK(test, msg) ((test) ? (void)0 : ((void)fprintf(stderr, \
@@ -298,6 +299,18 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
     return "boot_stress_return_p50";
   case StatisticIndicator::BootStressMaxDDP50:
     return "boot_stress_max_dd_p50";
+  case StatisticIndicator::BootLiqStressRuinProb50:
+    return "boot_liq_stress_ruin_prob_50";
+  case StatisticIndicator::BootLiqStressReturnP5:
+    return "boot_liq_stress_return_p5";
+  case StatisticIndicator::BootLiqStressMaxDDP50:
+    return "boot_liq_stress_max_dd_p50";
+  case StatisticIndicator::BootVolClusterStressRuinProb50:
+    return "boot_vol_cluster_stress_ruin_prob_50";
+  case StatisticIndicator::BootVolClusterStressReturnP5:
+    return "boot_vol_cluster_stress_return_p5";
+  case StatisticIndicator::BootVolClusterStressMaxDDP50:
+    return "boot_vol_cluster_stress_max_dd_p50";
 
   case StatisticIndicator::R2:
     return "r_squared";
@@ -634,7 +647,7 @@ order_id BrokerSubSystem::AddOrderAsync(run_id_t run_id, OrderContext* order) {
     if (_simulation) {
         // 多线程回测模式：使用策略名获取上下文
         ExchangeInterface* exchange_iface = _exchanges[ExchangeType::EX_STOCK_HIST_SIM];
-        auto* exchange = dynamic_cast<StockHistorySimulation*>(exchange_iface);
+        auto* exchange = dynamic_cast<HistorySimulationBase*>(exchange_iface);
         if (exchange) {
             return exchange->AddOrder(GET_SYMBOL(order), order, order->_strategy_hash);
         }
