@@ -1,4 +1,5 @@
 #include "DataContext.h"
+#include "ExchangeManager.h"
 #include "Util/system.h"
 #include "server.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
@@ -119,7 +120,10 @@ void DataContext::ConsumeSignals() {
 
 double DataContext::getAvailableCapital() const
 {
-    auto* exchange = _server->GetAvaliableStockExchange();
+    auto* exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
+    if (!exchange) {
+        exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
+    }
     if (exchange) {
         double funds = exchange->GetAvailableFunds(_backtestRunId);
         if (funds > 0) {
@@ -153,7 +157,7 @@ BacktestContext* DataContext::getBacktestContext() {
     if (_backtestRunId == 0) {
         return nullptr;
     }
-    auto* exchange = _server->GetAvaliableStockExchange();
+    auto* exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
     if (!exchange) {
         return nullptr;
     }

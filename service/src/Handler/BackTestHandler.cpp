@@ -4,6 +4,7 @@
 #include "Bridge/SIM/ETFHistorySimulation.h"
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
+#include "ExchangeManager.h"
 #include "Util/system.h"
 #include "Util/datetime.h"
 #include "json.hpp"
@@ -76,8 +77,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    // 根据策略图的 source 参数动态路由到对应 Exchange
-    ExchangeType targetExchange = ExchangeType::EX_STOCK_HIST_SIM;
+    // 收集策略图中所有需要的数据源
+    Set<String> requiredSources;
     if (script.contains("graph") && script["graph"].contains("nodes")) {
         for (auto& node : script["graph"]["nodes"]) {
             if (node.contains("data") && node["data"].contains("nodeType") &&
@@ -85,21 +86,19 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
                 node["data"].contains("params") &&
                 node["data"]["params"].contains("source")) {
                 String source = node["data"]["params"]["source"]["value"];
-                if (source == "ETF") {
-                    targetExchange = ExchangeType::EX_ETF_HIST_SIM;
-                }
-                break;
+                requiredSources.insert(source);
             }
         }
     }
+    if (requiredSources.empty()) {
+        requiredSources.insert("股票");  // 默认股票
+    }
 
-    HistorySimulationBase* exchange = dynamic_cast<HistorySimulationBase*>(_server->GetExchange(targetExchange));
-    if (!exchange) {
-        String msg = targetExchange == ExchangeType::EX_ETF_HIST_SIM
-            ? R"({"message": "ETF backtest mode is not available."})"
-            : R"({"message": "Backtest mode [SIM] is not available."})";
+    // 使用 ExchangeManager 统一协调
+    auto exchangeMgr = _server->GetExchangeManager();
+    if (!exchangeMgr) {
         res.status = 400;
-        res.set_content(msg, "application/json");
+        res.set_content(R"({"message": "ExchangeManager not available."})", "application/json");
         return;
     }
 
@@ -121,7 +120,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         time_t endT = FromStr(endStr, "%Y-%m-%d");
 
         if (startT > 0 && endT > 0 && endT > startT) {
-            exchange->SetBacktestTimeRange(startT, endT);
+            exchangeMgr->SetBacktestTimeRange(startT, endT);
             INFO("[Backtest] Time range configured: {} ~ {}", startStr, endStr);
         } else {
             WARN("[Backtest] Invalid time range: {} ~ {}, using data range", startStr, endStr);
@@ -144,30 +143,39 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    exchange->Login(AccountType::MAIN);
+    // 启动需要的 Exchange
+    exchangeMgr->StartRequiredExchanges(requiredSources);
+
     // 4. 执行回测（多线程版本）
     // 获取策略的标的列表
     auto symbols = strategySys->GetPools(strategyName);
 
-    // 使用 StartBacktest 启动多线程回测
-    auto* flowSubsystem = strategySys->GetFlowSubsystem();
-    // 回测模式下，固定初始资金为 50 万
+    // 使用 ExchangeManager 创建多 Exchange 回测上下文
     double initialCapital = BACKTEST_INITIAL_CAPITAL;
+    run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital);
 
-    // 启动回测并获取 run_id
-    run_id_t runId = flowSubsystem->Start(strategyName, symbols, initialCapital);
-    
     // 发送进度 (带 run_id)
     SendSSEProgress(sse_sock, strategyName, runId, 0.0, "开始执行回测");
+
+    // 启动回测工作线程
+    auto* flowSubsystem = strategySys->GetFlowSubsystem();
+    if (!flowSubsystem) {
+        res.status = 500;
+        res.set_content(R"({"message": "FlowSubsystem not available."})", "application/json");
+        return;
+    }
+
+    // 启动工作线程（使用 exchangeMgr 协调多 Exchange stepForward）
+    flowSubsystem->StartBacktestWithExchangeMgr(strategyName, runId, exchangeMgr);
 
     // 5. 等待回测完成（带进度推送）
     double lastProgress = 0.0;
 
     // 启动后台线程推送进度
     std::atomic<bool> pushRunning{true};
-    std::thread pushThread([this, exchange, &strategyName, &sse_sock, &lastProgress, &pushRunning, runId]() {
+    std::thread pushThread([this, exchangeMgr, &strategyName, &sse_sock, &lastProgress, &pushRunning, runId]() {
         while (pushRunning && !_server->IsExit()) {
-            double progress = exchange->Progress(strategyName);
+            double progress = exchangeMgr->GetProgress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
                 SendSSEProgress(sse_sock, strategyName, runId, 0.1 + progress * 0.5, msg);
@@ -203,7 +211,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     if (lastProgress < 1.0) {
         SendSSEProgress(sse_sock, strategyName, runId, 0.6, "回测执行完成");
     }
-    exchange->Logout(AccountType::MAIN);
+    exchangeMgr->StopRequiredExchanges(requiredSources);
     SendSSEProgress(sse_sock, strategyName, runId, 0.7, "PersistTrades");
 
     // 6. 收集结果

@@ -2,6 +2,7 @@
 #include "Bridge/CTP/CTPExchange.h"
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
+#include "Bridge/SIM/ETFHistorySimulation.h"
 #include "Bridge/SIM/StockRealSimulation.h"
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/exchange.h"
@@ -34,6 +35,33 @@ bool ExchangeManager::InitQuotePublisher() {
 
 // ========== Exchange 生命周期管理 ==========
 
+bool ExchangeManager::Use(const String& name) {
+    auto& config = _server->GetConfig();
+    auto exchangeCfg = config.GetExchangeByName(name);
+    if (exchangeCfg.empty()) {
+        WARN("Exchange config not found: {}", name);
+        return false;
+    }
+
+    String api = exchangeCfg["api"];
+    ExchangeType type = ExchangeType::EX_Unknow;
+
+    if (api == CTP_API)              type = ExchangeType::EX_CTP;
+    else if (api == STOCK_HISTORY_SIM)  type = ExchangeType::EX_STOCK_HIST_SIM;
+    else if (api == ETF_HISTORY_SIM)    type = ExchangeType::EX_ETF_HIST_SIM;
+    else if (api == STOCK_REAL_SIM)     type = ExchangeType::EX_STOCK_REAL_SIM;
+    else if (api == HX_API)             type = ExchangeType::EX_HX;
+    else if (api == TICKFLOW_QUOTE_API) type = ExchangeType::EX_TICKFLOW_QUOTE;
+    else {
+        WARN("Unsupported exchange api: {}", api);
+        return false;
+    }
+
+    return RegisterExchange(name, type);
+}
+
+// ========== Exchange 生命周期管理 ==========
+
 bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     // 避免重复注册
     if (_exchanges.count(name)) {
@@ -54,9 +82,6 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
             delete ptr;
             return false;
         }
-        if (ret) {
-            _activeFutureName = name;
-        }
     }
     else if (type == ExchangeType::EX_HX) {
         ptr = new HXExchange(_server);
@@ -66,28 +91,24 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
             delete ptr;
             return false;
         }
-        if (ret) {
-            _activeStockName = name;
-        }
     }
     else if (type == EX_STOCK_HIST_SIM) {
         ptr = new StockHistorySimulation(_server);
         ret = ptr->Init(exchangeCfg);
         _enableSimulation = true;
-        _activeStockName = name;
-        _activeFutureName = name;
+    }
+    else if (type == EX_ETF_HIST_SIM) {
+        ptr = new ETFHistorySimulation(_server);
+        ret = ptr->Init(exchangeCfg);
+        _enableSimulation = true;
     }
     else if (type == EX_STOCK_REAL_SIM) {
         ptr = new StockRealSimulation(_server);
         ret = ptr->Init(exchangeCfg);
-        _activeStockName = name;
     }
     else if (type == EX_TICKFLOW_QUOTE) {
         ptr = new TickFlowBridge(_server);
         ret = ptr->Init(exchangeCfg);
-        if (ret) {
-            _activeStockName = name;
-        }
     }
     else {
         WARN("Unknown exchange type: {}", (int)type);
@@ -162,6 +183,18 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     return true;
 }
 
+void ExchangeManager::RegisterExchangePtr(const String& name, ExchangeType type, ExchangeInterface* ptr) {
+    // 避免重复注册
+    if (_exchanges.count(name)) {
+        WARN("Exchange {} already registered in ExchangeManager", name);
+        return;
+    }
+
+    _exchanges[name] = ptr;
+    _typeExchanges[type] = ptr;
+    // 符号加载已由 RegisterExchange() 处理，这里只注册实例
+}
+
 void ExchangeManager::UnregisterExchange(const String& name) {
     auto itr = _exchanges.find(name);
     if (itr == _exchanges.end()) return;
@@ -185,10 +218,10 @@ void ExchangeManager::UnregisterExchange(const String& name) {
 void ExchangeManager::Shutdown() {
     for (auto& [name, exch] : _exchanges) {
         exch->Release();
-        delete exch;
     }
     _exchanges.clear();
     _typeExchanges.clear();
+    _exchangeRefCounts.clear();
 
     if (_quotePubInited) {
         nng_close(_quotePubSock);
@@ -215,8 +248,8 @@ const Map<ExchangeType, ExchangeInterface*>& ExchangeManager::GetExchangesByType
 }
 
 ExchangeInterface* ExchangeManager::GetExchangeByType(ExchangeType type) const {
-    if (_enableSimulation && type != ExchangeType::EX_STOCK_HIST_SIM) {
-        // 模拟模式下强制返回仿真环境
+    if (_enableSimulation && type != ExchangeType::EX_STOCK_HIST_SIM && type != ExchangeType::EX_ETF_HIST_SIM) {
+        // 模拟模式下强制返回仿真环境（非 ETF 类型）
         auto simItr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
         if (simItr != _typeExchanges.end()) {
             return simItr->second;
@@ -328,4 +361,295 @@ ExchangeInfo ExchangeManager::GetExchangeInfo(const String& name) const {
 
 bool ExchangeManager::IsSimulationEnabled() const {
     return _enableSimulation;
+}
+
+// ========== 多回测引擎协调 ==========
+
+Vector<ExchangeInterface*> ExchangeManager::GetExchangesByTypes(const Vector<ExchangeType>& types) const {
+    Vector<ExchangeInterface*> result;
+    for (auto type : types) {
+        auto itr = _typeExchanges.find(type);
+        if (itr != _typeExchanges.end()) {
+            result.push_back(itr->second);
+        }
+    }
+    return result;
+}
+
+ExchangeInterface* ExchangeManager::ResolveExchange(const symbol_t& symbol) const {
+    // 基金类标的优先走 ETFExchange
+    if (is_fund(symbol)) {
+        auto itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
+        if (itr != _typeExchanges.end()) {
+            return itr->second;
+        }
+        // 没有 ETFExchange 时回退到 StockExchange
+        itr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
+        if (itr != _typeExchanges.end()) {
+            return itr->second;
+        }
+    }
+    // 股票类走 StockExchange
+    auto itr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
+    if (itr != _typeExchanges.end()) {
+        return itr->second;
+    }
+    // 最后回退到 EX_STOCK_HIST_SIM
+    itr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
+    if (itr != _typeExchanges.end()) {
+        return itr->second;
+    }
+    return nullptr;
+}
+
+// ========== 策略级生命周期 ==========
+
+bool ExchangeManager::StartExchange(const String& name) {
+    auto* exch = GetExchange(name);
+    if (!exch) {
+        WARN("Exchange {} not registered", name);
+        return false;
+    }
+
+    int& refCount = _exchangeRefCounts[name];
+
+    if (refCount > 0) {
+        refCount++;
+        INFO("Exchange {} already running, ref count -> {}", name, refCount);
+        return true;
+    }
+
+    if (!exch->Login(AccountType::MAIN)) {
+        WARN("Exchange {} login failed", name);
+        return false;
+    }
+
+    refCount = 1;
+    INFO("Exchange {} started (ref count = 1)", name);
+    return true;
+}
+
+bool ExchangeManager::StopExchange(const String& name) {
+    auto itr = _exchangeRefCounts.find(name);
+    if (itr == _exchangeRefCounts.end() || itr->second <= 0) {
+        return true;  // 未运行或已停止
+    }
+
+    auto* exch = GetExchange(name);
+    if (!exch) return false;
+
+    itr->second--;
+
+    if (itr->second > 0) {
+        INFO("Exchange {} still in use, ref count -> {}", name, itr->second);
+        return true;
+    }
+
+    // 引用计数归零，真正停止
+    exch->StopQuery();
+    exch->Logout(AccountType::MAIN);
+    _exchangeRefCounts.erase(itr);
+    INFO("Exchange {} stopped (ref count = 0)", name);
+    return true;
+}
+
+Set<String> ExchangeManager::ResolveExchangeNames(const Set<String>& requiredSources) {
+    Set<String> names;
+
+    for (auto& [exName, exch] : _exchanges) {
+        bool needStart = false;
+        String apiName = exch->Name();
+
+        for (auto& source : requiredSources) {
+            if (source == "股票") {
+                // 根据运行模式决定：回测用历史数据，实盘用真实数据
+                if (apiName == STOCK_HISTORY_SIM || apiName == HX_API ||
+                    apiName == STOCK_REAL_SIM) {
+                    needStart = true;
+                }
+            }
+            else if (source == "ETF") {
+                if (apiName == ETF_HISTORY_SIM || apiName == STOCK_REAL_SIM) {
+                    needStart = true;
+                }
+            }
+        }
+
+        if (needStart) {
+            names.insert(exName);
+        }
+    }
+
+    return names;
+}
+
+bool ExchangeManager::StartRequiredExchanges(const Set<String>& requiredSources) {
+    auto names = ResolveExchangeNames(requiredSources);
+    bool anySuccess = false;
+
+    for (auto& name : names) {
+        if (StartExchange(name)) {
+            anySuccess = true;
+        }
+    }
+    return anySuccess;
+}
+
+void ExchangeManager::StopRequiredExchanges(const Set<String>& requiredSources) {
+    auto names = ResolveExchangeNames(requiredSources);
+    for (auto& name : names) {
+        StopExchange(name);
+    }
+}
+
+void ExchangeManager::StopAllExchanges() {
+    // 复制名称列表，避免在迭代中修改集合
+    Vector<String> runningNames;
+    for (auto& [name, count] : _exchangeRefCounts) {
+        if (count > 0) {
+            runningNames.push_back(name);
+        }
+    }
+
+    for (auto& name : runningNames) {
+        StopExchange(name);
+    }
+}
+
+// 保留旧方法以兼容（内部委托给新方法）
+bool ExchangeManager::LoginExchanges(const Set<String>& requiredSources) {
+    return StartRequiredExchanges(requiredSources);
+}
+
+void ExchangeManager::LogoutExchanges() {
+    StopAllExchanges();
+}
+
+bool ExchangeManager::StepAllHistoryExchanges(run_id_t runId) {
+    bool anyMoreData = false;
+
+    for (auto& [name, exch] : _exchanges) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(exch);
+        if (!base) continue;
+
+        auto* ctx = base->getBacktestContext(runId);
+        if (!ctx || ctx->isFinished()) continue;
+
+        if (base->stepForward(ctx)) {
+            anyMoreData = true;
+        }
+    }
+    return anyMoreData;
+}
+
+run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
+                                              const Set<symbol_t>& symbols,
+                                              double initialCapital) {
+    // 按标的类型分组
+    Set<symbol_t> stockSymbols, etfSymbols;
+    for (auto sym : symbols) {
+        if (is_fund(sym)) {
+            etfSymbols.insert(sym);
+        } else {
+            stockSymbols.insert(sym);
+        }
+    }
+
+    // 主 Exchange 分配 runId
+    run_id_t mainRunId = 0;
+
+    // 创建股票回测上下文
+    if (!stockSymbols.empty()) {
+        auto itr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
+        if (itr != _typeExchanges.end()) {
+            auto* stockExch = dynamic_cast<HistorySimulationBase*>(itr->second);
+            if (stockExch) {
+                mainRunId = stockExch->createBacktestContext(strategy, stockSymbols, initialCapital);
+            }
+        }
+    }
+
+    // 创建 ETF 回测上下文
+    if (!etfSymbols.empty()) {
+        auto itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
+        if (itr != _typeExchanges.end()) {
+            auto* etfExch = dynamic_cast<HistorySimulationBase*>(itr->second);
+            if (etfExch) {
+                // ETF Exchange 独立创建上下文（使用自己的 runId 计数器）
+                etfExch->createBacktestContext(strategy, etfSymbols, initialCapital);
+                if (mainRunId == 0) {
+                    // 如果没有股票标的，以 ETF 的 runId 为主 runId
+                    auto* ctx = etfExch->getBacktestContext(1);  // 第一个创建的
+                    if (ctx) {
+                        mainRunId = ctx->getRunId();
+                    }
+                }
+            }
+        }
+    }
+
+    return mainRunId;
+}
+
+double ExchangeManager::GetTotalAvailableFunds(run_id_t runId) const {
+    double total = 0.0;
+    bool found = false;
+
+    for (auto& [name, exch] : _exchanges) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(exch);
+        if (!base) continue;
+
+        auto* ctx = base->getBacktestContext(runId);
+        if (ctx) {
+            total += ctx->getAvailableFunds();
+            found = true;
+        }
+    }
+    return found ? total : BACKTEST_INITIAL_CAPITAL;
+}
+
+void ExchangeManager::ConfigureETFExchange() {
+    auto itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
+    if (itr == _typeExchanges.end()) return;
+
+    auto* etfExch = dynamic_cast<ETFHistorySimulation*>(itr->second);
+    if (!etfExch) return;
+
+    Set<String> t0Codes, t1Codes;
+    const auto& rawConfig = _server->GetConfig().GetRawConfig();
+    if (rawConfig.contains("etf")) {
+        if (rawConfig["etf"].contains("t0")) {
+            for (auto& c : rawConfig["etf"]["t0"]) t0Codes.insert(c.get<String>());
+        }
+        if (rawConfig["etf"].contains("t1")) {
+            for (auto& c : rawConfig["etf"]["t1"]) t1Codes.insert(c.get<String>());
+        }
+    }
+    etfExch->SetEtfCodes(t0Codes, t1Codes);
+    INFO("[ETF] Loaded T0 codes: {}, T1 codes: {}", t0Codes.size(), t1Codes.size());
+}
+
+double ExchangeManager::GetProgress(const String& strategy) const {
+    // 优先返回 StockExchange 的进度
+    auto itr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
+    if (itr != _typeExchanges.end()) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(itr->second);
+        if (base) return base->Progress(strategy);
+    }
+    // 其次返回 ETFExchange 的进度
+    itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
+    if (itr != _typeExchanges.end()) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(itr->second);
+        if (base) return base->Progress(strategy);
+    }
+    return 0.0;
+}
+
+void ExchangeManager::SetBacktestTimeRange(time_t start, time_t end) {
+    for (auto& [name, exch] : _exchanges) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(exch);
+        if (base) {
+            base->SetBacktestTimeRange(start, end);
+        }
+    }
 }

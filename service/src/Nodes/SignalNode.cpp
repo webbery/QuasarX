@@ -1,5 +1,6 @@
 #include "Nodes/SignalNode.h"
 #include "DataContext.h"
+#include "ExchangeManager.h"
 #include "Interprecter/Stmt.h"
 #include "Util/log.h"
 #include "server.h"
@@ -95,10 +96,10 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     // 如果不允许做空，过滤无持仓标的的 SELL 信号
     Map<symbol_t, int64_t> heldSymbols;
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
-            _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
-        if (histExchange) {
-            for (const auto& symbol : _pools) {
+        auto* exchangeMgr = _server->GetExchangeManager();
+        for (const auto& symbol : _pools) {
+            auto* histExchange = dynamic_cast<HistorySimulationBase*>(exchangeMgr->ResolveExchange(symbol));
+            if (histExchange) {
                 auto cnt = histExchange->GetPositionQuantity(symbol);
                 if (cnt != 0) {
                     heldSymbols[symbol] = cnt;

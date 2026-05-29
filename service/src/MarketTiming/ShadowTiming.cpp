@@ -94,7 +94,7 @@ String ShadowTiming::GetDateStr() {
 
 bool ShadowTiming::GetCurrentBar(symbol_t symbol, QuoteInfo& bar) {
     // 从 Server 获取最新行情（备用方案）
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     if (exchange) {
         bar = exchange->GetQuote(symbol);
         return !is_null(bar._symbol) && bar._time > 0;

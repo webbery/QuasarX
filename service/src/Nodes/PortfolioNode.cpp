@@ -1,5 +1,6 @@
 #include "Nodes/PortfolioNode.h"
 #include "DataContext.h"
+#include "ExchangeManager.h"
 #include "StrategyNode.h"
 #include "Util/system.h"
 #include "server.h"
@@ -94,12 +95,11 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
 }
 
 void PortfolioNode::Prepare(const String& strategy, DataContext& context) {
-    auto* exchange = (_server->GetAvaliableStockExchange());
-    if (_server->GetRunningMode()==RuningType::Backtest) {
-        auto broker = dynamic_cast<HistorySimulationBase*>(exchange);
-        double initialCapital = broker->GetAvailableFunds(context.getBacktestRunId());
-        context.setInitialCapital(initialCapital);
-    }
+    auto* exchangeMgr = _server->GetExchangeManager();
+    double initialCapital = exchangeMgr ?
+        exchangeMgr->GetTotalAvailableFunds(context.getBacktestRunId()) :
+        BACKTEST_INITIAL_CAPITAL;
+    context.setInitialCapital(initialCapital);
 }
 
 NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& context) {
@@ -242,7 +242,7 @@ ExecutionPlan PortfolioNode::generatePlan(
     size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
 
-    auto* exchange = _server->GetAvaliableStockExchange();
+    auto* exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
 
     for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;

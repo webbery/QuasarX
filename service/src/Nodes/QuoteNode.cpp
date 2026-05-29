@@ -1,4 +1,5 @@
 #include "Nodes/QuoteNode.h"
+#include "ExchangeManager.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
@@ -127,29 +128,37 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 
     // 设置数据源
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        String source = "股票";
+        _source = "股票";
         if (config["params"].contains("source")) {
-            source = (String)config["params"]["source"]["value"];
+            _source = (String)config["params"]["source"]["value"];
         }
 
         String freq = config["params"]["freq"]["value"];
 
-        if (source == "ETF") {
-            ETFHistorySimulation* etfExchange =
-                (ETFHistorySimulation*)_server->GetExchange(ExchangeType::EX_ETF_HIST_SIM);
+        auto* exchangeMgr = _server->GetExchangeManager();
+
+        if (_source == "ETF" && exchangeMgr) {
+            auto* etfExchange = dynamic_cast<HistorySimulationBase*>(
+                exchangeMgr->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM));
             if (etfExchange) {
                 etfExchange->SetFilter(filer);
-                etfExchange->UseFreq(freq);
+                auto* etfHist = dynamic_cast<ETFHistorySimulation*>(etfExchange);
+                if (etfHist) etfHist->UseFreq(freq);
             }
         } else {
-            StockHistorySimulation* exchange =
-                (StockHistorySimulation*)_server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM);
-            exchange->SetFilter(filer);
-            if (freq == "1d") {
-                exchange->UseLevel(TradingMode::T1);
-            } else {
-                exchange->UseLevel(TradingMode::T0);
-                exchange->SetT0Freq(freq);
+            auto* exchange = dynamic_cast<HistorySimulationBase*>(
+                _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+            if (exchange) {
+                exchange->SetFilter(filer);
+                auto* stockHist = dynamic_cast<StockHistorySimulation*>(exchange);
+                if (stockHist) {
+                    if (freq == "1d") {
+                        stockHist->UseLevel(TradingMode::T1);
+                    } else {
+                        stockHist->UseLevel(TradingMode::T0);
+                        stockHist->SetT0Freq(freq);
+                    }
+                }
             }
         }
     }
@@ -194,15 +203,20 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
         return NodeProcessResult::Skip;
     }
 
-    // 回测模式：从 StockHistorySimulation 获取当前 bar 的行情数据
-    auto* exchange = dynamic_cast<HistorySimulationBase*>(_server->GetAvaliableStockExchange());
+    // 回测模式：按 symbol 类型路由到对应 Exchange
+    run_id_t runId = context.getBacktestRunId();
+    auto* exchangeMgr = _server->GetExchangeManager();
 
     // 第一步：收集所有 symbol 当前 bar 的 quote，同时找出最小时间戳
     time_t min_t = std::numeric_limits<time_t>::max();
     bool allAligned = true;
 
     for (auto& symbol : _symbols) {
-        QuoteInfo quote = exchange->GetQuote(symbol, context.getBacktestRunId());
+        auto* exch = dynamic_cast<HistorySimulationBase*>(
+            exchangeMgr->ResolveExchange(symbol));
+        if (!exch) return NodeProcessResult::Skip;
+
+        QuoteInfo quote = exch->GetQuote(symbol, runId);
         // time == 0 表示该 symbol 数据已用完
         if (quote._time == 0) return NodeProcessResult::Finished;
 

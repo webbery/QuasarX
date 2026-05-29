@@ -30,7 +30,6 @@ struct StrategyValidationResult {
 class Commander;
 class StrategySubSystem;
 class PortfolioSubSystem;
-class ExchangeHandler;
 class ExchangeManager;
 class StrategyPlugin;
 class IStopLoss;
@@ -112,9 +111,6 @@ public:
     static bool IsExit() { return _exit; }
 
     ExchangeInterface* GetExchange(ExchangeType type);
-    ExchangeInterface* GetAvaliableStockExchange();
-    ExchangeInterface* GetAvaliableEtfExchange();
-    ExchangeInterface* GetAvaliableFutureExchange();
 
     float GetInterestRate(time_t datetime);
 
@@ -168,10 +164,6 @@ public:
     bool IsOpen(ExchangeName exchange, time_t);
 
     time_t GetCloseTime(ExchangeName exchange);
-
-    void SetActiveExchange(ExchangeInterface* exchange) {
-        _trade_exchange = exchange;
-    }
 
     bool SendEmail(const String& content);
     // 检查是否在数据备份中
@@ -286,7 +278,6 @@ private:
     ServerConfig* _config;
 
     ExchangeManager* _exchangeMgr = nullptr;
-    ExchangeInterface* _trade_exchange;
 
     StrategySubSystem* _strategySystem;
     PortfolioSubSystem* _portfolioSystem;

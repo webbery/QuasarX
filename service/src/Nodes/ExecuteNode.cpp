@@ -62,7 +62,7 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
 
     _timing = GenerateTiming((ExecuteType)type);
 
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     auto simExchange = dynamic_cast<HistorySimulationBase*>(exchange);
     if (simExchange) {
         simExchange->SetSlippageModel(SlippageFactory::create(slipJson));

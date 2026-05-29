@@ -15,7 +15,7 @@ IndexHandler::~IndexHandler() {
 }
 
 void IndexHandler::get(const httplib::Request& req, httplib::Response& res) {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     auto indx1 = to_symbol("000001", "sh");
     auto quote = exchange->GetQuote(indx1);
     nlohmann::json jsn;

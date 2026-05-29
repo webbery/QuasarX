@@ -7,7 +7,7 @@ PositionHandler::PositionHandler(Server* server):HttpHandler(server) {
 }
 
 void PositionHandler::get(const httplib::Request& req, httplib::Response& res) {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     AccountPosition positions;
     nlohmann::json result;
     if (!exchange->GetPosition(positions)) {

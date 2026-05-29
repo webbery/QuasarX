@@ -271,7 +271,7 @@ void OrderHandler::put(const httplib::Request& req, httplib::Response& res)
     int type = data["type"];
     int operation = data["operation"];
     if (type == 0) {
-        auto exchange = _server->GetAvaliableStockExchange();
+        auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
         if (operation == 0) {
             // 暂停报单
             exchange->EnableInsertOrder(false);

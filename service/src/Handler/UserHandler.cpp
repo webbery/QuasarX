@@ -342,7 +342,7 @@ UserFundHandler::UserFundHandler(Server* server):HttpHandler(server)
 
 void UserFundHandler::get(const httplib::Request& req, httplib::Response& res)
 {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     if (!exchange) {
         res.status = 400;
         return;
@@ -359,7 +359,7 @@ UserSwitchHandler::UserSwitchHandler(Server* server): HttpHandler(server) {
 }
 
 void UserSwitchHandler::post(const httplib::Request& req, httplib::Response& res) {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     if (!exchange) {
         res.status = 400;
         return;

@@ -11,6 +11,7 @@
 
 class Server;
 class RiskSubSystem;
+class ExchangeManager;
 enum class StatisticIndicator: char;
 enum class OrderType: char;
 
@@ -35,6 +36,14 @@ public:
     run_id_t Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
 
     /**
+     * @brief 启动已创建上下文的回测工作线程（多 Exchange 协调版本）
+     * @param strategy 策略名称
+     * @param runId 已分配的回测运行 ID
+     * @param exchangeMgr Exchange 协调器
+     */
+    void StartBacktestWithExchangeMgr(const String& strategy, run_id_t runId, ExchangeManager* exchangeMgr);
+
+    /**
      * @brief 设置策略为影子模式（在 LoadFlow 之前调用）
      * @note 不调用此方法时，策略默认跟随全局模式
      */
@@ -44,6 +53,11 @@ public:
      * @brief 启动实盘策略（K-bar 聚合驱动）
      */
     run_id_t StartRealtime(const String& strategy, const Set<symbol_t>& symbols, double initialCapital = 100000.0);
+
+    /**
+     * @brief 从策略图中获取需要的数据源集合
+     */
+    Set<String> GetRequiredSources(const String& strategy) const;
 
     /**
      * @brief 检查策略是否正在运行

@@ -48,7 +48,7 @@ void OptionHandler::get(const httplib::Request& req, httplib::Response& res) {
 
 void OptionDetailHandler::get(const httplib::Request& req, httplib::Response& res) {
     String code = req.get_param_value("id");
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     auto symbol = get_etf_option_symbol(code);
     auto quote = exchange->GetQuote(symbol);
 

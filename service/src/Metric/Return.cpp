@@ -438,7 +438,7 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
     std::map<symbol_t, HFQData> hfq_data;
 
     if (server) {
-        auto* exchange = dynamic_cast<HistorySimulationBase*>(server->GetAvaliableStockExchange());
+        auto* exchange = dynamic_cast<HistorySimulationBase*>(server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
         if (exchange) {
             for (auto symbol : all_symbols) {
                 try {

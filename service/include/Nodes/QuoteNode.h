@@ -37,6 +37,11 @@ public:
     void EraseSymbol(symbol_t symbol) { _symbols.erase(symbol); }
 
     Map<String, ArgType> out_elements();
+
+    /**
+     * @brief 获取数据源类型（"股票"/"ETF"）
+     */
+    const String& GetSource() const { return _source; }
 private:
     bool Init();
 
@@ -82,4 +87,5 @@ private:
     MissingHandleType _missingHandle = MissingHandleType::Skip;
     Map<symbol_t, QuoteInfo> _curQuotes;   // 当前轮次各 symbol 的 quote
     Map<symbol_t, QuoteInfo> _lastQuotes;  // 每个 symbol 上一次写入的 quote
+    String _source = "股票";                // 数据源类型
 };

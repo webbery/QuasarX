@@ -643,9 +643,14 @@ QuoteInfo HistorySimulationBase::GetQuote(symbol_t symbol, run_id_t run_id) {
 
 order_id HistorySimulationBase::AddOrder(const symbol_t& symbol, OrderContext* order, uint32_t strategy_hash) {
     BacktestContext* ctx = nullptr;
-    _backtestContexts.visit(strategy_hash, [&ctx](auto& item) {
-        ctx = item.second.get();
-    });
+    // 使用 order 中的 _backtest_run_id 而不是 strategy_hash
+    // BacktestContext 是以 runId 为 key 存储的
+    run_id_t runId = order->_backtest_run_id;
+    if (runId > 0) {
+        _backtestContexts.visit(runId, [&ctx](auto& item) {
+            ctx = item.second.get();
+        });
+    }
 
     if (ctx) {
         OrderInfo info;

@@ -38,7 +38,6 @@
 #include "Nodes/PortfolioNode.h"
 #include "Nodes/ExecuteNode.h"
 #include "Handler/BrokerHandler.h"
-#include "Handler/ExchangeHandler.h"
 #include "Handler/RiskHandler.h"
 #include "Handler/PortfolioHandler.h"
 #include "Handler/PredictionHandler.h"
@@ -162,7 +161,7 @@ bool Server::_exit = false;
 std::mutex Server::_sseMutex;
 Map<std::thread::id, nng_socket> Server::_sseSockets;
 
-Server::Server():_config(nullptr), _trade_exchange(nullptr), _dividends(12*60*12),
+Server::Server():_config(nullptr), _dividends(12*60*12),
 _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
 _defaultPortfolio(1), _timer(nullptr)
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
@@ -215,6 +214,10 @@ bool Server::Init(const char* config) {
 
     InitHandlers();
     InitDatabase();
+
+    // 创建 ExchangeManager 协调器
+    _exchangeMgr = new ExchangeManager(this);
+    _exchangeMgr->InitQuotePublisher();
     // _mode = mode;
     return true;
 }
@@ -360,10 +363,9 @@ void Server::InitDefault() {
     for (auto& name: names) {
         auto exchange = _config->GetExchangeByName(name);
         if (exchange.empty()) {
-            
+
         }
-        auto exchanger = (ExchangeHandler*)_handlers[API_EXHANGE];
-        if (!exchanger->Use(name)) {
+        if (!_exchangeMgr->Use(name)) {
         }
         if ((String)exchange["api"] == STOCK_HISTORY_SIM) {
             use_sim = true;
@@ -377,20 +379,8 @@ void Server::InitDefault() {
     }
 
     // 解析 etf.t0/etf.t1 配置并传递给 ETFHistorySimulation
-    auto etfExchanger = dynamic_cast<ETFHistorySimulation*>(GetExchange(ExchangeType::EX_ETF_HIST_SIM));
-    if (etfExchanger) {
-        Set<String> t0Codes, t1Codes;
-        const auto& rawConfig = _config->GetRawConfig();
-        if (rawConfig.contains("etf")) {
-            if (rawConfig["etf"].contains("t0")) {
-                for (auto& c : rawConfig["etf"]["t0"]) t0Codes.insert(c.get<String>());
-            }
-            if (rawConfig["etf"].contains("t1")) {
-                for (auto& c : rawConfig["etf"]["t1"]) t1Codes.insert(c.get<String>());
-            }
-        }
-        etfExchanger->SetEtfCodes(t0Codes, t1Codes);
-        INFO("[ETF] Loaded T0 codes: {}, T1 codes: {}", t0Codes.size(), t1Codes.size());
+    if (_exchangeMgr) {
+        _exchangeMgr->ConfigureETFExchange();
     }
 
     if (!use_sim) { // 开启模拟数据的情况下，不记录数据
@@ -437,7 +427,7 @@ void Server::InitDefault() {
         std::filesystem::create_directories(dbpath);
     }
 
-    auto& exchagnes = ((ExchangeHandler*)_handlers[API_EXHANGE])->GetExchangesWithType();
+    auto& exchagnes = _exchangeMgr->GetExchangesByType();
 
     _brokerSystem->Init(broker, exchagnes);
 
@@ -606,7 +596,7 @@ void Server::InitStocks(const String& path) {
     if (_markets.empty()) {
         WARN("Symbol market is empty, trying to reload from exchange...");
 
-        auto exchange = GetAvaliableStockExchange();
+        auto exchange = _exchangeMgr ? _exchangeMgr->GetExchangeByType(ExchangeType::EX_HX) : nullptr;
         if (exchange) {
             List<SymbolInfo> symbols;
             if (exchange->GetAllStockSymbols(symbols)) {
@@ -705,7 +695,7 @@ bool Server::InitMarket(const std::string& path) {
                 }
             } else if (info["api"] == TICKFLOW_QUOTE_API) {
                 // 通过 TickFlow 接口获取标的列表
-                auto exchange = GetAvaliableStockExchange();
+                auto exchange = _exchangeMgr ? _exchangeMgr->GetExchangeByType(ExchangeType::EX_HX) : nullptr;
                 if (exchange) {
                     List<SymbolInfo> symbols;
                     if (exchange->GetAllStockSymbols(symbols)) {
@@ -862,31 +852,7 @@ ExchangeName Server::GetExchange(const std::string& symbol) {
     return *types.begin();
 }
 
-ExchangeInterface* Server::GetAvaliableStockExchange()
-{
-    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
-    auto name = handler->GetActiveStock();
-    if (name.empty())
-        return nullptr;
-    auto& exchanges = handler->GetExchanges();
-    return exchanges.at(name);
-}
-
-ExchangeInterface* Server::GetAvaliableEtfExchange()
-{
-    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
-    return handler->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM);
-}
-
-ExchangeInterface* Server::GetAvaliableFutureExchange()
-{
-    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
-    auto name = handler->GetActiveFuture();
-    if (name.empty())
-        return nullptr;
-    auto& exchanges = handler->GetExchanges();
-    return exchanges.at(name);
-}
+int Server::GetMaxPrepareCount() {
 
 Pair<ContractType, char> Server::GetContractType(const std::string& symbol, const String& exhange)
 {
@@ -1139,7 +1105,7 @@ void Server::TimerWorker(nng_socket sock) {
     }
 #endif
     // 更新持仓
-    auto broker = GetAvaliableStockExchange();
+    auto broker = _exchangeMgr ? _exchangeMgr->GetExchangeByType(ExchangeType::EX_HX) : nullptr;
     AccountPosition ap;
     broker->GetPosition(ap);
     nlohmann::json holds;
@@ -1226,22 +1192,7 @@ void Server::TimerWorker(nng_socket sock) {
 // }
 
 void Server::UpdateQuoteQueryStatus(time_t curr) {
-    auto handler = (ExchangeHandler*)(_handlers[API_EXHANGE]);
-    for (auto exchange: handler->GetExchanges()) {
-        if (strcmp(exchange.second->Name(), STOCK_HISTORY_SIM) == 0) {
-            continue;
-        }
-        if (exchange.second->IsWorking(curr)) {
-            if (exchange.second->IsLogin()) {
-                exchange.second->QueryQuotes();
-            }
-            else {
-                exchange.second->Login();
-            }
-        } else {
-            exchange.second->StopQuery();
-        }
-    }
+    _exchangeMgr->UpdateQuoteQueryStatus(curr);
 }
 
 void Server::Schedules(time_t t) {
@@ -1276,8 +1227,7 @@ void Server::Schedules(time_t t) {
 }
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {
-    ExchangeHandler* handler = (ExchangeHandler*)_handlers[API_EXHANGE];
-    return handler->GetExchangeByType(type);
+    return _exchangeMgr->GetExchangeByType(type);
 }
 
 int Server::GetMaxPrepareCount() {
@@ -1296,7 +1246,7 @@ void Server::ReloadMarketData(const String& path) {
     _markets.clear();
 
     // 优先通过 Exchange 接口获取符号信息
-    auto exchange = GetAvaliableStockExchange();
+    auto exchange = _exchangeMgr ? _exchangeMgr->GetExchangeByType(ExchangeType::EX_HX) : nullptr;
     if (exchange) {
         List<SymbolInfo> symbols;
 
@@ -1345,7 +1295,6 @@ void Server::ReloadMarketData(const String& path) {
 }
 
 void Server::InitHandlers() {
-    RegistHandler(API_EXHANGE, ExchangeHandler);
     RegistHandler(API_RECORD, RecordHandler);
     RegistHandler(API_RISK_STOP_LOSS, StopLossHandler);
     RegistHandler(API_RISK_CAPITAL, CapitalRiskHandler);

@@ -127,7 +127,7 @@ StockDetailHandler::StockDetailHandler(Server* server)
 void StockDetailHandler::get(const httplib::Request& req, httplib::Response& res)
 {
   String symbol = req.get_param_value("id");
-  auto exchange = _server->GetAvaliableStockExchange();
+  auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
   auto quote = exchange->GetQuote(to_symbol(symbol));
   nlohmann::json jsn;
   jsn["upper"] = quote._upper;
@@ -152,7 +152,7 @@ void StockPrivilege::get(const httplib::Request& req, httplib::Response& res)
         return;
     }
     auto symbol = to_symbol(id);
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     nlohmann::json jsn;
     auto result = exchange->HasPermission(symbol);
     if (result.has_value()) {
@@ -183,7 +183,7 @@ void StockParams::get(const httplib::Request& req, httplib::Response& res)
     auto& limits = config.GetStockLimits();
     res.status = 200;
     nlohmann::json result;
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     result["order_limit"] = exchange->GetStockLimitation(2);
     result["daily_limit"] = exchange->GetStockLimitation(1);
     result["cancel_limit"] = exchange->GetStockLimitation(3);
@@ -196,7 +196,7 @@ void StockParams::put(const httplib::Request& req, httplib::Response& res)
     int ol = data["order_limit"];
     int dl = data["daily_limit"];
     int cl = data["cancel_limit"];
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     if (!exchange->SetStockLimitation(1, dl)) {
         ProcessError(ERROR_SET_ORDER_LIMIT, res);
         return;

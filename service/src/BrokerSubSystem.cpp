@@ -10,6 +10,7 @@
 #include <yas/serialize.hpp>
 #include "Bridge/SIM/BacktestContext.h"
 #include "Bridge/exchange.h"
+#include "ExchangeManager.h"
 #include "PortfolioSubsystem.h"
 #include "Util/lmdb.h"
 #include "Util/string_algorithm.h"
@@ -17,7 +18,6 @@
 #include "Util/system.h"
 #include "server.h"
 #include <boost/math/distributions/normal.hpp>
-#include "Handler/ExchangeHandler.h"
 #include "Strategy.h"
 #include "Metric/Sharp.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
@@ -183,7 +183,7 @@ void BrokerSubSystem::SetCommission(symbol_t symbol, const Commission& comm) {
 
 bool BrokerSubSystem::QueryOrders(SecurityType type, OrderList& ol)
 {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     if (!exchange->GetOrders(type, ol)) {
         WARN("query orders fail");
         return false;
@@ -193,7 +193,7 @@ bool BrokerSubSystem::QueryOrders(SecurityType type, OrderList& ol)
 
 int BrokerSubSystem::QueryOrder(const String& sysID, Order& order)
 {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     if (!exchange->GetOrder(sysID, order)) {
       return 0;
     }
@@ -201,7 +201,7 @@ int BrokerSubSystem::QueryOrder(const String& sysID, Order& order)
 }
 
 void BrokerSubSystem::CancelOrder(order_id& id, symbol_t symbol, std::function<void (const TradeReport&)> cb) {
-    auto exchange = _server->GetAvaliableStockExchange();
+    auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
     OrderContext* ctx = new OrderContext;
     ctx->_flag = false;
     ctx->_callback = cb;
@@ -664,11 +664,11 @@ order_id BrokerSubSystem::AddOrderAsync(run_id_t run_id, OrderContext* order) {
         _server->SendEmail(content);
     }
     if (is_stock(GET_SYMBOL(order)) || is_etf_option(GET_SYMBOL(order))) {
-        auto exchange = _server->GetAvaliableStockExchange();
+        auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
         return exchange->AddOrder(run_id, GET_SYMBOL(order), order);
     }
     if (is_future(GET_SYMBOL(order))) {
-        auto exchange = _server->GetAvaliableFutureExchange();
+        auto exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_CTP);
         return exchange->AddOrder(run_id, GET_SYMBOL(order), order);
     }
     order_id id;
