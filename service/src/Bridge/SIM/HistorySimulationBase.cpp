@@ -444,7 +444,11 @@ void HistorySimulationBase::destroyBacktestContext(run_id_t run_id) {
  */
 static inline time_t DateOnly(time_t ts) {
     struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &ts);
+#else
     localtime_r(&ts, &tm_val);
+#endif
     tm_val.tm_hour = 0;
     tm_val.tm_min = 0;
     tm_val.tm_sec = 0;

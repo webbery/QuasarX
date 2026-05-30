@@ -17,7 +17,7 @@ import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { createHash } from 'crypto';
-import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags } from './vectorDB';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags, storeChunkSummaries, getChunkSummariesByDocId, getChunksByDocId } from './vectorDB';
 import { agentRouter } from './agent/AgentRouter';
 import { IndexAgent } from './agent/IndexAgent';
 import type { AgentConfig } from '../src/lib/agent';
@@ -131,6 +131,19 @@ app.whenReady().then(async () => {
     try {
         agentRouter.register('index', new IndexAgent());
         console.log('[AgentRouter] IndexAgent registered');
+
+        // 注册 chunk summarizer agent（复用 IndexAgent 的 summarizeChunks 方法）
+        const summarizerAgent = {
+            name: 'index-summarizer',
+            run: async (input: string, options?: Record<string, any>) => {
+                // input 是 JSON字符串，包含 chunks 数组
+                const chunks = JSON.parse(input);
+                const indexAgent = new IndexAgent();
+                return await indexAgent.summarizeChunks(chunks, options);
+            }
+        };
+        agentRouter.register('index-summarizer', summarizerAgent as any);
+        console.log('[AgentRouter] IndexSummarizerAgent registered');
     } catch (e) {
         console.error('[AgentRouter] init failed:', e);
     }
@@ -499,30 +512,45 @@ ipcMain.handle('generate-summary', async (_, params: {
   docId: string;
   fileName: string;
   fullText: string;
-  chunkIds: string[];
+  chunks: { index: number; content: string }[];
   llmConfig: AgentConfig;
+  pages?: number;
 }) => {
   try {
-    const { docId, fileName, fullText, chunkIds, llmConfig } = params;
+    const { docId, fileName, fullText, chunks, llmConfig, pages } = params;
 
     // 标记为 pending
     try { await updateSummaryStatus(docId, 'pending'); } catch {}
 
-    // 通过 AgentRouter 调用 IndexAgent 生成摘要和标签
-    const result = await agentRouter.dispatch('index', fullText, { llmConfig }) as { summary: string; tags: string[] };
+    // 步骤 1: 批量生成 chunk summaries（段落意义总结）
+    console.log(`[generate-summary] generating chunk summaries for ${fileName}, ${chunks.length} chunks`);
+    const chunkTexts = chunks.map(c => c.content);
+    const summarizeResult = await agentRouter.dispatch('index-summarizer', chunkTexts, { llmConfig }) as { summaries: string[] };
+    const chunkSummaries = summarizeResult.summaries || chunkTexts; // 如果失败则使用原文
 
-    // 兼容旧格式（如果 IndexAgent 返回字符串而非对象）
+    // 存储 chunk summaries 到 chunk_summaries 表
+    const chunkSummariesData = chunks.map((chunk, idx) => ({
+      chunkId: `${docId}_${chunk.index}`,
+      chunkIndex: chunk.index,
+      summary: chunkSummaries[idx] || chunk.content,
+    }));
+    await storeChunkSummaries(docId, fileName, chunkSummariesData);
+
+    // 步骤 2: 生成文档级摘要和标签（使用 chunk_summaries 拼接）
+    const summaryInput = chunkSummaries.join('\n\n');
+    const result = await agentRouter.dispatch('index', summaryInput, { llmConfig }) as { summary: string; tags: string[] };
+
     const summary = typeof result === 'string' ? result : result.summary;
     const tags = typeof result === 'string' ? [] : (result.tags || []);
+    const chunkIds = chunks.map(c => `${docId}_${c.index}`);
 
-    // 存储摘要和标签
-    await storeSummary({ docId, fileName, summary, chunkIds, tags });
+    // 存储文档级摘要和标签
+    await storeSummary({ docId, fileName, summary, chunkIds, tags, pages });
 
-    console.log(`[generate-summary] summary generated for ${fileName}, tags: ${tags.join(', ')}`);
-    return { success: true, summary, tags };
+    console.log(`[generate-summary] completed for ${fileName}, tags: ${tags.join(', ')}, pages: ${pages || 0}`);
+    return { success: true, summary, tags, chunkSummaries };
   } catch (error: any) {
     console.error('[generate-summary] 错误:', error);
-    // 标记为 failed
     try { await updateSummaryStatus(params.docId, 'failed'); } catch {}
     return { success: false, error: error.message };
   }
@@ -539,21 +567,81 @@ ipcMain.handle('retry-summary', async (_, params: {
   try {
     const { docId, fileName, fullText, chunkIds, llmConfig, pages } = params;
 
-    // 只删除旧摘要（保留 chunks）
+    // 获取该文档的所有 chunks
+    const chunks = await getChunksByDocId(docId);
+    const chunkTexts = chunks.map((c: any) => c.content);
+
+    // 步骤 1: 重新生成 chunk summaries
+    console.log(`[retry-summary] regenerating chunk summaries for ${fileName}`);
+    const summarizeResult = await agentRouter.dispatch('index-summarizer', chunkTexts, { llmConfig }) as { summaries: string[] };
+    const chunkSummaries = summarizeResult.summaries || chunkTexts;
+
+    const chunkSummariesData = chunks.map((chunk: any, idx: number) => ({
+      chunkId: chunk.id,
+      chunkIndex: chunk.chunk_index,
+      summary: chunkSummaries[idx] || chunk.content,
+    }));
+    await storeChunkSummaries(docId, fileName, chunkSummariesData);
+
+    // 步骤 2: 重新生成文档级摘要和标签
     await deleteSummaryOnly(docId);
+    const summaryInput = chunkSummaries.join('\n\n');
+    const result = await agentRouter.dispatch('index', summaryInput, { llmConfig }) as { summary: string; tags: string[] };
 
-    const result = await agentRouter.dispatch('index', fullText, { llmConfig }) as { summary: string; tags: string[] };
-
-    // 兼容旧格式
     const summary = typeof result === 'string' ? result : result.summary;
     const tags = typeof result === 'string' ? [] : (result.tags || []);
 
     await storeSummary({ docId, fileName, summary, chunkIds, tags, pages });
 
-    console.log(`[retry-summary] summary regenerated for ${fileName}, tags: ${tags.join(', ')}, pages: ${pages || 0}`);
+    console.log(`[retry-summary] completed for ${fileName}, tags: ${tags.join(', ')}, pages: ${pages || 0}`);
     return { success: true, summary, tags };
   } catch (error: any) {
     console.error('[retry-summary] 错误:', error);
+    try { await updateSummaryStatus(params.docId, 'failed'); } catch {}
+    return { success: false, error: error.message };
+  }
+});
+
+// 重新生成标签（不重新分块，不重新生成 chunk summaries）
+ipcMain.handle('regenerate-tags', async (_, params: {
+  docId: string;
+  fileName: string;
+  llmConfig: AgentConfig;
+  pages?: number;
+}) => {
+  try {
+    const { docId, fileName, llmConfig, pages } = params;
+
+    // 获取该文档的所有 chunk summaries
+    const chunkSummaries = await getChunkSummariesByDocId(docId);
+
+    // 如果 chunk_summaries 为空，回退到获取 chunks 原文
+    let summaryInput: string;
+    if (chunkSummaries.length > 0) {
+      summaryInput = chunkSummaries.map((s: any) => s.summary).join('\n\n');
+    } else {
+      const chunks = await getChunksByDocId(docId);
+      summaryInput = chunks.map((c: any) => c.content).join('\n\n');
+    }
+
+    console.log(`[regenerate-tags] regenerating tags for ${docId}, input length: ${summaryInput.length}`);
+
+    // 只生成摘要和标签，不重新分块
+    await deleteSummaryOnly(docId);
+    const result = await agentRouter.dispatch('index', summaryInput, { llmConfig }) as { summary: string; tags: string[] };
+
+    const summary = typeof result === 'string' ? result : result.summary;
+    const tags = typeof result === 'string' ? [] : (result.tags || []);
+    const chunkIds = chunkSummaries.length > 0
+      ? chunkSummaries.map((s: any) => s.chunk_id)
+      : (await getChunksByDocId(docId)).map((c: any) => c.id);
+
+    await storeSummary({ docId, fileName, summary, chunkIds, tags, pages });
+
+    console.log(`[regenerate-tags] completed for ${docId}, tags: ${tags.join(', ')}`);
+    return { success: true, summary, tags };
+  } catch (error: any) {
+    console.error('[regenerate-tags] 错误:', error);
     try { await updateSummaryStatus(params.docId, 'failed'); } catch {}
     return { success: false, error: error.message };
   }

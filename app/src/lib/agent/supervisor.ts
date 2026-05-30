@@ -73,10 +73,24 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
       eventType: "thought",
       timestamp: Date.now(),
     });
+
+    // ★ 从 messages 中提取最后一条 AIMessage 作为最终回复
+    let extractedResponse = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg instanceof AIMessage) {
+        const content = typeof msg.content === 'string' ? msg.content : '';
+        if (content) {
+          extractedResponse = content;
+          break;
+        }
+      }
+    }
+
     return {
       routerDecision: "respond",
       activeAgent: null,
-      finalResponse: "",
+      finalResponse: extractedResponse,
     };
   }
 

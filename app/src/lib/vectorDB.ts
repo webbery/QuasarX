@@ -75,21 +75,22 @@ export async function search(
 }
 
 /**
- * 异步生成文档摘要
+ * 异步生成文档摘要（包含 chunk summaries）
  */
 export async function generateSummary(params: {
   docId: string;
   fileName: string;
   fullText: string;
-  chunkIds: string[];
+  chunks: { index: number; content: string }[];
   llmConfig: { url: string; protocol: string; apiKey: string; model: string };
-}): Promise<{ success: boolean; summary?: string; error?: string }> {
+  pages?: number;
+}): Promise<{ success: boolean; summary?: string; tags?: string[]; error?: string }> {
   const result = await ipcRenderer.invoke('generate-summary', params);
   return result;
 }
 
 /**
- * 重试生成文档摘要
+ * 重试生成文档摘要（包含 chunk summaries）
  */
 export async function retrySummary(params: {
   docId: string;
@@ -146,4 +147,17 @@ export async function getPages(docId: string): Promise<number> {
 export async function updateTags(docId: string, tags: string[]): Promise<void> {
   const result = await ipcRenderer.invoke('knowledge-update-tags', { docId, tags });
   if (!result.success) throw new Error(result.error);
+}
+
+/**
+ * 重新生成文档标签（不重新分块，使用 chunk_summaries 拼接）
+ */
+export async function regenerateTags(params: {
+  docId: string;
+  fileName: string;
+  llmConfig: { url: string; protocol: string; apiKey: string; model: string };
+  pages?: number;
+}): Promise<{ success: boolean; summary?: string; tags?: string[]; error?: string }> {
+  const result = await ipcRenderer.invoke('regenerate-tags', params);
+  return result;
 }

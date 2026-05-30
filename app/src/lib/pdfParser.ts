@@ -20,9 +20,10 @@ export interface TextChunk {
  * PDF 解析配置
  */
 interface ParseConfig {
-  chunkSize?: number;    // 每块字符数，默认 500
-  chunkOverlap?: number; // 重叠字符数，默认 50
-  summaryLength?: number; // 摘要字符数，默认 300
+  maxChunkSize?: number;    // 最大块大小（字符数），默认 800
+  minChunkSize?: number;    // 最小块大小（字符数），默认 100
+  shortChunkThreshold?: number; // 短块阈值（字符数），小于此值不做 summary，默认 50
+  summaryLength?: number;   // 摘要字符数，默认 300
 }
 
 /**
@@ -36,8 +37,9 @@ export async function parsePdf(
   config: ParseConfig = {}
 ): Promise<PdfParseResult> {
   const {
-    chunkSize = 500,
-    chunkOverlap = 50,
+    maxChunkSize = 800,
+    minChunkSize = 100,
+    shortChunkThreshold = 50,
     summaryLength = 300,
   } = config;
 
@@ -47,7 +49,7 @@ export async function parsePdf(
   const text = await extractTextFromPdf(fileData);
   const pages = estimatePageCount(text);
   const title = extractTitle(text);
-  const chunks = chunkText(text, chunkSize, chunkOverlap);
+  const chunks = chunkByParagraph(text, maxChunkSize, minChunkSize, shortChunkThreshold);
   const summary = generateSummary(text, summaryLength);
 
   return {
@@ -103,18 +105,108 @@ function extractTitle(text: string): string {
 }
 
 /**
- * 文本分块
+ * 按段落分块
+ * @param text 完整文本
+ * @param maxChunkSize 最大块大小（字符数），默认 800
+ * @param minChunkSize 最小块大小（字符数），默认 100
+ * @param shortChunkThreshold 短块阈值（字符数），小于此值不做 summary
+ * @returns 分块数组
  */
-function chunkText(text: string, chunkSize: number, overlap: number): string[] {
+function chunkByParagraph(
+  text: string,
+  maxChunkSize: number = 800,
+  minChunkSize: number = 100,
+  shortChunkThreshold: number = 50
+): string[] {
+  // 1. 按段落分割（双换行 = 段落边界，单换行 = 句子边界）
+  const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
+
+  // 降级：如果段落数太少（< 3），回退到固定字符分块
+  if (paragraphs.length < 3) {
+    console.warn('[pdfParser] 段落数太少（< 3），回退到固定字符分块');
+    return chunkByFixedChar(text, maxChunkSize);
+  }
+
   const chunks: string[] = [];
-  // 移除多余空白
+  let currentChunk = '';
+
+  for (const para of paragraphs) {
+    // 如果当前块 + 新段落不超过最大限制，追加
+    if (currentChunk.length + para.length + 2 <= maxChunkSize) {
+      currentChunk = currentChunk ? `${currentChunk}\n\n${para}` : para;
+    } else {
+      // 当前块已满，保存
+      if (currentChunk.length >= minChunkSize) {
+        chunks.push(currentChunk);
+      }
+      // 如果段落本身超长，需要进一步按句子拆分
+      if (para.length > maxChunkSize) {
+        const subChunks = splitLongParagraph(para, maxChunkSize, minChunkSize);
+        chunks.push(...subChunks);
+        currentChunk = '';
+      } else {
+        currentChunk = para;
+      }
+    }
+  }
+
+  // 处理最后一个块
+  if (currentChunk.length >= minChunkSize) {
+    chunks.push(currentChunk);
+  }
+
+  console.log(`[pdfParser] 按段落分块完成: ${paragraphs.length} 段落 → ${chunks.length} 块`);
+  return chunks;
+}
+
+/**
+ * 固定字符数分块（降级方案）
+ */
+function chunkByFixedChar(text: string, chunkSize: number): string[] {
+  const chunks: string[] = [];
   const cleaned = text.replace(/\s+/g, ' ').trim();
 
-  for (let i = 0; i < cleaned.length; i += chunkSize - overlap) {
+  for (let i = 0; i < cleaned.length; i += chunkSize) {
     const chunk = cleaned.substring(i, i + chunkSize);
     if (chunk.length > 0) {
       chunks.push(chunk);
     }
+  }
+
+  return chunks;
+}
+
+/**
+ * 超长段落按句子拆分（带重叠）
+ */
+function splitLongParagraph(
+  text: string,
+  maxChunkSize: number,
+  minChunkSize: number
+): string[] {
+  // 按句子分割（句号、问号、感叹号 + 空格/换行）
+  const sentences = text.split(/(?<=[。！？.!?])\s*/).filter(s => s.trim());
+
+  const chunks: string[] = [];
+  let currentChunk = '';
+  let overlap = ''; // 保留最后 1-2 个句子作为重叠
+
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length <= maxChunkSize) {
+      currentChunk += sentence;
+    } else {
+      if (currentChunk.length >= minChunkSize) {
+        chunks.push(overlap + currentChunk);
+      }
+      // 重叠：保留最后 2 个句子
+      const lastSentences = currentChunk.split(/(?<=[。！？.!?])\s*/).slice(-2).join('');
+      overlap = lastSentences;
+      currentChunk = sentence;
+    }
+  }
+
+  if (currentChunk.length >= minChunkSize) {
+    chunks.push(overlap + currentChunk);
   }
 
   return chunks;

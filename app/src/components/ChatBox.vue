@@ -132,10 +132,39 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useChatStore, type ThoughtStep, type TokenUsage } from '@/stores/chatStore'
 import { askAI, type AskAIProgress } from '@/lib/ChatApi'
 import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js/lib/core'
+import python from 'highlight.js/lib/languages/python'
+import json from 'highlight.js/lib/languages/json'
+import texmath from 'markdown-it-texmath'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import { runSupervisorGraph, IndexedDBSaver } from '@/lib/agent'
 import { AIMessage, HumanMessage } from '@langchain/core/messages'
 
-const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('json', json)
+
+const md = new MarkdownIt({
+  html: true,
+  breaks: true,
+  linkify: true,
+  highlight: (str: string, lang: string) => {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return `<pre class="hljs"><code class="hljs language-${lang}">${hljs.highlight(str, { language: lang }).value}</code></pre>`
+      } catch (__) {}
+    }
+    return '' // 使用默认转义
+  },
+})
+
+// 启用 LaTeX 数学公式渲染
+md.use(texmath, {
+  engine: katex,
+  delimiters: ['dollars', 'brackets', 'kramdown', 'doxygen'],
+  outerOpen: '$',
+  outerClose: '$',
+})
 const chatStore = useChatStore()
 const inputText = ref('')
 const messageListRef = ref<HTMLDivElement>()
@@ -415,6 +444,58 @@ function renderMarkdown(t: string) { return md.render(t) }
   background: rgba(0, 0, 0, 0.4); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0;
 }
 .message-text.markdown-body :deep(pre code) { background: none; padding: 0; font-size: 12px; line-height: 1.4 }
+
+/* highlight.js 语法高亮样式 (GitHub Dark 主题) */
+.message-text.markdown-body :deep(pre.hljs) {
+  background: #0d1117;
+  padding: 14px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.message-text.markdown-body :deep(code.hljs) {
+  background: none;
+  color: #c9d1d9;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+.message-text.markdown-body :deep(.hljs-keyword) { color: #ff7b72 }
+.message-text.markdown-body :deep(.hljs-string) { color: #a5d6ff }
+.message-text.markdown-body :deep(.hljs-number) { color: #79c0ff }
+.message-text.markdown-body :deep(.hljs-comment) { color: #8b949e; font-style: italic }
+.message-text.markdown-body :deep(.hljs-function) { color: #d2a8ff }
+.message-text.markdown-body :deep(.hljs-title) { color: #d2a8ff }
+.message-text.markdown-body :deep(.hljs-params) { color: #c9d1d9 }
+.message-text.markdown-body :deep(.hljs-built_in) { color: #ffa657 }
+.message-text.markdown-body :deep(.hljs-class) { color: #ffa657 }
+.message-text.markdown-body :deep(.hljs-literal) { color: #79c0ff }
+.message-text.markdown-body :deep(.hljs-operator) { color: #ff7b72 }
+.message-text.markdown-body :deep(.hljs-punctuation) { color: #c9d1d9 }
+.message-text.markdown-body :deep(.hljs-property) { color: #79c0ff }
+.message-text.markdown-body :deep(.hljs-variable) { color: #ffa657 }
+.message-text.markdown-body :deep(.hljs-meta) { color: #8b949e }
+.message-text.markdown-body :deep(.hljs-doctag) { color: #8b949e }
+.message-text.markdown-body :deep(.hljs-subst) { color: #c9d1d9 }
+.message-text.markdown-body :deep(.hljs-symbol) { color: #79c0ff }
+.message-text.markdown-body :deep(.hljs-bullet) { color: #79c0ff }
+.message-text.markdown-body :deep(.hljs-section) { color: #79c0ff; font-weight: bold }
+.message-text.markdown-body :deep(.hljs-name) { color: #7ee787 }
+.message-text.markdown-body :deep(.hljs-attr) { color: #79c0ff }
+
+/* KaTeX 数学公式样式适配 */
+.message-text.markdown-body :deep(.katex) { font-size: 1em }
+.message-text.markdown-body :deep(.katex-display) {
+  margin: 12px 0;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.message-text.markdown-body :deep(.katex .mord) { color: #e5e7eb }
+.message-text.markdown-body :deep(.katex .mbin) { color: #f59e0b }
+.message-text.markdown-body :deep(.katex .mrel) { color: #f59e0b }
 .message-text.markdown-body :deep(ul), .message-text.markdown-body :deep(ol) { margin: 6px 0; padding-left: 20px }
 .message-text.markdown-body :deep(li) { margin: 2px 0; font-size: 13px }
 .message-text.markdown-body :deep(strong) { color: #93c5fd }

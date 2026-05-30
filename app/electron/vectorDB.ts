@@ -7,6 +7,7 @@ import { mkdirSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import * as lancedb from '@lancedb/lancedb';
 import { pipeline, env } from '@xenova/transformers';
+import { Schema, Field, FixedSizeList, Float32, Utf8, Int32 } from 'apache-arrow';
 
 const EMBEDDING_MODEL = 'Xenova/distiluse-base-multilingual-cased-v2';
 const EMBEDDING_DIM = 768;
@@ -14,6 +15,7 @@ const SCHEMA_VERSION = 1;
 
 let db: lancedb.Connection | null = null;
 let chunksTable: lancedb.Table | null = null;
+let chunkSummariesTable: lancedb.Table | null = null;
 let summaryTable: lancedb.Table | null = null;
 let extractor: any = null;
 let dbDir: string = '';
@@ -58,6 +60,18 @@ export async function initVectorDB(baseDir: string) {
     chunksTable = await db.openTable('chunks');
     console.log('[VectorDB] opened existing chunks table');
   } else {
+    // ★ 使用 Arrow Schema 明确定义 vector 列为 FixedSizeList(Float32)
+    const chunksSchema = new Schema([
+      new Field('id', new Utf8(), true),
+      new Field('doc_id', new Utf8(), true),
+      new Field('file_name', new Utf8(), true),
+      new Field('chunk_index', new Int32(), true),
+      new Field('version', new Int32(), true),
+      new Field('content', new Utf8(), true),
+      new Field('vector', new FixedSizeList(EMBEDDING_DIM, new Field('item', new Float32())), true),
+      new Field('metadata', new Utf8(), true),
+    ]);
+
     const emptyData = [
       {
         id: '__init__',
@@ -66,13 +80,13 @@ export async function initVectorDB(baseDir: string) {
         chunk_index: 0,
         version: SCHEMA_VERSION,
         content: '__init__',
-        vector: new Float32Array(EMBEDDING_DIM),
+        vector: Array(EMBEDDING_DIM).fill(0),
         metadata: '{}',
       },
     ];
-    chunksTable = await db.createTable('chunks', emptyData);
+    chunksTable = await db.createTable('chunks', emptyData, { schema: chunksSchema });
     await chunksTable.delete("id = '__init__'");
-    console.log('[VectorDB] created chunks table');
+    console.log('[VectorDB] created chunks table with Arrow schema');
   }
 
   // 初始化 summary_index 表
@@ -80,6 +94,18 @@ export async function initVectorDB(baseDir: string) {
     summaryTable = await db.openTable('summary_index');
     console.log('[VectorDB] opened existing summary_index table');
   } else {
+    // ★ 使用 Arrow Schema 明确定义 vector 列
+    const summarySchema = new Schema([
+      new Field('id', new Utf8(), true),
+      new Field('doc_id', new Utf8(), true),
+      new Field('file_name', new Utf8(), true),
+      new Field('version', new Int32(), true),
+      new Field('summary', new Utf8(), true),
+      new Field('chunk_ids', new Utf8(), true),
+      new Field('vector', new FixedSizeList(EMBEDDING_DIM, new Field('item', new Float32())), true),
+      new Field('metadata', new Utf8(), true),
+    ]);
+
     const emptySummaryData = [
       {
         id: '__init__',
@@ -88,13 +114,46 @@ export async function initVectorDB(baseDir: string) {
         version: SCHEMA_VERSION,
         summary: '__init__',
         chunk_ids: '[]',
-        vector: new Float32Array(EMBEDDING_DIM),
+        vector: Array(EMBEDDING_DIM).fill(0),
         metadata: '{"status":"pending"}',
       },
     ];
-    summaryTable = await db.createTable('summary_index', emptySummaryData);
+    summaryTable = await db.createTable('summary_index', emptySummaryData, { schema: summarySchema });
     await summaryTable.delete("id = '__init__'");
-    console.log('[VectorDB] created summary_index table');
+    console.log('[VectorDB] created summary_index table with Arrow schema');
+  }
+
+  // 初始化 chunk_summaries 表（段落意义总结）
+  if (tableNames.includes('chunk_summaries')) {
+    chunkSummariesTable = await db.openTable('chunk_summaries');
+    console.log('[VectorDB] opened existing chunk_summaries table');
+  } else {
+    const chunkSummariesSchema = new Schema([
+      new Field('id', new Utf8(), true),
+      new Field('doc_id', new Utf8(), true),
+      new Field('file_name', new Utf8(), true),
+      new Field('chunk_id', new Utf8(), true),
+      new Field('chunk_index', new Int32(), true),
+      new Field('version', new Int32(), true),
+      new Field('summary', new Utf8(), true),
+      new Field('vector', new FixedSizeList(EMBEDDING_DIM, new Field('item', new Float32())), true),
+    ]);
+
+    const emptyChunkSummariesData = [
+      {
+        id: '__init__',
+        doc_id: '__init__',
+        file_name: '__init__',
+        chunk_id: '__init__',
+        chunk_index: 0,
+        version: SCHEMA_VERSION,
+        summary: '__init__',
+        vector: Array(EMBEDDING_DIM).fill(0),
+      },
+    ];
+    chunkSummariesTable = await db.createTable('chunk_summaries', emptyChunkSummariesData, { schema: chunkSummariesSchema });
+    await chunkSummariesTable.delete("id = '__init__'");
+    console.log('[VectorDB] created chunk_summaries table with Arrow schema');
   }
 }
 
@@ -126,7 +185,7 @@ export async function storeChunks(
       chunk_index: chunk.index,
       version: SCHEMA_VERSION,
       content: chunk.content,
-      vector: new Float32Array(embedding),
+      vector: embedding,  // ★ 使用 number[] 而非 Float32Array，LanceDB 会自动转换为 FixedSizeList
       metadata: JSON.stringify({ pages: pages || 0 }),  // ★ 保存页数到 metadata
     };
 
@@ -145,6 +204,94 @@ export async function storeChunks(
     const countResult = await chunksTable.query().where(`doc_id = '${docId}'`).select(['id']).toArray();
     console.log(`[VectorDB] verification: chunks table now has ${countResult.length} rows for docId=${docId}`);
   }
+}
+
+/**
+ * 存储 chunk 的段落意义总结到 chunk_summaries 表
+ */
+export async function storeChunkSummaries(
+  docId: string,
+  fileName: string,
+  chunkSummaries: { chunkId: string; chunkIndex: number; summary: string }[]
+): Promise<void> {
+  if (!chunkSummariesTable) throw new Error('VectorDB not initialized');
+
+  console.log(`[VectorDB] storeChunkSummaries called: docId=${docId}, fileName=${fileName}, summaries=${chunkSummaries.length}`);
+
+  // 先删除旧的 chunk summaries（如果存在）
+  await chunkSummariesTable.delete(`doc_id = '${docId}'`);
+
+  const rows: any[] = [];
+  for (const cs of chunkSummaries) {
+    const id = `${docId}_summary_${cs.chunkIndex}`;
+    const embedding = await embed(cs.summary);
+
+    console.log(`[VectorDB] chunk_summary ${id}: embedding dimension=${embedding.length}`);
+
+    const row = {
+      id,
+      doc_id: docId,
+      file_name: fileName,
+      chunk_id: cs.chunkId,
+      chunk_index: cs.chunkIndex,
+      version: SCHEMA_VERSION,
+      summary: cs.summary,
+      vector: embedding,
+    };
+
+    rows.push(row);
+  }
+
+  if (rows.length > 0) {
+    console.log(`[VectorDB] adding ${rows.length} rows to chunk_summaries table...`);
+    await chunkSummariesTable.add(rows);
+    console.log(`[VectorDB] ✓ stored ${rows.length} chunk summaries for ${fileName}`);
+  }
+}
+
+/**
+ * 获取指定文档的所有 chunk summaries
+ */
+export async function getChunkSummariesByDocId(docId: string): Promise<any[]> {
+  if (!chunkSummariesTable) throw new Error('VectorDB not initialized');
+
+  const results = await chunkSummariesTable
+    .query()
+    .where(`doc_id = '${docId}'`)
+    .select(['id', 'chunk_id', 'chunk_index', 'summary'])
+    .toArray();
+
+  // 按 chunk_index 排序
+  return results
+    .map((row: any) => ({
+      id: row.id,
+      chunk_id: row.chunk_id,
+      chunk_index: row.chunk_index,
+      summary: row.summary,
+    }))
+    .sort((a: any, b: any) => a.chunk_index - b.chunk_index);
+}
+
+/**
+ * 获取指定文档的所有 chunks
+ */
+export async function getChunksByDocId(docId: string): Promise<any[]> {
+  if (!chunksTable) throw new Error('VectorDB not initialized');
+
+  const results = await chunksTable
+    .query()
+    .where(`doc_id = '${docId}'`)
+    .select(['id', 'content', 'chunk_index'])
+    .toArray();
+
+  // 按 chunk_index 排序
+  return results
+    .map((row: any) => ({
+      id: row.id,
+      content: row.content,
+      chunk_index: row.chunk_index,
+    }))
+    .sort((a: any, b: any) => a.chunk_index - b.chunk_index);
 }
 
 /**
@@ -185,7 +332,7 @@ export async function storeSummary(params: {
     version: SCHEMA_VERSION,
     summary: params.summary,
     chunk_ids: JSON.stringify(params.chunkIds),
-    vector: new Float32Array(embedding),
+    vector: embedding,  // ★ 使用 number[] 而非 Float32Array
     metadata: JSON.stringify({
       status: 'ready',
       generatedAt: new Date().toISOString(),
@@ -323,13 +470,13 @@ export async function deleteChunks(docId: string): Promise<void> {
 }
 
 /**
- * 向量检索（两步检索：summary_index → chunks）
+ * 向量检索（新方案：chunk_summaries → chunks）
  *
- * 1. 对 summary_index 做向量搜索，召回 50 个候选
- * 2. 若提供 tags，对标签匹配的文档加分（+0.15 相似度）
+ * 1. 对 chunk_summaries 做向量搜索，召回 50 个候选
+ * 2. 若提供 tags，从 summary_index 获取文档标签并加分（+0.15 相似度）
  * 3. 按 similarity + tagBonus 重新排序，取 topK
- * 4. 通过 chunk_ids 从 chunks 表加载完整原文
- * 5. 降级：summary_index 为空时回退到 chunks 搜索
+ * 4. 通过 chunk_id 从 chunks 表加载完整原文
+ * 5. 降级：chunk_summaries 为空时回退到 chunks 搜索
  */
 export async function vectorSearch(
   queryText: string,
@@ -343,29 +490,29 @@ export async function vectorSearch(
   const queryEmbedding = await embed(queryText);
   const queryVector = new Float32Array(queryEmbedding);
 
-  // 调试日志：记录查询向量
   console.log(`[VectorDB] query embedding dimension=${queryEmbedding.length}, first3=[${queryEmbedding.slice(0, 3).join(',')}]`);
 
-  // 检查 summary_index 是否有数据
-  let useSummaryFallback = false;
-  if (!summaryTable) {
-    console.log('[VectorDB] summaryTable is null, using fallback');
-    useSummaryFallback = true;
+  // 检查 chunk_summaries 是否有数据
+  let useFallback = false;
+  if (!chunkSummariesTable) {
+    console.log('[VectorDB] chunkSummariesTable is null, using fallback');
+    useFallback = true;
   } else {
-    const summaryCount = await summaryTable.query().select(['id']).toArray();
-    console.log(`[VectorDB] summary_index has ${summaryCount.length} rows`);
-    if (summaryCount.length === 0) {
-      console.log('[VectorDB] summary_index is empty, using fallback');
-      useSummaryFallback = true;
+    const chunkSummariesCount = await chunkSummariesTable.query().select(['id']).toArray();
+    console.log(`[VectorDB] chunk_summaries has ${chunkSummariesCount.length} rows`);
+    if (chunkSummariesCount.length === 0) {
+      console.log('[VectorDB] chunk_summaries is empty, using fallback');
+      useFallback = true;
     }
   }
 
   // 降级模式：直接搜索 chunks
-  if (useSummaryFallback) {
+  if (useFallback) {
     console.log('[VectorDB] ⚠ fallback mode: searching chunks directly');
     try {
       const results = await chunksTable
         .vectorSearch(queryVector)
+        .column('vector')
         .limit(topK)
         .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata', 'vector']);
 
@@ -391,45 +538,56 @@ export async function vectorSearch(
     }
   }
 
-  // 正常模式：summary_index 搜索（召回更多候选，再加权排序）
-  // 先召回 50 个摘要用于排序
+  // 正常模式：chunk_summaries 搜索
   const RECALL_TOP_K = 50;
 
-  console.log(`[VectorDB] normal mode: searching summary_index with recall=${RECALL_TOP_K}`);
+  console.log(`[VectorDB] normal mode: searching chunk_summaries with recall=${RECALL_TOP_K}`);
 
   try {
-    const summaryResults = await summaryTable
+    const chunkSummariesResults = await chunkSummariesTable
       .vectorSearch(queryVector)
+      .column('vector')
       .limit(RECALL_TOP_K)
-      .select(['id', 'doc_id', 'file_name', 'summary', 'chunk_ids', 'metadata']);
+      .select(['id', 'doc_id', 'file_name', 'chunk_id', 'chunk_index', 'summary']);
 
-    const summaryRows = await summaryResults.toArray();
-    console.log(`[VectorDB] summary search returned ${summaryRows.length} results`);
+    const chunkSummariesRows = await chunkSummariesResults.toArray();
+    console.log(`[VectorDB] chunk_summaries search returned ${chunkSummariesRows.length} results`);
 
-    if (summaryRows.length === 0) {
-      console.log('[VectorDB] no results from summary search, returning empty');
+    if (chunkSummariesRows.length === 0) {
+      console.log('[VectorDB] no results from chunk_summaries search, returning empty');
       return [];
     }
 
-    // 调试日志：显示前 3 个结果的相似度
-    summaryRows.slice(0, 3).forEach((row: any, idx: number) => {
-      const similarity = row._distance !== undefined ? 1 - row._distance : 0;
-      console.log(`[VectorDB] result ${idx + 1}: doc_id=${row.doc_id}, similarity=${(similarity * 100).toFixed(2)}%`);
-    });
+    // 如果需要标签加成，从 summary_index 获取文档标签
+    const docTagsMap = new Map<string, string[]>();
+    if (tags && tags.length > 0) {
+      const summaryResults = await summaryTable
+        ?.query()
+        .select(['doc_id', 'metadata'])
+        .toArray();
+
+      if (summaryResults) {
+        for (const row of summaryResults) {
+          const meta = JSON.parse(row.metadata || '{}');
+          if (meta.tags && meta.tags.length > 0) {
+            docTagsMap.set(row.doc_id, meta.tags);
+          }
+        }
+      }
+    }
 
     // 计算标签加成并重新排序
-    const scoredRows = summaryRows.map((row: any) => {
+    const scoredRows = chunkSummariesRows.map((row: any) => {
       const baseSimilarity = row._distance !== undefined ? 1 - row._distance : 0;
       let tagBonus = 0;
 
       if (tags && tags.length > 0) {
-        const meta = JSON.parse(row.metadata || '{}');
-        const docTags = (meta.tags || []).map((t: string) => t.toLowerCase());
-        // 任一标签匹配就加分
-        const matchCount = tags.filter(t => docTags.includes(t.toLowerCase())).length;
+        const docTags = docTagsMap.get(row.doc_id) || [];
+        const docTagsLower = docTags.map((t: string) => t.toLowerCase());
+        const matchCount = tags.filter(t => docTagsLower.includes(t.toLowerCase())).length;
         if (matchCount > 0) {
-          tagBonus = 0.15 * matchCount; // 每个匹配标签 +0.15
-          console.log(`[VectorDB] tag bonus: ${matchCount} tags matched, bonus=${tagBonus}`);
+          tagBonus = 0.15 * matchCount;
+          console.log(`[VectorDB] tag bonus: ${matchCount} tags matched for ${row.doc_id}, bonus=${tagBonus}`);
         }
       }
 
@@ -439,21 +597,32 @@ export async function vectorSearch(
     // 按 _score 降序排序
     scoredRows.sort((a: any, b: any) => b._score - a._score);
 
-    // 取前 topK 个加载完整 chunks
-    const topDocs = scoredRows.slice(0, topK);
+    // 按 doc_id 分组，取前 topK 个文档
+    const docGroups = new Map<string, any[]>();
+    for (const row of scoredRows) {
+      if (!docGroups.has(row.doc_id)) {
+        docGroups.set(row.doc_id, []);
+      }
+      docGroups.get(row.doc_id)!.push(row);
+    }
 
-    console.log(`[VectorDB] top ${topDocs.length} docs after sorting and slicing`);
+    // 取前 topK 个文档
+    const topDocs = Array.from(docGroups.entries())
+      .slice(0, topK)
+      .map(([docId, chunks]) => ({
+        docId,
+        fileName: chunks[0].file_name,
+        chunks,
+        similarity: chunks[0]._baseSimilarity,
+        tagBonus: chunks[0]._tagBonus,
+      }));
 
-    // 根据命中的摘要加载完整 chunks
+    console.log(`[VectorDB] top ${topDocs.length} docs after grouping and slicing`);
+
+    // 加载完整 chunks 原文
     const fullDocs: any[] = [];
     for (const hit of topDocs) {
-      const chunkIds = JSON.parse(hit.chunk_ids || '[]');
-      if (chunkIds.length === 0) {
-        console.log(`[VectorDB] skipping doc ${hit.doc_id}: no chunk_ids`);
-        continue;
-      }
-
-      const chunkIdList = chunkIds.map((id: string) => `'${id}'`).join(',');
+      const chunkIdList = hit.chunks.map((c: any) => `'${c.chunk_id}'`).join(',');
       const chunkResults = await chunksTable
         .query()
         .where(`id IN (${chunkIdList})`)
@@ -463,12 +632,26 @@ export async function vectorSearch(
       // 按 chunk_index 排序
       chunkResults.sort((a: any, b: any) => a.chunk_index - b.chunk_index);
 
-      const meta = JSON.parse(hit.metadata || '{}');
+      // 获取文档级摘要和标签
+      const summaryResult = await summaryTable
+        ?.query()
+        .where(`doc_id = '${hit.docId}'`)
+        .select(['summary', 'metadata'])
+        .toArray();
+
+      let summary = '';
+      let docTags: string[] = [];
+      if (summaryResult && summaryResult.length > 0) {
+        summary = summaryResult[0].summary || '';
+        const meta = JSON.parse(summaryResult[0].metadata || '{}');
+        docTags = meta.tags || [];
+      }
+
       fullDocs.push({
-        docId: hit.doc_id,
-        fileName: hit.file_name,
-        summary: hit.summary,
-        tags: meta.tags || [],
+        docId: hit.docId,
+        fileName: hit.fileName,
+        summary,
+        tags: docTags,
         chunks: chunkResults.map((c: any) => ({
           id: c.id,
           docId: c.doc_id,
@@ -477,19 +660,16 @@ export async function vectorSearch(
           content: c.content,
           metadata: JSON.parse(c.metadata || '{}'),
         })),
-        similarity: hit._baseSimilarity,
-        tagBonus: hit._tagBonus,
-        summaryStatus: meta.status || 'ready',
-        mode: 'summary',
+        similarity: hit.similarity,
+        tagBonus: hit.tagBonus,
+        mode: 'chunk_summaries',
       });
     }
 
     console.log(`[VectorDB] ✓ vectorSearch returning ${fullDocs.length} docs`);
-
-    // 已经按 _score 排序，不需要再次排序
     return fullDocs;
   } catch (error: any) {
-    console.error(`[VectorDB] ❌ summary search failed:`, error);
+    console.error(`[VectorDB] ❌ chunk_summaries search failed:`, error);
     throw error;
   }
 }
@@ -697,17 +877,25 @@ export async function initIntentTable(): Promise<void> {
     intentTable = await db.openTable('intents');
     console.log('[VectorDB] opened existing intents table');
   } else {
+    // ★ 使用 Arrow Schema 定义 intents 表
+    const intentsSchema = new Schema([
+      new Field('id', new Utf8(), true),
+      new Field('text', new Utf8(), true),
+      new Field('vector', new FixedSizeList(EMBEDDING_DIM, new Field('item', new Float32())), true),
+      new Field('ruleId', new Utf8(), true),
+    ]);
+
     const emptyData = [
       {
         id: '__init__',
         text: '__init__',
-        vector: new Float32Array(EMBEDDING_DIM),
+        vector: Array(EMBEDDING_DIM).fill(0),
         ruleId: '__init__',
       },
     ];
-    intentTable = await db.createTable('intents', emptyData);
+    intentTable = await db.createTable('intents', emptyData, { schema: intentsSchema });
     await intentTable.delete("id = '__init__'");
-    console.log('[VectorDB] created intents table');
+    console.log('[VectorDB] created intents table with Arrow schema');
   }
 }
 
@@ -734,7 +922,7 @@ export async function storeIntents(
     rows.push({
       id: rule.id,
       text: rule.text,
-      vector: new Float32Array(embedding),
+      vector: embedding,  // ★ 使用 number[] 而非 Float32Array
       ruleId: rule.ruleId,
     });
   }
@@ -765,7 +953,7 @@ export async function patchIntents(
       rows.push({
         id: item.id,
         text: item.text,
-        vector: new Float32Array(embedding),
+        vector: embedding,  // ★ 使用 number[] 而非 Float32Array
         ruleId: item.ruleId,
       });
     }
@@ -787,6 +975,7 @@ export async function searchIntents(
 
   const results = await intentTable
     .vectorSearch(queryVector)
+    .column('vector')
     .limit(topK)
     .select(['id', 'ruleId', 'text']);
 

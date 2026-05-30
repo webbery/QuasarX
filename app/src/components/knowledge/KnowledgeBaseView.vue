@@ -98,6 +98,9 @@
             <td class="col-tags">
               <div class="tags-container">
                 <span v-for="tag in (doc.tags || [])" :key="tag" class="tag-chip">{{ tag }}</span>
+                <button class="btn-regenerate-tags" @click="onRegenerateTags(doc)" title="重新生成标签">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
                 <button class="btn-edit-tags" @click="onEditTags(doc)" title="编辑标签">
                   <i class="fas fa-pen"></i>
                 </button>
@@ -202,6 +205,9 @@
       :document="editingTagsDoc"
       @save="onSaveTags"
     />
+
+    <!-- 提示对话框 -->
+    <PromptDialog ref="promptDialogRef" />
   </div>
 </template>
 
@@ -211,10 +217,11 @@ import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
 import { savePdf, listPdfs, deletePdf, downloadPdf, calculateFileHash } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
-import { storeChunks, deleteChunks, retrySummary, getSummaryStatus, getPages } from '../../lib/vectorDB';
+import { storeChunks, deleteChunks, retrySummary, getSummaryStatus, getPages, regenerateTags } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
 import ContextMenu from './ContextMenu.vue';
 import EditTagsDialog from './EditTagsDialog.vue';
+import PromptDialog from '../PromptDialog.vue';
 import type { ContextMenuAction } from './ContextMenu.vue';
 import { message } from '../../tool';
 import { getAgentConfig } from '../../lib/agent';
@@ -228,6 +235,9 @@ const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null);
 // 标签编辑
 const showTagsDialog = ref(false);
 const editingTagsDoc = ref<KnowledgeDocument | null>(null);
+
+// 提示对话框
+const promptDialogRef = ref<InstanceType<typeof PromptDialog> | null>(null);
 
 const selectedCount = computed(() => store.selectedDocs.size);
 const isAllSelected = computed(() => {
@@ -654,6 +664,50 @@ async function onSaveTags(doc: KnowledgeDocument, tags: string[]) {
 }
 
 /**
+ * 重新生成标签
+ */
+const regeneratingDocIds = ref(new Set<string>())
+
+async function onRegenerateTags(doc: KnowledgeDocument) {
+  // 弹出确认对话框
+  const confirmed = await promptDialogRef.value!.confirm({
+    title: '重新生成标签',
+    message: `确定要重新生成 "${doc.title}" 的标签吗？`,
+  })
+
+  if (!confirmed) return
+
+  regeneratingDocIds.value.add(doc.id)
+  try {
+    const llmConfig = getAgentConfig()
+    if (!llmConfig) {
+      message.error('LLM 配置未设置，无法生成标签')
+      return
+    }
+
+    const regenResult = await regenerateTags({
+      docId: doc.id,
+      fileName: doc.fileName,
+      llmConfig,
+      pages: doc.pages,
+    })
+
+    if (regenResult.success && regenResult.tags) {
+      store.updateTags(doc.id, regenResult.tags)
+      message.success(`"${doc.title}" 标签重新生成成功`)
+      // 刷新文档状态
+      await loadSummaryStatus([doc.id])
+    } else {
+      message.error(`标签重新生成失败: ${regenResult.error || '未知错误'}`)
+    }
+  } catch (error: any) {
+    message.error(`标签重新生成失败: ${error.message}`)
+  } finally {
+    regeneratingDocIds.value.delete(doc.id)
+  }
+}
+
+/**
  * 组件挂载时加载 PDF 列表
  */
 onMounted(async () => {
@@ -1025,6 +1079,31 @@ onMounted(async () => {
   opacity: 1;
   color: #60a5fa;
   background: rgba(96, 165, 250, 0.1);
+}
+
+.btn-regenerate-tags {
+  background: none;
+  border: none;
+  color: #606080;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  opacity: 0.5;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-regenerate-tags:hover {
+  opacity: 1;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.btn-regenerate-tags:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* Action buttons */
