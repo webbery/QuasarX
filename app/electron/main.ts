@@ -17,7 +17,7 @@ import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { createHash } from 'crypto';
-import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags } from './vectorDB';
+import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags } from './vectorDB';
 import { agentRouter } from './agent/AgentRouter';
 import { IndexAgent } from './agent/IndexAgent';
 import type { AgentConfig } from '../src/lib/agent';
@@ -266,13 +266,16 @@ function getSafeFileName(dir: string, fileName: string): string {
  * @param {string} fileName - 原始文件名
  * @returns {object} { success: boolean, fileName: string, path: string, error?: string }
  */
-ipcMain.handle('knowledge-save-pdf', async (_, fileData: Buffer, fileName: string) => {
+ipcMain.handle('knowledge-save-pdf', async (_, fileData: number[], fileName: string) => {
   try {
     const dir = getKnowledgeDir();
     const safeName = getSafeFileName(dir, fileName);
     const filePath = join(dir, safeName);
-    writeFileSync(filePath, Buffer.from(fileData));
-    return { success: true, fileName: safeName, path: filePath };
+    const buffer = Buffer.from(fileData);
+    writeFileSync(filePath, buffer);
+    // ★ 在保存时计算 hash（使用与 listPdfs 相同的方式）
+    const hash = createHash('sha256').update(buffer).digest('hex');
+    return { success: true, fileName: safeName, path: filePath, mtime: Date.now(), hash };
   } catch (error: any) {
     console.error('[knowledge-save-pdf] 错误:', error);
     return { success: false, fileName: '', path: '', error: error.message };
@@ -426,11 +429,11 @@ async function RecursiveCopyCbor(to_dir, from_dir) {
 // Vector Database IPC Handlers (Main Process)
 // ============================================================
 
-ipcMain.handle('vector-store-chunks', async (_, { docId, fileName, chunks }: {
-  docId: string; fileName: string; chunks: { index: number; content: string }[]
+ipcMain.handle('vector-store-chunks', async (_, { docId, fileName, chunks, pages }: {
+  docId: string; fileName: string; chunks: { index: number; content: string }[]; pages?: number
 }) => {
   try {
-    await storeChunks(docId, fileName, chunks);
+    await storeChunks(docId, fileName, chunks, pages);
     return { success: true };
   } catch (error: any) {
     console.error('[vector-store-chunks] 错误:', error);
@@ -478,6 +481,16 @@ ipcMain.handle('vector-get-stats', async () => {
   }
 });
 
+ipcMain.handle('vector-get-pages', async (_, docId: string) => {
+  try {
+    const pages = await getPages(docId);
+    return { success: true, pages };
+  } catch (error: any) {
+    console.error('[vector-get-pages] 错误:', error);
+    return { success: false, pages: 0, error: error.message };
+  }
+});
+
 // ============================================================
 // Summary Generation IPC Handlers (AgentRouter)
 // ============================================================
@@ -521,9 +534,10 @@ ipcMain.handle('retry-summary', async (_, params: {
   fullText: string;
   chunkIds: string[];
   llmConfig: AgentConfig;
+  pages?: number;
 }) => {
   try {
-    const { docId, fileName, fullText, chunkIds, llmConfig } = params;
+    const { docId, fileName, fullText, chunkIds, llmConfig, pages } = params;
 
     // 只删除旧摘要（保留 chunks）
     await deleteSummaryOnly(docId);
@@ -534,9 +548,9 @@ ipcMain.handle('retry-summary', async (_, params: {
     const summary = typeof result === 'string' ? result : result.summary;
     const tags = typeof result === 'string' ? [] : (result.tags || []);
 
-    await storeSummary({ docId, fileName, summary, chunkIds, tags });
+    await storeSummary({ docId, fileName, summary, chunkIds, tags, pages });
 
-    console.log(`[retry-summary] summary regenerated for ${fileName}, tags: ${tags.join(', ')}`);
+    console.log(`[retry-summary] summary regenerated for ${fileName}, tags: ${tags.join(', ')}, pages: ${pages || 0}`);
     return { success: true, summary, tags };
   } catch (error: any) {
     console.error('[retry-summary] 错误:', error);
@@ -547,7 +561,7 @@ ipcMain.handle('retry-summary', async (_, params: {
 
 ipcMain.handle('get-summary-status', async (_, docIds: string[]) => {
   try {
-    const statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[] }> = {};
+    const statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[]; pages?: number }> = {};
     for (const docId of docIds) {
       statuses[docId] = await getSummaryStatus(docId);
     }

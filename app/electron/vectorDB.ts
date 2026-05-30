@@ -104,16 +104,22 @@ export async function initVectorDB(baseDir: string) {
 export async function storeChunks(
   docId: string,
   fileName: string,
-  chunksArr: { index: number; content: string }[]
+  chunksArr: { index: number; content: string }[],
+  pages?: number  // ★ 新增：文件页数
 ): Promise<void> {
   if (!chunksTable) throw new Error('VectorDB not initialized');
+
+  console.log(`[VectorDB] storeChunks called: docId=${docId}, fileName=${fileName}, chunks=${chunksArr.length}, pages=${pages || 'unknown'}`);
 
   const rows: any[] = [];
   for (const chunk of chunksArr) {
     const id = `${docId}_${chunk.index}`;
     const embedding = await embed(chunk.content);
 
-    rows.push({
+    // 调试日志：记录向量生成
+    console.log(`[VectorDB] chunk ${id}: embedding dimension=${embedding.length}, first3=[${embedding.slice(0, 3).join(',')}]`);
+
+    const row = {
       id,
       doc_id: docId,
       file_name: fileName,
@@ -121,13 +127,23 @@ export async function storeChunks(
       version: SCHEMA_VERSION,
       content: chunk.content,
       vector: new Float32Array(embedding),
-      metadata: JSON.stringify({}),
-    });
+      metadata: JSON.stringify({ pages: pages || 0 }),  // ★ 保存页数到 metadata
+    };
+
+    // 调试日志：验证向量类型
+    console.log(`[VectorDB] chunk ${id}: vector type=${row.vector.constructor.name}, length=${row.vector.length}, pages=${pages}`);
+
+    rows.push(row);
   }
 
   if (rows.length > 0) {
+    console.log(`[VectorDB] adding ${rows.length} rows to chunks table...`);
     await chunksTable.add(rows);
-    console.log(`[VectorDB] stored ${rows.length} chunks for ${fileName}`);
+    console.log(`[VectorDB] ✓ stored ${rows.length} chunks for ${fileName}`);
+
+    // 调试日志：验证写入结果
+    const countResult = await chunksTable.query().where(`doc_id = '${docId}'`).select(['id']).toArray();
+    console.log(`[VectorDB] verification: chunks table now has ${countResult.length} rows for docId=${docId}`);
   }
 }
 
@@ -140,21 +156,29 @@ export async function storeSummary(params: {
   summary: string;
   chunkIds: string[];
   tags?: string[];
+  pages?: number;  // ★ 新增：页数信息
 }): Promise<void> {
   if (!summaryTable) throw new Error('VectorDB not initialized');
 
+  console.log(`[VectorDB] storeSummary called: docId=${params.docId}, fileName=${params.fileName}, pages=${params.pages || 'unknown'}`);
+  console.log(`[VectorDB] summary length=${params.summary.length}, chunkIds count=${params.chunkIds.length}`);
+
   // 先删除旧摘要（如果存在）
+  console.log(`[VectorDB] deleting old summary for docId=${params.docId}...`);
   await summaryTable.delete(`doc_id = '${params.docId}'`);
 
   const id = `${params.docId}_summary`;
   const embedding = await embed(params.summary);
+
+  // 调试日志：记录摘要向量生成
+  console.log(`[VectorDB] summary ${id}: embedding dimension=${embedding.length}, first3=[${embedding.slice(0, 3).join(',')}]`);
 
   // 规范化标签：trim + 去重 + 限制最多 5 个
   const normalizedTags = params.tags
     ? [...new Set(params.tags.map(t => t.trim()).filter(t => t.length > 0))].slice(0, 5)
     : [];
 
-  await summaryTable.add([{
+  const summaryRow = {
     id,
     doc_id: params.docId,
     file_name: params.fileName,
@@ -166,10 +190,27 @@ export async function storeSummary(params: {
       status: 'ready',
       generatedAt: new Date().toISOString(),
       tags: normalizedTags,
+      pages: params.pages || 0,  // ★ 保存页数到 summary metadata
     }),
-  }]);
+  };
 
-  console.log(`[VectorDB] stored summary for ${params.fileName}, tags: ${normalizedTags.join(', ')}`);
+  // 调试日志：验证向量类型
+  console.log(`[VectorDB] summary ${id}: vector type=${summaryRow.vector.constructor.name}, length=${summaryRow.vector.length}`);
+  console.log(`[VectorDB] summary ${id}: tags=[${normalizedTags.join(', ')}], pages=${params.pages}`);
+
+  console.log(`[VectorDB] adding summary row to summary_index table...`);
+  await summaryTable.add([summaryRow]);
+
+  console.log(`[VectorDB] ✓ stored summary for ${params.fileName}, tags: ${normalizedTags.join(', ')}, pages: ${params.pages || 0}`);
+
+  // 调试日志：验证写入结果
+  const verifyResult = await summaryTable.query().where(`doc_id = '${params.docId}'`).select(['id', 'metadata']).toArray();
+  if (verifyResult.length > 0) {
+    const meta = JSON.parse(verifyResult[0].metadata || '{}');
+    console.log(`[VectorDB] verification: summary exists, status=${meta.status || 'unknown'}, pages=${meta.pages || 0}`);
+  } else {
+    console.warn(`[VectorDB] ⚠ verification failed: summary not found after insert!`);
+  }
 }
 
 /**
@@ -243,6 +284,7 @@ export async function getSummaryStatus(docId: string): Promise<{
   status?: string;
   summary?: string;
   tags?: string[];
+  pages?: number;
 }> {
   if (!summaryTable) throw new Error('VectorDB not initialized');
 
@@ -263,6 +305,7 @@ export async function getSummaryStatus(docId: string): Promise<{
     status: meta.status || 'pending',
     summary: row.summary,
     tags: meta.tags || [],
+    pages: meta.pages || 0,
   };
 }
 
@@ -295,122 +338,184 @@ export async function vectorSearch(
 ): Promise<any[]> {
   if (!chunksTable) throw new Error('VectorDB not initialized');
 
+  console.log(`[VectorDB] vectorSearch called: query="${queryText}", topK=${topK}, tags=[${tags?.join(', ') || 'none'}]`);
+
   const queryEmbedding = await embed(queryText);
   const queryVector = new Float32Array(queryEmbedding);
+
+  // 调试日志：记录查询向量
+  console.log(`[VectorDB] query embedding dimension=${queryEmbedding.length}, first3=[${queryEmbedding.slice(0, 3).join(',')}]`);
 
   // 检查 summary_index 是否有数据
   let useSummaryFallback = false;
   if (!summaryTable) {
+    console.log('[VectorDB] summaryTable is null, using fallback');
     useSummaryFallback = true;
   } else {
     const summaryCount = await summaryTable.query().select(['id']).toArray();
+    console.log(`[VectorDB] summary_index has ${summaryCount.length} rows`);
     if (summaryCount.length === 0) {
+      console.log('[VectorDB] summary_index is empty, using fallback');
       useSummaryFallback = true;
     }
   }
 
   // 降级模式：直接搜索 chunks
   if (useSummaryFallback) {
-    console.log('[VectorDB] summary_index 为空，降级为 chunks 直接搜索');
-    const results = await chunksTable
-      .vectorSearch(queryVector)
-      .limit(topK)
-      .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata', 'vector']);
+    console.log('[VectorDB] ⚠ fallback mode: searching chunks directly');
+    try {
+      const results = await chunksTable
+        .vectorSearch(queryVector)
+        .limit(topK)
+        .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata', 'vector']);
 
-    const rows = await results.toArray();
-    return rows.map((row: any) => ({
-      chunk: {
-        id: row.id,
-        docId: row.doc_id,
-        fileName: row.file_name,
-        chunkIndex: row.chunk_index,
-        content: row.content,
-        embedding: row.vector ? Array.from(row.vector) : [],
-        metadata: JSON.parse(row.metadata || '{}'),
-      },
-      similarity: row._distance !== undefined ? 1 - row._distance : 0,
-      summary: '',
-      mode: 'fallback',
-    }));
+      const rows = await results.toArray();
+      console.log(`[VectorDB] fallback search returned ${rows.length} results`);
+      return rows.map((row: any) => ({
+        chunk: {
+          id: row.id,
+          docId: row.doc_id,
+          fileName: row.file_name,
+          chunkIndex: row.chunk_index,
+          content: row.content,
+          embedding: row.vector ? Array.from(row.vector) : [],
+          metadata: JSON.parse(row.metadata || '{}'),
+        },
+        similarity: row._distance !== undefined ? 1 - row._distance : 0,
+        summary: '',
+        mode: 'fallback',
+      }));
+    } catch (error: any) {
+      console.error(`[VectorDB] ❌ fallback search failed:`, error);
+      throw error;
+    }
   }
 
   // 正常模式：summary_index 搜索（召回更多候选，再加权排序）
   // 先召回 50 个摘要用于排序
   const RECALL_TOP_K = 50;
 
-  const summaryResults = await summaryTable
-    .vectorSearch(queryVector)
-    .limit(RECALL_TOP_K)
-    .select(['id', 'doc_id', 'file_name', 'summary', 'chunk_ids', 'metadata']);
+  console.log(`[VectorDB] normal mode: searching summary_index with recall=${RECALL_TOP_K}`);
 
-  const summaryRows = await summaryResults.toArray();
-  if (summaryRows.length === 0) {
-    return [];
-  }
+  try {
+    const summaryResults = await summaryTable
+      .vectorSearch(queryVector)
+      .limit(RECALL_TOP_K)
+      .select(['id', 'doc_id', 'file_name', 'summary', 'chunk_ids', 'metadata']);
 
-  // 计算标签加成并重新排序
-  const scoredRows = summaryRows.map((row: any) => {
-    const baseSimilarity = row._distance !== undefined ? 1 - row._distance : 0;
-    let tagBonus = 0;
+    const summaryRows = await summaryResults.toArray();
+    console.log(`[VectorDB] summary search returned ${summaryRows.length} results`);
 
-    if (tags && tags.length > 0) {
-      const meta = JSON.parse(row.metadata || '{}');
-      const docTags = (meta.tags || []).map((t: string) => t.toLowerCase());
-      // 任一标签匹配就加分
-      const matchCount = tags.filter(t => docTags.includes(t.toLowerCase())).length;
-      if (matchCount > 0) {
-        tagBonus = 0.15 * matchCount; // 每个匹配标签 +0.15
-      }
+    if (summaryRows.length === 0) {
+      console.log('[VectorDB] no results from summary search, returning empty');
+      return [];
     }
 
-    return { ...row, _baseSimilarity: baseSimilarity, _tagBonus: tagBonus, _score: baseSimilarity + tagBonus };
-  });
-
-  // 按 _score 降序排序
-  scoredRows.sort((a: any, b: any) => b._score - a._score);
-
-  // 取前 topK 个加载完整 chunks
-  const topDocs = scoredRows.slice(0, topK);
-
-  // 根据命中的摘要加载完整 chunks
-  const fullDocs: any[] = [];
-  for (const hit of topDocs) {
-    const chunkIds = JSON.parse(hit.chunk_ids || '[]');
-    if (chunkIds.length === 0) continue;
-
-    const chunkIdList = chunkIds.map((id: string) => `'${id}'`).join(',');
-    const chunkResults = await chunksTable
-      .query()
-      .where(`id IN (${chunkIdList})`)
-      .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata'])
-      .toArray();
-
-    // 按 chunk_index 排序
-    chunkResults.sort((a: any, b: any) => a.chunk_index - b.chunk_index);
-
-    const meta = JSON.parse(hit.metadata || '{}');
-    fullDocs.push({
-      docId: hit.doc_id,
-      fileName: hit.file_name,
-      summary: hit.summary,
-      tags: meta.tags || [],
-      chunks: chunkResults.map((c: any) => ({
-        id: c.id,
-        docId: c.doc_id,
-        fileName: c.file_name,
-        chunkIndex: c.chunk_index,
-        content: c.content,
-        metadata: JSON.parse(c.metadata || '{}'),
-      })),
-      similarity: hit._baseSimilarity,
-      tagBonus: hit._tagBonus,
-      summaryStatus: meta.status || 'ready',
-      mode: 'summary',
+    // 调试日志：显示前 3 个结果的相似度
+    summaryRows.slice(0, 3).forEach((row: any, idx: number) => {
+      const similarity = row._distance !== undefined ? 1 - row._distance : 0;
+      console.log(`[VectorDB] result ${idx + 1}: doc_id=${row.doc_id}, similarity=${(similarity * 100).toFixed(2)}%`);
     });
-  }
 
-  // 已经按 _score 排序，不需要再次排序
-  return fullDocs;
+    // 计算标签加成并重新排序
+    const scoredRows = summaryRows.map((row: any) => {
+      const baseSimilarity = row._distance !== undefined ? 1 - row._distance : 0;
+      let tagBonus = 0;
+
+      if (tags && tags.length > 0) {
+        const meta = JSON.parse(row.metadata || '{}');
+        const docTags = (meta.tags || []).map((t: string) => t.toLowerCase());
+        // 任一标签匹配就加分
+        const matchCount = tags.filter(t => docTags.includes(t.toLowerCase())).length;
+        if (matchCount > 0) {
+          tagBonus = 0.15 * matchCount; // 每个匹配标签 +0.15
+          console.log(`[VectorDB] tag bonus: ${matchCount} tags matched, bonus=${tagBonus}`);
+        }
+      }
+
+      return { ...row, _baseSimilarity: baseSimilarity, _tagBonus: tagBonus, _score: baseSimilarity + tagBonus };
+    });
+
+    // 按 _score 降序排序
+    scoredRows.sort((a: any, b: any) => b._score - a._score);
+
+    // 取前 topK 个加载完整 chunks
+    const topDocs = scoredRows.slice(0, topK);
+
+    console.log(`[VectorDB] top ${topDocs.length} docs after sorting and slicing`);
+
+    // 根据命中的摘要加载完整 chunks
+    const fullDocs: any[] = [];
+    for (const hit of topDocs) {
+      const chunkIds = JSON.parse(hit.chunk_ids || '[]');
+      if (chunkIds.length === 0) {
+        console.log(`[VectorDB] skipping doc ${hit.doc_id}: no chunk_ids`);
+        continue;
+      }
+
+      const chunkIdList = chunkIds.map((id: string) => `'${id}'`).join(',');
+      const chunkResults = await chunksTable
+        .query()
+        .where(`id IN (${chunkIdList})`)
+        .select(['id', 'doc_id', 'file_name', 'chunk_index', 'content', 'metadata'])
+        .toArray();
+
+      // 按 chunk_index 排序
+      chunkResults.sort((a: any, b: any) => a.chunk_index - b.chunk_index);
+
+      const meta = JSON.parse(hit.metadata || '{}');
+      fullDocs.push({
+        docId: hit.doc_id,
+        fileName: hit.file_name,
+        summary: hit.summary,
+        tags: meta.tags || [],
+        chunks: chunkResults.map((c: any) => ({
+          id: c.id,
+          docId: c.doc_id,
+          fileName: c.file_name,
+          chunkIndex: c.chunk_index,
+          content: c.content,
+          metadata: JSON.parse(c.metadata || '{}'),
+        })),
+        similarity: hit._baseSimilarity,
+        tagBonus: hit._tagBonus,
+        summaryStatus: meta.status || 'ready',
+        mode: 'summary',
+      });
+    }
+
+    console.log(`[VectorDB] ✓ vectorSearch returning ${fullDocs.length} docs`);
+
+    // 已经按 _score 排序，不需要再次排序
+    return fullDocs;
+  } catch (error: any) {
+    console.error(`[VectorDB] ❌ summary search failed:`, error);
+    throw error;
+  }
+}
+
+/**
+ * 获取指定文档的页数（从 chunks 表的 metadata 中读取）
+ */
+export async function getPages(docId: string): Promise<number> {
+  if (!chunksTable) throw new Error('VectorDB not initialized');
+
+  const results = await chunksTable
+    .query()
+    .where(`doc_id = '${docId}'`)
+    .select(['metadata'])
+    .limit(1)
+    .toArray();
+
+  if (results.length > 0) {
+    try {
+      const metadata = JSON.parse(results[0].metadata || '{}');
+      return metadata.pages || 0;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
 }
 
 /**

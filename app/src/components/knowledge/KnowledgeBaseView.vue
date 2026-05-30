@@ -211,7 +211,7 @@ import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
 import { savePdf, listPdfs, deletePdf, downloadPdf, calculateFileHash } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
-import { storeChunks, deleteChunks, retrySummary, getSummaryStatus } from '../../lib/vectorDB';
+import { storeChunks, deleteChunks, retrySummary, getSummaryStatus, getPages } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
 import ContextMenu from './ContextMenu.vue';
 import EditTagsDialog from './EditTagsDialog.vue';
@@ -300,9 +300,16 @@ async function onDrop(event: DragEvent) {
       continue;
     }
 
-    // 先计算文件 hash
+    // ★ 先保存文件，使用服务端返回的 hash（保证一致性）
     const arrayBuffer = await file.arrayBuffer();
-    const fileHash = await calculateFileHash(arrayBuffer);
+    const saveResult = await savePdf(arrayBuffer, file.name);
+    if (!saveResult.success) {
+      message.error(`保存 "${file.name}" 失败`);
+      continue;
+    }
+
+    // ★ 使用服务端返回的 hash（与 listPdfs 计算的 hash 一致）
+    const fileHash = saveResult.hash;
 
     // 检查是否已有相同文件
     if (store.documents.some(d => d.fileHash === fileHash)) {
@@ -310,12 +317,13 @@ async function onDrop(event: DragEvent) {
       continue;
     }
 
-    const docId = `doc_${Date.now()}_${i}`;
+    // ★ 使用文件 hash 作为 docId（保证一致性，天然去重）
+    const docId = `doc_${fileHash}`;
     store.addDocument({
       id: docId,
-      fileName: file.name,
-      title: file.name.replace(/\.pdf$/i, ''),
-      uploadTime: Date.now(),
+      fileName: saveResult.fileName,
+      title: saveResult.fileName.replace(/\.pdf$/i, ''),
+      uploadTime: saveResult.mtime || Date.now(),
       pages: 0,
       status: 'parsing',
       summary: '',
@@ -326,22 +334,26 @@ async function onDrop(event: DragEvent) {
       tags: [],
     });
 
-    processPdfFile(file, docId);
+    processPdfFile(file, docId, saveResult);
   }
 }
 
 /**
  * 处理 PDF 文件
  */
-async function processPdfFile(file: File, docId: string) {
+async function processPdfFile(file: File, docId: string, saveResult?: { fileName: string; path: string; hash?: string; mtime?: number }) {
   try {
     const arrayBuffer = await file.arrayBuffer();
 
-    const saveResult = await savePdf(arrayBuffer, file.name);
-    if (!saveResult.success) {
-      store.updateDocumentStatus(docId, 'error', '保存文件失败');
-      message.error(`保存 "${file.name}" 失败`);
-      return;
+    // 如果 saveResult 没有传进来，尝试保存
+    let actualSaveResult = saveResult;
+    if (!actualSaveResult) {
+      actualSaveResult = await savePdf(arrayBuffer, file.name);
+      if (!actualSaveResult.success) {
+        store.updateDocumentStatus(docId, 'error', '保存文件失败');
+        message.error(`保存 "${file.name}" 失败`);
+        return;
+      }
     }
 
     const parseResult = await parsePdf(arrayBuffer);
@@ -352,7 +364,7 @@ async function processPdfFile(file: File, docId: string) {
     }
 
     const chunkIds = parseResult.chunks.map(c => `${docId}_${c.index}`);
-    await storeChunks(docId, saveResult.fileName, parseResult.chunks);
+    await storeChunks(docId, actualSaveResult.fileName, parseResult.chunks, parseResult.pages);
 
     store.setFullText(docId, parseResult.text);
 
@@ -365,7 +377,7 @@ async function processPdfFile(file: File, docId: string) {
     );
 
     // 异步触发摘要生成
-    triggerSummaryGeneration(docId, saveResult.fileName, parseResult.text, chunkIds);
+    triggerSummaryGeneration(docId, actualSaveResult.fileName, parseResult.text, chunkIds, parseResult.pages);
 
     message.success(`"${file.name}" 解析完成`);
   } catch (error: any) {
@@ -382,7 +394,8 @@ async function triggerSummaryGeneration(
   docId: string,
   fileName: string,
   fullText: string,
-  chunkIds: string[]
+  chunkIds: string[],
+  pages?: number
 ) {
   const llmConfig = getAgentConfig();
   if (!llmConfig) {
@@ -400,6 +413,7 @@ async function triggerSummaryGeneration(
       fullText,
       chunkIds,
       llmConfig,
+      pages,
     });
 
     if (result.success) {
@@ -407,6 +421,13 @@ async function triggerSummaryGeneration(
       // 保存标签
       if (result.tags && result.tags.length > 0) {
         store.updateTags(docId, result.tags);
+      }
+      // 更新页数
+      if (pages && pages > 0) {
+        const doc = store.documents.find(d => d.id === docId);
+        if (doc) {
+          doc.pages = pages;
+        }
       }
     } else {
       store.updateSummaryStatus(docId, 'failed');
@@ -642,15 +663,19 @@ onMounted(async () => {
       const docIds: string[] = [];
       const docMap = new Map<string, KnowledgeDocument>();
 
+      // ★ 修复：清空后再添加，避免重复
+      store.clearAll();
+
       for (const pdf of result.pdfs) {
-        const docId = `doc_${pdf.name}_${pdf.mtime}`;
+        // ★ 使用文件 hash 作为 docId（与上传时保持一致）
+        const docId = `doc_${pdf.hash}`;
         docIds.push(docId);
         const doc: KnowledgeDocument = {
           id: docId,
           fileName: pdf.name,
           title: pdf.name.replace(/\.pdf$/i, ''),
           uploadTime: pdf.mtime,
-          pages: 0,
+          pages: 0,  // 初始为 0，后面会从 LanceDB 恢复
           status: 'ready',
           summary: '（未解析，建议重新处理）',
           hitCount: 0,
@@ -663,24 +688,36 @@ onMounted(async () => {
         docMap.set(docId, doc);
       }
 
-      // 异步查询摘要状态
+      // 异步查询摘要状态 + 恢复页数
       try {
         const statusResult = await getSummaryStatus(docIds);
+        
+        console.log(`[KnowledgeBase] getSummaryStatus result:`, statusResult);
+        
         if (statusResult.success) {
           for (const [docId, statusInfo] of Object.entries(statusResult.statuses)) {
-            const doc = docMap.get(docId);
+            const doc = store.documents.find(d => d.id === docId);
             if (doc) {
+              console.log(`[KnowledgeBase] doc ${docId}: exists=${statusInfo.exists}, status=${statusInfo.status}, tags=[${(statusInfo.tags || []).join(', ')}], pages=${statusInfo.pages}`);
+              
               if (statusInfo.exists) {
+                // ★ 使用 store 方法更新状态，确保响应式生效
                 doc.summaryStatus = (statusInfo.status as any) || 'ready';
-                doc.tags = statusInfo.tags || [];
+                store.updateTags(docId, statusInfo.tags || []);
+                // ★ 更新页数（直接赋值应该触发响应式，因为 documents 是 reactive array）
+                if (statusInfo.pages && statusInfo.pages > 0) {
+                  doc.pages = statusInfo.pages;
+                  console.log(`[KnowledgeBase] restored pages=${doc.pages} for doc ${docId}`);
+                }
               } else {
                 doc.summaryStatus = 'pending';
-                doc.tags = [];
+                store.updateTags(docId, []);
               }
             }
           }
         }
-      } catch {
+      } catch (error) {
+        console.error('[KnowledgeBase] 状态查询失败:', error);
         // 状态查询失败不影响列表显示
       }
     }
