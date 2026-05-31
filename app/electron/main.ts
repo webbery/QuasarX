@@ -525,7 +525,7 @@ ipcMain.handle('generate-summary', async (_, params: {
     // 步骤 1: 批量生成 chunk summaries（段落意义总结）
     console.log(`[generate-summary] generating chunk summaries for ${fileName}, ${chunks.length} chunks`);
     const chunkTexts = chunks.map(c => c.content);
-    const summarizeResult = await agentRouter.dispatch('index-summarizer', chunkTexts, { llmConfig }) as { summaries: string[] };
+    const summarizeResult = await agentRouter.dispatch('index-summarizer', JSON.stringify(chunkTexts), { llmConfig }) as { summaries: string[] };
     const chunkSummaries = summarizeResult.summaries || chunkTexts; // 如果失败则使用原文
 
     // 存储 chunk summaries 到 chunk_summaries 表
@@ -573,7 +573,7 @@ ipcMain.handle('retry-summary', async (_, params: {
 
     // 步骤 1: 重新生成 chunk summaries
     console.log(`[retry-summary] regenerating chunk summaries for ${fileName}`);
-    const summarizeResult = await agentRouter.dispatch('index-summarizer', chunkTexts, { llmConfig }) as { summaries: string[] };
+    const summarizeResult = await agentRouter.dispatch('index-summarizer', JSON.stringify(chunkTexts), { llmConfig }) as { summaries: string[] };
     const chunkSummaries = summarizeResult.summaries || chunkTexts;
 
     const chunkSummariesData = chunks.map((chunk: any, idx: number) => ({
@@ -649,9 +649,11 @@ ipcMain.handle('regenerate-tags', async (_, params: {
 
 ipcMain.handle('get-summary-status', async (_, docIds: string[]) => {
   try {
-    const statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[]; pages?: number }> = {};
+    const statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[]; pages?: number; chunkCount?: number }> = {};
     for (const docId of docIds) {
-      statuses[docId] = await getSummaryStatus(docId);
+      const status = await getSummaryStatus(docId);
+      statuses[docId] = status;
+      console.log(`[get-summary-status] doc ${docId}: exists=${status.exists}, chunkCount=${status.chunkCount || 0}`);
     }
     return { success: true, statuses };
   } catch (error: any) {

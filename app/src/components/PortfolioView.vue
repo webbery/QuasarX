@@ -4,9 +4,9 @@
   <div class="toolbar">
     <div class="toolbar-left">
       <h2><i class="fas fa-chart-pie"></i> 投资组合配置</h2>
-      <span class="strategy-binding" v-if="currentStrategyId">
+      <span class="strategy-binding" v-if="currentStrategyId && currentStrategyName">
         <i class="fas fa-link"></i>
-        关联策略：{{ strategyName || '未命名' }}
+        关联策略：{{ currentStrategyName || '未命名' }}
       </span>
     </div>
     <div class="toolbar-right">
@@ -30,19 +30,117 @@
     <!-- 左栏：配置区 -->
     <div class="config-panel">
 
-      <!-- 模型选择 -->
-      <div class="card">
-        <div class="card-header">
-          <h3><i class="fas fa-brain"></i> 优化模型</h3>
+      <!-- 证券池和优化模型：两列同行布局 -->
+      <div class="two-column-row">
+        <!-- 证券池选择 -->
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-list"></i> 证券池</h3>
+          </div>
+          <div class="card-content">
+            <div class="form-group">
+              <label>选择策略</label>
+              <select class="form-control" v-model="selectedPoolStrategyId" @change="onPoolStrategyChange">
+                <option value="">-- 选择策略 --</option>
+                <option v-for="s in strategyOptions" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                </option>
+              </select>
+            </div>
+
+            <!-- 标的池展示区 -->
+            <div class="pool-description">
+              <div class="pool-description-header" @click="togglePoolExpand">
+                <span class="pool-label">
+                  <i class="fas" :class="isPoolExpanded ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                  标的池:
+                </span>
+                <span class="pool-count" v-if="currentStrategyPool.length > 0">
+                  (共{{ currentStrategyPool.length }}只)
+                </span>
+              </div>
+              <div class="pool-description-content" v-show="isPoolExpanded">
+                <div class="pool-codes">
+                  <span v-for="sec in currentStrategyPool" :key="sec.code" class="pool-code-tag">
+                    {{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}
+                  </span>
+                  <span v-if="currentStrategyPool.length === 0" class="empty-tip">
+                    暂无标的，请在策略流程图中配置
+                  </span>
+                </div>
+              </div>
+              <!-- 收起状态的简要展示 -->
+              <div class="pool-brief" v-show="!isPoolExpanded">
+                {{ poolDisplayText }}
+              </div>
+            </div>
+
+            <!-- 手动选择按钮（保留原有功能） -->
+            <div class="action-row">
+              <button class="btn btn-sm" @click="selectSecurities">
+                <i class="fas fa-edit"></i> 手动选择
+              </button>
+            </div>
+
+            <!-- 已选证券标签 -->
+            <div class="security-tags" v-if="selectedSecurities.length > 0">
+              <span v-for="sec in selectedSecurities" :key="sec.code" class="tag">
+                {{ sec.code }} {{ sec.name }}
+                <i class="fas fa-times" @click="removeSecurity(sec.code)"></i>
+              </span>
+            </div>
+            <div class="security-tags" v-else>
+              <span class="empty-tip">
+                暂无证券，请从上方策略选择或点击"手动选择"添加
+              </span>
+            </div>
+          </div>
         </div>
-        <div class="card-content">
-          <div class="form-group">
-            <label>模型类型</label>
-            <select class="form-control" v-model="config.modelType">
-              <option value="black_litterman">Black-Litterman</option>
-              <option value="mean_variance">Mean-Variance (马科维茨)</option>
-              <option value="risk_parity">Risk Parity (风险平价)</option>
-            </select>
+
+        <!-- 优化模型选择 -->
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-brain"></i> 优化模型</h3>
+          </div>
+          <div class="card-content">
+            <div class="form-group">
+              <label>模型类型</label>
+              <select class="form-control" v-model="config.modelType">
+                <option value="black_litterman">Black-Litterman</option>
+                <option value="mean_variance">Mean-Variance (马科维茨)</option>
+                <option value="risk_parity">Risk Parity (风险平价)</option>
+              </select>
+            </div>
+
+            <!-- 约束条件分隔线 -->
+            <div class="section-divider"></div>
+
+            <!-- 约束条件 -->
+            <div class="constraints-section">
+              <div class="constraints-title">
+                <i class="fas fa-sliders-h"></i> 优化约束
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>单证券最大权重 (%)</label>
+                  <input type="number" class="form-control" v-model.number="constraints.maxWeight" min="0" max="100" />
+                </div>
+                <div class="form-group">
+                  <label>单证券最小权重 (%)</label>
+                  <input type="number" class="form-control" v-model.number="constraints.minWeight" min="0" max="100" />
+                </div>
+              </div>
+              <div class="form-row checkbox-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="constraints.longOnly" />
+                  <span>不允许做空（权重 ≥ 0）</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="constraints.fullyInvested" />
+                  <span>完全投资（权重之和 = 1）</span>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -66,8 +164,6 @@
               <label>无风险利率 (%)</label>
               <input type="number" class="form-control" v-model.number="config.params.riskFreeRate" step="0.1" />
             </div>
-          </div>
-          <div class="form-row">
             <div class="form-group">
               <label>风险厌恶系数</label>
               <input type="number" class="form-control" v-model.number="config.params.riskAversion" step="0.1" />
@@ -76,71 +172,6 @@
               <label>市场波动率 (%)</label>
               <input type="number" class="form-control" v-model.number="config.params.marketVolatility" step="0.1" />
             </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 证券池选择 -->
-      <div class="card">
-        <div class="card-header">
-          <h3><i class="fas fa-list"></i> 证券池</h3>
-        </div>
-        <div class="card-content">
-          <div class="form-group">
-            <label>选择策略</label>
-            <select class="form-control" v-model="selectedPoolStrategyId" @change="onPoolStrategyChange">
-              <option value="">-- 选择策略 --</option>
-              <option v-for="s in strategyOptions" :key="s.id" :value="s.id">
-                {{ s.name }}
-              </option>
-            </select>
-          </div>
-          
-          <!-- 标的池展示区 -->
-          <div class="pool-description">
-            <div class="pool-description-header" @click="togglePoolExpand">
-              <span class="pool-label">
-                <i class="fas" :class="isPoolExpanded ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
-                标的池:
-              </span>
-              <span class="pool-count" v-if="currentStrategyPool.length > 0">
-                (共{{ currentStrategyPool.length }}只)
-              </span>
-            </div>
-            <div class="pool-description-content" v-show="isPoolExpanded">
-              <div class="pool-codes">
-                <span v-for="sec in currentStrategyPool" :key="sec.code" class="pool-code-tag">
-                  {{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}
-                </span>
-                <span v-if="currentStrategyPool.length === 0" class="empty-tip">
-                  暂无标的，请在策略流程图中配置
-                </span>
-              </div>
-            </div>
-            <!-- 收起状态的简要展示 -->
-            <div class="pool-brief" v-show="!isPoolExpanded">
-              {{ poolDisplayText }}
-            </div>
-          </div>
-          
-          <!-- 手动选择按钮（保留原有功能） -->
-          <div class="action-row">
-            <button class="btn btn-sm" @click="selectSecurities">
-              <i class="fas fa-edit"></i> 手动选择
-            </button>
-          </div>
-          
-          <!-- 已选证券标签 -->
-          <div class="security-tags" v-if="selectedSecurities.length > 0">
-            <span v-for="sec in selectedSecurities" :key="sec.code" class="tag">
-              {{ sec.code }} {{ sec.name }}
-              <i class="fas fa-times" @click="removeSecurity(sec.code)"></i>
-            </span>
-          </div>
-          <div class="security-tags" v-else>
-            <span class="empty-tip">
-              暂无证券，请从上方策略选择或点击"手动选择"添加
-            </span>
           </div>
         </div>
       </div>
@@ -218,35 +249,6 @@
             <div v-if="config.views.length === 0" class="empty-state">
               暂无观点，请点击上方"添加观点"按钮
             </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 约束条件 -->
-      <div class="card">
-        <div class="card-header">
-          <h3><i class="fas fa-sliders-h"></i> 优化约束</h3>
-        </div>
-        <div class="card-content">
-          <div class="form-row">
-            <div class="form-group">
-              <label>单证券最大权重 (%)</label>
-              <input type="number" class="form-control" v-model.number="constraints.maxWeight" min="0" max="100" />
-            </div>
-            <div class="form-group">
-              <label>单证券最小权重 (%)</label>
-              <input type="number" class="form-control" v-model.number="constraints.minWeight" min="0" max="100" />
-            </div>
-          </div>
-          <div class="form-row checkbox-row">
-            <label class="checkbox-label">
-              <input type="checkbox" v-model="constraints.longOnly" />
-              <span>不允许做空（权重 ≥ 0）</span>
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" v-model="constraints.fullyInvested" />
-              <span>完全投资（权重之和 = 1）</span>
-            </label>
           </div>
         </div>
       </div>
@@ -428,6 +430,7 @@ const currentPortfolioConfig = inject('currentPortfolioConfig', ref(null));
 // 状态变量
 const selectedConfigId = ref('');
 const strategyName = ref('');
+const currentStrategyName = ref(''); // 显示当前策略名称
 const hasChanges = ref(false);
 const showSecurityDialog = ref(false);
 const showSaveDialog = ref(false);
@@ -440,7 +443,7 @@ const isPoolExpanded = ref(false);
 // 当前选择的标的池策略 ID
 const selectedPoolStrategyId = ref('');
 
-// 策略选项列表
+// 策略选项列表（用于证券池选择）
 const strategyOptions = computed(() => {
   return historyStore.strategies.map(s => ({
     id: s.id,
@@ -833,6 +836,11 @@ watch(currentStrategyId, (newId) => {
     loadPortfolioConfigs(newId);
     // 自动选择当前策略
     selectedPoolStrategyId.value = newId;
+    // 更新当前策略名称
+    const strategy = historyStore.strategies.find(s => s.id === newId);
+    if (strategy) {
+      currentStrategyName.value = strategy.name;
+    }
     // 加载该策略的标的池
     onPoolStrategyChange();
   }
@@ -895,6 +903,65 @@ watch(currentStrategyId, (newId) => {
 
 .config-panel, .result-panel {
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary, #2962ff) transparent;
+}
+
+.config-panel::-webkit-scrollbar,
+.result-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.config-panel::-webkit-scrollbar-track,
+.result-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.config-panel::-webkit-scrollbar-thumb,
+.result-panel::-webkit-scrollbar-thumb {
+  background-color: var(--primary, #2962ff);
+  border-radius: 3px;
+}
+
+.config-panel::-webkit-scrollbar-thumb:hover,
+.result-panel::-webkit-scrollbar-thumb:hover {
+  background-color: var(--primary, #2962ff);
+  opacity: 0.8;
+}
+
+/* 证券池和优化模型：两列同行布局 */
+.two-column-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+
+  .card {
+    margin-bottom: 0;
+  }
+}
+
+/* 优化模型内部约束条件样式 */
+.section-divider {
+  height: 1px;
+  background-color: var(--border, #333);
+  margin: 16px 0;
+}
+
+.constraints-section {
+  .constraints-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text, rgba(255, 255, 255, 0.87));
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    i {
+      color: var(--primary, #2962ff);
+    }
+  }
 }
 
 .card {
@@ -1036,6 +1103,8 @@ watch(currentStrategyId, (newId) => {
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid var(--border, #333);
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary, #2962ff) transparent;
 
     .pool-codes {
       display: flex;
@@ -1043,6 +1112,8 @@ watch(currentStrategyId, (newId) => {
       gap: 8px;
       max-height: 300px;
       overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--primary, #2962ff) transparent;
 
       .pool-code-tag {
         display: inline-flex;
@@ -1061,6 +1132,28 @@ watch(currentStrategyId, (newId) => {
         padding: 8px 0;
       }
     }
+  }
+
+  .pool-description-content::-webkit-scrollbar,
+  .pool-codes::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .pool-description-content::-webkit-scrollbar-track,
+  .pool-codes::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .pool-description-content::-webkit-scrollbar-thumb,
+  .pool-codes::-webkit-scrollbar-thumb {
+    background-color: var(--primary, #2962ff);
+    border-radius: 3px;
+  }
+
+  .pool-description-content::-webkit-scrollbar-thumb:hover,
+  .pool-codes::-webkit-scrollbar-thumb:hover {
+    background-color: var(--primary, #2962ff);
+    opacity: 0.8;
   }
 
   .pool-brief {

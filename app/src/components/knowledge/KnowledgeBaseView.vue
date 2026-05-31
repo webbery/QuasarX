@@ -454,34 +454,38 @@ async function triggerSummaryGeneration(
  * 单个文档生成索引
  */
 async function onGenerateSingle(doc: KnowledgeDocument) {
-  if (!doc.fullText || doc.chunks.length === 0) {
-    message.warning(`"${doc.title}" 缺少完整文本，无法生成索引`);
+  console.log(`[onGenerateSingle] doc ${doc.id}: chunks.length = ${doc.chunks.length}, summaryStatus = ${doc.summaryStatus}`);
+  if (doc.chunks.length === 0) {
+    message.warning(`"${doc.title}" 缺少分块数据，无法生成索引（chunkCount=0，请检查是否成功上传并解析 PDF）`);
     return;
   }
   const chunkIds = doc.chunks.map(c => `${doc.id}_${c.index}`);
-  await triggerSummaryGeneration(doc.id, doc.fileName, doc.fullText, chunkIds);
+  const fullText = doc.fullText || '';  // 主进程会从 LanceDB 重新加载 chunks
+  await triggerSummaryGeneration(doc.id, doc.fileName, fullText, chunkIds);
 }
 
 /**
  * 单个文档重试
  */
 async function onRetryIndex(doc: KnowledgeDocument) {
-  if (!doc.fullText || doc.chunks.length === 0) {
-    message.warning(`"${doc.title}" 缺少完整文本，无法重新生成索引`);
+  console.log(`[onRetryIndex] doc ${doc.id}: chunks.length = ${doc.chunks.length}, summaryStatus = ${doc.summaryStatus}`);
+  if (doc.chunks.length === 0) {
+    message.warning(`"${doc.title}" 缺少分块数据，无法重新生成索引（chunkCount=0，请检查是否成功上传并解析 PDF）`);
     return;
   }
   const llmConfig = getAgentConfig();
   if (!llmConfig) {
-    message.warning('未配置 AI 服务，无法生成索引');
+    message.warning('未配置 AI 服务，无法重新生成索引');
     return;
   }
 
   try {
     store.updateSummaryStatus(doc.id, 'indexing');
+    const fullText = doc.fullText || '';  // 主进程会从 LanceDB 重新加载 chunks
     const result = await retrySummary({
       docId: doc.id,
       fileName: doc.fileName,
-      fullText: doc.fullText!,
+      fullText,
       chunkIds: doc.chunks.map(c => `${doc.id}_${c.index}`),
       llmConfig,
     });
@@ -521,7 +525,7 @@ async function onGenerateAll() {
     return;
   }
   const needIndex = store.sortedDocuments.filter(
-    d => d.summaryStatus !== 'ready' && d.summaryStatus !== 'indexing' && d.fullText && d.chunks.length > 0
+    d => d.summaryStatus !== 'ready' && d.summaryStatus !== 'indexing' && d.chunks.length > 0
   );
   if (needIndex.length === 0) {
     message.info('所有文档均已索引');
@@ -548,7 +552,7 @@ async function batchGenerateIndexes(docs: KnowledgeDocument[]) {
   const worker = async () => {
     while (queue.length > 0) {
       const doc = queue.shift()!;
-      if (!doc.fullText || doc.chunks.length === 0) {
+      if (doc.chunks.length === 0) {
         store.updateSummaryStatus(doc.id, 'failed');
         failCount++;
         continue;
@@ -556,10 +560,11 @@ async function batchGenerateIndexes(docs: KnowledgeDocument[]) {
 
       try {
         store.updateSummaryStatus(doc.id, 'indexing');
+        const fullText = doc.fullText || '';  // 主进程会从 LanceDB 重新加载 chunks
         const result = await retrySummary({
           docId: doc.id,
           fileName: doc.fileName,
-          fullText: doc.fullText,
+          fullText,
           chunkIds: doc.chunks.map(c => `${doc.id}_${c.index}`),
           llmConfig,
         });
@@ -744,16 +749,18 @@ onMounted(async () => {
 
       // 异步查询摘要状态 + 恢复页数
       try {
+        console.log(`[KnowledgeBase] calling getSummaryStatus with ${docIds.length} docIds`);
         const statusResult = await getSummaryStatus(docIds);
-        
+
         console.log(`[KnowledgeBase] getSummaryStatus result:`, statusResult);
         
         if (statusResult.success) {
           for (const [docId, statusInfo] of Object.entries(statusResult.statuses)) {
             const doc = store.documents.find(d => d.id === docId);
             if (doc) {
-              console.log(`[KnowledgeBase] doc ${docId}: exists=${statusInfo.exists}, status=${statusInfo.status}, tags=[${(statusInfo.tags || []).join(', ')}], pages=${statusInfo.pages}`);
-              
+              const chunkCount = statusInfo.chunkCount || 0;
+              console.log(`[KnowledgeBase] doc ${docId}: exists=${statusInfo.exists}, chunkCount=${chunkCount}, status=${statusInfo.status}, tags=[${(statusInfo.tags || []).join(', ')}], pages=${statusInfo.pages}`);
+
               if (statusInfo.exists) {
                 // ★ 使用 store 方法更新状态，确保响应式生效
                 doc.summaryStatus = (statusInfo.status as any) || 'ready';
@@ -766,6 +773,19 @@ onMounted(async () => {
               } else {
                 doc.summaryStatus = 'pending';
                 store.updateTags(docId, []);
+              }
+
+              // ★ 恢复 chunks 占位数组（使重新索引功能可用）
+              // 无论 summary 是否存在，只要有 chunks 就恢复
+              console.log(`[KnowledgeBase] doc ${docId}: chunkCount from server = ${chunkCount}, current chunks length = ${doc.chunks.length}`);
+              if (chunkCount > 0) {
+                doc.chunks = Array.from({ length: chunkCount }, (_, i) => ({
+                  index: i,
+                  content: '',  // 占位，实际内容不需要
+                }));
+                console.log(`[KnowledgeBase] restored ${chunkCount} chunk placeholders for doc ${docId}`);
+              } else {
+                console.warn(`[KnowledgeBase] doc ${docId}: chunkCount is 0, chunks will remain empty`);
               }
             }
           }

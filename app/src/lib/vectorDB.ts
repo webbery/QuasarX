@@ -109,7 +109,7 @@ export async function retrySummary(params: {
  */
 export async function getSummaryStatus(docIds: string[]): Promise<{
   success: boolean;
-  statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[]; pages?: number }>;
+  statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[]; pages?: number; chunkCount?: number }>;
 }> {
   const result = await ipcRenderer.invoke('get-summary-status', docIds);
   return result;

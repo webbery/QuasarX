@@ -432,6 +432,7 @@ export async function getSummaryStatus(docId: string): Promise<{
   summary?: string;
   tags?: string[];
   pages?: number;
+  chunkCount?: number;
 }> {
   if (!summaryTable) throw new Error('VectorDB not initialized');
 
@@ -441,18 +442,37 @@ export async function getSummaryStatus(docId: string): Promise<{
     .select(['id', 'summary', 'metadata'])
     .toArray();
 
+  // 查询 chunks 数量（无论 summary 是否存在都查询）
+  let chunkCount = 0;
+  if (chunksTable) {
+    try {
+      const chunkResults = await chunksTable
+        .query()
+        .where(`doc_id = '${docId}'`)
+        .select(['id'])
+        .toArray();
+      chunkCount = chunkResults.length;
+      console.log(`[getSummaryStatus] doc ${docId}: chunkCount = ${chunkCount}`);
+    } catch (e) {
+      console.warn(`[getSummaryStatus] failed to count chunks for ${docId}:`, e);
+    }
+  }
+
   if (existing.length === 0) {
-    return { exists: false };
+    // summary_index 中不存在，但可能有 chunks
+    return { exists: false, chunkCount };
   }
 
   const row = existing[0];
   const meta = JSON.parse(row.metadata || '{}');
+
   return {
     exists: true,
     status: meta.status || 'pending',
     summary: row.summary,
     tags: meta.tags || [],
     pages: meta.pages || 0,
+    chunkCount,
   };
 }
 
