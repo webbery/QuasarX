@@ -38,13 +38,15 @@ export interface SummarySearchResult {
  * @param docId 文档 ID
  * @param fileName 文件名
  * @param chunks 文本块数组
+ * @param pages 文件页数（可选）
  */
 export async function storeChunks(
   docId: string,
   fileName: string,
-  chunks: { index: number; content: string }[]
+  chunks: { index: number; content: string }[],
+  pages?: number
 ): Promise<void> {
-  const result = await ipcRenderer.invoke('vector-store-chunks', { docId, fileName, chunks });
+  const result = await ipcRenderer.invoke('vector-store-chunks', { docId, fileName, chunks, pages });
   if (!result.success) throw new Error(result.error);
 }
 
@@ -73,21 +75,22 @@ export async function search(
 }
 
 /**
- * 异步生成文档摘要
+ * 异步生成文档摘要（包含 chunk summaries）
  */
 export async function generateSummary(params: {
   docId: string;
   fileName: string;
   fullText: string;
-  chunkIds: string[];
+  chunks: { index: number; content: string }[];
   llmConfig: { url: string; protocol: string; apiKey: string; model: string };
-}): Promise<{ success: boolean; summary?: string; error?: string }> {
+  pages?: number;
+}): Promise<{ success: boolean; summary?: string; tags?: string[]; error?: string }> {
   const result = await ipcRenderer.invoke('generate-summary', params);
   return result;
 }
 
 /**
- * 重试生成文档摘要
+ * 重试生成文档摘要（包含 chunk summaries）
  */
 export async function retrySummary(params: {
   docId: string;
@@ -95,6 +98,7 @@ export async function retrySummary(params: {
   fullText: string;
   chunkIds: string[];
   llmConfig: { url: string; protocol: string; apiKey: string; model: string };
+  pages?: number;
 }): Promise<{ success: boolean; summary?: string; tags?: string[]; error?: string }> {
   const result = await ipcRenderer.invoke('retry-summary', params);
   return result;
@@ -105,7 +109,7 @@ export async function retrySummary(params: {
  */
 export async function getSummaryStatus(docIds: string[]): Promise<{
   success: boolean;
-  statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[] }>;
+  statuses: Record<string, { exists: boolean; status?: string; summary?: string; tags?: string[]; pages?: number; chunkCount?: number }>;
 }> {
   const result = await ipcRenderer.invoke('get-summary-status', docIds);
   return result;
@@ -129,9 +133,31 @@ export async function getStats(): Promise<{ totalChunks: number; totalDocs: numb
 }
 
 /**
+ * 获取指定文档的页数（从 chunks 表的 metadata 中读取）
+ */
+export async function getPages(docId: string): Promise<number> {
+  const result = await ipcRenderer.invoke('vector-get-pages', docId);
+  if (!result.success) return 0;
+  return result.pages || 0;
+}
+
+/**
  * 更新文档标签
  */
 export async function updateTags(docId: string, tags: string[]): Promise<void> {
   const result = await ipcRenderer.invoke('knowledge-update-tags', { docId, tags });
   if (!result.success) throw new Error(result.error);
+}
+
+/**
+ * 重新生成文档标签（不重新分块，使用 chunk_summaries 拼接）
+ */
+export async function regenerateTags(params: {
+  docId: string;
+  fileName: string;
+  llmConfig: { url: string; protocol: string; apiKey: string; model: string };
+  pages?: number;
+}): Promise<{ success: boolean; summary?: string; tags?: string[]; error?: string }> {
+  const result = await ipcRenderer.invoke('regenerate-tags', params);
+  return result;
 }

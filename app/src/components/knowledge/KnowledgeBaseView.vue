@@ -98,6 +98,9 @@
             <td class="col-tags">
               <div class="tags-container">
                 <span v-for="tag in (doc.tags || [])" :key="tag" class="tag-chip">{{ tag }}</span>
+                <button class="btn-regenerate-tags" @click="onRegenerateTags(doc)" title="重新生成标签">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
                 <button class="btn-edit-tags" @click="onEditTags(doc)" title="编辑标签">
                   <i class="fas fa-pen"></i>
                 </button>
@@ -202,6 +205,9 @@
       :document="editingTagsDoc"
       @save="onSaveTags"
     />
+
+    <!-- 提示对话框 -->
+    <PromptDialog ref="promptDialogRef" />
   </div>
 </template>
 
@@ -211,10 +217,11 @@ import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
 import { savePdf, listPdfs, deletePdf, downloadPdf, calculateFileHash } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
-import { storeChunks, deleteChunks, retrySummary, getSummaryStatus } from '../../lib/vectorDB';
+import { storeChunks, deleteChunks, retrySummary, getSummaryStatus, getPages, regenerateTags } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
 import ContextMenu from './ContextMenu.vue';
 import EditTagsDialog from './EditTagsDialog.vue';
+import PromptDialog from '../PromptDialog.vue';
 import type { ContextMenuAction } from './ContextMenu.vue';
 import { message } from '../../tool';
 import { getAgentConfig } from '../../lib/agent';
@@ -228,6 +235,9 @@ const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null);
 // 标签编辑
 const showTagsDialog = ref(false);
 const editingTagsDoc = ref<KnowledgeDocument | null>(null);
+
+// 提示对话框
+const promptDialogRef = ref<InstanceType<typeof PromptDialog> | null>(null);
 
 const selectedCount = computed(() => store.selectedDocs.size);
 const isAllSelected = computed(() => {
@@ -300,9 +310,16 @@ async function onDrop(event: DragEvent) {
       continue;
     }
 
-    // 先计算文件 hash
+    // ★ 先保存文件，使用服务端返回的 hash（保证一致性）
     const arrayBuffer = await file.arrayBuffer();
-    const fileHash = await calculateFileHash(arrayBuffer);
+    const saveResult = await savePdf(arrayBuffer, file.name);
+    if (!saveResult.success) {
+      message.error(`保存 "${file.name}" 失败`);
+      continue;
+    }
+
+    // ★ 使用服务端返回的 hash（与 listPdfs 计算的 hash 一致）
+    const fileHash = saveResult.hash;
 
     // 检查是否已有相同文件
     if (store.documents.some(d => d.fileHash === fileHash)) {
@@ -310,12 +327,13 @@ async function onDrop(event: DragEvent) {
       continue;
     }
 
-    const docId = `doc_${Date.now()}_${i}`;
+    // ★ 使用文件 hash 作为 docId（保证一致性，天然去重）
+    const docId = `doc_${fileHash}`;
     store.addDocument({
       id: docId,
-      fileName: file.name,
-      title: file.name.replace(/\.pdf$/i, ''),
-      uploadTime: Date.now(),
+      fileName: saveResult.fileName,
+      title: saveResult.fileName.replace(/\.pdf$/i, ''),
+      uploadTime: saveResult.mtime || Date.now(),
       pages: 0,
       status: 'parsing',
       summary: '',
@@ -326,22 +344,26 @@ async function onDrop(event: DragEvent) {
       tags: [],
     });
 
-    processPdfFile(file, docId);
+    processPdfFile(file, docId, saveResult);
   }
 }
 
 /**
  * 处理 PDF 文件
  */
-async function processPdfFile(file: File, docId: string) {
+async function processPdfFile(file: File, docId: string, saveResult?: { fileName: string; path: string; hash?: string; mtime?: number }) {
   try {
     const arrayBuffer = await file.arrayBuffer();
 
-    const saveResult = await savePdf(arrayBuffer, file.name);
-    if (!saveResult.success) {
-      store.updateDocumentStatus(docId, 'error', '保存文件失败');
-      message.error(`保存 "${file.name}" 失败`);
-      return;
+    // 如果 saveResult 没有传进来，尝试保存
+    let actualSaveResult = saveResult;
+    if (!actualSaveResult) {
+      actualSaveResult = await savePdf(arrayBuffer, file.name);
+      if (!actualSaveResult.success) {
+        store.updateDocumentStatus(docId, 'error', '保存文件失败');
+        message.error(`保存 "${file.name}" 失败`);
+        return;
+      }
     }
 
     const parseResult = await parsePdf(arrayBuffer);
@@ -352,7 +374,7 @@ async function processPdfFile(file: File, docId: string) {
     }
 
     const chunkIds = parseResult.chunks.map(c => `${docId}_${c.index}`);
-    await storeChunks(docId, saveResult.fileName, parseResult.chunks);
+    await storeChunks(docId, actualSaveResult.fileName, parseResult.chunks, parseResult.pages);
 
     store.setFullText(docId, parseResult.text);
 
@@ -365,7 +387,7 @@ async function processPdfFile(file: File, docId: string) {
     );
 
     // 异步触发摘要生成
-    triggerSummaryGeneration(docId, saveResult.fileName, parseResult.text, chunkIds);
+    triggerSummaryGeneration(docId, actualSaveResult.fileName, parseResult.text, chunkIds, parseResult.pages);
 
     message.success(`"${file.name}" 解析完成`);
   } catch (error: any) {
@@ -382,7 +404,8 @@ async function triggerSummaryGeneration(
   docId: string,
   fileName: string,
   fullText: string,
-  chunkIds: string[]
+  chunkIds: string[],
+  pages?: number
 ) {
   const llmConfig = getAgentConfig();
   if (!llmConfig) {
@@ -400,6 +423,7 @@ async function triggerSummaryGeneration(
       fullText,
       chunkIds,
       llmConfig,
+      pages,
     });
 
     if (result.success) {
@@ -407,6 +431,13 @@ async function triggerSummaryGeneration(
       // 保存标签
       if (result.tags && result.tags.length > 0) {
         store.updateTags(docId, result.tags);
+      }
+      // 更新页数
+      if (pages && pages > 0) {
+        const doc = store.documents.find(d => d.id === docId);
+        if (doc) {
+          doc.pages = pages;
+        }
       }
     } else {
       store.updateSummaryStatus(docId, 'failed');
@@ -423,34 +454,38 @@ async function triggerSummaryGeneration(
  * 单个文档生成索引
  */
 async function onGenerateSingle(doc: KnowledgeDocument) {
-  if (!doc.fullText || doc.chunks.length === 0) {
-    message.warning(`"${doc.title}" 缺少完整文本，无法生成索引`);
+  console.log(`[onGenerateSingle] doc ${doc.id}: chunks.length = ${doc.chunks.length}, summaryStatus = ${doc.summaryStatus}`);
+  if (doc.chunks.length === 0) {
+    message.warning(`"${doc.title}" 缺少分块数据，无法生成索引（chunkCount=0，请检查是否成功上传并解析 PDF）`);
     return;
   }
   const chunkIds = doc.chunks.map(c => `${doc.id}_${c.index}`);
-  await triggerSummaryGeneration(doc.id, doc.fileName, doc.fullText, chunkIds);
+  const fullText = doc.fullText || '';  // 主进程会从 LanceDB 重新加载 chunks
+  await triggerSummaryGeneration(doc.id, doc.fileName, fullText, chunkIds);
 }
 
 /**
  * 单个文档重试
  */
 async function onRetryIndex(doc: KnowledgeDocument) {
-  if (!doc.fullText || doc.chunks.length === 0) {
-    message.warning(`"${doc.title}" 缺少完整文本，无法重新生成索引`);
+  console.log(`[onRetryIndex] doc ${doc.id}: chunks.length = ${doc.chunks.length}, summaryStatus = ${doc.summaryStatus}`);
+  if (doc.chunks.length === 0) {
+    message.warning(`"${doc.title}" 缺少分块数据，无法重新生成索引（chunkCount=0，请检查是否成功上传并解析 PDF）`);
     return;
   }
   const llmConfig = getAgentConfig();
   if (!llmConfig) {
-    message.warning('未配置 AI 服务，无法生成索引');
+    message.warning('未配置 AI 服务，无法重新生成索引');
     return;
   }
 
   try {
     store.updateSummaryStatus(doc.id, 'indexing');
+    const fullText = doc.fullText || '';  // 主进程会从 LanceDB 重新加载 chunks
     const result = await retrySummary({
       docId: doc.id,
       fileName: doc.fileName,
-      fullText: doc.fullText!,
+      fullText,
       chunkIds: doc.chunks.map(c => `${doc.id}_${c.index}`),
       llmConfig,
     });
@@ -490,7 +525,7 @@ async function onGenerateAll() {
     return;
   }
   const needIndex = store.sortedDocuments.filter(
-    d => d.summaryStatus !== 'ready' && d.summaryStatus !== 'indexing' && d.fullText && d.chunks.length > 0
+    d => d.summaryStatus !== 'ready' && d.summaryStatus !== 'indexing' && d.chunks.length > 0
   );
   if (needIndex.length === 0) {
     message.info('所有文档均已索引');
@@ -517,7 +552,7 @@ async function batchGenerateIndexes(docs: KnowledgeDocument[]) {
   const worker = async () => {
     while (queue.length > 0) {
       const doc = queue.shift()!;
-      if (!doc.fullText || doc.chunks.length === 0) {
+      if (doc.chunks.length === 0) {
         store.updateSummaryStatus(doc.id, 'failed');
         failCount++;
         continue;
@@ -525,10 +560,11 @@ async function batchGenerateIndexes(docs: KnowledgeDocument[]) {
 
       try {
         store.updateSummaryStatus(doc.id, 'indexing');
+        const fullText = doc.fullText || '';  // 主进程会从 LanceDB 重新加载 chunks
         const result = await retrySummary({
           docId: doc.id,
           fileName: doc.fileName,
-          fullText: doc.fullText,
+          fullText,
           chunkIds: doc.chunks.map(c => `${doc.id}_${c.index}`),
           llmConfig,
         });
@@ -633,6 +669,50 @@ async function onSaveTags(doc: KnowledgeDocument, tags: string[]) {
 }
 
 /**
+ * 重新生成标签
+ */
+const regeneratingDocIds = ref(new Set<string>())
+
+async function onRegenerateTags(doc: KnowledgeDocument) {
+  // 弹出确认对话框
+  const confirmed = await promptDialogRef.value!.confirm({
+    title: '重新生成标签',
+    message: `确定要重新生成 "${doc.title}" 的标签吗？`,
+  })
+
+  if (!confirmed) return
+
+  regeneratingDocIds.value.add(doc.id)
+  try {
+    const llmConfig = getAgentConfig()
+    if (!llmConfig) {
+      message.error('LLM 配置未设置，无法生成标签')
+      return
+    }
+
+    const regenResult = await regenerateTags({
+      docId: doc.id,
+      fileName: doc.fileName,
+      llmConfig,
+      pages: doc.pages,
+    })
+
+    if (regenResult.success && regenResult.tags) {
+      store.updateTags(doc.id, regenResult.tags)
+      message.success(`"${doc.title}" 标签重新生成成功`)
+      // 刷新文档状态
+      await loadSummaryStatus([doc.id])
+    } else {
+      message.error(`标签重新生成失败: ${regenResult.error || '未知错误'}`)
+    }
+  } catch (error: any) {
+    message.error(`标签重新生成失败: ${error.message}`)
+  } finally {
+    regeneratingDocIds.value.delete(doc.id)
+  }
+}
+
+/**
  * 组件挂载时加载 PDF 列表
  */
 onMounted(async () => {
@@ -642,15 +722,19 @@ onMounted(async () => {
       const docIds: string[] = [];
       const docMap = new Map<string, KnowledgeDocument>();
 
+      // ★ 修复：清空后再添加，避免重复
+      store.clearAll();
+
       for (const pdf of result.pdfs) {
-        const docId = `doc_${pdf.name}_${pdf.mtime}`;
+        // ★ 使用文件 hash 作为 docId（与上传时保持一致）
+        const docId = `doc_${pdf.hash}`;
         docIds.push(docId);
         const doc: KnowledgeDocument = {
           id: docId,
           fileName: pdf.name,
           title: pdf.name.replace(/\.pdf$/i, ''),
           uploadTime: pdf.mtime,
-          pages: 0,
+          pages: 0,  // 初始为 0，后面会从 LanceDB 恢复
           status: 'ready',
           summary: '（未解析，建议重新处理）',
           hitCount: 0,
@@ -663,24 +747,51 @@ onMounted(async () => {
         docMap.set(docId, doc);
       }
 
-      // 异步查询摘要状态
+      // 异步查询摘要状态 + 恢复页数
       try {
+        console.log(`[KnowledgeBase] calling getSummaryStatus with ${docIds.length} docIds`);
         const statusResult = await getSummaryStatus(docIds);
+
+        console.log(`[KnowledgeBase] getSummaryStatus result:`, statusResult);
+        
         if (statusResult.success) {
           for (const [docId, statusInfo] of Object.entries(statusResult.statuses)) {
-            const doc = docMap.get(docId);
+            const doc = store.documents.find(d => d.id === docId);
             if (doc) {
+              const chunkCount = statusInfo.chunkCount || 0;
+              console.log(`[KnowledgeBase] doc ${docId}: exists=${statusInfo.exists}, chunkCount=${chunkCount}, status=${statusInfo.status}, tags=[${(statusInfo.tags || []).join(', ')}], pages=${statusInfo.pages}`);
+
               if (statusInfo.exists) {
+                // ★ 使用 store 方法更新状态，确保响应式生效
                 doc.summaryStatus = (statusInfo.status as any) || 'ready';
-                doc.tags = statusInfo.tags || [];
+                store.updateTags(docId, statusInfo.tags || []);
+                // ★ 更新页数（直接赋值应该触发响应式，因为 documents 是 reactive array）
+                if (statusInfo.pages && statusInfo.pages > 0) {
+                  doc.pages = statusInfo.pages;
+                  console.log(`[KnowledgeBase] restored pages=${doc.pages} for doc ${docId}`);
+                }
               } else {
                 doc.summaryStatus = 'pending';
-                doc.tags = [];
+                store.updateTags(docId, []);
+              }
+
+              // ★ 恢复 chunks 占位数组（使重新索引功能可用）
+              // 无论 summary 是否存在，只要有 chunks 就恢复
+              console.log(`[KnowledgeBase] doc ${docId}: chunkCount from server = ${chunkCount}, current chunks length = ${doc.chunks.length}`);
+              if (chunkCount > 0) {
+                doc.chunks = Array.from({ length: chunkCount }, (_, i) => ({
+                  index: i,
+                  content: '',  // 占位，实际内容不需要
+                }));
+                console.log(`[KnowledgeBase] restored ${chunkCount} chunk placeholders for doc ${docId}`);
+              } else {
+                console.warn(`[KnowledgeBase] doc ${docId}: chunkCount is 0, chunks will remain empty`);
               }
             }
           }
         }
-      } catch {
+      } catch (error) {
+        console.error('[KnowledgeBase] 状态查询失败:', error);
         // 状态查询失败不影响列表显示
       }
     }
@@ -988,6 +1099,31 @@ onMounted(async () => {
   opacity: 1;
   color: #60a5fa;
   background: rgba(96, 165, 250, 0.1);
+}
+
+.btn-regenerate-tags {
+  background: none;
+  border: none;
+  color: #606080;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  opacity: 0.5;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-regenerate-tags:hover {
+  opacity: 1;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.btn-regenerate-tags:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* Action buttons */

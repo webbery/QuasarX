@@ -22,21 +22,27 @@ export const knowledgeTool = tool(
       // 更新命中次数
       const knowledgeStore = useKnowledgeStore()
 
-      // 构建返回文本
+      // 构建返回文本，添加引用标记和相关度分级
       const docs = results.map((r, idx) => {
         knowledgeStore.incrementHitCount(r.docId)
+
+        const similarity = r.similarity * 100
+        const relevanceLevel = similarity >= 80 ? "高度相关" : similarity >= 60 ? "中等相关" : "低度相关"
+        const citationTag = `[${idx + 1}]`
 
         const fullContent = r.chunks.map((c) => c.content).join("\n\n")
         const tagsStr = r.tags && r.tags.length > 0 ? ` [${r.tags.join(", ")}]` : ""
 
-        return `--- 文档 ${idx + 1}: ${r.fileName}${tagsStr} (相关度: ${(r.similarity * 100).toFixed(1)}%) ---
-【摘要】${r.summary}
+        return `### ${citationTag} 文档 ${idx + 1}: ${r.fileName}${tagsStr}
+- **引用标识**: ${citationTag}
+- **相关度**: ${similarity.toFixed(1)}% (${relevanceLevel})
+- **摘要**: ${r.summary}
 
-【正文】
+**正文内容**:
 ${fullContent}`
       }).join("\n\n")
 
-      return `【知识库相关内容】\n\n${docs}`
+      return `【知识库检索结果】共找到 ${results.length} 个相关文档，按相关度排序：\n\n${docs}\n\n---\n**引用说明**: 回复中请使用 [1]、[2] 等引用标记指代对应文档，并在回答末尾添加"参考资料"章节列出所有引用的文档。`
     } catch (e) {
       console.warn("[Knowledge Tool] 检索失败:", e)
       return "【知识库】检索服务暂时不可用。"
