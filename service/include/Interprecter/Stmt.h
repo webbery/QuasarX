@@ -113,6 +113,15 @@ public:
 
     List<Pair<symbol_t, TradeAction>> envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
 
+    /**
+     * @brief 数值模式：计算表达式的数值结果（不转为 TradeAction）
+     * @param symbols 所有标的
+     * @param variantNames 变量名集合
+     * @param context 数据上下文
+     * @return Map<symbol_t, double> 每个标的的计算结果
+     */
+    Map<symbol_t, double> computeNumeric(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
+
 public:
     context_t evalNumber(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);

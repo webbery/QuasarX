@@ -327,6 +327,84 @@ buy: MA_5[t] > MA_10[t] or close[t] > high[t-1]
 7. 已持仓不追加：已持仓股票的 BUY 信号会被过滤为 HOLD`
 }
 
+// === Formula 公式计算使用指南 ===
+
+function getFormulaSyntaxDoc(): string {
+  return `# Formula 公式语法
+
+Formula 节点通过自定义公式对输入数据进行计算，输出数值结果。
+
+## 与 Signal 节点的区别
+
+| | Signal 节点 | Formula 节点 |
+|---|---|---|
+| 输出类型 | TradeAction (BUY/SELL/HOLD) | double (数值结果) |
+| 用途 | 生成交易信号 | 任意数值计算 |
+| 公式结果 | 必须为布尔值 | 可以是任意数值 |
+| 时间索引 | 必须带 [t] | 可选 |
+
+## 变量来源
+
+公式中的变量名来自 Formula 节点的前驱节点（直接相连的上游节点）的输出。
+
+### 如何确定可用变量
+
+1. 查看 Formula 节点的上游节点是谁
+2. 使用 \`strategy(action="get_node_info", keyword="上游节点类型")\` 查看该节点的 outputs 字段
+3. 这些 outputs 就是公式中可以使用的变量名
+
+### 变量引用格式
+
+格式：\`变量名[时间索引]\`
+- \`A[t]\` — 当前时刻的值
+- \`MA_5[t-1]\` — 前 1 个时刻的值
+- \`ReturnRate[t-5]\` — 前 5 个时刻的值
+
+时间索引支持：
+- \`[t]\` — 当前时刻（最新值）
+- \`[t-N]\` — 前 N 个时刻
+- 省略时间索引 — 使用最新值
+
+## 运算符
+- **算术运算**: \`+\`, \`-\`, \`*\`, \`/\`
+- **括号**: \`(...)\`
+- **逻辑运算**: \`and\`, \`or\`, \`not\` / \`!\`
+
+## 截面函数（对所有标的联合计算）
+- \`topk(表达式, k)\` — 值最大的前 k 个标的返回 1，其余返回 0
+- \`bottomk(表达式, k)\` — 值最小的前 k 个标的返回 1，其余返回 0
+- \`rank(表达式)\` — 返回 0~1 的排名归一化值
+- \`zscore(表达式)\` — Z-Score 标准化：(x - mean) / std
+
+## 典型示例
+
+### 加权平均
+\`\`\`
+A * 0.5 + B * 0.3 + C * 0.2
+\`\`\`
+
+### 差值计算
+\`\`\`
+MA_short[t] - MA_long[t]
+\`\`\`
+
+### 排名得分
+\`\`\`
+rank(ReturnRate[t]) * 0.6 + rank(volume[t]) * 0.4
+\`\`\`
+
+### 条件打分
+\`\`\`
+(RSI[t] > 50 ? 1 : -1) * ZScore[t]
+\`\`\`
+
+## 重要注意事项
+1. **变量来自上游节点**：公式中的变量名只能是 Formula 节点前驱节点的输出
+2. **输出是连续数值**：与 Signal 节点输出 BUY/SELL 不同，Formula 输出数值结果
+3. **截面函数改变语义**：使用 topk/rank/zscore 时，公式对所有标的联合计算
+4. **时间索引可选**：\`RSI\` 使用最新值，\`RSI[t-1]\` 使用前一时刻值`
+}
+
 // === HMM 市场状态识别使用指南 ===
 
 function getHMMUsageGuide(): string {
@@ -724,6 +802,12 @@ export const strategyTool = tool(
           info.push('[提示] 数据重采样节点有详细的使用指南。使用 `action="resample_usage"` 获取完整说明（聚合规则、频率选项、Signal 公式用法）。')
         }
 
+        // 为 Formula 节点添加特殊提示
+        if (n.nodeType === "formula" || n.id === "formula") {
+          info.push('')
+          info.push('[提示] 公式计算节点有完整的语法文档。使用 `action="formula_syntax"` 获取完整说明（运算符、变量引用、截面函数、典型示例）。')
+        }
+
         // 为其他关键节点添加策略图约束提示
         if (["input", "execution", "portfolio", "function", "xgboost", "spread", "protection"].includes(n.nodeType)) {
           info.push('')
@@ -767,6 +851,10 @@ export const strategyTool = tool(
         return getSignalSyntaxDoc()
       }
 
+      case "formula_syntax": {
+        return getFormulaSyntaxDoc()
+      }
+
       case "flow_constraints": {
         return getFlowConstraints()
       }
@@ -789,12 +877,12 @@ export const strategyTool = tool(
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
         "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
-        "signal_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage"
+        "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage"
       ]).describe("操作类型"),
       keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
       data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy 时必填）"),

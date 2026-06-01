@@ -289,3 +289,38 @@ context_t FormulaParser::evalArithmetic(const symbol_t& symbol, const peg::Ast& 
 
     return result;
 }
+
+// ========== computeNumeric 实现 ==========
+
+Map<symbol_t, double> FormulaParser::computeNumeric(const Vector<symbol_t>& symbols,
+                                                     const Set<String>& variantNames,
+                                                     DataContext& context) {
+    Map<symbol_t, double> results;
+
+    if (!_ast) {
+        return results;
+    }
+
+    // 预处理截面函数（复用现有逻辑）
+    if (hasCrossSectionFunctions(*_ast)) {
+        precomputeCrossSectionFunctions(symbols, context);
+    }
+
+    // 逐 symbol 计算数值
+    for (auto& sym : symbols) {
+        context_t val = eval(sym, *_ast, context);
+        double numericValue = 0.0;
+        std::visit([&numericValue](auto&& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, double>) {
+                numericValue = v;
+            } else if constexpr (std::is_same_v<T, Vector<double>>) {
+                numericValue = v.empty() ? 0.0 : v.back();
+            } else if constexpr (std::is_same_v<T, bool>) {
+                numericValue = v ? 1.0 : 0.0;
+            }
+        }, val);
+        results[sym] = numericValue;
+    }
+    return results;
+}

@@ -72,6 +72,7 @@ enum class StrategyNodeType {
     EMD,        // 经验模态分解节点（信号处理）
     HMM,        // 隐马尔可夫节点（因果推理：市场状态识别）
     Resample,   // 数据重采样节点（高频→低频聚合）
+    Formula,    // 公式计算节点（自定义表达式计算）
 };
 
 struct AgentStrategyInfo;
