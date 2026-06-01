@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <unordered_map>
 #include "Nodes/TestNode.h"
+#include "Nodes/ExecuteNode.h"
+#include "Nodes/QuoteNode.h"
 #include "boost/algorithm/string.hpp"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/exchange.h"
@@ -97,7 +99,7 @@ QNode* generate_node(const String& id, Server* server) {
     return node;
 }
 
-List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server) {
+List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server, SlippageConfigInfo* outSlippageConfig) {
     List<QNode*> graph;
     auto& nodes = content["nodes"];
     auto& edges = content["edges"];
@@ -200,6 +202,51 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         auto& config = nodeConfigMap[node.first];
         node.second->Init(config);
     }
+
+    // 收集滑点配置（从 ExecuteNode 中提取）
+    if (outSlippageConfig) {
+        Set<String> sources;
+        nlohmann::json slippageConfig;
+        bool hasSlippageConfig = false;
+
+        for (auto& [id, node] : nodeMap) {
+            if (dynamic_cast<ExecuteNode*>(node)) {
+                auto& cfg = nodeConfigMap[id];
+                if (cfg.contains("params") && cfg["params"].contains("slippageModel")) {
+                    auto& slippageModel = cfg["params"]["slippageModel"];
+                    int modelType = slippageModel["value"].get<int>();
+
+                    // 构建滑点模型 JSON 配置
+                    slippageConfig["type"] = modelType;
+                    if (modelType == 0) {
+                        double slippageValue = 0.0;
+                        if (cfg["params"].contains("slippage") && cfg["params"]["slippage"].contains("value")) {
+                            slippageValue = cfg["params"]["slippage"]["value"].get<double>();
+                        }
+                        slippageConfig["ratio"] = slippageValue;
+                    } else {
+                        slippageConfig["base"] = cfg["params"]["slippageBase"]["value"].get<double>();
+                        slippageConfig["impact_k"] = cfg["params"]["slippageImpactK"]["value"].get<double>();
+                        slippageConfig["alpha"] = cfg["params"]["slippageAlpha"]["value"].get<double>();
+                    }
+                    hasSlippageConfig = true;
+                }
+            }
+        }
+
+        // 收集所有 QuoteInputNode 的 source
+        for (auto& [id, node] : nodeMap) {
+            if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
+                sources.insert(quoteNode->GetSource());
+            }
+        }
+
+        if (hasSlippageConfig && !sources.empty()) {
+            outSlippageConfig->sources = std::move(sources);
+            outSlippageConfig->modelConfig = std::move(slippageConfig);
+        }
+    }
+
     return graph;
 }
 

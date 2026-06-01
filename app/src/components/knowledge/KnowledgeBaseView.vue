@@ -215,7 +215,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useKnowledgeStore } from '../../stores/knowledgeStore';
 import type { KnowledgeDocument } from '../../stores/knowledgeStore';
-import { savePdf, listPdfs, deletePdf, downloadPdf, calculateFileHash } from '../../lib/pdfFileManager';
+import { savePdf, listPdfs, deletePdf, downloadPdf, calculateFileHash, type SavePdfResult } from '../../lib/pdfFileManager';
 import { parsePdf } from '../../lib/pdfParser';
 import { storeChunks, deleteChunks, retrySummary, getSummaryStatus, getPages, regenerateTags } from '../../lib/vectorDB';
 import DocumentDetailDialog from './DocumentDetailDialog.vue';
@@ -320,6 +320,10 @@ async function onDrop(event: DragEvent) {
 
     // ★ 使用服务端返回的 hash（与 listPdfs 计算的 hash 一致）
     const fileHash = saveResult.hash;
+    if (!fileHash) {
+      message.error(`保存 "${file.name}" 失败：未返回文件 hash`);
+      continue;
+    }
 
     // 检查是否已有相同文件
     if (store.documents.some(d => d.fileHash === fileHash)) {
@@ -351,7 +355,7 @@ async function onDrop(event: DragEvent) {
 /**
  * 处理 PDF 文件
  */
-async function processPdfFile(file: File, docId: string, saveResult?: { fileName: string; path: string; hash?: string; mtime?: number }) {
+async function processPdfFile(file: File, docId: string, saveResult?: SavePdfResult) {
   try {
     const arrayBuffer = await file.arrayBuffer();
 
@@ -701,7 +705,7 @@ async function onRegenerateTags(doc: KnowledgeDocument) {
       store.updateTags(doc.id, regenResult.tags)
       message.success(`"${doc.title}" 标签重新生成成功`)
       // 刷新文档状态
-      await loadSummaryStatus([doc.id])
+      await getSummaryStatus([doc.id])
     } else {
       message.error(`标签重新生成失败: ${regenResult.error || '未知错误'}`)
     }

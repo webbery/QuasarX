@@ -1,3 +1,4 @@
+#include "ExchangeManager.h"
 #include "std_header.h"
 #include "Metric/Return.h"
 #include "Util/system.h"
@@ -444,7 +445,7 @@ build_portfolio_values(const crash_flow_t& flow, const DataContext& context, Ser
                 try {
                     auto [dts, closes] = exchange->GetHFQCloseData(symbol);
                     if (!dts.empty()) {
-                        hfq_data[symbol] = {std::move(dts), std::move(closes)};
+                        hfq_data[symbol] = HFQData{std::move(dts), std::move(closes)};
                     }
                 } catch (...) {
                     // 如果获取失败，跳过该标的

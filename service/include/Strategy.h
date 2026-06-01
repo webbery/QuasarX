@@ -77,8 +77,28 @@ enum class StrategyNodeType {
 struct AgentStrategyInfo;
 // AgentStrategyInfo parse_strategy_script(const nlohmann::json& content);
 
+/**
+ * @brief 滑点配置结构（从 ExecuteNode 提取）
+ */
+struct SlippageConfigInfo {
+    Set<String> sources;          // 策略使用的数据源集合
+    nlohmann::json modelConfig;   // 滑点模型 JSON 配置
+};
+
 class Server;
 class QNode;
-List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server);
+
+/**
+ * @brief 解析策略图 v2 版本
+ * @param content 策略 JSON 内容
+ * @param server Server 指针
+ * @param outSlippageConfig 可选输出参数，用于返回滑点配置
+ * @return 解析后的节点列表
+ */
+List<QNode*> parse_strategy_script_v2(
+    const nlohmann::json& content,
+    Server* server,
+    SlippageConfigInfo* outSlippageConfig = nullptr
+);
 // 对输入的有向图节点作topo排序，返回排序后的节点
 List<QNode*> topo_sort(const List<QNode*>& graph);

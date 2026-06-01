@@ -1,4 +1,5 @@
 #include "Handler/PositionHandler.h"
+#include "ExchangeManager.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
 

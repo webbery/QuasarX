@@ -1,5 +1,6 @@
 #include "StrategySubSystem.h"
 #include "BrokerSubSystem.h"
+#include "ExchangeManager.h"
 #include "FeatureSubsystem.h"
 #include "AgentSubSystem.h"
 #include "Strategy.h"
@@ -237,9 +238,16 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
         return;
     }
 
-    auto nodes = parse_strategy_script_v2(script, _handle);
+    // 解析策略图，同时收集滑点配置
+    SlippageConfigInfo slippageConfig;
+    auto nodes = parse_strategy_script_v2(script, _handle, &slippageConfig);
     auto sorted_nodes = topo_sort(nodes);
     InitStrategy(strategyName, sorted_nodes);
+
+    // 配置滑点模型（从策略解析层提取的配置）
+    if (!slippageConfig.sources.empty() && slippageConfig.modelConfig.is_object()) {
+        _handle->GetExchangeManager()->ConfigureSlippageModels(slippageConfig.sources, slippageConfig.modelConfig);
+    }
 
     // 解析策略级影子模式标志
     if (script.contains("shadow") && script["shadow"] == true) {

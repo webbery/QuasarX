@@ -1,4 +1,5 @@
 #include "Handler/IndexHandler.h"
+#include "ExchangeManager.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "json.hpp"

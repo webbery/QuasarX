@@ -1,4 +1,5 @@
 #include "Handler/OptionHandler.h"
+#include "ExchangeManager.h"
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>

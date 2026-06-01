@@ -1,4 +1,5 @@
 #include "MarketTiming/ShadowTiming.h"
+#include "ExchangeManager.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "server.h"

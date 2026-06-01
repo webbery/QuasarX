@@ -1,5 +1,6 @@
 #include "Handler/UserHandler.h"
 #include "Bridge/exchange.h"
+#include "ExchangeManager.h"
 #include "HttpHandler.h"
 #include "json.hpp"
 #include "server.h"

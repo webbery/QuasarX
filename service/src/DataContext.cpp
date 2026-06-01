@@ -4,6 +4,7 @@
 #include "server.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
+#include "Bridge/SIM/BacktestContext.h"
 
 DataContext::~DataContext() {
     for (auto& item: _signalObservers) {
@@ -120,15 +121,28 @@ void DataContext::ConsumeSignals() {
 
 double DataContext::getAvailableCapital() const
 {
-    auto* exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
-    if (!exchange) {
-        exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_HX);
-    }
-    if (exchange) {
-        double funds = exchange->GetAvailableFunds(_backtestRunId);
-        if (funds > 0) {
-            return funds;
+    const auto& exchangeMgr = *_server->GetExchangeManager();
+    // 回测模式：遍历所有 Exchange，汇总可用资金
+    if (_server->GetRunningMode() == RuningType::Backtest) {
+        double totalFunds = 0.0;
+        bool found = false;
+        for (auto* exchange : exchangeMgr.GetActiveExchanges()) {
+            double funds = exchange->GetAvailableFunds(_backtestRunId);
+            if (funds > 0) {
+                totalFunds += funds;
+                found = true;
+            }
         }
+        if (found) {
+            return totalFunds;
+        }
+        return BACKTEST_INITIAL_CAPITAL;
+    }
+
+    // 实盘模式：使用活跃的股票交易 Exchange
+    auto* exchange = exchangeMgr.GetActiveStockExchange();
+    if (exchange) {
+        return exchange->GetAvailableFunds(0);
     }
     return 0;
 }

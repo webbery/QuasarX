@@ -652,48 +652,7 @@ bool Server::InitMarket(const std::string& path) {
     for (String name: exchangeNames) {
         auto& info = _config->GetExchangeByName(name);
         if (info["type"] == "stock") {
-            if (info["api"] == STOCK_HISTORY_SIM) {
-                // STOCK_HISTORY_SIM 模式：直接从 symbol_market.csv 读取标的列表
-                INFO("InitMarket for STOCK_HISTORY_SIM mode, loading from symbol_market.csv");
-                
-                // 如果配置中没有 quote_addr，使用默认路径
-                auto csv_path = path + "/symbol_market.csv";
-                
-                if (std::filesystem::exists(csv_path)) {
-                    try {
-                        io::CSVReader<3> reader(csv_path);
-                        reader.read_header(io::ignore_extra_column, "代码", "交易所", "name");
-                        std::string code, exch, name;
-                        int symbolCount = 0;
-                        while (reader.read_row(code, exch, name)) {
-                            ContractInfo ci;
-                            ci._type = static_cast<char>(ContractType::AStock);
-                            ci._name = name;
-                            
-                            if (exch == "SH") {
-                                ci._exchange = MT_Shanghai;
-                            } else if (exch == "SZ") {
-                                ci._exchange = MT_Shenzhen;
-                            } else if (exch == "BJ") {
-                                ci._exchange = MT_Beijing;
-                            } else {
-                                WARN("{}: Unknown exchange {}", code, exch);
-                                continue;
-                            }
-                            
-                            _markets.emplace(code, std::move(ci));
-                            symbolCount++;
-                        }
-                        INFO("Loaded {} stock symbols from {}", symbolCount, csv_path);
-                    } catch (const std::exception& e) {
-                        WARN("Failed to load {}: {}, fallback to InitStocks", csv_path, e.what());
-                        InitStocks(path);
-                    }
-                } else {
-                    WARN("{} not found, fallback to InitStocks", csv_path);
-                    InitStocks(path);
-                }
-            } else if (info["api"] == TICKFLOW_QUOTE_API) {
+            if (info["api"] == TICKFLOW_QUOTE_API) {
                 // 通过 TickFlow 接口获取标的列表
                 auto exchange = _exchangeMgr ? _exchangeMgr->GetExchangeByType(ExchangeType::EX_HX) : nullptr;
                 if (exchange) {
@@ -713,8 +672,7 @@ bool Server::InitMarket(const std::string& path) {
                     }
                 }
             } else {
-                // TODO: 通过接口获取
-                InitStocks(path);
+                // STOCK_HISTORY_SIM 等其他模式：标的同步已在 RegisterExchange 中完成，无需重复加载
             }
         }
         else if (info["type"] == "future") {
@@ -851,8 +809,6 @@ ExchangeName Server::GetExchange(const std::string& symbol) {
     }
     return *types.begin();
 }
-
-int Server::GetMaxPrepareCount() {
 
 Pair<ContractType, char> Server::GetContractType(const std::string& symbol, const String& exhange)
 {
@@ -1105,9 +1061,8 @@ void Server::TimerWorker(nng_socket sock) {
     }
 #endif
     // 更新持仓
-    auto broker = _exchangeMgr ? _exchangeMgr->GetExchangeByType(ExchangeType::EX_HX) : nullptr;
     AccountPosition ap;
-    broker->GetPosition(ap);
+    _exchangeMgr->GetTradingPosition(ap);
     nlohmann::json holds;
     for (auto& item : ap._positions) {
         nlohmann::json position;
@@ -1125,10 +1080,10 @@ void Server::TimerWorker(nng_socket sock) {
         String info = format_sse("update_position", data);
         nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
     }
-    
+
     // 更新订单
     OrderList ol;
-    if (broker->GetOrders(SecurityType::Stock,ol) && !ol.empty()) {
+    if (_exchangeMgr->GetTradingOrders(SecurityType::Stock, ol) && !ol.empty()) {
         nlohmann::json array;
         for (auto& item: ol) {
             nlohmann::json order;
@@ -1621,16 +1576,27 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
     auto exchange = config.GetExchangeByName(name);
 
     std::string ex_type = exchange["api"];
-    std::string quote_addr = exchange["quote"];
-    std::string trade_addr = exchange["trade"];
+    std::string quote_addr = exchange.value("quote", "");
+    std::string trade_addr = exchange.value("trade", "");
     ExchangeInfo handle;
     strcpy(handle._local_addr, config.GetHost().c_str());
+
+    // 兼容没有 quote/trade 字段的配置（如 tickflow-quote 纯行情 Bridge）
     std::vector<std::string> trade_info;
-    split(trade_addr, trade_info, ":");
+    if (!trade_addr.empty()) {
+        split(trade_addr, trade_info, ":");
+    }
     std::vector<std::string> quote_info;
-    split(quote_addr, quote_info, ":");
-    strcpy(handle._quote_addr, quote_info[0].c_str());
-    strcpy(handle._default_addr, trade_info[0].c_str());
+    if (!quote_addr.empty()) {
+        split(quote_addr, quote_info, ":");
+    }
+
+    if (!quote_info.empty()) {
+        strcpy(handle._quote_addr, quote_info[0].c_str());
+    }
+    if (!trade_info.empty()) {
+        strcpy(handle._default_addr, trade_info[0].c_str());
+    }
     strcpy(handle._productID, config.GetProductID().c_str());
     if (exchange.contains("account")) {
         std::string username = exchange["account"];

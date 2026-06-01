@@ -17,6 +17,8 @@ export interface SavePdfResult {
   success: boolean;
   fileName: string;
   path: string;
+  hash?: string;
+  mtime?: number;
   error?: string;
 }
 

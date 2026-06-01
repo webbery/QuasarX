@@ -2,6 +2,7 @@
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Util/system.h"
+#include "std_header.h"
 #include <nng/nng.h>
 #include <mutex>
 
@@ -108,6 +109,12 @@ public:
     const Map<ExchangeType, ExchangeInterface*>& GetExchangesByType() const;
 
     /**
+     * @brief 获取所有当前有效的 Exchange 实例
+     * @return 所有已注册且非空的 Exchange 指针列表
+     */
+    Vector<ExchangeInterface*> GetActiveExchanges() const;
+
+    /**
      * @brief 按类型获取 Exchange (如 EX_CTP, EX_HX)
      */
     ExchangeInterface* GetExchangeByType(ExchangeType type) const;
@@ -122,12 +129,25 @@ public:
      */
     ExchangeInterface* GetActiveFutureExchange() const;
 
-    // ========== 设置活跃交易所 ==========
+    // ========== 交易相关（持仓/订单） ==========
 
-    void SetActiveStockExchange(const String& name);
-    void SetActiveFutureExchange(const String& name);
-    String GetActiveStockName() const;
-    String GetActiveFutureName() const;
+    /**
+     * @brief 从所有交易 Exchange 获取汇总持仓信息
+     * @param outPosition 输出参数，填充所有持仓
+     * @return 是否获取到持仓
+     */
+    bool GetTradingPosition(AccountPosition& outPosition) const;
+
+    /**
+     * @brief 从所有交易 Exchange 获取汇总订单信息
+     * @param secType 证券类型
+     * @param outOrders 输出参数，填充所有订单
+     * @return 是否获取到订单
+     */
+    bool GetTradingOrders(SecurityType secType, OrderList& outOrders) const;
+
+    // ========== 活跃交易所 ==========
+    Vector<ExchangeInterface*> GetActiveExchanges();
 
     // ========== 行情发布 ==========
 
@@ -224,6 +244,17 @@ public:
      * @brief 从 config.json 加载 etf.t0/etf.t1 并设置到 ETFHistorySimulation
      */
     void ConfigureETFExchange();
+
+    // ========== 滑点模型配置 ==========
+
+    /**
+     * @brief 根据策略的数据源配置滑点模型
+     *
+     * 由策略解析层调用，根据 sources 自动路由到对应的 HistorySimulation Exchange
+     * @param sources 数据源集合，如 {"股票"} 或 {"ETF"}
+     * @param slippageConfig 滑点模型 JSON 配置（由 SlippageFactory::create 解析的格式）
+     */
+    void ConfigureSlippageModels(const Set<String>& sources, const nlohmann::json& slippageConfig);
 
 private:
     /**

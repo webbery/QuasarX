@@ -5,6 +5,7 @@
 #include "Bridge/SIM/ETFHistorySimulation.h"
 #include "Bridge/SIM/StockRealSimulation.h"
 #include "Bridge/TickFlow/TickFlowBridge.h"
+#include "Bridge/SlippageModel.h"
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/log.h"
@@ -247,6 +248,16 @@ const Map<ExchangeType, ExchangeInterface*>& ExchangeManager::GetExchangesByType
     return _typeExchanges;
 }
 
+Vector<ExchangeInterface*> ExchangeManager::GetActiveExchanges() const {
+    Vector<ExchangeInterface*> result;
+    for (auto& [type, exch] : _typeExchanges) {
+        if (exch) {
+            result.push_back(exch);
+        }
+    }
+    return result; 
+}
+
 ExchangeInterface* ExchangeManager::GetExchangeByType(ExchangeType type) const {
     if (_enableSimulation && type != ExchangeType::EX_STOCK_HIST_SIM && type != ExchangeType::EX_ETF_HIST_SIM) {
         // 模拟模式下强制返回仿真环境（非 ETF 类型）
@@ -274,28 +285,53 @@ ExchangeInterface* ExchangeManager::GetActiveFutureExchange() const {
     return (itr != _exchanges.end()) ? itr->second : nullptr;
 }
 
-// ========== 设置活跃交易所 ==========
+// ========== 交易相关（持仓/订单） ==========
 
-void ExchangeManager::SetActiveStockExchange(const String& name) {
-    if (_exchanges.count(name)) {
-        _activeStockName = name;
-        INFO("Active stock exchange set to: {}", name);
+bool ExchangeManager::GetTradingPosition(AccountPosition& outPosition) const {
+    bool found = false;
+    for (auto& [name, exch] : _exchanges) {
+        if (!exch) continue;
+        // 通过 _typeExchanges 反查 Exchange 类型
+        ExchangeType type = ExchangeType::EX_Unknow;
+        for (auto& [t, e] : _typeExchanges) {
+            if (e == exch) { type = t; break; }
+        }
+        // 排除历史回测和纯行情 Bridge，只取真实交易 Exchange
+        if (type == ExchangeType::EX_STOCK_HIST_SIM ||
+            type == ExchangeType::EX_ETF_HIST_SIM ||
+            type == ExchangeType::EX_TICKFLOW_QUOTE) {
+            continue;
+        }
+        AccountPosition ap;
+        if (exch->GetPosition(ap) && !ap._positions.empty()) {
+            outPosition._positions.insert(outPosition._positions.end(),
+                                          ap._positions.begin(), ap._positions.end());
+            found = true;
+        }
     }
+    return found;
 }
 
-void ExchangeManager::SetActiveFutureExchange(const String& name) {
-    if (_exchanges.count(name)) {
-        _activeFutureName = name;
-        INFO("Active future exchange set to: {}", name);
+bool ExchangeManager::GetTradingOrders(SecurityType secType, OrderList& outOrders) const {
+    bool found = false;
+    for (auto& [name, exch] : _exchanges) {
+        if (!exch) continue;
+        ExchangeType type = ExchangeType::EX_Unknow;
+        for (auto& [t, e] : _typeExchanges) {
+            if (e == exch) { type = t; break; }
+        }
+        if (type == ExchangeType::EX_STOCK_HIST_SIM ||
+            type == ExchangeType::EX_ETF_HIST_SIM ||
+            type == ExchangeType::EX_TICKFLOW_QUOTE) {
+            continue;
+        }
+        OrderList ol;
+        if (exch->GetOrders(secType, ol) && !ol.empty()) {
+            outOrders.insert(outOrders.end(), ol.begin(), ol.end());
+            found = true;
+        }
     }
-}
-
-String ExchangeManager::GetActiveStockName() const {
-    return _activeStockName;
-}
-
-String ExchangeManager::GetActiveFutureName() const {
-    return _activeFutureName;
+    return found;
 }
 
 // ========== 行情发布 ==========
@@ -650,6 +686,38 @@ void ExchangeManager::SetBacktestTimeRange(time_t start, time_t end) {
         auto* base = dynamic_cast<HistorySimulationBase*>(exch);
         if (base) {
             base->SetBacktestTimeRange(start, end);
+        }
+    }
+}
+
+void ExchangeManager::ConfigureSlippageModels(const Set<String>& sources, const nlohmann::json& slippageConfig) {
+    auto model = SlippageFactory::create(slippageConfig);
+
+    for (const auto& source : sources) {
+        ExchangeType targetType = ExchangeType::EX_Unknow;
+        if (source == "股票") {
+            targetType = ExchangeType::EX_STOCK_HIST_SIM;
+        } else if (source == "ETF") {
+            targetType = ExchangeType::EX_ETF_HIST_SIM;
+        } else if (source == "期货") {
+            // 期货回测引擎（如果有的话）
+            continue;
+        } else {
+            WARN("[Slippage] Unknown source type: {}", source);
+            continue;
+        }
+
+        auto itr = _typeExchanges.find(targetType);
+        if (itr != _typeExchanges.end()) {
+            auto* histSim = dynamic_cast<HistorySimulationBase*>(itr->second);
+            if (histSim) {
+                histSim->SetSlippageModel(SlippageFactory::create(slippageConfig));
+                INFO("[Slippage] Configured slippage model for source '{}'", source);
+            } else {
+                WARN("[Slippage] Exchange for source '{}' is not a HistorySimulationBase", source);
+            }
+        } else {
+            WARN("[Slippage] No exchange registered for source '{}'", source);
         }
     }
 }

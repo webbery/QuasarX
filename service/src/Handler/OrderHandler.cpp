@@ -1,4 +1,5 @@
 #include "Handler/OrderHandler.h"
+#include "ExchangeManager.h"
 #include "Util/system.h"
 #include "server.h"
 #include <cstdint>
