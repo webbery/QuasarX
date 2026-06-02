@@ -142,7 +142,12 @@ const metricNameMap: Record<string, string> = {
 
 // === 格式化 ===
 
-function formatMetricValue(key: string, value: number): string {
+function formatMetricValue(key: string, value: number | null | undefined): string {
+  // 空值处理
+  if (value === null || value === undefined) {
+    return '-'
+  }
+
   // === 特殊处理 ===
   // Bootstrap 方法
   if (key === 'boot_method') {
@@ -228,7 +233,12 @@ function formatMetricValue(key: string, value: number): string {
 
 // === 样式辅助 ===
 
-function getValueClass(key: string, value: number): string {
+function getValueClass(key: string, value: number | null | undefined): string {
+  // 空值无样式类
+  if (value === null || value === undefined) {
+    return ''
+  }
+
   const lowerKey = key.toLowerCase()
 
   // === 爆仓概率类：> 5% 标红 ===
@@ -277,7 +287,7 @@ function getValueClass(key: string, value: number): string {
 interface MetricItem {
   key: string
   name: string
-  value: number
+  value: number | null | undefined
   displayValue: string
 }
 

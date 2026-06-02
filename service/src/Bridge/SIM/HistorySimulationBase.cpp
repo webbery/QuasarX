@@ -217,8 +217,24 @@ bool HistorySimulationBase::LoadCSVToDataFrame(const String& file_path,
             }
             continue;
         }
+
+        // 跳过空行或格式错误的行
+        if (row.empty() || row[0].empty()) {
+            --index;  // 不计数空行
+            continue;
+        }
+
         const char* timeFmt = (row[0].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
-        dates.emplace_back(FromStr(row[0], timeFmt));
+        time_t timestamp = FromStr(row[0], timeFmt);
+
+        // 跳过无效时间戳（FromStr 返回 -1 表示解析失败）
+        if (timestamp < 0) {
+            WARN("Invalid timestamp in CSV: {}, skipping row", row[0]);
+            --index;
+            continue;
+        }
+
+        dates.emplace_back(timestamp);
         open.emplace_back(std::stof(row[1]));
         close.emplace_back(std::stof(row[2]));
         high.emplace_back(std::stof(row[3]));
@@ -227,11 +243,12 @@ bool HistorySimulationBase::LoadCSVToDataFrame(const String& file_path,
     }
     ifs.close();
 
-    if (header.empty()) {
+    if (header.empty() || dates.empty()) {
         return false;
     }
 
-    Vector<uint32_t> indexes(index);
+    size_t numRows = dates.size();
+    Vector<uint32_t> indexes(numRows);
     std::iota(indexes.begin(), indexes.end(), 1);
     df.load_index(std::move(indexes));
     df.load_column(header[0].c_str(), std::move(dates));
@@ -352,7 +369,7 @@ run_id_t HistorySimulationBase::createBacktestContext(
                 const auto& datetime = df.get_column<time_t>(header[0].c_str());
 
                 time_t startTime = datetime[0];
-                time_t endTime = datetime[df.get_index().size() - 1];
+                time_t endTime = datetime[datetime.size() - 1];
 
                 if (startTime > maxStartTime) {
                     maxStartTime = startTime;
@@ -463,6 +480,35 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
 
     std::shared_lock<std::shared_mutex> dataLock(_dataMutex);
 
+    // === 第一步：收集所有股票当前时间戳 ===
+    Map<symbol_t, time_t> currentTimes;
+    for (auto symbol : symbols) {
+        auto itr = _csvs.find(symbol);
+        if (itr == _csvs.end()) continue;
+
+        const auto& df = itr->second;
+        const auto& header = _headers.at(symbol);
+        if (header.empty()) continue;
+
+        const auto& datetime = df.get_column<time_t>(header[0].c_str());
+        uint32_t curIndex = context->getCurIndex(symbol);
+
+        if (curIndex < datetime.size()) {
+            currentTimes[symbol] = datetime[curIndex];
+        } else {
+            currentTimes[symbol] = 0;  // 数据已用完
+        }
+    }
+
+    // === 第二步：找出所有股票当前时间的最大值（最晚时间）===
+    time_t maxTime = 0;
+    for (auto& [symbol, t] : currentTimes) {
+        if (t > maxTime) {
+            maxTime = t;
+        }
+    }
+
+    // === 第三步：只推进时间 < maxTime 的股票，时间晚的保持不变 ===
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
         if (itr == _csvs.end()) continue;
@@ -484,13 +530,19 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             continue;
         }
 
+        // Skip 语义：如果当前时间 >= 最晚时间，保持 curIndex 不变，等待其他股票追上来
+        time_t curTime = datetime[curIndex];
+        if (curTime >= maxTime) {
+            continue;
+        }
+
         anyMoreData = true;
 
         auto org_itr = _org_csvs.find(symbol);
         QuoteInfo info;
         info._symbol = symbol;
         info._volume = volume[curIndex];
-        info._time = datetime[curIndex];
+        info._time = curTime;
 
         if (org_itr != _org_csvs.end() && !_org_headers.at(symbol).empty()) {
             const auto& org_df = org_itr->second;
