@@ -240,7 +240,7 @@ class TestStrategy:
 
         kwargs = self._auth_kwargs(auth_token)
 
-        no_reply = ['ml.json', 'CTA']
+        no_reply = ['ml.json']
         script_dir = './script'
         for item_name in os.listdir(script_dir):
             if item_name == 'ml.json':

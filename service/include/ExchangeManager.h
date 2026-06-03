@@ -120,6 +120,16 @@ public:
     ExchangeInterface* GetExchangeByType(ExchangeType type) const;
 
     /**
+     * @brief 确保指定类型的 Exchange 已注册，不存在时自动创建默认实例
+     *
+     * 首先从 config.json 中查找对应 API 类型的 exchange 名称，
+     * 如果未找到则使用默认名称创建
+     * @param type 交易所类型
+     * @return 是否成功
+     */
+    bool EnsureExchangeByType(ExchangeType type);
+
+    /**
      * @brief 获取活跃的股票交易 Exchange
      */
     ExchangeInterface* GetActiveStockExchange() const;

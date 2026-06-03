@@ -1,6 +1,7 @@
 #pragma once
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
+#include "Util/finance.h"
 #include "httplib.h"
 #include "nng/nng.h"
 #include <atomic>
@@ -71,6 +72,9 @@ private:
     // 错误处理
     void HandleApiError(const String& reason);
 
+    // 订单邮件通知（含流动性指标）
+    void SendOrderEmail(symbol_t symbol, const TradeReport& report);
+
     // 构建 HTTP 客户端
     void InitHttpClient();
 
@@ -110,4 +114,14 @@ private:
     // nng pub socket，用于发布行情到 URI_RAW_QUOTE
     nng_socket _sock = {0};
     bool _pub_inited = false;
+
+    // Tick历史缓冲区（用于流动性计算）
+    struct TickRecord {
+        time_t time;
+        double price;
+        int64_t volume;
+    };
+    static constexpr size_t LIQUIDITY_WINDOW = 60;  // 最近60个tick
+    Map<symbol_t, std::deque<TickRecord>> _tickHistory;
+    mutable std::mutex _tickHistoryMutex;
 };

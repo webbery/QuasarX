@@ -1,0 +1,231 @@
+{
+    "id": "etf-momentum-5m",
+    "name": "ETF动量轮动策略",
+    "version": 1,
+    "description": "基于5分钟动量的ETF轮动策略，选择表现最好的2只ETF",
+    "backtest": {
+        "start": "2025-01-01",
+        "end": "2025-06-01"
+    },
+    "nodes": [
+        {
+            "id": "1",
+            "type": "custom",
+            "data": {
+                "label": "ETF行情输入",
+                "nodeType": "input",
+                "params": {
+                    "source": {
+                        "value": "ETF",
+                        "type": "select",
+                        "options": ["股票", "ETF"]
+                    },
+                    "code": {
+                        "value": ["sz.159941", "sz.159687", "sh.588060", "sh.511010", "sz.159981"],
+                        "type": "text"
+                    },
+                    "freq": {
+                        "value": "5m",
+                        "type": "select",
+                        "options": ["1d", "5m"]
+                    },
+                    "close": {
+                        "value": "close",
+                        "type": "text"
+                    },
+                    "open": {
+                        "value": "open",
+                        "type": "text"
+                    },
+                    "high": {
+                        "value": "high",
+                        "type": "text"
+                    },
+                    "low": {
+                        "value": "low",
+                        "type": "text"
+                    },
+                    "volume": {
+                        "value": "volume",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 50, "y": 100 }
+        },
+        {
+            "id": "2",
+            "type": "custom",
+            "data": {
+                "label": "动量指标",
+                "nodeType": "function",
+                "params": {
+                    "method": {
+                        "value": "Return",
+                        "type": "select",
+                        "options": ["Return"]
+                    },
+                    "range": {
+                        "value": "5m",
+                        "type": "select",
+                        "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
+                    }
+                }
+            },
+            "position": { "x": 550, "y": 100 }
+        },
+        {
+            "id": "6",
+            "type": "custom",
+            "data": {
+                "label": "动量信号",
+                "nodeType": "signal",
+                "params": {
+                    "code": {
+                        "value": ["sz.159941", "sz.159687", "sh.588060", "sh.511010", "sz.159981"],
+                        "type": "text"
+                    },
+                    "buy": {
+                        "value": "topk(ReturnRate[t], 2)",
+                        "type": "text"
+                    },
+                    "sell": {
+                        "value": "not topk(ReturnRate[t], 2)",
+                        "type": "text"
+                    }
+                }
+            },
+            "position": { "x": 800, "y": 150 }
+        },
+        {
+            "id": "7",
+            "type": "custom",
+            "data": {
+                "label": "投资组合",
+                "nodeType": "portfolio",
+                "params": {
+                    "positionRatio": {
+                        "value": 0.9,
+                        "type": "number",
+                        "min": 0,
+                        "max": 1,
+                        "step": 0.1
+                    }
+                }
+            },
+            "position": { "x": 1050, "y": 150 }
+        },
+        {
+            "id": "8",
+            "type": "custom",
+            "data": {
+                "label": "调试输出",
+                "nodeType": "debug",
+                "params": {
+                    "suffix": {
+                        "value": "csv",
+                        "type": "select",
+                        "options": ["csv", "log"]
+                    }
+                }
+            },
+            "position": { "x": 1050, "y": 300 }
+        },
+        {
+            "id": "4",
+            "type": "custom",
+            "data": {
+                "label": "执行器",
+                "nodeType": "execution",
+                "params": {
+                    "slippageModel": {
+                        "value": 0,
+                        "type": "select",
+                        "options": [0, 1]
+                    },
+                    "slippage": {
+                        "value": 0.0005,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001
+                    },
+                    "slippageBase": {
+                        "value": 0.001,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.01,
+                        "step": 0.0001
+                    },
+                    "slippageImpactK": {
+                        "value": 0.01,
+                        "type": "number",
+                        "min": 0,
+                        "max": 0.1,
+                        "step": 0.001
+                    },
+                    "slippageAlpha": {
+                        "value": 0.5,
+                        "type": "number",
+                        "min": 0.1,
+                        "max": 1.0,
+                        "step": 0.1
+                    },
+                    "type": {
+                        "value": 0,
+                        "type": "select",
+                        "options": ["立即执行市价单", "VWAP"]
+                    },
+                    "contract":{
+                        "value": 2,
+                        "type": "select",
+                        "options": ["股票", "期货", "ETF"]
+                    }
+                }
+            },
+            "position": { "x": 1300, "y": 150 }
+        }
+    ],
+    "edges": [
+        {
+            "id": "1-close->2",
+            "source": "1",
+            "target": "2",
+            "sourceHandle": "1-close",
+            "targetHandle": "2",
+            "type": "default"
+        },
+        {
+            "id": "2->6",
+            "source": "2",
+            "target": "6",
+            "sourceHandle": "2",
+            "targetHandle": "6",
+            "type": "default"
+        },
+        {
+            "id": "6->7",
+            "source": "6",
+            "target": "7",
+            "sourceHandle": "6",
+            "targetHandle": "7",
+            "type": "default"
+        },
+        {
+            "id": "7->4",
+            "source": "7",
+            "target": "4",
+            "sourceHandle": "7",
+            "targetHandle": "4",
+            "type": "default"
+        },
+        {
+            "id": "6->8",
+            "source": "6",
+            "target": "8",
+            "sourceHandle": "6",
+            "targetHandle": "8",
+            "type": "default"
+        }
+    ]
+}

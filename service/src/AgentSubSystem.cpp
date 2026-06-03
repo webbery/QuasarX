@@ -492,11 +492,6 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                     if (btContext && btContext->dailySnapshotCount() > 0) {
                         portfolio_values = btContext->takePortfolioValues();
                         INFO("[Backtest] Using BacktestContext snapshots: {} days", portfolio_values.size());
-                    } else {
-                        auto& cash_flow = endNode->GetReports();
-                        auto [pv, cf] = build_portfolio_values(cash_flow, context, _handle);
-                        portfolio_values.assign(pv.begin(), pv.end());
-                        INFO("[Backtest] Fallback to build_portfolio_values: {} days", portfolio_values.size());
                     }
 
                     auto daily_returns = simple_daily_return(portfolio_values);
@@ -676,6 +671,11 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
         if (exch) {
             exch->destroyBacktestContext(runId);
         }
+
+        // 停止该策略启动的 Exchange（通过引用计数保证多策略安全）
+        Set<String> requiredSources = GetRequiredSources(strategy);
+        exchangeMgr->StopRequiredExchanges(requiredSources);
+
         flow._running = false;
     });
 }
@@ -778,6 +778,13 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
 
         nng_close(recvSock);
         flow._running = false;
+
+        // 停止该策略启动的 Exchange
+        auto* exchMgr = _handle->GetExchangeManager();
+        if (exchMgr) {
+            Set<String> requiredSources = GetRequiredSources(strategy);
+            exchMgr->StopRequiredExchanges(requiredSources);
+        }
 
         // ★ 恢复原始运行模式
         if (shadowMode) {

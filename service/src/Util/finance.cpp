@@ -3,6 +3,7 @@
 #include <boost/math/statistics/univariate_statistics.hpp>
 #include <filesystem>
 #include "csv.h"
+#include <cmath>
 
 namespace finance {
 double stage3GM(double g1, double g2, double D, double T1, double T2, double r) {
@@ -10,6 +11,80 @@ double stage3GM(double g1, double g2, double D, double T1, double T2, double r) 
         return 0;
 
     return 0;
+}
+
+double kyles_lambda(const Vector<double>& prices,
+                    const Vector<int64_t>& volumes,
+                    int trade_side,
+                    int64_t trade_volume) {
+    size_t n = prices.size();
+    if (n < 2 || volumes.size() != n) {
+        return 0.0;
+    }
+
+    // 计算价格变化和订单流序列
+    double sum_dp = 0, sum_of = 0, sum_dp_of = 0, sum_of2 = 0;
+    size_t count = 0;
+
+    for (size_t i = 1; i < n; ++i) {
+        double dp = prices[i] - prices[i - 1];
+
+        // 用价格变动方向代理订单流方向
+        int direction = (dp > 0) ? 1 : (dp < 0) ? -1 : 0;
+        if (direction == 0) continue;  // 跳过无变化的tick
+
+        double of = direction * (double)volumes[i];
+
+        sum_dp += dp;
+        sum_of += of;
+        sum_dp_of += dp * of;
+        sum_of2 += of * of;
+        count++;
+    }
+
+    // 加入本次交易
+    int last_direction = (trade_side == 0) ? 1 : -1;
+    double last_of = last_direction * (double)trade_volume;
+
+    // 如果历史数据不足，至少用本次交易
+    if (count == 0) {
+        // 只有1个点无法计算协方差/方差
+        return 0.0;
+    }
+
+    // 线性回归: lambda = Cov(dp, of) / Var(of)
+    double mean_dp = sum_dp / count;
+    double mean_of = sum_of / count;
+
+    double cov_dp_of = (sum_dp_of / count) - mean_dp * mean_of;
+    double var_of = (sum_of2 / count) - mean_of * mean_of;
+
+    if (var_of < 1e-12) {
+        return 0.0;  // 订单流方差为0，无法计算
+    }
+
+    return cov_dp_of / var_of;
+}
+
+double amihud_illiquidity(const Vector<double>& prices,
+                          const Vector<int64_t>& volumes) {
+    size_t n = prices.size();
+    if (n < 2 || volumes.size() != n) {
+        return 0.0;
+    }
+
+    double sum_amihud = 0;
+    size_t count = 0;
+
+    for (size_t i = 1; i < n; ++i) {
+        if (volumes[i] == 0) continue;
+
+        double ret = (prices[i] - prices[i - 1]) / prices[i - 1];
+        sum_amihud += std::abs(ret) / (double)volumes[i];
+        count++;
+    }
+
+    return count > 0 ? sum_amihud / count : 0.0;
 }
 
 }

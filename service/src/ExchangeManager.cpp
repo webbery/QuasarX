@@ -273,6 +273,72 @@ ExchangeInterface* ExchangeManager::GetExchangeByType(ExchangeType type) const {
     return nullptr;
 }
 
+bool ExchangeManager::EnsureExchangeByType(ExchangeType type) {
+    // 已存在，直接返回
+    if (_typeExchanges.count(type)) {
+        return true;
+    }
+
+    // 从 config.json 查找对应 API 类型的 exchange
+    String apiName;
+    String configName;
+    String quoteAddr = "data";  // 默认数据目录
+
+    if (type == EX_STOCK_HIST_SIM) {
+        apiName = STOCK_HISTORY_SIM;
+    } else if (type == EX_ETF_HIST_SIM) {
+        apiName = ETF_HISTORY_SIM;
+    } else {
+        WARN("EnsureExchangeByType: unsupported type {}", (int)type);
+        return false;
+    }
+
+    // 遍历 config.json 中的 exchange 数组，找到匹配 api 的 exchange
+    auto exchanges = _server->GetConfig().GetExchanges();
+    for (auto& ex : exchanges) {
+        String api = ex.value("api", "");
+        if (api == apiName) {
+            configName = ex.value("name", "");
+            quoteAddr = ex.value("quote", "data");
+            break;
+        }
+    }
+
+    // 如果配置中没有，使用默认名称
+    if (configName.empty()) {
+        WARN("Exchange type {} (api={}) not found in config, using default name '{}'",
+             (int)type, apiName, configName);
+        return false;
+    }
+
+    // 构造 ExchangeInfo
+    ExchangeInfo info;
+    memset(&info, 0, sizeof(info));
+    strncpy(info._quote_addr, quoteAddr.c_str(), sizeof(info._quote_addr) - 1);
+
+    ExchangeInterface* ptr = nullptr;
+    bool ret = false;
+
+    if (type == EX_STOCK_HIST_SIM) {
+        ptr = new StockHistorySimulation(_server);
+        ret = ptr->Init(info);
+        _enableSimulation = true;
+    } else if (type == EX_ETF_HIST_SIM) {
+        ptr = new ETFHistorySimulation(_server);
+        ret = ptr->Init(info);
+        _enableSimulation = true;
+    }
+
+    if (!ret || !ptr) {
+        delete ptr;
+        return false;
+    }
+
+    RegisterExchangePtr(configName, type, ptr);
+    INFO("Auto-created exchange '{}' (type={}, api={})", configName, (int)type, apiName);
+    return true;
+}
+
 ExchangeInterface* ExchangeManager::GetActiveStockExchange() const {
     if (_activeStockName.empty()) return nullptr;
     auto itr = _exchanges.find(_activeStockName);

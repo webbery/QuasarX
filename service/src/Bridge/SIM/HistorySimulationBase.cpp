@@ -399,7 +399,8 @@ run_id_t HistorySimulationBase::createBacktestContext(
          ToString(maxStartTime, "%Y-%m-%d %H:%M:%S"),
          ToString(minEndTime, "%Y-%m-%d %H:%M:%S"));
 
-    // 设置每个 symbol 的起始索引
+    // 设置每个 symbol 的起始索引，并计算对齐后的共同 bar 数量
+    size_t commonBars = std::numeric_limits<size_t>::max();
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
         if (itr != _csvs.end()) {
@@ -417,16 +418,24 @@ run_id_t HistorySimulationBase::createBacktestContext(
 
             context->setCurIndex(symbol, startIndex);
             INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
+
+            // 计算该 symbol 在共同时间范围内的 bar 数量
+            size_t symbolBars = (datetime.size() > startIndex) ? (datetime.size() - startIndex) : 0;
+            if (symbolBars < commonBars) {
+                commonBars = symbolBars;
+            }
         } else {
             context->setCurIndex(symbol, 0);
+            commonBars = 0;  // 没有数据的 symbol，共同 bar 数为 0
         }
     }
 
-    if (!_csvs.empty()) {
-        size_t totalBars = _csvs.begin()->second.get_index().size();
-        context->setTotalBars(totalBars);
-        context->reserveDailySnapshots(totalBars);
+    // 使用对齐后的共同 bar 数量，而不是第一个 symbol 的 bar 数
+    if (commonBars == std::numeric_limits<size_t>::max()) {
+        commonBars = 0;  // 没有有效数据
     }
+    context->setTotalBars(commonBars);
+    context->reserveDailySnapshots(commonBars);
 
     _backtestContexts.emplace(runId, std::move(context));
 
@@ -477,11 +486,12 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
     if (symbols.empty()) return false;
 
     bool anyMoreData = false;
+    bool anyFinished = false;
 
     std::shared_lock<std::shared_mutex> dataLock(_dataMutex);
 
-    // === 第一步：收集所有股票当前时间戳 ===
-    Map<symbol_t, time_t> currentTimes;
+    // === 找出所有股票当前时间的最大值（最晚时间） ===
+    time_t maxTime = 0;
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
         if (itr == _csvs.end()) continue;
@@ -494,17 +504,8 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
         uint32_t curIndex = context->getCurIndex(symbol);
 
         if (curIndex < datetime.size()) {
-            currentTimes[symbol] = datetime[curIndex];
-        } else {
-            currentTimes[symbol] = 0;  // 数据已用完
-        }
-    }
-
-    // === 第二步：找出所有股票当前时间的最大值（最晚时间）===
-    time_t maxTime = 0;
-    for (auto& [symbol, t] : currentTimes) {
-        if (t > maxTime) {
-            maxTime = t;
+            if (datetime[curIndex] > maxTime)
+                maxTime = datetime[curIndex];
         }
     }
 
@@ -526,13 +527,15 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
 
         uint32_t curIndex = context->getCurIndex(symbol);
         if (curIndex >= datetime.size()) {
+            // 任何 symbol 数据用完，立即结束整个回测
             context->setFinished(true);
-            continue;
+            anyFinished = true;
+            break;
         }
 
         // Skip 语义：如果当前时间 >= 最晚时间，保持 curIndex 不变，等待其他股票追上来
         time_t curTime = datetime[curIndex];
-        if (curTime >= maxTime) {
+        if (curTime > maxTime) {
             continue;
         }
 
@@ -567,6 +570,11 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
     }
 
     dataLock.unlock();
+
+    // 如果任何 symbol 数据用完，立即返回 false 结束回测
+    if (anyFinished) {
+        return false;
+    }
 
     // === 跨日检测 ===
     for (auto symbol : symbols) {

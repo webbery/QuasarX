@@ -1,11 +1,13 @@
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "Util/finance.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
 #include "json.hpp"
 #include "server.h"
 #include <format>
+#include <deque>
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
 #include <openssl/x509.h>
 #endif
@@ -188,7 +190,10 @@ order_id TickFlowBridge::AddOrder(run_id_t run_id, const symbol_t& symbol, Order
     report._side = order->_order._side;
     report._flag = order->_order._flag;
 
-    // 触发回调和邮件通知
+    // 发送订单邮件通知（含流动性指标）
+    SendOrderEmail(symbol, report);
+
+    // 触发基类回调（持仓更新等）
     OnOrderReport({}, report);
 
     // 标记订单成功
@@ -201,19 +206,67 @@ order_id TickFlowBridge::AddOrder(run_id_t run_id, const symbol_t& symbol, Order
     return order_id{};
 }
 
-void TickFlowBridge::OnOrderReport(order_id id, const TradeReport& report) {
-    // 邮件通知（持仓已在 AddOrder 中更新）
-    if (_server) {
-        String content;
-        if (report._side == 0) {
-            content = std::format("Buy {} {}", report._price, report._quantity);
-        } else {
-            content = std::format("Sell {} {}", report._price, report._quantity);
-        }
-        if (!content.empty()) {
-            _server->SendEmail(content);
-        }
+void TickFlowBridge::SendOrderEmail(symbol_t symbol, const TradeReport& report) {
+    if (!_server) return;
+
+    String symbol_str = SymbolToTickFlow(symbol);
+
+    // 构建基础订单信息
+    String content;
+    if (report._side == 0) {
+        content = std::format("Buy {} @ {:.4f}  volume={}\n",
+                             symbol_str, report._price, report._quantity);
+    } else {
+        content = std::format("Sell {} @ {:.4f}  volume={}\n",
+                             symbol_str, report._price, report._quantity);
     }
+
+    // 计算流动性指标
+    std::lock_guard<std::mutex> lock(_tickHistoryMutex);
+    auto it = _tickHistory.find(symbol);
+    if (it != _tickHistory.end() && it->second.size() >= 2) {
+        const auto& history = it->second;
+        Vector<double> prices;
+        Vector<int64_t> volumes;
+        prices.reserve(history.size());
+        volumes.reserve(history.size());
+        for (const auto& tick : history) {
+            prices.push_back(tick.price);
+            volumes.push_back(tick.volume);
+        }
+
+        double kyle = finance::kyles_lambda(prices, volumes, report._side, report._quantity);
+        double amihud = finance::amihud_illiquidity(prices, volumes);
+
+        content += "\n--- Liquidity Metrics ---\n";
+        content += std::format("Kyle's Lambda:    {:.6e}\n", kyle);
+        content += std::format("Amihud Illiquid:  {:.6e}\n", amihud);
+
+        // 流动性评级（基于 Kyle's Lambda）
+        if (kyle < 1e-7) {
+            content += "Liquidity Level:  HIGH (Liquid)\n";
+        } else if (kyle < 1e-6) {
+            content += "Liquidity Level:  MEDIUM\n";
+        } else if (kyle < 1e-5) {
+            content += "Liquidity Level:  LOW (Illiquid)\n";
+        } else {
+            content += "Liquidity Level:  VERY LOW (Highly Illiquid)\n";
+        }
+
+        content += std::format("Tick Window:    {} bars\n", history.size());
+    } else {
+        content += "\n--- Liquidity Metrics ---\n";
+        content += "Insufficient tick data for calculation\n";
+    }
+
+    if (!content.empty()) {
+        _server->SendEmail(content);
+    }
+}
+
+void TickFlowBridge::OnOrderReport(order_id id, const TradeReport& report) {
+    // 基类回调：由 BrokerSubSystem 等调用，此处保留空实现
+    // 邮件通知已移至 AddOrder 中的 SendOrderEmail
 }
 
 // ==================== 行情 ====================
@@ -384,6 +437,17 @@ void TickFlowBridge::ParseResponse(const String& response) {
 
             _quotes.insert({quote._symbol, quote});
             count++;
+
+            // 记录tick历史（用于流动性计算）
+            {
+                std::lock_guard<std::mutex> lock(_tickHistoryMutex);
+                auto& history = _tickHistory[quote._symbol];
+                history.push_back(TickRecord{quote._time, quote._close, quote._volume});
+                // 保留最近 LIQUIDITY_WINDOW + 1 个tick
+                if (history.size() > LIQUIDITY_WINDOW + 1) {
+                    history.pop_front();
+                }
+            }
 
             // 发布到 URI_RAW_QUOTE，供 RecordHandler 等订阅者使用
             PublishQuote(quote);

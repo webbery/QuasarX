@@ -17,6 +17,7 @@
 """
 import argparse
 import sys
+import json
 from datetime import datetime
 
 try:
@@ -132,6 +133,49 @@ MACRO_INDICATORS = {
 }
 
 
+def output_json(info: dict, df, date_col: str, value_cols: list):
+    """
+    输出结构化 JSON 格式，供 C++ Handler 解析。
+
+    格式:
+    {
+      "name": "指标名称",
+      "unit": "单位",
+      "updated_at": "2026-06-02T13:30:00",
+      "data": [
+        {"date": "2025-09-10", "value": 0.1},
+        ...
+      ]
+    }
+    """
+    result = {
+        "name": info["name"],
+        "unit": "%",  # 默认单位，后续可按指标扩展
+        "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "data": []
+    }
+
+    for _, row in df.iterrows():
+        item = {}
+        if date_col and date_col in row:
+            item["date"] = str(row[date_col])
+
+        # 取第一个值列作为 value
+        for col in value_cols:
+            try:
+                item["value"] = float(row[col])
+                break
+            except (ValueError, TypeError):
+                pass
+
+        if "date" in item and "value" in item:
+            result["data"].append(item)
+
+    print(json.dumps(result, ensure_ascii=False))
+
+
+
+
 def list_indicators():
     """列出所有支持的指标"""
     print("\n" + "=" * 70)
@@ -154,7 +198,7 @@ def list_indicators():
     print("=" * 70 + "\n")
 
 
-def fetch_and_print(indicator: str, country: str, start_date: str = None, end_date: str = None):
+def fetch_and_print(indicator: str, country: str, start_date: str = None, end_date: str = None, json_mode: bool = False):
     """
     获取宏观数据并打印输出
 
@@ -166,24 +210,32 @@ def fetch_and_print(indicator: str, country: str, start_date: str = None, end_da
     """
     key = (country, indicator)
     if key not in MACRO_INDICATORS:
-        print(f"错误: 不支持的指标类型 '{indicator}' (country={country})")
-        print("可用指标:")
-        for (c, i), info in MACRO_INDICATORS.items():
-            if c == country:
-                print(f"  - {i}: {info['name']}")
+        if not json_mode:
+            print(f"错误: 不支持的指标类型 '{indicator}' (country={country})")
+            print("可用指标:")
+            for (c, i), info in MACRO_INDICATORS.items():
+                if c == country:
+                    print(f"  - {i}: {info['name']}")
         return
 
     info = MACRO_INDICATORS[key]
-    print(f"正在获取 {info['name']}...")
+    if not json_mode:
+        print(f"正在获取 {info['name']}...")
 
     try:
         df = info["fetch"]()
     except Exception as e:
-        print(f"获取数据失败: {e}")
+        if json_mode:
+            print(json.dumps({"error": str(e), "data": []}))
+        else:
+            print(f"获取数据失败: {e}")
         return
 
     if df is None or df.empty:
-        print("未获取到数据")
+        if json_mode:
+            print(json.dumps({"name": info["name"], "data": []}))
+        else:
+            print("未获取到数据")
         return
 
     # 重命名列
@@ -208,14 +260,23 @@ def fetch_and_print(indicator: str, country: str, start_date: str = None, end_da
             except Exception:
                 pass  # 日期格式不匹配，跳过筛选
 
+    # 确定日期列和值列（在两种输出模式前统一计算）
+    main_date_col = "date" if "date" in df.columns else (df.columns[0] if len(df.columns) > 0 else None)
+    main_value_cols = [c for c in df.columns if c != main_date_col] if main_date_col else df.columns
+
+    # 输出模式
+    if json_mode:
+        output_json(info, df, main_date_col, main_value_cols)
+        return
+
     # 打印结果
     print("\n" + "=" * 70)
     print(f"{info['name']}")
     print("=" * 70)
 
     # 获取最新日期
-    date_col = "date" if "date" in df.columns else (df.columns[0] if len(df.columns) > 0 else None)
-    value_cols = [c for c in df.columns if c != date_col] if date_col else df.columns
+    date_col = main_date_col
+    value_cols = main_value_cols
 
     if date_col:
         latest_date = df[date_col].iloc[-1]
@@ -284,6 +345,7 @@ def main():
     parser.add_argument("--start", type=str, help="开始日期 (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, help="结束日期 (YYYY-MM-DD)")
     parser.add_argument("--list", action="store_true", help="列出所有支持的指标")
+    parser.add_argument("--json", action="store_true", help="输出 JSON 格式（供 C++ Handler 解析）")
 
     args = parser.parse_args()
 
@@ -296,7 +358,7 @@ def main():
         parser.print_help()
         return
 
-    fetch_and_print(args.indicator, args.country, args.start, args.end)
+    fetch_and_print(args.indicator, args.country, args.start, args.end, args.json)
 
 
 if __name__ == "__main__":

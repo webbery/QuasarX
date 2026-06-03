@@ -87,6 +87,8 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         auto* exchangeMgr = _server->GetExchangeManager();
 
         if (_source == "ETF" && exchangeMgr) {
+            exchangeMgr->EnsureExchangeByType(ExchangeType::EX_ETF_HIST_SIM);
+
             auto* etfExchange = dynamic_cast<HistorySimulationBase*>(
                 exchangeMgr->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM));
             if (etfExchange) {
@@ -95,6 +97,8 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
                 if (etfHist) etfHist->UseFreq(freq);
             }
         } else {
+            exchangeMgr->EnsureExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
+
             auto* exchange = dynamic_cast<HistorySimulationBase*>(
                 _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
             if (exchange) {

@@ -53,6 +53,7 @@
 #include "Handler/ServerEventHandler.h"
 #include "Handler/CapitalRiskHandler.h"
 #include "Handler/ShiborHandler.h"
+#include "Handler/MacroHandler.h"
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "nng/nng.h"
@@ -1282,6 +1283,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SECTOR_FLOW, SectorHandler);
     RegistHandler(API_SECTOR_QUOTE, SectorQuoteHandler);
     RegistHandler(API_SHIBOR, ShiborHandler);
+    RegistHandler(API_MACRO, MacroHandler);
     RegistHandler(API_SERVER_EVENT, ServerEventHandler);
     RegistHandler(API_POSITION, PositionHandler);
     RegistHandler(API_USER_SWITCH, UserSwitchHandler);

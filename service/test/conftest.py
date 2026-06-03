@@ -1,5 +1,28 @@
 import requests
 import pytest
+import os
+import glob
+from pathlib import Path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_scripts():
+    """
+    测试结束后清理 build/scripts/ 目录下 test_* 开头的策略文件。
+    避免测试产生的策略脚本残留。
+    """
+    yield  # 先运行所有测试
+
+    # 测试结束后执行清理
+    scripts_dir = Path(__file__).parent.parent / "build" / "scripts"
+    if scripts_dir.exists():
+        removed = []
+        for f in scripts_dir.glob("test_*"):
+            f.unlink()
+            removed.append(f.name)
+        if removed:
+            print(f"\n[Cleanup] Removed {len(removed)} test scripts: {', '.join(removed)}")
+
 
 class AuthAPI:
     """模拟认证API"""
