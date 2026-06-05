@@ -107,11 +107,12 @@ enum class contract_type: char {
     call = 3,
     fund = 4,
     index = 5,
+    exchange_traded_fund = 6,  // 场内ETF
 };
 
 struct alignas(4) symbol_t {
     /**
-    * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC
+    * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC, 7-ETF
      */
     contract_type _type : 8;
     char _exchange:8;

@@ -19,6 +19,10 @@ DataContext::DataContext(const String& strategy, Server* server):_strategy(strat
     // 初始化该策略的历史记录
 }
 
+void DataContext::addExchangeType(ExchangeType type) {
+    _exchangeTypes.insert(type);
+}
+
 // context_t& DataContext::get(const String& name) {
 //     return _outputs[name];
 // }

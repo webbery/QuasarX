@@ -34,10 +34,10 @@ bool ETFHistorySimulation::LoadData(const String& code) {
     auto& security = Server::GetSecurity(code);
     auto symbol = to_symbol(code, security);
 
-    // 后复权价格路径: zh/fund/{freq}/{code}.csv
-    String adjPath = _org_path + "/zh/fund/" + _freq + "/" + code + ".csv";
-    // 原始价格路径: zh/fund_org/{freq}/{code}.csv
-    String orgPath = _org_path + "/zh/fund_org/" + _freq + "/" + code + ".csv";
+    // 后复权价格路径: etf_hfq/{freq}/{code}.csv
+    String adjPath = _org_path + "/etf_hfq/" + _freq + "/" + code + ".csv";
+    // 原始价格路径: etf_org/{freq}/{code}.csv
+    String orgPath = _org_path + "/etf_org/" + _freq + "/" + code + ".csv";
 
     if (!LoadCSVToDataFrame(adjPath, _csvs[symbol], _headers[symbol])) {
         String err_msg = fmt::format(

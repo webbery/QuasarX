@@ -144,6 +144,7 @@ bool is_stock(symbol_t );
 bool is_etf_option(symbol_t);
 bool is_option(symbol_t );
 bool is_fund(symbol_t );
+bool is_etf(symbol_t );
 bool is_null(symbol_t);
 
 template <>

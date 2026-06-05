@@ -235,6 +235,11 @@ public:
         return (int)(_epoch - _warmupEpochs);
     }
 
+    // ============ 回测 Exchange 类型（策略初始化时设置，支持多个） ============
+
+    void addExchangeType(ExchangeType type);
+    const Set<ExchangeType>& getExchangeTypes() const { return _exchangeTypes; }
+
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -269,4 +274,7 @@ private:
 
     // 预热期数（回测模式下 FunctionNode 需要预热的 epoch 数）
     int _warmupEpochs = 0;
+
+    // 策略初始化时设置的 Exchange 类型（支持股票+ETF 混合）
+    Set<ExchangeType> _exchangeTypes;
 };

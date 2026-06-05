@@ -135,7 +135,12 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 }
 
 void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
-    // 预留初始化入口
+    // 根据数据源注册 Exchange 类型，供 PortfolioNode/ExecuteNode 后续使用
+    if (_source == "ETF") {
+        context.addExchangeType(ExchangeType::EX_ETF_HIST_SIM);
+    } else {
+        context.addExchangeType(ExchangeType::EX_STOCK_HIST_SIM);
+    }
 }
 
 NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& context) {

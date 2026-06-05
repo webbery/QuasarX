@@ -480,7 +480,7 @@ Vector<ExchangeInterface*> ExchangeManager::GetExchangesByTypes(const Vector<Exc
 
 ExchangeInterface* ExchangeManager::ResolveExchange(const symbol_t& symbol) const {
     // 基金类标的优先走 ETFExchange
-    if (is_fund(symbol)) {
+    if (is_fund(symbol) || is_etf(symbol)) {
         auto itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
         if (itr != _typeExchanges.end()) {
             return itr->second;
@@ -650,7 +650,7 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
     // 按标的类型分组
     Set<symbol_t> stockSymbols, etfSymbols;
     for (auto sym : symbols) {
-        if (is_fund(sym)) {
+        if (is_fund(sym) || is_etf(sym)) {
             etfSymbols.insert(sym);
         } else {
             stockSymbols.insert(sym);

@@ -263,6 +263,7 @@ nlohmann::json order2json(const Order& item)
         kind = 1;
         break;
     case contract_type::stock:
+    case contract_type::exchange_traded_fund:
     default:
         kind = 0;
         break;

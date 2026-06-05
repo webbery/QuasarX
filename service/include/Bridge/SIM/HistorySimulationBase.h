@@ -81,6 +81,7 @@ public:
     // === 合约信息查询 ===
     virtual bool GetAllStockSymbols(List<SymbolInfo>& symbols) override;
     virtual bool GetAllFundSymbols(List<SymbolInfo>& symbols) override;
+    virtual bool GetAllETFSymbols(List<SymbolInfo>& symbols);
     virtual bool GetAllOptionSymbols(List<SymbolInfo>& symbols) override;
     virtual SymbolInfo GetSymbolInfo(const String& code) override;
     virtual void RefreshSymbolList() override;

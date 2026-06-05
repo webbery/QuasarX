@@ -893,6 +893,86 @@ bool HistorySimulationBase::GetAllFundSymbols(List<SymbolInfo>& symbols) {
     }
 }
 
+bool HistorySimulationBase::GetAllETFSymbols(List<SymbolInfo>& symbols) {
+    // 场内ETF数据目录: data/etf_org 和 data/etf_hfq
+    String csv_path = _org_path + "/etf_market.csv";
+
+    if (!std::filesystem::exists(csv_path)) {
+        WARN("{} not exist, trying to scan data directory", csv_path);
+        // 如果 CSV 不存在，尝试从数据目录扫描
+        String dataDir = _org_path + "/etf_org";
+        if (!std::filesystem::exists(dataDir)) {
+            WARN("ETF data directory not exist: {}", dataDir);
+            return false;
+        }
+
+        // 扫描目录中的 CSV 文件
+        for (auto& entry : std::filesystem::directory_iterator(dataDir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".csv") {
+                SymbolInfo info;
+                info._code = entry.path().stem().string();
+                info._name = info._code;  // 暂无名称，使用代码
+
+                // 根据代码判断交易所：6位数字代码
+                if (info._code.size() >= 8) {
+                    String prefix = info._code.substr(0, 2);
+                    if (prefix == "sh") {
+                        info._exchange = MT_Shanghai;
+                    } else if (prefix == "sz") {
+                        info._exchange = MT_Shenzhen;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    // 纯6位数字代码，根据首位判断
+                    char firstDigit = info._code[0];
+                    if (firstDigit == '5' || firstDigit == '6') {
+                        info._exchange = MT_Shanghai;
+                    } else if (firstDigit == '0' || firstDigit == '1' || firstDigit == '3') {
+                        info._exchange = MT_Shenzhen;
+                    } else {
+                        continue;
+                    }
+                }
+
+                info._type = static_cast<char>(ContractType::ETF);
+                symbols.push_back(info);
+            }
+        }
+
+        INFO("Scanned {} ETF symbols from directory {}", symbols.size(), dataDir);
+        return !symbols.empty();
+    }
+
+    try {
+        io::CSVReader<3> reader(csv_path);
+        reader.read_header(io::ignore_extra_column, "code", "name", "exchange");
+        std::string code, name, exch;
+        while (reader.read_row(code, name, exch)) {
+            SymbolInfo info;
+            info._code = code;
+            info._name = name;
+
+            if (exch == "SH" || exch == "sh") {
+                info._exchange = MT_Shanghai;
+            } else if (exch == "SZ" || exch == "sz") {
+                info._exchange = MT_Shenzhen;
+            } else {
+                WARN("{}: Unknown exchange {}", code, exch);
+                continue;
+            }
+
+            info._type = static_cast<char>(ContractType::ETF);
+            symbols.push_back(info);
+        }
+        INFO("Loaded {} ETF symbols from {}", symbols.size(), csv_path);
+        return true;
+    } catch (const std::exception& e) {
+        FATAL("Failed to load {}: {}", csv_path, e.what());
+        return false;
+    }
+}
+
 bool HistorySimulationBase::GetAllOptionSymbols(List<SymbolInfo>& symbols) {
     String csv_path = _org_path + "/option_market.csv";
 

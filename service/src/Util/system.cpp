@@ -638,7 +638,7 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     auto ct = Server::GetContractType(strSymbol);
     switch (ct.first) {
     case ContractType::AStock: id._type = contract_type::stock; break;
-    case ContractType::ETF: id._type = contract_type::fund; break;
+    case ContractType::ETF: id._type = contract_type::exchange_traded_fund; break;
     case ContractType::Future: id._type = contract_type::future; break;
     case ContractType::AmericanOption: {
         auto name = Server::GetName(symbol);
@@ -673,13 +673,18 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
 }
 
 symbol_t to_symbol(const String& code, const ContractInfo& security) {
-  if (ConvertContractType(security._type) == ContractType::AStock) {
+  switch (ConvertContractType(security._type)) {
+    case ContractType::ETF:
+    case ContractType::AStock:
     return to_symbol(code);
+    break;
+    default:
+    break;
   }
   if (security._exchange == ExchangeName::MT_Shanghai || security._exchange == MT_Shenzhen) {
     return ETFOptionSymbol(code, security._name);
   }
-  WARN("not support symbol");
+  WARN("not support symbol: type={}", (int)security._type);
   return symbol_t();
 }
 
@@ -757,6 +762,10 @@ bool is_option(symbol_t sym) {
 }
 bool is_fund(symbol_t sym) {
   return sym._type == contract_type::fund;
+}
+
+bool is_etf(symbol_t sym) {
+  return sym._type == contract_type::exchange_traded_fund;
 }
 
 bool is_null(symbol_t sym)

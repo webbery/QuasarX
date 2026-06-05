@@ -169,11 +169,22 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
     auto name = get_symbol(symbol);
     String key = name + "." + var_name;
 
+    if (!context.exist(key)) {
+        WARN("FormulaParser: key '{}' not found for symbol '{}', expression may reference a non-existent feature", key, name);
+        return 0.0;
+    }
+
     auto& vec = context.get<Vector<double>>(key);
+    if (vec.empty()) {
+        WARN("FormulaParser: key '{}' exists but vector is empty for symbol '{}'", key, name);
+        return 0.0;
+    }
+
     int idx = (int)vec.size() - 1 + time_offset;
     if (idx >= 0 && idx < (int)vec.size()) {
         return vec[idx];
     } else {
+        WARN("getHistoricalValue - index out of range, idx={}, size={}, key={}", idx, vec.size(), key);
         return vec.back();
     }
 }
@@ -276,6 +287,10 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
 context_t FormulaParser::getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context) {
     auto str = get_symbol(symbol);
     String key = str + "." + varName;
+    if (!context->exist(key)) {
+        WARN("getVariableValue: key '{}' not found for symbol '{}'", key, str);
+        return 0.0;
+    }
     return context->get(key);
 }
 

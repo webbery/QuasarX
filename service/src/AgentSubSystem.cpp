@@ -725,6 +725,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
         }
 
         DataContext context(strategy, _handle);
+
         auto& flow = _flows[strategy];
 
         // 订阅原始行情

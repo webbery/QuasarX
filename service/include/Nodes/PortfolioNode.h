@@ -20,7 +20,7 @@ public:
     virtual Map<String, ArgType> out_elements() override;
 
 private:
-    ExecutionPlan generatePlan(const Map<symbol_t, TradeAction>& decisions,
+    ExecutionPlan generatePlan(DataContext& context, const Map<symbol_t, TradeAction>& decisions,
                               double capital);
     ExecutionPlan generatePlan(DataContext& context, const Map<symbol_t, TradeAction>& decisions,
                               double capital,

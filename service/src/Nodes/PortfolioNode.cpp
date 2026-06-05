@@ -142,14 +142,18 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // 3. 生成执行计划
     ExecutionPlan newPlan;
     if (_server->GetRunningMode() != RuningType::Backtest) { [[likely]]
-        newPlan = generatePlan(decisions, targetCapital);
+        newPlan = generatePlan(context, decisions, targetCapital);
     } else {
         // 回测模式：获取 BacktestContext 以获取正确的 symbol 索引
         BacktestContext* btContext = nullptr;
-        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
-            _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
-        if (histExchange) {
-            btContext = histExchange->getBacktestContext(context.getBacktestRunId());
+        auto* exchangeMgr = _server->GetExchangeManager();
+        for (auto type : context.getExchangeTypes()) {
+            auto* histExchange = dynamic_cast<HistorySimulationBase*>(
+                exchangeMgr->GetExchangeByType(type));
+            if (histExchange) {
+                btContext = histExchange->getBacktestContext(context.getBacktestRunId());
+                if (btContext) break;
+            }
         }
         newPlan = generatePlan(context, decisions, targetCapital, btContext);
     }
@@ -227,6 +231,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
 }
 
 ExecutionPlan PortfolioNode::generatePlan(
+    DataContext& context,
     const Map<symbol_t, TradeAction>& decisions,
     double targetCapital
 ) {
@@ -242,7 +247,17 @@ ExecutionPlan PortfolioNode::generatePlan(
     size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
 
-    auto* exchange = _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
+    // 从 DataContext 获取策略初始化时设置的 Exchange 类型
+    auto* exchangeMgr = _server->GetExchangeManager();
+    ExchangeInterface* exchange = nullptr;
+    for (auto type : context.getExchangeTypes()) {
+        exchange = exchangeMgr->GetExchangeByType(type);
+        if (exchange) break;
+    }
+    // fallback: 尝试股票 Exchange
+    if (!exchange) {
+        exchange = exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
+    }
 
     for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;
@@ -350,9 +365,14 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
     size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
 
-    // 获取历史数据仿真交易所，用于获取未复权价格
-    auto* histExchange = dynamic_cast<HistorySimulationBase*>(
-        _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+    // 从 DataContext 获取策略初始化时设置的 Exchange 类型，用于获取未复权价格
+    auto* exchangeMgr = _server->GetExchangeManager();
+    HistorySimulationBase* histExchange = nullptr;
+    for (auto type : context.getExchangeTypes()) {
+        histExchange = dynamic_cast<HistorySimulationBase*>(
+            exchangeMgr->GetExchangeByType(type));
+        if (histExchange) break;
+    }
 
     for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;

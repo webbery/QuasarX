@@ -36,6 +36,9 @@ String GetTypePath(symbol_t sym) {
   }
   else if (is_fund(sym)) {
     return "/zh/fund";
+  }
+  else if (is_etf(sym)) {
+    return "/zh/etf";
   } else {
     WARN("not support type for symbol.");
     return "/zh/temp";

@@ -7,8 +7,8 @@
  * @brief ETF 历史数据回测
  *
  * 支持分钟级 ETF 数据回测：
- * - 后复权价格: zh/fund/{freq}/{code}.csv
- * - 原始价格:   zh/fund_org/{freq}/{code}.csv
+ * - 后复权价格: etf_hfq/{freq}/{code}.csv
+ * - 原始价格:   etf_org/{freq}/{code}.csv
  * - 佣金: 万 0.5，无最低限制
  * - 无印花税
  * - T+0/T+1 由 config.json 的 etf.t0/etf.t1 配置决定

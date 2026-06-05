@@ -79,8 +79,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 收集策略图中所有需要的数据源
     Set<String> requiredSources;
-    if (script.contains("graph") && script["graph"].contains("nodes")) {
-        for (auto& node : script["graph"]["nodes"]) {
+    if (script.contains("nodes")) {
+        for (auto& node : script["nodes"]) {
             if (node.contains("data") && node["data"].contains("nodeType") &&
                 node["data"]["nodeType"] == "input" &&
                 node["data"].contains("params") &&
