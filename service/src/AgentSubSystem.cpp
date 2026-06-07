@@ -170,7 +170,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
 
             if (success) {
-                // 统计指标
+                // 统计指标（封装为独立函数）
                 ExecuteNode* endNode = nullptr;
                 for (auto node: flow._graph) {
                     auto n = dynamic_cast<ExecuteNode*>(node);
@@ -180,195 +180,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                     }
                 }
                 if (endNode) {
-                    // 使用 BacktestContext 中的每日快照计算指标（替代 build_portfolio_values）
-                    // 性能优化：避免重建组合价值，直接使用 stepForward 中记录的快照
-                    Vector<double> portfolio_values;
-
-                    if (btContext && btContext->dailySnapshotCount() > 0) {
-                        // 直接 move 快照数据（SoA 布局，零拷贝）
-                        portfolio_values = btContext->takePortfolioValues();
-                        INFO("[Backtest] Using BacktestContext snapshots: {} days", portfolio_values.size());
-                    } else {
-                        // 降级：使用原有的 build_portfolio_values
-                        auto& cash_flow = endNode->GetReports();
-                        auto [pv, cf] = build_portfolio_values(cash_flow, context, _handle);
-                        portfolio_values.assign(pv.begin(), pv.end());
-                        INFO("[Backtest] Fallback to build_portfolio_values: {} days", portfolio_values.size());
-                    }
-
-                    auto daily_returns = simple_daily_return(portfolio_values);
-                    auto total_return = simple_total_return(portfolio_values, context.getInitialCapital());
-                    flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
-
-                    // 将日收益率和日期存回 BacktestContext，供 BackTestHandler 返回给前端
-                    // 注意：daily_returns 后面还要用，所以拷贝而非 move
-                    // 先保存 dates（避免 takeDates move 后导致 dailySnapshotCount 为 0）
-                    if (btContext && btContext->dailySnapshotCount() > 0) {
-                        auto datesCopy = btContext->getDates();  // 拷贝日期
-                        btContext->setDailyReturns(std::move(datesCopy), Vector<double>(daily_returns.begin(), daily_returns.end()));
-                    }
-
-                    // 计算年化收益率
-                    int count = static_cast<int>(daily_returns.size());
-                    auto annual_return = compute_annualized_return(total_return, count);
-                    flow._collections[StatisticIndicator::AnualReturn] = annual_return;
-
-                    double annual_vol = compute_annualized_volatility(daily_returns);
-
-                    // 计算夏普比率
-                    double risk_free_rate = 0.0;  // 无风险利率，可改为从配置读取
-                    float sharp = compute_sharp_ratio(annual_return, annual_vol, risk_free_rate);
-                    flow._collections[StatisticIndicator::Sharp] = sharp;
-
-                    auto max_dd = max_drawdown_ratio(portfolio_values);
-                    flow._collections[StatisticIndicator::MaxDrawDown] = max_dd;
-                    flow._collections[StatisticIndicator::WinRate] = win_rate(daily_returns);
-                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(annual_return, max_dd);
-
-                    // 样本外拟合能力 R²
-                    flow._collections[StatisticIndicator::R2] = static_cast<float>(compute_r_squared(portfolio_values));
-
-                    // 尾部风险指标
-                    flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns, 0.95);
-                    flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns, 0.95);
-
-                    // MonteCarlo Bootstrap 风险分析
-                    auto* exchange = dynamic_cast<HistorySimulationBase*>(_handle->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
-                    TradingMode trading_mode = exchange ? exchange->GetTradingMode() : TradingMode::T1;
-                    int bars_per_year = (trading_mode == TradingMode::T1) ? 252 : 60480;
-
-                    McSimConfig mcConfig;
-                    mcConfig.trading_mode = trading_mode;  // 元信息，不改变抽样逻辑
-                    mcConfig.bars_per_year = bars_per_year;
-                    mcConfig.n_simulations = 20000;
-
-                    MonteCarloSimulator mc;
-                    mc.Init(mcConfig);
-                    mc.FeedReturns(std::vector<double>(daily_returns.begin(), daily_returns.end()));
-                    auto mcResult = mc.Run();
-
-                    flow._collections[StatisticIndicator::BootRuinProb50]       = mcResult.ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootRuinProb30]       = mcResult.ruin_prob_low;
-                    flow._collections[StatisticIndicator::BootReturnP5]         = mcResult.return_p5;
-                    flow._collections[StatisticIndicator::BootReturnP50]        = mcResult.return_p50;
-                    flow._collections[StatisticIndicator::BootReturnP95]        = mcResult.return_p95;
-                    flow._collections[StatisticIndicator::BootMaxDDP50]         = mcResult.max_dd_p50;
-                    flow._collections[StatisticIndicator::BootMaxDDP95]         = mcResult.max_dd_p95;
-                    flow._collections[StatisticIndicator::BootMedianAnnualRet]  = mcResult.median_annual_ret;
-                    flow._collections[StatisticIndicator::BootTail1PctAvgDD]    = mcResult.tail_1pct_avg_dd;
-                    flow._collections[StatisticIndicator::BootMethod]           = static_cast<float>(mcResult.method);
-                    flow._collections[StatisticIndicator::BootBlockSize]        = static_cast<float>(mcResult.block_size);
-                    flow._collections[StatisticIndicator::BootAutocorrelation]  = mcResult.autocorrelation;
-                    flow._collections[StatisticIndicator::BootNSimulations]     = static_cast<float>(mcResult.n_simulations);
-                    // 压力测试（基础）
-                    flow._collections[StatisticIndicator::BootStressRuinProb50] = mcResult.stress_ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootStressRuinProb30] = mcResult.stress_ruin_prob_low;
-                    flow._collections[StatisticIndicator::BootStressReturnP5]   = mcResult.stress_return_p5;
-                    flow._collections[StatisticIndicator::BootStressReturnP50]  = mcResult.stress_return_p50;
-                    flow._collections[StatisticIndicator::BootStressMaxDDP50]   = mcResult.stress_max_dd_p50;
-                    // 流动性压力测试
-                    flow._collections[StatisticIndicator::BootLiqStressRuinProb50] = mcResult.liq_stress_ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootLiqStressReturnP5]   = mcResult.liq_stress_return_p5;
-                    flow._collections[StatisticIndicator::BootLiqStressMaxDDP50]   = mcResult.liq_stress_max_dd_p50;
-                    // 波动率聚集压力测试
-                    flow._collections[StatisticIndicator::BootVolClusterStressRuinProb50] = mcResult.vol_cluster_stress_ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootVolClusterStressReturnP5]   = mcResult.vol_cluster_stress_return_p5;
-                    flow._collections[StatisticIndicator::BootVolClusterStressMaxDDP50]   = mcResult.vol_cluster_stress_max_dd_p50;
-
-                    // 输出极端场景信息到日志
-                    INFO("MonteCarlo Analysis:\n{}", mcResult.toString());
-
-                    // 保存路径数据供前端可视化
-                    auto& mcPaths = flow._mcPaths;
-                    // 最差路径
-                    for (const auto& p : mcResult.worst_paths) {
-                        FlowSubsystem::McPathDetail d;
-                        d.total_return = p.total_return;
-                        d.max_drawdown = p.max_drawdown;
-                        d.win_rate = p.win_rate;
-                        d.longest_win_streak = p.longest_win_streak;
-                        d.longest_loss_streak = p.longest_loss_streak;
-                        d.max_dd_bar_index = p.max_dd_bar_index;
-                        d.vol_ratio = p.vol_ratio;
-                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
-                        mcPaths.worst_paths.push_back(d);
-                    }
-                    // 最好路径
-                    for (const auto& p : mcResult.best_paths) {
-                        FlowSubsystem::McPathDetail d;
-                        d.total_return = p.total_return;
-                        d.max_drawdown = p.max_drawdown;
-                        d.win_rate = p.win_rate;
-                        d.longest_win_streak = p.longest_win_streak;
-                        d.longest_loss_streak = p.longest_loss_streak;
-                        d.max_dd_bar_index = p.max_dd_bar_index;
-                        d.vol_ratio = p.vol_ratio;
-                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
-                        mcPaths.best_paths.push_back(d);
-                    }
-                    // 基准路径
-                    auto convertPathDetail = [](const PathDetail& p) -> FlowSubsystem::McPathDetail {
-                        FlowSubsystem::McPathDetail d;
-                        d.total_return = p.total_return;
-                        d.max_drawdown = p.max_drawdown;
-                        d.win_rate = p.win_rate;
-                        d.longest_win_streak = p.longest_win_streak;
-                        d.longest_loss_streak = p.longest_loss_streak;
-                        d.max_dd_bar_index = p.max_dd_bar_index;
-                        d.vol_ratio = p.vol_ratio;
-                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
-                        return d;
-                    };
-                    mcPaths.median_path = convertPathDetail(mcResult.median_path);
-                    mcPaths.p10_path = convertPathDetail(mcResult.p10_path);
-                    mcPaths.p90_path = convertPathDetail(mcResult.p90_path);
-
-                    // 多资产协方差诊断（仅资产数 > 1 时计算）
-                    if (btContext && btContext->assetSnapshotCount() > 0) {
-                        const auto& symbols = btContext->getSymbols();
-                        int nAssets = static_cast<int>(symbols.size());
-                        if (nAssets > 1) {
-                            const auto& assetDates = btContext->getAssetSnapshotDates();
-                            const auto& assetValues = btContext->getAssetValues();
-                            int T = static_cast<int>(assetDates.size());
-
-                            // 构建每个资产的日收益率序列
-                            std::vector<std::vector<double>> assetReturns(nAssets);
-                            for (int j = 0; j < nAssets; j++) {
-                                auto it = symbols.begin();
-                                std::advance(it, j);
-                                symbol_t sym = *it;
-                                assetReturns[j].reserve(T - 1);
-
-                                for (int i = 1; i < T; i++) {
-                                    double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
-                                    double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
-                                    if (prevVal > 0.0) {
-                                        assetReturns[j].push_back((currVal - prevVal) / prevVal);
-                                    } else {
-                                        assetReturns[j].push_back(0.0);
-                                    }
-                                }
-                            }
-
-                            // 计算协方差和质量评估
-                            auto cov = compute_covariance(assetReturns);
-                            if (cov.n_assets > 1) {
-                                auto quality = evaluate_covariance_quality(cov);
-                                flow._collections[StatisticIndicator::CovConditionNumber] = static_cast<float>(quality.conditionNumber);
-                                flow._collections[StatisticIndicator::CovMinCorr] = static_cast<float>(cov.minCorrelation);
-                                flow._collections[StatisticIndicator::CovMaxCorr] = static_cast<float>(cov.maxCorrelation);
-                                flow._collections[StatisticIndicator::CovPositiveDefinite] = quality.isPositiveDefinite ? 1.0f : 0.0f;
-                                flow._collections[StatisticIndicator::CovObservations] = static_cast<float>(cov.n_observations);
-                                flow._collections[StatisticIndicator::CovNAzets] = static_cast<float>(cov.n_assets);
-                                flow._collections[StatisticIndicator::CovNearCollinear] = static_cast<float>(cov.nearCollinearPairs);
-                                INFO("[Backtest] Covariance: assets={}, obs={}, κ={:.1f}, grade={}, positive_definite={}",
-                                     cov.n_assets, cov.n_observations, quality.conditionNumber, quality.gradeString(), quality.isPositiveDefinite);
-                            }
-                        }
-                    }
-
-                    // 输出极端场景信息到日志（已在上面通过 mcResult.toString() 输出）
+                    ComputeBacktestMetrics(strategy, flow, btContext, _handle->GetExchangeManager());
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);
@@ -462,7 +274,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
             while (flow._running || !Server::IsExit()) {
                 context.SetEpoch(++epoch);
 
-                // 推进所有 Exchange 的回测时间
+                // 推进 Exchange 的回测时间
                 if (!exchangeMgr->StepAllHistoryExchanges(runId)) {
                     INFO("Backtest data finished for strategy {}", strategy);
                     break;
@@ -477,7 +289,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
 
             if (success) {
-                // 统计指标（与 StartBacktest 相同的逻辑）
+                // 统计指标（封装为独立函数）
                 ExecuteNode* endNode = nullptr;
                 for (auto node: flow._graph) {
                     auto n = dynamic_cast<ExecuteNode*>(node);
@@ -487,165 +299,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                     }
                 }
                 if (endNode) {
-                    Vector<double> portfolio_values;
-
-                    if (btContext && btContext->dailySnapshotCount() > 0) {
-                        portfolio_values = btContext->takePortfolioValues();
-                        INFO("[Backtest] Using BacktestContext snapshots: {} days", portfolio_values.size());
-                    }
-
-                    auto daily_returns = simple_daily_return(portfolio_values);
-                    auto total_return = simple_total_return(portfolio_values, context.getInitialCapital());
-                    flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
-
-                    if (btContext && btContext->dailySnapshotCount() > 0) {
-                        auto datesCopy = btContext->getDates();
-                        btContext->setDailyReturns(std::move(datesCopy), Vector<double>(daily_returns.begin(), daily_returns.end()));
-                    }
-
-                    int count = static_cast<int>(daily_returns.size());
-                    auto annual_return = compute_annualized_return(total_return, count);
-                    flow._collections[StatisticIndicator::AnualReturn] = annual_return;
-                    double annual_vol = compute_annualized_volatility(daily_returns);
-                    double risk_free_rate = 0.0;
-                    float sharp = compute_sharp_ratio(annual_return, annual_vol, risk_free_rate);
-                    flow._collections[StatisticIndicator::Sharp] = sharp;
-                    auto max_dd = max_drawdown_ratio(portfolio_values);
-                    flow._collections[StatisticIndicator::MaxDrawDown] = max_dd;
-                    flow._collections[StatisticIndicator::WinRate] = win_rate(daily_returns);
-                    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(annual_return, max_dd);
-                    flow._collections[StatisticIndicator::R2] = static_cast<float>(compute_r_squared(portfolio_values));
-                    flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns, 0.95);
-                    flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns, 0.95);
-
-                    // MonteCarlo 分析
-                    auto* exch = stockExch ? stockExch : dynamic_cast<HistorySimulationBase*>(
-                        exchangeMgr->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM));
-                    TradingMode trading_mode = exch ? exch->GetTradingMode() : TradingMode::T1;
-                    int bars_per_year = (trading_mode == TradingMode::T1) ? 252 : 60480;
-
-                    McSimConfig mcConfig;
-                    mcConfig.trading_mode = trading_mode;
-                    mcConfig.bars_per_year = bars_per_year;
-                    mcConfig.n_simulations = 20000;
-
-                    MonteCarloSimulator mc;
-                    mc.Init(mcConfig);
-                    mc.FeedReturns(std::vector<double>(daily_returns.begin(), daily_returns.end()));
-                    auto mcResult = mc.Run();
-
-                    flow._collections[StatisticIndicator::BootRuinProb50]       = mcResult.ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootRuinProb30]       = mcResult.ruin_prob_low;
-                    flow._collections[StatisticIndicator::BootReturnP5]         = mcResult.return_p5;
-                    flow._collections[StatisticIndicator::BootReturnP50]        = mcResult.return_p50;
-                    flow._collections[StatisticIndicator::BootReturnP95]        = mcResult.return_p95;
-                    flow._collections[StatisticIndicator::BootMaxDDP50]         = mcResult.max_dd_p50;
-                    flow._collections[StatisticIndicator::BootMaxDDP95]         = mcResult.max_dd_p95;
-                    flow._collections[StatisticIndicator::BootMedianAnnualRet]  = mcResult.median_annual_ret;
-                    flow._collections[StatisticIndicator::BootTail1PctAvgDD]    = mcResult.tail_1pct_avg_dd;
-                    flow._collections[StatisticIndicator::BootMethod]           = static_cast<float>(mcResult.method);
-                    flow._collections[StatisticIndicator::BootBlockSize]        = static_cast<float>(mcResult.block_size);
-                    flow._collections[StatisticIndicator::BootAutocorrelation]  = mcResult.autocorrelation;
-                    flow._collections[StatisticIndicator::BootNSimulations]     = static_cast<float>(mcResult.n_simulations);
-                    flow._collections[StatisticIndicator::BootStressRuinProb50] = mcResult.stress_ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootStressRuinProb30] = mcResult.stress_ruin_prob_low;
-                    flow._collections[StatisticIndicator::BootStressReturnP5]   = mcResult.stress_return_p5;
-                    flow._collections[StatisticIndicator::BootStressReturnP50]  = mcResult.stress_return_p50;
-                    flow._collections[StatisticIndicator::BootStressMaxDDP50]   = mcResult.stress_max_dd_p50;
-                    flow._collections[StatisticIndicator::BootLiqStressRuinProb50] = mcResult.liq_stress_ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootLiqStressReturnP5]   = mcResult.liq_stress_return_p5;
-                    flow._collections[StatisticIndicator::BootLiqStressMaxDDP50]   = mcResult.liq_stress_max_dd_p50;
-                    flow._collections[StatisticIndicator::BootVolClusterStressRuinProb50] = mcResult.vol_cluster_stress_ruin_prob_high;
-                    flow._collections[StatisticIndicator::BootVolClusterStressReturnP5]   = mcResult.vol_cluster_stress_return_p5;
-                    flow._collections[StatisticIndicator::BootVolClusterStressMaxDDP50]   = mcResult.vol_cluster_stress_max_dd_p50;
-
-                    INFO("MonteCarlo Analysis:\n{}", mcResult.toString());
-
-                    auto& mcPaths = flow._mcPaths;
-                    for (const auto& p : mcResult.worst_paths) {
-                        FlowSubsystem::McPathDetail d;
-                        d.total_return = p.total_return;
-                        d.max_drawdown = p.max_drawdown;
-                        d.win_rate = p.win_rate;
-                        d.longest_win_streak = p.longest_win_streak;
-                        d.longest_loss_streak = p.longest_loss_streak;
-                        d.max_dd_bar_index = p.max_dd_bar_index;
-                        d.vol_ratio = p.vol_ratio;
-                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
-                        mcPaths.worst_paths.push_back(d);
-                    }
-                    for (const auto& p : mcResult.best_paths) {
-                        FlowSubsystem::McPathDetail d;
-                        d.total_return = p.total_return;
-                        d.max_drawdown = p.max_drawdown;
-                        d.win_rate = p.win_rate;
-                        d.longest_win_streak = p.longest_win_streak;
-                        d.longest_loss_streak = p.longest_loss_streak;
-                        d.max_dd_bar_index = p.max_dd_bar_index;
-                        d.vol_ratio = p.vol_ratio;
-                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
-                        mcPaths.best_paths.push_back(d);
-                    }
-                    auto convertPathDetail = [](const PathDetail& p) -> FlowSubsystem::McPathDetail {
-                        FlowSubsystem::McPathDetail d;
-                        d.total_return = p.total_return;
-                        d.max_drawdown = p.max_drawdown;
-                        d.win_rate = p.win_rate;
-                        d.longest_win_streak = p.longest_win_streak;
-                        d.longest_loss_streak = p.longest_loss_streak;
-                        d.max_dd_bar_index = p.max_dd_bar_index;
-                        d.vol_ratio = p.vol_ratio;
-                        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
-                        return d;
-                    };
-                    mcPaths.median_path = convertPathDetail(mcResult.median_path);
-                    mcPaths.p10_path = convertPathDetail(mcResult.p10_path);
-                    mcPaths.p90_path = convertPathDetail(mcResult.p90_path);
-
-                    if (btContext && btContext->assetSnapshotCount() > 0) {
-                        const auto& symbols = btContext->getSymbols();
-                        int nAssets = static_cast<int>(symbols.size());
-                        if (nAssets > 1) {
-                            const auto& assetDates = btContext->getAssetSnapshotDates();
-                            const auto& assetValues = btContext->getAssetValues();
-                            int T = static_cast<int>(assetDates.size());
-
-                            std::vector<std::vector<double>> assetReturns(nAssets);
-                            for (int j = 0; j < nAssets; j++) {
-                                auto it = symbols.begin();
-                                std::advance(it, j);
-                                symbol_t sym = *it;
-                                assetReturns[j].reserve(T - 1);
-
-                                for (int i = 1; i < T; i++) {
-                                    double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
-                                    double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
-                                    if (prevVal > 0.0) {
-                                        assetReturns[j].push_back((currVal - prevVal) / prevVal);
-                                    } else {
-                                        assetReturns[j].push_back(0.0);
-                                    }
-                                }
-                            }
-
-                            // 计算协方差和质量评估
-                            auto cov = compute_covariance(assetReturns);
-                            if (cov.n_assets > 1) {
-                                auto quality = evaluate_covariance_quality(cov);
-                                flow._collections[StatisticIndicator::CovConditionNumber] = static_cast<float>(quality.conditionNumber);
-                                flow._collections[StatisticIndicator::CovMinCorr] = static_cast<float>(cov.minCorrelation);
-                                flow._collections[StatisticIndicator::CovMaxCorr] = static_cast<float>(cov.maxCorrelation);
-                                flow._collections[StatisticIndicator::CovPositiveDefinite] = quality.isPositiveDefinite ? 1.0f : 0.0f;
-                                flow._collections[StatisticIndicator::CovObservations] = static_cast<float>(cov.n_observations);
-                                flow._collections[StatisticIndicator::CovNAzets] = static_cast<float>(cov.n_assets);
-                                flow._collections[StatisticIndicator::CovNearCollinear] = static_cast<float>(cov.nearCollinearPairs);
-                                INFO("[Backtest] Covariance: assets={}, obs={}, κ={:.1f}, grade={}, positive_definite={}",
-                                     cov.n_assets, cov.n_observations, quality.conditionNumber, quality.gradeString(), quality.isPositiveDefinite);
-                            }
-                        }
-                    }
-
-                    INFO("MonteCarlo Analysis:\n{}", mcResult.toString());
+                    ComputeBacktestMetrics(strategy, flow, btContext, exchangeMgr);
                 }
                 for (auto node : flow._graph) {
                     node->Done(strategy);
@@ -678,6 +332,181 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
 
         flow._running = false;
     });
+}
+
+/**
+ * @brief 计算回测指标和 MonteCarlo 模拟，结果写入 flow._collections 和 flow._mcPaths
+ */
+void FlowSubsystem::ComputeBacktestMetrics(
+    const String& strategy,
+    StrategyFlowInfo& flow,
+    BacktestContext* btContext,
+    ExchangeManager* exchangeMgr
+) {
+    Vector<double> portfolio_values;
+
+    if (btContext && btContext->dailySnapshotCount() > 0) {
+        portfolio_values = btContext->takePortfolioValues();
+        INFO("[Backtest] Using BacktestContext snapshots: {} days", portfolio_values.size());
+    }
+
+    auto daily_returns = simple_daily_return(portfolio_values);
+    std::vector<double> portfolio_values_std(portfolio_values.begin(), portfolio_values.end());
+    double initial_capital = btContext ? btContext->getCapital() : 100000.0;
+    auto total_return = simple_total_return(portfolio_values_std, initial_capital);
+    flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
+
+    if (btContext && btContext->dailySnapshotCount() > 0) {
+        auto datesCopy = btContext->getDates();
+        btContext->setDailyReturns(std::move(datesCopy), Vector<double>(daily_returns.begin(), daily_returns.end()));
+    }
+
+    int count = static_cast<int>(daily_returns.size());
+    auto annual_return = compute_annualized_return(total_return, count);
+    flow._collections[StatisticIndicator::AnualReturn] = annual_return;
+    double annual_vol = compute_annualized_volatility(daily_returns);
+    double risk_free_rate = 0.0;
+    float sharp = compute_sharp_ratio(annual_return, annual_vol, risk_free_rate);
+    flow._collections[StatisticIndicator::Sharp] = sharp;
+    auto max_dd = max_drawdown_ratio(portfolio_values);
+    flow._collections[StatisticIndicator::MaxDrawDown] = max_dd;
+    flow._collections[StatisticIndicator::WinRate] = win_rate(daily_returns);
+    flow._collections[StatisticIndicator::Calmar] = calmar_ratio(annual_return, max_dd);
+    flow._collections[StatisticIndicator::R2] = static_cast<float>(compute_r_squared(portfolio_values_std));
+    // 尾部风险指标
+    std::vector<double> daily_returns_std(daily_returns.begin(), daily_returns.end());
+    flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns_std, 0.95);
+    flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns_std, 0.95);
+
+    // MonteCarlo 分析
+    auto* stockExch = dynamic_cast<HistorySimulationBase*>(
+        exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
+    auto* exch = stockExch ? stockExch : dynamic_cast<HistorySimulationBase*>(
+        exchangeMgr->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM));
+    TradingMode trading_mode = exch ? exch->GetTradingMode() : TradingMode::T1;
+    int bars_per_year = (trading_mode == TradingMode::T1) ? 252 : 60480;
+
+    McSimConfig mcConfig;
+    mcConfig.trading_mode = trading_mode;
+    mcConfig.bars_per_year = bars_per_year;
+    mcConfig.n_simulations = 20000;
+
+    MonteCarloSimulator mc;
+    mc.Init(mcConfig);
+    mc.FeedReturns(daily_returns_std);
+    auto mcResult = mc.Run();
+
+    flow._collections[StatisticIndicator::BootRuinProb50]       = mcResult.ruin_prob_high;
+    flow._collections[StatisticIndicator::BootRuinProb30]       = mcResult.ruin_prob_low;
+    flow._collections[StatisticIndicator::BootReturnP5]         = mcResult.return_p5;
+    flow._collections[StatisticIndicator::BootReturnP50]        = mcResult.return_p50;
+    flow._collections[StatisticIndicator::BootReturnP95]        = mcResult.return_p95;
+    flow._collections[StatisticIndicator::BootMaxDDP50]         = mcResult.max_dd_p50;
+    flow._collections[StatisticIndicator::BootMaxDDP95]         = mcResult.max_dd_p95;
+    flow._collections[StatisticIndicator::BootMedianAnnualRet]  = mcResult.median_annual_ret;
+    flow._collections[StatisticIndicator::BootTail1PctAvgDD]    = mcResult.tail_1pct_avg_dd;
+    flow._collections[StatisticIndicator::BootMethod]           = static_cast<float>(mcResult.method);
+    flow._collections[StatisticIndicator::BootBlockSize]        = static_cast<float>(mcResult.block_size);
+    flow._collections[StatisticIndicator::BootAutocorrelation]  = mcResult.autocorrelation;
+    flow._collections[StatisticIndicator::BootNSimulations]     = static_cast<float>(mcResult.n_simulations);
+    flow._collections[StatisticIndicator::BootStressRuinProb50] = mcResult.stress_ruin_prob_high;
+    flow._collections[StatisticIndicator::BootStressRuinProb30] = mcResult.stress_ruin_prob_low;
+    flow._collections[StatisticIndicator::BootStressReturnP5]   = mcResult.stress_return_p5;
+    flow._collections[StatisticIndicator::BootStressReturnP50]  = mcResult.stress_return_p50;
+    flow._collections[StatisticIndicator::BootStressMaxDDP50]   = mcResult.stress_max_dd_p50;
+    flow._collections[StatisticIndicator::BootLiqStressRuinProb50] = mcResult.liq_stress_ruin_prob_high;
+    flow._collections[StatisticIndicator::BootLiqStressReturnP5]   = mcResult.liq_stress_return_p5;
+    flow._collections[StatisticIndicator::BootLiqStressMaxDDP50]   = mcResult.liq_stress_max_dd_p50;
+    flow._collections[StatisticIndicator::BootVolClusterStressRuinProb50] = mcResult.vol_cluster_stress_ruin_prob_high;
+    flow._collections[StatisticIndicator::BootVolClusterStressReturnP5]   = mcResult.vol_cluster_stress_return_p5;
+    flow._collections[StatisticIndicator::BootVolClusterStressMaxDDP50]   = mcResult.vol_cluster_stress_max_dd_p50;
+
+    INFO("MonteCarlo Analysis:\n{}", mcResult.toString());
+
+    auto& mcPaths = flow._mcPaths;
+    for (const auto& p : mcResult.worst_paths) {
+        FlowSubsystem::McPathDetail d;
+        d.total_return = p.total_return;
+        d.max_drawdown = p.max_drawdown;
+        d.win_rate = p.win_rate;
+        d.longest_win_streak = p.longest_win_streak;
+        d.longest_loss_streak = p.longest_loss_streak;
+        d.max_dd_bar_index = p.max_dd_bar_index;
+        d.vol_ratio = p.vol_ratio;
+        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
+        mcPaths.worst_paths.push_back(d);
+    }
+    for (const auto& p : mcResult.best_paths) {
+        FlowSubsystem::McPathDetail d;
+        d.total_return = p.total_return;
+        d.max_drawdown = p.max_drawdown;
+        d.win_rate = p.win_rate;
+        d.longest_win_streak = p.longest_win_streak;
+        d.longest_loss_streak = p.longest_loss_streak;
+        d.max_dd_bar_index = p.max_dd_bar_index;
+        d.vol_ratio = p.vol_ratio;
+        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
+        mcPaths.best_paths.push_back(d);
+    }
+    auto convertPathDetail = [](const PathDetail& p) -> FlowSubsystem::McPathDetail {
+        FlowSubsystem::McPathDetail d;
+        d.total_return = p.total_return;
+        d.max_drawdown = p.max_drawdown;
+        d.win_rate = p.win_rate;
+        d.longest_win_streak = p.longest_win_streak;
+        d.longest_loss_streak = p.longest_loss_streak;
+        d.max_dd_bar_index = p.max_dd_bar_index;
+        d.vol_ratio = p.vol_ratio;
+        d.equity_curve.assign(p.equity_curve.begin(), p.equity_curve.end());
+        return d;
+    };
+    mcPaths.median_path = convertPathDetail(mcResult.median_path);
+    mcPaths.p10_path = convertPathDetail(mcResult.p10_path);
+    mcPaths.p90_path = convertPathDetail(mcResult.p90_path);
+
+    // 协方差诊断（多资产时）
+    if (btContext && btContext->assetSnapshotCount() > 0) {
+        const auto& symbols = btContext->getSymbols();
+        int nAssets = static_cast<int>(symbols.size());
+        if (nAssets > 1) {
+            const auto& assetDates = btContext->getAssetSnapshotDates();
+            const auto& assetValues = btContext->getAssetValues();
+            int T = static_cast<int>(assetDates.size());
+
+            std::vector<std::vector<double>> assetReturns(nAssets);
+            for (int j = 0; j < nAssets; j++) {
+                auto it = symbols.begin();
+                std::advance(it, j);
+                symbol_t sym = *it;
+                assetReturns[j].reserve(T - 1);
+
+                for (int i = 1; i < T; i++) {
+                    double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
+                    double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
+                    if (prevVal > 0.0) {
+                        assetReturns[j].push_back((currVal - prevVal) / prevVal);
+                    } else {
+                        assetReturns[j].push_back(0.0);
+                    }
+                }
+            }
+
+            // 计算协方差和质量评估
+            auto cov = compute_covariance(assetReturns);
+            if (cov.n_assets > 1) {
+                auto quality = evaluate_covariance_quality(cov);
+                flow._collections[StatisticIndicator::CovConditionNumber] = static_cast<float>(quality.conditionNumber);
+                flow._collections[StatisticIndicator::CovMinCorr] = static_cast<float>(cov.minCorrelation);
+                flow._collections[StatisticIndicator::CovMaxCorr] = static_cast<float>(cov.maxCorrelation);
+                flow._collections[StatisticIndicator::CovPositiveDefinite] = quality.isPositiveDefinite ? 1.0f : 0.0f;
+                flow._collections[StatisticIndicator::CovObservations] = static_cast<float>(cov.n_observations);
+                flow._collections[StatisticIndicator::CovNAzets] = static_cast<float>(cov.n_assets);
+                flow._collections[StatisticIndicator::CovNearCollinear] = static_cast<float>(cov.nearCollinearPairs);
+                INFO("[Backtest] Covariance: assets={}, obs={}, κ={:.1f}, grade={}, positive_definite={}",
+                     cov.n_assets, cov.n_observations, quality.conditionNumber, quality.gradeString(), quality.isPositiveDefinite);
+            }
+        }
+    }
 }
 
 /**

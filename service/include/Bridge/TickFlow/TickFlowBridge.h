@@ -119,7 +119,7 @@ private:
     struct TickRecord {
         time_t time;
         double price;
-        int64_t volume;
+        uint64_t volume;
     };
     static constexpr size_t LIQUIDITY_WINDOW = 60;  // 最近60个tick
     Map<symbol_t, std::deque<TickRecord>> _tickHistory;

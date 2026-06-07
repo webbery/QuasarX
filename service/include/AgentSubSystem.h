@@ -64,6 +64,28 @@ public:
      */
     bool IsRunning(const String& strategy) const;
 
+    /**
+     * @brief 计算回测指标和 MonteCarlo 模拟，结果写入 flow._collections 和 flow._mcPaths
+     * 
+     * @param strategy      策略名称（用于日志）
+     * @param flow          策略流信息（输出指标会写入 flow._collections 和 flow._mcPaths）
+     * @param btContext     回测上下文（提供组合价值快照和资产快照）
+     * @param exchangeMgr   Exchange 管理器（用于查询交易模式）
+     * 
+     * @note 此函数会：
+     *       1. 从 btContext 提取组合价值序列
+     *       2. 计算传统统计指标（收益、夏普、回撤等）
+     *       3. 运行 20,000 次 MonteCarlo 模拟（含压力测试）
+     *       4. 多资产时计算协方差诊断
+     *       5. 将结果写入 flow._collections 和 flow._mcPaths
+     */
+    void ComputeBacktestMetrics(
+        const String& strategy,
+        StrategyFlowInfo& flow,
+        BacktestContext* btContext,
+        ExchangeManager* exchangeMgr
+    );
+
     // void Create(const String& strategy, SignalGeneratorType type, const nlohmann::json& params);
 
     void RegistCollection(const String& strategy, const Set<String>& );

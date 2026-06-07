@@ -266,6 +266,8 @@ public:
      */
     void ConfigureSlippageModels(const Set<String>& sources, const nlohmann::json& slippageConfig);
 
+    order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order);
+
 private:
     /**
      * @brief 根据名称从 Server 配置中获取 ExchangeInfo

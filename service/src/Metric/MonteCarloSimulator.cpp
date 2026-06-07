@@ -26,6 +26,13 @@ void MonteCarloSimulator::FeedReturns(const std::vector<double>& net_returns) {
         return;
     }
 
+    // 预分配采样缓冲区（避免 Run() 循环内反复分配）
+    _sampledBuf.resize(_nBars);
+    _stressReturnsBuf.resize(_nBars);
+
+    // 初始化复用的 distribution
+    _distIdx = std::uniform_int_distribution<size_t>(0, _nBars - 1);
+
     // 预计算自相关
     _acf = computeAutocorrelation(_returns, 1);
 
@@ -47,6 +54,7 @@ void MonteCarloSimulator::FeedReturns(const std::vector<double>& net_returns) {
 
     if (_useBlockBootstrap) {
         _blockSize = computeBlockSize(_nBars);
+        _distStart = std::uniform_int_distribution<size_t>(0, _nBars - _blockSize);
     }
 }
 
@@ -68,13 +76,12 @@ McResult MonteCarloSimulator::Run(int n_simulations) {
     paths.reserve(nSim);
 
     for (int sim = 0; sim < nSim; ++sim) {
-        std::vector<double> sampled;
         if (_useBlockBootstrap) {
-            sampled = sampleBlockBootstrap(_blockSize);
+            sampleBlockBootstrapInto(_sampledBuf, _blockSize);
         } else {
-            sampled = sampleStandardBootstrap();
+            sampleStandardBootstrapInto(_sampledBuf);
         }
-        paths.push_back(simulatePath(sampled));
+        paths.push_back(simulatePath(_sampledBuf));
     }
 
     result = aggregateResults(paths, _useBlockBootstrap ? 1 : 0, _blockSize, static_cast<float>(_acf));
@@ -83,34 +90,17 @@ McResult MonteCarloSimulator::Run(int n_simulations) {
     if (_config.enable_stress_test) {
         // 2a. 基础压力：波动率 × N
         {
-            std::vector<double> stress_returns = buildStressReturns(_config.stress_vol_factor);
+            buildStressReturnsInto(_stressReturnsBuf, _config.stress_vol_factor);
             std::vector<PathResult> stress_paths;
             stress_paths.reserve(nSim);
 
-            std::uniform_int_distribution<size_t> dist_idx(0, _nBars - 1);
-            std::vector<double> sampled;
-            sampled.reserve(_nBars);
-
             for (int sim = 0; sim < nSim; ++sim) {
-                sampled.clear();
                 if (_useBlockBootstrap) {
-                    int blk = _blockSize;
-                    std::uniform_int_distribution<size_t> dist_start(0, _nBars - blk);
-                    int remaining = _nBars;
-                    while (remaining > 0) {
-                        size_t start = dist_start(_rng);
-                        int take = std::min(blk, remaining);
-                        for (int i = 0; i < take; ++i) {
-                            sampled.push_back(stress_returns[start + i]);
-                        }
-                        remaining -= take;
-                    }
+                    sampleBlockBootstrapFromInto(_stressReturnsBuf, _sampledBuf, _blockSize);
                 } else {
-                    for (int i = 0; i < _nBars; ++i) {
-                        sampled.push_back(stress_returns[dist_idx(_rng)]);
-                    }
+                    sampleStandardBootstrapFromInto(_stressReturnsBuf, _sampledBuf);
                 }
-                stress_paths.push_back(simulatePath(sampled));
+                stress_paths.push_back(simulatePath(_sampledBuf));
             }
 
             int stress_worst_count = _config.save_stress_worst_paths ? _config.save_stress_paths_count : 0;
@@ -124,57 +114,33 @@ McResult MonteCarloSimulator::Run(int n_simulations) {
 
         // 2b. 流动性压力：尾部收益率折扣
         if (_config.stress_liquidity) {
+            // 先拷贝 _returns 到缓冲区
             std::vector<double> liq_returns = _returns;
             std::vector<double> sorted_for_tail = liq_returns;
             std::sort(sorted_for_tail.begin(), sorted_for_tail.end());
 
             int tail_count = std::max(1, static_cast<int>(_config.liquidity_tail_pct * _nBars));
 
-            // 对最差 tail_count 个收益率应用折扣
-            // 使用索引追踪避免浮点精度问题
-            std::vector<size_t> tail_indices;
+            // 对最差 tail_count 个收益率应用折扣（简化实现：直接排序后修改）
+            std::vector<size_t> indices(_nBars);
+            std::iota(indices.begin(), indices.end(), 0);
+            std::sort(indices.begin(), indices.end(),
+                      [&](size_t a, size_t b) { return _returns[a] < _returns[b]; });
+
             for (int i = 0; i < tail_count; ++i) {
-                double tail_val = sorted_for_tail[i];
-                for (size_t j = 0; j < liq_returns.size(); ++j) {
-                    // 检查是否已经在索引列表中
-                    bool already = false;
-                    for (size_t idx : tail_indices) {
-                        if (idx == j) { already = true; break; }
-                    }
-                    if (!already && std::abs(liq_returns[j] - tail_val) < 1e-12) {
-                        tail_indices.push_back(j);
-                        liq_returns[j] = tail_val * _config.liquidity_factor;
-                        break;
-                    }
-                }
+                liq_returns[indices[i]] *= _config.liquidity_factor;
             }
 
             std::vector<PathResult> liq_paths;
             liq_paths.reserve(nSim);
-            std::uniform_int_distribution<size_t> dist_idx(0, _nBars - 1);
-            std::vector<double> sampled;
-            sampled.reserve(_nBars);
 
             for (int sim = 0; sim < nSim; ++sim) {
-                sampled.clear();
                 if (_useBlockBootstrap) {
-                    int blk = _blockSize;
-                    std::uniform_int_distribution<size_t> dist_start(0, _nBars - blk);
-                    int remaining = _nBars;
-                    while (remaining > 0) {
-                        size_t start = dist_start(_rng);
-                        int take = std::min(blk, remaining);
-                        for (int i = 0; i < take; ++i) {
-                            sampled.push_back(liq_returns[start + i]);
-                        }
-                        remaining -= take;
-                    }
+                    sampleBlockBootstrapFromInto(liq_returns, _sampledBuf, _blockSize);
                 } else {
-                    for (int i = 0; i < _nBars; ++i) {
-                        sampled.push_back(liq_returns[dist_idx(_rng)]);
-                    }
+                    sampleStandardBootstrapFromInto(liq_returns, _sampledBuf);
                 }
-                liq_paths.push_back(simulatePath(sampled));
+                liq_paths.push_back(simulatePath(_sampledBuf));
             }
 
             int liq_worst_count = _config.save_stress_worst_paths ? _config.save_stress_paths_count : 0;
@@ -196,21 +162,10 @@ McResult MonteCarloSimulator::Run(int n_simulations) {
             std::vector<PathResult> vc_paths;
             vc_paths.reserve(nSim);
             std::uniform_int_distribution<size_t> dist_start(0, _nBars - stress_blk);
-            std::vector<double> sampled;
-            sampled.reserve(_nBars);
 
             for (int sim = 0; sim < nSim; ++sim) {
-                sampled.clear();
-                int remaining = _nBars;
-                while (remaining > 0) {
-                    size_t start = dist_start(_rng);
-                    int take = std::min(stress_blk, remaining);
-                    for (int i = 0; i < take; ++i) {
-                        sampled.push_back(_returns[start + i]);
-                    }
-                    remaining -= take;
-                }
-                vc_paths.push_back(simulatePath(sampled));
+                sampleBlockBootstrapFromInto(_returns, _sampledBuf, stress_blk);
+                vc_paths.push_back(simulatePath(_sampledBuf));
             }
 
             int vc_worst_count = _config.save_stress_worst_paths ? _config.save_stress_paths_count : 0;
@@ -357,7 +312,52 @@ PathDetail MonteCarloSimulator::buildDetail(const PathResult& p) const {
 }
 
 // ============================================================
-// 抽样方法
+// 抽样方法（预分配版本：写入外部缓冲区，避免分配）
+// ============================================================
+
+void MonteCarloSimulator::sampleStandardBootstrapInto(std::vector<double>& out) {
+    for (int i = 0; i < _nBars; ++i) {
+        out[i] = _returns[_distIdx(_rng)];
+    }
+}
+
+void MonteCarloSimulator::sampleStandardBootstrapFromInto(
+    const std::vector<double>& source, std::vector<double>& out) {
+    for (int i = 0; i < _nBars; ++i) {
+        out[i] = source[_distIdx(_rng)];
+    }
+}
+
+void MonteCarloSimulator::sampleBlockBootstrapInto(std::vector<double>& out, int block_size) {
+    int remaining = _nBars;
+    int writePos = 0;
+    while (remaining > 0) {
+        size_t start = _distStart(_rng);
+        int take = std::min(block_size, remaining);
+        for (int i = 0; i < take; ++i) {
+            out[writePos++] = _returns[start + i];
+        }
+        remaining -= take;
+    }
+}
+
+void MonteCarloSimulator::sampleBlockBootstrapFromInto(
+    const std::vector<double>& source, std::vector<double>& out, int block_size) {
+    int remaining = _nBars;
+    int writePos = 0;
+    std::uniform_int_distribution<size_t> dist_start(0, source.size() - block_size);
+    while (remaining > 0) {
+        size_t start = dist_start(_rng);
+        int take = std::min(block_size, remaining);
+        for (int i = 0; i < take; ++i) {
+            out[writePos++] = source[start + i];
+        }
+        remaining -= take;
+    }
+}
+
+// ============================================================
+// 旧版抽样方法（保留兼容，但不再使用）
 // ============================================================
 
 std::vector<double> MonteCarloSimulator::sampleStandardBootstrap() {
@@ -389,8 +389,18 @@ std::vector<double> MonteCarloSimulator::sampleBlockBootstrap(int block_size) {
 }
 
 // ============================================================
-// 压力测试收益率池构建
+// 压力测试收益率池构建（预分配版本）
 // ============================================================
+
+void MonteCarloSimulator::buildStressReturnsInto(std::vector<double>& out, double vol_factor) const {
+    double mean = 0.0;
+    for (double r : _returns) mean += r;
+    mean /= _nBars;
+
+    for (int i = 0; i < _nBars; ++i) {
+        out[i] = mean + (_returns[i] - mean) * vol_factor;
+    }
+}
 
 std::vector<double> MonteCarloSimulator::buildStressReturns(double vol_factor) const {
     double mean = 0.0;

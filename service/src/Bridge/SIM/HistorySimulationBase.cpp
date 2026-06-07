@@ -490,8 +490,9 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
 
     std::shared_lock<std::shared_mutex> dataLock(_dataMutex);
 
-    // === 找出所有股票当前时间的最大值（最晚时间） ===
-    time_t maxTime = 0;
+    // === 找出所有symbol当前时间的最小值（最早时间） ===
+    Map<symbol_t, QuoteInfo> quotes;
+    time_t minTime = std::numeric_limits<time_t>::max();
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
         if (itr == _csvs.end()) continue;
@@ -502,50 +503,27 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
 
         const auto& datetime = df.get_column<time_t>(header[0].c_str());
         uint32_t curIndex = context->getCurIndex(symbol);
-
         if (curIndex < datetime.size()) {
-            if (datetime[curIndex] > maxTime)
-                maxTime = datetime[curIndex];
+            if (datetime[curIndex] < minTime)
+                minTime = datetime[curIndex];
         }
-    }
-
-    // === 第三步：只推进时间 < maxTime 的股票，时间晚的保持不变 ===
-    for (auto symbol : symbols) {
-        auto itr = _csvs.find(symbol);
-        if (itr == _csvs.end()) continue;
-
-        const auto& df = itr->second;
-        const auto& header = _headers.at(symbol);
-        if (header.empty()) continue;
-
-        const auto& datetime = df.get_column<time_t>(header[0].c_str());
+        else {
+            // 任何 symbol 数据用完，立即结束整个回测
+            context->setFinished(true);
+            anyFinished = true;
+            break;
+        }
         const auto& open = df.get_column<float>(header[1].c_str());
         const auto& close = df.get_column<float>(header[2].c_str());
         const auto& high = df.get_column<float>(header[3].c_str());
         const auto& low = df.get_column<float>(header[4].c_str());
         const auto& volume = df.get_column<int64_t>(header[5].c_str());
 
-        uint32_t curIndex = context->getCurIndex(symbol);
-        if (curIndex >= datetime.size()) {
-            // 任何 symbol 数据用完，立即结束整个回测
-            context->setFinished(true);
-            anyFinished = true;
-            break;
-        }
-
-        // Skip 语义：如果当前时间 >= 最晚时间，保持 curIndex 不变，等待其他股票追上来
-        time_t curTime = datetime[curIndex];
-        if (curTime > maxTime) {
-            continue;
-        }
-
-        anyMoreData = true;
-
         auto org_itr = _org_csvs.find(symbol);
         QuoteInfo info;
         info._symbol = symbol;
         info._volume = volume[curIndex];
-        info._time = curTime;
+        info._time = datetime[curIndex];
 
         if (org_itr != _org_csvs.end() && !_org_headers.at(symbol).empty()) {
             const auto& org_df = org_itr->second;
@@ -558,17 +536,26 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             info._close = org_df.get_column<float>(org_header[2].c_str())[org_index];
             info._high = org_df.get_column<float>(org_header[3].c_str())[org_index];
             info._low = df.get_column<float>(org_header[4].c_str())[org_index];
-        } else {
+        }
+        else {
             info._open = open[curIndex];
             info._close = close[curIndex];
             info._high = high[curIndex];
             info._low = low[curIndex];
         }
-
-        context->setQuote(symbol, info);
-        context->incrementCurIndex(symbol);
+        quotes[symbol] = std::move(info);
+    }
+    // 推进时间最小的symbol
+    for (auto& [symbol, quote] : quotes) {
+        context->setQuote(symbol, quote);
+        if (quote._time == minTime) {
+            context->incrementCurIndex(symbol);
+            anyMoreData = true;
+        }
+        //INFO("incrementCurIndex {}, time: {}", symbol, ToString(quote._time));
     }
 
+    //INFO("---------------------------------------");
     dataLock.unlock();
 
     // 如果任何 symbol 数据用完，立即返回 false 结束回测

@@ -183,7 +183,6 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
         _curQuotes[symbol] = quote;
         if (quote._time < min_t) min_t = quote._time;
     }
-
     // 第二步：检查是否所有 symbol 时间戳一致
     bool allAligned = true;
     for (auto& [symbol, quote] : _curQuotes) {

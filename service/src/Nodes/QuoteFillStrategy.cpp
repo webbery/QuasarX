@@ -2,6 +2,7 @@
 #include "DataContext.h"
 #include "Util/log.h"
 #include <algorithm>
+#include <limits>
 
 // ============================================================
 // SkipFillStrategy
@@ -13,8 +14,19 @@ bool SkipFillStrategy::alignAndWrite(
     DataContext& context,
     std::function<void(const QuoteInfo&)> writeFn
 ) const {
-    // 不对齐时直接返回 false，不写入任何数据
-    return false;
+    // 不对齐时，将时间不对齐的 symbol 的 close 填充为 NaN 写入
+    for (auto& [symbol, quote] : quotes) {
+        if (quote._time == minTime) {
+            // 时间对齐：直接写入
+            writeFn(quote);
+        } else {
+            // 时间不对齐：用 NaN 填充 close
+            QuoteInfo nanQuote = quote;
+            nanQuote._close = std::numeric_limits<double>::quiet_NaN();
+            writeFn(nanQuote);
+        }
+    }
+    return true;
 }
 
 // ============================================================

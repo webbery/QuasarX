@@ -189,8 +189,15 @@ private:
     // Block Bootstrap 抽样
     std::vector<double> sampleBlockBootstrap(int block_size);
 
+    // === 预分配版本（写入外部缓冲区，避免循环内分配）===
+    void sampleStandardBootstrapInto(std::vector<double>& out);
+    void sampleStandardBootstrapFromInto(const std::vector<double>& source, std::vector<double>& out);
+    void sampleBlockBootstrapInto(std::vector<double>& out, int block_size);
+    void sampleBlockBootstrapFromInto(const std::vector<double>& source, std::vector<double>& out, int block_size);
+
     // 波动率压力：构建压力收益率池
     std::vector<double> buildStressReturns(double vol_factor) const;
+    void buildStressReturnsInto(std::vector<double>& out, double vol_factor) const;
 
     // 汇总结果（含双向极端路径）
     McResult aggregateResults(
@@ -230,4 +237,10 @@ private:
     std::mt19937 _rng;
     double _ruinThresholdHigh = 0.50;
     double _ruinThresholdLow = 0.30;
+
+    // === 预分配缓冲区（避免循环内重复分配）===
+    std::vector<double> _sampledBuf;         // Bootstrap 采样输出缓冲区
+    std::vector<double> _stressReturnsBuf;   // 压力测试收益率池
+    std::uniform_int_distribution<size_t> _distIdx;       // 复用 distribution
+    std::uniform_int_distribution<size_t> _distStart;     // Block Bootstrap 起始位置
 };
