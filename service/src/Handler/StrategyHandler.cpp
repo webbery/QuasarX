@@ -36,18 +36,18 @@ StrategyHandler::~StrategyHandler() {
 
 void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
 {
-    auto sys = _server->GetStrategySystem();
-    auto flow = sys->GetFlowSubsystem();
-    auto names = sys->GetStrategyNames();
-
-    bool isBacktest = (_server->GetRunningMode() == RuningType::Backtest);
+    auto strategySys = _server->GetStrategySystem();
+    auto flow = strategySys->GetFlowSubsystem();
 
     nlohmann::json result = nlohmann::json::array();
-    for (auto& name : names) {
-        nlohmann::json item;
-        item["name"] = name;
-        item["running"] = isBacktest ? true : (flow ? flow->IsRunning(name) : false);
-        result.push_back(item);
+    if (flow) {
+        auto names = flow->GetFlowNames();
+        for (auto& name : names) {
+            nlohmann::json item;
+            item["name"] = name;
+            item["running"] = flow->IsRunning(name);
+            result.push_back(item);
+        }
     }
 
     res.status = 200;

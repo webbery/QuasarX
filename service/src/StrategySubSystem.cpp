@@ -258,7 +258,7 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;
 
-    if (warmup > 0) {
-        INFO("[StrategySubSystem] Inferred warmup for '{}': {} epochs", strategyName, warmup);
-    }
+    //if (warmup > 0) {
+        //INFO("[StrategySubSystem] Inferred warmup for '{}': {} epochs", strategyName, warmup);
+    //}
 }

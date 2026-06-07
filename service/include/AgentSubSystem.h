@@ -65,6 +65,11 @@ public:
     bool IsRunning(const String& strategy) const;
 
     /**
+     * @brief 获取所有已载入的策略名称
+     */
+    List<String> GetFlowNames() const;
+
+    /**
      * @brief 计算回测指标和 MonteCarlo 模拟，结果写入 flow._collections 和 flow._mcPaths
      * 
      * @param strategy      策略名称（用于日志）

@@ -673,6 +673,14 @@ bool FlowSubsystem::IsRunning(const String& strategy) const {
     return true;
 }
 
+List<String> FlowSubsystem::GetFlowNames() const {
+    List<String> names;
+    for (auto& [name, flow] : _flows) {
+        names.push_back(name);
+    }
+    return names;
+}
+
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
     auto& flow = _flows[strategy];
     for (auto& node: flow._graph) {
