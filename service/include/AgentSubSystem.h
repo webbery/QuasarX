@@ -70,6 +70,16 @@ public:
     List<String> GetFlowNames() const;
 
     /**
+     * @brief 获取策略的 epoch 计数（回测总周期数或实盘执行次数）
+     */
+    uint64_t GetEpochCount(const String& strategy) const;
+
+    /**
+     * @brief 获取策略最后一次成功执行的时间戳（Unix time_t）
+     */
+    time_t GetLastHeartbeat(const String& strategy) const;
+
+    /**
      * @brief 计算回测指标和 MonteCarlo 模拟，结果写入 flow._collections 和 flow._mcPaths
      * 
      * @param strategy      策略名称（用于日志）
@@ -188,6 +198,10 @@ private:
 
         // K-bar 聚合器（实盘模式）
         std::shared_ptr<KBarBuilder> _kbarBuilder;
+
+        // 扩展字段：用于 GET /strategy 返回
+        uint64_t _epochCount = 0;       // 总执行周期数
+        time_t _lastHeartbeat = 0;      // 最后一次成功执行的时间戳
     };
 
     Map<String, StrategyFlowInfo> _flows; 

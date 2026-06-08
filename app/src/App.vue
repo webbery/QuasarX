@@ -191,7 +191,7 @@
         </div>
         <div class="status-item">
           <div class="status-dot"></div>
-          <span>策略运行中 ({{ runningCount }})</span>
+          <span>策略运行中 ({{ runningCount }}/{{ totalCount }})</span>
         </div>
         <div class="status-item">
           <i class="fas fa-microchip"></i>
@@ -710,6 +710,11 @@ const runningCount = computed(() =>
   serverStrategies.value.filter(s => s.running).length
 )
 
+/** 策略总数 */
+const totalCount = computed(() =>
+  serverStrategies.value.length
+)
+
 /** 从服务端获取策略状态 */
 const fetchServerStrategies = async () => {
   try {
@@ -823,6 +828,10 @@ provide('updateServer', updateServer)
 provide('currentStrategyId', currentStrategyId)
 provide('currentPortfolioConfig', currentPortfolioConfig)
 provide('portfolioConfigs', portfolioConfigs)
+
+// === 策略状态共享（供 StrategyTracker 实时监控使用） ===
+provide('serverStrategies', serverStrategies)
+provide('fetchServerStrategies', fetchServerStrategies)
 // 报表配置相关 provide（新增）
 provide('showReportConfig', showReportConfig)
 provide('onShowReportConfig', onShowReportConfig)

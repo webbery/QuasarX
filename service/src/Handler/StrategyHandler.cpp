@@ -46,6 +46,8 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
             nlohmann::json item;
             item["name"] = name;
             item["running"] = flow->IsRunning(name);
+            item["epochCount"] = flow->GetEpochCount(name);
+            item["lastHeartbeat"] = flow->GetLastHeartbeat(name);
             result.push_back(item);
         }
     }

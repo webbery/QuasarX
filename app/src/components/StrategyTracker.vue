@@ -31,10 +31,63 @@
 
         <!-- 实时监控面板 -->
         <div v-if="activeTab === 'realtime'" class="tab-content">
-            <div class="empty-state">
-                <i class="fas fa-bolt"></i>
-                <p>实时监控</p>
-                <span>选择运行中的策略以查看实时持仓、信号和净值曲线</span>
+            <div v-if="strategyList.length === 0" class="empty-state">
+                <i class="fas fa-inbox"></i>
+                <p>暂无策略</p>
+                <span>请先在策略工厂中创建策略</span>
+            </div>
+            <div v-else class="strategy-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 60px;">状态</th>
+                            <th>策略名称</th>
+                            <th style="width: 100px;">Epoch</th>
+                            <th style="width: 120px;">最后心跳</th>
+                            <th style="width: 140px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="s in strategyList" :key="s.name">
+                            <td>
+                                <span class="status-dot" :class="{ running: s.running }"></span>
+                            </td>
+                            <td class="strategy-name" :title="s.name">{{ s.name }}</td>
+                            <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
+                            <td>
+                                <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
+                                <span v-else class="heartbeat unknown">--</span>
+                            </td>
+                            <td>
+                                <div class="action-buttons">
+                                    <button
+                                        v-if="s.running"
+                                        class="btn btn-stop"
+                                        @click="stopStrategy(s.name)"
+                                        :disabled="isOperating(s.name)"
+                                    >
+                                        <i class="fas fa-stop"></i> 停止
+                                    </button>
+                                    <button
+                                        v-else
+                                        class="btn btn-start"
+                                        @click="startStrategy(s.name)"
+                                        :disabled="isOperating(s.name)"
+                                    >
+                                        <i class="fas fa-play"></i> 启动
+                                    </button>
+                                    <button
+                                        class="btn btn-delete"
+                                        @click="deleteStrategy(s.name)"
+                                        :disabled="isOperating(s.name)"
+                                    >
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -58,29 +111,92 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, inject, watch } from 'vue'
 import axios from 'axios'
-import * as echarts from 'echarts'
-import PriceTrendChart from './report/charts/PriceTrendChart.vue'
+import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
 
 const activeTab = ref('realtime')
 const selectedStrategy = ref('')
-const strategyList = ref([])
+
+// 复用 App.vue 共享的策略状态（10s 轮询）
+const serverStrategies = inject('serverStrategies', ref([]))
+const fetchServerStrategies = inject('fetchServerStrategies', () => {})
+
+const strategyList = serverStrategies
 
 // ReviewPanel 引用
 const reviewPanelRef = ref(null)
 
-onMounted(async () => {
+// 操作中的策略名（防止重复点击）
+const operatingStrategies = ref(new Set())
+
+/** 策略是否正在执行操作中 */
+const isOperating = (name) => operatingStrategies.value.has(name)
+
+/** 格式化心跳时间：距离 lastHeartbeat 的时间差 */
+const formatHeartbeat = (lastHeartbeat) => {
+    // lastHeartbeat 是 Unix 时间戳（秒），服务端返回 0 表示无心跳
+    if (!lastHeartbeat) return '--'
+    const elapsed = Math.floor(Date.now() / 1000) - lastHeartbeat
+    if (elapsed < 0) return '刚刚'
+    if (elapsed < 60) return `${elapsed}s前`
+    if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m前`
+    return `${Math.floor(elapsed / 3600)}h${Math.floor((elapsed % 3600) / 60)}m前`
+}
+
+/** 停止策略 */
+const stopStrategy = async (name) => {
+    operatingStrategies.value.add(name)
     try {
-        const res = await axios.get('/v0/strategy')
-        const data = Array.isArray(res.data) ? res.data : (res.data.strategies || [])
-        strategyList.value = data
+        await axios.post('/v0/strategy', { mode: 2, name })
+        message.success(`策略 "${name}" 已停止`)
+        await fetchServerStrategies()
     } catch (e) {
-        console.warn('获取策略列表失败', e)
-        strategyList.value = []
+        message.error('停止失败: ' + (e.response?.data?.message || e.message))
+    } finally {
+        operatingStrategies.value.delete(name)
     }
-})
+}
+
+/** 启动策略 */
+const startStrategy = async (name) => {
+    operatingStrategies.value.add(name)
+    try {
+        await axios.post('/v0/strategy', { mode: 1, name })
+        message.success(`策略 "${name}" 已启动`)
+        await fetchServerStrategies()
+    } catch (e) {
+        message.error('启动失败: ' + (e.response?.data?.message || e.message))
+    } finally {
+        operatingStrategies.value.delete(name)
+    }
+}
+
+/** 删除策略 */
+const deleteStrategy = async (name) => {
+    const s = strategyList.value.find(x => x.name === name)
+    let confirmMsg = `确定要删除策略 "${name}" 吗？此操作不可恢复。`
+    if (s && s.running) {
+        confirmMsg = `策略 "${name}" 正在运行中，删除前会先停止它。确定继续吗？`
+    }
+    if (!confirm(confirmMsg)) return
+
+    operatingStrategies.value.add(name)
+    try {
+        await axios.delete('/v0/strategy', { data: { name } })
+        message.success(`策略 "${name}" 已删除`)
+        // 如果当前选中的策略被删除，清空选择
+        if (selectedStrategy.value === name) {
+            selectedStrategy.value = ''
+        }
+        await fetchServerStrategies()
+    } catch (e) {
+        message.error('删除失败: ' + (e.response?.data?.message || e.message))
+    } finally {
+        operatingStrategies.value.delete(name)
+    }
+}
 
 // 监听策略选择和 Tab 切换，自动加载复盘数据
 watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
@@ -179,5 +295,145 @@ watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
 
 .empty-state span {
     font-size: 13px;
+}
+
+/* 策略表格样式 */
+.strategy-table {
+    flex: 1;
+    overflow: auto;
+}
+
+.strategy-table table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #e2e8f0;
+}
+
+.strategy-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.strategy-table th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: #94a3b8;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(15, 23, 42, 0.9);
+    border-bottom: 1px solid rgba(74, 158, 255, 0.2);
+}
+
+.strategy-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(74, 158, 255, 0.08);
+    font-size: 14px;
+    vertical-align: middle;
+}
+
+.strategy-table tbody tr {
+    background: rgba(15, 23, 42, 0.5);
+    transition: background 0.15s;
+}
+
+.strategy-table tbody tr:hover {
+    background: rgba(30, 41, 59, 0.8);
+}
+
+/* 状态圆点 */
+.status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #475569;
+}
+
+.status-dot.running {
+    background: #4ade80;
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.4);
+}
+
+/* 策略名称 */
+.strategy-name {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Epoch 计数 */
+.epoch-count {
+    color: #94a3b8;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 13px;
+}
+
+/* 心跳时间 */
+.heartbeat {
+    color: #94a3b8;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 13px;
+}
+
+.heartbeat.unknown {
+    color: #475569;
+}
+
+/* 操作按钮 */
+.action-buttons {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.btn {
+    padding: 4px 10px;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+    color: #e2e8f0;
+}
+
+.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-stop {
+    background: rgba(251, 146, 60, 0.2);
+    border: 1px solid rgba(251, 146, 60, 0.4);
+}
+
+.btn-stop:hover:not(:disabled) {
+    background: rgba(251, 146, 60, 0.35);
+}
+
+.btn-start {
+    background: rgba(74, 222, 128, 0.2);
+    border: 1px solid rgba(74, 222, 128, 0.4);
+}
+
+.btn-start:hover:not(:disabled) {
+    background: rgba(74, 222, 128, 0.35);
+}
+
+.btn-delete {
+    background: rgba(248, 113, 113, 0.15);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    padding: 4px 8px;
+    color: #f87171;
+}
+
+.btn-delete:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.3);
 }
 </style>

@@ -270,13 +270,13 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                 node->Prepare(strategy, context);
             }
 
-            uint64_t epoch = 0;
             bool success = true;
             auto startTick = std::chrono::high_resolution_clock::now();
 
             // 使用 exchangeMgr 协调多 Exchange stepForward
             while (flow._running || !Server::IsExit()) {
-                context.SetEpoch(++epoch);
+                flow._lastHeartbeat = context.Current();
+                context.SetEpoch(++flow._epochCount);
 
                 // 推进 Exchange 的回测时间
                 if (!exchangeMgr->StepAllHistoryExchanges(runId)) {
