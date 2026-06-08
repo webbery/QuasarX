@@ -11,7 +11,7 @@ namespace{
     public:
         BasicSignalObserver(Server* server):_server(server) {}
         ~BasicSignalObserver() {
-            delete _strategy;
+            // _strategy 的生命周期由 ExecuteNode 管理，observer 不负责删除
         }
 
         virtual void OnSignalConsume(const String& strategy, TradeSignal* signal, const DataContext &context) {

@@ -58,10 +58,14 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
 }
 
 void FlowSubsystem::ClearFlow(const String& strategy) {
-    for (auto node: _flows[strategy]._graph) {
-        delete node;
+    auto it = _flows.find(strategy);
+    if (it != _flows.end()) {
+        for (auto node: it->second._graph) {
+            delete node;
+        }
+        it->second._graph.clear();
+        _flows.erase(it);
     }
-    _flows[strategy]._graph.clear();
 }
 
 void FlowSubsystem::SetShadowMode(const String& strategy) {
@@ -81,8 +85,8 @@ void FlowSubsystem::Start() {
 
 void FlowSubsystem::Stop(const String& strategy) {
     auto& flow = _flows.at(strategy);
+    flow._running = false;
     if (flow._worker) {
-        flow._running = false;
         if (flow._worker->joinable()) flow._worker->join();
         delete flow._worker;
     }
@@ -151,7 +155,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
             auto startTick = std::chrono::high_resolution_clock::now();
 
             // 使用 stepForward 推进回测时间
-            while (flow._running || !Server::IsExit()) {
+            while (flow._running && !Server::IsExit()) {
                 context.SetEpoch(++epoch);
 
                 // 推进回测时间
@@ -574,7 +578,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
             Map<symbol_t, QuoteInfo> snapshot;
             uint64_t epoch = 0;
 
-            while (flow._running || !Server::IsExit()) {
+            while (flow._running && !Server::IsExit()) {
                 // 阻塞读取 tick（Subscribe 默认 5s 超时）
                 QuoteInfo tick;
                 if (!ReadQuote(recvSock, tick)) continue;
@@ -664,6 +668,8 @@ bool FlowSubsystem::IsRunning(const String& strategy) const {
         return false;
     }
     const auto& flow = itr->second;
+    if (!flow._worker)
+        return false;
     if (!flow._running.load()) {
         if (flow._worker && flow._worker->joinable()) {
             flow._worker->join();

@@ -68,7 +68,6 @@ public:
     
     void SetupSimulation(const String& name);
 
-    FeatureSubsystem* GetFeatureSystem() { return _featureSystem; }
     FlowSubsystem* GetFlowSubsystem() { return _agentSystem; }
 
     Map<StatisticIndicator, std::variant<float, List<float>>> GetIndicators(const String& strategy);
@@ -82,7 +81,6 @@ private:
     // AgentStrategyInfo ParseJsonScript(const String& content);
 
 private:
-    FeatureSubsystem* _featureSystem;
     FlowSubsystem* _agentSystem;
 
     Set<String> _strategies;

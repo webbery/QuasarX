@@ -48,25 +48,6 @@ class TestStrategy:
             pass
 
     @pytest.mark.timeout(10)
-    def test_strategy(self, auth_token, is_backtest):
-        """测试获取策略列表，验证新返回格式 [{name, running}, ...]"""
-        kwargs = self._auth_kwargs(auth_token)
-        response = requests.get(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(response)
-
-        assert isinstance(data, list)
-        if len(data) > 0:
-            # 验证返回格式：每项必须有 name 和 running 字段
-            item = data[0]
-            assert 'name' in item, "策略列表项缺少 'name' 字段"
-            assert 'running' in item, "策略列表项缺少 'running' 字段"
-            assert isinstance(item['running'], bool), "'running' 字段应为布尔值"
-
-            # 回测模式下 running 应始终为 true
-            if is_backtest:
-                assert item['running'] is True, "回测模式下 running 应为 True"
-
-    @pytest.mark.timeout(10)
     def test_upload_model(self, auth_token):
         kwargs = self._auth_kwargs(auth_token)
 
@@ -83,68 +64,12 @@ class TestStrategy:
             )
         check_response(response)
 
-    @pytest.mark.timeout(30)
-    def test_deploy(self, auth_token, is_backtest):
-        """部署并运行策略，验证返回格式 + 策略列表状态"""
-        if is_backtest:
-            pytest.skip("回测模式下不支持策略部署操作")
-
-        kwargs = self._auth_kwargs(auth_token)
-
-        script_path = './script/ma_graph_strategy.json'
-        if not os.path.exists(script_path):
-            pytest.skip(f"策略脚本不存在: {script_path}")
-
-        script = self.load_script(script_path)
-        kwargs['json'] = {
-            'mode': 0,
-            'name': self.STRATEGY_NAME,
-            'script': script
-        }
-        response = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(response)
-
-        assert data['message'] == 'success', f"部署失败: {data}"
-        assert data['name'] == self.STRATEGY_NAME
-        assert data['running'] is True, "部署后策略应处于运行状态"
-
-        # 验证策略列表中可查找到
-        strategies = self.get_all_strategies(auth_token)
-        found = self.find_strategy(strategies, self.STRATEGY_NAME)
-        assert found is not None, "部署的策略应在策略列表中"
-        assert found['running'] is True
-
-    @pytest.mark.timeout(30)
-    def test_delete_strategy(self, auth_token, is_backtest):
-        """删除策略，验证从列表中消失"""
-        if is_backtest:
-            pytest.skip("回测模式下不支持策略删除操作")
-
-        # 先部署一个用于删除的策略
-        cleanup_name = 'test_delete_target'
-        self.cleanup_strategy(auth_token, cleanup_name)
-
-        script_path = './script/ma_graph_strategy.json'
-        script = self.load_script(script_path)
-        kwargs = self._auth_kwargs(auth_token)
-        kwargs['json'] = {'mode': 0, 'name': cleanup_name, 'script': script}
-        response = requests.post(f"{BASE_URL}/strategy", **kwargs)
-        check_response(response)
-
-        # 删除策略
-        kwargs['json'] = {'name': cleanup_name}
-        response = requests.delete(f"{BASE_URL}/strategy", **kwargs)
-        data = check_response(response)
-        assert data['message'] == 'success'
-
-        # 验证策略列表中不再存在
-        strategies = self.get_all_strategies(auth_token)
-        found = self.find_strategy(strategies, cleanup_name)
-        assert found is None, "删除的策略不应在策略列表中"
-
     @pytest.mark.timeout(60)
     def test_strategy_lifecycle(self, auth_token, is_backtest):
-        """完整生命周期测试：部署 → 停止 → 再运行 → 再停止 → 删除"""
+        """完整生命周期测试：部署 → 停止 → 再运行 → 再停止 → 删除
+        
+        每个阶段后调用 GET /strategy 验证列表状态和返回格式。
+        """
         if is_backtest:
             pytest.skip("回测模式下不支持策略生命周期操作（stop/run）")
 
@@ -155,38 +80,77 @@ class TestStrategy:
         script = self.load_script(script_path)
         kwargs = self._auth_kwargs(auth_token)
 
+        def verify_strategy_list_format(strategies):
+            """验证策略列表格式：每项必须有 name 和 running 字段"""
+            assert isinstance(strategies, list)
+            for item in strategies:
+                assert 'name' in item, "策略列表项缺少 'name' 字段"
+                assert 'running' in item, "策略列表项缺少 'running' 字段"
+                assert isinstance(item['running'], bool), "'running' 字段应为布尔值"
+
         # 1. 部署
         kwargs['json'] = {'mode': 0, 'name': lifecycle_name, 'script': script}
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
         data = check_response(resp)
-        assert data['running'] is True
+        assert data['running'] is True, "部署后策略应处于运行状态"
+
+        # 验证部署后策略列表
+        strategies = self.get_all_strategies(auth_token)
+        verify_strategy_list_format(strategies)
+        found = self.find_strategy(strategies, lifecycle_name)
+        assert found is not None, "部署的策略应在策略列表中"
+        assert found['running'] is True, "部署后 running 应为 True"
 
         # 2. 停止
         kwargs['json'] = {'mode': 2, 'name': lifecycle_name}
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
         data = check_response(resp)
-        assert data['running'] is False
+        assert data['running'] is False, "停止后策略应处于停止状态"
+
+        # 验证停止后策略列表
+        strategies = self.get_all_strategies(auth_token)
+        verify_strategy_list_format(strategies)
+        found = self.find_strategy(strategies, lifecycle_name)
+        assert found is not None, "停止后策略仍应在列表中"
+        assert found['running'] is False, "停止后 running 应为 False"
 
         # 3. 再运行
         kwargs['json'] = {'mode': 1, 'name': lifecycle_name}
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
         data = check_response(resp)
-        assert data['running'] is True
+        assert data['running'] is True, "再运行后策略应处于运行状态"
+
+        # 验证再运行后策略列表
+        strategies = self.get_all_strategies(auth_token)
+        verify_strategy_list_format(strategies)
+        found = self.find_strategy(strategies, lifecycle_name)
+        assert found is not None, "再运行后策略仍应在列表中"
+        assert found['running'] is True, "再运行后 running 应为 True"
 
         # 4. 再停止
         kwargs['json'] = {'mode': 2, 'name': lifecycle_name}
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
         data = check_response(resp)
-        assert data['running'] is False
+        assert data['running'] is False, "再停止后策略应处于停止状态"
+
+        # 验证再停止后策略列表
+        strategies = self.get_all_strategies(auth_token)
+        verify_strategy_list_format(strategies)
+        found = self.find_strategy(strategies, lifecycle_name)
+        assert found is not None, "再停止后策略仍应在列表中"
+        assert found['running'] is False, "再停止后 running 应为 False"
 
         # 5. 删除
         kwargs['json'] = {'name': lifecycle_name}
         resp = requests.delete(f"{BASE_URL}/strategy", **kwargs)
         data = check_response(resp)
-        assert data['message'] == 'success'
+        assert data['message'] == 'success', "删除应成功"
 
+        # 验证删除后策略列表
         strategies = self.get_all_strategies(auth_token)
-        assert self.find_strategy(strategies, lifecycle_name) is None
+        verify_strategy_list_format(strategies)
+        found = self.find_strategy(strategies, lifecycle_name)
+        assert found is None, "删除的策略不应在策略列表中"
 
     @pytest.mark.timeout(30)
     def test_redeploy_overwrite(self, auth_token, is_backtest):

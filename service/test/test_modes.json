@@ -21,6 +21,7 @@
       "config": "tickflow.json",
       "description": "通过 TickFlow API 获取实时行情",
       "tests": [
+        "test_strategy",
         "test_sectorquote",
         "test_tick_record",
         "test_data",

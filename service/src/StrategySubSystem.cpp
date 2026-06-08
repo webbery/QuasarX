@@ -67,8 +67,7 @@ namespace {
 }
 
 StrategySubSystem::StrategySubSystem(Server* server)
-:_featureSystem(nullptr), _agentSystem(nullptr), _handle(server) {
-    _featureSystem = new FeatureSubsystem(server);
+:_agentSystem(nullptr), _handle(server) {
     _agentSystem = new FlowSubsystem(server);
 }
 
@@ -82,8 +81,6 @@ void StrategySubSystem::Init() {
     if (!std::filesystem::exists(SCRIPTS_DIR)) {
         std::filesystem::create_directories(SCRIPTS_DIR);
     }
-    _featureSystem->InitSecondLvlFeatures();
-    _featureSystem->Start();
     if (_handle->GetRunningMode() != RuningType::Backtest) {
         // 非回测模式加载当前路径下的策略
         for (const auto& entry : std::filesystem::directory_iterator(SCRIPTS_DIR)) {
@@ -216,7 +213,6 @@ void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& histor
 }
 
 void StrategySubSystem::DeleteStrategy(const String& name) {
-    _featureSystem->ErasePipeline(name);
     _strategies.erase(name);
     _strategyWarmupEpochs.erase(name);
 }
