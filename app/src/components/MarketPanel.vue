@@ -100,11 +100,13 @@ const shibor1Y = computed(() => shiborStore.getTerm('1年'))
 onMounted(() => {
   // quoteStore.subscribe('SH000001')  // 已关闭 TickFlow 请求
   shiborStore.subscribe('MarketPanel')
+  // startPolling()  // 已关闭外部数据源轮询（USD/CNY、黄金等）
 })
 
 onBeforeUnmount(() => {
   // quoteStore.unsubscribe('SH000001')  // 已关闭 TickFlow 请求
   shiborStore.unsubscribe('MarketPanel')
+  // stopPolling()  // 已关闭外部数据源轮询
 })
 
 const indexDisplay = computed(() => {

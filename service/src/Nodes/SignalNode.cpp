@@ -116,9 +116,7 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     }
     if (!_allowShort) {
         for (auto it = sells.begin(); it != sells.end(); ++it) {
-            // if (it->second == TradeAction::SELL) INFO("{} SELL signal", it->first);
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                // INFO("{} SELL signal filtered (no position held, shorting disabled)", it->first);
                 it->second = TradeAction::HOLD;
             }
         }
@@ -129,12 +127,12 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             item.second = TradeAction::HOLD;
         }
     }
-    for (auto it = buys.begin(); it != buys.end(); ++it) {
-        if (it->second == TradeAction::BUY) INFO("{} BUY signal {}", it->first, heldSymbols[it->first]);
-    }
-    for (auto it = sells.begin(); it != sells.end(); ++it) {
-        if (it->second == TradeAction::SELL) INFO("{} SELL signal {}", it->first, heldSymbols[it->first]);
-    }
+    // for (auto it = buys.begin(); it != buys.end(); ++it) {
+    //     if (it->second == TradeAction::BUY) INFO("{} BUY signal {}", it->first, heldSymbols[it->first]);
+    // }
+    // for (auto it = sells.begin(); it != sells.end(); ++it) {
+    //     if (it->second == TradeAction::SELL) INFO("{} SELL signal {}", it->first, heldSymbols[it->first]);
+    // }
     Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
         for (auto& item: trade) {

@@ -90,6 +90,7 @@ enum class StatisticIndicator: char {
   CovObservations,       // 有效观测数
   CovNAzets,            // 资产数
   CovNearCollinear,      // |ρ| > 0.95 配对数
+  DragCostToReturn,      // 拖累成本/收益比 = 总摩擦成本 / 总收益绝对值
 };
 
 class ICommission {

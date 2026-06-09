@@ -79,6 +79,27 @@ bool HistorySimulationBase::GetSymbolExchanges(List<Pair<String, ExchangeName>>&
 }
 
 order_id HistorySimulationBase::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order) {
+    BacktestContext* ctx = nullptr;
+    _backtestContexts.visit(run_id, [&ctx](auto& item) {
+        ctx = item.second.get();
+    });
+
+    if (ctx) {
+        OrderInfo info;
+        info._id = ++_cur_id;
+        info._order = order;
+        auto* queue = ctx->getOrCreateOrderQueue(symbol);
+        queue->push(info);
+
+        order_id id;
+        id._id = info._id;
+        if (is_stock(symbol)) {
+            id._type = 0;
+        }
+        return id;
+    }
+
+    // 回退：找不到 context，只返回 id
     OrderInfo info;
     info._id = ++_cur_id;
     info._order = order;
@@ -315,12 +336,15 @@ void HistorySimulationBase::matchOrders(BacktestContext* context, symbol_t symbo
         double stampTax = calcStampTax(report, comm);
         double totalCost = commission + stampTax;
 
+        double slipDiff = (order._flag == 1) ? 0.0 : (report._trade_amount - (order._volume * order._price));
         if (order._flag == 1) {
             context->releaseFunds(report._trade_amount - totalCost);
         } else {
-            double slipDiff = report._trade_amount - (order._volume * order._price);
             context->releaseFunds(-(slipDiff + totalCost));
         }
+
+        // 累加摩擦成本（佣金 + 印花税 + 滑点绝对值）
+        context->addFrictionCost(totalCost + std::abs(slipDiff));
 
         context->addOrderReport(orderInfo._id, orderInfo._order);
 
@@ -690,43 +714,6 @@ QuoteInfo HistorySimulationBase::GetQuote(symbol_t symbol, run_id_t run_id) {
     empty._symbol = symbol;
     empty._time = 0;
     return empty;
-}
-
-order_id HistorySimulationBase::AddOrder(const symbol_t& symbol, OrderContext* order, uint32_t strategy_hash) {
-    BacktestContext* ctx = nullptr;
-    // 使用 order 中的 _backtest_run_id 而不是 strategy_hash
-    // BacktestContext 是以 runId 为 key 存储的
-    run_id_t runId = order->_backtest_run_id;
-    if (runId > 0) {
-        _backtestContexts.visit(runId, [&ctx](auto& item) {
-            ctx = item.second.get();
-        });
-    }
-
-    if (ctx) {
-        OrderInfo info;
-        info._id = ++_cur_id;
-        info._order = order;
-        auto* queue = ctx->getOrCreateOrderQueue(symbol);
-        queue->push(info);
-
-        order_id id;
-        id._id = info._id;
-        if (is_stock(symbol)) {
-            id._type = 0;
-        }
-        return id;
-    }
-
-    // 回退到全局 _reports
-    OrderInfo info;
-    info._id = ++_cur_id;
-    info._order = order;
-    _reports.emplace(info._id, order);
-
-    order_id id;
-    id._id = info._id;
-    return id;
 }
 
 double HistorySimulationBase::GetPrimitivePrice(symbol_t symbol, uint32_t index) const {

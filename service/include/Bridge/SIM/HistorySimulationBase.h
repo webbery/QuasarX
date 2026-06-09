@@ -72,7 +72,6 @@ public:
 
     bool stepForward(BacktestContext* context);
     QuoteInfo GetQuote(symbol_t symbol, run_id_t run_id);
-    order_id AddOrder(const symbol_t& symbol, OrderContext* order, uint32_t strategy_hash);
 
     double GetPrimitivePrice(symbol_t symbol, uint32_t index) const;
     double GetAdjPrice(symbol_t symbol, uint32_t index) const;

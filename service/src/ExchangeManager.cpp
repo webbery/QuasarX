@@ -790,8 +790,15 @@ void ExchangeManager::ConfigureSlippageModels(const Set<String>& sources, const 
 
 order_id ExchangeManager::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order)
 {
-    // TODO: 当前只支持一个策略
-    for (auto exc : _exchanges) {
-        return exc.second->AddOrder(run_id, symbol, order);
+    // 根据 symbol 类型路由到对应的 Exchange
+    auto* targetExch = ResolveExchange(symbol);
+    if (targetExch) {
+        return targetExch->AddOrder(run_id, symbol, order);
     }
+
+    // 回退：遍历所有 Exchange
+    for (auto& [name, exc] : _exchanges) {
+        return exc->AddOrder(run_id, symbol, order);
+    }
+    return order_id();
 }

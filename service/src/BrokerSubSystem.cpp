@@ -331,6 +331,9 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   case StatisticIndicator::CovNearCollinear:
     return "cov_near_collinear_pairs";
 
+  case StatisticIndicator::DragCostToReturn:
+    return "drag_cost_to_return";
+
   default:
     return "unknown";
   }
@@ -643,26 +646,20 @@ void BrokerSubSystem::CleanStrategyRecord() {
 }
 
 order_id BrokerSubSystem::AddOrderAsync(run_id_t run_id, OrderContext* order) {
-
-    if (_simulation) {
-        // 多线程回测模式：使用策略名获取上下文
-        ExchangeInterface* exchange_iface = _exchanges[ExchangeType::EX_STOCK_HIST_SIM];
-        auto* exchange = dynamic_cast<HistorySimulationBase*>(exchange_iface);
-        if (exchange) {
-            return exchange->AddOrder(GET_SYMBOL(order), order, order->_strategy_hash);
+    // 邮件通知
+    if (!_simulation) {
+      String content;
+        if (order->_order._side == 0) {
+            content = std::format("Buy {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
+        }
+        else if (order->_order._side == 1) {
+            content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
+        }
+        if (!content.empty()) {
+            _server->SendEmail(content);
         }
     }
-    // 邮件通知
-    String content;
-    if (order->_order._side == 0) {
-        content = std::format("Buy {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
-    }
-    else if (order->_order._side == 1) {
-        content = std::format("Sell {} {}", get_symbol(GET_SYMBOL(order)), order->_order._price);
-    }
-    if (!content.empty()) {
-        _server->SendEmail(content);
-    }
+    
     auto exchangeManager = _server->GetExchangeManager();
     return exchangeManager->AddOrder(run_id, GET_SYMBOL(order), order);
     

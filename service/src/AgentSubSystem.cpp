@@ -310,7 +310,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                 }
             }
 
-            auto info = fmt::format("backtest finish, cost {}s, {}ms/per datum", duration.count(), (epoch == 0? 0:duration.count()*1000.0/epoch));
+            auto info = fmt::format("backtest finish, cost {}s, {:.2f}ms/per datum", duration.count(), (flow._epochCount == 0? 0:duration.count()*1000.0/flow._epochCount));
             strategy_log(strategy, info);
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
@@ -511,6 +511,16 @@ void FlowSubsystem::ComputeBacktestMetrics(
             }
         }
     }
+
+    // === 拖累成本指标 ===
+    double totalFrictionCost = btContext ? btContext->getTotalFrictionCost() : 0.0;
+    double dragCostToReturn = 0.0;
+    if (std::abs(total_return) > 1e-6) {
+        dragCostToReturn = totalFrictionCost / std::abs(total_return);
+    }
+    flow._collections[StatisticIndicator::DragCostToReturn] = static_cast<float>(dragCostToReturn);
+    INFO("[Backtest] Drag cost: friction={:.2f}, total_return={:.4f}, drag_cost_to_return={:.4f}",
+         totalFrictionCost, total_return, dragCostToReturn);
 }
 
 /**
@@ -685,6 +695,18 @@ List<String> FlowSubsystem::GetFlowNames() const {
         names.push_back(name);
     }
     return names;
+}
+
+uint64_t FlowSubsystem::GetEpochCount(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) return 0;
+    return it->second._epochCount;
+}
+
+time_t FlowSubsystem::GetLastHeartbeat(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) return 0;
+    return it->second._lastHeartbeat;
 }
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {

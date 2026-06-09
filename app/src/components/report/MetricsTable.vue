@@ -54,6 +54,7 @@ const metricGroupsDef: MetricGroupDef[] = [
     keys: [
       'total_return', 'annual_return', 'max_drawdown', 'volatility',
       'sharp', 'calmar_ratio', 'win_rate', 'num_trades', 'r_squared',
+      'drag_cost_to_return',
     ],
   },
   {
@@ -110,6 +111,7 @@ const metricNameMap: Record<string, string> = {
   avg_holding_days: '平均持仓天数',
   profit_loss_ratio: '盈亏比',
   r_squared: '样本外 R²',
+  drag_cost_to_return: '拖累成本/收益比',
   // Bootstrap 蒙特卡洛 - 正常场景
   boot_ruin_prob_50: '爆仓概率 (<50%)',
   boot_ruin_prob_30: '爆仓概率 (<30%)',
@@ -184,6 +186,11 @@ function formatMetricValue(key: string, value: number | null | undefined): strin
   // === 夏普比率：小数显示，保留两位小数 ===
   if (key === 'sharp' || key === 'calmar_ratio' || key === 'information_ratio') {
     return value.toFixed(2)
+  }
+
+  // === 拖累成本比（百分比） ===
+  if (key === 'drag_cost_to_return') {
+    return `${(value * 100).toFixed(2)}%`
   }
 
   // === 百分比显示的指标 ===
@@ -267,6 +274,9 @@ function getValueClass(key: string, value: number | null | undefined): string {
 
   // === 样本外 R² < 0 标红（拟合劣于均值，策略噪声大） ===
   if (lowerKey === 'r_squared' && value < 0) return 'value-negative'
+
+  // === 拖累成本比：>50% 标红（摩擦成本吃掉一半以上收益） ===
+  if (lowerKey === 'drag_cost_to_return' && value > 0.5) return 'value-negative'
 
   // === 协方差诊断 ===
   if (lowerKey === 'cov_condition_number' && value >= 1000) return 'value-negative'

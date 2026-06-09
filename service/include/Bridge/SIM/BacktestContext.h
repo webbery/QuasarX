@@ -145,6 +145,10 @@ public:
     const Vector<time_t>& getAssetSnapshotDates() const noexcept { return _assetSnapshotDates; }
     const Vector<Map<symbol_t, double>>& getAssetValues() const noexcept { return _assetValues; }
 
+    // === 摩擦成本累计 ===
+    void addFrictionCost(double cost) noexcept { _totalFrictionCost += cost; }
+    double getTotalFrictionCost() const noexcept { return _totalFrictionCost; }
+
 private:
     run_id_t _runId;                    // 回测运行 ID
     String _strategy_name;              // 策略名称
@@ -197,4 +201,7 @@ private:
     // 多资产每日快照（每个标的独立的持仓市值）
     Vector<time_t> _assetSnapshotDates;
     Vector<Map<symbol_t, double>> _assetValues;
+
+    // 摩擦成本累计（佣金 + 印花税 + 滑点）
+    double _totalFrictionCost = 0.0;
 };
