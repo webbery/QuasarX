@@ -418,13 +418,9 @@ QuasarX/
 
 详见 [QWEN.md](QWEN.md)
 
-## 第三方库
+## 未来目标
 
-位于 `service/third_party/`:
-
-- [DataFrame](https://github.com/hosseinmoein/DataFrame) - 无头数据分析库
-- [fmt](https://fmt.dev/) - 格式化库
-- [nng](https://nng.nanomsg.org/) - 消息通信库
+1. 使用DuckDB统一底层数据读写保存功能
 
 ## 注意事项
 

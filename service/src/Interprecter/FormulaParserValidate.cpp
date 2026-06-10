@@ -21,6 +21,10 @@ FormulaParser::ExprType FormulaParser::inferExpressionType(
         return ExprType::DOUBLE_SCALAR;
     }
 
+    if (ast.name == "BoolLiteral") {
+        return ExprType::BOOL;
+    }
+
     if (ast.name == "Identifier") {
         String varName(ast.token);
         auto it = availableVars.find(varName);

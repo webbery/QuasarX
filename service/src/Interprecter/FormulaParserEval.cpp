@@ -28,6 +28,12 @@ context_t FormulaParser::evalNumber(const symbol_t& symbol, const peg::Ast& ast,
     return ast.token_to_number<double>();
 }
 
+context_t FormulaParser::evalBoolLiteral(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+    // ast.token 是 "true"/"false"/"True"/"False"
+    String token(ast.token);
+    return (token == "true" || token == "True");
+}
+
 context_t FormulaParser::evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     String token(ast.token);
 

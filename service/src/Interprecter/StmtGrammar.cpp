@@ -38,7 +38,7 @@ String grammar = R"(
         ArithExpr       <- Term (AddOp Term)*
         Term            <- Primary (MulOp Primary)*
         Primary         <- Atom (Trailer)*
-        Atom            <- Number / String / FunctionCall / ListExpr / Identifier / '(' Expression ')'
+        Atom            <- Number / String / BoolLiteral / FunctionCall / ListExpr / Identifier / '(' Expression ')'
 
         # 时间序列访问
         Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeOffset ']'
@@ -51,8 +51,11 @@ String grammar = R"(
         # 数据结构
         ListExpr        <- '[' Expression (',' Expression)* ']'
 
+        # 布尔字面量（支持大小写）
+        BoolLiteral     <- < 'true' > / < 'false' > / < 'True' > / < 'False' >
+
         # 标识符和数字（排除关键字）
-        Identifier      <- !('not' / 'and' / 'or' / 'true' / 'false') < [a-zA-Z_][a-zA-Z_0-9]* >
+        Identifier      <- !('not' / 'and' / 'or' / 'true' / 'false' / 'True' / 'False') < [a-zA-Z_][a-zA-Z_0-9]* >
         Number          <- < '-'? [0-9]+ ('.' [0-9-9]+)? >
         String          <- < '"' [^"]* '"' > / < "'" [^']* "'" >
 
@@ -227,6 +230,7 @@ using EvalPtr = context_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , 
 
 Map<String, EvalPtr> evalMap{
     {"Number", &FormulaParser::evalNumber},
+    {"BoolLiteral", &FormulaParser::evalBoolLiteral},
     {"Identifier", &FormulaParser::evalIdentifier},
     {"CompareExpr", &FormulaParser::evalComparison},
     {"FunctionCall", &FormulaParser::evalFunctionCall},

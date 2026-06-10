@@ -4,6 +4,10 @@ import os
 import glob
 from pathlib import Path
 
+# 抑制 SSL 警告（本地测试不需要证书验证）
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_test_scripts():

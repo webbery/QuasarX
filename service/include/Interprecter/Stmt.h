@@ -124,6 +124,7 @@ public:
 
 public:
     context_t evalNumber(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
+    context_t evalBoolLiteral(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalComparison(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
