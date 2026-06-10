@@ -317,6 +317,7 @@ defineExpose({
   updateTradeSignals,
   updateMetrics,
   updateBenchmark,
+  updateMcPaths: dataState.updateMcPaths,
   loadBacktestResultFromVersion,
   resetTableZoom: () => {
     console.info('[ReportView] resetTableZoom 已调用')

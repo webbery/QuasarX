@@ -1,7 +1,6 @@
 #include "StrategySubSystem.h"
 #include "BrokerSubSystem.h"
 #include "ExchangeManager.h"
-#include "FeatureSubsystem.h"
 #include "AgentSubSystem.h"
 #include "Strategy.h"
 #include "json.hpp"

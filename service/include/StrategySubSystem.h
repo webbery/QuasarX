@@ -10,7 +10,6 @@
 constexpr int MIN_STRATEGY_VERSION = 1;
 
 class StrategyPlugin;
-class FeatureSubsystem;
 class FlowSubsystem;
 class Server;
 class QNode;

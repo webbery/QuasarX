@@ -220,6 +220,14 @@
             "type": "default"
         },
         {
+            "id": "7->8",
+            "source": "7",
+            "target": "8",
+            "sourceHandle": "7",
+            "targetHandle": "8",
+            "type": "default"
+        },
+        {
             "id": "6->8",
             "source": "6",
             "target": "8",

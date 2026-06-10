@@ -780,6 +780,16 @@ double HistorySimulationBase::Progress(const String& strategy) {
     return 0.0;
 }
 
+bool HistorySimulationBase::HasBacktestContext(const String& strategy) const {
+    bool found = false;
+    _backtestContexts.visit_all([&found, &strategy](const auto& item) {
+        if (item.second->getStrategyName() == strategy) {
+            found = true;
+        }
+    });
+    return found;
+}
+
 // ============ 合约信息查询 ============
 
 bool HistorySimulationBase::GetAllStockSymbols(List<SymbolInfo>& symbols) {

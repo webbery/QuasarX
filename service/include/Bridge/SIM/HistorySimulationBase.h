@@ -86,6 +86,7 @@ public:
     virtual void RefreshSymbolList() override;
 
     double Progress(const String& strategy);
+    bool HasBacktestContext(const String& strategy) const;
 
     // === 回测时间范围配置 ===
     void SetBacktestTimeRange(time_t start, time_t end);

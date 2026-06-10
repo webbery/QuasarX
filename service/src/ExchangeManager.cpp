@@ -678,13 +678,10 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
             auto* etfExch = dynamic_cast<HistorySimulationBase*>(itr->second);
             if (etfExch) {
                 // ETF Exchange 独立创建上下文（使用自己的 runId 计数器）
-                etfExch->createBacktestContext(strategy, etfSymbols, initialCapital);
+                run_id_t etfRunId = etfExch->createBacktestContext(strategy, etfSymbols, initialCapital);
                 if (mainRunId == 0) {
                     // 如果没有股票标的，以 ETF 的 runId 为主 runId
-                    auto* ctx = etfExch->getBacktestContext(1);  // 第一个创建的
-                    if (ctx) {
-                        mainRunId = ctx->getRunId();
-                    }
+                    mainRunId = etfRunId;
                 }
             }
         }
@@ -732,19 +729,26 @@ void ExchangeManager::ConfigureETFExchange() {
 }
 
 double ExchangeManager::GetProgress(const String& strategy) const {
-    // 优先返回 StockExchange 的进度
-    auto itr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
-    if (itr != _typeExchanges.end()) {
-        auto* base = dynamic_cast<HistorySimulationBase*>(itr->second);
-        if (base) return base->Progress(strategy);
+    // 聚合所有 HistorySimulation Exchange 的进度
+    // 多标的场景（股票+ETF）下，取最慢的进度作为整体进度
+    double minProgress = 1.0;
+    bool foundAny = false;
+
+    for (const auto& [name, exch] : _exchanges) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(exch);
+        if (base) {
+            // 检查该 Exchange 是否有该策略的上下文
+            if (base->HasBacktestContext(strategy)) {
+                double p = base->Progress(strategy);
+                foundAny = true;
+                if (p < minProgress) {
+                    minProgress = p;
+                }
+            }
+        }
     }
-    // 其次返回 ETFExchange 的进度
-    itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
-    if (itr != _typeExchanges.end()) {
-        auto* base = dynamic_cast<HistorySimulationBase*>(itr->second);
-        if (base) return base->Progress(strategy);
-    }
-    return 0.0;
+
+    return foundAny ? minProgress : 0.0;
 }
 
 void ExchangeManager::SetBacktestTimeRange(time_t start, time_t end) {

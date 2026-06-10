@@ -209,10 +209,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 确保最终进度推送
     if (lastProgress < 1.0) {
-        SendSSEProgress(sse_sock, strategyName, runId, 0.6, "回测执行完成");
+        SendSSEProgress(sse_sock, strategyName, runId, 0.7, "回测执行完成");
     }
     exchangeMgr->StopRequiredExchanges(requiredSources);
-    SendSSEProgress(sse_sock, strategyName, runId, 0.7, "PersistTrades");
+    SendSSEProgress(sse_sock, strategyName, runId, 0.8, "PersistTrades");
 
     // 6. 收集结果
     nlohmann::json results;
@@ -312,7 +312,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         {"win_rate", win_rate_val},
         {"calmar_ratio", calmar_val}
     };
-    SendSSEProgress(sse_sock, strategyName, runId, 0.8, "add summary");
+    SendSSEProgress(sse_sock, strategyName, runId, 0.9, "add summary");
 
     // === 10. 收集每日收益率数据（从 FlowSubsystem 获取，此时 context 已被销毁）===
     {
@@ -405,10 +405,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             INFO("[Backtest] MonteCarlo paths collected: {} paths", totalPaths);
         }
     }
+    SendSSEProgress(sse_sock, strategyName, runId, 1.0, "回测全部完成");
 
     strategySys->ReleaseStrategy(strategyName);
 
-    SendSSEProgress(sse_sock, strategyName, runId, 1.0, "回测全部完成");
 
     INFO("[Backtest] Completed: {}, {}", features.dump(), results["summary"].dump());
     res.status = 200;
