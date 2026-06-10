@@ -40,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, h, type Component } from 'vue'
+import { ref, computed, onMounted, nextTick, h, type Component, inject } from 'vue'
 import { useReportState } from './composables/useReportState'
 import { useChartData } from './composables/useChartData'
 import MetricsTable from './MetricsTable.vue'
@@ -57,6 +57,9 @@ import { CHART_REGISTRY } from './config/chartRegistry'
 const reportState = useReportState()
 const dataState = useChartData(reportState)
 
+// === 从 App.vue 注入统一的 chartVisibility 状态 ===
+const appChartVisibility = inject<Ref<Record<string, boolean>>>('reportChartVisibility')
+
 // === 解构状态 ===
 const {
   selectedSymbol,
@@ -66,10 +69,12 @@ const {
   strategyDailyReturns,
   benchmarkData,
   benchmarkName,
-  showMetricsTable,
   layout,
   saveLayout,
 } = reportState
+
+// 优先使用 App.vue 提供的 chartVisibility（确保配置面板和图表视图使用同一状态）
+const chartVisibility = appChartVisibility ?? reportState.chartVisibility
 
 const {
   strategyReturnsEstimated,
@@ -116,19 +121,9 @@ const orderedItems = computed<OrderedItem[]>(() => {
 
   // 按 layout 顺序遍历
   for (const item of layout.value) {
-    // metricsTable 特殊处理
-    if (item.id === 'metricsTable') {
-      if (showMetricsTable.value) {
-        const currentMetrics = metricsData.value
-        items.push({
-          id: 'metricsTable',
-          span: 'full',
-          component: MetricsTable,
-          props: { metrics: currentMetrics },
-        })
-      }
-      continue
-    }
+    // 统一检查 chartVisibility（所有图表使用同一套可见性控制）
+    const isVisible = chartVisibility.value[item.id]
+    if (!isVisible) continue
 
     const def = CHART_REGISTRY.find(c => c.id === item.id)
     if (!def) continue
@@ -138,7 +133,9 @@ const orderedItems = computed<OrderedItem[]>(() => {
 
     // 根据 id 构建 props
     let props: Record<string, any> = {}
-    if (item.id === 'priceTrend') {
+    if (item.id === 'metricsTable') {
+      props = { metrics: metricsData.value }
+    } else if (item.id === 'priceTrend') {
       props = {
         prices: dataState.symbolPrices.value,
         'buy-signals': dataState.buySignals.value,

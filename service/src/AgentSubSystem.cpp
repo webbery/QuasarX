@@ -506,21 +506,18 @@ void FlowSubsystem::ComputeBacktestMetrics(
                 flow._collections[StatisticIndicator::CovObservations] = static_cast<float>(cov.n_observations);
                 flow._collections[StatisticIndicator::CovNAzets] = static_cast<float>(cov.n_assets);
                 flow._collections[StatisticIndicator::CovNearCollinear] = static_cast<float>(cov.nearCollinearPairs);
-                INFO("[Backtest] Covariance: assets={}, obs={}, κ={:.1f}, grade={}, positive_definite={}",
-                     cov.n_assets, cov.n_observations, quality.conditionNumber, quality.gradeString(), quality.isPositiveDefinite);
             }
         }
     }
 
     // === 拖累成本指标 ===
     double totalFrictionCost = btContext ? btContext->getTotalFrictionCost() : 0.0;
+    double totalFrictionCostRatio = totalFrictionCost / initial_capital;
     double dragCostToReturn = 0.0;
     if (std::abs(total_return) > 1e-6) {
-        dragCostToReturn = totalFrictionCost / std::abs(total_return);
+        dragCostToReturn = totalFrictionCostRatio / std::abs(total_return);
     }
     flow._collections[StatisticIndicator::DragCostToReturn] = static_cast<float>(dragCostToReturn);
-    INFO("[Backtest] Drag cost: friction={:.2f}, total_return={:.4f}, drag_cost_to_return={:.4f}",
-         totalFrictionCost, total_return, dragCostToReturn);
 }
 
 /**

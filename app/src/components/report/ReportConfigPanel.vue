@@ -44,44 +44,26 @@
           </label>
         </div>
       </div>
-
-      <!-- 其他配置 -->
-      <div class="other-config">
-        <h4>其他设置</h4>
-        <label class="config-option">
-          <input
-            type="checkbox"
-            v-model="localShowMetricsTable"
-            @change="updateMetricsTableSetting"
-          />
-          <span>显示指标表格</span>
-        </label>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { computed } from 'vue'
 import { CHART_REGISTRY, type ChartDefinition } from './config/chartRegistry'
 
 interface Props {
   /** 图表可见性配置 */
   chartVisibility: Record<string, boolean>
-  /** 是否显示指标表格 */
-  showMetricsTable: boolean
 }
 
 interface Emits {
   (e: 'update:chartVisibility', value: Record<string, boolean>): void
-  (e: 'update:showMetricsTable', value: boolean): void
   (e: 'reset'): void
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
-
-const localShowMetricsTable = ref(props.showMetricsTable)
 
 // 排序后的图表列表
 const sortedCharts = computed(() => {
@@ -110,19 +92,10 @@ function setAllVisible(visible: boolean) {
 }
 
 function confirmReset() {
-  if (confirm('确定要重置为默认配置吗？这将重置图表可见性、指标显示和图表顺序。')) {
+  if (confirm('确定要重置为默认配置吗？这将重置图表可见性和顺序。')) {
     emit('reset')
   }
 }
-
-function updateMetricsTableSetting() {
-  emit('update:showMetricsTable', localShowMetricsTable.value)
-}
-
-// 监听 props 变化同步到本地
-watch(() => props.showMetricsTable, (val) => {
-  localShowMetricsTable.value = val
-})
 </script>
 
 <style scoped>
