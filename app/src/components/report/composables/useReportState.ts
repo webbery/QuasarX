@@ -140,13 +140,24 @@ export function useReportState(): UseReportStateReturn {
   const layout = ref<ChartLayoutItem[]>(migrateLayout(loadLayoutFromStorage()) ?? defaultLayout())
 
   /**
-   * 迁移布局：为旧布局自动添加新增的图表（如 metricsTable）
+   * 迁移布局：为旧布局自动添加新增的图表（如 monteCarloPaths、metricsTable）
    */
   function migrateLayout(oldLayout: ChartLayoutItem[] | null): ChartLayoutItem[] | null {
     if (!oldLayout) return null
 
     try {
-      return oldLayout
+      const existingIds = new Set(oldLayout.map(item => item.id))
+      const migrated = [...oldLayout]
+
+      // 检查是否有新注册的图表需要添加
+      for (const chart of CHART_REGISTRY) {
+        if (!existingIds.has(chart.id)) {
+          console.info(`[useReportState] 布局迁移：添加新图表 ${chart.id}`)
+          migrated.push({ id: chart.id, visible: chart.defaultVisible })
+        }
+      }
+
+      return migrated
     } catch (e) {
       console.warn('[useReportState] 布局迁移失败，使用默认布局', e)
       return null

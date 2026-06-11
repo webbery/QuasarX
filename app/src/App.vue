@@ -267,6 +267,7 @@ import sseService from "./ts/SSEService";
 import Store from 'electron-store';
 // 报表配置面板
 import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
+import { CHART_REGISTRY } from './components/report/config/chartRegistry';
 // 知识库
 import KnowledgeBaseView from './components/knowledge/KnowledgeBaseView.vue';
 // AI 聊天框

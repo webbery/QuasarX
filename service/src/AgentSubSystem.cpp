@@ -394,6 +394,8 @@ void FlowSubsystem::ComputeBacktestMetrics(
     mcConfig.trading_mode = trading_mode;
     mcConfig.bars_per_year = bars_per_year;
     mcConfig.n_simulations = 20000;
+    mcConfig.save_worst_paths_count = 10;   // 只保存 10 条最差路径
+    mcConfig.save_best_paths_count = 10;    // 只保存 10 条最好路径
 
     MonteCarloSimulator mc;
     mc.Init(mcConfig);

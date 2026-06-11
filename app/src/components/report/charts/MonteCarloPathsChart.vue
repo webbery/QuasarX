@@ -12,26 +12,6 @@
           <option value="best">🟢 最好路径 (有效场景)</option>
           <option value="benchmark">⚪ 基准路径 (P10/P50/P90)</option>
         </select>
-        <span v-if="pathCount > 0" class="path-count">{{ pathCount }} 条</span>
-      </div>
-    </div>
-
-    <!-- 路径选择面板（仅 worst/best 显示） -->
-    <div v-if="activeTab !== 'benchmark'" class="path-selector">
-      <label class="select-all-label">
-        <input type="checkbox" :checked="allSelected" @change="toggleAll" />
-        全选
-      </label>
-      <div class="path-chips">
-        <span
-          v-for="(p, i) in currentPaths"
-          :key="i"
-          class="path-chip"
-          :class="{ selected: selectedPaths.has(i) }"
-          @click="togglePath(i)"
-        >
-          #{{ i + 1 }} {{ (p.total_return * 100).toFixed(1) }}%
-        </span>
       </div>
     </div>
 
@@ -57,11 +37,7 @@ interface Props {
 const props = defineProps<Props>()
 
 const activeTab = ref<'worst' | 'best' | 'benchmark'>('worst')
-const selectedPaths = ref<Set<number>>(new Set())
 const { chartRef, initChart, updateChart } = useECharts(true)
-
-// 默认最多显示 10 条路径
-const MAX_VISIBLE_PATHS = 10
 
 const currentPaths = computed(() => {
   return activeTab.value === 'worst' ? props.worstPaths : props.bestPaths
@@ -69,11 +45,6 @@ const currentPaths = computed(() => {
 
 const pathCount = computed(() => {
   return currentPaths.value.length
-})
-
-const allSelected = computed(() => {
-  if (currentPaths.value.length === 0) return false
-  return selectedPaths.value.size === currentPaths.value.length
 })
 
 /**
@@ -136,24 +107,18 @@ function buildChartOption() {
       })
     }
   } else {
-    // worst/best 路径
+    // worst/best 路径 - 全部显示
     const color = activeTab.value === 'worst' ? '#f44336' : '#00c853'
-    const displayCount = Math.min(selectedPaths.value.size || MAX_VISIBLE_PATHS, currentPaths.value.length)
 
-    for (let i = 0; i < displayCount; i++) {
-      const pathIdx = selectedPaths.value.size > 0
-        ? Array.from(selectedPaths.value)[i]
-        : i
-      if (pathIdx >= currentPaths.value.length) continue
-
-      const path = currentPaths.value[pathIdx]
+    for (let i = 0; i < currentPaths.value.length; i++) {
+      const path = currentPaths.value[i]
       const curve = downsampleCurve(path.equity_curve, maxPoints)
       const data = curve.map(v => Number(((v - 1) * 100).toFixed(2)))
 
-      const alpha = displayCount > 1 ? Math.max(0.15, 0.6 - i * 0.04) : 0.8
+      const alpha = currentPaths.value.length > 1 ? Math.max(0.15, 0.6 - i * 0.04) : 0.8
 
       series.push({
-        name: `#${pathIdx + 1}`,
+        name: `#${i + 1}`,
         type: 'line',
         data,
         smooth: true,
@@ -275,29 +240,6 @@ function buildChartOption() {
 }
 
 function onTabChange() {
-  selectedPaths.value = new Set()
-  // 默认选中前 MAX_VISIBLE_PATHS 条
-  for (let i = 0; i < Math.min(MAX_VISIBLE_PATHS, currentPaths.value.length); i++) {
-    selectedPaths.value.add(i)
-  }
-  updateChart(buildChartOption(), true)
-}
-
-function togglePath(index: number) {
-  if (selectedPaths.value.has(index)) {
-    selectedPaths.value.delete(index)
-  } else {
-    selectedPaths.value.add(index)
-  }
-  updateChart(buildChartOption(), true)
-}
-
-function toggleAll() {
-  if (allSelected.value) {
-    selectedPaths.value = new Set()
-  } else {
-    selectedPaths.value = new Set(currentPaths.value.map((_, i) => i))
-  }
   updateChart(buildChartOption(), true)
 }
 
@@ -305,21 +247,24 @@ function toggleAll() {
 watch(
   [() => props.worstPaths, () => props.bestPaths, () => props.medianPath, () => props.p10Path, () => props.p90Path, () => props.barCount],
   () => {
-    // 重置选中状态
-    selectedPaths.value = new Set()
-    for (let i = 0; i < Math.min(MAX_VISIBLE_PATHS, currentPaths.value.length); i++) {
-      selectedPaths.value.add(i)
+    // 确保图表已初始化后再更新
+    if (chartRef.value) {
+      updateChart(buildChartOption(), true)
     }
-    updateChart(buildChartOption(), true)
   },
-  { deep: true }
+  { deep: true, immediate: true }
 )
 
 onMounted(() => {
-  // 初始化默认选中
-  for (let i = 0; i < Math.min(MAX_VISIBLE_PATHS, currentPaths.value.length); i++) {
-    selectedPaths.value.add(i)
-  }
+  console.info('[MonteCarloPathsChart] 组件已挂载', {
+    worstPaths: props.worstPaths?.length || 0,
+    bestPaths: props.bestPaths?.length || 0,
+    hasMedian: !!props.medianPath,
+    barCount: props.barCount
+  })
+  // 初始化 ECharts 实例
+  initChart()
+  updateChart(buildChartOption(), true)
 })
 </script>
 
@@ -392,57 +337,6 @@ onMounted(() => {
   padding: 2px 8px;
   background: rgba(255, 152, 0, 0.1);
   border-radius: 4px;
-}
-
-.path-selector {
-  margin-bottom: 12px;
-  padding: 10px;
-  background: rgba(42, 52, 77, 0.3);
-  border-radius: 8px;
-  border: 1px solid var(--border, #2a3449);
-}
-
-.select-all-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: #a0aec0;
-  cursor: pointer;
-  margin-bottom: 8px;
-}
-
-.select-all-label input[type="checkbox"] {
-  accent-color: #2962ff;
-}
-
-.path-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.path-chip {
-  padding: 4px 10px;
-  font-size: 12px;
-  color: #a0aec0;
-  background: rgba(42, 52, 77, 0.5);
-  border: 1px solid var(--border, #2a3449);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  user-select: none;
-}
-
-.path-chip:hover {
-  border-color: #2962ff;
-  color: #e0e0e0;
-}
-
-.path-chip.selected {
-  background: rgba(41, 98, 255, 0.2);
-  border-color: #2962ff;
-  color: #2962ff;
 }
 
 .chart-container {

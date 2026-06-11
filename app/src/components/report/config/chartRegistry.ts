@@ -74,7 +74,7 @@ export const CHART_REGISTRY: ChartDefinition[] = [
     label: 'Monte Carlo Paths',
     icon: '🎲',
     description: '蒙特卡洛模拟路径可视化（最差/最好/基准对比）',
-    defaultVisible: false,
+    defaultVisible: true,
     defaultOrder: 4,
     span: 'full',
     component: () => import('../charts/MonteCarloPathsChart.vue')
