@@ -40,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, h, type Component, inject } from 'vue'
+import { ref, computed, onMounted, nextTick, h, type Component, inject, type Ref } from 'vue'
 import { useReportState } from './composables/useReportState'
 import { useChartData } from './composables/useChartData'
 import MetricsTable from './MetricsTable.vue'

@@ -62,6 +62,14 @@ endif(WIN32)
 #add_compile_definitions(PYTHON_PATH=\"${Python3_EXECUTABLE}\")
 
 option(USE_CUDA OFF)
+option(USE_LIBTORCH OFF)
+
+if (USE_LIBTORCH)
+    add_compile_definitions(_USE_LIBTORCH_)
+    find_package(Torch REQUIRED)
+    message("-- libTorch Include Dir: ${TORCH_INCLUDE_DIRS}")
+    message("-- libTorch Libs: ${TORCH_LIBRARIES}")
+endif (USE_LIBTORCH)
 
 if (USE_CUDA)
     add_compile_definitions(__USE_CUDA__)
@@ -99,7 +107,7 @@ else (USE_CUDA)
     # endif()
 endif (USE_CUDA)
 
-include_directories(include third_party/include ${CUDA_INCLUDE_DIRS} ${TensorRT_INCLUDE_DIRS})
+include_directories(include third_party/include ${CUDA_INCLUDE_DIRS} ${TensorRT_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
 if (WIN32)
 if (USE_CUDA)
     find_library(NVINFER_LIB nvinfer_10 PATHS ${TensorRT_LIBRARIES_DIR})
@@ -174,10 +182,10 @@ add_subdirectory(third_party/DataFrame)
 target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame xgboost)
 if (USE_CUDA)
     target_link_libraries(${PROJECT_NAME} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES})
-else (USE_CUDA) # onnxruntime
-    # target_link_libraries(${PROJECT_NAME} onnxruntime::onnxruntime)
-    # target_link_libraries(${PROJECT_NAME} onnxruntime)
 endif (USE_CUDA)
+if (USE_LIBTORCH)
+    target_link_libraries(${PROJECT_NAME} ${TORCH_LIBRARIES})
+endif (USE_LIBTORCH)
 install(TARGETS ${PROJECT_NAME})
 install(FILES
     ${CMAKE_SOURCE_DIR}/build/${PROJECT_NAME}

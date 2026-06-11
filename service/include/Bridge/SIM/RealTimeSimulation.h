@@ -5,10 +5,10 @@
 /**
  * 实盘仿真，任何下单都只记录到数据库，不会真正提交。用于实盘测试环境
  */
-class StockRealSimulation: public HXExchange {
+class RealTimeSimulation: public HXExchange {
 public:
-    StockRealSimulation(Server* server);
-    ~StockRealSimulation();
+    RealTimeSimulation(Server* server);
+    ~RealTimeSimulation();
 
     virtual const char* Name() override { return STOCK_REAL_SIM; }
 

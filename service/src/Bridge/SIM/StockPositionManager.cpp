@@ -22,13 +22,13 @@ void StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) {
     double amount = qty * price;
     double fees = CalcFees(amount, false);
 
-    if (!_backtestMode) {
-        if (_availableFunds < amount + fees) {
-            WARN("Insufficient funds: need={}+{} avail={}", amount, fees, _availableFunds);
-            return;
-        }
-        _availableFunds -= (amount + fees);
+    // 回测和实盘都应扣减资金，确保 recordDailySnapshot 记录的总资产正确
+    // 旧逻辑：回测模式不扣资金 → available_funds 始终保持初始值 → totalEquity 被高估
+    if (_availableFunds < amount + fees) {
+        WARN("Insufficient funds: need={}+{} avail={}", amount, fees, _availableFunds);
+        return;
     }
+    _availableFunds -= (amount + fees);
 
     // 更新持仓（加权平均成本）
     auto it = _positions.find(symbol);
@@ -90,9 +90,8 @@ void StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
     double amount = qty * price;
     double fees = CalcFees(amount, true);
 
-    if (!_backtestMode) {
-        _availableFunds += (amount - fees);
-    }
+    // 回测和实盘都应增加资金，与Buy保持一致
+    _availableFunds += (amount - fees);
 
     // 更新持仓
     pos._qty -= qty;

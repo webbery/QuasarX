@@ -356,7 +356,7 @@ void FlowSubsystem::ComputeBacktestMetrics(
 
     auto daily_returns = simple_daily_return(portfolio_values);
     std::vector<double> portfolio_values_std(portfolio_values.begin(), portfolio_values.end());
-    double initial_capital = btContext ? btContext->getCapital() : 100000.0;
+    double initial_capital = portfolio_values_std.empty() ? BACKTEST_INITIAL_CAPITAL : portfolio_values_std[0];
     auto total_return = simple_total_return(portfolio_values_std, initial_capital);
     flow._collections[StatisticIndicator::TotalReturn] = (float)total_return;
 

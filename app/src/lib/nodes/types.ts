@@ -27,6 +27,8 @@ export interface ParamSchema {
   pattern?: string        // 正则验证
   errorMsg?: string       // 验证失败提示
   description?: string    // 参数说明（给 AI 看）
+  dependsOn?: string      // 依赖的参数 key，当该参数取特定值时才显示
+  dependsValue?: any      // 依赖参数的目标值
 }
 
 // === 节点分类 ===

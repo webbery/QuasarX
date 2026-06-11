@@ -3,7 +3,7 @@
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/ETFHistorySimulation.h"
-#include "Bridge/SIM/StockRealSimulation.h"
+#include "Bridge/SIM/RealTimeSimulation.h"
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SlippageModel.h"
 #include "Bridge/exchange.h"
@@ -104,7 +104,7 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
         _enableSimulation = true;
     }
     else if (type == EX_STOCK_REAL_SIM) {
-        ptr = new StockRealSimulation(_server);
+        ptr = new RealTimeSimulation(_server);
         ret = ptr->Init(exchangeCfg);
     }
     else if (type == EX_TICKFLOW_QUOTE) {
