@@ -151,9 +151,7 @@
       <div v-else-if="is_strategy && showReportConfig" style="height: 100%">
         <ReportConfigPanel
           :chart-visibility="reportChartVisibility"
-          :show-metrics-table="reportShowMetricsTable"
           @update:chart-visibility="updateReportChartVisibility"
-          @update:show-metrics-table="updateReportShowMetricsTable"
           @reset="resetReportConfig"
         />
       </div>
@@ -322,7 +320,6 @@ let selectedAccount;
 // === 报表配置面板状态（新增） ===
 const showReportConfig = ref(false)
 const reportChartVisibility = ref({})
-const reportShowMetricsTable = ref(true)
 
 /**
  * 从 localStorage 加载报表配置
@@ -333,7 +330,6 @@ function loadReportConfig() {
     if (stored) {
       const parsed = JSON.parse(stored)
       reportChartVisibility.value = parsed.chartVisibility || {}
-      reportShowMetricsTable.value = parsed.showMetricsTable ?? true
     }
   } catch (e) {
     console.warn('[App] 加载报表配置失败', e)
@@ -347,7 +343,6 @@ function saveReportConfig() {
   try {
     const config = {
       chartVisibility: reportChartVisibility.value,
-      showMetricsTable: reportShowMetricsTable.value
     }
     localStorage.setItem('quasarx_report_config', JSON.stringify(config))
   } catch (e) {
@@ -378,18 +373,10 @@ function updateReportChartVisibility(newVisibility) {
 }
 
 /**
- * 更新指标表格显示
- */
-function updateReportShowMetricsTable(value) {
-  reportShowMetricsTable.value = value
-  saveReportConfig()
-}
-
-/**
  * 重置报表配置（含布局）
  */
 function resetReportConfig() {
-  if (confirm('确定要重置报表配置为默认值吗？这将重置图表可见性、指标显示和图表顺序。')) {
+  if (confirm('确定要重置报表配置为默认值吗？这将重置图表可见性和顺序。')) {
     localStorage.removeItem('quasarx_report_config')
     localStorage.removeItem('quasarx_report_layout')
     loadReportConfig()
@@ -837,9 +824,7 @@ provide('showReportConfig', showReportConfig)
 provide('onShowReportConfig', onShowReportConfig)
 provide('onHideReportConfig', onHideReportConfig)
 provide('reportChartVisibility', reportChartVisibility)
-provide('reportShowMetricsTable', reportShowMetricsTable)
 provide('updateReportChartVisibility', updateReportChartVisibility)
-provide('updateReportShowMetricsTable', updateReportShowMetricsTable)
 </script>
 
 <style scoped>

@@ -8,12 +8,10 @@ const CONFIG_STORAGE_KEY = 'quasarx_report_config'
 const LAYOUT_STORAGE_KEY = 'quasarx_report_layout'
 
 export interface ReportConfig {
-  /** 图表可见性配置 */
+  /** 图表可见性配置（所有图表统一控制，包括 MetricsTable） */
   chartVisibility: Record<string, boolean>
   /** 默认基准 */
   defaultBenchmark: string
-  /** 是否显示指标表格 */
-  showMetricsTable: boolean
 }
 
 /** 图表布局项（只控制顺序和可见性，span 由 CHART_REGISTRY 决定） */
@@ -44,10 +42,8 @@ export interface UseReportStateReturn {
   backtestEndDate: Ref<Date | null>
 
   // === 图表配置 ===
-  /** 图表可见性配置（响应式） */
+  /** 图表可见性配置（响应式，所有图表统一控制） */
   chartVisibility: Ref<Record<string, boolean>>
-  /** 是否显示指标表格 */
-  showMetricsTable: Ref<boolean>
   /** 当前可见的图表列表（按 order 排序） */
   visibleCharts: ComputedRef<ChartDefinition[]>
 
@@ -83,7 +79,6 @@ function getDefaultConfig(): ReportConfig {
   return {
     chartVisibility,
     defaultBenchmark: localStorage.getItem('benchmark_symbol') || 'SH000001',
-    showMetricsTable: true
   }
 }
 
@@ -100,7 +95,6 @@ function loadConfigFromStorage(): ReportConfig {
       return {
         chartVisibility: { ...defaultConfig.chartVisibility, ...parsed.chartVisibility },
         defaultBenchmark: parsed.defaultBenchmark ?? defaultConfig.defaultBenchmark,
-        showMetricsTable: parsed.showMetricsTable ?? defaultConfig.showMetricsTable
       }
     }
   } catch (e) {
@@ -138,7 +132,6 @@ export function useReportState(): UseReportStateReturn {
   // === 图表配置 ===
   const initialConfig = loadConfigFromStorage()
   const chartVisibility = ref<Record<string, boolean>>(initialConfig.chartVisibility)
-  const showMetricsTable = ref(initialConfig.showMetricsTable)
 
   // === 拖拽布局 ===
   const defaultLayout = (): ChartLayoutItem[] =>
@@ -153,14 +146,6 @@ export function useReportState(): UseReportStateReturn {
     if (!oldLayout) return null
 
     try {
-      // 检查是否缺少 metricsTable
-      const hasMetricsTable = oldLayout.some(item => item.id === 'metricsTable')
-      if (!hasMetricsTable) {
-        console.info('[useReportState] 检测到旧布局缺少 metricsTable，自动添加')
-        // 在末尾添加 metricsTable
-        oldLayout.push({ id: 'metricsTable', visible: true })
-      }
-
       return oldLayout
     } catch (e) {
       console.warn('[useReportState] 布局迁移失败，使用默认布局', e)
@@ -208,7 +193,6 @@ export function useReportState(): UseReportStateReturn {
     const config: ReportConfig = {
       chartVisibility: chartVisibility.value,
       defaultBenchmark: selectedBenchmark.value,
-      showMetricsTable: showMetricsTable.value
     }
     saveConfigToStorage(config)
   }
@@ -217,7 +201,6 @@ export function useReportState(): UseReportStateReturn {
     const defaultConfig = getDefaultConfig()
     chartVisibility.value = defaultConfig.chartVisibility
     selectedBenchmark.value = defaultConfig.defaultBenchmark
-    showMetricsTable.value = defaultConfig.showMetricsTable
     saveConfig()
   }
 
@@ -256,7 +239,6 @@ export function useReportState(): UseReportStateReturn {
     backtestEndDate,
     // 图表配置
     chartVisibility,
-    showMetricsTable,
     visibleCharts,
     // 拖拽布局
     layout,
