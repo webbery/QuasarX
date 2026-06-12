@@ -279,6 +279,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 从 _collections 中提取性能指标（可能存储为 float(index 0) 或 List<float>(index 1)）
     float sharp_val = 0, annual_return_val = 0, total_return_val = 0;
     float max_drawdown_val = 0, win_rate_val = 0, calmar_val = 0;
+    float annual_vol_val = 0;
     for (auto& item : indicators) {
         float val = 0;
         if (item.second.index() == 0) {
@@ -297,6 +298,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         case StatisticIndicator::MaxDrawDown: max_drawdown_val = val; break;
         case StatisticIndicator::WinRate: win_rate_val = val; break;
         case StatisticIndicator::Calmar: calmar_val = val; break;
+        case StatisticIndicator::AnnualVol: annual_vol_val = val; break;
         default: break;
         }
     }
@@ -307,6 +309,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         {"indicator_count", features.size()},
         {"sharp", sharp_val},
         {"annual_return", annual_return_val},
+        {"annual_volatility", annual_vol_val},
         {"total_return", total_return_val},
         {"max_drawdown", max_drawdown_val},
         {"win_rate", win_rate_val},

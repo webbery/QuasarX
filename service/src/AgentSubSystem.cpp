@@ -369,6 +369,7 @@ void FlowSubsystem::ComputeBacktestMetrics(
     auto annual_return = compute_annualized_return(total_return, count);
     flow._collections[StatisticIndicator::AnualReturn] = annual_return;
     double annual_vol = compute_annualized_volatility(daily_returns);
+    flow._collections[StatisticIndicator::AnnualVol] = static_cast<float>(annual_vol);
     double risk_free_rate = 0.0;
     float sharp = compute_sharp_ratio(annual_return, annual_vol, risk_free_rate);
     flow._collections[StatisticIndicator::Sharp] = sharp;

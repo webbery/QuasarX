@@ -52,6 +52,7 @@ enum class StatisticIndicator: char {
   NumTrades,
   Extreme,
   TotalReturn,
+  AnnualVol,    // 年化波动率
 
   // Bootstrap 蒙特卡洛风险分析指标
   BootRuinProb50,       // 爆仓概率 (<50%)

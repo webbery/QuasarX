@@ -186,8 +186,7 @@ float win_rate(const Vector<double>& daily_values) {
 float calmar_ratio(double annual_return, double max_dd) {
     // 卡玛比率 = 年化收益率 / 最大回撤绝对值
     if (max_dd <= 0) {
-        // 如果没有回撤，返回一个较大的值或年化收益率本身
-        return annual_return > 0 ? 10.0f : 0.0f;
+        return 0.0f;
     }
 
     return static_cast<float>(annual_return / max_dd);

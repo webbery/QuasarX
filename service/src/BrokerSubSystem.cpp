@@ -257,6 +257,8 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
     return "annual_return";
   case StatisticIndicator::TotalReturn:
     return "total_return";
+  case StatisticIndicator::AnnualVol:
+    return "annual_volatility";
   case StatisticIndicator::WinRate:
     return "win_rate";
   case StatisticIndicator::Calmar:
