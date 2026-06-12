@@ -441,16 +441,18 @@ class TestStandardCases:
         case_id = "up_trend"
         case = self.cases[case_id]
         expected = case["expected"]
-        
+
         # 运行 C++ 回测
         cpp_metrics = self._run_cpp_backtest(case_id)
-        
+
         # 对比指标
         tolerance = 0.05  # 5% 容差（考虑佣金和滑点）
         self._assert_metric(cpp_metrics.get("total_return", 0), expected["total_return"], tolerance, "总收益率")
         self._assert_metric(cpp_metrics.get("win_rate", 0), expected["win_rate"], tolerance, "胜率")
         self._assert_metric(cpp_metrics.get("max_drawdown", 0), expected["max_drawdown"], tolerance, "最大回撤")
-        
+        self._assert_metric(cpp_metrics.get("var_95", 0), expected.get("var_95", 0), tolerance, "VaR(95%)")
+        self._assert_metric(cpp_metrics.get("es", 0), expected.get("es", 0), tolerance, "CVaR(95%)")
+
         print(f"\n[UP_TREND] C++: total_return={cpp_metrics.get('total_return')}, "
               f"expected={expected['total_return']}")
 
@@ -459,63 +461,73 @@ class TestStandardCases:
         case_id = "down_trend"
         case = self.cases[case_id]
         expected = case["expected"]
-        
+
         cpp_metrics = self._run_cpp_backtest(case_id)
-        
+
         tolerance = 0.05
         self._assert_metric(cpp_metrics.get("total_return", 0), expected["total_return"], tolerance, "总收益率")
         self._assert_metric(cpp_metrics.get("win_rate", 0), expected["win_rate"], tolerance, "胜率")
         self._assert_metric(cpp_metrics.get("max_drawdown", 0), expected["max_drawdown"], tolerance, "最大回撤")
+        self._assert_metric(cpp_metrics.get("var_95", 0), expected.get("var_95", 0), tolerance, "VaR(95%)")
+        self._assert_metric(cpp_metrics.get("es", 0), expected.get("es", 0), tolerance, "CVaR(95%)")
 
     def test_rise_fall(self):
         """测试先涨后跌：最大回撤约17.39%"""
         case_id = "rise_fall"
         case = self.cases[case_id]
         expected = case["expected"]
-        
+
         cpp_metrics = self._run_cpp_backtest(case_id)
-        
+
         tolerance = 0.05
         self._assert_metric(cpp_metrics.get("total_return", 0), expected["total_return"], tolerance, "总收益率")
         self._assert_metric(cpp_metrics.get("max_drawdown", 0), expected["max_drawdown"], tolerance, "最大回撤")
+        self._assert_metric(cpp_metrics.get("var_95", 0), expected.get("var_95", 0), tolerance, "VaR(95%)")
+        self._assert_metric(cpp_metrics.get("es", 0), expected.get("es", 0), tolerance, "CVaR(95%)")
 
     def test_sideways(self):
         """测试横盘震荡：总收益接近0"""
         case_id = "sideways"
         case = self.cases[case_id]
         expected = case["expected"]
-        
+
         cpp_metrics = self._run_cpp_backtest(case_id)
-        
+
         tolerance = 0.05
         self._assert_metric(cpp_metrics.get("total_return", 0), expected["total_return"], tolerance, "总收益率")
+        self._assert_metric(cpp_metrics.get("var_95", 0), expected.get("var_95", 0), tolerance, "VaR(95%)")
+        self._assert_metric(cpp_metrics.get("es", 0), expected.get("es", 0), tolerance, "CVaR(95%)")
 
     def test_high_volatility(self):
         """测试高波动率：总收益接近0，但波动率大"""
         case_id = "high_volatility"
         case = self.cases[case_id]
         expected = case["expected"]
-        
+
         cpp_metrics = self._run_cpp_backtest(case_id)
-        
+
         tolerance = 0.05
         self._assert_metric(cpp_metrics.get("total_return", 0), expected["total_return"], tolerance, "总收益率")
-        
+
         # 验证波动率不为0
         assert cpp_metrics.get("annual_volatility", 0) > 0.1, "高波动率用例预期波动率>0.1"
+        self._assert_metric(cpp_metrics.get("var_95", 0), expected.get("var_95", 0), tolerance, "VaR(95%)")
+        self._assert_metric(cpp_metrics.get("es", 0), expected.get("es", 0), tolerance, "CVaR(95%)")
 
     def test_steady_trend(self):
         """测试长期趋势：指标在合理范围内"""
         case_id = "steady_trend"
         case = self.cases[case_id]
         expected = case["expected"]
-        
+
         cpp_metrics = self._run_cpp_backtest(case_id)
-        
+
         tolerance = 0.10  # 10% 容差（长期趋势允许更大偏差）
         self._assert_metric(cpp_metrics.get("total_return", 0), expected["total_return"], tolerance, "总收益率")
         self._assert_metric(cpp_metrics.get("win_rate", 0), expected["win_rate"], tolerance, "胜率")
         self._assert_metric(cpp_metrics.get("max_drawdown", 0), expected["max_drawdown"], tolerance, "最大回撤")
+        self._assert_metric(cpp_metrics.get("var_95", 0), expected.get("var_95", 0), tolerance, "VaR(95%)")
+        self._assert_metric(cpp_metrics.get("es", 0), expected.get("es", 0), tolerance, "CVaR(95%)")
 
 
 # ============================================================

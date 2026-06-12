@@ -29,6 +29,7 @@
 #include <nng/supplemental/util/platform.h>
 #include <stdexcept>
 #include "Handler/AssetHandler.h"
+#include "Handler/VolatilityHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/NavHandler.h"
 #include "Handler/StrategyHandler.h"
@@ -148,6 +149,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_DAILY      "/risk/daily"
 #define API_RISK_CLOSEALL   "/risk/closeall"
 #define API_NAV_HISTORY     "/nav/history"
+#define API_VOLATILITY      "/analysis/volatility"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -320,6 +322,7 @@ void Server::Regist() {
     REGIST_GET(API_OPTION_HISTORY);
 
     REGIST_POST(API_BACKTEST);
+    REGIST_GET(API_VOLATILITY);
     REGIST_POST(API_SERVER_CONFIG);
 
     REGIST_PUT(API_STRATEGY_NODE);
@@ -1289,6 +1292,7 @@ void Server::InitHandlers() {
     RegistHandler(API_USER_SWITCH, UserSwitchHandler);
     RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
     RegistHandler(API_STOCK_PARAMS, StockParams);
+    RegistHandler(API_VOLATILITY, VolatilityHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});

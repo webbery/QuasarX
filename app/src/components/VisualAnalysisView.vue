@@ -1,15 +1,12 @@
 <template>
   <div class="visual-analysis-container">
-    <!-- 头部区域 -->
+    <!-- 头部控制区 -->
     <header class="header">
       <div class="controls">
         <el-select v-model="selectedAssetType" placeholder="选择资产类型" class="control-item">
           <el-option label="股票板块" value="stocks"></el-option>
-          <!-- <el-option label="债券" value="bonds"></el-option>
-          <el-option label="基金" value="funds"></el-option>
-          <el-option label="期货" value="futures"></el-option> -->
         </el-select>
-        
+
         <el-date-picker
           v-model="dateRange"
           type="daterange"
@@ -19,76 +16,85 @@
           class="control-item"
         >
         </el-date-picker>
-        
+
         <el-button type="primary" @click="refreshData">刷新数据</el-button>
       </div>
     </header>
-    
-    <!-- 主要图表区域 -->
-    <main class="main-content">
-      <!-- 第一行：资金流入情况和流入流出Top5 -->
-      <div class="chart-row">
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>当日板块流入流出Top5</h3>
-            <div class="chart-controls">
-              <el-radio-group v-model="flowDirection" size="small">
-                <el-radio-button label="all">全部</el-radio-button>
-                <el-radio-button label="inflow">仅流入</el-radio-button>
-                <el-radio-button label="outflow">仅流出</el-radio-button>
-              </el-radio-group>
-            </div>
-          </div>
-          <div class="chart" ref="flowChart"></div>
-        </div>
 
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>{{ selectedSector ? `[${selectedSector}]当日资金流向详情` : '板块资金流向详情' }}</h3>
-            <div class="chart-controls">
-              <el-radio-group v-model="fundsChartType" size="small">
-                <!-- <el-radio-button label="radar">雷达图</el-radio-button> -->
-                <el-radio-button label="bar">柱状图</el-radio-button>
-              </el-radio-group>
+    <!-- Tab 切换 -->
+    <el-tabs v-model="activeTab" class="main-tabs">
+      <el-tab-pane label="📊 资金流向" name="flow">
+        <div class="tab-content">
+          <!-- 第一行：资金流入情况和流入流出Top5 -->
+          <div class="chart-row">
+            <div class="chart-container">
+              <div class="chart-header">
+                <h3>当日板块流入流出Top5</h3>
+                <div class="chart-controls">
+                  <el-radio-group v-model="flowDirection" size="small">
+                    <el-radio-button label="all">全部</el-radio-button>
+                    <el-radio-button label="inflow">仅流入</el-radio-button>
+                    <el-radio-button label="outflow">仅流出</el-radio-button>
+                  </el-radio-group>
+                </div>
+              </div>
+              <div class="chart" ref="flowChart"></div>
+            </div>
+
+            <div class="chart-container">
+              <div class="chart-header">
+                <h3>{{ selectedSector ? `[${selectedSector}]当日资金流向详情` : '板块资金流向详情' }}</h3>
+                <div class="chart-controls">
+                  <el-radio-group v-model="fundsChartType" size="small">
+                    <el-radio-button label="bar">柱状图</el-radio-button>
+                  </el-radio-group>
+                </div>
+              </div>
+              <div class="chart" ref="fundsChart"></div>
             </div>
           </div>
-          <div class="chart" ref="fundsChart"></div>
-        </div>
-      </div>
-      
-      <!-- 第二行：相关性热力图和聚类分析 -->
-      <div class="chart-row">
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>板块流入流出变化率Top5</h3>
-            <div class="chart-controls">
-              <el-button size="small" @click="exportHeatmap">导出</el-button>
+
+          <!-- 第二行：相关性热力图和聚类分析 -->
+          <div class="chart-row">
+            <div class="chart-container">
+              <div class="chart-header">
+                <h3>板块流入流出变化率Top5</h3>
+                <div class="chart-controls">
+                  <el-button size="small" @click="exportHeatmap">导出</el-button>
+                </div>
+              </div>
+              <div class="chart" ref="heatmapChart"></div>
+            </div>
+
+            <div class="chart-container">
+              <div class="chart-header">
+                <h3>{{ selectedSector ? `[${selectedSector}]历史资金流向` : '历史资金流向' }}</h3>
+                <div class="chart-controls">
+                  <el-slider
+                    v-model="clusterCount"
+                    :min="2"
+                    :max="8"
+                    :step="1"
+                    show-stops
+                    size="small"
+                    style="width: 120px;"
+                  >
+                  </el-slider>
+                </div>
+              </div>
+              <div class="chart" ref="clusterChart"></div>
             </div>
           </div>
-          <div class="chart" ref="heatmapChart"></div>
         </div>
-        
-        <div class="chart-container">
-          <div class="chart-header">
-            <h3>{{ selectedSector ? `[${selectedSector}]历史资金流向` : '历史资金流向' }}</h3>
-            <div class="chart-controls">
-              <el-slider
-                v-model="clusterCount"
-                :min="2"
-                :max="8"
-                :step="1"
-                show-stops
-                size="small"
-                style="width: 120px;"
-              >
-              </el-slider>
-            </div>
-          </div>
-          <div class="chart" ref="clusterChart"></div>
+      </el-tab-pane>
+
+      <el-tab-pane label="📈 波动率分析" name="volatility">
+        <div class="tab-content">
+          <VolatilityTab />
         </div>
-      </div>
-    </main>
-    
+      </el-tab-pane>
+    </el-tabs>
+
     <!-- 底部统计信息 -->
     <footer class="footer">
       <div class="stats-container">
@@ -105,8 +111,13 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as echarts from 'echarts'
 import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
+import VolatilityTab from './volatility/VolatilityTab.vue'
 
 const unit = 100000000 // 单位:亿
+
+// Tab 切换
+const activeTab = ref('flow')
+
 // 响应式数据
 const selectedAssetType = ref('stocks')
 const dateRange = ref([])
@@ -665,7 +676,7 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background-color: #f5f7fa;
+  background-color: #1a2236;
   font-family: 'Helvetica Neue', Arial, sans-serif;
 }
 
@@ -674,14 +685,14 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 24px;
-  background-color: #fff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background-color: rgba(26, 34, 54, 0.9);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   z-index: 100;
 }
 
 .title {
   margin: 0;
-  color: #303133;
+  color: #e0e0e0;
   font-weight: 600;
 }
 
@@ -693,6 +704,40 @@ onUnmounted(() => {
 
 .control-item {
   width: 180px;
+}
+
+.main-tabs {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 24px;
+  background: rgba(26, 34, 54, 0.8);
+  border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+}
+
+.main-tabs :deep(.el-tabs__item) {
+  color: #999;
+}
+
+.main-tabs :deep(.el-tabs__item.is-active) {
+  color: #2962ff;
+}
+
+.main-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  overflow: auto;
+}
+
+.tab-content {
+  padding: 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .main-content {
@@ -712,9 +757,9 @@ onUnmounted(() => {
 
 .chart-container {
   flex: 1;
-  background-color: #fff;
+  background-color: rgba(26, 34, 54, 0.5);
+  border: 1px solid rgba(74, 85, 104, 0.2);
   border-radius: 8px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -725,12 +770,12 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.2);
 }
 
 .chart-header h3 {
   margin: 0;
-  color: #303133;
+  color: #e0e0e0;
   font-size: 16px;
   font-weight: 600;
 }
@@ -748,8 +793,8 @@ onUnmounted(() => {
 
 .footer {
   padding: 16px 24px;
-  background-color: #fff;
-  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
+  background-color: rgba(26, 34, 54, 0.9);
+  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .stats-container {
@@ -765,7 +810,7 @@ onUnmounted(() => {
 .stat-value {
   font-size: 24px;
   font-weight: 600;
-  color: #303133;
+  color: #e0e0e0;
   margin-bottom: 4px;
 }
 

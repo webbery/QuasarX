@@ -74,13 +74,3 @@ public:
 
 private:
 };
-
-/**
- * 获取波动率相关的风险，如波动率结构发生突变概率等
- */
-class VolatilityHandler: public HttpHandler {
-public:
-  VolatilityHandler(Server* handle): HttpHandler(handle) {}
-
-  virtual void get(const httplib::Request& req, httplib::Response& res);
-};
