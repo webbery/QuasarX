@@ -4,7 +4,6 @@
 
 RealTimeSimulation::RealTimeSimulation(Server* server)
     : HXExchange(server)
-    , _positionMgr(BACKTEST_INITIAL_CAPITAL)
 {
 }
 
@@ -12,7 +11,10 @@ RealTimeSimulation::~RealTimeSimulation() {
 }
 
 double RealTimeSimulation::GetAvailableFunds(run_id_t run_id) {
-    return _positionMgr.GetAvailableFunds();
+    if (_capitalPool && !_strategyName.empty()) {
+        return _capitalPool->getAvailable(_strategyName);
+    }
+    return 0.0;
 }
 
 AccountAsset RealTimeSimulation::GetAsset() {
@@ -24,13 +26,20 @@ bool RealTimeSimulation::GetPosition(AccountPosition& pos) {
 }
 
 order_id RealTimeSimulation::AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order) {
-    // 实盘仿真：更新持仓但不实际执行
+    // 实盘仿真：更新持仓并从 CapitalPool 扣/加资金
     double price = order->_order._price;
     int64_t qty = order->_order._volume;
     if (order->_order._side == 0) {
-        _positionMgr.Buy(symbol, qty, price);
+        TradeFees fees = _positionMgr.Buy(symbol, qty, price);
+        if (_capitalPool && !_strategyName.empty()) {
+            double amount = qty * price;
+            _capitalPool->updateAvailable(_strategyName, -(amount + fees.total()));
+        }
     } else {
-        _positionMgr.Sell(symbol, qty, price);
+        auto result = _positionMgr.Sell(symbol, qty, price);
+        if (_capitalPool && !_strategyName.empty()) {
+            _capitalPool->updateAvailable(_strategyName, result.proceeds);
+        }
     }
 
     order_id id;

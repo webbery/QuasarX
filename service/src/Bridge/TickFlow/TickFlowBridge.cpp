@@ -20,8 +20,7 @@ TickFlowBridge::TickFlowBridge(Server* server)
       _login_success(false),
       _error_count(0),
       _pause_phase(0),
-      _paused(false),
-      _positionMgr(BACKTEST_INITIAL_CAPITAL) {
+      _paused(false) {
 }
 
 TickFlowBridge::~TickFlowBridge() {
@@ -152,7 +151,10 @@ symbol_t TickFlowBridge::TickFlowToSymbol(const String& code) {
 // ==================== 资金/持仓 ====================
 
 double TickFlowBridge::GetAvailableFunds(run_id_t run_id) {
-    return _positionMgr.GetAvailableFunds();
+    if (_capitalPool && !_strategyName.empty()) {
+        return _capitalPool->getAvailable(_strategyName);
+    }
+    return 0.0;
 }
 
 AccountAsset TickFlowBridge::GetAsset() {
@@ -171,13 +173,20 @@ order_id TickFlowBridge::AddOrder(run_id_t run_id, const symbol_t& symbol, Order
 
     INFO("Order (no-op): {} {} @ {:.4f} volume={}", side, symbol_str, order->_order._price, order->_order._volume);
 
-    // 更新模拟持仓
+    // 更新模拟持仓并从 CapitalPool 扣/加资金
     double price = order->_order._price;
     int64_t qty = order->_order._volume;
     if (order->_order._side == 0) {
-        _positionMgr.Buy(symbol, qty, price);
+        TradeFees fees = _positionMgr.Buy(symbol, qty, price);
+        if (_capitalPool && !_strategyName.empty()) {
+            double amount = qty * price;
+            _capitalPool->updateAvailable(_strategyName, -(amount + fees.total()));
+        }
     } else {
-        _positionMgr.Sell(symbol, qty, price);
+        auto result = _positionMgr.Sell(symbol, qty, price);
+        if (_capitalPool && !_strategyName.empty()) {
+            _capitalPool->updateAvailable(_strategyName, result.proceeds);
+        }
     }
 
     // 构造成交回报

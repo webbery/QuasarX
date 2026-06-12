@@ -182,9 +182,12 @@ public:
 
     double getAvailableCapital() const;
 
-    // 初始本金管理（用于回测）
     void setInitialCapital(double capital);
     double getInitialCapital() const;
+    // 策略资金管理（从资金池分配，同时用作收益率计算基准）
+    void setCapital(double capital);
+    double getCapital() const;
+    void updateCapital(double delta);  // 成交时更新
 
     // QuoteInfo 存储和获取（用于影子模式）
     void SetQuote(symbol_t symbol, const QuoteInfo& quote);
@@ -266,8 +269,9 @@ private:
     // 风控上下文（独立于节点数据通道）
     RiskContext _risk_context;
 
-    // 初始本金（用于回测）
     double _initialCapital = 0.0;
+    // 策略级资金
+    double _capital = 0.0;   // 从资金池分配的资金（同时用作收益率计算基准）
 
     // 关联的回测运行 ID（0 表示未关联）
     uint16_t _backtestRunId{0};

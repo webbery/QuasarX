@@ -150,6 +150,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_CLOSEALL   "/risk/closeall"
 #define API_NAV_HISTORY     "/nav/history"
 #define API_VOLATILITY      "/analysis/volatility"
+#define API_CAPITAL_STATUS  "/server/capital"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -320,6 +321,7 @@ void Server::Regist() {
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
     REGIST_GET(API_OPTION_HISTORY);
+    REGIST_GET(API_CAPITAL_STATUS);
 
     REGIST_POST(API_BACKTEST);
     REGIST_GET(API_VOLATILITY);
@@ -434,6 +436,14 @@ void Server::InitDefault() {
     auto& exchagnes = _exchangeMgr->GetExchangesByType();
 
     _brokerSystem->Init(broker, exchagnes);
+    
+    // 初始化资金池
+    double initialCapital = 1000000;  // 默认 100 万
+    if (default_config.contains("capitalRisk") && default_config["capitalRisk"].contains("initialCapital")) {
+        initialCapital = default_config["capitalRisk"]["initialCapital"].get<double>();
+    }
+    String capitalPersistPath = dbpath + "/capital_pool.json";
+    _brokerSystem->initCapitalPool(initialCapital, capitalPersistPath);
 
     // 初始化风控子系统
     _riskSystem = new RiskSubSystem(this);

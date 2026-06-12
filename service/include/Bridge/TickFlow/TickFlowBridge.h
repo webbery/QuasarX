@@ -1,6 +1,7 @@
 #pragma once
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
+#include "Bridge/CapitalPool.h"
 #include "Util/finance.h"
 #include "httplib.h"
 #include "nng/nng.h"
@@ -24,6 +25,8 @@ public:
     void Logout(AccountType t = AccountType::MAIN) override {}
 
     // 资金/持仓（模拟）
+    void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }
+    void setStrategyName(const String& name) { _strategyName = name; }
     double GetAvailableFunds(run_id_t run_id) override;
     AccountAsset GetAsset() override;
     bool GetPosition(AccountPosition& pos) override;
@@ -110,6 +113,8 @@ private:
 
     // 模拟持仓
     StockPositionManager _positionMgr;
+    CapitalPool* _capitalPool = nullptr;
+    String _strategyName;
 
     // nng pub socket，用于发布行情到 URI_RAW_QUOTE
     nng_socket _sock = {0};

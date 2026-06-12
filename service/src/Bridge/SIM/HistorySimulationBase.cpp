@@ -168,7 +168,10 @@ void HistorySimulationBase::QueryQuotes() {
 }
 
 double HistorySimulationBase::GetAvailableFunds(run_id_t run_id) {
-    double funds = BACKTEST_INITIAL_CAPITAL;
+    // 默认返回 0.0，表示该 Exchange 没有该策略的资金上下文
+    // DataContext::getAvailableCapital() 会对所有 Exchange 求和，
+    // 如果这里返回默认值 500000，会导致多 Exchange 场景下资金被重复累加
+    double funds = 0.0;
     _backtestContexts.visit(run_id, [&funds](auto& item) {
         funds = item.second->getAvailableFunds();
     });
@@ -337,11 +340,8 @@ void HistorySimulationBase::matchOrders(BacktestContext* context, symbol_t symbo
         double totalCost = commission + stampTax;
 
         double slipDiff = (order._flag == 1) ? 0.0 : (report._trade_amount - (order._volume * order._price));
-        if (order._flag == 1) {
-            context->releaseFunds(report._trade_amount - totalCost);
-        } else {
-            context->releaseFunds(-(slipDiff + totalCost));
-        }
+        // 资金扣减/增加已在 OrderReport → adjustPosition 中通过 CapitalPool 处理
+        // 旧代码的 releaseFunds 是空操作，已移除
 
         // 累加摩擦成本（佣金 + 印花税 + 滑点绝对值）
         context->addFrictionCost(totalCost + std::abs(slipDiff));
@@ -370,6 +370,12 @@ run_id_t HistorySimulationBase::createBacktestContext(
 
     auto context = std::make_unique<BacktestContext>(runId, strategy_name);
     context->setCapital(initial_capital);
+
+    // 设置 CapitalPool 引用（资金统一管理）
+    if (broker) {
+        context->setCapitalPool(broker->GetCapitalPool());
+        context->setStrategyName(strategy_name);
+    }
 
     // 计算共同时间范围
     time_t maxStartTime = 0;

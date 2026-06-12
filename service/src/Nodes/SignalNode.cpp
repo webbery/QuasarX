@@ -117,6 +117,7 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     if (!_allowShort) {
         for (auto it = sells.begin(); it != sells.end(); ++it) {
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
+                INFO("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
                 it->second = TradeAction::HOLD;
             }
         }
@@ -127,12 +128,12 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             item.second = TradeAction::HOLD;
         }
     }
-    // for (auto it = buys.begin(); it != buys.end(); ++it) {
-    //     if (it->second == TradeAction::BUY) INFO("{} BUY signal {}", it->first, heldSymbols[it->first]);
-    // }
-    // for (auto it = sells.begin(); it != sells.end(); ++it) {
-    //     if (it->second == TradeAction::SELL) INFO("{} SELL signal {}", it->first, heldSymbols[it->first]);
-    // }
+    for (auto it = buys.begin(); it != buys.end(); ++it) {
+        if (it->second == TradeAction::BUY) INFO("[SignalNode] {} BUY signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
+    }
+    for (auto it = sells.begin(); it != sells.end(); ++it) {
+        if (it->second == TradeAction::SELL) INFO("[SignalNode] {} SELL signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
+    }
     Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
         for (auto& item: trade) {

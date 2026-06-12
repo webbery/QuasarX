@@ -67,6 +67,26 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     String strategyName = script.value("id", "unknown");
     INFO("[Backtest] Starting backtest for strategy: {}", strategyName);
 
+    // 解析策略资金配置
+    double strategyCapital = 0.0;  // 0 表示自动分配
+    if (script.contains("capital")) {
+        strategyCapital = script["capital"].get<double>();
+    }
+    
+    // 从资金池分配资金
+    auto* broker = _server->GetBrokerSubSystem();
+    auto* pool = broker ? broker->GetCapitalPool() : nullptr;
+    if (pool) {
+        if (!pool->allocate(strategyName, strategyCapital)) {
+            res.status = 400;
+            String msg = R"({"message": "资金分配失败，可用资金不足"})";
+            res.set_content(msg.c_str(), "application/json");
+            return;
+        }
+        strategyCapital = pool->get(strategyName).allocated;
+        INFO("[Backtest] Capital allocated to {}: {:.0f}", strategyName, strategyCapital);
+    }
+
     // 获取 SSE socket 用于推送进度
     nng_socket sse_sock = _server->GetSocket();
 
@@ -199,6 +219,12 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             WARN("Backtest timeout for strategy {}", strategyName);
             break;
         }
+    }
+    
+    // 回收策略资金
+    if (pool) {
+        double reclaimed = pool->reclaim(strategyName);
+        INFO("[Backtest] Reclaimed {:.0f} from strategy {}", reclaimed, strategyName);
     }
 
     // 停止推送线程

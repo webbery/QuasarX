@@ -1,6 +1,7 @@
 #pragma once
 #include "std_header.h"
 #include "Bridge/exchange.h"
+#include "Bridge/CapitalPool.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
 #include "Util/lmdb.h"
@@ -145,6 +146,13 @@ public:
     bool Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers);
 
     void Release();
+    
+    // 资金池访问
+    CapitalPool* GetCapitalPool() { return &_capitalPool; }
+    const CapitalPool* GetCapitalPool() const { return &_capitalPool; }
+    
+    // 从 config.json 初始化资金池
+    void initCapitalPool(double initialCapital, const String& persistPath);
 
     [[deprecated("使用异步版本 Buy(strategy, symbol, order, callback)")]]
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
@@ -280,6 +288,9 @@ private:
     bool _exit : 1;
     float _slip;
     String _dbpath;
+    
+    // 策略级资金池
+    CapitalPool _capitalPool;
     std::thread* _thread;
     std::mutex _mutex;
     std::condition_variable _cv;

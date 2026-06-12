@@ -446,6 +446,9 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
             if (histExchange) {
                 currentQty = histExchange->GetPositionQuantity(item._symbol);
             }
+            String symName = get_symbol(item._symbol);
+            INFO("[PortfolioNode] SELL action for {}, currentQty={}, price={:.2f}, allowShort={}",
+                 symName, currentQty, price, _allowShort);
             if (currentQty > 0) {
                 // 平多
                 item._quantity = currentQty;
@@ -454,6 +457,7 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
                 item._targetValue = currentQty * price;
                 plan._items.push_back(item);
                 plan._usedCapital += item._targetValue;
+                INFO("[PortfolioNode] -> SELL {} added to plan: qty={}, price={:.2f}", symName, currentQty, price);
             } else if (currentQty == 0 && _allowShort) {
                 // 做空（开仓）
                 int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
@@ -464,7 +468,10 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
                     item._targetValue = quantity * price;
                     plan._items.push_back(item);
                     plan._usedCapital += item._targetValue;
+                    INFO("[PortfolioNode] -> SHORT {} added to plan: qty={}, price={:.2f}", symName, quantity, price);
                 }
+            } else {
+                INFO("[PortfolioNode] -> SELL {} skipped: currentQty={}, allowShort={}", symName, currentQty, _allowShort);
             }
         }
     }

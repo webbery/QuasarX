@@ -4,9 +4,7 @@
 BacktestContext::BacktestContext(run_id_t run_id, const String& strategy_name)
     : _runId(run_id)
     , _strategy_name(strategy_name)
-    , _positionMgr(BACKTEST_INITIAL_CAPITAL)
 {
-    _positionMgr.SetBacktestMode(true);
 }
 
 BacktestContext::~BacktestContext() {
@@ -68,24 +66,35 @@ void BacktestContext::setPosition(symbol_t symbol, int64_t qty) {
 }
 
 void BacktestContext::adjustPosition(symbol_t symbol, int delta, double price) {
-    _positionMgr.AdjustPosition(symbol, delta, price);
-}
-
-void BacktestContext::setAvailableFunds(double funds) {
-    // 回测模式下直接设置可用资金
-}
-
-bool BacktestContext::tryReserveFunds(double amount) {
-    double current = _positionMgr.GetAvailableFunds();
-    if (current < amount) {
-        return false;
+    // 调用 StockPositionManager 执行持仓变动，返回费用明细
+    TradeFees fees = _positionMgr.AdjustPosition(symbol, delta, price);
+    
+    // 从 CapitalPool 扣/加资金
+    if (_capitalPool && !_strategyNameForCapital.empty()) {
+        double amount = std::abs(delta) * price;
+        if (delta > 0) {
+            // 买入：扣资金 = amount + fees
+            _capitalPool->updateAvailable(_strategyNameForCapital, -(amount + fees.total()));
+        } else if (delta < 0) {
+            // 卖出：加资金 = amount - fees
+            _capitalPool->updateAvailable(_strategyNameForCapital, amount - fees.total());
+        }
     }
-    // 回测模式下资金由外部管理，这里不实际扣减
-    return true;
 }
 
-void BacktestContext::releaseFunds(double amount) {
-    // 回测模式下资金由外部管理
+double BacktestContext::getCapital() const {
+    return _initialCapital;
+}
+
+double BacktestContext::getAvailableFunds() const {
+    if (_capitalPool && !_strategyNameForCapital.empty()) {
+        return _capitalPool->getAvailable(_strategyNameForCapital);
+    }
+    return 0.0;
+}
+
+void BacktestContext::setCapital(double capital) {
+    _initialCapital = capital;
 }
 
 QuoteInfo* BacktestContext::getQuote(symbol_t symbol) {
@@ -169,4 +178,3 @@ void BacktestContext::addSymbol(symbol_t symbol) {
     std::lock_guard<std::mutex> lock(_symbolsMtx);
     _symbols.insert(symbol);
 }
-

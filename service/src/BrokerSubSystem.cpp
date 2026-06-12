@@ -102,6 +102,16 @@ bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType,
   return true;
 }
 
+void BrokerSubSystem::initCapitalPool(double initialCapital, const String& persistPath) {
+    // 尝试从持久化文件加载
+    if (!persistPath.empty() && _capitalPool.load(persistPath)) {
+        INFO("[BrokerSubSystem] CapitalPool loaded from {}", persistPath);
+    } else {
+        _capitalPool.init(initialCapital);
+        INFO("[BrokerSubSystem] CapitalPool initialized with initialCapital={}", initialCapital);
+    }
+}
+
 void BrokerSubSystem::Release() {
   if (!_thread)
     return;
@@ -111,10 +121,15 @@ void BrokerSubSystem::Release() {
   delete _thread;
   _thread = nullptr;
   
+  // 持久化资金池状态
+  if (!_dbpath.empty()) {
+      String capitalPersistPath = _dbpath + "/capital_pool.json";
+      _capitalPool.persist(capitalPersistPath);
+  }
+
   _order_queue.consume_all([](OrderContext* ctx) {
     delete ctx;
   });
-
   for (auto& item: _exchanges) {
     if (item.second)
       item.second->Release();

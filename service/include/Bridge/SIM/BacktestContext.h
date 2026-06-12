@@ -1,6 +1,7 @@
 #pragma once
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
+#include "Bridge/CapitalPool.h"
 #include "std_header.h"
 #include <boost/lockfree/queue.hpp>
 #include <atomic>
@@ -41,15 +42,17 @@ public:
     // 持仓跟踪（委托给 StockPositionManager）
     int64_t getPosition(symbol_t symbol) const;
     void setPosition(symbol_t symbol, int64_t qty);
+    
+    /// @brief 调整持仓（通用：delta > 0 买入，delta < 0 卖出）
+    /// 成交时自动从 CapitalPool 扣/加资金
     void adjustPosition(symbol_t symbol, int delta, double price);
 
-    // 资金管理
-    double getCapital() const { return _positionMgr.getCapital(); }
-    void setCapital(double capital) { _positionMgr.SetInitialCapital(capital); }
-    double getAvailableFunds() const { return _positionMgr.GetAvailableFunds(); }
-    void setAvailableFunds(double funds);
-    bool tryReserveFunds(double amount);
-    void releaseFunds(double amount);
+    // 资金管理（委托给 CapitalPool）
+    void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }
+    void setStrategyName(const String& name) { _strategyNameForCapital = name; }
+    double getCapital() const;
+    double getAvailableFunds() const;
+    void setCapital(double capital);  // 初始化策略资金
 
     // 报价缓存（当前 Bar 的数据）
     QuoteInfo* getQuote(symbol_t symbol);
@@ -159,6 +162,11 @@ private:
 
     // 持仓状态（由 StockPositionManager 统一管理）
     StockPositionManager _positionMgr;
+
+    // 资金管理（委托给 CapitalPool，不拥有）
+    CapitalPool* _capitalPool = nullptr;
+    String _strategyNameForCapital;  // 用于 CapitalPool 查询的策略名
+    double _initialCapital = 0.0;    // 策略初始资金（从 CapitalPool 分配）
 
     // 当前 Bar 的报价（每个线程私有，无需锁）
     Map<symbol_t, QuoteInfo> _quotes;

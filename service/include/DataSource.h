@@ -7,14 +7,6 @@
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
 
-struct DataFeatures {
-    Vector<symbol_t> _symbols;
-    Vector<String> _names;
-    Vector<context_t> _data;
-    Vector<char> _type; // 0-double, 1-vector, 2-matrix
-    YAS_DEFINE_STRUCT_SERIALIZE("DataMessenger", _symbols, _names,  _data, _type);
-};
-
 namespace yas {
 template<typename Archive>
 void serialize(Archive& ar, Eigen::MatrixXd& matrix) {

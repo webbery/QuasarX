@@ -63,9 +63,7 @@ bool Pusher(const String& uri, nng_socket& sock);
 
 struct QuoteInfo;
 struct symbol_t;
-struct DataFeatures;
 bool ReadQuote(nng_socket& sock, QuoteInfo& quote, const Set<symbol_t>& filter = {});
-bool ReadFeatures(nng_socket& sock, DataFeatures& features);
 
 enum class SIMDSupport {
     None = 0,

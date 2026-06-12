@@ -1,34 +1,22 @@
 #include "Bridge/SIM/StockPositionManager.h"
-#include "Bridge/SIM/BacktestContext.h"
 #include <cmath>
 
-StockPositionManager::StockPositionManager(double initialCapital)
-    : _availableFunds(initialCapital)
-    , _initialCapital(initialCapital)
-    , _commissionRate(0.0003)
+StockPositionManager::StockPositionManager()
+    : _commissionRate(0.0003)
     , _stampTaxRate(0.001)
-    , _backtestMode(false)
 {
 }
 
 // ==================== 持仓操作 ====================
 
-void StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) {
+TradeFees StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) {
     if (qty <= 0 || price <= 0.0) {
         WARN("Invalid buy params: qty={}, price={}", qty, price);
-        return;
+        return TradeFees{};
     }
     std::lock_guard<std::mutex> lock(_mutex);
     double amount = qty * price;
-    double fees = CalcFees(amount, false);
-
-    // 回测和实盘都应扣减资金，确保 recordDailySnapshot 记录的总资产正确
-    // 旧逻辑：回测模式不扣资金 → available_funds 始终保持初始值 → totalEquity 被高估
-    if (_availableFunds < amount + fees) {
-        WARN("Insufficient funds: need={}+{} avail={}", amount, fees, _availableFunds);
-        return;
-    }
-    _availableFunds -= (amount + fees);
+    TradeFees fees = CalcFees(amount, false);
 
     // 更新持仓（加权平均成本）
     auto it = _positions.find(symbol);
@@ -50,20 +38,22 @@ void StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) {
     // T+1 控制：记录当日买入
     _todayBuyQty[symbol] += qty;
 
-    INFO("BUY symbol={} qty={} price={} fees={}", symbol, qty, price, fees);
+    INFO("BUY symbol={} qty={} price={} fees={}", symbol, qty, price, fees.total());
+    return fees;
 }
 
-void StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
+StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
+    SellResult result{};
     if (qty <= 0 || price <= 0.0) {
         WARN("Invalid sell params: qty={}, price={}", qty, price);
-        return;
+        return result;
     }
     std::lock_guard<std::mutex> lock(_mutex);
 
     auto it = _positions.find(symbol);
     if (it == _positions.end()) {
         WARN("No position to sell: {}", symbol);
-        return;
+        return result;
     }
 
     StockPosition& pos = it->second;
@@ -84,14 +74,13 @@ void StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
     }
 
     if (qty <= 0) {
-        return;
+        return result;
     }
 
     double amount = qty * price;
-    double fees = CalcFees(amount, true);
-
-    // 回测和实盘都应增加资金，与Buy保持一致
-    _availableFunds += (amount - fees);
+    result.fees = CalcFees(amount, true);
+    result.proceeds = amount - result.fees.total();
+    result.actualQty = qty;
 
     // 更新持仓
     pos._qty -= qty;
@@ -99,15 +88,18 @@ void StockPositionManager::Sell(symbol_t symbol, int64_t qty, double price) {
         _positions.erase(it);
     }
 
-    INFO("SELL symbol={} qty={} price={} fees={}", symbol, qty, price, fees);
+    INFO("SELL symbol={} qty={} price={} fees={}", symbol, qty, price, result.fees.total());
+    return result;
 }
 
-void StockPositionManager::AdjustPosition(symbol_t symbol, int64_t delta, double price) {
+TradeFees StockPositionManager::AdjustPosition(symbol_t symbol, int64_t delta, double price) {
     if (delta > 0) {
-        Buy(symbol, delta, price);
+        return Buy(symbol, delta, price);
     } else if (delta < 0) {
-        Sell(symbol, -delta, price);
+        auto result = Sell(symbol, -delta, price);
+        return result.fees;
     }
+    return TradeFees{};
 }
 
 // ==================== 查询 ====================
@@ -150,17 +142,11 @@ double StockPositionManager::GetPositionCost(symbol_t symbol) const {
     return it->second._cost;
 }
 
-double StockPositionManager::GetAvailableFunds() const {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _availableFunds;
-}
-
 AccountAsset StockPositionManager::GetAsset() const {
     std::lock_guard<std::mutex> lock(_mutex);
     AccountAsset asset{};
-    asset.buying_power = _availableFunds;
-    // TODO: 计算持仓市值
-    asset.total_asset = _availableFunds;
+    asset.buying_power = 0.0;  // 资金由外部管理
+    asset.total_asset = 0.0;   // 需要调用方计算持仓市值
     return asset;
 }
 
@@ -180,16 +166,9 @@ bool StockPositionManager::GetPosition(AccountPosition& pos) const {
 
 // ==================== 配置 ====================
 
-void StockPositionManager::SetInitialCapital(double capital) {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _initialCapital = capital;
-    _availableFunds = capital;
-}
-
 void StockPositionManager::Reset() {
     std::lock_guard<std::mutex> lock(_mutex);
     _positions.clear();
-    _availableFunds = _initialCapital;
     _todayBuyQty.clear();
 }
 
@@ -200,8 +179,9 @@ void StockPositionManager::OnDayChange() {
 
 // ==================== 内部方法 ====================
 
-double StockPositionManager::CalcFees(double amount, bool isSell) const {
-    double commission = amount * _commissionRate;
-    double stampTax = isSell ? (amount * _stampTaxRate) : 0.0;
-    return commission + stampTax;
+TradeFees StockPositionManager::CalcFees(double amount, bool isSell) const {
+    TradeFees fees;
+    fees.commission = amount * _commissionRate;
+    fees.stampTax = isSell ? (amount * _stampTaxRate) : 0.0;
+    return fees;
 }

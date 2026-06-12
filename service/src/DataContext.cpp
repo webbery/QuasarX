@@ -125,22 +125,17 @@ void DataContext::ConsumeSignals() {
 
 double DataContext::getAvailableCapital() const
 {
+    // 优先从 Exchange 获取实际可用资金（回测模式下 BacktestContext/PositionManager 管理）
     const auto& exchangeMgr = *_server->GetExchangeManager();
-    // 回测模式：遍历所有 Exchange，汇总可用资金
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        double totalFunds = 0.0;
-        bool found = false;
         for (auto* exchange : exchangeMgr.GetActiveExchanges()) {
             double funds = exchange->GetAvailableFunds(_backtestRunId);
             if (funds > 0) {
-                totalFunds += funds;
-                found = true;
+                return funds;
             }
         }
-        if (found) {
-            return totalFunds;
-        }
-        return BACKTEST_INITIAL_CAPITAL;
+        // fallback: 使用分配的资金
+        return _capital;
     }
 
     // 实盘模式：使用活跃的股票交易 Exchange
@@ -148,7 +143,7 @@ double DataContext::getAvailableCapital() const
     if (exchange) {
         return exchange->GetAvailableFunds(0);
     }
-    return 0;
+    return _capital;
 }
 
 void DataContext::SetQuote(symbol_t symbol, const QuoteInfo& quote) {
@@ -169,6 +164,18 @@ void DataContext::setInitialCapital(double capital) {
 
 double DataContext::getInitialCapital() const {
     return _initialCapital;
+}
+
+void DataContext::setCapital(double capital) {
+    _capital = capital;
+}
+
+double DataContext::getCapital() const {
+    return _capital;
+}
+
+void DataContext::updateCapital(double delta) {
+    _capital += delta;
 }
 
 BacktestContext* DataContext::getBacktestContext() {
