@@ -34,17 +34,44 @@ std::vector<double> VolatilityHandler::loadPrices(
     std::vector<std::string>& out_dates,
     std::vector<double>& out_volumes)
 {
-    // 从数据目录读取 CSV
-    std::string data_path = "./data/AStock/" + symbol + ".csv";
+    // 获取程序运行目录的绝对路径
+    std::string base_dir = "./data";
     
-    // 也尝试后复权数据
-    std::string hfq_path = "./data/A_hfq/" + symbol + ".csv";
-    if (fs::exists(hfq_path)) {
-        data_path = hfq_path;
+    // 尝试多种可能的路径格式
+    std::vector<std::string> search_paths;
+    
+    // 原始symbol格式可能是: sz.000001, SH.000001, 000001等
+    // 数据文件名格式: sz.000001.csv (小写交易所前缀)
+    std::string normalized_symbol = symbol;
+    
+    // 如果symbol没有交易所前缀，尝试添加常见前缀
+    if (symbol.find('.') == std::string::npos) {
+        // 纯数字代码，尝试常见交易所
+        search_paths.push_back(base_dir + "/Astock/" + "sz." + symbol + ".csv");
+        search_paths.push_back(base_dir + "/Astock/" + "sh." + symbol + ".csv");
+        search_paths.push_back(base_dir + "/A_hfq/" + "sz." + symbol + ".csv");
+        search_paths.push_back(base_dir + "/A_hfq/" + "sh." + symbol + ".csv");
+    } else {
+        // 已有前缀，统一转为小写
+        std::transform(normalized_symbol.begin(), normalized_symbol.end(), 
+                      normalized_symbol.begin(), ::tolower);
+        search_paths.push_back(base_dir + "/Astock/" + normalized_symbol + ".csv");
+        search_paths.push_back(base_dir + "/A_hfq/" + normalized_symbol + ".csv");
     }
-
-    if (!fs::exists(data_path)) {
-        WARN("[Volatility] Data file not found: {}", data_path);
+    
+    std::string data_path;
+    for (const auto& path : search_paths) {
+        if (fs::exists(path)) {
+            data_path = path;
+            break;
+        }
+    }
+    
+    if (data_path.empty()) {
+        WARN("[Volatility] Data file not found for symbol: {}", symbol);
+        for (const auto& path : search_paths) {
+            WARN("  Tried: {}", path);
+        }
         return {};
     }
 

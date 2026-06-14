@@ -17,7 +17,7 @@
         <div class="tabs">
             <button
                 :class="{ active: activeTab === 'realtime' }"
-                @click="activeTab = 'realtime'"
+                @click="activeTab = 'realtime'; viewingLogs = false"
             >
                 <i class="fas fa-bolt"></i> 实时监控
             </button>
@@ -30,64 +30,95 @@
         </div>
 
         <!-- 实时监控面板 -->
-        <div v-if="activeTab === 'realtime'" class="tab-content">
-            <div v-if="strategyList.length === 0" class="empty-state">
-                <i class="fas fa-inbox"></i>
-                <p>暂无策略</p>
-                <span>请先在策略工厂中创建策略</span>
+        <div v-if="activeTab === 'realtime'" class="tab-content realtime-content">
+            <!-- 策略列表视图 -->
+            <div v-if="!viewingLogs" class="strategy-list-view">
+                <div v-if="strategyList.length === 0" class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>暂无策略</p>
+                    <span>请先在策略工厂中创建策略</span>
+                </div>
+                <div v-else class="strategy-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 60px;">状态</th>
+                                <th>策略名称</th>
+                                <th style="width: 100px;">Epoch</th>
+                                <th style="width: 120px;">最后心跳</th>
+                                <th style="width: 200px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="s in strategyList" :key="s.name">
+                                <td>
+                                    <span class="status-dot" :class="{ running: s.running }"></span>
+                                </td>
+                                <td class="strategy-name" :title="s.name">{{ s.name }}</td>
+                                <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
+                                <td>
+                                    <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
+                                    <span v-else class="heartbeat unknown">--</span>
+                                </td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <button
+                                            v-if="s.running"
+                                            class="btn btn-stop"
+                                            @click="stopStrategy(s.name)"
+                                            :disabled="isOperating(s.name)"
+                                        >
+                                            <i class="fas fa-stop"></i> 停止
+                                        </button>
+                                        <button
+                                            v-else
+                                            class="btn btn-start"
+                                            @click="startStrategy(s.name)"
+                                            :disabled="isOperating(s.name)"
+                                        >
+                                            <i class="fas fa-play"></i> 启动
+                                        </button>
+                                        <button
+                                            class="btn btn-log"
+                                            @click="viewLogs(s.name)"
+                                        >
+                                            <i class="fas fa-file-alt"></i> 日志
+                                        </button>
+                                        <button
+                                            class="btn btn-delete"
+                                            @click="deleteStrategy(s.name)"
+                                            :disabled="isOperating(s.name)"
+                                        >
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            <div v-else class="strategy-table">
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="width: 60px;">状态</th>
-                            <th>策略名称</th>
-                            <th style="width: 100px;">Epoch</th>
-                            <th style="width: 120px;">最后心跳</th>
-                            <th style="width: 140px;">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="s in strategyList" :key="s.name">
-                            <td>
-                                <span class="status-dot" :class="{ running: s.running }"></span>
-                            </td>
-                            <td class="strategy-name" :title="s.name">{{ s.name }}</td>
-                            <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
-                            <td>
-                                <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
-                                <span v-else class="heartbeat unknown">--</span>
-                            </td>
-                            <td>
-                                <div class="action-buttons">
-                                    <button
-                                        v-if="s.running"
-                                        class="btn btn-stop"
-                                        @click="stopStrategy(s.name)"
-                                        :disabled="isOperating(s.name)"
-                                    >
-                                        <i class="fas fa-stop"></i> 停止
-                                    </button>
-                                    <button
-                                        v-else
-                                        class="btn btn-start"
-                                        @click="startStrategy(s.name)"
-                                        :disabled="isOperating(s.name)"
-                                    >
-                                        <i class="fas fa-play"></i> 启动
-                                    </button>
-                                    <button
-                                        class="btn btn-delete"
-                                        @click="deleteStrategy(s.name)"
-                                        :disabled="isOperating(s.name)"
-                                    >
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+
+            <!-- 日志查看视图 -->
+            <div v-else class="log-view-container">
+                <div class="log-view-header">
+                    <button class="btn btn-back" @click="backToList">
+                        <i class="fas fa-arrow-left"></i> 返回策略列表
+                    </button>
+                    <span class="log-view-title">
+                        <i class="fas fa-file-alt"></i>
+                        策略日志
+                        <span v-if="viewLogStrategy" class="log-view-strategy-name">{{ viewLogStrategy }}</span>
+                        <span v-else class="log-view-all">（全部策略）</span>
+                    </span>
+                    <div></div>
+                </div>
+                <div class="log-view-content">
+                    <StrategyLogPanel
+                        :strategy-names="strategyNames"
+                        :selected-strategy="viewLogStrategy"
+                    />
+                </div>
             </div>
         </div>
 
@@ -111,17 +142,24 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, watch } from 'vue'
+import { ref, computed, inject, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
+import StrategyLogPanel from './StrategyLogPanel.vue'
 
 const activeTab = ref('realtime')
 const selectedStrategy = ref('')
 
+// 日志查看视图切换
+const viewingLogs = ref(false)
+const viewLogStrategy = ref('')
+
 // 复用 App.vue 共享的策略状态（10s 轮询）
 const serverStrategies = inject('serverStrategies', ref([]))
 const fetchServerStrategies = inject('fetchServerStrategies', () => {})
+
+const strategyNames = computed(() => serverStrategies.value.map(s => s.name))
 
 const strategyList = serverStrategies
 
@@ -133,6 +171,18 @@ const operatingStrategies = ref(new Set())
 
 /** 策略是否正在执行操作中 */
 const isOperating = (name) => operatingStrategies.value.has(name)
+
+/** 查看策略日志 */
+const viewLogs = (name) => {
+  viewLogStrategy.value = name
+  viewingLogs.value = true
+}
+
+/** 从日志视图返回策略列表 */
+const backToList = () => {
+  viewingLogs.value = false
+  viewLogStrategy.value = ''
+}
 
 /** 格式化心跳时间：距离 lastHeartbeat 的时间差 */
 const formatHeartbeat = (lastHeartbeat) => {
@@ -204,6 +254,11 @@ watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
         reviewPanelRef.value.loadData()
     }
 })
+
+// 挂载时获取服务端策略信息
+onMounted(async () => {
+    await fetchServerStrategies()
+})
 </script>
 
 <style scoped>
@@ -265,10 +320,10 @@ watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
 
 .tab-content {
     flex: 1;
-    overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    overflow: hidden;
+    min-height: 0;
 }
 
 .empty-state {
@@ -298,8 +353,13 @@ watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
 }
 
 /* 策略表格样式 */
+.realtime-content {
+  gap: 16px;
+  overflow-y: auto;
+}
+
 .strategy-table {
-    flex: 1;
+    flex: 0 0 auto;
     overflow: auto;
 }
 
@@ -436,4 +496,80 @@ watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
 .btn-delete:hover:not(:disabled) {
     background: rgba(248, 113, 113, 0.3);
 }
+
+/* ── 策略列表视图 ── */
+.strategy-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+/* ── 日志查看视图 ── */
+.log-view-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+
+.log-view-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(74, 158, 255, 0.2);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.log-view-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.log-view-title i {
+  color: #60a5fa;
+}
+
+.log-view-strategy-name {
+  color: #60a5fa;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 13px;
+}
+
+.log-view-all {
+  color: #64748b;
+  font-size: 13px;
+}
+
+/* ── 按钮样式 ── */
+.btn-back {
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  color: #60a5fa;
+  padding: 6px 12px;
+}
+
+.btn-back:hover {
+  background: rgba(96, 165, 250, 0.3);
+}
+
+.btn-log {
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+.btn-log:hover:not(:disabled) {
+  background: rgba(96, 165, 250, 0.3);
+}
+
+/* 日志区块（保留给 StrategyLogPanel 内部样式） */
 </style>

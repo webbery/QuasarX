@@ -44,16 +44,16 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
         auto names = flow->GetFlowNames();
         for (auto& name : names) {
             nlohmann::json item;
-            item["name"] = name;
+            item["name"] = to_utf8(name.c_str());
             item["running"] = flow->IsRunning(name);
-            item["epochCount"] = flow->GetEpochCount(name);
-            item["lastHeartbeat"] = flow->GetLastHeartbeat(name);
+            item["epochCount"] = (int64_t)flow->GetEpochCount(name);
+            item["lastHeartbeat"] = (int64_t)flow->GetLastHeartbeat(name);
             result.push_back(item);
         }
     }
 
     res.status = 200;
-    res.set_content(result.dump(), "application/json");
+    res.set_content(result.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), "application/json");
 }
 
 void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) {

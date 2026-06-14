@@ -556,15 +556,20 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     flow._kbarBuilder = kbarBuilder;
 
     bool shadowMode = flow.isShadowMode;
-    INFO("[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
-         KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
+    if (_handle->GetRunningMode() != RuningType::Backtest) {
+        STRATEGY_INFO(strategy, "[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
+             KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
+    } else {
+        INFO("[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
+             KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
+    }
 
     flow._worker = new std::thread([strategy, symbols, kbarBuilder, shadowMode, this]() {
         // ★ 影子模式：临时设置全局运行模式（仅在当前 worker 线程生命周期内有效）
         RuningType originalMode = _handle->GetRunningMode();
         if (shadowMode) {
             _handle->SetRunningMode(RuningType::Shadow);
-            INFO("[Realtime] Shadow mode activated for strategy '{}'", strategy);
+            STRATEGY_INFO(strategy, "[Realtime] Shadow mode activated");
         }
 
         DataContext context(strategy, _handle);
@@ -574,7 +579,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
         // 订阅原始行情
         nng_socket recvSock;
         if (!Subscribe(URI_RAW_QUOTE, recvSock)) {
-            WARN("[Realtime] Failed to subscribe to raw quote channel");
+            STRATEGY_WARN(strategy, "[Realtime] Failed to subscribe to raw quote channel");
             flow._running = false;
             return;
         }
@@ -612,12 +617,12 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
 
                 // 执行策略图
                 if (!RunGraph(strategy, flow, context)) {
-                    WARN("[Realtime] RunGraph failed for strategy {}", strategy);
+                    STRATEGY_WARN(strategy, "[Realtime] RunGraph failed");
                     break;
                 }
             }
         } catch (const std::invalid_argument& e) {
-            WARN("invalid argument error: {}", e.what());
+            STRATEGY_WARN(strategy, "invalid argument error: {}", e.what());
         }
 
         nng_close(recvSock);
@@ -633,7 +638,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
         // ★ 恢复原始运行模式
         if (shadowMode) {
             _handle->SetRunningMode(originalMode);
-            INFO("[Realtime] Shadow mode deactivated, restored to {}", (int)originalMode);
+            STRATEGY_INFO(strategy, "[Realtime] Shadow mode deactivated, restored to {}", (int)originalMode);
         }
     });
 

@@ -10,6 +10,7 @@
 #endif
 #include "server.h"
 #include "Util/string_algorithm.h"
+#include "Util/DuckDBLogger.h"
 #ifdef WIN32
 #define popen _popen
 #define pclose _pclose
@@ -153,6 +154,11 @@ int main(int argc, char* argv[])
     // init log
     init_logger();
 
+    // 初始化 DuckDB 策略日志（表不存在则自动创建）
+    if (!DuckDBLogger::instance().init("logs/strategy_logs.db")) {
+        SPDLOG_WARN("[Main] DuckDB logger init failed, strategy logs will not be stored");
+    }
+
     Server server;
     // 加载配置
     if (argc == 2) {
@@ -167,5 +173,10 @@ int main(int argc, char* argv[])
     }
     
     server.Run();
+
+    // 关闭 DuckDB 日志器
+    DuckDBLogger::instance().shutdown();
+    spdlog::shutdown();
+
     return 0;
 }

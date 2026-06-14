@@ -34,6 +34,7 @@
 #include "Handler/NavHandler.h"
 #include "Handler/StrategyHandler.h"
 #include "Handler/StockHandler.h"
+#include "Handler/StrategyLogHandler.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"
 #include "Nodes/PortfolioNode.h"
@@ -151,6 +152,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_NAV_HISTORY     "/nav/history"
 #define API_VOLATILITY      "/analysis/volatility"
 #define API_CAPITAL_STATUS  "/server/capital"
+#define API_STRATEGY_LOGS   "/strategy/logs"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -338,7 +340,6 @@ void Server::Regist() {
 bool Server::InitDatabase() {
     auto db_path = _config->GetDatabasePath();
     InitMarket(db_path);
-    // InitInterestRate(db_path + "/inter_rate.csv");
 
     // TODO: 获取配置中计算所需的最大数据量,然后只读取这部分数据,提升加载速度并减少内存占用
     // int prepare_count = GetMaxPrepareCount();
@@ -852,173 +853,6 @@ float Server::GetInterestRate(time_t datetime) {
     return itr->second;
 }
 
-// bool Server::LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType freq) {
-//     auto& dataCache = (right == StockAdjustType::None? _data: _hfqdata);
-//     if (dataCache.count(symbol)) {
-//         // TODO: 检查数据最后一天的时间是否是当天,如果不是,需要加载新的数据进来
-//         return true;
-//     }
-//     String path = _config->GetDatabasePath();
-//     auto type = GetContractType(symbol);
-//     String contract = (right == StockAdjustType::None? "Astock": "A_hfq");
-//     String filename;
-//     try {
-//         auto& df = dataCache[symbol];
-//         _symbolCache.push_front(symbol);
-//         switch (type)
-//         {
-//         case ContractType::ETF:
-//             contract = "etf";
-//             if (freq == DataFrequencyType::Min5) {
-//                 filename = symbol + "_5_data.csv";
-//             }
-//             else {
-//                 filename = symbol + "_hist_data.csv";
-//             }
-//             path += "/" + contract + "/" + filename;
-//             if (!LoadStock(df, path))
-//                 return false;
-//             break;
-//         case ContractType::LOF:
-//             contract = "lof";
-//             break;
-//         case ContractType::Future:
-//             contract = "Future";
-//             path += "/" + contract + "/" + filename;
-//             if (!LoadFuture(df, path))
-//                 return false;
-//             break;
-//         case ContractType::Option:
-//         case ContractType::AsianOption:
-//         case ContractType::BarrierOption:
-//         case ContractType::BinaryOption:
-//         case ContractType::EureanOption:
-//             contract = "Option";
-//             break;
-//         default:
-//             if (freq == DataFrequencyType::Min5) {
-//                 contract = "A_tick";
-//             }
-//             filename = symbol + "_hist_data.csv";
-//             path += "/" + contract + "/" + filename;
-//             if (!LoadStock(df, path))
-//                 return false;
-//             break;
-//         }
-//     }
-//     catch (std::exception& e) {
-//         WARN("read csv file fail:{}", e.what());
-//         return false;
-//     }
-
-//     if (_symbolCache.size() > MAX_HISTORY_SIZE) {
-//         auto erase_symbol = _symbolCache.back();
-//         dataCache.erase(erase_symbol);
-//         _symbolCache.pop_back();
-//     }
-//     return true;
-// }
-
-// bool Server::LoadStock(DataFrame& df, symbol_t symbol, int lastN) {
-//     auto filename = get_symbol(symbol) + "_hist_data.csv";
-//     String path = _config->GetDatabasePath();
-//     path += "/Astock/" + filename;
-
-//     std::ifstream file(path, std::ios::binary | std::ios::ate);
-//     if (!file.is_open()) {
-//         WARN("Can't open file: {}", path);
-//         return false;
-//     }
-//     // 获取文件大小并初始化位置指针
-//     std::streampos pos = file.tellg();
-//     int newlineCount = 0;
-//     char ch;
-//     // 从文件末尾向前搜索换行符
-//     while (pos > 0) {
-//         pos -= 1;
-//         file.seekg(pos, std::ios::beg); // 向前移动一个字节
-//         file.get(ch);
-        
-//         if (ch == '\n') {
-//             if (++newlineCount == lastN) 
-//                 break; // 找到第n个换行符
-//         }
-//     }
-//     // 如果未找到足够换行符，回到文件开头
-    
-//     if (pos != 0) {
-//         pos += 1;
-//         file.seekg(pos); // 跳过找到的换行符
-//     }
-//     else file.seekg(0);
-
-//     // 读取目标行内容
-//     uint32_t index = 0;
-//     std::string line;
-//     bool visited_head = false;
-//     df.load_column("datetime", Vector<time_t>());
-//     for (auto name : { "open", "close", "high", "low", "volume"}) {
-//         df.load_column(name, Vector<double>());
-//     }
-//     while (std::getline(file, line)) {
-//         // 处理换行符（\r\n）
-//         if (!line.empty() && line.back() == '\n') {
-//             line.pop_back();
-//             if (line.back() == '\r') {
-//                 line.pop_back();
-//             }
-//         }
-        
-//         if (!visited_head && line.find("open") != std::string::npos) {
-//             visited_head = true;
-//             continue;
-//         }
-
-//         Vector<String> content;
-//         split(line, content, ",");
-
-//         auto t = FromStr(content[0]);
-//         auto open = atof(content[1].c_str());
-//         auto close = atof(content[2].c_str());
-//         auto low = atof(content[3].c_str());
-//         auto high = atof(content[4].c_str());
-//         auto volumn = atof(content[5].c_str());
-//         df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
-//             std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn)
-//         );
-//         ++index;
-//     }
-//     file.close();
-//     return true;
-// }
-
-bool Server::LoadFuture(DataFrame& df, const String& path) {
-    if (!std::filesystem::exists(path))
-        return false;
-
-    String datetime;
-    double open, close, high, low, volumn;
-
-    Vector<String> sv;
-    df.load_column("datetime", sv);
-    Vector<double> dv;
-    for (auto name : { "open", "close", "high","low", "volume"}) {
-        df.load_column(name, dv);
-    }
-    uint32_t index = 0;
-    io::CSVReader<6> reader(path);
-    // 日期,开盘,收盘,最高,最低,成交量
-    reader.read_header(io::ignore_extra_column, "datetime", "open", "close", "high", "low", "volume");
-    while (reader.read_row(datetime, open, close, high, low, volumn)) {
-        auto t = FromStr(datetime);
-        df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
-            std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn)
-        );
-        ++index;
-    }
-    return true;
-}
-
 void Server::StartTimer()
 {
     _timer = new std::thread(&Server::Timer, this);
@@ -1303,6 +1137,7 @@ void Server::InitHandlers() {
     RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
     RegistHandler(API_STOCK_PARAMS, StockParams);
     RegistHandler(API_VOLATILITY, VolatilityHandler);
+    RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});

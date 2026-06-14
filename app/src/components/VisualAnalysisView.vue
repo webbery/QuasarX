@@ -3,39 +3,56 @@
     <!-- 头部控制区 -->
     <header class="header">
       <div class="controls">
-        <el-select v-model="selectedAssetType" placeholder="选择资产类型" class="control-item">
-          <el-option label="股票板块" value="stocks"></el-option>
-        </el-select>
+        <select v-model="selectedAssetType" class="control-item">
+          <option value="stocks">股票板块</option>
+        </select>
 
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          class="control-item"
-        >
-        </el-date-picker>
+        <div class="date-range-picker">
+          <input type="date" v-model="startDate" class="date-input" placeholder="开始日期" />
+          <span class="date-separator">至</span>
+          <input type="date" v-model="endDate" class="date-input" placeholder="结束日期" />
+        </div>
 
-        <el-button type="primary" @click="refreshData">刷新数据</el-button>
+        <button type="button" class="btn btn-primary" @click="refreshData">刷新数据</button>
       </div>
     </header>
 
     <!-- Tab 切换 -->
-    <el-tabs v-model="activeTab" class="main-tabs">
-      <el-tab-pane label="📊 资金流向" name="flow">
-        <div class="tab-content">
+    <div class="main-tabs">
+      <div class="tabs-header">
+        <button
+          v-for="tab in tabs"
+          :key="tab.name"
+          :class="['tab-item', { active: activeTab === tab.name }]"
+          @click="activeTab = tab.name"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+
+      <div class="tabs-content">
+         <!-- 波动率分析 Tab -->
+        <div v-show="activeTab === 'volatility'" class="tab-content">
+          <VolatilityTab />
+        </div>
+        <!-- 资金流向 Tab -->
+        <div v-show="activeTab === 'flow'" class="tab-content">
           <!-- 第一行：资金流入情况和流入流出Top5 -->
           <div class="chart-row">
             <div class="chart-container">
               <div class="chart-header">
                 <h3>当日板块流入流出Top5</h3>
                 <div class="chart-controls">
-                  <el-radio-group v-model="flowDirection" size="small">
-                    <el-radio-button label="all">全部</el-radio-button>
-                    <el-radio-button label="inflow">仅流入</el-radio-button>
-                    <el-radio-button label="outflow">仅流出</el-radio-button>
-                  </el-radio-group>
+                  <div class="radio-group">
+                    <button
+                      v-for="opt in flowDirectionOptions"
+                      :key="opt.value"
+                      :class="['radio-btn', { active: flowDirection === opt.value }]"
+                      @click="flowDirection = opt.value"
+                    >
+                      {{ opt.label }}
+                    </button>
+                  </div>
                 </div>
               </div>
               <div class="chart" ref="flowChart"></div>
@@ -45,9 +62,16 @@
               <div class="chart-header">
                 <h3>{{ selectedSector ? `[${selectedSector}]当日资金流向详情` : '板块资金流向详情' }}</h3>
                 <div class="chart-controls">
-                  <el-radio-group v-model="fundsChartType" size="small">
-                    <el-radio-button label="bar">柱状图</el-radio-button>
-                  </el-radio-group>
+                  <div class="radio-group">
+                    <button
+                      v-for="opt in fundsChartTypeOptions"
+                      :key="opt.value"
+                      :class="['radio-btn', { active: fundsChartType === opt.value }]"
+                      @click="fundsChartType = opt.value"
+                    >
+                      {{ opt.label }}
+                    </button>
+                  </div>
                 </div>
               </div>
               <div class="chart" ref="fundsChart"></div>
@@ -60,7 +84,7 @@
               <div class="chart-header">
                 <h3>板块流入流出变化率Top5</h3>
                 <div class="chart-controls">
-                  <el-button size="small" @click="exportHeatmap">导出</el-button>
+                  <button size="small" class="btn btn-small" @click="exportHeatmap">导出</button>
                 </div>
               </div>
               <div class="chart" ref="heatmapChart"></div>
@@ -70,59 +94,71 @@
               <div class="chart-header">
                 <h3>{{ selectedSector ? `[${selectedSector}]历史资金流向` : '历史资金流向' }}</h3>
                 <div class="chart-controls">
-                  <el-slider
-                    v-model="clusterCount"
+                  <input
+                    type="range"
+                    v-model.number="clusterCount"
                     :min="2"
                     :max="8"
                     :step="1"
-                    show-stops
-                    size="small"
-                    style="width: 120px;"
-                  >
-                  </el-slider>
+                    class="slider"
+                  />
+                  <span class="slider-value">{{ clusterCount }}</span>
                 </div>
               </div>
               <div class="chart" ref="clusterChart"></div>
             </div>
           </div>
-        </div>
-      </el-tab-pane>
-
-      <el-tab-pane label="📈 波动率分析" name="volatility">
-        <div class="tab-content">
-          <VolatilityTab />
-        </div>
-      </el-tab-pane>
-    </el-tabs>
-
-    <!-- 底部统计信息 -->
-    <footer class="footer">
-      <div class="stats-container">
-        <div class="stat-card">
-          <div class="stat-value">¥1,245.6亿</div>
-          <div class="stat-label">总资产规模</div>
+          <!-- 底部统计信息 -->
+          <footer class="footer">
+            <div class="stats-container">
+              <div class="stat-card">
+                <div class="stat-value">¥1,245.6亿</div>
+                <div class="stat-label">总资产规模</div>
+              </div>
+            </div>
+          </footer>
         </div>
       </div>
-    </footer>
+    </div>
+
+    
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import * as echarts from 'echarts'
 import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
 import VolatilityTab from './volatility/VolatilityTab.vue'
 
 const unit = 100000000 // 单位:亿
 
+// Tab 配置
+const tabs = [
+  { label: '波动率分析', name: 'volatility' },
+  { label: '资金流向', name: 'flow' }
+]
+
 // Tab 切换
 const activeTab = ref('flow')
 
 // 响应式数据
 const selectedAssetType = ref('stocks')
-const dateRange = ref([])
+const startDate = ref('')
+const endDate = ref('')
 const fundsChartType = ref('bar')
 const flowDirection = ref('all') // 流入流出显示选项
+
+const flowDirectionOptions = [
+  { label: '全部', value: 'all' },
+  { label: '仅流入', value: 'inflow' },
+  { label: '仅流出', value: 'outflow' }
+]
+
+const fundsChartTypeOptions = [
+  { label: '柱状图', value: 'bar' }
+]
+
 const clusterCount = ref(4)
 const selectedSector = ref(null) // 选中的板块
 const currentSectorData = ref(null) // 当前选中板块的详细数据
@@ -703,34 +739,215 @@ onUnmounted(() => {
 }
 
 .control-item {
-  width: 180px;
+  padding: 6px 12px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
 }
 
+.control-item:hover {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.control-item option {
+  background: #1a2236;
+  color: #e0e0e0;
+}
+
+.date-range-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.date-input {
+  padding: 6px 12px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+}
+
+.date-input:hover {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.date-input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
+}
+
+.date-separator {
+  color: #999;
+  font-size: 14px;
+}
+
+/* 按钮样式 */
+.btn {
+  padding: 6px 16px;
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  background: rgba(26, 34, 54, 0.8);
+  color: #e0e0e0;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.btn-primary {
+  background: #2962ff;
+  border-color: #2962ff;
+}
+
+.btn-primary:hover {
+  background: #1e54e6;
+  border-color: #1e54e6;
+}
+
+.btn-small {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+/* Tab 样式 */
 .main-tabs {
   flex: 1;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.main-tabs :deep(.el-tabs__header) {
-  margin: 0;
+.tabs-header {
+  display: flex;
+  gap: 0;
   padding: 0 24px;
   background: rgba(26, 34, 54, 0.8);
   border-bottom: 1px solid rgba(74, 85, 104, 0.3);
 }
 
-.main-tabs :deep(.el-tabs__item) {
+.tab-item {
+  padding: 12px 24px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
   color: #999;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.main-tabs :deep(.el-tabs__item.is-active) {
+.tab-item:hover {
+  color: #e0e0e0;
+}
+
+.tab-item.active {
   color: #2962ff;
+  border-bottom-color: #2962ff;
 }
 
-.main-tabs :deep(.el-tabs__content) {
+.tabs-content {
   flex: 1;
   overflow: auto;
+}
+
+/* 单选按钮组 */
+.radio-group {
+  display: flex;
+  gap: 0;
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.radio-btn {
+  padding: 4px 12px;
+  background: rgba(26, 34, 54, 0.8);
+  border: none;
+  border-right: 1px solid rgba(74, 85, 104, 0.3);
+  color: #999;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.radio-btn:last-child {
+  border-right: none;
+}
+
+.radio-btn:hover {
+  color: #e0e0e0;
+}
+
+.radio-btn.active {
+  background: #2962ff;
+  color: #fff;
+}
+
+/* 滑块样式 */
+.chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider {
+  width: 120px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(74, 85, 104, 0.3);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #2962ff;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.slider::-webkit-slider-thumb:hover {
+  background: #1e54e6;
+  transform: scale(1.1);
+}
+
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #2962ff;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.slider::-moz-range-thumb:hover {
+  background: #1e54e6;
+  transform: scale(1.1);
+}
+
+.slider-value {
+  color: #e0e0e0;
+  font-size: 12px;
+  min-width: 20px;
+  text-align: center;
 }
 
 .tab-content {

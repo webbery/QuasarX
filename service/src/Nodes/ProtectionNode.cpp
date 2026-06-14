@@ -157,7 +157,11 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             }
 
             _entry_info[symbol] = info;
-            INFO("[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info.avg_price);
+            if (_server->GetRunningMode() != RuningType::Backtest) {
+                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info.avg_price);
+            } else {
+                INFO("[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info.avg_price);
+            }
         }
     }
 }
@@ -244,10 +248,17 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         rc->triggered = true;
         rc->trigger_type = triggered;
         rc->action = RiskAction::Close;
-        INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
-             get_symbol(triggered_symbol), to_string(triggered),
-             _entry_info[triggered_symbol].avg_price,
-             context.get<Vector<double>>(get_symbol(triggered_symbol) + ".close").back());
+        if (_server->GetRunningMode() != RuningType::Backtest) {
+            STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
+                 get_symbol(triggered_symbol), to_string(triggered),
+                 _entry_info[triggered_symbol].avg_price,
+                 context.get<Vector<double>>(get_symbol(triggered_symbol) + ".close").back());
+        } else {
+            INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
+                 get_symbol(triggered_symbol), to_string(triggered),
+                 _entry_info[triggered_symbol].avg_price,
+                 context.get<Vector<double>>(get_symbol(triggered_symbol) + ".close").back());
+        }
     }
 
     return NodeProcessResult::Success;

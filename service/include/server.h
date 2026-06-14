@@ -190,12 +190,6 @@ private:
     // void RunCammand();
 
     void RegistAPI();
-    // Commander* RegistCommand();
-    void RunService();
-
-    void InitStrategy();
-
-    bool InitExchange();
 
     bool InitDatabase();
 
@@ -207,21 +201,9 @@ private:
 
     void InitHandlers();
 
-    // 通过历史计算股票日回报率
-    bool InitStockDailyReturn(const std::string& path);
-
     // 从配置中获取最大读取数据量
     int GetMaxPrepareCount();
 
-    // bool LoadDataBySymbol(const String& symbol, StockAdjustType right, DataFrequencyType type = DataFrequencyType::Day);
-
-    // bool LoadStock(DataFrame& df, const String& path);
-    /**
-     * @brief load stock last N data
-     */
-    // bool LoadStock(DataFrame& df, symbol_t symbol, int lastN);
-
-    bool LoadFuture(DataFrame& df, const String& path);
 
     void StartTimer();
 

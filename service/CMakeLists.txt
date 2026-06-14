@@ -140,8 +140,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE QS_VERSION="${GIT_TAG_VERSION
 
 
 if (WIN32)
-set(DEBUG_LINK_LIBS ws2_32 xmdapi xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se traderapi sptraderapi nngd fmtlog-static)
-set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se xfastmdapi fasttraderapi fastsptraderapi nng fmtlog)
+set(DEBUG_LINK_LIBS ws2_32 xmdapi xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se traderapi sptraderapi nngd fmtlog-static duckdb)
+set(OPTIMIZED_LINK_LIBS ws2_32 xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se xfastmdapi fasttraderapi fastsptraderapi nng fmtlog duckdb)
 target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
 #if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 target_link_libraries(${PROJECT_NAME} ${DEBUG_LINK_LIBS} Crypt32.lib ${OpenSSL_LIBRARIES})
@@ -169,8 +169,9 @@ else()
     target_link_libraries(${PROJECT_NAME} ssl crypto)
 endif()
 target_link_libraries(${PROJECT_NAME} curl -pthread nng papi
-    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se 
+    xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se
     ${LINUX_LIBS}
+    ${PROJECT_SOURCE_DIR}/third_party/libs/unix/libduckdb_static.a
 )
 
 endif(WIN32)

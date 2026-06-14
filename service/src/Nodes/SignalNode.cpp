@@ -117,7 +117,11 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     if (!_allowShort) {
         for (auto it = sells.begin(); it != sells.end(); ++it) {
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                INFO("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                if (_server->GetRunningMode() != RuningType::Backtest) {
+                    STRATEGY_INFO(strategy, "[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                } else {
+                    INFO("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                }
                 it->second = TradeAction::HOLD;
             }
         }
@@ -139,7 +143,11 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         for (auto& item: trade) {
             if (item.second != TradeAction::HOLD) {
                 if (decisions.count(item.first) && decisions[item.first] != item.second) {
-                    INFO("{} not match operation!", item.first);
+                    if (_server->GetRunningMode() != RuningType::Backtest) {
+                        STRATEGY_WARN(strategy, "[SignalNode] {} not match operation!", item.first);
+                    } else {
+                        INFO("[SignalNode] {} not match operation!", item.first);
+                    }
                     continue;
                 }
                 decisions[item.first] = item.second;

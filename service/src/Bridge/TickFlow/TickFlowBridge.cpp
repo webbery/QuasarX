@@ -16,7 +16,7 @@ TickFlowBridge::TickFlowBridge(Server* server)
     : ExchangeInterface(server),
       _base_url("https://api.tickflow.org"),
       _universes{"CN_Equity_A"},
-      _interval_ms(9500),
+      _interval_ms(10000),
       _login_success(false),
       _error_count(0),
       _pause_phase(0),
@@ -44,7 +44,7 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
 
     _base_url = "https://api.tickflow.org";
     // _universes = {"CN_Equity_A"};
-    _interval_ms = 9500;
+    _interval_ms = 10000;
 
     InitHttpClient();
 

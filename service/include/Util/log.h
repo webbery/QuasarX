@@ -15,6 +15,7 @@
 #endif // FMTLOG_HEADER_ONLY
 #endif
 #include "spdlog/spdlog.h"
+#include "Util/DuckDBLogger.h"
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #ifndef INFO
@@ -79,5 +80,47 @@
         std::string msg = fmt::format(fmt_str, ##__VA_ARGS__); \
         SPDLOG_ERROR("{}", msg); \
         throw std::runtime_error(msg); \
+    } while(0)
+#endif
+
+// ==================== 策略日志宏（DuckDB） ====================
+// 策略执行日志自动写入DuckDB + spdlog双写
+// 普通日志和性能日志暂不接入DuckDB，仅使用spdlog
+
+#ifndef STRATEGY_LOG
+#define STRATEGY_LOG(strategy, level, fmt_str, ...) \
+    do { \
+        std::string _msg = fmt::format(fmt_str, ##__VA_ARGS__); \
+        SPDLOG_INFO("[{}] {}", strategy, _msg); \
+        if (DuckDBLogger::instance().is_initialized()) { \
+            DuckDBLogger::instance().log_strategy(strategy, level, _msg); \
+        } \
+    } while(0)
+#endif
+
+#ifndef STRATEGY_INFO
+#define STRATEGY_INFO(strategy, fmt_str, ...) \
+    STRATEGY_LOG(strategy, "INFO", fmt_str, ##__VA_ARGS__)
+#endif
+
+#ifndef STRATEGY_WARN
+#define STRATEGY_WARN(strategy, fmt_str, ...) \
+    STRATEGY_LOG(strategy, "WARN", fmt_str, ##__VA_ARGS__)
+#endif
+
+#ifndef STRATEGY_ERROR
+#define STRATEGY_ERROR(strategy, fmt_str, ...) \
+    STRATEGY_LOG(strategy, "ERROR", fmt_str, ##__VA_ARGS__)
+#endif
+
+// 带上下文JSON的策略日志
+#ifndef STRATEGY_LOG_WITH_CTX
+#define STRATEGY_LOG_WITH_CTX(strategy, level, context_json, fmt_str, ...) \
+    do { \
+        std::string _msg = fmt::format(fmt_str, ##__VA_ARGS__); \
+        SPDLOG_INFO("[{}] {}", strategy, _msg); \
+        if (DuckDBLogger::instance().is_initialized()) { \
+            DuckDBLogger::instance().log_strategy(strategy, level, _msg, context_json); \
+        } \
     } while(0)
 #endif

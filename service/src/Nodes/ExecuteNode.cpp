@@ -44,7 +44,11 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
     // ── 风控短路处理：RiskContext triggered 时执行紧急平仓 ──
     auto* rc = context.GetRiskContext();
     if (rc && rc->triggered && rc->action == RiskAction::Close) {
-        INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+        if (_server->GetRunningMode() != RuningType::Backtest) {
+            STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+        } else {
+            INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+        }
 
         // 获取当前所有持仓并生成平仓信号
         if (_server->GetRunningMode() == RuningType::Backtest) {
@@ -64,7 +68,11 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                                 signal->SetBacktestTime(context.Current());
                             }
                             context.AddSignal(signal);
-                            INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
+                            if (_server->GetRunningMode() != RuningType::Backtest) {
+                                STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
+                            } else {
+                                INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
+                            }
                         }
                     }
                 }
@@ -77,7 +85,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     signal->SetQuantity(pos._holds);
                     signal->SetFlag(1); // 平仓
                     context.AddSignal(signal);
-                    INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(pos._symbol), pos._holds);
+                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={}", get_symbol(pos._symbol), pos._holds);
                 }
             }
         }
@@ -115,8 +123,13 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 signal->SetBacktestTime(context.Current());
             }
 
-            INFO("ExecuteNode: {} {} {} shares @ {}",
-                (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
+            if (_server->GetRunningMode() != RuningType::Backtest) {
+                STRATEGY_INFO(strategy, "ExecuteNode: {} {} {} shares @ {}",
+                    (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
+            } else {
+                INFO("ExecuteNode: {} {} {} shares @ {}",
+                    (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
+            }
         }
     }
 

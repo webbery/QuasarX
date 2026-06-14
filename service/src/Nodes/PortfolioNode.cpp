@@ -142,7 +142,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // 3. 生成执行计划
     ExecutionPlan newPlan;
     if (_server->GetRunningMode() != RuningType::Backtest) { [[likely]]
-        newPlan = generatePlan(context, decisions, targetCapital);
+        newPlan = generatePlan(strategy, context, decisions, targetCapital);
     } else {
         // 回测模式：获取 BacktestContext 以获取正确的 symbol 索引
         BacktestContext* btContext = nullptr;
@@ -231,6 +231,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
 }
 
 ExecutionPlan PortfolioNode::generatePlan(
+    const String& strategy,
     DataContext& context,
     const Map<symbol_t, TradeAction>& decisions,
     double targetCapital
@@ -268,7 +269,11 @@ ExecutionPlan PortfolioNode::generatePlan(
         double price = (quote._close > 0) ? quote._close : quote._open;
 
         if (price <= 0) {
-            WARN("Invalid price for symbol {}", get_symbol(item._symbol));
+            if (_server->GetRunningMode() != RuningType::Backtest) {
+                STRATEGY_WARN(strategy, "Invalid price for symbol {}", get_symbol(item._symbol));
+            } else {
+                WARN("Invalid price for symbol {}", get_symbol(item._symbol));
+            }
             continue;
         }
 
@@ -307,7 +312,11 @@ ExecutionPlan PortfolioNode::generatePlan(
                 // 无仓，BUY = 开多
                 int quantity = static_cast<int>(perSymbolCapital / price / 100) * 100;
                 if (quantity < 100) {
-                    WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                    if (_server->GetRunningMode() != RuningType::Backtest) {
+                        STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                    } else {
+                        WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                    }
                     continue;
                 }
                 item._quantity = quantity;
@@ -506,8 +515,12 @@ void PortfolioNode::applyRiskContext(DataContext& context, Map<symbol_t, TradeAc
         return;
     }
 
-    INFO("[PortfolioNode] RiskContext triggered (type={}), converting all decisions to SELL",
-         to_string(rc->trigger_type));
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        STRATEGY_INFO(context.CurrentStrategy(), "[PortfolioNode] RiskContext triggered (type={})",
+             to_string(rc->trigger_type));
+    } else {
+        INFO("[PortfolioNode] RiskContext triggered (type={})", to_string(rc->trigger_type));
+    }
     for (auto& [symbol, action] : decisions) {
         if (action != TradeAction::SELL) {
             action = TradeAction::SELL;

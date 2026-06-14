@@ -3,51 +3,44 @@
     <!-- 顶部控制栏 -->
     <div class="control-bar">
       <div class="symbol-selector">
-        <el-tag
+        <span
           v-for="(sym, idx) in state.symbols"
           :key="sym.symbol"
-          closable
-          @close="removeSymbol(idx)"
           class="symbol-tag"
         >
           {{ sym.symbol }}
-        </el-tag>
-        <el-input
+          <button class="tag-close" @click="removeSymbol(idx)">×</button>
+        </span>
+        <input
           v-model="state.editingSymbol"
           placeholder="输入标的代码 (如 sz.000001)"
-          size="small"
-          style="width: 200px"
+          class="symbol-input"
           @keyup.enter="addSymbolAndClear"
         />
-        <el-button size="small" @click="addSymbolAndClear">添加</el-button>
+        <button class="btn btn-small" @click="addSymbolAndClear">添加</button>
       </div>
 
       <div class="time-selector">
-        <el-select v-model="state.quickRange" size="small" style="width: 100px" @change="setQuickRange">
-          <el-option v-for="[label] in QUICK_RANGES" :key="label" :label="label" :value="label" />
-        </el-select>
-        <el-date-picker
-          v-model="state.dateRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始"
-          end-placeholder="结束"
-          size="small"
-          style="width: 260px"
-          value-format="YYYY-MM-DD"
-        />
+        <select v-model="state.quickRange" class="select-small" @change="setQuickRange">
+          <option v-for="[label] in QUICK_RANGES" :key="label" :value="label">{{ label }}</option>
+        </select>
+        <div class="date-range-inline">
+          <input type="date" :value="state.dateRange?.[0]" @input="updateStartDate($event)" class="date-input-small" placeholder="开始" />
+          <span class="date-sep">至</span>
+          <input type="date" :value="state.dateRange?.[1]" @input="updateEndDate($event)" class="date-input-small" placeholder="结束" />
+        </div>
       </div>
 
       <div class="strategy-link">
-        <el-select v-model="linkedStrategy" placeholder="策略联动" size="small" style="width: 180px" @change="onStrategyLink">
-          <el-option label="不联动" value="" />
-          <el-option v-for="s in availableStrategies" :key="s.id" :label="s.name" :value="s.id" />
-        </el-select>
+        <select v-model="linkedStrategy" class="select-small" @change="onStrategyLink">
+          <option value="">不联动</option>
+          <option v-for="s in availableStrategies" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </select>
       </div>
 
-      <el-button type="primary" size="small" :loading="loading" @click="runAnalysis">
-        开始分析
-      </el-button>
+      <button class="btn btn-primary btn-small" :disabled="loading" @click="runAnalysis">
+        {{ loading ? '分析中...' : '开始分析' }}
+      </button>
     </div>
 
     <!-- 分析结果 -->
@@ -117,7 +110,10 @@
 
     <!-- 空状态 -->
     <div v-else class="empty-state">
-      <el-empty description="请添加标的并点击「开始分析」" />
+      <div class="empty-content">
+        <div class="empty-icon">📊</div>
+        <div class="empty-text">请添加标的并点击「开始分析」</div>
+      </div>
     </div>
   </div>
 </template>
@@ -146,6 +142,20 @@ function addSymbolAndClear() {
   if (state.editingSymbol.trim()) {
     addSymbol(state.editingSymbol.trim())
     state.editingSymbol = ''
+  }
+}
+
+function updateStartDate(event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (state.dateRange) {
+    state.dateRange = [value, state.dateRange[1]]
+  }
+}
+
+function updateEndDate(event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (state.dateRange) {
+    state.dateRange = [state.dateRange[0], value]
   }
 }
 
@@ -223,7 +233,45 @@ onMounted(async () => {
 }
 
 .symbol-tag {
-  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(41, 98, 255, 0.2);
+  border: 1px solid rgba(41, 98, 255, 0.4);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #e0e0e0;
+}
+
+.tag-close {
+  background: transparent;
+  border: none;
+  color: #999;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 2px;
+}
+
+.tag-close:hover {
+  color: #ef232a;
+}
+
+.symbol-input {
+  padding: 4px 8px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  width: 180px;
+}
+
+.symbol-input:focus {
+  border-color: rgba(41, 98, 255, 0.5);
 }
 
 .time-selector {
@@ -232,10 +280,98 @@ onMounted(async () => {
   gap: 8px;
 }
 
+.date-range-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-input-small {
+  padding: 4px 8px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  width: 120px;
+}
+
+.date-input-small:focus {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.date-input-small::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
+}
+
+.date-sep {
+  color: #999;
+  font-size: 12px;
+}
+
+.select-small {
+  padding: 4px 8px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.select-small:focus {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.select-small option {
+  background: #1a2236;
+  color: #e0e0e0;
+}
+
 .strategy-link {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 按钮样式 */
+.btn {
+  padding: 6px 16px;
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  background: rgba(26, 34, 54, 0.8);
+  color: #e0e0e0;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #2962ff;
+  border-color: #2962ff;
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1e54e6;
+  border-color: #1e54e6;
+}
+
+.btn-small {
+  padding: 4px 12px;
+  font-size: 12px;
 }
 
 .results {
@@ -285,6 +421,20 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.empty-content {
+  text-align: center;
+  color: #999;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.empty-text {
+  font-size: 14px;
 }
 
 @media (max-width: 1200px) {
