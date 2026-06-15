@@ -21,7 +21,7 @@
       </div>
 
       <div class="time-selector">
-        <select v-model="state.quickRange" class="select-small" @change="setQuickRange">
+        <select v-model="state.quickRange" class="select-small" @change="setQuickRange(state.quickRange)">
           <option v-for="[label] in QUICK_RANGES" :key="label" :value="label">{{ label }}</option>
         </select>
         <div class="date-range-inline">
@@ -32,7 +32,7 @@
       </div>
 
       <div class="strategy-link">
-        <select v-model="linkedStrategy" class="select-small" @change="onStrategyLink">
+        <select v-model="linkedStrategy" class="select-small" @change="onStrategyLink(linkedStrategy)">
           <option value="">不联动</option>
           <option v-for="s in availableStrategies" :key="s.id" :value="s.id">{{ s.name }}</option>
         </select>

@@ -52,6 +52,16 @@ export interface VolatilitySingleResult {
   returns_acf: number[]
   returns_pacf: number[]
   abs_returns_acf: number[]
+  acf_decay: {
+    lb_statistic: number
+    lb_pvalue: number
+    has_autocorrelation: boolean
+    exponential_r2: number
+    hyperbolic_r2: number
+    decay_mode: 'exponential' | 'hyperbolic' | 'inconclusive'
+    decay_half_life: number
+    hurst_estimate: number
+  }
 }
 
 export interface VolatilityMultiResult {

@@ -140,7 +140,7 @@ const tabs = [
 ]
 
 // Tab 切换
-const activeTab = ref('flow')
+const activeTab = ref('volatility')
 
 // 响应式数据
 const selectedAssetType = ref('stocks')

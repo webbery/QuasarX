@@ -1899,7 +1899,7 @@ components:
           type: string
           description: 策略停止的时间
           example: '2020/01/01 00:00:00'
-    
+
     StrategyStatus:
       type: object
       description: 策略状态信息
@@ -1912,6 +1912,26 @@ components:
           type: boolean
           description: 策略是否正在运行
           example: true
+        epochCount:
+          type: integer
+          description: 策略运行轮数
+          example: 1000
+        lastHeartbeat:
+          type: integer
+          description: 最后心跳时间戳（Unix 毫秒）
+          example: 1718371200000
+        availableCapital:
+          type: number
+          description: 可用资金额度（未用于开仓的部分）
+          example: 50000.0
+        usedCapital:
+          type: number
+          description: 账面资金/持仓市值（已占用资金 + 费用）
+          example: 50000.0
+        allocatedCapital:
+          type: number
+          description: 分配给策略的总资金（= availableCapital + usedCapital）
+          example: 100000.0
 
     StrategyResponse:
       type: object

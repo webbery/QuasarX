@@ -897,67 +897,6 @@ int64_t volume(nvinfer1::Dims const& d)
 
 #endif // __USE_CUDA__
 
-std::wstring to_wstring(const char* c)
-{
-    const size_t cSize = strlen(c) + 1;
-
-    wchar_t* wc = new wchar_t[cSize];
-    mbstowcs(wc, c, cSize);
-    std::wstring ws(wc, cSize);
-    delete wc;
-    return ws;
-}
-
-#ifdef _WIN32
-#include <windows.h>
-
-std::wstring utf8_to_utf16(const String& utf8_str) {
-    if (utf8_str.empty()) return std::wstring();
-
-    // 第一次调用获取需要的缓冲区大小
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, NULL, 0);
-    if (wlen <= 0) {
-        return std::wstring();
-    }
-
-    // 分配缓冲区并转换
-    std::wstring utf16_str(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, &utf16_str[0], wlen);
-    utf16_str.resize(wlen - 1); // 去除末尾的 null terminator
-    return utf16_str;
-}
-
-String utf16_to_utf8(const std::wstring& utf16_str) {
-    if (utf16_str.empty()) return String();
-
-    // 第一次调用获取需要的缓冲区大小
-    int len = WideCharToMultiByte(CP_UTF8, 0, utf16_str.c_str(), -1, NULL, 0, NULL, NULL);
-    if (len <= 0) {
-        return String();
-    }
-
-    // 分配缓冲区并转换
-    String utf8_str(len, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, utf16_str.c_str(), -1, &utf8_str[0], len, NULL, NULL);
-    utf8_str.resize(len - 1); // 去除末尾的 null terminator
-    return utf8_str;
-}
-#else
-// Linux/Unix 下 UTF-8 原生编码，无需转换
-std::wstring utf8_to_utf16(const String& utf8_str) {
-    return to_wstring(utf8_str.c_str());
-}
-
-String utf16_to_utf8(const std::wstring& utf16_str) {
-    const size_t cSize = utf16_str.size() * 4 + 1;
-    char* utf8 = new char[cSize];
-    wcstombs(utf8, utf16_str.c_str(), cSize);
-    String result(utf8);
-    delete[] utf8;
-    return result;
-}
-#endif
-
 size_t get_feature_id(const String& name, const nlohmann::json& params) {
   auto h1 = std::hash<String>()(name);
   auto h2 = std::hash<nlohmann::json>{}(params);

@@ -113,5 +113,23 @@ String to_utf8(const String& str);
 
 String to_base64(const String& bin);
 
+std::wstring to_wstring(const char* c);
+
+/**
+ * @brief 将 UTF-8 字符串转换为 UTF-16 (wchar_t)
+ *        仅在 Windows 下有效，用于处理中文路径等场景
+ * @param utf8_str UTF-8 编码的字符串
+ * @return UTF-16 编码的 wstring，转换失败返回空 wstring
+ */
+std::wstring utf8_to_utf16(const String& utf8_str);
+
+/**
+ * @brief 将 UTF-16 字符串转换为 UTF-8
+ *        仅在 Windows 下有效
+ * @param utf16_str UTF-16 编码的 wstring
+ * @return UTF-8 编码的 string，转换失败返回空 string
+ */
+String utf16_to_utf8(const std::wstring& utf16_str);
+
 // 
 String format_sse(const String& event, const Map<String, String>& data);

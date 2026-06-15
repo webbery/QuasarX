@@ -4,6 +4,26 @@
 #include <string>
 #include <map>
 
+enum class ACFDecayMode {
+    Exponential,    // 指数衰减 (GARCH/EGARCH)
+    Hyperbolic,     // 双曲衰减 (FIGARCH/长记忆)
+    Inconclusive    // 无法判定
+};
+
+struct ACFDecayAnalysis {
+    // Ljung-Box 检验
+    double lb_statistic = 0;        // Q 统计量
+    double lb_pvalue = 0;           // p 值
+    bool has_autocorrelation = false; // p < 0.05 表示存在显著自相关
+
+    // 衰减模式拟合
+    double exponential_r2 = 0;      // 指数衰减 R² (GARCH/EGARCH)
+    double hyperbolic_r2 = 0;       // 双曲衰减 R² (FIGARCH/长记忆)
+    ACFDecayMode decay_mode = ACFDecayMode::Inconclusive;
+    double decay_half_life = 0;     // 指数衰减半衰期
+    double hurst_estimate = 0;      // Hurst 指数估计
+};
+
 struct VolatilitySingleResult {
     std::vector<double> prices;
     std::vector<double> returns;
@@ -24,6 +44,7 @@ struct VolatilitySingleResult {
     std::vector<double> returns_acf;
     std::vector<double> returns_pacf;
     std::vector<double> abs_returns_acf;
+    ACFDecayAnalysis acf_decay;
 };
 
 struct VolatilityMultiResult {
@@ -76,4 +97,6 @@ private:
     static std::vector<double> rollingVol(const std::vector<double>& returns, int window);
     static std::vector<double> computeACF(const std::vector<double>& data, int max_lag);
     static std::vector<double> computePACF(const std::vector<double>& acf, int max_lag);
+    static ACFDecayAnalysis analyzeACFDecay(const std::vector<double>& abs_acf,
+                                             const std::vector<double>& abs_returns);
 };

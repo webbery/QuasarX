@@ -1,6 +1,7 @@
 #include "Handler/VolatilityHandler.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
+#include "boost/math/statistics/ljung_box.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -284,6 +285,118 @@ std::vector<double> VolatilityHandler::computePACF(const std::vector<double>& ac
     return pacf;
 }
 
+// === ACF 衰减模式分析 ===
+
+// 简单线性回归 y = a + b*x，返回 {a, b, r2}
+static std::tuple<double, double, double> linearRegression(
+    const std::vector<double>& x, const std::vector<double>& y)
+{
+    size_t n = x.size();
+    if (n < 2) return {0, 0, 0};
+
+    double sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+    for (size_t i = 0; i < n; ++i) {
+        sx += x[i]; sy += y[i];
+        sxx += x[i] * x[i];
+        sxy += x[i] * y[i];
+        syy += y[i] * y[i];
+    }
+    double denom = n * sxx - sx * sx;
+    if (std::abs(denom) < 1e-15) return {0, 0, 0};
+
+    double b = (n * sxy - sx * sy) / denom;
+    double a = (sy - b * sx) / n;
+
+    // R²
+    double y_mean = sy / n;
+    double ss_tot = 0, ss_res = 0;
+    for (size_t i = 0; i < n; ++i) {
+        ss_tot += (y[i] - y_mean) * (y[i] - y_mean);
+        ss_res += (y[i] - (a + b * x[i])) * (y[i] - (a + b * x[i]));
+    }
+    double r2 = (ss_tot > 1e-15) ? (1.0 - ss_res / ss_tot) : 0;
+
+    return {a, b, r2};
+}
+
+static const char* decayModeToString(ACFDecayMode mode) {
+    switch (mode) {
+        case ACFDecayMode::Exponential:  return "exponential";
+        case ACFDecayMode::Hyperbolic:   return "hyperbolic";
+        case ACFDecayMode::Inconclusive: return "inconclusive";
+    }
+    return "unknown";
+}
+
+ACFDecayAnalysis VolatilityHandler::analyzeACFDecay(
+    const std::vector<double>& abs_acf,
+    const std::vector<double>& abs_returns)
+{
+    ACFDecayAnalysis result;
+
+    if (abs_acf.size() < 3 || abs_returns.size() < 4) {
+        result.decay_mode = ACFDecayMode::Inconclusive;
+        return result;
+    }
+
+    // 1. Ljung-Box 检验（对 abs_returns）
+    int lags = static_cast<int>(abs_acf.size()) - 1;
+    auto [Q, pval] = boost::math::statistics::ljung_box(abs_returns, lags, 0);
+    result.lb_statistic = Q;
+    result.lb_pvalue = pval;
+    result.has_autocorrelation = (pval < 0.05);
+
+    // 2. 拟合衰减模式（用 lag 1..max 的 |ACF|）
+    std::vector<double> lag_vals;
+    std::vector<double> acf_vals;
+    for (size_t k = 1; k < abs_acf.size(); ++k) {
+        double av = std::abs(abs_acf[k]);
+        if (av < 1e-10) continue;
+        lag_vals.push_back(static_cast<double>(k));
+        acf_vals.push_back(av);
+    }
+
+    if (lag_vals.size() < 3) {
+        result.decay_mode = ACFDecayMode::Inconclusive;
+        return result;
+    }
+
+    // 2a. 指数拟合: ln(|ρ(k)|) = ln(a) - b*k
+    std::vector<double> log_acf;
+    for (auto v : acf_vals) log_acf.push_back(std::log(v));
+    auto [exp_a, exp_b, exp_r2] = linearRegression(lag_vals, log_acf);
+    result.exponential_r2 = std::max(0.0, exp_r2);
+
+    // 2b. 双曲拟合: ln(|ρ(k)|) = ln(a) - b*ln(k)
+    std::vector<double> log_lag;
+    for (auto v : lag_vals) log_lag.push_back(std::log(v));
+    auto [hyp_a, hyp_b, hyp_r2] = linearRegression(log_lag, log_acf);
+    result.hyperbolic_r2 = std::max(0.0, hyp_r2);
+
+    // 3. 判定衰减模式
+    double delta_r2 = std::abs(result.exponential_r2 - result.hyperbolic_r2);
+    double max_r2 = std::max(result.exponential_r2, result.hyperbolic_r2);
+
+    if (delta_r2 > 0.1 && max_r2 > 0.3) {
+        result.decay_mode = (result.exponential_r2 > result.hyperbolic_r2)
+            ? ACFDecayMode::Exponential : ACFDecayMode::Hyperbolic;
+    } else {
+        result.decay_mode = ACFDecayMode::Inconclusive;
+    }
+
+    // 4. 半衰期 (仅指数模式)
+    if (result.decay_mode == ACFDecayMode::Exponential && exp_b > 1e-10) {
+        result.decay_half_life = std::log(2.0) / exp_b;
+    }
+
+    // 5. Hurst 指数估计 (从双曲拟合: H = 1 - b/2)
+    if (hyp_b > 0) {
+        result.hurst_estimate = 1.0 - hyp_b / 2.0;
+    }
+
+    return result;
+}
+
 // === 单标的完整计算 ===
 
 VolatilitySingleResult VolatilityHandler::computeSingle(
@@ -353,7 +466,8 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
     result.returns_acf = computeACF(result.returns, max_lag);
     result.returns_pacf = computePACF(result.returns_acf, max_lag);
     result.abs_returns_acf = computeACF(result.abs_returns, max_lag);
-    
+    result.acf_decay = analyzeACFDecay(result.abs_returns_acf, result.abs_returns);
+
     return result;
 }
 
@@ -564,6 +678,18 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             item["returns_acf"] = sr.returns_acf;
             item["returns_pacf"] = sr.returns_pacf;
             item["abs_returns_acf"] = sr.abs_returns_acf;
+
+            // ACF 衰减分析
+            nlohmann::json decay;
+            decay["lb_statistic"] = sr.acf_decay.lb_statistic;
+            decay["lb_pvalue"] = sr.acf_decay.lb_pvalue;
+            decay["has_autocorrelation"] = sr.acf_decay.has_autocorrelation;
+            decay["exponential_r2"] = sr.acf_decay.exponential_r2;
+            decay["hyperbolic_r2"] = sr.acf_decay.hyperbolic_r2;
+            decay["decay_mode"] = decayModeToString(sr.acf_decay.decay_mode);
+            decay["decay_half_life"] = sr.acf_decay.decay_half_life;
+            decay["hurst_estimate"] = sr.acf_decay.hurst_estimate;
+            item["acf_decay"] = decay;
 
             single_json[symbol] = item;
         }

@@ -13,6 +13,8 @@
 #include "nng/nng.h"
 #include "server.h"
 #include "Bridge/exchange.h"
+#include "Bridge/CapitalPool.h"
+#include "BrokerSubSystem.h"
 #include "StrategySubSystem.h"
 #include <boost/hana.hpp>
 #include "Nodes/FunctionNode.h"
@@ -38,6 +40,8 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
 {
     auto strategySys = _server->GetStrategySystem();
     auto flow = strategySys->GetFlowSubsystem();
+    auto broker = _server->GetBrokerSubSystem();
+    auto capitalPool = broker ? broker->GetCapitalPool() : nullptr;
 
     nlohmann::json result = nlohmann::json::array();
     if (flow) {
@@ -48,6 +52,19 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
             item["running"] = flow->IsRunning(name);
             item["epochCount"] = (int64_t)flow->GetEpochCount(name);
             item["lastHeartbeat"] = (int64_t)flow->GetLastHeartbeat(name);
+
+            // 补充策略资金信息
+            if (capitalPool) {
+                auto capitalInfo = capitalPool->get(name);
+                item["availableCapital"] = capitalInfo.available;     // 可用资金额度
+                item["usedCapital"] = capitalInfo.used();             // 账面资金（市值）
+                item["allocatedCapital"] = capitalInfo.allocated;     // 分配总额
+            } else {
+                item["availableCapital"] = 0.0;
+                item["usedCapital"] = 0.0;
+                item["allocatedCapital"] = 0.0;
+            }
+
             result.push_back(item);
         }
     }

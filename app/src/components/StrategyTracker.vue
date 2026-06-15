@@ -44,6 +44,8 @@
                             <tr>
                                 <th style="width: 60px;">状态</th>
                                 <th>策略名称</th>
+                                <th style="width: 120px;">分配资金</th>
+                                <th style="width: 120px;">持仓市值</th>
                                 <th style="width: 100px;">Epoch</th>
                                 <th style="width: 120px;">最后心跳</th>
                                 <th style="width: 200px;">操作</th>
@@ -60,6 +62,8 @@
                                     <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
                                     <span v-else class="heartbeat unknown">--</span>
                                 </td>
+                                <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
+                                <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
                                 <td>
                                     <div class="action-buttons">
                                         <button
@@ -193,6 +197,12 @@ const formatHeartbeat = (lastHeartbeat) => {
     if (elapsed < 60) return `${elapsed}s前`
     if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m前`
     return `${Math.floor(elapsed / 3600)}h${Math.floor((elapsed % 3600) / 60)}m前`
+}
+
+/** 格式化资金数值 */
+const formatCapital = (value) => {
+    if (value === undefined || value === null || value === 0) return '--'
+    return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 /** 停止策略 */
@@ -430,6 +440,14 @@ onMounted(async () => {
     color: #94a3b8;
     font-family: 'SF Mono', 'Consolas', monospace;
     font-size: 13px;
+}
+
+/* 资金列 */
+.capital-cell {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 13px;
+    text-align: right;
+    white-space: nowrap;
 }
 
 /* 心跳时间 */
