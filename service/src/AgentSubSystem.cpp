@@ -591,7 +591,6 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
             }
 
             Map<symbol_t, QuoteInfo> snapshot;
-            uint64_t epoch = 0;
 
             while (flow._running && !Server::IsExit()) {
                 // 阻塞读取 tick（Subscribe 默认 5s 超时）
@@ -608,7 +607,8 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
                 if (!kbarBuilder->GetSnapshot(snapshot)) continue;
 
                 // 将快照写入 context
-                context.SetEpoch(++epoch);
+                context.SetEpoch(++flow._epochCount);
+                flow._lastHeartbeat = time(nullptr);
                 for (auto& [symbol, quote] : snapshot) {
                     context.SetQuote(symbol, quote);
                 }

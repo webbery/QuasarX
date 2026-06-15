@@ -400,9 +400,9 @@ void TickFlowBridge::FetchQuotes() {
             return;
         }
 
-        // 批次间隔
+        // 批次间隔：确保每批至少隔 10 秒（符合 TickFlow 10次/分钟限制）
         if (i + BATCH_SIZE < symbols.size()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(_interval_ms));
         }
     }
 }
