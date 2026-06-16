@@ -17,7 +17,7 @@ public:
      * @param numIMFs 期望的 IMF 分量数量
      * @return IMF 分量列表，每个 IMF 为等长时间序列
      */
-    List<Vector<double>> emd(const Vector<double>& data, int numIMFs = 5);
+    Vector<Vector<double>> emd(const Vector<double>& data, int numIMFs = 5);
 
 private:
     /**

@@ -275,7 +275,8 @@ void DuckDBLogger::worker_loop() {
 
         auto now = std::chrono::steady_clock::now();
         if (now - last_flush > std::chrono::seconds(3)) {
-            exec("PRAGMA wal_checkpoint(PASSIVE)");
+            // 新版 DuckDB C API 不支持 wal_checkpoint PRAGMA，跳过
+            // exec("PRAGMA wal_checkpoint(PASSIVE)");
             last_flush = now;
         }
     }
@@ -349,6 +350,7 @@ void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
 
 std::vector<StrategyLogEntry> DuckDBLogger::query_strategy_logs(
     const std::string& strategy_name,
+    const std::string& keyword,
     const std::string& level_filter,
     const std::string& start_time,
     const std::string& end_time,
@@ -367,6 +369,10 @@ std::vector<StrategyLogEntry> DuckDBLogger::query_strategy_logs(
     if (!strategy_name.empty()) {
         sql += " AND strategy_name = ?";
         params.push_back(make_varchar(strategy_name));
+    }
+    if (!keyword.empty()) {
+        sql += " AND message LIKE ?";
+        params.push_back(make_varchar("%" + keyword + "%"));
     }
     if (!level_filter.empty()) {
         sql += " AND level = ?";
@@ -397,61 +403,26 @@ std::vector<StrategyLogEntry> DuckDBLogger::query_strategy_logs(
 
     idx_t row_count = duckdb_row_count(&result);
 
-    // 获取列数据指针
-    auto* id_data = (int64_t*)duckdb_column_data(&result, 0);
-    auto* id_null = duckdb_nullmask_data(&result, 0);
-
-    // VARCHAR 列返回 duckdb_string_t*
-    auto* ts_data = (duckdb_string_t*)duckdb_column_data(&result, 1);
-    auto* ts_null = duckdb_nullmask_data(&result, 1);
-
-    auto* sn_data = (duckdb_string_t*)duckdb_column_data(&result, 2);
-    auto* sn_null = duckdb_nullmask_data(&result, 2);
-
-    auto* lv_data = (duckdb_string_t*)duckdb_column_data(&result, 3);
-    auto* lv_null = duckdb_nullmask_data(&result, 3);
-
-    auto* msg_data = (duckdb_string_t*)duckdb_column_data(&result, 4);
-    auto* msg_null = duckdb_nullmask_data(&result, 4);
-
-    auto* ctx_data = (duckdb_string_t*)duckdb_column_data(&result, 5);
-    auto* ctx_null = duckdb_nullmask_data(&result, 5);
-
     for (idx_t i = 0; i < row_count; i++) {
         StrategyLogEntry entry;
 
+        // 使用 duckdb_value_string 读取（带长度，避免 null 截断）
+        auto read_str = [&](idx_t col) -> std::string {
+            duckdb_string val = duckdb_value_string(&result, col, i);
+            if (!val.data || val.size == 0) return "";
+            std::string s(val.data, val.size);
+            duckdb_free(val.data);
+            return s;
+        };
+
         // id
-        entry.id = (id_data && !id_null[i]) ? id_data[i] : 0;
+        entry.id = duckdb_value_int64(&result, 0, i);
 
-        // timestamp
-        if (ts_data && !ts_null[i]) {
-            const char* str = duckdb_string_t_data(&ts_data[i]);
-            if (str) entry.timestamp = std::string(str);
-        }
-
-        // strategy_name
-        if (sn_data && !sn_null[i]) {
-            const char* str = duckdb_string_t_data(&sn_data[i]);
-            if (str) entry.strategy_name = std::string(str);
-        }
-
-        // level
-        if (lv_data && !lv_null[i]) {
-            const char* str = duckdb_string_t_data(&lv_data[i]);
-            if (str) entry.level = std::string(str);
-        }
-
-        // message
-        if (msg_data && !msg_null[i]) {
-            const char* str = duckdb_string_t_data(&msg_data[i]);
-            if (str) entry.message = std::string(str);
-        }
-
-        // context
-        if (ctx_data && !ctx_null[i]) {
-            const char* str = duckdb_string_t_data(&ctx_data[i]);
-            if (str) entry.context_json = std::string(str);
-        }
+        entry.timestamp     = read_str(1);
+        entry.strategy_name = read_str(2);
+        entry.level         = read_str(3);
+        entry.message       = read_str(4);
+        entry.context_json  = read_str(5);
 
         results.push_back(std::move(entry));
     }
@@ -466,6 +437,7 @@ std::vector<StrategyLogEntry> DuckDBLogger::query_strategy_logs(
 
 int DuckDBLogger::count_strategy_logs(
     const std::string& strategy_name,
+    const std::string& keyword,
     const std::string& level_filter,
     const std::string& start_time,
     const std::string& end_time)
@@ -480,6 +452,10 @@ int DuckDBLogger::count_strategy_logs(
     if (!strategy_name.empty()) {
         sql += " AND strategy_name = ?";
         params.push_back(make_varchar(strategy_name));
+    }
+    if (!keyword.empty()) {
+        sql += " AND message LIKE ?";
+        params.push_back(make_varchar("%" + keyword + "%"));
     }
     if (!level_filter.empty()) {
         sql += " AND level = ?";
@@ -568,16 +544,16 @@ DuckDBLogger::StrategyStats DuckDBLogger::get_strategy_stats(
         duckdb_result result;
         if (query_params(sql, params, result)) {
             idx_t row_count = duckdb_row_count(&result);
-            auto* name_data = (duckdb_string_t*)duckdb_column_data(&result, 0);
-            auto* name_null = duckdb_nullmask_data(&result, 0);
-            auto* cnt_data = (int64_t*)duckdb_column_data(&result, 1);
-            auto* cnt_null = duckdb_nullmask_data(&result, 1);
 
             for (idx_t i = 0; i < row_count; i++) {
-                if (name_data && !name_null[i] && cnt_data && !cnt_null[i]) {
-                    const char* name_str = duckdb_string_t_data(&name_data[i]);
-                    if (name_str) {
-                        stats.strategy_counts[std::string(name_str)] = (int)cnt_data[i];
+                duckdb_string name_val = duckdb_value_string(&result, 0, i);
+                if (name_val.data && name_val.size > 0) {
+                    std::string name(name_val.data, name_val.size);
+                    duckdb_free(name_val.data);
+                    auto* cnt_data = (int64_t*)duckdb_column_data(&result, 1);
+                    auto* cnt_null = duckdb_nullmask_data(&result, 1);
+                    if (cnt_data && !cnt_null[i]) {
+                        stats.strategy_counts[name] = (int)cnt_data[i];
                     }
                 }
             }
@@ -592,16 +568,16 @@ DuckDBLogger::StrategyStats DuckDBLogger::get_strategy_stats(
         duckdb_result result;
         if (query_params(sql, params, result)) {
             idx_t row_count = duckdb_row_count(&result);
-            auto* name_data = (duckdb_string_t*)duckdb_column_data(&result, 0);
-            auto* name_null = duckdb_nullmask_data(&result, 0);
-            auto* cnt_data = (int64_t*)duckdb_column_data(&result, 1);
-            auto* cnt_null = duckdb_nullmask_data(&result, 1);
 
             for (idx_t i = 0; i < row_count; i++) {
-                if (name_data && !name_null[i] && cnt_data && !cnt_null[i]) {
-                    const char* name_str = duckdb_string_t_data(&name_data[i]);
-                    if (name_str) {
-                        stats.error_strategies[std::string(name_str)] = (int)cnt_data[i];
+                duckdb_string name_val = duckdb_value_string(&result, 0, i);
+                if (name_val.data && name_val.size > 0) {
+                    std::string name(name_val.data, name_val.size);
+                    duckdb_free(name_val.data);
+                    auto* cnt_data = (int64_t*)duckdb_column_data(&result, 1);
+                    auto* cnt_null = duckdb_nullmask_data(&result, 1);
+                    if (cnt_data && !cnt_null[i]) {
+                        stats.error_strategies[name] = (int)cnt_data[i];
                     }
                 }
             }
@@ -651,7 +627,8 @@ void DuckDBLogger::shutdown() {
     }
 
     if (conn_) {
-        exec("PRAGMA wal_checkpoint(FULL)");
+        // 新版 DuckDB C API 不支持 wal_checkpoint PRAGMA，直接断开
+        // exec("PRAGMA wal_checkpoint(FULL)");
         duckdb_disconnect(&conn_);
         conn_ = nullptr;
     }

@@ -117,3 +117,119 @@ bool LoadStockQuote(DataFrame& df, const String& path) {
     }
     return true;
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// 信号分析 / 时序分析工具函数
+// ──────────────────────────────────────────────────────────────────────
+
+Vector<double> finance::computeACF(const Vector<double>& data, int max_lag) {
+    Vector<double> acf;
+    if (data.empty()) return acf;
+
+    int n = static_cast<int>(data.size());
+    double mean = 0;
+    for (auto v : data) mean += v;
+    mean /= n;
+
+    double var = 0;
+    for (auto v : data) {
+        double d = v - mean;
+        var += d * d;
+    }
+    if (var < 1e-15) {
+        acf.resize(max_lag + 1, 1.0);
+        return acf;
+    }
+
+    for (int lag = 0; lag <= max_lag && lag < n; ++lag) {
+        double cov = 0;
+        for (int i = 0; i < n - lag; ++i) {
+            cov += (data[i] - mean) * (data[i + lag] - mean);
+        }
+        acf.push_back(cov / var);
+    }
+    return acf;
+}
+
+Vector<double> finance::computePACF(const Vector<double>& acf, int max_lag) {
+    Vector<double> pacf;
+    int n = static_cast<int>(acf.size()) - 1;
+    if (n < 0) return pacf;
+
+    // Durbin-Levinson 算法
+    Vector<Vector<double>> phi(n + 1, Vector<double>(n + 1, 0));
+
+    pacf.push_back(1.0);  // lag 0
+    if (n >= 1) {
+        phi[1][1] = acf[1];
+        pacf.push_back(phi[1][1]);
+    }
+
+    for (int k = 2; k <= n; ++k) {
+        double num = acf[k];
+        for (int j = 1; j < k; ++j) {
+            num -= phi[k-1][j] * acf[k - j];
+        }
+        double den = 1.0;
+        for (int j = 1; j < k; ++j) {
+            den -= phi[k-1][j] * acf[j];
+        }
+        if (std::abs(den) < 1e-10) {
+            phi[k][k] = 0;
+        } else {
+            phi[k][k] = num / den;
+        }
+        pacf.push_back(phi[k][k]);
+
+        for (int j = 1; j < k; ++j) {
+            phi[k][j] = phi[k-1][j] - phi[k][k] * phi[k-1][k-j];
+        }
+    }
+
+    return pacf;
+}
+
+double finance::estimateMeanPeriod(const Vector<double>& data) {
+    if (data.size() < 4) return 0;
+
+    int max_lag = std::min(20, static_cast<int>(data.size()) / 4);
+    auto acf = computeACF(data, max_lag);
+
+    // 找第一个过零点（ACF 从正变为负）
+    for (size_t i = 1; i < acf.size(); ++i) {
+        if (acf[i] < 0) {
+            return 2.0 * static_cast<double>(i);
+        }
+    }
+    return 0;
+}
+
+double finance::computeEnergyPct(const Vector<double>& component,
+                                  const Vector<double>& original) {
+    if (component.empty() || original.empty()) return 0;
+
+    double comp_mean = 0;
+    for (auto v : component) comp_mean += v;
+    comp_mean /= component.size();
+
+    double comp_var = 0;
+    for (auto v : component) {
+        double d = v - comp_mean;
+        comp_var += d * d;
+    }
+    comp_var /= component.size();
+
+    double orig_mean = 0;
+    for (auto v : original) orig_mean += v;
+    orig_mean /= original.size();
+
+    double orig_var = 0;
+    for (auto v : original) {
+        double d = v - orig_mean;
+        orig_var += d * d;
+    }
+    orig_var /= original.size();
+
+    if (orig_var < 1e-15) return 0;
+    return comp_var / orig_var;
+}

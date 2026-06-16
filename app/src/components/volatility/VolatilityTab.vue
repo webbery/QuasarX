@@ -20,6 +20,17 @@
         <button class="btn btn-small" @click="addSymbolAndClear">添加</button>
       </div>
 
+      <div class="field-selector">
+        <label>分析字段:</label>
+        <select v-model="state.field" class="select-small">
+          <option value="close">C 收盘价</option>
+          <option value="open">O 开盘价</option>
+          <option value="high">H 最高价</option>
+          <option value="low">L 最低价</option>
+          <option value="volume">V 成交量</option>
+        </select>
+      </div>
+
       <div class="time-selector">
         <select v-model="state.quickRange" class="select-small" @change="setQuickRange(state.quickRange)">
           <option v-for="[label] in QUICK_RANGES" :key="label" :value="label">{{ label }}</option>
@@ -169,11 +180,12 @@ const currentSingleResult = computed(() => {
 
 async function runAnalysis() {
   if (!state.dateRange) return
-  
+
   const symbols = state.symbols.map(s => s.symbol)
   const [start_date, end_date] = state.dateRange
-  
-  const result = await fetchVolatility(symbols, start_date, end_date, state.windows)
+  const field = state.field || 'close'
+
+  const result = await fetchVolatility(symbols, start_date, end_date, state.windows, field)
   if (result) {
     state.result = result
     currentSymbolIndex.value = 0
@@ -272,6 +284,18 @@ onMounted(async () => {
 
 .symbol-input:focus {
   border-color: rgba(41, 98, 255, 0.5);
+}
+
+.field-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-selector label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
 }
 
 .time-selector {

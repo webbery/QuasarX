@@ -45,18 +45,19 @@ void StrategyLogHandler::query_default(const httplib::Request& req, httplib::Res
 
     auto strategy = get_param(req, "strategy");
     auto level = get_param(req, "level");
+    auto keyword = get_param(req, "keyword");
     auto start_time = get_param(req, "start_time");
     auto end_time = get_param(req, "end_time");
     int limit = get_int_param(req, "limit", 1000);
     int offset = get_int_param(req, "offset", 0);
 
     auto logs = DuckDBLogger::instance().query_strategy_logs(
-        strategy, level, start_time, end_time, limit, offset
+        strategy, level, keyword, start_time, end_time, limit, offset
     );
 
     // 查询总记录数（不受 limit/offset 限制）
     int totalCount = DuckDBLogger::instance().count_strategy_logs(
-        strategy, level, start_time, end_time
+        strategy, level, keyword, start_time, end_time
     );
 
     nlohmann::json json;
@@ -112,7 +113,7 @@ void StrategyLogHandler::query_by_symbol(const httplib::Request& req, httplib::R
     // 查询包含该symbol的策略日志（通过context JSON中的symbol字段）
     // 使用 C API 查询，然后过滤
     auto all_logs = DuckDBLogger::instance().query_strategy_logs(
-        "", level, start_time, end_time, limit * 10, 0
+        "", "", level, start_time, end_time, limit * 10, 0
     );
 
     std::vector<StrategyLogEntry> results;

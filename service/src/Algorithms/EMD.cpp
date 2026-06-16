@@ -1,4 +1,5 @@
 #include "Algorithms/EMD.h"
+#include "std_header.h"
 #include <cmath>
 #include <numeric>
 
@@ -62,8 +63,8 @@ bool EMD::isIMF(const Vector<double>& signal, const Vector<double>& meanEnvelope
     return (meanMax / signalRange) < 0.02;
 }
 
-List<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs) {
-    List<Vector<double>> imfs;
+Vector<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs) {
+    Vector<Vector<double>> imfs;
     Vector<double> residual = data;
     int maxSiftingIter = 10;
 

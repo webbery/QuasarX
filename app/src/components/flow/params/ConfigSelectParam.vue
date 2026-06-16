@@ -61,3 +61,74 @@ const selectedConfigSummary = computed(() => {
   return props.configOptions.find(c => c.id === props.value) || null
 })
 </script>
+
+<style scoped>
+.config-select-wrapper {
+  width: 100%;
+}
+
+.config-select-wrapper .param-input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border, rgba(74, 158, 255, 0.3));
+  border-radius: 6px;
+  color: var(--text, #e2e8f0);
+  padding: 5px 10px;
+  font-size: 0.8rem;
+  outline: none;
+  cursor: pointer;
+  width: 100%;
+}
+
+.config-select-wrapper .param-input option {
+  background: var(--panel-bg, #1a2236);
+  color: var(--text, #e2e8f0);
+}
+
+.config-summary-card {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border, rgba(74, 158, 255, 0.15));
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+
+.summary-label {
+  color: var(--text-secondary, #94a3b8);
+}
+
+.summary-value {
+  color: var(--text, #e2e8f0);
+  font-weight: 500;
+}
+
+.summary-value.positive {
+  color: #4ade80;
+}
+
+.create-config-btn {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 4px;
+  color: var(--text, #e2e8f0);
+  font-size: 0.7rem;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+}
+
+.create-config-btn:hover {
+  background: rgba(74, 222, 128, 0.2);
+  border-color: rgba(74, 222, 128, 0.5);
+}
+</style>

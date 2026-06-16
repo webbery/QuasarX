@@ -4,6 +4,14 @@
 #include <string>
 #include <map>
 
+enum class PriceField {
+    Close,
+    Open,
+    High,
+    Low,
+    Volume
+};
+
 enum class ACFDecayMode {
     Exponential,    // 指数衰减 (GARCH/EGARCH)
     Hyperbolic,     // 双曲衰减 (FIGARCH/长记忆)
@@ -73,7 +81,8 @@ private:
     static VolatilityResult compute(const std::vector<std::string>& symbols,
                                      const std::string& start_date,
                                      const std::string& end_date,
-                                     const std::vector<int>& windows);
+                                     const std::vector<int>& windows,
+                                     PriceField field = PriceField::Close);
 
     static VolatilitySingleResult computeSingle(const std::vector<double>& prices,
                                                   const std::vector<double>& volumes,
@@ -85,7 +94,8 @@ private:
                                            const std::string& start_date,
                                            const std::string& end_date,
                                            std::vector<std::string>& out_dates,
-                                           std::vector<double>& out_volumes);
+                                           std::vector<double>& out_volumes,
+                                           PriceField field = PriceField::Close);
 
     static std::vector<double> simpleReturns(const std::vector<double>& prices);
     static double annualVolatility(const std::vector<double>& returns);
@@ -95,8 +105,6 @@ private:
     static double computeVar(const std::vector<double>& returns, double confidence);
     static double computeCVaR(const std::vector<double>& returns, double confidence);
     static std::vector<double> rollingVol(const std::vector<double>& returns, int window);
-    static std::vector<double> computeACF(const std::vector<double>& data, int max_lag);
-    static std::vector<double> computePACF(const std::vector<double>& acf, int max_lag);
     static ACFDecayAnalysis analyzeACFDecay(const std::vector<double>& abs_acf,
                                              const std::vector<double>& abs_returns);
 };

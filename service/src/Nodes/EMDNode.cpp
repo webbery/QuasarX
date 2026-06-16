@@ -5,6 +5,7 @@
 #include "server.h"
 #include "Util/log.h"
 #include "boost/algorithm/string.hpp"
+#include "std_header.h"
 
 EMDNode::EMDNode(Server* server)
     : _server(server), _method(EMDMethod::EMD), _numIMFs(5), _ensembles(50), _noiseStd(0.2),
@@ -97,7 +98,7 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
             return NodeProcessResult::Skip;
         }
 
-        List<Vector<double>> imfs;
+        Vector<Vector<double>> imfs;
 
         if (_method == EMDMethod::VMD) {
             // VMD 分解

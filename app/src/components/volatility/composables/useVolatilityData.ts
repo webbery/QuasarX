@@ -13,7 +13,8 @@ export function useVolatilityData() {
     symbols: string[],
     startDate: string,
     endDate: string,
-    windows: number[] = [20, 60, 120]
+    windows: number[] = [20, 60, 120],
+    field: string = 'close'
   ): Promise<VolatilityAnalysisResult | null> {
     if (symbols.length === 0) {
       ElMessage.warning('请至少添加一个标的')
@@ -27,7 +28,8 @@ export function useVolatilityData() {
           symbols: symbols.join(','),
           start_date: startDate,
           end_date: endDate,
-          windows: windows.join(',')
+          windows: windows.join(','),
+          field
         }
       })
 

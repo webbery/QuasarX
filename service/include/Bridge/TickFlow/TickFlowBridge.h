@@ -7,6 +7,7 @@
 #include "nng/nng.h"
 #include <atomic>
 #include <mutex>
+#include <thread>
 
 class TickFlowBridge : public ExchangeInterface {
 public:
@@ -38,9 +39,9 @@ public:
     bool GetOrders(SecurityType type, OrderList& ol) override { return true; }
     bool GetOrder(const String& sysID, Order& ol) override { return false; }
 
-    // 行情
-    void QueryQuotes() override;
-    void StopQuery() override;
+    // 行情（自治调度，QueryQuotes/StopQuery 改为空操作）
+    void QueryQuotes() override {}
+    void StopQuery() override {}
     QuoteInfo GetQuote(symbol_t symbol) override;
 
     // 其他
@@ -61,6 +62,9 @@ public:
     bool GetSymbolExchanges(List<Pair<String, ExchangeName>>& info) override { return false; }
 
 private:
+    // 自治调度线程（nanomsg socket 的 init/use/destroy 都在此线程）
+    void workerLoop();
+
     // HTTP 请求
     void FetchQuotes();
     void ParseResponse(const String& response);
@@ -97,7 +101,7 @@ private:
     Map<symbol_t, String> _symbol_to_code;
     Map<String, symbol_t> _code_to_symbol;
 
-    // 请求频率控制
+    // 请求频率控制（worker 线程内使用）
     std::chrono::steady_clock::time_point _last_request;
     std::atomic<bool> _login_success;
 
@@ -129,4 +133,11 @@ private:
     static constexpr size_t LIQUIDITY_WINDOW = 60;  // 最近60个tick
     Map<symbol_t, std::deque<TickRecord>> _tickHistory;
     mutable std::mutex _tickHistoryMutex;
+
+    // 自治调度线程
+    std::thread* _workerThread = nullptr;
+    std::atomic<bool> _stop = false;
+
+    // 批次偏移（worker 线程内使用，记录当前请求到哪一批）
+    int _offset = 0;
 };

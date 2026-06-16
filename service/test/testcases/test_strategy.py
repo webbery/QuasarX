@@ -64,11 +64,12 @@ class TestStrategy:
             )
         check_response(response)
 
-    @pytest.mark.timeout(60)
+    @pytest.mark.timeout(120)
     def test_strategy_lifecycle(self, auth_token, is_backtest):
         """完整生命周期测试：部署 → 停止 → 再运行 → 再停止 → 删除
-        
+
         每个阶段后调用 GET /strategy 验证列表状态和返回格式。
+        每次变更后等待 15s 确保行情数据到达并更新 epochCount。
         """
         if is_backtest:
             pytest.skip("回测模式下不支持策略生命周期操作（stop/run）")
@@ -80,13 +81,34 @@ class TestStrategy:
         script = self.load_script(script_path)
         kwargs = self._auth_kwargs(auth_token)
 
-        def verify_strategy_list_format(strategies):
-            """验证策略列表格式：每项必须有 name 和 running 字段"""
+        def verify_strategy_list_format(strategies, expected_running=None, expect_epoch_count_increase=None):
+            """验证策略列表格式：每项必须有 name、running、epochCount、lastHeartbeat 字段"""
             assert isinstance(strategies, list)
+            target = None
             for item in strategies:
                 assert 'name' in item, "策略列表项缺少 'name' 字段"
                 assert 'running' in item, "策略列表项缺少 'running' 字段"
                 assert isinstance(item['running'], bool), "'running' 字段应为布尔值"
+                assert 'epochCount' in item, "策略列表项缺少 'epochCount' 字段"
+                assert 'lastHeartbeat' in item, "策略列表项缺少 'lastHeartbeat' 字段"
+                assert isinstance(item['epochCount'], int), "'epochCount' 字段应为整数"
+                assert isinstance(item['lastHeartbeat'], int), "'lastHeartbeat' 字段应为整数"
+                if item['name'] == lifecycle_name:
+                    target = item
+
+            if expected_running is not None and target is not None:
+                assert target['running'] == expected_running, \
+                    f"'{lifecycle_name}' 的 running 应为 {expected_running}"
+
+            if expect_epoch_count_increase is not None and target is not None:
+                prev_count, prev_ts = expect_epoch_count_increase
+                assert target['epochCount'] >= prev_count, \
+                    f"'{lifecycle_name}' 的 epochCount({target['epochCount']}) 不应小于之前的值({prev_count})"
+                if target['running']:
+                    assert target['lastHeartbeat'] >= prev_ts, \
+                        f"运行中的 '{lifecycle_name}' lastHeartbeat({target['lastHeartbeat']}) 不应小于之前的值({prev_ts})"
+
+            return target
 
         # 1. 部署
         kwargs['json'] = {'mode': 0, 'name': lifecycle_name, 'script': script}
@@ -95,11 +117,14 @@ class TestStrategy:
         assert data['running'] is True, "部署后策略应处于运行状态"
 
         # 验证部署后策略列表
+        time.sleep(15)  # TickFlow 查询间隔为 10s + 网络延迟 + 数据发布，至少需要 15s 才能收到第一笔行情
         strategies = self.get_all_strategies(auth_token)
-        verify_strategy_list_format(strategies)
-        found = self.find_strategy(strategies, lifecycle_name)
+        found = verify_strategy_list_format(strategies, expected_running=True)
         assert found is not None, "部署的策略应在策略列表中"
-        assert found['running'] is True, "部署后 running 应为 True"
+        assert found['epochCount'] > 0, "运行中的策略 epochCount 应大于 0"
+        assert found['lastHeartbeat'] > 0, "运行中的策略 lastHeartbeat 应大于 0"
+        prev_epoch = found['epochCount']
+        prev_heartbeat = found['lastHeartbeat']
 
         # 2. 停止
         kwargs['json'] = {'mode': 2, 'name': lifecycle_name}
@@ -108,11 +133,13 @@ class TestStrategy:
         assert data['running'] is False, "停止后策略应处于停止状态"
 
         # 验证停止后策略列表
+        time.sleep(15)
         strategies = self.get_all_strategies(auth_token)
-        verify_strategy_list_format(strategies)
-        found = self.find_strategy(strategies, lifecycle_name)
+        found = verify_strategy_list_format(strategies, expected_running=False,
+                                            expect_epoch_count_increase=(prev_epoch, prev_heartbeat))
         assert found is not None, "停止后策略仍应在列表中"
-        assert found['running'] is False, "停止后 running 应为 False"
+        prev_epoch = found['epochCount']
+        prev_heartbeat = found['lastHeartbeat']
 
         # 3. 再运行
         kwargs['json'] = {'mode': 1, 'name': lifecycle_name}
@@ -121,11 +148,14 @@ class TestStrategy:
         assert data['running'] is True, "再运行后策略应处于运行状态"
 
         # 验证再运行后策略列表
+        time.sleep(15)
         strategies = self.get_all_strategies(auth_token)
-        verify_strategy_list_format(strategies)
-        found = self.find_strategy(strategies, lifecycle_name)
+        found = verify_strategy_list_format(strategies, expected_running=True,
+                                            expect_epoch_count_increase=(prev_epoch, prev_heartbeat))
         assert found is not None, "再运行后策略仍应在列表中"
-        assert found['running'] is True, "再运行后 running 应为 True"
+        assert found['epochCount'] >= prev_epoch, "再运行后 epochCount 不应回退"
+        prev_epoch = found['epochCount']
+        prev_heartbeat = found['lastHeartbeat']
 
         # 4. 再停止
         kwargs['json'] = {'mode': 2, 'name': lifecycle_name}
@@ -134,11 +164,11 @@ class TestStrategy:
         assert data['running'] is False, "再停止后策略应处于停止状态"
 
         # 验证再停止后策略列表
+        time.sleep(15)
         strategies = self.get_all_strategies(auth_token)
-        verify_strategy_list_format(strategies)
-        found = self.find_strategy(strategies, lifecycle_name)
+        found = verify_strategy_list_format(strategies, expected_running=False,
+                                            expect_epoch_count_increase=(prev_epoch, prev_heartbeat))
         assert found is not None, "再停止后策略仍应在列表中"
-        assert found['running'] is False, "再停止后 running 应为 False"
 
         # 5. 删除
         kwargs['json'] = {'name': lifecycle_name}

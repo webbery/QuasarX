@@ -30,6 +30,7 @@
 #include <stdexcept>
 #include "Handler/AssetHandler.h"
 #include "Handler/VolatilityHandler.h"
+#include "Handler/SignalHandler.h"
 #include "Handler/OrderHandler.h"
 #include "Handler/NavHandler.h"
 #include "Handler/StrategyHandler.h"
@@ -151,6 +152,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_CLOSEALL   "/risk/closeall"
 #define API_NAV_HISTORY     "/nav/history"
 #define API_VOLATILITY      "/analysis/volatility"
+#define API_SIGNAL          "/analysis/signal"
 #define API_CAPITAL_STATUS  "/server/capital"
 #define API_STRATEGY_LOGS   "/strategy/logs"
 
@@ -328,6 +330,7 @@ void Server::Regist() {
 
     REGIST_POST(API_BACKTEST);
     REGIST_GET(API_VOLATILITY);
+    REGIST_GET(API_SIGNAL);
     REGIST_POST(API_SERVER_CONFIG);
 
     REGIST_PUT(API_STRATEGY_NODE);
@@ -1138,6 +1141,7 @@ void Server::InitHandlers() {
     RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
     RegistHandler(API_STOCK_PARAMS, StockParams);
     RegistHandler(API_VOLATILITY, VolatilityHandler);
+    RegistHandler(API_SIGNAL, SignalHandler);
     RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];

@@ -26,3 +26,37 @@ defineEmits<{
   keydown: [event: KeyboardEvent]
 }>()
 </script>
+
+<style scoped>
+.textarea-wrapper {
+  width: 100%;
+}
+
+.param-textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border, rgba(74, 158, 255, 0.3));
+  border-radius: 6px;
+  color: var(--text, #e2e8f0);
+  padding: 5px 10px;
+  font-size: 0.8rem;
+  outline: none;
+  transition: all 0.2s ease;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.param-textarea:focus {
+  border-color: var(--primary, #2962ff);
+  box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.param-textarea:hover:not(:focus) {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.param-textarea::placeholder {
+  color: var(--text-secondary, #64748b);
+}
+</style>

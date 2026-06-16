@@ -409,7 +409,7 @@ inline void simd_accumulate(const double* a, double* acc, size_t n) {
 // ======================== EMD 完整流程 ========================
 
 /// SIMD 加速的 EMD 分解
-List<Vector<double>> simd_emd(const Vector<double>& data,
+Vector<Vector<double>> simd_emd(const Vector<double>& data,
                                 int numIMFs,
                                 int maxSiftingIter = 10,
                                 double sdThreshold = 0.02);

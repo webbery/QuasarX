@@ -34,7 +34,7 @@ public:
      * @brief 分解结果
      */
     struct Result {
-        List<Vector<double>> imfs;     ///< IMF 分量列表 (时域)
+        Vector<Vector<double>> imfs;     ///< IMF 分量列表 (时域)
         Vector<double> residual;        ///< 残差 (通常接近 0)
         Vector<double> centerFreqs;     ///< 中心频率 (归一化, 范围 [0, 0.5])
         int actualK = 0;                ///< 实际分解的 IMF 数

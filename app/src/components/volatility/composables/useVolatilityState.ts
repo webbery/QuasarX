@@ -13,6 +13,8 @@ export interface VolatilityState {
   symbols: SymbolItem[]
   /** 当前编辑的标的 */
   editingSymbol: string
+  /** 分析字段 (close/open/high/low/volume) */
+  field: string
   /** 时间范围 */
   dateRange: [string, string] | null
   /** 快速时间选择 */
@@ -117,6 +119,7 @@ export function useVolatilityState() {
   const state = reactive<VolatilityState>({
     symbols: [],
     editingSymbol: '',
+    field: 'close',
     dateRange: null,
     quickRange: '近1年',
     windows: [20, 60, 120],

@@ -556,13 +556,8 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     flow._kbarBuilder = kbarBuilder;
 
     bool shadowMode = flow.isShadowMode;
-    if (_handle->GetRunningMode() != RuningType::Backtest) {
-        STRATEGY_INFO(strategy, "[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
-             KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
-    } else {
-        INFO("[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
-             KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
-    }
+    STRATEGY_INFO(strategy, "[Realtime] KBarBuilder: freq={}, symbols={}, tolerance=5s, shadow={}",
+            KBarBuilder::FreqToString(freq), symbols.size(), shadowMode);
 
     flow._worker = new std::thread([strategy, symbols, kbarBuilder, shadowMode, this]() {
         // ★ 影子模式：临时设置全局运行模式（仅在当前 worker 线程生命周期内有效）
@@ -584,6 +579,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
             return;
         }
 
+        flow._lastHeartbeat = time(nullptr);
         try {
             // Prepare 阶段
             for (auto node : flow._graph) {

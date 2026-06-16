@@ -50,6 +50,33 @@ String GetMacAddr();
 bool RunCommand(const std::string& cmd);
 bool RunCommand(const std::string& cmd, String& output);
 std::vector<StockRowInfo> ReadCSV(const std::string& csv, int last_N);
+
+/// 从 CSV 数据文件加载指定列的时间序列数据
+/// @param symbol    标的代码 (如 "sz.000001")
+/// @param field     字段名 (close/open/high/low/volume/turnover)
+/// @param start_date 起始日期 "YYYY-MM-DD"，空字符串表示从最早开始
+/// @param end_date   结束日期 "YYYY-MM-DD"，空字符串表示到最新
+/// @param out_dates  输出日期序列（可选）
+/// @return          指定字段的数据序列
+Vector<double> LoadColumnData(const String& symbol,
+                               const String& field,
+                               const String& start_date = "",
+                               const String& end_date = "",
+                               Vector<String>* out_dates = nullptr);
+
+/// 从 CSV 数据文件加载多列时间序列数据
+/// @param symbol    标的代码 (如 "sz.000001")
+/// @param fields    字段名列表 (close/open/high/low/volume/turnover)
+/// @param start_date 起始日期 "YYYY-MM-DD"，空字符串表示从最早开始
+/// @param end_date   结束日期 "YYYY-MM-DD"，空字符串表示到最新
+/// @param out_dates  输出日期序列（可选）
+/// @return          map: field → 数据序列
+Map<String, Vector<double>> LoadColumnDataMulti(const String& symbol,
+                                                  const Vector<String>& fields,
+                                                  const String& start_date = "",
+                                                  const String& end_date = "",
+                                                  Vector<String>* out_dates = nullptr);
+
 std::string GetProgramPath();
 
 bool Subscribe(const std::string& uri, nng_socket& sock, short tick = 5000, short hwm = 64);

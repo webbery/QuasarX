@@ -123,11 +123,11 @@ Vector<double> simd_extractIMF(const Vector<double>& residual,
 /**
  * @brief SIMD 加速的 EMD 分解（完整流程）
  */
-List<Vector<double>> simd_emd(const Vector<double>& data,
+Vector<Vector<double>> simd_emd(const Vector<double>& data,
                                 int numIMFs,
                                 int maxSiftingIter,
                                 double sdThreshold) {
-    List<Vector<double>> imfs;
+    Vector<Vector<double>> imfs;
     Vector<double> residual = data;
 
     for (int n = 0; n < numIMFs; ++n) {

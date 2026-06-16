@@ -147,7 +147,7 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     }
 
     // 设置过滤条件和工作时间
-    auto config = _server->GetConfig().GetExchangeByAPI(name);
+    auto config = _server->GetConfig().GetExchangeByName(name);
     QuoteFilter filter;
     if (config.contains("pool")) {
         for (String symbol : config["pool"]) {

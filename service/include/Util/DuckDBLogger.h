@@ -66,6 +66,7 @@ public:
      */
     std::vector<StrategyLogEntry> query_strategy_logs(
         const std::string& strategy_name = "",
+        const std::string& keyword = "",
         const std::string& level_filter = "",
         const std::string& start_time = "",
         const std::string& end_time = "",
@@ -78,6 +79,7 @@ public:
      */
     int count_strategy_logs(
         const std::string& strategy_name = "",
+        const std::string& keyword = "",
         const std::string& level_filter = "",
         const std::string& start_time = "",
         const std::string& end_time = ""

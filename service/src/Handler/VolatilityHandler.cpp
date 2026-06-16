@@ -1,15 +1,20 @@
 #include "Handler/VolatilityHandler.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
+#include "Util/finance.h"
 #include "boost/math/statistics/ljung_box.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
-#include <fstream>
 #include <sstream>
-#include <filesystem>
 
-namespace fs = std::filesystem;
+static PriceField parsePriceField(const std::string& field) {
+    if (field == "open" || field == "O") return PriceField::Open;
+    if (field == "high" || field == "H") return PriceField::High;
+    if (field == "low" || field == "L") return PriceField::Low;
+    if (field == "volume" || field == "V") return PriceField::Volume;
+    return PriceField::Close;
+}
 
 // === 工具函数 ===
 
@@ -33,88 +38,41 @@ std::vector<double> VolatilityHandler::loadPrices(
     const std::string& start_date,
     const std::string& end_date,
     std::vector<std::string>& out_dates,
-    std::vector<double>& out_volumes)
+    std::vector<double>& out_volumes,
+    PriceField field)
 {
-    // 获取程序运行目录的绝对路径
-    std::string base_dir = "./data";
-    
-    // 尝试多种可能的路径格式
-    std::vector<std::string> search_paths;
-    
-    // 原始symbol格式可能是: sz.000001, SH.000001, 000001等
-    // 数据文件名格式: sz.000001.csv (小写交易所前缀)
-    std::string normalized_symbol = symbol;
-    
-    // 如果symbol没有交易所前缀，尝试添加常见前缀
-    if (symbol.find('.') == std::string::npos) {
-        // 纯数字代码，尝试常见交易所
-        search_paths.push_back(base_dir + "/Astock/" + "sz." + symbol + ".csv");
-        search_paths.push_back(base_dir + "/Astock/" + "sh." + symbol + ".csv");
-        search_paths.push_back(base_dir + "/A_hfq/" + "sz." + symbol + ".csv");
-        search_paths.push_back(base_dir + "/A_hfq/" + "sh." + symbol + ".csv");
-    } else {
-        // 已有前缀，统一转为小写
-        std::transform(normalized_symbol.begin(), normalized_symbol.end(), 
-                      normalized_symbol.begin(), ::tolower);
-        search_paths.push_back(base_dir + "/Astock/" + normalized_symbol + ".csv");
-        search_paths.push_back(base_dir + "/A_hfq/" + normalized_symbol + ".csv");
+    Vector<String> dates;
+    auto multi = LoadColumnDataMulti(symbol, {"close", "open", "high", "low", "volume", "turnover"},
+                                      start_date, end_date, &dates);
+
+    auto get_col = [&](const char* name) -> const std::vector<double>* {
+        auto it = multi.find(name);
+        if (it == multi.end() || it->second.empty()) return nullptr;
+        return &it->second;
+    };
+
+    const std::vector<double>* target = nullptr;
+    switch (field) {
+        case PriceField::Open:   target = get_col("open"); break;
+        case PriceField::High:   target = get_col("high"); break;
+        case PriceField::Low:    target = get_col("low"); break;
+        case PriceField::Volume: target = get_col("volume"); break;
+        case PriceField::Close:
+        default:                 target = get_col("close"); break;
     }
-    
-    std::string data_path;
-    for (const auto& path : search_paths) {
-        if (fs::exists(path)) {
-            data_path = path;
-            break;
-        }
-    }
-    
-    if (data_path.empty()) {
-        WARN("[Volatility] Data file not found for symbol: {}", symbol);
-        for (const auto& path : search_paths) {
-            WARN("  Tried: {}", path);
-        }
+
+    auto vol_col = get_col("volume");
+
+    if (!target || target->empty()) {
+        WARN("[Volatility] Data file not found or empty for symbol: {}", symbol);
         return {};
     }
 
-    std::ifstream file(data_path);
-    if (!file.is_open()) {
-        WARN("[Volatility] Cannot open: {}", data_path);
-        return {};
-    }
+    out_dates.assign(dates.begin(), dates.end());
+    if (vol_col) out_volumes.assign(vol_col->begin(), vol_col->end());
+    else         out_volumes.assign(target->size(), 0.0);
 
-    std::string line;
-    std::getline(file, line); // skip header
-
-    std::vector<double> closes;
-    time_t start_t = FromStr(start_date, "%Y-%m-%d");
-    time_t end_t = FromStr(end_date, "%Y-%m-%d");
-
-    while (std::getline(file, line)) {
-        std::istringstream iss(line);
-        std::string date_str, open_str, close_str, high_str, low_str, vol_str;
-        
-        if (!std::getline(iss, date_str, ',')) continue;
-        if (!std::getline(iss, open_str, ',')) continue;
-        if (!std::getline(iss, close_str, ',')) continue;
-        std::getline(iss, high_str, ','); // skip
-        std::getline(iss, low_str, ',');  // skip
-        std::getline(iss, vol_str, ',');
-
-        time_t t = FromStr(date_str, "%Y-%m-%d");
-        if (t < 0) continue;
-
-        if (start_t > 0 && t < start_t) continue;
-        if (end_t > 0 && t > end_t) continue;
-
-        double close = std::stod(close_str);
-        double vol = vol_str.empty() ? 0 : std::stod(vol_str);
-
-        closes.push_back(close);
-        out_dates.push_back(date_str);
-        out_volumes.push_back(vol);
-    }
-
-    return closes;
+    return *target;
 }
 
 // === 收益率计算 ===
@@ -220,69 +178,6 @@ std::vector<double> VolatilityHandler::rollingVol(const std::vector<double>& ret
         result.push_back(std::sqrt(var) * std::sqrt(252.0));
     }
     return result;
-}
-
-// === ACF / PACF ===
-
-std::vector<double> VolatilityHandler::computeACF(const std::vector<double>& data, int max_lag) {
-    std::vector<double> acf;
-    if (data.empty()) return acf;
-    
-    double m = mean(data);
-    double var = 0;
-    for (auto v : data) var += (v - m) * (v - m);
-    if (var < 1e-10) {
-        acf.resize(max_lag + 1, 1.0);
-        return acf;
-    }
-    
-    int n = data.size();
-    for (int lag = 0; lag <= max_lag && lag < n; ++lag) {
-        double cov = 0;
-        for (int i = 0; i < n - lag; ++i) {
-            cov += (data[i] - m) * (data[i + lag] - m);
-        }
-        acf.push_back(cov / var);
-    }
-    return acf;
-}
-
-std::vector<double> VolatilityHandler::computePACF(const std::vector<double>& acf, int max_lag) {
-    std::vector<double> pacf;
-    int n = acf.size() - 1;  // max lag
-    if (n < 0) return pacf;
-    
-    // Durbin-Levinson algorithm
-    std::vector<std::vector<double>> phi(n + 1, std::vector<double>(n + 1, 0));
-    
-    pacf.push_back(1.0);  // lag 0
-    if (n >= 1) {
-        phi[1][1] = acf[1];
-        pacf.push_back(phi[1][1]);
-    }
-    
-    for (int k = 2; k <= n; ++k) {
-        double num = acf[k];
-        for (int j = 1; j < k; ++j) {
-            num -= phi[k-1][j] * acf[k - j];
-        }
-        double den = 1.0;
-        for (int j = 1; j < k; ++j) {
-            den -= phi[k-1][j] * acf[j];
-        }
-        if (std::abs(den) < 1e-10) {
-            phi[k][k] = 0;
-        } else {
-            phi[k][k] = num / den;
-        }
-        pacf.push_back(phi[k][k]);
-        
-        for (int j = 1; j < k; ++j) {
-            phi[k][j] = phi[k-1][j] - phi[k][k] * phi[k-1][k-j];
-        }
-    }
-    
-    return pacf;
 }
 
 // === ACF 衰减模式分析 ===
@@ -463,9 +358,9 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
     
     // ACF / PACF (最多 lag 20)
     int max_lag = std::min(20, static_cast<int>(result.returns.size() / 4));
-    result.returns_acf = computeACF(result.returns, max_lag);
-    result.returns_pacf = computePACF(result.returns_acf, max_lag);
-    result.abs_returns_acf = computeACF(result.abs_returns, max_lag);
+    result.returns_acf = finance::computeACF(result.returns, max_lag);
+    result.returns_pacf = finance::computePACF(result.returns_acf, max_lag);
+    result.abs_returns_acf = finance::computeACF(result.abs_returns, max_lag);
     result.acf_decay = analyzeACFDecay(result.abs_returns_acf, result.abs_returns);
 
     return result;
@@ -564,38 +459,39 @@ VolatilityResult VolatilityHandler::compute(
     const std::vector<std::string>& symbols,
     const std::string& start_date,
     const std::string& end_date,
-    const std::vector<int>& windows)
+    const std::vector<int>& windows,
+    PriceField field)
 {
     VolatilityResult result;
     result.symbols = symbols;
-    
+
     std::map<std::string, std::vector<double>> returns_map;
     std::vector<std::string> common_dates;
     bool dates_set = false;
-    
+
     for (const auto& symbol : symbols) {
         std::vector<std::string> dates;
         std::vector<double> volumes;
-        auto prices = loadPrices(symbol, start_date, end_date, dates, volumes);
-        
+        auto prices = loadPrices(symbol, start_date, end_date, dates, volumes, field);
+
         if (prices.empty()) {
             WARN("[Volatility] No data for {}", symbol);
             continue;
         }
-        
+
         auto single_result = computeSingle(prices, volumes, windows);
         result.single[symbol] = single_result;
         returns_map[symbol] = simpleReturns(prices);
-        
+
         if (!dates_set) {
             common_dates = dates;
             dates_set = true;
         }
     }
-    
+
     result.dates = common_dates;
     result.multi = computeMulti(returns_map);
-    
+
     return result;
 }
 
@@ -608,6 +504,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         auto start_date_param = req.get_param_value("start_date");
         auto end_date_param = req.get_param_value("end_date");
         auto windows_param = req.get_param_value("windows");
+        auto field_param = req.get_param_value("field");
 
         if (symbols_param.empty()) {
             res.status = 400;
@@ -640,12 +537,18 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             }
         }
 
-        auto result = compute(symbols, start_date, end_date, windows);
+        PriceField field = parsePriceField(field_param);
+
+        auto result = compute(symbols, start_date, end_date, windows, field);
 
         // 构建 JSON 响应
         nlohmann::json json;
         json["symbols"] = result.symbols;
         json["dates"] = result.dates;
+
+        // 返回使用的字段名
+        static const char* field_names[] = {"close", "open", "high", "low", "volume"};
+        json["field"] = field_names[static_cast<int>(field)];
 
         // 单标的
         nlohmann::json single_json;

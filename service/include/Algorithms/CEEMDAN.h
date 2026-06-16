@@ -36,7 +36,7 @@ public:
      * @brief 分解结果
      */
     struct Result {
-        List<Vector<double>> imfs;     ///< IMF 分量列表
+        Vector<Vector<double>> imfs;     ///< IMF 分量列表
         Vector<double> residual;        ///< 最终残差 (趋势分量)
         int actualIMFs = 0;             ///< 实际生成的 IMF 数量
         double reconstructionError = 0; ///< 重建误差 (ΣIMF + residual - 原始信号 的 RMS)

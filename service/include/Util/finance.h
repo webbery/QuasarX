@@ -10,18 +10,6 @@ double stage3GM(double g1, double g2, double D, double T1, double T2, double r);
 
 /**
  * @brief 计算 Kyle's Lambda（订单流对价格的冲击系数）
- *
- * 通过线性回归 ΔP = λ · OF + ε 估计市场微观结构中的逆向选择成本。
- *
- * @param prices      价格序列（按时间顺序，至少2个元素）
- * @param volumes     成交量序列（与prices等长）
- * @param trade_side  本次交易方向: 0=BUY, 1=SELL
- * @param trade_volume 本次交易量
- * @return Kyle's Lambda。数据不足或方差为0时返回 0
- *
- * 注：因缺乏逐笔成交方向，用价格变动方向代理订单流符号：
- *      dp > 0 → direction = +1（买方发起）
- *      dp < 0 → direction = -1（卖方发起）
  */
 double kyles_lambda(const Vector<double>& prices,
                     const Vector<int64_t>& volumes,
@@ -30,15 +18,45 @@ double kyles_lambda(const Vector<double>& prices,
 
 /**
  * @brief 计算 Amihud 不流动性指标
- *
- * Amihud = |R| / Volume，衡量单位成交量引起的收益率绝对变化。
- *
- * @param prices  价格序列
- * @param volumes 成交量序列（与prices等长）
- * @return 平均 Amihud 值。数据不足时返回 0
  */
 double amihud_illiquidity(const Vector<double>& prices,
                           const Vector<int64_t>& volumes);
+
+// ──────────────────────────────────────────────────────────────────────
+// 信号分析 / 时序分析工具函数
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief 计算自相关函数 (ACF)
+ * @param data     输入序列
+ * @param max_lag  最大滞后阶数
+ * @return         ACF 值，索引 0 = lag 0（总是 1.0）
+ */
+Vector<double> computeACF(const Vector<double>& data, int max_lag);
+
+/**
+ * @brief 计算偏自相关函数 (PACF)，使用 Durbin-Levinson 算法
+ * @param acf      自相关函数值（从 computeACF 获得）
+ * @param max_lag  最大滞后阶数
+ * @return         PACF 值，索引 0 = lag 0
+ */
+Vector<double> computePACF(const Vector<double>& acf, int max_lag);
+
+/**
+ * @brief 估计序列的平均周期（ACF 第一个过零点 × 2）
+ * @param data  输入序列
+ * @return      平均周期（bar 数），无法估计时返回 0
+ */
+double estimateMeanPeriod(const Vector<double>& data);
+
+/**
+ * @brief 计算能量占比（序列方差 / 原始信号方差）
+ * @param component  分量序列（如 IMF）
+ * @param original   原始信号序列
+ * @return           能量占比 [0, 1]
+ */
+double computeEnergyPct(const Vector<double>& component,
+                         const Vector<double>& original);
 
 }
 

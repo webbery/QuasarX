@@ -159,7 +159,7 @@ if(ENABLE_ASAN)
     add_link_options(-fsanitize=address)
     # 可选：如果使用 CMake 3.13+ 也可用 target_compile_options / target_link_options 针对特定目标
 endif()
-set(LINUX_LIBS xmdapi traderapi sptraderapi)
+set(LINUX_LIBS xmdapi traderapi sptraderapi duckdb)
 endif()
 if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")
     target_compile_options(${PROJECT_NAME} PRIVATE -fPIE)
@@ -171,7 +171,6 @@ endif()
 target_link_libraries(${PROJECT_NAME} curl -pthread nng papi
     xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se
     ${LINUX_LIBS}
-    ${PROJECT_SOURCE_DIR}/third_party/libs/unix/libduckdb_static.a
 )
 
 endif(WIN32)

@@ -316,19 +316,39 @@ onMounted(() => {
 }
 
 .tab-select {
-  padding: 8px 12px;
-  background: rgba(42, 52, 77, 0.5);
-  border: 1px solid var(--border, #2a3449);
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border, rgba(74, 158, 255, 0.3));
   border-radius: 6px;
-  color: var(--text, #e0e0e0);
-  font-size: 14px;
+  color: var(--text, #e2e8f0);
+  font-size: 13px;
+  outline: none;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   min-width: 220px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0aec0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
 }
 
-.tab-select:hover {
-  border-color: #2962ff;
+.tab-select:hover:not(:focus) {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.tab-select:focus {
+  outline: none;
+  border-color: var(--primary, #2962ff);
+  box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.tab-select option {
+  background: var(--panel-bg, #1a2236);
+  color: var(--text, #e2e8f0);
+  padding: 8px;
 }
 
 .path-count {

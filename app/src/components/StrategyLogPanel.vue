@@ -30,11 +30,12 @@
           <input type="datetime-local" v-model="filters.endTime" />
         </template>
 
+        <label style="margin-left: 16px;">关键字:</label>
+        <input type="text" v-model="filters.keyword" placeholder="搜索消息内容"
+               style="padding: 4px 8px; width: 200px;" />
+
         <button class="btn btn-query" @click="loadLogs" style="margin-left: 16px;">
           <i class="fas fa-search"></i> 查询
-        </button>
-        <button class="btn btn-refresh" @click="refreshLogs">
-          <i class="fas fa-sync-alt"></i> 刷新
         </button>
 
         <label style="margin-left: auto; display: flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -144,6 +145,7 @@ const props = defineProps({
 // 筛选条件（无策略下拉，使用 props.selectedStrategy）
 const filters = reactive({
   level: '',
+  keyword: '',
   timeRange: '24h',
   startTime: '',
   endTime: ''
@@ -243,6 +245,7 @@ async function loadLogs() {
 
     if (props.selectedStrategy) params.strategy = props.selectedStrategy
     if (filters.level) params.level = filters.level
+    if (filters.keyword) params.keyword = filters.keyword
 
     const resp = await axios.get('/v0/strategy/logs', { params })
     logs.value = resp.data.logs || []
@@ -258,13 +261,6 @@ async function loadLogs() {
 // 展开/折叠详情
 function toggleDetail(id) {
   expandedLogId.value = expandedLogId.value === id ? null : id
-}
-
-// 刷新（重置到第1页）
-function refreshLogs() {
-  page.value = 1
-  loadStats()
-  loadLogs()
 }
 
 // 自动刷新开关
@@ -288,7 +284,7 @@ watch(page, () => loadLogs())
 
 // 监听筛选条件变化（自动重置到第1页）
 watch(
-  () => ({ l: filters.level, t: filters.timeRange, s: props.selectedStrategy }),
+  () => ({ l: filters.level, k: filters.keyword, t: filters.timeRange, s: props.selectedStrategy }),
   () => {
     page.value = 1
     loadLogs()
@@ -385,12 +381,6 @@ onUnmounted(() => {
   border: 1px solid rgba(96, 165, 250, 0.4);
 }
 .btn-query:hover { background: rgba(96, 165, 250, 0.35); }
-
-.btn-refresh {
-  background: rgba(74, 222, 128, 0.15);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-}
-.btn-refresh:hover { background: rgba(74, 222, 128, 0.3); }
 
 /* ── 日志表格容器（填充剩余空间） ── */
 .log-table-wrapper {

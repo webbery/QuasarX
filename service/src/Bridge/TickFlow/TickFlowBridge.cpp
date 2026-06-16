@@ -6,6 +6,7 @@
 #include "Util/system.h"
 #include "json.hpp"
 #include "server.h"
+#include <algorithm>
 #include <format>
 #include <deque>
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
@@ -20,10 +21,19 @@ TickFlowBridge::TickFlowBridge(Server* server)
       _login_success(false),
       _error_count(0),
       _pause_phase(0),
-      _paused(false) {
+      _paused(false),
+      _workerThread(nullptr),
+      _stop(false) {
 }
 
 TickFlowBridge::~TickFlowBridge() {
+    _stop = true;
+    if (_workerThread && _workerThread->joinable()) {
+        _workerThread->join();
+    }
+    delete _workerThread;
+
+    // socket 在线程内已关闭，此处兜底
     if (_sock.id != 0) {
         nng_close(_sock);
     }
@@ -43,22 +53,15 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     }
 
     _base_url = "https://api.tickflow.org";
-    // _universes = {"CN_Equity_A"};
+    // TickFlow 限频 10次/分钟，留有余量，默认 10s 一次请求
     _interval_ms = 10000;
 
     InitHttpClient();
 
-    // 初始化 pub socket，发布行情到 URI_RAW_QUOTE
-    if (!Publish(URI_RAW_QUOTE, _sock)) {
-        FATAL("TickFlowBridge failed to publish to URI_RAW_QUOTE");
-        return false;
-    }
-    _pub_inited = true;
-    INFO("TickFlowBridge pub socket initialized, uri={}", URI_RAW_QUOTE);
+    // 启动自治调度线程（nanomsg socket 的 init/use/destroy 都在此线程内）
+    _workerThread = new std::thread(&TickFlowBridge::workerLoop, this);
 
-    _login_success = true;
-
-    INFO("TickFlowBridge initialized, api_key loaded, interval={}ms", _interval_ms);
+    INFO("TickFlowBridge initialized, api_key loaded, worker thread started");
     return true;
 }
 
@@ -73,7 +76,12 @@ void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
             _code_to_symbol[code] = sym;
         }
     }
-    INFO("SetFilter: {} symbols loaded", filter._symbols.size());
+
+    // TickFlow 限频 10次/分钟，留有余量，10s 一次请求
+    // worker 线程已按 _interval_ms 控制频率
+    _interval_ms = 10000;
+
+    INFO("SetFilter: {} symbols, interval={}ms", filter._symbols.size(), _interval_ms);
 }
 
 bool TickFlowBridge::Release() {
@@ -278,6 +286,103 @@ void TickFlowBridge::OnOrderReport(order_id id, const TradeReport& report) {
     // 邮件通知已移至 AddOrder 中的 SendOrderEmail
 }
 
+// ==================== 自治调度线程 ====================
+
+/**
+ * workerLoop: 自治调度线程
+ * - nanomsg socket 的 init/use/destroy 都在此线程
+ * - 按 _interval_ms 周期轮询 TickFlow API
+ * - 检查工作时间 + 暂停状态
+ */
+void TickFlowBridge::workerLoop() {
+    using Clock = std::chrono::steady_clock;
+
+    // 1. 初始化 pub socket（同线程内）
+    if (Publish(URI_RAW_QUOTE, _sock)) {
+        _pub_inited = true;
+        INFO("[TickFlow] worker: pub socket initialized, uri={}", URI_RAW_QUOTE);
+    } else {
+        WARN("[TickFlow] worker: failed to init pub socket");
+    }
+
+    _login_success = true;
+
+    auto nextWakeup = Clock::now();
+
+    while (!_stop) {
+        // 检查当前时间
+        time_t curr = _server ? Now() : std::time(nullptr);
+
+        // 检查工作时间
+        if (!IsWorking(curr)) {
+            // 非工作时间，暂停 30s 再检查
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+            continue;
+        }
+
+        // 检查暂停状态
+        {
+            std::lock_guard<std::mutex> lock(_error_mutex);
+            if (_paused) {
+                auto now = Clock::now();
+                if (now < _pause_until) {
+                    auto remaining = std::chrono::duration_cast<std::chrono::seconds>(_pause_until - now).count();
+                    std::this_thread::sleep_for(std::chrono::seconds(std::min(remaining, 5L)));
+                    continue;
+                } else {
+                    _paused = false;
+                    _error_count = 0;
+                    INFO("[TickFlow] Pause expired, resuming");
+                }
+            }
+        }
+
+        // 检查频率控制
+        {
+            std::lock_guard<std::mutex> lock(_error_mutex);
+            auto now = Clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_request).count();
+            auto wait = _interval_ms - elapsed;
+            if (wait > 0) {
+                // 等待到下一个请求窗口，但每 1s 检查一次 _stop
+                auto deadline = Clock::now() + std::chrono::milliseconds(wait);
+                while (Clock::now() < deadline && !_stop) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(std::min(1000L,
+                        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count())));
+                }
+                if (_stop) break;
+            }
+            _last_request = Clock::now();
+        }
+
+        // 检查标的列表
+        if (_filter._symbols.empty()) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            continue;
+        }
+
+        // 执行 HTTP 请求 + 发布行情（同线程内 nanomsg 安全）
+        FetchQuotes();
+
+        // 下一轮唤醒
+        nextWakeup += std::chrono::milliseconds(_interval_ms);
+        auto sleepDur = nextWakeup - Clock::now();
+        if (sleepDur.count() > 0) {
+            std::this_thread::sleep_for(sleepDur);
+        } else {
+            nextWakeup = Clock::now() + std::chrono::milliseconds(_interval_ms);
+        }
+    }
+
+    // 线程退出前关闭 socket（同线程内）
+    if (_sock.id != 0) {
+        nng_close(_sock);
+        _sock.id = 0;
+        _pub_inited = false;
+    }
+    INFO("[TickFlow] worker: thread stopped");
+}
+
 // ==================== 行情 ====================
 
 QuoteInfo TickFlowBridge::GetQuote(symbol_t symbol) {
@@ -286,22 +391,6 @@ QuoteInfo TickFlowBridge::GetQuote(symbol_t symbol) {
         quote = entry.second;
     });
     return quote;
-}
-
-void TickFlowBridge::QueryQuotes() {
-    // 频率控制：检查距离上次请求的时间间隔
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_request).count();
-    if (elapsed < _interval_ms) {
-        return;  // 未到指定间隔，跳过
-    }
-    _last_request = now;
-    
-    FetchQuotes();
-}
-
-void TickFlowBridge::StopQuery() {
-    // 由外部调度，无需内部停止
 }
 
 void TickFlowBridge::PublishQuote(const QuoteInfo& quote) {
@@ -321,90 +410,77 @@ void TickFlowBridge::PublishQuote(const QuoteInfo& quote) {
 void TickFlowBridge::FetchQuotes() {
     if (!_login_success || _filter._symbols.empty()) return;
 
-    // 检查暂停状态
-    {
-        std::lock_guard<std::mutex> lock(_error_mutex);
-        if (_paused) {
-            auto now = std::chrono::steady_clock::now();
-            if (now < _pause_until) {
-                return;  // 仍在暂停中
-            } else {
-                _paused = false;
-                _error_count = 0;
-                INFO("Pause expired, resuming TickFlow requests");
-            }
-        }
+    auto symbols = Vector<String>(_filter._symbols.begin(), _filter._symbols.end());
+
+    // _offset 到达末尾后重置，每轮请求只发送一个批次
+    if (_offset >= static_cast<int>(symbols.size())) {
+        _offset = 0;
     }
 
     constexpr int BATCH_SIZE = 5;
-    auto symbols = Vector<String>(_filter._symbols.begin(), _filter._symbols.end());
+    int upper = std::min(static_cast<int>(symbols.size()), _offset + BATCH_SIZE);
+    int offset = upper - _offset;
+    if (offset <= 0) return;
 
-    for (size_t i = 0; i < symbols.size(); i += BATCH_SIZE) {
-        Vector<String> batch(symbols.begin() + i,
-                            symbols.begin() + std::min(i + BATCH_SIZE, symbols.size()));
+    Vector<String> batch(symbols.begin() + _offset, symbols.begin() + upper);
+    _offset = upper;
 
-        // 构建请求体
-        nlohmann::json body;
-        body["symbols"] = batch;
-        // body["universes"] = _universes;
+    // 构建请求体
+    nlohmann::json body;
+    body["symbols"] = batch;
 
-        String body_str = body.dump();
+    String body_str = body.dump();
 
-        // 发送 POST 请求
-        httplib::Headers headers = {
-            {"Content-Type", "application/json"},
-            { "x-api-key", _api_key }
-        };
+    // 发送 POST 请求
+    httplib::Headers headers = {
+        {"Content-Type", "application/json"},
+        { "x-api-key", _api_key }
+    };
 
-        DEBUG_INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
-                   _api_key.empty() ? "(empty)" : _api_key.substr(0, 8), body_str);
+    DEBUG_INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
+                _api_key.empty() ? "(empty)" : _api_key.substr(0, 8), body_str);
 
-        auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
+    auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
 
-        if (!res) {
-            auto err = res.error();
-            const char* err_str = "Unknown";
-            switch (err) {
-                case httplib::Error::Connection: err_str = "Connection"; break;
-                case httplib::Error::ConnectionTimeout: err_str = "ConnectionTimeout"; break;
-                case httplib::Error::Read: err_str = "Read"; break;
-                case httplib::Error::Write: err_str = "Write"; break;
-                case httplib::Error::SSLConnection: err_str = "SSLConnection"; break;
-                case httplib::Error::Canceled: err_str = "Canceled"; break;
-                case httplib::Error::ProxyConnection: err_str = "ProxyConnection"; break;
-                default: break;
-            }
-            WARN("HTTP request failed: error={}({})", err_str, static_cast<int>(err));
-            HandleApiError(std::format("HTTP error: {}({})", err_str, static_cast<int>(err)).c_str());
-            return;
+    if (!res) {
+        auto err = res.error();
+        const char* err_str = "Unknown";
+        switch (err) {
+            case httplib::Error::Connection: err_str = "Connection"; break;
+            case httplib::Error::ConnectionTimeout: err_str = "ConnectionTimeout"; break;
+            case httplib::Error::Read: err_str = "Read"; break;
+            case httplib::Error::Write: err_str = "Write"; break;
+            case httplib::Error::SSLConnection: err_str = "SSLConnection"; break;
+            case httplib::Error::Canceled: err_str = "Canceled"; break;
+            case httplib::Error::ProxyConnection: err_str = "ProxyConnection"; break;
+            default: break;
         }
-
-        DEBUG_INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
-        if (res->status != 200) {
-            DEBUG_INFO("[TickFlow] Response body: {}", res->body);
-        }
-
-        if (res->status == 200) {
-            ParseResponse(res->body);
-            std::lock_guard<std::mutex> lock(_error_mutex);
-            _error_count = 0;
-            _pause_phase = 0;
-        } else if (res->status == 429 || res->status == 401 || res->status == 403) {
-            String msg = std::format("TickFlow API error: status={}, body={}", res->status, res->body);
-            WARN("{}", msg.c_str());
-            HandleApiError(msg.c_str());
-            return;
-        } else {
-            WARN("Unexpected status: {}", res->status);
-            HandleApiError(std::format("HTTP {}", res->status).c_str());
-            return;
-        }
-
-        // 批次间隔：确保每批至少隔 10 秒（符合 TickFlow 10次/分钟限制）
-        if (i + BATCH_SIZE < symbols.size()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(_interval_ms));
-        }
+        WARN("HTTP request failed: error={}({})", err_str, static_cast<int>(err));
+        HandleApiError(std::format("HTTP error: {}({})", err_str, static_cast<int>(err)).c_str());
+        return;
     }
+
+    DEBUG_INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
+    if (res->status != 200) {
+        DEBUG_INFO("[TickFlow] Response body: {}", res->body);
+    }
+
+    if (res->status == 200) {
+        ParseResponse(res->body);
+        std::lock_guard<std::mutex> lock(_error_mutex);
+        _error_count = 0;
+        _pause_phase = 0;
+    } else if (res->status == 429 || res->status == 401 || res->status == 403) {
+        String msg = std::format("TickFlow API error: status={}, body={}", res->status, res->body);
+        WARN("{}", msg.c_str());
+        HandleApiError(msg.c_str());
+        return;
+    } else {
+        WARN("Unexpected status: {}", res->status);
+        HandleApiError(std::format("HTTP {}", res->status).c_str());
+        return;
+    }
+
 }
 
 void TickFlowBridge::ParseResponse(const String& response) {
