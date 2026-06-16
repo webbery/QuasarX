@@ -374,9 +374,14 @@ void Server::InitDefault() {
     for (auto& name: names) {
         auto exchange = _config->GetExchangeByName(name);
         if (exchange.empty()) {
-
+            WARN("Exchange config not found for name: {}", name);
+            continue;
         }
         if (!_exchangeMgr->Use(name)) {
+            WARN("Failed to register exchange: {}", name);
+            // 关键交易所注册失败时，不应继续执行（策略初始化会因找不到标的而崩溃）
+            printf("[ERROR] Failed to register exchange: %s\n", name.c_str());
+            return;
         }
         if ((String)exchange["api"] == STOCK_HISTORY_SIM) {
             use_sim = true;

@@ -57,13 +57,13 @@
                                     <span class="status-dot" :class="{ running: s.running }"></span>
                                 </td>
                                 <td class="strategy-name" :title="s.name">{{ s.name }}</td>
+                                <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
+                                <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
                                 <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
                                 <td>
                                     <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
                                     <span v-else class="heartbeat unknown">--</span>
                                 </td>
-                                <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
-                                <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
                                 <td>
                                     <div class="action-buttons">
                                         <button

@@ -61,6 +61,16 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     // 启动自治调度线程（nanomsg socket 的 init/use/destroy 都在此线程内）
     _workerThread = new std::thread(&TickFlowBridge::workerLoop, this);
 
+    // 等待 worker 线程就绪（避免竞态：主线程在 RegisterExchange 中调用 GetAllStockSymbols 时 _login_success 尚未被设置）
+    // workerLoop 开头会设置 _login_success = true，这里最多等 1s
+    for (int i = 0; i < 20 && !_login_success; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!_login_success) {
+        WARN("TickFlowBridge worker thread failed to initialize after 1s timeout");
+        return false;
+    }
+
     INFO("TickFlowBridge initialized, api_key loaded, worker thread started");
     return true;
 }
@@ -326,7 +336,7 @@ void TickFlowBridge::workerLoop() {
             if (_paused) {
                 auto now = Clock::now();
                 if (now < _pause_until) {
-                    auto remaining = std::chrono::duration_cast<std::chrono::seconds>(_pause_until - now).count();
+                    long remaining = std::chrono::duration_cast<std::chrono::seconds>(_pause_until - now).count();
                     std::this_thread::sleep_for(std::chrono::seconds(std::min(remaining, 5L)));
                     continue;
                 } else {
@@ -348,7 +358,7 @@ void TickFlowBridge::workerLoop() {
                 auto deadline = Clock::now() + std::chrono::milliseconds(wait);
                 while (Clock::now() < deadline && !_stop) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(std::min(1000L,
-                        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count())));
+                        (long)std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count())));
                 }
                 if (_stop) break;
             }

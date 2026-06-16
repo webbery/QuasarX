@@ -127,10 +127,20 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
 
     // 同步合约符号信息到 Server
     List<SymbolInfo> symbols;
-    ptr->GetAllStockSymbols(symbols);
-    ptr->GetAllFundSymbols(symbols);
-    ptr->GetAllOptionSymbols(symbols);
+    bool stockOk = ptr->GetAllStockSymbols(symbols);
+    bool fundOk = ptr->GetAllFundSymbols(symbols);
+    bool optionOk = ptr->GetAllOptionSymbols(symbols);
 
+    if (!stockOk && !fundOk && !optionOk) {
+        // 所有符号加载都失败 → 注册失败
+        WARN("Exchange {} registered but no symbols loaded (stock/fund/option all failed)", name);
+        delete ptr;
+        _exchanges.erase(name);
+        _typeExchanges.erase(type);
+        return false;
+    }
+
+    // 部分成功：至少有一种符号加载成功
     for (auto& sym : symbols) {
         ContractInfo info;
         info._type = sym._type;
@@ -144,6 +154,8 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     }
     if (!symbols.empty()) {
         INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
+    } else {
+        WARN("Exchange {} registered with 0 symbols (Bridge mode, symbols provided by config pool)", name);
     }
 
     // 设置过滤条件和工作时间
