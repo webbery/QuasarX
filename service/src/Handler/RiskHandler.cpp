@@ -315,9 +315,3 @@ void VaRHandler::run() {
 void VaRHandler::get(const httplib::Request& req, httplib::Response& res) {
 
 }
-
-void DrawdownHandler::get(const httplib::Request& req, httplib::Response& res) {
-    auto params = nlohmann::json::parse(req.body);
-    int type = params["range"];
-    String symbol = params["symbol"];
-}

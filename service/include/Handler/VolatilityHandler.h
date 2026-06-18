@@ -1,6 +1,9 @@
 #pragma once
 #include "HttpHandler.h"
 #include "Util/data.h"
+#include "Metric/RiskMetric.h"
+#include "Metric/Drawdown.h"
+#include "Metric/Volatility.h"
 #include <vector>
 #include <string>
 #include <map>
@@ -79,7 +82,8 @@ public:
     virtual void get(const httplib::Request& req, httplib::Response& res);
 
 private:
-    static VolatilityResult compute(const std::vector<std::string>& symbols,
+    static VolatilityResult compute(const std::string& db_path,
+                                     const std::vector<std::string>& symbols,
                                      const std::string& start_date,
                                      const std::string& end_date,
                                      const std::vector<int>& windows,
@@ -93,13 +97,8 @@ private:
     static VolatilityMultiResult computeMulti(const std::map<std::string, std::vector<double>>& returns_map);
 
     static std::vector<double> simpleReturns(const std::vector<double>& prices);
-    static double annualVolatility(const std::vector<double>& returns);
-    static double maxDrawdown(const std::vector<double>& prices);
     static double skewness(const std::vector<double>& data);
     static double kurtosis(const std::vector<double>& data);
-    static double computeVar(const std::vector<double>& returns, double confidence);
-    static double computeCVaR(const std::vector<double>& returns, double confidence);
-    static std::vector<double> rollingVol(const std::vector<double>& returns, int window);
     static ACFDecayAnalysis analyzeACFDecay(const std::vector<double>& abs_acf,
                                              const std::vector<double>& abs_returns);
 };

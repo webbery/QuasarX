@@ -4,6 +4,7 @@
 #include "Util/data.h"
 #include "Util/finance.h"
 #include "boost/math/statistics/ljung_box.hpp"
+#include "server.h"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -48,23 +49,6 @@ std::vector<double> VolatilityHandler::simpleReturns(const std::vector<double>& 
 
 // === 单标的指标 ===
 
-double VolatilityHandler::annualVolatility(const std::vector<double>& returns) {
-    if (returns.size() < 2) return 0.0;
-    return stddev(returns) * std::sqrt(252.0);
-}
-
-double VolatilityHandler::maxDrawdown(const std::vector<double>& prices) {
-    if (prices.empty()) return 0.0;
-    double peak = prices[0];
-    double max_dd = 0.0;
-    for (double v : prices) {
-        if (v > peak) peak = v;
-        double dd = (peak - v) / peak;
-        if (dd > max_dd) max_dd = dd;
-    }
-    return max_dd;
-}
-
 double VolatilityHandler::skewness(const std::vector<double>& data) {
     if (data.size() < 3) return 0.0;
     double m = mean(data);
@@ -95,46 +79,6 @@ double VolatilityHandler::kurtosis(const std::vector<double>& data) {
     double k = ((n*(n+1)) / ((n-1)*(n-2)*(n-3))) * sum4;
     double correction = (3.0 * (n-1) * (n-1)) / ((n-2) * (n-3));
     return k - correction;
-}
-
-double VolatilityHandler::computeVar(const std::vector<double>& returns, double confidence) {
-    if (returns.empty()) return 0.0;
-    auto sorted = returns;
-    std::sort(sorted.begin(), sorted.end());
-    int idx = static_cast<int>((1.0 - confidence) * sorted.size());
-    if (idx >= sorted.size()) idx = sorted.size() - 1;
-    return -sorted[idx];
-}
-
-double VolatilityHandler::computeCVaR(const std::vector<double>& returns, double confidence) {
-    if (returns.empty()) return 0.0;
-    auto sorted = returns;
-    std::sort(sorted.begin(), sorted.end());
-    int idx = static_cast<int>((1.0 - confidence) * sorted.size());
-    if (idx >= sorted.size()) idx = sorted.size() - 1;
-    if (idx <= 0) return -sorted[0];
-    double sum = 0;
-    for (int i = 0; i <= idx; ++i) sum += sorted[i];
-    return -(sum / (idx + 1));
-}
-
-std::vector<double> VolatilityHandler::rollingVol(const std::vector<double>& returns, int window) {
-    std::vector<double> result;
-    if (returns.size() < window) return result;
-    
-    for (size_t i = window - 1; i < returns.size(); ++i) {
-        double m = 0;
-        for (int j = 0; j < window; ++j) m += returns[i - j];
-        m /= window;
-        double var = 0;
-        for (int j = 0; j < window; ++j) {
-            double d = returns[i - j] - m;
-            var += d * d;
-        }
-        var /= (window - 1);
-        result.push_back(std::sqrt(var) * std::sqrt(252.0));
-    }
-    return result;
 }
 
 // === ACF 衰减模式分析 ===
@@ -265,7 +209,7 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
     
     // 滚动波动率
     for (int w : windows) {
-        result.rolling_vol[w] = rollingVol(result.returns, w);
+        result.rolling_vol[w] = rolling_volatility(result.returns, w);
     }
     
     // 波动率包络带 (基于滚动20日)
@@ -300,12 +244,12 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
     }
     
     // 汇总指标
-    result.annual_volatility = annualVolatility(result.returns);
-    result.max_drawdown = maxDrawdown(prices);
+    result.annual_volatility = compute_annualized_volatility(result.returns);
+    result.max_drawdown = max_drawdown_ratio(prices);
     result.skewness = skewness(result.returns);
     result.kurtosis = kurtosis(result.returns);
-    result.var_95 = computeVar(result.returns, 0.95);
-    result.cvar_95 = computeCVaR(result.returns, 0.95);
+    result.var_95 = compute_var(result.returns, 0.95);
+    result.cvar_95 = compute_cvar(result.returns, 0.95);
     
     // 波动率聚集 (|returns|)
     result.abs_returns.reserve(result.returns.size());
@@ -413,6 +357,7 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
 // === 主计算函数 ===
 
 VolatilityResult VolatilityHandler::compute(
+    const std::string& db_path,
     const std::vector<std::string>& symbols,
     const std::string& start_date,
     const std::string& end_date,
@@ -442,23 +387,38 @@ VolatilityResult VolatilityHandler::compute(
 
     for (const auto& symbol : symbols) {
         Vector<String> dates;
-        auto multi = LoadHistoryData(symbol, {"close", "open", "high", "low", "volume", "turnover"},
-                                      start_date, end_date, &dates, fill);
+        Vector<double> prices_vec;
+        Vector<double> volumes_vec;
 
-        Vector<double> prices = getPriceCol(multi);
-        Vector<double> volumes = getVolumeCol(multi);
+        // 检测是否为宏观指标 (格式: country/indicator)
+        auto slash = symbol.find('/');
+        bool is_macro = (slash != std::string::npos && symbol.size() > slash + 1 && symbol.find('.', slash) == std::string::npos);
 
-        if (prices.empty()) {
-            WARN("[Volatility] No data for {}", symbol);
-            continue;
+        if (is_macro) {
+            // 宏观指标数据
+            if (!FetchMacroData(symbol, db_path, dates, prices_vec)) {
+                WARN("[Volatility] No macro data for {}", symbol);
+                continue;
+            }
+            volumes_vec.assign(prices_vec.size(), 0.0);  // 宏观数据无成交量
+        } else {
+            // 股票/ETF行情数据
+            auto multi = LoadHistoryData(symbol, {"close", "open", "high", "low", "volume", "turnover"},
+                                          start_date, end_date, &dates, fill);
+            Vector<double> prices = getPriceCol(multi);
+            Vector<double> volumes = getVolumeCol(multi);
+            if (prices.empty()) {
+                WARN("[Volatility] No data for {}", symbol);
+                continue;
+            }
+            prices_vec.assign(prices.begin(), prices.end());
+            volumes_vec.assign(volumes.begin(), volumes.end());
+            if (volumes_vec.empty()) volumes_vec.assign(prices_vec.size(), 0.0);
         }
 
-        // volumes 补齐
-        if (volumes.empty()) volumes.assign(prices.size(), 0.0);
-
-        auto single_result = computeSingle(prices, volumes, windows);
+        auto single_result = computeSingle(prices_vec, volumes_vec, windows);
         result.single[symbol] = single_result;
-        returns_map[symbol] = simpleReturns(prices);
+        returns_map[symbol] = simpleReturns(prices_vec);
 
         if (common_dates.empty()) {
             common_dates.assign(dates.begin(), dates.end());
@@ -475,6 +435,8 @@ VolatilityResult VolatilityHandler::compute(
 
 void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res) {
     try {
+        auto db_path = _server->GetConfig().GetDatabasePath();
+
         // 从 URL 参数获取
         auto symbols_param = req.get_param_value("symbols");
         auto start_date_param = req.get_param_value("start_date");
@@ -517,7 +479,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         PriceField field = parsePriceField(field_param);
         FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
 
-        auto result = compute(symbols, start_date, end_date, windows, field, fill);
+        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill);
 
         // 构建 JSON 响应
         nlohmann::json json;

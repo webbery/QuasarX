@@ -5,10 +5,12 @@
 #include "Algorithms/EMD_SIMD.h"
 #include "Algorithms/CEEMDAN.h"
 #include "Util/datetime.h"
+#include "server.h"
 #include <sstream>
 
 void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
     try {
+        auto db_path = _server->GetConfig().GetDatabasePath();
         auto symbols_param = req.get_param_value("symbols");
         auto start_date = req.get_param_value("start_date");
         auto end_date = req.get_param_value("end_date");
@@ -54,13 +56,31 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
 
         // 只处理第一个 symbol（单标的分析）
         if (!symbols.empty()) {
-            Vector<String> dates;
-            auto multi = LoadHistoryData(symbols[0], {"close", "open", "high", "low", "volume", "turnover"},
-                                          start_date, end_date, &dates, fill);
+            // 检测是否为宏观指标 (格式: country/indicator)
+            auto slash = symbols[0].find('/');
+            bool is_macro = (slash != std::string::npos && symbols[0].size() > slash + 1 && symbols[0].find('.', slash) == std::string::npos);
 
-            auto it = multi.find(field);
-            if (it != multi.end() && !it->second.empty()) {
-                original = it->second;
+            if (is_macro) {
+                // 宏观指标数据
+                Vector<String> macro_dates;
+                Vector<double> macro_prices;
+                if (!FetchMacroData(symbols[0], db_path, macro_dates, macro_prices)) {
+                    res.status = 400;
+                    nlohmann::json err;
+                    err["error"] = fmt::format("No macro data for {}", symbols[0]);
+                    res.set_content(err.dump(), "application/json");
+                    return;
+                }
+                dates = macro_dates;
+                original = macro_prices;
+            } else {
+                // 股票/ETF行情数据
+                auto multi = LoadHistoryData(symbols[0], {"close", "open", "high", "low", "volume", "turnover"},
+                                              start_date, end_date, &dates, fill);
+                auto it = multi.find(field);
+                if (it != multi.end() && !it->second.empty()) {
+                    original = it->second;
+                }
             }
             json["dates"] = dates;
             json["original"] = original;

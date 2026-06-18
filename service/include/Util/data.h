@@ -31,3 +31,17 @@ Map<String, Vector<double>> LoadHistoryData(
     const String& end_date = "",
     Vector<String>* out_dates = nullptr,
     FillMethod fill = FillMethod::None);
+
+/// === 宏观经济数据获取 ===
+
+/// 从缓存或 Python 脚本获取宏观数据时间序列
+/// @param symbol     格式 "country/indicator" (如 "china/cpi")
+/// @param db_path    数据库根目录
+/// @param out_dates  输出日期序列
+/// @param out_prices 输出数值序列
+/// @return 是否成功获取数据
+bool FetchMacroData(
+    const String& symbol,
+    const String& db_path,
+    Vector<String>& out_dates,
+    Vector<double>& out_prices);

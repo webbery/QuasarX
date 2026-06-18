@@ -2,7 +2,7 @@
 #include <mutex>
 #include <thread>
 #include "HttpHandler.h"
-#include "Util/Volatility.h"
+#include "Metric/Volatility.h"
 #include "nng/nng.h"
 #include "Util/system.h"
 
@@ -65,12 +65,4 @@ public:
   double ExpectedShortFall();
 private:
   void run();
-};
-
-class DrawdownHandler: public HttpHandler {
-public:
-  DrawdownHandler(Server* handle): HttpHandler(handle) {}
-  virtual void get(const httplib::Request& req, httplib::Response& res);
-
-private:
 };

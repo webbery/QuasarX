@@ -29,33 +29,6 @@ namespace {
 
 }
 
-// 计算年化波动率
-// 公式: annualized_vol = std(daily_returns) * sqrt(YEAR_DAY)
-// 参数: daily_returns - 每日收益率序列
-// 返回: 年化波动率（标准差）
-float compute_annualized_volatility(const Vector<double>& daily_returns) {
-    if (daily_returns.size() < 2) {
-        return 0.0f;
-    }
-
-    // 计算均值
-    double sum = 0.0;
-    for (double ret : daily_returns) {
-        sum += ret;
-    }
-    double mean = sum / daily_returns.size();
-
-    // 计算样本标准差（Bessel 修正）
-    double sum_sq = 0.0;
-    for (double ret : daily_returns) {
-        double diff = ret - mean;
-        sum_sq += diff * diff;
-    }
-    double std_daily = std::sqrt(sum_sq / (daily_returns.size() - 1));
-
-    // 年化
-    return static_cast<float>(std_daily * std::sqrt(static_cast<double>(YEAR_DAY)));
-}
 
 // 计算夏普比率（简化版）
 // 公式: sharp = (annualized_return - risk_free_rate) / annualized_volatility

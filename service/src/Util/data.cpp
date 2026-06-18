@@ -1,6 +1,7 @@
 #include "Util/data.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
+#include "Util/system.h"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -265,4 +266,116 @@ Map<String, Vector<double>> LoadHistoryData(
     }
 
     return data;
+}
+
+// === 宏观经济数据获取 ===
+
+namespace {
+namespace fs = std::filesystem;
+
+String GetMacroCachePath(const String& db_path, const String& country, const String& indicator) {
+    return db_path + "/macro/" + country + "/" + indicator + ".json";
+}
+
+bool ReadMacroCache(const String& db_path, const String& country, const String& indicator, nlohmann::json& out) {
+    String path = GetMacroCachePath(db_path, country, indicator);
+    if (!fs::exists(path)) return false;
+    try {
+        std::ifstream ifs(path);
+        if (!ifs.is_open()) return false;
+        ifs >> out;
+        return out.contains("data") && out["data"].is_array();
+    }
+    catch (...) { return false; }
+}
+
+bool IsMacroCacheExpired(const nlohmann::json& cached) {
+    if (!cached.contains("updated_at")) return true;
+    String updated_at = cached["updated_at"];
+    struct tm tm_val = {};
+    if (sscanf(updated_at.c_str(), "%d-%d-%dT%d:%d:%d",
+               &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday,
+               &tm_val.tm_hour, &tm_val.tm_min, &tm_val.tm_sec) != 6) return true;
+    tm_val.tm_year -= 1900;
+    tm_val.tm_mon -= 1;
+    time_t cache_time = mktime(&tm_val);
+    auto now = std::chrono::system_clock::now();
+    time_t now_t = std::chrono::system_clock::to_time_t(now);
+    return (now_t - cache_time) > (7 * 24 * 3600);  // 7天
+}
+
+bool FetchMacroFromPython(const String& country, const String& indicator, nlohmann::json& out) {
+    String cmd = fmt::format("python3 tools/fetch_macro_data.py --indicator {} --country {} --json", indicator, country);
+    String output;
+    bool success = RunCommand(cmd, output);
+    if (!success || output.empty()) {
+        WARN("[MacroData] Python脚本执行失败: {}", cmd);
+        return false;
+    }
+    try {
+        out = nlohmann::json::parse(output);
+        return out.contains("data") && out["data"].is_array();
+    }
+    catch (const std::exception& e) {
+        WARN("[MacroData] 解析Python输出失败: {}", e.what());
+        return false;
+    }
+}
+
+bool SaveMacroCache(const String& db_path, const String& country, const String& indicator, const nlohmann::json& data) {
+    String path = GetMacroCachePath(db_path, country, indicator);
+    String dir = fs::path(path).parent_path().string();
+    try {
+        fs::create_directories(dir);
+        std::ofstream ofs(path);
+        if (!ofs.is_open()) return false;
+        ofs << data.dump(2);
+        return true;
+    }
+    catch (...) { return false; }
+}
+} // anonymous namespace
+
+bool FetchMacroData(
+    const String& symbol,
+    const String& db_path,
+    Vector<String>& out_dates,
+    Vector<double>& out_prices)
+{
+    auto slash = symbol.find('/');
+    if (slash == std::string::npos) return false;
+    std::string country = symbol.substr(0, slash);
+    std::string indicator = symbol.substr(slash + 1);
+
+    nlohmann::json cached_data;
+    bool cache_ok = ReadMacroCache(db_path, country, indicator, cached_data);
+    bool cache_expired = !cache_ok || IsMacroCacheExpired(cached_data);
+
+    nlohmann::json data;
+    bool fetch_ok = false;
+    if (cache_ok && !cache_expired) {
+        data = cached_data;
+        fetch_ok = true;
+    } else {
+        fetch_ok = FetchMacroFromPython(country, indicator, data);
+        if (fetch_ok) SaveMacroCache(db_path, country, indicator, data);
+        else if (cache_ok) data = cached_data;
+        else return false;
+    }
+
+    out_dates.clear();
+    out_prices.clear();
+    for (const auto& item : data["data"]) {
+        if (item.contains("date") && item.contains("value")) {
+            std::string d = item["date"].get<std::string>();
+            // 跳过非标准日期（如"美国CPI月率报告"）
+            if (d.size() < 10 || d[4] != '-') continue;
+            auto v = item["value"];
+            if (v.is_number()) {
+                out_dates.push_back(d);
+                out_prices.push_back(v.get<double>());
+            }
+        }
+    }
+    return !out_prices.empty();
 }

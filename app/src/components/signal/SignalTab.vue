@@ -2,34 +2,69 @@
   <div class="signal-tab">
     <!-- 顶部控制栏 -->
     <div class="control-bar">
-      <!-- 策略选择 -->
-      <div class="strategy-selector">
-        <label>策略:</label>
-        <select v-model="selectedStrategyId" class="select-small" @change="onStrategyChange">
-          <option value="">请选择策略</option>
-          <option v-for="opt in strategyOptions" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
-        </select>
+      <!-- 模式切换 -->
+      <div class="mode-toggle">
+        <button
+          :class="['mode-btn', { active: mode === 'strategy' }]"
+          @click="switchMode('strategy')"
+        >策略行情</button>
+        <button
+          :class="['mode-btn', { active: mode === 'macro' }]"
+          @click="switchMode('macro')"
+        >宏观指标</button>
       </div>
 
-      <!-- 标的池 (默认展开) -->
-      <div v-if="availableSecurities.length > 0" class="symbol-pool">
-        <span class="pool-label">标的池:</span>
-        <label
-          v-for="sec in availableSecurities"
-          :key="sec.code"
-          class="pool-checkbox"
-        >
-          <input
-            type="checkbox"
-            :checked="checkedSymbols.has(sec.code)"
-            @change="toggleSymbol(sec.code)"
-          />
-          <span>{{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}</span>
-        </label>
-      </div>
-      <div v-else-if="selectedStrategyId && !loading" class="pool-empty">
-        该策略未找到行情输入节点
-      </div>
+      <!-- 策略模式：策略选择 + 标的池 -->
+      <template v-if="mode === 'strategy'">
+        <div class="strategy-selector">
+          <label>策略:</label>
+          <select v-model="selectedStrategyId" class="select-small" @change="onStrategyChange">
+            <option value="">请选择策略</option>
+            <option v-for="opt in strategyOptions" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
+          </select>
+        </div>
+
+        <!-- 标的池 -->
+        <div v-if="availableSecurities.length > 0" class="symbol-pool">
+          <span class="pool-label">标的池:</span>
+          <label
+            v-for="sec in availableSecurities"
+            :key="sec.code"
+            class="pool-checkbox"
+          >
+            <input
+              type="checkbox"
+              :checked="checkedSymbols.has(sec.code)"
+              @change="toggleSymbol(sec.code)"
+            />
+            <span>{{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}</span>
+          </label>
+        </div>
+        <div v-else-if="selectedStrategyId && !loading" class="pool-empty">
+          该策略未找到行情输入节点
+        </div>
+      </template>
+
+      <!-- 宏观模式：国家 + 指标级联选择 -->
+      <template v-else>
+        <div class="macro-selector">
+          <label>国家:</label>
+          <select v-model="selectedMacroCountry" class="select-small" @change="onMacroCountryChange">
+            <option value="china">中国</option>
+            <option value="usa">美国</option>
+            <option value="global">全球</option>
+          </select>
+        </div>
+        <div class="macro-selector">
+          <label>指标:</label>
+          <select v-model="selectedMacroIndicator" class="select-small">
+            <option value="">请选择指标</option>
+            <option v-for="opt in filteredMacroOptions" :key="opt.indicator" :value="opt.indicator">
+              {{ opt.label }}
+            </option>
+          </select>
+        </div>
+      </template>
 
       <!-- 已选标的 tag -->
       <div v-if="state.symbols.length > 0" class="selected-symbols">
@@ -46,8 +81,8 @@
 
       <div class="control-spacer" />
 
-      <!-- 分析字段 -->
-      <div class="field-selector">
+      <!-- 分析字段 (宏观模式隐藏) -->
+      <div v-if="mode === 'strategy'" class="field-selector">
         <label>字段:</label>
         <select v-model="state.field" class="select-small">
           <option value="close">C 收盘价</option>
@@ -92,7 +127,7 @@
         </div>
       </div>
 
-      <button class="btn btn-primary btn-small" :disabled="loading || state.symbols.length === 0" @click="runAnalysis">
+      <button class="btn btn-primary btn-small" :disabled="loading || !canAnalyze" @click="runAnalysis">
         {{ loading ? '分析中...' : '开始分析' }}
       </button>
     </div>
@@ -103,7 +138,7 @@
         <h3 class="section-title">EMD 分解</h3>
         <div class="chart-grid">
           <div class="chart-card full">
-            <EMDDecompositionChart :data="state.result" />
+            <IMF3DChart :data="state.result" />
           </div>
         </div>
 
@@ -135,7 +170,8 @@
 import { ref, computed, watch } from 'vue'
 import { useSignalState, useSignalData } from './index'
 import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
-import EMDDecompositionChart from './charts/EMDDecompositionChart.vue'
+import { useMacroIndicators } from '../shared/composables/useMacroIndicators'
+import IMF3DChart from './charts/IMF3DChart.vue'
 import IMFEnergyChart from './charts/IMFEnergyChart.vue'
 
 const { state, QUICK_RANGES, removeSymbol, setQuickRange } = useSignalState()
@@ -149,9 +185,53 @@ const {
   loadSecuritiesForStrategy,
   toggleSymbol,
 } = useStrategySecurities()
+const { macroOptionsByCountry } = useMacroIndicators()
+
+// === 模式切换 ===
+type AnalysisMode = 'strategy' | 'macro'
+const mode = ref<AnalysisMode>('strategy')
+const selectedMacroCountry = ref('china')
+const selectedMacroIndicator = ref('')
+
+const filteredMacroOptions = computed(() =>
+  macroOptionsByCountry.value[selectedMacroCountry.value] || []
+)
 
 const analysisLoading = ref(false)
 const loading = computed(() => securitiesLoading.value || analysisLoading.value)
+
+const canAnalyze = computed(() => {
+  if (loading.value) return false
+  if (mode.value === 'macro') {
+    return !!selectedMacroIndicator.value
+  }
+  return state.symbols.length > 0
+})
+
+function switchMode(newMode: AnalysisMode) {
+  mode.value = newMode
+  if (newMode === 'strategy') {
+    selectedMacroIndicator.value = ''
+    state.symbols = []
+  } else {
+    selectedStrategyId.value = ''
+    availableSecurities.value = []
+    checkedSymbols.value = new Set()
+    state.symbols = []
+    const opts = filteredMacroOptions.value
+    if (opts.length > 0) {
+      selectedMacroIndicator.value = opts[0].indicator
+    }
+  }
+}
+
+function onMacroCountryChange() {
+  selectedMacroIndicator.value = ''
+  const opts = filteredMacroOptions.value
+  if (opts.length > 0) {
+    selectedMacroIndicator.value = opts[0].indicator
+  }
+}
 
 function onStrategyChange() {
   if (selectedStrategyId.value) {
@@ -165,6 +245,7 @@ function onStrategyChange() {
 
 // 监听勾选变化，同步到 state.symbols
 watch(checkedSymbols, (next) => {
+  if (mode.value !== 'strategy') return
   const current = new Set(state.symbols.map(s => s.symbol))
   const toAdd = Array.from(next).filter(c => !current.has(c))
 
@@ -173,6 +254,12 @@ watch(checkedSymbols, (next) => {
   }
   state.symbols = state.symbols.filter(s => next.has(s.symbol))
 }, { deep: false })
+
+// 监听宏观指标选择变化
+watch([selectedMacroCountry, selectedMacroIndicator], ([country, indicator]) => {
+  if (mode.value !== 'macro' || !indicator) return
+  state.symbols = [{ symbol: `${country}/${indicator}` }]
+})
 
 function updateStartDate(event: Event) {
   const value = (event.target as HTMLInputElement).value
@@ -195,7 +282,7 @@ async function runAnalysis() {
   try {
     const symbols = state.symbols.map(s => s.symbol)
     const [start_date, end_date] = state.dateRange
-    const field = state.field || 'close'
+    const field = mode.value === 'macro' ? 'value' : (state.field || 'close')
 
     const result = await fetchSignal(symbols, start_date, end_date, field, state.method, state.numImfs)
     if (result) {
@@ -226,6 +313,38 @@ async function runAnalysis() {
   flex-wrap: wrap;
 }
 
+/* 模式切换按钮 */
+.mode-toggle {
+  display: flex;
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mode-btn {
+  padding: 4px 12px;
+  background: rgba(26, 34, 54, 0.8);
+  border: none;
+  border-right: 1px solid rgba(74, 85, 104, 0.3);
+  color: #999;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:last-child {
+  border-right: none;
+}
+
+.mode-btn:hover {
+  color: #e0e0e0;
+}
+
+.mode-btn.active {
+  background: #2962ff;
+  color: #fff;
+}
+
 .strategy-selector {
   display: flex;
   align-items: center;
@@ -233,6 +352,19 @@ async function runAnalysis() {
 }
 
 .strategy-selector label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
+/* 宏观指标选择器 */
+.macro-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.macro-selector label {
   font-size: 12px;
   color: #999;
   white-space: nowrap;

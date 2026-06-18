@@ -1,7 +1,6 @@
 #include "Handler/StockHandler.h"
 #include "Bridge/exchange.h"
 #include "ExchangeManager.h"
-#include "Util/Volatility.h"
 #include "Util/datetime.h"
 #include "Util/string_algorithm.h"
 #include "server.h"

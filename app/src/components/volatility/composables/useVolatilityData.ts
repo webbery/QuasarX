@@ -6,6 +6,12 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { VolatilityAnalysisResult } from './useVolatilityState'
 
+/** 判断 symbol 是否为宏观指标 (格式: country/indicator) */
+function isMacroSymbol(symbol: string): boolean {
+  const parts = symbol.split('/')
+  return parts.length === 2
+}
+
 export function useVolatilityData() {
   const loading = ref(false)
 
@@ -24,16 +30,40 @@ export function useVolatilityData() {
 
     loading.value = true
     try {
-      const response = await axios.get('/v0/analysis/volatility', {
-        params: {
-          symbols: symbols.join(','),
-          start_date: startDate,
-          end_date: endDate,
-          windows: windows.join(','),
-          field,
-          fill_method: fillMethod
-        }
-      })
+      // 检测是否为宏观指标模式
+      const macroSymbols = symbols.filter(isMacroSymbol)
+      const isMacroMode = macroSymbols.length > 0
+
+      let response
+      if (isMacroMode) {
+        // 宏观指标模式：传递 country 和 indicator 参数
+        const { country, indicator } = macroSymbols[0].split('/')
+        response = await axios.get('/v0/analysis/volatility', {
+          params: {
+            symbols: symbols.join(','),
+            start_date: startDate,
+            end_date: endDate,
+            windows: windows.join(','),
+            field,
+            fill_method: fillMethod,
+            // 宏观指标参数
+            country,
+            indicator
+          }
+        })
+      } else {
+        // 策略行情模式：原有逻辑
+        response = await axios.get('/v0/analysis/volatility', {
+          params: {
+            symbols: symbols.join(','),
+            start_date: startDate,
+            end_date: endDate,
+            windows: windows.join(','),
+            field,
+            fill_method: fillMethod
+          }
+        })
+      }
 
       return response.data as VolatilityAnalysisResult
     } catch (err: any) {

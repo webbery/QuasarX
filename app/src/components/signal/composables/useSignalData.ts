@@ -6,6 +6,12 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { SignalAnalysisResult } from './useSignalState'
 
+/** 判断 symbol 是否为宏观指标 (格式: country/indicator) */
+function isMacroSymbol(symbol: string): boolean {
+  const parts = symbol.split('/')
+  return parts.length === 2
+}
+
 export function useSignalData() {
   const loading = ref(false)
 
@@ -25,17 +31,39 @@ export function useSignalData() {
 
     loading.value = true
     try {
-      const response = await axios.get('/v0/analysis/signal', {
-        params: {
-          symbols: symbols.join(','),
-          start_date: startDate,
-          end_date: endDate,
-          field,
-          method,
-          num_imfs: numImfs,
-          fill_method: fillMethod
-        }
-      })
+      const macroSymbols = symbols.filter(isMacroSymbol)
+      const isMacroMode = macroSymbols.length > 0
+
+      let response
+      if (isMacroMode) {
+        const { country, indicator } = macroSymbols[0].split('/')
+        response = await axios.get('/v0/analysis/signal', {
+          params: {
+            symbols: symbols.join(','),
+            start_date: startDate,
+            end_date: endDate,
+            field,
+            method,
+            num_imfs: numImfs,
+            fill_method: fillMethod,
+            // 宏观指标参数
+            country,
+            indicator
+          }
+        })
+      } else {
+        response = await axios.get('/v0/analysis/signal', {
+          params: {
+            symbols: symbols.join(','),
+            start_date: startDate,
+            end_date: endDate,
+            field,
+            method,
+            num_imfs: numImfs,
+            fill_method: fillMethod
+          }
+        })
+      }
 
       return response.data as SignalAnalysisResult
     } catch (err: any) {

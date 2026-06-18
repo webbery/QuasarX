@@ -1,9 +1,9 @@
 <template>
-  <div class="imf-energy-3d" ref="chartRef" style="width: 100%; height: 100%"></div>
+  <div class="imf-3d-chart" ref="chartRef" style="width: 100%; height: 100%"></div>
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted, onBeforeUnmount, ref } from 'vue'
+import { watch, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'
 import type { SignalAnalysisResult } from '../composables/useSignalState'
@@ -22,24 +22,33 @@ const IMF_COLORS = [
 ]
 
 function buildOption() {
-  if (!props.data || !props.data.imf_info.length) return {}
+  if (!props.data) return {}
 
-  const { imf_info, residual } = props.data
+  const { dates, imf_components } = props.data
+  const numIMFs = imf_components.length
+  if (numIMFs === 0) return {}
 
-  // 计算残差能量占比
-  const totalVariance = residual.reduce((sum, v) => sum + v * v, 0)
-  imf_info.forEach(info => {
-    // 已有 energy_pct
-  })
+  const xAxisData = dates && dates.length > 0
+    ? dates.map((d: string) => d.length > 10 ? d.substring(5, 10) : d)
+    : imf_components[0].map((_: number, i: number) => String(i))
 
-  // 3D 柱状图数据: [IMF索引, 0(单柱), 能量占比]
-  const barData = imf_info.map((info, idx) => [idx, 0, info.energy_pct || 0])
+  // 构建 3D 曲面数据：每个 IMF 作为一条沿 Y 轴分布的曲线
+  // data[i] = [x(时间索引), y(IMF索引), z(振幅值)]
+  const surfaceData: number[][] = []
+  for (let imfIdx = 0; imfIdx < numIMFs; imfIdx++) {
+    const imf = imf_components[imfIdx]
+    for (let t = 0; t < imf.length; t++) {
+      surfaceData.push([t, imfIdx, imf[t]])
+    }
+  }
 
-  const labels = imf_info.map((info, idx) => `IMF${idx + 1} T=${info.mean_period.toFixed(0)}`)
+  // Y 轴标签：IMF + 周期
+  const yAxisLabels = imf_info.map((info, idx) => `IMF${idx + 1} T=${info.mean_period.toFixed(0)}`)
+  const colorList = IMF_COLORS.slice(0, numIMFs)
 
   return {
     title: {
-      text: `IMF 能量占比 3D`,
+      text: `IMF 分量 3D 视图 (${props.data.method.toUpperCase()})  重建误差: ${(props.data.reconstruction_error * 1e10).toFixed(2)}e-10`,
       left: 'center',
       textStyle: { color: '#e0e0e0', fontSize: 13 }
     },
@@ -49,53 +58,60 @@ function buildOption() {
       borderColor: '#2a3449',
       textStyle: { color: '#e0e0e0', fontSize: 11 },
       formatter: (params: any) => {
-        const [imfIdx, _, pct] = params.data
-        const info = imf_info[imfIdx]
-        return `<b>IMF${imfIdx + 1}</b><br/>周期: ${info?.mean_period.toFixed(1)}<br/>能量占比: ${pct.toFixed(1)}%`
+        const [tIdx, imfIdx, val] = params.data
+        const dateStr = xAxisData[tIdx] || tIdx
+        return `<b>IMF${imfIdx + 1}</b><br/>时间: ${dateStr}<br/>值: ${val.toFixed(6)}`
       }
     },
     visualMap: {
       show: false,
       min: 0,
-      max: imf_info.length - 1,
-      inRange: { color: IMF_COLORS.slice(0, imf_info.length) },
-      dimension: 0
+      max: numIMFs - 1,
+      inRange: {
+        color: colorList
+      },
+      dimension: 1
     },
     xAxis3D: {
+      name: '时间',
+      type: 'category',
+      data: xAxisData,
+      axisLabel: {
+        color: '#999',
+        fontSize: 10,
+        interval: Math.floor(xAxisData.length / 8)
+      },
+      axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } }
+    },
+    yAxis3D: {
       name: 'IMF',
       type: 'category',
-      data: labels,
+      data: yAxisLabels,
       axisLabel: {
         color: (idx: number) => IMF_COLORS[idx % IMF_COLORS.length],
         fontSize: 10
       },
       axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } }
     },
-    yAxis3D: {
-      name: '',
-      type: 'value',
-      max: 1,
-      show: false
-    },
     zAxis3D: {
-      name: '能量%',
+      name: '振幅',
       axisLabel: {
         color: '#999',
         fontSize: 10,
-        formatter: (val: number) => val.toFixed(0) + '%'
+        formatter: (val: number) => val.toFixed(4)
       },
       axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } },
       splitLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.15)' } }
     },
     grid3D: {
-      boxWidth: 160,
-      boxDepth: 30,
+      boxWidth: 200,
+      boxDepth: 120,
       boxHeight: 60,
       viewControl: {
         autoRotate: false,
-        alpha: 15,
-        beta: 30,
-        distance: 180,
+        alpha: 20,
+        beta: 40,
+        distance: 200,
         minAlpha: 5,
         maxAlpha: 90,
         minBeta: -180,
@@ -104,10 +120,17 @@ function buildOption() {
         maxDistance: 400
       },
       environment: '#1a2236',
-      postEffect: { enable: false },
+      postEffect: {
+        enable: false
+      },
       light: {
-        main: { intensity: 0.8, shadow: false },
-        ambient: { intensity: 0.3 }
+        main: {
+          intensity: 0.8,
+          shadow: false
+        },
+        ambient: {
+          intensity: 0.2
+        }
       },
       axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } },
       axisPointer: {
@@ -117,24 +140,11 @@ function buildOption() {
       }
     },
     series: [{
-      type: 'bar3D',
-      name: 'Energy',
-      data: barData,
-      shading: 'lambert',
-      bevelSize: 0.3,
-      bevelSmoothness: 2,
-      itemStyle: {
-        color: (params: any) => {
-          const idx = params.dataIndex % IMF_COLORS.length
-          return IMF_COLORS[idx]
-        },
-        opacity: 0.85
-      },
-      label: {
-        show: true,
-        distance: 2,
-        formatter: (params: any) => `${params.data[2].toFixed(1)}%`,
-        textStyle: { fontSize: 10, color: '#e0e0e0' }
+      type: 'line3D',
+      name: 'IMF',
+      data: surfaceData,
+      lineStyle: {
+        width: 2
       }
     }]
   }
@@ -182,7 +192,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.imf-energy-3d {
-  min-height: 350px;
+.imf-3d-chart {
+  min-height: 500px;
 }
 </style>
