@@ -3,7 +3,6 @@
 #include "ctp/ThostFtdcMdApi.h"
 #include <condition_variable>
 #include <mutex>
-#include <nng/nng.h>
 #include <future>
 #include "Bridge/exchange.h"
 
@@ -54,7 +53,6 @@ protected:
 
 private:
     CTPExchange* _exchange;
-    nng_socket _sock;
 
     std::mutex _mx;
     std::condition_variable _cv;

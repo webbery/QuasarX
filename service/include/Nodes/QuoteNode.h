@@ -2,6 +2,7 @@
 #include "StrategyNode.h"
 #include "Nodes/QuoteFillStrategy.h"
 #include "Util/system.h"
+#include "server.h"
 
 class Server;
 class QuoteInputNode : public QNode {
@@ -46,9 +47,12 @@ public:
      * @brief 获取数据源类型（"股票"/"ETF"）
      */
     const String& GetSource() const { return _source; }
-private:
-    bool Init();
 
+    /**
+     * @brief 获取频率设置
+     */
+    DataFrequencyType GetFreq() const { return _freq; }
+private:
     /**
      * @brief 从 QuoteInfo 中提取指定属性值（open/close/high/low/volume）
      */
@@ -69,4 +73,5 @@ private:
     Map<symbol_t, QuoteInfo> _curQuotes;   // 当前轮次各 symbol 的 quote
     Map<symbol_t, QuoteInfo> _lastQuotes;  // 每个 symbol 上一次写入的 quote
     String _source = "股票";                // 数据源类型
+    DataFrequencyType _freq = DataFrequencyType::Day;  // 频率设置
 };

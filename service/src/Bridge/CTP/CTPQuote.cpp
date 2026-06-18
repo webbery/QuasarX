@@ -5,15 +5,13 @@
 #include <mutex>
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Bridge/exchange.h"
+#include "ExchangeManager.h"
 #include "Util/datetime.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
-#include "nng/nng.h"
-#include "nng/protocol/pubsub0/pub.h"
-#include "nng/protocol/pubsub0/sub.h"
-#include "yas/detail/type_traits/flags.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
 #include "Bridge/CTP/CTPExchange.h"
+#include "server.h"
 
 #define URI_CTP_WAIT  "inproc://URI_CTP_WAIT"
 
@@ -30,7 +28,7 @@ CTPQuote::~CTPQuote() {
 bool CTPQuote::Init() {
     if (_reconnected)
         return true;
-    return Publish(URI_RAW_QUOTE, _sock);
+    return true;
 }
 
 bool CTPQuote::IsConnected()
@@ -166,11 +164,12 @@ void CTPQuote::OnRtnDepthMarketData(CThostFtdcDepthMarketDataField *pDepthMarket
   info._askVolume[3] = pDepthMarketData->AskVolume4;
   info._askVolume[4] = pDepthMarketData->AskVolume5;
 
-  constexpr std::size_t flags = yas::mem|yas::binary;
-  yas::shared_buffer buf = yas::save<flags>(info);
-  if (0 != nng_send(_sock, buf.data.get(), buf.size, 0)) {
-    WARN("send quote message fail.");
-    return;
+  // 通过 ExchangeManager 的统一分发队列发布行情
+  if (_exchange && _exchange->GetHandle()) {
+    auto* exchMgr = _exchange->GetHandle()->GetExchangeManager();
+    if (exchMgr) {
+      exchMgr->QueueToPublish(info);
+    }
   }
   // INFO("Send quote {} success.", info._symbol);
 }

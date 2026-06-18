@@ -162,13 +162,27 @@ public:
     // ========== 行情发布 ==========
 
     /**
-     * @brief 统一行情发布接口 (供各 Quote SPI 调用)
-     * @param data  序列化后的 QuoteInfo 数据指针
-     * @param size  数据大小
+     * @brief 启动行情分发线程 (在 Server::Init 时调用)
      *
-     * 线程安全: 内部加锁保护 Pub socket
+     * 该线程是唯一创建/监听/发送 nng pub socket 的地方，
+     * 所有其他 Exchange 通过 QueueToPublish 将行情推入队列，
+     * 由该线程统一 nng_send，避免多 pub socket 冲突。
      */
-    void PublishQuote(const void* data, size_t size);
+    bool StartQuoteDispatcher();
+
+    /**
+     * @brief 停止行情分发线程并等待清理 (在 Server 析构时调用)
+     */
+    void StopQuoteDispatcher();
+
+    /**
+     * @brief 线程安全地将行情推入分发队列 (供各 Exchange 调用)
+     * @param quote 行情数据
+     *
+     * 该函数可以从任意线程调用（如 TickFlowBridge worker、HX 回调线程等），
+     * 内部通过 mutex + condition_variable 推入队列，由 dispatch 线程统一发送。
+     */
+    void QueueToPublish(const QuoteInfo& quote);
 
     // ========== 交易路由 ==========
 
@@ -284,6 +298,7 @@ private:
      */
     Set<String> ResolveExchangeNames(const Set<String>& requiredSources);
 
+    void quoteDispatchLoop();
 private:
     Server* _server;
 
@@ -295,10 +310,14 @@ private:
     String _activeStockName;
     String _activeFutureName;
 
-    // 统一行情发布
-    nng_socket _quotePubSock;
-    bool _quotePubInited = false;
-    std::mutex _quotePubMtx;   // 保护 _quotePubSock
+    // 统一行情分发（单线程，确保 nng pub socket 的 init/send/close 在同一线程）
+    nng_socket              _quotePubSock{0};
+    bool                    _quotePubInited = false;
+    std::mutex              _pubQueueMtx;
+    std::condition_variable _pubQueueCV;
+    Vector<QuoteInfo>       _pubQueue;       // 待发布的行情缓冲区
+    std::thread*            _dispatchThread = nullptr;
+    std::atomic<bool>       _dispatchRunning = false;
 
     // 模拟模式标志
     bool _enableSimulation = false;

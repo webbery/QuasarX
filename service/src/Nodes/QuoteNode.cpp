@@ -83,6 +83,9 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         }
 
         String freq = config["params"]["freq"]["value"];
+        if (freq == "1m") _freq = DataFrequencyType::Min1;
+        else if (freq == "5m") _freq = DataFrequencyType::Min5;
+        else _freq = DataFrequencyType::Day;  // "1d" 或其他
 
         auto* exchangeMgr = _server->GetExchangeManager();
 

@@ -35,6 +35,10 @@
         <div v-show="activeTab === 'volatility'" class="tab-content">
           <VolatilityTab />
         </div>
+        <!-- 信号分析 Tab -->
+        <div v-show="activeTab === 'signal'" class="tab-content">
+          <SignalTab />
+        </div>
         <!-- 资金流向 Tab -->
         <div v-show="activeTab === 'flow'" class="tab-content">
           <!-- 第一行：资金流入情况和流入流出Top5 -->
@@ -130,12 +134,14 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import * as echarts from 'echarts'
 import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
 import VolatilityTab from './volatility/VolatilityTab.vue'
+import SignalTab from './signal/SignalTab.vue'
 
 const unit = 100000000 // 单位:亿
 
 // Tab 配置
 const tabs = [
   { label: '波动率分析', name: 'volatility' },
+  { label: '信号分析', name: 'signal' },
   { label: '资金流向', name: 'flow' }
 ]
 

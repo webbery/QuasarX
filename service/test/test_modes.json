@@ -14,7 +14,8 @@
         "test_trade_history",
         "test_capital_risk",
         "test_volatility",
-        "test_risk"
+        "test_risk",
+        "test_macro"
       ]
     },
     "tickflow": {

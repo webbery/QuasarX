@@ -9,6 +9,7 @@
 #include "Bridge/exchange.h"
 #include "BrokerSubSystem.h"
 #include "Util/log.h"
+#include "nng/protocol/pubsub0/pub.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
 
@@ -17,21 +18,105 @@ ExchangeManager::ExchangeManager(Server* server)
 }
 
 ExchangeManager::~ExchangeManager() {
+    StopQuoteDispatcher();
     Shutdown();
 }
 
 // ========== 初始化 ==========
 
-bool ExchangeManager::InitQuotePublisher() {
-    if (_quotePubInited) return true;
+// ========== 行情分发线程 ==========
 
-    if (!Publish(URI_RAW_QUOTE, _quotePubSock)) {
-        FATAL("Failed to create quote publisher");
+bool ExchangeManager::StartQuoteDispatcher() {
+    if (_dispatchRunning) return true;
+
+    _dispatchRunning = true;
+    _dispatchThread = new std::thread(&ExchangeManager::quoteDispatchLoop, this);
+
+    // 等待 dispatch 线程就绪（避免竞态）
+    for (int i = 0; i < 40 && !_quotePubInited; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!_quotePubInited) {
+        WARN("Quote dispatcher thread failed to initialize after 2s timeout");
+        _dispatchRunning = false;
         return false;
     }
-    _quotePubInited = true;
-    INFO("Quote publisher initialized");
+
+    INFO("Quote dispatcher thread started");
     return true;
+}
+
+void ExchangeManager::StopQuoteDispatcher() {
+    if (!_dispatchRunning) return;
+
+    _dispatchRunning = false;
+    _pubQueueCV.notify_all();
+
+    if (_dispatchThread && _dispatchThread->joinable()) {
+        _dispatchThread->join();
+    }
+    delete _dispatchThread;
+    _dispatchThread = nullptr;
+    INFO("Quote dispatcher thread stopped");
+}
+
+void ExchangeManager::QueueToPublish(const QuoteInfo& quote) {
+    if (!_dispatchRunning) return;
+
+    {
+        std::lock_guard<std::mutex> lock(_pubQueueMtx);
+        _pubQueue.push_back(quote);
+    }
+    _pubQueueCV.notify_one();
+}
+
+void ExchangeManager::quoteDispatchLoop() {
+    // 1. 初始化 pub socket（本线程内）
+    int rv = nng_pub0_open(&_quotePubSock);
+    if (rv != 0) {
+        WARN("Quote dispatcher: nng_pub0_open fail: %s", nng_strerror(rv));
+        _quotePubInited = false;
+        return;
+    }
+
+    rv = nng_listen(_quotePubSock, URI_RAW_QUOTE, nullptr, 0);
+    if (rv != 0) {
+        WARN("Quote dispatcher: nng_listen(%s) fail: %s", URI_RAW_QUOTE, nng_strerror(rv));
+        nng_close(_quotePubSock);
+        _quotePubInited = false;
+        return;
+    }
+    _quotePubInited = true;
+    INFO("Quote dispatcher: pub socket initialized, uri={}", URI_RAW_QUOTE);
+
+    constexpr std::size_t yas_flags = yas::mem | yas::binary;
+
+    // 2. 主循环：从队列取数据，nng_send
+    while (_dispatchRunning) {
+        Vector<QuoteInfo> batch;
+        {
+            std::unique_lock<std::mutex> lock(_pubQueueMtx);
+            _pubQueueCV.wait_for(lock, std::chrono::milliseconds(100), [this] {
+                return !_pubQueue.empty() || !_dispatchRunning;
+            });
+            if (!_dispatchRunning && _pubQueue.empty()) break;
+            batch.swap(_pubQueue);
+        }
+
+        for (const auto& quote : batch) {
+            yas::shared_buffer buf = yas::save<yas_flags>(quote);
+            if (0 != nng_send(_quotePubSock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
+                WARN("Quote dispatcher: nng_send failed for {}", get_symbol(quote._symbol));
+            }
+        }
+    }
+
+    // 3. 清理 socket（本线程内）
+    if (_quotePubSock.id != 0) {
+        nng_close(_quotePubSock);
+        _quotePubSock.id = 0;
+    }
+    _quotePubInited = false;
 }
 
 // ========== Exchange 生命周期管理 ==========
@@ -410,17 +495,6 @@ bool ExchangeManager::GetTradingOrders(SecurityType secType, OrderList& outOrder
         }
     }
     return found;
-}
-
-// ========== 行情发布 ==========
-
-void ExchangeManager::PublishQuote(const void* data, size_t size) {
-    if (!_quotePubInited) return;
-
-    std::lock_guard<std::mutex> lock(_quotePubMtx);
-    if (0 != nng_send(_quotePubSock, const_cast<void*>(data), size, 0)) {
-        WARN("Failed to publish quote");
-    }
 }
 
 // ========== 交易路由 ==========

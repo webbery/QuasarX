@@ -4,7 +4,6 @@
 #include "Bridge/CapitalPool.h"
 #include "Util/finance.h"
 #include "httplib.h"
-#include "nng/nng.h"
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -85,7 +84,7 @@ private:
     // 构建 HTTP 客户端
     void InitHttpClient();
 
-    // 发布行情到 URI_RAW_QUOTE
+    // 发布行情到 ExchangeManager 的统一分发队列
     void PublishQuote(const QuoteInfo& quote);
 
 private:
@@ -119,10 +118,6 @@ private:
     StockPositionManager _positionMgr;
     CapitalPool* _capitalPool = nullptr;
     String _strategyName;
-
-    // nng pub socket，用于发布行情到 URI_RAW_QUOTE
-    nng_socket _sock = {0};
-    bool _pub_inited = false;
 
     // Tick历史缓冲区（用于流动性计算）
     struct TickRecord {

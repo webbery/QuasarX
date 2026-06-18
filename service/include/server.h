@@ -76,6 +76,7 @@ struct ContractInfo {
 
 enum class DataFrequencyType {
   Day,
+  Min1,
   Min5,
   Second,
 };

@@ -248,25 +248,37 @@ ExecutionPlan PortfolioNode::generatePlan(
     size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
 
-    // 从 DataContext 获取策略初始化时设置的 Exchange 类型
-    auto* exchangeMgr = _server->GetExchangeManager();
-    ExchangeInterface* exchange = nullptr;
-    for (auto type : context.getExchangeTypes()) {
-        exchange = exchangeMgr->GetExchangeByType(type);
-        if (exchange) break;
-    }
-    // fallback: 尝试股票 Exchange
-    if (!exchange) {
-        exchange = exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
-    }
+    // 优先从 DataContext 获取行情（TickFlow/实盘模式下 quote 通过 nng 推入 context）
+    // fallback: 从 Exchange 获取（回测模式下 exchange 持有历史数据）
+    auto getQuotePrice = [&](symbol_t symbol) -> double {
+        const QuoteInfo* q = context.GetQuote(symbol);
+        if (q && q->_close > 0) return q->_close;
+        if (q && q->_open > 0) return q->_open;
+
+        // fallback: 从 Exchange 获取
+        auto* exchangeMgr = _server->GetExchangeManager();
+        ExchangeInterface* exchange = nullptr;
+        for (auto type : context.getExchangeTypes()) {
+            exchange = exchangeMgr->GetExchangeByType(type);
+            if (exchange) break;
+        }
+        if (!exchange) {
+            exchange = exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
+        }
+        if (exchange) {
+            QuoteInfo eq = exchange->GetQuote(symbol);
+            if (eq._close > 0) return eq._close;
+            if (eq._open > 0) return eq._open;
+        }
+        return 0.0;
+    };
 
     for (const auto& [symbol, action] : decisions) {
         ExecutionItem item;
         item._symbol = symbol;
         item._action = action;
 
-        QuoteInfo quote = exchange->GetQuote(item._symbol);
-        double price = (quote._close > 0) ? quote._close : quote._open;
+        double price = getQuotePrice(symbol);
 
         if (price <= 0) {
             if (_server->GetRunningMode() != RuningType::Backtest) {

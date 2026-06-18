@@ -1,5 +1,6 @@
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "ExchangeManager.h"
 #include "Util/finance.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
@@ -32,11 +33,6 @@ TickFlowBridge::~TickFlowBridge() {
         _workerThread->join();
     }
     delete _workerThread;
-
-    // socket 在线程内已关闭，此处兜底
-    if (_sock.id != 0) {
-        nng_close(_sock);
-    }
 }
 
 const char* TickFlowBridge::Name() {
@@ -53,7 +49,6 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     }
 
     _base_url = "https://api.tickflow.org";
-    // TickFlow 限频 10次/分钟，留有余量，默认 10s 一次请求
     _interval_ms = 10000;
 
     InitHttpClient();
@@ -63,7 +58,7 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
 
     // 等待 worker 线程就绪（避免竞态：主线程在 RegisterExchange 中调用 GetAllStockSymbols 时 _login_success 尚未被设置）
     // workerLoop 开头会设置 _login_success = true，这里最多等 1s
-    for (int i = 0; i < 20 && !_login_success; ++i) {
+    for (int i = 0; i < 200 && !_login_success; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if (!_login_success) {
@@ -300,21 +295,14 @@ void TickFlowBridge::OnOrderReport(order_id id, const TradeReport& report) {
 
 /**
  * workerLoop: 自治调度线程
- * - nanomsg socket 的 init/use/destroy 都在此线程
  * - 按 _interval_ms 周期轮询 TickFlow API
  * - 检查工作时间 + 暂停状态
+ * - 行情发布通过 ExchangeManager::QueueToPublish 统一到 dispatch 线程发送
  */
 void TickFlowBridge::workerLoop() {
     using Clock = std::chrono::steady_clock;
 
-    // 1. 初始化 pub socket（同线程内）
-    if (Publish(URI_RAW_QUOTE, _sock)) {
-        _pub_inited = true;
-        INFO("[TickFlow] worker: pub socket initialized, uri={}", URI_RAW_QUOTE);
-    } else {
-        WARN("[TickFlow] worker: failed to init pub socket");
-    }
-
+    // 行情发布已统一到 ExchangeManager 的 dispatch 线程，本线程不再创建 pub socket
     _login_success = true;
 
     auto nextWakeup = Clock::now();
@@ -384,12 +372,6 @@ void TickFlowBridge::workerLoop() {
         }
     }
 
-    // 线程退出前关闭 socket（同线程内）
-    if (_sock.id != 0) {
-        nng_close(_sock);
-        _sock.id = 0;
-        _pub_inited = false;
-    }
     INFO("[TickFlow] worker: thread stopped");
 }
 
@@ -404,15 +386,10 @@ QuoteInfo TickFlowBridge::GetQuote(symbol_t symbol) {
 }
 
 void TickFlowBridge::PublishQuote(const QuoteInfo& quote) {
-    if (!_pub_inited || _sock.id == 0) {
-        return;
-    }
-
-    constexpr std::size_t flags = yas::mem | yas::binary;
-    yas::shared_buffer buf = yas::save<flags>(quote);
-    if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
-        WARN("TickFlowBridge: failed to publish quote for {}", get_symbol(quote._symbol));
-    }
+    if (!_server) return;
+    auto* exchMgr = _server->GetExchangeManager();
+    if (!exchMgr) return;
+    exchMgr->QueueToPublish(quote);
 }
 
 // ==================== HTTP 请求 ====================

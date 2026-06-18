@@ -1,5 +1,6 @@
 #pragma once
 #include "HttpHandler.h"
+#include "Util/data.h"
 #include <vector>
 #include <string>
 #include <map>
@@ -82,20 +83,14 @@ private:
                                      const std::string& start_date,
                                      const std::string& end_date,
                                      const std::vector<int>& windows,
-                                     PriceField field = PriceField::Close);
+                                     PriceField field = PriceField::Close,
+                                     FillMethod fill = FillMethod::None);
 
     static VolatilitySingleResult computeSingle(const std::vector<double>& prices,
                                                   const std::vector<double>& volumes,
                                                   const std::vector<int>& windows);
 
     static VolatilityMultiResult computeMulti(const std::map<std::string, std::vector<double>>& returns_map);
-
-    static std::vector<double> loadPrices(const std::string& symbol,
-                                           const std::string& start_date,
-                                           const std::string& end_date,
-                                           std::vector<std::string>& out_dates,
-                                           std::vector<double>& out_volumes,
-                                           PriceField field = PriceField::Close);
 
     static std::vector<double> simpleReturns(const std::vector<double>& prices);
     static double annualVolatility(const std::vector<double>& returns);

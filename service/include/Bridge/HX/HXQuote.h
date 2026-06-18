@@ -2,7 +2,6 @@
 #include "Bridge/exchange.h"
 #include "std_header.h"
 #include "hx/TORATstpXMdApi.h"
-#include <nng/nng.h>
 #include <shared_mutex>
 #include "Util/system.h"
 
@@ -37,8 +36,7 @@ private:
   bool _isInited;
 
   HXExchange* _exchange;
-  
-  nng_socket _sock;
+
   std::shared_mutex _mutex;
   Map<symbol_t, QuoteInfo> _tickers;
 

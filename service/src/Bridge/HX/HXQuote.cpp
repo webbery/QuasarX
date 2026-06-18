@@ -1,11 +1,13 @@
 #include "Bridge/HX/HXQuote.h"
 #include "Bridge/HX/HXExchange.h"
+#include "ExchangeManager.h"
 #include "Util/log.h"
 #include "Util/system.h"
 #include "Bridge/exchange.h"
 #include "Util/string_algorithm.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include <shared_mutex>
+#include "server.h"
 
 using namespace TORALEV1API;
 
@@ -15,15 +17,11 @@ HXQuateSpi::HXQuateSpi(CTORATstpXMdApi* api, HXExchange* exchange)
 }
 
 HXQuateSpi::~HXQuateSpi() {
-    if (_sock.id != 0) {
-        nng_close(_sock);
-    }
 }
 
 bool HXQuateSpi::Init() {
     if (!_isInited) {
         _isInited = true;
-        return Publish(URI_RAW_QUOTE, _sock);
     }
     return _isInited;
 }
@@ -62,10 +60,12 @@ void HXQuateSpi::OnRtnMarketData(TORALEV1API::CTORATstpMarketDataField *pMarketD
     split(strDate, infos, " ");
     InitQuoteInfo(info, symb, infos.front(), pMarketDataField);
     
-    yas::shared_buffer buf = yas::save<flags>(info);
-    if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
-        printf("send quote message fail.\n");
-        return;
+    // 通过 ExchangeManager 的统一分发队列发布行情
+    if (_exchange && _exchange->GetHandle()) {
+        auto* exchMgr = _exchange->GetHandle()->GetExchangeManager();
+        if (exchMgr) {
+            exchMgr->QueueToPublish(info);
+        }
     }
 }
 
@@ -73,7 +73,6 @@ void HXQuateSpi::OnFrontConnected()
 {
     INFO("HX connected");
 }
-
 void HXQuateSpi::OnFrontDisconnected(int nReason)
 {
     INFO("HX quote disconnect:{}", nReason);
@@ -141,10 +140,12 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
     split(strDate, infos, " ");
     InitQuoteInfo(info, symb, infos.front(), pMarketDataField);
 
-    yas::shared_buffer buf = yas::save<flags>(info);
-    if (0 != nng_send(_sock, buf.data.get(), buf.size, NNG_FLAG_NONBLOCK)) {
-        printf("send quote message fail.\n");
-        return;
+    // 通过 ExchangeManager 的统一分发队列发布行情
+    if (_exchange && _exchange->GetHandle()) {
+        auto* exchMgr = _exchange->GetHandle()->GetExchangeManager();
+        if (exchMgr) {
+            exchMgr->QueueToPublish(info);
+        }
     }
 }
 

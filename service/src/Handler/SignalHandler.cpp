@@ -1,5 +1,6 @@
 #include "Handler/SignalHandler.h"
 #include "Util/system.h"
+#include "Util/data.h"
 #include "Util/finance.h"
 #include "Algorithms/EMD_SIMD.h"
 #include "Algorithms/CEEMDAN.h"
@@ -14,6 +15,7 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
         auto field = req.get_param_value("field");
         auto method = req.get_param_value("method");
         auto num_imfs_param = req.get_param_value("num_imfs");
+        auto fill_param = req.get_param_value("fill_method");
 
         if (symbols_param.empty()) {
             res.status = 400;
@@ -25,6 +27,7 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
 
         if (field.empty()) field = "close";
         if (method.empty()) method = "emd";
+        FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
 
         int num_imfs = 5;
         if (!num_imfs_param.empty()) {
@@ -52,8 +55,8 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
         // 只处理第一个 symbol（单标的分析）
         if (!symbols.empty()) {
             Vector<String> dates;
-            auto multi = LoadColumnDataMulti(symbols[0], {"close", "open", "high", "low", "volume", "turnover"},
-                                              start_date, end_date, &dates);
+            auto multi = LoadHistoryData(symbols[0], {"close", "open", "high", "low", "volume", "turnover"},
+                                          start_date, end_date, &dates, fill);
 
             auto it = multi.find(field);
             if (it != multi.end() && !it->second.empty()) {

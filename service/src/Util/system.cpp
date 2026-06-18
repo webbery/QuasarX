@@ -379,165 +379,6 @@ std::string GetLastLine(std::ifstream* fs) {
     return lastline;
 }
 
-std::vector<StockRowInfo> ReadCSV(const std::string& csv, int last_N) {
-  std::ifstream file(csv);
-    
-  if (!file.is_open()) {
-      throw std::runtime_error("Unable to open file");
-  }
-
-  // 找到文件末尾
-  file.seekg(0, std::ios::end);
-  std::streampos end = file.tellg();
-
-  std::vector<StockRowInfo> rows(last_N);
-  // 从末尾开始读取指定行数
-  file.seekg(-1, std::ios_base::end);
-  int pos = MovetoLineStart(&file);
-  std::string line;
-  while (pos > 0) {
-      if (last_N <= 0) {
-          break;
-      }
-      getline(file, line);
-      if (line.empty()) {
-        break;
-      }
-
-      std::vector<std::string> tokens;
-      split(line, tokens, ",");
-      auto& v0 = tokens[0];
-      auto v1 = atof(tokens[1].c_str());
-      auto v2 = atof(tokens[2].c_str());
-      auto v3 = atof(tokens[3].c_str());
-      auto v4 = atof(tokens[4].c_str());
-      auto v5 = atof(tokens[5].c_str());
-      auto v6 = atof(tokens[6].c_str());
-      auto v7 = atof(tokens[7].c_str());
-      auto tp = std::make_tuple(v0, v1, v2, v3, v4, v5, v6, v7);
-      rows[last_N - 1] = tp;
-      
-      file.seekg(pos);
-      pos = MovetoLineStart(&file);
-      --last_N;
-  }
-  if (last_N > 0) {
-    return {rows.begin() + last_N, rows.end()};
-  }
-  return rows;
-}
-
-Vector<double> LoadColumnData(const String& symbol,
-                               const String& field,
-                               const String& start_date,
-                               const String& end_date,
-                               Vector<String>* out_dates)
-{
-    auto result = LoadColumnDataMulti(symbol, {field}, start_date, end_date, out_dates);
-    auto it = result.find(field);
-    return (it != result.end()) ? it->second : Vector<double>{};
-}
-
-Map<String, Vector<double>> LoadColumnDataMulti(const String& symbol,
-                                                  const Vector<String>& fields,
-                                                  const String& start_date,
-                                                  const String& end_date,
-                                                  Vector<String>* out_dates)
-{
-    std::string base_dir = "./data";
-
-    // 规范化 symbol（统一小写）
-    std::string normalized = symbol;
-    std::transform(normalized.begin(), normalized.end(),
-                   normalized.begin(), ::tolower);
-
-    // 尝试多个可能的路径
-    Vector<String> search_paths;
-    if (symbol.find('.') == String::npos) {
-        search_paths.push_back(base_dir + "/A_hfq/sz." + symbol + ".csv");
-        search_paths.push_back(base_dir + "/A_hfq/sh." + symbol + ".csv");
-        search_paths.push_back(base_dir + "/Astock/sz." + symbol + ".csv");
-        search_paths.push_back(base_dir + "/Astock/sh." + symbol + ".csv");
-    } else {
-        search_paths.push_back(base_dir + "/A_hfq/" + normalized + ".csv");
-        search_paths.push_back(base_dir + "/Astock/" + normalized + ".csv");
-    }
-
-    String data_path;
-    for (const auto& path : search_paths) {
-        if (std::filesystem::exists(path)) {
-            data_path = path;
-            break;
-        }
-    }
-
-    if (data_path.empty()) {
-        WARN("[LoadColumnDataMulti] Data file not found for symbol: {}", symbol);
-        return {};
-    }
-
-    std::ifstream file(data_path);
-    if (!file.is_open()) {
-        WARN("[LoadColumnDataMulti] Cannot open: {}", data_path);
-        return {};
-    }
-
-    // 构建 field → column index 映射
-    // CSV 列顺序: datetime,open,close,high,low,volume,turnover
-    Map<String, int> field_col_map;
-    field_col_map["open"] = 1;
-    field_col_map["close"] = 2;
-    field_col_map["high"] = 3;
-    field_col_map["low"] = 4;
-    field_col_map["volume"] = 5;
-    field_col_map["turnover"] = 6;
-
-    // 初始化结果 map
-    Map<String, Vector<double>> result;
-    for (const auto& f : fields) {
-        String lower_f = f;
-        std::transform(lower_f.begin(), lower_f.end(), lower_f.begin(), ::tolower);
-        if (field_col_map.count(lower_f)) {
-            result[lower_f] = Vector<double>{};
-        }
-    }
-
-    time_t start_t = start_date.empty() ? 0 : FromStr(start_date, "%Y-%m-%d");
-    time_t end_t = end_date.empty() ? 0 : FromStr(end_date, "%Y-%m-%d");
-
-    std::string line;
-    std::getline(file, line); // skip header
-
-    while (std::getline(file, line)) {
-        std::istringstream iss(line);
-        String tokens[7];
-        int col = 0;
-        while (col < 7 && std::getline(iss, tokens[col], ',')) ++col;
-        if (col < 6) continue;
-
-        time_t t = FromStr(tokens[0], "%Y-%m-%d");
-        if (t < 0) continue;
-
-        if (start_t > 0 && t < start_t) continue;
-        if (end_t > 0 && t > end_t) continue;
-
-        if (out_dates) out_dates->push_back(tokens[0]);
-
-        for (const auto& [f, ci] : field_col_map) {
-            auto it = result.find(f);
-            if (it != result.end()) {
-                try {
-                    it->second.push_back(std::stod(tokens[ci]));
-                } catch (...) {
-                    it->second.push_back(0.0);
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
 bool Subscribe(const std::string& uri, nng_socket& sock, short tick, short hwm) {
   int rv = nng_sub0_open(&sock);
   if (rv != 0) {
@@ -571,12 +412,14 @@ bool Publish(const std::string& uri, nng_socket& sock)
 {
   int rv = nng_pub0_open(&sock);
   if (rv != 0) {
-    printf("ERROR: nng_pub0_open fail.\n");
+    printf("ERROR: nng_pub0_open fail: %s\n", nng_strerror(rv));
     return false;
   }
   rv = nng_listen(sock, uri.c_str(), nullptr, 0);
-  if (rv < 0) {
-    printf("ERROR: nng_listen fail: %s.\n", nng_strerror(rv));
+  if (rv != 0) {
+    printf("ERROR: nng_listen(%s) fail: %s\n", uri.c_str(), nng_strerror(rv));
+    nng_close(sock);
+    sock.id = 0;
     return false;
   }
   return true;

@@ -264,3 +264,90 @@ class TestStrategy:
             assert len(data['features']) > 0
             features = data['features']
             assert 'sharp' in features
+
+    @pytest.mark.timeout(60)
+    def test_tickflow_context_has_quote(self, auth_token, is_backtest):
+        """验证 TickFlow 模式下 context 中有 quote 数据，策略能正常执行
+
+        步骤:
+        1. 部署 ma_graph_strategy（使用 sz.000001，在 TickFlow pool 中）
+        2. 等待 2 个 TickFlow 周期（10s × 2）+ 5s 缓冲
+        3. 验证策略正在运行且 epochCount > 0
+        4. 验证 DebugNode 输出文件存在且非空
+        """
+        if is_backtest:
+            pytest.skip("回测模式下跳过，仅在 TickFlow/实盘模式下运行")
+
+        name = 'test_quote_context'
+        self.cleanup_strategy(auth_token, name)
+
+        script_path = './script/ma_graph_strategy.json'
+        script = self.load_script(script_path)
+        kwargs = self._auth_kwargs(auth_token)
+
+        kwargs['json'] = {'mode': 0, 'name': name, 'script': script}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
+        check_response(resp)
+
+        # 等待 2 个 TickFlow 周期（10s × 2）+ 5s 缓冲
+        time.sleep(25)
+
+        # 验证策略正在运行
+        strategies = self.get_all_strategies(auth_token)
+        found = self.find_strategy(strategies, name)
+        assert found is not None, "策略应在列表中"
+        assert found['running'] is True, "策略应处于运行状态"
+        assert found['epochCount'] > 0, f"策略应至少执行 1 个 epoch，实际 {found['epochCount']}"
+
+        # 验证 DebugNode 输出文件存在（证明 context 中有 quote 数据，策略图成功执行）
+        # DebugNode 输出路径: {database_path}/data/debug/{strategy}/{label}.csv
+        debug_dir = f'../../build/data/data/debug/{name}'
+        time.sleep(3)  # 等待文件写入
+        assert os.path.exists(debug_dir), f"Debug 输出目录不存在: {debug_dir}"
+        csv_files = [f for f in os.listdir(debug_dir) if f.endswith('.csv')]
+        assert len(csv_files) > 0, f"Debug 输出目录中无 CSV 文件: {debug_dir}"
+
+        self.cleanup_strategy(auth_token, name)
+
+    @pytest.mark.timeout(120)
+    def test_tickflow_kbar_aggregation(self, auth_token, is_backtest):
+        """验证 TickFlow 模式下 KBar 聚合功能
+
+        步骤:
+        1. 部署策略，设置 freq="1m"（1 分钟聚合）
+        2. 等待 65s（60s 聚合窗口 + 5s 缓冲）
+        3. 验证聚合完成后 epochCount >= 1
+
+        注意: ma_graph_strategy.json 默认 freq="1d"，
+        本测试需要策略中 QuoteInputNode 的 freq 参数为 "1m"。
+        """
+        if is_backtest:
+            pytest.skip("回测模式下跳过，仅在 TickFlow/实盘模式下运行")
+
+        name = 'test_kbar_agg'
+        self.cleanup_strategy(auth_token, name)
+
+        script_path = './script/ma_graph_strategy.json'
+        script = self.load_script(script_path)
+        kwargs = self._auth_kwargs(auth_token)
+
+        # 修改 QuoteInputNode 的 freq 为 "1m"
+        for node in script['graph']['nodes']:
+            if node.get('data', {}).get('nodeType') == 'input':
+                node['data']['params']['freq'] = {'value': '1m'}
+                break
+
+        kwargs['json'] = {'mode': 0, 'name': name, 'script': script}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
+        check_response(resp)
+
+        # 等待聚合窗口（60s + 5s 缓冲）
+        time.sleep(65)
+
+        strategies = self.get_all_strategies(auth_token)
+        found = self.find_strategy(strategies, name)
+        assert found is not None, "策略应在列表中"
+        assert found['running'] is True, "策略应处于运行状态"
+        assert found['epochCount'] >= 1, f"聚合完成后 epochCount 应 >= 1，实际 {found['epochCount']}"
+
+        self.cleanup_strategy(auth_token, name)

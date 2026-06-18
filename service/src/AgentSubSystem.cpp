@@ -546,7 +546,12 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     BarFreq freq = BarFreq::Day;
     for (auto* node : flow._graph) {
         if (auto* qn = dynamic_cast<QuoteInputNode*>(node)) {
-            // 默认日线频率，后续可从节点配置读取
+            DataFrequencyType dft = qn->GetFreq();
+            switch (dft) {
+                case DataFrequencyType::Min1: freq = BarFreq::Min1; break;
+                case DataFrequencyType::Min5: freq = BarFreq::Min5; break;
+                default: freq = BarFreq::Day; break;
+            }
             break;
         }
     }
@@ -599,7 +604,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
                 // 聚合 tick
                 kbarBuilder->OnTick(tick);
 
-                // 拉动检查：是否有新的 bar 对齐快照
+                // // 拉动检查：是否有新的 bar 对齐快照
                 if (!kbarBuilder->GetSnapshot(snapshot)) continue;
 
                 // 将快照写入 context

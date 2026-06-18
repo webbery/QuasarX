@@ -1,6 +1,7 @@
 #include "Handler/VolatilityHandler.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
+#include "Util/data.h"
 #include "Util/finance.h"
 #include "boost/math/statistics/ljung_box.hpp"
 #include <algorithm>
@@ -29,50 +30,6 @@ static double stddev(const std::vector<double>& data, double m = -1) {
     double sq_sum = 0;
     for (auto v : data) sq_sum += (v - m) * (v - m);
     return std::sqrt(sq_sum / (data.size() - 1));
-}
-
-// === 加载历史价格 ===
-
-std::vector<double> VolatilityHandler::loadPrices(
-    const std::string& symbol,
-    const std::string& start_date,
-    const std::string& end_date,
-    std::vector<std::string>& out_dates,
-    std::vector<double>& out_volumes,
-    PriceField field)
-{
-    Vector<String> dates;
-    auto multi = LoadColumnDataMulti(symbol, {"close", "open", "high", "low", "volume", "turnover"},
-                                      start_date, end_date, &dates);
-
-    auto get_col = [&](const char* name) -> const std::vector<double>* {
-        auto it = multi.find(name);
-        if (it == multi.end() || it->second.empty()) return nullptr;
-        return &it->second;
-    };
-
-    const std::vector<double>* target = nullptr;
-    switch (field) {
-        case PriceField::Open:   target = get_col("open"); break;
-        case PriceField::High:   target = get_col("high"); break;
-        case PriceField::Low:    target = get_col("low"); break;
-        case PriceField::Volume: target = get_col("volume"); break;
-        case PriceField::Close:
-        default:                 target = get_col("close"); break;
-    }
-
-    auto vol_col = get_col("volume");
-
-    if (!target || target->empty()) {
-        WARN("[Volatility] Data file not found or empty for symbol: {}", symbol);
-        return {};
-    }
-
-    out_dates.assign(dates.begin(), dates.end());
-    if (vol_col) out_volumes.assign(vol_col->begin(), vol_col->end());
-    else         out_volumes.assign(target->size(), 0.0);
-
-    return *target;
 }
 
 // === 收益率计算 ===
@@ -460,32 +417,51 @@ VolatilityResult VolatilityHandler::compute(
     const std::string& start_date,
     const std::string& end_date,
     const std::vector<int>& windows,
-    PriceField field)
+    PriceField field,
+    FillMethod fill)
 {
     VolatilityResult result;
     result.symbols = symbols;
 
     std::map<std::string, std::vector<double>> returns_map;
     std::vector<std::string> common_dates;
-    bool dates_set = false;
+
+    auto getPriceCol = [&](const Map<String, Vector<double>>& data) -> Vector<double> {
+        static const char* names[] = {"close", "open", "high", "low", "volume"};
+        auto it = data.find(names[(int)field]);
+        if (it != data.end() && !it->second.empty()) return it->second;
+        it = data.find("close");
+        if (it != data.end()) return it->second;
+        return {};
+    };
+    auto getVolumeCol = [&](const Map<String, Vector<double>>& data) -> Vector<double> {
+        auto it = data.find("volume");
+        if (it != data.end()) return it->second;
+        return {};
+    };
 
     for (const auto& symbol : symbols) {
-        std::vector<std::string> dates;
-        std::vector<double> volumes;
-        auto prices = loadPrices(symbol, start_date, end_date, dates, volumes, field);
+        Vector<String> dates;
+        auto multi = LoadHistoryData(symbol, {"close", "open", "high", "low", "volume", "turnover"},
+                                      start_date, end_date, &dates, fill);
+
+        Vector<double> prices = getPriceCol(multi);
+        Vector<double> volumes = getVolumeCol(multi);
 
         if (prices.empty()) {
             WARN("[Volatility] No data for {}", symbol);
             continue;
         }
 
+        // volumes 补齐
+        if (volumes.empty()) volumes.assign(prices.size(), 0.0);
+
         auto single_result = computeSingle(prices, volumes, windows);
         result.single[symbol] = single_result;
         returns_map[symbol] = simpleReturns(prices);
 
-        if (!dates_set) {
-            common_dates = dates;
-            dates_set = true;
+        if (common_dates.empty()) {
+            common_dates.assign(dates.begin(), dates.end());
         }
     }
 
@@ -505,6 +481,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         auto end_date_param = req.get_param_value("end_date");
         auto windows_param = req.get_param_value("windows");
         auto field_param = req.get_param_value("field");
+        auto fill_param = req.get_param_value("fill_method");
 
         if (symbols_param.empty()) {
             res.status = 400;
@@ -538,8 +515,9 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         }
 
         PriceField field = parsePriceField(field_param);
+        FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
 
-        auto result = compute(symbols, start_date, end_date, windows, field);
+        auto result = compute(symbols, start_date, end_date, windows, field, fill);
 
         // 构建 JSON 响应
         nlohmann::json json;

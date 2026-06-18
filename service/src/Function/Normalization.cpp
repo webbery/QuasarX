@@ -1,6 +1,6 @@
 #include "Function/Normalization.h"
 
-MinMax::MinMax(double lower, double upper, LostType lt, FillType ft )
+MinMax::MinMax(double lower, double upper, LostType lt, FillMethod fm)
 :_lower(lower), _upper(upper) {
     _inter = _upper - _lower;
 }

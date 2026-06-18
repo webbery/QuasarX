@@ -225,7 +225,7 @@ bool Server::Init(const char* config) {
 
     // 创建 ExchangeManager 协调器
     _exchangeMgr = new ExchangeManager(this);
-    _exchangeMgr->InitQuotePublisher();
+    _exchangeMgr->StartQuoteDispatcher();
     // _mode = mode;
     return true;
 }
