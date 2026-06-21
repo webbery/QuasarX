@@ -125,22 +125,36 @@ void FunctionNode::UpdateLabel(const String& label) {
 
 bool FunctionNode::Init(const nlohmann::json& config) {
     // 从输入节点获取处理的属性
+    INFO("[FunctionNode:{}] Init: _ins size = {}", _id, _ins.size());
     for (auto& item: _ins) {
         auto input_names = item.second->out_elements();
+        INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements", 
+             _id, item.first, input_names.size());
         _params.merge(input_names);
     }
 
     // 构建输入到输出的映射，并收集所有 symbol
     _label = (String)config["label"];
+    INFO("[FunctionNode:{}] Init: label='{}', _params size = {}", 
+         _id, _label, _params.size());
+    
     for (auto& item: _params) {
         auto& name = item.first;
         Vector<String> tokens;
         split(name, tokens, ".");
+        if (tokens.empty()) {
+            WARN("[FunctionNode:{}] Init: param '{}' has no dots, skipping", 
+                 _id, name);
+            continue;
+        }
         tokens.pop_back();  // 去掉属性名
         String symbol = boost::algorithm::join(tokens, ".");
-        
+
         // 建立映射: "sh600519.close" -> "sh600519.ReturnRate"
-        _param_to_output_map[name] = symbol + "." + _label;
+        String output_key = symbol + "." + _label;
+        _param_to_output_map[name] = output_key;
+        INFO("[FunctionNode:{}] Init: mapped '{}' -> '{}'", 
+             _id, name, output_key);
     }
 
     String name = config["params"]["method"]["value"];
@@ -155,6 +169,8 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         // 函数输出是时间序列
         _outputs[output_key] = ArgType::Double_TimeSeries;
     }
+    INFO("[FunctionNode:{}] Init: _param_to_output_map has {} entries, _outputs has {} entries", 
+         _id, _param_to_output_map.size(), _outputs.size());
     return true;
 }
 
@@ -168,33 +184,38 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
     // 1. 收集所有 symbol 的输入数据
     Map<String, context_t> arguments;
     Vector<String> output_keys;  // 保存输出 key 的顺序
-    
+
     for (auto& item: _params) {
         auto& value = context.get(item.first);
         arguments[item.first] = value;
     }
-    
+
     // 2. 按 _param_to_output_map 的顺序构建输出 key 列表
     for (auto& [input_key, output_key] : _param_to_output_map) {
         output_keys.push_back(output_key);
     }
-    
+
+    INFO("[FunctionNode:{}] Processing, label='{}', output_keys={}", 
+         _id, _label, boost::algorithm::join(output_keys, ", "));
+
     // 3. 调用函数计算
     auto result = (*_callable)(arguments);
     
     // 4. 根据结果类型处理，按顺序写入输出
     auto ret = std::visit([this, &output_keys, &context, &strategy](const auto& val) -> NodeProcessResult {
         using T = std::decay_t<decltype(val)>;
-        
+
         if constexpr (std::is_same_v<T, double>) {
             // 标量：所有输出 key 都用同一个值
             for (auto& key : output_keys) {
                 if (context.exist(key)) {
                     context.add(key, val);
+                    INFO("[FunctionNode:{}] Appended value {} to existing key '{}'", _id, val, key);
                 } else {
                     Vector<double> timeseries;
                     timeseries.push_back(val);
                     context.set(key, timeseries);
+                    INFO("[FunctionNode:{}] Created new key '{}' with value {}", _id, key, val);
                 }
             }
         } else if constexpr (std::is_same_v<T, Vector<double>>) {
@@ -206,17 +227,19 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             for (size_t i = 0; i < output_keys.size(); ++i) {
                 if (context.exist(output_keys[i])) {
                     context.add(output_keys[i], val[i]);
+                    INFO("[FunctionNode:{}] Appended value {} to existing key '{}'", _id, val[i], output_keys[i]);
                 } else {
                     Vector<double> timeseries;
                     timeseries.push_back(val[i]);
                     context.set(output_keys[i], timeseries);
+                    INFO("[FunctionNode:{}] Created new key '{}' with vector[{}] = {}", _id, output_keys[i], i, val[i]);
                 }
             }
         } else {
             WARN("Function returned unsupported type");
             return NodeProcessResult::Error;
         }
-        
+
         return NodeProcessResult::Success;
     }, result);
     

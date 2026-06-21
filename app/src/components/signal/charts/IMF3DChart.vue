@@ -1,9 +1,10 @@
 <template>
-  <div class="imf-3d-chart" ref="chartRef" style="width: 100%; height: 100%"></div>
+  <div class="imf-3d-chart" ref="chartRef" style="width: 100%; height: 100%; min-height: 500px; background: rgba(26, 34, 54, 0.3);">
+  </div>
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'
 import type { SignalAnalysisResult } from '../composables/useSignalState'
@@ -22,29 +23,52 @@ const IMF_COLORS = [
 ]
 
 function buildOption() {
-  if (!props.data) return {}
+  if (!props.data) {
+    console.warn('[IMF3DChart] No data')
+    return {}
+  }
 
-  const { dates, imf_components } = props.data
+  const { dates, imf_components, imf_info } = props.data
   const numIMFs = imf_components.length
-  if (numIMFs === 0) return {}
+  
+  console.log('[IMF3DChart] buildOption called with:', {
+    dates_count: dates?.length || 0,
+    imf_count: numIMFs,
+    imf_info_count: imf_info?.length || 0,
+    method: props.data.method,
+    reconstruction_error: props.data.reconstruction_error
+  })
+  
+  if (numIMFs === 0 || !imf_info || imf_info.length === 0) {
+    console.warn('[IMF3DChart] No imf_components or imf_info')
+    return {}
+  }
 
   const xAxisData = dates && dates.length > 0
     ? dates.map((d: string) => d.length > 10 ? d.substring(5, 10) : d)
     : imf_components[0].map((_: number, i: number) => String(i))
 
-  // 构建 3D 曲面数据：每个 IMF 作为一条沿 Y 轴分布的曲线
-  // data[i] = [x(时间索引), y(IMF索引), z(振幅值)]
-  const surfaceData: number[][] = []
-  for (let imfIdx = 0; imfIdx < numIMFs; imfIdx++) {
-    const imf = imf_components[imfIdx]
-    for (let t = 0; t < imf.length; t++) {
-      surfaceData.push([t, imfIdx, imf[t]])
+  // 每个 IMF 作为独立的 series，避免线连在一起
+  const series = imf_components.map((imf, imfIdx) => {
+    const lineData = imf.map((val, t) => [t, imfIdx, val])
+    return {
+      type: 'line3D',
+      name: `IMF${imfIdx + 1}`,
+      data: lineData,
+      lineStyle: {
+        width: 2,
+        color: IMF_COLORS[imfIdx % IMF_COLORS.length]
+      }
     }
-  }
+  })
 
   // Y 轴标签：IMF + 周期
   const yAxisLabels = imf_info.map((info, idx) => `IMF${idx + 1} T=${info.mean_period.toFixed(0)}`)
   const colorList = IMF_COLORS.slice(0, numIMFs)
+  console.log('[IMF3DChart] yAxisLabels:', yAxisLabels)
+  console.log('[IMF3DChart] colorList:', colorList)
+  console.log('[IMF3DChart] series count:', series.length)
+  console.log('[IMF3DChart] About to return option object')
 
   return {
     title: {
@@ -56,21 +80,7 @@ function buildOption() {
       trigger: 'item',
       backgroundColor: 'rgba(26, 34, 54, 0.95)',
       borderColor: '#2a3449',
-      textStyle: { color: '#e0e0e0', fontSize: 11 },
-      formatter: (params: any) => {
-        const [tIdx, imfIdx, val] = params.data
-        const dateStr = xAxisData[tIdx] || tIdx
-        return `<b>IMF${imfIdx + 1}</b><br/>时间: ${dateStr}<br/>值: ${val.toFixed(6)}`
-      }
-    },
-    visualMap: {
-      show: false,
-      min: 0,
-      max: numIMFs - 1,
-      inRange: {
-        color: colorList
-      },
-      dimension: 1
+      textStyle: { color: '#e0e0e0', fontSize: 11 }
     },
     xAxis3D: {
       name: '时间',
@@ -88,7 +98,7 @@ function buildOption() {
       type: 'category',
       data: yAxisLabels,
       axisLabel: {
-        color: (idx: number) => IMF_COLORS[idx % IMF_COLORS.length],
+        color: '#999',
         fontSize: 10
       },
       axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } }
@@ -97,8 +107,7 @@ function buildOption() {
       name: '振幅',
       axisLabel: {
         color: '#999',
-        fontSize: 10,
-        formatter: (val: number) => val.toFixed(4)
+        fontSize: 10
       },
       axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } },
       splitLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.15)' } }
@@ -118,77 +127,133 @@ function buildOption() {
         maxBeta: 180,
         minDistance: 80,
         maxDistance: 400
-      },
-      environment: '#1a2236',
-      postEffect: {
-        enable: false
-      },
-      light: {
-        main: {
-          intensity: 0.8,
-          shadow: false
-        },
-        ambient: {
-          intensity: 0.2
-        }
-      },
-      axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } },
-      axisPointer: {
-        show: true,
-        lineStyle: { color: '#2962ff' },
-        label: { show: true }
       }
     },
-    series: [{
-      type: 'line3D',
-      name: 'IMF',
-      data: surfaceData,
-      lineStyle: {
-        width: 2
-      }
-    }]
+    series
   }
 }
 
 function initChart() {
-  if (!chartRef.value) return
-  if (echarts.getInstanceByDom(chartRef.value)) {
-    echarts.dispose(echarts.getInstanceByDom(chartRef.value)!)
+  console.log('[IMF3DChart] initChart called')
+  console.log('[IMF3DChart] chartRef:', chartRef.value)
+  console.log('[IMF3DChart] chartRef dimensions:', chartRef.value ? {
+    offsetWidth: chartRef.value.offsetWidth,
+    offsetHeight: chartRef.value.offsetHeight,
+    clientWidth: chartRef.value.clientWidth,
+    clientHeight: chartRef.value.clientHeight
+  } : 'N/A')
+  
+  if (!chartRef.value) {
+    console.warn('[IMF3DChart] chartRef not ready')
+    return
   }
-  chartInstance = echarts.init(chartRef.value)
-  const option = buildOption()
-  if (Object.keys(option).length > 0) {
-    chartInstance.setOption(option)
+
+  try {
+    const existingInstance = echarts.getInstanceByDom(chartRef.value)
+    console.log('[IMF3DChart] existingInstance:', existingInstance ? 'yes' : 'no')
+    
+    if (existingInstance) {
+      console.log('[IMF3DChart] disposing existing instance')
+      echarts.dispose(existingInstance)
+    }
+    
+    console.log('[IMF3DChart] creating new echarts instance')
+    chartInstance = echarts.init(chartRef.value)
+    console.log('[IMF3DChart] chartInstance created:', chartInstance)
+    
+    const option = buildOption()
+    console.log('[IMF3DChart] option keys:', Object.keys(option))
+    console.log('[IMF3DChart] option has series:', option.series ? 'yes' : 'no')
+    console.log('[IMF3DChart] series type:', option.series?.[0]?.type)
+    console.log('[IMF3DChart] series data length:', option.series?.[0]?.data?.length || 0)
+    
+    if (Object.keys(option).length > 0) {
+      console.log('[IMF3DChart] calling setOption')
+      chartInstance.setOption(option)
+      console.log('[IMF3DChart] Chart initialized successfully')
+    } else {
+      console.warn('[IMF3DChart] option is empty, skipping setOption')
+    }
+  } catch (e) {
+    console.error('[IMF3DChart] initChart error:', e)
+    console.error('[IMF3DChart] error stack:', (e as Error).stack)
   }
 }
 
 function updateChart() {
-  if (!chartInstance) return
-  const option = buildOption()
-  if (Object.keys(option).length > 0) {
-    chartInstance.setOption(option, true)
+  console.log('[IMF3DChart] updateChart called')
+  
+  if (!chartInstance) {
+    console.warn('[IMF3DChart] chartInstance not ready')
+    return
+  }
+
+  try {
+    const option = buildOption()
+    console.log('[IMF3DChart] updateChart option keys:', Object.keys(option))
+    console.log('[IMF3DChart] updateChart series data length:', option.series?.[0]?.data?.length || 0)
+    
+    if (Object.keys(option).length > 0) {
+      console.log('[IMF3DChart] calling setOption with notMerge=true')
+      chartInstance.setOption(option, true)
+      console.log('[IMF3DChart] Chart updated successfully')
+    }
+  } catch (e) {
+    console.error('[IMF3DChart] updateChart error:', e)
+    console.error('[IMF3DChart] error stack:', (e as Error).stack)
   }
 }
 
-watch(() => props.data, () => {
-  if (props.data) {
+watch(() => props.data, (newData) => {
+  console.log('[IMF3DChart] watch triggered, newData:', newData ? 'yes' : 'no')
+  console.log('[IMF3DChart] chartInstance:', chartInstance ? 'yes' : 'no')
+  console.log('[IMF3DChart] chartRef.value:', chartRef.value ? 'yes' : 'no')
+  
+  if (newData) {
     if (!chartInstance && chartRef.value) {
+      console.log('[IMF3DChart] Initializing chart from watch')
       initChart()
-    } else {
+    } else if (chartInstance) {
+      console.log('[IMF3DChart] Updating chart from watch')
       updateChart()
+    } else {
+      console.warn('[IMF3DChart] Cannot init or update: chartInstance=', chartInstance, 'chartRef=', chartRef.value)
     }
   }
 }, { immediate: true })
 
 onMounted(() => {
-  const handleResize = () => chartInstance?.resize()
+  console.log('[IMF3DChart] onMounted')
+  console.log('[IMF3DChart] props.data:', props.data ? 'yes' : 'no')
+  console.log('[IMF3DChart] chartRef.value:', chartRef.value ? 'yes' : 'no')
+  console.log('[IMF3DChart] chartRef dimensions:', chartRef.value ? {
+    offsetWidth: chartRef.value.offsetWidth,
+    offsetHeight: chartRef.value.offsetHeight
+  } : 'N/A')
+
+  // 在 onMounted 中初始化图表
+  if (props.data && chartRef.value) {
+    console.log('[IMF3DChart] onMounted: calling initChart')
+    initChart()
+  }
+
+  const handleResize = () => {
+    console.log('[IMF3DChart] resize event')
+    chartInstance?.resize()
+  }
   window.addEventListener('resize', handleResize)
+
   onBeforeUnmount(() => {
+    console.log('[IMF3DChart] onBeforeUnmount')
     window.removeEventListener('resize', handleResize)
-    chartInstance?.dispose()
-    chartInstance = null
+    if (chartInstance) {
+      console.log('[IMF3DChart] disposing chartInstance')
+      chartInstance.dispose()
+      chartInstance = null
+    }
   })
 })
+
 </script>
 
 <style scoped>

@@ -14,7 +14,7 @@ message(STATUS "Building from git tag: ${GIT_TAG_VERSION}")
 
 # include(FetchContent)
 if (WIN32)
-add_compile_options(/utf-8 /Z7 /GF /bigobj /Zc:__cplusplus /DNOMINMAX /DJWT_DISABLE_PICOJSON)
+add_compile_options(/utf-8 /Z7 /GF /bigobj /Zc:__cplusplus /DNOMINMAX /DJWT_DISABLE_PICOJSON /MP)
 #if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 #    add_compile_options(/O2 /arch:AVX2 /fp:fast /GL)
 #    add_link_options(/LTCG)

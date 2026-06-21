@@ -192,14 +192,44 @@ Vector<double> finance::computePACF(const Vector<double>& acf, int max_lag) {
 double finance::estimateMeanPeriod(const Vector<double>& data) {
     if (data.size() < 4) return 0;
 
-    int max_lag = std::min(20, static_cast<int>(data.size()) / 4);
-    auto acf = computeACF(data, max_lag);
+    int n = static_cast<int>(data.size());
 
-    // 找第一个过零点（ACF 从正变为负）
-    for (size_t i = 1; i < acf.size(); ++i) {
-        if (acf[i] < 0) {
-            return 2.0 * static_cast<double>(i);
+    // 去均值
+    double mean = 0;
+    for (auto v : data) mean += v;
+    mean /= n;
+
+    Vector<double> centered(n);
+    for (int i = 0; i < n; ++i) centered[i] = data[i] - mean;
+
+    // 简单 DFT 计算幅度谱（仅正频率部分）
+    // 对于每个频率 k，计算 X[k] = sum(x[t] * exp(-2*pi*i*k*t/N))
+    int half_n = n / 2 + 1;
+    Vector<double> magnitude(half_n, 0);
+
+    for (int k = 1; k < half_n; ++k) {  // 跳过 k=0（DC 分量）
+        double real = 0, imag = 0;
+        for (int t = 0; t < n; ++t) {
+            double angle = -2.0 * M_PI * k * t / n;
+            real += centered[t] * std::cos(angle);
+            imag += centered[t] * std::sin(angle);
         }
+        magnitude[k] = std::sqrt(real * real + imag * imag);
+    }
+
+    // 找幅度谱中的最大值对应的频率索引
+    int max_idx = 1;
+    double max_mag = magnitude[1];
+    for (int k = 2; k < half_n; ++k) {
+        if (magnitude[k] > max_mag) {
+            max_mag = magnitude[k];
+            max_idx = k;
+        }
+    }
+
+    // 周期 = N / k（每个周期包含的采样点数）
+    if (max_idx > 0) {
+        return static_cast<double>(n) / max_idx;
     }
     return 0;
 }

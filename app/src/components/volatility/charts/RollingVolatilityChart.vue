@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 import type { VolatilitySingleResult } from '../composables/useVolatilityState'
@@ -11,30 +11,35 @@ import type { VolatilitySingleResult } from '../composables/useVolatilityState'
 const props = defineProps<{
   data: VolatilitySingleResult | null
   windows?: number[]
+  dates?: string[]
 }>()
 
-const { chartRef, initChart, updateChart } = useECharts()
+const { chartRef, initChart, updateChart } = useECharts(false) // 不自动初始化
 
 function buildOption() {
   if (!props.data?.rolling_vol) return {}
-  
+
   const rollingVol = props.data.rolling_vol
   const windows = props.windows || [20, 60, 120]
   const colors = ['#2962ff', '#ff9800', '#00c853']
+
+  // 找到所有窗口中最短的长度，确保数据末尾对齐
+  const minLen = Math.min(...windows.map(w => rollingVol[w]?.length || 0))
   
+  // 按末尾对齐：取每个窗口最后 minLen 个数据点
   const series = windows.map((w, i) => ({
     name: `${w}日滚动`,
     type: 'line' as const,
-    data: rollingVol[w]?.map((v: number) => (v * 100).toFixed(2)) || [],
+    data: rollingVol[w]?.slice(-minLen).map((v: number) => (v * 100).toFixed(2)) || [],
     lineStyle: { color: colors[i], width: 2 },
     showSymbol: false,
     smooth: true
   }))
-  
-  // 对齐到 dates（滚动波动率比原始数据短）
-  const maxLen = Math.max(...windows.map(w => rollingVol[w]?.length || 0))
-  const offset = (props.data.prices.length - 1) - maxLen
-  
+
+  // 使用 dates 的最后 minLen 个作为 x 轴标签
+  const dates = props.dates || []
+  const displayDates = dates.length > 0 ? dates.slice(-minLen) : Array.from({ length: minLen }, (_, i) => i)
+
   return createBaseChartOption({
     title: {
       text: '滚动波动率',
@@ -46,8 +51,22 @@ function buildOption() {
     grid: { left: '3%', right: '4%', bottom: '3%', top: '20%', containLabel: true },
     xAxis: {
       type: 'category',
-      data: props.data.prices.slice(offset + 1).map((_, i) => i),
-      axisLabel: { color: '#999', interval: Math.floor(maxLen / 10) }
+      data: displayDates,
+      axisLabel: {
+        color: '#999',
+        interval: Math.max(0, Math.floor(minLen / 10) - 1),
+        rotate: 30,
+        formatter: (val: string) => {
+          // 如果是日期字符串，只显示 MM-DD 格式
+          if (typeof val === 'string' && val.includes('-')) {
+            const parts = val.split('-')
+            if (parts.length === 3) {
+              return `${parts[1]}-${parts[2]}`
+            }
+          }
+          return val
+        }
+      }
     },
     yAxis: {
       type: 'value',
@@ -59,10 +78,20 @@ function buildOption() {
   })
 }
 
-watch(() => props.data, () => {
-  if (props.data) {
-    if (chartRef.value && !echarts.getInstanceByDom(chartRef.value)) initChart()
+watch(() => props.data, (newData) => {
+  if (newData && chartRef.value) {
+    if (!echarts.getInstanceByDom(chartRef.value)) {
+      initChart()
+    }
     updateChart(buildOption(), true)
   }
 }, { immediate: true })
+
+// 组件挂载后确保图表已初始化
+onMounted(() => {
+  if (chartRef.value && props.data && !echarts.getInstanceByDom(chartRef.value)) {
+    initChart()
+    updateChart(buildOption(), true)
+  }
+})
 </script>

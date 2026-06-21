@@ -549,7 +549,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         json["multi"] = multi_json;
 
         res.set_content(json.dump(), "application/json");
-
+        res.status = 200;
     } catch (const std::exception& e) {
         FATAL("[Volatility] Error: {}", e.what());
         res.status = 500;

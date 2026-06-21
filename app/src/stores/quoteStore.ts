@@ -118,8 +118,8 @@ export const useQuoteStore = defineStore('quote', {
 
     _ensureTimer() {
       if (this.timer) return
-      this.fetchAll()
-      this.timer = setInterval(() => this.fetchAll(), POLL_INTERVAL)
+      // this.fetchAll()
+      // this.timer = setInterval(() => this.fetchAll(), POLL_INTERVAL)
     },
 
     _stopTimerIfIdle() {

@@ -395,24 +395,24 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 .node-param {
-    display: flex;
-    align-items: center;
-    margin: 8px 0;
-    position: relative;
-    min-height: 28px;
+    display: flex !important;
+    align-items: center !important;
+    margin: 8px 0 !important;
+    position: relative !important;
+    min-height: 28px !important;
 }
 
 .param-label {
-    flex: 1;
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    margin-right: 8px;
+    flex: 1 !important;
+    font-size: 0.8rem !important;
+    color: var(--text-secondary) !important;
+    margin-right: 8px !important;
 }
 
 .param-control {
-    flex: 2;
-    display: flex;
-    align-items: center;
+    flex: 2 !important;
+    display: flex !important;
+    align-items: center !important;
 }
 
 /* ============================================
@@ -428,98 +428,159 @@ const handleClickOutside = (event: MouseEvent) => {
     width: 100%;
 }
 
-/* 通用输入框样式 */
-.param-input {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    padding: 5px 10px;
-    font-size: 0.8rem;
-    outline: none;
-    transition: all 0.2s ease;
-    width: 100%;
+/* 通用输入框样式 - 强制暗色主题 */
+.param-input,
+input.param-input,
+input.param-text,
+input.param-number,
+input.param-date,
+select.param-input,
+select.param-select,
+textarea.param-input,
+textarea.param-textarea {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text) !important;
+    padding: 5px 10px !important;
+    font-size: 0.8rem !important;
+    outline: none !important;
+    transition: all 0.2s ease !important;
+    width: 100% !important;
+    font-family: inherit !important;
+    line-height: 1.4 !important;
 }
 
-.param-input:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
-    background: rgba(0, 0, 0, 0.4);
+/* 聚焦状态 */
+.param-input:focus,
+input.param-input:focus,
+select.param-input:focus,
+textarea.param-input:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2) !important;
+    background: rgba(0, 0, 0, 0.4) !important;
 }
 
-.param-input:hover:not(:focus) {
-    border-color: rgba(41, 98, 255, 0.5);
+/* 悬停状态 */
+.param-input:hover:not(:focus),
+input.param-input:hover:not(:focus),
+select.param-input:hover:not(:focus) {
+    border-color: rgba(41, 98, 255, 0.5) !important;
 }
 
 /* 文本输入框 */
-.param-text {
-    color: var(--text);
+.param-text,
+input[type="text"] {
+    color: var(--text) !important;
 }
 
 /* 数字输入框 */
-.param-number {
-    color: var(--text);
-    -moz-appearance: textfield;
+.param-number,
+input[type="number"] {
+    color: var(--text) !important;
+    -moz-appearance: textfield !important;
 }
 
 .param-number::-webkit-outer-spin-button,
-.param-number::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
+.param-number::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
 }
 
 /* 日期输入框 */
-.param-date {
-    color: var(--text);
-    color-scheme: dark;
+.param-date,
+input[type="date"],
+input[type="datetime-local"] {
+    color: var(--text) !important;
+    color-scheme: dark !important;
 }
 
-.param-date::-webkit-calendar-picker-indicator {
-    filter: invert(0.7);
-    cursor: pointer;
+.param-date::-webkit-calendar-picker-indicator,
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7) !important;
+    cursor: pointer !important;
 }
 
 /* 下拉选择框 */
-.param-select {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    padding: 5px 10px;
-    font-size: 0.8rem;
-    outline: none;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    width: 100%;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0aec0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    padding-right: 28px;
+.param-select,
+select.param-select {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text) !important;
+    padding: 5px 10px !important;
+    font-size: 0.8rem !important;
+    outline: none !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+    width: 100% !important;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0aec0' d='M6 8L1 3h10z'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 8px center !important;
+    padding-right: 28px !important;
 }
 
-.param-select:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2);
+.param-select:focus,
+select.param-select:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2) !important;
 }
 
-.param-select:hover:not(:focus) {
-    border-color: rgba(41, 98, 255, 0.5);
+.param-select:hover:not(:focus),
+select.param-select:hover:not(:focus) {
+    border-color: rgba(41, 98, 255, 0.5) !important;
 }
 
-.param-select option {
-    background: var(--panel-bg);
-    color: var(--text);
-    padding: 8px;
+.param-select option,
+select option {
+    background: var(--panel-bg) !important;
+    color: var(--text) !important;
+    padding: 8px !important;
+}
+
+/* 文本域 */
+.param-textarea,
+textarea.param-textarea {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text) !important;
+    padding: 8px 10px !important;
+    font-size: 0.8rem !important;
+    outline: none !important;
+    transition: all 0.2s ease !important;
+    width: 100% !important;
+    resize: vertical !important;
+    min-height: 60px !important;
+    font-family: inherit !important;
+}
+
+.param-textarea:focus,
+textarea.param-textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2) !important;
+    background: rgba(0, 0, 0, 0.4) !important;
+}
+
+/* 禁用状态 */
+.param-input:disabled,
+input.param-input:disabled,
+select.param-input:disabled {
+    opacity: 0.6 !important;
+    cursor: not-allowed !important;
 }
 
 /* 单位标签 */
 .param-unit {
-    color: var(--text-secondary);
-    font-size: 0.75rem;
-    white-space: nowrap;
-    flex-shrink: 0;
+    color: var(--text-secondary) !important;
+    font-size: 0.75rem !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
 }
 
 /* 多选下拉框容器 */
@@ -909,5 +970,143 @@ const handleClickOutside = (event: MouseEvent) => {
 .left-handle,
 .right-handle {
     pointer-events: auto;
+}
+
+/* ============================================
+   全局样式 - 非 scoped，用于原生 select option 元素
+   ============================================ */
+
+/* 确保所有 select 的 option 使用暗色主题 */
+.vue-flow__node-custom select option,
+.node-content select option {
+    background: var(--panel-bg) !important;
+    color: var(--text) !important;
+}
+
+/* 原生 select 元素全局样式 */
+.node-content select,
+.node-param select,
+.vue-flow__node-custom select {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text) !important;
+    padding: 5px 10px !important;
+    font-size: 0.8rem !important;
+    outline: none !important;
+    cursor: pointer !important;
+    width: 100% !important;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a0aec0' d='M6 8L1 3h10z'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 8px center !important;
+    padding-right: 28px !important;
+}
+
+.node-content select:focus,
+.node-param select:focus,
+.vue-flow__node-custom select:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2) !important;
+    background: rgba(0, 0, 0, 0.4) !important;
+}
+
+.node-content select:hover:not(:focus),
+.node-param select:hover:not(:focus),
+.vue-flow__node-custom select:hover:not(:focus) {
+    border-color: rgba(41, 98, 255, 0.5) !important;
+}
+
+/* 确保所有 input 元素使用暗色主题 */
+.node-content input[type="text"],
+.node-content input[type="number"],
+.node-content input[type="date"],
+.node-param input[type="text"],
+.node-param input[type="number"],
+.node-param input[type="date"],
+.vue-flow__node-custom input[type="text"],
+.vue-flow__node-custom input[type="number"],
+.vue-flow__node-custom input[type="date"] {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text) !important;
+    padding: 5px 10px !important;
+    font-size: 0.8rem !important;
+    outline: none !important;
+    transition: all 0.2s ease !important;
+    width: 100% !important;
+}
+
+.node-content input[type="text"]:focus,
+.node-content input[type="number"]:focus,
+.node-content input[type="date"]:focus,
+.node-param input[type="text"]:focus,
+.node-param input[type="number"]:focus,
+.node-param input[type="date"]:focus,
+.vue-flow__node-custom input[type="text"]:focus,
+.vue-flow__node-custom input[type="number"]:focus,
+.vue-flow__node-custom input[type="date"]:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2) !important;
+    background: rgba(0, 0, 0, 0.4) !important;
+}
+
+.node-content input[type="text"]:hover:not(:focus),
+.node-content input[type="number"]:hover:not(:focus),
+.node-content input[type="date"]:hover:not(:focus),
+.node-param input[type="text"]:hover:not(:focus),
+.node-param input[type="number"]:hover:not(:focus),
+.node-param input[type="date"]:hover:not(:focus),
+.vue-flow__node-custom input[type="text"]:hover:not(:focus),
+.vue-flow__node-custom input[type="number"]:hover:not(:focus),
+.vue-flow__node-custom input[type="date"]:hover:not(:focus) {
+    border-color: rgba(41, 98, 255, 0.5) !important;
+}
+
+/* 日期选择器特殊处理 */
+.node-content input[type="date"],
+.node-param input[type="date"],
+.vue-flow__node-custom input[type="date"] {
+    color-scheme: dark !important;
+}
+
+.node-content input[type="date"]::-webkit-calendar-picker-indicator,
+.node-param input[type="date"]::-webkit-calendar-picker-indicator,
+.vue-flow__node-custom input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7) !important;
+    cursor: pointer !important;
+}
+
+/* 数字输入框保留默认箭头，但调整样式适配暗色主题 */
+.node-content input[type="number"],
+.node-param input[type="number"],
+.vue-flow__node-custom input[type="number"] {
+    -moz-appearance: textfield !important;
+}
+
+/* Webkit 浏览器（Chrome/Edge/Safari）的自定义箭头样式 - 暗色主题 */
+.node-content input[type="number"]::-webkit-outer-spin-button,
+.node-content input[type="number"]::-webkit-inner-spin-button,
+.node-param input[type="number"]::-webkit-outer-spin-button,
+.node-param input[type="number"]::-webkit-inner-spin-button,
+.vue-flow__node-custom input[type="number"]::-webkit-outer-spin-button,
+.vue-flow__node-custom input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: inner-spin-button !important;
+    appearance: inner-spin-button !important;
+    margin: 0 !important;
+    background: rgba(0, 0, 0, 0.2) !important;
+    border-left: 1px solid var(--border) !important;
+    opacity: 0.7 !important;
+}
+
+.node-content input[type="number"]:hover::-webkit-outer-spin-button,
+.node-content input[type="number"]:hover::-webkit-inner-spin-button,
+.node-param input[type="number"]:hover::-webkit-outer-spin-button,
+.node-param input[type="number"]:hover::-webkit-inner-spin-button,
+.vue-flow__node-custom input[type="number"]:hover::-webkit-outer-spin-button,
+.vue-flow__node-custom input[type="number"]:hover::-webkit-inner-spin-button {
+    opacity: 1 !important;
 }
 </style>

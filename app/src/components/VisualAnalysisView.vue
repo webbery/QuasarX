@@ -1,22 +1,5 @@
 <template>
   <div class="visual-analysis-container">
-    <!-- 头部控制区 -->
-    <header class="header">
-      <div class="controls">
-        <select v-model="selectedAssetType" class="control-item">
-          <option value="stocks">股票板块</option>
-        </select>
-
-        <div class="date-range-picker">
-          <input type="date" v-model="startDate" class="date-input" placeholder="开始日期" />
-          <span class="date-separator">至</span>
-          <input type="date" v-model="endDate" class="date-input" placeholder="结束日期" />
-        </div>
-
-        <button type="button" class="btn btn-primary" @click="refreshData">刷新数据</button>
-      </div>
-    </header>
-
     <!-- Tab 切换 -->
     <div class="main-tabs">
       <div class="tabs-header">
@@ -40,92 +23,113 @@
           <SignalTab />
         </div>
         <!-- 资金流向 Tab -->
-        <div v-show="activeTab === 'flow'" class="tab-content">
-          <!-- 第一行：资金流入情况和流入流出Top5 -->
-          <div class="chart-row">
-            <div class="chart-container">
-              <div class="chart-header">
-                <h3>当日板块流入流出Top5</h3>
-                <div class="chart-controls">
-                  <div class="radio-group">
-                    <button
-                      v-for="opt in flowDirectionOptions"
-                      :key="opt.value"
-                      :class="['radio-btn', { active: flowDirection === opt.value }]"
-                      @click="flowDirection = opt.value"
-                    >
-                      {{ opt.label }}
-                    </button>
+        <div v-show="activeTab === 'flow'" class="tab-content flow-tab">
+          <!-- 头部控制区（移入资金流向 Tab） -->
+          <header class="header flow-header">
+            <div class="controls">
+              <select v-model="selectedAssetType" class="control-item">
+                <option value="stocks">股票板块</option>
+              </select>
+
+              <div class="date-range-picker">
+                <input type="date" v-model="startDate" class="date-input" placeholder="开始日期" />
+                <span class="date-separator">至</span>
+                <input type="date" v-model="endDate" class="date-input" placeholder="结束日期" />
+              </div>
+
+              <button type="button" class="btn btn-primary" @click="refreshData">刷新数据</button>
+            </div>
+          </header>
+
+          <!-- 图表区域 -->
+          <div class="flow-charts">
+            <!-- 第一行：资金流入情况和流入流出Top5 -->
+            <div class="chart-row">
+              <div class="chart-container">
+                <div class="chart-header">
+                  <h3>当日板块流入流出Top5</h3>
+                  <div class="chart-controls">
+                    <div class="radio-group">
+                      <button
+                        v-for="opt in flowDirectionOptions"
+                        :key="opt.value"
+                        :class="['radio-btn', { active: flowDirection === opt.value }]"
+                        @click="flowDirection = opt.value"
+                      >
+                        {{ opt.label }}
+                      </button>
+                    </div>
                   </div>
                 </div>
+                <div class="chart" ref="flowChart"></div>
               </div>
-              <div class="chart" ref="flowChart"></div>
-            </div>
 
-            <div class="chart-container">
-              <div class="chart-header">
-                <h3>{{ selectedSector ? `[${selectedSector}]当日资金流向详情` : '板块资金流向详情' }}</h3>
-                <div class="chart-controls">
-                  <div class="radio-group">
-                    <button
-                      v-for="opt in fundsChartTypeOptions"
-                      :key="opt.value"
-                      :class="['radio-btn', { active: fundsChartType === opt.value }]"
-                      @click="fundsChartType = opt.value"
-                    >
-                      {{ opt.label }}
-                    </button>
+              <div class="chart-container">
+                <div class="chart-header">
+                  <h3>{{ selectedSector ? `[${selectedSector}]当日资金流向详情` : '板块资金流向详情' }}</h3>
+                  <div class="chart-controls">
+                    <div class="radio-group">
+                      <button
+                        v-for="opt in fundsChartTypeOptions"
+                        :key="opt.value"
+                        :class="['radio-btn', { active: fundsChartType === opt.value }]"
+                        @click="fundsChartType = opt.value"
+                      >
+                        {{ opt.label }}
+                      </button>
+                    </div>
                   </div>
                 </div>
+                <div class="chart" ref="fundsChart"></div>
               </div>
-              <div class="chart" ref="fundsChart"></div>
-            </div>
-          </div>
-
-          <!-- 第二行：相关性热力图和聚类分析 -->
-          <div class="chart-row">
-            <div class="chart-container">
-              <div class="chart-header">
-                <h3>板块流入流出变化率Top5</h3>
-                <div class="chart-controls">
-                  <button size="small" class="btn btn-small" @click="exportHeatmap">导出</button>
-                </div>
-              </div>
-              <div class="chart" ref="heatmapChart"></div>
             </div>
 
-            <div class="chart-container">
-              <div class="chart-header">
-                <h3>{{ selectedSector ? `[${selectedSector}]历史资金流向` : '历史资金流向' }}</h3>
-                <div class="chart-controls">
-                  <input
-                    type="range"
-                    v-model.number="clusterCount"
-                    :min="2"
-                    :max="8"
-                    :step="1"
-                    class="slider"
-                  />
-                  <span class="slider-value">{{ clusterCount }}</span>
+            <!-- 第二行：相关性热力图和聚类分析 -->
+            <div class="chart-row">
+              <div class="chart-container">
+                <div class="chart-header">
+                  <h3>板块流入流出变化率Top5</h3>
+                  <div class="chart-controls">
+                    <button size="small" class="btn btn-small" @click="exportHeatmap">导出</button>
+                  </div>
+                </div>
+                <div class="chart" ref="heatmapChart"></div>
+              </div>
+
+              <div class="chart-container">
+                <div class="chart-header">
+                  <h3>{{ selectedSector ? `[${selectedSector}]历史资金流向` : '历史资金流向' }}</h3>
+                  <div class="chart-controls">
+                    <input
+                      type="range"
+                      v-model.number="clusterCount"
+                      :min="2"
+                      :max="8"
+                      :step="1"
+                      class="slider"
+                    />
+                    <span class="slider-value">{{ clusterCount }}</span>
+                  </div>
+                </div>
+                <div class="chart" ref="clusterChart"></div>
+              </div>
+            </div>
+
+            <!-- 底部统计信息 -->
+            <footer class="footer">
+              <div class="stats-container">
+                <div class="stat-card">
+                  <div class="stat-value">¥1,245.6亿</div>
+                  <div class="stat-label">总资产规模</div>
                 </div>
               </div>
-              <div class="chart" ref="clusterChart"></div>
-            </div>
+            </footer>
           </div>
-          <!-- 底部统计信息 -->
-          <footer class="footer">
-            <div class="stats-container">
-              <div class="stat-card">
-                <div class="stat-value">¥1,245.6亿</div>
-                <div class="stat-label">总资产规模</div>
-              </div>
-            </div>
-          </footer>
         </div>
       </div>
     </div>
 
-    
+
   </div>
 </template>
 
@@ -961,6 +965,42 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+/* 资金流向 Tab 样式：移除 padding，让 header 占满宽度 */
+.flow-tab {
+  padding: 0;
+}
+
+.flow-header {
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.flow-header .controls {
+  padding: 16px 24px;
+}
+
+.flow-charts {
+  flex: 1;
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 资金流向 Tab 内的图表行：移除固定高度，使用 flex 分配空间 */
+.flow-charts .chart-row {
+  height: auto;
+  flex: 1;
+  min-height: 300px;
+}
+
+/* footer 不占用 flex 空间 */
+.flow-charts .footer {
+  flex-shrink: 0;
+  margin-top: 16px;
 }
 
 .main-content {

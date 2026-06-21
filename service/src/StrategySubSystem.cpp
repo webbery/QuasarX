@@ -233,10 +233,20 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
         return;
     }
 
-    // 解析策略图，同时收集滑点配置
+    // 解析策略图，同时收集滑点配置和节点配置
     SlippageConfigInfo slippageConfig;
-    auto nodes = parse_strategy_script_v2(script, _handle, &slippageConfig);
+    std::map<uint32_t, nlohmann::json> nodeConfigMap;
+    auto nodes = parse_strategy_script_v2(script, _handle, &slippageConfig, &nodeConfigMap);
     auto sorted_nodes = topo_sort(nodes);
+    
+    // 按拓扑顺序初始化节点（确保数据源节点先于下游节点初始化）
+    for (auto* node: sorted_nodes) {
+        auto itr = nodeConfigMap.find(node->id());
+        if (itr != nodeConfigMap.end()) {
+            node->Init(itr->second);
+        }
+    }
+    
     InitStrategy(strategyName, sorted_nodes);
 
     // 配置滑点模型（从策略解析层提取的配置）

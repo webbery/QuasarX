@@ -133,18 +133,18 @@
     </div>
 
     <!-- 分析结果 -->
-    <div v-if="state.result" class="results">
+    <div v-if="result" class="results">
       <section class="section">
         <h3 class="section-title">EMD 分解</h3>
         <div class="chart-grid">
           <div class="chart-card full">
-            <IMF3DChart :data="state.result" />
+            <IMF3DChart :data="result" />
           </div>
         </div>
 
         <div class="chart-grid">
           <div class="chart-card half">
-            <IMFEnergyChart :data="state.result" />
+            <IMFEnergyChart :data="result" />
           </div>
           <div class="chart-card half">
             <!-- 预留：多标的 IMF 相关性热力图 -->
@@ -174,7 +174,7 @@ import { useMacroIndicators } from '../shared/composables/useMacroIndicators'
 import IMF3DChart from './charts/IMF3DChart.vue'
 import IMFEnergyChart from './charts/IMFEnergyChart.vue'
 
-const { state, QUICK_RANGES, removeSymbol, setQuickRange } = useSignalState()
+const { state, result, QUICK_RANGES, removeSymbol, setQuickRange } = useSignalState()
 const { fetchSignal } = useSignalData()
 const {
   strategyOptions,
@@ -246,13 +246,8 @@ function onStrategyChange() {
 // 监听勾选变化，同步到 state.symbols
 watch(checkedSymbols, (next) => {
   if (mode.value !== 'strategy') return
-  const current = new Set(state.symbols.map(s => s.symbol))
-  const toAdd = Array.from(next).filter(c => !current.has(c))
-
-  for (const code of toAdd) {
-    state.symbols.push({ symbol: code })
-  }
-  state.symbols = state.symbols.filter(s => next.has(s.symbol))
+  // 直接重新构建 symbols 数组，避免 push + filter 导致的中间状态
+  state.symbols = Array.from(next).map(code => ({ symbol: code }))
 }, { deep: false })
 
 // 监听宏观指标选择变化
@@ -280,14 +275,20 @@ async function runAnalysis() {
 
   analysisLoading.value = true
   try {
-    const symbols = state.symbols.map(s => s.symbol)
-    const [start_date, end_date] = state.dateRange
+    // 在 await 之前捕获数据，避免异步返回后 state 已被修改
+    const symbols = [...state.symbols.map(s => s.symbol)]
+    const [start_date, end_date] = [...state.dateRange]
     const field = mode.value === 'macro' ? 'value' : (state.field || 'close')
+    const method = state.method
+    const numImfs = state.numImfs
 
-    const result = await fetchSignal(symbols, start_date, end_date, field, state.method, state.numImfs)
-    if (result) {
-      state.result = result
+    const result_data = await fetchSignal(symbols, start_date, end_date, field, method, numImfs)
+    if (result_data) {
+      // 使用 shallowRef，避免深度响应式代理大型数组
+      result.value = result_data
     }
+  } catch (e) {
+    console.error('[SignalTab] Analysis error:', e)
   } finally {
     analysisLoading.value = false
   }
@@ -623,15 +624,18 @@ async function runAnalysis() {
   border-radius: 8px;
   padding: 12px;
   min-height: 300px;
+  height: 500px;
 }
 
 .chart-card.half {
   flex: 1;
+  height: 400px;
 }
 
 .chart-card.full {
   flex: 1;
   min-height: 600px;
+  height: 600px;
 }
 
 .placeholder-card {

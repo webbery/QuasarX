@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 
@@ -12,7 +12,7 @@ const props = defineProps<{
   annualVolatility: number[]
 }>()
 
-const { chartRef, initChart, updateChart } = useECharts()
+const { chartRef, initChart, updateChart } = useECharts(false) // 不自动初始化
 
 function buildOption() {
   const { symbols, annualVolatility } = props
@@ -25,11 +25,16 @@ function buildOption() {
       textStyle: { color: '#e0e0e0', fontSize: 14 }
     },
     tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}<br/>年化波动率: ${(p[0].value * 100).toFixed(2)}%` },
-    grid: { left: '3%', right: '4%', bottom: '10%', top: '15%', containLabel: true },
+    grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
     xAxis: {
       type: 'category',
-      data: symbols.map(s => s.split('.')[1] || s),
-      axisLabel: { color: '#999', rotate: 30 }
+      data: symbols.map(s => s.split('.')[0] || s),
+      axisLabel: {
+        color: '#999',
+        rotate: 45,
+        interval: 0,
+        fontSize: 11
+      }
     },
     yAxis: {
       type: 'value',
@@ -56,9 +61,16 @@ function buildOption() {
 }
 
 watch(() => [props.symbols, props.annualVolatility], () => {
-  if (props.symbols.length >= 2 && props.annualVolatility) {
-    if (chartRef.value && !echarts.getInstanceByDom(chartRef.value)) initChart()
+  if (props.symbols.length >= 2 && props.annualVolatility && chartRef.value) {
+    if (!echarts.getInstanceByDom(chartRef.value)) initChart()
     updateChart(buildOption(), true)
   }
 }, { immediate: true })
+
+onMounted(() => {
+  if (chartRef.value && props.symbols.length >= 2 && props.annualVolatility && !echarts.getInstanceByDom(chartRef.value)) {
+    initChart()
+    updateChart(buildOption(), true)
+  }
+})
 </script>

@@ -327,7 +327,7 @@ export function useFlowOperations(state) {
     const params = {}
     for (const p of entry.params) {
       const optArr = Array.isArray(p.options)
-        ? (typeof p.options[0] === 'object' ? p.options : p.options)
+        ? (typeof p.options[0] === 'object' ? p.options.map(o => typeof o === 'object' ? o : { label: o, value: o }) : p.options)
         : undefined
       params[p.label] = {
         value: p.default,

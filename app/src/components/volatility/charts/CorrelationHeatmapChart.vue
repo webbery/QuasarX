@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 
@@ -12,7 +12,7 @@ const props = defineProps<{
   correlationMatrix: number[][]
 }>()
 
-const { chartRef, initChart, updateChart } = useECharts()
+const { chartRef, initChart, updateChart } = useECharts(false) // 不自动初始化
 
 function buildOption() {
   const { symbols, correlationMatrix } = props
@@ -40,17 +40,25 @@ function buildOption() {
         return `${symbols[y]} ↔ ${symbols[x]}<br/>相关系数: ${v.toFixed(3)}`
       }
     },
-    grid: { height: '70%', top: '15%' },
+    grid: { height: '65%', top: '12%' },
     xAxis: {
       type: 'category',
-      data: symbols.map(s => s.split('.')[1] || s),
-      axisLabel: { color: '#999', rotate: 30 },
+      data: symbols.map(s => s.split('.')[0] || s),
+      axisLabel: {
+        color: '#999',
+        rotate: 45,
+        interval: 0,
+        fontSize: 11
+      },
       splitArea: { show: true }
     },
     yAxis: {
       type: 'category',
-      data: symbols.map(s => s.split('.')[1] || s),
-      axisLabel: { color: '#999' },
+      data: symbols.map(s => s.split('.')[0] || s).reverse(),
+      axisLabel: {
+        color: '#999',
+        fontSize: 11
+      },
       splitArea: { show: true }
     },
     visualMap: {
@@ -84,9 +92,16 @@ function buildOption() {
 }
 
 watch(() => [props.symbols, props.correlationMatrix], () => {
-  if (props.symbols.length >= 2 && props.correlationMatrix) {
-    if (chartRef.value && !echarts.getInstanceByDom(chartRef.value)) initChart()
+  if (props.symbols.length >= 2 && props.correlationMatrix && chartRef.value) {
+    if (!echarts.getInstanceByDom(chartRef.value)) initChart()
     updateChart(buildOption(), true)
   }
 }, { immediate: true })
+
+onMounted(() => {
+  if (chartRef.value && props.symbols.length >= 2 && props.correlationMatrix && !echarts.getInstanceByDom(chartRef.value)) {
+    initChart()
+    updateChart(buildOption(), true)
+  }
+})
 </script>

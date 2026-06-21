@@ -34,42 +34,43 @@ export function useVolatilityData() {
       const macroSymbols = symbols.filter(isMacroSymbol)
       const isMacroMode = macroSymbols.length > 0
 
-      let response
+      const url = '/v0/analysis/volatility'
+      let params: any
+
       if (isMacroMode) {
         // 宏观指标模式：传递 country 和 indicator 参数
         const { country, indicator } = macroSymbols[0].split('/')
-        response = await axios.get('/v0/analysis/volatility', {
-          params: {
-            symbols: symbols.join(','),
-            start_date: startDate,
-            end_date: endDate,
-            windows: windows.join(','),
-            field,
-            fill_method: fillMethod,
-            // 宏观指标参数
-            country,
-            indicator
-          }
-        })
+        params = {
+          symbols: symbols.join(','),
+          start_date: startDate,
+          end_date: endDate,
+          windows: windows.join(','),
+          field,
+          fill_method: fillMethod,
+          // 宏观指标参数
+          country,
+          indicator
+        }
       } else {
         // 策略行情模式：原有逻辑
-        response = await axios.get('/v0/analysis/volatility', {
-          params: {
-            symbols: symbols.join(','),
-            start_date: startDate,
-            end_date: endDate,
-            windows: windows.join(','),
-            field,
-            fill_method: fillMethod
-          }
-        })
+        params = {
+          symbols: symbols.join(','),
+          start_date: startDate,
+          end_date: endDate,
+          windows: windows.join(','),
+          field,
+          fill_method: fillMethod
+        }
       }
+
+      const response = await axios.get(url, { params })
 
       return response.data as VolatilityAnalysisResult
     } catch (err: any) {
       const msg = err.response?.data?.error || err.message || '请求失败'
-      ElMessage.error(`波动率分析失败: ${msg}`)
-      console.error('[VolatilityData]', err)
+      const status = err.response?.status || 'N/A'
+      ElMessage.error(`波动率分析失败: [${status}] ${msg}`)
+      console.error('[VolatilityData] 请求失败:', err)
       return null
     } finally {
       loading.value = false

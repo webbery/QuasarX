@@ -101,7 +101,7 @@ QNode* generate_node(const String& id, Server* server) {
     return node;
 }
 
-List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server, SlippageConfigInfo* outSlippageConfig) {
+List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server, SlippageConfigInfo* outSlippageConfig, std::map<uint32_t, nlohmann::json>* outNodeConfigMap) {
     List<QNode*> graph;
     auto& nodes = content["nodes"];
     auto& edges = content["edges"];
@@ -202,11 +202,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         }
         itr->second->Connect(next_itr->second, sourceHandle, targetHandle);
     }
-    // 初始化
-    for (auto& node: nodeMap) {
-        auto& config = nodeConfigMap[node.first];
-        node.second->Init(config);
-    }
+    // 注意：节点初始化不在这里进行，而是由调用方在拓扑排序后按依赖顺序进行
+    // 这样可以确保 QuoteInputNode 等数据源节点先于 FunctionNode 等下游节点初始化
+    // 让 out_elements() 返回正确的结果
 
     // 收集滑点配置（从 ExecuteNode 中提取）
     if (outSlippageConfig) {
@@ -249,6 +247,13 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         if (hasSlippageConfig && !sources.empty()) {
             outSlippageConfig->sources = std::move(sources);
             outSlippageConfig->modelConfig = std::move(slippageConfig);
+        }
+    }
+
+    // 输出节点配置映射，供调用方在拓扑排序后按顺序初始化
+    if (outNodeConfigMap) {
+        for (auto& [id, config] : nodeConfigMap) {
+            (*outNodeConfigMap)[id] = config;
         }
     }
 

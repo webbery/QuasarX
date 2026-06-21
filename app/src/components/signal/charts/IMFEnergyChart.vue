@@ -22,18 +22,30 @@ const IMF_COLORS = [
 ]
 
 function buildOption() {
-  if (!props.data || !props.data.imf_info.length) return {}
+  if (!props.data || !props.data.imf_info || !props.data.imf_info.length) {
+    console.warn('[IMFEnergyChart] No data or empty imf_info')
+    return {}
+  }
 
   const { imf_info, residual } = props.data
 
+  console.log('[IMFEnergyChart] Building option with:', {
+    imf_info_count: imf_info.length,
+    residual_length: residual?.length,
+    sample_imf_info: imf_info[0]
+  })
+
   // 计算残差能量占比
-  const totalVariance = residual.reduce((sum, v) => sum + v * v, 0)
+  const totalVariance = residual?.reduce((sum, v) => sum + v * v, 0) || 0
+  console.log('[IMFEnergyChart] totalVariance:', totalVariance)
+
   imf_info.forEach(info => {
     // 已有 energy_pct
   })
 
   // 3D 柱状图数据: [IMF索引, 0(单柱), 能量占比]
   const barData = imf_info.map((info, idx) => [idx, 0, info.energy_pct || 0])
+  console.log('[IMFEnergyChart] barData sample:', barData.slice(0, 3))
 
   const labels = imf_info.map((info, idx) => `IMF${idx + 1} T=${info.mean_period.toFixed(0)}`)
 
@@ -58,7 +70,9 @@ function buildOption() {
       show: false,
       min: 0,
       max: imf_info.length - 1,
-      inRange: { color: IMF_COLORS.slice(0, imf_info.length) },
+      inRange: {
+        color: IMF_COLORS.slice(0, imf_info.length)
+      },
       dimension: 0
     },
     xAxis3D: {
@@ -66,7 +80,7 @@ function buildOption() {
       type: 'category',
       data: labels,
       axisLabel: {
-        color: (idx: number) => IMF_COLORS[idx % IMF_COLORS.length],
+        color: '#999',
         fontSize: 10
       },
       axisLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.4)' } }
@@ -103,8 +117,7 @@ function buildOption() {
         minDistance: 80,
         maxDistance: 400
       },
-      environment: '#1a2236',
-      postEffect: { enable: false },
+      // 完全移除 environment 和 postEffect
       light: {
         main: { intensity: 0.8, shadow: false },
         ambient: { intensity: 0.3 }
@@ -124,17 +137,14 @@ function buildOption() {
       bevelSize: 0.3,
       bevelSmoothness: 2,
       itemStyle: {
-        color: (params: any) => {
-          const idx = params.dataIndex % IMF_COLORS.length
-          return IMF_COLORS[idx]
-        },
         opacity: 0.85
       },
       label: {
         show: true,
         distance: 2,
         formatter: (params: any) => `${params.data[2].toFixed(1)}%`,
-        textStyle: { fontSize: 10, color: '#e0e0e0' }
+        fontSize: 10,
+        color: '#e0e0e0'
       }
     }]
   }
@@ -160,17 +170,23 @@ function updateChart() {
   }
 }
 
-watch(() => props.data, () => {
-  if (props.data) {
-    if (!chartInstance && chartRef.value) {
-      initChart()
-    } else {
-      updateChart()
-    }
+watch(() => props.data, (newData) => {
+  if (newData) {
+    setTimeout(() => {
+      if (!chartInstance && chartRef.value) {
+        initChart()
+      } else if (chartInstance) {
+        updateChart()
+      }
+    }, 0)
   }
 }, { immediate: true })
 
 onMounted(() => {
+  if (props.data && chartRef.value) {
+    setTimeout(() => initChart(), 0)
+  }
+  
   const handleResize = () => chartInstance?.resize()
   window.addEventListener('resize', handleResize)
   onBeforeUnmount(() => {
@@ -183,6 +199,8 @@ onMounted(() => {
 
 <style scoped>
 .imf-energy-3d {
+  width: 100%;
+  height: 100%;
   min-height: 350px;
 }
 </style>

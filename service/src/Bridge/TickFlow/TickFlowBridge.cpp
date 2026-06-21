@@ -1,6 +1,7 @@
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "ExchangeManager.h"
+#include "Util/datetime.h"
 #include "Util/finance.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
@@ -52,6 +53,21 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     _interval_ms = 10000;
 
     InitHttpClient();
+
+    // 配置 A 股交易时段：9:30-11:30, 13:00-15:00
+    // 使用 GetWorkingRange 获取交易所标准交易时间，再设置到 ExchangeInterface
+    auto workingRanges = GetWorkingRange(MT_Shanghai);
+    for (const auto& range : workingRanges) {
+        // time_range 存储为秒数，需要解析回 hour/minute
+        int startSec = range.Start();
+        int endSec = range.End();
+        char startH = startSec / 3600;
+        char startM = (startSec % 3600) / 60;
+        char endH = endSec / 3600;
+        char endM = (endSec % 3600) / 60;
+        SetWorkingRange(startH, endH, startM, endM);
+    }
+    INFO("[TickFlow] Working hours configured from exchange time ranges");
 
     // 启动自治调度线程（nanomsg socket 的 init/use/destroy 都在此线程内）
     _workerThread = new std::thread(&TickFlowBridge::workerLoop, this);
@@ -307,7 +323,7 @@ void TickFlowBridge::workerLoop() {
 
     auto nextWakeup = Clock::now();
 
-    while (!_stop) {
+    while (!_stop || !Server::IsExit()) {
         // 检查当前时间
         time_t curr = _server ? Now() : std::time(nullptr);
 
@@ -344,7 +360,7 @@ void TickFlowBridge::workerLoop() {
             if (wait > 0) {
                 // 等待到下一个请求窗口，但每 1s 检查一次 _stop
                 auto deadline = Clock::now() + std::chrono::milliseconds(wait);
-                while (Clock::now() < deadline && !_stop) {
+                while (Clock::now() < deadline && (!_stop ||!Server::IsExit())) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(std::min(1000L,
                         (long)std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count())));
                 }

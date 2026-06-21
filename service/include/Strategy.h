@@ -94,12 +94,14 @@ class QNode;
  * @param content 策略 JSON 内容
  * @param server Server 指针
  * @param outSlippageConfig 可选输出参数，用于返回滑点配置
+ * @param outNodeConfigMap 可选输出参数，用于返回节点配置映射（用于后续初始化）
  * @return 解析后的节点列表
  */
 List<QNode*> parse_strategy_script_v2(
     const nlohmann::json& content,
     Server* server,
-    SlippageConfigInfo* outSlippageConfig = nullptr
+    SlippageConfigInfo* outSlippageConfig = nullptr,
+    std::map<uint32_t, nlohmann::json>* outNodeConfigMap = nullptr
 );
 // 对输入的有向图节点作topo排序，返回排序后的节点
 List<QNode*> topo_sort(const List<QNode*>& graph);

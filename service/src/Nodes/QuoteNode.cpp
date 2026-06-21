@@ -75,17 +75,21 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         }
     }
 
-    // 设置数据源
+    // 读取频率设置（回测和实盘模式都需要）
+    String freqStr = "1d";
+    if (config["params"].contains("freq")) {
+        freqStr = config["params"]["freq"]["value"];
+        if (freqStr == "1m") _freq = DataFrequencyType::Min1;
+        else if (freqStr == "5m") _freq = DataFrequencyType::Min5;
+        else _freq = DataFrequencyType::Day;  // "1d" 或其他
+    }
+
+    // 回测模式专属逻辑
     if (_server->GetRunningMode() == RuningType::Backtest) {
         _source = "股票";
         if (config["params"].contains("source")) {
             _source = (String)config["params"]["source"]["value"];
         }
-
-        String freq = config["params"]["freq"]["value"];
-        if (freq == "1m") _freq = DataFrequencyType::Min1;
-        else if (freq == "5m") _freq = DataFrequencyType::Min5;
-        else _freq = DataFrequencyType::Day;  // "1d" 或其他
 
         auto* exchangeMgr = _server->GetExchangeManager();
 
@@ -97,7 +101,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
             if (etfExchange) {
                 etfExchange->SetFilter(filer);
                 auto* etfHist = dynamic_cast<ETFHistorySimulation*>(etfExchange);
-                if (etfHist) etfHist->UseFreq(freq);
+                if (etfHist) etfHist->UseFreq(freqStr);
             }
         } else {
             exchangeMgr->EnsureExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
@@ -108,11 +112,11 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
                 exchange->SetFilter(filer);
                 auto* stockHist = dynamic_cast<StockHistorySimulation*>(exchange);
                 if (stockHist) {
-                    if (freq == "1d") {
+                    if (freqStr == "1d") {
                         stockHist->UseLevel(TradingMode::T1);
                     } else {
                         stockHist->UseLevel(TradingMode::T0);
-                        stockHist->SetT0Freq(freq);
+                        stockHist->SetT0Freq(freqStr);
                     }
                 }
             }
@@ -230,9 +234,18 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
 
 Map<String, ArgType> QuoteInputNode::out_elements() {
     Map<String, ArgType> names;
+    
+    // 调试日志：打印 _symbols 和 _properties 的状态
+    INFO("[QuoteInputNode:{}] out_elements() called: _symbols size = {}, _properties size = {}", 
+         _id, _symbols.size(), _properties.size());
+    
     for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
         auto name = get_symbol(*itr);
         auto baseKey = name + ".";
+        
+        INFO("[QuoteInputNode:{}] out_elements: symbol='{}', _properties['{}'] size = {}", 
+             _id, *itr, name, _properties[name].size());
+        
         for (auto& item: _properties[name]) {
             if (item == "volume") {
                 names[baseKey + item] = ArgType::Integer_TimeSeries;
@@ -241,6 +254,8 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
             }
         }
     }
+    
+    INFO("[QuoteInputNode:{}] out_elements returning {} elements", _id, names.size());
     return names;
 }
 

@@ -6,6 +6,7 @@
 #include "Nodes/FunctionNode.h"
 #include "Nodes/PortfolioNode.h"
 #include "Nodes/QuoteNode.h"
+#include "Nodes/DebugNode.h"
 #include "StrategyNode.h"
 #include "Util/log.h"
 #include "server.h"
@@ -533,6 +534,9 @@ void FlowSubsystem::ComputeBacktestMetrics(
  */
 run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
     auto& flow = _flows.at(strategy);
+    //if (flow._graph.size() == 0)
+    //    return 0;
+
     flow._running = true;
 
     // 启动需要的 Exchange
@@ -752,13 +756,24 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
     for (auto node: flow._graph) {
         // 跳过预热期的信号、执行和投资组合节点
         if (inWarmup) {
-            if (dynamic_cast<SignalNode*>(node) || 
-                dynamic_cast<ExecuteNode*>(node) || 
+            if (dynamic_cast<SignalNode*>(node) ||
+                dynamic_cast<ExecuteNode*>(node) ||
                 dynamic_cast<PortfolioNode*>(node)) {
                 continue;
             }
         }
+        
+        String nodeType = "unknown";
+        if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "QuoteInputNode";
+        else if (dynamic_cast<FunctionNode*>(node)) nodeType = "FunctionNode";
+        else if (dynamic_cast<SignalNode*>(node)) nodeType = "SignalNode";
+        else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
+        else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
+        else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
+        
+        INFO("[Strategy] Epoch {}, executing node: {} (type: {})", context.GetEpoch(), node->id(), nodeType);
         auto result = node->Process(strategy, context);
+        INFO("[Strategy] Node {} returned result: {}", node->id(), (int)result);
         
         switch (result) {
             case NodeProcessResult::Success:

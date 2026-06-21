@@ -108,7 +108,14 @@ app.whenReady().then(async () => {
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
-                'Content-Security-Policy': ['script-src \'self\'']
+                'Content-Security-Policy': [
+                    "default-src 'self'; " +
+                    "script-src 'self' 'unsafe-eval'; " +
+                    "style-src 'self' 'unsafe-inline'; " +
+                    "img-src 'self' data: blob:; " +
+                    "connect-src 'self' https: http:; " +
+                    "font-src 'self' data:;"
+                ]
             }
         })
     })

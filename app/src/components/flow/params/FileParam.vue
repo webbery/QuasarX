@@ -30,46 +30,46 @@ defineEmits<{
 
 <style scoped>
 .file-input {
-  width: 100%;
+  width: 100% !important;
 }
 
 .file-path-display {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border, rgba(74, 158, 255, 0.3));
-  border-radius: 6px;
-  padding: 4px 8px;
-  min-height: 28px;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  background: rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  padding: 4px 8px !important;
+  min-height: 28px !important;
 }
 
 .file-path-display .path-text {
-  flex: 1;
-  color: var(--text, #e2e8f0);
-  font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: 'SF Mono', 'Consolas', monospace;
+  flex: 1 !important;
+  color: var(--text) !important;
+  font-size: 0.75rem !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-family: 'SF Mono', 'Consolas', monospace !important;
 }
 
 .file-select-btn {
-  background: rgba(41, 98, 255, 0.15);
-  border: 1px solid rgba(41, 98, 255, 0.3);
-  border-radius: 4px;
-  color: var(--text, #e2e8f0);
-  padding: 2px 8px;
-  font-size: 0.7rem;
-  cursor: pointer;
-  transition: all 0.15s;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  background: rgba(41, 98, 255, 0.15) !important;
+  border: 1px solid rgba(41, 98, 255, 0.3) !important;
+  border-radius: 4px !important;
+  color: var(--text) !important;
+  padding: 2px 8px !important;
+  font-size: 0.7rem !important;
+  cursor: pointer !important;
+  transition: all 0.15s !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
 }
 
 .file-select-btn:hover {
-  background: rgba(41, 98, 255, 0.3);
-  border-color: rgba(41, 98, 255, 0.5);
+  background: rgba(41, 98, 255, 0.3) !important;
+  border-color: rgba(41, 98, 255, 0.5) !important;
 }
 </style>

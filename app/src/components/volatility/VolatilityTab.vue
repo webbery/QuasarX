@@ -14,7 +14,7 @@
         >宏观指标</button>
       </div>
 
-      <!-- 策略模式：策略选择 + 标的池 -->
+      <!-- 策略模式：策略选择 + 标的下拉选择 -->
       <template v-if="mode === 'strategy'">
         <div class="strategy-selector">
           <label>策略:</label>
@@ -24,21 +24,29 @@
           </select>
         </div>
 
-        <!-- 标的池 -->
-        <div v-if="availableSecurities.length > 0" class="symbol-pool">
-          <span class="pool-label">标的池:</span>
-          <label
-            v-for="sec in availableSecurities"
-            :key="sec.code"
-            class="pool-checkbox"
-          >
-            <input
-              type="checkbox"
-              :checked="checkedSymbols.has(sec.code)"
-              @change="toggleSymbol(sec.code)"
-            />
-            <span>{{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}</span>
-          </label>
+        <!-- 标的多选下拉框 -->
+        <div v-if="availableSecurities.length > 0" class="symbol-multiselect-dropdown" ref="symbolDropdownRef">
+          <label>标的:</label>
+          <div class="multiselect-trigger" @click="toggleSymbolDropdown">
+            <span class="multiselect-display">
+              {{ state.symbols.length > 0 ? `已选 ${state.symbols.length} 个` : '选择标的' }}
+            </span>
+            <span class="multiselect-arrow">▼</span>
+          </div>
+          <div v-if="symbolDropdownOpen" class="multiselect-dropdown-content">
+            <label
+              v-for="sec in availableSecurities"
+              :key="sec.code"
+              class="multiselect-checkbox"
+            >
+              <input
+                type="checkbox"
+                :checked="checkedSymbols.has(sec.code)"
+                @change="toggleSymbol(sec.code)"
+              />
+              <span>{{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}</span>
+            </label>
+          </div>
         </div>
         <div v-else-if="selectedStrategyId && !loading" class="pool-empty">
           该策略未找到行情输入节点
@@ -65,19 +73,6 @@
           </select>
         </div>
       </template>
-
-      <!-- 已选标的 tag -->
-      <div v-if="state.symbols.length > 0" class="selected-symbols">
-        <span class="selected-label">已选:</span>
-        <span
-          v-for="(sym, idx) in state.symbols"
-          :key="sym.symbol"
-          class="symbol-tag"
-        >
-          {{ sym.symbol }}
-          <button class="tag-close" @click="removeSymbol(idx)">×</button>
-        </span>
-      </div>
 
       <div class="control-spacer" />
 
@@ -114,19 +109,29 @@
     <div v-if="state.result" class="results">
       <!-- 单标的分析 -->
       <section v-if="state.symbols.length >= 1" class="section">
-        <h3 class="section-title">单标的分析</h3>
+        <div class="section-header">
+          <h3 class="section-title">单标的分析</h3>
+          <div v-if="state.symbols.length > 1" class="symbol-selector-inline">
+            <label>当前标的:</label>
+            <select v-model="currentSymbolIndex" class="select-small">
+              <option v-for="(sym, idx) in state.symbols" :key="sym.symbol" :value="idx">
+                {{ sym.symbol }}
+              </option>
+            </select>
+          </div>
+        </div>
         <div class="chart-grid">
           <div class="chart-card half">
             <ReturnDistributionChart :data="currentSingleResult" />
           </div>
           <div class="chart-card half">
-            <RollingVolatilityChart :data="currentSingleResult" :windows="state.windows" />
+            <RollingVolatilityChart :data="currentSingleResult" :windows="state.windows" :dates="state.result.dates" />
           </div>
         </div>
 
         <div class="chart-grid">
           <div class="chart-card full">
-            <PriceBandChart :data="currentSingleResult" />
+            <PriceBandChart :data="currentSingleResult" :dates="state.result.dates" />
           </div>
         </div>
 
@@ -140,11 +145,8 @@
         </div>
 
         <div class="chart-grid">
-          <div class="chart-card half">
-            <VolatilityMetricsCard :data="currentSingleResult" />
-          </div>
-          <div class="chart-card half">
-            <RiskMetricsCard :data="currentSingleResult" />
+          <div class="chart-card full">
+            <MetricsCard :data="currentSingleResult" />
           </div>
         </div>
       </section>
@@ -186,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useVolatilityState, useVolatilityData } from './index'
 import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
 import { useMacroIndicators } from '../shared/composables/useMacroIndicators'
@@ -195,8 +197,7 @@ import RollingVolatilityChart from './charts/RollingVolatilityChart.vue'
 import PriceBandChart from './charts/PriceBandChart.vue'
 import VolatilityClusteringChart from './charts/VolatilityClusteringChart.vue'
 import AutocorrelationChart from './charts/AutocorrelationChart.vue'
-import VolatilityMetricsCard from './charts/VolatilityMetricsCard.vue'
-import RiskMetricsCard from './charts/RiskMetricsCard.vue'
+import MetricsCard from './charts/MetricsCard.vue'
 import CorrelationHeatmapChart from './charts/CorrelationHeatmapChart.vue'
 import VolatilityComparisonChart from './charts/VolatilityComparisonChart.vue'
 import CovarianceEigenChart from './charts/CovarianceEigenChart.vue'
@@ -219,6 +220,9 @@ type AnalysisMode = 'strategy' | 'macro'
 const mode = ref<AnalysisMode>('strategy')
 const selectedMacroCountry = ref('china')
 const selectedMacroIndicator = ref('')
+const selectedSymbolForAdd = ref('')
+const symbolDropdownOpen = ref(false)
+const symbolDropdownRef = ref<HTMLElement | null>(null)
 
 const filteredMacroOptions = computed(() =>
   macroOptionsByCountry.value[selectedMacroCountry.value] || []
@@ -238,15 +242,18 @@ const canAnalyze = computed(() => {
 
 function switchMode(newMode: AnalysisMode) {
   mode.value = newMode
+  symbolDropdownOpen.value = false
   // 清空旧模式的状态
   if (newMode === 'strategy') {
     selectedMacroIndicator.value = ''
     state.symbols = []
+    selectedSymbolForAdd.value = ''
   } else {
     selectedStrategyId.value = ''
     availableSecurities.value = []
     checkedSymbols.value = new Set()
     state.symbols = []
+    selectedSymbolForAdd.value = ''
     // 默认选中第一个指标
     const opts = filteredMacroOptions.value
     if (opts.length > 0) {
@@ -254,6 +261,25 @@ function switchMode(newMode: AnalysisMode) {
     }
   }
 }
+
+function toggleSymbolDropdown() {
+  symbolDropdownOpen.value = !symbolDropdownOpen.value
+}
+
+// 点击外部关闭下拉框
+function handleClickOutside(event: MouseEvent) {
+  if (symbolDropdownRef.value && !symbolDropdownRef.value.contains(event.target as Node)) {
+    symbolDropdownOpen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 
 function onMacroCountryChange() {
   selectedMacroIndicator.value = ''
@@ -270,6 +296,14 @@ function onStrategyChange() {
     availableSecurities.value = []
     checkedSymbols.value = new Set()
     state.symbols = []
+    selectedSymbolForAdd.value = ''
+  }
+}
+
+function onSymbolSelect() {
+  if (selectedSymbolForAdd.value && !state.symbols.some(s => s.symbol === selectedSymbolForAdd.value)) {
+    state.symbols.push({ symbol: selectedSymbolForAdd.value })
+    selectedSymbolForAdd.value = '' // 清空选择
   }
 }
 
@@ -310,10 +344,10 @@ function updateEndDate(event: Event) {
 }
 
 // 当前选中的单标的结果（默认第一个）
-const currentSymbolIndex = 0
+const currentSymbolIndex = ref(0)
 const currentSingleResult = computed(() => {
   if (!state.result?.single) return null
-  const sym = state.symbols[currentSymbolIndex]?.symbol
+  const sym = state.symbols[currentSymbolIndex.value]?.symbol
   return sym ? state.result.single[sym] : null
 })
 
@@ -353,6 +387,7 @@ async function runAnalysis() {
   background: rgba(26, 34, 54, 0.8);
   border-bottom: 1px solid rgba(74, 85, 104, 0.3);
   flex-wrap: wrap;
+  min-height: 52px;
 }
 
 /* 模式切换按钮 */
@@ -399,6 +434,91 @@ async function runAnalysis() {
   white-space: nowrap;
 }
 
+/* 标的多选下拉框 */
+.symbol-multiselect-dropdown {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.symbol-multiselect-dropdown label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
+.multiselect-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 120px;
+  transition: border-color 0.2s;
+}
+
+.multiselect-trigger:hover {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.multiselect-display {
+  font-size: 12px;
+  color: #e0e0e0;
+}
+
+.multiselect-arrow {
+  font-size: 8px;
+  color: #999;
+  transition: transform 0.2s;
+}
+
+.multiselect-dropdown-content {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: rgba(26, 34, 54, 0.95);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  padding: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 1000;
+  min-width: 200px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.multiselect-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #e0e0e0;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.multiselect-checkbox:hover {
+  background: rgba(41, 98, 255, 0.1);
+}
+
+.multiselect-checkbox input[type="checkbox"] {
+  accent-color: #2962ff;
+  margin: 0;
+  cursor: pointer;
+}
+
+.multiselect-checkbox input[type="checkbox"]:checked + span {
+  color: #2962ff;
+  font-weight: 500;
+}
+
 /* 宏观指标选择器 */
 .macro-selector {
   display: flex;
@@ -412,90 +532,10 @@ async function runAnalysis() {
   white-space: nowrap;
 }
 
-/* 标的池 */
-.symbol-pool {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  background: rgba(41, 98, 255, 0.05);
-  border: 1px solid rgba(74, 85, 104, 0.2);
-  border-radius: 4px;
-}
-
-.pool-label {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-}
-
-.pool-checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #e0e0e0;
-  cursor: pointer;
-  user-select: none;
-}
-
-.pool-checkbox input[type="checkbox"] {
-  accent-color: #2962ff;
-  margin: 0;
-  cursor: pointer;
-}
-
-.pool-checkbox input[type="checkbox"]:checked + span {
-  color: #2962ff;
-  font-weight: 500;
-}
-
 .pool-empty {
   font-size: 12px;
   color: #666;
   font-style: italic;
-}
-
-/* 已选标的 */
-.selected-symbols {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.selected-label {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-}
-
-.symbol-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  background: rgba(41, 98, 255, 0.2);
-  border: 1px solid rgba(41, 98, 255, 0.4);
-  border-radius: 4px;
-  font-size: 12px;
-  color: #e0e0e0;
-}
-
-.tag-close {
-  background: transparent;
-  border: none;
-  color: #999;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
-  margin-left: 2px;
-}
-
-.tag-close:hover {
-  color: #ef232a;
 }
 
 .control-spacer {
@@ -619,14 +659,34 @@ async function runAnalysis() {
   flex: 1;
   overflow: auto;
   padding: 16px;
+  min-height: 0;
 }
 
 .section {
   margin-bottom: 24px;
 }
 
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.symbol-selector-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.symbol-selector-inline label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
 .section-title {
-  margin: 0 0 12px 0;
+  margin: 0;
   font-size: 16px;
   color: #e0e0e0;
   font-weight: 600;
@@ -645,16 +705,19 @@ async function runAnalysis() {
   border: 1px solid rgba(74, 85, 104, 0.2);
   border-radius: 8px;
   padding: 12px;
-  min-height: 300px;
+  height: 350px;
+  overflow: hidden;
 }
 
 .chart-card.half {
   flex: 1;
+  min-width: 0;
 }
 
 .chart-card.full {
-  flex: 1;
-  min-height: 350px;
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 400px;
 }
 
 .empty-state {

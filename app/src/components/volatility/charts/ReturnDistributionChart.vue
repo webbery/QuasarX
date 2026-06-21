@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 import type { VolatilitySingleResult } from '../composables/useVolatilityState'
@@ -12,7 +12,7 @@ const props = defineProps<{
   data: VolatilitySingleResult | null
 }>()
 
-const { chartRef, initChart, updateChart } = useECharts()
+const { chartRef, initChart, updateChart } = useECharts(false) // 不自动初始化
 
 function buildOption() {
   if (!props.data || !props.data.returns) return {}
@@ -110,13 +110,21 @@ function buildOption() {
 }
 
 watch(() => props.data, () => {
-  if (props.data) {
-    if (chartRef.value && !echarts.getInstanceByDom(chartRef.value)) {
+  if (props.data && chartRef.value) {
+    if (!echarts.getInstanceByDom(chartRef.value)) {
       initChart()
     }
     updateChart(buildOption(), true)
   }
 }, { immediate: true })
+
+// 组件挂载后确保图表已初始化
+onMounted(() => {
+  if (chartRef.value && props.data && !echarts.getInstanceByDom(chartRef.value)) {
+    initChart()
+    updateChart(buildOption(), true)
+  }
+})
 </script>
 
 <style scoped>

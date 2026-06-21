@@ -73,19 +73,42 @@ float Hour(const std::string& time) {
     return value;
 }
 
+/**
+ * @brief 检查给定时间戳是否处于指定的每日时间范围内
+ * 
+ * 该函数将输入的 tick 时间戳转换为本地时间，然后判断其是否落在
+ * 由 start_hour:end_hour 和 start_min:end_min 定义的时间区间内。
+ * 
+ * 典型应用场景：
+ *   - 判断当前是否处于 A 股交易时段（9:30-11:30, 13:00-15:00）
+ *   - 控制行情查询线程仅在工作时段内运行
+ *   - 定时任务的时段过滤
+ * 
+ * @param tick          Unix 时间戳（将转换为本地时间进行判断）
+ * @param start_hour    起始小时（24 小时制，例如 9 表示上午 9 点）
+ * @param end_hour      结束小时（24 小时制，例如 11 表示上午 11 点）
+ * @param start_min     起始分钟（0-59）
+ * @param end_min       结束分钟（0-59）
+ * @return true         tick 的本地时间处于 [start_hour:start_min, end_hour:end_min] 范围内
+ * @return false        tick 的本地时间超出该范围
+ * 
+ * @note 该函数使用 std::chrono::zoned_time 进行时区转换，自动处理夏令时
+ * @note 时间范围比较采用闭区间 [start, end]，边界值被视为在范围内
+ * @note 该函数不支持跨午夜时段（如 23:00-06:00），如需跨午夜请使用 time_range::equal
+ */
 bool IsInTimeRange(time_t tick, char start_hour, char end_hour, char start_min, char end_min) {
     using namespace std::chrono;
     // 获取当前本地时间
     auto now = zoned_time{current_zone(), system_clock::from_time_t(tick)}.get_local_time();
-    
+
     // 计算自当日午夜的持续时间
     auto midnight = floor<days>(now);
     auto since_midnight = now - midnight;
-    
+
     // 定义时间范围
     auto start = hours{start_hour} + minutes{start_min};
     auto end = hours{end_hour} + minutes{end_min};
-    
+
     return since_midnight >= start && since_midnight <= end;
 }
 

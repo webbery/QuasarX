@@ -65,14 +65,12 @@ export function useECharts(autoInit = true): UseEChartsReturn {
     }
 
     chart.value = echarts.init(chartRef.value, 'quasarx-dark')
-    
+
     // 监听容器大小变化
     resizeObserver = new ResizeObserver(() => {
       chart.value?.resize()
     })
     resizeObserver.observe(chartRef.value)
-
-    console.info('[useECharts] 图表已初始化')
   }
 
   /**
@@ -82,7 +80,10 @@ export function useECharts(autoInit = true): UseEChartsReturn {
    */
   function updateChart(option: any, notMerge = false) {
     if (!chart.value) {
-      console.warn('[useECharts] 图表未初始化，无法更新')
+      console.warn('[useECharts] 图表未初始化，无法更新', {
+        chartRef: chartRef.value ? '存在' : 'null',
+        chartInstance: chart.value ? '存在' : 'null'
+      })
       return
     }
     chart.value.setOption(option, notMerge)

@@ -8,6 +8,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include <utility>
+#include "boost/algorithm/string.hpp"
 
 SignalNode::SignalNode(Server* server):_server(server), _buyParser(nullptr), _sellParser(nullptr) {
 }
@@ -89,6 +90,20 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         for (auto& info: names) {
             args.insert(info.first);
         }
+    }
+
+    INFO("[SignalNode:{}] Processing, pools={}, args={}", 
+         _id, _pools.size(), boost::algorithm::join(args, ", "));
+
+    // 检查关键变量是否存在
+    for (const auto& symbol : _pools) {
+        String sym = get_symbol(symbol);
+        String shortKey = sym + ".ma_short";
+        String longKey = sym + ".ma_long";
+        bool hasShort = context.exist(shortKey);
+        bool hasLong = context.exist(longKey);
+        INFO("[SignalNode:{}] Symbol '{}': exist('{}')={}, exist('{}')={}", 
+             _id, sym, shortKey, hasShort, longKey, hasLong);
     }
 
     auto buys = _buyParser->envoke(_pools, args, context);

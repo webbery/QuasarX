@@ -49,11 +49,21 @@ static Map<String, Vector<double>> loadCsvData(
     // 尝试多个可能的路径
     Vector<String> search_paths;
     if (symbol.find('.') == String::npos) {
+        // 无后缀：尝试 sz/sh 前缀
         search_paths.push_back(base_dir + "/A_hfq/sz." + symbol + ".csv");
         search_paths.push_back(base_dir + "/A_hfq/sh." + symbol + ".csv");
         search_paths.push_back(base_dir + "/Astock/sz." + symbol + ".csv");
         search_paths.push_back(base_dir + "/Astock/sh." + symbol + ".csv");
     } else {
+        // 有后缀：将 CODE.EXCHANGE 转换为 exchange.code 格式
+        // 例如: 000001.SZ → sz.000001, 600000.SH → sh.600000
+        auto dot_pos = normalized.find('.');
+        std::string code = normalized.substr(0, dot_pos);
+        std::string exchange = normalized.substr(dot_pos + 1);
+        
+        search_paths.push_back(base_dir + "/A_hfq/" + exchange + "." + code + ".csv");
+        search_paths.push_back(base_dir + "/Astock/" + exchange + "." + code + ".csv");
+        // 也尝试原始格式（兼容已有文件）
         search_paths.push_back(base_dir + "/A_hfq/" + normalized + ".csv");
         search_paths.push_back(base_dir + "/Astock/" + normalized + ".csv");
     }

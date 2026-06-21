@@ -1,5 +1,7 @@
 #include "KBarBuilder.h"
 #include "Util/datetime.h"
+#include "Util/DuckDBLogger.h"
+#include "Util/log.h"
 
 KBarBuilder::KBarBuilder(BarFreq freq, int tolerance_seconds)
     : _freq(freq), _tolerance(tolerance_seconds) {
@@ -107,8 +109,13 @@ void KBarBuilder::OnTick(const QuoteInfo& tick) {
     auto& state = getOrCreate(tick._symbol);
     time_t tickBarStart = calcBarStart(tick._time);
 
+    INFO("[KBarBuilder:{}] OnTick: symbol={}, tickTime={}, tickBarStart={}, state.barEnd={}, _lastBarStart={}",
+                   (int)_freq, get_symbol(tick._symbol), tick._time, tickBarStart, state.barEnd, _lastBarStart);
+
     // 第一次 tick 或进入新 bar
     if (!_initialized || tickBarStart >= state.barEnd) {
+        INFO("[KBarBuilder:{}] startNewBar: symbol={}, oldBarStart={}, newBarStart={}",
+                       (int)_freq, tick._symbol, state.barStart, tickBarStart);
         startNewBar(state, tickBarStart);
     }
 
@@ -147,10 +154,17 @@ bool KBarBuilder::GetSnapshot(Map<symbol_t, QuoteInfo>& snapshot) {
     }
 
     // 还没有任何 bar 数据
-    if (minBarStart == 0) return false;
+    if (minBarStart == 0) {
+        INFO("[KBarBuilder:{}] GetSnapshot: minBarStart=0, returning false", (int)_freq);
+        return false;
+    }
 
     // 如果 bar 起始时间没变化，说明还没有新 bar 完成
-    if (_initialized && minBarStart == _lastBarStart) return false;
+    if (_initialized && minBarStart == _lastBarStart) {
+        INFO("[KBarBuilder:{}] GetSnapshot: minBarStart={} == _lastBarStart={}, returning false",
+                       (int)_freq, minBarStart, _lastBarStart);
+        return false;
+    }
 
     // 有新 bar 对齐，构建快照
     snapshot.clear();
@@ -203,6 +217,9 @@ bool KBarBuilder::GetSnapshot(Map<symbol_t, QuoteInfo>& snapshot) {
             }
         }
     }
+
+    INFO("[KBarBuilder:{}] GetSnapshot: _lastBarStart={} -> minBarStart={}, snapshot size={}",
+                   (int)_freq, _lastBarStart, minBarStart, snapshot.size());
 
     _lastBarStart = minBarStart;
     _initialized = true;

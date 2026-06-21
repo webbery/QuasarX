@@ -68,67 +68,67 @@ const selectedConfigSummary = computed(() => {
 }
 
 .config-select-wrapper .param-input {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border, rgba(74, 158, 255, 0.3));
-  border-radius: 6px;
-  color: var(--text, #e2e8f0);
-  padding: 5px 10px;
-  font-size: 0.8rem;
-  outline: none;
-  cursor: pointer;
-  width: 100%;
+  background: rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  color: var(--text) !important;
+  padding: 5px 10px !important;
+  font-size: 0.8rem !important;
+  outline: none !important;
+  cursor: pointer !important;
+  width: 100% !important;
 }
 
 .config-select-wrapper .param-input option {
-  background: var(--panel-bg, #1a2236);
-  color: var(--text, #e2e8f0);
+  background: var(--panel-bg) !important;
+  color: var(--text) !important;
 }
 
 .config-summary-card {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--border, rgba(74, 158, 255, 0.15));
-  border-radius: 4px;
-  font-size: 0.7rem;
+  margin-top: 6px !important;
+  padding: 6px 8px !important;
+  background: rgba(0, 0, 0, 0.2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 4px !important;
+  font-size: 0.7rem !important;
 }
 
 .summary-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 2px 0;
+  display: flex !important;
+  justify-content: space-between !important;
+  padding: 2px 0 !important;
 }
 
 .summary-label {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary) !important;
 }
 
 .summary-value {
-  color: var(--text, #e2e8f0);
-  font-weight: 500;
+  color: var(--text) !important;
+  font-weight: 500 !important;
 }
 
 .summary-value.positive {
-  color: #4ade80;
+  color: #4ade80 !important;
 }
 
 .create-config-btn {
-  display: block;
-  width: 100%;
-  margin-top: 6px;
-  padding: 4px 8px;
-  background: rgba(74, 222, 128, 0.1);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-  border-radius: 4px;
-  color: var(--text, #e2e8f0);
-  font-size: 0.7rem;
-  cursor: pointer;
-  text-align: center;
-  transition: all 0.15s;
+  display: block !important;
+  width: 100% !important;
+  margin-top: 6px !important;
+  padding: 4px 8px !important;
+  background: rgba(74, 222, 128, 0.1) !important;
+  border: 1px solid rgba(74, 222, 128, 0.3) !important;
+  border-radius: 4px !important;
+  color: var(--text) !important;
+  font-size: 0.7rem !important;
+  cursor: pointer !important;
+  text-align: center !important;
+  transition: all 0.15s !important;
 }
 
 .create-config-btn:hover {
-  background: rgba(74, 222, 128, 0.2);
-  border-color: rgba(74, 222, 128, 0.5);
+  background: rgba(74, 222, 128, 0.2) !important;
+  border-color: rgba(74, 222, 128, 0.5) !important;
 }
 </style>

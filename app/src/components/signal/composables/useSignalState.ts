@@ -1,7 +1,7 @@
 // app/src/components/signal/composables/useSignalState.ts
 // 信号分析状态管理
 
-import { reactive } from 'vue'
+import { reactive, shallowRef } from 'vue'
 
 export interface SymbolItem {
   symbol: string
@@ -17,7 +17,6 @@ export interface SignalState {
   dateRange: [string, string] | null
   quickRange: string
   loading: boolean
-  result: SignalAnalysisResult | null
 }
 
 export interface SignalAnalysisResult {
@@ -73,7 +72,7 @@ function formatDate(d: Date): string {
 }
 
 export function useSignalState() {
-  const state = reactive<SignalState>({
+  const state = reactive<Omit<SignalState, 'result'>>({
     symbols: [],
     editingSymbol: '',
     field: 'close',
@@ -81,9 +80,10 @@ export function useSignalState() {
     numImfs: 5,
     dateRange: null,
     quickRange: '近1年',
-    loading: false,
-    result: null
+    loading: false
   })
+
+  const result = shallowRef<SignalAnalysisResult | null>(null)
 
   function addSymbol(symbol: string) {
     if (!state.symbols.find(s => s.symbol === symbol)) {
@@ -108,6 +108,8 @@ export function useSignalState() {
 
   return {
     state,
+    result,
+    resultRef: result,
     QUICK_RANGES,
     addSymbol,
     removeSymbol,

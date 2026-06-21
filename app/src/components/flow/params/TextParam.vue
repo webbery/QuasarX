@@ -68,13 +68,36 @@ const validate = () => {
 <style scoped>
 .input-error {
   border-color: #ef4444 !important;
-  background-color: #fef2f2;
+  background-color: #fef2f2 !important;
 }
 
 .input-error-msg {
-  color: #ef4444;
-  font-size: 12px;
-  margin-top: 4px;
-  line-height: 1.4;
+  color: #ef4444 !important;
+  font-size: 12px !important;
+  margin-top: 4px !important;
+  line-height: 1.4 !important;
+}
+
+/* 强制暗色主题样式 */
+.param-input {
+  background: rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  color: var(--text) !important;
+  padding: 5px 10px !important;
+  font-size: 0.8rem !important;
+  outline: none !important;
+  transition: all 0.2s ease !important;
+  width: 100% !important;
+}
+
+.param-input:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 2px rgba(41, 98, 255, 0.2) !important;
+  background: rgba(0, 0, 0, 0.4) !important;
+}
+
+.param-input:hover:not(:focus) {
+  border-color: rgba(41, 98, 255, 0.5) !important;
 }
 </style>

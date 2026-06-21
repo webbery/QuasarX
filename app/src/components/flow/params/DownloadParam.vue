@@ -31,37 +31,37 @@ defineEmits<{
 
 <style scoped>
 .download-section {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
 .download-btn {
-  background: rgba(41, 98, 255, 0.15);
-  border: 1px solid rgba(41, 98, 255, 0.3);
-  border-radius: 4px;
-  color: var(--text, #e2e8f0);
-  padding: 4px 12px;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: all 0.15s;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  background: rgba(41, 98, 255, 0.15) !important;
+  border: 1px solid rgba(41, 98, 255, 0.3) !important;
+  border-radius: 4px !important;
+  color: var(--text) !important;
+  padding: 4px 12px !important;
+  font-size: 0.75rem !important;
+  cursor: pointer !important;
+  transition: all 0.15s !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
 }
 
 .download-btn:hover:not(:disabled) {
-  background: rgba(41, 98, 255, 0.3);
-  border-color: rgba(41, 98, 255, 0.5);
+  background: rgba(41, 98, 255, 0.3) !important;
+  border-color: rgba(41, 98, 255, 0.5) !important;
 }
 
 .download-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
 }
 
 .download-status {
-  color: var(--text-secondary, #94a3b8);
-  font-size: 0.7rem;
+  color: var(--text-secondary) !important;
+  font-size: 0.7rem !important;
 }
 </style>
