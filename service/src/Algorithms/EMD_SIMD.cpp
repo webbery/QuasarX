@@ -9,9 +9,10 @@
 // ============================================================================
 
 /**
- * @brief SIMD 加速的包络线生成（线性插值替代三次样条）
+ * @brief 三次样条包络线生成
  *
- * 在极值点之间用 SIMD 线性插值，端点外推。
+ * 在极值点之间使用自然三次样条插值（与 pyEMD 默认行为一致）。
+ * 端点外推：使用最近极值点的值。
  */
 Vector<double> simd_cubicSplineEnvelope(const Vector<double>& data,
                                           const Vector<int>& extremaIdx,
@@ -29,16 +30,19 @@ Vector<double> simd_cubicSplineEnvelope(const Vector<double>& data,
         return envelope;
     }
 
-    // 极值点间 SIMD 线性插值
-    for (size_t i = 0; i < extremaIdx.size() - 1; ++i) {
-        int i0 = extremaIdx[i];
-        int i1 = extremaIdx[i + 1];
-        double v0 = data[i0];
-        double v1 = data[i1];
-        simd_linear_interp(i0, i1, v0, v1, envPtr);
+    // 收集极值点对应的数据值
+    int nPts = static_cast<int>(extremaIdx.size());
+    Vector<int> xPts(nPts);
+    Vector<double> yPts(nPts);
+    for (int i = 0; i < nPts; ++i) {
+        xPts[i] = extremaIdx[i];
+        yPts[i] = data[extremaIdx[i]];
     }
 
-    // 外推端点
+    // 使用三次样条在极值点间插值
+    natural_cubic_spline(xPts.data(), yPts.data(), nPts, envPtr, 0, size - 1);
+
+    // 外推端点：使用最近极值点的值（与自然边界条件一致）
     double firstVal = envelope[extremaIdx[0]];
     double lastVal = envelope[extremaIdx.back()];
     for (int j = 0; j < extremaIdx[0]; ++j) envPtr[j] = firstVal;

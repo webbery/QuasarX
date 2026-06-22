@@ -39,7 +39,7 @@ export function useVolatilityData() {
 
       if (isMacroMode) {
         // 宏观指标模式：传递 country 和 indicator 参数
-        const { country, indicator } = macroSymbols[0].split('/')
+        const [country, indicator] = macroSymbols[0].split('/')
         params = {
           symbols: symbols.join(','),
           start_date: startDate,

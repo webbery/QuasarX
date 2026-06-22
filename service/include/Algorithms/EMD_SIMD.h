@@ -237,6 +237,102 @@ inline void simd_linear_interp(int i0, int i1, double v0, double v1, double* out
     }
 }
 
+/**
+ * @brief 三次样条插值（自然边界条件）
+ *
+ * 对极值点序列 (x[i], y[i]) 构造自然三次样条，在区间 [x0, x1] 内插值。
+ * 自然边界：端点二阶导数为零（与 pyEMD 默认行为一致）。
+ *
+ * @param x     极值点索引数组（单调递增）
+ * @param y     极值点值数组
+ * @param nPts  极值点数量
+ * @param out   输出插值结果（大小由调用方保证）
+ * @param outLo 插值起始索引（含）
+ * @param outHi 插值结束索引（含）
+ */
+inline void natural_cubic_spline(const int* x, const double* y, size_t nPts,
+                                  double* out, int outLo, int outHi) {
+    if (nPts < 2) {
+        double val = (nPts == 1) ? y[0] : 0.0;
+        for (int j = outLo; j <= outHi; ++j) out[j] = val;
+        return;
+    }
+
+    // 步骤 1: 计算步长 h[i] = x[i+1] - x[i]
+    int n = static_cast<int>(nPts) - 1;  // 区间数
+    Vector<double> h(n);
+    for (int i = 0; i < n; ++i) {
+        h[i] = static_cast<double>(x[i + 1] - x[i]);
+    }
+
+    // 步骤 2: 求解三对角方程组得到二阶导数 M[i]
+    // 自然边界: M[0] = M[n] = 0
+    Vector<double> alpha(n);    // 中间变量
+    Vector<double> l(n + 1);    // 下对角
+    Vector<double> mu(n + 1);   // 上对角
+    Vector<double> z(n + 1);    // 辅助变量
+    Vector<double> M(n + 1);    // 二阶导数
+
+    l[0] = 1.0; mu[0] = 0.0; z[0] = 0.0;
+
+    for (int i = 1; i < n; ++i) {
+        alpha[i] = (3.0 / h[i]) * (y[i + 1] - y[i]) -
+                    (3.0 / h[i - 1]) * (y[i] - y[i - 1]);
+    }
+
+    for (int i = 1; i < n; ++i) {
+        l[i] = 2.0 * (x[i + 1] - x[i - 1]) - h[i - 1] * mu[i - 1];
+        if (std::abs(l[i]) < 1e-15) l[i] = 1e-15;  // 防止除零
+        mu[i] = h[i] / l[i];
+        z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
+    }
+
+    l[n] = 1.0; z[n] = 0.0;
+    M[n] = 0.0;  // 自然边界
+
+    for (int j = n - 1; j >= 0; --j) {
+        M[j] = z[j] - mu[j] * M[j + 1];
+    }
+
+    // 步骤 3: 对每个区间 [x[i], x[i+1]] 执行样条插值
+    for (int i = 0; i < n; ++i) {
+        int j0 = std::max(outLo, x[i]);
+        int j1 = std::min(outHi, x[i + 1]);
+
+        if (j0 > j1) continue;
+
+        double hi = h[i];
+        double hiInv = 1.0 / hi;
+        double yi = y[i];
+        double yi1 = y[i + 1];
+        double Mi = M[i];
+        double Mi1 = M[i + 1];
+
+        // 标量循环（区间通常较短，SIMD 收益有限）
+        for (int j = j0; j <= j1; ++j) {
+            double t = static_cast<double>(j - x[i]) * hiInv;  // t ∈ [0, 1]
+            double t2 = t * t;
+            double t3 = t2 * t;
+
+            // 三次样条公式（Hermite 形式）:
+            // S(t) = (1-t)^3*y[i] + 3*(1-t)^2*t*y[i+1]
+            //      + (1-t)^3*hi^2*M[i]/6 + t*(1-t)*(2-t)*hi^2*M[i]/6
+            //      + t^3*hi^2*M[i+1]/6 - t^2*(1-t)*hi^2*M[i+1]/6
+            // 简化为:
+            // S(t) = (1-t)*y[i] + t*y[i+1]
+            //      + hi^2/6 * [(1-t)^3 - (1-t)]*M[i] + hi^2/6 * [t^3 - t]*M[i+1]
+
+            double a = (1.0 - t);
+            double b = t;
+            double a3_minus_a = a * a * a - a;  // (1-t)^3 - (1-t)
+            double b3_minus_b = b * b * b - b;   // t^3 - t
+
+            out[j] = a * yi + b * yi1 +
+                     (hi * hi / 6.0) * (a3_minus_a * Mi + b3_minus_b * Mi1);
+        }
+    }
+}
+
 /// 集合平均: out[i] = Σ buffers[j][i] / N
 inline void simd_ensemble_average(const Vector<Vector<double>>& buffers,
                                    double* out, size_t n) {

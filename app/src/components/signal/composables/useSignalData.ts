@@ -36,7 +36,7 @@ export function useSignalData() {
 
       let response
       if (isMacroMode) {
-        const { country, indicator } = macroSymbols[0].split('/')
+        const [country, indicator] = macroSymbols[0].split('/')
         response = await axios.get('/v0/analysis/signal', {
           params: {
             symbols: symbols.join(','),

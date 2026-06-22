@@ -1242,6 +1242,84 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PositionItem"
+  /analysis/signal:
+    get:
+      summary: EMD 信号分解分析
+      description: |
+        对指定标的的价格序列进行经验模态分解 (EMD/CEEMDAN)，
+        输出 IMF 分量、残差、能量分布和平均周期。
+        用于信号的频率成分分析和周期结构识别。
+      tags:
+        - Analysis
+      parameters:
+        - in: query
+          name: symbols
+          required: true
+          schema:
+            type: string
+          description: 标的代码（目前只处理第一个标的），逗号分隔
+          example: sz.900001
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date
+          description: 开始日期（YYYY-MM-DD）
+          example: "2024-01-01"
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date
+          description: 结束日期（YYYY-MM-DD）
+          example: "2025-06-01"
+        - in: query
+          name: field
+          schema:
+            type: string
+            enum: [close, open, high, low, volume, turnover]
+          description: 分析字段（默认 close）
+          example: close
+        - in: query
+          name: method
+          schema:
+            type: string
+            enum: [emd, ceemdan]
+          description: 分解方法（默认 emd）
+          example: emd
+        - in: query
+          name: num_imfs
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+          description: IMF 数量（默认 5）
+          example: 5
+        - in: query
+          name: fill_method
+          schema:
+            type: string
+            enum: [None, Forward, Backward, Linear, Zero]
+          description: 缺失值填充方法（默认 None）
+      responses:
+        '200':
+          description: EMD 分解结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalResponse"
+        '400':
+          description: 参数错误/数据不足
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /analysis/volatility:
     get:
       summary: 波动率与自相关分析
@@ -2332,6 +2410,69 @@ components:
           type: number
           description: 涨跌幅（单位：%）
           example: 2.35
+
+    # EMD 信号分析相关类型
+    IMFInfo:
+      type: object
+      description: IMF 分量信息（频率特征与能量占比）
+      properties:
+        index:
+          type: integer
+          description: IMF 序号（从 1 开始）
+        mean_period:
+          type: number
+          description: 平均周期（衡量该分量的频率特征，值越大频率越低）
+        energy_pct:
+          type: number
+          description: 能量占比（该分量占原始信号总能量的百分比）
+
+    SignalResponse:
+      type: object
+      description: EMD/CEEMDAN 分解结果
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 分析的标的列表
+        field:
+          type: string
+          description: 使用的数据字段
+        method:
+          type: string
+          enum: [emd, ceemdan]
+          description: 使用的分解方法
+        dates:
+          type: array
+          items:
+            type: string
+          description: 日期序列
+        original:
+          type: array
+          items:
+            type: number
+          description: 原始信号序列（价格/成交量等）
+        imf_components:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: IMF 分量数组，每个元素是一个时间序列
+        residual:
+          type: array
+          items:
+            type: number
+          description: 残差序列（原始信号减去所有 IMF）
+        imf_info:
+          type: array
+          items:
+            $ref: "#/components/schemas/IMFInfo"
+          description: 各 IMF 分量的频率特征和能量分布
+        reconstruction_error:
+          type: number
+          description: 重建误差（RMS 值，衡量 IMF+残差 还原原始信号的精度）
+
     Error:
       type: object
       properties:
