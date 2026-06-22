@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted } from 'vue'
+import { watch, onMounted, computed } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 import type { VolatilitySingleResult, ForecastResult } from '../composables/useVolatilityState'
@@ -12,6 +12,7 @@ const props = defineProps<{
   data: VolatilitySingleResult | null
   forecast: ForecastResult | null
   dates?: string[]
+  bandWindow?: number  // 包络带窗口大小，用于跳过前 N 个点
 }>()
 
 const { chartRef, initChart, updateChart } = useECharts(false)
@@ -19,16 +20,45 @@ const { chartRef, initChart, updateChart } = useECharts(false)
 function buildOption() {
   if (!props.data?.prices) return {}
 
-  const prices = props.data.prices
-  const upper2 = props.data.upper_2sigma
-  const upper1 = props.data.upper_1sigma
-  const lower1 = props.data.lower_1sigma
-  const lower2 = props.data.lower_2sigma
-  const mean = props.data.mean_price
+  const allPrices = props.data.prices
+  const allUpper2 = props.data.upper_2sigma
+  const allUpper1 = props.data.upper_1sigma
+  const allLower1 = props.data.lower_1sigma
+  const allLower2 = props.data.lower_2sigma
+  const allMean = props.data.mean_price
+
+  // 跳过前 N 个点（窗口大小 - 1），这些点用于计算但数据不稳定
+  const skipCount = props.bandWindow ? (props.bandWindow - 1) : 19
+
+  // 确保不越界
+  const startIndex = Math.min(skipCount, allPrices.length)
+
+  const prices = allPrices.slice(startIndex)
+  const upper2 = allUpper2.slice(startIndex)
+  const upper1 = allUpper1.slice(startIndex)
+  const lower1 = allLower1.slice(startIndex)
+  const lower2 = allLower2.slice(startIndex)
+  const mean = allMean.slice(startIndex)
+
   const len = prices.length
 
-  const dates = props.dates || []
-  const displayDates = dates.length > 0 ? dates.slice(-len) : Array.from({ length: len }, (_, i) => i)
+  // 使用 dates 作为 x 轴标签，确保与数据长度一致
+  const allDates = props.dates || []
+  let displayDates: (string | number)[]
+  if (allDates.length > startIndex) {
+    // 有足够日期：跳过前 N 个，取后面的
+    const availableDates = allDates.slice(startIndex)
+    displayDates = availableDates.slice(-len)
+  } else if (allDates.length > 0) {
+    // 日期不足：用已有日期 + 索引填充
+    displayDates = [...allDates]
+    for (let i = allDates.length; i < len; i++) {
+      displayDates.push(i)
+    }
+  } else {
+    // 无日期：纯索引
+    displayDates = Array.from({ length: len }, (_, i) => i)
+  }
 
   const series: any[] = []
 
@@ -197,7 +227,35 @@ function buildOption() {
         }
       },
       legend: { data: ['价格', '±1σ', '±2σ', '预测价格', '预测±1σ', '预测±2σ'], top: 25, textStyle: { color: '#999' } },
-      grid: { left: '3%', right: '4%', bottom: '3%', top: '18%', containLabel: true },
+      grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
+      dataZoom: [
+        {
+          type: 'inside',
+          xAxisIndex: 0,
+          start: 0,
+          end: 100,
+          zoomOnMouseWheel: true,
+          moveOnMouseMove: true,
+          moveOnMouseWheel: false
+        },
+        {
+          type: 'slider',
+          xAxisIndex: 0,
+          start: 0,
+          end: 100,
+          bottom: 10,
+          height: 20,
+          handleSize: '80%',
+          textStyle: { color: '#999' },
+          borderColor: '#444',
+          fillerColor: 'rgba(41, 98, 255, 0.1)',
+          handleStyle: { color: '#2962ff' },
+          dataBackground: {
+            lineStyle: { color: '#555' },
+            areaStyle: { color: '#333' }
+          }
+        }
+      ],
       xAxis: {
         type: 'category',
         data: allDates,
@@ -242,7 +300,35 @@ function buildOption() {
       }
     },
     legend: { data: ['价格', '±1σ', '±2σ'], top: 25, textStyle: { color: '#999' } },
-    grid: { left: '3%', right: '4%', bottom: '3%', top: '18%', containLabel: true },
+    grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        start: 0,
+        end: 100,
+        zoomOnMouseWheel: true,
+        moveOnMouseMove: true,
+        moveOnMouseWheel: false
+      },
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        start: 0,
+        end: 100,
+        bottom: 10,
+        height: 20,
+        handleSize: '80%',
+        textStyle: { color: '#999' },
+        borderColor: '#444',
+        fillerColor: 'rgba(41, 98, 255, 0.1)',
+        handleStyle: { color: '#2962ff' },
+        dataBackground: {
+          lineStyle: { color: '#555' },
+          areaStyle: { color: '#333' }
+        }
+      }
+    ],
     xAxis: {
       type: 'category',
       data: displayDates,

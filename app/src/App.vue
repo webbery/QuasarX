@@ -960,6 +960,20 @@ provide('updateReportChartVisibility', updateReportChartVisibility)
   border-radius: 2px;
 }
 
+/* 右侧面板内容区填充 */
+.right-panel-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+
+.right-panel-content > * {
+  flex: 1;
+  min-height: 0;
+}
+
 @keyframes fade-in-scale {
   from {
     opacity: 0;

@@ -98,7 +98,7 @@ jobs:
       - name: Build DuckDB (if cache miss)
         if: steps.cache-duckdb.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --branch v1.3.0 https://github.com/duckdb/duckdb
+          git clone --depth 1 --branch v1.5.4 https://github.com/duckdb/duckdb
           cd duckdb
           mkdir build && cd build
           cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_UNIT_TESTS=OFF ..

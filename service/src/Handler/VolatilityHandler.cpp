@@ -199,23 +199,23 @@ ACFDecayAnalysis VolatilityHandler::analyzeACFDecay(
 VolatilitySingleResult VolatilityHandler::computeSingle(
     const std::vector<double>& prices,
     const std::vector<double>& volumes,
-    const std::vector<int>& windows)
+    const std::vector<int>& windows,
+    int band_window)
 {
     VolatilitySingleResult result;
     result.prices = prices;
     result.volumes = volumes;
     result.returns = simpleReturns(prices);
-    
+
     if (result.returns.empty()) return result;
-    
+
     // 滚动波动率
     for (int w : windows) {
         result.rolling_vol[w] = rolling_volatility(result.returns, w);
     }
-    
-    // 波动率包络带 (基于滚动20日)
-    int band_window = 20;
-    size_t offset = (band_window - 1);
+
+    // 波动率包络带 (基于滚动窗口)
+    size_t offset = (band_window > 1) ? (band_window - 1) : 0;
     for (size_t i = 0; i < prices.size(); ++i) {
         if (i < offset) {
             result.mean_price.push_back(prices[i]);
@@ -225,7 +225,7 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
             result.lower_2sigma.push_back(prices[i]);
             continue;
         }
-        
+
         // 计算窗口内的均值和标准差
         double sum = 0;
         for (int j = 0; j < band_window; ++j) sum += prices[i - j];
@@ -236,7 +236,7 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
             var += d * d;
         }
         double s = std::sqrt(var / (band_window - 1));
-        
+
         result.mean_price.push_back(m);
         result.upper_1sigma.push_back(m + s);
         result.upper_2sigma.push_back(m + 2 * s);
@@ -448,7 +448,8 @@ VolatilityResult VolatilityHandler::compute(
     const std::string& end_date,
     const std::vector<int>& windows,
     PriceField field,
-    FillMethod fill)
+    FillMethod fill,
+    int band_window)
 {
     VolatilityResult result;
     result.symbols = symbols;
@@ -501,12 +502,16 @@ VolatilityResult VolatilityHandler::compute(
             if (volumes_vec.empty()) volumes_vec.assign(prices_vec.size(), 0.0);
         }
 
-        auto single_result = computeSingle(prices_vec, volumes_vec, windows);
+        auto single_result = computeSingle(prices_vec, volumes_vec, windows, band_window);
         result.single[symbol] = single_result;
         returns_map[symbol] = simpleReturns(prices_vec);
 
         if (common_dates.empty()) {
             common_dates.assign(dates.begin(), dates.end());
+            if (common_dates.size() != prices_vec.size()) {
+                WARN("[Volatility] Date/price length mismatch for {}: dates={}, prices={}",
+                     symbol, common_dates.size(), prices_vec.size());
+            }
         }
     }
 
@@ -548,6 +553,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         auto windows_param = req.get_param_value("windows");
         auto field_param = req.get_param_value("field");
         auto fill_param = req.get_param_value("fill_method");
+        auto band_window_param = req.get_param_value("band_window");
 
         if (symbols_param.empty()) {
             res.status = 400;
@@ -580,10 +586,21 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             }
         }
 
+        int band_window = 20;
+        if (!band_window_param.empty()) {
+            try {
+                band_window = std::stoi(band_window_param);
+                if (band_window < 2) band_window = 2;
+                if (band_window > 120) band_window = 120;
+            } catch (...) {
+                band_window = 20;
+            }
+        }
+
         PriceField field = parsePriceField(field_param);
         FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
 
-        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill);
+        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window);
 
         // 构建 JSON 响应
         nlohmann::json json;

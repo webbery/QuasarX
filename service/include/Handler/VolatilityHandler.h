@@ -103,11 +103,13 @@ private:
                                      const std::string& end_date,
                                      const std::vector<int>& windows,
                                      PriceField field = PriceField::Close,
-                                     FillMethod fill = FillMethod::None);
+                                     FillMethod fill = FillMethod::None,
+                                     int band_window = 20);
 
     static VolatilitySingleResult computeSingle(const std::vector<double>& prices,
                                                   const std::vector<double>& volumes,
-                                                  const std::vector<int>& windows);
+                                                  const std::vector<int>& windows,
+                                                  int band_window = 20);
 
     static VolatilityMultiResult computeMulti(const std::map<std::string, std::vector<double>>& returns_map);
 

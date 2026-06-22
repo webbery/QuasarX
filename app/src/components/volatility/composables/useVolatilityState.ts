@@ -21,6 +21,8 @@ export interface VolatilityState {
   quickRange: string
   /** 滚动窗口配置 */
   windows: number[]
+  /** 包络带窗口 (默认 20 天) */
+  bandWindow: number
   /** 是否正在加载 */
   loading: boolean
   /** 分析结果 */
@@ -151,6 +153,7 @@ export function useVolatilityState() {
     dateRange: null,
     quickRange: '近1年',
     windows: [20, 60, 120],
+    bandWindow: 20,
     loading: false,
     result: null
   })

@@ -362,16 +362,21 @@ const loadVersion = (version: any) => {
 <style scoped>
 .history-panel {
   height: 100%;
+  width: 100%;
   background-color: var(--darker-bg);
   border-left: 1px solid var(--border);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   color: var(--text);
   overflow: auto;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .tree-container {
   padding: 16px 12px;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .strategy-node {

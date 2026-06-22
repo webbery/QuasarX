@@ -100,6 +100,17 @@
         </div>
       </div>
 
+      <!-- 包络带窗口 -->
+      <div class="band-window-selector">
+        <label>包络窗口:</label>
+        <select v-model.number="state.bandWindow" class="select-small">
+          <option :value="10">10天</option>
+          <option :value="20">20天</option>
+          <option :value="30">30天</option>
+          <option :value="60">60天</option>
+        </select>
+      </div>
+
       <button class="btn btn-primary btn-small" :disabled="loading || !canAnalyze" @click="runAnalysis">
         {{ loading ? '分析中...' : '开始分析' }}
       </button>
@@ -131,6 +142,7 @@
 
         <div class="chart-grid">
           <div class="chart-card full">
+
             <!-- 预测源选择（仅当任一预测可用时显示） -->
             <div v-if="currentSingleResult?.forecast_returns?.has_autocorrelation ||
                         currentSingleResult?.forecast_vol?.has_autocorrelation"
@@ -422,7 +434,7 @@ async function runAnalysis() {
     const [start_date, end_date] = state.dateRange
     const field = mode.value === 'macro' ? 'value' : (state.field || 'close')
 
-    const result = await fetchVolatility(symbols, start_date, end_date, state.windows, field)
+    const result = await fetchVolatility(symbols, start_date, end_date, state.windows, field, 'none', state.bandWindow)
     if (result) {
       state.result = result
     }
@@ -652,6 +664,18 @@ async function runAnalysis() {
 .date-sep {
   color: #999;
   font-size: 12px;
+}
+
+.band-window-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.band-window-selector label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
 }
 
 .select-small {
