@@ -4,6 +4,7 @@
 #include "Metric/RiskMetric.h"
 #include "Metric/Drawdown.h"
 #include "Metric/Volatility.h"
+#include "Algorithms/ARModel.h"
 #include <vector>
 #include <string>
 #include <map>
@@ -57,6 +58,10 @@ struct VolatilitySingleResult {
     std::vector<double> returns_pacf;
     std::vector<double> abs_returns_acf;
     ACFDecayAnalysis acf_decay;
+
+    // AR(p) 预测结果
+    ar_model::ForecastResult forecast_returns;
+    ar_model::ForecastResult forecast_vol;
 };
 
 struct VolatilityMultiResult {
@@ -66,6 +71,16 @@ struct VolatilityMultiResult {
     double condition_number = 0;
     bool is_positive_definite = true;
     std::vector<double> annual_volatility;
+
+    // 多资产预测外推
+    struct MultiForecast {
+        int horizon = 0;
+        std::vector<std::string> symbols;
+        std::vector<std::vector<double>> forecast_cov;
+        std::vector<std::vector<double>> forecast_corr;
+        std::vector<double> forecast_volatilities;
+    };
+    MultiForecast multi_forecast;
 };
 
 struct VolatilityResult {

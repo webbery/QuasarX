@@ -64,6 +64,24 @@ export interface VolatilitySingleResult {
     decay_half_life: number
     hurst_estimate: number
   }
+  // AR(p) 预测结果
+  forecast_returns: ForecastResult | null
+  forecast_vol: ForecastResult | null
+}
+
+export interface ForecastResult {
+  source_series: string
+  order_p: number
+  ar_coeffs: number[]
+  residual_var: number
+  forecast_values: number[]
+  forecast_upper_1sigma: number[]
+  forecast_lower_1sigma: number[]
+  forecast_upper_2sigma: number[]
+  forecast_lower_2sigma: number[]
+  forecast_std: number[]
+  has_autocorrelation: boolean
+  note: string
 }
 
 export interface VolatilityMultiResult {
@@ -73,6 +91,16 @@ export interface VolatilityMultiResult {
   condition_number: number
   is_positive_definite: boolean
   annual_volatility: number[]
+  // 多资产预测外推
+  multi_forecast: MultiForecast | null
+}
+
+export interface MultiForecast {
+  horizon: number
+  symbols: string[]
+  forecast_cov: number[][]
+  forecast_corr: number[][]
+  forecast_volatilities: number[]
 }
 
 const QUICK_RANGES: [string, () => [string, string]][] = [

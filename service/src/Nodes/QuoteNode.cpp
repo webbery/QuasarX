@@ -78,7 +78,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
     // 读取频率设置（回测和实盘模式都需要）
     String freqStr = "1d";
     if (config["params"].contains("freq")) {
-        freqStr = config["params"]["freq"]["value"];
+        freqStr = (String)config["params"]["freq"]["value"];
         if (freqStr == "1m") _freq = DataFrequencyType::Min1;
         else if (freqStr == "5m") _freq = DataFrequencyType::Min5;
         else _freq = DataFrequencyType::Day;  // "1d" 或其他

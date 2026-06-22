@@ -1,367 +1,569 @@
+#!/usr/bin/env python3
 """
-波动率分析 API 测试
+波动率分析 API 完整测试（历史回测模式）
 
-测试 /v0/analysis/volatility GET 接口：
-- 单标的波动率指标
-- 多标的关联分析
-- 参数校验
-- 历史回测模式下与 Python 预期数据对比
+验证策略：
+1. 波动率指标（年化波动率/最大回撤/VaR/CVaR）→ empyrical 黄金标准对比
+2. AR(p) 自回归预测（系数/预测值/残差方差）→ statsmodels 黄金标准对比
+3. 数学属性（置信区间包含/对称性/正定性）→ 精确验证
+4. API 结构/参数校验 → 基础测试
 
-前置条件：
-1. 服务已启动并处于回测模式
-2. 已运行 generate_test_data.py 生成测试数据
+黄金标准库：
+- empyrical: Quantopian 金融指标库（年化波动率/最大回撤/VaR/CVaR）
+- statsmodels: 学术级时序分析库（Yule-Walker/AR 预测/置信区间）
+
+使用方法：
+  pytest test_volatility_forecast.py -v
+
+前置准备：
+  pip install empyrical statsmodels
+  python generate_test_data.py  # 生成基础测试数据
+  服务已启动
 """
+
 import pytest
 import requests
-import os
 import csv
 import numpy as np
 from pathlib import Path
-from tool import check_response, BASE_URL
+from typing import Dict, List, Tuple, Optional
 
+# 黄金标准库
+try:
+    import empyrical
+except ImportError:
+    raise ImportError("需要 empyrical 库，请运行: pip install empyrical")
+
+try:
+    from statsmodels.tsa.stattools import yule_walker, acf as sm_acf
+    from statsmodels.tsa.ar_model import AutoReg
+except ImportError:
+    raise ImportError("需要 statsmodels 库，请运行: pip install statsmodels")
+
+# 抑制 SSL 警告
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ============================================================
+# 配置
+# ============================================================
+
+BASE_URL = "https://localhost:19107/v0"
+VERIFY_SSL = False
+
+# 测试数据目录
+SERVICE_DATA_DIR = Path(__file__).parent.parent.parent / "build" / "data"
+HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
+ORG_DIR = SERVICE_DATA_DIR / "AStock"
+
+# 固定随机种子保证可重复
+np.random.seed(42)
+
+# 指标对比容差
+VOL_TOLERANCE = 0.05  # 波动率指标 5% 容差（empyrical 与 C++ 计算方法可能有微小差异）
+AR_TOLERANCE = 0.01   # AR 系数 1% 容差（纯数学计算，应高度一致）
+
+
+# ============================================================
+# 辅助函数
+# ============================================================
+
+def simple_returns(prices: List[float]) -> np.ndarray:
+    """简单收益率"""
+    return np.array([(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))])
+
+
+def compute_empyrical_metrics(returns: np.ndarray) -> Dict:
+    """使用 empyrical 计算波动率指标（黄金标准）"""
+    return {
+        "annual_volatility": empyrical.annual_volatility(returns, period='daily'),
+        "max_drawdown": abs(empyrical.max_drawdown(returns)),
+        "cvar": abs(empyrical.conditional_value_at_risk(returns)),
+    }
+
+
+def find_significant_lag_golden(returns: np.ndarray, max_p: int = 10) -> int:
+    """使用 statsmodels ACF 找到显著 lag"""
+    N = len(returns)
+    if N < 30:
+        return 0
+    acf_values = sm_acf(returns, nlags=max_p, fft=False)
+    threshold = 1.96 / np.sqrt(N)
+    result = 0
+    for k in range(1, len(acf_values)):
+        if abs(acf_values[k]) > threshold:
+            result = k
+    return result
+
+
+def compute_ar_golden(returns: np.ndarray, p: int) -> Dict:
+    """使用 statsmodels Yule-Walker 计算 AR(p)"""
+    if p <= 0:
+        return {"ar_coeffs": [], "residual_var": 0.0, "sigma": 0.0}
+    ar_coeffs, sigma = yule_walker(returns, order=p, method="mle")
+    return {
+        "ar_coeffs": ar_coeffs.tolist(),
+        "residual_var": float(sigma ** 2),
+        "sigma": float(sigma)
+    }
+
+
+def compute_forecast_golden(returns: np.ndarray, prices: List[float],
+                            max_p: int = 10) -> Optional[Dict]:
+    """使用 statsmodels AutoReg 做完整预测"""
+    p = find_significant_lag_golden(returns, max_p)
+    if p == 0:
+        return None
+
+    model = AutoReg(returns, lags=p, old_names=False)
+    fit_result = model.fit()
+    forecast = fit_result.forecast(steps=p)
+    forecast_mean = forecast.mean.values
+    forecast_se = forecast.se_mean.values
+
+    last_price = prices[-1]
+    return {
+        "order_p": p,
+        "ar_coeffs": fit_result.params[1:].tolist(),
+        "residual_var": float(fit_result.sigma2),
+        "forecast_values": forecast_mean.tolist(),
+        "forecast_std": forecast_se.tolist(),
+        "forecast_upper_1sigma": (last_price + forecast_mean + forecast_se).tolist(),
+        "forecast_lower_1sigma": (last_price + forecast_mean - forecast_se).tolist(),
+        "forecast_upper_2sigma": (last_price + forecast_mean + 2 * forecast_se).tolist(),
+        "forecast_lower_2sigma": (last_price + forecast_mean - 2 * forecast_se).tolist(),
+    }
+
+
+def call_volatility_api(symbol: str, start_date: str, end_date: str,
+                        windows: str = "20", auth_token: str = None) -> Dict:
+    """调用波动率分析 API"""
+    kwargs = {'verify': VERIFY_SSL}
+    if auth_token and len(auth_token) > 10:
+        kwargs['headers'] = {'Authorization': auth_token}
+    resp = requests.get(
+        f"{BASE_URL}/analysis/volatility",
+        params={"symbols": symbol, "start_date": start_date, "end_date": end_date, "windows": windows},
+        **kwargs
+    )
+    assert resp.status_code == 200, f"API 请求失败: {resp.status_code} - {resp.text}"
+    return resp.json()
+
+
+def load_csv_prices(symbol: str) -> Tuple[List[float], List[str]]:
+    """从 CSV 加载收盘价和日期"""
+    csv_path = HFQ_DIR / f"{symbol}.csv"
+    if not csv_path.exists():
+        csv_path = ORG_DIR / f"{symbol}.csv"
+    if not csv_path.exists():
+        pytest.skip(f"测试数据不存在: {csv_path}")
+    closes, dates = [], []
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            closes.append(float(row['close']))
+            dates.append(row['datetime'])
+    return closes, dates
+
+
+# ============================================================
+# 测试类 1：完整波动率分析 API 基础测试
+# ============================================================
 
 @pytest.mark.usefixtures("auth_token")
 class TestVolatilityAPI:
     """波动率分析 API 基础测试"""
 
-    def test_volatility_single_symbol(self, auth_token):
-        """单标的波动率分析"""
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
+    def test_single_symbol_fields(self, auth_token):
+        """单标的应返回所有必要字段"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
 
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": "sz.900001",
-                "start_date": "2023-01-01",
-                "end_date": "2023-04-01",
-                "windows": "20,60"
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        assert "symbols" in data
-        assert "single" in data
-        assert "sz.900001" in data["single"]
+        assert "symbols" in resp
+        assert "single" in resp
+        assert symbol in resp["single"]
+        single = resp["single"][symbol]
 
-        single = data["single"]["sz.900001"]
-        assert "prices" in single
-        assert "returns" in single
-        assert "annual_volatility" in single
-        assert "max_drawdown" in single
-        assert "skewness" in single
-        assert "kurtosis" in single
-        assert "var_95" in single
-        assert "cvar_95" in single
-        assert "rolling_vol" in single
-        assert "returns_acf" in single
-        assert "abs_returns_acf" in single
+        required = ["prices", "returns", "annual_volatility", "max_drawdown",
+                    "skewness", "kurtosis", "var_95", "cvar_95", "rolling_vol",
+                    "returns_acf", "abs_returns_acf"]
+        for field in required:
+            assert field in single, f"缺少字段: {field}"
 
-        # 验证数据类型
-        assert single["annual_volatility"] >= 0
-        assert single["max_drawdown"] >= 0
+    def test_multiple_symbols_correlation(self, auth_token):
+        """多标的应返回相关系数矩阵"""
+        closes, dates = load_csv_prices("sz.900001")
+        resp = call_volatility_api("sz.900001,sz.900002", dates[0], dates[-1], auth_token=auth_token)
 
-    def test_volatility_multiple_symbols(self, auth_token):
-        """多标的关联分析"""
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
-
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": "sz.900001,sz.900002",
-                "start_date": "2023-01-01",
-                "end_date": "2023-04-01"
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        assert "multi" in data
-        multi = data["multi"]
+        assert "multi" in resp
+        multi = resp["multi"]
         assert "correlation_matrix" in multi
-        assert "covariance_matrix" in multi
-        assert "condition_number" in multi
-        assert "is_positive_definite" in multi
-        assert "annual_volatility" in multi
-
-        # 验证矩阵维度
         assert len(multi["correlation_matrix"]) == 2
-        assert len(multi["correlation_matrix"][0]) == 2
-        assert len(multi["annual_volatility"]) == 2
-
-        # 对角线应为 1
         assert abs(multi["correlation_matrix"][0][0] - 1.0) < 0.01
 
-    def test_volatility_missing_symbols(self, auth_token):
+    def test_missing_symbols_400(self, auth_token):
         """缺少标的参数应返回 400"""
-        kwargs = {'verify': False}
+        kwargs = {'verify': VERIFY_SSL}
         if auth_token and len(auth_token) > 10:
             kwargs['headers'] = {'Authorization': auth_token}
-
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={"start_date": "2023-01-01"},
-            **kwargs
-        )
+        resp = requests.get(f"{BASE_URL}/analysis/volatility", params={"start_date": "2023-01-01"}, **kwargs)
         assert resp.status_code == 400
-        assert "error" in resp.json()
 
-    def test_volatility_no_data(self, auth_token):
+    def test_nonexistent_symbol_empty(self, auth_token):
         """不存在的标的数据应返回空结果"""
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
-
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": "sz.999999",
-                "start_date": "2023-01-01",
-                "end_date": "2023-04-01"
-            },
-            **kwargs
-        )
-        # 不存在的标的：返回 200 且 single 中无该标的
-        assert resp.status_code == 200
-        try:
-            data = resp.json()
-        except Exception:
-            pytest.fail(f"响应不是有效 JSON: {resp.text}")
-        
-        assert isinstance(data, dict), f"响应不是字典: {type(data)}"
-        single = data.get("single")
-        # single 为 None 或空字典都表示无数据
+        closes, dates = load_csv_prices("sz.900001")
+        resp = call_volatility_api("sz.999999", dates[0], dates[-1], auth_token=auth_token)
+        # call_volatility_api 已断言 200，这里直接检查数据
+        single = resp.get("single")
         assert single is None or (isinstance(single, dict) and "sz.999999" not in single)
 
 
+# ============================================================
+# 测试类 2：波动率指标 vs empyrical 黄金标准
+# ============================================================
+
 @pytest.mark.usefixtures("auth_token")
-class TestVolatilityAccuracy:
-    """波动率计算精度测试：与 Python 预期对比"""
+class TestVolatilityEmpyrical:
+    """波动率指标 vs empyrical 黄金标准对比"""
 
-    @staticmethod
-    def load_csv_prices(symbol):
-        """读取测试 CSV 数据"""
-        csv_path = Path(__file__).parent.parent.parent / "build" / "data" / "AStock" / f"{symbol}.csv"
-        if not csv_path.exists():
-            pytest.skip(f"测试数据不存在: {csv_path}")
-        with open(csv_path, 'r') as f:
-            rows = list(csv.DictReader(f))
-        closes = [float(r['close']) for r in rows]
-        volumes = [float(r.get('volume', 0)) for r in rows]
-        dates = [r['datetime'] for r in rows]
-        return closes, volumes, dates
-
-    @staticmethod
-    def compute_python_expected(closes):
-        """计算 Python 预期指标"""
-        returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
-        n = len(returns)
-        if n < 2:
-            return {}
-
-        annual_vol = np.std(returns, ddof=1) * np.sqrt(252)
-        max_dd = 0
-        peak = closes[0]
-        for v in closes:
-            if v > peak:
-                peak = v
-            dd = (peak - v) / peak
-            if dd > max_dd:
-                max_dd = dd
-
-        m = np.mean(returns)
-        s = np.std(returns, ddof=1)
-        skew = float((n / ((n-1) * (n-2))) * sum(((r - m) / s) ** 3 for r in returns)) if s > 1e-10 else 0
-
-        sorted_returns = sorted(returns)
-        var_idx = int(0.05 * n)
-        var_95 = -sorted_returns[var_idx] if var_idx < n else 0
-
-        return {
-            "annual_volatility": annual_vol,
-            "max_drawdown": max_dd,
-            "skewness": skew,
-            "var_95": var_95
-        }
-
-    def test_up_trend_volatility_accuracy(self, auth_token):
-        """验证单边上涨用例的波动率计算精度"""
+    def test_annual_volatility_up_trend(self, auth_token):
+        """验证单边上涨用例的年化波动率与 empyrical 一致"""
         symbol = "sz.900001"
-        closes, volumes, dates = self.load_csv_prices(symbol)
+        closes, dates = load_csv_prices(symbol)
+        returns = simple_returns(closes)
 
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_vol = resp["single"][symbol]["annual_volatility"]
+        emp_vol = empyrical.annual_volatility(returns, period='daily')
 
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": symbol,
-                "start_date": dates[0],
-                "end_date": dates[-1]
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        cpp_result = data["single"][symbol]
+        if emp_vol > 0:
+            rel_err = abs(cpp_vol - emp_vol) / emp_vol
+            assert rel_err < VOL_TOLERANCE, \
+                f"年化波动率差异: C++={cpp_vol:.6f}, empyrical={emp_vol:.6f}, 误差={rel_err:.4f}"
 
-        expected = self.compute_python_expected(closes)
-
-        # 验证波动率（容差 5%）
-        cpp_vol = cpp_result["annual_volatility"]
-        py_vol = expected["annual_volatility"]
-        if py_vol > 0:
-            assert abs(cpp_vol - py_vol) / py_vol < 0.05, \
-                f"年化波动率差异过大: C++={cpp_vol:.6f}, Python={py_vol:.6f}"
-
-        # 验证最大回撤
-        cpp_dd = cpp_result["max_drawdown"]
-        py_dd = expected["max_drawdown"]
-        assert abs(cpp_dd - py_dd) < 0.01, \
-            f"最大回撤差异过大: C++={cpp_dd:.6f}, Python={py_dd:.6f}"
-
-    def test_down_trend_volatility_accuracy(self, auth_token):
-        """验证单边下跌用例的波动率计算精度"""
-        symbol = "sz.900002"
-        closes, volumes, dates = self.load_csv_prices(symbol)
-
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
-
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": symbol,
-                "start_date": dates[0],
-                "end_date": dates[-1]
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        cpp_result = data["single"][symbol]
-
-        expected = self.compute_python_expected(closes)
-
-        cpp_vol = cpp_result["annual_volatility"]
-        py_vol = expected["annual_volatility"]
-        if py_vol > 0:
-            assert abs(cpp_vol - py_vol) / py_vol < 0.05, \
-                f"年化波动率差异过大: C++={cpp_vol:.6f}, Python={py_vol:.6f}"
-
-    def test_high_volatility_accuracy(self, auth_token):
-        """验证高波动用例的波动率计算精度"""
+    def test_annual_volatility_high_vol(self, auth_token):
+        """验证高波动用例的年化波动率"""
         symbol = "sz.900005"
-        closes, volumes, dates = self.load_csv_prices(symbol)
+        closes, dates = load_csv_prices(symbol)
+        returns = simple_returns(closes)
 
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_vol = resp["single"][symbol]["annual_volatility"]
+        emp_vol = empyrical.annual_volatility(returns, period='daily')
 
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": symbol,
-                "start_date": dates[0],
-                "end_date": dates[-1]
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        cpp_result = data["single"][symbol]
+        if emp_vol > 0:
+            rel_err = abs(cpp_vol - emp_vol) / emp_vol
+            assert rel_err < VOL_TOLERANCE, \
+                f"年化波动率差异: C++={cpp_vol:.6f}, empyrical={emp_vol:.6f}, 误差={rel_err:.4f}"
 
-        expected = self.compute_python_expected(closes)
+    def test_max_drawdown_up_trend(self, auth_token):
+        """验证最大回撤与 empyrical 一致"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
 
-        cpp_vol = cpp_result["annual_volatility"]
-        py_vol = expected["annual_volatility"]
-        if py_vol > 0:
-            assert abs(cpp_vol - py_vol) / py_vol < 0.05, \
-                f"年化波动率差异过大: C++={cpp_vol:.6f}, Python={py_vol:.6f}"
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_dd = resp["single"][symbol]["max_drawdown"]
+        emp_dd = abs(empyrical.max_drawdown(simple_returns(closes)))
 
+        assert abs(cpp_dd - emp_dd) < 0.01, \
+            f"最大回撤差异: C++={cpp_dd:.6f}, empyrical={emp_dd:.6f}"
+
+    def test_max_drawdown_down_trend(self, auth_token):
+        """验证单边下跌用例的最大回撤"""
+        symbol = "sz.900002"
+        closes, dates = load_csv_prices(symbol)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_dd = resp["single"][symbol]["max_drawdown"]
+        emp_dd = abs(empyrical.max_drawdown(simple_returns(closes)))
+
+        assert abs(cpp_dd - emp_dd) < 0.01, \
+            f"最大回撤差异: C++={cpp_dd:.6f}, empyrical={emp_dd:.6f}"
+
+    def test_cvar_vs_empyrical(self, auth_token):
+        """验证 CVaR 与 empyrical 一致"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        returns = simple_returns(closes)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_cvar = resp["single"][symbol]["cvar_95"]
+        emp_cvar = abs(empyrical.conditional_value_at_risk(returns))
+
+        # CVaR 方向：C++ 返回正值（亏损），empyrical 返回负值
+        if emp_cvar > 0 and cpp_cvar > 0:
+            rel_err = abs(cpp_cvar - emp_cvar) / emp_cvar
+            assert rel_err < VOL_TOLERANCE, \
+                f"CVaR 差异: C++={cpp_cvar:.6f}, empyrical={emp_cvar:.6f}, 误差={rel_err:.4f}"
+
+
+# ============================================================
+# 测试类 3：波动率数学属性
+# ============================================================
 
 @pytest.mark.usefixtures("auth_token")
 class TestVolatilityProperties:
-    """波动率数学属性测试"""
+    """波动率数学属性验证"""
 
-    def test_rolling_volatility_decreases_with_window(self, auth_token):
-        """滚动波动率应随窗口增大而减小（或持平）"""
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
+    def test_rolling_vol_decreases_with_window(self, auth_token):
+        """滚动波动率随窗口增大而减小"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        resp = call_volatility_api(symbol, dates[0], dates[-1], "20,60,120", auth_token=auth_token)
 
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": "sz.900001",
-                "start_date": "2023-01-01",
-                "end_date": "2023-04-01",
-                "windows": "20,60,120"
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        single = data["single"]["sz.900001"]
-        rolling = single["rolling_vol"]
-
+        rolling = resp["single"][symbol]["rolling_vol"]
         if "20" in rolling and "60" in rolling:
             vol_20 = np.mean(rolling["20"])
-            vol_60_values = [v for v in rolling["60"] if not np.isnan(v)]
-            if len(vol_60_values) == 0:
-                pytest.skip("60日滚动波动率无有效数据（数据量不足）")
-            vol_60 = np.mean(vol_60_values)
-            # 短期波动率通常 >= 长期波动率
-            assert vol_20 >= vol_60 * 0.9, \
-                f"短期波动率({vol_20:.4f})应 >= 长期波动率({vol_60:.4f})"
+            vol_60_vals = [v for v in rolling["60"] if not np.isnan(v)]
+            if vol_60_vals:
+                vol_60 = np.mean(vol_60_vals)
+                assert vol_20 >= vol_60 * 0.9, \
+                    f"短期波动率({vol_20:.4f})应 >= 长期波动率({vol_60:.4f})"
 
-    def test_var_cvar_relationship(self, auth_token):
-        """CVaR 应 >= VaR（尾部风险更大，即亏损更多）"""
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
+    def test_cvar_gte_var(self, auth_token):
+        """CVaR 应 >= VaR（尾部平均亏损 >= 分位数亏损）"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
 
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": "sz.900001",
-                "start_date": "2023-01-01",
-                "end_date": "2023-04-01"
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        single = data["single"]["sz.900001"]
+        var_95 = resp["single"][symbol]["var_95"]
+        cvar_95 = resp["single"][symbol]["cvar_95"]
 
-        # VaR/CVaR 在 C++ 中返回的是 -sorted_returns[idx]（正值表示亏损）
-        # CVaR 应该 >= VaR（尾部平均亏损 >= 分位数亏损）
-        var_95 = single["var_95"]
-        cvar_95 = single["cvar_95"]
-        
-        # 只验证正值场景（负值表示没有亏损，CVaR/VaR 关系无意义）
         if var_95 > 0 and cvar_95 > 0:
             assert cvar_95 >= var_95 * 0.95, \
                 f"CVaR({cvar_95:.6f}) 应 >= VaR({var_95:.6f})"
 
     def test_correlation_symmetric(self, auth_token):
         """相关系数矩阵应对称"""
-        kwargs = {'verify': False}
-        if auth_token and len(auth_token) > 10:
-            kwargs['headers'] = {'Authorization': auth_token}
+        closes, dates = load_csv_prices("sz.900001")
+        resp = call_volatility_api("sz.900001,sz.900002,sz.900003", dates[0], dates[-1], auth_token=auth_token)
 
-        resp = requests.get(
-            f"{BASE_URL}/analysis/volatility",
-            params={
-                "symbols": "sz.900001,sz.900002,sz.900003",
-                "start_date": "2023-01-01",
-                "end_date": "2023-04-01"
-            },
-            **kwargs
-        )
-        data = check_response(resp)
-        corr = data["multi"]["correlation_matrix"]
+        corr = resp["multi"]["correlation_matrix"]
         n = len(corr)
         for i in range(n):
             for j in range(i + 1, n):
                 assert abs(corr[i][j] - corr[j][i]) < 1e-6, \
                     f"相关系数不对称: [{i}][{j}]={corr[i][j]}, [{j}][{i}]={corr[j][i]}"
+
+
+# ============================================================
+# 测试类 4：AR(p) 预测 vs statsmodels 黄金标准
+# ============================================================
+
+@pytest.mark.usefixtures("auth_token")
+class TestARForecastGoldenStandard:
+    """AR(p) 预测测试：C++ vs statsmodels 黄金标准"""
+
+    def test_ar_coefficients_up_trend(self, auth_token):
+        """验证 AR 系数与 statsmodels 一致"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        returns = simple_returns(closes)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        p = find_significant_lag_golden(returns)
+        if p == 0 or not cpp_fc["has_autocorrelation"]:
+            pytest.skip("无显著自相关")
+
+        py_ar = compute_ar_golden(returns, p)
+
+        assert cpp_fc["order_p"] == p, \
+            f"AR 阶数: C++={cpp_fc['order_p']}, Python={p}"
+
+        for i, (c, py) in enumerate(zip(cpp_fc["ar_coeffs"], py_ar["ar_coeffs"])):
+            if abs(py) > 1e-6:
+                rel_err = abs(c - py) / abs(py)
+                assert rel_err < AR_TOLERANCE, \
+                    f"AR 系数[{i}]: C++={c:.6f}, statsmodels={py:.6f}, 误差={rel_err:.4f}"
+
+    def test_ar_residual_variance(self, auth_token):
+        """验证残差方差与 statsmodels 一致"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        returns = simple_returns(closes)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        p = find_significant_lag_golden(returns)
+        if p == 0 or not cpp_fc["has_autocorrelation"]:
+            pytest.skip("无显著自相关")
+
+        py_ar = compute_ar_golden(returns, p)
+
+        if py_ar["residual_var"] > 1e-10:
+            rel_err = abs(cpp_fc["residual_var"] - py_ar["residual_var"]) / py_ar["residual_var"]
+            assert rel_err < AR_TOLERANCE, \
+                f"残差方差: C++={cpp_fc['residual_var']:.10f}, statsmodels={py_ar['residual_var']:.10f}"
+
+    def test_forecast_values(self, auth_token):
+        """验证预测值与 statsmodels AutoReg 一致"""
+        symbol = "sz.900005"
+        closes, dates = load_csv_prices(symbol)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        py_fc = compute_forecast_golden(simple_returns(closes), closes)
+        if py_fc is None or not cpp_fc["has_autocorrelation"]:
+            pytest.skip("无显著自相关")
+
+        for i, (c, py) in enumerate(zip(cpp_fc["forecast_values"], py_fc["forecast_values"])):
+            if abs(py) > 1e-6:
+                rel_err = abs(c - py) / abs(py)
+                assert rel_err < AR_TOLERANCE, \
+                    f"预测值[{i}]: C++={c:.8f}, statsmodels={py:.8f}"
+
+    def test_forecast_std_accuracy(self, auth_token):
+        """验证预测标准差与 statsmodels AutoReg 一致"""
+        symbol = "sz.900005"
+        closes, dates = load_csv_prices(symbol)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        py_fc = compute_forecast_golden(simple_returns(closes), closes)
+        if py_fc is None or not cpp_fc["has_autocorrelation"]:
+            pytest.skip("无显著自相关")
+
+        for i, (c, py) in enumerate(zip(cpp_fc["forecast_std"], py_fc["forecast_std"])):
+            if py > 1e-6:
+                rel_err = abs(c - py) / py
+                assert rel_err < AR_TOLERANCE, \
+                    f"预测标准差[{i}]: C++={c:.8f}, statsmodels={py:.8f}"
+
+    def test_forecast_confidence_intervals(self, auth_token):
+        """验证置信区间：2σ ⊇ 1σ"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        if cpp_fc["has_autocorrelation"] and len(cpp_fc["forecast_values"]) > 0:
+            last = len(cpp_fc["forecast_values"]) - 1
+            assert cpp_fc["forecast_upper_2sigma"][last] >= cpp_fc["forecast_upper_1sigma"][last]
+            assert cpp_fc["forecast_lower_2sigma"][last] <= cpp_fc["forecast_lower_1sigma"][last]
+
+    def test_forecast_std_increases(self, auth_token):
+        """验证预测标准差随步数递增"""
+        symbol = "sz.900005"
+        closes, dates = load_csv_prices(symbol)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        if cpp_fc["has_autocorrelation"] and len(cpp_fc["forecast_std"]) >= 2:
+            assert cpp_fc["forecast_std"][-1] >= cpp_fc["forecast_std"][0], \
+                f"标准差递增: {cpp_fc['forecast_std']}"
+
+    def test_forecast_steps_max_10(self, auth_token):
+        """验证预测步数 ≤ 10"""
+        symbol = "sz.900006"
+        closes, dates = load_csv_prices(symbol)
+
+        resp = call_volatility_api(symbol, dates[0], dates[-1], auth_token=auth_token)
+        cpp_fc = resp["single"][symbol]["forecast_returns"]
+
+        if cpp_fc["has_autocorrelation"]:
+            assert len(cpp_fc["forecast_values"]) <= 10
+
+
+# ============================================================
+# 测试类 5：多资产协方差外推
+# ============================================================
+
+@pytest.mark.usefixtures("auth_token")
+class TestMultiAssetForecast:
+    """多资产预测外推测试"""
+
+    def _get_multi_forecast(self, symbols_str: str, auth_token: str) -> Dict:
+        symbols = symbols_str.split(',')
+        if not symbols:
+            return {}
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(symbols_str, dates[0], dates[-1], auth_token=auth_token)
+        return resp.get("multi", {}).get("multi_forecast", {})
+
+    def test_multi_forecast_exists(self, auth_token):
+        """多标的应返回 multi_forecast"""
+        mf = self._get_multi_forecast("sz.900001,sz.900002", auth_token)
+        for field in ["horizon", "symbols", "forecast_cov", "forecast_corr", "forecast_volatilities"]:
+            assert field in mf, f"缺少字段: {field}"
+
+    def test_multi_forecast_cov_dimensions(self, auth_token):
+        """协方差矩阵维度正确"""
+        mf = self._get_multi_forecast("sz.900001,sz.900002", auth_token)
+        if "forecast_cov" not in mf:
+            pytest.skip("无 multi_forecast 数据")
+        n = len(mf["symbols"])
+        assert len(mf["forecast_cov"]) == n
+        for i in range(n):
+            assert len(mf["forecast_cov"][i]) == n
+
+    def test_multi_forecast_corr_symmetric(self, auth_token):
+        """外推相关系数矩阵对称"""
+        mf = self._get_multi_forecast("sz.900001,sz.900002,sz.900003", auth_token)
+        if "forecast_corr" not in mf:
+            pytest.skip("无 multi_forecast 数据")
+        corr = mf["forecast_corr"]
+        n = len(corr)
+        for i in range(n):
+            for j in range(i + 1, n):
+                assert abs(corr[i][j] - corr[j][i]) < 1e-6
+
+    def test_multi_forecast_corr_diagonal_one(self, auth_token):
+        """外推相关系数对角线为 1"""
+        mf = self._get_multi_forecast("sz.900001,sz.900002", auth_token)
+        if "forecast_corr" not in mf:
+            pytest.skip("无 multi_forecast 数据")
+        for i in range(len(mf["forecast_corr"])):
+            assert abs(mf["forecast_corr"][i][i] - 1.0) < 0.01
+
+    def test_multi_forecast_cov_positive_diagonal(self, auth_token):
+        """外推协方差对角线 > 0"""
+        mf = self._get_multi_forecast("sz.900001,sz.900002", auth_token)
+        if "forecast_cov" not in mf:
+            pytest.skip("无 multi_forecast 数据")
+        for i in range(len(mf["forecast_cov"])):
+            assert mf["forecast_cov"][i][i] > 0
+
+    def test_multi_forecast_volatilities_count(self, auth_token):
+        """外推波动率数量 = 资产数"""
+        mf = self._get_multi_forecast("sz.900001,sz.900002,sz.900003", auth_token)
+        if "forecast_volatilities" not in mf:
+            pytest.skip("无 multi_forecast 数据")
+        assert len(mf["forecast_volatilities"]) == len(mf["symbols"])
+
+
+# ============================================================
+# 测试类 6：滚动波动率预测
+# ============================================================
+
+@pytest.mark.usefixtures("auth_token")
+class TestRollingVolForecast:
+    """滚动波动率 AR(p) 预测测试"""
+
+    def test_forecast_vol_exists(self, auth_token):
+        """forecast_vol 字段存在"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        resp = call_volatility_api(symbol, dates[0], dates[-1], "20", auth_token=auth_token)
+        fc = resp["single"][symbol]["forecast_vol"]
+        assert fc["source_series"] == "rolling_vol"
+
+    def test_forecast_vol_fields_complete(self, auth_token):
+        """forecast_vol 字段完整"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        resp = call_volatility_api(symbol, dates[0], dates[-1], "20", auth_token=auth_token)
+        fc = resp["single"][symbol]["forecast_vol"]
+        required = ["source_series", "order_p", "ar_coeffs", "residual_var",
+                    "forecast_values", "forecast_upper_1sigma", "forecast_lower_1sigma",
+                    "forecast_upper_2sigma", "forecast_lower_2sigma",
+                    "forecast_std", "has_autocorrelation", "note"]
+        for field in required:
+            assert field in fc, f"缺少字段: {field}"

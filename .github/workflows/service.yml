@@ -50,6 +50,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-boost
 
+      - name: Cache DuckDB build
+        uses: actions/cache@v4
+        id: cache-duckdb
+        with:
+          path: |
+            duckdb/build
+            /usr/local/lib/libduckdb*
+            /usr/local/include/duckdb*
+          key: ${{ runner.os }}-duckdb-${{ hashFiles('**/duckdb.h') }}
+          restore-keys: |
+            ${{ runner.os }}-duckdb-
+
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
@@ -81,6 +93,17 @@ jobs:
           ./b2 install
           sudo cp -r stage/include /usr/local
           sudo cp -r stage/lib /usr/local
+          sudo ldconfig
+
+      - name: Build DuckDB (if cache miss)
+        if: steps.cache-duckdb.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.3.0 https://github.com/duckdb/duckdb
+          cd duckdb
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_UNIT_TESTS=OFF ..
+          make -j$(nproc)
+          sudo make install
           sudo ldconfig
 
       # - name: Cache ONNX-runtime build

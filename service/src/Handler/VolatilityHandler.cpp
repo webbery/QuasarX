@@ -1,4 +1,5 @@
 #include "Handler/VolatilityHandler.h"
+#include "Algorithms/ARModel.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
 #include "Util/data.h"
@@ -264,6 +265,26 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
     result.abs_returns_acf = finance::computeACF(result.abs_returns, max_lag);
     result.acf_decay = analyzeACFDecay(result.abs_returns_acf, result.abs_returns);
 
+    // === AR(p) 预测：收益率 ===
+    double last_price = result.prices.empty() ? 0.0 : result.prices.back();
+    result.forecast_returns = ar_model::buildForecast(
+        result.returns, result.returns_acf, ar_model::MAX_FORECAST_STEPS,
+        "returns", last_price
+    );
+
+    // === AR(p) 预测：滚动波动率 (window=20) ===
+    if (!result.rolling_vol.empty() && result.rolling_vol.count(20)) {
+        const auto& rv = result.rolling_vol.at(20);
+        if (rv.size() >= 30) {
+            auto vol_acf = finance::computeACF(rv, ar_model::MAX_FORECAST_STEPS);
+            double last_vol = rv.empty() ? 0.0 : rv.back();
+            result.forecast_vol = ar_model::buildForecast(
+                rv, vol_acf, ar_model::MAX_FORECAST_STEPS,
+                "rolling_vol", last_vol
+            );
+        }
+    }
+
     return result;
 }
 
@@ -350,7 +371,71 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
         result.eigenvalues.push_back(result.covariance_matrix[i][i]);
     }
     std::sort(result.eigenvalues.rbegin(), result.eigenvalues.rend());
-    
+
+    // === 多资产预测外推 ===
+    // 收集各资产的 Forecast 结果
+    std::vector<ar_model::Forecast> all_forecasts;
+    std::vector<std::string> fc_symbols;
+    size_t sym_idx = 0;
+    for (const auto& [sym, rets] : returns_map) {
+        if (rets.size() < 30) {
+            ++sym_idx;
+            continue;
+        }
+        auto acf = finance::computeACF(rets, ar_model::MAX_FORECAST_STEPS);
+        int p = ar_model::findSignificantLag(acf, rets.size(), ar_model::MAX_FORECAST_STEPS);
+        if (p > 0) {
+            auto fit = ar_model::solveYuleWalker(acf, p);
+            if (fit.stable && !fit.coeffs.empty()) {
+                std::vector<double> history(rets.end() - p, rets.end());
+                all_forecasts.push_back(ar_model::predict(fit.coeffs, history, p, fit.residual_var));
+                fc_symbols.push_back(sym);
+            }
+        }
+        // 无自相关或拟合失败，使用空预测（零收益率 + 历史波动率）
+        if (fc_symbols.size() <= sym_idx) {
+            double vol = std::sqrt(result.covariance_matrix[sym_idx][sym_idx]);
+            all_forecasts.push_back(ar_model::Forecast{
+                .values = std::vector<double>(1, 0.0),
+                .std_per_step = std::vector<double>(1, vol)
+            });
+            fc_symbols.push_back(sym);
+        }
+        ++sym_idx;
+    }
+
+    if (fc_symbols.size() >= 2) {
+        int horizon = std::max(1, static_cast<int>(all_forecasts[0].values.size()));
+        result.multi_forecast.horizon = horizon;
+        result.multi_forecast.symbols = fc_symbols;
+        result.multi_forecast.forecast_cov = ar_model::extrapolateCovariance(
+            result.covariance_matrix, all_forecasts, horizon
+        );
+
+        // 外推相关系数矩阵
+        size_t N = fc_symbols.size();
+        result.multi_forecast.forecast_corr.resize(N, std::vector<double>(N));
+        for (size_t i = 0; i < N; ++i) {
+            for (size_t j = 0; j < N; ++j) {
+                double vi = result.multi_forecast.forecast_cov[i][i];
+                double vj = result.multi_forecast.forecast_cov[j][j];
+                if (vi > 1e-15 && vj > 1e-15) {
+                    result.multi_forecast.forecast_corr[i][j] =
+                        result.multi_forecast.forecast_cov[i][j] / std::sqrt(vi * vj);
+                } else {
+                    result.multi_forecast.forecast_corr[i][j] = (i == j) ? 1.0 : 0.0;
+                }
+            }
+        }
+
+        // 外推年化波动率
+        for (size_t i = 0; i < N; ++i) {
+            result.multi_forecast.forecast_volatilities.push_back(
+                std::sqrt(result.multi_forecast.forecast_cov[i][i] * 252.0)
+            );
+        }
+    }
+
     return result;
 }
 
@@ -429,6 +514,25 @@ VolatilityResult VolatilityHandler::compute(
     result.multi = computeMulti(returns_map);
 
     return result;
+}
+
+// === Forecast JSON 序列化 ===
+
+static nlohmann::json forecastToJson(const ar_model::ForecastResult& fc) {
+    nlohmann::json j;
+    j["source_series"] = fc.source_series;
+    j["order_p"] = fc.order_p;
+    j["ar_coeffs"] = fc.ar_coeffs;
+    j["residual_var"] = fc.residual_var;
+    j["forecast_values"] = fc.forecast_values;
+    j["forecast_upper_1sigma"] = fc.forecast_upper_1sigma;
+    j["forecast_lower_1sigma"] = fc.forecast_lower_1sigma;
+    j["forecast_upper_2sigma"] = fc.forecast_upper_2sigma;
+    j["forecast_lower_2sigma"] = fc.forecast_lower_2sigma;
+    j["forecast_std"] = fc.forecast_std;
+    j["has_autocorrelation"] = fc.has_autocorrelation;
+    j["note"] = fc.note;
+    return j;
 }
 
 // === HTTP Handler (GET 请求) ===
@@ -534,6 +638,10 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             decay["hurst_estimate"] = sr.acf_decay.hurst_estimate;
             item["acf_decay"] = decay;
 
+            // AR(p) 预测结果
+            item["forecast_returns"] = forecastToJson(sr.forecast_returns);
+            item["forecast_vol"] = forecastToJson(sr.forecast_vol);
+
             single_json[symbol] = item;
         }
         json["single"] = single_json;
@@ -546,6 +654,17 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         multi_json["condition_number"] = result.multi.condition_number;
         multi_json["is_positive_definite"] = result.multi.is_positive_definite;
         multi_json["annual_volatility"] = result.multi.annual_volatility;
+
+        // 多资产预测外推
+        if (result.multi.multi_forecast.horizon > 0) {
+            nlohmann::json mf;
+            mf["horizon"] = result.multi.multi_forecast.horizon;
+            mf["symbols"] = result.multi.multi_forecast.symbols;
+            mf["forecast_cov"] = result.multi.multi_forecast.forecast_cov;
+            mf["forecast_corr"] = result.multi.multi_forecast.forecast_corr;
+            mf["forecast_volatilities"] = result.multi.multi_forecast.forecast_volatilities;
+            multi_json["multi_forecast"] = mf;
+        }
         json["multi"] = multi_json;
 
         res.set_content(json.dump(), "application/json");

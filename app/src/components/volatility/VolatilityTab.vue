@@ -131,7 +131,27 @@
 
         <div class="chart-grid">
           <div class="chart-card full">
-            <PriceBandChart :data="currentSingleResult" :dates="state.result.dates" />
+            <!-- 预测源选择（仅当任一预测可用时显示） -->
+            <div v-if="currentSingleResult?.forecast_returns?.has_autocorrelation ||
+                        currentSingleResult?.forecast_vol?.has_autocorrelation"
+                 class="forecast-control-bar">
+              <label class="forecast-label">预测:</label>
+              <select v-model="forecastSourceMap[currentSymbolKey]" class="select-small">
+                <option value="returns" v-if="currentSingleResult?.forecast_returns?.has_autocorrelation">
+                  收益率 AR({{ currentSingleResult.forecast_returns.order_p }})
+                </option>
+                <option value="vol" v-if="currentSingleResult?.forecast_vol?.has_autocorrelation">
+                  波动率 AR({{ currentSingleResult.forecast_vol.order_p }})
+                </option>
+              </select>
+              <span class="forecast-note">{{ forecastNote }}</span>
+            </div>
+
+            <PriceBandChart
+              :data="currentSingleResult"
+              :forecast="currentForecast"
+              :dates="state.result.dates"
+            />
           </div>
         </div>
 
@@ -174,6 +194,19 @@
             <CovarianceEigenChart :data="state.result.multi" />
           </div>
         </div>
+
+        <!-- 多资产预测外推 -->
+        <div v-if="state.result?.multi?.multi_forecast?.horizon" class="chart-grid">
+          <div class="chart-card half">
+            <CovarianceForecastChart :data="state.result.multi.multi_forecast" />
+          </div>
+          <div class="chart-card half">
+            <VolatilityComparisonChart
+              :symbols="state.result.multi.multi_forecast.symbols"
+              :annual-volatility="state.result.multi.multi_forecast.forecast_volatilities"
+            />
+          </div>
+        </div>
       </section>
     </div>
 
@@ -201,6 +234,7 @@ import MetricsCard from './charts/MetricsCard.vue'
 import CorrelationHeatmapChart from './charts/CorrelationHeatmapChart.vue'
 import VolatilityComparisonChart from './charts/VolatilityComparisonChart.vue'
 import CovarianceEigenChart from './charts/CovarianceEigenChart.vue'
+import CovarianceForecastChart from './charts/CovarianceForecastChart.vue'
 
 const { state, QUICK_RANGES, removeSymbol, setQuickRange } = useVolatilityState()
 const { fetchVolatility } = useVolatilityData()
@@ -349,6 +383,34 @@ const currentSingleResult = computed(() => {
   if (!state.result?.single) return null
   const sym = state.symbols[currentSymbolIndex.value]?.symbol
   return sym ? state.result.single[sym] : null
+})
+
+// === 每标的独立的预测源选择 ===
+const forecastSourceMap = ref<Record<string, string>>({})
+
+const currentSymbolKey = computed(() => {
+  return state.symbols[currentSymbolIndex.value]?.symbol || ''
+})
+
+const currentForecast = computed(() => {
+  const key = currentSymbolKey.value
+  const sr = state.result?.single?.[key]
+  if (!sr) return null
+  const source = forecastSourceMap.value[key] || 'returns'
+  return source === 'returns' ? sr.forecast_returns : sr.forecast_vol
+})
+
+const forecastNote = computed(() => {
+  const fc = currentForecast.value
+  return fc?.note || ''
+})
+
+// 当切换标的时，初始化默认预测源
+watch(currentSymbolKey, (key) => {
+  if (key && !forecastSourceMap.value[key]) {
+    const sr = state.result?.single?.[key]
+    forecastSourceMap.value[key] = sr?.forecast_returns?.has_autocorrelation ? 'returns' : 'vol'
+  }
 })
 
 async function runAnalysis() {
@@ -610,6 +672,31 @@ async function runAnalysis() {
 .select-small option {
   background: #1a2236;
   color: #e0e0e0;
+}
+
+/* 预测控制栏 */
+.forecast-control-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  background: rgba(41, 98, 255, 0.08);
+  border: 1px solid rgba(41, 98, 255, 0.2);
+  border-radius: 4px;
+}
+
+.forecast-label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
+.forecast-note {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+  margin-left: 8px;
 }
 
 .strategy-link {

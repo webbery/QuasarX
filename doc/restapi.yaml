@@ -1242,6 +1242,75 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PositionItem"
+  /analysis/volatility:
+    get:
+      summary: 波动率与自相关分析
+      description: |
+        对指定标的进行波动率分析，包含：
+        - 单标的：滚动波动率、收益率分布、ACF/PACF、波动率包络带、AR(p) 预测
+        - 多标的：协方差矩阵、相关系数矩阵、特征值分解、协方差外推预测
+      tags:
+        - Analysis
+      parameters:
+        - in: query
+          name: symbols
+          required: true
+          schema:
+            type: string
+          description: 标的代码列表，逗号分隔（如 sz.000001,sh.600000）
+          example: sz.000001,sh.600000
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date
+          description: 开始日期（YYYY-MM-DD）
+          example: "2024-01-01"
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date
+          description: 结束日期（YYYY-MM-DD）
+          example: "2025-06-01"
+        - in: query
+          name: windows
+          schema:
+            type: string
+          description: 滚动窗口大小，逗号分隔（默认 20,60,120）
+          example: "20,60,120"
+        - in: query
+          name: field
+          schema:
+            type: string
+            enum: [close, open, high, low, volume]
+          description: 分析字段（默认 close）
+          example: close
+        - in: query
+          name: fill_method
+          schema:
+            type: string
+            enum: [None, Forward, Backward, Linear, Zero]
+          description: 缺失值填充方法
+      responses:
+        '200':
+          description: 波动率分析结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolatilityResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
     # 基础数据类型
@@ -2273,3 +2342,280 @@ components:
         msg:
           type: string
           example: error
+
+    # 波动率分析相关类型
+    ACFDecayAnalysis:
+      type: object
+      description: ACF 衰减模式分析结果
+      properties:
+        lb_statistic:
+          type: number
+          description: Ljung-Box Q 统计量
+        lb_pvalue:
+          type: number
+          description: Ljung-Box p 值（p < 0.05 表示存在显著自相关）
+        has_autocorrelation:
+          type: boolean
+          description: 是否存在显著自相关
+        exponential_r2:
+          type: number
+          description: 指数衰减拟合 R²（GARCH/EGARCH）
+        hyperbolic_r2:
+          type: number
+          description: 双曲衰减拟合 R²（FIGARCH/长记忆）
+        decay_mode:
+          type: string
+          enum: [exponential, hyperbolic, inconclusive]
+          description: 衰减模式
+        decay_half_life:
+          type: number
+          description: 指数衰减半衰期
+        hurst_estimate:
+          type: number
+          description: Hurst 指数估计
+
+    ForecastResult:
+      type: object
+      description: AR(p) 自回归预测结果
+      properties:
+        source_series:
+          type: string
+          enum: [returns, rolling_vol]
+          description: 预测来源序列
+        order_p:
+          type: integer
+          description: AR 模型阶数
+        ar_coeffs:
+          type: array
+          items:
+            type: number
+          description: AR 系数 φ₁, φ₂, ..., φₚ
+        residual_var:
+          type: number
+          description: 残差方差 σ²
+        forecast_values:
+          type: array
+          items:
+            type: number
+          description: 预测值序列（1..p 步）
+        forecast_upper_1sigma:
+          type: array
+          items:
+            type: number
+          description: ±1σ 置信上界
+        forecast_lower_1sigma:
+          type: array
+          items:
+            type: number
+          description: ±1σ 置信下界
+        forecast_upper_2sigma:
+          type: array
+          items:
+            type: number
+          description: ±2σ 置信上界
+        forecast_lower_2sigma:
+          type: array
+          items:
+            type: number
+          description: ±2σ 置信下界
+        forecast_std:
+          type: array
+          items:
+            type: number
+          description: 每步预测标准差（用于前端渐变透明度）
+        has_autocorrelation:
+          type: boolean
+          description: 是否存在显著自相关（false 时预测结果无效）
+        note:
+          type: string
+          description: 诊断信息（如 "AR(5) from returns, R²≈0.23"）
+
+    VolatilitySingleResult:
+      type: object
+      description: 单标的波动率分析结果
+      properties:
+        prices:
+          type: array
+          items:
+            type: number
+          description: 价格序列
+        returns:
+          type: array
+          items:
+            type: number
+          description: 收益率序列
+        volumes:
+          type: array
+          items:
+            type: number
+          description: 成交量序列
+        abs_returns:
+          type: array
+          items:
+            type: number
+          description: 绝对收益率序列
+        rolling_vol:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: number
+          description: 滚动波动率，key 为窗口大小
+        upper_2sigma:
+          type: array
+          items:
+            type: number
+          description: 波动率包络 ±2σ 上界
+        upper_1sigma:
+          type: array
+          items:
+            type: number
+          description: 波动率包络 ±1σ 上界
+        mean_price:
+          type: array
+          items:
+            type: number
+          description: 滚动均值价格
+        lower_1sigma:
+          type: array
+          items:
+            type: number
+          description: 波动率包络 ±1σ 下界
+        lower_2sigma:
+          type: array
+          items:
+            type: number
+          description: 波动率包络 ±2σ 下界
+        annual_volatility:
+          type: number
+          description: 年化波动率
+        max_drawdown:
+          type: number
+          description: 最大回撤率
+        skewness:
+          type: number
+          description: 收益率偏度
+        kurtosis:
+          type: number
+          description: 收益率超额峰度
+        var_95:
+          type: number
+          description: 95% VaR
+        cvar_95:
+          type: number
+          description: 95% CVaR
+        returns_acf:
+          type: array
+          items:
+            type: number
+          description: 收益率 ACF
+        returns_pacf:
+          type: array
+          items:
+            type: number
+          description: 收益率 PACF
+        abs_returns_acf:
+          type: array
+          items:
+            type: number
+          description: 绝对收益率 ACF
+        acf_decay:
+          $ref: "#/components/schemas/ACFDecayAnalysis"
+        forecast_returns:
+          $ref: "#/components/schemas/ForecastResult"
+        forecast_vol:
+          $ref: "#/components/schemas/ForecastResult"
+
+    MultiForecast:
+      type: object
+      description: 多资产预测外推结果
+      properties:
+        horizon:
+          type: integer
+          description: 预测步数
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 资产标的列表
+        forecast_cov:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: 外推协方差矩阵（N×N）
+        forecast_corr:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: 外推相关系数矩阵（N×N）
+        forecast_volatilities:
+          type: array
+          items:
+            type: number
+          description: 各资产外推年化波动率
+
+    VolatilityMultiResult:
+      type: object
+      description: 多标的关联分析结果
+      properties:
+        correlation_matrix:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: 相关系数矩阵
+        covariance_matrix:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: 协方差矩阵
+        eigenvalues:
+          type: array
+          items:
+            type: number
+          description: 特征值（降序）
+        condition_number:
+          type: number
+          description: 条件数 κ = λ_max / λ_min
+        is_positive_definite:
+          type: boolean
+          description: 是否正定
+        annual_volatility:
+          type: array
+          items:
+            type: number
+          description: 各资产年化波动率
+        multi_forecast:
+          $ref: "#/components/schemas/MultiForecast"
+
+    VolatilityResponse:
+      type: object
+      description: 波动率分析响应
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 分析的标的列表
+        dates:
+          type: array
+          items:
+            type: string
+          description: 日期序列
+        field:
+          type: string
+          description: 使用的价格字段
+        single:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/VolatilitySingleResult"
+          description: 单标的分析结果，key 为标的代码
+        multi:
+          $ref: "#/components/schemas/VolatilityMultiResult"
