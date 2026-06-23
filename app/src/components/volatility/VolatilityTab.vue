@@ -615,6 +615,25 @@ async function runAnalysis() {
   z-index: 1000;
   min-width: 200px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dropdown::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .multiselect-checkbox {
@@ -822,6 +841,25 @@ async function runAnalysis() {
   overflow: auto;
   padding: 16px;
   min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.results::-webkit-scrollbar {
+  width: 6px;
+}
+
+.results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.results::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.results::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .section {
@@ -920,7 +958,7 @@ async function runAnalysis() {
 .chart-card.full {
   flex: 1 1 100%;
   min-width: 0;
-  height: 400px;
+  height: 350px;
 }
 
 .empty-state {
@@ -949,7 +987,7 @@ async function runAnalysis() {
     flex-direction: column;
   }
   .chart-card.half {
-    min-height: 300px;
+    min-height: 250px;
   }
 }
 </style>

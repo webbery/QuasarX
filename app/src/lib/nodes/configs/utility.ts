@@ -14,10 +14,13 @@ export const debugNode: NodeRegistryEntry = {
   inputs: ['timeseries'],
   outputs: ['timeseries'],
   params: [
-    { key: 'downloadPath', label: '下载路径', type: 'directory', default: '' },
-    { key: 'downloadFile', label: '下载文件', type: 'download', default: '' },
+    { key: 'outputFields', label: '导出字段', type: 'multiselect', default: [],
+      options: [],
+      description: '勾选需要导出的数据字段，来源于上游节点输出' },
+    { key: 'visualize', label: '可视化', type: 'button', default: 'visualize',
+      description: '切换到可视化分析面板查看数据' },
   ],
-  example: { downloadPath: '' }
+  example: {}
 }
 
 registerNode(debugNode)

@@ -5,5 +5,9 @@ export type {
   VolatilityAnalysisResult,
   VolatilitySingleResult,
   VolatilityMultiResult,
-  SymbolItem
+  SymbolItem,
+  TimeSeriesAnalysis,
+  LeadLagPair,
+  GrangerPair,
+  CointegrationPair
 } from './composables/useVolatilityState'

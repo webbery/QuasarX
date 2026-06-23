@@ -54,9 +54,9 @@ function buildOption() {
       dimension: 2,
       min: 0,
       max: absReturns.length,
-      orient: 'horizontal',
-      left: 'center',
-      bottom: 0,
+      orient: 'vertical',
+      right: 10,
+      top: 'center',
       text: ['早期', '近期'],
       calculable: true,
       inRange: {

@@ -18,11 +18,12 @@
       :is-valid-connection="isValidConnection"
     >
       <template #node-custom="nodeProps">
-        <FlowNode 
+        <FlowNode
           :node="nodeProps"
           @update-node="handleUpdateNode"
           @node-click="handleNodeClick"
           @node-context-menu="handleNodeContextMenu"
+          @visualize-debug="handleVisualizeDebug"
         />
       </template>
 
@@ -86,7 +87,8 @@ const emit = defineEmits([
   'connect',
   'edges-delete',
   'node-click',
-  'update-node'
+  'update-node',
+  'visualize-debug'
 ])
 
 const handlePaneReady = (vueFlowInstance) => {
@@ -154,6 +156,10 @@ const handleNodeClick = (event) => {
 
 const handleUpdateNode = (nodeId, paramKey, newValue) => {
   emit('update-node', nodeId, paramKey, newValue)
+}
+
+const handleVisualizeDebug = (debugNodeId) => {
+  emit('visualize-debug', debugNodeId)
 }
 
 // 调试：监听 edges 变化

@@ -17,11 +17,12 @@ const { chartRef, initChart, updateChart } = useECharts(false) // 不自动初�
 function buildOption() {
   const { symbols, correlationMatrix } = props
   const n = symbols.length
-  if (n === 0 || !correlationMatrix) return {}
-  
+  if (n === 0 || !correlationMatrix || correlationMatrix.length !== n) return {}
+
   // 构建热力图数据
   const data: number[][] = []
   for (let i = 0; i < n; i++) {
+    if (!correlationMatrix[i] || correlationMatrix[i].length !== n) return {}
     for (let j = 0; j < n; j++) {
       data.push([j, i, correlationMatrix[i][j]])
     }
@@ -65,9 +66,9 @@ function buildOption() {
       min: -1,
       max: 1,
       calculable: true,
-      orient: 'horizontal',
-      left: 'center',
-      bottom: '5%',
+      orient: 'vertical',
+      right: 10,
+      top: 'center',
       text: ['高', '低'],
       inRange: {
         color: ['#ef232a', '#1a2236', '#00c853']

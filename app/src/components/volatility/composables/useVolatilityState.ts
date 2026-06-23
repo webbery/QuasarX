@@ -95,6 +95,42 @@ export interface VolatilityMultiResult {
   annual_volatility: number[]
   // 多资产预测外推
   multi_forecast: MultiForecast | null
+  // 多标的时间序列分析
+  time_series_analysis: TimeSeriesAnalysis | null
+}
+
+export interface TimeSeriesAnalysis {
+  lead_lag: LeadLagPair[]
+  granger_causality: GrangerPair[]
+  cointegration: CointegrationPair[]
+}
+
+export interface LeadLagPair {
+  symbol_x: string
+  symbol_y: string
+  lead_lag: number
+  max_correlation: number
+  ccf: number[]
+}
+
+export interface GrangerPair {
+  from: string
+  to: string
+  f_statistic: number
+  p_value: number
+  is_significant: boolean
+  optimal_lag: number
+}
+
+export interface CointegrationPair {
+  symbol_x: string
+  symbol_y: string
+  beta: number
+  alpha: number
+  adf_statistic: number
+  p_value: number
+  is_cointegrated: boolean
+  half_life: number
 }
 
 export interface MultiForecast {

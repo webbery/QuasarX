@@ -165,7 +165,11 @@
             @delete-strategy="onDeleteStrategy" 
             @delete-version="onDeleteVersion"
           />
-          <FlowComponents v-else />
+          <FlowComponents
+            v-else
+            ref="flowComponentsRef"
+            @visualize-debug="onVisualizeDebug"
+          />
         </div>
       </div>
       <div v-else-if="is_setting">
@@ -248,6 +252,7 @@ import RiskPanel from "./components/RiskPanel.vue";
 import StrategyFactory from "./components/StrategyFactory.vue";
 import StrategyTracker from "./components/StrategyTracker.vue";
 import FlowComponents from "./components/FlowComponents.vue";
+import { getAllDebugNodes } from '@/lib/nodes/useDebugNodeFields'
 import DataCenter from "./components/DataCenter.vue";
 import LoginForm from "./components/LoginForm.vue";
 import SettingView from "./components/SettingView.vue";
@@ -306,9 +311,13 @@ const {
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);
 const dynamicComponentRef = ref(null); // 用于引用动态组件实例
+const flowComponentsRef = ref(null); // 用于引用 FlowComponents（策略编辑器）
 let isBacktesting = ref(false);
 let rightPanelTab = ref(localStorage.getItem('rightPanelTab') || 'components');
 let selectedStrategyId = ref(null); // 当前选中的策略ID（用于风险详情）
+
+// === 策略编辑状态保存（用于视图切换后恢复） ===
+const strategyEditorState = ref(null)
 
 // 监听右侧面板 Tab 变化并持久化
 watch(rightPanelTab, (newTab) => {
@@ -560,12 +569,16 @@ onMounted(() => {
   // 启动服务端策略状态轮询
   fetchServerStrategies()
   _strategyTimer = setInterval(fetchServerStrategies, 10000)
-});
+
+  // 监听策略可视化调试事件（从 FlowComponents 触发）
+  window.addEventListener('visualize-strategy', onVisualizeStrategy)
+})
 
 onUnmounted(() => {
   localStorage.setItem('token', '')
   window.removeEventListener('loginSuccess', onLoginSucess)
   window.removeEventListener('open-portfolio-manager', onHandlePortfolioMananger)
+  window.removeEventListener('visualize-strategy', onVisualizeStrategy)
   uninitServerEvent()
   if (_strategyTimer) {
     clearInterval(_strategyTimer)
@@ -592,6 +605,59 @@ const onHandleDataCenter = () => {
 
 const onHandleVisualAnanlysis = () => {
   currentView.value = VIEWS.VISUAL_VIEW;
+}
+
+/**
+ * 调试节点可视化按钮点击：保存策略状态并切换到可视化面板
+ */
+const onVisualizeDebug = (debugNodeId) => {
+  if (flowComponentsRef.value?.onVisualizeDebug) {
+    flowComponentsRef.value.onVisualizeDebug(debugNodeId)
+  }
+}
+
+/**
+ * 接收 FlowComponents 发来的可视化事件
+ */
+const onVisualizeStrategy = (event) => {
+  const { debugNodeId, debugNodes, nodes, edges, strategyId, versionId } = event.detail
+  
+  // 保存当前策略编辑状态
+  strategyEditorState.value = {
+    nodes,
+    edges,
+    strategyId,
+    versionId,
+  }
+  
+  // 切换到可视化分析面板
+  currentView.value = VIEWS.VISUAL_VIEW
+  
+  // 通知可视化面板加载数据
+  window.dispatchEvent(new CustomEvent('load-strategy-data', {
+    detail: {
+      debugNodeId,
+      debugNodes,
+      nodes,
+      edges,
+    }
+  }))
+  
+  message.success('已切换到可视化分析面板')
+}
+
+/**
+ * 从可视化面板返回策略编辑器
+ */
+const returnToStrategyEditor = () => {
+  if (strategyEditorState.value) {
+    // 恢复策略编辑状态
+    currentView.value = VIEWS.DESIGN_STATEGY
+    
+    message.success('已返回策略编辑器')
+  } else {
+    currentView.value = VIEWS.DESIGN_STATEGY
+  }
 }
 
 const onHandleRiskMananger = () => {
@@ -826,6 +892,7 @@ provide('onShowReportConfig', onShowReportConfig)
 provide('onHideReportConfig', onHideReportConfig)
 provide('reportChartVisibility', reportChartVisibility)
 provide('updateReportChartVisibility', updateReportChartVisibility)
+provide('returnToStrategyEditor', returnToStrategyEditor)
 </script>
 
 <style scoped>

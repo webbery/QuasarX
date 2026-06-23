@@ -151,7 +151,7 @@ target_link_libraries(${PROJECT_NAME} ${DEBUG_LINK_LIBS} Crypt32.lib ${OpenSSL_L
 else(WIN32)
 if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
-set(LINUX_LIBS xfastmdapi fasttraderapi fastsptraderapi)
+set(LINUX_LIBS xfastmdapi fasttraderapi fastsptraderapi duckdb)
 else()
 if(ENABLE_ASAN)
     # 添加编译和链接的 ASan 标志

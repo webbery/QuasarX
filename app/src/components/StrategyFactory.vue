@@ -35,6 +35,7 @@
           @edges-delete="onEdgesDelete"
           @node-click="onNodeClick"
           @update-node="updateNodeData"
+          @visualize-debug="onVisualizeDebug"
         />
 
         <FlowContextMenu
@@ -179,6 +180,24 @@ watch(() => getNodes.value, () => {
 watch(() => getEdges.value, () => {
   hasUnsavedChanges.value = true
 }, { deep: true, immediate: false })
+
+// 可视化调试：通知父组件切换视图
+const onVisualizeDebug = (debugNodeId) => {
+  // 收集当前流程图中所有 DebugNode
+  const debugNodes = getNodes.value.filter(n => n.data?.nodeType === 'debug')
+  
+  // 发送事件到 App.vue
+  window.dispatchEvent(new CustomEvent('visualize-strategy', {
+    detail: {
+      debugNodeId,
+      debugNodes,
+      nodes: JSON.parse(JSON.stringify(getNodes.value)),
+      edges: JSON.parse(JSON.stringify(getEdges.value)),
+      strategyId: currentStrategyId.value,
+      versionId: currentVersionId.value,
+    }
+  }))
+}
 
 // 监听选项卡切换
 watch(activeTab, async (newTab) => {
@@ -351,7 +370,8 @@ defineExpose({
   loadVersionFromHistory: handleLoadVersionFromHistory,
   clearCanvasIfStrategyMatches,
   clearCanvasIfVersionMatches,
-  getStrategyGraph
+  getStrategyGraph,
+  onVisualizeDebug,
 })
 </script>
 

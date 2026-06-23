@@ -153,6 +153,14 @@
                         @download="downloadFile"
                     />
 
+                    <!-- 按钮类型 -->
+                    <ButtonParam
+                        v-else-if="paramConfig.type === 'button'"
+                        :param-key="key"
+                        :param-config="paramConfig"
+                        @click="handleParamButtonClick(key)"
+                    />
+
                     <!-- 默认显示 -->
                     <span v-else class="param-value">
                         {{ paramConfig.value }}
@@ -187,6 +195,7 @@ import DirectoryParam from './params/DirectoryParam.vue'
 import FileParam from './params/FileParam.vue'
 import ConfigSelectParam from './params/ConfigSelectParam.vue'
 import DownloadParam from './params/DownloadParam.vue'
+import ButtonParam from './params/ButtonParam.vue'
 
 interface FlowNodeData {
   id: string
@@ -202,13 +211,13 @@ interface FlowNode {
   [key: string]: any
 }
 
-const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file', 'config-select']
+const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file', 'config-select', 'button']
 
 const props = defineProps<{
     node: FlowNode
 }>()
 
-const emit = defineEmits(['update-node', 'node-click', 'node-context-menu', 'open-portfolio-manager'])
+const emit = defineEmits(['update-node', 'node-click', 'node-context-menu', 'open-portfolio-manager', 'visualize-debug'])
 
 const selectedNodes = inject('selectedNodes', [])
 const portfolioConfigs = inject('portfolioConfigs', ref([]))
@@ -335,6 +344,12 @@ const selectDirectory = async (paramKey: string) => {
 
 const selectFile = async (paramKey: string) => {
     // TODO: 实现文件选择
+}
+
+const handleParamButtonClick = (paramKey: string) => {
+    if (paramKey === 'visualize') {
+        emit('visualize-debug', props.node.id)
+    }
 }
 
 onMounted(() => {

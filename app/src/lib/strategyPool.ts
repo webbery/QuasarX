@@ -86,9 +86,11 @@ function extractFromInputNode(
   // 检查是否有"代码"参数
   const codeParam = params['代码'] || params['code']
   if (codeParam && codeParam.value) {
-    const codes = Array.isArray(codeParam.value)
+    let codes = Array.isArray(codeParam.value)
       ? codeParam.value
-      : [codeParam.value]
+      : typeof codeParam.value === 'string' && codeParam.value.includes(',')
+        ? codeParam.value.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        : [codeParam.value]
 
     for (const code of codes) {
       if (code && typeof code === 'string' && code.trim()) {
@@ -120,9 +122,11 @@ function extractFromSignalNode(
   // 检查是否有"代码"参数
   const codeParam = params['代码'] || params['code']
   if (codeParam && codeParam.value) {
-    const codes = Array.isArray(codeParam.value)
+    let codes = Array.isArray(codeParam.value)
       ? codeParam.value
-      : [codeParam.value]
+      : typeof codeParam.value === 'string' && codeParam.value.includes(',')
+        ? codeParam.value.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        : [codeParam.value]
 
     for (const code of codes) {
       if (code && typeof code === 'string' && code.trim()) {
@@ -154,9 +158,11 @@ function extractFromPortfolioNode(
   // 检查是否有"pool"或"交易池"参数
   const poolParam = params['pool'] || params['交易池']
   if (poolParam && poolParam.value) {
-    const codes = Array.isArray(poolParam.value)
+    let codes = Array.isArray(poolParam.value)
       ? poolParam.value
-      : [poolParam.value]
+      : typeof poolParam.value === 'string' && poolParam.value.includes(',')
+        ? poolParam.value.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        : [poolParam.value]
 
     for (const code of codes) {
       if (code && typeof code === 'string' && code.trim()) {

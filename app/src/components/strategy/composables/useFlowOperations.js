@@ -1,6 +1,7 @@
 import { nextTick } from 'vue'
 import { MarkerType } from '@vue-flow/core'
 import { getNode } from '@/lib/nodes'
+import { updateAllSuccessorDebugNodes } from '@/lib/nodes/useDebugNodeFields'
 
 /**
  * 流程图操作 composable
@@ -440,6 +441,11 @@ export function useFlowOperations(state) {
     }
     // 添加到边数组
     addEdges([newEdge])
+
+    // 连接产生后，更新所有后继 DebugNode 的字段选项
+    nextTick(() => {
+      updateAllSuccessorDebugNodes(connection.target, getNodes.value, getEdges.value)
+    })
   }
 
   /**

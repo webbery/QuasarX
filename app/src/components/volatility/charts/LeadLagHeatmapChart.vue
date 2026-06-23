@@ -72,9 +72,9 @@ function buildChart() {
       min: -1,
       max: 1,
       calculable: true,
-      orient: 'horizontal',
-      left: 'center',
-      bottom: 0,
+      orient: 'vertical',
+      right: 10,
+      top: 'center',
       inRange: {
         color: ['#2166ac', '#4393c3', '#92c5de', '#f7f7f7', '#fddbc7', '#f4a582', '#d6604d']
       },

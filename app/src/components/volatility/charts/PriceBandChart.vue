@@ -124,10 +124,15 @@ function buildOption() {
 
     // 预测价格序列（基于最后价格推导）
     const fcPrices = forecast.forecast_values.map(v => lastPrice * (1 + v))
-    const fcUpper1 = forecast.forecast_upper_1sigma.map(v => lastPrice + (v - lastPrice))
-    const fcLower1 = forecast.forecast_lower_1sigma.map(v => lastPrice - (lastPrice - v))
-    const fcUpper2 = forecast.forecast_upper_2sigma.map(v => lastPrice + (v - lastPrice) * 1.5)
-    const fcLower2 = forecast.forecast_lower_2sigma.map(v => lastPrice - (lastPrice - v) * 1.5)
+    
+    // 1sigma 和 2sigma 是收益率级别的标准差，需要加到预测价格上
+    // forecast_upper_1sigma = base + fc.values[i] + s，其中 s 是标准差（收益率级别）
+    // 正确做法：预测价格 + lastPrice * std（将收益率标准差转换为价格标准差）
+    const fcStdPerStep = forecast.forecast_std || []
+    const fcUpper1 = fcPrices.map((p, i) => p + lastPrice * (fcStdPerStep[i] || 0))
+    const fcLower1 = fcPrices.map((p, i) => p - lastPrice * (fcStdPerStep[i] || 0))
+    const fcUpper2 = fcPrices.map((p, i) => p + lastPrice * 2 * (fcStdPerStep[i] || 0))
+    const fcLower2 = fcPrices.map((p, i) => p - lastPrice * 2 * (fcStdPerStep[i] || 0))
 
     // x 轴扩展
     const fcLabels = Array.from({ length: fcSteps }, (_, i) => `预测+${i + 1}`)

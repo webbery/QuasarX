@@ -62,9 +62,9 @@ function buildOption() {
       min: -1,
       max: 1,
       calculable: true,
-      orient: 'horizontal',
-      left: 'center',
-      bottom: '0%',
+      orient: 'vertical',
+      right: 10,
+      top: 'center',
       inRange: {
         color: ['#313695', '#4575b4', '#74add1', '#fee090', '#f46d43', '#d73027']
       },
