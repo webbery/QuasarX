@@ -291,28 +291,33 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
 // === 多标的计算 ===
 
 VolatilityMultiResult VolatilityHandler::computeMulti(
-    const std::map<std::string, std::vector<double>>& returns_map)
+    const std::map<std::string, std::vector<double>>& returns_map,
+    const std::vector<std::string>& symbols,
+    int max_lag)
 {
     VolatilityMultiResult result;
     size_t n = returns_map.size();
     if (n < 2) return result;
-    
+
     // 对齐收益率序列 (取最短长度)
     size_t min_len = std::numeric_limits<size_t>::max();
     for (const auto& [sym, rets] : returns_map) {
         if (rets.size() < min_len) min_len = rets.size();
     }
-    
+
     // 构建收益率矩阵 (n x T)
     std::vector<std::vector<double>> ret_matrix(n, std::vector<double>(min_len));
+    std::vector<std::string> sym_list;
+    sym_list.reserve(n);
     size_t idx = 0;
     for (const auto& [sym, rets] : returns_map) {
         for (size_t t = 0; t < min_len; ++t) {
             ret_matrix[idx][t] = rets[rets.size() - min_len + t];
         }
+        sym_list.push_back(sym);
         ++idx;
     }
-    
+
     // 计算协方差矩阵 RᵀR / (T-1)
     result.covariance_matrix.resize(n, std::vector<double>(n, 0));
     for (size_t i = 0; i < n; ++i) {
@@ -326,7 +331,7 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
             result.covariance_matrix[j][i] = cov;
         }
     }
-    
+
     // 计算相关系数矩阵
     std::vector<double> stds(n);
     for (size_t i = 0; i < n; ++i) {
@@ -342,12 +347,12 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
             }
         }
     }
-    
+
     // 年化波动率
     for (size_t i = 0; i < n; ++i) {
         result.annual_volatility.push_back(std::sqrt(result.covariance_matrix[i][i] * 252.0));
     }
-    
+
     // 特征值分解 (幂迭代法求最大/最小特征值)
     // 简化：用 Gershgorin 圆估计条件数
     double max_eigen = 0;
@@ -361,10 +366,10 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
         max_eigen = std::max(max_eigen, center + radius);
         min_eigen = std::min(min_eigen, std::max(0.0, center - radius));
     }
-    
+
     result.condition_number = (min_eigen > 1e-15) ? (max_eigen / min_eigen) : 1e15;
     result.is_positive_definite = (min_eigen > 1e-15);
-    
+
     // 简化特征值 (对角线作为近似)
     result.eigenvalues.reserve(n);
     for (size_t i = 0; i < n; ++i) {
@@ -433,6 +438,49 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
             result.multi_forecast.forecast_volatilities.push_back(
                 std::sqrt(result.multi_forecast.forecast_cov[i][i] * 252.0)
             );
+        }
+    }
+
+    // === 多标的时间序列分析 ===
+    // 对所有标的对执行分析 (n*(n-1)/2 对)
+    int ts_max_lag = std::min(max_lag, static_cast<int>(min_len / 4));
+    if (ts_max_lag < 1) ts_max_lag = 1;
+
+    for (size_t i = 0; i < sym_list.size(); ++i) {
+        for (size_t j = i + 1; j < sym_list.size(); ++j) {
+            const auto& rets_i = ret_matrix[i];
+            const auto& rets_j = ret_matrix[j];
+
+            // 1. 交叉相关 + 领先滞后
+            auto ccf = finance::crossCorrelation(rets_i, rets_j, ts_max_lag);
+            result.lead_lag_results.push_back({
+                sym_list[i], sym_list[j],
+                ccf.lead_lag,
+                ccf.max_correlation,
+                ccf.ccf
+            });
+
+            // 2. 格兰杰因果检验 (y→x 和 x→y 双向)
+            int granger_max_lag = std::min(ts_max_lag, 5);  // 格兰杰检验限制最大滞后
+            auto gr_yx = finance::grangerCausalityTest(rets_i, rets_j, granger_max_lag, sym_list[i], sym_list[j]);
+            result.granger_results.push_back({
+                sym_list[j], sym_list[i],  // y→x
+                gr_yx.f_statistic, gr_yx.p_value, gr_yx.is_significant, gr_yx.optimal_lag
+            });
+            auto gr_xy = finance::grangerCausalityTest(rets_j, rets_i, granger_max_lag, sym_list[j], sym_list[i]);
+            result.granger_results.push_back({
+                sym_list[i], sym_list[j],  // x→y
+                gr_xy.f_statistic, gr_xy.p_value, gr_xy.is_significant, gr_xy.optimal_lag
+            });
+
+            // 3. 协整检验
+            auto coint = finance::engleGrangerTest(rets_i, rets_j);
+            result.cointegration_results.push_back({
+                sym_list[i], sym_list[j],
+                coint.beta, coint.alpha,
+                coint.adf_statistic, coint.p_value,
+                coint.is_cointegrated, coint.half_life
+            });
         }
     }
 
@@ -516,7 +564,7 @@ VolatilityResult VolatilityHandler::compute(
     }
 
     result.dates = common_dates;
-    result.multi = computeMulti(returns_map);
+    result.multi = computeMulti(returns_map, symbols, 10);
 
     return result;
 }
@@ -682,6 +730,57 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             mf["forecast_volatilities"] = result.multi.multi_forecast.forecast_volatilities;
             multi_json["multi_forecast"] = mf;
         }
+
+        // === 多标的时间序列分析 ===
+        if (!result.multi.lead_lag_results.empty()) {
+            nlohmann::json ts;
+
+            // 领先-滞后分析
+            nlohmann::json ll_array = nlohmann::json::array();
+            for (const auto& ll : result.multi.lead_lag_results) {
+                nlohmann::json item;
+                item["symbol_x"] = ll.symbol_x;
+                item["symbol_y"] = ll.symbol_y;
+                item["lead_lag"] = ll.lead_lag;
+                item["max_correlation"] = ll.max_correlation;
+                item["ccf"] = ll.ccf;
+                ll_array.push_back(item);
+            }
+            ts["lead_lag"] = ll_array;
+
+            // 格兰杰因果检验
+            nlohmann::json gr_array = nlohmann::json::array();
+            for (const auto& gr : result.multi.granger_results) {
+                nlohmann::json item;
+                item["from"] = gr.from;
+                item["to"] = gr.to;
+                item["f_statistic"] = gr.f_statistic;
+                item["p_value"] = gr.p_value;
+                item["is_significant"] = gr.is_significant;
+                item["optimal_lag"] = gr.optimal_lag;
+                gr_array.push_back(item);
+            }
+            ts["granger_causality"] = gr_array;
+
+            // 协整检验
+            nlohmann::json ci_array = nlohmann::json::array();
+            for (const auto& ci : result.multi.cointegration_results) {
+                nlohmann::json item;
+                item["symbol_x"] = ci.symbol_x;
+                item["symbol_y"] = ci.symbol_y;
+                item["beta"] = ci.beta;
+                item["alpha"] = ci.alpha;
+                item["adf_statistic"] = ci.adf_statistic;
+                item["p_value"] = ci.p_value;
+                item["is_cointegrated"] = ci.is_cointegrated;
+                item["half_life"] = ci.half_life;
+                ci_array.push_back(item);
+            }
+            ts["cointegration"] = ci_array;
+
+            multi_json["time_series_analysis"] = ts;
+        }
+
         json["multi"] = multi_json;
 
         res.set_content(json.dump(), "application/json");

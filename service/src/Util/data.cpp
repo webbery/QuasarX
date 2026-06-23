@@ -30,6 +30,31 @@ String toString(FillMethod method) {
     return "unknown";
 }
 
+// === ETF 代码判断 ===
+
+/// 根据股票代码字符串判断是否为场内ETF
+/// 上交所ETF: 51xxxx, 58xxxx; 深交所ETF: 15xxxx
+static bool is_etf_symbol(const String& symbol_normalized) {
+    // 尝试从完整 symbol 中提取纯数字代码
+    String code = symbol_normalized;
+    auto dot_pos = code.find('.');
+    if (dot_pos != String::npos) {
+        code = code.substr(0, dot_pos);
+    }
+    if (code.size() < 6) return false;
+
+    int prefix = 0;
+    try {
+        prefix = std::stoi(code.substr(0, 3));
+    } catch (...) {
+        return false;
+    }
+
+    // 上交所ETF: 510xxx~519xxx, 588xxx
+    // 深交所ETF: 159xxx
+    return (prefix >= 510 && prefix <= 519) || (prefix == 588) || (prefix == 159);
+}
+
 // === 核心 CSV 数据加载 ===
 
 static Map<String, Vector<double>> loadCsvData(
@@ -60,12 +85,31 @@ static Map<String, Vector<double>> loadCsvData(
         auto dot_pos = normalized.find('.');
         std::string code = normalized.substr(0, dot_pos);
         std::string exchange = normalized.substr(dot_pos + 1);
-        
+
         search_paths.push_back(base_dir + "/A_hfq/" + exchange + "." + code + ".csv");
         search_paths.push_back(base_dir + "/Astock/" + exchange + "." + code + ".csv");
         // 也尝试原始格式（兼容已有文件）
         search_paths.push_back(base_dir + "/A_hfq/" + normalized + ".csv");
         search_paths.push_back(base_dir + "/Astock/" + normalized + ".csv");
+    }
+
+    // 新增：ETF 数据路径（后复权优先，用于指标计算）
+    if (is_etf_symbol(normalized)) {
+        // ETF 数据按频率子目录存储，默认使用 5m 日线级数据
+        String etf_code = normalized;
+        auto dot_pos = etf_code.find('.');
+        if (dot_pos != String::npos) {
+            std::string code = etf_code.substr(0, dot_pos);
+            std::string exchange = etf_code.substr(dot_pos + 1);
+            String etf_formatted = exchange + "." + code;
+
+            // 后复权数据（指标计算用，与回测一致）
+            search_paths.push_back(base_dir + "/etf_hfq/5m/" + etf_formatted + ".csv");
+            search_paths.push_back(base_dir + "/etf_hfq/1m/" + etf_formatted + ".csv");
+            // 原始数据（价格撮合用）
+            search_paths.push_back(base_dir + "/etf_org/5m/" + etf_formatted + ".csv");
+            search_paths.push_back(base_dir + "/etf_org/1m/" + etf_formatted + ".csv");
+        }
     }
 
     String data_path;
