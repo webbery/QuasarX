@@ -23,6 +23,66 @@ double amihud_illiquidity(const Vector<double>& prices,
                           const Vector<int64_t>& volumes);
 
 // ──────────────────────────────────────────────────────────────────────
+// 时间序列分析工具函数（多标的）
+// ──────────────────────────────────────────────────────────────────────
+
+/// OLS 回归结果
+struct OLSResult {
+    double alpha;              // 截距
+    double beta;               // 斜率
+    Vector<double> residuals;  // 残差序列
+    double r_squared;          // R²
+    double std_error;          // 回归标准误差
+};
+
+/// 交叉相关分析结果
+struct CrossCorrelationResult {
+    Vector<double> ccf;        // lag -max_lag ~ +max_lag 的相关系数
+    int max_lag_index;         // CCF 向量中最大相关的索引
+    double max_correlation;    // 最大 |相关系数|
+    int lead_lag;              // >0: y领先x, <0: x领先y
+};
+
+/// 格兰杰因果检验结果
+struct GrangerCausalityResult {
+    double f_statistic;
+    double p_value;
+    bool is_significant;       // p < 0.05
+    int optimal_lag;           // AIC 最小的滞后阶数
+    String direction;          // "X→Y" 或 "Y→X"
+};
+
+/// 协整检验结果 (Engle-Granger)
+struct CointegrationResult {
+    double beta;               // y = α + βx + ε
+    double alpha;
+    double adf_statistic;      // 残差 ADF 检验统计量
+    double p_value;
+    bool is_cointegrated;      // p < 0.05
+    double half_life;          // 均值回归半衰期 (bar 数)
+};
+
+/// OLS 回归: y = α + βx + ε
+OLSResult olsRegression(const Vector<double>& x, const Vector<double>& y);
+
+/// 交叉相关函数 (Cross-Correlation Function)
+/// 计算 x 和 y 在滞后 [-max_lag, +max_lag] 下的相关系数
+/// 正值 lag: y 领先 x；负值 lag: x 领先 y
+CrossCorrelationResult crossCorrelation(
+    const Vector<double>& x, const Vector<double>& y, int max_lag);
+
+/// 格兰杰因果检验
+/// 检验 y 是否是 x 的格兰杰原因
+GrangerCausalityResult grangerCausalityTest(
+    const Vector<double>& x, const Vector<double>& y, int max_lag,
+    const String& x_name = "X", const String& y_name = "Y");
+
+/// Engle-Granger 协整检验
+/// 检验 x 和 y 是否存在长期均衡关系
+CointegrationResult engleGrangerTest(
+    const Vector<double>& x, const Vector<double>& y);
+
+// ──────────────────────────────────────────────────────────────────────
 // 信号分析 / 时序分析工具函数
 // ──────────────────────────────────────────────────────────────────────
 

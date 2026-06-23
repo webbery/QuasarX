@@ -174,39 +174,83 @@
       <!-- 多标的关联分析 -->
       <section v-if="state.symbols.length >= 2" class="section">
         <h3 class="section-title">多标的关联分析</h3>
-        <div class="chart-grid">
-          <div class="chart-card full">
-            <CorrelationHeatmapChart
-              :symbols="state.result.symbols"
-              :correlation-matrix="state.result.multi.correlation_matrix"
-            />
-          </div>
+
+        <!-- 子标签切换 -->
+        <div class="sub-tab-bar">
+          <button
+            :class="['sub-tab-btn', { active: activeMultiTab === 'correlation' }]"
+            @click="activeMultiTab = 'correlation'"
+          >协方差/相关性</button>
+          <button
+            :class="['sub-tab-btn', { active: activeMultiTab === 'timeseries' }]"
+            @click="activeMultiTab = 'timeseries'"
+          >时间序列分析</button>
         </div>
 
-        <div class="chart-grid">
-          <div class="chart-card half">
-            <VolatilityComparisonChart
-              :symbols="state.result.symbols"
-              :annual-volatility="state.result.multi.annual_volatility"
-            />
+        <!-- 协方差/相关性 -->
+        <template v-if="activeMultiTab === 'correlation'">
+          <div class="chart-grid">
+            <div class="chart-card full">
+              <CorrelationHeatmapChart
+                :symbols="state.result.symbols"
+                :correlation-matrix="state.result.multi.correlation_matrix"
+              />
+            </div>
           </div>
-          <div class="chart-card half">
-            <CovarianceEigenChart :data="state.result.multi" />
-          </div>
-        </div>
 
-        <!-- 多资产预测外推 -->
-        <div v-if="state.result?.multi?.multi_forecast?.horizon" class="chart-grid">
-          <div class="chart-card half">
-            <CovarianceForecastChart :data="state.result.multi.multi_forecast" />
+          <div class="chart-grid">
+            <div class="chart-card half">
+              <VolatilityComparisonChart
+                :symbols="state.result.symbols"
+                :annual-volatility="state.result.multi.annual_volatility"
+              />
+            </div>
+            <div class="chart-card half">
+              <CovarianceEigenChart :data="state.result.multi" />
+            </div>
           </div>
-          <div class="chart-card half">
-            <VolatilityComparisonChart
-              :symbols="state.result.multi.multi_forecast.symbols"
-              :annual-volatility="state.result.multi.multi_forecast.forecast_volatilities"
-            />
+
+          <!-- 多资产预测外推 -->
+          <div v-if="state.result?.multi?.multi_forecast?.horizon" class="chart-grid">
+            <div class="chart-card half">
+              <CovarianceForecastChart :data="state.result.multi.multi_forecast" />
+            </div>
+            <div class="chart-card half">
+              <VolatilityComparisonChart
+                :symbols="state.result.multi.multi_forecast.symbols"
+                :annual-volatility="state.result.multi.multi_forecast.forecast_volatilities"
+              />
+            </div>
           </div>
-        </div>
+        </template>
+
+        <!-- 时间序列分析 -->
+        <template v-else-if="activeMultiTab === 'timeseries'">
+          <div v-if="state.result?.multi?.time_series_analysis" class="chart-grid">
+            <div class="chart-card full">
+              <LeadLagHeatmapChart
+                :data="state.result.multi.time_series_analysis.lead_lag"
+              />
+            </div>
+          </div>
+
+          <div v-if="state.result?.multi?.time_series_analysis" class="chart-grid">
+            <div class="chart-card half">
+              <GrangerTable
+                :data="state.result.multi.time_series_analysis.granger_causality"
+              />
+            </div>
+            <div class="chart-card half">
+              <CointegrationTable
+                :data="state.result.multi.time_series_analysis.cointegration"
+              />
+            </div>
+          </div>
+
+          <div v-else class="empty-mini">
+            时间序列分析需要至少2个标的
+          </div>
+        </template>
       </section>
     </div>
 
@@ -235,6 +279,10 @@ import CorrelationHeatmapChart from './charts/CorrelationHeatmapChart.vue'
 import VolatilityComparisonChart from './charts/VolatilityComparisonChart.vue'
 import CovarianceEigenChart from './charts/CovarianceEigenChart.vue'
 import CovarianceForecastChart from './charts/CovarianceForecastChart.vue'
+// 时间序列分析组件
+import LeadLagHeatmapChart from './charts/LeadLagHeatmapChart.vue'
+import GrangerTable from './charts/GrangerTable.vue'
+import CointegrationTable from './charts/CointegrationTable.vue'
 
 const { state, QUICK_RANGES, removeSymbol, setQuickRange } = useVolatilityState()
 const { fetchVolatility } = useVolatilityData()
@@ -248,6 +296,9 @@ const {
   toggleSymbol,
 } = useStrategySecurities()
 const { macroOptionsByCountry } = useMacroIndicators()
+
+// 多标的子标签切换
+const activeMultiTab = ref<'correlation' | 'timeseries'>('correlation')
 
 // === 模式切换 ===
 type AnalysisMode = 'strategy' | 'macro'
@@ -779,6 +830,47 @@ async function runAnalysis() {
   font-weight: 600;
   padding-left: 12px;
   border-left: 3px solid #2962ff;
+}
+
+/* 子标签切换栏 */
+.sub-tab-bar {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0;
+  padding: 4px;
+  background: rgba(26, 34, 54, 0.5);
+  border: 1px solid rgba(74, 85, 104, 0.2);
+  border-radius: 6px;
+}
+
+.sub-tab-btn {
+  padding: 6px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #999;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sub-tab-btn:hover {
+  color: #e0e0e0;
+  background: rgba(41, 98, 255, 0.1);
+}
+
+.sub-tab-btn.active {
+  background: #2962ff;
+  color: #fff;
+  font-weight: 500;
+}
+
+.empty-mini {
+  text-align: center;
+  color: #666;
+  font-size: 13px;
+  padding: 40px 20px;
+  font-style: italic;
 }
 
 .chart-grid {

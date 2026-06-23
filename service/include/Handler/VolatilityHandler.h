@@ -1,6 +1,7 @@
 #pragma once
 #include "HttpHandler.h"
 #include "Util/data.h"
+#include "Util/finance.h"
 #include "Metric/RiskMetric.h"
 #include "Metric/Drawdown.h"
 #include "Metric/Volatility.h"
@@ -81,6 +82,35 @@ struct VolatilityMultiResult {
         std::vector<double> forecast_volatilities;
     };
     MultiForecast multi_forecast;
+
+    // === 多标的时间序列分析 ===
+    struct LeadLagPair {
+        std::string symbol_x, symbol_y;
+        int lead_lag;              // >0: y领先x, <0: x领先y
+        double max_correlation;    // 最大 |相关系数|
+        std::vector<double> ccf;   // 交叉相关系数序列
+    };
+
+    struct GrangerPair {
+        std::string from, to;
+        double f_statistic;
+        double p_value;
+        bool is_significant;
+        int optimal_lag;
+    };
+
+    struct CointegrationPair {
+        std::string symbol_x, symbol_y;
+        double beta, alpha;
+        double adf_statistic;
+        double p_value;
+        bool is_cointegrated;
+        double half_life;
+    };
+
+    std::vector<LeadLagPair> lead_lag_results;
+    std::vector<GrangerPair> granger_results;
+    std::vector<CointegrationPair> cointegration_results;
 };
 
 struct VolatilityResult {
@@ -109,7 +139,10 @@ private:
                                                   const std::vector<double>& volumes,
                                                   const std::vector<int>& windows);
 
-    static VolatilityMultiResult computeMulti(const std::map<std::string, std::vector<double>>& returns_map);
+    static VolatilityMultiResult computeMulti(
+        const std::map<std::string, std::vector<double>>& returns_map,
+        const std::vector<std::string>& symbols,
+        int max_lag = 10);
 
     static std::vector<double> simpleReturns(const std::vector<double>& prices);
     static double skewness(const std::vector<double>& data);
