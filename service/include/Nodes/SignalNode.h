@@ -31,4 +31,6 @@ private:
     FormulaParser* _sellParser;
     Vector<symbol_t> _pools;
     bool _allowShort = false;  // 是否允许做空
+    String _buyExpression;     // 原始买入表达式（用于日志）
+    String _sellExpression;    // 原始卖出表达式（用于日志）
 };

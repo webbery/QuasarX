@@ -151,8 +151,8 @@ private:
      */
     run_id_t StartBacktest(const String& strategy, const Set<symbol_t>& symbols, double initialCapital);
 
-    bool ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type);
-    bool ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type);
+    // bool ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type);
+    // bool ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type);
 
     // bool DailyBuy(const String& strategy, symbol_t symbol, const DataFeatures& features);
     // bool DailySell(const String& strategy, symbol_t symbol, const DataFeatures& features);

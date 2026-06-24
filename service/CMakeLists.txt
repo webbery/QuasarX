@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.20)
 project(QuantService)
 
 option(ENABLE_ASAN "Enable AddressSanitizer" ON)
+option(ENABLE_NODE_IO_LOGGING "Enable node IO logging to DuckDB (debug only)" OFF)
+if(ENABLE_NODE_IO_LOGGING)
+    add_compile_definitions(ENABLE_NODE_IO_LOGGING)
+    message(STATUS "Node IO logging: ENABLED")
+else()
+    message(STATUS "Node IO logging: DISABLED (zero overhead)")
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 # add_compile_definitions(USE_PMR)
 execute_process(

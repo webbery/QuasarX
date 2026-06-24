@@ -89,6 +89,12 @@
                                             <i class="fas fa-file-alt"></i> 日志
                                         </button>
                                         <button
+                                            class="btn btn-node-log"
+                                            @click="viewNodeLogs(s.name)"
+                                        >
+                                            <i class="fas fa-table"></i> 节点
+                                        </button>
+                                        <button
                                             class="btn btn-delete"
                                             @click="deleteStrategy(s.name)"
                                             :disabled="isOperating(s.name)"
@@ -100,6 +106,24 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- 日志查看视图 -->
+            <div v-else-if="viewingNodeLogs" class="log-view-container">
+                <div class="log-view-header">
+                    <button class="btn btn-back" @click="backFromNodeLogs">
+                        <i class="fas fa-arrow-left"></i> 返回策略列表
+                    </button>
+                    <span class="log-view-title">
+                        <i class="fas fa-table"></i>
+                        节点输入输出日志
+                        <span v-if="viewNodeLogStrategy" class="log-view-strategy-name">{{ viewNodeLogStrategy }}</span>
+                    </span>
+                    <div></div>
+                </div>
+                <div class="log-view-content">
+                    <NodeIOPanel :strategy="viewNodeLogStrategy" />
                 </div>
             </div>
 
@@ -151,6 +175,7 @@ import axios from 'axios'
 import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
 import StrategyLogPanel from './StrategyLogPanel.vue'
+import NodeIOPanel from './NodeIOPanel.vue'
 
 const activeTab = ref('realtime')
 const selectedStrategy = ref('')
@@ -158,6 +183,10 @@ const selectedStrategy = ref('')
 // 日志查看视图切换
 const viewingLogs = ref(false)
 const viewLogStrategy = ref('')
+
+// 节点日志查看视图切换
+const viewingNodeLogs = ref(false)
+const viewNodeLogStrategy = ref('')
 
 // 复用 App.vue 共享的策略状态（10s 轮询）
 const serverStrategies = inject('serverStrategies', ref([]))
@@ -186,6 +215,18 @@ const viewLogs = (name) => {
 const backToList = () => {
   viewingLogs.value = false
   viewLogStrategy.value = ''
+}
+
+/** 查看节点日志 */
+const viewNodeLogs = (name) => {
+  viewNodeLogStrategy.value = name
+  viewingNodeLogs.value = true
+}
+
+/** 从节点日志视图返回策略列表 */
+const backFromNodeLogs = () => {
+  viewingNodeLogs.value = false
+  viewNodeLogStrategy.value = ''
 }
 
 /** 格式化心跳时间：距离 lastHeartbeat 的时间差 */
@@ -587,6 +628,16 @@ onMounted(async () => {
 
 .btn-log:hover:not(:disabled) {
   background: rgba(96, 165, 250, 0.3);
+}
+
+.btn-node-log {
+  background: rgba(167, 139, 250, 0.15);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  color: #a78bfa;
+}
+
+.btn-node-log:hover:not(:disabled) {
+  background: rgba(167, 139, 250, 0.3);
 }
 
 /* 日志区块（保留给 StrategyLogPanel 内部样式） */

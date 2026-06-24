@@ -212,6 +212,11 @@ public:
 
     TradeSignal* getSignalBySymbol(symbol_t);
 
+    /**
+     * @brief 获取所有 signals（只读，用于 ExecuteNode 遍历检查）
+     */
+    const std::unordered_map<symbol_t, TradeSignal*>& getAllSignals() const { return _signals; }
+
     // ============ Warmup 管理 ============
 
     /**

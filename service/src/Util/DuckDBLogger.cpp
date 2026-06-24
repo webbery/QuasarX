@@ -174,6 +174,9 @@ bool DuckDBLogger::init(const std::string& db_path) {
     // 初始化表结构
     init_tables();
 
+    // 初始化 node_io_logs 表
+    init_node_io_table();
+
     // 初始化ID计数器
     duckdb_result result;
     if (query_params("SELECT COALESCE(MAX(id), 0) + 1 FROM strategy_logs", {}, result)) {
@@ -213,6 +216,27 @@ void DuckDBLogger::init_tables() {
     exec("CREATE INDEX IF NOT EXISTS idx_time_desc ON strategy_logs(timestamp DESC)");
 }
 
+void DuckDBLogger::init_node_io_table() {
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS node_io_logs (
+            id BIGINT PRIMARY KEY,
+            timestamp TIMESTAMP NOT NULL,
+            strategy_name VARCHAR NOT NULL,
+            epoch BIGINT NOT NULL,
+            node_type VARCHAR NOT NULL,
+            node_id VARCHAR,
+            input JSON,
+            output JSON,
+            metadata JSON
+        )
+    )");
+
+    exec("CREATE INDEX IF NOT EXISTS idx_nodeio_strategy_time ON node_io_logs(strategy_name, timestamp DESC)");
+    exec("CREATE INDEX IF NOT EXISTS idx_nodeio_epoch ON node_io_logs(strategy_name, epoch)");
+    exec("CREATE INDEX IF NOT EXISTS idx_nodeio_node_type ON node_io_logs(node_type)");
+    exec("CREATE INDEX IF NOT EXISTS idx_nodeio_time ON node_io_logs(timestamp DESC)");
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // 异步日志入口
 // ──────────────────────────────────────────────────────────────────────
@@ -242,6 +266,37 @@ void DuckDBLogger::log_strategy(
     queue_cv_.notify_one();
 }
 
+void DuckDBLogger::log_node_io(
+    const std::string& strategy_name,
+    int64_t epoch,
+    const std::string& node_type,
+    const std::string& node_id,
+    const std::string& input_json,
+    const std::string& output_json,
+    const std::string& metadata_json)
+{
+    if (!initialized_ || !running_) {
+        return;
+    }
+
+    NodeIOEntry entry;
+    entry.id = id_counter_++;
+    entry.timestamp = ToString(Now());
+    entry.strategy_name = strategy_name;
+    entry.epoch = epoch;
+    entry.node_type = node_type;
+    entry.node_id = node_id;
+    entry.input_json = input_json;
+    entry.output_json = output_json;
+    entry.metadata_json = metadata_json;
+
+    {
+        std::lock_guard<std::mutex> lock(node_io_queue_mutex_);
+        node_io_queue_.push(std::move(entry));
+    }
+    node_io_queue_cv_.notify_one();
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // 后台写入线程
 // ──────────────────────────────────────────────────────────────────────
@@ -249,34 +304,52 @@ void DuckDBLogger::log_strategy(
 void DuckDBLogger::worker_loop() {
     std::vector<StrategyLogEntry> batch;
     batch.reserve(BATCH_SIZE);
+    std::vector<NodeIOEntry> node_io_batch;
+    node_io_batch.reserve(BATCH_SIZE);
 
     auto last_flush = std::chrono::steady_clock::now();
 
-    while (running_ || !queue_.empty()) {
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-
-        queue_cv_.wait_for(
-            lock,
-            std::chrono::milliseconds(FLUSH_INTERVAL_MS),
-            [this] { return !queue_.empty() || !running_; }
-        );
-
-        while (!queue_.empty() && batch.size() < BATCH_SIZE) {
-            batch.push_back(std::move(queue_.front()));
-            queue_.pop();
+    while (running_ || !queue_.empty() || !node_io_queue_.empty()) {
+        // 处理策略日志队列
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            queue_cv_.wait_for(
+                lock,
+                std::chrono::milliseconds(FLUSH_INTERVAL_MS),
+                [this] { return !queue_.empty() || !running_; }
+            );
+            while (!queue_.empty() && batch.size() < BATCH_SIZE) {
+                batch.push_back(std::move(queue_.front()));
+                queue_.pop();
+            }
         }
 
-        lock.unlock();
+        // 处理节点 IO 日志队列
+        {
+            std::unique_lock<std::mutex> lock(node_io_queue_mutex_);
+            node_io_queue_cv_.wait_for(
+                lock,
+                std::chrono::milliseconds(FLUSH_INTERVAL_MS),
+                [this] { return !node_io_queue_.empty() || !running_; }
+            );
+            while (!node_io_queue_.empty() && node_io_batch.size() < BATCH_SIZE) {
+                node_io_batch.push_back(std::move(node_io_queue_.front()));
+                node_io_queue_.pop();
+            }
+        }
 
         if (!batch.empty()) {
             batch_insert(batch);
             batch.clear();
         }
 
+        if (!node_io_batch.empty()) {
+            batch_insert_node_io(node_io_batch);
+            node_io_batch.clear();
+        }
+
         auto now = std::chrono::steady_clock::now();
         if (now - last_flush > std::chrono::seconds(3)) {
-            // 新版 DuckDB C API 不支持 wal_checkpoint PRAGMA，跳过
-            // exec("PRAGMA wal_checkpoint(PASSIVE)");
             last_flush = now;
         }
     }
@@ -339,6 +412,65 @@ void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
     if (failed) {
         exec("ROLLBACK");
         SPDLOG_ERROR("[DuckDBLogger] Batch insert failed, rolled back");
+    } else {
+        exec("COMMIT");
+    }
+}
+
+void DuckDBLogger::batch_insert_node_io(const std::vector<NodeIOEntry>& entries) {
+    if (!exec("BEGIN TRANSACTION")) {
+        return;
+    }
+
+    duckdb_prepared_statement stmt = nullptr;
+    const char* insert_sql = R"(
+        INSERT INTO node_io_logs
+        (id, timestamp, strategy_name, epoch, node_type, node_id, input, output, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    )";
+
+    if (duckdb_prepare(conn_, insert_sql, &stmt) != DuckDBSuccess) {
+        exec("ROLLBACK");
+        return;
+    }
+
+    bool failed = false;
+    for (const auto& entry : entries) {
+        duckdb_value v_id   = make_int64(entry.id);
+        duckdb_value v_ts   = make_varchar(entry.timestamp);
+        duckdb_value v_name = make_varchar(entry.strategy_name);
+        duckdb_value v_epoch = make_int64(entry.epoch);
+        duckdb_value v_type = make_varchar(entry.node_type);
+        duckdb_value v_nid  = make_varchar(entry.node_id);
+        duckdb_value v_in   = entry.input_json.empty() ? make_null() : make_varchar(entry.input_json);
+        duckdb_value v_out  = entry.output_json.empty() ? make_null() : make_varchar(entry.output_json);
+        duckdb_value v_meta = entry.metadata_json.empty() ? make_null() : make_varchar(entry.metadata_json);
+
+        duckdb_value vals[9] = { v_id, v_ts, v_name, v_epoch, v_type, v_nid, v_in, v_out, v_meta };
+
+        for (int i = 0; i < 9; ++i) {
+            if (!bind_value_at(stmt, (idx_t)(i + 1), vals[i])) {
+                failed = true;
+            }
+        }
+        for (auto& v : vals) duckdb_destroy_value(&v);
+
+        if (failed) break;
+
+        duckdb_result result;
+        if (duckdb_execute_prepared(stmt, &result) != DuckDBSuccess) {
+            failed = true;
+            duckdb_destroy_result(&result);
+            break;
+        }
+        duckdb_destroy_result(&result);
+    }
+
+    duckdb_destroy_prepare(&stmt);
+
+    if (failed) {
+        exec("ROLLBACK");
+        SPDLOG_ERROR("[DuckDBLogger] Node IO batch insert failed, rolled back");
     } else {
         exec("COMMIT");
     }
@@ -608,6 +740,174 @@ void DuckDBLogger::cleanup_old_logs(int retention_days) {
     exec("VACUUM");
 
     SPDLOG_INFO("[DuckDBLogger] Cleaned logs older than {} days", retention_days);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 节点 IO 日志查询
+// ──────────────────────────────────────────────────────────────────────
+
+std::vector<NodeIOEntry> DuckDBLogger::query_node_io_logs(
+    const std::string& strategy_name,
+    const std::string& node_type,
+    int64_t epoch_from,
+    int64_t epoch_to,
+    const std::string& start_time,
+    const std::string& end_time,
+    int limit,
+    int offset)
+{
+    if (!initialized_) {
+        return {};
+    }
+
+    std::vector<NodeIOEntry> results;
+
+    std::string sql = "SELECT id, timestamp, strategy_name, epoch, node_type, node_id, input, output, metadata FROM node_io_logs WHERE 1=1";
+    std::vector<duckdb_value> params;
+
+    if (!strategy_name.empty()) {
+        sql += " AND strategy_name = ?";
+        params.push_back(make_varchar(strategy_name));
+    }
+    if (!node_type.empty()) {
+        sql += " AND node_type = ?";
+        params.push_back(make_varchar(node_type));
+    }
+    if (epoch_from > 0) {
+        sql += " AND epoch >= ?";
+        params.push_back(make_int64(epoch_from));
+    }
+    if (epoch_to > 0) {
+        sql += " AND epoch <= ?";
+        params.push_back(make_int64(epoch_to));
+    }
+    if (!start_time.empty()) {
+        sql += " AND timestamp >= ?";
+        params.push_back(make_varchar(start_time));
+    }
+    if (!end_time.empty()) {
+        sql += " AND timestamp <= ?";
+        params.push_back(make_varchar(end_time));
+    }
+
+    sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?";
+    params.push_back(make_int32(limit));
+    params.push_back(make_int32(offset));
+
+    duckdb_result result;
+    if (!query_params(sql, params, result)) {
+        for (auto& v : params) duckdb_destroy_value(&v);
+        return {};
+    }
+
+    for (auto& v : params) duckdb_destroy_value(&v);
+
+    idx_t row_count = duckdb_row_count(&result);
+
+    for (idx_t i = 0; i < row_count; i++) {
+        NodeIOEntry entry;
+        entry.id = duckdb_value_int64(&result, 0, i);
+
+        // 使用 duckdb_value_string 读取（带长度，避免 null 截断）
+        auto read_str = [&](idx_t col) -> std::string {
+            duckdb_string val = duckdb_value_string(&result, col, i);
+            if (!val.data || val.size == 0) return "";
+            std::string s(val.data, val.size);
+            duckdb_free(val.data);
+            return s;
+        };
+
+        entry.timestamp     = read_str(1);
+        entry.strategy_name = read_str(2);
+        entry.epoch         = duckdb_value_int64(&result, 3, i);
+        entry.node_type     = read_str(4);
+        entry.node_id       = read_str(5);
+        entry.input_json    = read_str(6);
+        entry.output_json   = read_str(7);
+        entry.metadata_json = read_str(8);
+
+        results.push_back(std::move(entry));
+    }
+
+    duckdb_destroy_result(&result);
+    return results;
+}
+
+int DuckDBLogger::count_node_io_logs(
+    const std::string& strategy_name,
+    const std::string& node_type,
+    int64_t epoch_from,
+    int64_t epoch_to,
+    const std::string& start_time,
+    const std::string& end_time)
+{
+    if (!initialized_) {
+        return 0;
+    }
+
+    std::string sql = "SELECT COUNT(*) FROM node_io_logs WHERE 1=1";
+    std::vector<duckdb_value> params;
+
+    if (!strategy_name.empty()) {
+        sql += " AND strategy_name = ?";
+        params.push_back(make_varchar(strategy_name));
+    }
+    if (!node_type.empty()) {
+        sql += " AND node_type = ?";
+        params.push_back(make_varchar(node_type));
+    }
+    if (epoch_from > 0) {
+        sql += " AND epoch >= ?";
+        params.push_back(make_int64(epoch_from));
+    }
+    if (epoch_to > 0) {
+        sql += " AND epoch <= ?";
+        params.push_back(make_int64(epoch_to));
+    }
+    if (!start_time.empty()) {
+        sql += " AND timestamp >= ?";
+        params.push_back(make_varchar(start_time));
+    }
+    if (!end_time.empty()) {
+        sql += " AND timestamp <= ?";
+        params.push_back(make_varchar(end_time));
+    }
+
+    duckdb_result result;
+    if (!query_params(sql, params, result)) {
+        for (auto& v : params) duckdb_destroy_value(&v);
+        return 0;
+    }
+
+    for (auto& v : params) duckdb_destroy_value(&v);
+
+    int count = 0;
+    idx_t row_count = duckdb_row_count(&result);
+    if (row_count > 0) {
+        auto* count_data = (int32_t*)duckdb_column_data(&result, 0);
+        if (count_data) count = *count_data;
+    }
+
+    duckdb_destroy_result(&result);
+    return count;
+}
+
+int64_t DuckDBLogger::delete_node_io_logs_before(const std::string& timestamp) {
+    if (!initialized_) {
+        return 0;
+    }
+
+    // 先查询删除前的数量
+    int before_count = count_node_io_logs("", "", 0, 0, "", timestamp);
+
+    duckdb_value v = make_varchar(timestamp);
+    exec_params("DELETE FROM node_io_logs WHERE timestamp < ?", {v});
+    duckdb_destroy_value(&v);
+
+    exec("VACUUM");
+
+    SPDLOG_INFO("[DuckDBLogger] Deleted node IO logs before {}, approximately {} rows", timestamp, before_count);
+    return before_count;
 }
 
 // ──────────────────────────────────────────────────────────────────────

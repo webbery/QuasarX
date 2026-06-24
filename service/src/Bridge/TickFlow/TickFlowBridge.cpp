@@ -541,7 +541,6 @@ void TickFlowBridge::ParseResponse(const String& response) {
             PublishQuote(quote);
             published++;
         }
-        DEBUG_INFO("[TickFlow] Parsed {} quotes, published {} to URI_RAW_QUOTE", count, published);
     } catch (const std::exception& e) {
         WARN("Parse error: {}", e.what());
     }

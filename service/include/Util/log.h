@@ -17,6 +17,78 @@
 #include "spdlog/spdlog.h"
 #include "Util/DuckDBLogger.h"
 
+// ──────────────────────────────────────────────────────────────────────
+// 节点 IO 日志宏（仅实盘模式，编译期开关控制）
+//
+// 用法（在节点 Process 函数中）：
+//   NODE_IO_LOG("signal", _id,
+//       input["buy"] = _buyExpr;
+//       output["sig"] = 1;
+//       meta["custom"] = "value";  // 可选
+//   )
+//
+// 说明：
+//   - _server 和 context 由宏自动捕获（要求节点类有 _server 成员，Process 有 context 参数）
+//   - 宏内部自动构建 input/output/meta 三个 json 对象
+//   - meta 自动填充 "mode":"realtime" 和 "epoch"
+//   - 未定义 ENABLE_NODE_IO_LOGGING 时宏展开为空（零开销）
+// ──────────────────────────────────────────────────────────────────────
+
+#ifdef ENABLE_NODE_IO_LOGGING
+
+#define NODE_IO_LOG(node_type, node_id, body) \
+    do { \
+        if (_server->GetRunningMode() != RuningType::Backtest && \
+            DuckDBLogger::instance().is_initialized()) { \
+            try { \
+                nlohmann::json input; \
+                nlohmann::json output; \
+                nlohmann::json meta; \
+                meta["mode"] = "realtime"; \
+                meta["epoch"] = context.GetEpoch(); \
+                { body } \
+                DuckDBLogger::instance().log_node_io( \
+                    context.CurrentStrategy(), \
+                    context.GetEpoch(), \
+                    node_type, \
+                    std::to_string(node_id), \
+                    input.dump(), output.dump(), meta.dump()); \
+            } catch (const std::exception& e) { \
+                WARN("[NodeIO] " node_type " logging failed: {}", e.what()); \
+            } \
+        } \
+    } while(0)
+
+/**
+ * @brief 轻量版宏（metadata 用静态字符串，避免构建 meta json）
+ */
+#define NODE_IO_LOG_FAST(node_type, node_id, body) \
+    do { \
+        if (_server->GetRunningMode() != RuningType::Backtest && \
+            DuckDBLogger::instance().is_initialized()) { \
+            try { \
+                nlohmann::json input; \
+                nlohmann::json output; \
+                { body } \
+                DuckDBLogger::instance().log_node_io( \
+                    context.CurrentStrategy(), \
+                    context.GetEpoch(), \
+                    node_type, \
+                    std::to_string(node_id), \
+                    input.dump(), output.dump(), \
+                    R"({"mode":"realtime","epoch":)" + std::to_string(context.GetEpoch()) + "}"); \
+            } catch (const std::exception& e) { \
+                WARN("[NodeIO] " node_type " logging failed: {}", e.what()); \
+            } \
+        } \
+    } while(0)
+
+#else
+    // 未定义时宏展开为空，零字节代码
+    #define NODE_IO_LOG(node_type, node_id, body)
+    #define NODE_IO_LOG_FAST(node_type, node_id, body)
+#endif
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #ifndef INFO
 #define INFO(...) \

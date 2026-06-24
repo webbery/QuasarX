@@ -227,6 +227,45 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         }
     }
 
+    // ── DuckDB node_io 日志（仅实盘模式）──
+    NODE_IO_LOG("portfolio", _id,
+        input["capital"] = context.getAvailableCapital();
+        input["available_funds"] = capital;
+        nlohmann::json decisions_json = nlohmann::json::object();
+        for (const auto& [sym, action] : decisions) {
+            String action_str = "HOLD";
+            if (action == TradeAction::BUY) action_str = "BUY";
+            else if (action == TradeAction::SELL) action_str = "SELL";
+            decisions_json[get_symbol(sym)] = action_str;
+        }
+        input["decisions"] = decisions_json;
+
+        nlohmann::json plan_arr = nlohmann::json::array();
+        for (const auto& item : _lastPlan._items) {
+            nlohmann::json item_json;
+            item_json["symbol"] = get_symbol(item._symbol);
+            switch (item._action) {
+                case TradeAction::BUY:  item_json["action"] = "BUY"; break;
+                case TradeAction::SELL: item_json["action"] = "SELL"; break;
+                case TradeAction::HOLD: item_json["action"] = "HOLD"; break;
+                default: item_json["action"] = "EXEC"; break;
+            }
+            item_json["quantity"] = item._quantity;
+            item_json["limit_price"] = item._limitPrice;
+            item_json["target_value"] = item._targetValue;
+            plan_arr.push_back(item_json);
+        }
+        nlohmann::json skipped = nlohmann::json::array();
+        output["plan_items"] = plan_arr;
+        output["skipped"] = skipped;
+
+        switch (_sizing_method) {
+            case SizingMethod::Equal: meta["sizing_method"] = "equal"; break;
+            case SizingMethod::Kelly: meta["sizing_method"] = "kelly"; break;
+            case SizingMethod::VolatilityTarget: meta["sizing_method"] = "volatility_target"; break;
+        }
+    );
+
     return NodeProcessResult::Success;
 }
 
@@ -328,6 +367,12 @@ ExecutionPlan PortfolioNode::generatePlan(
                         STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
                     } else {
                         WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                    }
+                    // 仍然更新 signal 的 quantity/price，让 ExecuteNode 知道此 signal 已被评估
+                    auto* signal = context.getSignalBySymbol(symbol);
+                    if (signal) {
+                        signal->SetQuantity(quantity);
+                        signal->SetPrice(price);
                     }
                     continue;
                 }

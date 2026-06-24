@@ -161,8 +161,8 @@ bool KBarBuilder::GetSnapshot(Map<symbol_t, QuoteInfo>& snapshot) {
 
     // 如果 bar 起始时间没变化，说明还没有新 bar 完成
     if (_initialized && minBarStart == _lastBarStart) {
-        INFO("[KBarBuilder:{}] GetSnapshot: minBarStart={} == _lastBarStart={}, returning false",
-                       (int)_freq, minBarStart, _lastBarStart);
+        // INFO("[KBarBuilder:{}] GetSnapshot: minBarStart={} == _lastBarStart={}, returning false",
+        //                (int)_freq, minBarStart, _lastBarStart);
         return false;
     }
 

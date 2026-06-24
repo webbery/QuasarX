@@ -17,6 +17,10 @@ bool SignalNode::Init(const nlohmann::json& config) {
     auto& buySignal = config["params"]["buy"]["value"];
     auto& sellSignal = config["params"]["sell"]["value"];
 
+    // 保存原始表达式（用于日志）
+    _buyExpression = (String)buySignal;
+    _sellExpression = (String)sellSignal;
+
     // 收集可用变量列表及其类型（从输入节点）
     Map<String, ArgType> availableVars;
     for (auto& item: _ins) {
@@ -92,19 +96,8 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         }
     }
 
-    INFO("[SignalNode:{}] Processing, pools={}, args={}", 
-         _id, _pools.size(), boost::algorithm::join(args, ", "));
-
-    // 检查关键变量是否存在
-    for (const auto& symbol : _pools) {
-        String sym = get_symbol(symbol);
-        String shortKey = sym + ".ma_short";
-        String longKey = sym + ".ma_long";
-        bool hasShort = context.exist(shortKey);
-        bool hasLong = context.exist(longKey);
-        INFO("[SignalNode:{}] Symbol '{}': exist('{}')={}, exist('{}')={}", 
-             _id, sym, shortKey, hasShort, longKey, hasLong);
-    }
+    // INFO("[SignalNode:{}] Processing, pools={}, args={}", 
+    //      _id, _pools.size(), boost::algorithm::join(args, ", "));
 
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
@@ -147,12 +140,12 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             item.second = TradeAction::HOLD;
         }
     }
-    for (auto it = buys.begin(); it != buys.end(); ++it) {
-        if (it->second == TradeAction::BUY) INFO("[SignalNode] {} BUY signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
-    }
-    for (auto it = sells.begin(); it != sells.end(); ++it) {
-        if (it->second == TradeAction::SELL) INFO("[SignalNode] {} SELL signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
-    }
+    // for (auto it = buys.begin(); it != buys.end(); ++it) {
+    //     if (it->second == TradeAction::BUY) INFO("[SignalNode] {} BUY signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
+    // }
+    // for (auto it = sells.begin(); it != sells.end(); ++it) {
+    //     if (it->second == TradeAction::SELL) INFO("[SignalNode] {} SELL signal, held={}", get_symbol(it->first), heldSymbols.count(it->first) ? heldSymbols[it->first] : 0);
+    // }
     Map<symbol_t, TradeAction> decisions;
     for (auto& trade: {buys, sells}) {
         for (auto& item: trade) {
@@ -200,6 +193,33 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             context.set(key, std::move(signalVec));
         }
     }
+
+    // ── DuckDB node_io 日志（仅实盘模式）──
+    NODE_IO_LOG("signal", _id,
+        input["buy_expression"] = _buyExpression;
+        input["sell_expression"] = _sellExpression;
+        nlohmann::json pools_arr = nlohmann::json::array();
+        for (const auto& sym : _pools) {
+            pools_arr.push_back(get_symbol(sym));
+        }
+        input["pools"] = pools_arr;
+
+        nlohmann::json sig_arr = nlohmann::json::array();
+        for (const auto& symbol : _pools) {
+            String key = get_symbol(symbol) + ".signal";
+            int signal_value = 0;
+            if (context.exist(key)) {
+                const auto& sig_vec = context.get<Vector<double>>(key);
+                if (!sig_vec.empty()) signal_value = static_cast<int>(sig_vec.back());
+            }
+            nlohmann::json sig_entry;
+            sig_entry["symbol"] = get_symbol(symbol);
+            sig_entry["signal"] = signal_value;
+            sig_arr.push_back(sig_entry);
+        }
+        output["signals"] = sig_arr;
+    );
+
     return NodeProcessResult::Success;
 }
 

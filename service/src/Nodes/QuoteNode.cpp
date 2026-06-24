@@ -2,6 +2,7 @@
 #include "ExchangeManager.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
+#include "Util/log.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
@@ -167,6 +168,32 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
         }
         if (anyQuote) {
             context.SetTime(min_t);
+
+            // 实盘模式：记录节点 IO 日志到 DuckDB
+            NODE_IO_LOG_FAST("input", _id,
+                nlohmann::json quotes = nlohmann::json::array();
+                for (auto& [sym, q] : _curQuotes) {
+                    nlohmann::json item;
+                    item["symbol"] = get_symbol(sym);
+                    item["open"] = q._open;
+                    item["high"] = q._high;
+                    item["low"] = q._low;
+                    item["close"] = q._close;
+                    item["volume"] = q._volume;
+                    item["time"] = static_cast<int64_t>(q._time);
+                    quotes.push_back(item);
+                }
+                nlohmann::json keys = nlohmann::json::array();
+                for (auto& [sym, props] : _properties) {
+                    for (auto& p : props) {
+                        keys.push_back(sym + "." + p);
+                    }
+                }
+                output["quotes"] = quotes;
+                output["keys_written"] = keys;
+                output["aligned"] = true;
+            );
+
             return NodeProcessResult::Success;
         }
         return NodeProcessResult::Skip;

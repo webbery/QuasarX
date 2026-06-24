@@ -5,6 +5,7 @@
 #include "MarketTiming/ShadowTiming.h"
 #include "server.h"
 #include "RiskContext.h"
+#include "Util/log.h"
 
 namespace{
     class BasicSignalObserver : public ISignalObserver {
@@ -99,6 +100,25 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
     if (context.GetExecutionPlan()._hasChanged) {
         const auto& plan = context.GetExecutionPlan();
 
+        // 构建 plan 中已处理的 symbol 集合
+        Set<symbol_t> plannedSymbols;
+        for (const auto& item : plan._items) {
+            plannedSymbols.insert(item._symbol);
+        }
+
+        // 对于不在 plan 中的 signal（PortfolioNode 评估后跳过，如 quantity < 100），
+        // 将其 action 改为 HOLD，避免 ConsumeSignals 时触发无效订单
+        const auto& allSignals = context.getAllSignals();
+        for (const auto& [sym, signal] : allSignals) {
+            if (plannedSymbols.count(sym) == 0) {
+                // 该 symbol 不在 plan 中，说明被 PortfolioNode 跳过了
+                if (signal->GetAction() == TradeAction::BUY || signal->GetAction() == TradeAction::SELL) {
+                    // 数量不足或其他原因被跳过，标记为 HOLD 防止 ImmediateTiming 执行
+                    signal->SetAction(TradeAction::HOLD);
+                }
+            }
+        }
+
         for (const auto& item : plan._items) {
             auto* signal = context.getSignalBySymbol(item._symbol);
             if (item._action == TradeAction::HOLD) {
@@ -131,7 +151,62 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     (int)item._action - 1, get_symbol(item._symbol), item._quantity, item._limitPrice);
             }
         }
+    } else {
+        // Plan 没有变化，但可能存在旧的 signal（quantity=0, price=0）
+        // 将所有 BUY/SELL signal 改为 HOLD，防止被 ConsumeSignals 消费
+        const auto& allSignals = context.getAllSignals();
+        for (const auto& [sym, signal] : allSignals) {
+            if (signal->GetAction() == TradeAction::BUY || signal->GetAction() == TradeAction::SELL) {
+                if (signal->GetQuantity() <= 0) {
+                    signal->SetAction(TradeAction::HOLD);
+                }
+            }
+        }
     }
+
+    // ── DuckDB node_io 日志（仅实盘模式，在 ConsumeSignals 之前）──
+    NODE_IO_LOG("execution", _id,
+        input["plan_changed"] = context.GetExecutionPlan()._hasChanged;
+        nlohmann::json plan_items_json = nlohmann::json::array();
+        for (const auto& item : context.GetExecutionPlan()._items) {
+            nlohmann::json item_json;
+            item_json["symbol"] = get_symbol(item._symbol);
+            switch (item._action) {
+                case TradeAction::BUY:  item_json["action"] = "BUY"; break;
+                case TradeAction::SELL: item_json["action"] = "SELL"; break;
+                case TradeAction::HOLD: item_json["action"] = "HOLD"; break;
+                default: item_json["action"] = "EXEC"; break;
+            }
+            item_json["quantity"] = item._quantity;
+            item_json["limit_price"] = item._limitPrice;
+            item_json["target_value"] = item._targetValue;
+            plan_items_json.push_back(item_json);
+        }
+        input["plan_items"] = plan_items_json;
+
+        const auto& all_signals = context.getAllSignals();
+        nlohmann::json signals_consumed_json = nlohmann::json::array();
+        nlohmann::json signals_skipped_json = nlohmann::json::array();
+        for (const auto& [sym, signal] : all_signals) {
+            nlohmann::json sig_json;
+            sig_json["symbol"] = get_symbol(sym);
+            switch (signal->GetAction()) {
+                case TradeAction::BUY:  sig_json["action"] = "BUY"; break;
+                case TradeAction::SELL: sig_json["action"] = "SELL"; break;
+                case TradeAction::HOLD: sig_json["action"] = "HOLD"; break;
+                default: sig_json["action"] = "EXEC"; break;
+            }
+            sig_json["quantity"] = signal->GetQuantity();
+            sig_json["price"] = signal->GetPrice();
+            if (signal->GetAction() != TradeAction::HOLD) {
+                signals_consumed_json.push_back(sig_json);
+            } else {
+                signals_skipped_json.push_back(sig_json);
+            }
+        }
+        output["signals_consumed"] = signals_consumed_json;
+        output["signals_skipped"] = signals_skipped_json;
+    );
 
     context.ConsumeSignals();
     return NodeProcessResult::Success;

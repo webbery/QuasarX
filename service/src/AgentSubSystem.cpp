@@ -771,9 +771,9 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
         else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
         
-        INFO("[Strategy] Epoch {}, executing node: {} (type: {})", context.GetEpoch(), node->id(), nodeType);
+        // INFO("[Strategy] Epoch {}, executing node: {} (type: {})", context.GetEpoch(), node->id(), nodeType);
         auto result = node->Process(strategy, context);
-        INFO("[Strategy] Node {} returned result: {}", node->id(), (int)result);
+        // INFO("[Strategy] Node {} returned result: {}", node->id(), (int)result);
         
         switch (result) {
             case NodeProcessResult::Success:
@@ -826,33 +826,33 @@ void FlowSubsystem::RegistIndicator(const String& strategy) {
     broker->RegistIndicator(strategy, StatisticIndicator::Sharp);
 }
 
-bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type) {
-    auto broker = _handle->GetBrokerSubSystem();
-    Order order;
-    order._time = Now();
-    order._side = 0;
-    order._type = type;
-    order._volume = 0;
-    order._price = price;
-    TradeInfo dd;
-    auto id = broker->Buy(strategy, symbol, order, dd);
-    if (id._id != 0) {
-        LOG("buy order: {}, result: {}", order, dd);
-        return true;
-    }
-    return false;
-}
+// bool FlowSubsystem::ImmediatelyBuy(const String& strategy, symbol_t symbol, double price, OrderType type) {
+//     auto broker = _handle->GetBrokerSubSystem();
+//     Order order;
+//     order._time = Now();
+//     order._side = 0;
+//     order._type = type;
+//     order._volume = 0;
+//     order._price = price;
+//     TradeInfo dd;
+//     auto id = broker->Buy(strategy, symbol, order, dd);
+//     if (id._id != 0) {
+//         LOG("buy order: {}, result: {}", order, dd);
+//         return true;
+//     }
+//     return false;
+// }
 
-bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type) {
-    auto broker = _handle->GetBrokerSubSystem();
-    Order order;
-    order._volume = 0;
-    order._side = true;
-    order._price = price;
-    TradeInfo dd;
-    auto id = broker->Sell(strategy, symbol, order, dd);
-    return true;
-}
+// bool FlowSubsystem::ImmediatelySell(const String& strategy, symbol_t symbol, double price, OrderType type) {
+//     auto broker = _handle->GetBrokerSubSystem();
+//     Order order;
+//     order._volume = 0;
+//     order._side = true;
+//     order._price = price;
+//     TradeInfo dd;
+//     auto id = broker->Sell(strategy, symbol, order, dd);
+//     return true;
+// }
 
 // bool FlowSubsystem::GenerateSignal(symbol_t symbol, const DataFeatures& features) {
 //     float vwap = -1;

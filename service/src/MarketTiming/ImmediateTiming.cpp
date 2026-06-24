@@ -13,9 +13,15 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     // 捕获信号触发时的时间 (回测模式下使用)
     time_t signalTime = signal.GetBacktestTime();
 
-    // 从 DataContext 获取当前价格 (回测模式优先使用 context 中的价格)
+    // 获取价格：回测模式优先使用 context 中的价格，实盘模式也从 context 获取实时行情
     double price = signal.GetPrice();
     if (_server->GetRunningMode() == RuningType::Backtest) {
+        const QuoteInfo* quote = context.GetQuote(symbol);
+        if (quote && quote->_close > 0) {
+            price = quote->_close;
+        }
+    } else {
+        // 实盘模式：signal 的 price 默认为 0，需要从 context 获取实时行情
         const QuoteInfo* quote = context.GetQuote(symbol);
         if (quote && quote->_close > 0) {
             price = quote->_close;
@@ -83,4 +89,3 @@ bool ImmediateTiming::processSignal(const String& strategy, const TradeSignal& s
     }
     return true;
 }
-
