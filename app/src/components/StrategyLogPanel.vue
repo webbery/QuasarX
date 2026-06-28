@@ -38,6 +38,10 @@
           <i class="fas fa-search"></i> 查询
         </button>
 
+        <button class="btn btn-delete" @click="handleDelete" style="margin-left: 8px;">
+          <i class="fas fa-trash"></i> 删除日志
+        </button>
+
         <label style="margin-left: auto; display: flex; align-items: center; gap: 6px; cursor: pointer;">
           <input type="checkbox" v-model="autoRefresh" @change="toggleAutoRefresh" />
           <span>实时刷新 (5s)</span>
@@ -130,17 +134,25 @@
         共 {{ totalCount }} 条
       </span>
     </div>
+
+    <!-- 确认对话框 -->
+    <PromptDialog ref="promptDialogRef" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import axios from 'axios'
+import { message } from '../tool'
+import PromptDialog from './PromptDialog.vue'
 
 const props = defineProps({
   strategyNames: { type: Array, default: () => [] },
   selectedStrategy: { type: String, default: '' }
 })
+
+// PromptDialog 引用
+const promptDialogRef = ref(null)
 
 // 筛选条件（无策略下拉，使用 props.selectedStrategy）
 const filters = reactive({
@@ -275,6 +287,50 @@ function toggleAutoRefresh() {
   }
 }
 
+// 删除日志
+async function handleDelete() {
+  // 构建删除条件描述
+  const conditions = []
+  if (props.selectedStrategy) conditions.push(`策略: ${props.selectedStrategy}`)
+  if (filters.level) conditions.push(`级别: ${filters.level}`)
+  if (filters.keyword) conditions.push(`关键字: ${filters.keyword}`)
+  const { start, end } = getTimeRange()
+  if (start || end) conditions.push(`时间: ${start || '不限'} ~ ${end || '不限'}`)
+
+  if (conditions.length === 0) {
+    message.warning('请至少设置一个筛选条件')
+    return
+  }
+
+  // 显示确认对话框
+  const confirmed = await promptDialogRef.value.confirm({
+    title: '删除日志',
+    message: `确定要删除以下日志吗？此操作不可恢复。\n\n删除条件：\n${conditions.join('\n')}`
+  })
+
+  if (!confirmed) return
+
+  try {
+    loading.value = true
+    const resp = await axios.delete('/v0/strategy/logs', {
+      data: {
+        strategy: props.selectedStrategy || '',
+        level: filters.level || '',
+        start_time: start,
+        end_time: end
+      }
+    })
+    message.success(`已删除 ${resp.data.deleted_count} 条日志`)
+    // 刷新统计和列表
+    await loadStats()
+    await loadLogs()
+  } catch (e) {
+    message.error('删除失败: ' + (e.response?.data?.error || e.message))
+  } finally {
+    loading.value = false
+  }
+}
+
 // ─────────────────────────────────────────────
 // 生命周期 & Watchers
 // ─────────────────────────────────────────────
@@ -381,6 +437,13 @@ onUnmounted(() => {
   border: 1px solid rgba(96, 165, 250, 0.4);
 }
 .btn-query:hover { background: rgba(96, 165, 250, 0.35); }
+
+.btn-delete {
+  background: rgba(248, 113, 113, 0.15);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #f87171;
+}
+.btn-delete:hover { background: rgba(248, 113, 113, 0.35); }
 
 /* ── 日志表格容器（填充剩余空间） ── */
 .log-table-wrapper {

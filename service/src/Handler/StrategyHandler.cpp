@@ -52,6 +52,7 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
             item["running"] = flow->IsRunning(name);
             item["epochCount"] = (int64_t)flow->GetEpochCount(name);
             item["lastHeartbeat"] = (int64_t)flow->GetLastHeartbeat(name);
+            item["lastEvoke"] = (int64_t)flow->GetLastEvoke(name);
 
             // 补充策略资金信息
             if (capitalPool) {

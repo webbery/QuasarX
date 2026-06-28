@@ -26,6 +26,7 @@ public:
     StrategyLogHandler(Server* server) : HttpHandler(server) {}
 
     void get(const httplib::Request& req, httplib::Response& res) override;
+    void del(const httplib::Request& req, httplib::Response& res) override;
 
 private:
     // 按策略/级别/时间查询

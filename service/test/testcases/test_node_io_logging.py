@@ -47,11 +47,12 @@ def auth_token():
     try:
         resp = requests.post(
             f"{BASE_URL}/user/login",
-            json={"username": "admin", "password": "admin123"},
+            json={"name": "admin", "pwd": "admin"},
             verify=VERIFY_SSL
         )
         if resp.status_code == 200:
-            return resp.json()["token"]
+            data = resp.json()
+            return data.get("tk", "")
     except Exception:
         pass
     return ""
@@ -62,7 +63,7 @@ def headers(auth_token):
     """带认证的请求头"""
     h = {}
     if auth_token:
-        h["Authorization"] = f"Bearer {auth_token}"
+        h["Authorization"] = auth_token
     return h
 
 

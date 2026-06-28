@@ -140,6 +140,25 @@ public:
      */
     void cleanup_old_logs(int retention_days = 90);
 
+    /**
+     * 删除策略日志（按条件）
+     * @param strategy_name 策略名称（空=全部）
+     * @param level 日志级别（空=全部）
+     * @param start_time 开始时间（空=无限制）
+     * @param end_time 结束时间（空=无限制）
+     * @return 删除的行数（负数表示失败）
+     */
+    struct DeleteResult {
+        int64_t deleted_count;
+        std::string error;
+    };
+    DeleteResult delete_strategy_logs(
+        const std::string& strategy_name,
+        const std::string& level,
+        const std::string& start_time,
+        const std::string& end_time
+    );
+
     // ========== 节点输入输出日志 ==========
 
     /**

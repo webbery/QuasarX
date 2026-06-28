@@ -742,6 +742,68 @@ void DuckDBLogger::cleanup_old_logs(int retention_days) {
     SPDLOG_INFO("[DuckDBLogger] Cleaned logs older than {} days", retention_days);
 }
 
+DuckDBLogger::DeleteResult DuckDBLogger::delete_strategy_logs(
+    const std::string& strategy_name,
+    const std::string& level,
+    const std::string& start_time,
+    const std::string& end_time)
+{
+    DeleteResult result = {0, ""};
+
+    if (!initialized_) {
+        result.error = "DuckDB logger not initialized";
+        result.deleted_count = -1;
+        return result;
+    }
+
+    // 至少需要一个过滤条件
+    if (strategy_name.empty() && level.empty() && start_time.empty() && end_time.empty()) {
+        result.error = "At least one filter condition is required";
+        result.deleted_count = -1;
+        return result;
+    }
+
+    // 先查询将要删除的数量
+    int count = count_strategy_logs(strategy_name, "", level, start_time, end_time);
+
+    // 构建 DELETE SQL
+    std::string sql = "DELETE FROM strategy_logs WHERE 1=1";
+    std::vector<duckdb_value> params;
+
+    if (!strategy_name.empty()) {
+        sql += " AND strategy_name = ?";
+        params.push_back(make_varchar(strategy_name));
+    }
+    if (!level.empty()) {
+        sql += " AND level = ?";
+        params.push_back(make_varchar(level));
+    }
+    if (!start_time.empty()) {
+        sql += " AND timestamp >= ?";
+        params.push_back(make_varchar(start_time));
+    }
+    if (!end_time.empty()) {
+        sql += " AND timestamp <= ?";
+        params.push_back(make_varchar(end_time));
+    }
+
+    bool success = exec_params(sql, params);
+    for (auto& v : params) duckdb_destroy_value(&v);
+
+    if (!success) {
+        result.error = "DELETE execution failed";
+        result.deleted_count = -1;
+        return result;
+    }
+
+    // VACUUM 回收空间
+    exec("VACUUM");
+
+    result.deleted_count = count;
+    SPDLOG_INFO("[DuckDBLogger] Deleted {} strategy logs", count);
+    return result;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // 节点 IO 日志查询
 // ──────────────────────────────────────────────────────────────────────

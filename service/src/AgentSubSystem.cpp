@@ -602,6 +602,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
                 QuoteInfo tick;
                 if (!ReadQuote(recvSock, tick)) continue;
 
+                flow._lastHeartbeat = time(nullptr);
                 // 只处理策略涉及的标的
                 if (!symbols.count(tick._symbol)) continue;
 
@@ -613,7 +614,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
 
                 // 将快照写入 context
                 context.SetEpoch(++flow._epochCount);
-                flow._lastHeartbeat = time(nullptr);
+                flow._lastEvoke = time(nullptr);
                 for (auto& [symbol, quote] : snapshot) {
                     context.SetQuote(symbol, quote);
                 }
@@ -717,6 +718,12 @@ time_t FlowSubsystem::GetLastHeartbeat(const String& strategy) const {
     auto it = _flows.find(strategy);
     if (it == _flows.end()) return 0;
     return it->second._lastHeartbeat;
+}
+
+time_t FlowSubsystem::GetLastEvoke(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) return 0;
+    return it->second._lastEvoke;
 }
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {

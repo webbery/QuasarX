@@ -47,8 +47,9 @@
                                 <th style="width: 120px;">分配资金</th>
                                 <th style="width: 120px;">持仓市值</th>
                                 <th style="width: 100px;">Epoch</th>
+                                <th style="width: 120px;">最后执行</th>
                                 <th style="width: 120px;">最后心跳</th>
-                                <th style="width: 200px;">操作</th>
+                                <th style="width: 250px;">操作</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -60,6 +61,10 @@
                                 <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
                                 <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
                                 <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
+                                <td>
+                                    <span v-if="s.lastEvoke" class="heartbeat">{{ formatHeartbeat(s.lastEvoke) }}</span>
+                                    <span v-else class="heartbeat unknown">--</span>
+                                </td>
                                 <td>
                                     <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
                                     <span v-else class="heartbeat unknown">--</span>
@@ -89,12 +94,6 @@
                                             <i class="fas fa-file-alt"></i> 日志
                                         </button>
                                         <button
-                                            class="btn btn-node-log"
-                                            @click="viewNodeLogs(s.name)"
-                                        >
-                                            <i class="fas fa-table"></i> 节点
-                                        </button>
-                                        <button
                                             class="btn btn-delete"
                                             @click="deleteStrategy(s.name)"
                                             :disabled="isOperating(s.name)"
@@ -110,39 +109,21 @@
             </div>
 
             <!-- 日志查看视图 -->
-            <div v-else-if="viewingNodeLogs" class="log-view-container">
-                <div class="log-view-header">
-                    <button class="btn btn-back" @click="backFromNodeLogs">
-                        <i class="fas fa-arrow-left"></i> 返回策略列表
-                    </button>
-                    <span class="log-view-title">
-                        <i class="fas fa-table"></i>
-                        节点输入输出日志
-                        <span v-if="viewNodeLogStrategy" class="log-view-strategy-name">{{ viewNodeLogStrategy }}</span>
-                    </span>
-                    <div></div>
-                </div>
-                <div class="log-view-content">
-                    <NodeIOPanel :strategy="viewNodeLogStrategy" />
-                </div>
-            </div>
-
-            <!-- 日志查看视图 -->
             <div v-else class="log-view-container">
                 <div class="log-view-header">
                     <button class="btn btn-back" @click="backToList">
                         <i class="fas fa-arrow-left"></i> 返回策略列表
                     </button>
-                    <span class="log-view-title">
-                        <i class="fas fa-file-alt"></i>
-                        策略日志
-                        <span v-if="viewLogStrategy" class="log-view-strategy-name">{{ viewLogStrategy }}</span>
-                        <span v-else class="log-view-all">（全部策略）</span>
-                    </span>
-                    <div></div>
+                    <!-- 策略选择下拉框 -->
+                    <select v-model="viewLogStrategy" class="log-strategy-select">
+                        <option value="">全部策略</option>
+                        <option v-for="name in strategyNames" :key="name" :value="name">
+                            {{ name }}
+                        </option>
+                    </select>
                 </div>
                 <div class="log-view-content">
-                    <StrategyLogPanel
+                    <StrategySelectPanel
                         :strategy-names="strategyNames"
                         :selected-strategy="viewLogStrategy"
                     />
@@ -174,8 +155,7 @@ import { ref, computed, inject, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
-import StrategyLogPanel from './StrategyLogPanel.vue'
-import NodeIOPanel from './NodeIOPanel.vue'
+import StrategySelectPanel from './StrategySelectPanel.vue'
 
 const activeTab = ref('realtime')
 const selectedStrategy = ref('')
@@ -183,10 +163,6 @@ const selectedStrategy = ref('')
 // 日志查看视图切换
 const viewingLogs = ref(false)
 const viewLogStrategy = ref('')
-
-// 节点日志查看视图切换
-const viewingNodeLogs = ref(false)
-const viewNodeLogStrategy = ref('')
 
 // 复用 App.vue 共享的策略状态（10s 轮询）
 const serverStrategies = inject('serverStrategies', ref([]))
@@ -215,18 +191,6 @@ const viewLogs = (name) => {
 const backToList = () => {
   viewingLogs.value = false
   viewLogStrategy.value = ''
-}
-
-/** 查看节点日志 */
-const viewNodeLogs = (name) => {
-  viewNodeLogStrategy.value = name
-  viewingNodeLogs.value = true
-}
-
-/** 从节点日志视图返回策略列表 */
-const backFromNodeLogs = () => {
-  viewingNodeLogs.value = false
-  viewNodeLogStrategy.value = ''
 }
 
 /** 格式化心跳时间：距离 lastHeartbeat 的时间差 */
@@ -436,13 +400,23 @@ onMounted(async () => {
     letter-spacing: 0.05em;
     background: rgba(15, 23, 42, 0.9);
     border-bottom: 1px solid rgba(74, 158, 255, 0.2);
+    border-right: 1px solid rgba(74, 158, 255, 0.1);
+}
+
+.strategy-table th:last-child {
+    border-right: none;
 }
 
 .strategy-table td {
     padding: 10px 12px;
     border-bottom: 1px solid rgba(74, 158, 255, 0.08);
+    border-right: 1px solid rgba(74, 158, 255, 0.08);
     font-size: 14px;
     vertical-align: middle;
+}
+
+.strategy-table td:last-child {
+    border-right: none;
 }
 
 .strategy-table tbody tr {
@@ -584,29 +558,15 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 
-.log-view-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #94a3b8;
-  font-size: 14px;
-  font-weight: 600;
-  flex: 1;
-}
-
-.log-view-title i {
-  color: #60a5fa;
-}
-
-.log-view-strategy-name {
-  color: #60a5fa;
-  font-family: 'SF Mono', 'Consolas', monospace;
+.log-strategy-select {
+  padding: 6px 12px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(74, 158, 255, 0.3);
+  border-radius: 6px;
+  color: #e2e8f0;
   font-size: 13px;
-}
-
-.log-view-all {
-  color: #64748b;
-  font-size: 13px;
+  cursor: pointer;
+  min-width: 150px;
 }
 
 /* ── 按钮样式 ── */
@@ -630,15 +590,5 @@ onMounted(async () => {
   background: rgba(96, 165, 250, 0.3);
 }
 
-.btn-node-log {
-  background: rgba(167, 139, 250, 0.15);
-  border: 1px solid rgba(167, 139, 250, 0.3);
-  color: #a78bfa;
-}
-
-.btn-node-log:hover:not(:disabled) {
-  background: rgba(167, 139, 250, 0.3);
-}
-
-/* 日志区块（保留给 StrategyLogPanel 内部样式） */
+/* 日志区块（保留给 StrategySelectPanel 内部样式） */
 </style>

@@ -34,6 +34,58 @@ void StrategyLogHandler::get(const httplib::Request& req, httplib::Response& res
     }
 }
 
+void StrategyLogHandler::del(const httplib::Request& req, httplib::Response& res) {
+    if (!DuckDBLogger::instance().is_initialized()) {
+        res.status = 503;
+        nlohmann::json err;
+        err["error"] = "DuckDB logger not initialized";
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    try {
+        auto params = nlohmann::json::parse(req.body);
+
+        std::string strategy = params.value("strategy", "");
+        std::string level = params.value("level", "");
+        std::string start_time = params.value("start_time", "");
+        std::string end_time = params.value("end_time", "");
+
+        // 安全检查：至少需要一个过滤条件
+        if (strategy.empty() && level.empty() && start_time.empty() && end_time.empty()) {
+            res.status = 400;
+            nlohmann::json err;
+            err["error"] = "至少需要一个过滤条件（strategy/level/start_time/end_time）";
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+
+        auto result = DuckDBLogger::instance().delete_strategy_logs(
+            strategy, level, start_time, end_time
+        );
+
+        if (result.deleted_count < 0) {
+            res.status = 500;
+            nlohmann::json err;
+            err["error"] = result.error;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+
+        res.status = 200;
+        nlohmann::json resp;
+        resp["message"] = "success";
+        resp["deleted_count"] = result.deleted_count;
+        res.set_content(resp.dump(), "application/json");
+    } catch (const std::exception& e) {
+        FATAL("[StrategyLogHandler] DELETE error: {}", e.what());
+        res.status = 500;
+        nlohmann::json err;
+        err["error"] = e.what();
+        res.set_content(err.dump(), "application/json");
+    }
+}
+
 void StrategyLogHandler::query_default(const httplib::Request& req, httplib::Response& res) {
     if (!DuckDBLogger::instance().is_initialized()) {
         res.status = 503;
