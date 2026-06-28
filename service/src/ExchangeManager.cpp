@@ -122,14 +122,16 @@ void ExchangeManager::quoteDispatchLoop() {
 // ========== Exchange 生命周期管理 ==========
 
 bool ExchangeManager::Use(const String& name) {
+    INFO("[ExchangeManager::Use] Trying to use exchange: {}", name);
     auto& config = _server->GetConfig();
     auto exchangeCfg = config.GetExchangeByName(name);
-    if (exchangeCfg.empty()) {
-        WARN("Exchange config not found: {}", name);
+    if (exchangeCfg.empty() || !exchangeCfg.contains("api")) {
+        WARN("[ExchangeManager::Use] Exchange config not found or invalid for exchange: {}", name);
         return false;
     }
 
     String api = exchangeCfg["api"];
+    INFO("[ExchangeManager::Use] Found exchange config, api={}", api);
     ExchangeType type = ExchangeType::EX_Unknow;
 
     if (api == CTP_API)              type = ExchangeType::EX_CTP;
@@ -139,11 +141,14 @@ bool ExchangeManager::Use(const String& name) {
     else if (api == HX_API)             type = ExchangeType::EX_HX;
     else if (api == TICKFLOW_QUOTE_API) type = ExchangeType::EX_TICKFLOW_QUOTE;
     else {
-        WARN("Unsupported exchange api: {}", api);
+        WARN("[ExchangeManager::Use] Unsupported exchange api: {}", api);
         return false;
     }
 
-    return RegisterExchange(name, type);
+    INFO("[ExchangeManager::Use] Registering exchange: {} as type {}", name, (int)type);
+    bool result = RegisterExchange(name, type);
+    INFO("[ExchangeManager::Use] RegisterExchange result: {} for exchange: {}", result, name);
+    return result;
 }
 
 // ========== Exchange 生命周期管理 ==========

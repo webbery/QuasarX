@@ -154,13 +154,21 @@ const nlohmann::json& ServerConfig::GetExchangeByAPI(const std::string& name) co
 const nlohmann::json& ServerConfig::GetExchangeByName(const std::string& name) const {
     if (_config.empty()) {
         printf("Empty json.\n");
+        static const nlohmann::json emptyObj = nlohmann::json::object();
+        return emptyObj;
     }
     auto& exchanges = _config["exchange"];
+    if (!exchanges.is_array() || exchanges.empty()) {
+        WARN("No exchanges configured or empty array");
+        static const nlohmann::json emptyObj = nlohmann::json::object();
+        return emptyObj;
+    }
     for (auto& setting: exchanges) {
         if (setting["name"] == name) {
             return setting;
         }
     }
+    WARN("Exchange not found: {}, returning first exchange as fallback", name);
     return exchanges.front();
 }
 

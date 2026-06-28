@@ -156,7 +156,8 @@ void HXTrade::OnRtnTrade(TORASTOCKAPI::CTORATstpTradeField *pTradeField) {
 
 void HXTrade::OnRspOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField *pInputOrderActionField, TORASTOCKAPI::CTORATstpRspInfoField *pRspInfoField, int nRequestID) {
     order_id id;
-    strcpy(id._sysID, pInputOrderActionField->SInfo);
+    strncpy(id._sysID, pInputOrderActionField->SInfo, sizeof(id._sysID) - 1);
+    id._sysID[sizeof(id._sysID) - 1] = '\0';
     id._id = pInputOrderActionField->IInfo;
     TradeReport report;
     if (pRspInfoField && pRspInfoField->ErrorID == 0) {
@@ -173,7 +174,8 @@ void HXTrade::OnErrRtnOrderAction(TORASTOCKAPI::CTORATstpInputOrderActionField* 
     TradeReport report;
     report._status = OrderStatus::CancelFail;
     order_id id;
-    strcpy(id._sysID, pInputOrderActionField->SInfo);
+    strncpy(id._sysID, pInputOrderActionField->SInfo, sizeof(id._sysID) - 1);
+    id._sysID[sizeof(id._sysID) - 1] = '\0';
     id._id = pInputOrderActionField->IInfo;
     _exchange->OnOrderReport(id, report);
     INFO("OnErrRtnOrderAction {}", id._sysID);

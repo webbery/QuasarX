@@ -21,9 +21,7 @@ std::vector<std::vector<int64_t>> ArtificialIntelligenceNode::InitInput() {
     Ort::AllocatorWithDefaultOptions allocator;
     for (size_t i = 0; i < num_input_nodes; ++i) {
         auto name = _session->GetInputNameAllocated(i, allocator);
-        char* inputName = new char[strlen(name.get())];
-        strcpy(inputName, name.get());
-        _modelInputs.push_back(inputName);
+        _modelInputs.push_back(name.get());
 
         auto input_type_info = _session->GetInputTypeInfo(i);
         auto tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
@@ -39,9 +37,7 @@ std::vector<std::vector<int64_t>> ArtificialIntelligenceNode::InitOutput() {
     Ort::AllocatorWithDefaultOptions allocator;
     for (size_t i = 0; i < num_output_nodes; ++i) {
         auto name = _session->GetOutputNameAllocated(i, allocator);
-        char* outputName = new char[strlen(name.get())];
-        strcpy(outputName, name.get());
-        _modelOutputs.push_back(outputName);
+        _modelOutputs.push_back(name.get());
 
         auto output_type_info = _session->GetOutputTypeInfo(i);
         auto tensor_info = output_type_info.GetTensorTypeAndShapeInfo();

@@ -361,7 +361,7 @@ bool Server::InitDatabase() {
 void Server::InitDefault() {
     if (!_config->HasDefault())
         return;
-        
+
     auto default_config = _config->GetDefault();
     if (!default_config.contains("broker")) {
         printf("default config require `broker`\n");
@@ -376,19 +376,23 @@ void Server::InitDefault() {
         printf("default config `exchange` is not exist.\n");
         return;
     }
+    INFO("[InitDefault] Found {} exchange(s) in default config", names.size());
     bool use_sim = false;
     for (auto& name: names) {
+        INFO("[InitDefault] Processing exchange: {}", name);
         auto exchange = _config->GetExchangeByName(name);
         if (exchange.empty()) {
-            WARN("Exchange config not found for name: {}", name);
+            WARN("[InitDefault] Exchange config not found for name: {}", name);
             continue;
         }
+        INFO("[InitDefault] Calling _exchangeMgr->Use({})", name);
         if (!_exchangeMgr->Use(name)) {
-            WARN("Failed to register exchange: {}", name);
+            WARN("[InitDefault] Failed to register exchange: {}", name);
             // 关键交易所注册失败时，不应继续执行（策略初始化会因找不到标的而崩溃）
             printf("[ERROR] Failed to register exchange: %s\n", name.c_str());
             return;
         }
+        INFO("[InitDefault] Successfully registered exchange: {}", name);
         if ((String)exchange["api"] == STOCK_HISTORY_SIM) {
             use_sim = true;
             _runType = RuningType::Backtest;

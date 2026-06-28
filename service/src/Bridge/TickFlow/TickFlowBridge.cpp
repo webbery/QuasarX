@@ -42,7 +42,7 @@ const char* TickFlowBridge::Name() {
 
 bool TickFlowBridge::Init(const ExchangeInfo& handle) {
     // API Key 拼接：_username 存前缀（如 "tk_"），_passwd 存 32 位主体
-    // 完整 token 形如: tk_9f008d2914ab4dbda62ac83a063ff6f6
+    // 完整 token 形如: tk_xxx
     _api_key = String(handle._username) + String(handle._passwd, 32);
     if (_api_key.empty()) {
         FATAL("TickFlow API key is empty, bridge disabled");

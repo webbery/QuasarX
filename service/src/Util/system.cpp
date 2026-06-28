@@ -166,7 +166,7 @@ String GetMacAddr() {
             if (pCurr->IfType != IF_TYPE_SOFTWARE_LOOPBACK &&
                 pCurr->PhysicalAddressLength == 6) {
                 unsigned char* macAddr = pCurr->PhysicalAddress;
-                sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X",
+                snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
                     macAddr[0], macAddr[1], macAddr[2],
                     macAddr[3], macAddr[4], macAddr[5]);
                 printf("MAC地址: %s\n", mac);   // 可选调试输出

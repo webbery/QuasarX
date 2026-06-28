@@ -216,7 +216,8 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             for (auto& item: ol) {
                 auto symbol = item._symbol;
                 order_id id;
-                strcpy(id._sysID, item._sysID.c_str());
+                memset(&id, 0, sizeof(order_id));
+                strncpy(id._sysID, item._sysID.c_str(), sizeof(id._sysID) - 1);
                 id._id = item._id;
                 broker->CancelOrder(id, symbol, [symbol] (const TradeReport& report) {
                     auto sock = Server::GetSocket();
@@ -247,8 +248,9 @@ void OrderHandler::del(const httplib::Request& req, httplib::Response& res) {
             }
             auto symbol = order._symbol;
             order_id id;
+            memset(&id, 0, sizeof(order_id));
             // id._id = order._id;
-            strcpy(id._sysID, sysID.c_str());
+            strncpy(id._sysID, sysID.c_str(), sizeof(id._sysID) - 1);
             oids.emplace_back(std::move(Pair{id, symbol}));
             
         }

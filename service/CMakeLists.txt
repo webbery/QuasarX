@@ -45,11 +45,16 @@ else(WIN32)
 # FetchContent_MakeAvailable(cpr)
 
 add_compile_definitions(CPPHTTPLIB_OPENSSL_SUPPORT)
+# 启用最高警告级别
+add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-reorder)
 if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 add_compile_definitions(_DEBUG)
 add_compile_definitions(SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG)
+add_compile_options(-g -O0)
 elseif(${CMAKE_BUILD_TYPE} STREQUAL "Release")
 add_compile_options(-march=native -O3)
+add_compile_options(-g -fno-omit-frame-pointer)
+add_compile_options(-Wl,-rpath=.)
 endif()
 add_compile_definitions(JWT_DISABLE_PICOJSON)
 
@@ -194,6 +199,18 @@ endif (USE_CUDA)
 if (USE_LIBTORCH)
     target_link_libraries(${PROJECT_NAME} ${TORCH_LIBRARIES})
 endif (USE_LIBTORCH)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
+  find_program(OBJCOPY_EXE objcopy REQUIRED)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+      COMMAND ${OBJCOPY_EXE} --only-keep-debug $<TARGET_FILE:${PROJECT_NAME}> $<TARGET_FILE:${PROJECT_NAME}>.debug
+      COMMAND ${OBJCOPY_EXE} --strip-debug $<TARGET_FILE:${PROJECT_NAME}>
+      COMMAND ${OBJCOPY_EXE} --add-gnu-debuglink=$<TARGET_FILE:${PROJECT_NAME}>.debug $<TARGET_FILE:${PROJECT_NAME}>
+      COMMENT "Separating debug symbols for ${PROJECT_NAME}"
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+endif()
+
 install(TARGETS ${PROJECT_NAME})
 install(FILES
     ${CMAKE_SOURCE_DIR}/build/${PROJECT_NAME}

@@ -52,7 +52,7 @@ bool CTPExchange::Init(const ExchangeInfo& handle){
     protocal += handle._quote_addr;
     protocal += ":" + std::to_string(handle._quote_port);
     char szFrontAddr[32] = { 0 };
-    sprintf(szFrontAddr, "%s", protocal.c_str());
+    snprintf(szFrontAddr, sizeof(szFrontAddr), "%s", protocal.c_str());
     _pUserMdApi->RegisterFront(szFrontAddr);
     // _pUserMdApi->SubscribePublicTopic(THOST_TERT_QUICK);
     // _pUserMdApi->SubscribePrivateTopic(THOST_TERT_RESTART);
@@ -65,7 +65,7 @@ bool CTPExchange::Init(const ExchangeInfo& handle){
     protocal += handle._default_addr;
     protocal += ":" + std::to_string(handle._stock_port);
     memset(szFrontAddr, 0, 32);
-    sprintf(szFrontAddr, "%s", protocal.c_str());
+    snprintf(szFrontAddr, sizeof(szFrontAddr), "%s", protocal.c_str());
     _pUserTradeApi->RegisterFront(szFrontAddr);
     _pUserTradeApi->Init();
 
@@ -117,9 +117,12 @@ bool CTPExchange::Login(AccountType t){
     return true;
 
   CThostFtdcReqUserLoginField reqUserLogin = { 0 };
-  strcpy(reqUserLogin.BrokerID, BROKER_ID);
-  strcpy(reqUserLogin.UserID, _info._username);
-  strcpy(reqUserLogin.Password, _info._passwd);
+  strncpy(reqUserLogin.BrokerID, BROKER_ID, sizeof(reqUserLogin.BrokerID) - 1);
+  reqUserLogin.BrokerID[sizeof(reqUserLogin.BrokerID) - 1] = '\0';
+  strncpy(reqUserLogin.UserID, _info._username, sizeof(reqUserLogin.UserID) - 1);
+  reqUserLogin.UserID[sizeof(reqUserLogin.UserID) - 1] = '\0';
+  strncpy(reqUserLogin.Password, _info._passwd, sizeof(reqUserLogin.Password) - 1);
+  reqUserLogin.Password[sizeof(reqUserLogin.Password) - 1] = '\0';
   int num = _pUserMdApi->ReqUserLogin(&reqUserLogin, _nRequestID++);
   switch (num)
   {
@@ -233,16 +236,22 @@ void CTPExchange::QueryQuotes(){
 void CTPExchange::UpdateCommission() {
   for (auto& contract: _contracts) {
     CThostFtdcQryInstrumentMarginRateField margin_rate;
-    strcpy(margin_rate.BrokerID, BROKER_ID);
-    strcpy(margin_rate.InvestorID, _info._username);
+    strncpy(margin_rate.BrokerID, BROKER_ID, sizeof(margin_rate.BrokerID) - 1);
+    margin_rate.BrokerID[sizeof(margin_rate.BrokerID) - 1] = '\0';
+    strncpy(margin_rate.InvestorID, _info._username, sizeof(margin_rate.InvestorID) - 1);
+    margin_rate.InvestorID[sizeof(margin_rate.InvestorID) - 1] = '\0';
     margin_rate.HedgeFlag = THOST_FTDC_HF_Speculation;
-    strcpy(margin_rate.InstrumentID, contract.data());
+    strncpy(margin_rate.InstrumentID, contract.data(), sizeof(margin_rate.InstrumentID) - 1);
+    margin_rate.InstrumentID[sizeof(margin_rate.InstrumentID) - 1] = '\0';
     auto ret = _pUserTradeApi->ReqQryInstrumentMarginRate(&margin_rate, _nRequestID++);
 
     CThostFtdcQryInstrumentCommissionRateField comm_rate;
-    strcpy(comm_rate.BrokerID, BROKER_ID);
-    strcpy(comm_rate.InvestorID, _info._username);
-    strcpy(comm_rate.InstrumentID, contract.data());
+    strncpy(comm_rate.BrokerID, BROKER_ID, sizeof(comm_rate.BrokerID) - 1);
+    comm_rate.BrokerID[sizeof(comm_rate.BrokerID) - 1] = '\0';
+    strncpy(comm_rate.InvestorID, _info._username, sizeof(comm_rate.InvestorID) - 1);
+    comm_rate.InvestorID[sizeof(comm_rate.InvestorID) - 1] = '\0';
+    strncpy(comm_rate.InstrumentID, contract.data(), sizeof(comm_rate.InstrumentID) - 1);
+    comm_rate.InstrumentID[sizeof(comm_rate.InstrumentID) - 1] = '\0';
     _pUserTradeApi->ReqQryInstrumentCommissionRate(&comm_rate, _nRequestID++);
   }
 }

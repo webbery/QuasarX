@@ -181,7 +181,8 @@ bool HXExchange::StockLogin()
     auto termInfo = std::format("PC;IIP={};IPORT={};LIP={};MAC={};HD={};",
         GetIP(), std::to_string(_brokerInfo._localPort), "192.168.118.107", GetMacAddr(),
         "WKPRV00E");
-    strcpy(tradeUser.TerminalInfo, termInfo.c_str());
+    strncpy(tradeUser.TerminalInfo, termInfo.c_str(), sizeof(tradeUser.TerminalInfo) - 1);
+    tradeUser.TerminalInfo[sizeof(tradeUser.TerminalInfo) - 1] = '\0';
 
     auto reqID = ++_reqID;
     auto promise = std::make_shared<std::promise<TORASTOCKAPI::CTORATstpRspUserLoginField>>();
@@ -211,16 +212,20 @@ bool HXExchange::OptionLogin()
     memset(&tradeUser, 0, sizeof(tradeUser));
     strncpy(tradeUser.LogInAccount, _brokerInfo._account, strlen(_brokerInfo._account));
     strncpy(tradeUser.Password, _brokerInfo._accpwd, strlen(_brokerInfo._accpwd));
-    strcpy(tradeUser.MacAddress, "");
-    strcpy(tradeUser.OneTimePassword, "");
-    strcpy(tradeUser.MacAddress, "12:34:EC:23:ED:3E");
-    strcpy(tradeUser.HDSerial, "D034-2DF22582");
-    strncpy(tradeUser.DepartmentID, tradeUser.LogInAccount, 4);
+    tradeUser.MacAddress[0] = '\0';
+    tradeUser.OneTimePassword[0] = '\0';
+    strncpy(tradeUser.MacAddress, "12:34:EC:23:ED:3E", sizeof(tradeUser.MacAddress) - 1);
+    tradeUser.MacAddress[sizeof(tradeUser.MacAddress) - 1] = '\0';
+    strncpy(tradeUser.HDSerial, "D034-2DF22582", sizeof(tradeUser.HDSerial) - 1);
+    tradeUser.HDSerial[sizeof(tradeUser.HDSerial) - 1] = '\0';
+    strncpy(tradeUser.DepartmentID, tradeUser.LogInAccount, sizeof(tradeUser.DepartmentID) - 1);
+    tradeUser.DepartmentID[sizeof(tradeUser.DepartmentID) - 1] = '\0';
 
-    tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;  // 
+    tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;  //
     tradeUser.AuthMode = TORASPAPI::TORA_TSTP_SP_AM_Password;
     memcpy(tradeUser.UserProductInfo, _brokerInfo._productID, strlen(_brokerInfo._productID));
-    strcpy(tradeUser.TerminalInfo, "1123ni3498ebf");
+    strncpy(tradeUser.TerminalInfo, "1123ni3498ebf", sizeof(tradeUser.TerminalInfo) - 1);
+    tradeUser.TerminalInfo[sizeof(tradeUser.TerminalInfo) - 1] = '\0';
 
     //tradeUser.LogInAccountType = TORASPAPI::TORA_TSTP_SP_LACT_UserID;
     //strcpy(tradeUser.LogInAccount, "00105687");
@@ -285,9 +290,11 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
     order.OrderRef = oid._id;
     order.UserRequestID = oid._id;
 
-    strcpy(order.ShareholderID, shareholder.c_str());
+    strncpy(order.ShareholderID, shareholder.c_str(), sizeof(order.ShareholderID) - 1);
+    order.ShareholderID[sizeof(order.ShareholderID) - 1] = '\0';
     auto strCode = format_symbol(std::to_string(symbol._symbol));
-    strncpy(order.SecurityID, strCode.c_str(), strCode.size());
+    strncpy(order.SecurityID, strCode.c_str(), sizeof(order.SecurityID) - 1);
+    order.SecurityID[sizeof(order.SecurityID) - 1] = '\0';
     order.ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
     order.VolumeTotalOriginal = ctx->_order._volume;
     order.LimitPrice = o._price;
@@ -310,7 +317,8 @@ order_id HXExchange::AddStockOrder(const symbol_t& symbol, OrderContext* ctx)
     ctx->_order._id = oid._id;
     //auto pr = std::make_pair(order, ctx);
     _orders.emplace(oid._id, ctx);
-    strcpy(oid._sysID, ctx->_order._sysID.c_str());
+    strncpy(oid._sysID, ctx->_order._sysID.c_str(), sizeof(oid._sysID) - 1);
+    oid._sysID[sizeof(oid._sysID) - 1] = '\0';
     return oid;
 }
 
@@ -334,8 +342,10 @@ order_id HXExchange::AddOptionOrder(const symbol_t& symbol, OrderContext* ctx)
     auto& o = ctx->_order;
     pInputOrderField.OrderRef = oid._id;
 
-    strcpy(pInputOrderField.ShareholderID, shareholder.c_str());
-    strncpy(pInputOrderField.SecurityID, strCode.c_str(), strCode.size());
+    strncpy(pInputOrderField.ShareholderID, shareholder.c_str(), sizeof(pInputOrderField.ShareholderID) - 1);
+    pInputOrderField.ShareholderID[sizeof(pInputOrderField.ShareholderID) - 1] = '\0';
+    strncpy(pInputOrderField.SecurityID, strCode.c_str(), sizeof(pInputOrderField.SecurityID) - 1);
+    pInputOrderField.SecurityID[sizeof(pInputOrderField.SecurityID) - 1] = '\0';
     pInputOrderField.ExchangeID = toExchangeID((ExchangeName)symbol._exchange);
     pInputOrderField.VolumeCondition = TORASPAPI::TORA_TSTP_SP_VC_AV; // 任意数量
     pInputOrderField.VolumeTotalOriginal = ctx->_order._volume; // volume手
@@ -506,16 +516,17 @@ bool HXExchange::QueryStockOrders(uint64_t reqID)
 {
     TORASTOCKAPI::CTORATstpQryOrderField qry_orders;
     memset(&qry_orders, 0, sizeof(qry_orders));
-    strcpy(qry_orders.SecurityID, "");
-    strcpy(qry_orders.ShareholderID, "");
-    strcpy(qry_orders.OrderSysID, "");
+    qry_orders.SecurityID[0] = '\0';
+    qry_orders.ShareholderID[0] = '\0';
+    qry_orders.OrderSysID[0] = '\0';
     // "09:36:00"
     //strcpy(qry_orders.InsertTimeStart, "");
     //strcpy(qry_orders.InsertTimeEnd, "");
     //strcpy(qry_orders.SInfo, "");
     qry_orders.IInfo = INT_NULL_VAL;
     qry_orders.IsCancel = INT_NULL_VAL;
-    strcpy(qry_orders.InvestorID, _brokerInfo._account);
+    strncpy(qry_orders.InvestorID, _brokerInfo._account, sizeof(qry_orders.InvestorID) - 1);
+    qry_orders.InvestorID[sizeof(qry_orders.InvestorID) - 1] = '\0';
     int ret = _stockHandle._tradeAPI->ReqQryOrder(&qry_orders, reqID);
     if (ret != 0) {
         return false;
@@ -526,11 +537,12 @@ bool HXExchange::QueryStockOrders(uint64_t reqID)
 bool HXExchange::QueryOptionOrders(uint64_t reqID) {
     TORASPAPI::CTORATstpSPQryOrderField pQryOrderField;
     memset(&pQryOrderField, 0, sizeof(pQryOrderField));
-    strcpy(pQryOrderField.SecurityID, "");
-    strcpy(pQryOrderField.ShareholderID, "");
-    strcpy(pQryOrderField.OrderSysID, "");
+    pQryOrderField.SecurityID[0] = '\0';
+    pQryOrderField.ShareholderID[0] = '\0';
+    pQryOrderField.OrderSysID[0] = '\0';
     pQryOrderField.IInfo = INT_NULL_VAL;
-    strcpy(pQryOrderField.InvestorID, _brokerInfo._account);
+    strncpy(pQryOrderField.InvestorID, _brokerInfo._account, sizeof(pQryOrderField.InvestorID) - 1);
+    pQryOrderField.InvestorID[sizeof(pQryOrderField.InvestorID) - 1] = '\0';
 
     int ret = _optionHandle._tradeAPI->ReqQryOrder(&pQryOrderField, reqID);
     if (ret != 0) {
@@ -571,7 +583,8 @@ Boolean HXExchange::HasStockPermission(symbol_t symbol)
         default:
             break;
         }
-        strcpy(qry_field.SecurityID, token.back().c_str());
+        strncpy(qry_field.SecurityID, token.back().c_str(), sizeof(qry_field.SecurityID) - 1);
+        qry_field.SecurityID[sizeof(qry_field.SecurityID) - 1] = '\0';
 
         // 查询证券信息
         if (_stockHandle._tradeAPI->ReqQrySecurity(&qry_field, reqID)) {
@@ -685,9 +698,11 @@ bool HXExchange::InitPermissions(ExchangeName name)
 {
     TORASTOCKAPI::CTORATstpQryShareholderSpecPrivilegeField privilegeFiled;
     memset(&privilegeFiled, 0, sizeof(privilegeFiled));
-    strcpy(privilegeFiled.InvestorID, _brokerInfo._account);
+    strncpy(privilegeFiled.InvestorID, _brokerInfo._account, sizeof(privilegeFiled.InvestorID) - 1);
+    privilegeFiled.InvestorID[sizeof(privilegeFiled.InvestorID) - 1] = '\0';
     String& shareholder = _stockHandle._shareholder[name];
-    strcpy(privilegeFiled.ShareholderID, shareholder.c_str());
+    strncpy(privilegeFiled.ShareholderID, shareholder.c_str(), sizeof(privilegeFiled.ShareholderID) - 1);
+    privilegeFiled.ShareholderID[sizeof(privilegeFiled.ShareholderID) - 1] = '\0';
     //privilegeFiled.Direction = '0';
     //privilegeFiled.ExchangeID = '1';
     switch (name)
@@ -833,8 +848,8 @@ bool HXExchange::GetSymbolExchanges(List<Pair<String, ExchangeName>>& info)
 {
     order_id id;
     id._id = ++_reqID;
-    char* all[1] = { 0 };
-    strcpy(all[0], "00000000");
+    char buf[9] = "00000000";
+    char* all[1] = { buf };
     _quoteAPI->SubscribeSimplifyMarketData(all, 1, 0);
 
     auto promise = std::make_shared<std::promise<CTORATstpSpecificSecurityField>>();
@@ -867,7 +882,8 @@ bool HXExchange::GetPosition(AccountPosition& ap){
 
     TORASTOCKAPI::CTORATstpQryPositionField field;
     memset(&field, 0, sizeof(field));
-    strcpy(field.InvestorID, _brokerInfo._account);
+    strncpy(field.InvestorID, _brokerInfo._account, sizeof(field.InvestorID) - 1);
+    field.InvestorID[sizeof(field.InvestorID) - 1] = '\0';
     int ret = _stockHandle._tradeAPI->ReqQryPosition(&field, oid._id);
 
     std::future<bool> fut;
@@ -953,8 +969,10 @@ void HXExchange::CancelStockOrder(order_id id, OrderContext* ctx) {
     memset(&pInputOrderActionField, 0, sizeof(TORASTOCKAPI::CTORATstpInputOrderActionField));
     pInputOrderActionField.ExchangeID = toExchangeID((ExchangeName)ctx->_order._symbol._exchange);
     pInputOrderActionField.ActionFlag = TORASTOCKAPI::TORA_TSTP_AF_Delete;
-    strcpy(pInputOrderActionField.OrderSysID, id._sysID);
-    strcpy(pInputOrderActionField.SInfo, id._sysID);
+    strncpy(pInputOrderActionField.OrderSysID, id._sysID, sizeof(pInputOrderActionField.OrderSysID) - 1);
+    pInputOrderActionField.OrderSysID[sizeof(pInputOrderActionField.OrderSysID) - 1] = '\0';
+    strncpy(pInputOrderActionField.SInfo, id._sysID, sizeof(pInputOrderActionField.SInfo) - 1);
+    pInputOrderActionField.SInfo[sizeof(pInputOrderActionField.SInfo) - 1] = '\0';
     pInputOrderActionField.IInfo = id._id;
 
     if (!_orders.empty()) {
@@ -1034,8 +1052,10 @@ bool HXExchange::GetOrder(const String& sysID, Order& ol){
     memset(&qry_orders, 0, sizeof(qry_orders));
     qry_orders.IInfo = INT_NULL_VAL;
     qry_orders.IsCancel = INT_NULL_VAL;
-    strcpy(qry_orders.InvestorID, _brokerInfo._account);
-    strcpy(qry_orders.OrderSysID, sysID.c_str());
+    strncpy(qry_orders.InvestorID, _brokerInfo._account, sizeof(qry_orders.InvestorID) - 1);
+    qry_orders.InvestorID[sizeof(qry_orders.InvestorID) - 1] = '\0';
+    strncpy(qry_orders.OrderSysID, sysID.c_str(), sizeof(qry_orders.OrderSysID) - 1);
+    qry_orders.OrderSysID[sizeof(qry_orders.OrderSysID) - 1] = '\0';
     int ret = _stockHandle._tradeAPI->ReqQryOrder(&qry_orders, reqID);
     if (ret != 0) {
         return false;
@@ -1234,7 +1254,8 @@ double HXExchange::GetAvailableFunds(run_id_t run_id)
     
     TORASTOCKAPI::CTORATstpQryTradingAccountField qry_trading_account_field;
     memset(&qry_trading_account_field, 0, sizeof(qry_trading_account_field));
-    strcpy(qry_trading_account_field.AccountID, _brokerInfo._account);
+    strncpy(qry_trading_account_field.AccountID, _brokerInfo._account, sizeof(qry_trading_account_field.AccountID) - 1);
+    qry_trading_account_field.AccountID[sizeof(qry_trading_account_field.AccountID) - 1] = '\0';
 
     int ret = _stockHandle._tradeAPI->ReqQryTradingAccount(&qry_trading_account_field, reqID);
     if (ret != 0) {
@@ -1258,7 +1279,8 @@ bool HXExchange::QueryStockShareHolder(ExchangeName name)
 
     TORASTOCKAPI::CTORATstpQryShareholderAccountField qry_shr_account;
     memset(&qry_shr_account, 0, sizeof(qry_shr_account));
-    strcpy(qry_shr_account.InvestorID, _brokerInfo._account);
+    strncpy(qry_shr_account.InvestorID, _brokerInfo._account, sizeof(qry_shr_account.InvestorID) - 1);
+    qry_shr_account.InvestorID[sizeof(qry_shr_account.InvestorID) - 1] = '\0';
     switch (name) {
     case ExchangeName::MT_Shanghai:
         qry_shr_account.ExchangeID = TORA_TSTP_EXD_SSE;
@@ -1293,7 +1315,8 @@ bool HXExchange::QueryOptionShareHolder(ExchangeName name)
     auto promise = initPromise<String>(id._id);
     TORASPAPI::CTORATstpSPQryShareholderAccountField  qry_shr_account;
     memset(&qry_shr_account, 0, sizeof(qry_shr_account));
-    strcpy(qry_shr_account.InvestorID, _brokerInfo._account);
+    strncpy(qry_shr_account.InvestorID, _brokerInfo._account, sizeof(qry_shr_account.InvestorID) - 1);
+    qry_shr_account.InvestorID[sizeof(qry_shr_account.InvestorID) - 1] = '\0';
     switch (name) {
     case ExchangeName::MT_Shanghai:
         qry_shr_account.ExchangeID = TORA_TSTP_EXD_SSE;
