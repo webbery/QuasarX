@@ -9,7 +9,7 @@ class HXExchange;
 class HXQuateSpi: public TORALEV1API::CTORATstpXMdSpi {
 public:
     HXQuateSpi(TORALEV1API::CTORATstpXMdApi* api, HXExchange* exchange);
-    ~HXQuateSpi();
+    virtual ~HXQuateSpi();
 
     bool Init();
 

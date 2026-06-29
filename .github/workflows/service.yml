@@ -303,12 +303,9 @@ jobs:
       - name: Install runtime libraries
         run: |
           # 将 artifact 中的 so 安装到 /usr/local/lib
-          sudo cp -f runtime-libs/usr/local/lib/libxgboost.* /usr/local/lib/ 2>/dev/null || true
-          sudo cp -f runtime-libs/usr/local/lib/libduckdb.so* /usr/local/lib/ 2>/dev/null || true
-          sudo cp -f runtime-libs/usr/local/lib/libnng.so* /usr/local/lib/ 2>/dev/null || true
-          sudo cp -f runtime-libs/usr/local/lib/libta_lib.* /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/usr/local/lib/lib*.so /usr/local/lib/ 2>/dev/null || true
           # third_party/libs/unix 下的券商/交易 SDK
-          sudo cp -f runtime-libs/service/third_party/libs/unix/*.so* /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so /usr/local/lib/ 2>/dev/null || true
           sudo ls /usr/local/lib
           sudo ldconfig
 

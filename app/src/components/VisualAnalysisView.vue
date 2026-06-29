@@ -22,6 +22,10 @@
         <div v-show="activeTab === 'signal'" class="tab-content">
           <SignalTab />
         </div>
+        <!-- PCA 主成分分析 Tab -->
+        <div v-show="activeTab === 'pca'" class="tab-content">
+          <PCATab />
+        </div>
         <!-- 资金流向 Tab -->
         <div v-show="activeTab === 'flow'" class="tab-content flow-tab">
           <!-- 头部控制区（移入资金流向 Tab） -->
@@ -213,6 +217,7 @@ import * as echarts from 'echarts'
 import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
 import VolatilityTab from './volatility/VolatilityTab.vue'
 import SignalTab from './signal/SignalTab.vue'
+import PCATab from './pca/PCATab.vue'
 
 const unit = 100000000 // 单位:亿
 
@@ -220,6 +225,7 @@ const unit = 100000000 // 单位:亿
 const tabs = [
   { label: '波动率分析', name: 'volatility' },
   { label: '信号分析', name: 'signal' },
+  { label: 'PCA 主成分', name: 'pca' },
   { label: '资金流向', name: 'flow' },
   { label: '策略数据', name: 'strategyData' }
 ]
