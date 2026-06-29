@@ -26,7 +26,7 @@ jobs:
           key: ${{ runner.os }}-ccache-xgboost
           max-size: 1024M  # 限制缓存大小
 
-      # 4. 缓存 xgboost 的 build 目录（依赖缓存）
+      # 4. 缓存 xgboost（固定版本，升级时改 key 中的版本号）
       - name: Cache xgboost build
         uses: actions/cache@v4
         id: cache-xgboost
@@ -35,7 +35,7 @@ jobs:
             xgboost/build
             /usr/local/include/xgboost
             /usr/local/lib/libxgboost.*
-          key: ${{ runner.os }}-xgboost-${{ hashFiles('**/CMakeLists.txt', '**/dmlc-core/CMakeLists.txt') }}
+          key: ${{ runner.os }}-xgboost-v1.7.5
           restore-keys: |
             ${{ runner.os }}-xgboost-
 
@@ -46,7 +46,7 @@ jobs:
           path: |
             /usr/local/include/boost
             /usr/local/lib/libboost*
-          key: ${{ runner.os }}-boost-${{ hashFiles('**/any.hpp') }}
+          key: ${{ runner.os }}-boost-v1.89.0
           restore-keys: |
             ${{ runner.os }}-boost
 
@@ -58,7 +58,7 @@ jobs:
             duckdb/build
             /usr/local/lib/libduckdb*
             /usr/local/include/duckdb*
-          key: ${{ runner.os }}-duckdb-${{ hashFiles('**/duckdb.h') }}
+          key: ${{ runner.os }}-duckdb-v1.5.4
           restore-keys: |
             ${{ runner.os }}-duckdb-
 
@@ -161,7 +161,7 @@ jobs:
           git clone --recursive https://github.com/hosseinmoein/DataFrame service/third_party/DataFrame
           mkdir service/build && cd service/build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON
-          cmake --build . --config Release
+          cmake --build . --config Release -j$(nproc)
 
       # 显示缓存统计（验证加速效果）
       - name: Show ccache stats
@@ -231,7 +231,7 @@ jobs:
           # BROKER_COMMISSION: ${{ secrets.BROKER_COMMISSION }}
           # BROKER_MIN_COMMISSION: ${{ secrets.BROKER_MIN_COMMISSION }}
 
-      # 上传构建产物供 test job 使用
+      # 上传构建产物供 test job 使用（含第三方编译的 so）
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -240,7 +240,22 @@ jobs:
             service/build/QuantService
             service/build/QuantService.debug
             service/build/config.json
-          compression-level: 5
+            /usr/local/lib/libxgboost.*
+            /usr/local/lib/libduckdb.so*
+            /usr/local/lib/libnng.so*
+            /usr/local/lib/libta_lib.*
+            service/third_party/libs/unix/libfastsptraderapi.so
+            service/third_party/libs/unix/libfasttraderapi.so
+            service/third_party/libs/unix/libsptraderapi.so
+            service/third_party/libs/unix/libthostmduserapi_se.so
+            service/third_party/libs/unix/libthosttraderapi_se.so
+            service/third_party/libs/unix/libtraderapi.so
+            service/third_party/libs/unix/libxfastmdapi.so
+            service/third_party/libs/unix/libxmdapi.so
+            service/third_party/libs/unix/libxtpquoteapi.so
+            service/third_party/libs/unix/libxtptraderapi.so
+            service/third_party/libs/unix/libonnxruntime.so
+          compression-level: 0
           retention-days: 1
 
   test:
@@ -256,15 +271,34 @@ jobs:
           name: build-artifact
           path: service/build
 
+      - name: Install runtime libraries
+        run: |
+          # 将 artifact 中的 so 安装到 /usr/local/lib
+          sudo cp -f service/build/usr/local/lib/libxgboost.*    /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f service/build/usr/local/lib/libduckdb.so*   /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f service/build/usr/local/lib/libnng.so*      /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f service/build/usr/local/lib/libta_lib.*     /usr/local/lib/ 2>/dev/null || true
+          # third_party/libs/unix 下的券商/交易 SDK
+          sudo cp -f service/build/service/third_party/libs/unix/*.so* /usr/local/lib/ 2>/dev/null || true
+          sudo ldconfig
+
       - name: Make service executable
         run: |
           chmod +x service/build/QuantService
 
-      - name: Install test dependencies
+      - name: Install runtime dependencies (system libs)
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl gdb
+          sudo apt-get install -y libpapi-dev libarmadillo-dev libmlpack-dev libssl-dev curl gdb
+          sudo ldconfig
+
+      - name: Install test dependencies (Python)
+        run: |
           pip install pytest requests pyyaml
+
+      - name: Create TLS certificates
+        run: |
+          echo "${{ secrets.SERVER_CRT }}" | base64 -d > service/build/server.crt
 
       # === 阶段 1: 服务生命周期测试（启动 + 稳定 + 优雅退出）===
 
