@@ -231,7 +231,7 @@ jobs:
           # BROKER_COMMISSION: ${{ secrets.BROKER_COMMISSION }}
           # BROKER_MIN_COMMISSION: ${{ secrets.BROKER_MIN_COMMISSION }}
 
-      # 上传构建产物供 test job 使用（含第三方编译的 so）
+      # 上传构建产物供 test job 使用（二进制 + config）
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -240,6 +240,15 @@ jobs:
             service/build/QuantService
             service/build/QuantService.debug
             service/build/config.json
+          compression-level: 5
+          retention-days: 1
+
+      # 上传第三方 so 供 test job 使用
+      - name: Upload runtime libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-libs
+          path: |
             /usr/local/lib/libxgboost.*
             /usr/local/lib/libduckdb.so*
             /usr/local/lib/libnng.so*
@@ -264,22 +273,29 @@ jobs:
     env:
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
     steps:
-      # 下载构建产物
+      # 下载构建产物（二进制 + config）
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-artifact
           path: service/build
 
+      # 下载第三方 so
+      - name: Download runtime libs
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-libs
+          path: runtime-libs
+
       - name: Install runtime libraries
         run: |
           # 将 artifact 中的 so 安装到 /usr/local/lib
-          sudo cp -f service/build/usr/local/lib/libxgboost.*    /usr/local/lib/ 2>/dev/null || true
-          sudo cp -f service/build/usr/local/lib/libduckdb.so*   /usr/local/lib/ 2>/dev/null || true
-          sudo cp -f service/build/usr/local/lib/libnng.so*      /usr/local/lib/ 2>/dev/null || true
-          sudo cp -f service/build/usr/local/lib/libta_lib.*     /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/usr/local/lib/libxgboost.* /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/usr/local/lib/libduckdb.so* /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/usr/local/lib/libnng.so* /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/usr/local/lib/libta_lib.* /usr/local/lib/ 2>/dev/null || true
           # third_party/libs/unix 下的券商/交易 SDK
-          sudo cp -f service/build/service/third_party/libs/unix/*.so* /usr/local/lib/ 2>/dev/null || true
+          sudo cp -f runtime-libs/service/third_party/libs/unix/*.so* /usr/local/lib/ 2>/dev/null || true
           sudo ldconfig
 
       - name: Make service executable
