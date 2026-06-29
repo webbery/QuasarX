@@ -15,6 +15,9 @@
 #include <signal.h>
 #include <pthread.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>  // waitpid
+#include <vector>
+#include <string>
 #endif
 #include "server.h"
 #include "Util/string_algorithm.h"
@@ -260,6 +263,69 @@ void on_terminate() {
             int len = snprintf(line, sizeof(line), "  [%02d] %s\n", i, strings[i]);
             write(STDERR_FILENO, line, len);
         }
+        
+        // 解析地址为源文件行号（fork 子进程调用 addr2line）
+        const char resolve_header[] = "\n--- Source location resolution ---\n";
+        write(STDERR_FILENO, resolve_header, sizeof(resolve_header) - 1);
+        
+        // 收集所有地址
+        std::vector<std::string> addresses;
+        for (int i = 0; i < size; i++) {
+            // 解析格式: ./binary(symbol+0xoffset) [0xADDR]
+            char* addr_start = strchr(strings[i], '[');
+            if (addr_start) {
+                char* addr_end = strchr(addr_start, ']');
+                if (addr_end) {
+                    *addr_end = '\0';
+                    addresses.push_back(addr_start + 1);  // 跳过 '['
+                    *addr_end = ']';
+                }
+            }
+        }
+        
+        if (!addresses.empty()) {
+            // 获取当前可执行文件路径
+            char exe_path[4096];
+            ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+            if (len == -1) {
+                const char err_msg[] = "Failed to get executable path\n";
+                write(STDERR_FILENO, err_msg, sizeof(err_msg) - 1);
+            } else {
+                exe_path[len] = '\0';
+                
+                // 优先使用 .debug 文件（如果存在）
+                std::string debug_path = std::string(exe_path) + ".debug";
+                const char* target = access(debug_path.c_str(), F_OK) == 0 ? debug_path.c_str() : exe_path;
+                
+                // fork 子进程执行 addr2line
+                pid_t pid = fork();
+                if (pid == 0) {
+                    // 子进程：执行 addr2line
+                    std::vector<const char*> args;
+                    args.push_back("addr2line");
+                    args.push_back("-e");
+                    args.push_back(target);
+                    args.push_back("-f");  // 打印函数名
+                    args.push_back("-C");  // demangle C++ 符号
+                    for (const auto& addr : addresses) {
+                        args.push_back(addr.c_str());
+                    }
+                    args.push_back(nullptr);
+                    
+                    execvp("addr2line", const_cast<char**>(args.data()));
+                    // 如果 execvp 失败
+                    _exit(127);
+                } else if (pid > 0) {
+                    // 父进程：等待子进程完成
+                    int status;
+                    waitpid(pid, &status, 0);
+                } else {
+                    const char fork_err[] = "fork() failed, skipping addr2line\n";
+                    write(STDERR_FILENO, fork_err, sizeof(fork_err) - 1);
+                }
+            }
+        }
+        
         free(strings);
     }
     
