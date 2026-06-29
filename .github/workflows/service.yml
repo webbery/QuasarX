@@ -244,6 +244,13 @@ jobs:
           retention-days: 1
 
       # 上传第三方 so 供 test job 使用
+      - name: List files to upload
+        run: |
+          echo "=== third_party/libs/unix ==="
+          ls -la service/third_party/libs/unix/ || echo "DIR NOT FOUND"
+          echo "=== /usr/local/lib ==="
+          ls -la /usr/local/lib/libxgboost.* /usr/local/lib/libduckdb.so* /usr/local/lib/libnng.so* /usr/local/lib/libta_lib.* 2>&1 || true
+
       - name: Upload runtime libs
         uses: actions/upload-artifact@v4
         with:
@@ -287,6 +294,12 @@ jobs:
           name: runtime-libs
           path: runtime-libs
 
+      - name: List downloaded runtime libs
+        run: |
+          echo "=== runtime-libs root ==="
+          find runtime-libs -type f -o -type l 2>/dev/null | head -50 || echo "DIR EMPTY"
+          echo "=== /usr/local/lib (after copy) ==="
+
       - name: Install runtime libraries
         run: |
           # 将 artifact 中的 so 安装到 /usr/local/lib
@@ -296,6 +309,7 @@ jobs:
           sudo cp -f runtime-libs/usr/local/lib/libta_lib.* /usr/local/lib/ 2>/dev/null || true
           # third_party/libs/unix 下的券商/交易 SDK
           sudo cp -f runtime-libs/service/third_party/libs/unix/*.so* /usr/local/lib/ 2>/dev/null || true
+          sudo ls /usr/local/lib
           sudo ldconfig
 
       - name: Make service executable
