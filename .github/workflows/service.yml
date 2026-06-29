@@ -166,12 +166,223 @@ jobs:
       # 显示缓存统计（验证加速效果）
       - name: Show ccache stats
         run: ccache -s
-      # 上传构建以便下载
-      - name: Upload Build
+
+      # 从模板和 Secrets 生成 config.json（供 test job 使用）
+      - name: Generate config.json
+        run: |
+          cd service/build
+          cp ../config.template.json ./config.json
+          python3 -c "
+          import json, os
+
+          with open('config.json') as f:
+              config = json.load(f)
+
+          server = config.get('server', {})
+          if os.environ.get('SERVER_USER'):
+              server['user'] = os.environ['SERVER_USER']
+          if os.environ.get('SERVER_PASSWD'):
+              server['passwd'] = os.environ['SERVER_PASSWD']
+          if os.environ.get('SERVER_JWT_SECRET'):
+              server['jwt'] = os.environ['SERVER_JWT_SECRET']
+          if os.environ.get('SERVER_PRODUCT_ID'):
+              server['productID'] = os.environ['SERVER_PRODUCT_ID']
+          if os.environ.get('SERVER_LLM_KEY'):
+              server['llmkey'] = os.environ['SERVER_LLM_KEY']
+          if os.environ.get('SERVER_PORT'):
+              server['port'] = int(os.environ['SERVER_PORT'])
+          if os.environ.get('SERVER_ADDR'):
+              server['addr'] = os.environ['SERVER_ADDR']
+          if os.environ.get('SERVER_SSL'):
+              server['ssl'] = os.environ['SERVER_SSL']
+
+          for ex in config.get('exchange', []):
+              ex_name = ex.get('name', '')
+              if ex_name == 'tickflow-quote' and os.environ.get('TICKFLOW_API_KEY'):
+                  ex['passwd'] = os.environ['TICKFLOW_API_KEY']
+              elif ex_name == 'tickflow-quote' and os.environ.get('TICKFLOW_USERNAME'):
+                  ex['username'] = os.environ['TICKFLOW_USERNAME']
+
+          risk = config.get('risk', {})
+          capital_risk = risk.get('capitalRisk', {})
+          if os.environ.get('INITIAL_CAPITAL'):
+              capital_risk['initialCapital'] = float(os.environ['INITIAL_CAPITAL'])
+
+          for br in config.get('broker', []):
+              if os.environ.get('BROKER_COMMISSION'):
+                  br['commission']['fee'] = float(os.environ['BROKER_COMMISSION'])
+              if os.environ.get('BROKER_MIN_COMMISSION'):
+                  br['commission']['min'] = float(os.environ['BROKER_MIN_COMMISSION'])
+
+          with open('config.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('config.json generated successfully')
+          "
+        env:
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PASSWD: ${{ secrets.SERVER_PASSWD }}
+          SERVER_PRODUCT_ID: ${{ secrets.SERVER_PRODUCT_ID }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_ADDR: ${{ secrets.SERVER_ADDR }}
+          # SERVER_SSL: ${{ secrets.SERVER_SSL }}
+          TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+          # TICKFLOW_USERNAME: ${{ secrets.TICKFLOW_USERNAME }}
+          # INITIAL_CAPITAL: ${{ secrets.INITIAL_CAPITAL }}
+          # BROKER_COMMISSION: ${{ secrets.BROKER_COMMISSION }}
+          # BROKER_MIN_COMMISSION: ${{ secrets.BROKER_MIN_COMMISSION }}
+
+      # 上传构建产物供 test job 使用
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: |
+            service/build/QuantService
+            service/build/QuantService.debug
+            service/build/config.json
+          compression-level: 5
+          retention-days: 1
+
+  test:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+    steps:
+      # 下载构建产物
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+          path: service/build
+
+      - name: Make service executable
+        run: |
+          chmod +x service/build/QuantService
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl gdb
+          pip install pytest requests pyyaml
+
+      # === 阶段 1: 服务生命周期测试（启动 + 稳定 + 优雅退出）===
+
+      - name: Start service (lifecycle test)
+        id: start_service
+        run: |
+          # 允许生成 core dump 以便崩溃时获取堆栈
+          ulimit -c unlimited
+          echo "core" | sudo tee /proc/sys/kernel/core_pattern 2>/dev/null || true
+          cd service/build
+          nohup ./QuantService config.json > service_lifecycle.log 2>&1 &
+          SERVICE_PID=$!
+          echo "pid=$SERVICE_PID" >> $GITHUB_OUTPUT
+          echo "Service started with PID $SERVICE_PID"
+          for i in $(seq 1 30); do
+            if curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status >/dev/null 2>&1; then
+              echo "Service is ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Service start timeout after 30s"
+          cat service_lifecycle.log
+          exit 1
+
+      - name: Verify service stability
+        run: |
+          sleep 5
+          SERVICE_PID=${{ steps.start_service.outputs.pid }}
+          if kill -0 "$SERVICE_PID" 2>/dev/null; then
+            echo "Service (PID $SERVICE_PID) is still running — stability check passed"
+          else
+            echo "Service crashed after startup"
+            echo "=== Log output ==="
+            cat service/build/service_lifecycle.log
+            echo ""
+            echo "=== Stack trace from core dump (if any) ==="
+            # 尝试多种 core dump 路径
+            CORE_FILE=$(ls -t /tmp/core.* service/build/core.* /var/lib/systemd/coredump/core* 2>/dev/null | head -1)
+            if [ -n "$CORE_FILE" ]; then
+              gdb -batch \
+                -ex "file service/build/QuantService" \
+                -ex "symbol-file service/build/QuantService.debug" \
+                -ex "bt full" \
+                -ex "info registers" \
+                -ex "x/10i \$pc" \
+                -c "$CORE_FILE" 2>&1 || true
+            else
+              echo "No core dump found — check log output above for signal handler backtrace"
+            fi
+            exit 1
+          fi
+          STATUS=$(curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status)
+          echo "Status response: $STATUS"
+
+      - name: Stop service (graceful shutdown test)
+        id: stop_service
+        if: always()
+        run: |
+          SERVICE_PID=${{ steps.start_service.outputs.pid }}
+          echo "Sending graceful shutdown request to service (PID $SERVICE_PID)..."
+          curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+          for i in $(seq 1 10); do
+            if ! kill -0 "$SERVICE_PID" 2>/dev/null; then
+              echo "Service exited gracefully after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Graceful shutdown timeout, sending SIGKILL to PID $SERVICE_PID"
+          kill -9 "$SERVICE_PID" 2>/dev/null || true
+          echo "Service forced to terminate"
+          cat service/build/service_lifecycle.log || true
+          exit 1
+
+      # === 阶段 2: 回测功能测试 ===
+
+      # - name: Run backtest tests
+      #   id: test
+      #   run: |
+      #     cd service/build
+      #     nohup ./QuantService config.json > service_test.log 2>&1 &
+      #     TEST_PID=$!
+      #     echo "Test service PID: $TEST_PID"
+      #     for i in $(seq 1 30); do
+      #       if curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status >/dev/null 2>&1; then
+      #         echo "Test service ready"
+      #         break
+      #       fi
+      #       sleep 1
+      #     done
+      #     cd ../test
+      #     python testcases/generate_test_data.py 2>/dev/null || true
+      #     python run_tests.py --mode stock_hist_sim --no-service
+      #     TEST_EXIT_CODE=$?
+      #     curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+      #     sleep 2
+      #     kill -9 $TEST_PID 2>/dev/null || true
+      #     exit $TEST_EXIT_CODE
+
+      # === 阶段 3: 测试通过后上传最终构建 ===
+
+      - name: Upload Build (passed tests)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: |
             service/build/QuantService
-            service/build/QuantService.debug
           compression-level: 5
+
+      - name: Upload test failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failure-report
+          path: |
+            service/build/service_lifecycle.log
+            service/build/service_test.log
+          compression-level: 0
+          retention-days: 7

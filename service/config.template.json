@@ -1,0 +1,61 @@
+{
+    "etf": { "t0": ["sh.510300", "sh.588000"], "t1": [] },
+    "broker": [
+        {
+            "commission": { "fee": null, "min": null, "stamp": null },
+            "db": "data/broker",
+            "name": "astock",
+            "type": "stock"
+        }
+    ],
+    "exchange": [
+        { "api": "stock_hist_sim", "desc": "", "name": "stock-sim", "pool": [], "quote": "data", "trade": "", "type": "stock" },
+        {
+            "api": "tickflow",
+            "desc": "TickFlow Real-time Quote",
+            "name": "tickflow-quote",
+            "passwd": null,
+            "pool": ["000001.SZ","159941.SZ","159687.SZ","159981.SZ","518880.SH","511010.SH","588060.SH"],
+            "type": "stock",
+            "username": "tk_"
+        }
+    ],
+    "risk": {
+        "capitalRisk": {
+            "autoClosePosition": false,
+            "dailyMaxLossPercent": 0.03,
+            "enableDailyLossLimit": true,
+            "enableTotalStopLoss": true,
+            "initialCapital": 1000000,
+            "lastDayEquity": 1000000,
+            "manualInterventionTimeoutSec": 300,
+            "timeoutAutoClose": true,
+            "totalStopLossPercent": 0.85
+        }
+    },
+    "server": {
+        "addr": "localhost",
+        "db_path": "data",
+        "default": {
+            "broker": "astock",
+            "daily": "20:00",
+            "exchange": [
+                "tickflow-quote"
+            ],
+            "freerate": 0.0175,
+            "record": [
+                "*"
+            ],
+            "strategy": null
+        },
+        "jwt": null,
+        "llmkey": null,
+        "notice": { "email": null },
+        "passwd": null,
+        "port": 0,
+        "productID": null,
+        "smtp": { "addr": null, "auth": null, "mail": null },
+        "ssl": "",
+        "user": null
+    }
+}
