@@ -292,6 +292,7 @@ std::wstring to_wstring(const char* c)
 }
 
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 std::wstring utf8_to_utf16(const String& utf8_str) {

@@ -1,12 +1,20 @@
 #include "spdlog/common.h"
 #include <memory_resource>
+#include <exception>  // std::set_terminate
 #ifdef WIN32
+#define WIN32_LEAN_AND_MEAN  // 阻止 windows.h 包含 winsock.h（避免 sockaddr 重定义）
+#include <windows.h>
+#include <dbghelp.h>
+#include <excpt.h>
+#pragma comment(lib, "dbghelp.lib")
 #else
 #include <execinfo.h>
 #include <cxxabi.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
+#include <pthread.h>
+#include <sys/syscall.h>
 #endif
 #include "server.h"
 #include "Util/string_algorithm.h"
@@ -22,83 +30,165 @@
 
 #ifdef WIN32
 LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
-  // 获取堆栈信息
-  PVOID stack[10];
-  DWORD frames;
-  printf("111\n");
-  if (!RtlCaptureStackBackTrace(0, 100, NULL, &frames))
-  {
-    return EXCEPTION_CONTINUE_SEARCH;
-  }
-
-  printf("333\n");
-  if (!RtlCaptureStackBackTrace(0, 10, stack, &frames)) {
-    printf("Failed to capture stack trace.\n");
-  }
-  else {
-    for (ULONG i = 0; i < frames; i++) {
-      //PVOID frame = stack[i];
-      //printf("Frame %u: ", i);
-      //PCHAR symbol_name = NULL;
-      //ULONG symbol_size = 0;
-      //if (SymFromAddr(GetCurrentProcess(), (PVOID)frame, &symbol_name, &symbol_size)) {
-      //  printf("%s\n", symbol_name);
-      //  LocalFree(symbol_name);
-      //}
-      //else {
-      //  printf("Unable to get symbol name.\n");
-      //}
+    fprintf(stderr, "\n========== Windows Unhandled Exception ==========\n");
+    fprintf(stderr, "Exception code: 0x%08X\n", exception_info->ExceptionRecord->ExceptionCode);
+    fprintf(stderr, "Exception address: 0x%p\n", exception_info->ExceptionRecord->ExceptionAddress);
+    
+    // 初始化 DbgHelp（只需一次）
+    static bool initialized = false;
+    if (!initialized) {
+        SymInitialize(GetCurrentProcess(), NULL, TRUE);
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+        initialized = true;
     }
-  }
-  // 返回异常处理的结果
-  printf("222\n");
-  return EXCEPTION_EXECUTE_HANDLER;
+    
+    // 捕获堆栈
+    PVOID stack[64];
+    USHORT frames = CaptureStackBackTrace(0, 64, stack, NULL);
+    
+    fprintf(stderr, "\nStack trace (%u frames):\n", frames);
+    
+    // 解析每个帧的符号
+    for (USHORT i = 0; i < frames; i++) {
+        DWORD64 address = (DWORD64)stack[i];
+        DWORD64 dwDisplacement = 0;
+        
+        // 分配足够的内存用于 SYMBOL_INFO 结构
+        char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR)];
+        PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)buffer;
+        pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+        pSymbol->MaxNameLen = MAX_SYM_NAME;
+        
+        // 获取符号信息
+        if (SymFromAddr(GetCurrentProcess(), address, &dwDisplacement, pSymbol)) {
+            // 获取行号信息
+            IMAGEHLP_LINE64 lineInfo = {0};
+            lineInfo.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+            DWORD lineDisplacement = 0;
+            
+            if (SymGetLineFromAddr64(GetCurrentProcess(), address, &lineDisplacement, &lineInfo)) {
+                fprintf(stderr, "  [%02u] %s + 0x%I64x (%s:%lu)\n",
+                        i, pSymbol->Name, dwDisplacement, lineInfo.FileName, lineInfo.LineNumber);
+            } else {
+                fprintf(stderr, "  [%02u] %s + 0x%I64x\n",
+                        i, pSymbol->Name, dwDisplacement);
+            }
+        } else {
+            fprintf(stderr, "  [%02u] 0x%p (no symbol)\n", i, stack[i]);
+        }
+    }
+    
+    fprintf(stderr, "\n=========================================\n");
+    fprintf(stderr, "Check crash dump or attach debugger for more details.\n\n");
+    
+    return EXCEPTION_EXECUTE_HANDLER;
 }
 #else
+// 异步信号安全的堆栈打印（信号处理函数中只能调用 async-signal-safe 函数）
 void print_stacktrace(int signo) {
-    void *array[10];
-    size_t size;
+    // 使用 write() 直接输出到 stderr，这是 async-signal-safe 的
+    const char* signal_name = strsignal(signo);
+    const char prefix[] = "\n=== CRASH: Caught signal ";
+    write(STDERR_FILENO, prefix, sizeof(prefix) - 1);
+    
+    char signum_buf[16];
+    int signum_len = 0;
+    int tmp = signo;
+    do {
+        signum_buf[signum_len++] = '0' + (tmp % 10);
+        tmp /= 10;
+    } while (tmp > 0);
+    for (int i = 0; i < signum_len / 2; i++) {
+        char c = signum_buf[i];
+        signum_buf[i] = signum_buf[signum_len - 1 - i];
+        signum_buf[signum_len - 1 - i] = c;
+    }
+    signum_buf[signum_len] = '\0';
+    write(STDERR_FILENO, signum_buf, signum_len);
+    write(STDERR_FILENO, " (", 2);
+    write(STDERR_FILENO, signal_name, strlen(signal_name));
+    write(STDERR_FILENO, ") ===\n", 6);
 
-    // 获取当前线程的堆栈地址
-    // 注意：这里假设只有一个线程，如果需要处理多线程情况，请使用pthread_getspecific等函数
-    array[0] = (void *) pthread_self();
-
-    // 获取堆栈地址数量
-    size = backtrace(array, sizeof(array) / sizeof(array[0]));
-    size_t max_output_size = (std::min)((int)size, 20);
-
-    // 打印堆栈地址
-    char **strings = backtrace_symbols(array, max_output_size);
-    for (size_t i = 0; i < max_output_size; ++i) {
-      std::vector<std::string> info;
-      split((std::string)strings[i], info, " ");
-      for (auto& str: info) {
-        if (str[0] == '[' && str.back() == ']') {
-          std::string addr = str.substr(1, str.size() - 2);
-          std::string cmd = "addr2line " + addr + " -e " + GetProgramPath();
-          std::string output;
-          RunCommand(cmd, output);
-          FATAL("{}", output.c_str());
-        } else {
-          FATAL("{}", str.c_str());
-        }
-      }
-      // 使用__cxa_demangle函数解析符号信息
-      // char name[256] = {0};
-      // int status = 0;
-      // size_t len = 256;
-      // __cxxabiv1::__cxa_demangle(strings[i], name, &len, 0);
-      // if (status == 0 || strlen(name) != 0) {
-      //     printf("%s ", name);
-      //     // 注意：这里假设所有的函数都在同一个文件中定义，实际上可能并非如此
-      //     // printf("Line: %d ", atoi(name) + 1);  // 注意：这里的行号是从1开始的
-      // } else {
-      // }
+    // 捕获堆栈（增加到 64 帧）
+    void* array[64];
+    int size = backtrace(array, 64);
+    
+    // 获取符号信息
+    char** strings = backtrace_symbols(array, size);
+    if (strings == NULL) {
+        const char err_msg[] = "Failed to get backtrace_symbols\n";
+        write(STDERR_FILENO, err_msg, sizeof(err_msg) - 1);
+        _exit(EXIT_FAILURE);
     }
 
-    // 释放内存
+    // 打印原始堆栈信息（async-signal-safe）
+    const char stack_header[] = "\nStack trace:\n";
+    write(STDERR_FILENO, stack_header, sizeof(stack_header) - 1);
+    
+    for (int i = 0; i < size; i++) {
+        char line[512];
+        int len = snprintf(line, sizeof(line), "  [%02d] %s\n", i, strings[i]);
+        write(STDERR_FILENO, line, len);
+    }
+
+    // 尝试 demangle C++ 符号（也在信号处理函数中安全执行）
+    const char demangle_header[] = "\nDemangled stack trace:\n";
+    write(STDERR_FILENO, demangle_header, sizeof(demangle_header) - 1);
+    
+    for (int i = 0; i < size; i++) {
+        // 解析 backtrace_symbols 输出格式: ./binary(mangled_name+0xoffset) [0xaddr]
+        char* begin = strchr(strings[i], '(');
+        char* end = begin ? strchr(begin, '+') : NULL;
+        
+        if (begin && end) {
+            *begin = '\0';
+            *end = '\0';
+            begin++;
+            
+            int status = 0;
+            char* demangled = abi::__cxa_demangle(begin, NULL, NULL, &status);
+            
+            char line[512];
+            int len;
+            if (status == 0 && demangled) {
+                len = snprintf(line, sizeof(line), "  [%02d] %s(%s+0x", i, strings[i], demangled);
+                free(demangled);
+            } else {
+                len = snprintf(line, sizeof(line), "  [%02d] %s(%s+0x", i, strings[i], begin);
+            }
+            
+            // 恢复原字符串以便打印 offset
+            *end = '+';
+            char* offset_start = end + 1;
+            char* bracket = strchr(offset_start, ')');
+            if (bracket) *bracket = '\0';
+            len += snprintf(line + len, sizeof(line) - len, "%s) [", offset_start);
+            if (bracket) *bracket = ')';
+            
+            // 打印地址
+            char* addr_begin = strchr(strings[i], '[');
+            if (addr_begin) {
+                len += snprintf(line + len, sizeof(line) - len, "%s", addr_begin);
+            }
+            len += snprintf(line + len, sizeof(line) - len, "\n");
+            write(STDERR_FILENO, line, len);
+        } else {
+            // 无法解析，直接打印原始字符串
+            char line[512];
+            int len = snprintf(line, sizeof(line), "  [%02d] %s\n", i, strings[i]);
+            write(STDERR_FILENO, line, len);
+        }
+    }
+
+    // 提示用户使用 addr2line 获取详细信息
+    const char tip[] = "\nTo get source locations, run:\n  addr2line -e <binary> -a <address>\n";
+    write(STDERR_FILENO, tip, sizeof(tip) - 1);
+    
+    const char example[] = "Example: addr2line -e ./QuantService -a 0x401234\n\n";
+    write(STDERR_FILENO, example, sizeof(example) - 1);
+
     free(strings);
-    exit(-1);
+    _exit(EXIT_FAILURE);  // 使用 _exit 而不是 exit，避免调用 atexit 处理函数
 }
 #endif
 
@@ -109,9 +199,77 @@ void install_signal_handler() {
   struct sigaction action;
   memset(&action, 0, sizeof(action));
   action.sa_handler = print_stacktrace;
-  sigaction(SIGSEGV, &action, NULL);
-  sigaction(SIGFPE, &action, NULL);
+  sigemptyset(&action.sa_mask);
+  
+  // 注册所有关键崩溃信号
+  sigaction(SIGSEGV, &action, NULL);   // 段错误（非法内存访问）
+  sigaction(SIGFPE, &action, NULL);    // 浮点异常（除零等）
+  sigaction(SIGABRT, &action, NULL);   // abort() 调用（assert 失败、异常终止）
+  sigaction(SIGILL, &action, NULL);    // 非法指令
+  sigaction(SIGBUS, &action, NULL);    // 总线错误
+  sigaction(SIGTERM, &action, NULL);   // 终止信号
 #endif
+}
+
+// C++ terminate handler（捕获 std::terminate，通常是未捕获异常）
+void on_terminate() {
+#ifdef WIN32
+    // Windows: 使用 fprintf 输出到 stderr
+    fprintf(stderr, "\n========== std::terminate called ==========\n");
+    fprintf(stderr, "Attempting to print stack trace...\n\n");
+    
+    // 尝试获取当前异常信息
+    try {
+        throw;  // 重新抛出当前异常
+    } catch (const std::exception& e) {
+        fprintf(stderr, "Active exception: %s\n", e.what());
+    } catch (...) {
+        fprintf(stderr, "Unknown exception type\n");
+    }
+    
+    // Windows 堆栈打印（需要 DbgHelp，留给 unhandled_exception_filter 处理）
+    fprintf(stderr, "\nCheck crash dump for full analysis.\n");
+    fprintf(stderr, "=========================================\n\n");
+#else
+    // Linux: 使用 write() 直接输出（async-signal-safe）
+    const char msg[] = "\n========== std::terminate called ==========\n"
+                       "Attempting to print stack trace...\n\n";
+    write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    
+    // 尝试获取当前异常信息
+    try {
+        throw;  // 重新抛出当前异常
+    } catch (const std::exception& e) {
+        const char exc_msg[] = "Active exception: ";
+        write(STDERR_FILENO, exc_msg, sizeof(exc_msg) - 1);
+        write(STDERR_FILENO, e.what(), strlen(e.what()));
+        write(STDERR_FILENO, "\n", 1);
+    } catch (...) {
+        const char unknown_exc[] = "Unknown exception type\n";
+        write(STDERR_FILENO, unknown_exc, sizeof(unknown_exc) - 1);
+    }
+    
+    // 打印堆栈
+    void* array[64];
+    int size = backtrace(array, 64);
+    char** strings = backtrace_symbols(array, size);
+    
+    if (strings) {
+        for (int i = 0; i < size; i++) {
+            char line[512];
+            int len = snprintf(line, sizeof(line), "  [%02d] %s\n", i, strings[i]);
+            write(STDERR_FILENO, line, len);
+        }
+        free(strings);
+    }
+    
+    const char footer[] = "\nCheck core dump for full GDB analysis.\n"
+                          "=========================================\n\n";
+    write(STDERR_FILENO, footer, sizeof(footer) - 1);
+#endif
+    
+    // 调用默认 terminate handler（会 abort() 触发 SIGABRT）
+    std::abort();
 }
 
 void init_logger() {
@@ -148,8 +306,10 @@ int main(int argc, char* argv[])
     std::pmr::synchronized_pool_resource pool;
     std::pmr::set_default_resource(&pool);
     hmdf::ThreadGranularity::set_optimum_thread_level();
-    
+
+    // 安装信号处理器和 terminate handler
     install_signal_handler();
+    std::set_terminate(on_terminate);
 
     // init log
     init_logger();
