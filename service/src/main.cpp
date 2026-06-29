@@ -220,120 +220,36 @@ void on_terminate() {
     // Windows: 使用 fprintf 输出到 stderr
     fprintf(stderr, "\n========== std::terminate called ==========\n");
     fprintf(stderr, "Attempting to print stack trace...\n\n");
-    
-    // 尝试获取当前异常信息
-    try {
-        throw;  // 重新抛出当前异常
-    } catch (const std::exception& e) {
-        fprintf(stderr, "Active exception: %s\n", e.what());
-    } catch (...) {
-        fprintf(stderr, "Unknown exception type\n");
-    }
-    
-    // Windows 堆栈打印（需要 DbgHelp，留给 unhandled_exception_filter 处理）
-    fprintf(stderr, "\nCheck crash dump for full analysis.\n");
-    fprintf(stderr, "=========================================\n\n");
 #else
     // Linux: 使用 write() 直接输出（async-signal-safe）
-    const char msg[] = "\n========== std::terminate called ==========\n"
-                       "Attempting to print stack trace...\n\n";
+    const char msg[] = "\n========== std::terminate called ==========\n";
     write(STDERR_FILENO, msg, sizeof(msg) - 1);
-    
-    // 尝试获取当前异常信息
-    try {
-        throw;  // 重新抛出当前异常
-    } catch (const std::exception& e) {
-        const char exc_msg[] = "Active exception: ";
-        write(STDERR_FILENO, exc_msg, sizeof(exc_msg) - 1);
-        write(STDERR_FILENO, e.what(), strlen(e.what()));
-        write(STDERR_FILENO, "\n", 1);
-    } catch (...) {
-        const char unknown_exc[] = "Unknown exception type\n";
-        write(STDERR_FILENO, unknown_exc, sizeof(unknown_exc) - 1);
-    }
-    
+#endif
+
     // 打印堆栈
+#ifdef WIN32
+    // Windows 堆栈打印（需要 DbgHelp，留给 unhandled_exception_filter 处理）
+    fprintf(stderr, "Check crash dump for full analysis.\n");
+    fprintf(stderr, "=========================================\n\n");
+#else
     void* array[64];
     int size = backtrace(array, 64);
     char** strings = backtrace_symbols(array, size);
-    
+
     if (strings) {
         for (int i = 0; i < size; i++) {
             char line[512];
             int len = snprintf(line, sizeof(line), "  [%02d] %s\n", i, strings[i]);
             write(STDERR_FILENO, line, len);
         }
-        
-        // 解析地址为源文件行号（fork 子进程调用 addr2line）
-        const char resolve_header[] = "\n--- Source location resolution ---\n";
-        write(STDERR_FILENO, resolve_header, sizeof(resolve_header) - 1);
-        
-        // 收集所有地址
-        std::vector<std::string> addresses;
-        for (int i = 0; i < size; i++) {
-            // 解析格式: ./binary(symbol+0xoffset) [0xADDR]
-            char* addr_start = strchr(strings[i], '[');
-            if (addr_start) {
-                char* addr_end = strchr(addr_start, ']');
-                if (addr_end) {
-                    *addr_end = '\0';
-                    addresses.push_back(addr_start + 1);  // 跳过 '['
-                    *addr_end = ']';
-                }
-            }
-        }
-        
-        if (!addresses.empty()) {
-            // 获取当前可执行文件路径
-            char exe_path[4096];
-            ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-            if (len == -1) {
-                const char err_msg[] = "Failed to get executable path\n";
-                write(STDERR_FILENO, err_msg, sizeof(err_msg) - 1);
-            } else {
-                exe_path[len] = '\0';
-                
-                // 优先使用 .debug 文件（如果存在）
-                std::string debug_path = std::string(exe_path) + ".debug";
-                const char* target = access(debug_path.c_str(), F_OK) == 0 ? debug_path.c_str() : exe_path;
-                
-                // fork 子进程执行 addr2line
-                pid_t pid = fork();
-                if (pid == 0) {
-                    // 子进程：执行 addr2line
-                    std::vector<const char*> args;
-                    args.push_back("addr2line");
-                    args.push_back("-e");
-                    args.push_back(target);
-                    args.push_back("-f");  // 打印函数名
-                    args.push_back("-C");  // demangle C++ 符号
-                    for (const auto& addr : addresses) {
-                        args.push_back(addr.c_str());
-                    }
-                    args.push_back(nullptr);
-                    
-                    execvp("addr2line", const_cast<char**>(args.data()));
-                    // 如果 execvp 失败
-                    _exit(127);
-                } else if (pid > 0) {
-                    // 父进程：等待子进程完成
-                    int status;
-                    waitpid(pid, &status, 0);
-                } else {
-                    const char fork_err[] = "fork() failed, skipping addr2line\n";
-                    write(STDERR_FILENO, fork_err, sizeof(fork_err) - 1);
-                }
-            }
-        }
-        
         free(strings);
     }
-    
+
     const char footer[] = "\nCheck core dump for full GDB analysis.\n"
                           "=========================================\n\n";
     write(STDERR_FILENO, footer, sizeof(footer) - 1);
 #endif
-    
+
     // 调用默认 terminate handler（会 abort() 触发 SIGABRT）
     std::abort();
 }
