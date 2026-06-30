@@ -1488,9 +1488,9 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
     }
     if (exchange.contains("passwd")) {
         std::string passwd = exchange["passwd"];
-        strcpy(handle._passwd, passwd.c_str());
+        strncpy(handle._passwd, passwd.data(), std::min(32, (int)passwd.size()));
     }
-    if (exchange.contains("option")) {
+    if (exchange.contains("option")) {  
         std::string option_addr = exchange["option"];
         std::vector<std::string> option_info;
         split(option_addr, option_info, ":");

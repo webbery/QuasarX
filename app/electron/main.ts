@@ -17,6 +17,7 @@ import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { createHash } from 'crypto';
+import { DuckDBInstance, DuckDBConnection, DuckDBAppender, timestampValue, listValue } from '@duckdb/node-api';
 import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags, storeChunkSummaries, getChunkSummariesByDocId, getChunksByDocId } from './vectorDB';
 import { agentRouter } from './agent/AgentRouter';
 import { IndexAgent } from './agent/IndexAgent';
@@ -182,6 +183,18 @@ app.whenReady().then(async () => {
         }
     });
 
+    ipcMain.handle('show-message-box', async (_, options) => {
+        const result = await dialog.showMessageBox({
+            type: options.type || 'question',
+            title: options.title || '确认',
+            message: options.message,
+            buttons: options.buttons || ['取消', '确定'],
+            defaultId: options.defaultId !== undefined ? options.defaultId : 1,
+            cancelId: options.cancelId !== undefined ? options.cancelId : 0
+        });
+        return { response: result.response };
+    });
+
     ipcMain.handle('merge-csv', async (_, url, token, dstZip, mergeSrc) => {
         console.info('merge', url, dstZip, mergeSrc)
         const agent = new https.Agent({
@@ -206,6 +219,153 @@ app.whenReady().then(async () => {
             return false;
         }
     })
+
+    // ============================================================
+    // DuckDB Tick 数据同步
+    // ============================================================
+
+    // 本地 DuckDB 实例缓存（按文件路径缓存，避免多实例 attach 同一 DB）
+    const tickDbCache = new Map<string, DuckDBInstance>();
+
+    async function getTickDb(dbPath: string): Promise<DuckDBInstance> {
+        if (tickDbCache.has(dbPath)) {
+            return tickDbCache.get(dbPath)!;
+        }
+        const instance = await DuckDBInstance.create(dbPath);
+        tickDbCache.set(dbPath, instance);
+
+        // 创建与服务端一致的表结构
+        const conn = await instance.connect();
+        await conn.run(`
+            CREATE TABLE IF NOT EXISTS tick_data (
+                id            INTEGER PRIMARY KEY,
+                timestamp     TIMESTAMP NOT NULL,
+                symbol        TEXT NOT NULL,
+                open          DOUBLE,
+                close         DOUBLE,
+                high          DOUBLE,
+                low           DOUBLE,
+                volume        BIGINT,
+                turnover      BIGINT,
+                value         DOUBLE,
+                upper         DOUBLE,
+                lower         DOUBLE,
+                source        TEXT,
+                confidence    INTEGER,
+                bid_prices    DOUBLE[],
+                bid_volumes   BIGINT[],
+                ask_prices    DOUBLE[],
+                ask_volumes   BIGINT[]
+            )
+        `);
+        await conn.run(`CREATE INDEX IF NOT EXISTS idx_tick_sym_time ON tick_data(symbol, timestamp)`);
+        conn.disconnectSync();
+        return instance;
+    }
+
+    /**
+     * 从服务端下载 tick 数据并写入本地 DuckDB
+     * 参数: serverUrl, token, symbol, start, end, dbPath
+     * 返回: { success, count, error? }
+     */
+    ipcMain.handle('tick-sync-to-duckdb', async (_, serverUrl: string, token: string, symbol: string | null, start: number, end: number, dbPath: string) => {
+        try {
+            const db = await getTickDb(dbPath);
+            const conn = await db.connect();
+
+            // 确保目录存在
+            const dir = dirname(dbPath);
+            if (!existsSync(dir)) {
+                mkdirSync(dir, { recursive: true });
+            }
+
+            const agent = new https.Agent({ rejectUnauthorized: false });
+            let totalCount = 0;
+            let idCounter = 1;
+
+            // 获取当前最大 ID（避免重复插入时主键冲突）
+            const maxIdReader = await conn.runAndReadAll('SELECT COALESCE(MAX(id), 0) as max_id FROM tick_data');
+            const maxIdResult = maxIdReader.getRowObjectsJson();
+            if (maxIdResult.length > 0) {
+                idCounter = Number(maxIdResult[0].max_id) + 1;
+            }
+
+            // 分页拉取
+            const limit = 100000;
+            while (true) {
+                let queryUrl = `${serverUrl}?action=query&limit=${limit}`;
+                if (symbol) queryUrl += `&symbol=${encodeURIComponent(symbol)}`;
+                if (start) queryUrl += `&start=${start}`;
+                if (end) queryUrl += `&end=${end}`;
+
+                const response = await axios.get(queryUrl, {
+                    httpsAgent: agent,
+                    headers: { 'Authorization': token },
+                    timeout: 120000
+                });
+
+                const ticks = response.data;
+                if (!ticks || ticks.length === 0) break;
+
+                // 使用 Appender 批量插入（最快）
+                const appender = await conn.createAppender('tick_data');
+                for (const t of ticks) {
+                    appender.appendInteger(idCounter++);
+                    // timestamp: epoch seconds → DuckDB TIMESTAMP
+                    const d = new Date(t.time * 1000);
+                    appender.appendTimestamp(timestampValue(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), 0));
+                    appender.appendVarchar(t.symbol || symbol || '');
+                    appender.appendDouble(t.open ?? 0);
+                    appender.appendDouble(t.close ?? 0);
+                    appender.appendDouble(t.high ?? 0);
+                    appender.appendDouble(t.low ?? 0);
+                    appender.appendBigInt(BigInt(t.volume ?? 0));
+                    appender.appendBigInt(BigInt(t.turnover ?? 0));
+                    appender.appendDouble(t.value ?? 0);
+                    appender.appendDouble(t.upper ?? 0);
+                    appender.appendDouble(t.lower ?? 0);
+                    appender.appendVarchar(t.source || '');
+                    appender.appendInteger(t.confidence ?? 0);
+                    // 盘口数组（当前查询接口不返回，留 NULL）
+                    appender.appendNull();
+                    appender.appendNull();
+                    appender.appendNull();
+                    appender.appendNull();
+                    appender.endRow();
+                }
+                appender.closeSync();
+
+                totalCount += ticks.length;
+
+                // 进度通知
+                mainWindow?.webContents.send('tick-download-progress', { count: totalCount });
+
+                if (ticks.length < limit) break; // 最后一页
+            }
+
+            conn.disconnectSync();
+            return { success: true, count: totalCount };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    /**
+     * 删除服务端 Tick 数据
+     */
+    ipcMain.handle('delete-server-ticks', async (_, serverUrl: string, token: string, beforeTs: number) => {
+        try {
+            const agent = new https.Agent({ rejectUnauthorized: false });
+            const response = await axios.post(
+                `${serverUrl}?action=delete_tick&before=${beforeTs}`,
+                {},
+                { httpsAgent: agent, headers: { 'Authorization': token }, timeout: 60000 }
+            );
+            return response.data;
+        } catch (err: any) {
+            return { error: err.message };
+        }
+    });
 
     // 处理文件选择请求
     ipcMain.handle('select-file', async (event, options) => {

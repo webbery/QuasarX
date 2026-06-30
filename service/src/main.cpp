@@ -154,10 +154,10 @@ void print_stacktrace(int signo) {
             char line[512];
             int len;
             if (status == 0 && demangled) {
-                len = snprintf(line, sizeof(line), "  [%02d] %s(%s+0x", i, strings[i], demangled);
+                len = snprintf(line, sizeof(line), "  [%02d] %s(%s+", i, strings[i], demangled);
                 free(demangled);
             } else {
-                len = snprintf(line, sizeof(line), "  [%02d] %s(%s+0x", i, strings[i], begin);
+                len = snprintf(line, sizeof(line), "  [%02d] %s(%s+", i, strings[i], begin);
             }
             
             // 恢复原字符串以便打印 offset

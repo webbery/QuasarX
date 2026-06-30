@@ -12,6 +12,8 @@ void ReplayHandler::post(const httplib::Request &req, httplib::Response &res) {
 
     if (action == "query" || action == "history") {
         HandleTicksQuery(req, res);
+    } else if (action == "delete_tick") {
+        HandleDeleteTickData(req, res);
     } else {
         res.status = 400;
         res.set_content(nlohmann::json{{"error", "unknown action: " + action}}.dump(), "application/json");
@@ -50,5 +52,17 @@ void ReplayHandler::HandleTicksQuery(const httplib::Request &req, httplib::Respo
         result.push_back(j);
     }
 
+    res.set_content(result.dump(), "application/json");
+}
+
+void ReplayHandler::HandleDeleteTickData(const httplib::Request &req, httplib::Response &res) {
+    auto beforeStr = req.get_param_value("before");
+    int64_t beforeTs = beforeStr.empty() ? 0 : std::stoll(beforeStr);
+
+    DuckDBLogger::instance().delete_tick_data_before(beforeTs);
+
+    nlohmann::json result;
+    result["deleted"] = true;
+    result["before"] = beforeTs;
     res.set_content(result.dump(), "application/json");
 }

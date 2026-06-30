@@ -10,4 +10,5 @@ public:
 
 private:
     void HandleTicksQuery(const httplib::Request &req, httplib::Response &res);
+    void HandleDeleteTickData(const httplib::Request &req, httplib::Response &res);
 };
