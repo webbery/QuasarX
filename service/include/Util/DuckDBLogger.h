@@ -41,6 +41,34 @@ struct NodeIOEntry {
 };
 
 /**
+ * Tick 数据条目
+ *
+ * 盘口使用 REAL[]/BIGINT[] 数组存储，DuckDB 对 NULL 元素几乎零开销。
+ * 只有 _bidPrice[0] > 0 时才写入盘口数组，否则存 NULL。
+ */
+struct TickDataEntry {
+    int64_t id;
+    int64_t timestamp_epoch;    // Unix 时间戳
+    std::string symbol;         // 标的代码
+    double open;
+    double close;
+    double high;
+    double low;
+    int64_t volume;
+    int64_t turnover;
+    double value;
+    double upper;
+    double lower;
+    std::string source;
+    int confidence;
+    // 盘口：仅当 _bidPrice[0] > 0 时填充，否则为空数组
+    std::vector<double> bid_prices;
+    std::vector<int64_t> bid_volumes;
+    std::vector<double> ask_prices;
+    std::vector<int64_t> ask_volumes;
+};
+
+/**
  * DuckDB 策略日志管理器（单例）
  *
  * 职责：
@@ -95,6 +123,35 @@ public:
         const std::string& output_json,
         const std::string& metadata_json
     );
+
+    // ========== Tick 数据 ==========
+
+    /**
+     * 批量记录 Tick 数据（异步，立即返回，供 RecordHandler 调用）
+     * @param ticks Tick 数据列表
+     */
+    void log_ticks(const std::vector<TickDataEntry>& ticks);
+
+    /**
+     * 查询 Tick 数据（同步，供 HTTP API 使用）
+     * @param symbol 标的代码（空=全部）
+     * @param start_ts 开始时间戳（epoch seconds）
+     * @param end_ts 结束时间戳
+     * @param limit 返回条数限制
+     * @return Tick 数据列表，按时间升序
+     */
+    std::vector<TickDataEntry> query_ticks(
+        const std::string& symbol,
+        int64_t start_ts,
+        int64_t end_ts,
+        int limit = 10000
+    );
+
+    /**
+     * 删除指定时间前的 Tick 数据
+     * @return 删除的行数
+     */
+    int64_t delete_tick_data_before(int64_t timestamp_epoch);
 
     /**
      * 查询策略日志（同步，供HTTP API使用）
@@ -217,6 +274,9 @@ private:
     // 初始化 node_io_logs 表
     void init_node_io_table();
 
+    // 初始化 tick_data 表
+    void init_tick_table();
+
     // 后台写入线程主循环
     void worker_loop();
 
@@ -225,6 +285,9 @@ private:
 
     // 批量写入节点 IO 日志
     void batch_insert_node_io(const std::vector<NodeIOEntry>& entries);
+
+    // 批量写入 Tick 数据
+    void batch_insert_ticks(const std::vector<TickDataEntry>& entries);
 
     // 执行 SQL（无参数）
     bool exec(const std::string& sql);
@@ -265,6 +328,11 @@ private:
     std::queue<NodeIOEntry> node_io_queue_;
     std::mutex node_io_queue_mutex_;
     std::condition_variable node_io_queue_cv_;
+
+    // Tick 数据异步队列
+    std::queue<TickDataEntry> tick_queue_;
+    std::mutex tick_queue_mutex_;
+    std::condition_variable tick_queue_cv_;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};

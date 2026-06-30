@@ -186,16 +186,6 @@ public:
 
     // ========== 交易路由 ==========
 
-    /**
-     * @brief 买入 (自动路由到正确的 Exchange)
-     */
-    double Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& deals);
-
-    /**
-     * @brief 卖出 (自动路由到正确的 Exchange)
-     */
-    double Sell(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& deals);
-
     // ========== 定时任务 ==========
 
     /**

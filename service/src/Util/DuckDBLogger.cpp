@@ -177,6 +177,9 @@ bool DuckDBLogger::init(const std::string& db_path) {
     // 初始化 node_io_logs 表
     init_node_io_table();
 
+    // 初始化 tick_data 表
+    init_tick_table();
+
     // 初始化ID计数器
     duckdb_result result;
     if (query_params("SELECT COALESCE(MAX(id), 0) + 1 FROM strategy_logs", {}, result)) {
@@ -235,6 +238,34 @@ void DuckDBLogger::init_node_io_table() {
     exec("CREATE INDEX IF NOT EXISTS idx_nodeio_epoch ON node_io_logs(strategy_name, epoch)");
     exec("CREATE INDEX IF NOT EXISTS idx_nodeio_node_type ON node_io_logs(node_type)");
     exec("CREATE INDEX IF NOT EXISTS idx_nodeio_time ON node_io_logs(timestamp DESC)");
+}
+
+void DuckDBLogger::init_tick_table() {
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS tick_data (
+            id              INTEGER PRIMARY KEY,
+            timestamp       TIMESTAMP NOT NULL,
+            symbol          TEXT NOT NULL,
+            open            DOUBLE,
+            close           DOUBLE,
+            high            DOUBLE,
+            low             DOUBLE,
+            volume          BIGINT,
+            turnover        BIGINT,
+            value           DOUBLE,
+            upper           DOUBLE,
+            lower           DOUBLE,
+            source          TEXT,
+            confidence      INTEGER,
+            bid_prices      DOUBLE[],
+            bid_volumes     BIGINT[],
+            ask_prices      DOUBLE[],
+            ask_volumes     BIGINT[]
+        )
+    )");
+
+    exec("CREATE INDEX IF NOT EXISTS idx_tick_sym_time ON tick_data(symbol, timestamp)");
+    exec("CREATE INDEX IF NOT EXISTS idx_tick_time ON tick_data(timestamp DESC)");
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -297,6 +328,20 @@ void DuckDBLogger::log_node_io(
     node_io_queue_cv_.notify_one();
 }
 
+void DuckDBLogger::log_ticks(const std::vector<TickDataEntry>& ticks) {
+    if (!initialized_ || !running_ || ticks.empty()) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(tick_queue_mutex_);
+        for (auto& tick : ticks) {
+            tick_queue_.push(tick);
+        }
+    }
+    tick_queue_cv_.notify_one();
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // 后台写入线程
 // ──────────────────────────────────────────────────────────────────────
@@ -306,10 +351,12 @@ void DuckDBLogger::worker_loop() {
     batch.reserve(BATCH_SIZE);
     std::vector<NodeIOEntry> node_io_batch;
     node_io_batch.reserve(BATCH_SIZE);
+    std::vector<TickDataEntry> tick_batch;
+    tick_batch.reserve(BATCH_SIZE);
 
     auto last_flush = std::chrono::steady_clock::now();
 
-    while (running_ || !queue_.empty() || !node_io_queue_.empty()) {
+    while (running_ || !queue_.empty() || !node_io_queue_.empty() || !tick_queue_.empty()) {
         // 处理策略日志队列
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -338,6 +385,20 @@ void DuckDBLogger::worker_loop() {
             }
         }
 
+        // 处理 Tick 数据队列
+        {
+            std::unique_lock<std::mutex> lock(tick_queue_mutex_);
+            tick_queue_cv_.wait_for(
+                lock,
+                std::chrono::milliseconds(FLUSH_INTERVAL_MS),
+                [this] { return !tick_queue_.empty() || !running_; }
+            );
+            while (!tick_queue_.empty() && tick_batch.size() < BATCH_SIZE) {
+                tick_batch.push_back(std::move(tick_queue_.front()));
+                tick_queue_.pop();
+            }
+        }
+
         if (!batch.empty()) {
             batch_insert(batch);
             batch.clear();
@@ -346,6 +407,11 @@ void DuckDBLogger::worker_loop() {
         if (!node_io_batch.empty()) {
             batch_insert_node_io(node_io_batch);
             node_io_batch.clear();
+        }
+
+        if (!tick_batch.empty()) {
+            batch_insert_ticks(tick_batch);
+            tick_batch.clear();
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -471,6 +537,119 @@ void DuckDBLogger::batch_insert_node_io(const std::vector<NodeIOEntry>& entries)
     if (failed) {
         exec("ROLLBACK");
         SPDLOG_ERROR("[DuckDBLogger] Node IO batch insert failed, rolled back");
+    } else {
+        exec("COMMIT");
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 辅助：创建 DuckDB LIST 值（数组）
+// ──────────────────────────────────────────────────────────────────────
+
+namespace {
+duckdb_value make_double_list(const std::vector<double>& values) {
+    if (values.empty()) return duckdb_create_null_value();
+    std::vector<duckdb_value> elems;
+    elems.reserve(values.size());
+    for (auto v : values) elems.push_back(duckdb_create_double(v));
+    auto list_type = duckdb_create_list_type(duckdb_create_logical_type(DUCKDB_TYPE_DOUBLE));
+    duckdb_value result = duckdb_create_list_value(list_type, elems.data(), elems.size());
+    duckdb_destroy_logical_type(&list_type);
+    for (auto& e : elems) duckdb_destroy_value(&e);
+    return result;
+}
+
+duckdb_value make_int64_list(const std::vector<int64_t>& values) {
+    if (values.empty()) return duckdb_create_null_value();
+    std::vector<duckdb_value> elems;
+    elems.reserve(values.size());
+    for (auto v : values) elems.push_back(duckdb_create_int64(v));
+    auto list_type = duckdb_create_list_type(duckdb_create_logical_type(DUCKDB_TYPE_BIGINT));
+    duckdb_value result = duckdb_create_list_value(list_type, elems.data(), elems.size());
+    duckdb_destroy_logical_type(&list_type);
+    for (auto& e : elems) duckdb_destroy_value(&e);
+    return result;
+}
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 批量插入 Tick 数据
+// ──────────────────────────────────────────────────────────────────────
+
+void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries) {
+    if (!exec("BEGIN TRANSACTION")) {
+        return;
+    }
+
+    duckdb_prepared_statement stmt = nullptr;
+    const char* insert_sql = R"(
+        INSERT INTO tick_data
+        (id, timestamp, symbol, open, close, high, low, volume, turnover, value,
+         upper, lower, source, confidence, bid_prices, bid_volumes, ask_prices, ask_volumes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    )";
+
+    if (duckdb_prepare(conn_, insert_sql, &stmt) != DuckDBSuccess) {
+        exec("ROLLBACK");
+        return;
+    }
+
+    bool failed = false;
+    for (const auto& entry : entries) {
+        // timestamp: epoch seconds → DuckDB TIMESTAMP
+        std::string ts_str = std::to_string(entry.timestamp_epoch);
+
+        duckdb_value v_id   = make_int64(entry.id);
+        duckdb_value v_ts   = make_varchar(ts_str);
+        duckdb_value v_sym  = make_varchar(entry.symbol);
+        duckdb_value v_open = duckdb_create_double(entry.open);
+        duckdb_value v_close = duckdb_create_double(entry.close);
+        duckdb_value v_high = duckdb_create_double(entry.high);
+        duckdb_value v_low  = duckdb_create_double(entry.low);
+        duckdb_value v_vol  = make_int64(entry.volume);
+        duckdb_value v_turn = make_int64(entry.turnover);
+        duckdb_value v_val  = duckdb_create_double(entry.value);
+        duckdb_value v_upper = duckdb_create_double(entry.upper);
+        duckdb_value v_lower = duckdb_create_double(entry.lower);
+        duckdb_value v_src  = entry.source.empty() ? make_null() : make_varchar(entry.source);
+        duckdb_value v_conf = make_int32(entry.confidence);
+
+        // 盘口：有数据时才写入数组，否则 NULL
+        bool has_book = (!entry.bid_prices.empty() && entry.bid_prices[0] > 0);
+        duckdb_value v_bid_p = has_book ? make_double_list(entry.bid_prices) : make_null();
+        duckdb_value v_bid_v = has_book ? make_int64_list(entry.bid_volumes) : make_null();
+        duckdb_value v_ask_p = has_book ? make_double_list(entry.ask_prices) : make_null();
+        duckdb_value v_ask_v = has_book ? make_int64_list(entry.ask_volumes) : make_null();
+
+        duckdb_value vals[18] = {
+            v_id, v_ts, v_sym, v_open, v_close, v_high, v_low, v_vol, v_turn,
+            v_val, v_upper, v_lower, v_src, v_conf,
+            v_bid_p, v_bid_v, v_ask_p, v_ask_v
+        };
+
+        for (int i = 0; i < 18; ++i) {
+            if (!bind_value_at(stmt, (idx_t)(i + 1), vals[i])) {
+                failed = true;
+            }
+        }
+        for (auto& v : vals) duckdb_destroy_value(&v);
+
+        if (failed) break;
+
+        duckdb_result result;
+        if (duckdb_execute_prepared(stmt, &result) != DuckDBSuccess) {
+            failed = true;
+            duckdb_destroy_result(&result);
+            break;
+        }
+        duckdb_destroy_result(&result);
+    }
+
+    duckdb_destroy_prepare(&stmt);
+
+    if (failed) {
+        exec("ROLLBACK");
+        SPDLOG_ERROR("[DuckDBLogger] Tick batch insert failed, rolled back");
     } else {
         exec("COMMIT");
     }
@@ -1001,4 +1180,111 @@ void DuckDBLogger::shutdown() {
 
     initialized_ = false;
     SPDLOG_INFO("[DuckDBLogger] Shutdown complete");
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Tick 数据查询
+// ──────────────────────────────────────────────────────────────────────
+
+std::vector<TickDataEntry> DuckDBLogger::query_ticks(
+    const std::string& symbol,
+    int64_t start_ts,
+    int64_t end_ts,
+    int limit)
+{
+    if (!initialized_) {
+        return {};
+    }
+
+    std::vector<TickDataEntry> results;
+
+    std::string sql = "SELECT id, timestamp, symbol, open, close, high, low, volume, turnover, "
+                      "value, upper, lower, source, confidence, bid_prices, bid_volumes, "
+                      "ask_prices, ask_volumes FROM tick_data WHERE 1=1";
+    std::vector<duckdb_value> params;
+
+    if (!symbol.empty()) {
+        sql += " AND symbol = ?";
+        params.push_back(make_varchar(symbol));
+    }
+    if (start_ts > 0) {
+        sql += " AND timestamp >= ?";
+        params.push_back(make_varchar(std::to_string(start_ts)));
+    }
+    if (end_ts < INT64_MAX) {
+        sql += " AND timestamp <= ?";
+        params.push_back(make_varchar(std::to_string(end_ts)));
+    }
+
+    sql += " ORDER BY timestamp ASC LIMIT ?";
+    params.push_back(make_int32(limit));
+
+    duckdb_result result;
+    if (!query_params(sql, params, result)) {
+        for (auto& v : params) duckdb_destroy_value(&v);
+        return {};
+    }
+
+    for (auto& v : params) duckdb_destroy_value(&v);
+
+    idx_t row_count = duckdb_row_count(&result);
+
+    for (idx_t i = 0; i < row_count; i++) {
+        TickDataEntry entry;
+
+        auto read_str = [&](idx_t col) -> std::string {
+            duckdb_string val = duckdb_value_string(&result, col, i);
+            if (!val.data || val.size == 0) return "";
+            std::string s(val.data, val.size);
+            duckdb_free(val.data);
+            return s;
+        };
+
+        entry.id = duckdb_value_int64(&result, 0, i);
+
+        // timestamp: 解析字符串形式的 epoch seconds
+        std::string ts_str = read_str(1);
+        entry.timestamp_epoch = ts_str.empty() ? 0 : std::stoll(ts_str);
+
+        entry.symbol     = read_str(2);
+        entry.open       = duckdb_value_double(&result, 3, i);
+        entry.close      = duckdb_value_double(&result, 4, i);
+        entry.high       = duckdb_value_double(&result, 5, i);
+        entry.low        = duckdb_value_double(&result, 6, i);
+        entry.volume     = duckdb_value_int64(&result, 7, i);
+        entry.turnover   = duckdb_value_int64(&result, 8, i);
+        entry.value      = duckdb_value_double(&result, 9, i);
+        entry.upper      = duckdb_value_double(&result, 10, i);
+        entry.lower      = duckdb_value_double(&result, 11, i);
+        entry.source     = read_str(12);
+
+        // confidence
+        auto* conf_data = (int32_t*)duckdb_column_data(&result, 13);
+        auto* conf_null = duckdb_nullmask_data(&result, 13);
+        entry.confidence = (conf_data && !conf_null[i]) ? conf_data[i] : 0;
+
+        // 盘口数组（LIST 类型）— 使用 duckdb_value_string 读取为字符串表示
+        // 复盘查询中盘口数据通常不需要，这里简化处理：不解析 LIST，留给前端按需请求
+        // 如需盘口，可在后续扩展
+
+        results.push_back(std::move(entry));
+    }
+
+    duckdb_destroy_result(&result);
+    return results;
+}
+
+int64_t DuckDBLogger::delete_tick_data_before(int64_t timestamp_epoch) {
+    if (!initialized_) return -1;
+
+    std::string sql = "DELETE FROM tick_data WHERE timestamp < ?";
+    duckdb_value v = make_varchar(std::to_string(timestamp_epoch));
+    bool success = exec_params(sql, {v});
+    duckdb_destroy_value(&v);
+
+    if (!success) return -1;
+
+    exec("VACUUM");
+    SPDLOG_INFO("[DuckDBLogger] Deleted tick data before {}", timestamp_epoch);
+    return 0;  // DuckDB C API 不返回删除行数，返回 0 表示成功
 }

@@ -15,6 +15,7 @@
 #include "RiskSubSystem.h"
 #include "Handler/ServerEventHandler.h"
 #include "Handler/RecordHandler.h"
+#include "Handler/ReplayHandler.h"
 #include "HttpHandler.h"
 #include "PortfolioSubsystem.h"
 #include "StrategyNode.h"
@@ -115,6 +116,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_STOP_LOSS  "/risk/stoploss"
 #define API_RISK_VAR        "/risk/var"
 #define API_RECORD          "/record"
+#define API_REPLAY          "/replay"
 #define API_ALL_FUTURE      "/future/simple"
 #define API_ALL_OPTION      "/option/simple"
 #define API_OPTION_HISTORY  "/option/history"
@@ -302,6 +304,8 @@ void Server::Regist() {
 
     REGIST_POST(API_RECORD);
     REGIST_DEL(API_RECORD);
+
+    REGIST_POST(API_REPLAY);
 
     REGIST_GET(API_STOCK_DETAIL);
 
@@ -1121,6 +1125,7 @@ void Server::ReloadMarketData(const String& path) {
 
 void Server::InitHandlers() {
     RegistHandler(API_RECORD, RecordHandler);
+    RegistHandler(API_REPLAY, ReplayHandler);
     RegistHandler(API_RISK_STOP_LOSS, StopLossHandler);
     RegistHandler(API_RISK_CAPITAL, CapitalRiskHandler);
     RegistHandler(API_RISK_DAILY, DailyLossRiskHandler);
@@ -1451,7 +1456,6 @@ ExchangeInfo Server::GetExchangeInfo(const String& name) {
     auto& config = GetConfig();
     auto exchange = config.GetExchangeByName(name);
 
-    std::string ex_type = exchange["api"];
     std::string quote_addr = exchange.value("quote", "");
     std::string trade_addr = exchange.value("trade", "");
     ExchangeInfo handle;

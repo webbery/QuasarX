@@ -75,7 +75,6 @@ void FlowSubsystem::SetShadowMode(const String& strategy) {
 }
 
 void FlowSubsystem::Start() {
-    auto broker = _handle->GetBrokerSubSystem();
     auto strategySys = _handle->GetStrategySystem();
     for (auto& item : _flows) {
         auto name = item.first;
@@ -105,7 +104,6 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
     Stop(strategy);
 
     RuningType mode = _handle->GetRunningMode();
-    auto it = _flows.find(strategy);
     if (mode == RuningType::Backtest) {
         return StartBacktest(strategy, symbols, initialCapital);
     } else {
@@ -795,7 +793,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             case NodeProcessResult::Finished:
                 // 回测模式下，QuoteInputNode 数据正常结束
                 if (_handle->GetRunningMode() == RuningType::Backtest) {
-                    if (auto quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
+                    if (dynamic_cast<QuoteInputNode*>(node)) {
                         INFO("{} data finished, backtest completed normally", node->id());
                         context.SetEpoch(0);
                         return true;
@@ -911,7 +909,6 @@ void FlowSubsystem::RegistIndicator(const String& strategy) {
 
 bool FlowSubsystem::IsNearClose(symbol_t symb) {
     auto current = Now();
-    auto name = GetExchangeName(get_symbol(symb));
     auto final_time = *_stock_working_range.rbegin();
     if (current == final_time && final_time.near_end(current)) {
         INFO("force buy because near trade end.");

@@ -502,30 +502,6 @@ bool ExchangeManager::GetTradingOrders(SecurityType secType, OrderList& outOrder
     return found;
 }
 
-// ========== 交易路由 ==========
-
-double ExchangeManager::Buy(const String& strategy, symbol_t symbol,
-                            const Order& order, TradeInfo& deals) {
-    auto broker = _server->GetBrokerSubSystem();
-    if (!broker) {
-        WARN("BrokerSubSystem not initialized");
-        return 0;
-    }
-    broker->Buy(strategy, symbol, order, deals);
-    return 0;
-}
-
-double ExchangeManager::Sell(const String& strategy, symbol_t symbol,
-                             const Order& order, TradeInfo& deals) {
-    auto broker = _server->GetBrokerSubSystem();
-    if (!broker) {
-        WARN("BrokerSubSystem not initialized");
-        return 0;
-    }
-    broker->Sell(strategy, symbol, order, deals);
-    return 0;
-}
-
 // ========== 定时任务 ==========
 
 void ExchangeManager::UpdateQuoteQueryStatus(time_t curr) {
