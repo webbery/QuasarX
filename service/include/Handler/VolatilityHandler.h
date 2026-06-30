@@ -134,7 +134,8 @@ private:
                                      const std::vector<int>& windows,
                                      PriceField field = PriceField::Close,
                                      FillMethod fill = FillMethod::None,
-                                     int band_window = 20);
+                                     int band_window = 20,
+                                     BarFreq target_freq = BarFreq::Day);
 
     static VolatilitySingleResult computeSingle(const std::vector<double>& prices,
                                                   const std::vector<double>& volumes,

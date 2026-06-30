@@ -7,7 +7,14 @@
 enum class BarFreq : char {
     Min1 = 0,   // 1 分钟
     Min5 = 1,   // 5 分钟
-    Day  = 2,   // 日线
+    Min15 = 2,  // 15 分钟
+    Min30 = 3,  // 30 分钟
+    Hour1 = 4,  // 1 小时
+    Hour2 = 5,  // 2 小时
+    Hour4 = 6,  // 4 小时
+    Day  = 7,   // 日线
+    Week = 8,   // 周线
+    Month = 9,  // 月线
 };
 
 /**

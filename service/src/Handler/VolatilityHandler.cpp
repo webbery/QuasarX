@@ -497,7 +497,8 @@ VolatilityResult VolatilityHandler::compute(
     const std::vector<int>& windows,
     PriceField field,
     FillMethod fill,
-    int band_window)
+    int band_window,
+    BarFreq target_freq)
 {
     VolatilityResult result;
     result.symbols = symbols;
@@ -536,9 +537,9 @@ VolatilityResult VolatilityHandler::compute(
             }
             volumes_vec.assign(prices_vec.size(), 0.0);  // 宏观数据无成交量
         } else {
-            // 股票/ETF行情数据
-            auto multi = LoadHistoryData(symbol, {"close", "open", "high", "low", "volume", "turnover"},
-                                          start_date, end_date, &dates, fill);
+            // 股票/ETF行情数据（默认使用 HFQ 后复权）
+            auto multi = LoadHistoryDataWithFreq(symbol, {"close", "open", "high", "low", "volume", "turnover"},
+                                                  start_date, end_date, target_freq, AdjType::HFQ, &dates, fill);
             Vector<double> prices = getPriceCol(multi);
             Vector<double> volumes = getVolumeCol(multi);
             if (prices.empty()) {
@@ -602,6 +603,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         auto field_param = req.get_param_value("field");
         auto fill_param = req.get_param_value("fill_method");
         auto band_window_param = req.get_param_value("band_window");
+        auto frequency_param = req.get_param_value("frequency");
 
         if (symbols_param.empty()) {
             res.status = 400;
@@ -647,8 +649,9 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
 
         PriceField field = parsePriceField(field_param);
         FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
+        BarFreq target_freq = frequency_param.empty() ? BarFreq::Day : parseBarFreq(frequency_param);
 
-        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window);
+        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window, target_freq);
 
         // 构建 JSON 响应
         nlohmann::json json;

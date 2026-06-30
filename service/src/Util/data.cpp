@@ -30,6 +30,40 @@ String toString(FillMethod method) {
     return "unknown";
 }
 
+// === BarFreq 解析 ===
+
+BarFreq parseBarFreq(const String& str) {
+    String lower = str;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower == "1m" || lower == "min1") return BarFreq::Min1;
+    if (lower == "5m" || lower == "min5") return BarFreq::Min5;
+    if (lower == "15m" || lower == "min15") return BarFreq::Min15;
+    if (lower == "30m" || lower == "min30") return BarFreq::Min30;
+    if (lower == "1h" || lower == "hour1") return BarFreq::Hour1;
+    if (lower == "2h" || lower == "hour2") return BarFreq::Hour2;
+    if (lower == "4h" || lower == "hour4") return BarFreq::Hour4;
+    if (lower == "1d" || lower == "day" || lower == "daily") return BarFreq::Day;
+    if (lower == "1w" || lower == "week" || lower == "weekly") return BarFreq::Week;
+    if (lower == "1M" || lower == "month" || lower == "monthly") return BarFreq::Month;
+    return BarFreq::Day;  // 默认日线
+}
+
+String toString(BarFreq freq) {
+    switch (freq) {
+        case BarFreq::Min1:  return "1m";
+        case BarFreq::Min5:  return "5m";
+        case BarFreq::Min15: return "15m";
+        case BarFreq::Min30: return "30m";
+        case BarFreq::Hour1: return "1h";
+        case BarFreq::Hour2: return "2h";
+        case BarFreq::Hour4: return "4h";
+        case BarFreq::Day:   return "1d";
+        case BarFreq::Week:  return "1w";
+        case BarFreq::Month: return "1M";
+    }
+    return "unknown";
+}
+
 // === ETF 代码判断 ===
 
 /// 根据股票代码字符串判断是否为场内ETF
@@ -55,8 +89,115 @@ static bool is_etf_symbol(const String& symbol_normalized) {
     return (prefix >= 510 && prefix <= 519) || (prefix == 588) || (prefix == 159);
 }
 
+// === 静态路径表（方案 C）===
+
+// 编译期常量，避免运行时分支
+// [资产类型][复权类型] → 子目录名
+// 资产类型：0=股票, 1=ETF
+static constexpr const char* kSubdirTable[2][2] = {
+    {"A_hfq",  "Astock"},   // 股票: [HFQ, None]
+    {"etf_hfq", "etf_org"}, // ETF:  [HFQ, None]
+};
+
+// 内联函数：解析子目录（零开销，编译期可计算）
+inline String resolveSubdir(bool is_etf, AdjType adj) {
+    return kSubdirTable[is_etf ? 1 : 0][static_cast<int>(adj)];
+}
+
 // === 核心 CSV 数据加载 ===
 
+/// 实际 CSV 解析函数（从已打开的文件中读取）
+static Map<String, Vector<double>> parseCsvFile(
+    std::ifstream& file,
+    const Vector<String>& fields,
+    const String& start_date,
+    const String& end_date,
+    Vector<String>* out_dates)
+{
+    // CSV 列顺序: datetime,open,close,high,low,volume,turnover
+    Map<String, int> field_col_map;
+    field_col_map["open"] = 1;
+    field_col_map["close"] = 2;
+    field_col_map["high"] = 3;
+    field_col_map["low"] = 4;
+    field_col_map["volume"] = 5;
+    field_col_map["turnover"] = 6;
+
+    // 初始化结果 map
+    Map<String, Vector<double>> result;
+    for (const auto& f : fields) {
+        String lower_f = f;
+        std::transform(lower_f.begin(), lower_f.end(), lower_f.begin(), ::tolower);
+        if (field_col_map.count(lower_f)) {
+            result[lower_f] = Vector<double>{};
+        }
+    }
+
+    time_t start_t = start_date.empty() ? 0 : FromStr(start_date, "%Y-%m-%d");
+    time_t end_t = end_date.empty() ? 0 : FromStr(end_date, "%Y-%m-%d");
+
+    Vector<String> dates;
+    std::string line;
+    std::getline(file, line); // skip header
+
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        String tokens[7];
+        int col = 0;
+        while (col < 7 && std::getline(iss, tokens[col], ',')) ++col;
+        if (col < 6) continue;
+
+        time_t t = FromStr(tokens[0], "%Y-%m-%d");
+        // 也支持带时间的格式 "YYYY-MM-DD HH:MM:SS"
+        if (t < 0) t = FromStr(tokens[0], "%Y-%m-%d %H:%M:%S");
+        if (t < 0) continue;
+
+        if (start_t > 0 && t < start_t) continue;
+        if (end_t > 0 && t > end_t) continue;
+
+        dates.push_back(tokens[0]);
+
+        for (const auto& [f, ci] : field_col_map) {
+            auto it = result.find(f);
+            if (it != result.end()) {
+                try {
+                    it->second.push_back(std::stod(tokens[ci]));
+                } catch (...) {
+                    it->second.push_back(0.0);
+                }
+            }
+        }
+    }
+
+    if (out_dates) {
+        *out_dates = std::move(dates);
+    }
+
+    return result;
+}
+
+/// 从指定路径加载数据
+static Map<String, Vector<double>> loadCsvDataFromPath(
+    const String& data_path,
+    const Vector<String>& fields,
+    const String& start_date,
+    const String& end_date,
+    Vector<String>* out_dates)
+{
+    if (data_path.empty() || !std::filesystem::exists(data_path)) {
+        return {};
+    }
+
+    std::ifstream file(data_path);
+    if (!file.is_open()) {
+        WARN("[loadCsvDataFromPath] Cannot open: {}", data_path);
+        return {};
+    }
+
+    return parseCsvFile(file, fields, start_date, end_date, out_dates);
+}
+
+/// 根据 symbol 搜索并加载数据（无频率限制）
 static Map<String, Vector<double>> loadCsvData(
     const String& symbol,
     const Vector<String>& fields,
@@ -432,4 +573,190 @@ bool FetchMacroData(
         }
     }
     return !out_prices.empty();
+}
+
+// === 频率解析与聚合 ===
+
+/// 解析 datetime 字符串为 time_t
+static time_t parseDatetime(const String& dt) {
+    // 支持 "YYYY-MM-DD" 和 "YYYY-MM-DD HH:MM:SS"
+    if (dt.size() >= 19 && dt[10] == ' ') {
+        return FromStr(dt, "%Y-%m-%d %H:%M:%S");
+    }
+    return FromStr(dt, "%Y-%m-%d");
+}
+
+/// 获取目标频率的目录名
+static String getFreqDir(BarFreq freq) {
+    switch (freq) {
+        case BarFreq::Min1:  return "1m";
+        case BarFreq::Min5:  return "5m";
+        case BarFreq::Min15: return "15m";
+        case BarFreq::Min30: return "30m";
+        case BarFreq::Hour1: return "1h";
+        case BarFreq::Hour2: return "2h";
+        case BarFreq::Hour4: return "4h";
+        case BarFreq::Day:   return "1d";
+        case BarFreq::Week:  return "1w";
+        case BarFreq::Month: return "1M";
+    }
+    return "1d";
+}
+
+/// 检查指定频率的数据是否存在
+static bool checkFreqExists(const String& base_dir, const String& rel_path, BarFreq freq) {
+    String freq_dir = getFreqDir(freq);
+    String path = base_dir + "/" + freq_dir + "/" + rel_path;
+    return std::filesystem::exists(path);
+}
+
+ResampledData ResampleToFrequency(
+    const Map<String, Vector<double>>& source_data,
+    const Vector<String>& source_dates,
+    BarFreq source_freq,
+    BarFreq target_freq,
+    const Vector<String>& fields)
+{
+    ResampledData result;
+
+    if (source_freq == target_freq || source_dates.empty()) {
+        result.data = source_data;
+        result.dates = source_dates;
+        return result;
+    }
+
+    // 仅支持分钟 → 日线的聚合
+    if (target_freq != BarFreq::Day) {
+        WARN("[ResampleToFrequency] Unsupported target frequency: {}", toString(target_freq));
+        result.data = source_data;
+        result.dates = source_dates;
+        return result;
+    }
+
+    // 按日期分组聚合
+    std::map<String, std::vector<size_t>> date_groups;  // "YYYY-MM-DD" → indices
+    for (size_t i = 0; i < source_dates.size(); ++i) {
+        String dt = source_dates[i];
+        // 提取日期部分（前 10 字符）
+        String date_key = dt.size() >= 10 ? dt.substr(0, 10) : dt;
+        date_groups[date_key].push_back(i);
+    }
+
+    // 字段聚合规则
+    // open: 第一条, high: max, low: min, close: 最后一条, volume/turnover: sum
+    for (const auto& [date_key, indices] : date_groups) {
+        result.dates.push_back(date_key);
+
+        for (const auto& field : fields) {
+            auto it = source_data.find(field);
+            if (it == source_data.end()) continue;
+
+            const auto& values = it->second;
+            double val = 0.0;
+
+            if (field == "open") {
+                val = values[indices.front()];
+            } else if (field == "high") {
+                val = -1e308;
+                for (size_t idx : indices) val = std::max(val, values[idx]);
+            } else if (field == "low") {
+                val = 1e308;
+                for (size_t idx : indices) val = std::min(val, values[idx]);
+            } else if (field == "close") {
+                val = values[indices.back()];
+            } else if (field == "volume" || field == "turnover") {
+                val = 0.0;
+                for (size_t idx : indices) val += values[idx];
+            } else {
+                val = values[indices.back()];  // 默认取最后一条
+            }
+
+            result.data[field].push_back(val);
+        }
+    }
+
+    return result;
+}
+
+Map<String, Vector<double>> LoadHistoryDataWithFreq(
+    const String& symbol,
+    const Vector<String>& fields,
+    const String& start_date,
+    const String& end_date,
+    BarFreq target_freq,
+    AdjType adj,
+    Vector<String>* out_dates,
+    FillMethod fill)
+{
+    const String base_dir = "./data";
+
+    // 规范化 symbol
+    String normalized = symbol;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
+
+    // 自动判断资产类型
+    const bool is_etf = is_etf_symbol(normalized);
+
+    // 静态路径表解析子目录（零开销）
+    const String subdir = resolveSubdir(is_etf, adj);
+
+    // 构建相对路径
+    String rel_path;
+    if (symbol.find('.') == String::npos) {
+        rel_path = "sz." + symbol + ".csv";
+        if (!std::filesystem::exists(base_dir + "/" + subdir + "/" + rel_path)) {
+            rel_path = "sh." + symbol + ".csv";
+        }
+    } else {
+        auto dot_pos = normalized.find('.');
+        std::string code = normalized.substr(0, dot_pos);
+        std::string exchange = normalized.substr(dot_pos + 1);
+        rel_path = exchange + "." + code + ".csv";
+    }
+
+    // 频率搜索优先级（从目标频率到更低频率）
+    static constexpr BarFreq freq_order[] = {
+        BarFreq::Min1, BarFreq::Min5, BarFreq::Min15, BarFreq::Min30,
+        BarFreq::Hour1, BarFreq::Hour2, BarFreq::Hour4,
+        BarFreq::Day, BarFreq::Week, BarFreq::Month
+    };
+    constexpr int kFreqCount = sizeof(freq_order) / sizeof(freq_order[0]);
+
+    // 1. 优先尝试加载目标频率
+    const String target_dir = getFreqDir(target_freq);
+    const String target_path = base_dir + "/" + subdir + "/" + target_dir + "/" + rel_path;
+
+    auto data = loadCsvDataFromPath(target_path, fields, start_date, end_date, out_dates);
+    if (!data.empty()) {
+        return data;
+    }
+
+    // 2. 遍历所有更低频率并聚合到目标频率
+    for (int i = 0; i < kFreqCount; ++i) {
+        const BarFreq src_freq = freq_order[i];
+        if (src_freq >= target_freq) break;  // 只尝试更低频率（数值更小）
+
+        const String src_dir = getFreqDir(src_freq);
+        const String src_path = base_dir + "/" + subdir + "/" + src_dir + "/" + rel_path;
+
+        if (!std::filesystem::exists(src_path)) continue;
+
+        Vector<String> src_dates;
+        auto src_data = loadCsvDataFromPath(src_path, fields, start_date, end_date, &src_dates);
+        if (src_data.empty()) continue;
+
+        INFO("[LoadHistoryDataWithFreq] Resampling {} → {} for {}",
+             toString(src_freq), toString(target_freq), symbol);
+        auto resampled = ResampleToFrequency(src_data, src_dates, src_freq, target_freq, fields);
+        if (out_dates) *out_dates = std::move(resampled.dates);
+        return std::move(resampled.data);
+    }
+
+    // 3. 回退：尝试顶层目录中的默认文件（无频率子目录）
+    const String default_path = base_dir + "/" + subdir + "/" + rel_path;
+    if (std::filesystem::exists(default_path)) {
+        return loadCsvDataFromPath(default_path, fields, start_date, end_date, out_dates);
+    }
+
+    return {};
 }

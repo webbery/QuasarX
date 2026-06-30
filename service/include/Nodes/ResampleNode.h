@@ -1,20 +1,7 @@
 #pragma once
-#include "StrategyNode.h"
 #include "std_header.h"
-
-/**
- * 目标频率枚举
- */
-enum class BarFreq : char {
-    Min1 = 0,    // 1 分钟
-    Min5 = 1,    // 5 分钟
-    Min15 = 2,   // 15 分钟
-    Min30 = 3,   // 30 分钟
-    Hour1 = 4,   // 1 小时
-    Hour2 = 5,   // 2 小时
-    Hour4 = 6,   // 4 小时
-    Day = 7,     // 1 天
-};
+#include "StrategyNode.h"
+#include "KBarBuilder.h"
 
 /**
  * 数据重采样节点
@@ -97,7 +84,7 @@ private:
     String _label;
 
     // 配置参数
-    BarFreq _target_freq = BarFreq::Hour1;
+    BarFreq _target_freq = BarFreq::Day;
 
     // 输入属性列表
     Vector<String> _input_keys;

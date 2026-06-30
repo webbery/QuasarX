@@ -22,7 +22,8 @@ export function useVolatilityData() {
     windows: number[] = [20, 60, 120],
     field: string = 'close',
     fillMethod: string = 'none',
-    bandWindow: number = 20
+    bandWindow: number = 20,
+    frequency: string = '1d'
   ): Promise<VolatilityAnalysisResult | null> {
     if (symbols.length === 0) {
       ElMessage.warning('请至少添加一个标的')
@@ -49,6 +50,7 @@ export function useVolatilityData() {
           field,
           fill_method: fillMethod,
           band_window: bandWindow,
+          frequency,
           // 宏观指标参数
           country,
           indicator
@@ -62,7 +64,8 @@ export function useVolatilityData() {
           windows: windows.join(','),
           field,
           fill_method: fillMethod,
-          band_window: bandWindow
+          band_window: bandWindow,
+          frequency
         }
       }
 

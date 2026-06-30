@@ -1,136 +1,62 @@
 <template>
   <div class="signal-tab">
     <!-- 顶部控制栏 -->
-    <div class="control-bar">
-      <!-- 模式切换 -->
-      <div class="mode-toggle">
-        <button
-          :class="['mode-btn', { active: mode === 'strategy' }]"
-          @click="switchMode('strategy')"
-        >策略行情</button>
-        <button
-          :class="['mode-btn', { active: mode === 'macro' }]"
-          @click="switchMode('macro')"
-        >宏观指标</button>
-      </div>
-
-      <!-- 策略模式：策略选择 + 标的池 -->
-      <template v-if="mode === 'strategy'">
-        <div class="strategy-selector">
-          <label>策略:</label>
-          <select v-model="selectedStrategyId" class="select-small" @change="onStrategyChange">
-            <option value="">请选择策略</option>
-            <option v-for="opt in strategyOptions" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
+    <AnalysisControlBar
+      v-model:mode="mode"
+      v-model:selectedStrategyId="selectedStrategyId"
+      v-model:selectedMacroCountry="selectedMacroCountry"
+      v-model:selectedMacroIndicator="selectedMacroIndicator"
+      v-model:quickRange="state.quickRange"
+      v-model:frequency="state.frequency"
+      :strategy-options="strategyOptions"
+      :available-securities="availableSecurities"
+      :checked-symbols="checkedSymbols"
+      :filtered-macro-options="filteredMacroOptions"
+      :quick-ranges="QUICK_RANGES"
+      :loading="loading"
+      :can-analyze="canAnalyze"
+      show-frequency
+      @update:quickRange="setQuickRange(state.quickRange)"
+      @update-date-range="updateDateRange"
+      @toggle-symbol="toggleSymbol"
+      @run-analysis="runAnalysis"
+    >
+      <template #extra-controls>
+        <!-- 分析字段 (宏观模式隐藏) -->
+        <div v-if="mode === 'strategy'" class="field-selector">
+          <label>字段:</label>
+          <select v-model="state.field" class="select-small">
+            <option value="close">C 收盘价</option>
+            <option value="open">O 开盘价</option>
+            <option value="high">H 最高价</option>
+            <option value="low">L 最低价</option>
+            <option value="volume">V 成交量</option>
+            <option value="turnover">T 换手率</option>
           </select>
         </div>
 
-        <!-- 标的池 -->
-        <div v-if="availableSecurities.length > 0" class="symbol-pool">
-          <span class="pool-label">标的池:</span>
-          <label
-            v-for="sec in availableSecurities"
-            :key="sec.code"
-            class="pool-checkbox"
-          >
-            <input
-              type="checkbox"
-              :checked="checkedSymbols.has(sec.code)"
-              @change="toggleSymbol(sec.code)"
-            />
-            <span>{{ sec.name ? `${sec.code}(${sec.name})` : sec.code }}</span>
-          </label>
+        <!-- 分解方法 -->
+        <div class="method-selector">
+          <label>方法:</label>
+          <select v-model="state.method" class="select-small">
+            <option value="emd">EMD</option>
+            <option value="ceemdan">CEEMDAN</option>
+          </select>
         </div>
-        <div v-else-if="selectedStrategyId && !loading" class="pool-empty">
-          该策略未找到行情输入节点
+
+        <!-- IMF数量 -->
+        <div class="imf-count-selector">
+          <label>IMF:</label>
+          <input
+            v-model.number="state.numImfs"
+            type="number"
+            min="1"
+            max="20"
+            class="number-input-small"
+          />
         </div>
       </template>
-
-      <!-- 宏观模式：国家 + 指标级联选择 -->
-      <template v-else>
-        <div class="macro-selector">
-          <label>国家:</label>
-          <select v-model="selectedMacroCountry" class="select-small" @change="onMacroCountryChange">
-            <option value="china">中国</option>
-            <option value="usa">美国</option>
-            <option value="global">全球</option>
-          </select>
-        </div>
-        <div class="macro-selector">
-          <label>指标:</label>
-          <select v-model="selectedMacroIndicator" class="select-small">
-            <option value="">请选择指标</option>
-            <option v-for="opt in filteredMacroOptions" :key="opt.indicator" :value="opt.indicator">
-              {{ opt.label }}
-            </option>
-          </select>
-        </div>
-      </template>
-
-      <!-- 已选标的 tag -->
-      <div v-if="state.symbols.length > 0" class="selected-symbols">
-        <span class="selected-label">已选:</span>
-        <span
-          v-for="(sym, idx) in state.symbols"
-          :key="sym.symbol"
-          class="symbol-tag"
-        >
-          {{ sym.symbol }}
-          <button class="tag-close" @click="removeSymbol(idx)">×</button>
-        </span>
-      </div>
-
-      <div class="control-spacer" />
-
-      <!-- 分析字段 (宏观模式隐藏) -->
-      <div v-if="mode === 'strategy'" class="field-selector">
-        <label>字段:</label>
-        <select v-model="state.field" class="select-small">
-          <option value="close">C 收盘价</option>
-          <option value="open">O 开盘价</option>
-          <option value="high">H 最高价</option>
-          <option value="low">L 最低价</option>
-          <option value="volume">V 成交量</option>
-          <option value="turnover">T 换手率</option>
-        </select>
-      </div>
-
-      <!-- 分解方法 -->
-      <div class="method-selector">
-        <label>方法:</label>
-        <select v-model="state.method" class="select-small">
-          <option value="emd">EMD</option>
-          <option value="ceemdan">CEEMDAN</option>
-        </select>
-      </div>
-
-      <!-- IMF数量 -->
-      <div class="imf-count-selector">
-        <label>IMF:</label>
-        <input
-          v-model.number="state.numImfs"
-          type="number"
-          min="1"
-          max="20"
-          class="number-input-small"
-        />
-      </div>
-
-      <!-- 时间范围 -->
-      <div class="time-selector">
-        <select v-model="state.quickRange" class="select-small" @change="setQuickRange(state.quickRange)">
-          <option v-for="[label] in QUICK_RANGES" :key="label" :value="label">{{ label }}</option>
-        </select>
-        <div class="date-range-inline">
-          <input type="date" :value="state.dateRange?.[0]" @input="updateStartDate($event)" class="date-input-small" placeholder="开始" />
-          <span class="date-sep">至</span>
-          <input type="date" :value="state.dateRange?.[1]" @input="updateEndDate($event)" class="date-input-small" placeholder="结束" />
-        </div>
-      </div>
-
-      <button class="btn btn-primary btn-small" :disabled="loading || !canAnalyze" @click="runAnalysis">
-        {{ loading ? '分析中...' : '开始分析' }}
-      </button>
-    </div>
+    </AnalysisControlBar>
 
     <!-- 分析结果 -->
     <div v-if="result" class="results">
@@ -171,6 +97,7 @@ import { ref, computed, watch } from 'vue'
 import { useSignalState, useSignalData } from './index'
 import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
 import { useMacroIndicators } from '../shared/composables/useMacroIndicators'
+import AnalysisControlBar from '../shared/AnalysisControlBar.vue'
 import IMF3DChart from './charts/IMF3DChart.vue'
 import IMFEnergyChart from './charts/IMFEnergyChart.vue'
 
@@ -256,17 +183,22 @@ watch([selectedMacroCountry, selectedMacroIndicator], ([country, indicator]) => 
   state.symbols = [{ symbol: `${country}/${indicator}` }]
 })
 
-function updateStartDate(event: Event) {
-  const value = (event.target as HTMLInputElement).value
-  if (state.dateRange) {
-    state.dateRange = [value, state.dateRange[1]]
+// 监听策略 ID 变化，自动加载标的
+watch(selectedStrategyId, (newId) => {
+  if (newId) {
+    loadSecuritiesForStrategy(newId)
+  } else {
+    availableSecurities.value = []
+    checkedSymbols.value = new Set()
+    state.symbols = []
   }
-}
+})
 
-function updateEndDate(event: Event) {
-  const value = (event.target as HTMLInputElement).value
+function updateDateRange(value: string, type: 'start' | 'end') {
   if (state.dateRange) {
-    state.dateRange = [state.dateRange[0], value]
+    state.dateRange = type === 'start'
+      ? [value, state.dateRange[1]]
+      : [state.dateRange[0], value]
   }
 }
 
@@ -304,174 +236,39 @@ async function runAnalysis() {
   color: #e0e0e0;
 }
 
-.control-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: rgba(26, 34, 54, 0.8);
-  border-bottom: 1px solid rgba(74, 85, 104, 0.3);
-  flex-wrap: wrap;
-}
-
-/* 模式切换按钮 */
-.mode-toggle {
-  display: flex;
-  border: 1px solid rgba(74, 85, 104, 0.3);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.mode-btn {
-  padding: 4px 12px;
-  background: rgba(26, 34, 54, 0.8);
-  border: none;
-  border-right: 1px solid rgba(74, 85, 104, 0.3);
-  color: #999;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.mode-btn:last-child {
-  border-right: none;
-}
-
-.mode-btn:hover {
-  color: #e0e0e0;
-}
-
-.mode-btn.active {
-  background: #2962ff;
-  color: #fff;
-}
-
-.strategy-selector {
+/* 字段选择器（SignalTab 独有） */
+.field-selector {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.strategy-selector label {
+.field-selector label {
   font-size: 12px;
   color: #999;
   white-space: nowrap;
 }
 
-/* 宏观指标选择器 */
-.macro-selector {
+/* 方法选择器（SignalTab 独有） */
+.method-selector {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.macro-selector label {
+.method-selector label {
   font-size: 12px;
   color: #999;
   white-space: nowrap;
 }
 
-/* 标的池 */
-.symbol-pool {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  background: rgba(41, 98, 255, 0.05);
-  border: 1px solid rgba(74, 85, 104, 0.2);
-  border-radius: 4px;
-}
-
-.pool-label {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-}
-
-.pool-checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #e0e0e0;
-  cursor: pointer;
-  user-select: none;
-}
-
-.pool-checkbox input[type="checkbox"] {
-  accent-color: #2962ff;
-  margin: 0;
-  cursor: pointer;
-}
-
-.pool-checkbox input[type="checkbox"]:checked + span {
-  color: #2962ff;
-  font-weight: 500;
-}
-
-.pool-empty {
-  font-size: 12px;
-  color: #666;
-  font-style: italic;
-}
-
-/* 已选标的 */
-.selected-symbols {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.selected-label {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-}
-
-.symbol-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  background: rgba(41, 98, 255, 0.2);
-  border: 1px solid rgba(41, 98, 255, 0.4);
-  border-radius: 4px;
-  font-size: 12px;
-  color: #e0e0e0;
-}
-
-.tag-close {
-  background: transparent;
-  border: none;
-  color: #999;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
-  margin-left: 2px;
-}
-
-.tag-close:hover {
-  color: #ef232a;
-}
-
-.control-spacer {
-  flex: 1;
-  min-width: 8px;
-}
-
-.field-selector,
-.method-selector,
+/* IMF 数量选择器（SignalTab 独有） */
 .imf-count-selector {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.field-selector label,
-.method-selector label,
 .imf-count-selector label {
   font-size: 12px;
   color: #999;
@@ -494,43 +291,7 @@ async function runAnalysis() {
   border-color: rgba(41, 98, 255, 0.5);
 }
 
-.time-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.date-range-inline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.date-input-small {
-  padding: 4px 8px;
-  background: rgba(26, 34, 54, 0.8);
-  border: 1px solid rgba(74, 85, 104, 0.3);
-  border-radius: 4px;
-  color: #e0e0e0;
-  font-size: 12px;
-  outline: none;
-  width: 120px;
-}
-
-.date-input-small:focus {
-  border-color: rgba(41, 98, 255, 0.5);
-}
-
-.date-input-small::-webkit-calendar-picker-indicator {
-  filter: invert(1);
-  cursor: pointer;
-}
-
-.date-sep {
-  color: #999;
-  font-size: 12px;
-}
-
+/* 通用 select-small（被 extra-controls 插槽使用） */
 .select-small {
   padding: 4px 8px;
   background: rgba(26, 34, 54, 0.8);
@@ -549,48 +310,6 @@ async function runAnalysis() {
 .select-small option {
   background: #1a2236;
   color: #e0e0e0;
-}
-
-.strategy-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn {
-  padding: 6px 16px;
-  border: 1px solid rgba(74, 85, 104, 0.3);
-  border-radius: 4px;
-  background: rgba(26, 34, 54, 0.8);
-  color: #e0e0e0;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn:hover:not(:disabled) {
-  border-color: rgba(41, 98, 255, 0.5);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: #2962ff;
-  border-color: #2962ff;
-  font-weight: 600;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #1e54e6;
-  border-color: #1e54e6;
-}
-
-.btn-small {
-  padding: 4px 12px;
-  font-size: 12px;
 }
 
 .results {

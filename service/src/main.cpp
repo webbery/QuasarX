@@ -36,7 +36,29 @@ LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
     fprintf(stderr, "\n========== Windows Unhandled Exception ==========\n");
     fprintf(stderr, "Exception code: 0x%08X\n", exception_info->ExceptionRecord->ExceptionCode);
     fprintf(stderr, "Exception address: 0x%p\n", exception_info->ExceptionRecord->ExceptionAddress);
-    
+
+    // 【关键】在崩溃时尝试刷新日志和 DuckDB 数据到磁盘
+    fprintf(stderr, "\n[CRASH HANDLER] Attempting to flush logs and DuckDB data...\n");
+
+    try {
+        // 刷新 spdlog 日志到磁盘
+        spdlog::default_logger_raw()->flush();
+        spdlog::flush_every(std::chrono::seconds(0));  // 立即刷新所有 logger
+        fprintf(stderr, "[CRASH HANDLER] Log buffer flushed.\n");
+    } catch (...) {
+        fprintf(stderr, "[CRASH HANDLER] Failed to flush logs (exception caught).\n");
+    }
+
+    try {
+        // 刷新 DuckDB 数据到磁盘
+        if (DuckDBLogger::instance().is_initialized()) {
+            DuckDBLogger::instance().shutdown();
+            fprintf(stderr, "[CRASH HANDLER] DuckDB data flushed and closed.\n");
+        }
+    } catch (...) {
+        fprintf(stderr, "[CRASH HANDLER] Failed to flush DuckDB data (exception caught).\n");
+    }
+
     // 初始化 DbgHelp（只需一次）
     static bool initialized = false;
     if (!initialized) {
@@ -93,7 +115,7 @@ void print_stacktrace(int signo) {
     const char* signal_name = strsignal(signo);
     const char prefix[] = "\n=== CRASH: Caught signal ";
     write(STDERR_FILENO, prefix, sizeof(prefix) - 1);
-    
+
     char signum_buf[16];
     int signum_len = 0;
     int tmp = signo;
@@ -111,6 +133,37 @@ void print_stacktrace(int signo) {
     write(STDERR_FILENO, " (", 2);
     write(STDERR_FILENO, signal_name, strlen(signal_name));
     write(STDERR_FILENO, ") ===\n", 6);
+
+    // 【关键】在崩溃时尝试刷新日志和 DuckDB 数据到磁盘
+    // 注意：这里只能调用 async-signal-safe 函数，但 spdlog 和 DuckDB 的刷新函数
+    // 并不是严格 async-signal-safe 的。我们在崩溃场景下冒险调用，因为这是最后的机会。
+    const char flush_msg[] = "\n[CRASH HANDLER] Attempting to flush logs and DuckDB data...\n";
+    write(STDERR_FILENO, flush_msg, sizeof(flush_msg) - 1);
+
+    try {
+        // 刷新 spdlog 日志到磁盘
+        spdlog::default_logger_raw()->flush();
+        spdlog::flush_every(std::chrono::seconds(0));  // 立即刷新所有 logger
+
+        const char log_flushed[] = "[CRASH HANDLER] Log buffer flushed.\n";
+        write(STDERR_FILENO, log_flushed, sizeof(log_flushed) - 1);
+    } catch (...) {
+        const char log_err[] = "[CRASH HANDLER] Failed to flush logs (exception caught).\n";
+        write(STDERR_FILENO, log_err, sizeof(log_err) - 1);
+    }
+
+    try {
+        // 刷新 DuckDB 数据到磁盘
+        // 注意：shutdown() 会停止 worker 线程并断开连接，这会强制 WAL checkpoint
+        if (DuckDBLogger::instance().is_initialized()) {
+            DuckDBLogger::instance().shutdown();
+            const char duckdb_flushed[] = "[CRASH HANDLER] DuckDB data flushed and closed.\n";
+            write(STDERR_FILENO, duckdb_flushed, sizeof(duckdb_flushed) - 1);
+        }
+    } catch (...) {
+        const char duckdb_err[] = "[CRASH HANDLER] Failed to flush DuckDB data (exception caught).\n";
+        write(STDERR_FILENO, duckdb_err, sizeof(duckdb_err) - 1);
+    }
 
     // 捕获堆栈（增加到 64 帧）
     void* array[64];
@@ -225,6 +278,53 @@ void on_terminate() {
     const char msg[] = "\n========== std::terminate called ==========\n";
     write(STDERR_FILENO, msg, sizeof(msg) - 1);
 #endif
+
+    // 【关键】在 terminate 时尝试刷新日志和 DuckDB 数据到磁盘
+#ifdef WIN32
+    fprintf(stderr, "\n[TERMINATE HANDLER] Attempting to flush logs and DuckDB data...\n");
+#else
+    const char flush_msg[] = "\n[TERMINATE HANDLER] Attempting to flush logs and DuckDB data...\n";
+    write(STDERR_FILENO, flush_msg, sizeof(flush_msg) - 1);
+#endif
+
+    try {
+        // 刷新 spdlog 日志到磁盘
+        spdlog::default_logger_raw()->flush();
+        spdlog::flush_every(std::chrono::seconds(0));  // 立即刷新所有 logger
+#ifdef WIN32
+        fprintf(stderr, "[TERMINATE HANDLER] Log buffer flushed.\n");
+#else
+        const char log_flushed[] = "[TERMINATE HANDLER] Log buffer flushed.\n";
+        write(STDERR_FILENO, log_flushed, sizeof(log_flushed) - 1);
+#endif
+    } catch (...) {
+#ifdef WIN32
+        fprintf(stderr, "[TERMINATE HANDLER] Failed to flush logs (exception caught).\n");
+#else
+        const char log_err[] = "[TERMINATE HANDLER] Failed to flush logs (exception caught).\n";
+        write(STDERR_FILENO, log_err, sizeof(log_err) - 1);
+#endif
+    }
+
+    try {
+        // 刷新 DuckDB 数据到磁盘
+        if (DuckDBLogger::instance().is_initialized()) {
+            DuckDBLogger::instance().shutdown();
+#ifdef WIN32
+            fprintf(stderr, "[TERMINATE HANDLER] DuckDB data flushed and closed.\n");
+#else
+            const char duckdb_flushed[] = "[TERMINATE HANDLER] DuckDB data flushed and closed.\n";
+            write(STDERR_FILENO, duckdb_flushed, sizeof(duckdb_flushed) - 1);
+#endif
+        }
+    } catch (...) {
+#ifdef WIN32
+        fprintf(stderr, "[TERMINATE HANDLER] Failed to flush DuckDB data (exception caught).\n");
+#else
+        const char duckdb_err[] = "[TERMINATE HANDLER] Failed to flush DuckDB data (exception caught).\n";
+        write(STDERR_FILENO, duckdb_err, sizeof(duckdb_err) - 1);
+#endif
+    }
 
     // 打印堆栈
 #ifdef WIN32

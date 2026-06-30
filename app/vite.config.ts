@@ -39,7 +39,7 @@ export default defineConfig(({ command, mode }) => {
     },
     optimizeDeps: {
       include: ['@anthropic-ai/sdk'],
-      exclude: ['@lancedb/lancedb'],
+      exclude: ['@lancedb/lancedb', '@duckdb/node-api'],
     },
     css: {
       preprocessorOptions: {
@@ -73,7 +73,7 @@ export default defineConfig(({ command, mode }) => {
               minify: isBuild,
               outDir: 'build/electron',
               rollupOptions: {
-                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios', '@langchain/core', '@langchain/openai', '@langchain/anthropic', 'langchain', '@anthropic-ai/sdk'],
+                external: ['@lancedb/lancedb', '@xenova/transformers', 'electron', 'electron-store', 'pdf-parse-new', 'node-stream-zip', 'axios', '@langchain/core', '@langchain/openai', '@langchain/anthropic', 'langchain', '@anthropic-ai/sdk', '@duckdb/node-api', '@duckdb/node-bindings'],
                 output: {
                   format: 'esm',
                 },

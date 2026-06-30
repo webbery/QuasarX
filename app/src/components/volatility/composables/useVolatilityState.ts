@@ -19,6 +19,8 @@ export interface VolatilityState {
   dateRange: [string, string] | null
   /** 快速时间选择 */
   quickRange: string
+  /** 数据频率 (1m/5m/15m/30m/1h/4h/1d/1w/1M) */
+  frequency: string
   /** 滚动窗口配置 */
   windows: number[]
   /** 包络带窗口 (默认 20 天) */
@@ -188,6 +190,7 @@ export function useVolatilityState() {
     field: 'close',
     dateRange: null,
     quickRange: '近1年',
+    frequency: '1d',
     windows: [20, 60, 120],
     bandWindow: 20,
     loading: false,

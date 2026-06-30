@@ -16,6 +16,8 @@ export interface SignalState {
   numImfs: number
   dateRange: [string, string] | null
   quickRange: string
+  /** 数据频率 (1m/5m/15m/30m/1h/4h/1d/1w/1M) */
+  frequency: string
   loading: boolean
 }
 
@@ -80,6 +82,7 @@ export function useSignalState() {
     numImfs: 5,
     dateRange: null,
     quickRange: '近1年',
+    frequency: '1d',
     loading: false
   })
 
