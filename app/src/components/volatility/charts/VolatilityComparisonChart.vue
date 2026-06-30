@@ -10,17 +10,18 @@ import { useECharts, createBaseChartOption } from '../../report/composables/useE
 const props = defineProps<{
   symbols: string[]
   annualVolatility: number[]
+  title?: string
 }>()
 
 const { chartRef, initChart, updateChart } = useECharts(false) // 不自动初始化
 
 function buildOption() {
-  const { symbols, annualVolatility } = props
+  const { symbols, annualVolatility, title } = props
   if (!symbols.length || !annualVolatility) return {}
-  
+
   return createBaseChartOption({
     title: {
-      text: '年化波动率对比',
+      text: title || '年化波动率对比',
       left: 'center',
       textStyle: { color: '#e0e0e0', fontSize: 14 }
     },

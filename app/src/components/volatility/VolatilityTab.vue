@@ -133,11 +133,14 @@
         <!-- 协方差/相关性 -->
         <template v-if="activeMultiTab === 'correlation'">
           <div class="chart-grid">
-            <div class="chart-card full">
+            <div class="chart-card full" :style="getCorrelationCardStyle()">
               <CorrelationHeatmapChart
                 :symbols="state.result.symbols"
                 :correlation-matrix="state.result.multi.correlation_matrix"
               />
+              <div style="padding: 8px; font-size: 11px; color: #666;">
+                标的数: {{ state.result.symbols?.length || 0 }} | 矩阵尺寸: {{ state.result.multi.correlation_matrix?.length || 0 }}
+              </div>
             </div>
           </div>
 
@@ -160,6 +163,7 @@
             </div>
             <div class="chart-card half">
               <VolatilityComparisonChart
+                title="预测波动率对比"
                 :symbols="state.result.multi.multi_forecast.symbols"
                 :annual-volatility="state.result.multi.multi_forecast.forecast_volatilities"
               />
@@ -362,6 +366,14 @@ const currentSingleResult = computed(() => {
   const sym = state.symbols[currentSymbolIndex.value]?.symbol
   return sym ? state.result.single[sym] : null
 })
+
+// 相关性热力图卡片动态高度
+function getCorrelationCardStyle(): Record<string, string> {
+  const n = state.result?.symbols?.length || 0
+  if (n <= 10) return {}
+  const neededHeight = Math.max(350, n * 16 + 100)
+  return { height: neededHeight + 'px' }
+}
 
 // === 每标的独立的预测源选择 ===
 const forecastSourceMap = ref<Record<string, string>>({})

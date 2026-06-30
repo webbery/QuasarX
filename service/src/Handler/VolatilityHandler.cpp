@@ -501,7 +501,7 @@ VolatilityResult VolatilityHandler::compute(
     BarFreq target_freq)
 {
     VolatilityResult result;
-    result.symbols = symbols;
+    // 注意：result.symbols 在循环中动态收集（跳过数据不足的标的）
 
     std::map<std::string, std::vector<double>> returns_map;
     std::vector<std::string> common_dates;
@@ -554,6 +554,9 @@ VolatilityResult VolatilityHandler::compute(
         auto single_result = computeSingle(prices_vec, volumes_vec, windows, band_window);
         result.single[symbol] = single_result;
         returns_map[symbol] = simpleReturns(prices_vec);
+
+        // 动态收集成功加载数据的标的（跳过数据不足的）
+        result.symbols.push_back(symbol);
 
         if (common_dates.empty()) {
             common_dates.assign(dates.begin(), dates.end());
