@@ -683,6 +683,16 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             }
         }
         if (firstQuote) {
+            // 计算当日收益率并更新 CUSUM 检测
+            size_t snapshotCount = context->dailySnapshotCount();
+            if (snapshotCount > 1) {
+                double prevEquity = context->getPortfolioValues()[snapshotCount - 2];
+                if (prevEquity > 1e-6) {
+                    double daily_return = (totalEquity - prevEquity) / prevEquity;
+                    context->updateCUSUM(daily_return);
+                }
+            }
+
             context->recordDailySnapshot(firstQuote->_time, totalEquity);
             context->recordDailyAssetSnapshot(firstQuote->_time, assetValues);
         }

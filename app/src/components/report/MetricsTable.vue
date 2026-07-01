@@ -91,6 +91,14 @@ const metricGroupsDef: MetricGroupDef[] = [
       'cov_near_collinear_pairs',
     ],
   },
+  {
+    title: 'CUSUM 变点检测',
+    keys: [
+      'cusum_change_points', 'cusum_max_drift', 'cusum_last_change_index',
+      'cusum_consensus_count', 'cusum_consensus_triggered',
+      'adaptive_var', 'ewma_var',
+    ],
+  },
 ]
 
 const metricNameMap: Record<string, string> = {
@@ -140,6 +148,14 @@ const metricNameMap: Record<string, string> = {
   cov_min_correlation: '最小相关系数',
   cov_max_correlation: '最大相关系数',
   cov_near_collinear_pairs: '高相关配对 (|ρ|>0.95)',
+  // CUSUM 变点检测
+  cusum_change_points: '变点次数',
+  cusum_max_drift: '最大漂移量',
+  cusum_last_change_index: '最后变点索引',
+  cusum_consensus_count: '共识触发资产数',
+  cusum_consensus_triggered: '系统性风险',
+  adaptive_var: '自适应 VaR',
+  ewma_var: 'EWMA VaR',
 }
 
 // === 格式化 ===
@@ -229,6 +245,26 @@ function formatMetricValue(key: string, value: number | null | undefined): strin
     return `${(value * 100).toFixed(2)}%`
   }
 
+  // CUSUM VaR 类
+  if (key === 'adaptive_var' || key === 'ewma_var') {
+    return `${(value * 100).toFixed(2)}%`
+  }
+
+  // CUSUM 整数类型
+  if (key === 'cusum_change_points' || key === 'cusum_last_change_index' || key === 'cusum_consensus_count') {
+    return Math.round(value).toString()
+  }
+
+  // CUSUM 漂移量
+  if (key === 'cusum_max_drift') {
+    return value.toFixed(4)
+  }
+
+  // CUSUM 系统性风险（布尔值）
+  if (key === 'cusum_consensus_triggered') {
+    return value > 0.5 ? '⚠ 触发' : '✓ 正常'
+  }
+
   // 爆仓概率类
   if (key.includes('ruin_prob') || key.includes('stress_ruin')) {
     return `${(value * 100).toFixed(2)}%`
@@ -287,6 +323,14 @@ function getValueClass(key: string, value: number | null | undefined): string {
     const nAssets = props.metrics['cov_n_assets'] ?? 2
     if (value < nAssets * 5) return 'value-negative'
   }
+
+  // === CUSUM 变点检测 ===
+  // 系统性风险触发标红
+  if (lowerKey === 'cusum_consensus_triggered' && value > 0.5) return 'value-negative'
+  // 变点次数过多（>5 次）标红
+  if (lowerKey === 'cusum_change_points' && value > 5) return 'value-negative'
+  // 自适应 VaR > 5% 标红（日风险超过 5%）
+  if (lowerKey === 'adaptive_var' && value > 0.05) return 'value-negative'
 
   // === 其他所有指标：默认颜色 ===
   return ''

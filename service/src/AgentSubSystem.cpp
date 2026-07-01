@@ -379,6 +379,52 @@ void FlowSubsystem::ComputeBacktestMetrics(
     flow._collections[StatisticIndicator::R2] = static_cast<float>(compute_r_squared(portfolio_values_std));
     // 尾部风险指标
     std::vector<double> daily_returns_std(daily_returns.begin(), daily_returns.end());
+
+    // === CUSUM 变点检测 + 自适应 VaR ===
+    // 在回测中，CUSUMDetector 已经在 stepForward 中每日更新
+    // 这里读取检测结果并计算自适应 VaR
+    if (btContext) {
+        const auto& cusum = btContext->getCUSUMDetector();
+
+        // CUSUM 诊断指标
+        flow._collections[StatisticIndicator::CUSUMChangePoints] =
+            static_cast<float>(cusum.get_total_change_points());
+        flow._collections[StatisticIndicator::CUSUMMaxDrift] =
+            static_cast<float>(cusum.get_max_drift());
+        flow._collections[StatisticIndicator::CUSUMLastChangeIndex] =
+            static_cast<float>(cusum.get_last_change_index());
+
+        // 自适应 VaR（基于 CUSUM 检测结果）
+        flow._collections[StatisticIndicator::AdaptiveVaR] =
+            compute_adaptive_var(daily_returns_std, cusum);
+
+        // EWMA VaR（对比基准）
+        flow._collections[StatisticIndicator::EWMA_VaR] =
+            compute_ewma_var(daily_returns_std, 0.95);
+
+        // 如果 CUSUM 检测到变点，输出诊断日志
+        if (cusum.get_total_change_points() > 0) {
+            INFO("[CUSUM] Detected {} change point(s), max_drift={:.4f}, last_change_index={}",
+                 cusum.get_total_change_points(), cusum.get_max_drift(), cusum.get_last_change_index());
+        }
+    } else {
+        // 无 BacktestContext 时的降级方案
+        CUSUMDetector fallback_detector;
+        auto cusum_result = fallback_detector.detect_batch(daily_returns_std);
+
+        flow._collections[StatisticIndicator::CUSUMChangePoints] =
+            static_cast<float>(cusum_result.total_change_points);
+        flow._collections[StatisticIndicator::CUSUMMaxDrift] =
+            static_cast<float>(cusum_result.max_drift);
+        flow._collections[StatisticIndicator::CUSUMLastChangeIndex] =
+            static_cast<float>(cusum_result.last_change_index);
+        flow._collections[StatisticIndicator::AdaptiveVaR] =
+            compute_adaptive_var(daily_returns_std, fallback_detector);
+        flow._collections[StatisticIndicator::EWMA_VaR] =
+            compute_ewma_var(daily_returns_std, 0.95);
+    }
+
+    // 保留传统 VaR/CVaR 用于对比
     flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns_std, 0.95);
     flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns_std, 0.95);
 

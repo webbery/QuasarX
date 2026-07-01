@@ -85,12 +85,9 @@ bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType,
     _dbpath = virt_path;
   }
   if (config["type"] == "stock") {
-    if (config.contains("commission")) {
-      _stockCommission._min = config["commission"]["min"];
-      _stockCommission._ration = config["commission"]["fee"];
-    }
+    // 费率在策略中配置，不需要在此初始化
   } else {
-    WARN("commission is not set for type: {}", String(config["type"]));
+    WARN("unknown type: {}", String(config["type"]));
     return false;
   }
 
@@ -185,15 +182,6 @@ order_id BrokerSubSystem::Exercise(run_id_t run_id, const String& strategy, symb
 
 double BrokerSubSystem::GetProfitLoss() {
   return 0;
-}
-
-void BrokerSubSystem::SetCommission(symbol_t symbol, const Commission& comm) {
-  if (is_stock(symbol)) {
-    static auto stock_comm = new StockCommission();
-    _commissions[symbol] = stock_comm;
-  } else {
-    WARN("{} commission not support", symbol);
-  }
 }
 
 bool BrokerSubSystem::QueryOrders(SecurityType type, OrderList& ol)
@@ -350,6 +338,18 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
 
   case StatisticIndicator::DragCostToReturn:
     return "drag_cost_to_return";
+
+  // CUSUM 变点检测指标
+  case StatisticIndicator::CUSUMChangePoints:
+    return "cusum_change_points";
+  case StatisticIndicator::CUSUMMaxDrift:
+    return "cusum_max_drift";
+  case StatisticIndicator::CUSUMLastChangeIndex:
+    return "cusum_last_change_index";
+  case StatisticIndicator::AdaptiveVaR:
+    return "adaptive_var";
+  case StatisticIndicator::EWMA_VaR:
+    return "ewma_var";
 
   default:
     return "unknown";
@@ -750,10 +750,11 @@ double BrokerSubSystem::ES(double var)
 ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {
   auto itr = _commissions.find(symbol);
   if (itr == _commissions.end()) {
-    SetCommission(symbol, _stockCommission);
-    return _commissions[symbol];
+    // 费率在策略中配置，不再使用默认佣金
+    WARN("commission not found for {}, please configure in strategy", get_symbol(symbol));
+    return nullptr;
   }
-  return nullptr;
+  return itr->second;
 }
 
 order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail, int side)

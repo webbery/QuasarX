@@ -1,8 +1,9 @@
 #pragma once
+#include "std_header.h"
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/StockPositionManager.h"
 #include "Bridge/CapitalPool.h"
-#include "std_header.h"
+#include "Metric/CUSUMDetector.h"
 #include <boost/lockfree/queue.hpp>
 #include <atomic>
 #include <shared_mutex>
@@ -152,6 +153,17 @@ public:
     void addFrictionCost(double cost) noexcept { _totalFrictionCost += cost; }
     double getTotalFrictionCost() const noexcept { return _totalFrictionCost; }
 
+    // === CUSUM 变点检测 ===
+    /// @brief 推送当日收益率到 CUSUM 检测器
+    /// @param daily_return 当日组合收益率
+    /// @return 是否检测到变点
+    bool updateCUSUM(double daily_return) noexcept {
+        auto result = _cusum_detector.update(daily_return);
+        return result.change_point;
+    }
+
+    const CUSUMDetector& getCUSUMDetector() const noexcept { return _cusum_detector; }
+
 private:
     run_id_t _runId;                    // 回测运行 ID
     String _strategy_name;              // 策略名称
@@ -212,4 +224,8 @@ private:
 
     // 摩擦成本累计（佣金 + 印花税 + 滑点）
     double _totalFrictionCost = 0.0;
+
+    // === CUSUM 变点检测 ===
+    CUSUMDetector _cusum_detector;
 };
+

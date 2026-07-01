@@ -93,6 +93,13 @@ enum class StatisticIndicator: char {
   CovNAzets,            // 资产数
   CovNearCollinear,      // |ρ| > 0.95 配对数
   DragCostToReturn,      // 拖累成本/收益比 = 总摩擦成本 / 总收益绝对值
+
+  // CUSUM 变点检测指标
+  CUSUMChangePoints,     // 变点次数
+  CUSUMMaxDrift,         // 最大漂移量
+  CUSUMLastChangeIndex,  // 最后变点索引（0 表示未触发）
+  AdaptiveVaR,           // 自适应 VaR（95% 或 99%）
+  EWMA_VaR,              // EWMA VaR（用于对比）
 };
 
 class ICommission {
@@ -189,7 +196,6 @@ public:
 
     double GetProfitLoss();
 
-    void SetCommission(symbol_t symbol, const Commission& comm);
     // 设置滑点
     void SetSlip(float val) { _slip = val; }
     // 
@@ -279,8 +285,7 @@ private:
     Map<symbol_t, Pair<fixed_time_range, int>> _symbolOperation;
 
     Map<int, MDB_dbi> _dbis;
-    // 交易手续费
-    Commission _stockCommission;
+    // 交易手续费（已剔除，费率在策略中配置）
     Map<symbol_t, Commission> _future;
     Map<symbol_t, ICommission*> _commissions;
 
