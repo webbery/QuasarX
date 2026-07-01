@@ -180,7 +180,7 @@ onMounted(() => {
   }
 
   // 在 onMounted 中注册事件监听
-  const chart = echarts.getInstanceByDom(chartRef.value)
+  const chart = echarts.getInstanceByDom(chartRef.value!)
   console.info('[CorrelationHeatmapChart] chart instance:', !!chart)
   if (chart) {
     chart.off('datarangeselected')

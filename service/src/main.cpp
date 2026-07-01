@@ -109,6 +109,153 @@ LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #else
+// ========== Linux: 调用 addr2line 解析地址为可读堆栈 ==========
+// 在信号处理/terminate 中通过 fork+exec 调用外部工具
+
+// 从 /proc/self/maps 读取可执行文件的基地址
+static uintptr_t get_exe_base_address() {
+    FILE* fp = fopen("/proc/self/maps", "r");
+    if (!fp) return 0;
+
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len <= 0) { fclose(fp); return 0; }
+    exe_path[len] = '\0';
+
+    uintptr_t base = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        // 格式: "START-END perms offset dev inode pathname"
+        char* path = strchr(line, '/');
+        if (path && strncmp(path, exe_path, strlen(exe_path)) == 0) {
+            base = strtoull(line, nullptr, 16);
+            break;  // 第一行映射就是基地址
+        }
+    }
+    fclose(fp);
+    return base;
+}
+
+static void resolve_addresses(void** addrs, int count) {
+    uintptr_t base = get_exe_base_address();
+    if (base == 0) {
+        const char warn[] = "[addr2line] Failed to get base address, skipping\n";
+        write(STDERR_FILENO, warn, sizeof(warn) - 1);
+        return;
+    }
+
+    // 构建 addr2line 命令行参数
+    std::vector<const char*> args;
+    args.push_back("addr2line");
+    args.push_back("-e");
+
+    // 获取当前可执行文件路径
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        args.push_back(exe_path);
+    } else {
+        args.push_back("./QuantService");
+    }
+
+    args.push_back("-f");
+    args.push_back("-s");  // 只显示文件名基名
+
+    // 将运行时地址转换为偏移地址 (addr - base)
+    char buf_storage[64][32];
+    for (int i = 0; i < count; i++) {
+        uintptr_t offset = (uintptr_t)addrs[i] - base;
+        snprintf(buf_storage[i], sizeof(buf_storage[i]), "0x%lx", (unsigned long)offset);
+        args.push_back(buf_storage[i]);
+    }
+    args.push_back(nullptr);
+
+    // 创建管道
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return;
+    }
+
+    if (pid == 0) {
+        // 子进程: 重定向 stdout 到管道写端, exec addr2line
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        execvp("addr2line", const_cast<char**>(args.data()));
+        _exit(127);
+    }
+
+    // 父进程
+    close(pipefd[1]);
+
+    // 读取 addr2line -f -s 输出 (两行一组: 函数名\n文件:行号)
+    char readbuf[4096];
+    ssize_t n;
+    std::string buffer;
+    while ((n = read(pipefd[0], readbuf, sizeof(readbuf))) > 0) {
+        buffer.append(readbuf, n);
+    }
+    close(pipefd[0]);
+
+    // 解析两行一组，用 abi::__cxa_demangle 后格式化
+    size_t pos = 0;
+    int frame = 0;
+    while (pos < buffer.size() && frame < count) {
+        size_t name_end = buffer.find('\n', pos);
+        if (name_end == std::string::npos) break;
+        std::string mangled = buffer.substr(pos, name_end - pos);
+
+        pos = name_end + 1;
+        size_t loc_end = buffer.find('\n', pos);
+        std::string location;
+        if (loc_end != std::string::npos) {
+            location = buffer.substr(pos, loc_end - pos);
+            pos = loc_end + 1;
+        } else {
+            location = buffer.substr(pos);
+            pos = buffer.size();
+        }
+
+        // demangle 函数名
+        char* demangled = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, nullptr);
+        std::string name = demangled ? demangled : mangled;
+        free(demangled);
+
+        // 去除末尾换行/空白
+        while (!name.empty() && (name.back() == '\n' || name.back() == '\r' || name.back() == ' '))
+            name.pop_back();
+
+        // 截断过长模板签名: 保留 "FuncName<...>" 中的函数名部分
+        std::string short_name = name;
+        auto lt_pos = short_name.find('<');
+        if (lt_pos != std::string::npos && lt_pos > 0) {
+            short_name = short_name.substr(0, lt_pos);
+        }
+        // 去除尾随空格和 const/&
+        while (!short_name.empty() && (short_name.back() == ' ' || short_name.back() == '&'))
+            short_name.pop_back();
+
+        char line[512];
+        int len = snprintf(line, sizeof(line), "  [%02d] %s  [%s]\n", frame, short_name.c_str(), location.c_str());
+        write(STDERR_FILENO, line, len);
+        frame++;
+    }
+
+    // 等待子进程退出
+    waitpid(pid, nullptr, 0);
+}
+
 // 异步信号安全的堆栈打印（信号处理函数中只能调用 async-signal-safe 函数）
 void print_stacktrace(int signo) {
     // 使用 write() 直接输出到 stderr，这是 async-signal-safe 的
@@ -236,12 +383,13 @@ void print_stacktrace(int signo) {
         }
     }
 
-    // 提示用户使用 addr2line 获取详细信息
-    const char tip[] = "\nTo get source locations, run:\n  addr2line -e <binary> -a <address>\n";
-    write(STDERR_FILENO, tip, sizeof(tip) - 1);
-    
-    const char example[] = "Example: addr2line -e ./QuantService -a 0x401234\n\n";
-    write(STDERR_FILENO, example, sizeof(example) - 1);
+    // 调用 addr2line 解析为可读堆栈（函数名 + 源码位置）
+    const char resolved_header[] = "\nResolved stack trace (via addr2line):\n";
+    write(STDERR_FILENO, resolved_header, sizeof(resolved_header) - 1);
+    resolve_addresses(array, size);
+
+    const char footer[] = "\n";
+    write(STDERR_FILENO, footer, sizeof(footer) - 1);
 
     free(strings);
     _exit(EXIT_FAILURE);  // 使用 _exit 而不是 exit，避免调用 atexit 处理函数
@@ -337,6 +485,8 @@ void on_terminate() {
     char** strings = backtrace_symbols(array, size);
 
     if (strings) {
+        const char stack_header[] = "\nStack trace:\n";
+        write(STDERR_FILENO, stack_header, sizeof(stack_header) - 1);
         for (int i = 0; i < size; i++) {
             char line[512];
             int len = snprintf(line, sizeof(line), "  [%02d] %s\n", i, strings[i]);
@@ -344,6 +494,11 @@ void on_terminate() {
         }
         free(strings);
     }
+
+    // 调用 addr2line 解析为可读堆栈（函数名 + 源码位置）
+    const char resolved_header[] = "\nResolved stack trace (via addr2line):\n";
+    write(STDERR_FILENO, resolved_header, sizeof(resolved_header) - 1);
+    resolve_addresses(array, size);
 
     const char footer[] = "\nCheck core dump for full GDB analysis.\n"
                           "=========================================\n\n";

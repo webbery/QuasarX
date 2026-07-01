@@ -173,63 +173,85 @@ jobs:
           cd service/build
           cp ../config.template.json ./config.json
           python3 -c "
-          import json, os
+          import json, os, sys
 
           with open('config.json') as f:
               config = json.load(f)
 
+          def set_or_skip(obj, key, value, required=False):
+              if value:
+                  obj[key] = value
+              elif required:
+                  print(f'ERROR: required field \"{key}\" is empty', file=sys.stderr)
+                  sys.exit(1)
+
+          # ===== Server 配置 =====
           server = config.get('server', {})
-          if os.environ.get('SERVER_USER'):
-              server['user'] = os.environ['SERVER_USER']
-          if os.environ.get('SERVER_PASSWD'):
-              server['passwd'] = os.environ['SERVER_PASSWD']
+          set_or_skip(server, 'user', os.environ.get('SERVER_USER'), required=True)
+          set_or_skip(server, 'passwd', os.environ.get('SERVER_PASSWD'), required=True)
+          set_or_skip(server, 'productID', os.environ.get('PRODUCT_ID'), required=True)
+          set_or_skip(server, 'port', int(os.environ['SERVER_PORT']) if os.environ.get('SERVER_PORT') else None, required=True)
+          set_or_skip(server, 'addr', os.environ.get('SERVER_ADDR'))
+          set_or_skip(server, 'ssl', os.environ.get('SERVER_SSL'))
+
+          # JWT: 无 secret 时跳过（部分接口可能不需要鉴权）
           if os.environ.get('SERVER_JWT_SECRET'):
               server['jwt'] = os.environ['SERVER_JWT_SECRET']
-          if os.environ.get('SERVER_PRODUCT_ID'):
-              server['productID'] = os.environ['SERVER_PRODUCT_ID']
+
+          # LLM Key: 可选
           if os.environ.get('SERVER_LLM_KEY'):
               server['llmkey'] = os.environ['SERVER_LLM_KEY']
-          if os.environ.get('SERVER_PORT'):
-              server['port'] = int(os.environ['SERVER_PORT'])
-          if os.environ.get('SERVER_ADDR'):
-              server['addr'] = os.environ['SERVER_ADDR']
-          if os.environ.get('SERVER_SSL'):
-              server['ssl'] = os.environ['SERVER_SSL']
 
+          # Notice email
+          notice = server.get('notice', {})
+          set_or_skip(notice, 'email', os.environ.get('NOTICE_EMAIL'))
+
+          # SMTP 配置
+          smtp = server.get('smtp', {})
+          set_or_skip(smtp, 'addr', os.environ.get('SMTP_ADDR'))
+          set_or_skip(smtp, 'auth', os.environ.get('SMTP_AUTH'))
+          set_or_skip(smtp, 'mail', os.environ.get('SMTP_MAIL'))
+
+          # ===== Exchange 配置 =====
           for ex in config.get('exchange', []):
               ex_name = ex.get('name', '')
-              if ex_name == 'tickflow-quote' and os.environ.get('TICKFLOW_API_KEY'):
-                  ex['passwd'] = os.environ['TICKFLOW_API_KEY']
-              elif ex_name == 'tickflow-quote' and os.environ.get('TICKFLOW_USERNAME'):
-                  ex['username'] = os.environ['TICKFLOW_USERNAME']
+              if ex_name == 'tickflow-quote':
+                  set_or_skip(ex, 'passwd', os.environ.get('TICKFLOW_API_KEY'), required=True)
 
-          risk = config.get('risk', {})
-          capital_risk = risk.get('capitalRisk', {})
-          if os.environ.get('INITIAL_CAPITAL'):
-              capital_risk['initialCapital'] = float(os.environ['INITIAL_CAPITAL'])
-
+          # ===== Broker 配置 =====
           for br in config.get('broker', []):
               if os.environ.get('BROKER_COMMISSION'):
                   br['commission']['fee'] = float(os.environ['BROKER_COMMISSION'])
               if os.environ.get('BROKER_MIN_COMMISSION'):
                   br['commission']['min'] = float(os.environ['BROKER_MIN_COMMISSION'])
+              if os.environ.get('BROKER_STAMP'):
+                  br['commission']['stamp'] = float(os.environ['BROKER_STAMP'])
+
+          # ===== Risk 配置 =====
+          capital_risk = config.get('risk', {}).get('capitalRisk', {})
+          if os.environ.get('INITIAL_CAPITAL'):
+              capital_risk['initialCapital'] = float(os.environ['INITIAL_CAPITAL'])
 
           with open('config.json', 'w') as f:
               json.dump(config, f, indent=4)
           print('config.json generated successfully')
           "
         env:
+          # 必填
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_PASSWD: ${{ secrets.SERVER_PASSWD }}
-          SERVER_PRODUCT_ID: ${{ secrets.SERVER_PRODUCT_ID }}
+          PRODUCT_ID: ${{ secrets.PRODUCT_ID }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_ADDR: ${{ secrets.SERVER_ADDR }}
-          # SERVER_SSL: ${{ secrets.SERVER_SSL }}
           TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
-          # TICKFLOW_USERNAME: ${{ secrets.TICKFLOW_USERNAME }}
-          # INITIAL_CAPITAL: ${{ secrets.INITIAL_CAPITAL }}
-          # BROKER_COMMISSION: ${{ secrets.BROKER_COMMISSION }}
-          # BROKER_MIN_COMMISSION: ${{ secrets.BROKER_MIN_COMMISSION }}
+          # 可选
+          SERVER_ADDR: ${{ secrets.SERVER_ADDR }}
+          SERVER_SSL: ${{ secrets.SERVER_SSL }}
+          SERVER_JWT_SECRET: ${{ secrets.SERVER_JWT_SECRET }}
+          SERVER_LLM_KEY: ${{ secrets.SERVER_LLM_KEY }}
+          NOTICE_EMAIL: ${{ secrets.NOTICE_EMAIL }}
+          SMTP_ADDR: ${{ secrets.SMTP_ADDR }}
+          SMTP_AUTH: ${{ secrets.SMTP_AUTH }}
+          SMTP_MAIL: ${{ secrets.SMTP_MAIL }}
 
       # 上传构建产物供 test job 使用（二进制 + config）
       - name: Upload build artifact
@@ -401,24 +423,37 @@ jobs:
                 -ex "x/20i \$pc" \
                 -c "$CORE_FILE" 2>&1 | head -300
               echo ""
-              echo "=== GDB analysis complete ==="
+              echo "=== Resolved stack trace (via addr2line) ==="
+              # GDB 已有 debug 符号，bt 输出已包含函数名+行号
+              # 这里额外用 addr2line 验证关键帧
+              gdb -batch \
+                -ex "file ./QuantService" \
+                -ex "symbol-file ./QuantService.debug" \
+                -ex "set pagination off" \
+                -ex "bt" \
+                -c "$CORE_FILE" 2>/dev/null | head -50
+              echo ""
+              echo "=== GDB + addr2line analysis complete ==="
             else
               echo "No core dump found."
               echo "Current core_pattern: $(cat /proc/sys/kernel/core_pattern 2>/dev/null || echo 'unknown')"
               echo "ulimit -c: $(ulimit -c)"
               echo ""
               echo "=== Trying addr2line on binary (without debug symbols) ==="
-              # 尝试从日志中提取地址
-              ADDRESSES=$(grep -oE '0x[0-9a-fA-F]+' service_lifecycle.log | sort -u | head -20)
-              if [ -n "$ADDRESSES" ]; then
-                echo "Found addresses in log:"
-                echo "$ADDRESSES"
+              # 从日志中提取偏移地址（格式: +0x123456）并解析
+              OFFSETS=$(grep -oE '\+0x[0-9a-fA-F]+' service_lifecycle.log | sed 's/^+//' | sort -u | head -20)
+              if [ -n "$OFFSETS" ]; then
+                echo "Found offsets in log:"
+                echo "$OFFSETS"
                 echo ""
                 echo "Resolving with addr2line:"
-                for addr in $ADDRESSES; do
-                  RESULT=$(addr2line -e ./QuantService -f -C "$addr" 2>/dev/null || echo "  <unable>")
-                  echo "$addr → $RESULT"
+                for offset in $OFFSETS; do
+                  RESULT=$(addr2line -e ./QuantService -f -C -s "$offset" 2>/dev/null || echo "  <unable>")
+                  echo "  $offset → $RESULT"
                 done
+              else
+                echo "No offset addresses found in log."
+                echo "Log may have been truncated or addr2line format not matched."
               fi
             fi
             

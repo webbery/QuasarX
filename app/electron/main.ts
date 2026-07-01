@@ -17,7 +17,7 @@ import axios from 'axios';
 import https from 'https';
 import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { createHash } from 'crypto';
-import { DuckDBInstance, DuckDBConnection, DuckDBAppender, timestampValue, listValue } from '@duckdb/node-api';
+import { DuckDBInstance, DuckDBConnection, DuckDBAppender } from '@duckdb/node-api';
 import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags, storeChunkSummaries, getChunkSummariesByDocId, getChunksByDocId } from './vectorDB';
 import { agentRouter } from './agent/AgentRouter';
 import { IndexAgent } from './agent/IndexAgent';
@@ -235,11 +235,12 @@ app.whenReady().then(async () => {
         tickDbCache.set(dbPath, instance);
 
         // 创建与服务端一致的表结构
+        // 注意：timestamp 存 epoch seconds (BIGINT)，与服务端查询返回的 time 字段一致
         const conn = await instance.connect();
         await conn.run(`
             CREATE TABLE IF NOT EXISTS tick_data (
                 id            INTEGER PRIMARY KEY,
-                timestamp     TIMESTAMP NOT NULL,
+                timestamp     BIGINT NOT NULL,
                 symbol        TEXT NOT NULL,
                 open          DOUBLE,
                 close         DOUBLE,
@@ -311,9 +312,8 @@ app.whenReady().then(async () => {
                 const appender = await conn.createAppender('tick_data');
                 for (const t of ticks) {
                     appender.appendInteger(idCounter++);
-                    // timestamp: epoch seconds → DuckDB TIMESTAMP
-                    const d = new Date(t.time * 1000);
-                    appender.appendTimestamp(timestampValue(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), 0));
+                    // timestamp: epoch seconds (BIGINT)
+                    appender.appendBigInt(BigInt(t.time));
                     appender.appendVarchar(t.symbol || symbol || '');
                     appender.appendDouble(t.open ?? 0);
                     appender.appendDouble(t.close ?? 0);
