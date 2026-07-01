@@ -293,6 +293,7 @@ private:
     bool _exit : 1;
     float _slip;
     String _dbpath;
+    String _modename;
     
     // 策略级资金池
     CapitalPool _capitalPool;

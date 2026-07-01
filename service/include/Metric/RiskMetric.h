@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <Eigen/Dense>
 #include "Metric/CUSUMDetector.h"
 
 /*
@@ -76,3 +77,18 @@ struct AdaptiveVaRConfig {
 float compute_adaptive_var(const std::vector<double>& returns,
                            const CUSUMDetector& detector,
                            const AdaptiveVaRConfig& config = {});
+
+/*
+ * @brief 计算两个收益率向量的相关系数
+ * @param x 收益率序列 1
+ * @param y 收益率序列 2
+ * @return 相关系数 [-1, 1]
+ */
+double compute_correlation(const std::vector<double>& x, const std::vector<double>& y);
+
+/*
+ * @brief 计算收益率矩阵的相关系数矩阵
+ * @param data 输入矩阵 (n_assets × n_samples)，每行是一个资产的收益率序列
+ * @return 相关系数矩阵 (n_assets × n_assets)
+ */
+Eigen::MatrixXd compute_correlation_matrix(const Eigen::MatrixXd& data);

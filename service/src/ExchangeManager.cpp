@@ -57,7 +57,6 @@ void ExchangeManager::StopQuoteDispatcher() {
     }
     delete _dispatchThread;
     _dispatchThread = nullptr;
-    INFO("Quote dispatcher thread stopped");
 }
 
 void ExchangeManager::QueueToPublish(const QuoteInfo& quote) {
@@ -327,7 +326,6 @@ void ExchangeManager::Shutdown() {
     _exchangeRefCounts.clear();
 
     if (_quotePubInited) {
-        nng_close(_quotePubSock);
         _quotePubInited = false;
     }
 }

@@ -76,13 +76,9 @@ BrokerSubSystem::BrokerSubSystem(Server* server, bool is_simulation)
 }
 
 bool BrokerSubSystem::Init(const nlohmann::json& config, const Map<ExchangeType, ExchangeInterface*>& brokers) {
-  String dbpath = config["db"];
+  _dbpath = (String)config["db"];
   if (_simulation) {
-    auto real_path = dbpath + "/" + (String)config["name"] + ".db";
-    _dbpath = real_path;
-  } else {
-    auto virt_path = dbpath + "/virtual.db";
-    _dbpath = virt_path;
+    _modename = (String)config["name"];
   }
   if (config["type"] == "stock") {
     // 费率在策略中配置，不需要在此初始化
@@ -118,7 +114,7 @@ void BrokerSubSystem::Release() {
   delete _thread;
   _thread = nullptr;
   
-  // 持久化资金池状态
+  // 持久化资金池状态（存放在 _dbpath 的父目录，而非 exchange 子目录）
   if (!_dbpath.empty()) {
       String capitalPersistPath = _dbpath + "/capital_pool.json";
       _capitalPool.persist(capitalPersistPath);
@@ -559,11 +555,17 @@ void BrokerSubSystem::run() {
     MDB_env* _env;
     MDB_txn* _txn;
 
+    String dbpath;
+    if (_simulation) {
+      dbpath = _dbpath + "/" + _modename + ".db";
+    } else {
+      dbpath = _dbpath + "/virtual.db";
+    }
     ER(mdb_env_create(&_env));
     ER(mdb_env_set_maxreaders(_env, 1));
     ER(mdb_env_set_mapsize(_env, DEFAULT_DISK_CACHE_SIZE));
     ER(mdb_env_set_maxdbs(_env, DEFAULT_MAX_SYMBOLS));
-    ER(mdb_env_open(_env, _dbpath.c_str(), MDB_CREATE | MDB_NOTLS | MDB_NORDAHEAD | MDB_NOSUBDIR | MDB_NOLOCK | MDB_WRITEMAP, 0664));
+    ER(mdb_env_open(_env, dbpath.c_str(), MDB_CREATE | MDB_NOTLS | MDB_NORDAHEAD | MDB_NOSUBDIR | MDB_NOLOCK | MDB_WRITEMAP, 0664));
     ER(mdb_txn_begin(_env, NULL, MDB_WRITEMAP, &_txn));
 
     // 不同模式使用不同的数据库

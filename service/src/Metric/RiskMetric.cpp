@@ -1,4 +1,5 @@
 #include "Metric/RiskMetric.h"
+#include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -135,7 +136,7 @@ float compute_adaptive_var(const std::vector<double>& returns,
 }
 
 // ============================================================
-// 自相关函数
+// 自相关函数（Eigen 实现）
 // ============================================================
 
 double compute_autocorrelation(const std::vector<double>& returns, int lag) {
@@ -144,29 +145,95 @@ double compute_autocorrelation(const std::vector<double>& returns, int lag) {
         return 0.0;
     }
 
-    // 计算均值
-    double mean = 0.0;
-    for (double r : returns) {
-        mean += r;
-    }
-    mean /= n;
+    // 使用 Eigen 向量化计算
+    Eigen::Map<const Eigen::VectorXd> x(returns.data(), n);
+    double mean = x.mean();
+    Eigen::VectorXd centered = x.array() - mean;
 
-    // 计算方差和协方差
-    double variance = 0.0;
-    double covariance = 0.0;
-    for (int i = 0; i < n; ++i) {
-        double diff_i = returns[i] - mean;
-        variance += diff_i * diff_i;
+    // 方差：sum((x - mean)²)
+    double variance = centered.squaredNorm();
 
-        if (i + lag < n) {
-            double diff_j = returns[i + lag] - mean;
-            covariance += diff_i * diff_j;
-        }
-    }
+    // 协方差：sum((x_t - mean) * (x_{t+lag} - mean))
+    double covariance = centered.head(n - lag).dot(centered.tail(n - lag));
 
-    if (variance == 0.0) {
+    if (variance < 1e-10) {
         return 0.0;
     }
 
     return covariance / variance;
+}
+
+// ============================================================
+// 相关系数计算（Eigen 实现）
+// ============================================================
+
+/**
+ * @brief 计算两个收益率向量的相关系数
+ * @param x 收益率序列 1
+ * @param y 收益率序列 2
+ * @return 相关系数 [-1, 1]
+ */
+double compute_correlation(const std::vector<double>& x, const std::vector<double>& y) {
+    size_t n = x.size();
+    if (n != y.size() || n < 2) {
+        return 0.0;
+    }
+
+    Eigen::Map<const Eigen::VectorXd> vx(x.data(), n);
+    Eigen::Map<const Eigen::VectorXd> vy(y.data(), n);
+
+    double mx = vx.mean();
+    double my = vy.mean();
+
+    Eigen::VectorXd cx = vx.array() - mx;
+    Eigen::VectorXd cy = vy.array() - my;
+
+    double denom = std::sqrt(cx.squaredNorm() * cy.squaredNorm());
+    if (denom < 1e-10) {
+        return 0.0;
+    }
+
+    return cx.dot(cy) / denom;
+}
+
+/**
+ * @brief 计算收益率矩阵的相关系数矩阵
+ * @param data 输入矩阵 (n_assets × n_samples)，每行是一个资产的收益率序列
+ * @return 相关系数矩阵 (n_assets × n_assets)
+ */
+Eigen::MatrixXd compute_correlation_matrix(const Eigen::MatrixXd& data) {
+    size_t n_assets = data.rows();
+    size_t n_samples = data.cols();
+
+    if (n_samples < 2) {
+        return Eigen::MatrixXd::Identity(n_assets, n_assets);
+    }
+
+    // 1. 去均值（每行减均值）
+    Eigen::MatrixXd centered = data;
+    for (size_t i = 0; i < n_assets; ++i) {
+        centered.row(i).array() -= data.row(i).mean();
+    }
+
+    // 2. 计算协方差矩阵：C = (X * X^T) / (n-1)
+    Eigen::MatrixXd cov = (centered * centered.transpose()) / (n_samples - 1);
+
+    // 3. 转换为相关系数矩阵：ρ_ij = cov_ij / (σ_i * σ_j)
+    Eigen::VectorXd std_devs(n_assets);
+    for (size_t i = 0; i < n_assets; ++i) {
+        std_devs(i) = std::sqrt(cov(i, i));
+        if (std_devs(i) < 1e-10) std_devs(i) = 1.0;  // 防止除以零
+    }
+
+    Eigen::MatrixXd corr = cov;
+    for (size_t i = 0; i < n_assets; ++i) {
+        for (size_t j = 0; j < n_assets; ++j) {
+            corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+        }
+    }
+
+    // 确保对角线为 1
+    corr.diagonal().setOnes();
+
+    return corr;
 }

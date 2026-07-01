@@ -100,11 +100,24 @@ def send_exit_request(config):
     base_url = config.get("base_url", "https://localhost:19107/v0")
     exit_uri = f"{base_url}/exit"
     try:
+        # 先登录获取 token
+        login_uri = f"{base_url}/user/login"
+        login_resp = requests.post(login_uri, json={"name": "admin", "pwd": "admin"},
+                                   verify=False, timeout=5)
+        if login_resp.status_code == 200:
+            token = login_resp.json()["tk"]
+            headers = {"Authorization": token}
+        else:
+            print(f"[EXIT] 登录失败: {login_resp.status_code}")
+            return
+
         print(f"\n[EXIT] 发送退出请求: {exit_uri}")
-        requests.post(exit_uri, verify=False, timeout=5)
+        requests.post(exit_uri, headers=headers, verify=False, timeout=5)
         print("[EXIT] 服务已退出")
+    except requests.exceptions.ConnectionError:
+        print("[EXIT] 服务已关闭（连接失败）")
     except Exception as e:
-        print(f"[EXIT] 退出请求失败（服务可能已关闭）: {e}")
+        print(f"[EXIT] 退出请求失败: {e}")
 
 
 def list_modules(config, all_modules):
