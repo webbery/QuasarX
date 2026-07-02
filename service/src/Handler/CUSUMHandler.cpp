@@ -58,7 +58,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         else if (freq == "1h") target_freq = BarFreq::Hour1;
 
         // 1. 加载历史数据（各标的收盘价）
-        Map<symbol_t, Vector<double>> returns_map;
+        Map<String, Vector<double>> returns_map;
         Vector<String> dates_str;
         for (auto& sym : symbols) {
             Vector<String> sym_dates;
@@ -75,7 +75,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                 double ret = (closes[i] - closes[i-1]) / closes[i-1];
                 sym_returns.push_back(ret);
             }
-            returns_map[to_symbol(sym)] = sym_returns;
+            returns_map[sym] = sym_returns;
             if (dates_str.empty()) {
                 // 使用第一个有效标的的日期
                 dates_str = sym_dates;
@@ -89,7 +89,25 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         }
 
         // 2. 计算组合平均收益率（等权）
+        // 取所有标的收益率长度的最小值，避免不同标的上市时间不同导致越界
         size_t n_days = returns_map.begin()->second.size();
+        for (auto& [sym, rets] : returns_map) {
+            if (rets.size() < n_days) {
+                n_days = rets.size();
+            }
+        }
+
+        // 裁剪日期到共同长度
+        // dates_str 含 header 行时长度为 n_days+1，需要去掉第一个元素
+        if (dates_str.size() > n_days) {
+            Vector<String> trimmed_dates;
+            trimmed_dates.reserve(n_days);
+            for (size_t i = 1; i < dates_str.size() && trimmed_dates.size() < n_days; ++i) {
+                trimmed_dates.push_back(dates_str[i]);
+            }
+            dates_str = std::move(trimmed_dates);
+        }
+
         Vector<double> portfolio_returns(n_days, 0.0);
         for (auto& [sym, rets] : returns_map) {
             for (size_t i = 0; i < n_days; ++i) {
@@ -97,82 +115,129 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             }
         }
 
-        // 3. 计算波动率（收益率平方）
+        // 3. 计算波动率（收益率平方）— 组合用于方差检测
         Vector<double> squared_returns(n_days);
         for (size_t i = 0; i < n_days; ++i) {
-            squared_returns[i] = portfolio_returns[i] * portfolio_returns[i];
+            double port_ret = 0;
+            for (auto& [sym, rets] : returns_map) {
+                port_ret += rets[i] / returns_map.size();
+            }
+            squared_returns[i] = port_ret * port_ret;
         }
 
-        // 计算全局均值和标准差
-        double mean_ret = std::accumulate(portfolio_returns.begin(), portfolio_returns.end(), 0.0) / n_days;
-        double var_ret = 0;
-        for (double r : portfolio_returns) var_ret += (r - mean_ret) * (r - mean_ret);
-        var_ret /= n_days;
-        double sigma_ret = std::sqrt(var_ret);
+        // 3b. 计算组合均值和标准差 — 用于组合方差检测
+        double port_mean_ret = 0;
+        for (auto& [sym, rets] : returns_map) {
+            double sym_sum = 0;
+            for (double r : rets) sym_sum += r;
+            port_mean_ret += sym_sum / (rets.size() * returns_map.size());
+        }
+        double port_var_ret = 0;
+        for (size_t i = 0; i < n_days; ++i) {
+            double port_ret = 0;
+            for (auto& [sym, rets] : returns_map) port_ret += rets[i] / returns_map.size();
+            port_var_ret += (port_ret - port_mean_ret) * (port_ret - port_mean_ret);
+        }
+        port_var_ret /= n_days;
+        double port_sigma_ret = std::sqrt(port_var_ret);
 
         nlohmann::json result;
 
         // 日期字符串（out_dates 直接返回日期，不含 header）
         result["dates"] = dates_str;
-
-        // 4. 均值漂移 CUSUM
-        if (std::find(modes.begin(), modes.end(), "mean") != modes.end()) {
-            CUSUMDetector mean_detector({
-                ._mu = mean_ret,
-                ._sigma = sigma_ret,
-                ._lambda = lambda,
-                ._threshold_multiplier = threshold_multiplier,
-                ._min_obs = min_obs,
-            });
-            auto cusum_result = mean_detector.detect_batch(portfolio_returns);
-
-            nlohmann::json mean_json;
-            mean_json["s_pos"] = Vector<double>(cusum_result._steps.size());
-            mean_json["s_neg"] = Vector<double>(cusum_result._steps.size());
-            Vector<size_t> change_points;
-            for (size_t i = 0; i < cusum_result._steps.size(); ++i) {
-                mean_json["s_pos"][i] = cusum_result._steps[i]._cusum_positive;
-                mean_json["s_neg"][i] = cusum_result._steps[i]._cusum_negative;
-                if (cusum_result._steps[i]._change_point) {
-                    change_points.push_back(i);
-                }
-            }
-            mean_json["change_points"] = change_points;
-            mean_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
-            result["mean_cusum"] = mean_json;
+        result["symbols"] = nlohmann::json::array();
+        for (auto& [sym, _] : returns_map) {
+            result["symbols"].push_back(sym);
         }
 
-        // 5. 方差漂移 CUSUM
-        if (std::find(modes.begin(), modes.end(), "variance") != modes.end()) {
-            double mean_sq = std::accumulate(squared_returns.begin(), squared_returns.end(), 0.0) / n_days;
-            double var_sq = 0;
-            for (double s : squared_returns) var_sq += (s - mean_sq) * (s - mean_sq);
-            var_sq /= n_days;
-            double sigma_sq = std::sqrt(var_sq);
+        // 4. 均值漂移 CUSUM — 对每个标的单独检测 + 组合
+        if (std::find(modes.begin(), modes.end(), "mean") != modes.end()) {
+            nlohmann::json per_symbol = nlohmann::json::array();
 
-            CUSUMDetector var_detector({
-                ._mu = mean_sq,
-                ._sigma = sigma_sq,
-                ._lambda = lambda,
-                ._threshold_multiplier = threshold_multiplier,
-                ._min_obs = min_obs,
-            });
-            auto cusum_result = var_detector.detect_batch(squared_returns);
+            // 对每个标的单独检测
+            for (auto& [sym, rets] : returns_map) {
+                if (rets.size() < min_obs) continue;
 
-            nlohmann::json var_json;
-            var_json["s_pos"] = Vector<double>(cusum_result._steps.size());
-            var_json["s_neg"] = Vector<double>(cusum_result._steps.size());
-            Vector<size_t> change_points;
-            for (size_t i = 0; i < cusum_result._steps.size(); ++i) {
-                var_json["s_pos"][i] = cusum_result._steps[i]._cusum_positive;
-                var_json["s_neg"][i] = cusum_result._steps[i]._cusum_negative;
-                if (cusum_result._steps[i]._change_point) {
-                    change_points.push_back(i);
+                double sym_mean = std::accumulate(rets.begin(), rets.end(), 0.0) / rets.size();
+                double sym_var = 0;
+                for (double r : rets) sym_var += (r - sym_mean) * (r - sym_mean);
+                sym_var /= rets.size();
+                double sym_sigma = std::sqrt(sym_var);
+
+                CUSUMDetector mean_detector({
+                    ._mu = sym_mean,
+                    ._sigma = sym_sigma,
+                    ._lambda = lambda,
+                    ._threshold_multiplier = threshold_multiplier,
+                    ._min_obs = min_obs,
+                });
+                auto cusum_result = mean_detector.detect_batch(rets);
+
+                nlohmann::json sym_json;
+                sym_json["symbol"] = sym;
+                sym_json["s_pos"] = Vector<double>(cusum_result._steps.size());
+                sym_json["s_neg"] = Vector<double>(cusum_result._steps.size());
+                Vector<size_t> change_points;
+                for (size_t i = 0; i < cusum_result._steps.size(); ++i) {
+                    sym_json["s_pos"][i] = cusum_result._steps[i]._cusum_positive;
+                    sym_json["s_neg"][i] = cusum_result._steps[i]._cusum_negative;
+                    if (cusum_result._steps[i]._change_point) {
+                        change_points.push_back(i);
+                    }
                 }
+                sym_json["change_points"] = change_points;
+                sym_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
+                per_symbol.push_back(sym_json);
             }
-            var_json["change_points"] = change_points;
-            var_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
-            result["variance_cusum"] = var_json;
+
+            result["mean_cusum"] = per_symbol;
+        }
+
+        // 5. 方差漂移 CUSUM — 对每个标的单独检测 + 组合
+        if (std::find(modes.begin(), modes.end(), "variance") != modes.end()) {
+            nlohmann::json per_symbol_var = nlohmann::json::array();
+
+            // 对每个标的单独检测
+            for (auto& [sym, rets] : returns_map) {
+                if (rets.size() < min_obs) continue;
+
+                // 计算平方收益率
+                Vector<double> sq_rets(rets.size());
+                for (size_t i = 0; i < rets.size(); ++i) sq_rets[i] = rets[i] * rets[i];
+
+                double sym_mean_sq = std::accumulate(sq_rets.begin(), sq_rets.end(), 0.0) / sq_rets.size();
+                double sym_var_sq = 0;
+                for (double s : sq_rets) sym_var_sq += (s - sym_mean_sq) * (s - sym_mean_sq);
+                sym_var_sq /= sq_rets.size();
+                double sym_sigma_sq = std::sqrt(sym_var_sq);
+
+                CUSUMDetector var_detector({
+                    ._mu = sym_mean_sq,
+                    ._sigma = sym_sigma_sq,
+                    ._lambda = lambda,
+                    ._threshold_multiplier = threshold_multiplier,
+                    ._min_obs = min_obs,
+                });
+                auto cusum_result = var_detector.detect_batch(sq_rets);
+
+                nlohmann::json sym_json;
+                sym_json["symbol"] = sym;
+                sym_json["s_pos"] = Vector<double>(cusum_result._steps.size());
+                sym_json["s_neg"] = Vector<double>(cusum_result._steps.size());
+                Vector<size_t> change_points;
+                for (size_t i = 0; i < cusum_result._steps.size(); ++i) {
+                    sym_json["s_pos"][i] = cusum_result._steps[i]._cusum_positive;
+                    sym_json["s_neg"][i] = cusum_result._steps[i]._cusum_negative;
+                    if (cusum_result._steps[i]._change_point) {
+                        change_points.push_back(i);
+                    }
+                }
+                sym_json["change_points"] = change_points;
+                sym_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
+                per_symbol_var.push_back(sym_json);
+            }
+
+            result["variance_cusum"] = per_symbol_var;
         }
 
         // 6. 相关性结构变化（使用 Eigen + RiskMetric 函数）
@@ -231,26 +296,34 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             result["correlation"] = corr_json;
         }
 
-        // 7. 变点时间轴
+        // 7. 变点时间轴 — 从数组中收集所有标的的变点
         nlohmann::json timeline = nlohmann::json::array();
-        if (result.contains("mean_cusum")) {
-            for (size_t idx : result["mean_cusum"]["change_points"]) {
-                timeline.push_back({
-                    {"day", (int)idx},
-                    {"type", "mean_shift"},
-                    {"drift", result["mean_cusum"]["s_pos"][idx]},
-                    {"action", "ewma_99"},
-                });
+        if (result.contains("mean_cusum") && result["mean_cusum"].is_array()) {
+            for (auto& item : result["mean_cusum"]) {
+                String sym = item.value("symbol", "");
+                for (size_t idx : item["change_points"]) {
+                    timeline.push_back({
+                        {"day", (int)idx},
+                        {"type", "mean_shift"},
+                        {"symbol", sym},
+                        {"drift", item["s_pos"][idx]},
+                        {"action", "ewma_99"},
+                    });
+                }
             }
         }
-        if (result.contains("variance_cusum")) {
-            for (size_t idx : result["variance_cusum"]["change_points"]) {
-                timeline.push_back({
-                    {"day", (int)idx},
-                    {"type", "variance_shift"},
-                    {"drift", result["variance_cusum"]["s_pos"][idx]},
-                    {"action", "ewma_99_5"},
-                });
+        if (result.contains("variance_cusum") && result["variance_cusum"].is_array()) {
+            for (auto& item : result["variance_cusum"]) {
+                String sym = item.value("symbol", "");
+                for (size_t idx : item["change_points"]) {
+                    timeline.push_back({
+                        {"day", (int)idx},
+                        {"type", "variance_shift"},
+                        {"symbol", sym},
+                        {"drift", item["s_pos"][idx]},
+                        {"action", "ewma_99_5"},
+                    });
+                }
             }
         }
         result["timeline"] = timeline;

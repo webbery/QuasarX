@@ -2,37 +2,36 @@
   <div class="cusum-tab">
     <!-- 头部控制区 -->
     <header class="cusum-header">
-      <div class="control-group">
-        <label>标的池：</label>
-        <div class="symbol-input">
-          <input
-            v-model="symbolInput"
-            type="text"
-            class="symbol-text"
-            placeholder="输入标的，逗号分隔，如 sh.600519,sz.000001"
-          />
-          <button class="btn btn-small" @click="parseSymbols">解析</button>
-        </div>
-        <div class="symbol-tags" v-if="symbols.length > 0">
-          <span v-for="sym in symbols" :key="sym" class="tag">{{ sym }}</span>
-        </div>
-      </div>
+      <!-- 标的池：使用 StrategySelector 组件 -->
+      <StrategySelector
+        :selected-strategy-id="selectedStrategyId"
+        :strategy-options="strategyOptions"
+        :available-securities="availableSecurities"
+        :checked-symbols="checkedSymbols"
+        :loading="isLoading"
+        @update:selectedStrategyId="selectedStrategyId = $event"
+        @toggle-symbol="toggleSymbol"
+      />
 
       <div class="control-group">
-        <label>时间范围：</label>
-        <input type="date" v-model="startDate" class="date-input" />
-        <span class="date-separator">至</span>
-        <input type="date" v-model="endDate" class="date-input" />
+        <DateRangeSelector
+          v-model:quickRange="quickRange"
+          v-model:frequency="frequency"
+          :quick-ranges="QUICK_RANGES"
+          :date-range="dateRange"
+          :show-frequency="false"
+          @update-date-range="updateDateRange"
+        />
       </div>
 
       <div class="control-group">
         <label>CUSUM 参数：</label>
         <span class="param-label">λ</span>
-        <input type="number" v-model.number="lambda" class="param-input" step="0.1" min="0.1" max="2.0" />
+        <input type="number" v-model.number="lambda" class="select-small" step="0.1" min="0.1" max="2.0" />
         <span class="param-label">h</span>
-        <input type="number" v-model.number="threshold" class="param-input" step="0.5" min="1.0" max="10.0" />
+        <input type="number" v-model.number="threshold" class="select-small" step="0.5" min="1.0" max="10.0" />
         <span class="param-label">min_obs</span>
-        <input type="number" v-model.number="minObs" class="param-input" step="5" min="10" max="100" />
+        <input type="number" v-model.number="minObs" class="select-small" step="5" min="10" max="100" />
       </div>
 
       <div class="control-group">
@@ -52,15 +51,14 @@
       </div>
 
       <div class="control-group actions">
-        <button class="btn btn-primary" @click="runAnalysis" :disabled="loading || symbols.length === 0">
-          {{ loading ? '分析中...' : '▶ 开始分析' }}
+        <button class="btn btn-primary btn-small" @click="runAnalysis" :disabled="isLoading || checkedSymbols.size === 0">
+          {{ isLoading ? '分析中...' : '开始分析' }}
         </button>
-        <button class="btn btn-secondary" @click="resetForm">↻ 重置</button>
       </div>
     </header>
 
     <!-- 加载状态 -->
-    <div v-if="loading" class="loading-state">
+    <div v-if="isLoading" class="loading-state">
       <div class="spinner"></div>
       <span>CUSUM 检测中，请稍候...</span>
     </div>
@@ -73,37 +71,33 @@
     </div>
 
     <!-- 结果展示区 -->
-    <div v-else class="results-container">
+    <div v-if="hasResult" class="results-container">
       <!-- 1. 均值漂移检测 -->
-      <div v-if="modes.mean && result.mean_cusum" class="result-section">
+      <div class="result-section">
         <div class="section-header">
           <h3>📊 均值漂移检测 (Mean Shift)</h3>
-          <span :class="['status-badge', result.mean_cusum.change_points.length > 0 ? 'warning' : 'normal']">
-            {{ result.mean_cusum.change_points.length > 0 ? `⚠ ${result.mean_cusum.change_points.length} 次变点` : '✓ 正常' }}
+          <span class="status-badge normal">
+            {{ result.mean_cusum ? result.mean_cusum.length : 0 }} 只标的
           </span>
         </div>
         <MeanShiftChart
-          :s-pos="result.mean_cusum.s_pos"
-          :s-neg="result.mean_cusum.s_neg"
-          :threshold="result.mean_cusum.threshold"
-          :change-points="result.mean_cusum.change_points"
+          v-if="result.mean_cusum && result.mean_cusum.length"
+          :results="result.mean_cusum"
           :dates="result.dates"
         />
       </div>
 
       <!-- 2. 方差漂移检测 -->
-      <div v-if="modes.variance && result.variance_cusum" class="result-section">
+      <div class="result-section">
         <div class="section-header">
           <h3>📈 方差漂移检测 (Variance Shift)</h3>
-          <span :class="['status-badge', result.variance_cusum.change_points.length > 0 ? 'warning' : 'normal']">
-            {{ result.variance_cusum.change_points.length > 0 ? `⚠ ${result.variance_cusum.change_points.length} 次变点` : '✓ 正常' }}
+          <span class="status-badge normal">
+            {{ result.variance_cusum ? result.variance_cusum.length : 0 }} 只标的
           </span>
         </div>
         <VarianceShiftChart
-          :s-pos="result.variance_cusum.s_pos"
-          :s-neg="result.variance_cusum.s_neg"
-          :threshold="result.variance_cusum.threshold"
-          :change-points="result.variance_cusum.change_points"
+          v-if="result.variance_cusum && result.variance_cusum.length"
+          :results="result.variance_cusum"
           :dates="result.dates"
         />
       </div>
@@ -134,6 +128,7 @@
         <TimelineChart
           :events="result.timeline"
           :total-days="result.dates.length"
+          :dates="result.dates"
         />
       </div>
     </div>
@@ -141,17 +136,82 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
+import axios from 'axios'
+import StrategySelector from '../shared/StrategySelector.vue'
+import DateRangeSelector from '../shared/DateRangeSelector.vue'
 import MeanShiftChart from './charts/MeanShiftChart.vue'
 import VarianceShiftChart from './charts/VarianceShiftChart.vue'
 import CorrelationChart from './charts/CorrelationChart.vue'
 import TimelineChart from './charts/TimelineChart.vue'
+import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
+
+interface Security {
+  code: string
+  name?: string
+}
+
+// === 标的池状态（使用 StrategySelector + useStrategySecurities） ===
+const {
+  strategyOptions,
+  selectedStrategyId,
+  availableSecurities,
+  checkedSymbols,
+  loading: securitiesLoading,
+  loadSecuritiesForStrategy,
+  toggleSymbol,
+} = useStrategySecurities()
+
+// === 快速范围默认值 ===
+const QUICK_RANGES: [string, () => [string, string]][] = [
+  ['近1月', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setMonth(start.getMonth() - 1)
+    return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)]
+  }],
+  ['近3月', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setMonth(start.getMonth() - 3)
+    return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)]
+  }],
+  ['近6月', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setMonth(start.getMonth() - 6)
+    return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)]
+  }],
+  ['近1年', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setFullYear(start.getFullYear() - 1)
+    return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)]
+  }],
+  ['近3年', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setFullYear(start.getFullYear() - 3)
+    return [start.toISOString().slice(0, 10), end.toISOString().slice(0, 10)]
+  }],
+]
 
 // === 表单状态 ===
-const symbolInput = ref('')
-const symbols = ref<string[]>([])
-const startDate = ref('2024-01-01')
-const endDate = ref('2024-12-31')
+const quickRange = ref('近1年')
+const frequency = ref('1d')
+const dateRange = ref<[string, string] | null>(null)
+
+// 初始化日期范围
+function initDateRangeFromQuickRange() {
+  const range = QUICK_RANGES.find(r => r[0] === quickRange.value)
+  if (range) {
+    dateRange.value = range[1]()
+  }
+}
+
+// 初始化
+initDateRangeFromQuickRange()
+
 const lambda = ref(0.5)
 const threshold = ref(4.0)
 const minObs = ref(30)
@@ -165,18 +225,42 @@ const loading = ref(false)
 const hasResult = ref(false)
 const result = ref<any>({})
 
-// === 方法 ===
+// 合并加载状态
+const isLoading = computed(() => securitiesLoading.value || loading.value)
 
-function parseSymbols() {
-  symbols.value = symbolInput.value
-    .split(/[,，\s]+/)
-    .map(s => s.trim().toLowerCase())
-    .filter(s => s.length > 0)
+// 监听策略 ID 变化，自动加载标的
+watch(selectedStrategyId, (newId) => {
+  if (newId) {
+    loadSecuritiesForStrategy(newId)
+  } else {
+    availableSecurities.value = []
+    checkedSymbols.value = new Set()
+  }
+})
+
+// 监听 quickRange 变化，更新日期范围
+watch(quickRange, () => {
+  initDateRangeFromQuickRange()
+})
+
+function updateDateRange(value: string, type: 'start' | 'end') {
+  if (dateRange.value) {
+    dateRange.value = type === 'start'
+      ? [value, dateRange.value[1]]
+      : [dateRange.value[0], value]
+  }
 }
 
+// === 方法 ===
+
 async function runAnalysis() {
-  if (symbols.value.length === 0) {
-    alert('请先输入标的池')
+  if (checkedSymbols.value.size === 0) {
+    alert('请先选择标的池')
+    return
+  }
+
+  if (!dateRange.value) {
+    alert('请选择时间范围')
     return
   }
 
@@ -189,25 +273,25 @@ async function runAnalysis() {
     if (modes.variance) activeModes.push('variance')
     if (modes.correlation) activeModes.push('correlation')
 
-    const response = await fetch('/v0/analysis/cusum', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbols: symbols.value,
-        start: startDate.value,
-        end: endDate.value,
-        lambda: lambda.value,
-        threshold_multiplier: threshold.value,
-        min_obs: minObs.value,
-        modes: activeModes,
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    const requestBody = {
+      symbols: Array.from(checkedSymbols.value),
+      start: dateRange.value[0],
+      end: dateRange.value[1],
+      lambda: lambda.value,
+      threshold_multiplier: threshold.value,
+      min_obs: minObs.value,
+      modes: activeModes,
+      freq: '1d',
     }
 
-    result.value = await response.json()
+    console.log('[CUSUMTab] Sending request:', requestBody)
+
+    const response = await axios.post('/v0/analysis/cusum', requestBody)
+
+    console.log('[CUSUMTab] Response status:', response.status)
+    console.log('[CUSUMTab] Response data:', response.data)
+
+    result.value = response.data
     hasResult.value = true
   } catch (err: any) {
     console.error('[CUSUMTab] Analysis error:', err)
@@ -218,10 +302,12 @@ async function runAnalysis() {
 }
 
 function resetForm() {
-  symbolInput.value = ''
-  symbols.value = []
-  startDate.value = '2024-01-01'
-  endDate.value = '2024-12-31'
+  selectedStrategyId.value = ''
+  availableSecurities.value = []
+  checkedSymbols.value = new Set()
+  quickRange.value = '近1年'
+  frequency.value = '1d'
+  initDateRangeFromQuickRange()
   lambda.value = 0.5
   threshold.value = 4.0
   minObs.value = 30
@@ -248,103 +334,69 @@ function resetForm() {
 .cusum-header {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  padding: 16px 24px;
-  background: rgba(42, 52, 77, 0.6);
-  border-bottom: 1px solid #2a3449;
-  align-items: flex-end;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(26, 34, 54, 0.8);
+  border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+  align-items: center;
+  min-height: 52px;
 }
 
 .control-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .control-group label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #a0aec0;
+  font-size: 12px;
+  color: #999;
   white-space: nowrap;
 }
 
-.symbol-input {
-  display: flex;
-  gap: 8px;
-}
-
-.symbol-text {
-  width: 280px;
-  padding: 6px 10px;
-  background: #2a3449;
-  border: 1px solid #3a4459;
-  border-radius: 6px;
-  color: #e0e0e0;
-  font-size: 13px;
-}
-
-.symbol-text:focus {
-  outline: none;
-  border-color: #2962ff;
-}
-
-.symbol-tags {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.tag {
-  padding: 2px 8px;
-  background: rgba(41, 98, 255, 0.2);
-  border: 1px solid #2962ff;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #64b5f6;
-}
-
-.date-input {
-  padding: 6px 10px;
-  background: #2a3449;
-  border: 1px solid #3a4459;
-  border-radius: 6px;
-  color: #e0e0e0;
-  font-size: 13px;
-}
-
-.date-separator {
-  color: #a0aec0;
-  font-size: 13px;
-}
-
 .param-label {
-  font-size: 13px;
-  color: #a0aec0;
+  font-size: 12px;
+  color: #999;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.param-input {
-  width: 60px;
-  padding: 6px 8px;
-  background: #2a3449;
-  border: 1px solid #3a4459;
-  border-radius: 6px;
+.select-small {
+  padding: 4px 8px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
   color: #e0e0e0;
-  font-size: 13px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  width: 60px;
   text-align: center;
+}
+
+.select-small:focus {
+  border-color: rgba(41, 98, 255, 0.5);
 }
 
 .checkbox-label {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
-  color: #e0e0e0;
+  font-size: 12px;
+  color: #999;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .checkbox-label input[type="checkbox"] {
   accent-color: #2962ff;
+  margin: 0;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"]:checked + span {
+  color: #2962ff;
+  font-weight: 500;
 }
 
 .actions {
@@ -352,41 +404,38 @@ function resetForm() {
 }
 
 .btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 6px 16px;
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  background: rgba(26, 34, 54, 0.8);
+  color: #e0e0e0;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.btn-primary {
-  background: #2962ff;
-  color: #fff;
+.btn:hover:not(:disabled) {
+  border-color: rgba(41, 98, 255, 0.5);
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: #1e4fd9;
-}
-
-.btn-primary:disabled {
+.btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.btn-secondary {
-  background: #3a4459;
-  color: #e0e0e0;
-  margin-left: 8px;
+.btn-primary {
+  background: #2962ff;
+  border-color: #2962ff;
+  font-weight: 600;
 }
 
-.btn-secondary:hover {
-  background: #4a5469;
+.btn-primary:hover:not(:disabled) {
+  background: #1e54e6;
+  border-color: #1e54e6;
 }
 
 .btn-small {
-  padding: 4px 10px;
+  padding: 4px 12px;
   font-size: 12px;
 }
 
@@ -456,6 +505,7 @@ function resetForm() {
   border-radius: 12px;
   border: 1px solid #2a3449;
   overflow: hidden;
+  min-height: 400px;
 }
 
 .section-header {

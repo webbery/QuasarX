@@ -11,6 +11,7 @@ import * as echarts from 'echarts'
 interface TimelineEvent {
   day: number
   type: string
+  symbol?: string
   drift: number
   action: string
 }
@@ -18,6 +19,7 @@ interface TimelineEvent {
 interface Props {
   events: TimelineEvent[]
   totalDays: number
+  dates?: string[]
 }
 
 const props = defineProps<Props>()
@@ -40,10 +42,16 @@ const actionLabelMap: Record<string, string> = {
 function renderChart() {
   if (!chartInstance || !props.events.length) return
 
+  // dates 含 header 导致长度为 n+1，取 slice(1) 与收益率数量对齐
+  const dates = props.dates && props.dates.length > props.totalDays
+    ? props.dates.slice(1)
+    : props.dates || []
+
   const events = props.events.map((e, i) => ({
     ...e,
     icon: typeIconMap[e.type] || '📌',
     label: `${actionLabelMap[e.action] || e.action}`,
+    dateLabel: dates[e.day] ? `${dates[e.day]} (Day ${e.day})` : `Day ${e.day}`,
   }))
 
   const option = {
@@ -51,13 +59,18 @@ function renderChart() {
       trigger: 'item',
       formatter: (params: any) => {
         const evt = events[params.dataIndex]
-        return `<b>Day ${evt.day}</b><br/>类型: ${evt.type}<br/>漂移: ${evt.drift.toFixed(4)}<br/>VaR 调整: ${evt.label}`
+        return `<b>${evt.dateLabel}</b><br/>标的: ${evt.symbol || '-'}<br/>类型: ${evt.type}<br/>漂移: ${evt.drift.toFixed(4)}<br/>VaR 调整: ${evt.label}`
       },
+    },
+    legend: {
+      data: ['变点漂移'],
+      top: 5,
+      textStyle: { color: '#999', fontSize: 11 },
     },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
       type: 'category',
-      data: events.map(e => `Day ${e.day}`),
+      data: events.map(e => e.dateLabel),
       axisLabel: { rotate: 45, fontSize: 11 },
     },
     yAxis: {
@@ -66,7 +79,7 @@ function renderChart() {
       splitLine: { lineStyle: { color: '#2a3449' } },
     },
     series: [{
-      name: 'Change Points',
+      name: '变点漂移',
       type: 'bar',
       data: events.map(e => ({
         value: e.drift,

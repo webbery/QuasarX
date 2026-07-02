@@ -390,8 +390,6 @@ void TickFlowBridge::workerLoop() {
             nextWakeup = Clock::now() + std::chrono::milliseconds(_interval_ms);
         }
     }
-
-    INFO("[TickFlow] worker: thread stopped");
 }
 
 // ==================== 行情 ====================

@@ -3,7 +3,6 @@ import { ref } from 'vue'
 import { useQuoteStore } from './quoteStore'
 import { useAccountStore } from './account'
 import { fetchSectorQuotes, calculateTotalAdvanceDecline } from '@/lib/sectorApi'
-import { useMockRiskData } from '@/components/risk/hooks/useMockRiskData'
 
 export interface ThoughtStep {
   id: string
@@ -177,19 +176,18 @@ ${conversationText}
     try {
       const quoteStore = useQuoteStore()
       const accountStore = useAccountStore()
-      const { marketData, strategies } = useMockRiskData()
-      
+
       // 订阅主要指数
       quoteStore.subscribe('SH000001')  // 上证指数
       quoteStore.subscribe('SH000300')  // 沪深300
-      
+
       // 等待行情数据加载
       await quoteStore.fetchAll()
-      
+
       // 获取指数数据
       const shIndex = quoteStore.getQuote('SH000001')
       const hs300 = quoteStore.getQuote('SH000300')
-      
+
       // 获取板块数据
       let sectorText = ''
       try {
@@ -202,7 +200,7 @@ ${conversationText}
         const topLosers = sorted.slice(0, 3)
 
         sectorText = `\n• 市场广度：上涨 ${totalUp} 家，下跌 ${totalDown} 家`
-        
+
         if (topGainers.length > 0) {
           sectorText += `\n• 领涨板块：${topGainers.map(s => `${s.name}(+${s.change_pct.toFixed(2)}%)`).join('、')}`
         }
@@ -212,7 +210,7 @@ ${conversationText}
       } catch (e) {
         console.warn('[Chat] 获取板块数据失败', e)
       }
-      
+
       // 构建账户风险数据
       let accountRiskText = ''
       if (accountStore.maxDrawDown !== 0 || accountStore.sharpRatio !== 0 || accountStore.todayPL !== 0) {
@@ -222,27 +220,12 @@ ${conversationText}
 • 夏普比率：${accountStore.sharpRatio.toFixed(2)}
 • 今日盈亏：¥${accountStore.todayPL.toLocaleString()}`
       }
-      
-      // 构建市场风险数据
+
+      // 构建市场风险数据（暂缺，待接入真实数据源）
       let marketRiskText = ''
-      const md = marketData.value
-      if (md.volatility > 0 || md.sentimentIndex > 0) {
-        marketRiskText = `
-【市场风险】
-• 波动率：${md.volatility.toFixed(2)}%
-• 市场情绪：${md.sentimentLabel}（${md.sentimentIndex}/100）`
-      }
-      
-      // 构建策略风险概览
+
+      // 构建策略风险概览（暂缺，待接入真实数据源）
       let strategyRiskText = ''
-      if (strategies.value.length > 0) {
-        const strategyLines = strategies.value.slice(0, 5).map(s => 
-          `• ${s.name}：VaR ${s.var_95}% | 最大回撤 ${s.maxDrawdown}% | 风险等级：${s.riskLevel}`
-        )
-        strategyRiskText = `
-【策略风险概览】
-${strategyLines.join('\n')}`
-      }
       
       // 格式化日期
       const today = new Date()

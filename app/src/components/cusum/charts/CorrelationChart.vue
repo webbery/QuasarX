@@ -45,10 +45,20 @@ function renderLineChart() {
   if (!lineChartInstance || !props.rollingAvg.length) return
 
   const n = props.rollingAvg.length
-  const xData = props.dates.length === n ? props.dates : Array.from({ length: n }, (_, i) => `Day ${i + 1}`)
+  // dates 含 header 导致长度为 n+1，取 slice(1) 与收益率数量对齐
+  const xData = props.dates.length > n
+    ? props.dates.slice(1).slice(0, n)
+    : props.dates.length === n
+      ? props.dates
+      : Array.from({ length: n }, (_, i) => `Day ${i + 1}`)
 
   const option = {
     tooltip: { trigger: 'axis' },
+    legend: {
+      data: ['滚动平均相关性'],
+      top: 5,
+      textStyle: { color: '#999', fontSize: 11 },
+    },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { type: 'category', data: xData, axisLabel: { rotate: 45, fontSize: 11 } },
     yAxis: {
@@ -60,7 +70,7 @@ function renderLineChart() {
     },
     dataZoom: [{ type: 'inside' }, { type: 'slider', height: 20, bottom: 10 }],
     series: [{
-      name: 'Rolling Avg Correlation',
+      name: '滚动平均相关性',
       type: 'line',
       data: props.rollingAvg,
       smooth: true,
@@ -107,13 +117,16 @@ function renderHeatmap(ref: any, data: number[][], symbols: string[]) {
       splitArea: { show: true },
     },
     visualMap: {
+      show: true,
       min: 0,
       max: 1,
-      calculable: true,
+      calculable: false,
       orient: 'horizontal',
       left: 'center',
       bottom: '0%',
       inRange: { color: ['#1a2236', '#2962ff', '#ff9800', '#ff1744'] },
+      text: ['高相关', '低相关'],
+      textStyle: { color: '#999', fontSize: 10 },
     },
     series: [{
       name: 'Correlation',
