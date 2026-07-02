@@ -413,11 +413,11 @@ void FlowSubsystem::ComputeBacktestMetrics(
         auto cusum_result = fallback_detector.detect_batch(daily_returns_std);
 
         flow._collections[StatisticIndicator::CUSUMChangePoints] =
-            static_cast<float>(cusum_result.total_change_points);
+            static_cast<float>(cusum_result._total_change_points);
         flow._collections[StatisticIndicator::CUSUMMaxDrift] =
-            static_cast<float>(cusum_result.max_drift);
+            static_cast<float>(cusum_result._max_drift);
         flow._collections[StatisticIndicator::CUSUMLastChangeIndex] =
-            static_cast<float>(cusum_result.last_change_index);
+            static_cast<float>(cusum_result._last_change_index);
         flow._collections[StatisticIndicator::AdaptiveVaR] =
             compute_adaptive_var(daily_returns_std, fallback_detector);
         flow._collections[StatisticIndicator::EWMA_VaR] =

@@ -18,8 +18,7 @@ ExchangeManager::ExchangeManager(Server* server)
 }
 
 ExchangeManager::~ExchangeManager() {
-    StopQuoteDispatcher();
-    Shutdown();
+    
 }
 
 // ========== 初始化 ==========

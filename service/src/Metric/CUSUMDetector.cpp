@@ -12,7 +12,7 @@ CUSUMStepResult CUSUMDetector::update(double new_return) {
     ++_count;
 
     // 最少观测数保护：初期不触发变点
-    if (_count < _config.min_obs) {
+    if (_count < _config._min_obs) {
         _last_result = {
             false,
             _count - 1,
@@ -23,8 +23,8 @@ CUSUMStepResult CUSUMDetector::update(double new_return) {
         return _last_result;
     }
 
-    double k = _config.lambda * _config.sigma;
-    double drift = new_return - _config.mu;
+    double k = _config._lambda * _config._sigma;
+    double drift = new_return - _config._mu;
 
     // 双侧 CUSUM 更新
     _s_pos = std::max(0.0, _s_pos + drift - k);
@@ -58,16 +58,16 @@ CUSUMResult CUSUMDetector::detect_batch(const std::vector<double>& returns) {
     reset();
 
     CUSUMResult result;
-    result.steps.reserve(returns.size());
+    result._steps.reserve(returns.size());
 
     for (double ret : returns) {
         auto step = update(ret);
-        result.steps.push_back(step);
-        if (step.change_point) {
-            ++result.total_change_points;
-            result.last_change_index = step.step_index;
+        result._steps.push_back(step);
+        if (step._change_point) {
+            ++result._total_change_points;
+            result._last_change_index = step._step_index;
         }
-        result.max_drift = std::max(result.max_drift, std::abs(step.current_drift));
+        result._max_drift = std::max(result._max_drift, std::abs(step._current_drift));
     }
 
     return result;
@@ -86,5 +86,5 @@ void CUSUMDetector::reset() {
 double CUSUMDetector::compute_threshold() const {
     // h = threshold_multiplier * sigma * sqrt(N)
     // N 使用当前观测数，动态调整阈值
-    return _config.threshold_multiplier * _config.sigma * std::sqrt(static_cast<double>(_count));
+    return _config._threshold_multiplier * _config._sigma * std::sqrt(static_cast<double>(_count));
 }

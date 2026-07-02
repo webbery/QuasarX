@@ -59,6 +59,7 @@
 #include "Handler/SectorQuoteHandler.h"
 #include "Handler/ServerEventHandler.h"
 #include "Handler/CapitalRiskHandler.h"
+#include "Handler/StrategyRiskHandler.h"
 #include "Handler/ShiborHandler.h"
 #include "Handler/MacroHandler.h"
 #include "StrategySubSystem.h"
@@ -155,6 +156,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_CAPITAL    "/risk/capital"
 #define API_RISK_DAILY      "/risk/daily"
 #define API_RISK_CLOSEALL   "/risk/closeall"
+#define API_RISK_STRATEGIES "/risk/strategies"
 #define API_NAV_HISTORY     "/nav/history"
 #define API_VOLATILITY      "/analysis/volatility"
 #define API_CUSUM           "/analysis/cusum"
@@ -247,6 +249,8 @@ void Server::Run() {
     }
     _exit = true;
     printf("Bye\n");
+    _exchangeMgr->StopQuoteDispatcher();
+    _exchangeMgr->Shutdown();
 }
 
 void Server::Regist() {
@@ -281,6 +285,7 @@ void Server::Regist() {
     REGIST_GET(API_RISK_DAILY);
     REGIST_POST(API_RISK_DAILY);
     REGIST_POST(API_RISK_CLOSEALL);
+    REGIST_GET(API_RISK_STRATEGIES);
 
     REGIST_POST(API_RISK_STOP_LOSS);
     REGIST_PUT(API_RISK_STOP_LOSS);
@@ -1131,6 +1136,7 @@ void Server::InitHandlers() {
     RegistHandler(API_RISK_CAPITAL, CapitalRiskHandler);
     RegistHandler(API_RISK_DAILY, DailyLossRiskHandler);
     RegistHandler(API_RISK_CLOSEALL, CloseAllPositionHandler);
+    RegistHandler(API_RISK_STRATEGIES, StrategyRiskHandler);
     RegistHandler(API_ALL_STOCK, StockHandler);
     RegistHandler(API_STOCK_DETAIL, StockDetailHandler);
     RegistHandler(API_STOCK_HISTORY, StockHistoryHandler);

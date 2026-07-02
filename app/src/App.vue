@@ -125,13 +125,13 @@
 
     <!-- 主内容区 -->
     <main class="main-content">
-      <!-- 风控详情特殊处理，需要传递 props -->
+      <!-- 风控详情（待后端 API 实现后替换 props） -->
       <StrategyRiskDetail
         v-if="currentView === VIEWS.RISK_DETAIL_VIEW"
-        :strategy="getStrategyById(selectedStrategyId)"
-        :option-data="getOptionRiskData(selectedStrategyId)"
-        :stock-data="getStockRiskData(selectedStrategyId)"
-        :future-data="getFutureRiskData(selectedStrategyId)"
+        :strategy="undefined"
+        :option-data="undefined"
+        :stock-data="undefined"
+        :future-data="undefined"
         @back="onRiskDetailBack"
       />
       <component v-else :is="activeComponent" ref="dynamicComponentRef"
@@ -267,7 +267,6 @@ import PortfolioPanel from "./components/PortfolioPanel.vue";
 // Risk 新组件
 import RiskView from "./components/risk/RiskView.vue";
 import StrategyRiskDetail from "./components/risk/StrategyRiskDetail.vue";
-import { useMockRiskData } from "./components/risk/hooks/useMockRiskData";
 import sseService from "./ts/SSEService";
 import Store from 'electron-store';
 // 报表配置面板
@@ -300,13 +299,8 @@ const VIEWS = {
 };
 const store = new Store()
 
-// 风控模拟数据 hook
-const {
-  getStrategyById,
-  getOptionRiskData,
-  getStockRiskData,
-  getFutureRiskData,
-} = useMockRiskData()
+// 风控模拟数据 hook（待后端 API 实现后替换）
+// const { getStrategyById, getOptionRiskData, getStockRiskData, getFutureRiskData } = useMockRiskData()
 
 // 使用响应式状态管理当前视图
 let currentView = ref(VIEWS.ACCOUNT);

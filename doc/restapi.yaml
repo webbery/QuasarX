@@ -574,6 +574,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /risk/strategies:
+    get:
+      summary: strategy risk metrics
+      description: 获取所有策略的风险指标和健康度评估数据，包括信息比率(IR)、CUSUM信号、VaR、最大回撤、夏普比率、胜率等。前端根据 IR 和 CUSUM 信号计算策略健康度。
+      tags:
+        - Risk
+      responses:
+        '200':
+          description: 策略风险指标列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StrategyRiskItem"
+        '500':
+          description: 策略系统未初始化
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /risk/factor/liquidity:
     get:
       summary: liquidity
@@ -1941,6 +1962,58 @@ components:
           type: string
           description: 响应消息
           example: 所有持仓已平仓
+
+    StrategyRiskItem:
+      type: object
+      description: 策略风险指标和健康度评估数据
+      properties:
+        id:
+          type: string
+          description: 策略标识
+          example: "strategy_001"
+        name:
+          type: string
+          description: 策略名称
+          example: "趋势跟踪"
+        type:
+          type: string
+          description: 标的类型（从 Input 节点解析）
+          enum: [stock, etf, future, option, mixed]
+          example: "stock"
+        information_ratio:
+          type: number
+          format: double
+          description: 信息比率 (IR)，衡量策略的风险调整后超额收益
+          example: 1.25
+        cusum_signal:
+          type: integer
+          description: CUSUM 信号值，-1=负向漂移(策略恶化), 0=中性, 1=正向漂移(策略改善)
+          enum: [-1, 0, 1]
+          example: 0
+        cusum_triggered:
+          type: boolean
+          description: CUSUM 是否刚触发变点
+          example: false
+        var_95:
+          type: number
+          format: double
+          description: 95% VaR (Value at Risk)
+          example: 2.3
+        max_drawdown:
+          type: number
+          format: double
+          description: 最大回撤（负值）
+          example: -5.4
+        sharpe_ratio:
+          type: number
+          format: double
+          description: 夏普比率
+          example: 1.56
+        win_rate:
+          type: number
+          format: double
+          description: 胜率（百分比）
+          example: 52.3
 
     PortfolioRequest:
       type: object

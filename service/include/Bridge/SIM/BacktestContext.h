@@ -159,7 +159,7 @@ public:
     /// @return 是否检测到变点
     bool updateCUSUM(double daily_return) noexcept {
         auto result = _cusum_detector.update(daily_return);
-        return result.change_point;
+        return result._change_point;
     }
 
     const CUSUMDetector& getCUSUMDetector() const noexcept { return _cusum_detector; }

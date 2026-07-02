@@ -30,7 +30,12 @@ export interface StrategyRiskItem {
   var_95: number            // 95% VaR
   maxDrawdown: number       // 最大回撤
   sharpeRatio: number       // 夏普比率
+  informationRatio: number  // 信息比率 IR
+  cusumSignal: number       // CUSUM 信号值：-1/0/1
+  cusumTriggered: boolean   // CUSUM 是否刚触发变点
   winRate: number           // 胜率
+  healthLevel: 'excellent' | 'good' | 'warning' | 'critical'  // 健康度等级
+  healthSuggestion: string  // 操作建议
   updatedAt: string
 }
 

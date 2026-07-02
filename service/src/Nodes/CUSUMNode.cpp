@@ -21,11 +21,11 @@ bool CUSUMNode::Init(const nlohmann::json& config) {
         else if (mode_str == "asset") _mode = CUSUMMode::Asset;
         else if (mode_str == "consensus") _mode = CUSUMMode::Consensus;
 
-        if (p.contains("lambda")) _config.lambda = (double)p["lambda"]["value"];
-        if (p.contains("threshold_multiplier")) _config.threshold_multiplier = (double)p["threshold_multiplier"]["value"];
-        if (p.contains("min_obs")) _config.min_obs = (size_t)(int)p["min_obs"]["value"];
-        if (p.contains("mu")) _config.mu = (double)p["mu"]["value"];
-        if (p.contains("sigma")) _config.sigma = (double)p["sigma"]["value"];
+        if (p.contains("lambda")) _config._lambda = (double)p["lambda"]["value"];
+        if (p.contains("threshold_multiplier")) _config._threshold_multiplier = (double)p["threshold_multiplier"]["value"];
+        if (p.contains("min_obs")) _config._min_obs = (size_t)(int)p["min_obs"]["value"];
+        if (p.contains("mu")) _config._mu = (double)p["mu"]["value"];
+        if (p.contains("sigma")) _config._sigma = (double)p["sigma"]["value"];
         if (p.contains("cooldown")) _cooldownDays = (int)p["cooldown"]["value"];
         if (p.contains("consensus_threshold")) _consensusThreshold = (int)p["consensus_threshold"]["value"];
     }
@@ -86,7 +86,7 @@ bool CUSUMNode::Init(const nlohmann::json& config) {
     }
 
     INFO("[CUSUM] Initialized: label={}, mode={}, lambda={}, threshold={}, min_obs={}",
-         _label, mode_name, _config.lambda, _config.threshold_multiplier, _config.min_obs);
+         _label, mode_name, _config._lambda, _config._threshold_multiplier, _config._min_obs);
     return true;
 }
 
@@ -129,9 +129,9 @@ NodeProcessResult CUSUMNode::ProcessSingleAsset(const String& strategy, DataCont
     // 更新 CUSUM
     auto result = _singleDetector->update(ret);
 
-    bool triggered = result.change_point;
-    bool s_pos_triggered = triggered && (result.cusum_positive > 0);
-    bool s_neg_triggered = triggered && (result.cusum_negative > 0);
+    bool triggered = result._change_point;
+    bool s_pos_triggered = triggered && (result._cusum_positive > 0);
+    bool s_neg_triggered = triggered && (result._cusum_negative > 0);
 
     double signal = InterpretSignal(triggered, s_pos_triggered, s_neg_triggered);
 
@@ -143,9 +143,9 @@ NodeProcessResult CUSUMNode::ProcessSingleAsset(const String& strategy, DataCont
     // 输出到 DataContext
     context.set<double>(_signalLabel + ".signal", signal);
     context.set<bool>(_signalLabel + ".triggered", triggered);
-    context.set<double>(_signalLabel + ".s_pos", result.cusum_positive);
-    context.set<double>(_signalLabel + ".s_neg", result.cusum_negative);
-    context.set<double>(_signalLabel + ".drift", result.current_drift);
+    context.set<double>(_signalLabel + ".s_pos", result._cusum_positive);
+    context.set<double>(_signalLabel + ".s_neg", result._cusum_negative);
+    context.set<double>(_signalLabel + ".drift", result._current_drift);
     context.set<uint64_t>(_signalLabel + ".change_points", (uint64_t)_singleDetector->get_total_change_points());
 
     return NodeProcessResult::Success;
@@ -178,9 +178,9 @@ NodeProcessResult CUSUMNode::ProcessMultiAsset(const String& strategy, DataConte
 
         auto result = it->second->update(ret);
 
-        bool triggered = result.change_point;
-        bool s_pos_triggered = triggered && (result.cusum_positive > 0);
-        bool s_neg_triggered = triggered && (result.cusum_negative > 0);
+        bool triggered = result._change_point;
+        bool s_pos_triggered = triggered && (result._cusum_positive > 0);
+        bool s_neg_triggered = triggered && (result._cusum_negative > 0);
         double signal = InterpretSignal(triggered, s_pos_triggered, s_neg_triggered);
 
         _assetLastSignals[sym] = signal;
@@ -189,8 +189,8 @@ NodeProcessResult CUSUMNode::ProcessMultiAsset(const String& strategy, DataConte
         asset_json["symbol"] = sym;
         asset_json["signal"] = signal;
         asset_json["triggered"] = triggered;
-        asset_json["s_pos"] = result.cusum_positive;
-        asset_json["s_neg"] = result.cusum_negative;
+        asset_json["s_pos"] = result._cusum_positive;
+        asset_json["s_neg"] = result._cusum_negative;
         asset_json["change_points"] = it->second->get_total_change_points();
         asset_results.push_back(asset_json);
 

@@ -33,7 +33,10 @@ TickFlowBridge::~TickFlowBridge() {
     if (_workerThread && _workerThread->joinable()) {
         _workerThread->join();
     }
-    delete _workerThread;
+    if (_workerThread) {
+        delete _workerThread;
+    }
+    _workerThread = nullptr;
 }
 
 const char* TickFlowBridge::Name() {
@@ -329,8 +332,8 @@ void TickFlowBridge::workerLoop() {
 
         // 检查工作时间
         if (!IsWorking(curr)) {
-            // 非工作时间，暂停 30s 再检查
-            std::this_thread::sleep_for(std::chrono::seconds(30));
+            // 非工作时间，暂停 5s 再检查
+            std::this_thread::sleep_for(std::chrono::seconds(5));
             continue;
         }
 

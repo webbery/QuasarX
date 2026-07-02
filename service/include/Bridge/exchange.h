@@ -251,8 +251,7 @@ class fmt::formatter<Order>
 {
 public:
     constexpr auto parse(auto & context) {
-        auto it = context.begin(), end = context.end();
-        return it;
+        return context.begin();
     }
 
     auto format(const Order& order, auto &context) const {

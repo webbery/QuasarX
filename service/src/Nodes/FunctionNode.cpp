@@ -153,7 +153,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         // 建立映射: "sh600519.close" -> "sh600519.ReturnRate"
         String output_key = symbol + "." + _label;
         _param_to_output_map[name] = output_key;
-        INFO("[FunctionNode:{}] Init: mapped '{}' -> '{}'", 
+        DEBUG_INFO("[FunctionNode:{}] Init: mapped '{}' -> '{}'", 
              _id, name, output_key);
     }
 

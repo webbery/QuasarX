@@ -118,27 +118,27 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         // 4. 均值漂移 CUSUM
         if (std::find(modes.begin(), modes.end(), "mean") != modes.end()) {
             CUSUMDetector mean_detector({
-                .mu = mean_ret,
-                .sigma = sigma_ret,
-                .lambda = lambda,
-                .threshold_multiplier = threshold_multiplier,
-                .min_obs = min_obs,
+                ._mu = mean_ret,
+                ._sigma = sigma_ret,
+                ._lambda = lambda,
+                ._threshold_multiplier = threshold_multiplier,
+                ._min_obs = min_obs,
             });
             auto cusum_result = mean_detector.detect_batch(portfolio_returns);
 
             nlohmann::json mean_json;
-            mean_json["s_pos"] = Vector<double>(cusum_result.steps.size());
-            mean_json["s_neg"] = Vector<double>(cusum_result.steps.size());
+            mean_json["s_pos"] = Vector<double>(cusum_result._steps.size());
+            mean_json["s_neg"] = Vector<double>(cusum_result._steps.size());
             Vector<size_t> change_points;
-            for (size_t i = 0; i < cusum_result.steps.size(); ++i) {
-                mean_json["s_pos"][i] = cusum_result.steps[i].cusum_positive;
-                mean_json["s_neg"][i] = cusum_result.steps[i].cusum_negative;
-                if (cusum_result.steps[i].change_point) {
+            for (size_t i = 0; i < cusum_result._steps.size(); ++i) {
+                mean_json["s_pos"][i] = cusum_result._steps[i]._cusum_positive;
+                mean_json["s_neg"][i] = cusum_result._steps[i]._cusum_negative;
+                if (cusum_result._steps[i]._change_point) {
                     change_points.push_back(i);
                 }
             }
             mean_json["change_points"] = change_points;
-            mean_json["threshold"] = mean_detector.get_config().threshold_multiplier * mean_detector.get_config().sigma * std::sqrt((double)cusum_result.steps.size());
+            mean_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
             result["mean_cusum"] = mean_json;
         }
 
@@ -151,27 +151,27 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             double sigma_sq = std::sqrt(var_sq);
 
             CUSUMDetector var_detector({
-                .mu = mean_sq,
-                .sigma = sigma_sq,
-                .lambda = lambda,
-                .threshold_multiplier = threshold_multiplier,
-                .min_obs = min_obs,
+                ._mu = mean_sq,
+                ._sigma = sigma_sq,
+                ._lambda = lambda,
+                ._threshold_multiplier = threshold_multiplier,
+                ._min_obs = min_obs,
             });
             auto cusum_result = var_detector.detect_batch(squared_returns);
 
             nlohmann::json var_json;
-            var_json["s_pos"] = Vector<double>(cusum_result.steps.size());
-            var_json["s_neg"] = Vector<double>(cusum_result.steps.size());
+            var_json["s_pos"] = Vector<double>(cusum_result._steps.size());
+            var_json["s_neg"] = Vector<double>(cusum_result._steps.size());
             Vector<size_t> change_points;
-            for (size_t i = 0; i < cusum_result.steps.size(); ++i) {
-                var_json["s_pos"][i] = cusum_result.steps[i].cusum_positive;
-                var_json["s_neg"][i] = cusum_result.steps[i].cusum_negative;
-                if (cusum_result.steps[i].change_point) {
+            for (size_t i = 0; i < cusum_result._steps.size(); ++i) {
+                var_json["s_pos"][i] = cusum_result._steps[i]._cusum_positive;
+                var_json["s_neg"][i] = cusum_result._steps[i]._cusum_negative;
+                if (cusum_result._steps[i]._change_point) {
                     change_points.push_back(i);
                 }
             }
             var_json["change_points"] = change_points;
-            var_json["threshold"] = var_detector.get_config().threshold_multiplier * var_detector.get_config().sigma * std::sqrt((double)cusum_result.steps.size());
+            var_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
             result["variance_cusum"] = var_json;
         }
 
