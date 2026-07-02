@@ -47,7 +47,7 @@ FormulaParser::FormulaParser(Server* server): _server(server), _default(TradeAct
 
 bool FormulaParser::parse(const String& code) {
     _codes = cleanInputString(code);
-    INFO("Parsing: '{}'", _codes);
+    DEBUG_INFO("Parsing: '{}'", _codes);
     if (_parser.parse(_codes, _ast)) {
         // printAST(_ast);
         _ast = _parser.optimize_ast(_ast);

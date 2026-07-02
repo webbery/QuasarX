@@ -17,6 +17,7 @@ import './configs/utility'
 import './configs/emd'
 import './configs/hmm'
 import './configs/resample'
+import './configs/cusum'
 
 export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
 export { CATEGORY_ICONS } from './types'

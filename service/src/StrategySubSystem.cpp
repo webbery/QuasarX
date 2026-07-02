@@ -82,16 +82,28 @@ void StrategySubSystem::Init() {
     }
     if (_handle->GetRunningMode() != RuningType::Backtest) {
         // 非回测模式加载当前路径下的策略
+        int loadedCount = 0;
+        int failedCount = 0;
         for (const auto& entry : std::filesystem::directory_iterator(SCRIPTS_DIR)) {
             if (!entry.is_regular_file())
                 continue;
 
             String strategy_path = entry.path().string();
-
             String strategyName = entry.path().filename().string();
-            InstallStrategy(strategyName);
-            Run(strategyName);
+
+            INFO("[StrategySubSystem] Loading strategy: {} from {}", strategyName, strategy_path);
+
+            if (InstallStrategy(strategyName)) {
+                INFO("[StrategySubSystem] Strategy '{}' installed successfully", strategyName);
+                Run(strategyName);
+                INFO("[StrategySubSystem] Strategy '{}' started", strategyName);
+                ++loadedCount;
+            } else {
+                WARN("[StrategySubSystem] Strategy '{}' failed to install", strategyName);
+                ++failedCount;
+            }
         }
+        INFO("[StrategySubSystem] Strategy loading complete: {} succeeded, {} failed", loadedCount, failedCount);
     }
 }
 
@@ -233,12 +245,16 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
         return;
     }
 
+    INFO("[StrategySubSystem] Initializing strategy '{}' (version {})", strategyName, version);
+
     // 解析策略图，同时收集滑点配置和节点配置
     SlippageConfigInfo slippageConfig;
     std::map<uint32_t, nlohmann::json> nodeConfigMap;
     auto nodes = parse_strategy_script_v2(script, _handle, &slippageConfig, &nodeConfigMap);
+    INFO("[StrategySubSystem] Strategy '{}' parsed: {} nodes created", strategyName, nodes.size());
+
     auto sorted_nodes = topo_sort(nodes);
-    
+
     // 按拓扑顺序初始化节点（确保数据源节点先于下游节点初始化）
     for (auto* node: sorted_nodes) {
         auto itr = nodeConfigMap.find(node->id());
@@ -246,24 +262,25 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
             node->Init(itr->second);
         }
     }
-    
+
     InitStrategy(strategyName, sorted_nodes);
 
     // 配置滑点模型（从策略解析层提取的配置）
     if (!slippageConfig.sources.empty() && slippageConfig.modelConfig.is_object()) {
         _handle->GetExchangeManager()->ConfigureSlippageModels(slippageConfig.sources, slippageConfig.modelConfig);
+        INFO("[StrategySubSystem] Strategy '{}' slippage models configured", strategyName);
     }
 
     // 解析策略级影子模式标志
     if (script.contains("shadow") && script["shadow"] == true) {
         _agentSystem->SetShadowMode(strategyName);
+        INFO("[StrategySubSystem] Strategy '{}' shadow mode enabled", strategyName);
     }
 
     // 推断并保存预热期 epoch 数
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;
 
-    //if (warmup > 0) {
-        //INFO("[StrategySubSystem] Inferred warmup for '{}': {} epochs", strategyName, warmup);
-    //}
+    INFO("[StrategySubSystem] Strategy '{}' initialized: warmup={} epochs, nodes={}",
+         strategyName, warmup, sorted_nodes.size());
 }

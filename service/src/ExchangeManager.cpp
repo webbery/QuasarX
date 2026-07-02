@@ -121,7 +121,6 @@ void ExchangeManager::quoteDispatchLoop() {
 // ========== Exchange 生命周期管理 ==========
 
 bool ExchangeManager::Use(const String& name) {
-    INFO("[ExchangeManager::Use] Trying to use exchange: {}", name);
     auto& config = _server->GetConfig();
     auto exchangeCfg = config.GetExchangeByName(name);
     if (exchangeCfg.empty() || !exchangeCfg.contains("api")) {
@@ -144,9 +143,7 @@ bool ExchangeManager::Use(const String& name) {
         return false;
     }
 
-    INFO("[ExchangeManager::Use] Registering exchange: {} as type {}", name, (int)type);
     bool result = RegisterExchange(name, type);
-    INFO("[ExchangeManager::Use] RegisterExchange result: {} for exchange: {}", result, name);
     return result;
 }
 

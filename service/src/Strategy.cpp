@@ -30,6 +30,7 @@
 #include "Nodes/HMMNode.h"
 #include "Nodes/ResampleNode.h"
 #include "Nodes/FormulaNode.h"
+#include "Nodes/CUSUMNode.h"
 
 namespace {
     Map<String, StrategyNodeType> node_type_map{
@@ -48,6 +49,7 @@ namespace {
         {"hmm", StrategyNodeType::HMM},
         {"resample", StrategyNodeType::Resample},
         {"formula", StrategyNodeType::Formula},
+        {"cusum", StrategyNodeType::CUSUM},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -162,6 +164,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Formula:
             nodeInstance = generate_node<FormulaNode>(node["id"], server);
+            break;
+        case StrategyNodeType::CUSUM:
+            nodeInstance = generate_node<CUSUMNode>(node["id"], server);
             break;
         default:
             WARN("Unknown node type: {}", node_type);

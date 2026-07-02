@@ -125,17 +125,17 @@ void FunctionNode::UpdateLabel(const String& label) {
 
 bool FunctionNode::Init(const nlohmann::json& config) {
     // 从输入节点获取处理的属性
-    INFO("[FunctionNode:{}] Init: _ins size = {}", _id, _ins.size());
+    DEBUG_INFO("[FunctionNode:{}] Init: _ins size = {}", _id, _ins.size());
     for (auto& item: _ins) {
         auto input_names = item.second->out_elements();
-        INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements", 
+        DEBUG_INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements", 
              _id, item.first, input_names.size());
         _params.merge(input_names);
     }
 
     // 构建输入到输出的映射，并收集所有 symbol
     _label = (String)config["label"];
-    INFO("[FunctionNode:{}] Init: label='{}', _params size = {}", 
+    DEBUG_INFO("[FunctionNode:{}] Init: label='{}', _params size = {}", 
          _id, _label, _params.size());
     
     for (auto& item: _params) {
@@ -169,7 +169,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         // 函数输出是时间序列
         _outputs[output_key] = ArgType::Double_TimeSeries;
     }
-    INFO("[FunctionNode:{}] Init: _param_to_output_map has {} entries, _outputs has {} entries", 
+    DEBUG_INFO("[FunctionNode:{}] Init: _param_to_output_map has {} entries, _outputs has {} entries", 
          _id, _param_to_output_map.size(), _outputs.size());
     return true;
 }
@@ -195,14 +195,14 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         output_keys.push_back(output_key);
     }
 
-    INFO("[FunctionNode:{}] Processing, label='{}', output_keys={}", 
+    DEBUG_INFO("[FunctionNode:{}] Processing, label='{}', output_keys={}", 
          _id, _label, boost::algorithm::join(output_keys, ", "));
 
     // 3. 调用函数计算
     auto result = (*_callable)(arguments);
     
     // 4. 根据结果类型处理，按顺序写入输出
-    auto ret = std::visit([this, &output_keys, &context, &strategy](const auto& val) -> NodeProcessResult {
+    auto ret = std::visit([this, &output_keys, &context](const auto& val) -> NodeProcessResult {
         using T = std::decay_t<decltype(val)>;
 
         if constexpr (std::is_same_v<T, double>) {
@@ -210,12 +210,12 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             for (auto& key : output_keys) {
                 if (context.exist(key)) {
                     context.add(key, val);
-                    INFO("[FunctionNode:{}] Appended value {} to existing key '{}'", _id, val, key);
+                    DEBUG_INFO("[FunctionNode:{}] Appended value {} to existing key '{}'", _id, val, key);
                 } else {
                     Vector<double> timeseries;
                     timeseries.push_back(val);
                     context.set(key, timeseries);
-                    INFO("[FunctionNode:{}] Created new key '{}' with value {}", _id, key, val);
+                    DEBUG_INFO("[FunctionNode:{}] Created new key '{}' with value {}", _id, key, val);
                 }
             }
         } else if constexpr (std::is_same_v<T, Vector<double>>) {
@@ -227,12 +227,12 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             for (size_t i = 0; i < output_keys.size(); ++i) {
                 if (context.exist(output_keys[i])) {
                     context.add(output_keys[i], val[i]);
-                    INFO("[FunctionNode:{}] Appended value {} to existing key '{}'", _id, val[i], output_keys[i]);
+                    DEBUG_INFO("[FunctionNode:{}] Appended value {} to existing key '{}'", _id, val[i], output_keys[i]);
                 } else {
                     Vector<double> timeseries;
                     timeseries.push_back(val[i]);
                     context.set(output_keys[i], timeseries);
-                    INFO("[FunctionNode:{}] Created new key '{}' with vector[{}] = {}", _id, output_keys[i], i, val[i]);
+                    DEBUG_INFO("[FunctionNode:{}] Created new key '{}' with vector[{}] = {}", _id, output_keys[i], i, val[i]);
                 }
             }
         } else {

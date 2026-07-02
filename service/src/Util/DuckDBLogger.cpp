@@ -5,14 +5,6 @@
 #include <algorithm>
 #include <filesystem>
 
-namespace {
-    // 获取当前线程ID的字符串表示
-    std::string get_thread_id() {
-        std::hash<std::thread::id> hasher;
-        return std::to_string(hasher(std::this_thread::get_id()));
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // 辅助：创建 duckdb_value（新版不透明指针 API）
 // ──────────────────────────────────────────────────────────────────────
@@ -590,12 +582,18 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
     )";
 
     if (duckdb_prepare(conn_, insert_sql, &stmt) != DuckDBSuccess) {
+        const char* err = duckdb_prepare_error(stmt);
+        SPDLOG_ERROR("[DuckDBLogger] Tick batch prepare failed: {}", err ? err : "unknown");
+        duckdb_destroy_prepare(&stmt);
         exec("ROLLBACK");
         return;
     }
 
     bool failed = false;
-    for (const auto& entry : entries) {
+    String last_error;
+    size_t failed_idx = 0;
+    for (size_t idx = 0; idx < entries.size(); ++idx) {
+        const auto& entry = entries[idx];
         // timestamp: epoch seconds → DuckDB TIMESTAMP
         std::string ts_str = std::to_string(entry.timestamp_epoch);
 
@@ -630,6 +628,8 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
         for (int i = 0; i < 18; ++i) {
             if (!bind_value_at(stmt, (idx_t)(i + 1), vals[i])) {
                 failed = true;
+                failed_idx = idx;
+                last_error = "bind_value_at failed at column " + std::to_string(i + 1);
             }
         }
         for (auto& v : vals) duckdb_destroy_value(&v);
@@ -639,6 +639,9 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
         duckdb_result result;
         if (duckdb_execute_prepared(stmt, &result) != DuckDBSuccess) {
             failed = true;
+            failed_idx = idx;
+            const char* err = duckdb_result_error(&result);
+            last_error = err ? err : "duckdb_execute_prepared failed";
             duckdb_destroy_result(&result);
             break;
         }
@@ -649,7 +652,9 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
 
     if (failed) {
         exec("ROLLBACK");
-        SPDLOG_ERROR("[DuckDBLogger] Tick batch insert failed, rolled back");
+        const auto& e = entries[failed_idx];
+        SPDLOG_ERROR("[DuckDBLogger] Tick batch insert failed at entry [{}/{}]: id={}, symbol={}, error={}",
+                     failed_idx, entries.size(), e.id, e.symbol, last_error);
     } else {
         exec("COMMIT");
     }

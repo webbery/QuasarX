@@ -31,22 +31,6 @@ static double calcStdDev(const Vector<double>& data, double mean_val = -1) {
     return std::sqrt(ss / (data.size() - 1));
 }
 
-/// 计算相关系数
-static double calcCorrelation(const Vector<double>& x, const Vector<double>& y) {
-    size_t n = x.size();
-    if (n < 2 || y.size() != n) return 0.0;
-    double mx = calcMean(x), my = calcMean(y);
-    double sxy = 0, sx2 = 0, sy2 = 0;
-    for (size_t i = 0; i < n; ++i) {
-        double dx = x[i] - mx, dy = y[i] - my;
-        sxy += dx * dy;
-        sx2 += dx * dx;
-        sy2 += dy * dy;
-    }
-    double denom = std::sqrt(sx2 * sy2);
-    return (denom > 1e-15) ? (sxy / denom) : 0.0;
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // OLS 回归
 // ──────────────────────────────────────────────────────────────────────

@@ -73,6 +73,7 @@ enum class StrategyNodeType {
     HMM,        // 隐马尔可夫节点（因果推理：市场状态识别）
     Resample,   // 数据重采样节点（高频→低频聚合）
     Formula,    // 公式计算节点（自定义表达式计算）
+    CUSUM,      // CUSUM 累积和变点检测节点
 };
 
 struct AgentStrategyInfo;

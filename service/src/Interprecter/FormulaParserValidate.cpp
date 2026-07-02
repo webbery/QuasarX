@@ -31,7 +31,6 @@ FormulaParser::ExprType FormulaParser::inferExpressionType(
         if (it != availableVars.end()) {
             switch (it->second) {
                 case ArgType::Double_Scalar:
-                case ArgType::Double_Deprecated:
                     return ExprType::DOUBLE_SCALAR;
                 case ArgType::Double_TimeSeries:
                     return ExprType::DOUBLE_TIMESERIES;
@@ -114,7 +113,6 @@ bool FormulaParser::validateIdentifier(const peg::Ast& ast,
 
     switch (it->second) {
         case ArgType::Double_Scalar:
-        case ArgType::Double_Deprecated:
             outType = ExprType::DOUBLE_SCALAR;
             break;
         case ArgType::Double_TimeSeries:

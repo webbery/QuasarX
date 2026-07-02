@@ -398,8 +398,6 @@ void Server::InitDefault() {
         INFO("[InitDefault] Calling _exchangeMgr->Use({})", name);
         if (!_exchangeMgr->Use(name)) {
             WARN("[InitDefault] Failed to register exchange: {}", name);
-            // 关键交易所注册失败时，不应继续执行（策略初始化会因找不到标的而崩溃）
-            printf("[ERROR] Failed to register exchange: %s\n", name.c_str());
             return;
         }
         INFO("[InitDefault] Successfully registered exchange: {}", name);

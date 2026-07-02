@@ -103,9 +103,7 @@ std::string GetIP() {
     return ip4.front();
   return "";
 #else
-  struct ifaddrs *ifaddr, *ifa;
-    int family, s;
-    
+    struct ifaddrs *ifaddr, *ifa;
     // 获取网络接口地址
     if (getifaddrs(&ifaddr) == -1) {
         return "";

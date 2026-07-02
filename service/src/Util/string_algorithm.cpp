@@ -287,7 +287,7 @@ std::wstring to_wstring(const char* c)
     wchar_t* wc = new wchar_t[cSize];
     mbstowcs(wc, c, cSize);
     std::wstring ws(wc, cSize);
-    delete wc;
+    delete[] wc;
     return ws;
 }
 
