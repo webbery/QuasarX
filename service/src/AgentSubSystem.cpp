@@ -39,17 +39,7 @@ FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
 }
 
 FlowSubsystem::~FlowSubsystem() {
-    for (auto& item : _flows) {
-        if (item.second._worker) {
-            item.second._running = false;
-            if (item.second._worker->joinable()) item.second._worker->join();
-            delete item.second._worker;
-        }
-        for (auto node: item.second._graph) {
-            delete node;
-        }
-    }
-    _flows.clear();
+    Release();
 }
 
 bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_flow) {
@@ -98,6 +88,20 @@ void FlowSubsystem::Stop(const String& strategy) {
         Set<String> requiredSources = GetRequiredSources(strategy);
         exchangeMgr->StopRequiredExchanges(requiredSources);
     }
+}
+
+void FlowSubsystem::Release() {
+    for (auto& item : _flows) {
+        if (item.second._worker) {
+            item.second._running = false;
+            if (item.second._worker->joinable()) item.second._worker->join();
+            delete item.second._worker;
+        }
+        for (auto node: item.second._graph) {
+            delete node;
+        }
+    }
+    _flows.clear();
 }
 
 run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {

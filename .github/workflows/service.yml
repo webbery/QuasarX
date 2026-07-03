@@ -348,6 +348,7 @@ jobs:
       - name: Create TLS certificates
         run: |
           echo "${{ secrets.SERVER_CRT }}" | base64 -d > service/build/server.crt
+          echo "${{ secrets.SERVER_KEY }}" | base64 -d > service/build/server.key
 
       # === 阶段 1: 服务生命周期测试（启动 + 稳定 + 优雅退出）===
 

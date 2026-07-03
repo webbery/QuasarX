@@ -21,6 +21,8 @@ public:
     FlowSubsystem(Server* handle);
     ~FlowSubsystem();
 
+    void Release();
+    
     bool LoadFlow(const String& strategy, const List<QNode*>& topo_flow);
     void ClearFlow(const String& strategy);
 

@@ -326,7 +326,7 @@ void TickFlowBridge::workerLoop() {
 
     auto nextWakeup = Clock::now();
 
-    while (!_stop || !Server::IsExit()) {
+    while (!_stop && !Server::IsExit()) {
         // 检查当前时间
         time_t curr = _server ? Now() : std::time(nullptr);
 
@@ -363,7 +363,7 @@ void TickFlowBridge::workerLoop() {
             if (wait > 0) {
                 // 等待到下一个请求窗口，但每 1s 检查一次 _stop
                 auto deadline = Clock::now() + std::chrono::milliseconds(wait);
-                while (Clock::now() < deadline && (!_stop ||!Server::IsExit())) {
+                while (Clock::now() < deadline && !_stop && !Server::IsExit()) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(std::min(1000L,
                         (long)std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count())));
                 }

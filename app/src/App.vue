@@ -181,6 +181,9 @@
       <div v-else-if="is_portfolio">
         <PortfolioPanel :selectedSecurity="selectedSecurity" :highlight="highlightTradePanel"></PortfolioPanel>
       </div>
+      <div v-else-if="is_visual_analysis">
+        <AnalysisRightPanel />
+      </div>
     </aside>
 
     <!-- 页脚 -->
@@ -270,6 +273,7 @@ import StrategyRiskDetail from "./components/risk/StrategyRiskDetail.vue";
 import sseService from "./ts/SSEService";
 import Store from 'electron-store';
 // 报表配置面板
+import AnalysisRightPanel from './components/AnalysisRightPanel.vue';
 import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
 import { CHART_REGISTRY } from './components/report/config/chartRegistry';
 // 知识库

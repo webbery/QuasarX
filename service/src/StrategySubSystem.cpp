@@ -121,6 +121,7 @@ void StrategySubSystem::Release() {
         }
     }
     _strategies.clear();
+    _agentSystem->Release();
 }
 
 void StrategySubSystem::ReleaseStrategy(const String& strategy) {
@@ -208,6 +209,7 @@ bool StrategySubSystem::UninstallStrategy(const String& strategy) {
     if (HasStrategy(strategy)) {
         DeleteStrategy(strategy);
     }
+    _agentSystem->Stop(strategy);
     return true;
 }
 

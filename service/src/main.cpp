@@ -289,7 +289,8 @@ void print_stacktrace(int signo) {
 
     try {
         // 刷新 spdlog 日志到磁盘
-        spdlog::default_logger_raw()->flush();
+        auto* logger = spdlog::default_logger_raw();
+        if (logger) logger->flush();
         spdlog::flush_every(std::chrono::seconds(0));  // 立即刷新所有 logger
 
         const char log_flushed[] = "[CRASH HANDLER] Log buffer flushed.\n";

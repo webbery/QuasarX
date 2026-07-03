@@ -594,8 +594,9 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
     size_t failed_idx = 0;
     for (size_t idx = 0; idx < entries.size(); ++idx) {
         const auto& entry = entries[idx];
-        // timestamp: epoch seconds → DuckDB TIMESTAMP
-        std::string ts_str = std::to_string(entry.timestamp_epoch);
+        // timestamp: epoch seconds → DuckDB TIMESTAMP (requires microseconds)
+        int64_t timestamp_us = static_cast<int64_t>(entry.timestamp_epoch) * 1000000LL;
+        std::string ts_str = std::to_string(timestamp_us);
 
         duckdb_value v_id   = make_int64(entry.id);
         duckdb_value v_ts   = make_varchar(ts_str);

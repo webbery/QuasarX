@@ -251,6 +251,7 @@ void Server::Run() {
     printf("Bye\n");
     _exchangeMgr->StopQuoteDispatcher();
     _exchangeMgr->Shutdown();
+    _strategySystem->Release();
 }
 
 void Server::Regist() {

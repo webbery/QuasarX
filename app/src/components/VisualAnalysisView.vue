@@ -894,15 +894,23 @@ const downloadCSV = () => {
   message.success(`已下载 ${csvRows.length - 1} 行数据`)
 }
 
+// 从右侧面板切换 Tab
+const onSwitchAnalysisTab = (e) => {
+  const tab = e.detail?.tab
+  if (tab) activeTab.value = tab
+}
+
 // 生命周期
 onMounted(() => {
   initCharts()
   window.addEventListener('resize', handleResize)
   // 初始化数据
   refreshData()
-  
+
   // 监听策略数据加载事件
   window.addEventListener('load-strategy-data', onLoadStrategyData)
+  // 监听右侧面板 Tab 切换
+  window.addEventListener('switch-analysis-tab', onSwitchAnalysisTab)
 })
 
 onUnmounted(() => {
@@ -912,6 +920,7 @@ onUnmounted(() => {
   clusterChartInstance && clusterChartInstance.dispose()
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('load-strategy-data', onLoadStrategyData)
+  window.removeEventListener('switch-analysis-tab', onSwitchAnalysisTab)
 })
 </script>
 
