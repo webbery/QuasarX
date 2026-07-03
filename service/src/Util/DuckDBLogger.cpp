@@ -594,9 +594,8 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
     size_t failed_idx = 0;
     for (size_t idx = 0; idx < entries.size(); ++idx) {
         const auto& entry = entries[idx];
-        // timestamp: epoch seconds → DuckDB TIMESTAMP (requires microseconds)
-        int64_t timestamp_us = static_cast<int64_t>(entry.timestamp_epoch) * 1000000LL;
-        std::string ts_str = std::to_string(timestamp_us);
+        // timestamp: epoch seconds → DuckDB TIMESTAMP via datetime string
+        std::string ts_str = ToString(static_cast<time_t>(entry.timestamp_epoch));
 
         duckdb_value v_id   = make_int64(entry.id);
         duckdb_value v_ts   = make_varchar(ts_str);
@@ -1215,11 +1214,11 @@ std::vector<TickDataEntry> DuckDBLogger::query_ticks(
     }
     if (start_ts > 0) {
         sql += " AND timestamp >= ?";
-        params.push_back(make_varchar(std::to_string(start_ts)));
+        params.push_back(make_varchar(ToString(static_cast<time_t>(start_ts))));
     }
     if (end_ts < INT64_MAX) {
         sql += " AND timestamp <= ?";
-        params.push_back(make_varchar(std::to_string(end_ts)));
+        params.push_back(make_varchar(ToString(static_cast<time_t>(end_ts))));
     }
 
     sql += " ORDER BY timestamp ASC LIMIT ?";
@@ -1248,9 +1247,9 @@ std::vector<TickDataEntry> DuckDBLogger::query_ticks(
 
         entry.id = duckdb_value_int64(&result, 0, i);
 
-        // timestamp: 解析字符串形式的 epoch seconds
+        // timestamp: 解析 datetime 字符串 ("2026-07-03 13:35:38") → epoch seconds
         std::string ts_str = read_str(1);
-        entry.timestamp_epoch = ts_str.empty() ? 0 : std::stoll(ts_str);
+        entry.timestamp_epoch = ts_str.empty() ? 0 : static_cast<int64_t>(FromStr(ts_str, "%Y-%m-%d %H:%M:%S"));
 
         entry.symbol     = read_str(2);
         entry.open       = duckdb_value_double(&result, 3, i);
@@ -1284,7 +1283,7 @@ int64_t DuckDBLogger::delete_tick_data_before(int64_t timestamp_epoch) {
     if (!initialized_) return -1;
 
     std::string sql = "DELETE FROM tick_data WHERE timestamp < ?";
-    duckdb_value v = make_varchar(std::to_string(timestamp_epoch));
+    duckdb_value v = make_varchar(ToString(static_cast<time_t>(timestamp_epoch)));
     bool success = exec_params(sql, {v});
     duckdb_destroy_value(&v);
 

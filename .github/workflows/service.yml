@@ -350,6 +350,27 @@ jobs:
           echo "${{ secrets.SERVER_CRT }}" | base64 -d > service/build/server.crt
           echo "${{ secrets.SERVER_KEY }}" | base64 -d > service/build/server.key
 
+      - name: Verify TLS certificates
+        run: |
+          cd service/build
+          echo "=== File sizes ==="
+          ls -la server.crt server.key
+          echo ""
+          echo "=== PEM header check ==="
+          echo "crt: $(head -1 server.crt)"
+          echo "key: $(head -1 server.key)"
+          echo ""
+          echo "=== OpenSSL validate ==="
+          openssl x509 -in server.crt -noout -subject -dates 2>&1 || echo "CRT INVALID"
+          openssl rsa -in server.key -check -noout 2>&1 || echo "KEY INVALID"
+          echo ""
+          echo "=== Cert-Key modulus match ==="
+          CERT_MOD=$(openssl x509 -in server.crt -noout -modulus 2>/dev/null | md5sum | awk '{print $1}')
+          KEY_MOD=$(openssl rsa -in server.key -noout -modulus 2>/dev/null | md5sum | awk '{print $1}')
+          echo "Cert: $CERT_MOD"
+          echo "Key:  $KEY_MOD"
+          if [ "$CERT_MOD" = "$KEY_MOD" ]; then echo "MATCH ✓"; else echo "MISMATCH ✗"; exit 1; fi
+
       # === 阶段 1: 服务生命周期测试（启动 + 稳定 + 优雅退出）===
 
       - name: Start service (lifecycle test)
