@@ -169,20 +169,6 @@ app.whenReady().then(async () => {
         }
     })();
 
-    ipcMain.handle('open-directory-dialog', async (event, options) => {
-        const result = await dialog.showOpenDialog({
-            title: options?.title || '选择目录',
-            defaultPath: options?.defaultPath || '',
-            buttonLabel: options?.buttonLabel || '选择',
-            properties: ['openDirectory']
-        });
-        if (result.canceled || result.filePaths.length == 0) {
-            return null;
-        } else {
-            return result.filePaths[0];
-        }
-    });
-
     ipcMain.handle('show-message-box', async (_, options) => {
         const result = await dialog.showMessageBox({
             type: options.type || 'question',
@@ -194,31 +180,6 @@ app.whenReady().then(async () => {
         });
         return { response: result.response };
     });
-
-    ipcMain.handle('merge-csv', async (_, url, token, dstZip, mergeSrc) => {
-        console.info('merge', url, dstZip, mergeSrc)
-        const agent = new https.Agent({
-            rejectUnauthorized: false // 忽略证书错误
-        });
-        const response = await axios.get(url, {
-            httpsAgent: agent,
-            responseType: 'arraybuffer',
-            headers: { 'Authorization': token}})
-        if (response.status === 200) {
-            const fs = require('fs');
-            const path = require('path');
-            const StreamZip = require('node-stream-zip');
-            // 解压zip文件
-            const zip = new StreamZip.async({ file: dstZip });
-            await zip.extract(null, 'zip_temp');
-            await zip.close();
-            // 递归复制 CBOR 文件到目标文件夹（覆盖已有文件）
-            await RecursiveCopyCbor(mergeSrc, 'zip_temp')
-            return true;
-        } else {
-            return false;
-        }
-    })
 
     // ============================================================
     // DuckDB Tick 数据同步
@@ -574,36 +535,6 @@ ipcMain.handle('parse-pdf', async (_, fileData: number[]) => {
     return { success: false, text: '', pages: 0, error: error.message };
   }
 });
-
-async function RecursiveCopyCbor(to_dir, from_dir) {
-    const path = require('path');
-    const fs = require('fs');
-    const { mkdirSync, cpSync } = require('fs');
-    console.info('copy cbor from', from_dir, 'to', to_dir)
-    const subdirs = fs.readdirSync(from_dir)
-    for (const item of subdirs) {
-        const srcPath = path.join(from_dir, item);
-        const dstPath = path.join(to_dir, item);
-        const st = fs.statSync(srcPath);
-        if (!fs.existsSync(dstPath)) {
-            if (st.isDirectory()) {
-                mkdirSync(dstPath, { recursive: true });
-                RecursiveCopyCbor(dstPath, srcPath);
-            }
-            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.cbor') {
-                cpSync(srcPath, dstPath);
-            }
-        } else {
-            if (st.isDirectory()) {
-                RecursiveCopyCbor(dstPath, srcPath);
-            }
-            else if (st.isFile() && path.extname(srcPath).toLowerCase() === '.cbor') {
-                // CBOR 直接覆盖
-                cpSync(srcPath, dstPath);
-            }
-        }
-    }
-}
 
 // ============================================================
 // Vector Database IPC Handlers (Main Process)

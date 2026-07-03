@@ -172,17 +172,21 @@ bool DuckDBLogger::init(const std::string& db_path) {
     // 初始化 tick_data 表
     init_tick_table();
 
-    // 初始化ID计数器
-    duckdb_result result;
-    if (query_params("SELECT COALESCE(MAX(id), 0) + 1 FROM strategy_logs", {}, result)) {
-        if (duckdb_row_count(&result) > 0) {
-            auto* data = (int64_t*)duckdb_column_data(&result, 0);
-            auto* null_mask = duckdb_nullmask_data(&result, 0);
-            if (data && !null_mask[0]) id_counter_ = data[0];
+    // 初始化ID计数器：取所有表的最大 id
+    id_counter_ = 1;
+    const char* tables[] = {"strategy_logs", "node_io_logs", "tick_data"};
+    for (const auto& table : tables) {
+        duckdb_result res;
+        std::string sql = std::string("SELECT COALESCE(MAX(id), 0) FROM ") + table;
+        duckdb_state st = duckdb_query(conn_, sql.c_str(), &res);
+        if (st == DuckDBSuccess && duckdb_row_count(&res) > 0) {
+            auto* data = (int64_t*)duckdb_column_data(&res, 0);
+            auto* null_mask = duckdb_nullmask_data(&res, 0);
+            if (data && !null_mask[0] && data[0] >= id_counter_) {
+                id_counter_ = data[0] + 1;
+            }
         }
-        duckdb_destroy_result(&result);
-    } else {
-        id_counter_ = 1;
+        duckdb_destroy_result(&res);
     }
 
     // 启动后台写入线程
@@ -597,7 +601,7 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
         // timestamp: epoch seconds → DuckDB TIMESTAMP via datetime string
         std::string ts_str = ToString(static_cast<time_t>(entry.timestamp_epoch));
 
-        duckdb_value v_id   = make_int64(entry.id);
+        duckdb_value v_id   = make_int64(id_counter_++);
         duckdb_value v_ts   = make_varchar(ts_str);
         duckdb_value v_sym  = make_varchar(entry.symbol);
         duckdb_value v_open = duckdb_create_double(entry.open);

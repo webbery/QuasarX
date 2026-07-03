@@ -24,17 +24,6 @@ BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 
 }
 
-// 发送 SSE 消息
-static void SendSSEProgress(nng_socket& sock, const String& strategy, uint16_t runId, double progress, const String& message) {
-    Map<String, String> data;
-    data["strategy"] = strategy;
-    data["run_id"] = std::to_string(runId);
-    data["progress"] = std::to_string(progress);
-    data["message"] = message;
-    auto msg = format_sse("backtest_progress", data);
-    nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
-}
-
 void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) {
     // 1. 解析请求参数
     nlohmann::json params;
@@ -175,7 +164,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital);
 
     // 发送进度 (带 run_id)
-    SendSSEProgress(sse_sock, strategyName, runId, 0.0, "开始执行回测");
+    SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.000000"}, {"message", "开始执行回测"}});
 
     // 启动回测工作线程
     auto* flowSubsystem = strategySys->GetFlowSubsystem();
@@ -198,7 +187,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             double progress = exchangeMgr->GetProgress(strategyName);
             if (progress >= 0 && progress - lastProgress >= 0.01) {
                 String msg = fmt::format("处理进度：{:.1f}%", progress * 100);
-                SendSSEProgress(sse_sock, strategyName, runId, 0.1 + progress * 0.5, msg);
+                SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", std::to_string(0.1 + progress * 0.5)}, {"message", msg}});
                 lastProgress = progress;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -235,10 +224,10 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 确保最终进度推送
     if (lastProgress < 1.0) {
-        SendSSEProgress(sse_sock, strategyName, runId, 0.7, "回测执行完成");
+        SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.700000"}, {"message", "回测执行完成"}});
     }
     exchangeMgr->StopRequiredExchanges(requiredSources);
-    SendSSEProgress(sse_sock, strategyName, runId, 0.8, "PersistTrades");
+    SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.800000"}, {"message", "PersistTrades"}});
 
     // 6. 收集结果
     nlohmann::json results;
@@ -341,7 +330,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         {"win_rate", win_rate_val},
         {"calmar_ratio", calmar_val}
     };
-    SendSSEProgress(sse_sock, strategyName, runId, 0.9, "add summary");
+    SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.900000"}, {"message", "add summary"}});
 
     // === 10. 收集每日收益率数据（从 FlowSubsystem 获取，此时 context 已被销毁）===
     {
@@ -434,7 +423,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             INFO("[Backtest] MonteCarlo paths collected: {} paths", totalPaths);
         }
     }
-    SendSSEProgress(sse_sock, strategyName, runId, 1.0, "回测全部完成");
+    SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "1.000000"}, {"message", "回测全部完成"}});
 
     strategySys->ReleaseStrategy(strategyName);
 

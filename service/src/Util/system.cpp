@@ -474,6 +474,10 @@ bool ReadQuote(nng_socket& sock, QuoteInfo& quote, const Set<symbol_t>& filter) 
   return true;
 }
 
+void SendSSE(const nng_socket& sock, const String& event, const Map<String, String>& data) {
+    auto msg = format_sse(event, data);
+    nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
+}
 
 #ifdef _WIN32
 void __cpuid(unsigned int output[4], unsigned int EAX, unsigned int ECX) {

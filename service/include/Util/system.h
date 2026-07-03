@@ -63,6 +63,9 @@ struct QuoteInfo;
 struct symbol_t;
 bool ReadQuote(nng_socket& sock, QuoteInfo& quote, const Set<symbol_t>& filter = {});
 
+// 通过 nng socket 发送 SSE 事件到 /v0/server/event
+void SendSSE(const nng_socket& sock, const String& event, const Map<String, String>& data);
+
 enum class SIMDSupport {
     None = 0,
     MMX = 1,

@@ -66,7 +66,7 @@
       :frequency-options="frequencyOptions"
       @update:quickRange="$emit('update:quickRange', $event)"
       @update:frequency="$emit('update:frequency', $event)"
-      @update-date-range="$emit('update-date-range', $event)"
+      @update-date-range="(val, type) => $emit('update-date-range', val, type)"
     />
 
     <!-- 开始分析按钮 -->

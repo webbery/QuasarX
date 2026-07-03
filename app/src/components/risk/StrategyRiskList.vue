@@ -31,7 +31,7 @@
 
           <!-- 类型 -->
           <td class="col-type">
-            <span class="type-tag">{{ typeLabel(row.type) }}</span>
+            <span class="type-tag">{{ typeLabel(row.strategyType) }}</span>
           </td>
 
           <!-- 风险等级 -->
@@ -58,17 +58,17 @@
 
           <!-- 最大回撤 -->
           <td class="col-drawdown">
-            <span class="negative">{{ (row.max_drawdown || 0).toFixed(1) }}%</span>
+            <span class="negative">{{ (row.maxDrawdown || 0).toFixed(1) }}%</span>
           </td>
 
           <!-- 夏普比率 -->
           <td class="col-sharpe">
-            <span>{{ (row.sharpe_ratio || 0).toFixed(2) }}</span>
+            <span>{{ (row.sharpeRatio || 0).toFixed(2) }}</span>
           </td>
 
           <!-- 信息比率 (IR) -->
           <td class="col-ir">
-            <span :class="irClass(row.information_ratio)">{{ (row.information_ratio || 0).toFixed(2) }}</span>
+            <span :class="irClass(row.informationRatio)">{{ (row.informationRatio || 0).toFixed(2) }}</span>
           </td>
 
           <!-- 健康度 -->
@@ -82,7 +82,7 @@
 
           <!-- 胜率 -->
           <td class="col-winrate">
-            <span>{{ (row.win_rate || 0).toFixed(1) }}%</span>
+            <span>{{ (row.winRate || 0).toFixed(1) }}%</span>
           </td>
 
           <!-- 操作 -->

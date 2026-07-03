@@ -33,6 +33,13 @@
             "totalStopLossPercent": 0.85
         }
     },
+    "python": {
+        "default": "python3",
+        "environments": {
+            "base": "python3",
+            "research": "/home/user/anaconda3/envs/research/bin/python"
+        }
+    },
     "server": {
         "addr": "localhost",
         "db_path": "data",

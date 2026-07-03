@@ -123,9 +123,9 @@ def download_etf_data(
 
     # 字段
     if frequency == "d":
-        fields = "date,open,high,low,close,volume,amount"
+        fields = "date,open,high,low,close,volume,amount,turn"
     else:
-        fields = "date,time,open,high,low,close,volume,amount"
+        fields = "date,time,open,high,low,close,volume,amount,turn"
 
     try:
         rs = bs.query_history_k_data_plus(
@@ -171,6 +171,7 @@ def normalize_columns(df: pd.DataFrame, freq: str) -> pd.DataFrame:
         'low': 'low',
         'close': 'close',
         'volume': 'volume',
+        'turn': 'turnover',
     }
     df = df.rename(columns=col_map)
 
@@ -189,7 +190,7 @@ def normalize_columns(df: pd.DataFrame, freq: str) -> pd.DataFrame:
 
     df['datetime'] = pd.to_datetime(df['datetime'])
 
-    required = ['datetime', 'open', 'high', 'low', 'close', 'volume']
+    required = ['datetime', 'open', 'high', 'low', 'close', 'volume', 'turnover']
     for col in required:
         if col not in df.columns:
             return pd.DataFrame()
@@ -197,7 +198,7 @@ def normalize_columns(df: pd.DataFrame, freq: str) -> pd.DataFrame:
     df = df[required].copy()
     df = df.sort_values('datetime').reset_index(drop=True)
 
-    for col in ['open', 'high', 'low', 'close', 'volume']:
+    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
     return df
@@ -226,14 +227,15 @@ def save_csv(df: pd.DataFrame, filepath: str, use_timestamp: bool = False):
             ts = int(pd.Timestamp(row['datetime']).timestamp())
             lines.append(
                 f"{ts},{row['open']:.4f},{row['close']:.4f},"
-                f"{row['high']:.4f},{row['low']:.4f},{int(row['volume'])}"
+                f"{row['high']:.4f},{row['low']:.4f},{int(row['volume'])},"
+                f"{row['turnover']:.4f}"
             )
-        csv_content = "datetime,open,close,high,low,volume\n" + "\n".join(lines)
+        csv_content = "datetime,open,close,high,low,volume,turnover\n" + "\n".join(lines)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(csv_content)
     else:
         # Python 格式: 标准 datetime 列
-        out_cols = ['datetime', 'open', 'close', 'high', 'low', 'volume']
+        out_cols = ['datetime', 'open', 'close', 'high', 'low', 'volume', 'turnover']
         df[out_cols].to_csv(filepath, index=False)
 
     label = "C++" if use_timestamp else "Python"
@@ -242,10 +244,10 @@ def save_csv(df: pd.DataFrame, filepath: str, use_timestamp: bool = False):
 
 
 # ============================================================
-# 单只 ETF 下载
+# 单只标的下载
 # ============================================================
 
-def download_single_etf(symbol, data_dir, freq, start_date, end_date):
+def download_single_data(symbol, data_dir, freq, start_date, end_date, asset_type="etf"):
     """下载后复权 + 不复权数据"""
     bs_code = convert_to_baostock_code(symbol)
     print(f"\n[{bs_code}] 下载 {freq}...")
@@ -253,8 +255,8 @@ def download_single_etf(symbol, data_dir, freq, start_date, end_date):
     success = False
 
     for adjust_flag, subdir, label in [
-        ("1", "etf_hfq", "后复权"),
-        ("3", "etf_org", "不复权"),
+        ("1", f"{asset_type}_hfq", "后复权"),
+        ("3", f"{asset_type}_org", "不复权"),
     ]:
         df = download_etf_data(
             symbol=bs_code, freq=freq,
@@ -298,12 +300,15 @@ def main():
                         help="BaoStock 不支持 1m 数据")
     parser.add_argument("--start", default=None, help="开始日期 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="结束日期 YYYY-MM-DD")
+    parser.add_argument("--asset-type", default="etf", choices=["etf", "stock"],
+                        help="资产类型: etf / stock")
 
     args = parser.parse_args()
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    asset_label = "ETF" if args.asset_type == "etf" else "Stock"
 
     print("=" * 60)
-    print("ETF 历史数据下载 (BaoStock)")
+    print(f"{asset_label} 历史数据下载 (BaoStock)")
     print("=" * 60)
     print(f"标的: {', '.join(symbols)}")
     print(f"频率: {args.freq}")
@@ -323,8 +328,8 @@ def main():
     try:
         ok_count = 0
         for sym in symbols:
-            if download_single_etf(
-                sym, args.data_dir, args.freq, args.start, args.end
+            if download_single_data(
+                sym, args.data_dir, args.freq, args.start, args.end, args.asset_type
             ):
                 ok_count += 1
             if len(symbols) > 1:

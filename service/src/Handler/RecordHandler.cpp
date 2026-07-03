@@ -84,7 +84,7 @@ void RecordHandler::SetSymbols(const Set<String>& symbols) {
 
 void RecordHandler::PushDuckDbTick(const QuoteInfo& quote) {
     TickDataEntry entry;
-    entry.id = 0;  // DuckDBLogger 自动分配
+    entry.id = 0;  // batch_insert_ticks 中由 id_counter_ 分配
     entry.timestamp_epoch = static_cast<int64_t>(quote._time);
     entry.symbol = format_symbol(get_symbol(quote._symbol));
     entry.open = quote._open;

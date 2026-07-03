@@ -1,35 +1,5 @@
 <template>
-    <div class="input-group">
-            <label for="sync-path">数据文件夹路径</label>
-            <input
-                type="text"
-                placeholder="请选择或输入要保存数据的文件夹路径"
-                v-model="selectedFolderPath"
-                readonly
-            >
-        </div>
-
-        <div class="button-group">
-            <button class="selection" @click="onHandleSelection">
-                <i class="fas fa-folder-open"></i>选择本地数据文件夹
-            </button>
-            <button class="btn" @click="onHandleDownload">
-                <i class="fas fa-sync-alt"></i>同步数据
-            </button>
-        </div>
-
-        <div class="status">
-            <div class="status-title">
-                <i class="fas fa-info-circle"></i>同步状态
-            </div>
-            <div class="status-content">
-                最近同步: {{ lastSyncDate }}<br>
-                状态: <span style="color: #4ade80;">{{ status }}</span>
-            </div>
-        </div>
-
         <!-- Tick 数据下载 -->
-        <div class="section-divider"></div>
         <div class="section-title">
             <i class="fas fa-chart-bar"></i> Tick 数据下载 (DuckDB)
         </div>
@@ -77,6 +47,70 @@
             {{ tickDownloadStatus }}
         </div>
 
+        <!-- 行情数据下载 (K线) -->
+        <div class="section-divider"></div>
+        <div class="section-title">
+            <i class="fas fa-chart-line"></i> 行情数据下载 (K线)
+        </div>
+
+        <div class="input-row">
+            <div class="input-group">
+                <label>资产类型</label>
+                <select v-model="quoteAssetType" class="quote-select">
+                    <option value="etf">ETF</option>
+                    <option value="stock">Stock</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label>频率</label>
+                <select v-model="quoteFreq" class="quote-select">
+                    <option value="daily">日线</option>
+                    <option value="5m">5分钟</option>
+                    <option value="15m">15分钟</option>
+                    <option value="30m">30分钟</option>
+                    <option value="60m">60分钟</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label>开始日期</label>
+                <input type="date" v-model="quoteStartDate" />
+            </div>
+            <div class="input-group">
+                <label>结束日期</label>
+                <input type="date" v-model="quoteEndDate" />
+            </div>
+        </div>
+
+        <div class="input-group">
+            <label>标的代码 (逗号分隔)</label>
+            <input
+                type="text"
+                placeholder="510300.SH, 510500.SH"
+                v-model="quoteSymbols"
+            >
+        </div>
+
+        <div class="button-row">
+            <button class="btn" @click="onHandleQuoteDownload" :disabled="quoteDownloading">
+                <i class="fas fa-download"></i>
+                {{ quoteDownloading ? '下载中...' : '开始下载' }}
+            </button>
+        </div>
+
+        <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
+            {{ quoteStatus }}
+        </div>
+
+        <div v-if="quoteLogs.length" class="quote-log-box">
+            <div class="quote-log-title">下载日志</div>
+            <div class="quote-log-content" ref="quoteLogRef">
+                <div v-for="(log, i) in quoteLogs" :key="i" class="quote-log-line"
+                     :class="{ 'log-error': log.type === 'error', 'log-success': log.type === 'done' }">
+                    <span class="log-time">{{ log.time }}</span> {{ log.text }}
+                </div>
+            </div>
+        </div>
+
         <!-- 服务端数据管理 -->
         <div class="section-divider danger"></div>
         <div class="section-title danger">
@@ -96,16 +130,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { ipcRenderer } from 'electron'
-import Store from 'electron-store';
-
-let status = ref('')
-const store = new Store();
-
-const storeKey = 'syncPath'
-let selectedFolderPath = ref(store.get(storeKey) || '');
-let lastSyncDate = ref(store.get('lastSyncDate') || '');
+import axios from 'axios'
+import sseService from '@/ts/SSEService'
 
 // Tick 下载状态
 const tickDbPath = ref('')
@@ -121,62 +149,72 @@ const tickDownloadStatus = ref('')
 const deleting = ref(false)
 const deleteStatus = ref('')
 
+// 行情下载状态
+const quoteAssetType = ref('etf')
+const quoteFreq = ref('5m')
+const quoteSymbols = ref('')
+const quoteStartDate = ref('')
+const quoteEndDate = ref('')
+const quoteDownloading = ref(false)
+const quoteStatus = ref('')
+const quoteLogs = ref([])
+const quoteLogRef = ref(null)
+
 // 监听进度事件
 const onTickProgress = (_, data) => {
     tickCount.value = data.count
 }
 
+// 行情下载 SSE 事件处理
+const addQuoteLog = (text, type = 'info') => {
+    const now = new Date()
+    const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
+    quoteLogs.value.push({ time, text, type })
+    nextTick(() => {
+        if (quoteLogRef.value) quoteLogRef.value.scrollTop = quoteLogRef.value.scrollHeight
+    })
+}
+
+const onQuoteDownloadEvent = (msg) => {
+    const d = msg.data
+    switch (d.status) {
+        case 'started':
+            addQuoteLog(`开始下载: ${d.symbols}`)
+            break
+        case 'downloaded':
+            addQuoteLog('脚本下载完成，正在导入...')
+            break
+        case 'download_failed':
+            addQuoteLog('脚本下载失败', 'error')
+            if (d.output) addQuoteLog(d.output, 'error')
+            break
+        case 'importing':
+            addQuoteLog(`导入 ${d.table}: ${d.symbol} (${d.rows} 行)`, 'success')
+            break
+        case 'done':
+            quoteDownloading.value = false
+            if (d.success === 'true') {
+                addQuoteLog(`完成: 共导入 ${d.total_rows} 行 → ${d.table}`, 'done')
+                quoteStatus.value = `下载完成，${d.total_rows} 行已导入 ${d.table}`
+            } else {
+                addQuoteLog('下载失败', 'error')
+                quoteStatus.value = '下载失败'
+            }
+            break
+    }
+}
+
 onMounted(() => {
     ipcRenderer.on('tick-download-progress', onTickProgress)
+    sseService.on('quote_download', onQuoteDownloadEvent)
 })
 
 onUnmounted(() => {
     ipcRenderer.removeListener('tick-download-progress', onTickProgress)
+    sseService.off('quote_download', onQuoteDownloadEvent)
 })
 
-const onHandleDownload = async () => {
-    console.info("onHandleDownload", selectedFolderPath.value);
-    const filePath = 'sync.zip'
-    const server = localStorage.getItem('remote')
-    const token = localStorage.getItem('token')
-    const url = 'https://' + server + '/v0/data/sync'
-    const result = await ipcRenderer.invoke("merge-csv", url, token, filePath, selectedFolderPath.value);
-    if (result === true) {
-        const date = new Date()
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-
-        const formattedString = `${year}-${month}-${day} ${hours}:${minutes}`;
-        lastSyncDate.value = formattedString
-        store.set('lastSyncDate', formattedString)
-        status.value = '同步成功'
-    } else {
-        status.value = '同步失败'
-    }
-}
-
-const onHandleSelection = async () => {
-  console.info("onHandleSelection");
-  try {
-    const result = await ipcRenderer.invoke("open-directory-dialog");
-    if (!result.canceled) {
-        selectedFolderPath.value = result;
-        store.set(storeKey, result)
-    }
-  } catch (err) {
-    console.error('Error selecting folder:', err);
-  }
-}
-
 const onHandleTickDownload = async () => {
-    if (!selectedFolderPath.value) {
-        tickDownloadStatus.value = '请先选择本地数据文件夹'
-        return
-    }
-
     tickDownloading.value = true
     tickCount.value = 0
     tickDownloadStatus.value = '正在连接服务端...'
@@ -187,8 +225,7 @@ const onHandleTickDownload = async () => {
     const startTs = tickStartDate.value ? Math.floor(new Date(tickStartDate.value).getTime() / 1000) : 0
     const endTs = tickEndDate.value ? Math.floor(new Date(tickEndDate.value + 'T23:59:59').getTime() / 1000) : 0
 
-    // 默认 DB 路径
-    const dbPath = tickDbPath.value || `${selectedFolderPath.value}/tick_data.db`
+    const dbPath = tickDbPath.value || 'tick_data.db'
 
     try {
         const result = await ipcRenderer.invoke('tick-sync-to-duckdb',
@@ -203,6 +240,37 @@ const onHandleTickDownload = async () => {
         tickDownloadStatus.value = `下载失败: ${err.message}`
     } finally {
         tickDownloading.value = false
+    }
+}
+
+const onHandleQuoteDownload = async () => {
+    if (!quoteSymbols.value.trim()) {
+        quoteStatus.value = '请输入标的代码'
+        return
+    }
+
+    quoteDownloading.value = true
+    quoteStatus.value = ''
+    quoteLogs.value = []
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        await axios.post(`https://${server}/v0/quote`, {
+            symbols: quoteSymbols.value.trim(),
+            freq: quoteFreq.value,
+            asset_type: quoteAssetType.value,
+            start: quoteStartDate.value || undefined,
+            end: quoteEndDate.value || undefined,
+        }, {
+            headers: { 'Authorization': token || '' }
+        })
+        // POST 立即返回，进度通过 SSE 推送
+    } catch (err) {
+        quoteDownloading.value = false
+        quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
+        addQuoteLog(`请求失败: ${err.message}`, 'error')
     }
 }
 
@@ -244,118 +312,185 @@ const onHandleDeleteServerTicks = async () => {
 </script>
 
 <style scoped>
-input {
+/* ── 基础控件（与 AnalysisControlBar 统一） ── */
+input, select {
     width: 100%;
-    padding: 6px 8px;
-    background: rgba(15, 23, 42, 0.7);
-    border: 1px solid rgba(74, 158, 255, 0.3);
-    border-radius: 8px;
-    color: #e2e8f0;
-    font-size: 1rem;
-}
-input:focus {
+    padding: 4px 8px;
+    background: rgba(26, 34, 54, 0.8);
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 12px;
     outline: none;
-    border-color: #4a9eff;
-    box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
 }
-.selection {
-    border: none;
-    padding: 8px 25px;
-    border-radius: 8px;
-    font-weight: 600;
+input:focus, select:focus {
+    border-color: rgba(41, 98, 255, 0.5);
+}
+input::-webkit-calendar-picker-indicator {
+    filter: invert(1);
     cursor: pointer;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
 }
+select option {
+    background: #1a2236;
+    color: #e0e0e0;
+}
+
+/* ── 按钮 ── */
 .btn {
-    background: linear-gradient(90deg, #2563eb, #1d4ed8);
-    color: white;
-    border: none;
-    padding: 12px 25px;
-    border-radius: 8px;
-    font-weight: 600;
+    padding: 6px 16px;
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 4px;
+    background: rgba(26, 34, 54, 0.8);
+    color: #e0e0e0;
+    font-size: 12px;
     cursor: pointer;
-    transition: all 0.3s ease;
-    align-items: center;
-    gap: 8px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s;
+}
+.btn:hover:not(:disabled) {
+    border-color: rgba(41, 98, 255, 0.5);
 }
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
+.btn-primary {
+    background: #2962ff;
+    border-color: #2962ff;
+    color: #fff;
+    font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+    background: #1e54e6;
+    border-color: #1e54e6;
+}
 .btn-danger {
-    background: linear-gradient(90deg, #dc2626, #b91c1c);
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 8px;
+    padding: 6px 16px;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.2s;
+}
+.btn-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.6);
 }
 .btn-danger:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ── 布局 ── */
 .input-row {
     display: flex;
-    gap: 16px;
-    margin-top: 12px;
+    gap: 12px;
+    margin-top: 8px;
 }
 .input-row .input-group {
     flex: 1;
 }
 .button-group {
     display: flex;
-    gap: 12px;
-    margin-top: 12px;
+    gap: 8px;
+    margin-top: 8px;
 }
 .button-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-top: 12px;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* ── 标签 & 状态 ── */
+.input-group {
+    margin-top: 8px;
+}
+.input-group label {
+    display: block;
+    color: #999;
+    font-size: 12px;
+    margin-bottom: 4px;
 }
 .progress-text {
-    color: #94a3b8;
-    font-size: 0.9rem;
+    color: #999;
+    font-size: 12px;
 }
 .status-text {
-    margin-top: 8px;
-    color: #94a3b8;
-    font-size: 0.9rem;
+    margin-top: 6px;
+    color: #999;
+    font-size: 12px;
 }
 .status-text.status-error {
     color: #f87171;
 }
+
+/* ── 分区 ── */
 .section-divider {
     height: 1px;
-    background: rgba(74, 158, 255, 0.2);
-    margin: 20px 0;
+    background: rgba(74, 85, 104, 0.3);
+    margin: 16px 0;
 }
 .section-divider.danger {
-    background: rgba(248, 113, 113, 0.3);
+    background: rgba(239, 68, 68, 0.3);
 }
 .section-title {
-    color: #e2e8f0;
-    font-size: 1rem;
+    color: #e0e0e0;
+    font-size: 13px;
     font-weight: 600;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 .section-title.danger {
     color: #f87171;
 }
-.input-group {
-    margin-top: 12px;
+
+/* ── 行情下载日志 ── */
+.quote-select {
+    appearance: auto;
 }
-.input-group label {
-    display: block;
-    color: #94a3b8;
-    font-size: 0.85rem;
-    margin-bottom: 4px;
+.quote-log-box {
+    margin-top: 8px;
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.quote-log-title {
+    padding: 4px 10px;
+    background: rgba(26, 34, 54, 0.6);
+    color: #999;
+    font-size: 11px;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(74, 85, 104, 0.2);
+}
+.quote-log-content {
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 6px 10px;
+    background: rgba(15, 20, 35, 0.5);
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+}
+.quote-log-line {
+    color: #999;
+    line-height: 1.5;
+}
+.quote-log-line .log-time {
+    color: #666;
+    margin-right: 6px;
+}
+.quote-log-line.log-error {
+    color: #f87171;
+}
+.quote-log-line.log-success {
+    color: #4ade80;
+}
+.quote-log-line.log-done {
+    color: #2962ff;
+    font-weight: 600;
 }
 </style>

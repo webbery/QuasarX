@@ -40,6 +40,8 @@
 #include "Handler/StockHandler.h"
 #include "Handler/StrategyLogHandler.h"
 #include "Handler/NodeIOHandler.h"
+#include "Handler/PythonRunnerHandler.h"
+#include "Handler/QuoteDownloadHandler.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"
 #include "Nodes/PortfolioNode.h"
@@ -165,6 +167,8 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_CAPITAL_STATUS  "/server/capital"
 #define API_STRATEGY_LOGS   "/strategy/logs"
 #define API_NODE_IO         "/node/io"
+#define API_PYTHON_RUNNER   "/python/run"
+#define API_QUOTE           "/quote"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -343,6 +347,9 @@ void Server::Regist() {
     REGIST_DEL(API_STRATEGY_LOGS);
     REGIST_GET(API_NODE_IO);
     REGIST_DEL(API_NODE_IO);
+    REGIST_POST(API_PYTHON_RUNNER);
+    REGIST_POST(API_QUOTE);
+    REGIST_GET(API_QUOTE);
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
     REGIST_GET(API_OPTION_HISTORY);
@@ -1177,6 +1184,8 @@ void Server::InitHandlers() {
     RegistHandler(API_PCA, PCAHandler);
     RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
     RegistHandler(API_NODE_IO, NodeIOHandler);
+    RegistHandler(API_PYTHON_RUNNER, PythonRunnerHandler);
+    RegistHandler(API_QUOTE, QuoteDownloadHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});
