@@ -455,7 +455,21 @@ jobs:
         run: |
           SERVICE_PID=${{ steps.start_service.outputs.pid }}
           echo "Sending graceful shutdown request to service (PID $SERVICE_PID)..."
-          curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+
+          # 1. 先 login 获取 token
+          LOGIN_RESP=$(curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/user/login" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"${{ secrets.SERVER_USER }}","pwd":"${{ secrets.SERVER_PASSWD }}"}')
+          echo "Login response: $LOGIN_RESP"
+          TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['tk'])")
+          echo "Token obtained: ${TOKEN:0:8}..."
+
+          # 2. 携带 token 发送退出请求
+          EXIT_RESP=$(curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/exit" \
+            -H "Authorization: $TOKEN")
+          echo "Exit response: $EXIT_RESP"
+
+          # 3. 等待服务退出
           for i in $(seq 1 10); do
             if ! kill -0 "$SERVICE_PID" 2>/dev/null; then
               echo "Service exited gracefully after ${i}s"
