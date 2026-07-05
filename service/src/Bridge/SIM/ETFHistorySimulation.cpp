@@ -1,4 +1,5 @@
 #include "Bridge/SIM/ETFHistorySimulation.h"
+#include "Util/data.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
@@ -34,25 +35,35 @@ bool ETFHistorySimulation::LoadData(const String& code) {
     auto& security = Server::GetSecurity(code);
     auto symbol = to_symbol(code, security);
 
-    // 后复权价格路径: etf_hfq/{freq}/{code}.csv
-    String adjPath = _org_path + "/etf_hfq/" + _freq + "/" + code + ".csv";
-    // 原始价格路径: etf_org/{freq}/{code}.csv
-    String orgPath = _org_path + "/etf_org/" + _freq + "/" + code + ".csv";
+    BarFreq freq = parseBarFreq(_freq);
 
-    if (!LoadCSVToDataFrame(adjPath, _csvs[symbol], _headers[symbol])) {
-        String err_msg = fmt::format(
-            "Failed to load ETF backtest data for '{}': CSV not found at '{}'",
-            code, adjPath);
+    // 后复权数据（指标计算）
+    Vector<String> adjDates;
+    auto adjData = LoadHistoryDataWithFreq(
+        symbol, {"open", "close", "high", "low", "volume"},
+        "", "", freq, AdjType::HFQ, &adjDates);
+
+    if (adjData.empty()) {
+        String err_msg = fmt::format("No ETF data for '{}' from DuckDB (freq={}, adj=HFQ)", code, toString(freq));
         WARN("{}", err_msg);
         throw std::runtime_error(err_msg);
     }
 
-    // 加载原始价文件
-    if (!LoadCSVToDataFrame(orgPath, _org_csvs[symbol], _org_headers[symbol])) {
-        WARN("load {} fail, will use adjusted price", orgPath);
-        _org_csvs[symbol] = _csvs[symbol];
-        _org_headers[symbol] = _headers[symbol];
+    BuildDataFrameFromMap(adjData, adjDates, _csvs[symbol], _headers[symbol]);
+
+    // 原始价数据（撮合）
+    Vector<String> orgDates;
+    auto orgData = LoadHistoryDataWithFreq(
+        symbol, {"open", "close", "high", "low", "volume"},
+        "", "", freq, AdjType::None, &orgDates);
+
+    if (orgData.empty()) {
+        String err_msg = fmt::format("No ETF data for '{}' from DuckDB (freq={}, adj=None)", code, toString(freq));
+        WARN("{}", err_msg);
+        throw std::runtime_error(err_msg);
     }
+
+    BuildDataFrameFromMap(orgData, orgDates, _org_csvs[symbol], _org_headers[symbol]);
 
     return true;
 }

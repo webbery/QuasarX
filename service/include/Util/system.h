@@ -146,6 +146,9 @@ bool is_fund(symbol_t );
 bool is_etf(symbol_t );
 bool is_null(symbol_t);
 
+// 将 CODE.EXCHANGE 或 BaoStock 格式转为 sh.000001 / sz.159919
+std::string toInternalSymbol(const std::string& csv_stem);
+
 template <>
 struct fmt::formatter<symbol_t> {
     constexpr auto parse(format_parse_context& ctx) {

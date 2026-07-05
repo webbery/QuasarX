@@ -57,7 +57,8 @@ class SSEService {
         },
         
         onmessage: (event: any) => {
-          console.info('sse event', event)
+          console.log(`[SSE] onmessage 原始事件:`, event)
+          console.log(`[SSE] onmessage: event.event=${event.event ? `"${event.event}"` : 'undefined'}, event.data 存在=${!!event.data}`)
           if (event.data) {
             this.handleEvent(event)
           }
@@ -88,6 +89,9 @@ class SSEService {
   private handleEvent(event: any) {
     try {
       const eventType = event.event || 'message'
+      console.log(`[SSE] handleEvent: event.event=${event.event ? `"${event.event}"` : 'undefined'}, 使用 eventType="${eventType}"`)
+      console.log(`[SSE] handleEvent: event.data 前 100 字符=${event.data?.substring(0, 100)}`)
+      
       const messageData = JSON.parse(event.data)
       const message: SSEMessage = {
         type: eventType,
@@ -98,6 +102,7 @@ class SSEService {
       this.messages.value.push(messageData)
       this.lastMessage.value = messageData
 
+      console.log(`[SSE] handleEvent: 准备触发 triggerHandlers("${eventType}")`)
       this.triggerHandlers(eventType, message)
       // this.triggerHandlers('*', messageData)
 
@@ -136,9 +141,12 @@ class SSEService {
   }
 
   private triggerHandlers(messageType: string, message: SSEMessage) {
+    console.log(`[SSE] triggerHandlers: 查找 messageType="${messageType}"`)
+    console.log(`[SSE] triggerHandlers: 已注册的 handler 类型列表:`, Array.from(this.messageHandlers.keys()))
+    
     const handlers = this.messageHandlers.get(messageType)
     if (handlers) {
-      console.log(`[SSE] triggerHandlers: ${messageType}, handler 数量=${handlers.length}`)
+      console.log(`[SSE] triggerHandlers: ✅ 找到 messageType="${messageType}", handler 数量=${handlers.length}`)
       handlers.forEach(handler => {
         try {
           handler(message)
@@ -146,6 +154,8 @@ class SSEService {
           console.error('SSE 消息处理器执行失败:', error)
         }
       })
+    } else {
+      console.warn(`[SSE] triggerHandlers: ❌ 未找到 messageType="${messageType}" 的 handler`)
     }
   }
 

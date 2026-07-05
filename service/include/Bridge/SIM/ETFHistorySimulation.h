@@ -4,11 +4,10 @@
 #define ETF_HISTORY_SIM "etf_hist_sim"
 
 /**
- * @brief ETF 历史数据回测
+ * @brief ETF 历史数据回测（DuckDB 数据源）
  *
  * 支持分钟级 ETF 数据回测：
- * - 后复权价格: etf_hfq/{freq}/{code}.csv
- * - 原始价格:   etf_org/{freq}/{code}.csv
+ * - 数据源: DuckDB 表 etf_1m / etf_5m / etf_15m
  * - 佣金: 万 0.5，无最低限制
  * - 无印花税
  * - T+0/T+1 由 config.json 的 etf.t0/etf.t1 配置决定

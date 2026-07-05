@@ -1,4 +1,5 @@
 <template>
+    <div class="data-center-container">
         <!-- Tick 数据下载 -->
         <div class="section-title">
             <i class="fas fa-chart-bar"></i> Tick 数据下载 (DuckDB)
@@ -55,13 +56,6 @@
 
         <div class="input-row">
             <div class="input-group">
-                <label>资产类型</label>
-                <select v-model="quoteAssetType" class="quote-select">
-                    <option value="etf">ETF</option>
-                    <option value="stock">Stock</option>
-                </select>
-            </div>
-            <div class="input-group">
                 <label>频率</label>
                 <select v-model="quoteFreq" class="quote-select">
                     <option value="daily">日线</option>
@@ -91,10 +85,13 @@
         </div>
 
         <div class="button-row">
-            <button class="btn" @click="onHandleQuoteDownload" :disabled="quoteDownloading">
+            <button class="btn" @click="onHandleQuoteDownload" :disabled="quoteDownloading || !isLoggedIn">
                 <i class="fas fa-download"></i>
-                {{ quoteDownloading ? '下载中...' : '开始下载' }}
+                {{ quoteDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
             </button>
+            <span v-if="!isLoggedIn" class="login-hint">
+                💡 行情数据下载需要先登录
+            </span>
         </div>
 
         <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
@@ -114,7 +111,107 @@
         <!-- 服务端数据管理 -->
         <div class="section-divider danger"></div>
         <div class="section-title danger">
-            <i class="fas fa-exclamation-triangle"></i> 服务端数据管理
+            <i class="fas fa-exclamation-triangle"></i> 服务端行情数据管理
+            <button class="btn-sm" @click="loadQuoteData" :disabled="loadingQuoteData">
+                <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQuoteData }"></i>
+                刷新
+            </button>
+        </div>
+
+        <!-- 已下载数据列表 -->
+        <div v-if="quoteDataList.length > 0" class="quote-data-table">
+            <div class="table-header">
+                <span class="header-title">已导入数据 ({{ flatSymbols.length }} 个标的)</span>
+                <div class="header-actions">
+                    <button v-if="selectedSymbols.size > 0" class="btn-warning btn-sm" @click="onBatchDeleteSymbols" :disabled="deletingSymbol">
+                        <i class="fas fa-trash"></i>
+                        批量删除 ({{ selectedSymbols.size }})
+                    </button>
+                    <button class="btn-danger btn-sm" @click="onHandleDeleteAllQuoteData" :disabled="deletingQuote">
+                        <i class="fas fa-trash"></i>
+                        {{ deletingQuote ? '删除中...' : '清空所有数据' }}
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th class="col-checkbox">
+                                <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll">
+                            </th>
+                            <th>类型</th>
+                            <th>频率</th>
+                            <th>标的代码</th>
+                            <th>起始时间</th>
+                            <th>结束时间</th>
+                            <th>数据量</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="(item, idx) in pagedSymbols" :key="`${item.table}-${item.symbol}`">
+                            <td class="col-checkbox">
+                                <input type="checkbox" :checked="isSelected(item)" @change="toggleSelect(item)">
+                            </td>
+                            <td class="asset-type">{{ item.assetType }}</td>
+                            <td class="freq">{{ item.freq }}</td>
+                            <td class="symbol-code">{{ item.symbol }}</td>
+                            <td class="time-range">{{ item.start_time || '-' }}</td>
+                            <td class="time-range">{{ item.end_time || '-' }}</td>
+                            <td class="symbol-count">{{ item.count.toLocaleString() }}</td>
+                            <td class="actions">
+                                <button class="btn-info btn-xs" @click="onUpdateSymbol(item.table, item.symbol)" :disabled="updatingSymbol">
+                                    <i class="fas fa-sync-alt"></i> 更新
+                                </button>
+                                <button class="btn-danger btn-xs" @click="onDeleteSymbol(item.table, item.symbol)" :disabled="deletingSymbol">
+                                    <i class="fas fa-trash"></i> 删除
+                                </button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 分页控件 -->
+            <div class="pagination" v-if="totalPages > 1">
+                <button class="page-btn" :disabled="currentPage === 1" @click="currentPage = 1">
+                    <i class="fas fa-angle-double-left"></i>
+                </button>
+                <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">
+                    <i class="fas fa-angle-left"></i>
+                </button>
+                <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条）</span>
+                <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage++">
+                    <i class="fas fa-angle-right"></i>
+                </button>
+                <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage = totalPages">
+                    <i class="fas fa-angle-double-right"></i>
+                </button>
+                <select class="page-size-select" v-model.number="pageSize" @change="currentPage = 1">
+                    <option :value="10">10 条/页</option>
+                    <option :value="20">20 条/页</option>
+                    <option :value="50">50 条/页</option>
+                    <option :value="100">100 条/页</option>
+                </select>
+            </div>
+        </div>
+
+        <div v-else-if="loadingQuoteData" class="loading-text">
+            <i class="fas fa-spinner fa-spin"></i> 加载中...
+        </div>
+
+        <div v-else class="empty-text">
+            <i class="fas fa-info-circle"></i> 暂无已导入的行情数据
+        </div>
+
+        <PromptDialog ref="promptDialogRef" />
+
+        <!-- Tick 数据删除 -->
+        <div class="section-divider danger"></div>
+        <div class="section-title danger">
+            <i class="fas fa-exclamation-triangle"></i> Tick 数据管理
         </div>
 
         <div class="button-row">
@@ -127,13 +224,27 @@
         <div v-if="deleteStatus" class="status-text" :class="{ 'status-error': deleteStatus.includes('失败') }">
             {{ deleteStatus }}
         </div>
+    </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { ipcRenderer } from 'electron'
 import axios from 'axios'
 import sseService from '@/ts/SSEService'
+import PromptDialog from './PromptDialog.vue'
+
+// 声明接收父组件传递的事件（避免 Vue fragment 警告）
+defineEmits(['load-version', 'strategy-click'])
+
+// PromptDialog 引用
+const promptDialogRef = ref(null)
+
+// 登录状态
+const isLoggedIn = computed(() => {
+    const token = localStorage.getItem('token')
+    return token && token.length > 0
+})
 
 // Tick 下载状态
 const tickDbPath = ref('')
@@ -150,7 +261,6 @@ const deleting = ref(false)
 const deleteStatus = ref('')
 
 // 行情下载状态
-const quoteAssetType = ref('etf')
 const quoteFreq = ref('5m')
 const quoteSymbols = ref('')
 const quoteStartDate = ref('')
@@ -159,6 +269,85 @@ const quoteDownloading = ref(false)
 const quoteStatus = ref('')
 const quoteLogs = ref([])
 const quoteLogRef = ref(null)
+
+// 服务端数据列表状态
+const quoteDataList = ref([])
+const loadingQuoteData = ref(false)
+const deletingQuote = ref(false)
+const deletingSymbol = ref(false)
+const updatingSymbol = ref(false)
+
+// 分页
+const currentPage = ref(1)
+const pageSize = ref(20)
+
+// 将所有标的展平为一维列表（供分页使用）
+const flatSymbols = computed(() => {
+    const freqMap = {
+        '1d': '日线', '5m': '5分钟', '15m': '15分钟',
+        '30m': '30分钟', '60m': '60分钟', '1h': '1小时',
+        'daily': '日线'
+    }
+    const result = []
+    for (const table of quoteDataList.value) {
+        // 从表名解析类型和频率：如 "etf_5m" → "ETF", "5m"
+        const parts = table.table.split('_')
+        const assetType = parts[0] === 'etf' ? 'ETF' : 'Stock'
+        const rawFreq = parts.length > 1 ? parts.slice(1).join('_') : '-'
+        const freq = freqMap[rawFreq] || rawFreq
+
+        for (const sym of table.symbols) {
+            result.push({ table: table.table, assetType, freq, ...sym })
+        }
+    }
+    return result
+})
+
+// 批量选择
+const selectedSymbols = ref(new Set())  // key: "table|symbol"
+
+// 当前页的标的列表
+const pagedSymbols = computed(() => {
+    const start = (currentPage.value - 1) * pageSize.value
+    return flatSymbols.value.slice(start, start + pageSize.value)
+})
+
+// 总页数
+const totalPages = computed(() => Math.ceil(flatSymbols.value.length / pageSize.value))
+
+// 当前页是否全选
+const isAllSelected = computed(() => {
+    return pagedSymbols.value.length > 0 && pagedSymbols.value.every(item => isSelected(item))
+})
+
+const itemKey = (item) => `${item.table}|${item.symbol}`
+
+const isSelected = (item) => selectedSymbols.value.has(itemKey(item))
+
+const toggleSelect = (item) => {
+    const key = itemKey(item)
+    if (selectedSymbols.value.has(key)) {
+        selectedSymbols.value.delete(key)
+    } else {
+        selectedSymbols.value.add(key)
+    }
+    selectedSymbols.value = new Set(selectedSymbols.value) // trigger reactivity
+}
+
+const toggleSelectAll = () => {
+    if (isAllSelected.value) {
+        // 取消当前页全选
+        for (const item of pagedSymbols.value) {
+            selectedSymbols.value.delete(itemKey(item))
+        }
+    } else {
+        // 当前页全选
+        for (const item of pagedSymbols.value) {
+            selectedSymbols.value.add(itemKey(item))
+        }
+    }
+    selectedSymbols.value = new Set(selectedSymbols.value)
+}
 
 // 监听进度事件
 const onTickProgress = (_, data) => {
@@ -176,7 +365,11 @@ const addQuoteLog = (text, type = 'info') => {
 }
 
 const onQuoteDownloadEvent = (msg) => {
+    console.log('[QuoteDownload] 收到 SSE 事件, msg:', msg)
     const d = msg.data
+    console.log('[QuoteDownload] msg.data:', d)
+    console.log('[QuoteDownload] status 字段值:', d.status)
+    console.log('[QuoteDownload] 当前 quoteLogs 数量:', quoteLogs.value.length)
     switch (d.status) {
         case 'started':
             addQuoteLog(`开始下载: ${d.symbols}`)
@@ -186,7 +379,11 @@ const onQuoteDownloadEvent = (msg) => {
             break
         case 'download_failed':
             addQuoteLog('脚本下载失败', 'error')
-            if (d.output) addQuoteLog(d.output, 'error')
+            if (d.output) {
+                // 按换行拆分多行输出
+                const lines = d.output.split(/\r?\n/).filter(l => l.trim())
+                lines.forEach(line => addQuoteLog(line, 'error'))
+            }
             break
         case 'importing':
             addQuoteLog(`导入 ${d.table}: ${d.symbol} (${d.rows} 行)`, 'success')
@@ -205,13 +402,31 @@ const onQuoteDownloadEvent = (msg) => {
 }
 
 onMounted(() => {
+    // 只在首次挂载时注册 SSE handler（KeepAlive 不会触发重复注册）
     ipcRenderer.on('tick-download-progress', onTickProgress)
     sseService.on('quote_download', onQuoteDownloadEvent)
+    
+    // 加载已下载的行情数据列表
+    if (isLoggedIn.value) {
+        loadQuoteData()
+    }
 })
 
 onUnmounted(() => {
+    // 组件真正销毁时才移除 handler
     ipcRenderer.removeListener('tick-download-progress', onTickProgress)
     sseService.off('quote_download', onQuoteDownloadEvent)
+})
+
+// KeepAlive 缓存期间不需要重复注册
+onActivated(() => {
+    // 组件被 KeepAlive 缓存后重新显示
+    console.log('[DataCenter] onActivated')
+})
+
+onDeactivated(() => {
+    // 组件被 KeepAlive 缓存后隐藏
+    console.log('[DataCenter] onDeactivated')
 })
 
 const onHandleTickDownload = async () => {
@@ -244,6 +459,12 @@ const onHandleTickDownload = async () => {
 }
 
 const onHandleQuoteDownload = async () => {
+    // 检查是否已登录
+    if (!isLoggedIn.value) {
+        quoteStatus.value = '请先登录后再下载行情数据'
+        return
+    }
+
     if (!quoteSymbols.value.trim()) {
         quoteStatus.value = '请输入标的代码'
         return
@@ -260,7 +481,6 @@ const onHandleQuoteDownload = async () => {
         await axios.post(`https://${server}/v0/quote`, {
             symbols: quoteSymbols.value.trim(),
             freq: quoteFreq.value,
-            asset_type: quoteAssetType.value,
             start: quoteStartDate.value || undefined,
             end: quoteEndDate.value || undefined,
         }, {
@@ -275,16 +495,11 @@ const onHandleQuoteDownload = async () => {
 }
 
 const onHandleDeleteServerTicks = async () => {
-    const result = await ipcRenderer.invoke('show-message-box', {
-        type: 'warning',
+    const confirmed = await promptDialogRef.value?.confirm({
         title: '确认删除',
-        message: '确定要删除服务端所有 Tick 数据吗？此操作不可恢复！',
-        buttons: ['取消', '确定删除'],
-        defaultId: 0,
-        cancelId: 0
+        message: '确定要删除服务端所有 Tick 数据吗？此操作不可恢复！'
     })
-
-    if (!result || result.response !== 1) return
+    if (!confirmed) return
 
     deleting.value = true
     deleteStatus.value = '正在删除...'
@@ -309,9 +524,206 @@ const onHandleDeleteServerTicks = async () => {
         deleting.value = false
     }
 }
+
+// 加载已下载的行情数据列表
+const loadQuoteData = async () => {
+    if (!isLoggedIn.value) {
+        quoteStatus.value = '请先登录后查看数据'
+        return
+    }
+
+    loadingQuoteData.value = true
+    quoteDataList.value = []
+    currentPage.value = 1
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        const response = await axios.get(`https://${server}/v0/quote`, {
+            headers: { 'Authorization': token || '' }
+        })
+        quoteDataList.value = response.data
+    } catch (err) {
+        quoteStatus.value = `加载数据列表失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        loadingQuoteData.value = false
+    }
+}
+
+// 删除单个表
+const onDeleteTable = async (tableName) => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: `确定要删除表 "${tableName}" 的所有数据吗？此操作不可恢复！`
+    })
+    if (!confirmed) return
+
+    deletingQuote.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        await axios.delete(`https://${server}/v0/quote?table=${tableName}`, {
+            headers: { 'Authorization': token || '' }
+        })
+        quoteStatus.value = `表 ${tableName} 已删除`
+        // 刷新列表
+        await loadQuoteData()
+    } catch (err) {
+        quoteStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        deletingQuote.value = false
+    }
+}
+
+// 更新单个标的（重新下载）
+const onUpdateSymbol = async (tableName, symbol) => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认更新',
+        message: `确定要重新下载表 "${tableName}" 中标的 "${symbol}" 的数据吗？`
+    })
+    if (!confirmed) return
+
+    updatingSymbol.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        // 触发下载（后端会自动判断 ETF/Stock）
+        // 从表名提取频率：如 "etf_5m" → "5m"
+        const rawFreq = tableName.includes('_') ? tableName.split('_').slice(1).join('_') : '5m'
+        const freqMap = { '日线': 'daily', '5分钟': '5m', '15分钟': '15m', '30分钟': '30m', '60分钟': '60m', '1小时': '1h' }
+        const freq = freqMap[rawFreq] || rawFreq
+
+        await axios.post(`https://${server}/v0/quote`, {
+            symbols: symbol,
+            freq,
+        }, {
+            headers: { 'Authorization': token || '' }
+        })
+        quoteStatus.value = `标的 ${symbol} 更新任务已提交`
+    } catch (err) {
+        quoteStatus.value = `更新失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        updatingSymbol.value = false
+    }
+}
+
+// 删除单个标的
+const onDeleteSymbol = async (tableName, symbol) => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: `确定要删除表 "${tableName}" 中标的 "${symbol}" 的数据吗？此操作不可恢复！`
+    })
+    if (!confirmed) return
+
+    deletingSymbol.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        await axios.delete(`https://${server}/v0/quote?table=${tableName}&symbol=${symbol}`, {
+            headers: { 'Authorization': token || '' }
+        })
+        quoteStatus.value = `标的 ${symbol} 已删除`
+        // 刷新列表（loadQuoteData 会重置 currentPage）
+        await loadQuoteData()
+    } catch (err) {
+        quoteStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        deletingSymbol.value = false
+    }
+}
+
+// 批量删除选中的标的
+const onBatchDeleteSymbols = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认批量删除',
+        message: `确定要删除选中的 ${selectedSymbols.value.size} 个标的的数据吗？此操作不可恢复！`
+    })
+    if (!confirmed) return
+
+    deletingSymbol.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const key of selectedSymbols.value) {
+        const [table, symbol] = key.split('|')
+        try {
+            await axios.delete(`https://${server}/v0/quote?table=${table}&symbol=${symbol}`, {
+                headers: { 'Authorization': token || '' }
+            })
+            successCount++
+        } catch (err) {
+            failCount++
+            console.error(`[DataCenter] Failed to delete ${symbol}:`, err)
+        }
+    }
+
+    selectedSymbols.value = new Set()
+    quoteStatus.value = `批量删除完成：成功 ${successCount}，失败 ${failCount}`
+    await loadQuoteData()
+
+    deletingSymbol.value = false
+}
+
+// 清空所有行情数据
+const onHandleDeleteAllQuoteData = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: '确定要清空服务端所有行情数据吗？此操作不可恢复！'
+    })
+    if (!confirmed) return
+
+    deletingQuote.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        await axios.delete(`https://${server}/v0/quote`, {
+            headers: { 'Authorization': token || '' }
+        })
+        quoteStatus.value = '所有行情数据已清空'
+        quoteDataList.value = []
+        currentPage.value = 1
+    } catch (err) {
+        quoteStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        deletingQuote.value = false
+    }
+}
 </script>
 
 <style scoped>
+/* ── 根容器（带滚动） ── */
+.data-center-container {
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.data-center-container::-webkit-scrollbar {
+    width: 6px;
+}
+.data-center-container::-webkit-scrollbar-track {
+    background: rgba(15, 20, 35, 0.5);
+}
+.data-center-container::-webkit-scrollbar-thumb {
+    background: rgba(74, 85, 104, 0.5);
+    border-radius: 3px;
+}
+.data-center-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 85, 104, 0.8);
+}
+
 /* ── 基础控件（与 AnalysisControlBar 统一） ── */
 input, select {
     width: 100%;
@@ -382,6 +794,14 @@ select option {
     opacity: 0.5;
     cursor: not-allowed;
 }
+.btn-sm {
+    padding: 4px 12px;
+    font-size: 11px;
+}
+.btn-xs {
+    padding: 3px 8px;
+    font-size: 10px;
+}
 
 /* ── 布局 ── */
 .input-row {
@@ -418,6 +838,11 @@ select option {
     color: #999;
     font-size: 12px;
 }
+.login-hint {
+    color: #fbbf24;
+    font-size: 11px;
+    font-style: italic;
+}
 .status-text {
     margin-top: 6px;
     color: #999;
@@ -449,6 +874,193 @@ select option {
     color: #f87171;
 }
 
+/* ── 数据列表表格 ── */
+.quote-data-table {
+    margin-top: 12px;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.table-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+}
+.table-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+.table-scroll::-webkit-scrollbar-track {
+    background: rgba(15, 20, 35, 0.5);
+}
+.table-scroll::-webkit-scrollbar-thumb {
+    background: rgba(74, 85, 104, 0.5);
+    border-radius: 3px;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 85, 104, 0.8);
+}
+.table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+}
+.header-title {
+    color: #f87171;
+    font-size: 12px;
+    font-weight: 600;
+}
+.header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.btn-warning {
+    padding: 4px 12px;
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    border-radius: 4px;
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-warning:hover:not(:disabled) {
+    background: rgba(251, 191, 36, 0.25);
+    border-color: rgba(251, 191, 36, 0.6);
+}
+.btn-warning:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-info {
+    padding: 3px 8px;
+    border: 1px solid rgba(96, 165, 250, 0.4);
+    border-radius: 3px;
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-info:hover:not(:disabled) {
+    background: rgba(96, 165, 250, 0.25);
+    border-color: rgba(96, 165, 250, 0.6);
+}
+.btn-info:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+.data-table thead {
+    background: rgba(26, 34, 54, 0.8);
+}
+.data-table th {
+    padding: 8px 10px;
+    text-align: left;
+    color: #999;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+}
+.data-table td {
+    padding: 8px 10px;
+    color: #e0e0e0;
+    border-bottom: 1px solid rgba(74, 85, 104, 0.2);
+}
+.data-table tbody tr:hover {
+    background: rgba(41, 98, 255, 0.05);
+}
+.col-checkbox {
+    width: 40px;
+    text-align: center;
+}
+.col-checkbox input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: #2962ff;
+    width: 14px;
+    height: 14px;
+}
+.asset-type {
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+}
+.asset-type:after {
+    content: '';
+}
+.freq {
+    color: #fbbf24;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+}
+.table-name {
+    font-family: 'Courier New', monospace;
+    color: #2962ff;
+    font-weight: 600;
+    vertical-align: middle;
+}
+.symbol-code {
+    font-family: 'Courier New', monospace;
+    color: #60a5fa;
+    font-weight: 600;
+}
+.time-range {
+    color: #999;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+}
+.symbol-count {
+    color: #4ade80;
+    font-weight: 600;
+    text-align: right;
+}
+.symbols-list {
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.symbol-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    margin: 2px 4px 2px 0;
+    background: rgba(41, 98, 255, 0.1);
+    border: 1px solid rgba(41, 98, 255, 0.3);
+    border-radius: 3px;
+    color: #60a5fa;
+    font-size: 10px;
+    font-family: 'Courier New', monospace;
+}
+.more-symbols {
+    color: #999;
+    font-size: 10px;
+    font-style: italic;
+}
+.actions {
+    white-space: nowrap;
+}
+.loading-text,
+.empty-text {
+    margin-top: 12px;
+    padding: 12px;
+    text-align: center;
+    color: #999;
+    font-size: 12px;
+}
+.loading-text i,
+.empty-text i {
+    margin-right: 6px;
+}
+
 /* ── 行情下载日志 ── */
 .quote-select {
     appearance: auto;
@@ -475,6 +1087,19 @@ select option {
     font-family: 'Courier New', monospace;
     font-size: 11px;
 }
+.quote-log-content::-webkit-scrollbar {
+    width: 6px;
+}
+.quote-log-content::-webkit-scrollbar-track {
+    background: rgba(15, 20, 35, 0.5);
+}
+.quote-log-content::-webkit-scrollbar-thumb {
+    background: rgba(74, 85, 104, 0.5);
+    border-radius: 3px;
+}
+.quote-log-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 85, 104, 0.8);
+}
 .quote-log-line {
     color: #999;
     line-height: 1.5;
@@ -492,5 +1117,55 @@ select option {
 .quote-log-line.log-done {
     color: #2962ff;
     font-weight: 600;
+}
+
+/* ── 分页控件 ── */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 12px;
+    border-top: 1px solid rgba(74, 85, 104, 0.3);
+    background: rgba(26, 34, 54, 0.6);
+}
+.page-btn {
+    padding: 3px 6px;
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 3px;
+    background: rgba(26, 34, 54, 0.8);
+    color: #e0e0e0;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.page-btn:hover:not(:disabled) {
+    border-color: rgba(41, 98, 255, 0.5);
+    background: rgba(41, 98, 255, 0.15);
+}
+.page-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.page-info {
+    color: #999;
+    font-size: 11px;
+    min-width: 200px;
+    text-align: center;
+    margin: 0 4px;
+}
+.page-size-select {
+    padding: 2px 4px;
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 3px;
+    background: rgba(26, 34, 54, 0.8);
+    color: #e0e0e0;
+    font-size: 10px;
+    outline: none;
+    max-width: 80px;
+}
+.page-size-select option {
+    background: #1a2236;
+    color: #e0e0e0;
 }
 </style>

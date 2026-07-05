@@ -121,6 +121,11 @@ protected:
 
     // === 共同工具方法 ===
     bool LoadCSVToDataFrame(const String& file_path, DataFrame& df, Vector<String>& header);
+    void BuildDataFrameFromMap(
+        const Map<String, Vector<double>>& data,
+        const Vector<String>& dates,
+        DataFrame& df,
+        Vector<String>& header);
     void matchOrders(BacktestContext* context, symbol_t symbol);
     bool OrderReport(BacktestContext* context, order_id id, const TradeReport& report);
     TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);

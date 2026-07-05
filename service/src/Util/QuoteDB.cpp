@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstring>
+#include <algorithm>
 
 // ═══════════════════════════════════════════════════════════
 //  symbol 编解码
@@ -46,6 +47,8 @@ QuoteDB& QuoteDB::instance() {
 }
 
 QuoteDB::~QuoteDB() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    initialized_ = false;  // 阻止析构后新线程再调用
     if (conn_) duckdb_disconnect(&conn_);
     if (db_) duckdb_close(&db_);
 }
@@ -102,6 +105,10 @@ void QuoteDB::ensureTable(const std::string& table) {
             volume      BIGINT,
             turnover    DOUBLE,
             ext         TINYINT DEFAULT 0,
+            adj_open    DOUBLE,
+            adj_close   DOUBLE,
+            adj_high    DOUBLE,
+            adj_low     DOUBLE,
             UNIQUE(symbol, datetime)
         )
     )", table);
@@ -118,7 +125,8 @@ void QuoteDB::ensureTable(const std::string& table) {
 
 int QuoteDB::importCsv(const std::string& csv_path,
                        const std::string& table,
-                       const std::string& symbol_str) {
+                       const std::string& symbol_str,
+                       AdjType adj) {
     std::lock_guard<std::mutex> lock(mtx_);
 
     ensureTable(table);
@@ -131,17 +139,27 @@ int QuoteDB::importCsv(const std::string& csv_path,
 
     int64_t sym_encoded = encodeSymbol(symbol_str);
 
-    // 跳过 header
-    std::string header;
-    std::getline(ifs, header);
-
-    std::string insert_sql = fmt::format(
-        "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(symbol, datetime) DO UPDATE SET "
-        "open=excluded.open, close=excluded.close, high=excluded.high, "
-        "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext",
-        table);
+    // 根据 AdjType 决定写入哪组列
+    bool is_hfq = (adj == AdjType::HFQ);
+    std::string insert_sql;
+    if (is_hfq) {
+        insert_sql = fmt::format(
+            "INSERT INTO {} (symbol, datetime, adj_open, adj_close, adj_high, adj_low, volume, turnover, ext) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(symbol, datetime) DO UPDATE SET "
+            "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
+            "adj_high=excluded.adj_high, adj_low=excluded.adj_low, "
+            "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext",
+            table);
+    } else {
+        insert_sql = fmt::format(
+            "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(symbol, datetime) DO UPDATE SET "
+            "open=excluded.open, close=excluded.close, high=excluded.high, "
+            "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext",
+            table);
+    }
 
     exec("BEGIN TRANSACTION");
 
@@ -154,8 +172,14 @@ int QuoteDB::importCsv(const std::string& csv_path,
 
     int count = 0;
     std::string line;
+    bool headerSkipped = false;
     while (std::getline(ifs, line)) {
         if (line.empty()) continue;
+
+        // 跳过 BOM 前缀
+        if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF') {
+            line = line.substr(3);
+        }
 
         // 解析 CSV: datetime,open,close,high,low,volume,turnover
         std::istringstream ss(line);
@@ -164,40 +188,58 @@ int QuoteDB::importCsv(const std::string& csv_path,
         while (std::getline(ss, tok, ',')) cols.push_back(tok);
         if (cols.size() < 7) continue;
 
-        const auto& dt_str   = cols[0];
-        double open   = std::stod(cols[1]);
-        double close  = std::stod(cols[2]);
-        double high   = std::stod(cols[3]);
-        double low    = std::stod(cols[4]);
-        int64_t volume = static_cast<int64_t>(std::stod(cols[5]));
-        double turnover = std::stod(cols[6]);
-
-        // 停牌检测
-        uint8_t ext = 0;
-        if (volume == 0 || (open == 0 && close == 0 && high == 0 && low == 0)) {
-            ext |= 0x01;
+        // 跳过 header 行（第一列为 "datetime" 或 "date"）
+        if (!headerSkipped) {
+            std::string first = cols[0];
+            std::transform(first.begin(), first.end(), first.begin(), ::tolower);
+            if (first == "datetime" || first == "date") {
+                headerSkipped = true;
+                continue;
+            }
+            headerSkipped = true;
         }
 
-        // 绑定参数
-        duckdb_bind_int64(stmt, 1, sym_encoded);
-        duckdb_bind_varchar(stmt, 2, dt_str.c_str());
-        duckdb_bind_double(stmt, 3, open);
-        duckdb_bind_double(stmt, 4, close);
-        duckdb_bind_double(stmt, 5, high);
-        duckdb_bind_double(stmt, 6, low);
-        duckdb_bind_int64(stmt, 7, volume);
-        duckdb_bind_double(stmt, 8, turnover);
-        duckdb_bind_int8(stmt, 9, static_cast<int8_t>(ext));
+        // 安全解析 double（防止非数字行导致崩溃）
+        try {
+            const auto& dt_str   = cols[0];
+            double open   = std::stod(cols[1]);
+            double close  = std::stod(cols[2]);
+            double high   = std::stod(cols[3]);
+            double low    = std::stod(cols[4]);
+            int64_t volume = static_cast<int64_t>(std::stod(cols[5]));
+            double turnover = std::stod(cols[6]);
 
-        if (duckdb_execute_prepared(stmt, nullptr) == DuckDBSuccess) {
-            count++;
+            // 停牌检测
+            uint8_t ext = 0;
+            if (volume == 0 || (open == 0 && close == 0 && high == 0 && low == 0)) {
+                ext |= 0x01;
+            }
+
+            // 绑定参数: symbol, datetime, ohlc, volume, turnover, ext
+            duckdb_bind_int64(stmt, 1, sym_encoded);
+            duckdb_bind_varchar(stmt, 2, dt_str.c_str());
+            duckdb_bind_double(stmt, 3, open);
+            duckdb_bind_double(stmt, 4, close);
+            duckdb_bind_double(stmt, 5, high);
+            duckdb_bind_double(stmt, 6, low);
+            duckdb_bind_int64(stmt, 7, volume);
+            duckdb_bind_double(stmt, 8, turnover);
+            duckdb_bind_int8(stmt, 9, static_cast<int8_t>(ext));
+
+            if (duckdb_execute_prepared(stmt, nullptr) == DuckDBSuccess) {
+                count++;
+            }
+        } catch (const std::exception& e) {
+            // 跳过解析失败的行（如 header、脏数据）
+            SPDLOG_WARN("[QuoteDB] Skip invalid row: {} ({})", line, e.what());
         }
     }
 
     duckdb_destroy_prepare(&stmt);
     exec("COMMIT");
 
-    SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {}", count, table, symbol_str);
+    SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {} (adj={})",
+                count, table, symbol_str, is_hfq ? "HFQ" : "None");
     return count;
 }
 
@@ -217,7 +259,8 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     int64_t sym_encoded = encodeSymbol(symbol);
 
     std::string sql = fmt::format(
-        "SELECT symbol, CAST(datetime AS VARCHAR), open, close, high, low, volume, turnover, ext "
+        "SELECT symbol, CAST(datetime AS VARCHAR), open, close, high, low, volume, turnover, ext, "
+        "adj_open, adj_close, adj_high, adj_low "
         "FROM {} WHERE symbol = {}", table, sym_encoded);
 
     if (!start_time.empty())
@@ -245,6 +288,11 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
         bar.volume   = duckdb_value_int64(&res, 6, i);
         bar.turnover = duckdb_value_double(&res, 7, i);
         bar.ext      = static_cast<uint8_t>(duckdb_value_int8(&res, 8, i));
+        // 后复权价格（NULL 时 duckdb_value_double 返回 0.0）
+        bar.adj_open  = duckdb_value_double(&res, 9, i);
+        bar.adj_close = duckdb_value_double(&res, 10, i);
+        bar.adj_high  = duckdb_value_double(&res, 11, i);
+        bar.adj_low   = duckdb_value_double(&res, 12, i);
         result.push_back(std::move(bar));
     }
 
@@ -288,4 +336,62 @@ std::vector<std::string> QuoteDB::listSymbols(const std::string& table) {
     }
     duckdb_destroy_result(&res);
     return symbols;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  删除表
+// ═══════════════════════════════════════════════════════════
+
+bool QuoteDB::dropTable(const std::string& table) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    std::string sql = fmt::format("DROP TABLE IF EXISTS {}", table);
+    return exec(sql);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  删除标的 / 查询时间范围
+// ═══════════════════════════════════════════════════════════
+
+bool QuoteDB::deleteSymbol(const std::string& table, const std::string& symbol) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    int64_t sym_encoded = encodeSymbol(symbol);
+    std::string sql = fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
+    bool ok = exec(sql);
+    if (!ok) {
+        SPDLOG_ERROR("[QuoteDB] Failed to delete symbol {} from {}", symbol, table);
+    } else {
+        SPDLOG_INFO("[QuoteDB] Deleted symbol {} from {}", symbol, table);
+    }
+    return ok;
+}
+
+std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::string& table) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    std::vector<SymbolTimeRange> result;
+    if (!initialized_) return result;
+
+    std::string sql = fmt::format(
+        "SELECT symbol, MIN(datetime), MAX(datetime), COUNT(*) FROM {} GROUP BY symbol ORDER BY symbol",
+        table);
+
+    duckdb_result db_result;
+    if (duckdb_query(conn_, sql.c_str(), &db_result) != DuckDBSuccess) {
+        duckdb_destroy_result(&db_result);
+        return result;
+    }
+
+    idx_t rows = duckdb_row_count(&db_result);
+    for (idx_t i = 0; i < rows; i++) {
+        SymbolTimeRange range;
+        int64_t encoded = duckdb_value_int64(&db_result, 0, i);
+        // 将 int64_t 直接拷贝到 symbol_t（size 相同）
+        std::memcpy(&range.symbol, &encoded, sizeof(symbol_t));
+        range.start_time = duckdb_value_varchar(&db_result, 1, i);
+        range.end_time = duckdb_value_varchar(&db_result, 2, i);
+        range.count = static_cast<int64_t>(duckdb_value_int64(&db_result, 3, i));
+        result.push_back(std::move(range));
+    }
+
+    duckdb_destroy_result(&db_result);
+    return result;
 }

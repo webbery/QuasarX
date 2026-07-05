@@ -1,4 +1,5 @@
 #include "Util/data.h"
+#include "Util/QuoteDB.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "Util/system.h"
@@ -679,7 +680,7 @@ ResampledData ResampleToFrequency(
 }
 
 Map<String, Vector<double>> LoadHistoryDataWithFreq(
-    const String& symbol,
+    const symbol_t& symbol,
     const Vector<String>& fields,
     const String& start_date,
     const String& end_date,
@@ -688,6 +689,118 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
     Vector<String>* out_dates,
     FillMethod fill)
 {
+    // === 新方法：从 DuckDB 获取数据 ===
+    try {
+        // 初始化 QuoteDB（如果尚未初始化）
+        // 注意：正常路径应由 Server::InitDefault() 在启动时初始化
+        // 此处为回退逻辑，尝试使用 "./data/quote" 路径
+        auto& quoteDB = QuoteDB::instance();
+        if (!quoteDB.isInitialized()) {
+            std::string db_dir = "./data/quote";
+            if (!quoteDB.init(db_dir)) {
+                WARN("[LoadHistoryDataWithFreq] Failed to initialize QuoteDB at {}", db_dir);
+                goto fallback_csv;
+            }
+        }
+
+        // 从 symbol_t 获取标准格式的 symbol 字符串（用于查询和日志）
+        String symbol_str = get_symbol(symbol);
+
+        // 判断资产类型：使用 is_etf() 函数（内部基于代码前缀判断）
+        bool is_etf_flag = is_etf(symbol);
+        String asset_type = is_etf_flag ? "etf" : "stock";
+
+        // 构建表名
+        String freq_str = toString(target_freq);
+        String table = QuoteDB::tableName(asset_type, freq_str);
+
+        // 检查表是否存在
+        auto tables = quoteDB.listTables();
+        bool table_exists = false;
+        for (const auto& t : tables) {
+            if (t == table) {
+                table_exists = true;
+                break;
+            }
+        }
+        
+        for (const auto& t : tables) {
+            WARN("  - {}", t);
+        }
+        
+        if (!table_exists) {
+            WARN("[LoadHistoryDataWithFreq] Table {} not found in DuckDB", table);
+            goto fallback_csv;
+        }
+
+        // 查询数据（使用 symbol_t 编码，内部会重新转换为字符串）
+        String start_time = start_date.empty() ? "" : start_date + " 00:00:00";
+        String end_time = end_date.empty() ? "" : end_date + " 23:59:59";
+        auto bars = quoteDB.query(table, symbol_str, start_time, end_time, 100000);
+
+        if (bars.empty()) {
+            WARN("[LoadHistoryDataWithFreq] No data found for {} in {}", symbol_str, table);
+            goto fallback_csv;
+        }
+
+        // 构建返回结果
+        Map<String, Vector<double>> result;
+        Vector<String> dates;
+        dates.reserve(bars.size());
+
+        // 初始化结果字段
+        for (const auto& f : fields) {
+            String lower_f = f;
+            std::transform(lower_f.begin(), lower_f.end(), lower_f.begin(), ::tolower);
+            result[lower_f] = Vector<double>();
+            result[lower_f].reserve(bars.size());
+        }
+
+        // 填充数据
+        for (const auto& bar : bars) {
+            dates.push_back(bar.datetime);
+
+            for (const auto& f : fields) {
+                String lower_f = f;
+                std::transform(lower_f.begin(), lower_f.end(), lower_f.begin(), ::tolower);
+
+                double val = 0.0;
+                if (lower_f == "open") {
+                    val = (adj == AdjType::HFQ && bar.adj_open > 0) ? bar.adj_open : bar.open;
+                } else if (lower_f == "close") {
+                    val = (adj == AdjType::HFQ && bar.adj_close > 0) ? bar.adj_close : bar.close;
+                } else if (lower_f == "high") {
+                    val = (adj == AdjType::HFQ && bar.adj_high > 0) ? bar.adj_high : bar.high;
+                } else if (lower_f == "low") {
+                    val = (adj == AdjType::HFQ && bar.adj_low > 0) ? bar.adj_low : bar.low;
+                } else if (lower_f == "volume") {
+                    val = static_cast<double>(bar.volume);
+                } else if (lower_f == "turnover") {
+                    val = bar.turnover;
+                }
+
+                auto it = result.find(lower_f);
+                if (it != result.end()) {
+                    it->second.push_back(val);
+                }
+            }
+        }
+
+        if (out_dates) {
+            *out_dates = std::move(dates);
+        }
+
+        INFO("[LoadHistoryDataWithFreq] Loaded {} bars from DuckDB for {} ({})",
+             bars.size(), symbol_str, table);
+        return result;
+
+    } catch (const std::exception& e) {
+        WARN("[LoadHistoryDataWithFreq] DuckDB query failed: {}, falling back to CSV", e.what());
+    }
+
+fallback_csv:
+    // === 原 CSV 方法（已注释，保留作为回退） ===
+    /*
     const String base_dir = "./data";
 
     // 规范化 symbol
@@ -757,6 +870,7 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
     if (std::filesystem::exists(default_path)) {
         return loadCsvDataFromPath(default_path, fields, start_date, end_date, out_dates);
     }
+    */
 
     return {};
 }

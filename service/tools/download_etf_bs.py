@@ -72,6 +72,32 @@ def convert_to_baostock_code(symbol: str) -> str:
         return f"sh.{code}"
 
 
+def to_code_exchange(symbol: str) -> str:
+    """
+    将 BaoStock 格式或大写交易所格式转为 CODE.EXCHANGE 格式
+    如 "sh.510300" -> "510300.SH"，"sz.159919" -> "159919.SZ"
+    如果已经是 CODE.EXCHANGE 格式则直接返回
+    """
+    sym = symbol.strip()
+    if "." not in sym:
+        return sym  # 纯代码，原样返回
+
+    parts = sym.split(".")
+    if len(parts) != 2:
+        return sym
+
+    left, right = parts[0], parts[1].upper()
+
+    # 如果左边是数字，右边是交易所 -> 已经是 CODE.EXCHANGE 格式
+    if left.isdigit():
+        return sym.upper() if right in ("SH", "SZ", "SSE", "SZSE", "BJ") else sym
+
+    # BaoStock 格式: sh.510300 -> 510300.SH
+    exchange_map = {"sh": "SH", "sse": "SH", "sz": "SZ", "szse": "SZ", "bj": "BJ"}
+    exchange = exchange_map.get(left.lower(), right)
+    return f"{left}.{exchange}"
+
+
 # ============================================================
 # 频率映射
 # ============================================================
@@ -239,7 +265,7 @@ def save_csv(df: pd.DataFrame, filepath: str, use_timestamp: bool = False):
         df[out_cols].to_csv(filepath, index=False)
 
     label = "C++" if use_timestamp else "Python"
-    print(f"  ✓ {label} 格式: {filepath} ({len(df)} 条)")
+    print(f"  [OK] {label} 格式: {filepath} ({len(df)} 条)")
     return True
 
 
@@ -273,7 +299,12 @@ def download_single_data(symbol, data_dir, freq, start_date, end_date, asset_typ
             continue
 
         out_dir = os.path.join(data_dir, subdir, freq)
-        filename = f"{bs_code}.csv"
+        os.makedirs(out_dir, exist_ok=True)
+
+        # 文件名统一使用 CODE.EXCHANGE.csv 格式（如 510300.SH.csv / 000001.SZ.csv）
+        # 注意：使用 bs_code（已转为 sh.510300 格式）保证一致性，避免输入格式不统一
+        csv_name = to_code_exchange(bs_code)
+        filename = f"{csv_name}.csv"
 
         # 只保存 Python 格式 (YYYY-MM-DD HH:MM:SS)
         save_csv(df, os.path.join(out_dir, filename), use_timestamp=False)
@@ -337,7 +368,7 @@ def main():
 
         print(f"\n完成: {ok_count}/{len(symbols)} 成功")
         if args.freq != "daily":
-            print("⚠ 分钟数据约3个月历史")
+            print("[WARN] 分钟数据约3个月历史")
 
     finally:
         bs.logout()

@@ -5,11 +5,11 @@
 #define STOCK_HISTORY_SIM "stock_hist_sim"
 
 /**
- * @brief 股票历史数据回测
+ * @brief 股票历史数据回测（DuckDB 数据源）
  *
  * 继承 HistorySimulationBase，实现股票特有逻辑：
- * - LoadT1(): 日线数据 (A_hfq / AStock)
- * - LoadT0(): 分钟级数据 (stock/)
+ * - 数据源: DuckDB 表 stock_1d / stock_1m / stock_5m
+ * - T+0/T+1 由 UseLevel() 决定频率
  * - 股票佣金/印花税默认配置
  */
 class StockHistorySimulation : public HistorySimulationBase {
@@ -42,9 +42,6 @@ protected:
     void OnDataLoaded() override;
 
 private:
-    void LoadT0(const String& code);
-    void LoadT1(const String& code);
-
     TradingMode _tradingMode;  // 交易模式（T0/T1，决定数据加载方式）
     String _t0Freq;            // T0 数据频率（1m/5m/15m），仅分钟级使用
 };

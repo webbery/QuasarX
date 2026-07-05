@@ -19,6 +19,7 @@
 #include "HttpHandler.h"
 #include "PortfolioSubsystem.h"
 #include "StrategyNode.h"
+#include "Util/QuoteDB.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
@@ -42,6 +43,7 @@
 #include "Handler/NodeIOHandler.h"
 #include "Handler/PythonRunnerHandler.h"
 #include "Handler/QuoteDownloadHandler.h"
+#include "Handler/QuoteDataHandler.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"
 #include "Nodes/PortfolioNode.h"
@@ -169,6 +171,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_NODE_IO         "/node/io"
 #define API_PYTHON_RUNNER   "/python/run"
 #define API_QUOTE           "/quote"
+#define API_QUOTE_DATA      "/quote/data"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -350,6 +353,9 @@ void Server::Regist() {
     REGIST_POST(API_PYTHON_RUNNER);
     REGIST_POST(API_QUOTE);
     REGIST_GET(API_QUOTE);
+    REGIST_DEL(API_QUOTE);
+    REGIST_POST(API_QUOTE_DATA);
+    REGIST_DEL(API_QUOTE_DATA);
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
     REGIST_GET(API_OPTION_HISTORY);
@@ -382,6 +388,17 @@ bool Server::InitDatabase() {
 }
 
 void Server::InitDefault() {
+    // 初始化 QuoteDB（使用正确的数据库路径）
+    auto& quoteDB = QuoteDB::instance();
+    auto db_path = _config->GetDatabasePath();
+    if (!quoteDB.isInitialized()) {
+        if (quoteDB.init(db_path + "/quote")) {
+            INFO("[InitDefault] QuoteDB initialized at {}/quote", db_path);
+        } else {
+            WARN("[InitDefault] Failed to initialize QuoteDB at {}/quote", db_path);
+        }
+    }
+
     if (!_config->HasDefault())
         return;
 
@@ -1186,6 +1203,7 @@ void Server::InitHandlers() {
     RegistHandler(API_NODE_IO, NodeIOHandler);
     RegistHandler(API_PYTHON_RUNNER, PythonRunnerHandler);
     RegistHandler(API_QUOTE, QuoteDownloadHandler);
+    RegistHandler(API_QUOTE_DATA, QuoteDataHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});

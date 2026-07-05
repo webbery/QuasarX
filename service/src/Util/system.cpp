@@ -287,16 +287,22 @@ bool RunCommand(const std::string& cmd, String& output) {
         BOOL readSuccess = ReadFile(hStdoutRd, buffer, BUFFER_SIZE - 1, &bytesRead, NULL);
         if (!readSuccess || bytesRead == 0) {
             break;
-    }
+        }
         buffer[bytesRead] = '\0';
         output += buffer;
-}
-
+    }
+    output = to_utf8(output);
     WaitForSingleObject(pi.hProcess, INFINITE);
+
+    // 获取子进程退出码
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(hStdoutRd);
+
+    return exitCode == 0;
 #else
     int pipefd[2];
     if (pipe(pipefd) == -1) {
@@ -575,8 +581,17 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
   memset(&id, 0, sizeof(symbol_t));
   auto code = atoi(strSymbol.c_str());
   if (exchange.empty()) {
-    auto ct = Server::GetContractType(strSymbol);
-    switch (ct.first) {
+    // 优先通过代码前缀判断资产类型（不依赖 _markets）
+    ContractType ct = ContractType::AStock;
+    if (code >= 510000 && code <= 519999) ct = ContractType::ETF;          // 上交所ETF: 510-519
+    else if (code >= 560000 && code <= 569999) ct = ContractType::ETF;     // 上交所ETF: 560-569
+    else if (code == 588000 || code == 589000) ct = ContractType::ETF;     // 科创ETF: 588/589
+    else if (code >= 159000 && code <= 159999) ct = ContractType::ETF;     // 深交所ETF: 159
+    else {
+      auto fallback = Server::GetContractType(strSymbol);
+      ct = fallback.first;
+    }
+    switch (ct) {
     case ContractType::AStock: id._type = contract_type::stock; break;
     case ContractType::ETF: id._type = contract_type::exchange_traded_fund; break;
     case ContractType::Future: id._type = contract_type::future; break;
@@ -586,7 +601,9 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
         return option;
     }
     case ContractType::Option: {
-        if (ct.second) {
+        // Option 需要通过 Server::GetContractType 返回的第二个参数判断 call/put
+        auto optCt = Server::GetContractType(strSymbol);
+        if (optCt.second) {
             id._type = contract_type::call;
         }
         else {
@@ -595,7 +612,6 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     }
     break;
     case ContractType::Index: id._type = contract_type::index; break;
-    break;
     default: break;
     }
     if (tokens.size() > 1) {
@@ -926,4 +942,21 @@ void strategy_error(const String& strategy, const String& info) {
     auto sock = Server::GetSocket();
     auto msg = format_sse("strategy", { {"message", info}, {"type","error"} });
     nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
+}
+
+std::string toInternalSymbol(const std::string& symbol) {
+    auto dot = symbol.find('.');
+    if (dot == std::string::npos) {
+        // 纯数字代码，根据前缀推断交易所
+        if (symbol[0] == '6' || symbol[0] == '5') return "sh." + symbol;
+        return "sz." + symbol;
+    }
+    std::string code = symbol.substr(0, dot);
+    std::string market = symbol.substr(dot + 1);
+    // 转小写
+    std::transform(market.begin(), market.end(), market.begin(), ::tolower);
+    if (market == "sh" || market == "sse") return "sh." + code;
+    if (market == "sz" || market == "szse") return "sz." + code;
+    if (market == "bj") return "bj." + code;
+    return market + "." + code;
 }

@@ -40,7 +40,7 @@ Map<String, Vector<double>> LoadHistoryData(
 
 /// 从 CSV 数据文件加载多列时间序列数据（带频率自适应）
 /// 优先加载 target_freq 对应的 CSV，若不存在则查找可用频率并聚合
-/// @param symbol     标的代码 (如 "sz.000001")
+/// @param symbol     标的代码 (symbol_t 类型)
 /// @param fields     字段名列表 (close/open/high/low/volume/turnover)
 /// @param start_date 起始日期 "YYYY-MM-DD"，空字符串表示从最早开始
 /// @param end_date   结束日期 "YYYY-MM-DD"，空字符串表示到最新
@@ -50,7 +50,7 @@ Map<String, Vector<double>> LoadHistoryData(
 /// @param fill       填充策略，默认 None（截断到共同长度）
 /// @return           map: field → 数据序列（已按 fill 策略对齐，必要时聚合）
 Map<String, Vector<double>> LoadHistoryDataWithFreq(
-    const String& symbol,
+    const symbol_t& symbol,
     const Vector<String>& fields,
     const String& start_date,
     const String& end_date,

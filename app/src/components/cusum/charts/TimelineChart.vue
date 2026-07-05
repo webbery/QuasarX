@@ -26,11 +26,11 @@ const props = defineProps<Props>()
 const chartRef = ref<HTMLElement>()
 let chartInstance: echarts.ECharts | null = null
 
-const typeIconMap: Record<string, string> = {
-  mean_shift: '📊',
-  variance_shift: '📈',
-  corr_spike: '🔗',
-  consensus: '⚠️',
+const typeIconMap: Record<string, Record<string, string>> = {
+  mean_shift: { positive: '📈', negative: '📉' },
+  variance_shift: { positive: '🔺', negative: '🔻' },
+  corr_spike: { positive: '🔗', negative: '🔗' },
+  consensus: { positive: '⚠️', negative: '⚠️' },
 }
 
 const actionLabelMap: Record<string, string> = {
@@ -47,23 +47,32 @@ function renderChart() {
     ? props.dates.slice(1)
     : props.dates || []
 
-  const events = props.events.map((e, i) => ({
-    ...e,
-    icon: typeIconMap[e.type] || '📌',
-    label: `${actionLabelMap[e.action] || e.action}`,
-    dateLabel: dates[e.day] ? `${dates[e.day]} (Day ${e.day})` : `Day ${e.day}`,
-  }))
+  const events = props.events.map((e, i) => {
+    // 从 drift 值的正负判断方向，如果没有 direction 字段则自动推断
+    const direction = e.drift >= 0 ? 'positive' : 'negative'
+    const iconMap = typeIconMap[e.type] || { positive: '📌', negative: '📌' }
+    const icon = iconMap[direction] || '📌'
+    return {
+      ...e,
+      direction,
+      icon,
+      driftDirection: direction,
+      label: `${actionLabelMap[e.action] || e.action}`,
+      dateLabel: dates[e.day] ? `${dates[e.day]} (Day ${e.day})` : `Day ${e.day}`,
+    }
+  })
 
   const option = {
     tooltip: {
       trigger: 'item',
       formatter: (params: any) => {
         const evt = events[params.dataIndex]
-        return `<b>${evt.dateLabel}</b><br/>标的: ${evt.symbol || '-'}<br/>类型: ${evt.type}<br/>漂移: ${evt.drift.toFixed(4)}<br/>VaR 调整: ${evt.label}`
+        const directionLabel = evt.driftDirection === 'positive' ? '正向漂移 (C+)' : '负向漂移 (C-)'
+        return `<b>${evt.dateLabel}</b><br/>标的: ${evt.symbol || '-'}<br/>方向: ${directionLabel}<br/>类型: ${evt.type}<br/>漂移: ${evt.drift.toFixed(4)}<br/>VaR 调整: ${evt.label}`
       },
     },
     legend: {
-      data: ['变点漂移'],
+      data: ['正向漂移 (C+)', '负向漂移 (C-)'],
       top: 5,
       textStyle: { color: '#999', fontSize: 11 },
     },
@@ -84,9 +93,7 @@ function renderChart() {
       data: events.map(e => ({
         value: e.drift,
         itemStyle: {
-          color: e.type === 'consensus' ? '#ff1744' :
-                 e.type === 'corr_spike' ? '#ff9800' :
-                 e.type === 'variance_shift' ? '#9c27b0' : '#2962ff',
+          color: e.drift >= 0 ? '#2962ff' : '#ff1744',  // C+ 蓝色，C- 红色
         },
       })),
       label: {

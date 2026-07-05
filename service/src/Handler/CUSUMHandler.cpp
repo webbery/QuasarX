@@ -62,7 +62,9 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         Vector<String> dates_str;
         for (auto& sym : symbols) {
             Vector<String> sym_dates;
-            auto data = LoadHistoryDataWithFreq(sym, {"close"}, start, end, target_freq, AdjType::HFQ, &sym_dates);
+            // 将 symbol 字符串转换为 symbol_t 类型
+            symbol_t sym_t = to_symbol(toInternalSymbol(sym));
+            auto data = LoadHistoryDataWithFreq(sym_t, {"close"}, start, end, target_freq, AdjType::HFQ, &sym_dates);
             auto close_it = data.find("close");
             if (close_it == data.end() || close_it->second.size() < 2) {
                 WARN("[CUSUM] Insufficient data for {}", sym);
@@ -302,11 +304,23 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             for (auto& item : result["mean_cusum"]) {
                 String sym = item.value("symbol", "");
                 for (size_t idx : item["change_points"]) {
+                    double s_pos_val = item["s_pos"][idx];
+                    double s_neg_val = item["s_neg"][idx];
+                    // 根据 S+ 和 S- 的相对大小判断漂移方向
+                    String drift_direction = "positive";
+                    double drift_value = s_pos_val;
+                    if (s_neg_val > s_pos_val) {
+                        drift_direction = "negative";
+                        drift_value = -s_neg_val;  // 负向漂移用负值表示
+                    }
                     timeline.push_back({
                         {"day", (int)idx},
                         {"type", "mean_shift"},
                         {"symbol", sym},
-                        {"drift", item["s_pos"][idx]},
+                        {"drift", drift_value},
+                        {"s_pos", s_pos_val},
+                        {"s_neg", s_neg_val},
+                        {"direction", drift_direction},
                         {"action", "ewma_99"},
                     });
                 }
@@ -316,11 +330,22 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             for (auto& item : result["variance_cusum"]) {
                 String sym = item.value("symbol", "");
                 for (size_t idx : item["change_points"]) {
+                    double s_pos_val = item["s_pos"][idx];
+                    double s_neg_val = item["s_neg"][idx];
+                    String drift_direction = "positive";
+                    double drift_value = s_pos_val;
+                    if (s_neg_val > s_pos_val) {
+                        drift_direction = "negative";
+                        drift_value = -s_neg_val;
+                    }
                     timeline.push_back({
                         {"day", (int)idx},
                         {"type", "variance_shift"},
                         {"symbol", sym},
-                        {"drift", item["s_pos"][idx]},
+                        {"drift", drift_value},
+                        {"s_pos", s_pos_val},
+                        {"s_neg", s_neg_val},
+                        {"direction", drift_direction},
                         {"action", "ewma_99_5"},
                     });
                 }

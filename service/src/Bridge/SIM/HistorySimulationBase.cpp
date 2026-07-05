@@ -285,6 +285,53 @@ bool HistorySimulationBase::LoadCSVToDataFrame(const String& file_path,
     return true;
 }
 
+void HistorySimulationBase::BuildDataFrameFromMap(
+    const Map<String, Vector<double>>& data,
+    const Vector<String>& dates,
+    DataFrame& df,
+    Vector<String>& header)
+{
+    header = {"date", "open", "close", "high", "low", "volume"};
+
+    Vector<time_t> timestamps;
+    Vector<float> open, close, high, low;
+    Vector<int64_t> volume;
+
+    timestamps.reserve(dates.size());
+    open.reserve(dates.size());
+    close.reserve(dates.size());
+    high.reserve(dates.size());
+    low.reserve(dates.size());
+    volume.reserve(dates.size());
+
+    for (size_t i = 0; i < dates.size(); ++i) {
+        const char* fmt = (dates[i].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
+        timestamps.emplace_back(FromStr(dates[i], fmt));
+        open.emplace_back(static_cast<float>(data.at("open")[i]));
+        close.emplace_back(static_cast<float>(data.at("close")[i]));
+        high.emplace_back(static_cast<float>(data.at("high")[i]));
+        low.emplace_back(static_cast<float>(data.at("low")[i]));
+        volume.emplace_back(static_cast<int64_t>(data.at("volume")[i]));
+    }
+
+    if (timestamps.empty()) {
+        WARN("BuildDataFrameFromMap: empty dates");
+        return;
+    }
+
+    size_t numRows = timestamps.size();
+    Vector<uint32_t> indexes(numRows);
+    std::iota(indexes.begin(), indexes.end(), 1);
+
+    df.load_index(std::move(indexes));
+    df.load_column(header[0].c_str(), std::move(timestamps));
+    df.load_column(header[1].c_str(), std::move(open));
+    df.load_column(header[2].c_str(), std::move(close));
+    df.load_column(header[3].c_str(), std::move(high));
+    df.load_column(header[4].c_str(), std::move(low));
+    df.load_column(header[5].c_str(), std::move(volume));
+}
+
 // ============ 订单撮合 ============
 
 TradeReport HistorySimulationBase::OrderMatch(const Order& order, const QuoteInfo& quote) {

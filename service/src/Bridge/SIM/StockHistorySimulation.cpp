@@ -6,6 +6,7 @@
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
+#include "Util/data.h"
 #include "std_header.h"
 #include <algorithm>
 #include <exception>
@@ -65,56 +66,41 @@ void StockHistorySimulation::OnDataLoaded() {
 }
 
 bool StockHistorySimulation::LoadData(const String& code) {
-    if (_tradingMode == TradingMode::T1) {
-        LoadT1(code);
-    } else {
-        LoadT0(code);
+    auto& security = Server::GetSecurity(code);
+    auto symbol = to_symbol(code, security);
+
+    // 确定频率：T1 → 日线，T0 → 分钟级
+    BarFreq freq = (_tradingMode == TradingMode::T1) ? BarFreq::Day : parseBarFreq(_t0Freq.empty() ? "1m" : _t0Freq);
+
+    // 后复权数据（指标计算）
+    Vector<String> adjDates;
+    auto adjData = LoadHistoryDataWithFreq(
+        symbol, {"open", "close", "high", "low", "volume"},
+        "", "", freq, AdjType::HFQ, &adjDates);
+
+    if (adjData.empty()) {
+        String err_msg = fmt::format("No stock data for '{}' from DuckDB (freq={}, adj=HFQ)", code, toString(freq));
+        WARN("{}", err_msg);
+        throw std::runtime_error(err_msg);
     }
+
+    BuildDataFrameFromMap(adjData, adjDates, _csvs[symbol], _headers[symbol]);
+
+    // 原始价数据（撮合）
+    Vector<String> orgDates;
+    auto orgData = LoadHistoryDataWithFreq(
+        symbol, {"open", "close", "high", "low", "volume"},
+        "", "", freq, AdjType::None, &orgDates);
+
+    if (orgData.empty()) {
+        String err_msg = fmt::format("No stock data for '{}' from DuckDB (freq={}, adj=None)", code, toString(freq));
+        WARN("{}", err_msg);
+        throw std::runtime_error(err_msg);
+    }
+
+    BuildDataFrameFromMap(orgData, orgDates, _org_csvs[symbol], _org_headers[symbol]);
+
     return true;
-}
-
-void StockHistorySimulation::LoadT1(const String& code) {
-    auto& security = Server::GetSecurity(code);
-    auto symbol = to_symbol(code, security);
-    String subdir, orgdir;
-    if (is_stock(symbol)) {
-        subdir = "A_hfq";
-        orgdir = "AStock";
-    }
-    auto file_path = _org_path + "/" + subdir + "/" + code + ".csv";
-    auto primitive_file_path = _org_path + "/" + orgdir + "/" + code + ".csv";
-
-    if (!LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol])) {
-        String err_msg = fmt::format("Failed to load backtest data for '{}': CSV file not found or invalid at '{}'. "
-                                     "Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') "
-                                     "and the CSV file exists in the data directory.", code, file_path);
-        WARN("{}", err_msg);
-        throw std::runtime_error(err_msg);
-    }
-
-    if (!LoadCSVToDataFrame(primitive_file_path, _org_csvs[symbol], _org_headers[symbol])) {
-        WARN("load {} fail, will use adjusted price", primitive_file_path);
-        _org_csvs[symbol] = _csvs[symbol];
-        _org_headers[symbol] = _headers[symbol];
-    }
-}
-
-void StockHistorySimulation::LoadT0(const String& code) {
-    auto& security = Server::GetSecurity(code);
-    auto symbol = to_symbol(code, security);
-    String subdir;
-    if (is_stock(symbol)) {
-        subdir = "stock";
-    }
-    auto file_path = _org_path + "/zh/" + subdir + "/" + code + ".csv";
-
-    if (!LoadCSVToDataFrame(file_path, _csvs[symbol], _headers[symbol])) {
-        String err_msg = fmt::format("Failed to load backtest data for '{}': CSV file not found or invalid at '{}'. "
-                                     "Please ensure the code format is correct (e.g., 'sh.600519' or 'sz.000001') "
-                                     "and the CSV file exists in the data directory.", code, file_path);
-        WARN("{}", err_msg);
-        throw std::runtime_error(err_msg);
-    }
 }
 
 std::pair<std::vector<time_t>, std::vector<double>> StockHistorySimulation::GetHFQCloseData(symbol_t symbol) const {

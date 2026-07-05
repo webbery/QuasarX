@@ -538,7 +538,9 @@ VolatilityResult VolatilityHandler::compute(
             volumes_vec.assign(prices_vec.size(), 0.0);  // 宏观数据无成交量
         } else {
             // 股票/ETF行情数据（默认使用 HFQ 后复权）
-            auto multi = LoadHistoryDataWithFreq(symbol, {"close", "open", "high", "low", "volume", "turnover"},
+            // 将 symbol 字符串转换为 symbol_t 类型
+            symbol_t sym = to_symbol(toInternalSymbol(symbol));
+            auto multi = LoadHistoryDataWithFreq(sym, {"close", "open", "high", "low", "volume", "turnover"},
                                                   start_date, end_date, target_freq, AdjType::HFQ, &dates, fill);
             Vector<double> prices = getPriceCol(multi);
             Vector<double> volumes = getVolumeCol(multi);

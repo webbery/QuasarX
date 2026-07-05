@@ -134,10 +134,12 @@
         :future-data="undefined"
         @back="onRiskDetailBack"
       />
-      <component v-else :is="activeComponent" ref="dynamicComponentRef"
-        @load-version="onLoadVersion"
-        @strategy-click="onStrategyRiskClick"
-      />
+      <KeepAlive>
+        <component :is="activeComponent" ref="dynamicComponentRef"
+          @load-version="onLoadVersion"
+          @strategy-click="onStrategyRiskClick"
+        />
+      </KeepAlive>
     </main>
 
     <!-- 右侧面板 -->

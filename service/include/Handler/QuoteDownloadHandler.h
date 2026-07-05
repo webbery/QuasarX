@@ -6,4 +6,5 @@ public:
     using HttpHandler::HttpHandler;
     void post(const httplib::Request& req, httplib::Response& res) override;
     void get(const httplib::Request& req, httplib::Response& res) override;
+    void del(const httplib::Request& req, httplib::Response& res) override;
 };
