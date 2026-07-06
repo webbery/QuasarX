@@ -519,6 +519,22 @@ jobs:
             service/build/QuantService
           compression-level: 5
 
+      - name: Show service log (last 100 lines)
+        if: always()
+        run: |
+          echo "=== Last 100 lines of spdlog ==="
+          tail -100 service/build/logs/monthly_log.txt 2>/dev/null || echo "(log not found)"
+
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-logs
+          path: |
+            service/build/logs/
+          compression-level: 5
+          retention-days: 7
+
       - name: Upload test failure report
         if: failure()
         uses: actions/upload-artifact@v4

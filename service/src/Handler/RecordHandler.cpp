@@ -84,7 +84,7 @@ void RecordHandler::SetSymbols(const Set<String>& symbols) {
 
 void RecordHandler::PushDuckDbTick(const QuoteInfo& quote) {
     TickDataEntry entry;
-    entry.id = 0;  // batch_insert_ticks 中由 id_counter_ 分配
+    entry.id = 0;  // id 由 DuckDB IDENTITY 自动生成
     entry.timestamp_epoch = static_cast<int64_t>(quote._time);
     entry.symbol = format_symbol(get_symbol(quote._symbol));
     entry.open = quote._open;
@@ -132,12 +132,7 @@ void RecordHandler::FlushDuckDbBatch() {
         batch.swap(_duckdbBuffer);
     }
 
-    // 分配 ID 并推入 DuckDBLogger
-    static std::atomic<int64_t> s_id_counter{1};
-    for (auto& entry : batch) {
-        entry.id = s_id_counter++;
-    }
-
+    // 推入 DuckDBLogger（id 由 DuckDB IDENTITY 自动生成）
     DuckDBLogger::instance().log_ticks(batch);
     _lastDuckDbFlush = now;
 }

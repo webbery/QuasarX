@@ -338,8 +338,6 @@ private:
     std::atomic<bool> initialized_{false};
     std::thread worker_thread_;
 
-    std::atomic<int64_t> id_counter_{0};
-
     // 批量写入配置
     static constexpr int BATCH_SIZE = 200;          // 批量阈值
     static constexpr int FLUSH_INTERVAL_MS = 500;   // 强制刷新间隔

@@ -172,23 +172,6 @@ bool DuckDBLogger::init(const std::string& db_path) {
     // 初始化 tick_data 表
     init_tick_table();
 
-    // 初始化ID计数器：取所有表的最大 id
-    id_counter_ = 1;
-    const char* tables[] = {"strategy_logs", "node_io_logs", "tick_data"};
-    for (const auto& table : tables) {
-        duckdb_result res;
-        std::string sql = std::string("SELECT COALESCE(MAX(id), 0) FROM ") + table;
-        duckdb_state st = duckdb_query(conn_, sql.c_str(), &res);
-        if (st == DuckDBSuccess && duckdb_row_count(&res) > 0) {
-            auto* data = (int64_t*)duckdb_column_data(&res, 0);
-            auto* null_mask = duckdb_nullmask_data(&res, 0);
-            if (data && !null_mask[0] && data[0] >= id_counter_) {
-                id_counter_ = data[0] + 1;
-            }
-        }
-        duckdb_destroy_result(&res);
-    }
-
     // 启动后台写入线程
     running_ = true;
     worker_thread_ = std::thread(&DuckDBLogger::worker_loop, this);
@@ -201,7 +184,7 @@ bool DuckDBLogger::init(const std::string& db_path) {
 void DuckDBLogger::init_tables() {
     exec(R"(
         CREATE TABLE IF NOT EXISTS strategy_logs (
-            id BIGINT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             timestamp TIMESTAMP NOT NULL,
             strategy_name VARCHAR NOT NULL,
             level VARCHAR NOT NULL,
@@ -218,7 +201,7 @@ void DuckDBLogger::init_tables() {
 void DuckDBLogger::init_node_io_table() {
     exec(R"(
         CREATE TABLE IF NOT EXISTS node_io_logs (
-            id BIGINT PRIMARY KEY,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             timestamp TIMESTAMP NOT NULL,
             strategy_name VARCHAR NOT NULL,
             epoch BIGINT NOT NULL,
@@ -239,7 +222,7 @@ void DuckDBLogger::init_node_io_table() {
 void DuckDBLogger::init_tick_table() {
     exec(R"(
         CREATE TABLE IF NOT EXISTS tick_data (
-            id              INTEGER PRIMARY KEY,
+            id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             timestamp       TIMESTAMP NOT NULL,
             symbol          TEXT NOT NULL,
             open            DOUBLE,
@@ -279,7 +262,6 @@ void DuckDBLogger::log_strategy(
     }
 
     StrategyLogEntry entry;
-    entry.id = id_counter_++;
     entry.timestamp = ToString(Now());
     entry.strategy_name = strategy_name;
     entry.level = level;
@@ -307,7 +289,6 @@ void DuckDBLogger::log_node_io(
     }
 
     NodeIOEntry entry;
-    entry.id = id_counter_++;
     entry.timestamp = ToString(Now());
     entry.strategy_name = strategy_name;
     entry.epoch = epoch;
@@ -429,8 +410,8 @@ void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
     duckdb_prepared_statement stmt = nullptr;
     const char* insert_sql = R"(
         INSERT INTO strategy_logs
-        (id, timestamp, strategy_name, level, message, context)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (timestamp, strategy_name, level, message, context)
+        VALUES (?, ?, ?, ?, ?)
     )";
 
     if (duckdb_prepare(conn_, insert_sql, &stmt) != DuckDBSuccess) {
@@ -440,7 +421,6 @@ void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
 
     bool failed = false;
     for (const auto& entry : entries) {
-        duckdb_value v_id   = make_int64(entry.id);
         duckdb_value v_ts   = make_varchar(entry.timestamp);
         duckdb_value v_name = make_varchar(entry.strategy_name);
         duckdb_value v_lvl  = make_varchar(entry.level);
@@ -448,9 +428,9 @@ void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
         duckdb_value v_ctx  = entry.context_json.empty() ? make_null()
                                                          : make_varchar(entry.context_json);
 
-        duckdb_value vals[6] = { v_id, v_ts, v_name, v_lvl, v_msg, v_ctx };
+        duckdb_value vals[5] = { v_ts, v_name, v_lvl, v_msg, v_ctx };
 
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (!bind_value_at(stmt, (idx_t)(i + 1), vals[i])) {
                 failed = true;
             }
@@ -487,8 +467,8 @@ void DuckDBLogger::batch_insert_node_io(const std::vector<NodeIOEntry>& entries)
     duckdb_prepared_statement stmt = nullptr;
     const char* insert_sql = R"(
         INSERT INTO node_io_logs
-        (id, timestamp, strategy_name, epoch, node_type, node_id, input, output, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (timestamp, strategy_name, epoch, node_type, node_id, input, output, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     )";
 
     if (duckdb_prepare(conn_, insert_sql, &stmt) != DuckDBSuccess) {
@@ -498,7 +478,6 @@ void DuckDBLogger::batch_insert_node_io(const std::vector<NodeIOEntry>& entries)
 
     bool failed = false;
     for (const auto& entry : entries) {
-        duckdb_value v_id   = make_int64(entry.id);
         duckdb_value v_ts   = make_varchar(entry.timestamp);
         duckdb_value v_name = make_varchar(entry.strategy_name);
         duckdb_value v_epoch = make_int64(entry.epoch);
@@ -508,9 +487,9 @@ void DuckDBLogger::batch_insert_node_io(const std::vector<NodeIOEntry>& entries)
         duckdb_value v_out  = entry.output_json.empty() ? make_null() : make_varchar(entry.output_json);
         duckdb_value v_meta = entry.metadata_json.empty() ? make_null() : make_varchar(entry.metadata_json);
 
-        duckdb_value vals[9] = { v_id, v_ts, v_name, v_epoch, v_type, v_nid, v_in, v_out, v_meta };
+        duckdb_value vals[8] = { v_ts, v_name, v_epoch, v_type, v_nid, v_in, v_out, v_meta };
 
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < 8; ++i) {
             if (!bind_value_at(stmt, (idx_t)(i + 1), vals[i])) {
                 failed = true;
             }
@@ -580,9 +559,9 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
     duckdb_prepared_statement stmt = nullptr;
     const char* insert_sql = R"(
         INSERT INTO tick_data
-        (id, timestamp, symbol, open, close, high, low, volume, turnover, value,
+        (timestamp, symbol, open, close, high, low, volume, turnover, value,
          upper, lower, source, confidence, bid_prices, bid_volumes, ask_prices, ask_volumes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     )";
 
     if (duckdb_prepare(conn_, insert_sql, &stmt) != DuckDBSuccess) {
@@ -601,7 +580,6 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
         // timestamp: epoch seconds → DuckDB TIMESTAMP via datetime string
         std::string ts_str = ToString(static_cast<time_t>(entry.timestamp_epoch));
 
-        duckdb_value v_id   = make_int64(id_counter_++);
         duckdb_value v_ts   = make_varchar(ts_str);
         duckdb_value v_sym  = make_varchar(entry.symbol);
         duckdb_value v_open = duckdb_create_double(entry.open);
@@ -623,13 +601,13 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
         duckdb_value v_ask_p = has_book ? make_double_list(entry.ask_prices) : make_null();
         duckdb_value v_ask_v = has_book ? make_int64_list(entry.ask_volumes) : make_null();
 
-        duckdb_value vals[18] = {
-            v_id, v_ts, v_sym, v_open, v_close, v_high, v_low, v_vol, v_turn,
+        duckdb_value vals[17] = {
+            v_ts, v_sym, v_open, v_close, v_high, v_low, v_vol, v_turn,
             v_val, v_upper, v_lower, v_src, v_conf,
             v_bid_p, v_bid_v, v_ask_p, v_ask_v
         };
 
-        for (int i = 0; i < 18; ++i) {
+        for (int i = 0; i < 17; ++i) {
             if (!bind_value_at(stmt, (idx_t)(i + 1), vals[i])) {
                 failed = true;
                 failed_idx = idx;
@@ -657,8 +635,8 @@ void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries)
     if (failed) {
         exec("ROLLBACK");
         const auto& e = entries[failed_idx];
-        SPDLOG_ERROR("[DuckDBLogger] Tick batch insert failed at entry [{}/{}]: id={}, symbol={}, error={}",
-                     failed_idx, entries.size(), e.id, e.symbol, last_error);
+        SPDLOG_ERROR("[DuckDBLogger] Tick batch insert failed at entry [{}/{}]: symbol={}, error={}",
+                     failed_idx, entries.size(), e.symbol, last_error);
     } else {
         exec("COMMIT");
     }
