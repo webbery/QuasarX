@@ -113,6 +113,44 @@ def generate_steady_trend(days=120):
     return prices
 
 
+def generate_mean_shift(total_days=200, shift_point=100, base_price=100.0,
+                        noise_std=0.005, shift_size=0.01):
+    """
+    生成均值偏移数据（用于 CUSUM 变点检测验证）
+
+    收益率序列有持续均值偏移：
+    - 前 shift_point 天：returns ~ N(0, noise_std)
+    - 后 (total_days - shift_point) 天：returns ~ N(shift_size, noise_std)
+
+    然后用随机游走重构价格序列。已知变点在 shift_point 位置。
+
+    参数:
+        total_days: 总天数
+        shift_point: 变点位置（第几天开始偏移）
+        base_price: 起始价格
+        noise_std: 收益率噪声标准差
+        shift_size: 收益率均值偏移量
+
+    返回:
+        prices: 价格序列
+    """
+    np.random.seed(42)
+    # 1. 生成有均值偏移的收益率序列
+    returns = []
+    for i in range(total_days):
+        if i < shift_point:
+            r = np.random.normal(0, noise_std)
+        else:
+            r = np.random.normal(shift_size, noise_std)
+        returns.append(r)
+
+    # 2. 用随机游走重构价格
+    prices = [base_price]
+    for r in returns[1:]:
+        prices.append(round(prices[-1] * (1 + r), 2))
+    return prices
+
+
 # ============================================================
 # CSV 数据生成
 # ============================================================
@@ -122,8 +160,8 @@ def generate_csv(symbol, prices, start_date, hfq_path, org_path):
     生成标准 CSV 格式的价格数据
     同时生成后复权（用于指标计算）和原始价格（用于交易撮合）
 
-    格式：datetime,open,close,high,low,volume
-    
+    格式：datetime,open,close,high,low,volume,turnover
+
     返回:
         opens: 开盘价序列
     """
@@ -133,7 +171,7 @@ def generate_csv(symbol, prices, start_date, hfq_path, org_path):
     # 后复权数据：在后复权目录中，价格与原始数据相同（测试用例不需要复权调整）
     with open(hfq_path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['datetime', 'open', 'close', 'high', 'low', 'volume'])
+        writer.writerow(['datetime', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
 
         current_date = start_date
         for i, close in enumerate(prices):
@@ -148,9 +186,10 @@ def generate_csv(symbol, prices, start_date, hfq_path, org_path):
             high = max(open_price, close) * (1 + abs(np.random.normal(0, 0.002)))
             low = min(open_price, close) * (1 - abs(np.random.normal(0, 0.002)))
             volume = int(np.random.uniform(1000000, 5000000))
+            turnover = round(volume * close, 2)
 
             writer.writerow([date_str, round(open_price, 2), round(close, 2),
-                             round(high, 2), round(low, 2), volume])
+                             round(high, 2), round(low, 2), volume, turnover])
 
             current_date += timedelta(days=1)
 
@@ -410,6 +449,13 @@ def main():
             "symbol": "sz.900006",
             "generator": generate_steady_trend,
             "kwargs": {"days": 120}
+        },
+        "mean_shift": {
+            "name": "均值偏移（CUSUM变点检测）",
+            "symbol": "sz.900007",
+            "generator": generate_mean_shift,
+            "kwargs": {"total_days": 200, "shift_point": 100, "base_price": 100.0,
+                       "noise_std": 0.001, "shift_size": 0.01}
         }
     }
 
@@ -436,11 +482,7 @@ def main():
         # 4. 生成策略脚本
         end_date = START_DATE + timedelta(days=len(prices) + 30)
         strategy = generate_strategy_script(
-            symbol,
-            f"test_{case_id}",
-            START_DATE,
-            end_date,
-            True
+            symbol, f"test_{case_id}", START_DATE, end_date, True
         )
 
         strategy_path = METRIC_TEST_DIR / f"{case_id}_strategy.json"

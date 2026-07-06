@@ -1165,7 +1165,6 @@ void Server::InitHandlers() {
     RegistHandler(API_ALL_STOCK, StockHandler);
     RegistHandler(API_STOCK_DETAIL, StockDetailHandler);
     RegistHandler(API_STOCK_HISTORY, StockHistoryHandler);
-    RegistHandler(API_RISK_VAR, VaRHandler);
     RegistHandler(API_PORTFOLIO, PortfolioHandler);
     RegistHandler(API_MONTECARLO, MonteCarloHandler);
     RegistHandler(API_ALL_FUTURE, FutureHandler);

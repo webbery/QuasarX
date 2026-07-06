@@ -352,6 +352,17 @@ app.whenReady().then(async () => {
     })
 });
 
+ipcMain.handle('save-csv-to-dir', async (_, directory: string, fileName: string, csvContent: string) => {
+    try {
+        const filePath = join(directory, fileName);
+        writeFileSync(filePath, '\ufeff' + csvContent, 'utf-8');
+        return { success: true, path: filePath };
+    } catch (error: any) {
+        console.error('[save-csv-to-dir] 错误:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.

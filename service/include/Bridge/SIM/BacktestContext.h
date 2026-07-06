@@ -157,9 +157,39 @@ public:
     /// @brief 推送当日收益率到 CUSUM 检测器
     /// @param daily_return 当日组合收益率
     /// @return 是否检测到变点
+    /// @note 前 min_obs 个数据用于校准 mu/sigma，之后用实际统计量更新 detector 配置
     bool updateCUSUM(double daily_return) noexcept {
-        auto result = _cusum_detector.update(daily_return);
-        return result._change_point;
+        _cusum_returns.push_back(daily_return);
+
+        // 收集足够数据后自适应校准：用实际收益率的 mu/sigma 替换默认值
+        if (!_cusum_calibrated &&
+            _cusum_returns.size() >= _cusum_detector.get_config()._min_obs) {
+            double mu = 0.0, sigma = 0.0;
+            for (double r : _cusum_returns) mu += r;
+            mu /= _cusum_returns.size();
+            for (double r : _cusum_returns) {
+                double d = r - mu;
+                sigma += d * d;
+            }
+            sigma = std::sqrt(sigma / _cusum_returns.size());
+            if (sigma < 1e-10) sigma = 1e-10;  // 防止除零
+
+            // 用实际统计量重置 detector 并重喂历史数据
+            CUSUMConfig cfg = _cusum_detector.get_config();
+            cfg._mu = mu;
+            cfg._sigma = sigma;
+            _cusum_detector.set_config(cfg);  // set_config 内部会 reset()
+            for (double r : _cusum_returns) {
+                _cusum_detector.update(r);
+            }
+            _cusum_calibrated = true;
+        }
+
+        // 校准前用默认参数 update，校准后用实际参数 update
+        if (_cusum_calibrated) {
+            return _cusum_detector.update(daily_return)._change_point;
+        }
+        return _cusum_detector.update(daily_return)._change_point;
     }
 
     const CUSUMDetector& getCUSUMDetector() const noexcept { return _cusum_detector; }
@@ -227,5 +257,7 @@ private:
 
     // === CUSUM 变点检测 ===
     CUSUMDetector _cusum_detector;
+    Vector<double> _cusum_returns;      // 用于自适应校准的返回值缓存
+    bool _cusum_calibrated = false;     // 是否已完成 mu/sigma 校准
 };
 

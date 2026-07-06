@@ -54,15 +54,3 @@ private:
 
   Map<StopLossType, IStopLoss*> _stlosses;
 };
-
-class VaRHandler: public HttpHandler {
-public:
-  VaRHandler(Server* handle): HttpHandler(handle) {}
-
-  virtual void post(const httplib::Request& req, httplib::Response& res);
-  virtual void get(const httplib::Request& req, httplib::Response& res);
-
-  double ExpectedShortFall();
-private:
-  void run();
-};

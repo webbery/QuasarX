@@ -135,19 +135,47 @@ def compute_forecast_golden(returns: np.ndarray, prices: List[float],
     }
 
 
+def to_api_symbol(symbol: str) -> str:
+    """sz.900001 → 900001.SZ（API 期望的格式）"""
+    if '.' in symbol:
+        parts = symbol.split('.', 1)
+        exchange_map = {'sz': 'SZ', 'sh': 'SH', 'bj': 'BJ'}
+        exc = exchange_map.get(parts[0].lower(), parts[0].upper())
+        return f"{parts[1]}.{exc}"
+    return symbol
+
+
+def from_api_symbol(symbol: str) -> str:
+    """900001.SZ → sz.900001（测试使用的格式）"""
+    if '.' in symbol:
+        parts = symbol.rsplit('.', 1)
+        exchange_map = {'SZ': 'sz', 'SH': 'sh', 'BJ': 'bj'}
+        exc = exchange_map.get(parts[1], parts[1].lower())
+        return f"{exc}.{parts[0]}"
+    return symbol
+
+
 def call_volatility_api(symbol: str, start_date: str, end_date: str,
                         windows: str = "20", auth_token: str = None) -> Dict:
     """调用波动率分析 API"""
     kwargs = {'verify': VERIFY_SSL}
     if auth_token and len(auth_token) > 10:
         kwargs['headers'] = {'Authorization': auth_token}
+    # 转换 symbol 格式：sz.900001 → 900001.SZ
+    api_symbols = ','.join(to_api_symbol(s.strip()) for s in symbol.split(','))
     resp = requests.get(
         f"{BASE_URL}/analysis/volatility",
-        params={"symbols": symbol, "start_date": start_date, "end_date": end_date, "windows": windows},
+        params={"symbols": api_symbols, "start_date": start_date, "end_date": end_date, "windows": windows},
         **kwargs
     )
     assert resp.status_code == 200, f"API 请求失败: {resp.status_code} - {resp.text}"
-    return resp.json()
+    data = resp.json()
+    # 将响应中的 symbol key 转回原始格式
+    if "single" in data and isinstance(data["single"], dict):
+        data["single"] = {from_api_symbol(k): v for k, v in data["single"].items()}
+    if "symbols" in data and isinstance(data["symbols"], list):
+        data["symbols"] = [from_api_symbol(s) for s in data["symbols"]]
+    return data
 
 
 def load_csv_prices(symbol: str) -> Tuple[List[float], List[str]]:

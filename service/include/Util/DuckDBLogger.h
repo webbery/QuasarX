@@ -292,6 +292,9 @@ private:
     // 执行 SQL（无参数）
     bool exec(const std::string& sql);
 
+    // 检查表是否存在
+    bool table_exists(const std::string& name);
+
     // 准备 + 执行 SQL（带参数，使用 duckdb_value 数组）
     bool exec_params(const std::string& sql, const std::vector<duckdb_value>& params);
 
@@ -337,6 +340,11 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
     std::thread worker_thread_;
+
+    // per-table ID counters (独立 atomic，无锁分配)
+    std::atomic<uint64_t> next_strategy_log_id_{1};
+    std::atomic<uint64_t> next_node_io_id_{1};
+    std::atomic<uint64_t> next_tick_id_{1};
 
     // 批量写入配置
     static constexpr int BATCH_SIZE = 200;          // 批量阈值

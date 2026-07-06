@@ -77,7 +77,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                 double ret = (closes[i] - closes[i-1]) / closes[i-1];
                 sym_returns.push_back(ret);
             }
-            returns_map[sym] = sym_returns;
+            returns_map[sym] = std::move(sym_returns);
             if (dates_str.empty()) {
                 // 使用第一个有效标的的日期
                 dates_str = sym_dates;

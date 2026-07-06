@@ -138,57 +138,31 @@ int QuoteDB::importCsv(const std::string& csv_path,
     }
 
     int64_t sym_encoded = encodeSymbol(symbol_str);
-
-    // 根据 AdjType 决定写入哪组列
     bool is_hfq = (adj == AdjType::HFQ);
-    std::string insert_sql;
-    if (is_hfq) {
-        insert_sql = fmt::format(
-            "INSERT INTO {} (symbol, datetime, adj_open, adj_close, adj_high, adj_low, volume, turnover, ext) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(symbol, datetime) DO UPDATE SET "
-            "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
-            "adj_high=excluded.adj_high, adj_low=excluded.adj_low, "
-            "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext",
-            table);
-    } else {
-        insert_sql = fmt::format(
-            "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(symbol, datetime) DO UPDATE SET "
-            "open=excluded.open, close=excluded.close, high=excluded.high, "
-            "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext",
-            table);
-    }
 
-    exec("BEGIN TRANSACTION");
+    // ── 阶段 1：解析 CSV，累积所有行 ──
+    struct Row {
+        std::string datetime;
+        double open, close, high, low, turnover;
+        int64_t volume;
+        uint8_t ext;
+    };
+    std::vector<Row> rows;
+    rows.reserve(2048);
 
-    duckdb_prepared_statement stmt = nullptr;
-    if (duckdb_prepare(conn_, insert_sql.c_str(), &stmt) != DuckDBSuccess) {
-        SPDLOG_ERROR("[QuoteDB] Prepare failed for table {}", table);
-        exec("ROLLBACK");
-        return -1;
-    }
-
-    int count = 0;
     std::string line;
     bool headerSkipped = false;
     while (std::getline(ifs, line)) {
         if (line.empty()) continue;
-
-        // 跳过 BOM 前缀
-        if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF') {
+        if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF')
             line = line.substr(3);
-        }
 
-        // 解析 CSV: datetime,open,close,high,low,volume,turnover
         std::istringstream ss(line);
         std::string tok;
         std::vector<std::string> cols;
         while (std::getline(ss, tok, ',')) cols.push_back(tok);
         if (cols.size() < 7) continue;
 
-        // 跳过 header 行（第一列为 "datetime" 或 "date"）
         if (!headerSkipped) {
             std::string first = cols[0];
             std::transform(first.begin(), first.end(), first.begin(), ::tolower);
@@ -199,45 +173,80 @@ int QuoteDB::importCsv(const std::string& csv_path,
             headerSkipped = true;
         }
 
-        // 安全解析 double（防止非数字行导致崩溃）
         try {
-            const auto& dt_str   = cols[0];
-            double open   = std::stod(cols[1]);
-            double close  = std::stod(cols[2]);
-            double high   = std::stod(cols[3]);
-            double low    = std::stod(cols[4]);
-            int64_t volume = static_cast<int64_t>(std::stod(cols[5]));
-            double turnover = std::stod(cols[6]);
-
-            // 停牌检测
-            uint8_t ext = 0;
-            if (volume == 0 || (open == 0 && close == 0 && high == 0 && low == 0)) {
-                ext |= 0x01;
-            }
-
-            // 绑定参数: symbol, datetime, ohlc, volume, turnover, ext
-            duckdb_bind_int64(stmt, 1, sym_encoded);
-            duckdb_bind_varchar(stmt, 2, dt_str.c_str());
-            duckdb_bind_double(stmt, 3, open);
-            duckdb_bind_double(stmt, 4, close);
-            duckdb_bind_double(stmt, 5, high);
-            duckdb_bind_double(stmt, 6, low);
-            duckdb_bind_int64(stmt, 7, volume);
-            duckdb_bind_double(stmt, 8, turnover);
-            duckdb_bind_int8(stmt, 9, static_cast<int8_t>(ext));
-
-            if (duckdb_execute_prepared(stmt, nullptr) == DuckDBSuccess) {
-                count++;
-            }
+            Row r;
+            r.datetime = cols[0];
+            r.open   = std::stod(cols[1]);
+            r.close  = std::stod(cols[2]);
+            r.high   = std::stod(cols[3]);
+            r.low    = std::stod(cols[4]);
+            r.volume = static_cast<int64_t>(std::stod(cols[5]));
+            r.turnover = std::stod(cols[6]);
+            r.ext = (r.volume == 0 || (r.open == 0 && r.close == 0 && r.high == 0 && r.low == 0)) ? 0x01 : 0;
+            rows.push_back(std::move(r));
         } catch (const std::exception& e) {
-            // 跳过解析失败的行（如 header、脏数据）
             SPDLOG_WARN("[QuoteDB] Skip invalid row: {} ({})", line, e.what());
         }
     }
+    ifs.close();
 
-    duckdb_destroy_prepare(&stmt);
+    if (rows.empty()) {
+        SPDLOG_WARN("[QuoteDB] No valid rows in {}", csv_path);
+        return 0;
+    }
+
+    // ── 阶段 2：构建批量 INSERT SQL ──
+    // 预留空间：每行约 120 字符
+    std::string sql;
+    sql.reserve(rows.size() * 128 + 512);
+
+    if (is_hfq) {
+        sql += fmt::format(
+            "INSERT INTO {} (symbol, datetime, adj_open, adj_close, adj_high, adj_low, volume, turnover, ext) VALUES ",
+            table);
+    } else {
+        sql += fmt::format(
+            "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) VALUES ",
+            table);
+    }
+
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const auto& r = rows[i];
+        if (i > 0) sql += ", ";
+        sql += fmt::format("({},'{}',{:.4f},{:.4f},{:.4f},{:.4f},{},{:.2f},{})",
+                           sym_encoded, r.datetime,
+                           r.open, r.close, r.high, r.low,
+                           r.volume, r.turnover, static_cast<int>(r.ext));
+    }
+
+    // ON CONFLICT upsert
+    if (is_hfq) {
+        sql += " ON CONFLICT(symbol, datetime) DO UPDATE SET "
+               "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
+               "adj_high=excluded.adj_high, adj_low=excluded.adj_low, "
+               "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
+    } else {
+        sql += " ON CONFLICT(symbol, datetime) DO UPDATE SET "
+               "open=excluded.open, close=excluded.close, high=excluded.high, "
+               "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
+    }
+
+    // ── 阶段 3：单次执行 ──
+    exec("BEGIN TRANSACTION");
+    duckdb_result result;
+    duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
+    if (state != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&result);
+        SPDLOG_ERROR("[QuoteDB] Batch insert failed for {} ({}): {}",
+                     symbol_str, table, err ? err : "unknown");
+        duckdb_destroy_result(&result);
+        exec("ROLLBACK");
+        return -1;
+    }
+    duckdb_destroy_result(&result);
     exec("COMMIT");
 
+    int count = static_cast<int>(rows.size());
     SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {} (adj={})",
                 count, table, symbol_str, is_hfq ? "HFQ" : "None");
     return count;

@@ -116,6 +116,12 @@
                 <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQuoteData }"></i>
                 刷新
             </button>
+            <button class="btn-sm btn-icon" @click="onSelectExportDir" :title="exportDir || '未设置导出目录'">
+                <i class="fas fa-folder-open"></i>
+            </button>
+            <span v-if="exportDir" class="export-dir-hint" :title="exportDir">
+                <i class="fas fa-download"></i> {{ exportDir }}
+            </span>
         </div>
 
         <!-- 已下载数据列表 -->
@@ -175,26 +181,34 @@
             </div>
 
             <!-- 分页控件 -->
-            <div class="pagination" v-if="totalPages > 1">
-                <button class="page-btn" :disabled="currentPage === 1" @click="currentPage = 1">
-                    <i class="fas fa-angle-double-left"></i>
-                </button>
-                <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">
-                    <i class="fas fa-angle-left"></i>
-                </button>
-                <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条）</span>
-                <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage++">
-                    <i class="fas fa-angle-right"></i>
-                </button>
-                <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage = totalPages">
-                    <i class="fas fa-angle-double-right"></i>
-                </button>
-                <select class="page-size-select" v-model.number="pageSize" @change="currentPage = 1">
-                    <option :value="10">10 条/页</option>
-                    <option :value="20">20 条/页</option>
-                    <option :value="50">50 条/页</option>
-                    <option :value="100">100 条/页</option>
-                </select>
+            <div class="pagination" v-if="flatSymbols.length > 0">
+                <div class="pagination-left">
+                    <button v-if="selectedSymbols.size > 0" class="btn-success btn-sm" @click="onBatchExport" :disabled="exporting">
+                        <i class="fas fa-file-export"></i>
+                        {{ exporting ? '导出中...' : `导出选中 (${selectedSymbols.size})` }}
+                    </button>
+                </div>
+                <div class="pagination-center" v-if="totalPages > 1">
+                    <button class="page-btn" :disabled="currentPage === 1" @click="currentPage = 1">
+                        <i class="fas fa-angle-double-left"></i>
+                    </button>
+                    <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">
+                        <i class="fas fa-angle-left"></i>
+                    </button>
+                    <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条）</span>
+                    <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage++">
+                        <i class="fas fa-angle-right"></i>
+                    </button>
+                    <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage = totalPages">
+                        <i class="fas fa-angle-double-right"></i>
+                    </button>
+                    <select class="page-size-select" v-model.number="pageSize" @change="currentPage = 1">
+                        <option :value="10">10 条/页</option>
+                        <option :value="20">20 条/页</option>
+                        <option :value="50">50 条/页</option>
+                        <option :value="100">100 条/页</option>
+                    </select>
+                </div>
             </div>
         </div>
 
@@ -276,6 +290,10 @@ const loadingQuoteData = ref(false)
 const deletingQuote = ref(false)
 const deletingSymbol = ref(false)
 const updatingSymbol = ref(false)
+
+// 导出状态
+const exportDir = ref(localStorage.getItem('quoteExportPath') || '')
+const exporting = ref(false)
 
 // 分页
 const currentPage = ref(1)
@@ -675,6 +693,71 @@ const onBatchDeleteSymbols = async () => {
     deletingSymbol.value = false
 }
 
+// 选择导出目录
+const onSelectExportDir = async () => {
+    const result = await ipcRenderer.invoke('select-file', {
+        title: '选择 CSV 导出目录',
+        properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.success && result.filePath) {
+        exportDir.value = result.filePath
+        localStorage.setItem('quoteExportPath', result.filePath)
+    }
+}
+
+// 批量导出选中标的的 CSV
+const onBatchExport = async () => {
+    if (selectedSymbols.value.size === 0) return
+
+    // 检查导出目录
+    if (!exportDir.value) {
+        const result = await ipcRenderer.invoke('select-file', {
+            title: '选择 CSV 导出目录',
+            properties: ['openDirectory', 'createDirectory']
+        })
+        if (!result.success || !result.filePath) return
+        exportDir.value = result.filePath
+        localStorage.setItem('quoteExportPath', result.filePath)
+    }
+
+    exporting.value = true
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const key of selectedSymbols.value) {
+        const [table, symbol] = key.split('|')
+        try {
+            const resp = await axios.post(`https://${server}/v0/quote/data`, {
+                action: 'export',
+                table,
+                symbol,
+                format: 'csv'
+            }, {
+                headers: { 'Authorization': token || '' },
+                responseType: 'text'
+            })
+            // 通过 IPC 写入文件
+            const fileName = `${symbol}_${table}.csv`
+            const saveResult = await ipcRenderer.invoke('save-csv-to-dir', exportDir.value, fileName, resp.data)
+            if (saveResult.success) {
+                successCount++
+            } else {
+                failCount++
+                console.error(`[DataCenter] Failed to save ${fileName}:`, saveResult.error)
+            }
+        } catch (err) {
+            failCount++
+            console.error(`[DataCenter] Failed to export ${symbol}:`, err)
+        }
+    }
+
+    quoteStatus.value = `导出完成：成功 ${successCount}，失败 ${failCount}，目录: ${exportDir.value}`
+    exporting.value = false
+}
+
 // 清空所有行情数据
 const onHandleDeleteAllQuoteData = async () => {
     const confirmed = await promptDialogRef.value?.confirm({
@@ -954,6 +1037,49 @@ select option {
     opacity: 0.5;
     cursor: not-allowed;
 }
+.btn-success {
+    padding: 4px 12px;
+    border: 1px solid rgba(74, 222, 128, 0.4);
+    border-radius: 4px;
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-success:hover:not(:disabled) {
+    background: rgba(74, 222, 128, 0.25);
+    border-color: rgba(74, 222, 128, 0.6);
+}
+.btn-success:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-icon {
+    padding: 4px 8px;
+    border: 1px solid rgba(74, 85, 104, 0.4);
+    border-radius: 4px;
+    background: rgba(74, 85, 104, 0.15);
+    color: #94a3b8;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-icon:hover {
+    background: rgba(74, 85, 104, 0.3);
+    border-color: rgba(74, 85, 104, 0.6);
+    color: #e0e0e0;
+}
+.export-dir-hint {
+    font-size: 10px;
+    color: #4ade80;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.8;
+}
 .data-table {
     width: 100%;
     border-collapse: collapse;
@@ -1123,11 +1249,20 @@ select option {
 .pagination {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 4px;
+    justify-content: space-between;
     padding: 10px 12px;
     border-top: 1px solid rgba(74, 85, 104, 0.3);
     background: rgba(26, 34, 54, 0.6);
+}
+.pagination-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.pagination-center {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 .page-btn {
     padding: 3px 6px;
