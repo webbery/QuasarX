@@ -112,37 +112,34 @@
         <div class="section-divider danger"></div>
         <div class="section-title danger">
             <i class="fas fa-exclamation-triangle"></i> 服务端行情数据管理
-            <button class="btn-sm" @click="loadQuoteData" :disabled="loadingQuoteData">
-                <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQuoteData }"></i>
-                刷新
-            </button>
-            <button class="btn-sm btn-icon" @click="onSelectExportDir" :title="exportDir || '未设置导出目录'">
-                <i class="fas fa-folder-open"></i>
-            </button>
-            <span v-if="exportDir" class="export-dir-hint" :title="exportDir">
-                <i class="fas fa-download"></i> {{ exportDir }}
-            </span>
+        </div>
+
+        <!-- 标的查询 -->
+        <div class="symbol-search-row">
+            <div class="search-item">
+                <span class="search-label">标的代码</span>
+                <input
+                    type="text"
+                    placeholder="如 600000.SH（留空显示全部）"
+                    v-model="symbolFilter"
+                    @input="currentPage = 1"
+                >
+            </div>
+            <div class="search-item">
+                <span class="search-label">资产类型</span>
+                <select v-model="assetTypeFilter" @change="currentPage = 1">
+                    <option value="">全部</option>
+                    <option value="Stock">Stock</option>
+                    <option value="ETF">ETF</option>
+                </select>
+            </div>
         </div>
 
         <!-- 已下载数据列表 -->
-        <div v-if="quoteDataList.length > 0" class="quote-data-table">
-            <div class="table-header">
-                <span class="header-title">已导入数据 ({{ flatSymbols.length }} 个标的)</span>
-                <div class="header-actions">
-                    <button v-if="selectedSymbols.size > 0" class="btn-warning btn-sm" @click="onBatchDeleteSymbols" :disabled="deletingSymbol">
-                        <i class="fas fa-trash"></i>
-                        批量删除 ({{ selectedSymbols.size }})
-                    </button>
-                    <button class="btn-danger btn-sm" @click="onHandleDeleteAllQuoteData" :disabled="deletingQuote">
-                        <i class="fas fa-trash"></i>
-                        {{ deletingQuote ? '删除中...' : '清空所有数据' }}
-                    </button>
-                </div>
-            </div>
-
+        <div v-if="allFlatSymbols.length > 0" class="quote-data-table">
             <div class="table-scroll">
                 <table class="data-table">
-                    <thead>
+                    <thead class="sticky-header">
                         <tr>
                             <th class="col-checkbox">
                                 <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll">
@@ -167,25 +164,37 @@
                             <td class="time-range">{{ item.start_time || '-' }}</td>
                             <td class="time-range">{{ item.end_time || '-' }}</td>
                             <td class="symbol-count">{{ item.count.toLocaleString() }}</td>
-                            <td class="actions">
-                                <button class="btn-info btn-xs" @click="onUpdateSymbol(item.table, item.symbol)" :disabled="updatingSymbol">
-                                    <i class="fas fa-sync-alt"></i> 更新
-                                </button>
-                                <button class="btn-danger btn-xs" @click="onDeleteSymbol(item.table, item.symbol)" :disabled="deletingSymbol">
-                                    <i class="fas fa-trash"></i> 删除
-                                </button>
-                            </td>
+                            <td class="actions">—</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
 
             <!-- 分页控件 -->
-            <div class="pagination" v-if="flatSymbols.length > 0">
+            <div class="pagination" v-if="allFlatSymbols.length > 0">
                 <div class="pagination-left">
-                    <button v-if="selectedSymbols.size > 0" class="btn-success btn-sm" @click="onBatchExport" :disabled="exporting">
-                        <i class="fas fa-file-export"></i>
-                        {{ exporting ? '导出中...' : `导出选中 (${selectedSymbols.size})` }}
+                    <button class="btn-warning btn-sm" @click="onBatchDeleteSymbols" :disabled="deletingSymbol || selectedSymbols.size === 0">
+                        <i class="fas fa-trash"></i>
+                        {{ deletingSymbol ? '删除中...' : `批量删除 (${selectedSymbols.size})` }}
+                    </button>
+                    <button class="btn-info btn-sm" @click="onBatchUpdateSymbols" :disabled="updatingSymbol || selectedSymbols.size === 0">
+                        <i class="fas fa-sync-alt"></i>
+                        {{ updatingSymbol ? '更新中...' : `批量更新 (${selectedSymbols.size})` }}
+                    </button>
+                    <button class="btn-success btn-sm" @click="onBatchDownloadCSV" :disabled="downloadingCSV || selectedSymbols.size === 0">
+                        <i class="fas fa-file-csv"></i>
+                        {{ downloadingCSV ? '下载中...' : `下载CSV (${selectedSymbols.size})` }}
+                    </button>
+                    <button class="btn-sm btn-icon" @click="onSelectExportDir" :title="exportDir || '未设置导出目录'">
+                        <i class="fas fa-folder-open"></i>
+                        下载路径
+                    </button>
+                    <span v-if="exportDir" class="export-dir-hint" :title="exportDir">
+                        <i class="fas fa-download"></i> {{ exportDir }}
+                    </span>
+                    <button class="btn-danger btn-sm" @click="onHandleDeleteAllQuoteData" :disabled="deletingQuote">
+                        <i class="fas fa-trash"></i>
+                        {{ deletingQuote ? '删除中...' : '清空所有数据' }}
                     </button>
                 </div>
                 <div class="pagination-center" v-if="totalPages > 1">
@@ -195,7 +204,7 @@
                     <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">
                         <i class="fas fa-angle-left"></i>
                     </button>
-                    <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条）</span>
+                    <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条，总计 {{ allFlatSymbols.length }} 条）</span>
                     <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage++">
                         <i class="fas fa-angle-right"></i>
                     </button>
@@ -212,12 +221,16 @@
             </div>
         </div>
 
-        <div v-else-if="loadingQuoteData" class="loading-text">
+        <div v-if="allFlatSymbols.length === 0 && loadingQuoteData" class="loading-text">
             <i class="fas fa-spinner fa-spin"></i> 加载中...
         </div>
 
-        <div v-else class="empty-text">
+        <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length === 0" class="empty-text">
             <i class="fas fa-info-circle"></i> 暂无已导入的行情数据
+        </div>
+
+        <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length > 0 && (symbolFilter || assetTypeFilter)" class="empty-text">
+            <i class="fas fa-search"></i> 无匹配的标的，请调整筛选条件
         </div>
 
         <PromptDialog ref="promptDialogRef" />
@@ -294,13 +307,18 @@ const updatingSymbol = ref(false)
 // 导出状态
 const exportDir = ref(localStorage.getItem('quoteExportPath') || '')
 const exporting = ref(false)
+const downloadingCSV = ref(false)
 
 // 分页
 const currentPage = ref(1)
 const pageSize = ref(20)
 
+// 标的筛选
+const symbolFilter = ref('')
+const assetTypeFilter = ref('')
+
 // 将所有标的展平为一维列表（供分页使用）
-const flatSymbols = computed(() => {
+const allFlatSymbols = computed(() => {
     const freqMap = {
         '1d': '日线', '5m': '5分钟', '15m': '15分钟',
         '30m': '30分钟', '60m': '60分钟', '1h': '1小时',
@@ -318,6 +336,24 @@ const flatSymbols = computed(() => {
             result.push({ table: table.table, assetType, freq, ...sym })
         }
     }
+    return result
+})
+
+// 应用筛选后的标的列表
+const flatSymbols = computed(() => {
+    let result = allFlatSymbols.value
+
+    // 按标的代码筛选
+    if (symbolFilter.value.trim()) {
+        const filter = symbolFilter.value.trim().toUpperCase()
+        result = result.filter(item => item.symbol.toUpperCase().includes(filter))
+    }
+
+    // 按资产类型筛选
+    if (assetTypeFilter.value) {
+        result = result.filter(item => item.assetType === assetTypeFilter.value)
+    }
+
     return result
 })
 
@@ -693,6 +729,103 @@ const onBatchDeleteSymbols = async () => {
     deletingSymbol.value = false
 }
 
+// 批量更新选中的标的
+const onBatchUpdateSymbols = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认批量更新',
+        message: `确定要重新下载选中的 ${selectedSymbols.value.size} 个标的数据吗？`
+    })
+    if (!confirmed) return
+
+    updatingSymbol.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const key of selectedSymbols.value) {
+        const [table, symbol] = key.split('|')
+        try {
+            // 从表名提取频率
+            const rawFreq = table.includes('_') ? table.split('_').slice(1).join('_') : '5m'
+            const freqMap = { '日线': 'daily', '5分钟': '5m', '15分钟': '15m', '30分钟': '30m', '60分钟': '60m', '1小时': '1h' }
+            const freq = freqMap[rawFreq] || rawFreq
+
+            await axios.post(`https://${server}/v0/quote`, {
+                symbols: symbol,
+                freq,
+            }, {
+                headers: { 'Authorization': token || '' }
+            })
+            successCount++
+        } catch (err) {
+            failCount++
+            console.error(`[DataCenter] Failed to update ${symbol}:`, err)
+        }
+    }
+
+    selectedSymbols.value = new Set()
+    quoteStatus.value = `批量更新完成：成功 ${successCount}，失败 ${failCount}`
+    await loadQuoteData()
+
+    updatingSymbol.value = false
+}
+
+// 批量下载选中标的的 CSV
+const onBatchDownloadCSV = async () => {
+    if (selectedSymbols.value.size === 0) return
+
+    // 检查导出目录
+    if (!exportDir.value) {
+        const result = await ipcRenderer.invoke('select-file', {
+            title: '选择 CSV 导出目录',
+            properties: ['openDirectory', 'createDirectory']
+        })
+        if (!result.success || !result.filePath) return
+        exportDir.value = result.filePath
+        localStorage.setItem('quoteExportPath', result.filePath)
+    }
+
+    downloadingCSV.value = true
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const key of selectedSymbols.value) {
+        const [table, symbol] = key.split('|')
+        try {
+            const resp = await axios.post(`https://${server}/v0/quote/data`, {
+                action: 'export',
+                table,
+                symbol,
+                format: 'csv'
+            }, {
+                headers: { 'Authorization': token || '' },
+                responseType: 'text'
+            })
+            const fileName = `${symbol}_${table}.csv`
+            const saveResult = await ipcRenderer.invoke('save-csv-to-dir', exportDir.value, fileName, resp.data)
+            if (saveResult.success) {
+                successCount++
+            } else {
+                failCount++
+                console.error(`[DataCenter] Failed to save ${fileName}:`, saveResult.error)
+            }
+        } catch (err) {
+            failCount++
+            console.error(`[DataCenter] Failed to export ${symbol}:`, err)
+        }
+    }
+
+    quoteStatus.value = `CSV 下载完成：成功 ${successCount}，失败 ${failCount}，目录: ${exportDir.value}`
+    downloadingCSV.value = false
+}
+
 // 选择导出目录
 const onSelectExportDir = async () => {
     const result = await ipcRenderer.invoke('select-file', {
@@ -957,6 +1090,31 @@ select option {
     color: #f87171;
 }
 
+/* ── 标的筛选行 ── */
+.symbol-search-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+.search-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+.search-label {
+    color: #999;
+    font-size: 12px;
+    white-space: nowrap;
+    min-width: 65px;
+}
+.search-item input,
+.search-item select {
+    flex: 1;
+    margin: 0;
+}
+
 /* ── 数据列表表格 ── */
 .quote-data-table {
     margin-top: 12px;
@@ -980,24 +1138,6 @@ select option {
 }
 .table-scroll::-webkit-scrollbar-thumb:hover {
     background: rgba(74, 85, 104, 0.8);
-}
-.table-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    background: rgba(239, 68, 68, 0.1);
-    border-bottom: 1px solid rgba(239, 68, 68, 0.3);
-}
-.header-title {
-    color: #f87171;
-    font-size: 12px;
-    font-weight: 600;
-}
-.header-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
 }
 .btn-warning {
     padding: 4px 12px;
@@ -1094,6 +1234,12 @@ select option {
     color: #999;
     font-weight: 600;
     border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+}
+.data-table thead.sticky-header th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #1a2236;
 }
 .data-table td {
     padding: 8px 10px;
@@ -1248,8 +1394,10 @@ select option {
 /* ── 分页控件 ── */
 .pagination {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
     padding: 10px 12px;
     border-top: 1px solid rgba(74, 85, 104, 0.3);
     background: rgba(26, 34, 54, 0.6);
