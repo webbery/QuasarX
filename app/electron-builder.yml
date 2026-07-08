@@ -15,8 +15,14 @@ directories:
 
 files:
   - build
-  
-mac: 
+
+extraResources:
+  - from: skills
+    to: skills
+    filter:
+      - "**/*.md"
+
+mac:
   category: public.app-category.utilities
 
 win:

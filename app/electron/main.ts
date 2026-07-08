@@ -554,7 +554,7 @@ ipcMain.handle('parse-pdf', async (_, fileData: number[]) => {
 function getSkillsDir(): string {
   const basePath = process.env.VITE_DEV_SERVER_URL
     ? join(__dirname, '../..')
-    : dirname(app.getPath('exe'));
+    : process.resourcesPath;
   return join(basePath, 'skills');
 }
 

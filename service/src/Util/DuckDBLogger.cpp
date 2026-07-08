@@ -177,6 +177,7 @@ bool DuckDBLogger::init(const String& db_path) {
 
     // PRAGMA
     exec("PRAGMA threads=1");
+    exec("PRAGMA auto_checkpoint=128");
 
     // 初始化表结构
     init_tables();
@@ -434,6 +435,7 @@ void DuckDBLogger::worker_loop() {
         auto now = std::chrono::steady_clock::now();
         if (now - last_flush > std::chrono::seconds(3)) {
             last_flush = now;
+            exec("CHECKPOINT");
         }
     }
 }
@@ -1198,8 +1200,7 @@ void DuckDBLogger::shutdown() {
     }
 
     if (conn_) {
-        // 新版 DuckDB C API 不支持 wal_checkpoint PRAGMA，直接断开
-        // exec("PRAGMA wal_checkpoint(FULL)");
+        exec("CHECKPOINT");
         duckdb_disconnect(&conn_);
         conn_ = nullptr;
     }

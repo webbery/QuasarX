@@ -23,6 +23,7 @@ import { strategyTool } from "../tools/strategy";
 import { backtestTool } from "../tools/backtest";
 import { mutationTool } from "../tools/mutation";
 import { calculatorTool } from "../tools/calculator";
+import { skillTool } from "../tools/skill";
 
 import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent } from "./types";
 
@@ -39,6 +40,7 @@ const TOOL_REGISTRY: Record<string, StructuredToolInterface> = {
   backtest: backtestTool,
   mutation: mutationTool,
   calculator: calculatorTool,
+  skill: skillTool,
 };
 
 /**

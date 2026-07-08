@@ -8,3 +8,4 @@ declare namespace NodeJS {
     PUBLIC: string
   }
 }
+

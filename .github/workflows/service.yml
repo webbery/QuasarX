@@ -216,12 +216,11 @@ jobs:
     env:
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
     steps:
-      # 下载构建产物（二进制 + config）
+      # 下载构建产物（二进制 + config 模板），artifact 保留原始路径前缀，下载到仓库根目录
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-artifact
-          path: service/build
 
       # 下载第三方 so
       - name: Download runtime libs

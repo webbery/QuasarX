@@ -87,10 +87,10 @@ export type GraphStateType = typeof GraphState.State;
 /** 各 Agent 的 Tool 配置 */
 export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   supervisor: [], // Supervisor 只路由，不直接使用 Tool
-  chat: ["knowledge", "webSearch", "datetime", "platform", "calculator"],
-  strategy: ["strategy", "backtest", "quote", "calculator", "ask_risk", "ask_portfolio", "ask_chat"],
-  risk: ["account", "position", "mutation", "calculator", "knowledge", "ask_chat"],
-  portfolio: ["quote", "position", "account", "backtest", "knowledge", "ask_chat"],
+  chat: ["knowledge", "webSearch", "datetime", "platform", "calculator", "skill"],
+  strategy: ["strategy", "backtest", "quote", "calculator", "skill", "ask_risk", "ask_portfolio", "ask_chat"],
+  risk: ["account", "position", "mutation", "calculator", "knowledge", "skill", "ask_chat"],
+  portfolio: ["quote", "position", "account", "backtest", "knowledge", "skill", "ask_chat"],
 };
 
 /** 各 Agent 的 System Prompt */
@@ -127,6 +127,7 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   你的能力：
   - 回答量化交易相关问题
   - 检索知识库获取相关信息
+  - 加载第三方技能获取专业领域的工作流和最佳实践
   - 进行网络搜索
   - 获取日期时间和平台信息
   - 执行数学计算

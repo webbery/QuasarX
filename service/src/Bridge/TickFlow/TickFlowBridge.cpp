@@ -344,6 +344,9 @@ void TickFlowBridge::workerLoop() {
                 auto now = Clock::now();
                 if (now < _pause_until) {
                     long remaining = std::chrono::duration_cast<std::chrono::seconds>(_pause_until - now).count();
+                    if (remaining % 60 == 0 || remaining <= 30) {
+                        INFO("[TickFlow] Paused, resuming in {}s", remaining);
+                    }
                     std::this_thread::sleep_for(std::chrono::seconds(std::min(remaining, 5L)));
                     continue;
                 } else {

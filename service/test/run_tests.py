@@ -97,7 +97,6 @@ def prompt_credentials(fields: List[str]) -> Dict[str, str]:
             "username": "用户名",
             "passwd": "密码",
             "key": "API Key",
-            "passwd": "密码",
         }.get(field, field)
 
         if field in ("passwd", "password", "key"):
