@@ -1,0 +1,117 @@
+{
+  "id": "test_deterministic_std_20",
+  "name": "节点测试_test_deterministic_std_20",
+  "version": 1,
+  "description": "节点单元测试",
+  "backtest": {
+    "start": "2024-01-01",
+    "end": "2024-09-07"
+  },
+  "source": "A_hfq",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "行情数据",
+        "nodeType": "input",
+        "params": {
+          "source": {
+            "value": "A_hfq",
+            "type": "text"
+          },
+          "code": {
+            "value": [
+              "sz.800004"
+            ],
+            "type": "text"
+          },
+          "freq": {
+            "value": "1d",
+            "type": "select"
+          },
+          "close": {
+            "value": "close",
+            "type": "text"
+          },
+          "open": {
+            "value": "open",
+            "type": "text"
+          },
+          "high": {
+            "value": "high",
+            "type": "text"
+          },
+          "low": {
+            "value": "low",
+            "type": "text"
+          },
+          "volume": {
+            "value": "volume",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "2",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "STD(20)",
+        "nodeType": "function",
+        "params": {
+          "method": {
+            "value": "STD",
+            "type": "select"
+          },
+          "range": {
+            "value": "20d",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "3",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "debug_std_20",
+        "nodeType": "debug",
+        "params": {
+          "suffix": {
+            "value": "csv",
+            "type": "select"
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "1->2",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "1",
+      "targetHandle": "2"
+    },
+    {
+      "id": "2->3",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "2",
+      "targetHandle": "3"
+    }
+  ]
+}

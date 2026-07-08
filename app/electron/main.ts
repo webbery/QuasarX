@@ -548,6 +548,77 @@ ipcMain.handle('parse-pdf', async (_, fileData: number[]) => {
 });
 
 // ============================================================
+// Skills Knowledge Base IPC Handlers
+// ============================================================
+
+function getSkillsDir(): string {
+  const basePath = process.env.VITE_DEV_SERVER_URL
+    ? join(__dirname, '../..')
+    : dirname(app.getPath('exe'));
+  return join(basePath, 'skills');
+}
+
+function parseSkillFrontmatter(raw: string): { name: string; description: string; keywords: string[]; content: string } {
+  const fm = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+  let name = '', description = '', keywords: string[] = [], content = raw;
+  if (fm) {
+    content = fm[2].trim();
+    const nm = fm[1].match(/^name:\s*(.+)$/m);
+    const dm = fm[1].match(/^description:\s*(.+)$/m);
+    const km = fm[1].match(/^keywords:\s*(.+)$/m);
+    if (nm) name = nm[1].trim();
+    if (dm) description = dm[1].trim();
+    if (km) keywords = km[1].split(',').map((k: string) => k.trim()).filter(Boolean);
+  }
+  return { name, description, keywords, content };
+}
+
+ipcMain.handle('skills-list', async () => {
+  try {
+    const skillsDir = getSkillsDir();
+    if (!existsSync(skillsDir)) return { success: true, skills: [] };
+    const skills = [];
+    for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const skillFile = join(skillsDir, entry.name, 'SKILL.md');
+      if (!existsSync(skillFile)) continue;
+      const raw = readFileSync(skillFile, 'utf-8');
+      const parsed = parseSkillFrontmatter(raw);
+      skills.push({
+        id: entry.name,
+        name: parsed.name || entry.name,
+        description: parsed.description,
+        keywords: parsed.keywords,
+      });
+    }
+    return { success: true, skills };
+  } catch (error: any) {
+    console.error('[skills-list] error:', error);
+    return { success: false, skills: [], error: error.message };
+  }
+});
+
+ipcMain.handle('skills-read', async (_, skillId: string) => {
+  try {
+    const skillFile = join(getSkillsDir(), skillId, 'SKILL.md');
+    if (!existsSync(skillFile)) return { success: false, error: `Skill "${skillId}" not found` };
+    const raw = readFileSync(skillFile, 'utf-8');
+    const parsed = parseSkillFrontmatter(raw);
+    return {
+      success: true,
+      id: skillId,
+      name: parsed.name || skillId,
+      description: parsed.description,
+      keywords: parsed.keywords,
+      content: parsed.content,
+    };
+  } catch (error: any) {
+    console.error('[skills-read] error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================
 // Vector Database IPC Handlers (Main Process)
 // ============================================================
 

@@ -62,7 +62,7 @@ enum class StrategyNodeType {
     Feature,
     Script,
     LSTM,
-    BOOST,
+    XGBoost,
     NARX,
     Debug,
     Stack,
@@ -74,6 +74,7 @@ enum class StrategyNodeType {
     Resample,   // 数据重采样节点（高频→低频聚合）
     Formula,    // 公式计算节点（自定义表达式计算）
     CUSUM,      // CUSUM 累积和变点检测节点
+    FactorCombine,  // 多因子合成节点
 };
 
 struct AgentStrategyInfo;

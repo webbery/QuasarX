@@ -2,6 +2,7 @@ import requests
 import pytest
 import os
 import glob
+import time
 from pathlib import Path
 
 # 抑制 SSL 警告（本地测试不需要证书验证）
@@ -76,6 +77,12 @@ def upload_test_data(auth_api, is_backtest):
     # metric_test_data/ 目录（指标验证测试策略）
     metric_dir = Path(__file__).parent / "testcases" / "metric_test_data"
     s, e = _extract_symbols(metric_dir)
+    stock_symbols |= s
+    etf_symbols |= e
+
+    # node_test_data/ 目录（节点单元/集成测试策略）
+    node_dir = Path(__file__).parent / "testcases" / "node_test_data"
+    s, e = _extract_symbols(node_dir)
     stock_symbols |= s
     etf_symbols |= e
 
@@ -191,18 +198,26 @@ class AuthAPI:
         self._mode = None
         self._token = None
 
-    def login(self):
-        """模拟登录请求"""
+    def login(self, retries=10, delay=2):
+        """模拟登录请求（带重试，等待服务完全就绪）"""
         params = {"name": 'admin', 'pwd': 'admin'}
-        response = requests.post(f"{BASE_URL}/v0/user/login", json=params, verify=VERIFY_SSL)
-        data = response.json()
-        assert isinstance(data, object)
-        assert 'mode' in data
-        token = data['tk']
-        self._token = token
-        self._mode = data['mode']
-        assert len(token) > 0
-        return token
+        last_err = None
+        for i in range(retries):
+            try:
+                response = requests.post(f"{BASE_URL}/v0/user/login", json=params, verify=VERIFY_SSL, timeout=5)
+                data = response.json()
+                assert isinstance(data, object)
+                assert 'mode' in data
+                token = data['tk']
+                self._token = token
+                self._mode = data['mode']
+                assert len(token) > 0
+                return token
+            except Exception as e:
+                last_err = e
+                if i < retries - 1:
+                    time.sleep(delay)
+        raise ConnectionError(f"登录失败（重试 {retries} 次）: {last_err}")
 
     @property
     def token(self):

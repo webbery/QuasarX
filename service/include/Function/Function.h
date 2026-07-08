@@ -40,6 +40,14 @@ class STD: public ICallable {
 public:
     STD(int32_t count);
     virtual context_t operator()(const Map<String, context_t>& args);
+
+private:
+    int32_t _window;
+    std::vector<double> _buffer;
+    size_t _count;
+    size_t _nextIndex;
+    double _sum;
+    double _sumSq;
 };
 
 /**

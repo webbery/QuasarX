@@ -1,0 +1,526 @@
+{
+  "datasets": {
+    "sine": {
+      "symbol": "sz.800001",
+      "name": "正弦+噪声"
+    },
+    "step": {
+      "symbol": "sz.800002",
+      "name": "阶梯跳变"
+    },
+    "reversal": {
+      "symbol": "sz.800003",
+      "name": "趋势+反转"
+    },
+    "deterministic": {
+      "symbol": "sz.800004",
+      "name": "确定性序列"
+    },
+    "anomaly": {
+      "symbol": "sz.800005",
+      "name": "含异常值"
+    }
+  },
+  "strategies": {
+    "sine_std_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "STD(5)"
+    },
+    "sine_std_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "STD(15)"
+    },
+    "sine_ma_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "MA(5)"
+    },
+    "sine_ma_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "MA(15)"
+    },
+    "sine_return_1": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Return(1)"
+    },
+    "sine_return_3": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Return(3)"
+    },
+    "sine_zscore_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "ZScore(5)"
+    },
+    "sine_zscore_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "ZScore(15)"
+    },
+    "sine_r2_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "R2(5)"
+    },
+    "sine_r2_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "R2(15)"
+    },
+    "sine_formula_add": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: MA(5)+STD(5)"
+    },
+    "sine_formula_precedence": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: MA(5)*2+STD(5)"
+    },
+    "sine_formula_composite": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: (MA(5)+MA(15))/2"
+    },
+    "sine_formula_close": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: close-MA(5)"
+    },
+    "sine_formula_envelope": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: MA(15)+2*STD(15)"
+    },
+    "sine_formula_timeidx": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: ret1[t-1]"
+    },
+    "sine_formula_compare": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: ma5[t]>ma15[t]"
+    },
+    "sine_formula_multinode": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Formula: ma5[t]*std15[t]"
+    },
+    "sine_cusum_1": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "CUSUM(Return(1))"
+    },
+    "sine_emd_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "EMD(numIMFs=5)"
+    },
+    "step_std_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "STD(5)"
+    },
+    "step_std_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "STD(15)"
+    },
+    "step_ma_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "MA(5)"
+    },
+    "step_ma_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "MA(15)"
+    },
+    "step_return_1": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Return(1)"
+    },
+    "step_return_3": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Return(3)"
+    },
+    "step_zscore_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "ZScore(5)"
+    },
+    "step_zscore_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "ZScore(15)"
+    },
+    "step_r2_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "R2(5)"
+    },
+    "step_r2_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "R2(15)"
+    },
+    "step_formula_add": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: MA(5)+STD(5)"
+    },
+    "step_formula_precedence": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: MA(5)*2+STD(5)"
+    },
+    "step_formula_composite": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: (MA(5)+MA(15))/2"
+    },
+    "step_formula_close": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: close-MA(5)"
+    },
+    "step_formula_envelope": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: MA(15)+2*STD(15)"
+    },
+    "step_formula_timeidx": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: ret1[t-1]"
+    },
+    "step_formula_compare": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: ma5[t]>ma15[t]"
+    },
+    "step_formula_multinode": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Formula: ma5[t]*std15[t]"
+    },
+    "step_cusum_1": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "CUSUM(Return(1))"
+    },
+    "step_emd_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "EMD(numIMFs=5)"
+    },
+    "reversal_std_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "STD(5)"
+    },
+    "reversal_std_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "STD(15)"
+    },
+    "reversal_ma_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "MA(5)"
+    },
+    "reversal_ma_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "MA(15)"
+    },
+    "reversal_return_1": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Return(1)"
+    },
+    "reversal_return_3": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Return(3)"
+    },
+    "reversal_zscore_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "ZScore(5)"
+    },
+    "reversal_zscore_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "ZScore(15)"
+    },
+    "reversal_r2_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "R2(5)"
+    },
+    "reversal_r2_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "R2(15)"
+    },
+    "reversal_formula_add": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: MA(5)+STD(5)"
+    },
+    "reversal_formula_precedence": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: MA(5)*2+STD(5)"
+    },
+    "reversal_formula_composite": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: (MA(5)+MA(15))/2"
+    },
+    "reversal_formula_close": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: close-MA(5)"
+    },
+    "reversal_formula_envelope": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: MA(15)+2*STD(15)"
+    },
+    "reversal_formula_timeidx": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: ret1[t-1]"
+    },
+    "reversal_formula_compare": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: ma5[t]>ma15[t]"
+    },
+    "reversal_formula_multinode": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Formula: ma5[t]*std15[t]"
+    },
+    "reversal_cusum_1": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "CUSUM(Return(1))"
+    },
+    "reversal_emd_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "EMD(numIMFs=5)"
+    },
+    "deterministic_std_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "STD(5)"
+    },
+    "deterministic_std_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "STD(15)"
+    },
+    "deterministic_ma_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "MA(5)"
+    },
+    "deterministic_ma_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "MA(15)"
+    },
+    "deterministic_return_1": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Return(1)"
+    },
+    "deterministic_return_3": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Return(3)"
+    },
+    "deterministic_zscore_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "ZScore(5)"
+    },
+    "deterministic_zscore_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "ZScore(15)"
+    },
+    "deterministic_r2_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "R2(5)"
+    },
+    "deterministic_r2_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "R2(15)"
+    },
+    "deterministic_formula_add": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: MA(5)+STD(5)"
+    },
+    "deterministic_formula_precedence": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: MA(5)*2+STD(5)"
+    },
+    "deterministic_formula_composite": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: (MA(5)+MA(15))/2"
+    },
+    "deterministic_formula_close": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: close-MA(5)"
+    },
+    "deterministic_formula_envelope": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: MA(15)+2*STD(15)"
+    },
+    "deterministic_formula_timeidx": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: ret1[t-1]"
+    },
+    "deterministic_formula_compare": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: ma5[t]>ma15[t]"
+    },
+    "deterministic_formula_multinode": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Formula: ma5[t]*std15[t]"
+    },
+    "deterministic_cusum_1": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "CUSUM(Return(1))"
+    },
+    "deterministic_emd_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "EMD(numIMFs=5)"
+    },
+    "anomaly_std_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "STD(5)"
+    },
+    "anomaly_std_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "STD(15)"
+    },
+    "anomaly_ma_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "MA(5)"
+    },
+    "anomaly_ma_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "MA(15)"
+    },
+    "anomaly_return_1": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Return(1)"
+    },
+    "anomaly_return_3": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Return(3)"
+    },
+    "anomaly_zscore_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "ZScore(5)"
+    },
+    "anomaly_zscore_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "ZScore(15)"
+    },
+    "anomaly_r2_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "R2(5)"
+    },
+    "anomaly_r2_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "R2(15)"
+    },
+    "anomaly_formula_add": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: MA(5)+STD(5)"
+    },
+    "anomaly_formula_precedence": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: MA(5)*2+STD(5)"
+    },
+    "anomaly_formula_composite": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: (MA(5)+MA(15))/2"
+    },
+    "anomaly_formula_close": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: close-MA(5)"
+    },
+    "anomaly_formula_envelope": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: MA(15)+2*STD(15)"
+    },
+    "anomaly_formula_timeidx": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: ret1[t-1]"
+    },
+    "anomaly_formula_compare": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: ma5[t]>ma15[t]"
+    },
+    "anomaly_formula_multinode": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Formula: ma5[t]*std15[t]"
+    },
+    "anomaly_cusum_1": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "CUSUM(Return(1))"
+    },
+    "anomaly_emd_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "EMD(numIMFs=5)"
+    }
+  }
+}

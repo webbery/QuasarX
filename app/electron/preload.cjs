@@ -108,3 +108,9 @@ window.onmessage = function (event) {
 ipcRenderer.on('model-load-status', function (_event, status) {
   window.postMessage({ payload: 'model-load-status', data: status }, '*');
 });
+
+/** Skills Knowledge Base API */
+window.skillsAPI = {
+  list: function () { return ipcRenderer.invoke('skills-list'); },
+  read: function (skillId) { return ipcRenderer.invoke('skills-read', skillId); },
+};

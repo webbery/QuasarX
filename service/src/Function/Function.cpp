@@ -57,13 +57,58 @@ context_t MACD::operator()(const Map<String, context_t>& args) {
     return 0.;
 }
 
-STD::STD(int32_t count) {
-
+STD::STD(int32_t count)
+: _window(count), _count(0), _nextIndex(0), _sum(0.0), _sumSq(0.0) {
+    _buffer.resize(count, 0.0);
 }
 
 context_t STD::operator()(const Map<String, context_t>& args) {
+    if (args.size() != 1) {
+        return std::nan("nan");
+    }
+    auto itr = args.begin();
+    double value;
+    std::visit([&value] (auto&& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, double>) {
+            value = v;
+        }
+        else if constexpr (std::is_same_v<T, Vector<double>>) {
+            value = v.back();
+        } else {
+            INFO("Not support STD");
+        }
+    }, itr->second);
 
-    return 0.;
+    if (_count < static_cast<size_t>(_window)) {
+        _buffer[_count] = value;
+        _sum += value;
+        _sumSq += value * value;
+        ++_count;
+    } else {
+        double old_value = _buffer[_nextIndex];
+        _sum -= old_value;
+        _sumSq -= old_value * old_value;
+
+        _buffer[_nextIndex] = value;
+        _sum += value;
+        _sumSq += value * value;
+
+        _nextIndex = (_nextIndex + 1) % _window;
+    }
+
+    if (_count < static_cast<size_t>(_window)) {
+        return std::nan("nan");
+    }
+
+    double mean = _sum / _count;
+    double variance = (_sumSq / _count) - (mean * mean);
+
+    if (variance <= 0.0) {
+        return 0.0;
+    }
+
+    return std::sqrt(variance);
 }
 
 Return::Return(int32_t count): _cnts(count){

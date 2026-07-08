@@ -112,12 +112,15 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 
     // 2.5 验证策略图的完整性（回测前必须验证）
-    auto [validateSuccess, validateErrorMsg] = _server->ValidateStrategyConfig(script);
-    if (!validateSuccess) {
-        res.status = 400;
-        String msg = R"({"message": "策略图验证失败: )" + String(validateErrorMsg) + R"("})";
-        res.set_content(msg.c_str(), "application/json");
-        return;
+    bool useValidate = params.value("validate", true);
+    if (useValidate) {
+        auto [validateSuccess, validateErrorMsg] = _server->ValidateStrategyConfig(script);
+        if (!validateSuccess) {
+            res.status = 400;
+            String msg = R"({"message": "策略图验证失败: )" + String(validateErrorMsg) + R"("})";
+            res.set_content(msg.c_str(), "application/json");
+            return;
+        }
     }
 
     // 2.6 解析回测时间范围（可选，不配置则使用数据文件的全范围）

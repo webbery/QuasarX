@@ -167,93 +167,7 @@ jobs:
       - name: Show ccache stats
         run: ccache -s
 
-      # 从模板和 Secrets 生成 config.json（供 test job 使用）
-      - name: Generate config.json
-        run: |
-          cd service/build
-          cp ../config.template.json ./config.json
-          python3 -c "
-          import json, os, sys
-
-          with open('config.json') as f:
-              config = json.load(f)
-
-          def set_or_skip(obj, key, value, required=False):
-              if value:
-                  obj[key] = value
-              elif required:
-                  print(f'ERROR: required field \"{key}\" is empty', file=sys.stderr)
-                  sys.exit(1)
-
-          # ===== Server 配置 =====
-          server = config.get('server', {})
-          set_or_skip(server, 'user', os.environ.get('SERVER_USER'), required=True)
-          set_or_skip(server, 'passwd', os.environ.get('SERVER_PASSWD'), required=True)
-          set_or_skip(server, 'productID', os.environ.get('PRODUCT_ID'), required=True)
-          set_or_skip(server, 'port', int(os.environ['SERVER_PORT']) if os.environ.get('SERVER_PORT') else None, required=True)
-          set_or_skip(server, 'addr', os.environ.get('SERVER_ADDR'))
-          set_or_skip(server, 'ssl', os.environ.get('SERVER_SSL'))
-
-          # JWT: 无 secret 时跳过（部分接口可能不需要鉴权）
-          if os.environ.get('SERVER_JWT_SECRET'):
-              server['jwt'] = os.environ['SERVER_JWT_SECRET']
-
-          # LLM Key: 可选
-          if os.environ.get('SERVER_LLM_KEY'):
-              server['llmkey'] = os.environ['SERVER_LLM_KEY']
-
-          # Notice email
-          notice = server.get('notice', {})
-          set_or_skip(notice, 'email', os.environ.get('NOTICE_EMAIL'))
-
-          # SMTP 配置
-          smtp = server.get('smtp', {})
-          set_or_skip(smtp, 'addr', os.environ.get('SMTP_ADDR'))
-          set_or_skip(smtp, 'auth', os.environ.get('SMTP_AUTH'))
-          set_or_skip(smtp, 'mail', os.environ.get('SMTP_MAIL'))
-
-          # ===== Exchange 配置 =====
-          for ex in config.get('exchange', []):
-              ex_name = ex.get('name', '')
-              if ex_name == 'tickflow-quote':
-                  set_or_skip(ex, 'passwd', os.environ.get('TICKFLOW_API_KEY'), required=True)
-
-          # ===== Broker 配置 =====
-          for br in config.get('broker', []):
-              if os.environ.get('BROKER_COMMISSION'):
-                  br['commission']['fee'] = float(os.environ['BROKER_COMMISSION'])
-              if os.environ.get('BROKER_MIN_COMMISSION'):
-                  br['commission']['min'] = float(os.environ['BROKER_MIN_COMMISSION'])
-              if os.environ.get('BROKER_STAMP'):
-                  br['commission']['stamp'] = float(os.environ['BROKER_STAMP'])
-
-          # ===== Risk 配置 =====
-          capital_risk = config.get('risk', {}).get('capitalRisk', {})
-          if os.environ.get('INITIAL_CAPITAL'):
-              capital_risk['initialCapital'] = float(os.environ['INITIAL_CAPITAL'])
-
-          with open('config.json', 'w') as f:
-              json.dump(config, f, indent=4)
-          print('config.json generated successfully')
-          "
-        env:
-          # 必填
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_PASSWD: ${{ secrets.SERVER_PASSWD }}
-          PRODUCT_ID: ${{ secrets.PRODUCT_ID }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
-          # 可选
-          SERVER_ADDR: ${{ secrets.SERVER_ADDR }}
-          SERVER_SSL: ${{ secrets.SERVER_SSL }}
-          SERVER_JWT_SECRET: ${{ secrets.SERVER_JWT_SECRET }}
-          SERVER_LLM_KEY: ${{ secrets.SERVER_LLM_KEY }}
-          NOTICE_EMAIL: ${{ secrets.NOTICE_EMAIL }}
-          SMTP_ADDR: ${{ secrets.SMTP_ADDR }}
-          SMTP_AUTH: ${{ secrets.SMTP_AUTH }}
-          SMTP_MAIL: ${{ secrets.SMTP_MAIL }}
-
-      # 上传构建产物供 test job 使用（二进制 + config）
+      # 上传构建产物供 test job 使用（二进制 + 配置模板）
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -261,7 +175,7 @@ jobs:
           path: |
             service/build/QuantService
             service/build/QuantService.debug
-            service/build/config.json
+            service/config.template.json
           compression-level: 5
           retention-days: 1
 
@@ -370,6 +284,91 @@ jobs:
           echo "Cert: $CERT_MOD"
           echo "Key:  $KEY_MOD"
           if [ "$CERT_MOD" = "$KEY_MOD" ]; then echo "MATCH ✓"; else echo "MISMATCH ✗"; exit 1; fi
+
+      # 从模板和 Secrets 生成 config.json（生命周期测试）和 tickflow.json（TickFlow 测试）
+      - name: Generate configs from template
+        run: |
+          cd service/build
+          python3 -c "
+          import json, os, sys
+
+          with open('../config.template.json') as f:
+              template = json.load(f)
+
+          def set_or_skip(obj, key, value, required=False):
+              if value:
+                  obj[key] = value
+              elif required:
+                  print(f'ERROR: required field \"{key}\" is empty', file=sys.stderr)
+                  sys.exit(1)
+
+          def fill_config(config):
+              server = config.get('server', {})
+              set_or_skip(server, 'user', os.environ.get('SERVER_USER'), required=True)
+              set_or_skip(server, 'passwd', os.environ.get('SERVER_PASSWD'), required=True)
+              set_or_skip(server, 'productID', os.environ.get('PRODUCT_ID'), required=True)
+              set_or_skip(server, 'port', int(os.environ['SERVER_PORT']) if os.environ.get('SERVER_PORT') else None, required=True)
+              set_or_skip(server, 'addr', os.environ.get('SERVER_ADDR'))
+              set_or_skip(server, 'ssl', os.environ.get('SERVER_SSL'))
+              if os.environ.get('SERVER_JWT_SECRET'):
+                  server['jwt'] = os.environ['SERVER_JWT_SECRET']
+              if os.environ.get('SERVER_LLM_KEY'):
+                  server['llmkey'] = os.environ['SERVER_LLM_KEY']
+              notice = server.get('notice', {})
+              set_or_skip(notice, 'email', os.environ.get('NOTICE_EMAIL'))
+              smtp = server.get('smtp', {})
+              set_or_skip(smtp, 'addr', os.environ.get('SMTP_ADDR'))
+              set_or_skip(smtp, 'auth', os.environ.get('SMTP_AUTH'))
+              set_or_skip(smtp, 'mail', os.environ.get('SMTP_MAIL'))
+              for ex in config.get('exchange', []):
+                  if ex.get('name') == 'tickflow-quote':
+                      set_or_skip(ex, 'passwd', os.environ.get('TICKFLOW_API_KEY'), required=True)
+              for br in config.get('broker', []):
+                  if os.environ.get('BROKER_COMMISSION'):
+                      br['commission']['fee'] = float(os.environ['BROKER_COMMISSION'])
+                  if os.environ.get('BROKER_MIN_COMMISSION'):
+                      br['commission']['min'] = float(os.environ['BROKER_MIN_COMMISSION'])
+                  if os.environ.get('BROKER_STAMP'):
+                      br['commission']['stamp'] = float(os.environ['BROKER_STAMP'])
+              capital_risk = config.get('risk', {}).get('capitalRisk', {})
+              if os.environ.get('INITIAL_CAPITAL'):
+                  capital_risk['initialCapital'] = float(os.environ['INITIAL_CAPITAL'])
+
+          # config.json: 使用全部 exchange（生命周期测试用）
+          import copy
+          config = copy.deepcopy(template)
+          fill_config(config)
+          with open('config.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('config.json generated successfully')
+
+          # tickflow.json: 仅保留 tickflow exchange（TickFlow 测试用）
+          tickflow_config = copy.deepcopy(template)
+          tickflow_config['exchange'] = [
+              ex for ex in tickflow_config.get('exchange', [])
+              if ex.get('name') == 'tickflow-quote'
+          ]
+          fill_config(tickflow_config)
+          with open('tickflow.json', 'w') as f:
+              json.dump(tickflow_config, f, indent=4)
+          print('tickflow.json generated successfully')
+          "
+        env:
+          # 必填
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PASSWD: ${{ secrets.SERVER_PASSWD }}
+          PRODUCT_ID: ${{ secrets.PRODUCT_ID }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+          # 可选
+          SERVER_ADDR: ${{ secrets.SERVER_ADDR }}
+          SERVER_SSL: ${{ secrets.SERVER_SSL }}
+          SERVER_JWT_SECRET: ${{ secrets.SERVER_JWT_SECRET }}
+          SERVER_LLM_KEY: ${{ secrets.SERVER_LLM_KEY }}
+          NOTICE_EMAIL: ${{ secrets.NOTICE_EMAIL }}
+          SMTP_ADDR: ${{ secrets.SMTP_ADDR }}
+          SMTP_AUTH: ${{ secrets.SMTP_AUTH }}
+          SMTP_MAIL: ${{ secrets.SMTP_MAIL }}
 
       # === 阶段 1: 服务生命周期测试（启动 + 稳定 + 优雅退出）===
 
