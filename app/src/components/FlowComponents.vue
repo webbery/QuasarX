@@ -3,7 +3,6 @@
     <!-- 按分类动态生成 -->
     <div v-for="cat in categories" :key="cat" class="category">
         <div class="category-title" @click="toggleCategory(cat)">
-            <i :class="categoryIcons[cat]"></i>
             <span>{{ categoryLabels[cat] }}</span>
             <i class="fas fa-chevron-down arrow" :class="{ 'rotate-180': !openCategories[cat] }"></i>
         </div>
@@ -11,13 +10,12 @@
             <div
                 v-for="node in nodesByCategory[cat]"
                 :key="node.id"
-                class="component-card"
-                :class="categoryClassMap[cat]"
+                class="component-item"
                 draggable="true"
                 @dragstart="onDragStart($event, node.id)"
                 :title="node.description"
             >
-                <div class="component-title">{{ node.label }}</div>
+                <span class="component-name">{{ node.label }}</span>
             </div>
         </div>
     </div>
@@ -25,12 +23,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
-import { getAllCategories, getNodesByCategory } from '@/lib/nodes'
-import { CATEGORY_ICONS } from '@/lib/nodes/types'
-
-// 分类到图标的映射（从类型定义导入）
-const categoryIcons = CATEGORY_ICONS
+import { ref, reactive, onMounted } from 'vue'
 
 // 分类显示名称
 const categoryLabels = {
@@ -41,17 +34,6 @@ const categoryLabels = {
   ml: 'AI 模型',
   risk: '风控保护',
   utility: '工具节点',
-}
-
-// 分类到 CSS 类的映射
-const categoryClassMap = {
-  input: 'input-node',
-  process: 'process-node',
-  signal: 'signal-node',
-  execution: 'execution-node',
-  ml: 'ml-node',
-  risk: 'risk-node',
-  utility: 'utility-node',
 }
 
 // 从注册表动态获取分类和节点
@@ -116,21 +98,20 @@ const onDragStart = (event, nodeId) => {
 }
 
 .category {
-    margin-bottom: 15px;
+    margin-bottom: 8px;
 }
 
 .category-title {
-    font-size: 1.1rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--text);
-    margin-bottom: 12px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
-    padding: 8px 12px;
-    border-radius: 6px;
-    transition: all 0.3s ease;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
     user-select: none;
 }
 
@@ -138,18 +119,13 @@ const onDragStart = (event, nodeId) => {
     background: rgba(41, 98, 255, 0.1);
 }
 
-.category-title i:first-child {
-    margin-right: 8px;
-    color: var(--primary);
-}
-
 .category-title span {
     flex: 1;
 }
 
 .arrow {
-    transition: transform 0.3s ease;
-    font-size: 0.8rem;
+    transition: transform 0.2s ease;
+    font-size: 0.7rem;
     color: var(--text-secondary);
 }
 
@@ -160,70 +136,31 @@ const onDragStart = (event, nodeId) => {
 .components-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 2px;
+    margin-bottom: 4px;
+    padding-left: 8px;
 }
 
-.component-card {
-    background: rgba(41, 98, 255, 0.05);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 5px;
+.component-item {
+    display: flex;
+    align-items: center;
+    padding: 3px 8px;
     cursor: grab;
-    transition: all 0.3s ease;
+    transition: all 0.15s ease;
+    border-radius: 3px;
 }
 
-.component-card:hover {
-    background: rgba(41, 98, 255, 0.1);
-    border-color: var(--primary);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+.component-item:hover {
+    background: rgba(41, 98, 255, 0.15);
 }
 
-.component-title {
-    font-weight: 600;
-    color: var(--text);
-    font-size: 0.95rem;
+.component-item:active {
+    cursor: grabbing;
 }
 
-/* 节点类型特定样式 */
-.input-node .component-icon {
-    background: rgba(0, 200, 83, 0.1);
-    color: var(--secondary);
-}
-
-.output-node .component-icon {
-    background: rgba(255, 109, 0, 0.1);
-    color: var(--accent);
-}
-
-.signal-node .component-icon {
-    background: rgba(41, 98, 255, 0.1);
-    color: var(--primary);
-}
-
-.risk-node .component-icon {
-    background: rgba(156, 39, 176, 0.1);
-    color: #9c27b0;
-}
-
-.process-node .component-icon {
-    background: rgba(76, 175, 80, 0.1);
-    color: #4caf50;
-}
-
-.ml-node .component-icon {
-    background: rgba(233, 30, 99, 0.1);
-    color: #e91e63;
-}
-
-.execution-node .component-icon {
-    background: rgba(255, 109, 0, 0.1);
-    color: var(--accent);
-}
-
-.utility-node .component-icon {
-    background: rgba(255, 152, 0, 0.1);
-    color: #ff9800;
+.component-name {
+    font-size: 0.75rem;
+    color: #2962ff;
+    font-weight: 500;
 }
 </style>

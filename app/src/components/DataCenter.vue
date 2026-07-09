@@ -146,11 +146,30 @@
                             </th>
                             <th>类型</th>
                             <th>频率</th>
-                            <th>标的代码</th>
-                            <th>起始时间</th>
-                            <th>结束时间</th>
-                            <th>数据量</th>
-                            <th>操作</th>
+                            <th class="sortable" @click="handleSort('symbol')">
+                                标的代码
+                                <span class="sort-icon" v-if="sortKey === 'symbol'">
+                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
+                                </span>
+                            </th>
+                            <th class="sortable" @click="handleSort('start_time')">
+                                起始时间
+                                <span class="sort-icon" v-if="sortKey === 'start_time'">
+                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
+                                </span>
+                            </th>
+                            <th class="sortable" @click="handleSort('end_time')">
+                                结束时间
+                                <span class="sort-icon" v-if="sortKey === 'end_time'">
+                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
+                                </span>
+                            </th>
+                            <th class="sortable" @click="handleSort('count')">
+                                数据量
+                                <span class="sort-icon" v-if="sortKey === 'count'">
+                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
+                                </span>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -164,7 +183,6 @@
                             <td class="time-range">{{ item.start_time || '-' }}</td>
                             <td class="time-range">{{ item.end_time || '-' }}</td>
                             <td class="symbol-count">{{ item.count.toLocaleString() }}</td>
-                            <td class="actions">—</td>
                         </tr>
                     </tbody>
                 </table>
@@ -197,7 +215,10 @@
                         {{ deletingQuote ? '删除中...' : '清空所有数据' }}
                     </button>
                 </div>
-                <div class="pagination-center" v-if="totalPages > 1">
+                <div class="pagination-center" v-if="allFlatSymbols.length > 0">
+                    <button class="page-btn" @click="loadQuoteData" :disabled="loadingQuoteData" title="刷新数据">
+                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQuoteData }"></i>
+                    </button>
                     <button class="page-btn" :disabled="currentPage === 1" @click="currentPage = 1">
                         <i class="fas fa-angle-double-left"></i>
                     </button>
@@ -317,6 +338,21 @@ const pageSize = ref(20)
 const symbolFilter = ref('')
 const assetTypeFilter = ref('')
 
+// 排序
+const sortKey = ref('')
+const sortOrder = ref('asc') // 'asc' or 'desc'
+
+const handleSort = (key) => {
+    if (sortKey.value === key) {
+        // Toggle sort order
+        sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+    } else {
+        sortKey.value = key
+        sortOrder.value = 'asc'
+    }
+    currentPage.value = 1 // Reset to first page
+}
+
 // 将所有标的展平为一维列表（供分页使用）
 const allFlatSymbols = computed(() => {
     const freqMap = {
@@ -339,7 +375,7 @@ const allFlatSymbols = computed(() => {
     return result
 })
 
-// 应用筛选后的标的列表
+// 应用筛选和排序后的标的列表
 const flatSymbols = computed(() => {
     let result = allFlatSymbols.value
 
@@ -352,6 +388,29 @@ const flatSymbols = computed(() => {
     // 按资产类型筛选
     if (assetTypeFilter.value) {
         result = result.filter(item => item.assetType === assetTypeFilter.value)
+    }
+
+    // 排序
+    if (sortKey.value) {
+        result = [...result].sort((a, b) => {
+            let aVal = a[sortKey.value]
+            let bVal = b[sortKey.value]
+
+            // 处理 null/undefined
+            if (aVal == null) aVal = ''
+            if (bVal == null) bVal = ''
+
+            let comparison = 0
+            if (sortKey.value === 'count') {
+                // 数字排序
+                comparison = aVal - bVal
+            } else {
+                // 字符串排序
+                comparison = String(aVal).localeCompare(String(bVal))
+            }
+
+            return sortOrder.value === 'asc' ? comparison : -comparison
+        })
     }
 
     return result
@@ -646,14 +705,23 @@ const onUpdateSymbol = async (tableName, symbol) => {
     const token = localStorage.getItem('token')
 
     try {
-        // 触发下载（后端会自动判断 ETF/Stock）
-        // 从表名提取频率：如 "etf_5m" → "5m"
+        // 从表名提取频率（如 "etf_1d" → "1d"）
         const rawFreq = tableName.includes('_') ? tableName.split('_').slice(1).join('_') : '5m'
-        const freqMap = { '日线': 'daily', '5分钟': '5m', '15分钟': '15m', '30分钟': '30m', '60分钟': '60m', '1小时': '1h' }
+        // 映射为 Python 脚本接受的频率格式
+        const freqMap = {
+            '1d': 'daily', 'daily': 'daily', '日线': 'daily',
+            '5m': '5m', '5分钟': '5m',
+            '15m': '15m', '15分钟': '15m',
+            '30m': '30m', '30分钟': '30m',
+            '60m': '60m', '1h': '60m', '60分钟': '60m', '1小时': '60m',
+        }
         const freq = freqMap[rawFreq] || rawFreq
 
+        // 转换 symbol 格式：sh.510300 → 510300.SH
+        const normalizedSymbol = symbol.replace(/^([a-z]+)\.(\d+)$/, '$2.$1').toUpperCase()
+
         await axios.post(`https://${server}/v0/quote`, {
-            symbols: symbol,
+            symbols: normalizedSymbol,
             freq,
         }, {
             headers: { 'Authorization': token || '' }
@@ -729,14 +797,8 @@ const onBatchDeleteSymbols = async () => {
     deletingSymbol.value = false
 }
 
-// 批量更新选中的标的
+// 批量更新选中的标的（增量更新）
 const onBatchUpdateSymbols = async () => {
-    const confirmed = await promptDialogRef.value?.confirm({
-        title: '确认批量更新',
-        message: `确定要重新下载选中的 ${selectedSymbols.value.size} 个标的数据吗？`
-    })
-    if (!confirmed) return
-
     updatingSymbol.value = true
 
     const server = localStorage.getItem('remote')
@@ -748,15 +810,43 @@ const onBatchUpdateSymbols = async () => {
     for (const key of selectedSymbols.value) {
         const [table, symbol] = key.split('|')
         try {
-            // 从表名提取频率
+            // 从表名提取频率（如 "stock_1d" → "1d"）
             const rawFreq = table.includes('_') ? table.split('_').slice(1).join('_') : '5m'
-            const freqMap = { '日线': 'daily', '5分钟': '5m', '15分钟': '15m', '30分钟': '30m', '60分钟': '60m', '1小时': '1h' }
+            // 映射为 Python 脚本接受的频率格式
+            const freqMap = {
+                '1d': 'daily', 'daily': 'daily', '日线': 'daily',
+                '5m': '5m', '5分钟': '5m',
+                '15m': '15m', '15分钟': '15m',
+                '30m': '30m', '30分钟': '30m',
+                '60m': '60m', '1h': '60m', '60分钟': '60m', '1小时': '60m',
+            }
             const freq = freqMap[rawFreq] || rawFreq
 
-            await axios.post(`https://${server}/v0/quote`, {
-                symbols: symbol,
+            // 从 allFlatSymbols 中找到该标的的 end_time
+            const item = allFlatSymbols.value.find(s => s.table === table && s.symbol === symbol)
+            const endTime = item?.end_time || ''
+
+            // 计算增量 start：如果有 end_time，从 end_time+1 开始；否则全量下载
+            let startDate = ''
+            if (endTime) {
+                // end_time 格式: "2024-01-15" 或 "2024-01-15 09:30:00"
+                const datePart = endTime.split(' ')[0]
+                const nextDay = new Date(datePart)
+                nextDay.setDate(nextDay.getDate() + 1)
+                startDate = nextDay.toISOString().split('T')[0]
+            }
+
+            // 转换 symbol 格式：sh.510300 → 510300.SH
+            const normalizedSymbol = symbol.replace(/^([a-z]+)\.(\d+)$/, '$2.$1').toUpperCase()
+
+            const params = {
+                symbols: normalizedSymbol,
                 freq,
-            }, {
+                ...(startDate && { start: startDate }),
+            }
+            // end 不传，后端默认今天
+
+            await axios.post(`https://${server}/v0/quote`, params, {
                 headers: { 'Authorization': token || '' }
             })
             successCount++
@@ -1234,6 +1324,19 @@ select option {
     color: #999;
     font-weight: 600;
     border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+}
+.data-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s;
+}
+.data-table th.sortable:hover {
+    color: #e0e0e0;
+}
+.data-table th.sortable .sort-icon {
+    margin-left: 4px;
+    font-size: 10px;
+    opacity: 0.8;
 }
 .data-table thead.sticky-header th {
     position: sticky;

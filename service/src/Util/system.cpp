@@ -583,9 +583,10 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
   if (exchange.empty()) {
     // 优先通过代码前缀判断资产类型（不依赖 _markets）
     ContractType ct = ContractType::AStock;
-    if (code >= 510000 && code <= 519999) ct = ContractType::ETF;          // 上交所ETF: 510-519
+    if (code >= 510000 && code <= 539999) ct = ContractType::ETF;          // 上交所ETF: 510-539
+    else if (code >= 550000 && code <= 559999) ct = ContractType::ETF;     // 上交所ETF: 550-559
     else if (code >= 560000 && code <= 569999) ct = ContractType::ETF;     // 上交所ETF: 560-569
-    else if (code == 588000 || code == 589000) ct = ContractType::ETF;     // 科创ETF: 588/589
+    else if (code >= 588000 && code <= 589000) ct = ContractType::ETF;     // 科创ETF: 588/589
     else if (code >= 159000 && code <= 159999) ct = ContractType::ETF;     // 深交所ETF: 159
     else {
       auto fallback = Server::GetContractType(strSymbol);

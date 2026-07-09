@@ -7,15 +7,30 @@
           <tr>
             <th>From</th>
             <th>To</th>
-            <th>F 统计量</th>
-            <th>p 值</th>
+            <th class="sortable" @click="handleSort('f_statistic')">
+              F 统计量
+              <span class="sort-icon" v-if="sortKey === 'f_statistic'">
+                {{ sortOrder === 'asc' ? '↑' : '↓' }}
+              </span>
+            </th>
+            <th class="sortable" @click="handleSort('p_value')">
+              p 值
+              <span class="sort-icon" v-if="sortKey === 'p_value'">
+                {{ sortOrder === 'asc' ? '↑' : '↓' }}
+              </span>
+            </th>
             <th>最优滞后</th>
-            <th>显著性</th>
+            <th class="sortable" @click="handleSort('is_significant')">
+              显著性
+              <span class="sort-icon" v-if="sortKey === 'is_significant'">
+                {{ sortOrder === 'asc' ? '↑' : '↓' }}
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="(item, idx) in data"
+            v-for="(item, idx) in sortedData"
             :key="idx"
             :class="{ significant: item.is_significant }"
           >
@@ -42,6 +57,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+
 interface GrangerItem {
   from: string
   to: string
@@ -51,9 +68,40 @@ interface GrangerItem {
   optimal_lag: number
 }
 
-defineProps<{
+const props = defineProps<{
   data: GrangerItem[]
 }>()
+
+// 排序状态
+const sortKey = ref<'f_statistic' | 'p_value' | 'is_significant'>('')
+const sortOrder = ref<'asc' | 'desc'>('asc')
+
+const handleSort = (key: 'f_statistic' | 'p_value' | 'is_significant') => {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+const sortedData = computed(() => {
+  if (!sortKey.value) return props.data
+
+  return [...props.data].sort((a, b) => {
+    const aVal = a[sortKey.value]
+    const bVal = b[sortKey.value]
+
+    if (typeof aVal === 'boolean' && typeof bVal === 'boolean') {
+      // 布尔值排序：false (不显著) 在前，true (显著) 在后
+      const comparison = Number(aVal) - Number(bVal)
+      return sortOrder.value === 'asc' ? comparison : -comparison
+    }
+
+    const comparison = (aVal as number) - (bVal as number)
+    return sortOrder.value === 'asc' ? comparison : -comparison
+  })
+})
 </script>
 
 <style scoped>
@@ -114,6 +162,22 @@ thead th {
   font-weight: 500;
   border-bottom: 2px solid rgba(74, 85, 104, 0.3);
   z-index: 1;
+}
+
+thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s;
+}
+
+thead th.sortable:hover {
+  color: #e0e0e0;
+}
+
+thead th.sortable .sort-icon {
+  margin-left: 4px;
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 tbody tr {
