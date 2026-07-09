@@ -635,6 +635,8 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
             flow._running = false;
             return;
         }
+        STRATEGY_INFO(strategy, "[Realtime] Subscribed to raw quote, watching symbols: {}",
+            [&]() { String s; for (auto& sym : symbols) { if (!s.empty()) s += ","; s += get_symbol(sym); } return s; }());
 
         flow._lastHeartbeat = time(nullptr);
         try {
@@ -644,15 +646,26 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
             }
 
             Map<symbol_t, QuoteInfo> snapshot;
+            uint64_t tickCount = 0, filteredCount = 0;
 
             while (flow._running && !Server::IsExit()) {
                 // 阻塞读取 tick（Subscribe 默认 5s 超时）
                 QuoteInfo tick;
                 if (!ReadQuote(recvSock, tick)) continue;
 
+                tickCount++;
+                if (tickCount <= 3 || tickCount % 100 == 0) {
+                    STRATEGY_INFO(strategy, "[Realtime] ReadQuote #{}: symbol={}, time={}", tickCount, get_symbol(tick._symbol), tick._time);
+                }
+
                 flow._lastHeartbeat = time(nullptr);
                 // 只处理策略涉及的标的
-                if (!symbols.count(tick._symbol)) continue;
+                if (!symbols.count(tick._symbol)) {
+                    if (++filteredCount <= 3) {
+                        STRATEGY_WARN(strategy, "[Realtime] Symbol filtered: got={}, not in watch set", get_symbol(tick._symbol));
+                    }
+                    continue;
+                }
 
                 // 聚合 tick
                 kbarBuilder->OnTick(tick);

@@ -328,14 +328,14 @@ void TickFlowBridge::workerLoop() {
 
     while (!_stop && !Server::IsExit()) {
         // 检查当前时间
-        time_t curr = _server ? Now() : std::time(nullptr);
+        // time_t curr = _server ? Now() : std::time(nullptr);
 
         // 检查工作时间
-        if (!IsWorking(curr)) {
-            // 非工作时间，暂停 5s 再检查
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            continue;
-        }
+        // if (!IsWorking(curr)) {
+        //     // 非工作时间，暂停 5s 再检查
+        //     std::this_thread::sleep_for(std::chrono::seconds(5));
+        //     continue;
+        // }
 
         // 检查暂停状态
         {

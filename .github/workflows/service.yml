@@ -167,7 +167,10 @@ jobs:
       - name: Show ccache stats
         run: ccache -s
 
-      # 上传构建产物供 test job 使用（二进制 + 配置模板）
+      # 上传构建产物供 test job 使用（二进制 + 配置模板，统一放在 service/build/ 下）
+      - name: Prepare build artifact
+        run: cp service/config.template.json service/build/
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -175,7 +178,7 @@ jobs:
           path: |
             service/build/QuantService
             service/build/QuantService.debug
-            service/config.template.json
+            service/build/config.template.json
           compression-level: 5
           retention-days: 1
 
@@ -221,6 +224,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifact
+          path: .
+
+      - name: Verify build artifact
+        run: |
+          echo "=== Workspace root ==="
+          ls -la
+          echo "=== service/build/ ==="
+          ls -la service/build/ || echo "service/build/ NOT FOUND"
+          echo "=== Search QuantService ==="
+          find . -name "QuantService*" -type f 2>/dev/null || echo "NOT FOUND ANYWHERE"
 
       # 下载第三方 so
       - name: Download runtime libs
