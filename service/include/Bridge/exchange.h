@@ -436,6 +436,10 @@ public:
 
   virtual void SetFilter(const QuoteFilter& filter) = 0;
 
+  // 增量订阅管理（策略驱动，默认空实现）
+  virtual void AddSymbols(const Set<String>& symbols) {}
+  virtual void RemoveSymbols(const Set<String>& symbols) {}
+
   virtual bool Release() = 0;
 
   virtual bool Login(AccountType t = AccountType::MAIN) = 0;

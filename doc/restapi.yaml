@@ -1410,6 +1410,495 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  # ═══════════════════════════════════════════════════════════
+  #  行情数据
+  # ═══════════════════════════════════════════════════════════
+  /quote:
+    get:
+      summary: 查询行情数据 / 列出表和标的
+      description: |
+        查询行情数据或列出可用表和标的：
+        - 无参数：列出所有行情表（stock_1d, etf_5m 等）及各类别下的标的、时间范围
+        - table + symbol：查询该标的的行情 K 线明细
+      tags:
+        - Quote
+      parameters:
+        - in: query
+          name: table
+          schema:
+            type: string
+          description: 表名（如 stock_1d, etf_5m）
+          example: stock_1d
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 标的代码（如 sh.600000）
+          example: sh.600000
+        - in: query
+          name: start
+          schema:
+            type: string
+          description: 起始时间（YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS）
+        - in: query
+          name: end
+          schema:
+            type: string
+          description: 结束时间
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 5000
+          description: 返回条数上限
+      responses:
+        '200':
+          description: 行情数据或表列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteResponse"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      summary: 触发行情数据下载与导入
+      description: |
+        后台异步下载行情数据并导入 DuckDB，通过 SSE 推送进度事件。
+        自动按标的类型（ETF/Stock）分组下载，同时下载后复权和不复权数据。
+      tags:
+        - Quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteDownloadRequest"
+      responses:
+        '200':
+          description: 下载任务已启动
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDownloadResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 删除行情数据
+      description: |
+        按条件删除行情数据：
+        - table + symbol：删除指定表中指定标的数据
+        - 仅 table：删除整张表
+        - 无参数：删除所有行情表
+      tags:
+        - Quote
+      parameters:
+        - in: query
+          name: table
+          schema:
+            type: string
+          description: 表名（留空删除所有表）
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 标的代码（留空删除整表）
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteDeleteResponse"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /quote/data:
+    post:
+      summary: 导入/导出行情数据
+      description: |
+        直接操作行情数据库：
+        - action=import：将 CSV 行数据导入指定表
+        - action=export：导出指定标的数据为 CSV 或 JSON
+      tags:
+        - Quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteDataRequest"
+      responses:
+        '200':
+          description: 操作结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  table:
+                    type: string
+                  symbol:
+                    type: string
+                  imported_rows:
+                    type: integer
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 清理行情数据
+      description: 清理指定表或标的的行情数据（支持 drop table / delete symbol）
+      tags:
+        - Quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  description: 固定为 cleanup
+                table:
+                  type: string
+                  description: 表名（留空操作所有表）
+                symbol:
+                  type: string
+                  description: 标的代码（留空清理整表）
+              example:
+                action: cleanup
+                table: stock_1d
+                symbol: sh.600000
+      responses:
+        '200':
+          description: 清理结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ═══════════════════════════════════════════════════════════
+  #  财务数据
+  # ═══════════════════════════════════════════════════════════
+  /finance:
+    get:
+      summary: 查询财务数据
+      description: |
+        查询财务数据或列出可用表和标的：
+        - 无参数：列出所有财务类别表及各类别下的标的
+        - 仅 category：列出该类别下所有标的
+        - category + code：查询该标的的财务数据明细
+      tags:
+        - Finance
+      parameters:
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [profit, operation, growth, balance, cashflow, dupont]
+          description: 财务类别（留空列出所有表）
+        - in: query
+          name: code
+          schema:
+            type: string
+          description: 标的代码（如 600519.SH）
+          example: 600519.SH
+        - in: query
+          name: start
+          schema:
+            type: string
+          description: 起始日期（YYYY-MM-DD）
+        - in: query
+          name: end
+          schema:
+            type: string
+          description: 结束日期（YYYY-MM-DD）
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 500
+          description: 返回条数上限
+      responses:
+        '200':
+          description: 财务数据或表列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinanceResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      summary: 触发财务数据下载与导入
+      description: 后台异步下载财务数据并导入 DuckDB，通过 SSE 推送进度事件
+      tags:
+        - Finance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinanceDownloadRequest"
+      responses:
+        '200':
+          description: 下载任务已启动
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinanceDownloadResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 删除财务数据
+      description: |
+        删除指定标的的财务数据：
+        - 提供 category + code：删除该类别下该标的数据
+        - 仅提供 code：删除所有类别表中该标的数据
+      tags:
+        - Finance
+      parameters:
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [profit, operation, growth, balance, cashflow, dupont]
+          description: 财务类别（留空删除所有表中该标的数据）
+        - in: query
+          name: code
+          schema:
+            type: string
+          required: true
+          description: 标的代码
+          example: 600519.SH
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinanceDeleteResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /finance/data:
+    post:
+      summary: 导入/导出财务数据
+      description: |
+        直接操作财务数据库：
+        - action=import：将 CSV 行数据导入指定类别表
+        - action=export：导出指定标的数据为 CSV 或 JSON
+      tags:
+        - Finance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinanceDataRequest"
+      responses:
+        '200':
+          description: 操作结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  category:
+                    type: string
+                  code:
+                    type: string
+                  imported_rows:
+                    type: integer
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 清理财务数据
+      description: 清理指定类别或标的的财务数据（支持 drop table / delete symbol）
+      tags:
+        - Finance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category:
+                  type: string
+                  description: 财务类别（留空操作所有表）
+                code:
+                  type: string
+                  description: 标的代码（留空清理整表）
+              example:
+                category: profit
+                code: 600519.SH
+      responses:
+        '200':
+          description: 清理结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ═══════════════════════════════════════════════════════════
+  #  XGBoost 训练与分析
+  # ═══════════════════════════════════════════════════════════
+  /xgboost:
+    post:
+      summary: XGBoost 训练 / SHAP 计算 / 模型删除
+      description: |
+        单端点设计，通过 body 中的 "action" 字段路由不同操作：
+
+        - action=train：训练模型
+          1. 解析策略图，提取 XGBoost 上游子图
+          2. 部分执行回测，收集节点输出作为特征
+          3. 调用 xgboost_train.py 训练模型
+          4. 返回学习曲线、特征重要性、评估指标、预测结果等 JSON
+          5. 模型句柄保留在内存供 SHAP 计算
+
+        - action=shap：计算 SHAP 值
+          使用 XGBoost C API 在 C++ 端直接计算（XGBOOST_OUTPUT_CONTRIBUTION），
+          不依赖 Python shap 库，不持久化到数据库。
+
+        - action=delete：释放内存中的模型
+
+        训练结果（学习曲线/特征重要性/评估指标/预测）不存数据库，
+        训练完成后通过单次 JSON 响应返回前端，前端 useXGBoostState 缓存。
+      tags:
+        - XGBoost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/XGBoostTrainRequest"
+                - $ref: "#/components/schemas/XGBoostShapRequest"
+                - $ref: "#/components/schemas/XGBoostDeleteRequest"
+            examples:
+              train:
+                summary: 训练模型
+                value:
+                  action: train
+                  script: '{"id":"strategy_demo","nodes":[...], "edges":[...]}'
+                  label:
+                    source: sh.600000.close
+                    period: 5
+                    type: classification
+                    threshold: 0.0
+                  objective: binary:logistic
+                  num_class: 2
+                  test_ratio: 0.2
+                  params:
+                    learning_rate: 0.1
+                    max_depth: 6
+                    n_estimators: 200
+                    early_stopping_rounds: 20
+              shap:
+                summary: 计算 SHAP 值
+                value:
+                  action: shap
+                  model_id: 1
+              delete:
+                summary: 删除模型
+                value:
+                  action: delete
+                  model_id: 1
+      responses:
+        '200':
+          description: |
+            操作结果。
+            train 返回训练指标 + predictions + feature_importance + learning_curve + model_id
+            shap 返回 shap 矩阵 + features + base_value
+            delete 简单返回 message
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/XGBoostTrainResponse"
+                  - $ref: "#/components/schemas/XGBoostShapResponse"
+                  - $ref: "#/components/schemas/XGBoostDeleteResponse"
+        '400':
+          description: 参数错误（如缺 action 字段、label.source 缺失）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '404':
+          description: 模型未找到（shap/delete 操作时）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   schemas:
     # 基础数据类型
@@ -2833,3 +3322,316 @@ components:
           description: 单标的分析结果，key 为标的代码
         multi:
           $ref: "#/components/schemas/VolatilityMultiResult"
+
+    # ═══════════════════════════════════════════════════════════
+    #  行情数据 Schemas
+    # ═══════════════════════════════════════════════════════════
+    QuoteBar:
+      type: object
+      properties:
+        datetime:
+          type: string
+          description: 时间戳
+        open:
+          type: number
+        close:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        volume:
+          type: integer
+        turnover:
+          type: number
+        suspended:
+          type: boolean
+          description: 是否停牌
+        adj_open:
+          type: number
+          description: 后复权开盘价（仅当后复权数据存在时返回）
+        adj_close:
+          type: number
+          description: 后复权收盘价
+        adj_high:
+          type: number
+          description: 后复权最高价
+        adj_low:
+          type: number
+          description: 后复权最低价
+
+    QuoteSymbolRange:
+      type: object
+      properties:
+        symbol:
+          type: string
+          description: 标的代码
+        start_time:
+          type: string
+          description: 数据起始时间
+        end_time:
+          type: string
+          description: 数据结束时间
+        count:
+          type: integer
+          description: 数据条数
+
+    QuoteTableInfo:
+      type: object
+      properties:
+        table:
+          type: string
+          description: 表名（如 stock_1d, etf_5m）
+        symbol_count:
+          type: integer
+          description: 表中标的数量
+        symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuoteSymbolRange"
+          description: 标的列表及时间范围
+
+    QuoteResponse:
+      type: object
+      description: 行情查询响应
+      properties:
+        table:
+          type: string
+          description: 表名（查询明细时返回）
+        symbol:
+          type: string
+          description: 标的代码（查询明细时返回）
+        count:
+          type: integer
+          description: 数据条数
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuoteBar"
+          description: K 线明细（查询明细时返回）
+
+    QuoteDownloadRequest:
+      type: object
+      required:
+        - symbols
+      properties:
+        symbols:
+          type: string
+          description: 标的代码，多个用逗号分隔
+          example: "600000.SH,000001.SZ"
+        freq:
+          type: string
+          default: 5m
+          enum: [daily, 5m, 15m, 30m, 60m]
+          description: 数据频率
+        start:
+          type: string
+          description: 起始日期（YYYY-MM-DD）
+        end:
+          type: string
+          description: 结束日期（YYYY-MM-DD）
+        env:
+          type: string
+          description: Python 环境名称
+
+    QuoteDownloadResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: started
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              asset_type:
+                type: string
+                description: 资产类型（stock/etf）
+              table:
+                type: string
+                description: 目标表名
+              symbols:
+                type: string
+                description: 该组标的列表
+
+    QuoteDeleteResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: 操作结果描述
+
+    QuoteDataRequest:
+      type: object
+      required:
+        - action
+        - table
+        - symbol
+      properties:
+        action:
+          type: string
+          enum: [import, export]
+          description: 操作类型
+        table:
+          type: string
+          description: 表名（如 stock_1d, etf_5m）
+          example: stock_1d
+        symbol:
+          type: string
+          description: 标的代码
+          example: sh.600000
+        adj:
+          type: string
+          enum: [hfq, none]
+          default: hfq
+          description: 复权类型
+        start_time:
+          type: string
+          description: 导出起始时间
+        end_time:
+          type: string
+          description: 导出结束时间
+        format:
+          type: string
+          enum: [csv, json]
+          default: csv
+          description: 导出格式
+        data:
+          type: array
+          items:
+            type: string
+          description: CSV 行数据（import 时必填）
+
+    # ═══════════════════════════════════════════════════════════
+    #  财务数据 Schemas
+    # ═══════════════════════════════════════════════════════════
+    FinanceTableInfo:
+      type: object
+      properties:
+        category:
+          type: string
+          description: 财务类别标识
+        name:
+          type: string
+          description: 财务类别中文名
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 该表中已有的标的列表
+
+    FinanceResponse:
+      type: object
+      description: 财务查询响应
+      properties:
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/FinanceTableInfo"
+          description: 表列表（无 category 参数时返回）
+        category:
+          type: string
+          description: 财务类别
+        name:
+          type: string
+          description: 类别中文名
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 标的列表（仅 category 无 code 时返回）
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: 财务数据明细（category + code 时返回）
+        count:
+          type: integer
+          description: 数据条数
+
+    FinanceDownloadRequest:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          description: 标的代码
+          example: 600519.SH
+        category:
+          type: string
+          default: all
+          enum: [all, profit, operation, growth, balance, cashflow, dupont]
+          description: 财务类别（默认 all 下载全部）
+        start:
+          type: string
+          description: 起始日期（YYYY-MM-DD）
+        end:
+          type: string
+          description: 结束日期（YYYY-MM-DD）
+        env:
+          type: string
+          description: Python 环境名称
+
+    FinanceDownloadResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: started
+        code:
+          type: string
+        category:
+          type: string
+
+    FinanceDeleteResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 被删除的标的代码
+        category:
+          type: string
+          description: 被删除的类别（指定时返回）
+        success:
+          type: boolean
+          description: 是否成功（指定 category 时返回）
+        deleted_tables:
+          type: integer
+          description: 成功删除数据的表数量（未指定 category 时返回）
+
+    FinanceDataRequest:
+      type: object
+      required:
+        - action
+        - category
+      properties:
+        action:
+          type: string
+          enum: [import, export]
+          description: 操作类型
+        category:
+          type: string
+          enum: [profit, operation, growth, balance, cashflow, dupont]
+          description: 财务类别
+        code:
+          type: string
+          description: 标的代码（export 时必填）
+        start_date:
+          type: string
+          description: 起始日期
+        end_date:
+          type: string
+          description: 结束日期
+        format:
+          type: string
+          enum: [csv, json]
+          default: csv
+          description: 导出格式
+        data:
+          type: array
+          items:
+            type: string
+          description: CSV 行数据（import 时必填）

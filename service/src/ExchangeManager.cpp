@@ -240,18 +240,12 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     if (!symbols.empty()) {
         INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
     } else {
-        WARN("Exchange {} registered with 0 symbols (Bridge mode, symbols provided by config pool)", name);
+        WARN("Exchange {} registered with 0 symbols (Bridge mode, symbols will be subscribed by strategies)", name);
     }
 
-    // 设置过滤条件和工作时间
+    // 工作时间等配置
     auto config = _server->GetConfig().GetExchangeByName(name);
-    QuoteFilter filter;
-    if (config.contains("pool")) {
-        for (String symbol : config["pool"]) {
-            filter._symbols.insert(symbol);
-        }
-    }
-    ptr->SetFilter(filter);
+    // pool 已移除：行情订阅由策略驱动，通过 ExchangeManager::SubscribeSymbols() 动态注入
 
     // 设置工作时间段
     if (config.contains("utc_active")) {
@@ -626,8 +620,7 @@ Set<String> ExchangeManager::ResolveExchangeNames(const Set<String>& requiredSou
         for (auto& source : requiredSources) {
             if (source == "股票") {
                 // 根据运行模式决定：回测用历史数据，实盘用真实数据
-                if (apiName == STOCK_HISTORY_SIM || apiName == HX_API ||
-                    apiName == STOCK_REAL_SIM) {
+                if (apiName == HX_API || apiName == TICKFLOW_QUOTE_API) {
                     needStart = true;
                 }
             }
@@ -676,6 +669,78 @@ void ExchangeManager::StopAllExchanges() {
 
     for (auto& name : runningNames) {
         StopExchange(name);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  策略级行情订阅（引用计数保护）
+// ═══════════════════════════════════════════════════════════
+
+void ExchangeManager::SubscribeSymbols(const String& strategy, const Set<String>& sources, const Set<symbol_t>& symbols) {
+    // symbol_t → String
+    Set<String> symStrings;
+    for (auto& sym : symbols) {
+        symStrings.insert(get_symbol(sym));
+    }
+
+    // 找到对应 source 的 Exchange 名称
+    auto exchangeNames = ResolveExchangeNames(sources);
+
+    std::lock_guard<std::mutex> lock(_subMtx);
+
+    // 记录该策略的订阅
+    _strategySubscriptions[strategy] = symStrings;
+
+    // 更新引用计数，只对新增的 symbol 调用 AddSymbols
+    Set<String> toAdd;
+    for (auto& code : symStrings) {
+        if (_symbolRefCounts[code]++ == 0) {
+            toAdd.insert(code);
+        }
+    }
+
+    if (!toAdd.empty()) {
+        for (auto& name : exchangeNames) {
+            auto it = _exchanges.find(name);
+            if (it != _exchanges.end()) {
+                it->second->AddSymbols(toAdd);
+            }
+        }
+        INFO("SubscribeSymbols [{}]: +{} new symbols to {} exchanges", strategy, toAdd.size(), exchangeNames.size());
+    }
+}
+
+void ExchangeManager::UnsubscribeSymbols(const String& strategy, const Set<String>& sources) {
+    Set<String> symStrings;
+    auto exchangeNames = ResolveExchangeNames(sources);
+
+    std::lock_guard<std::mutex> lock(_subMtx);
+
+    auto it = _strategySubscriptions.find(strategy);
+    if (it == _strategySubscriptions.end()) return;
+
+    symStrings = it->second;
+    _strategySubscriptions.erase(it);
+
+    // 递减引用计数，只对归零的 symbol 调用 RemoveSymbols
+    Set<String> toRemove;
+    for (auto& code : symStrings) {
+        auto rit = _symbolRefCounts.find(code);
+        if (rit == _symbolRefCounts.end()) continue;
+        if (--rit->second <= 0) {
+            _symbolRefCounts.erase(rit);
+            toRemove.insert(code);
+        }
+    }
+
+    if (!toRemove.empty()) {
+        for (auto& name : exchangeNames) {
+            auto eit = _exchanges.find(name);
+            if (eit != _exchanges.end()) {
+                eit->second->RemoveSymbols(toRemove);
+            }
+        }
+        INFO("UnsubscribeSymbols [{}]: -{} symbols (refcount=0) from {} exchanges", strategy, toRemove.size(), exchangeNames.size());
     }
 }
 

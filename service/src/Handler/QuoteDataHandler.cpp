@@ -10,10 +10,6 @@
 
 namespace fs = std::filesystem;
 
-// ═══════════════════════════════════════════════════════════
-//  POST /v0/quote/data — 导入/导出行情数据
-// ═══════════════════════════════════════════════════════════
-
 void QuoteDataHandler::post(const httplib::Request& req, httplib::Response& res) {
     // 解析 JSON 请求
     QuoteDataRequest data_req;
@@ -179,32 +175,18 @@ bool QuoteDataHandler::importCsv(const QuoteDataRequest& req,
                                  int& imported_rows,
                                  std::string& error_msg) {
     try {
-        // 创建临时 CSV 文件
-        auto tmp_dir = fs::temp_directory_path() / "quasarx_test";
-        fs::create_directories(tmp_dir);
-        auto tmp_csv = tmp_dir / fmt::format("{}_{}.csv", req.symbol, req.table);
-
-        // 写入 CSV 内容
-        {
-            std::ofstream ofs(tmp_csv.string());
-            if (!ofs.is_open()) {
-                error_msg = fmt::format("Failed to create temp file: {}", tmp_csv.string());
-                return false;
-            }
-
-            for (const auto& line : req.csv_lines) {
-                ofs << line << "\n";
-            }
-            ofs.close();
+        std::string name = fmt::format("{}_{}", req.symbol, req.table);
+        auto tmp_path = DataUtil::WriteTempCsv(req.csv_lines, name);
+        if (tmp_path.empty()) {
+            error_msg = "Failed to create temp CSV file";
+            return false;
         }
 
-        // 调用 QuoteDB 导入
         auto& quoteDB = QuoteDB::instance();
         AdjType adj = (req.adj_type == "none") ? AdjType::None : AdjType::HFQ;
-        imported_rows = quoteDB.importCsv(tmp_csv.string(), req.table, req.symbol, adj);
+        imported_rows = quoteDB.importCsv(tmp_path, req.table, req.symbol, adj);
 
-        // 删除临时文件
-        fs::remove(tmp_csv);
+        DataUtil::CleanupTempFile(tmp_path);
 
         if (imported_rows < 0) {
             error_msg = "QuoteDB::importCsv failed";
@@ -260,37 +242,23 @@ bool QuoteDataHandler::cleanup(const QuoteDataRequest& req,
     try {
         auto& quoteDB = QuoteDB::instance();
 
-        if (!req.table.empty() && !req.symbol.empty()) {
-            // 删除指定表中的指定标的
-            if (quoteDB.deleteSymbol(req.table, req.symbol)) {
-                message = fmt::format("Deleted symbol {} from {}", req.symbol, req.table);
-                return true;
-            } else {
-                error_msg = fmt::format("Failed to delete symbol {} from {}", req.symbol, req.table);
-                return false;
-            }
-        } else if (!req.table.empty()) {
-            // 删除整个表
-            if (quoteDB.dropTable(req.table)) {
-                message = fmt::format("Table {} deleted", req.table);
-                return true;
-            } else {
-                error_msg = fmt::format("Failed to delete table {}", req.table);
-                return false;
-            }
-        } else if (!req.symbol.empty()) {
-            // 仅删除 symbol：列出所有表，删除该 symbol
-            auto tables = quoteDB.listTables();
-            int deleted_count = 0;
-            for (const auto& tbl : tables) {
-                if (quoteDB.deleteSymbol(tbl, req.symbol)) {
-                    deleted_count++;
-                }
-            }
-            message = fmt::format("Deleted symbol {} from {} tables", req.symbol, deleted_count);
+        DataUtil::DBCleanupOps ops;
+        ops.delete_symbol = [&quoteDB](const std::string& t, const std::string& s) {
+            return quoteDB.deleteSymbol(t, s);
+        };
+        ops.drop_table = [&quoteDB](const std::string& t) {
+            return quoteDB.dropTable(t);
+        };
+        ops.list_tables = [&quoteDB]() {
+            return quoteDB.listTables();
+        };
+
+        auto [ok, msg] = DataUtil::CleanupDBData(req.table, req.symbol, ops);
+        if (ok) {
+            message = msg;
             return true;
         } else {
-            error_msg = "At least one param required: table or symbol";
+            error_msg = msg;
             return false;
         }
     } catch (const std::exception& e) {

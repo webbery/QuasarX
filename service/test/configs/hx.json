@@ -16,7 +16,6 @@
             "api": "hx",
             "desc": "华鑫实盘仿真",
             "name": "hx-sim",
-            "pool": [],
             "quote": "",
             "trade": "",
             "type": "stock",

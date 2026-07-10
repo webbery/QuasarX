@@ -9,13 +9,12 @@
         }
     ],
     "exchange": [
-        { "api": "stock_hist_sim", "desc": "", "name": "stock-sim", "pool": [], "quote": "data", "trade": "", "type": "stock" },
+        { "api": "stock_hist_sim", "desc": "", "name": "stock-sim", "quote": "data", "trade": "", "type": "stock" },
         {
             "api": "tickflow",
             "desc": "TickFlow Real-time Quote",
             "name": "tickflow-quote",
             "passwd": null,
-            "pool": ["000001.SZ","159941.SZ","159687.SZ","159981.SZ","518880.SH","511010.SH","588060.SH"],
             "type": "stock",
             "username": "tk_"
         }

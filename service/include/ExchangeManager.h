@@ -91,6 +91,26 @@ public:
      */
     void StopAllExchanges();
 
+    // ========== 策略级行情订阅 ==========
+
+    /**
+     * @brief 策略启动时调用：将策略标的注入对应 source 的 Exchange
+     *
+     * 内部维护 per-symbol 引用计数，多策略共享同一 symbol 时只增不减，
+     * 仅当引用计数归零才真正从 Exchange 移除订阅
+     * @param strategy 策略名称
+     * @param sources 数据源集合 {"股票"/"ETF"}
+     * @param symbols 策略的 symbol_t 集合
+     */
+    void SubscribeSymbols(const String& strategy, const Set<String>& sources, const Set<symbol_t>& symbols);
+
+    /**
+     * @brief 策略停止时调用：移除该策略的标的订阅
+     *
+     * 只有当 symbol 不再被任何策略使用时才调用 Exchange::RemoveSymbols
+     */
+    void UnsubscribeSymbols(const String& strategy, const Set<String>& sources);
+
     // ========== 查询接口 ==========
 
     /**
@@ -314,4 +334,9 @@ private:
 
     // 引用计数（多策略并发安全）
     Map<String, int> _exchangeRefCounts;
+
+    // 策略级行情订阅追踪
+    Map<String, Set<String>> _strategySubscriptions;   // strategy → symbol strings
+    Map<String, int>         _symbolRefCounts;          // symbol string → refcount
+    std::mutex               _subMtx;
 };

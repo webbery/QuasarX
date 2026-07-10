@@ -151,7 +151,6 @@ void SystemConfigHandler::get(const httplib::Request& req, httplib::Response& re
         nlohmann::json sim_exchange;
         sim_exchange["api"] = STOCK_HISTORY_SIM;
         sim_exchange["name"] = "stock-sim";
-        sim_exchange["pool"] = std::vector<String>();
         sim_exchange["quote"] = DATA_PATH;
         sim_exchange["trade"] = "";
         sim_exchange["type"] = "stock";

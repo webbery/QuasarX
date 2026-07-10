@@ -23,6 +23,14 @@ void DataContext::addExchangeType(ExchangeType type) {
     _exchangeTypes.insert(type);
 }
 
+void DataContext::CollectNumericOutputs(Map<String, Vector<double>>& target) {
+    for (auto& [key, value] : _outputs) {
+        if (auto* vec = std::get_if<Vector<double>>(&value)) {
+            target[key] = *vec;
+        }
+    }
+}
+
 // context_t& DataContext::get(const String& name) {
 //     return _outputs[name];
 // }

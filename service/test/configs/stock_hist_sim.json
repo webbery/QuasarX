@@ -20,7 +20,6 @@
             "api": "stock_hist_sim",
             "desc": "历史回测模式",
             "name": "stock-sim",
-            "pool": [],
             "quote": "data",
             "trade": "",
             "type": "stock"

@@ -15,9 +15,11 @@
 #include <openssl/x509.h>
 #endif
 
+#define TICKFLOW_URL    "https://api.tickflow.org"
+
 TickFlowBridge::TickFlowBridge(Server* server)
     : ExchangeInterface(server),
-      _base_url("https://api.tickflow.org"),
+      _base_url(TICKFLOW_URL),
       _universes{"CN_Equity_A"},
       _interval_ms(10000),
       _login_success(false),
@@ -40,7 +42,7 @@ TickFlowBridge::~TickFlowBridge() {
 }
 
 const char* TickFlowBridge::Name() {
-    return "TickFlowBridge";
+    return TICKFLOW_QUOTE_API;
 }
 
 bool TickFlowBridge::Init(const ExchangeInfo& handle) {
@@ -52,7 +54,7 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
         return false;
     }
 
-    _base_url = "https://api.tickflow.org";
+    _base_url = TICKFLOW_URL;
     _interval_ms = 10000;
 
     InitHttpClient();
@@ -90,6 +92,7 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
 }
 
 void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
+    std::lock_guard<std::mutex> lock(_filterMtx);
     _filter = filter;
 
     // 初始化符号映射表
@@ -101,11 +104,41 @@ void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
         }
     }
 
-    // TickFlow 限频 10次/分钟，留有余量，10s 一次请求
-    // worker 线程已按 _interval_ms 控制频率
     _interval_ms = 10000;
-
     INFO("SetFilter: {} symbols, interval={}ms", filter._symbols.size(), _interval_ms);
+}
+
+void TickFlowBridge::AddSymbols(const Set<String>& symbols) {
+    std::lock_guard<std::mutex> lock(_filterMtx);
+    int added = 0;
+    for (const auto& code : symbols) {
+        if (_filter._symbols.insert(code).second) {
+            // code 已是内部格式（如 "sh.600000"），用 to_symbol 转换
+            auto& security = Server::GetSecurity(code);
+            symbol_t sym = to_symbol(code, security);
+            if (!is_null(sym)) {
+                _symbol_to_code[sym] = code;
+                _code_to_symbol[code] = sym;
+            }
+            added++;
+        }
+    }
+    if (added > 0) {
+        INFO("AddSymbols: +{} symbols, total={}", added, _filter._symbols.size());
+    }
+}
+
+void TickFlowBridge::RemoveSymbols(const Set<String>& symbols) {
+    std::lock_guard<std::mutex> lock(_filterMtx);
+    int removed = 0;
+    for (const auto& code : symbols) {
+        if (_filter._symbols.erase(code)) {
+            removed++;
+        }
+    }
+    if (removed > 0) {
+        INFO("RemoveSymbols: -{} symbols, total={}", removed, _filter._symbols.size());
+    }
 }
 
 bool TickFlowBridge::Release() {
@@ -328,14 +361,14 @@ void TickFlowBridge::workerLoop() {
 
     while (!_stop && !Server::IsExit()) {
         // 检查当前时间
-        // time_t curr = _server ? Now() : std::time(nullptr);
+        time_t curr = _server ? Now() : std::time(nullptr);
 
         // 检查工作时间
-        // if (!IsWorking(curr)) {
-        //     // 非工作时间，暂停 5s 再检查
-        //     std::this_thread::sleep_for(std::chrono::seconds(5));
-        //     continue;
-        // }
+        if (!IsWorking(curr)) {
+            // 非工作时间，暂停 5s 再检查
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            continue;
+        }
 
         // 检查暂停状态
         {
@@ -376,9 +409,12 @@ void TickFlowBridge::workerLoop() {
         }
 
         // 检查标的列表
-        if (_filter._symbols.empty()) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            continue;
+        {
+            std::lock_guard<std::mutex> lock(_filterMtx);
+            if (_filter._symbols.empty()) {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                continue;
+            }
         }
 
         // 执行 HTTP 请求 + 发布行情（同线程内 nanomsg 安全）
@@ -415,9 +451,12 @@ void TickFlowBridge::PublishQuote(const QuoteInfo& quote) {
 // ==================== HTTP 请求 ====================
 
 void TickFlowBridge::FetchQuotes() {
-    if (!_login_success || _filter._symbols.empty()) return;
-
-    auto symbols = Vector<String>(_filter._symbols.begin(), _filter._symbols.end());
+    Vector<String> symbols;
+    {
+        std::lock_guard<std::mutex> lock(_filterMtx);
+        if (!_login_success || _filter._symbols.empty()) return;
+        symbols.assign(_filter._symbols.begin(), _filter._symbols.end());
+    }
 
     // _offset 到达末尾后重置，每轮请求只发送一个批次
     if (_offset >= static_cast<int>(symbols.size())) {
@@ -467,7 +506,7 @@ void TickFlowBridge::FetchQuotes() {
         return;
     }
 
-    DEBUG_INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
+    DEBUG_INFO("[TickFlow] Response: status={} body_len={}, body: {}", res->status, res->body.size(), res->body.substr(0, std::min(20, (int)res->body.size())));
     if (res->status != 200) {
         DEBUG_INFO("[TickFlow] Response body: {}", res->body);
     }
@@ -498,8 +537,6 @@ void TickFlowBridge::ParseResponse(const String& response) {
             return;
         }
 
-        int count = 0;
-        int published = 0;
         for (auto& item : json["data"]) {
             QuoteInfo quote{};
 
@@ -528,7 +565,6 @@ void TickFlowBridge::ParseResponse(const String& response) {
             quote._confidence = 100;
 
             _quotes.insert({quote._symbol, quote});
-            count++;
 
             // 记录tick历史（用于流动性计算）
             {
@@ -543,7 +579,6 @@ void TickFlowBridge::ParseResponse(const String& response) {
 
             // 发布到 URI_RAW_QUOTE，供 RecordHandler 等订阅者使用
             PublishQuote(quote);
-            published++;
         }
     } catch (const std::exception& e) {
         WARN("Parse error: {}", e.what());

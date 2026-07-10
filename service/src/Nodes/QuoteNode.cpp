@@ -56,6 +56,11 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
     auto& codes = config["params"]["code"]["value"];
     QuoteFilter filer;
     for (String code: codes) {
+        // TODO: ALL_STOCK / ALL_ETF — 从 TickFlow API 获取全市场标的列表后展开
+        if (code == "ALL_STOCK" || code == "ALL_ETF") {
+            WARN("QuoteInputNode: {} not yet implemented (requires TickFlow full market symbol list)", code);
+            continue;
+        }
         auto& security = Server::GetSecurity(code);
         auto symbol = to_symbol(code, security);
         _symbols.insert(symbol);
