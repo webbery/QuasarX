@@ -874,3 +874,65 @@ fallback_csv:
 
     return {};
 }
+
+// ═══════════════════════════════════════════════════════════
+//  DataUtil — DuckDB 数据管理共享工具
+// ═══════════════════════════════════════════════════════════
+
+namespace DataUtil {
+
+std::string WriteTempCsv(const std::vector<std::string>& csv_lines,
+                         const std::string& name) {
+    auto tmp_dir = std::filesystem::temp_directory_path() / "quasarx_test";
+    std::filesystem::create_directories(tmp_dir);
+    auto tmp_path = tmp_dir / (name + ".csv");
+
+    std::ofstream ofs(tmp_path.string());
+    if (!ofs.is_open()) return "";
+
+    for (const auto& line : csv_lines) {
+        ofs << line << "\n";
+    }
+    ofs.close();
+    return tmp_path.string();
+}
+
+void CleanupTempFile(const std::string& path) {
+    if (!path.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+}
+
+std::pair<bool, std::string> CleanupDBData(
+    const std::string& table,
+    const std::string& symbol,
+    const DBCleanupOps& ops) {
+
+    if (!table.empty() && !symbol.empty()) {
+        if (ops.delete_symbol(table, symbol)) {
+            return {true, fmt::format("Deleted symbol {} from {}", symbol, table)};
+        }
+        return {false, fmt::format("Failed to delete symbol {} from {}", symbol, table)};
+    }
+
+    if (!table.empty()) {
+        if (ops.drop_table(table)) {
+            return {true, fmt::format("Table {} dropped", table)};
+        }
+        return {false, fmt::format("Failed to drop table {}", table)};
+    }
+
+    if (!symbol.empty()) {
+        auto tables = ops.list_tables();
+        int deleted = 0;
+        for (const auto& t : tables) {
+            if (ops.delete_symbol(t, symbol)) deleted++;
+        }
+        return {true, fmt::format("Deleted symbol {} from {} tables", symbol, deleted)};
+    }
+
+    return {false, "At least one param required: table or symbol"};
+}
+
+} // namespace DataUtil

@@ -254,6 +254,129 @@
             <i class="fas fa-search"></i> 无匹配的标的，请调整筛选条件
         </div>
 
+        <!-- 基本面数据管理 -->
+        <div class="section-divider"></div>
+        <div class="section-title">
+            <i class="fas fa-file-invoice-dollar"></i> 基本面数据管理
+        </div>
+
+        <div class="input-row">
+            <div class="input-group">
+                <label>标的代码</label>
+                <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="financeCode" />
+            </div>
+            <div class="input-group">
+                <label>财务类别</label>
+                <select v-model="financeCategory">
+                    <option value="">全部</option>
+                    <option value="profit">盈利能力</option>
+                    <option value="operation">营运能力</option>
+                    <option value="growth">成长能力</option>
+                    <option value="balance">偿债能力</option>
+                    <option value="cashflow">现金流量</option>
+                    <option value="dupont">杜邦分析</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="button-row">
+            <button class="btn" @click="onLoadFinanceData">
+                <i class="fas fa-search"></i> 查询
+            </button>
+            <button class="btn btn-primary" @click="onDownloadFinance" :disabled="financeDownloading">
+                <i class="fas fa-download"></i>
+                {{ financeDownloading ? '下载中...' : '下载财务数据' }}
+            </button>
+            <button class="btn-danger btn-sm" @click="onDeleteAllFinance" :disabled="financeDeleting">
+                <i class="fas fa-trash"></i> 清空所有
+            </button>
+        </div>
+
+        <div v-if="financeStatus" class="status-text" :class="{ 'status-error': financeStatus.includes('失败') }">
+            {{ financeStatus }}
+        </div>
+
+        <div v-if="financeTables.length > 0" class="quote-data-table">
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead class="sticky-header">
+                        <tr>
+                            <th class="col-checkbox">
+                                <input type="checkbox" :checked="isFinanceAllSelected" @change="toggleFinanceSelectAll" />
+                            </th>
+                            <th>类别</th>
+                            <th>标的代码</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="item in pagedFinanceItems" :key="`${item.category}-${item.symbol}`">
+                            <td class="col-checkbox">
+                                <input type="checkbox" :checked="isFinanceSelected(item)" @change="toggleFinanceSelect(item)" />
+                            </td>
+                            <td>{{ categoryNameMap[item.category] || item.category }}</td>
+                            <td class="symbol-code">{{ item.symbol }}</td>
+                            <td class="actions">
+                                <button class="btn-info btn-xs" @click="onViewFinanceDetail(item)">详情</button>
+                                <button class="btn-danger btn-xs" @click="onDeleteFinanceSymbol(item)">删除</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" v-if="financeFlatItems.length > 0">
+                <div class="pagination-left">
+                    <button class="btn-warning btn-sm" @click="onBatchDeleteFinance" :disabled="selectedFinance.size === 0">
+                        <i class="fas fa-trash"></i> 批量删除 ({{ selectedFinance.size }})
+                    </button>
+                    <button class="btn-info btn-sm" @click="onBatchUpdateFinance" :disabled="selectedFinance.size === 0">
+                        <i class="fas fa-sync-alt"></i> 批量更新 ({{ selectedFinance.size }})
+                    </button>
+                </div>
+                <div class="pagination-center" v-if="financeTotalPages > 1">
+                    <button class="page-btn" :disabled="financePage === 1" @click="financePage--">
+                        <i class="fas fa-angle-left"></i>
+                    </button>
+                    <span class="page-info">第 {{ financePage }} / {{ financeTotalPages }} 页（共 {{ financeFlatItems.length }} 条）</span>
+                    <button class="page-btn" :disabled="financePage === financeTotalPages" @click="financePage++">
+                        <i class="fas fa-angle-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="financeTables.length === 0 && !financeLoading && financeLoaded" class="empty-text">
+            <i class="fas fa-info-circle"></i> 暂无基本面数据，请先下载
+        </div>
+
+        <!-- 财务数据详情弹窗 -->
+        <div v-if="financeDetailVisible" class="finance-detail-overlay" @click.self="financeDetailVisible = false">
+            <div class="finance-detail-dialog">
+                <div class="finance-detail-header">
+                    <span>{{ financeDetailTitle }}</span>
+                    <button class="finance-detail-close" @click="financeDetailVisible = false">&times;</button>
+                </div>
+                <div class="finance-detail-body">
+                    <div class="table-scroll" style="max-height: 500px;">
+                        <table class="data-table" v-if="financeDetailData.length > 0">
+                            <thead class="sticky-header">
+                                <tr>
+                                    <th v-for="key in financeDetailKeys" :key="key">{{ key }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(row, i) in financeDetailData" :key="i">
+                                    <td v-for="key in financeDetailKeys" :key="key">
+                                        {{ typeof row[key] === 'number' ? (Number.isInteger(row[key]) ? row[key] : row[key].toFixed(4)) : (row[key] || '-') }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <PromptDialog ref="promptDialogRef" />
 
         <!-- Tick 数据删除 -->
@@ -337,6 +460,27 @@ const pageSize = ref(20)
 // 标的筛选
 const symbolFilter = ref('')
 const assetTypeFilter = ref('')
+
+// ── 基本面数据状态 ──
+const financeCode = ref('')
+const financeCategory = ref('')
+const financeTables = ref([])
+const financeStatus = ref('')
+const financeDownloading = ref(false)
+const financeDeleting = ref(false)
+const financeLoading = ref(false)
+const financeLoaded = ref(false)
+const financePage = ref(1)
+const selectedFinance = ref(new Set())
+const categoryNameMap = {
+    profit: '盈利能力', operation: '营运能力', growth: '成长能力',
+    balance: '偿债能力', cashflow: '现金流量', dupont: '杜邦分析'
+}
+// 详情弹窗
+const financeDetailVisible = ref(false)
+const financeDetailTitle = ref('')
+const financeDetailData = ref([])
+const financeDetailKeys = ref([])
 
 // 排序
 const sortKey = ref('')
@@ -522,6 +666,7 @@ onMounted(() => {
     // 加载已下载的行情数据列表
     if (isLoggedIn.value) {
         loadQuoteData()
+        onLoadFinanceData()
     }
 })
 
@@ -1006,6 +1151,207 @@ const onHandleDeleteAllQuoteData = async () => {
     } finally {
         deletingQuote.value = false
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  基本面数据管理
+// ═══════════════════════════════════════════════════════════
+
+const financeFlatItems = computed(() => {
+    const result = []
+    for (const table of financeTables.value) {
+        for (const sym of (table.symbols || [])) {
+            result.push({
+                category: table.category,
+                symbol: typeof sym === 'string' ? sym : sym.symbol,
+            })
+        }
+    }
+    return result
+})
+
+const pagedFinanceItems = computed(() => {
+    const start = (financePage.value - 1) * pageSize.value
+    return financeFlatItems.value.slice(start, start + pageSize.value)
+})
+
+const financeTotalPages = computed(() => Math.ceil(financeFlatItems.value.length / pageSize.value))
+
+const financeItemKey = (item) => `${item.category}|${item.symbol}`
+const isFinanceSelected = (item) => selectedFinance.value.has(financeItemKey(item))
+
+const isFinanceAllSelected = computed(() => {
+    return pagedFinanceItems.value.length > 0 && pagedFinanceItems.value.every(item => isFinanceSelected(item))
+})
+
+const toggleFinanceSelect = (item) => {
+    const key = financeItemKey(item)
+    if (selectedFinance.value.has(key)) selectedFinance.value.delete(key)
+    else selectedFinance.value.add(key)
+    selectedFinance.value = new Set(selectedFinance.value)
+}
+
+const toggleFinanceSelectAll = () => {
+    if (isFinanceAllSelected.value) {
+        for (const item of pagedFinanceItems.value) selectedFinance.value.delete(financeItemKey(item))
+    } else {
+        for (const item of pagedFinanceItems.value) selectedFinance.value.add(financeItemKey(item))
+    }
+    selectedFinance.value = new Set(selectedFinance.value)
+}
+
+const onLoadFinanceData = async () => {
+    if (!isLoggedIn.value) return
+    financeLoading.value = true
+    financeStatus.value = ''
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        const params = {}
+        if (financeCategory.value) params.category = financeCategory.value
+        if (financeCode.value.trim()) params.code = financeCode.value.trim()
+        const resp = await axios.get(`https://${server}/v0/finance`, {
+            params, headers: { 'Authorization': token || '' }
+        })
+        financeTables.value = resp.data.tables || []
+        financeStatus.value = `查询完成，共 ${financeFlatItems.value.length} 条记录`
+    } catch (err) {
+        financeStatus.value = `查询失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        financeLoading.value = false
+        financeLoaded.value = true
+    }
+}
+
+const onDownloadFinance = async () => {
+    if (!financeCode.value.trim()) {
+        financeStatus.value = '请输入标的代码'
+        return
+    }
+    financeDownloading.value = true
+    financeStatus.value = '正在下载...'
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        await axios.post(`https://${server}/v0/finance`, {
+            code: financeCode.value.trim(),
+            category: financeCategory.value || 'all'
+        }, { headers: { 'Authorization': token || '' } })
+        financeStatus.value = '下载任务已提交'
+        setTimeout(onLoadFinanceData, 3000)
+    } catch (err) {
+        financeStatus.value = `下载失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        financeDownloading.value = false
+    }
+}
+
+const onViewFinanceDetail = async (item) => {
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        const resp = await axios.get(`https://${server}/v0/finance`, {
+            params: { category: item.category, code: item.symbol },
+            headers: { 'Authorization': token || '' }
+        })
+        financeDetailData.value = resp.data.data || []
+        financeDetailKeys.value = financeDetailData.value.length > 0 ? Object.keys(financeDetailData.value[0]) : []
+        financeDetailTitle.value = `${item.symbol} - ${categoryNameMap[item.category] || item.category}`
+        financeDetailVisible.value = true
+    } catch (err) {
+        financeStatus.value = `查询详情失败: ${err.response?.data?.message || err.message}`
+    }
+}
+
+const onDeleteFinanceSymbol = async (item) => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: `确定要删除 ${item.symbol} 的${categoryNameMap[item.category] || item.category}数据吗？`
+    })
+    if (!confirmed) return
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        await axios.delete(`https://${server}/v0/finance`, {
+            params: { category: item.category, code: item.symbol },
+            headers: { 'Authorization': token || '' }
+        })
+        financeStatus.value = `${item.symbol} 已删除`
+        await onLoadFinanceData()
+    } catch (err) {
+        financeStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
+    }
+}
+
+const onDeleteAllFinance = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: '确定要清空所有基本面数据吗？此操作不可恢复！'
+    })
+    if (!confirmed) return
+    financeDeleting.value = true
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        await axios.delete(`https://${server}/v0/finance`, {
+            headers: { 'Authorization': token || '' }
+        })
+        financeStatus.value = '所有基本面数据已清空'
+        financeTables.value = []
+    } catch (err) {
+        financeStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        financeDeleting.value = false
+    }
+}
+
+const onBatchDeleteFinance = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认批量删除',
+        message: `确定要删除选中的 ${selectedFinance.value.size} 条财务数据吗？`
+    })
+    if (!confirmed) return
+    let successCount = 0, failCount = 0
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    for (const key of selectedFinance.value) {
+        const [category, symbol] = key.split('|')
+        try {
+            await axios.delete(`https://${server}/v0/finance`, {
+                params: { category, code: symbol },
+                headers: { 'Authorization': token || '' }
+            })
+            successCount++
+        } catch { failCount++ }
+    }
+    selectedFinance.value = new Set()
+    financeStatus.value = `批量删除完成：成功 ${successCount}，失败 ${failCount}`
+    await onLoadFinanceData()
+}
+
+const onBatchUpdateFinance = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认批量更新',
+        message: `确定要重新下载选中的 ${selectedFinance.value.size} 条财务数据吗？`
+    })
+    if (!confirmed) return
+    financeDownloading.value = true
+    let successCount = 0, failCount = 0
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    for (const key of selectedFinance.value) {
+        const [category, symbol] = key.split('|')
+        try {
+            await axios.post(`https://${server}/v0/finance`, {
+                code: symbol, category
+            }, { headers: { 'Authorization': token || '' } })
+            successCount++
+        } catch { failCount++ }
+    }
+    selectedFinance.value = new Set()
+    financeStatus.value = `批量更新已提交：成功 ${successCount}，失败 ${failCount}`
+    financeDownloading.value = false
+    setTimeout(onLoadFinanceData, 3000)
 }
 </script>
 
@@ -1553,5 +1899,51 @@ select option {
 .page-size-select option {
     background: #1a2236;
     color: #e0e0e0;
+}
+
+/* ── 财务数据详情弹窗 ── */
+.finance-detail-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.finance-detail-dialog {
+    background: #1a2236;
+    border: 1px solid rgba(74, 85, 104, 0.5);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 1000px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+.finance-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+    color: #e0e0e0;
+    font-size: 14px;
+    font-weight: 600;
+}
+.finance-detail-close {
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+.finance-detail-close:hover {
+    color: #f87171;
+}
+.finance-detail-body {
+    padding: 12px;
+    overflow: auto;
 }
 </style>

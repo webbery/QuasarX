@@ -78,3 +78,33 @@ bool FetchMacroData(
     const String& db_path,
     Vector<String>& out_dates,
     Vector<double>& out_prices);
+
+/// === DuckDB 数据管理共享工具 ===
+
+namespace DataUtil {
+
+/// 将 CSV 行写入临时文件，返回文件路径
+/// 目录: {temp}/quasarx_test/{name}.csv
+std::string WriteTempCsv(const std::vector<std::string>& csv_lines,
+                         const std::string& name);
+
+/// 删除临时 CSV 文件
+void CleanupTempFile(const std::string& path);
+
+/// 通用清理模式：按 table/symbol 粒度删除
+/// delete_symbol_fn: (table, symbol) -> bool
+/// drop_table_fn:    (table) -> bool
+/// list_tables_fn:   () -> vector<string>
+struct DBCleanupOps {
+    std::function<bool(const std::string& table, const std::string& symbol)> delete_symbol;
+    std::function<bool(const std::string& table)> drop_table;
+    std::function<std::vector<std::string>()> list_tables;
+};
+
+/// 执行清理，返回 {success, message}
+std::pair<bool, std::string> CleanupDBData(
+    const std::string& table,
+    const std::string& symbol,
+    const DBCleanupOps& ops);
+
+} // namespace DataUtil

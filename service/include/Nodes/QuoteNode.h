@@ -49,6 +49,11 @@ public:
     const String& GetSource() const { return _source; }
 
     /**
+     * @brief 获取当前节点已注册的 symbol 列表
+     */
+    const Set<symbol_t>& GetSymbols() const { return _symbols; }
+
+    /**
      * @brief 获取频率设置
      */
     DataFrequencyType GetFreq() const { return _freq; }

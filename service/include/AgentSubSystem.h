@@ -125,6 +125,32 @@ public:
         Vector<time_t> dates;
         Vector<double> returns;
     };
+
+    /**
+     * @brief 训练数据收集流（独立于正常回测，XGBoost 训练专用）
+     *
+     * 流程：
+     * 1. 在交易所创建临时 BacktestContext
+     * 2. 启动 worker 线程，用上游子图驱动回测循环
+     * 3. 回测结束后从 DataContext 收集所有 Vector<double> 输出
+     * 4. 清理 BacktestContext，结果通过 outCollected 返回
+     *
+     * @param strategy 策略名称（用于日志）
+     * @param upstreamGraph 上游子图节点列表（已拓扑排序）
+     * @param requiredSources 需要启动的 Exchange 数据源
+     * @param symbols 回测标的列表
+     * @param initialCapital 初始资金
+     * @param outCollected 输出：收集到的节点输出（变量名 → 时间序列）
+     * @return 是否成功
+     */
+    bool RunTrainingCollect(
+        const String& strategy,
+        const List<QNode*>& upstreamGraph,
+        const Set<String>& requiredSources,
+        const Set<symbol_t>& symbols,
+        double initialCapital,
+        Map<String, Vector<double>>& outCollected
+    );
     BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
 
     /**

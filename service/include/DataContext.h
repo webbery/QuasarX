@@ -248,6 +248,13 @@ public:
     void addExchangeType(ExchangeType type);
     const Set<ExchangeType>& getExchangeTypes() const { return _exchangeTypes; }
 
+    // ============ 节点输出收集（XGBoost 训练用） ============
+
+    /**
+     * @brief 遍历 _outputs，将所有 Vector<double> 类型的值拷贝到 target
+     */
+    void CollectNumericOutputs(Map<String, Vector<double>>& target);
+
 private:
     // 移除过期信号
     void cleanupExpiredSignals();

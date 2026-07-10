@@ -86,6 +86,8 @@ void FlowSubsystem::Stop(const String& strategy) {
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (exchangeMgr) {
         Set<String> requiredSources = GetRequiredSources(strategy);
+        // 先移除行情订阅，再停止 Exchange
+        exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
         exchangeMgr->StopRequiredExchanges(requiredSources);
     }
 }
@@ -592,6 +594,8 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     if (exchangeMgr) {
         Set<String> requiredSources = GetRequiredSources(strategy);
         exchangeMgr->StartRequiredExchanges(requiredSources);
+        // 将策略标的注入 Exchange（策略驱动行情订阅）
+        exchangeMgr->SubscribeSymbols(strategy, requiredSources, symbols);
     }
 
     // 从 QuoteInputNode 配置中读取频率
@@ -1007,3 +1011,87 @@ const Map<StatisticIndicator, std::variant<float, List<float>>>& FlowSubsystem::
 //     break;
 //     }
 // }
+
+bool FlowSubsystem::RunTrainingCollect(
+    const String& strategy,
+    const List<QNode*>& upstreamGraph,
+    const Set<String>& requiredSources,
+    const Set<symbol_t>& symbols,
+    double initialCapital,
+    Map<String, Vector<double>>& outCollected
+) {
+    auto* exchangeMgr = _handle->GetExchangeManager();
+    if (!exchangeMgr) {
+        WARN("[TrainingCollect] ExchangeManager is null");
+        return false;
+    }
+
+    auto* exchange = dynamic_cast<HistorySimulationBase*>(
+        exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
+    if (!exchange) {
+        WARN("[TrainingCollect] No stock backtest exchange available");
+        return false;
+    }
+
+    run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
+    if (runId == 0) {
+        WARN("[TrainingCollect] Failed to create backtest context");
+        return false;
+    }
+
+    bool success = false;
+    std::thread worker([strategy, runId, &upstreamGraph, this, exchangeMgr, exchange, &outCollected, &success]() {
+        DataContext context(strategy, _handle);
+        context.setBacktestRunId(runId);
+
+        auto* btContext = exchange->getBacktestContext(runId);
+        if (!btContext) {
+            WARN("[TrainingCollect] btContext is null");
+            return;
+        }
+
+        try {
+            for (auto node : upstreamGraph) {
+                node->Prepare(strategy, context);
+            }
+
+            uint64_t epoch = 0;
+            bool running = true;
+            while (running && !Server::IsExit()) {
+                context.SetEpoch(++epoch);
+                if (!exchange->stepForward(btContext)) {
+                    INFO("[TrainingCollect] Data finished for {}", strategy);
+                    break;
+                }
+                for (auto node : upstreamGraph) {
+                    auto result = node->Process(strategy, context);
+                    if (result == NodeProcessResult::Finished) {
+                        INFO("[TrainingCollect] Node returned Finished: {}", node->id());
+                        running = false;
+                        break;
+                    }
+                    if (result == NodeProcessResult::Error) {
+                        WARN("[TrainingCollect] Node error: {}", node->id());
+                        running = false;
+                        break;
+                    }
+                }
+            }
+
+            context.CollectNumericOutputs(outCollected);
+            INFO("[TrainingCollect] Collected {} numeric outputs ({} epochs)",
+                 outCollected.size(), epoch);
+            success = !outCollected.empty();
+        } catch (const std::exception& e) {
+            WARN("[TrainingCollect] Exception: {}", e.what());
+        }
+
+        for (auto node : upstreamGraph) {
+            node->Done(strategy);
+        }
+        exchange->destroyBacktestContext(runId);
+    });
+    worker.join();
+
+    return success;
+}

@@ -177,7 +177,6 @@ bool DuckDBLogger::init(const String& db_path) {
 
     // PRAGMA
     exec("PRAGMA threads=1");
-    exec("PRAGMA auto_checkpoint=128");
 
     // 初始化表结构
     init_tables();

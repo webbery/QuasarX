@@ -107,3 +107,10 @@ List<QNode*> parse_strategy_script_v2(
 );
 // 对输入的有向图节点作topo排序，返回排序后的节点
 List<QNode*> topo_sort(const List<QNode*>& graph);
+
+/**
+ * @brief 提取目标节点所有上游节点（含自身），沿 _ins 反向 BFS
+ * @param graph 拓扑排序后的节点列表
+ * @return 上游节点集合（Set<QNode*>）
+ */
+Set<QNode*> collectUpstreamNodes(const List<QNode*>& graph);

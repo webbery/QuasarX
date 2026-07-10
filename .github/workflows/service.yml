@@ -226,15 +226,6 @@ jobs:
           name: build-artifact
           path: .
 
-      - name: Verify build artifact
-        run: |
-          echo "=== Workspace root ==="
-          ls -la
-          echo "=== service/build/ ==="
-          ls -la service/build/ || echo "service/build/ NOT FOUND"
-          echo "=== Search QuantService ==="
-          find . -name "QuantService*" -type f 2>/dev/null || echo "NOT FOUND ANYWHERE"
-
       # 下载第三方 so
       - name: Download runtime libs
         uses: actions/download-artifact@v4
@@ -259,7 +250,7 @@ jobs:
 
       - name: Make service executable
         run: |
-          chmod +x service/build/QuantService
+          chmod +x QuantService
 
       - name: Install runtime dependencies (system libs)
         run: |
@@ -273,8 +264,8 @@ jobs:
 
       - name: Create TLS certificates
         run: |
-          echo "${{ secrets.SERVER_CRT }}" | base64 -d > service/build/server.crt
-          echo "${{ secrets.SERVER_KEY }}" | base64 -d > service/build/server.key
+          echo "${{ secrets.SERVER_CRT }}" | base64 -d > server.crt
+          echo "${{ secrets.SERVER_KEY }}" | base64 -d > server.key
 
       - name: Verify TLS certificates
         run: |
@@ -491,7 +482,7 @@ jobs:
           echo "Graceful shutdown timeout, sending SIGKILL to PID $SERVICE_PID"
           kill -9 "$SERVICE_PID" 2>/dev/null || true
           echo "Service forced to terminate"
-          cat service/build/service_lifecycle.log || true
+          cat service_lifecycle.log || true
           exit 1
 
       # === 阶段 2: 回测功能测试 ===
@@ -527,14 +518,14 @@ jobs:
         with:
           name: build-output
           path: |
-            service/build/QuantService
+            QuantService
           compression-level: 5
 
       - name: Show service log (last 100 lines)
         if: always()
         run: |
           echo "=== Last 100 lines of spdlog ==="
-          tail -100 service/build/logs/monthly_log.txt 2>/dev/null || echo "(log not found)"
+          tail -100 logs/monthly_log.txt 2>/dev/null || echo "(log not found)"
 
       - name: Upload service logs
         if: always()
@@ -542,7 +533,7 @@ jobs:
         with:
           name: service-logs
           path: |
-            service/build/logs/
+            logs/
           compression-level: 5
           retention-days: 7
 
@@ -552,7 +543,7 @@ jobs:
         with:
           name: test-failure-report
           path: |
-            service/build/service_lifecycle.log
-            service/build/service_test.log
+            service_lifecycle.log
+            service_test.log
           compression-level: 0
           retention-days: 7

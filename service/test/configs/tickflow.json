@@ -17,10 +17,6 @@
             "desc": "TickFlow Real-time Quote",
             "name": "tickflow-quote",
             "passwd": "",
-            "pool": [
-                "600000.SH",
-                "000001.SZ"
-            ],
             "type": "stock",
             "username": "tk_"
         }

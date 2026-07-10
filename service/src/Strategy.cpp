@@ -307,3 +307,28 @@ List<QNode*> topo_sort(const List<QNode*>& graph) {
     }
     return sorted_nodes;
 }
+
+Set<QNode*> collectUpstreamNodes(const List<QNode*>& graph) {
+    Set<QNode*> upstream;
+    List<QNode*> workQueue;
+
+    for (auto node : graph) {
+        if (dynamic_cast<XGBoostNode*>(node)) {
+            workQueue.push_back(node);
+        }
+    }
+
+    while (!workQueue.empty()) {
+        auto node = workQueue.back();
+        workQueue.pop_back();
+        if (upstream.count(node)) continue;
+        upstream.insert(node);
+        for (auto& [_, prev] : node->ins()) {
+            if (!upstream.count(prev)) {
+                workQueue.push_back(prev);
+            }
+        }
+    }
+
+    return upstream;
+}

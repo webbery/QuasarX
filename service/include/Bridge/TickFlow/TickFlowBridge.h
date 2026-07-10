@@ -17,6 +17,8 @@ public:
     const char* Name() override;
     bool Init(const ExchangeInfo& handle) override;
     void SetFilter(const QuoteFilter& filter) override;
+    void AddSymbols(const Set<String>& symbols) override;
+    void RemoveSymbols(const Set<String>& symbols) override;
     bool Release() override;
 
     // 登录/登出（空操作）
@@ -132,6 +134,9 @@ private:
     // 自治调度线程
     std::thread* _workerThread = nullptr;
     std::atomic<bool> _stop = false;
+
+    // _filter._symbols 读写锁（worker 线程读，主线程写）
+    mutable std::mutex _filterMtx;
 
     // 批次偏移（worker 线程内使用，记录当前请求到哪一批）
     int _offset = 0;
