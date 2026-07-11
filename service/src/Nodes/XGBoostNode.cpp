@@ -115,12 +115,24 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
     }
 
     // 推理
+#if XGBOOST_VER_MAJOR >= 2
     const char* config = R"({"type": 0, "training": false, "strict_shape": true})";
     bst_ulong const* out_shape = nullptr;
     bst_ulong out_dim = 0;
     const float* out_result = nullptr;
 
     ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
+#else
+    bst_ulong out_shape_val = 0;
+    bst_ulong out_dim = 0;
+    float* out_result_mut = nullptr;
+
+    ret = XGBoosterPredictFromDMatrix(_booster, dmat,
+                                       0, 0, 0,  // 旧版: option, ntree_limit, training
+                                       &out_shape_val, &out_dim, &out_result_mut);
+    const bst_ulong* out_shape = &out_shape_val;
+    const float* out_result = out_result_mut;
+#endif
     XGDMatrixFree(dmat);
 
     if (ret != 0) {

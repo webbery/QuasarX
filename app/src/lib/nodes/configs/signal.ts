@@ -17,7 +17,6 @@ export const signalGenerationNode: NodeRegistryEntry = {
   hasOutput: false,
   params: [
     { key: 'type', label: '类型', type: 'select', default: '股票', options: ['股票', '期货', '期权'] },
-    { key: 'code', label: '代码', type: 'text', default: '', visible: false },
     { key: 'buy', label: '买入条件', type: 'text', default: 'MA_5-MA_15 >= 0' },
     { key: 'sell', label: '卖出条件', type: 'text', default: 'MA_5-MA_15 < 0' },
     { key: 'allowShort', label: '允许做空', type: 'boolean', default: false },

@@ -73,7 +73,6 @@ import { useFlowState } from '@/components/strategy/composables/useFlowState'
 import { useFlowOperations } from '@/components/strategy/composables/useFlowOperations'
 import { useFlowSaveLoad } from '@/components/strategy/composables/useFlowSaveLoad'
 import { useBacktest } from '@/components/strategy/composables/useBacktest'
-import * as codeSync from '@/components/strategy/composables/useCodeSync'
 import { convertLabelsToKeys } from '@/lib/nodes'
 
 // 注入报表配置面板控制方法（从 App.vue）
@@ -144,7 +143,7 @@ watch(currentStrategyId, (newId) => {
 const backtestRange = ref(['2020-01-01', '2025-12-31'])
 
 // 初始化 backtest（传入 backtestRange 引用）
-const backtest = useBacktest(state, saveLoad, codeSync, backtestRange)
+const backtest = useBacktest(state, saveLoad, backtestRange)
 const { runBacktest } = backtest
 
 // Refs

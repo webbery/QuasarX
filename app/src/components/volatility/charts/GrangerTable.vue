@@ -73,7 +73,7 @@ const props = defineProps<{
 }>()
 
 // 排序状态
-const sortKey = ref<'f_statistic' | 'p_value' | 'is_significant'>('')
+const sortKey = ref<'f_statistic' | 'p_value' | 'is_significant' | ''>('')
 const sortOrder = ref<'asc' | 'desc'>('asc')
 
 const handleSort = (key: 'f_statistic' | 'p_value' | 'is_significant') => {
@@ -86,11 +86,12 @@ const handleSort = (key: 'f_statistic' | 'p_value' | 'is_significant') => {
 }
 
 const sortedData = computed(() => {
-  if (!sortKey.value) return props.data
+  const key = sortKey.value
+  if (!key) return props.data
 
   return [...props.data].sort((a, b) => {
-    const aVal = a[sortKey.value]
-    const bVal = b[sortKey.value]
+    const aVal = a[key]
+    const bVal = b[key]
 
     if (typeof aVal === 'boolean' && typeof bVal === 'boolean') {
       // 布尔值排序：false (不显著) 在前，true (显著) 在后

@@ -547,6 +547,30 @@ onMounted(async () => {
   min-height: 0;
 }
 
+/* 日志容器滚动条（thin 风格） */
+.log-view-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.log-view-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.log-view-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-view-content::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 3px;
+}
+
+.log-view-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
 .log-view-header {
   display: flex;
   align-items: center;

@@ -72,11 +72,24 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error(error);
     }
 
-    auto& operatorPool = config["params"]["code"]["value"];
-    for (String code: operatorPool) {
-        auto& security = Server::GetSecurity(code);
-        auto symbol = to_symbol(code, security);
-        _pools.emplace_back(symbol);
+    // 从上游输入节点的 out_elements() 中提取 symbol
+    // QuoteInputNode 的 out_elements 返回格式: "sz.159995.close" 等
+    // 提取唯一的 symbol 列表
+    Set<symbol_t> upstreamSymbols;
+    for (auto& item: _ins) {
+        auto names = item.second->out_elements();
+        for (auto& kv: names) {
+            upstreamSymbols.insert(to_symbol(kv.first));
+        }
+    }
+
+    if (upstreamSymbols.empty()) {
+        WARN("[SignalNode:{}] No upstream symbols found, signal node will be skipped", _id);
+        return false;
+    }
+
+    for (const auto& sym : upstreamSymbols) {
+        _pools.emplace_back(sym);
     }
 
     if (config["params"].contains("allowShort")) {
@@ -126,9 +139,9 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         for (auto it = sells.begin(); it != sells.end(); ++it) {
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
                 if (_server->GetRunningMode() != RuningType::Backtest) {
-                    STRATEGY_INFO(strategy, "[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                    STRATEGY_IMPORTANT(strategy, "[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
                 } else {
-                    INFO("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                    IMPORTANT("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
                 }
                 it->second = TradeAction::HOLD;
             }
@@ -152,9 +165,9 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             if (item.second != TradeAction::HOLD) {
                 if (decisions.count(item.first) && decisions[item.first] != item.second) {
                     if (_server->GetRunningMode() != RuningType::Backtest) {
-                        STRATEGY_WARN(strategy, "[SignalNode] {} not match operation!", item.first);
+                        STRATEGY_IMPORTANT(strategy, "[SignalNode] {} not match operation!", item.first);
                     } else {
-                        INFO("[SignalNode] {} not match operation!", item.first);
+                        IMPORTANT("[SignalNode] {} not match operation!", item.first);
                     }
                     continue;
                 }
@@ -247,7 +260,7 @@ SignalNode::~SignalNode() {
 }
 
 const nlohmann::json SignalNode::getParams() {
-    return {"buy", "sell", "code", "allowShort"};
+    return {"buy", "sell", "allowShort"};
 }
 
 Map<String, ArgType> SignalNode::out_elements() {

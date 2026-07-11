@@ -2,6 +2,7 @@
 #include "StrategyNode.h"
 #include "std_header.h"
 #include <xgboost/c_api.h>
+#include <xgboost/version_config.h>
 
 /**
  * XGBoost 推理节点

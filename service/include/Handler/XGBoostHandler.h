@@ -1,6 +1,7 @@
 #pragma once
 #include "HttpHandler.h"
 #include <xgboost/c_api.h>
+#include <xgboost/version_config.h>
 #include <atomic>
 #include <mutex>
 

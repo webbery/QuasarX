@@ -10,7 +10,7 @@ const STRATEGY_SCRIPT_VERSION = 1
  * 回测执行与结果处理 composable
  * 处理回测执行、结果解析、图表更新等
  */
-export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) {
+export function useBacktest(state, saveLoad, backtestRangeRef = null) {
   const {
     getNodes,
     getEdges,
@@ -21,7 +21,6 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
   } = state
 
   const { validateFlow, ensureVersionId, strategies } = saveLoad
-  const { syncCodeToDownstreamSignals } = codeSync
 
   /**
    * 执行回测
@@ -39,32 +38,7 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
       return
     }
 
-    // 3. 同步 input 节点的 code 到所有可达的 signal 节点（确保回测前数据一致）
-    const inputNodes = getNodes.value.filter(n => n.data.nodeType === 'input')
-    for (const inputNode of inputNodes) {
-      syncCodeToDownstreamSignals(inputNode, getEdges.value, getNodes.value, (nodeId, paramKey, value) => {
-        // 这里需要回调到主组件的 updateNodeData
-        // 但由于 operations 未传入，我们直接在节点上更新
-        const nodeIndex = getNodes.value.findIndex(node => node.id === nodeId)
-        if (nodeIndex !== -1) {
-          getNodes.value[nodeIndex] = {
-            ...getNodes.value[nodeIndex],
-            data: {
-              ...getNodes.value[nodeIndex].data,
-              params: {
-                ...getNodes.value[nodeIndex].data.params,
-                [paramKey]: {
-                  ...getNodes.value[nodeIndex].data.params[paramKey],
-                  value
-                }
-              }
-            }
-          }
-        }
-      })
-    }
-
-    // 4. 获取当前图节点信息（使用动态生成的策略信息）
+    // 3. 获取当前图节点信息（使用动态生成的策略信息）
     const strategyName = currentStrategyId.value
       ? strategies.value.find(s => s.id === currentStrategyId.value)?.name || '未命名策略'
       : '临时策略'
@@ -270,7 +244,7 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
    */
   const updatePriceChart = (reportViewRef, addInfoMessage) => {
     // 优先从 Input 节点获取代码
-    const inputNodes = getNodes.value.filter(n => n.data.nodeType === 'input')
+    const inputNodes = getNodes.value.filter(n => n.data.nodeType === 'input' || n.data.nodeType === 'quote')
     for (const inputNode of inputNodes) {
       const codes = inputNode.data.params['code']?.value || inputNode.data.params['代码']?.value
       if (codes) {
@@ -289,32 +263,7 @@ export function useBacktest(state, saveLoad, codeSync, backtestRangeRef = null) 
       }
     }
 
-    // 回退：从 Signal 节点获取代码（兼容旧策略）
-    let signalNode = null
-    for (const node of getNodes.value) {
-      if (node.data.nodeType === 'signal') {
-        signalNode = node
-        break
-      }
-    }
-
-    if (signalNode) {
-      const codes = signalNode.data.params['code']?.value || signalNode.data.params['代码']?.value
-      if (codes) {
-        const symbols = Array.isArray(codes) ? codes : codes.split(',').map(s => s.trim()).filter(s => s.length > 0)
-        if (symbols.length > 0 && reportViewRef?.value?.updatePrice && backtestRangeRef?.value) {
-          const rangeDate = backtestRangeRef.value
-          if (reportViewRef.value.setSelectedSymbol) {
-            reportViewRef.value.setSelectedSymbol(symbols)
-          }
-          reportViewRef.value.updatePrice(symbols[0], rangeDate[0], rangeDate[1])
-          console.info(`[useBacktest] 从 Signal 节点获取标的: ${symbols.join(', ')}, 范围: ${rangeDate[0]} - ${rangeDate[1]}`)
-          return
-        }
-      }
-    }
-
-    console.warn('未找到 Input 或 Signal 节点的代码配置，无法更新价格图表')
+    console.warn('未找到 Input 节点的代码配置，无法更新价格图表')
     addInfoMessage('未找到标的代码配置，价格图表将不会更新', 'warning')
   }
 

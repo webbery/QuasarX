@@ -89,10 +89,10 @@ async function onStrategyChange() {
   hasXGBoost.value = false
   if (!state.selectedStrategyId) return
   try {
-    const versions = await historyStore.getVersionsByStrategy(state.selectedStrategyId)
+    const versions = await historyStore.getVersionsByStrategy(state.selectedStrategyId.value)
     const latest = versions[0]
     if (!latest) return
-    const data = await historyStore.loadVersionData(latest.id)
+    const data = await historyStore.loadVersionFlowData(latest.id)
     if (!data) return
     const graphData = typeof data === 'string' ? JSON.parse(data) : data
     script.value = JSON.stringify(graphData)

@@ -15,6 +15,7 @@
       <div v-if="logType === 'normal' && normalStats" class="log-stats-inline">
         <span class="stat-item">总计: <strong>{{ normalStats.total_logs }}</strong></span>
         <span class="stat-item info">ℹ️ <strong>{{ normalStats.info_count }}</strong></span>
+        <span class="stat-item important">🔥 <strong>{{ normalStats.important_count }}</strong></span>
         <span class="stat-item warn">⚠️ <strong>{{ normalStats.warn_count }}</strong></span>
         <span class="stat-item error">❌ <strong>{{ normalStats.error_count }}</strong></span>
       </div>
@@ -36,6 +37,7 @@
         <select v-model="normalFilters.level">
           <option value="">全部</option>
           <option value="INFO">INFO</option>
+          <option value="IMPORTANT">🔥 IMPORTANT</option>
           <option value="WARN">WARN</option>
           <option value="ERROR">ERROR</option>
         </select>
@@ -136,17 +138,29 @@
 
         <!-- 普通日志表格 -->
         <table v-if="logType === 'normal' && currentLogs.length > 0">
+          <colgroup>
+            <col style="width: 180px;" />
+            <col style="width: 120px;" />
+            <col style="width: 70px;" />
+            <col />
+            <col style="width: 60px;" />
+          </colgroup>
           <thead>
             <tr>
-              <th style="width: 180px;">时间</th>
-              <th style="width: 120px;">策略</th>
-              <th style="width: 70px;">级别</th>
+              <th class="sortable" @click="toggleSortOrder">
+                时间
+                <i v-if="sortState === 'asc'" class="fas fa-sort-up"></i>
+                <i v-else-if="sortState === 'desc'" class="fas fa-sort-down"></i>
+                <i v-else class="fas fa-sort"></i>
+              </th>
+              <th>策略</th>
+              <th>级别</th>
               <th>消息</th>
-              <th style="width: 60px;">详情</th>
+              <th>详情</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="log in currentLogs" :key="log.id" :class="{ 'log-error-row': log.level === 'ERROR' }">
+            <tr v-for="log in currentLogs" :key="log.id" :class="{ 'log-error-row': log.level === 'ERROR', 'log-important-row': log.level === 'IMPORTANT' }">
               <td class="log-time">{{ log.timestamp }}</td>
               <td class="log-strategy" :title="log.strategy">{{ log.strategy }}</td>
               <td class="log-level">
@@ -166,15 +180,29 @@
 
         <!-- 节点日志表格 -->
         <table v-else-if="logType === 'node' && currentLogs.length > 0">
+          <colgroup>
+            <col style="width: 80px;" />
+            <col style="width: 100px;" />
+            <col style="width: 80px;" />
+            <col />
+            <col />
+            <col style="width: 150px;" />
+            <col style="width: 60px;" />
+          </colgroup>
           <thead>
             <tr>
-              <th style="width: 80px;">Epoch</th>
-              <th style="width: 100px;">节点类型</th>
-              <th style="width: 80px;">节点 ID</th>
+              <th>Epoch</th>
+              <th>节点类型</th>
+              <th>节点 ID</th>
               <th>输入摘要</th>
               <th>输出摘要</th>
-              <th style="width: 150px;">时间</th>
-              <th style="width: 60px;">详情</th>
+              <th class="sortable" @click="toggleSortOrder">
+                时间
+                <i v-if="sortState === 'asc'" class="fas fa-sort-up"></i>
+                <i v-else-if="sortState === 'desc'" class="fas fa-sort-down"></i>
+                <i v-else class="fas fa-sort"></i>
+              </th>
+              <th>详情</th>
             </tr>
           </thead>
           <tbody>
@@ -286,6 +314,9 @@ const page = ref(1)
 const pageSize = 50
 const totalCount = ref(0)
 
+// 排序状态 ('' = 无排序, 'asc' = 升序, 'desc' = 降序)
+const sortState = ref('')
+
 const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize)))
 
 // ─────────────────────────────────────────────
@@ -330,6 +361,23 @@ const expandedLog = computed(() => currentLogs.value.find(l => l.id === expanded
 // ─────────────────────────────────────────────
 // 工具函数
 // ─────────────────────────────────────────────
+
+// 排序切换
+function toggleSortOrder() {
+  if (sortState.value === '') {
+    sortState.value = 'asc'
+  } else if (sortState.value === 'asc') {
+    sortState.value = 'desc'
+  } else {
+    sortState.value = ''
+  }
+  // 重新加载当前日志
+  if (logType.value === 'normal') {
+    loadNormalLogs()
+  } else {
+    loadNodeLogs()
+  }
+}
 
 function formatDateTime(date) {
   const y = date.getFullYear()
@@ -391,6 +439,7 @@ function formatJson(str) {
 function onLogTypeChange() {
   page.value = 1
   expandedLogId.value = null
+  sortState.value = ''  // 重置排序
   if (logType.value === 'normal') {
     loadNormalLogs()
   } else {
@@ -433,7 +482,18 @@ async function loadNormalLogs() {
     if (normalFilters.keyword) params.keyword = normalFilters.keyword
 
     const resp = await axios.get('/v0/strategy/logs', { params })
-    normalLogs.value = resp.data.logs || []
+    let logs = resp.data.logs || []
+    
+    // 客户端排序
+    if (sortState.value) {
+      logs.sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime()
+        const timeB = new Date(b.timestamp).getTime()
+        return sortState.value === 'asc' ? timeA - timeB : timeB - timeA
+      })
+    }
+    
+    normalLogs.value = logs
     totalCount.value = resp.data.total || 0
   } catch (e) {
     console.error('[StrategySelectPanel] Load normal logs failed:', e)
@@ -520,7 +580,18 @@ async function loadNodeLogs() {
     if (nodeFilters.epochTo != null) params.epoch_to = nodeFilters.epochTo
 
     const resp = await axios.get('/v0/node/io', { params })
-    nodeLogs.value = resp.data.logs || []
+    let logs = resp.data.logs || []
+    
+    // 客户端排序
+    if (sortState.value) {
+      logs.sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime()
+        const timeB = new Date(b.timestamp).getTime()
+        return sortState.value === 'asc' ? timeA - timeB : timeB - timeA
+      })
+    }
+    
+    nodeLogs.value = logs
     totalCount.value = resp.data.total || 0
   } catch (e) {
     console.error('[StrategySelectPanel] Load node logs failed:', e)
@@ -614,6 +685,38 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ── 统一滚动条（thin 风格） ── */
+.log-table-wrapper::-webkit-scrollbar,
+.log-table::-webkit-scrollbar,
+.json-block::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.log-table-wrapper::-webkit-scrollbar-track,
+.log-table::-webkit-scrollbar-track,
+.json-block::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-table-wrapper::-webkit-scrollbar-thumb,
+.log-table::-webkit-scrollbar-thumb,
+.json-block::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 3px;
+}
+
+.log-table-wrapper::-webkit-scrollbar-thumb:hover,
+.log-table::-webkit-scrollbar-thumb:hover,
+.json-block::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+/* 表格 tbody 滚动 */
+.log-table tbody {
+  overflow-y: auto;
+}
+
 .strategy-select-panel {
   display: flex;
   flex-direction: column;
@@ -754,7 +857,7 @@ onUnmounted(() => {
   border-collapse: collapse;
   color: #e2e8f0;
   font-size: 13px;
-  flex: 1;
+  table-layout: fixed;
 }
 
 .log-table thead {
@@ -773,6 +876,32 @@ onUnmounted(() => {
   text-transform: uppercase;
   background: rgba(15, 23, 42, 0.95);
   border-bottom: 1px solid rgba(74, 158, 255, 0.2);
+}
+
+/* 可排序列 */
+.log-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.log-table th.sortable:hover {
+  color: #e2e8f0;
+}
+
+.log-table th.sortable i {
+  margin-left: 4px;
+  opacity: 0.4;
+  font-size: 11px;
+}
+
+.log-table th.sortable:hover i {
+  opacity: 0.7;
+}
+
+.log-table th.sortable .fa-sort-up,
+.log-table th.sortable .fa-sort-down {
+  opacity: 1 !important;
+  color: #60a5fa;
 }
 
 .log-table td {
@@ -840,6 +969,20 @@ onUnmounted(() => {
 .level-badge.error {
   background: rgba(248, 113, 113, 0.15);
   color: #f87171;
+}
+.level-badge.important {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+  font-weight: 700;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
+/* IMPORTANT 日志行背景 */
+.log-important-row {
+  background: rgba(251, 191, 36, 0.08) !important;
+}
+.log-important-row:hover {
+  background: rgba(251, 191, 36, 0.15) !important;
 }
 
 /* 节点类型标签 */

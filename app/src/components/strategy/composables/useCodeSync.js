@@ -1,6 +1,8 @@
 /**
  * 代码同步与格式化 composable
- * 处理股票代码格式转换、节点间代码同步、键名映射等
+ * 处理股票代码格式转换、键名映射等
+ * 
+ * 注意：标的代码统一从 QuoteInputNode 传递，SignalNode 不再存储 code 参数。
  */
 
 /**
@@ -40,63 +42,6 @@ function normalizeOne(code) {
   }
   // 默认返回 sz
   return 'sz.' + code
-}
-
-/**
- * 从 input 节点出发，沿连接方向查找所有可达的 signal 节点（BFS 遍历）
- * @param {string} inputNodeId - 输入节点 ID
- * @param {Array} edges - 边数组
- * @param {Array} nodes - 节点数组
- * @returns {Array} signal 节点数组
- */
-export function findSignalNodesFromInput(inputNodeId, edges, nodes) {
-  const signalNodes = []
-  const visited = new Set()
-  const queue = [inputNodeId]
-
-  while (queue.length > 0) {
-    const currentId = queue.shift()
-    if (visited.has(currentId)) continue
-    visited.add(currentId)
-
-    // 找到从当前节点出发的所有边
-    const outgoingEdges = edges.filter(e => e.source === currentId)
-    for (const edge of outgoingEdges) {
-      const targetId = edge.target
-      if (!visited.has(targetId)) {
-        const targetNode = nodes.find(n => n.id === targetId)
-        if (targetNode) {
-          if (targetNode.data.nodeType === 'signal') {
-            signalNodes.push(targetNode)
-          }
-          // 继续遍历下游节点
-          queue.push(targetId)
-        }
-      }
-    }
-  }
-
-  return signalNodes
-}
-
-/**
- * 同步 code 从 input 节点到所有可达的 signal 节点
- * @param {Object} inputNode - 输入节点
- * @param {Array} edges - 边数组
- * @param {Array} nodes - 节点数组
- * @param {Function} updateNodeData - 更新节点数据的回调
- */
-export function syncCodeToDownstreamSignals(inputNode, edges, nodes, updateNodeData) {
-  const codeValue = inputNode.data.params['代码']?.value
-  if (!codeValue) return
-
-  // 将 code 转换为带交易所前缀的格式
-  const normalizedCode = normalizeCode(codeValue)
-
-  const signalNodes = findSignalNodesFromInput(inputNode.id, edges, nodes)
-  for (const signalNode of signalNodes) {
-    updateNodeData(signalNode.id, '代码', normalizedCode)
-  }
 }
 
 /**

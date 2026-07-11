@@ -62,12 +62,7 @@ export function extractSecuritiesFromFlowData(flowData: FlowData): Security[] {
       extractFromInputNode(params, securities)
     }
 
-    // 2. 从信号生成节点 (SignalNode) 提取
-    if (nodeType === 'signal') {
-      extractFromSignalNode(params, securities)
-    }
-
-    // 3. 从投资组合节点 (PortfolioNode) 提取
+    // 2. 从投资组合节点 (PortfolioNode) 提取
     if (nodeType === 'portfolio') {
       extractFromPortfolioNode(params, securities)
     }
@@ -80,42 +75,6 @@ export function extractSecuritiesFromFlowData(flowData: FlowData): Security[] {
  * 从输入节点提取标的
  */
 function extractFromInputNode(
-  params: Record<string, { value: any; type: string }>,
-  securities: Map<string, Security>
-): void {
-  // 检查是否有"代码"参数
-  const codeParam = params['代码'] || params['code']
-  if (codeParam && codeParam.value) {
-    let codes = Array.isArray(codeParam.value)
-      ? codeParam.value
-      : typeof codeParam.value === 'string' && codeParam.value.includes(',')
-        ? codeParam.value.split(',').map(s => s.trim()).filter(s => s.length > 0)
-        : [codeParam.value]
-
-    for (const code of codes) {
-      if (code && typeof code === 'string' && code.trim()) {
-        // 检查是否是"全股票"标记
-        if (code === 'all' || code === '全部' || code === '全市场') {
-          securities.set('all_stocks', {
-            code: 'all_stocks',
-            name: '全市场股票'
-          })
-          return
-        }
-
-        const security = parseSecurityCode(code)
-        if (security) {
-          securities.set(security.code, security)
-        }
-      }
-    }
-  }
-}
-
-/**
- * 从信号节点提取标的
- */
-function extractFromSignalNode(
   params: Record<string, { value: any; type: string }>,
   securities: Map<string, Security>
 ): void {

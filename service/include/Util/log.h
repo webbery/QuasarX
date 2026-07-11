@@ -106,6 +106,10 @@
 #define FATAL(...) \
   SPDLOG_ERROR( __VA_ARGS__);
 #endif
+#ifndef IMPORTANT
+#define IMPORTANT(...) \
+  {SPDLOG_WARN(__VA_ARGS__);fmt::print(fg(fmt::color::yellow) | fmt::emphasis::bold, "[重要] ");fmt::print(##__VA_ARGS__);fmt::print("\n");}
+#endif
 #ifndef DEBUG_INFO
 #ifdef _DEBUG 
 #define DEBUG_INFO(...) \
@@ -130,6 +134,10 @@
 #ifndef FATAL
 #define FATAL(fmt_str, ...) \
   fmt::print("{} {} " fmt_str "\n", ToString(Now()), __LINE__, ##__VA_ARGS__);SPDLOG_ERROR(fmt_str, ##__VA_ARGS__);
+#endif
+#ifndef IMPORTANT
+#define IMPORTANT(fmt_str, ...) \
+  fmt::print("{} {} " fmt_str "\n", ToString(Now()), __LINE__, ##__VA_ARGS__);SPDLOG_WARN(fmt_str, ##__VA_ARGS__);
 #endif
 #ifndef DEBUG_INFO
 #ifdef _DEBUG 
@@ -179,6 +187,11 @@
 #ifndef STRATEGY_ERROR
 #define STRATEGY_ERROR(strategy, fmt_str, ...) \
     STRATEGY_LOG(strategy, "ERROR", fmt_str, ##__VA_ARGS__)
+#endif
+
+#ifndef STRATEGY_IMPORTANT
+#define STRATEGY_IMPORTANT(strategy, fmt_str, ...) \
+    STRATEGY_LOG(strategy, "IMPORTANT", fmt_str, ##__VA_ARGS__)
 #endif
 
 // 带上下文JSON的策略日志

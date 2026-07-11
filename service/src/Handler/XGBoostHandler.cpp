@@ -16,7 +16,10 @@
 #include <sstream>
 #include <random>
 #include <algorithm>
+#ifdef WIN32
+#else
 #include <unistd.h>
+#endif
 
 extern "C" {
 #include <xgboost/c_api.h>
@@ -395,13 +398,30 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
         return;
     }
 
-    bst_ulong out_n = 0;
     bst_ulong out_dim = 0;
-    float* out_data = nullptr;
+    const float* out_data = nullptr;
+    size_t n_out = 0;
 
+#if XGBOOST_VER_MAJOR >= 2
+    // XGBoost >= 2.x: 使用 config JSON 字符串
+    const char* predict_config = R"({"type": 0, "training": false, "strict_shape": true})";
+    bst_ulong const* out_shape = nullptr;
+    ret = XGBoosterPredictFromDMatrix(model->booster, dmat,
+                                       predict_config,
+                                       &out_shape, &out_dim, &out_data);
+    n_samples = out_shape ? out_shape[0] : 0;
+    n_out = n_samples * out_dim;
+#else
+    // XGBoost < 2.x: 旧版 (option, ntree_limit, training) 参数
+    bst_ulong out_n = 0;
+    float* out_data_mut = nullptr;
     ret = XGBoosterPredictFromDMatrix(model->booster, dmat,
                                        0, 0, 1,  // XGBOOST_OUTPUT_CONTRIBUTION
-                                       &out_n, &out_dim, &out_data);
+                                       &out_n, &out_dim, &out_data_mut);
+    out_data = out_data_mut;
+    n_samples = out_n;
+    n_out = n_samples * out_dim;
+#endif
     XGDMatrixFree(dmat);
 
     if (ret != 0 || !out_data) {
@@ -412,7 +432,7 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
 
     nlohmann::json shapList = nlohmann::json::array();
     nlohmann::json baseList = nlohmann::json::array();
-    for (size_t i = 0; i < out_n; ++i) {
+    for (size_t i = 0; i < n_samples; ++i) {
         nlohmann::json featsArr = nlohmann::json::array();
         for (size_t j = 0; j < n_features; ++j) {
             featsArr.push_back(out_data[i * out_dim + j]);
@@ -477,7 +497,7 @@ void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
         handleDelete(this, params, res);
     } else {
         res.status = 400;
-        res.set_content(R"({"message":"missing or invalid 'action' (train|shap|delete)"})", "application/json");
+        res.set_content(R"JSON({"message":"missing or invalid 'action' (train|shap|delete)"})JSON", "application/json");
         return;
     }
 }
