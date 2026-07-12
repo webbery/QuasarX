@@ -23,7 +23,7 @@ namespace {
         {"MA", [] (const FunctionNode& node, const nlohmann::json& config) {
             // range: 平滑时间参数（时间范围，格式：正整数 + s/m/h/d 后缀，如 "5d", "30m"）
             // 解析规则：提取数字部分作为 MA 周期，单位后缀仅作语义提示
-            String range = (String)config["params"]["range"]["value"];
+            String range = config["params"]["range"]["value"].dump();
             std::regex re(R"(\d+)");
             std::smatch match;
             if (std::regex_search(range, match, re)) {

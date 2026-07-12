@@ -269,7 +269,6 @@ jobs:
 
       - name: Verify TLS certificates
         run: |
-          cd service/build
           echo "=== File sizes ==="
           ls -la server.crt server.key
           echo ""
@@ -291,7 +290,6 @@ jobs:
       # 从模板和 Secrets 生成 config.json（生命周期测试）和 tickflow.json（TickFlow 测试）
       - name: Generate configs from template
         run: |
-          cd service/build
           python3 -c "
           import json, os, sys
 
@@ -381,7 +379,6 @@ jobs:
           # 允许生成 core dump 以便崩溃时获取堆栈
           ulimit -c unlimited
           echo "core" | sudo tee /proc/sys/kernel/core_pattern 2>/dev/null || true
-          cd service/build
           
           # 启动前诊断
           echo "=== Pre-start diagnostics ==="
@@ -490,7 +487,6 @@ jobs:
       # - name: Run backtest tests
       #   id: test
       #   run: |
-      #     cd service/build
       #     nohup ./QuantService config.json > service_test.log 2>&1 &
       #     TEST_PID=$!
       #     echo "Test service PID: $TEST_PID"

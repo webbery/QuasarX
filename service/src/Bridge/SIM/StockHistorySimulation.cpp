@@ -72,35 +72,38 @@ bool StockHistorySimulation::LoadData(const String& code) {
     // 确定频率：T1 → 日线，T0 → 分钟级
     BarFreq freq = (_tradingMode == TradingMode::T1) ? BarFreq::Day : parseBarFreq(_t0Freq.empty() ? "1m" : _t0Freq);
 
-    // 后复权数据（指标计算）
-    Vector<String> adjDates;
-    auto adjData = LoadHistoryDataWithFreq(
-        symbol, {"open", "close", "high", "low", "volume"},
-        "", "", freq, AdjType::HFQ, &adjDates);
+    try {
+        // 后复权数据（指标计算）
+        Vector<String> adjDates;
+        auto adjData = LoadHistoryDataWithFreq(
+            symbol, {"open", "close", "high", "low", "volume"},
+            "", "", freq, AdjType::HFQ, &adjDates);
 
-    if (adjData.empty()) {
-        String err_msg = fmt::format("No stock data for '{}' from DuckDB (freq={}, adj=HFQ)", code, toString(freq));
-        WARN("{}", err_msg);
-        throw std::runtime_error(err_msg);
+        if (adjData.empty()) {
+            WARN("[StockHistorySimulation] No HFQ data for {} (freq={}), skipping", code, toString(freq));
+            return false;
+        }
+
+        BuildDataFrameFromMap(adjData, adjDates, _csvs[symbol], _headers[symbol]);
+
+        // 原始价数据（撮合）
+        Vector<String> orgDates;
+        auto orgData = LoadHistoryDataWithFreq(
+            symbol, {"open", "close", "high", "low", "volume"},
+            "", "", freq, AdjType::None, &orgDates);
+
+        if (orgData.empty()) {
+            WARN("[StockHistorySimulation] No original data for {} (freq={}), skipping", code, toString(freq));
+            return false;
+        }
+
+        BuildDataFrameFromMap(orgData, orgDates, _org_csvs[symbol], _org_headers[symbol]);
+
+        return true;
+    } catch (const std::exception& e) {
+        WARN("[StockHistorySimulation] Failed to load {}: {}, skipping", code, e.what());
+        return false;
     }
-
-    BuildDataFrameFromMap(adjData, adjDates, _csvs[symbol], _headers[symbol]);
-
-    // 原始价数据（撮合）
-    Vector<String> orgDates;
-    auto orgData = LoadHistoryDataWithFreq(
-        symbol, {"open", "close", "high", "low", "volume"},
-        "", "", freq, AdjType::None, &orgDates);
-
-    if (orgData.empty()) {
-        String err_msg = fmt::format("No stock data for '{}' from DuckDB (freq={}, adj=None)", code, toString(freq));
-        WARN("{}", err_msg);
-        throw std::runtime_error(err_msg);
-    }
-
-    BuildDataFrameFromMap(orgData, orgDates, _org_csvs[symbol], _org_headers[symbol]);
-
-    return true;
 }
 
 std::pair<std::vector<time_t>, std::vector<double>> StockHistorySimulation::GetHFQCloseData(symbol_t symbol) const {

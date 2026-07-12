@@ -10,8 +10,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
-#include "Nodes/SignalNode.h"
-#include "std_header.h"
+#include "Nodes/QuoteNode.h"
 #include <cmath>
 
 PortfolioNode::PortfolioNode(Server* server)
@@ -72,23 +71,44 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
         }
     }
 
-    // 交易池 - 优先从 config 读取，如果没有则从上游 SignalNode 获取
-    if (config["params"].contains("pool")) {
-        auto& poolConfig = config["params"]["pool"]["value"];
-        for (const String& code : poolConfig) {
-            auto& security = Server::GetSecurity(code);
-            _pool.insert(to_symbol(code, security));
-        }
-    } else {
-        // 从上游 SignalNode 获取交易池
-        for (auto& [port, inputNode] : _ins) {
-            if (auto* signalNode = dynamic_cast<SignalNode*>(inputNode)) {
-                auto pool = signalNode->GetPool();
-                for (const auto& symbol : pool) {
-                    _pool.insert(symbol);
-                }
+    // 交易池 - 沿路径回溯，从上游 QuoteInputNode 获取标的池
+    // 使用 BFS 遍历所有上游节点，收集所有 QuoteInputNode 的 symbol
+    Set<QNode*> visited;
+    Vector<QNode*> queue;
+
+    // 从直接上游节点开始 BFS
+    for (auto& [port, inputNode] : _ins) {
+        queue.push_back(inputNode);
+    }
+
+    while (!queue.empty()) {
+        QNode* current = queue.back();
+        queue.pop_back();
+
+        if (visited.count(current)) continue;
+        visited.insert(current);
+
+        // 如果是 QuoteInputNode，提取其 symbol
+        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(current)) {
+            const auto& symbols = quoteNode->GetSymbols();
+            for (const auto& symbol : symbols) {
+                _pool.insert(symbol);
             }
         }
+
+        // 继续向上游遍历
+        for (auto& item: current->ins()) {
+            if (!visited.count(item.second)) {
+                queue.push_back(item.second);
+            }
+        }
+    }
+
+    if (_pool.empty()) {
+        WARN("[PortfolioNode:{}] No symbols found from upstream QuoteInputNode (traversed {} nodes)", _id, visited.size());
+    } else {
+        INFO("[PortfolioNode:{}] Found {} symbols from {} upstream nodes (traversed {} nodes)",
+             _id, _pool.size(), _ins.size(), visited.size());
     }
 
     return true;

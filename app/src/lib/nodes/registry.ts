@@ -57,6 +57,21 @@ export function searchNodes(query: string): NodeRegistryEntry[] {
  */
 export function convertLabelsToKeys(graphJson: string): string {
   let result = graphJson
+  
+  // 定义参数别名映射（处理旧版本或用户修改的标签）
+  const paramAliases: Record<string, string> = {
+    '范围': 'range',
+    '窗口': 'range',
+    '方法': 'method',
+  }
+  
+  // 先处理别名转换
+  for (const [alias, key] of Object.entries(paramAliases)) {
+    const regex = new RegExp(`"${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:`, 'g')
+    result = result.replace(regex, `"${key}":`)
+  }
+  
+  // 再处理注册表中的标准参数
   for (const node of getAllNodes()) {
     for (const p of node.params) {
       // 用 "label": 模式精确匹配，避免子串替换
@@ -64,6 +79,7 @@ export function convertLabelsToKeys(graphJson: string): string {
       result = result.replace(regex, `"${p.key}":`)
     }
   }
+  
   return result
 }
 

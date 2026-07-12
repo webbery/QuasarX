@@ -7,6 +7,7 @@
 #include "BrokerSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
+#include "Nodes/QuoteNode.h"
 #include <utility>
 #include "boost/algorithm/string.hpp"
 
@@ -72,21 +73,47 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error(error);
     }
 
-    // 从上游输入节点的 out_elements() 中提取 symbol
-    // QuoteInputNode 的 out_elements 返回格式: "sz.159995.close" 等
-    // 提取唯一的 symbol 列表
+    // 沿路径回溯，找到所有可达的 QuoteInputNode（数据源的真实入口）
+    // 使用 BFS 遍历所有上游节点，收集所有 QuoteInputNode 的 symbol
     Set<symbol_t> upstreamSymbols;
+    Set<QNode*> visited;
+    Vector<QNode*> queue;
+
+    // 从直接上游节点开始 BFS
     for (auto& item: _ins) {
-        auto names = item.second->out_elements();
-        for (auto& kv: names) {
-            upstreamSymbols.insert(to_symbol(kv.first));
+        queue.push_back(item.second);
+    }
+
+    while (!queue.empty()) {
+        QNode* current = queue.back();
+        queue.pop_back();
+
+        if (visited.count(current)) continue;
+        visited.insert(current);
+
+        // 如果是 QuoteInputNode，提取其 symbol
+        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(current)) {
+            const auto& symbols = quoteNode->GetSymbols();
+            for (const auto& sym : symbols) {
+                upstreamSymbols.insert(sym);
+            }
+        }
+
+        // 继续向上游遍历
+        for (auto& item: current->ins()) {
+            if (!visited.count(item.second)) {
+                queue.push_back(item.second);
+            }
         }
     }
 
     if (upstreamSymbols.empty()) {
-        WARN("[SignalNode:{}] No upstream symbols found, signal node will be skipped", _id);
+        WARN("[SignalNode:{}] No upstream symbols found from QuoteInputNode (traversed {} nodes), signal node will be skipped", _id, visited.size());
         return false;
     }
+
+    INFO("[SignalNode:{}] Found {} symbols from {} upstream nodes (traversed {} nodes)",
+         _id, upstreamSymbols.size(), _ins.size(), visited.size());
 
     for (const auto& sym : upstreamSymbols) {
         _pools.emplace_back(sym);

@@ -23,7 +23,6 @@ public:
     Set<symbol_t> GetPool() {
         return {_pools.begin(), _pools.end()};
     }
-    
 private:
 
     Server* _server;

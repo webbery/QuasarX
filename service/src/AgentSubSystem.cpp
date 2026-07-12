@@ -793,13 +793,17 @@ time_t FlowSubsystem::GetLastEvoke(const String& strategy) const {
 
 Set<symbol_t> FlowSubsystem::GetPools(const String& strategy) {
     auto& flow = _flows[strategy];
+    Set<symbol_t> allSymbols;
+    
+    // 从所有 QuoteInputNode 收集标的（数据源是标的的单一真实来源）
     for (auto& node: flow._graph) {
-        if (typeid(*node) == typeid(SignalNode)) {
-            auto p = (SignalNode*)node;
-            return p->GetPool();
+        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
+            const auto& symbols = quoteNode->GetSymbols();
+            allSymbols.insert(symbols.begin(), symbols.end());
         }
     }
-    return Set<symbol_t>();
+    
+    return allSymbols;
 }
 
 FlowSubsystem::BacktestDailyReturns FlowSubsystem::GetBacktestDailyReturns(const String& strategy) const {

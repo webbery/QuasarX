@@ -408,6 +408,17 @@ run_id_t HistorySimulationBase::createBacktestContext(
     const Set<symbol_t>& symbols,
     double initial_capital)
 {
+    // 确保数据已加载（回测模式下 Login 可能未被调用）
+    if (!_dataLoadSuccess) {
+        // 将 symbols 转换为字符串并设置到 filter
+        QuoteFilter filter;
+        for (auto symbol : symbols) {
+            filter._symbols.insert(get_symbol(symbol));
+        }
+        SetFilter(filter);
+        Login(AccountType::MAIN);
+    }
+
     uint16_t runId = _nextRunId.fetch_add(1, std::memory_order_relaxed);
 
     auto broker = _server->GetBrokerSubSystem();
@@ -572,7 +583,10 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
     time_t minTime = std::numeric_limits<time_t>::max();
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
-        if (itr == _csvs.end()) continue;
+        if (itr == _csvs.end()) {
+            WARN("[HistorySimulationBase] symbol {} not found in _csvs!", get_symbol(symbol));
+            continue;
+        }
 
         const auto& df = itr->second;
         const auto& header = _headers.at(symbol);
@@ -742,6 +756,8 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
                     context->updateCUSUM(daily_return);
                 }
             }
+        } else {
+            WARN("[HistorySimulationBase] No valid quote found for any symbol, skipping daily snapshot");
         }
     }
 
