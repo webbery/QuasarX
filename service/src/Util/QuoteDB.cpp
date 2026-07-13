@@ -176,6 +176,10 @@ int QuoteDB::importCsv(const std::string& csv_path,
         try {
             Row r;
             r.datetime = cols[0];
+            // 如果 datetime 只有日期部分（YYYY-MM-DD），补充时间部分
+            if (r.datetime.length() == 10 && r.datetime[4] == '-' && r.datetime[7] == '-') {
+                r.datetime += " 00:00:00";
+            }
             r.open   = std::stod(cols[1]);
             r.close  = std::stod(cols[2]);
             r.high   = std::stod(cols[3]);

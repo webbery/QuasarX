@@ -3635,3 +3635,128 @@ components:
           items:
             type: string
           description: CSV 行数据（import 时必填）
+    #  ══════════════ XGBoost Schemas ══════════════
+
+    XGBoostTrainRequest:
+      type: object
+      required: [action, script, label]
+      properties:
+        action:
+          type: string
+          enum: [train]
+        script:
+          type: string
+          description: 策略图 JSON 字符串
+        label:
+          type: object
+          required: [source]
+          properties:
+            source:
+              type: string
+            period:
+              type: integer
+              default: 5
+            type:
+              type: string
+              enum: [classification, regression]
+              default: classification
+            threshold:
+              type: number
+              default: 0.0
+        objective:
+          type: string
+          enum: [binary:logistic, multi:softprob, reg:squarederror]
+          default: binary:logistic
+        num_class:
+          type: integer
+          default: 2
+        test_ratio:
+          type: number
+          default: 0.2
+        params:
+          type: object
+        py_env:
+          type: string
+
+    XGBoostShapRequest:
+      type: object
+      required: [action, model_id]
+      properties:
+        action:
+          type: string
+          enum: [shap]
+        model_id:
+          type: integer
+
+    XGBoostDeleteRequest:
+      type: object
+      required: [action, model_id]
+      properties:
+        action:
+          type: string
+          enum: [delete]
+        model_id:
+          type: integer
+
+    XGBoostTrainResponse:
+      type: object
+      properties:
+        model_id: { type: integer }
+        model_path: { type: string }
+        best_iteration: { type: integer }
+        n_train: { type: integer }
+        n_test: { type: integer }
+        n_features: { type: integer }
+        features:
+          type: array
+          items: { type: string }
+        learning_curve:
+          type: array
+          items:
+            type: object
+            properties:
+              iteration: { type: integer }
+              train_loss: { type: number }
+              eval_loss: { type: number }
+        feature_importance:
+          type: array
+          items:
+            type: object
+            properties:
+              feature: { type: string }
+              gain: { type: number }
+              weight: { type: number }
+              cover: { type: number }
+        eval_metrics:
+          type: object
+          additionalProperties: { type: number }
+        predictions:
+          type: array
+          items:
+            type: object
+            properties:
+              actual: { type: number }
+              predicted: { type: number }
+              pred_class: { type: integer }
+
+    XGBoostShapResponse:
+      type: object
+      properties:
+        model_id: { type: integer }
+        features:
+          type: array
+          items: { type: string }
+        shap:
+          type: array
+          items:
+            type: array
+            items: { type: number }
+        base_value:
+          type: array
+          items: { type: number }
+        n_samples: { type: integer }
+
+    XGBoostDeleteResponse:
+      type: object
+      properties:
+        message: { type: string, example: "deleted" }

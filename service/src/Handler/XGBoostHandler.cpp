@@ -422,11 +422,19 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
     n_samples = out_n;
     n_out = n_samples * out_dim;
 #endif
+
     XGDMatrixFree(dmat);
 
     if (ret != 0 || !out_data) {
         res.status = 500;
         res.set_content(R"({"message":"SHAP prediction failed"})", "application/json");
+        return;
+    }
+
+    // out_shape[0] = 总元素数（== n_samples * out_dim）
+    if (!out_shape || out_shape[0] == 0) {
+        res.status = 500;
+        res.set_content(R"({"message":"SHAP output shape invalid"})", "application/json");
         return;
     }
 
@@ -438,7 +446,10 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
             featsArr.push_back(out_data[i * out_dim + j]);
         }
         shapList.push_back(featsArr);
-        baseList.push_back(out_data[i * out_dim + (out_dim - 1)]);
+        // SHAP 输出最后一维为 base_value
+        if (out_dim > n_features) {
+            baseList.push_back(out_data[i * out_dim + n_features]);
+        }
     }
 
     nlohmann::json featuresArr = nlohmann::json::array();
@@ -497,7 +508,9 @@ void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
         handleDelete(this, params, res);
     } else {
         res.status = 400;
-        res.set_content(R"JSON({"message":"missing or invalid 'action' (train|shap|delete)"})JSON", "application/json");
+        res.set_content(
+            "{\"message\":\"missing or invalid 'action' (train|shap|delete)\"}",
+            "application/json");
         return;
     }
 }

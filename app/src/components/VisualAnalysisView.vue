@@ -36,6 +36,11 @@
           <XGBoostTab />
         </div>
 
+        <!-- 基本面分析 Tab -->
+        <div v-show="activeTab === 'fundamental'" class="tab-content">
+          <FundamentalTab />
+        </div>
+
         <!-- 资金流向 Tab -->
         <div v-show="activeTab === 'flow'" class="tab-content flow-tab">
           <!-- 头部控制区（移入资金流向 Tab） -->
@@ -230,6 +235,7 @@ import SignalTab from './signal/SignalTab.vue'
 import PCATab from './pca/PCATab.vue'
 import CUSUMTab from './cusum/CUSUMTab.vue'
 import XGBoostTab from './xgboost/XGBoostTab.vue'
+import FundamentalTab from './fundamental/FundamentalTab.vue'
 
 const unit = 100000000 // 单位:亿
 
@@ -240,6 +246,7 @@ const tabs = [
   { label: 'PCA 主成分', name: 'pca' },
   { label: 'CUSUM 结构变化', name: 'cusum' },
   { label: 'XGBoost 分析', name: 'xgboost' },
+  { label: '基本面分析', name: 'fundamental' },
   { label: '资金流向', name: 'flow' },
   { label: '策略数据', name: 'strategyData' }
 ]

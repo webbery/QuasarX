@@ -293,7 +293,7 @@ jobs:
           python3 -c "
           import json, os, sys
 
-          with open('../config.template.json') as f:
+          with open('config.template.json') as f:
               template = json.load(f)
 
           def set_or_skip(obj, key, value, required=False):
