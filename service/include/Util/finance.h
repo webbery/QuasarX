@@ -118,6 +118,24 @@ double estimateMeanPeriod(const Vector<double>& data);
 double computeEnergyPct(const Vector<double>& component,
                          const Vector<double>& original);
 
+/**
+ * @brief 滚动 EMD 能量计算
+ *
+ * 在每个窗口位置 t ∈ [window-1, N) 对 data[t-window+1:t+1] 运行 EMD，
+ * 返回每个窗口下 (numIMFs 个 IMF + 残差) 的能量占比时间序列。
+ *
+ * @param data       原始信号
+ * @param window     滚动窗口大小（bar 数，建议 30-120）
+ * @param numIMFs    每个窗口 EMD 分解的 IMF 数量
+ * @param dates      完整日期序列，与 data 等长；返回时输出每个窗口对应的结束日期
+ * @return           每个窗口的能量占比：外层索引 = IMF i (0..numIMFs-1)，最后一项 = 残差；
+ *                   每个内层 vector 长度为 N - window + 1
+ */
+Vector<Vector<double>> computeRollingEMDEnergy(const Vector<double>& data,
+                                                int window,
+                                                int numIMFs,
+                                                const Vector<String>& dates);
+
 }
 
 bool LoadStockQuote(DataFrame& df, const String& path);

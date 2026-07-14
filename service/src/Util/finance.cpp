@@ -1,5 +1,6 @@
 #include "Util/finance.h"
 #include "Util/datetime.h"
+#include "Algorithms/EMD_SIMD.h"
 #include <boost/math/statistics/univariate_statistics.hpp>
 #include <filesystem>
 #include "csv.h"
@@ -661,4 +662,83 @@ double finance::computeEnergyPct(const Vector<double>& component,
 
     if (orig_var < 1e-15) return 0;
     return comp_var / orig_var;
+}
+
+Vector<Vector<double>> finance::computeRollingEMDEnergy(const Vector<double>& data,
+                                                          int window,
+                                                          int numIMFs,
+                                                          const Vector<String>& dates) {
+    Vector<Vector<double>> result;
+    int N = static_cast<int>(data.size());
+    if (window < 4 || numIMFs < 1 || N < window) {
+        return result;
+    }
+
+    int out_len = N - window + 1;
+    // numIMFs 个 IMF + 1 个残差
+    result.resize(numIMFs + 1);
+    for (auto& v : result) v.assign(out_len, 0.0);
+
+    // 复用 dates 槽位记录每个窗口的结束日期索引（用空字符串填充首 window-1 个）
+    // 实际上 dates 在此处不修改，调用方负责用日期数组切片
+
+    for (int t = window - 1; t < N; ++t) {
+        int out_idx = t - window + 1;
+        // 提取窗口 [t-window+1, t]
+        Vector<double> window_data(data.begin() + (t - window + 1),
+                                    data.begin() + t + 1);
+
+        // 限制 IMF 数量不能超过窗口大小/2
+        int actualIMFs = std::min(numIMFs, std::max(1, window / 4));
+
+        Vector<Vector<double>> imfs;
+        try {
+            imfs = simd_emd(window_data, actualIMFs, 10, 0.02);
+        } catch (...) {
+            continue;  // EMD 偶尔失败，跳过该窗口
+        }
+
+        // 原始信号方差（用于归一化能量）
+        double orig_mean = 0;
+        for (auto v : window_data) orig_mean += v;
+        orig_mean /= window_data.size();
+        double orig_var = 0;
+        for (auto v : window_data) {
+            double d = v - orig_mean;
+            orig_var += d * d;
+        }
+        if (orig_var < 1e-15) continue;
+
+        // 计算每个 IMF 的能量占比
+        Vector<double> window_residual = window_data;
+        for (int i = 0; i < (int)imfs.size() && i < numIMFs; ++i) {
+            double mean = 0;
+            for (auto v : imfs[i]) mean += v;
+            mean /= imfs[i].size();
+            double var = 0;
+            for (auto v : imfs[i]) {
+                double d = v - mean;
+                var += d * d;
+            }
+            result[i][out_idx] = var / orig_var;
+
+            // 累减得到残差
+            for (size_t j = 0; j < window_residual.size(); ++j) {
+                window_residual[j] -= imfs[i][j];
+            }
+        }
+
+        // 残差能量
+        double r_mean = 0;
+        for (auto v : window_residual) r_mean += v;
+        r_mean /= window_residual.size();
+        double r_var = 0;
+        for (auto v : window_residual) {
+            double d = v - r_mean;
+            r_var += d * d;
+        }
+        result[numIMFs][out_idx] = r_var / orig_var;
+    }
+
+    return result;
 }
