@@ -14,6 +14,7 @@ export interface SignalState {
   field: string
   method: string
   numImfs: number
+  rollingWindow: number
   dateRange: [string, string] | null
   quickRange: string
   /** 数据频率 (1m/5m/15m/30m/1h/4h/1d/1w/1M) */
@@ -31,6 +32,21 @@ export interface SignalAnalysisResult {
   residual: number[]
   imf_info: { index: number; mean_period: number; energy_pct: number }[]
   reconstruction_error: number
+  rolling?: {
+    window: number
+    dates: string[]
+    by_imf_energy: number[][]
+    residual_energy: number[]
+    total_energy: number[]
+    change_rate: number[]
+  }
+  lowest_freq?: {
+    imf_index: number
+    imf_mean_period: number
+    energy_series: number[]
+    volume_normalized: number[]
+    energy_to_volume_ratio: number[]
+  }
 }
 
 const QUICK_RANGES: [string, () => [string, string]][] = [
@@ -80,6 +96,7 @@ export function useSignalState() {
     field: 'close',
     method: 'emd',
     numImfs: 5,
+    rollingWindow: 60,
     dateRange: null,
     quickRange: '近1年',
     frequency: '1d',

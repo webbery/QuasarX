@@ -595,3 +595,140 @@ class TestRollingVolForecast:
                     "forecast_std", "has_autocorrelation", "note"]
         for field in required:
             assert field in fc, f"缺少字段: {field}"
+
+
+# ============================================================
+# 测试类 7：相关系数矩阵 vs numpy.corrcoef 黄金标准
+# ============================================================
+
+CORR_TOLERANCE = 1e-6  # 纯数学计算，应精确一致
+
+
+def compute_corr_golden(symbols: List[str]) -> Tuple[np.ndarray, List[str]]:
+    """使用 numpy.corrcoef 计算相关系数矩阵（黄金标准）
+
+    Returns:
+        (correlation_matrix, symbol_list) — symbol_list 与矩阵索引对应
+    """
+    all_returns = []
+    valid_symbols = []
+    for sym in symbols:
+        closes, _ = load_csv_prices(sym)
+        if len(closes) < 2:
+            continue
+        rets = simple_returns(closes)
+        all_returns.append(rets)
+        valid_symbols.append(sym)
+
+    # 对齐到共同长度（取最短，取尾部 — 与 C++ computeMulti 一致）
+    min_len = min(len(r) for r in all_returns)
+    aligned = np.array([r[-min_len:] for r in all_returns])
+
+    # numpy.corrcoef 是标准 Pearson 相关系数（去均值）
+    corr = np.corrcoef(aligned)
+    return corr, valid_symbols
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestCorrelationGoldenStandard:
+    """相关系数矩阵 vs numpy.corrcoef 黄金标准对比"""
+
+    def test_correlation_2symbols_vs_numpy(self, auth_token):
+        """2 标的相关系数 vs numpy.corrcoef"""
+        symbols = ["sz.900001", "sz.900002"]
+        golden_corr, _ = compute_corr_golden(symbols)
+
+        api_symbols_str = ','.join(symbols)
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(api_symbols_str, dates[0], dates[-1], auth_token=auth_token)
+
+        api_corr = np.array(resp["multi"]["correlation_matrix"])
+        assert api_corr.shape == golden_corr.shape
+
+        for i in range(api_corr.shape[0]):
+            for j in range(api_corr.shape[1]):
+                assert abs(api_corr[i][j] - golden_corr[i][j]) < CORR_TOLERANCE, \
+                    f"corr[{i}][{j}]: API={api_corr[i][j]:.8f}, numpy={golden_corr[i][j]:.8f}, " \
+                    f"diff={abs(api_corr[i][j] - golden_corr[i][j]):.2e}"
+
+    def test_correlation_3symbols_vs_numpy(self, auth_token):
+        """3 标的相关系数 vs numpy.corrcoef"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        golden_corr, _ = compute_corr_golden(symbols)
+
+        api_symbols_str = ','.join(symbols)
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(api_symbols_str, dates[0], dates[-1], auth_token=auth_token)
+
+        api_corr = np.array(resp["multi"]["correlation_matrix"])
+        assert api_corr.shape == golden_corr.shape
+
+        for i in range(api_corr.shape[0]):
+            for j in range(api_corr.shape[1]):
+                assert abs(api_corr[i][j] - golden_corr[i][j]) < CORR_TOLERANCE, \
+                    f"corr[{i}][{j}]: API={api_corr[i][j]:.8f}, numpy={golden_corr[i][j]:.8f}, " \
+                    f"diff={abs(api_corr[i][j] - golden_corr[i][j]):.2e}"
+
+    def test_correlation_5symbols_vs_numpy(self, auth_token):
+        """5 标的相关系数 vs numpy.corrcoef（更多标的放大排序问题）"""
+        symbols = ["sz.900003", "sz.900001", "sz.900005", "sz.900002", "sz.900004"]
+        golden_corr, valid_syms = compute_corr_golden(symbols)
+
+        api_symbols_str = ','.join(symbols)
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(api_symbols_str, dates[0], dates[-1], auth_token=auth_token)
+
+        # 验证 API 返回的 symbols 顺序与请求一致
+        api_sym_list = resp["symbols"]
+        assert api_sym_list == valid_syms, \
+            f"symbols 顺序不一致: API={api_sym_list}, expected={valid_syms}"
+
+        api_corr = np.array(resp["multi"]["correlation_matrix"])
+        assert api_corr.shape == golden_corr.shape
+
+        for i in range(api_corr.shape[0]):
+            for j in range(api_corr.shape[1]):
+                assert abs(api_corr[i][j] - golden_corr[i][j]) < CORR_TOLERANCE, \
+                    f"corr[{i}][{j}] ({api_sym_list[i]} vs {api_sym_list[j]}): " \
+                    f"API={api_corr[i][j]:.8f}, numpy={golden_corr[i][j]:.8f}, " \
+                    f"diff={abs(api_corr[i][j] - golden_corr[i][j]):.2e}"
+
+    def test_correlation_matrix_matches_symbols_order(self, auth_token):
+        """验证 correlation_matrix[i][j] 对应 symbols[i] 和 symbols[j]
+
+        方法：交换两个标的的请求顺序，检查矩阵是否相应交换。
+        如果矩阵索引与 symbols 不匹配，交换后值会对不上。
+        """
+        closes, dates = load_csv_prices("sz.900001")
+        date_range = (dates[0], dates[-1])
+
+        # 请求顺序 A: [900001, 900002, 900003]
+        resp_a = call_volatility_api("sz.900001,sz.900002,sz.900003",
+                                     *date_range, auth_token=auth_token)
+        corr_a = np.array(resp_a["multi"]["correlation_matrix"])
+
+        # 请求顺序 B: [900003, 900001, 900002] — 循环移位
+        resp_b = call_volatility_api("sz.900003,sz.900001,sz.900002",
+                                     *date_range, auth_token=auth_token)
+        corr_b = np.array(resp_b["multi"]["correlation_matrix"])
+
+        # corr_a[0][1] = corr(900001, 900002)
+        # corr_b[1][2] = corr(900001, 900002) — 在 B 中 900001 是 index 1, 900002 是 index 2
+        assert abs(corr_a[0][1] - corr_b[1][2]) < CORR_TOLERANCE, \
+            f"矩阵索引与 symbols 不匹配: " \
+            f"corr_a[0][1](900001,900002)={corr_a[0][1]:.8f}, " \
+            f"corr_b[1][2](900001,900002)={corr_b[1][2]:.8f}"
+
+        # corr_a[1][2] = corr(900002, 900003)
+        # corr_b[2][0] = corr(900002, 900003) — 在 B 中 900002 是 index 2, 900003 是 index 0
+        assert abs(corr_a[1][2] - corr_b[2][0]) < CORR_TOLERANCE, \
+            f"矩阵索引与 symbols 不匹配: " \
+            f"corr_a[1][2](900002,900003)={corr_a[1][2]:.8f}, " \
+            f"corr_b[2][0](900002,900003)={corr_b[2][0]:.8f}"
+
+        # corr_a[0][2] = corr(900001, 900003)
+        # corr_b[1][0] = corr(900001, 900003) — 在 B 中 900001 是 index 1, 900003 是 index 0
+        assert abs(corr_a[0][2] - corr_b[1][0]) < CORR_TOLERANCE, \
+            f"矩阵索引与 symbols 不匹配: " \
+            f"corr_a[0][2](900001,900003)={corr_a[0][2]:.8f}, " \
+            f"corr_b[1][0](900001,900003)={corr_b[1][0]:.8f}"

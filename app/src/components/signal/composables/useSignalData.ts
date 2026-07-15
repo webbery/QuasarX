@@ -22,7 +22,8 @@ export function useSignalData() {
     field: string = 'close',
     method: string = 'emd',
     numImfs: number = 5,
-    fillMethod: string = 'none'
+    fillMethod: string = 'none',
+    rollingWindow: number = 60
   ): Promise<SignalAnalysisResult | null> {
     if (symbols.length === 0) {
       ElMessage.warning('请至少添加一个标的')
@@ -34,36 +35,24 @@ export function useSignalData() {
       const macroSymbols = symbols.filter(isMacroSymbol)
       const isMacroMode = macroSymbols.length > 0
 
-      let response
+      const params: Record<string, any> = {
+        symbols: symbols.join(','),
+        start_date: startDate,
+        end_date: endDate,
+        field,
+        method,
+        num_imfs: numImfs,
+        fill_method: fillMethod,
+        rolling_window: rollingWindow
+      }
+
       if (isMacroMode) {
         const [country, indicator] = macroSymbols[0].split('/')
-        response = await axios.get('/v0/analysis/signal', {
-          params: {
-            symbols: symbols.join(','),
-            start_date: startDate,
-            end_date: endDate,
-            field,
-            method,
-            num_imfs: numImfs,
-            fill_method: fillMethod,
-            // 宏观指标参数
-            country,
-            indicator
-          }
-        })
-      } else {
-        response = await axios.get('/v0/analysis/signal', {
-          params: {
-            symbols: symbols.join(','),
-            start_date: startDate,
-            end_date: endDate,
-            field,
-            method,
-            num_imfs: numImfs,
-            fill_method: fillMethod
-          }
-        })
+        params.country = country
+        params.indicator = indicator
       }
+
+      const response = await axios.get('/v0/analysis/signal', { params })
 
       return response.data as SignalAnalysisResult
     } catch (err: any) {

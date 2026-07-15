@@ -6,6 +6,7 @@
 #include "Util/finance.h"
 #include "boost/math/statistics/ljung_box.hpp"
 #include "server.h"
+#include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -296,55 +297,65 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     int max_lag)
 {
     VolatilityMultiResult result;
-    size_t n = returns_map.size();
-    if (n < 2) return result;
 
-    // 对齐收益率序列 (取最短长度)
+    // 按 symbols（请求顺序）构建收益率矩阵，跳过无数据的标的
+    size_t n = 0;
     size_t min_len = std::numeric_limits<size_t>::max();
-    for (const auto& [sym, rets] : returns_map) {
-        if (rets.size() < min_len) min_len = rets.size();
+    for (const auto& sym : symbols) {
+        auto it = returns_map.find(sym);
+        if (it == returns_map.end()) continue;
+        if (it->second.size() < min_len) min_len = it->second.size();
+        ++n;
     }
+    if (n < 2 || min_len < 2) return result;
 
-    // 构建收益率矩阵 (n x T)
-    std::vector<std::vector<double>> ret_matrix(n, std::vector<double>(min_len));
+    // 构建 n x T 收益率矩阵（按 symbols 请求顺序）
+    Eigen::MatrixXd ret_matrix(n, min_len);
     std::vector<std::string> sym_list;
     sym_list.reserve(n);
     size_t idx = 0;
-    for (const auto& [sym, rets] : returns_map) {
+    for (const auto& sym : symbols) {
+        auto it = returns_map.find(sym);
+        if (it == returns_map.end()) continue;
+        const auto& rets = it->second;
         for (size_t t = 0; t < min_len; ++t) {
-            ret_matrix[idx][t] = rets[rets.size() - min_len + t];
+            ret_matrix(idx, t) = rets[rets.size() - min_len + t];
         }
         sym_list.push_back(sym);
         ++idx;
     }
 
-    // 计算协方差矩阵 RᵀR / (T-1)
-    result.covariance_matrix.resize(n, std::vector<double>(n, 0));
+    // 去均值（每行减均值）— 标准 Pearson 相关系数
+    Eigen::MatrixXd centered(n, min_len);
     for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j <= i; ++j) {
-            double cov = 0;
-            for (size_t t = 0; t < min_len; ++t) {
-                cov += ret_matrix[i][t] * ret_matrix[j][t];
-            }
-            cov /= (min_len - 1);
-            result.covariance_matrix[i][j] = cov;
-            result.covariance_matrix[j][i] = cov;
-        }
+        centered.row(i) = ret_matrix.row(i).array() - ret_matrix.row(i).mean();
     }
 
-    // 计算相关系数矩阵
-    std::vector<double> stds(n);
+    // 协方差矩阵：C = (X_centered * X_centered^T) / (T-1)
+    Eigen::MatrixXd cov = (centered * centered.transpose()) / (min_len - 1);
+
+    // 相关系数矩阵：ρ_ij = cov_ij / (σ_i * σ_j)
+    Eigen::VectorXd std_devs(n);
     for (size_t i = 0; i < n; ++i) {
-        stds[i] = std::sqrt(result.covariance_matrix[i][i]);
+        std_devs(i) = std::sqrt(cov(i, i));
+        if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
     }
+
+    Eigen::MatrixXd corr = cov;
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+        }
+    }
+    corr.diagonal().setOnes();
+
+    // 转换为 std::vector<std::vector<double>>
+    result.covariance_matrix.resize(n, std::vector<double>(n));
     result.correlation_matrix.resize(n, std::vector<double>(n));
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = 0; j < n; ++j) {
-            if (stds[i] > 1e-10 && stds[j] > 1e-10) {
-                result.correlation_matrix[i][j] = result.covariance_matrix[i][j] / (stds[i] * stds[j]);
-            } else {
-                result.correlation_matrix[i][j] = (i == j) ? 1.0 : 0.0;
-            }
+            result.covariance_matrix[i][j] = cov(i, j);
+            result.correlation_matrix[i][j] = corr(i, j);
         }
     }
 
@@ -378,11 +389,14 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     std::sort(result.eigenvalues.rbegin(), result.eigenvalues.rend());
 
     // === 多资产预测外推 ===
-    // 收集各资产的 Forecast 结果
+    // 收集各资产的 Forecast 结果（按 symbols 请求顺序）
     std::vector<ar_model::Forecast> all_forecasts;
     std::vector<std::string> fc_symbols;
     size_t sym_idx = 0;
-    for (const auto& [sym, rets] : returns_map) {
+    for (const auto& sym : symbols) {
+        auto it = returns_map.find(sym);
+        if (it == returns_map.end()) continue;
+        const auto& rets = it->second;
         if (rets.size() < 30) {
             ++sym_idx;
             continue;
@@ -447,9 +461,13 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     if (ts_max_lag < 1) ts_max_lag = 1;
 
     for (size_t i = 0; i < sym_list.size(); ++i) {
+        // Eigen row → std::vector<double>
+        std::vector<double> rets_i(min_len);
+        for (size_t t = 0; t < min_len; ++t) rets_i[t] = ret_matrix(i, t);
+
         for (size_t j = i + 1; j < sym_list.size(); ++j) {
-            const auto& rets_i = ret_matrix[i];
-            const auto& rets_j = ret_matrix[j];
+            std::vector<double> rets_j(min_len);
+            for (size_t t = 0; t < min_len; ++t) rets_j[t] = ret_matrix(j, t);
 
             // 1. 交叉相关 + 领先滞后
             auto ccf = finance::crossCorrelation(rets_i, rets_j, ts_max_lag);
@@ -461,15 +479,15 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
             });
 
             // 2. 格兰杰因果检验 (y→x 和 x→y 双向)
-            int granger_max_lag = std::min(ts_max_lag, 5);  // 格兰杰检验限制最大滞后
+            int granger_max_lag = std::min(ts_max_lag, 5);
             auto gr_yx = finance::grangerCausalityTest(rets_i, rets_j, granger_max_lag, sym_list[i], sym_list[j]);
             result.granger_results.push_back({
-                sym_list[j], sym_list[i],  // y→x
+                sym_list[j], sym_list[i],
                 gr_yx.f_statistic, gr_yx.p_value, gr_yx.is_significant, gr_yx.optimal_lag
             });
             auto gr_xy = finance::grangerCausalityTest(rets_j, rets_i, granger_max_lag, sym_list[j], sym_list[i]);
             result.granger_results.push_back({
-                sym_list[i], sym_list[j],  // x→y
+                sym_list[i], sym_list[j],
                 gr_xy.f_statistic, gr_xy.p_value, gr_xy.is_significant, gr_xy.optimal_lag
             });
 

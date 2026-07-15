@@ -55,6 +55,19 @@
             class="number-input-small"
           />
         </div>
+
+        <!-- 滚动窗口 -->
+        <div class="rolling-window-selector">
+          <label>滚动窗口:</label>
+          <input
+            v-model.number="state.rollingWindow"
+            type="number"
+            min="0"
+            max="500"
+            class="number-input-small"
+            title="0 = 关闭滚动 EMD 分析"
+          />
+        </div>
       </template>
     </AnalysisControlBar>
 
@@ -80,6 +93,22 @@
           </div>
         </div>
       </section>
+
+      <!-- 滚动能量 + 量价分离（仅当 rolling 字段存在时显示） -->
+      <section v-if="result.rolling" class="section">
+        <h3 class="section-title">滚动能量分析</h3>
+        <div class="chart-grid">
+          <div class="chart-card full">
+            <RollingEnergyChart :result="result" />
+          </div>
+        </div>
+
+        <div v-if="result.lowest_freq" class="chart-grid">
+          <div class="chart-card full">
+            <PriceVolumeDivergenceChart :result="result" />
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- 空状态 -->
@@ -100,6 +129,8 @@ import { useMacroIndicators } from '../shared/composables/useMacroIndicators'
 import AnalysisControlBar from '../shared/AnalysisControlBar.vue'
 import IMF3DChart from './charts/IMF3DChart.vue'
 import IMFEnergyChart from './charts/IMFEnergyChart.vue'
+import RollingEnergyChart from './charts/RollingEnergyChart.vue'
+import PriceVolumeDivergenceChart from './charts/PriceVolumeDivergenceChart.vue'
 
 const { state, result, QUICK_RANGES, removeSymbol, setQuickRange } = useSignalState()
 const { fetchSignal } = useSignalData()
@@ -213,8 +244,9 @@ async function runAnalysis() {
     const field = mode.value === 'macro' ? 'value' : (state.field || 'close')
     const method = state.method
     const numImfs = state.numImfs
+    const rollingWindow = state.rollingWindow
 
-    const result_data = await fetchSignal(symbols, start_date, end_date, field, method, numImfs)
+    const result_data = await fetchSignal(symbols, start_date, end_date, field, method, numImfs, 'none', rollingWindow)
     if (result_data) {
       // 使用 shallowRef，避免深度响应式代理大型数组
       result.value = result_data
@@ -270,6 +302,19 @@ async function runAnalysis() {
 }
 
 .imf-count-selector label {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
+/* 滚动窗口选择器（SignalTab 独有） */
+.rolling-window-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rolling-window-selector label {
   font-size: 12px;
   color: #999;
   white-space: nowrap;

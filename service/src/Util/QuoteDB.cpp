@@ -199,61 +199,71 @@ int QuoteDB::importCsv(const std::string& csv_path,
         return 0;
     }
 
-    // ── 阶段 2：构建批量 INSERT SQL ──
-    // 预留空间：每行约 120 字符
-    std::string sql;
-    sql.reserve(rows.size() * 128 + 512);
+    // ── 阶段 2：分块批量 INSERT（防止大批量导致 ART 索引损坏）──
+    static constexpr size_t CHUNK_SIZE = 500;
 
-    if (is_hfq) {
-        sql += fmt::format(
-            "INSERT INTO {} (symbol, datetime, adj_open, adj_close, adj_high, adj_low, volume, turnover, ext) VALUES ",
-            table);
-    } else {
-        sql += fmt::format(
-            "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) VALUES ",
-            table);
-    }
+    auto buildUpsertClause = [&](bool hfq) -> std::string {
+        if (hfq) {
+            return " ON CONFLICT(symbol, datetime) DO UPDATE SET "
+                   "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
+                   "adj_high=excluded.adj_high, adj_low=excluded.adj_low, "
+                   "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
+        } else {
+            return " ON CONFLICT(symbol, datetime) DO UPDATE SET "
+                   "open=excluded.open, close=excluded.close, high=excluded.high, "
+                   "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
+        }
+    };
 
-    for (size_t i = 0; i < rows.size(); ++i) {
-        const auto& r = rows[i];
-        if (i > 0) sql += ", ";
-        sql += fmt::format("({},'{}',{:.4f},{:.4f},{:.4f},{:.4f},{},{:.2f},{})",
-                           sym_encoded, r.datetime,
-                           r.open, r.close, r.high, r.low,
-                           r.volume, r.turnover, static_cast<int>(r.ext));
-    }
+    std::string upsert_clause = buildUpsertClause(is_hfq);
+    int total_inserted = 0;
 
-    // ON CONFLICT upsert
-    if (is_hfq) {
-        sql += " ON CONFLICT(symbol, datetime) DO UPDATE SET "
-               "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
-               "adj_high=excluded.adj_high, adj_low=excluded.adj_low, "
-               "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
-    } else {
-        sql += " ON CONFLICT(symbol, datetime) DO UPDATE SET "
-               "open=excluded.open, close=excluded.close, high=excluded.high, "
-               "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
-    }
-
-    // ── 阶段 3：单次执行 ──
     exec("BEGIN TRANSACTION");
-    duckdb_result result;
-    duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
-    if (state != DuckDBSuccess) {
-        const char* err = duckdb_result_error(&result);
-        SPDLOG_ERROR("[QuoteDB] Batch insert failed for {} ({}): {}",
-                     symbol_str, table, err ? err : "unknown");
+
+    for (size_t chunk_start = 0; chunk_start < rows.size(); chunk_start += CHUNK_SIZE) {
+        size_t chunk_end = std::min(chunk_start + CHUNK_SIZE, rows.size());
+        std::string sql;
+        sql.reserve((chunk_end - chunk_start) * 128 + 512);
+
+        if (is_hfq) {
+            sql += fmt::format(
+                "INSERT INTO {} (symbol, datetime, adj_open, adj_close, adj_high, adj_low, volume, turnover, ext) VALUES ",
+                table);
+        } else {
+            sql += fmt::format(
+                "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) VALUES ",
+                table);
+        }
+
+        for (size_t i = chunk_start; i < chunk_end; ++i) {
+            const auto& r = rows[i];
+            if (i > chunk_start) sql += ", ";
+            sql += fmt::format("({},'{}',{:.4f},{:.4f},{:.4f},{:.4f},{},{:.2f},{})",
+                               sym_encoded, r.datetime,
+                               r.open, r.close, r.high, r.low,
+                               r.volume, r.turnover, static_cast<int>(r.ext));
+        }
+        sql += upsert_clause;
+
+        duckdb_result result;
+        duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
+        if (state != DuckDBSuccess) {
+            const char* err = duckdb_result_error(&result);
+            SPDLOG_ERROR("[QuoteDB] Batch insert failed for {} ({}): {}",
+                         symbol_str, table, err ? err : "unknown");
+            duckdb_destroy_result(&result);
+            exec("ROLLBACK");
+            return -1;
+        }
         duckdb_destroy_result(&result);
-        exec("ROLLBACK");
-        return -1;
+        total_inserted += static_cast<int>(chunk_end - chunk_start);
     }
-    duckdb_destroy_result(&result);
+
     exec("COMMIT");
 
-    int count = static_cast<int>(rows.size());
     SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {} (adj={})",
-                count, table, symbol_str, is_hfq ? "HFQ" : "None");
-    return count;
+                total_inserted, table, symbol_str, is_hfq ? "HFQ" : "None");
+    return total_inserted;
 }
 
 // ═══════════════════════════════════════════════════════════
