@@ -43,9 +43,7 @@ struct VolatilitySingleResult {
     std::vector<double> returns;
     std::map<int, std::vector<double>> rolling_vol;  // window -> values
     std::vector<double> upper_2sigma;
-    std::vector<double> upper_1sigma;
     std::vector<double> mean_price;
-    std::vector<double> lower_1sigma;
     std::vector<double> lower_2sigma;
     double annual_volatility = 0;
     double max_drawdown = 0;

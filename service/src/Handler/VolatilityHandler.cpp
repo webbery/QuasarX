@@ -220,9 +220,7 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
     for (size_t i = 0; i < prices.size(); ++i) {
         if (i < offset) {
             result.mean_price.push_back(prices[i]);
-            result.upper_1sigma.push_back(prices[i]);
             result.upper_2sigma.push_back(prices[i]);
-            result.lower_1sigma.push_back(prices[i]);
             result.lower_2sigma.push_back(prices[i]);
             continue;
         }
@@ -239,9 +237,7 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
         double s = std::sqrt(var / (band_window - 1));
 
         result.mean_price.push_back(m);
-        result.upper_1sigma.push_back(m + s);
         result.upper_2sigma.push_back(m + 2 * s);
-        result.lower_1sigma.push_back(m - s);
         result.lower_2sigma.push_back(m - 2 * s);
     }
     
@@ -701,9 +697,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             item["rolling_vol"] = rolling;
 
             item["upper_2sigma"] = sr.upper_2sigma;
-            item["upper_1sigma"] = sr.upper_1sigma;
             item["mean_price"] = sr.mean_price;
-            item["lower_1sigma"] = sr.lower_1sigma;
             item["lower_2sigma"] = sr.lower_2sigma;
 
             item["annual_volatility"] = sr.annual_volatility;

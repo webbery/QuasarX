@@ -57,12 +57,10 @@ function buildOption() {
         interval: Math.max(0, Math.floor(minLen / 10) - 1),
         rotate: 30,
         formatter: (val: string) => {
-          // 如果是日期字符串，只显示 MM-DD 格式
           if (typeof val === 'string' && val.includes('-')) {
-            const parts = val.split('-')
-            if (parts.length === 3) {
-              return `${parts[1]}-${parts[2]}`
-            }
+            const datePart = val.split(' ')[0]
+            const parts = datePart.split('-')
+            if (parts.length === 3) return `${parts[1]}-${parts[2]}`
           }
           return val
         }

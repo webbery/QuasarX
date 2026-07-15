@@ -3169,21 +3169,11 @@ components:
           items:
             type: number
           description: 波动率包络 ±2σ 上界
-        upper_1sigma:
-          type: array
-          items:
-            type: number
-          description: 波动率包络 ±1σ 上界
         mean_price:
           type: array
           items:
             type: number
           description: 滚动均值价格
-        lower_1sigma:
-          type: array
-          items:
-            type: number
-          description: 波动率包络 ±1σ 下界
         lower_2sigma:
           type: array
           items:

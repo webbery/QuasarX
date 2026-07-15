@@ -47,9 +47,20 @@ QuoteDB& QuoteDB::instance() {
 }
 
 QuoteDB::~QuoteDB() {
+    shutdown();
+}
+
+void QuoteDB::shutdown() {
     std::lock_guard<std::mutex> lock(mtx_);
-    initialized_ = false;  // 阻止析构后新线程再调用
-    if (conn_) duckdb_disconnect(&conn_);
+    if (!initialized_) return;
+    initialized_ = false;
+    if (conn_) {
+        // CHECKPOINT 强制 WAL 落盘，确保数据一致性
+        duckdb_result result;
+        duckdb_query(conn_, "CHECKPOINT", &result);
+        duckdb_destroy_result(&result);
+        duckdb_disconnect(&conn_);
+    }
     if (db_) duckdb_close(&db_);
 }
 

@@ -22,6 +22,8 @@
 #include "server.h"
 #include "Util/string_algorithm.h"
 #include "Util/DuckDBLogger.h"
+#include "Util/QuoteDB.h"
+#include "Util/FinanceDB.h"
 #ifdef WIN32
 #define popen _popen
 #define pclose _pclose
@@ -49,15 +51,8 @@ LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
         fprintf(stderr, "[CRASH HANDLER] Failed to flush logs (exception caught).\n");
     }
 
-    try {
-        // 刷新 DuckDB 数据到磁盘
-        if (DuckDBLogger::instance().is_initialized()) {
-            DuckDBLogger::instance().shutdown();
-            fprintf(stderr, "[CRASH HANDLER] DuckDB data flushed and closed.\n");
-        }
-    } catch (...) {
-        fprintf(stderr, "[CRASH HANDLER] Failed to flush DuckDB data (exception caught).\n");
-    }
+    // 注意：崩溃场景不调用 DuckDB shutdown()（涉及 mutex/join，非 async-signal-safe）
+    // 依赖 DuckDB WAL 自动恢复未完成的事务
 
     // 初始化 DbgHelp（只需一次）
     static bool initialized = false;
@@ -281,10 +276,10 @@ void print_stacktrace(int signo) {
     write(STDERR_FILENO, signal_name, strlen(signal_name));
     write(STDERR_FILENO, ") ===\n", 6);
 
-    // 【关键】在崩溃时尝试刷新日志和 DuckDB 数据到磁盘
-    // 注意：这里只能调用 async-signal-safe 函数，但 spdlog 和 DuckDB 的刷新函数
-    // 并不是严格 async-signal-safe 的。我们在崩溃场景下冒险调用，因为这是最后的机会。
-    const char flush_msg[] = "\n[CRASH HANDLER] Attempting to flush logs and DuckDB data...\n";
+    // 【关键】在崩溃时尝试刷新日志到磁盘
+    // 注意：崩溃场景不调用 DuckDB shutdown()（涉及 mutex/join，非 async-signal-safe）
+    // 依赖 DuckDB WAL 自动恢复未完成的事务
+    const char flush_msg[] = "\n[CRASH HANDLER] Attempting to flush logs...\n";
     write(STDERR_FILENO, flush_msg, sizeof(flush_msg) - 1);
 
     try {
@@ -298,19 +293,6 @@ void print_stacktrace(int signo) {
     } catch (...) {
         const char log_err[] = "[CRASH HANDLER] Failed to flush logs (exception caught).\n";
         write(STDERR_FILENO, log_err, sizeof(log_err) - 1);
-    }
-
-    try {
-        // 刷新 DuckDB 数据到磁盘
-        // 注意：shutdown() 会停止 worker 线程并断开连接，这会强制 WAL checkpoint
-        if (DuckDBLogger::instance().is_initialized()) {
-            DuckDBLogger::instance().shutdown();
-            const char duckdb_flushed[] = "[CRASH HANDLER] DuckDB data flushed and closed.\n";
-            write(STDERR_FILENO, duckdb_flushed, sizeof(duckdb_flushed) - 1);
-        }
-    } catch (...) {
-        const char duckdb_err[] = "[CRASH HANDLER] Failed to flush DuckDB data (exception caught).\n";
-        write(STDERR_FILENO, duckdb_err, sizeof(duckdb_err) - 1);
     }
 
     // 捕获堆栈（增加到 64 帧）
@@ -397,22 +379,48 @@ void print_stacktrace(int signo) {
 }
 #endif
 
+// 优雅关闭：CHECKPOINT 所有 DuckDB 实例后退出
+// 用于 SIGTERM (systemctl stop) / SIGINT (Ctrl+C)
+void graceful_shutdown(int signo) {
+    // 1. CHECKPOINT + 关闭所有 DuckDB 实例
+    try { DuckDBLogger::instance().shutdown(); } catch (...) {}
+    try { QuoteDB::instance().shutdown(); } catch (...) {}
+    try { FinanceDB::instance().shutdown(); } catch (...) {}
+
+    // 2. 刷新日志
+    try { spdlog::default_logger_raw()->flush(); } catch (...) {}
+    spdlog::shutdown();
+
+    _exit(0);
+}
+
 void install_signal_handler() {
 #ifdef WIN32
   SetUnhandledExceptionFilter(unhandled_exception_filter);
+
+  // Windows: Ctrl+C 通过 SetConsoleCtrlHandler 处理
+  // SIGTERM 由 systemctl/服务管理器发送，走正常退出流程
 #else
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  action.sa_handler = print_stacktrace;
-  sigemptyset(&action.sa_mask);
-  
-  // 注册所有关键崩溃信号
-  sigaction(SIGSEGV, &action, NULL);   // 段错误（非法内存访问）
-  sigaction(SIGFPE, &action, NULL);    // 浮点异常（除零等）
-  sigaction(SIGABRT, &action, NULL);   // abort() 调用（assert 失败、异常终止）
-  sigaction(SIGILL, &action, NULL);    // 非法指令
-  sigaction(SIGBUS, &action, NULL);    // 总线错误
-  sigaction(SIGTERM, &action, NULL);   // 终止信号
+  // 崩溃信号 → 打印堆栈后 _exit(1)
+  struct sigaction crash_action;
+  memset(&crash_action, 0, sizeof(crash_action));
+  crash_action.sa_handler = print_stacktrace;
+  sigemptyset(&crash_action.sa_mask);
+
+  sigaction(SIGSEGV, &crash_action, NULL);   // 段错误
+  sigaction(SIGFPE,  &crash_action, NULL);   // 浮点异常
+  sigaction(SIGABRT, &crash_action, NULL);   // abort()
+  sigaction(SIGILL,  &crash_action, NULL);   // 非法指令
+  sigaction(SIGBUS,  &crash_action, NULL);   // 总线错误
+
+  // 终止信号 → 优雅关闭（CHECKPOINT 所有 DB 后退出）
+  struct sigaction term_action;
+  memset(&term_action, 0, sizeof(term_action));
+  term_action.sa_handler = graceful_shutdown;
+  sigemptyset(&term_action.sa_mask);
+
+  sigaction(SIGTERM, &term_action, NULL);    // systemctl stop / kill
+  sigaction(SIGINT,  &term_action, NULL);    // Ctrl+C
 #endif
 }
 
@@ -428,11 +436,12 @@ void on_terminate() {
     write(STDERR_FILENO, msg, sizeof(msg) - 1);
 #endif
 
-    // 【关键】在 terminate 时尝试刷新日志和 DuckDB 数据到磁盘
+    // 【关键】在 terminate 时尝试刷新日志到磁盘
+    // 注意：崩溃场景不调用 DuckDB shutdown()，依赖 WAL 自动恢复
 #ifdef WIN32
-    fprintf(stderr, "\n[TERMINATE HANDLER] Attempting to flush logs and DuckDB data...\n");
+    fprintf(stderr, "\n[TERMINATE HANDLER] Attempting to flush logs...\n");
 #else
-    const char flush_msg[] = "\n[TERMINATE HANDLER] Attempting to flush logs and DuckDB data...\n";
+    const char flush_msg[] = "\n[TERMINATE HANDLER] Attempting to flush logs...\n";
     write(STDERR_FILENO, flush_msg, sizeof(flush_msg) - 1);
 #endif
 
@@ -452,26 +461,6 @@ void on_terminate() {
 #else
         const char log_err[] = "[TERMINATE HANDLER] Failed to flush logs (exception caught).\n";
         write(STDERR_FILENO, log_err, sizeof(log_err) - 1);
-#endif
-    }
-
-    try {
-        // 刷新 DuckDB 数据到磁盘
-        if (DuckDBLogger::instance().is_initialized()) {
-            DuckDBLogger::instance().shutdown();
-#ifdef WIN32
-            fprintf(stderr, "[TERMINATE HANDLER] DuckDB data flushed and closed.\n");
-#else
-            const char duckdb_flushed[] = "[TERMINATE HANDLER] DuckDB data flushed and closed.\n";
-            write(STDERR_FILENO, duckdb_flushed, sizeof(duckdb_flushed) - 1);
-#endif
-        }
-    } catch (...) {
-#ifdef WIN32
-        fprintf(stderr, "[TERMINATE HANDLER] Failed to flush DuckDB data (exception caught).\n");
-#else
-        const char duckdb_err[] = "[TERMINATE HANDLER] Failed to flush DuckDB data (exception caught).\n";
-        write(STDERR_FILENO, duckdb_err, sizeof(duckdb_err) - 1);
 #endif
     }
 
@@ -572,7 +561,10 @@ int main(int argc, char* argv[])
     
     server.Run();
 
-    // 关闭 DuckDB 日志器
+    // 优雅关闭所有 DuckDB 实例（CHECKPOINT + disconnect + close）
+    SPDLOG_INFO("[Main] Shutting down...");
+    QuoteDB::instance().shutdown();
+    FinanceDB::instance().shutdown();
     DuckDBLogger::instance().shutdown();
     spdlog::shutdown();
 

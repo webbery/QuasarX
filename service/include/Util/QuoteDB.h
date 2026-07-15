@@ -22,6 +22,7 @@ public:
 
     bool init(const std::string& db_dir);
     bool isInitialized() const { return initialized_; }
+    void shutdown();
 
     // CSV 导入到指定表，返回导入行数
     int importCsv(const std::string& csv_path,

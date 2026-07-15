@@ -22,8 +22,6 @@ function buildOption() {
 
   const allPrices = props.data.prices
   const allUpper2 = props.data.upper_2sigma
-  const allUpper1 = props.data.upper_1sigma
-  const allLower1 = props.data.lower_1sigma
   const allLower2 = props.data.lower_2sigma
   const allMean = props.data.mean_price
 
@@ -35,8 +33,6 @@ function buildOption() {
 
   const prices = allPrices.slice(startIndex)
   const upper2 = allUpper2.slice(startIndex)
-  const upper1 = allUpper1.slice(startIndex)
-  const lower1 = allLower1.slice(startIndex)
   const lower2 = allLower2.slice(startIndex)
   const mean = allMean.slice(startIndex)
 
@@ -86,28 +82,6 @@ function buildOption() {
     }
   })
   series.push({
-    name: '±1σ',
-    type: 'line',
-    data: upper1,
-    lineStyle: { color: '#ff9800', width: 1, type: 'dotted' },
-    showSymbol: false,
-    smooth: true
-  })
-  series.push({
-    name: '±1σ',
-    type: 'line',
-    data: lower1,
-    lineStyle: { color: '#ff9800', width: 1, type: 'dotted' },
-    showSymbol: false,
-    smooth: true,
-    areaStyle: {
-      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-        { offset: 0, color: 'rgba(255, 152, 0, 0.1)' },
-        { offset: 1, color: 'rgba(255, 152, 0, 0.1)' }
-      ])
-    }
-  })
-  series.push({
     name: '价格',
     type: 'line',
     data: prices,
@@ -125,12 +99,9 @@ function buildOption() {
     // 预测价格序列（基于最后价格推导）
     const fcPrices = forecast.forecast_values.map(v => lastPrice * (1 + v))
     
-    // 1sigma 和 2sigma 是收益率级别的标准差，需要加到预测价格上
-    // forecast_upper_1sigma = base + fc.values[i] + s，其中 s 是标准差（收益率级别）
+    // 2sigma 是收益率级别的标准差，需要加到预测价格上
     // 正确做法：预测价格 + lastPrice * std（将收益率标准差转换为价格标准差）
     const fcStdPerStep = forecast.forecast_std || []
-    const fcUpper1 = fcPrices.map((p, i) => p + lastPrice * (fcStdPerStep[i] || 0))
-    const fcLower1 = fcPrices.map((p, i) => p - lastPrice * (fcStdPerStep[i] || 0))
     const fcUpper2 = fcPrices.map((p, i) => p + lastPrice * 2 * (fcStdPerStep[i] || 0))
     const fcLower2 = fcPrices.map((p, i) => p - lastPrice * 2 * (fcStdPerStep[i] || 0))
 
@@ -176,25 +147,6 @@ function buildOption() {
       }
     })
 
-    // 预测 ±1σ
-    series.push({
-      name: '预测±1σ',
-      type: 'line',
-      data: [...upper1, ...fcUpper1],
-      lineStyle: { color: '#ff9800', width: 1, type: 'dotted' },
-      showSymbol: false
-    })
-    series.push({
-      name: '预测±1σ',
-      type: 'line',
-      data: [...lower1, ...fcLower1],
-      lineStyle: { color: '#ff9800', width: 1, type: 'dotted' },
-      showSymbol: false,
-      areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, gradStops(255, 152, 0, 0.12))
-      }
-    })
-
     // 预测价格线
     series.push({
       name: '预测价格',
@@ -231,7 +183,7 @@ function buildOption() {
           return result
         }
       },
-      legend: { data: ['价格', '±1σ', '±2σ', '预测价格', '预测±1σ', '预测±2σ'], top: 25, textStyle: { color: '#999' } },
+      legend: { data: ['价格', '±2σ', '预测价格', '预测±2σ'], top: 25, textStyle: { color: '#999' } },
       grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
       dataZoom: [
         {
@@ -270,7 +222,8 @@ function buildOption() {
           rotate: 30,
           formatter: (val: string) => {
             if (typeof val === 'string' && val.includes('-') && !val.startsWith('预测')) {
-              const parts = val.split('-')
+              const datePart = val.split(' ')[0]
+              const parts = datePart.split('-')
               if (parts.length === 3) return `${parts[1]}-${parts[2]}`
             }
             return val
@@ -304,7 +257,7 @@ function buildOption() {
         return result
       }
     },
-    legend: { data: ['价格', '±1σ', '±2σ'], top: 25, textStyle: { color: '#999' } },
+    legend: { data: ['价格', '±2σ'], top: 25, textStyle: { color: '#999' } },
     grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
     dataZoom: [
       {
@@ -343,7 +296,8 @@ function buildOption() {
         rotate: 30,
         formatter: (val: string) => {
           if (typeof val === 'string' && val.includes('-')) {
-            const parts = val.split('-')
+            const datePart = val.split(' ')[0]
+            const parts = datePart.split('-')
             if (parts.length === 3) return `${parts[1]}-${parts[2]}`
           }
           return val

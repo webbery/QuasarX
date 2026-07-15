@@ -127,9 +127,19 @@ FinanceDB& FinanceDB::instance() {
 }
 
 FinanceDB::~FinanceDB() {
+    shutdown();
+}
+
+void FinanceDB::shutdown() {
     std::lock_guard<std::mutex> lock(mtx_);
+    if (!initialized_) return;
     initialized_ = false;
-    if (conn_) duckdb_disconnect(&conn_);
+    if (conn_) {
+        duckdb_result result;
+        duckdb_query(conn_, "CHECKPOINT", &result);
+        duckdb_destroy_result(&result);
+        duckdb_disconnect(&conn_);
+    }
     if (db_) duckdb_close(&db_);
 }
 

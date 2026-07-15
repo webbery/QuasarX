@@ -45,9 +45,7 @@ export interface VolatilitySingleResult {
   abs_returns: number[]
   rolling_vol: Record<string, number[]>
   upper_2sigma: number[]
-  upper_1sigma: number[]
   mean_price: number[]
-  lower_1sigma: number[]
   lower_2sigma: number[]
   annual_volatility: number
   max_drawdown: number
