@@ -27,6 +27,12 @@
             >
                 <i class="fas fa-history"></i> 历史复盘
             </button>
+            <button
+                :class="{ active: activeTab === 'signals' }"
+                @click="activeTab = 'signals'; viewingLogs = false"
+            >
+                <i class="fas fa-satellite-dish"></i> 信号监控
+            </button>
         </div>
 
         <!-- 实时监控面板 -->
@@ -147,6 +153,11 @@
                 :strategy-id="selectedStrategy"
             />
         </div>
+
+        <!-- 信号监控面板 -->
+        <div v-if="activeTab === 'signals'" class="tab-content">
+            <SignalMonitor />
+        </div>
     </div>
 </template>
 
@@ -155,6 +166,7 @@ import { ref, computed, inject, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
+import SignalMonitor from './SignalMonitor.vue'
 import StrategySelectPanel from './StrategySelectPanel.vue'
 
 const activeTab = ref('realtime')
