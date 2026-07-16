@@ -45,6 +45,8 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
             _sizing_method = SizingMethod::Kelly;
         } else if (method == "volatility_target") {
             _sizing_method = SizingMethod::VolatilityTarget;
+        } else if (method == "strength") {
+            _sizing_method = SizingMethod::Strength;
         } else {
             _sizing_method = SizingMethod::Equal;
         }
@@ -283,6 +285,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
             case SizingMethod::Equal: meta["sizing_method"] = "equal"; break;
             case SizingMethod::Kelly: meta["sizing_method"] = "kelly"; break;
             case SizingMethod::VolatilityTarget: meta["sizing_method"] = "volatility_target"; break;
+            case SizingMethod::Strength: meta["sizing_method"] = "strength"; break;
         }
     );
 
@@ -306,6 +309,14 @@ ExecutionPlan PortfolioNode::generatePlan(
 
     size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
+
+    // Strength 模式：按归一化权重分配资金
+    auto getSymbolCapital = [&](symbol_t symbol) -> double {
+        if (!_weights.empty() && _weights.count(symbol)) {
+            return targetCapital * _weights.at(symbol);
+        }
+        return perSymbolCapital;
+    };
 
     // 优先从 DataContext 获取行情（TickFlow/实盘模式下 quote 通过 nng 推入 context）
     // fallback: 从 Exchange 获取（回测模式下 exchange 持有历史数据）
@@ -381,7 +392,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                 continue;
             } else {
                 // 无仓，BUY = 开多
-                int quantity = static_cast<int>(perSymbolCapital / price / 100) * 100;
+                int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
                 if (quantity < 100) {
                     if (_server->GetRunningMode() != RuningType::Backtest) {
                         STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
@@ -421,7 +432,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                 plan._items.push_back(item);
             } else if (currentQty == 0 && _allowShort) {
                 // 做空（开仓）
-                int quantity = static_cast<int>(perSymbolCapital / price / 100) * 100;
+                int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
                 if (quantity >= 100) {
                     item._quantity = quantity;
                     item._flag = 0; // 开仓
@@ -450,6 +461,14 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
 
     size_t count = decisions.size();
     double perSymbolCapital = targetCapital / count;
+
+    // Strength 模式：按归一化权重分配资金
+    auto getSymbolCapital = [&](symbol_t symbol) -> double {
+        if (!_weights.empty() && _weights.count(symbol)) {
+            return targetCapital * _weights.at(symbol);
+        }
+        return perSymbolCapital;
+    };
 
     // 从 DataContext 获取策略初始化时设置的 Exchange 类型，用于获取未复权价格
     auto* exchangeMgr = _server->GetExchangeManager();
@@ -515,7 +534,7 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
                 continue;
             } else {
                 // 无仓，BUY = 开多
-                int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
+                int64_t quantity = static_cast<int64_t>(getSymbolCapital(symbol) / price / 100) * 100;
                 if (quantity < 100) {
                     WARN("Quantity {} too small for symbol {}", quantity, symbolName);
                     continue;
@@ -546,7 +565,7 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
                 INFO("[PortfolioNode] -> SELL {} added to plan: qty={}, price={:.2f}", symName, currentQty, price);
             } else if (currentQty == 0 && _allowShort) {
                 // 做空（开仓）
-                int64_t quantity = static_cast<int64_t>(perSymbolCapital / price / 100) * 100;
+                int64_t quantity = static_cast<int64_t>(getSymbolCapital(symbol) / price / 100) * 100;
                 if (quantity >= 100) {
                     item._quantity = quantity;
                     item._flag = 0; // 开仓
@@ -664,6 +683,36 @@ void PortfolioNode::applySizingWeights(DataContext& context, Map<symbol_t, Trade
                 weights[symbol] = 1.0 / buySymbols.size();
             }
         }
+    } else if (_sizing_method == SizingMethod::Strength) {
+        // 信号强度加权: 读取 {symbol}.strength → 归一化
+        // strength 值由上游节点写入（XGBoost/Signal/Formula 等均可）
+        // 只取正值（负值表示做空信号，不在 BUY 列表中）
+        double total_strength = 0.0;
+        for (const auto& symbol : buySymbols) {
+            String key = get_symbol(symbol) + ".strength";
+            double strength = 0.0;
+            if (context.exist(key)) {
+                auto s_var = context.get<Vector<double>>(key);
+                if (!s_var.empty()) {
+                    strength = s_var.back();
+                }
+            }
+            // 负值或零值给一个最小权重，避免完全排除
+            strength = std::max(strength, 1e-6);
+            weights[symbol] = strength;
+            total_strength += strength;
+        }
+        // 归一化
+        if (total_strength > 0) {
+            for (auto& [symbol, w] : weights) {
+                w /= total_strength;
+            }
+        } else {
+            // 全部为零时回退等权
+            for (const auto& symbol : buySymbols) {
+                weights[symbol] = 1.0 / buySymbols.size();
+            }
+        }
     }
 
     if (weights.empty()) {
@@ -685,13 +734,12 @@ void PortfolioNode::applySizingWeights(DataContext& context, Map<symbol_t, Trade
         }
     }
 
-    // 将权重信息写入 context，供 generatePlan 参考
-    // TODO: 后续可在 generatePlan 中直接使用 weights 调整 quantity
-    (void)weights; // 当前仅计算，实际仓位调整逻辑待后续完善
+    // 存入成员变量，供 generatePlan 使用
+    _weights = std::move(weights);
 }
 
 const nlohmann::json PortfolioNode::getParams() {
-    return {"positionRatio", "pool", "allowShort", "sizing_method", "max_single_pct", "max_total_pct", "volatility_target"};
+    return {"positionRatio", "pool", "allowShort", "sizing_method", "max_single_pct", "max_total_pct", "volatility_target", "strength"};
 }
 
 Map<String, ArgType> PortfolioNode::out_elements() {

@@ -25,6 +25,8 @@ import { backtestTool } from "./backtest"
 import { mutationTool } from "./mutation"
 import { calculatorTool } from "./calculator"
 import { skillTool } from "./skill"
+import { dataTool } from "./data"
+import { analysisTool } from "./analysis"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -39,6 +41,8 @@ const builtinTools: StructuredToolInterface[] = [
   mutationTool,
   calculatorTool,
   skillTool,
+  dataTool,
+  analysisTool,
 ]
 
 // === 插件 Tool 加载 ===

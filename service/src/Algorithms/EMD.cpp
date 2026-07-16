@@ -1,4 +1,5 @@
 #include "Algorithms/EMD.h"
+#include "Algorithms/EMD_SIMD.h"
 #include "std_header.h"
 #include <cmath>
 #include <numeric>
@@ -19,19 +20,21 @@ Vector<double> EMD::cubicSplineEnvelope(const Vector<double>& data,
         return envelope;
     }
 
-    // 简化实现：线性插值（完整版本可用 boost::math::interpolators::cubic_b_spline）
-    for (size_t i = 0; i < extremaIdx.size() - 1; ++i) {
-        int i0 = extremaIdx[i];
-        int i1 = extremaIdx[i + 1];
-        double v0 = data[i0];
-        double v1 = data[i1];
-        for (int j = i0; j <= i1; ++j) {
-            double t = (double)(j - i0) / (i1 - i0);
-            envelope[j] = v0 + t * (v1 - v0);
-        }
+    // 自然三次样条插值（与 pyEMD 一致）
+    // 构造极值点索引和值的数组
+    size_t nPts = extremaIdx.size();
+    Vector<int> xPts(nPts);
+    Vector<double> yPts(nPts);
+    for (size_t i = 0; i < nPts; ++i) {
+        xPts[i] = extremaIdx[i];
+        yPts[i] = data[extremaIdx[i]];
     }
 
-    // 外推端点
+    // 调用 EMD_SIMD.h 中的自然三次样条
+    natural_cubic_spline(xPts.data(), yPts.data(), nPts,
+                         envelope.data(), 0, size - 1);
+
+    // 端点外推：常数外推（与 pyEMD 默认行为一致）
     for (int j = 0; j < extremaIdx[0]; ++j) {
         envelope[j] = envelope[extremaIdx[0]];
     }
