@@ -293,3 +293,104 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
     
     return (value - mean) / std_dev;
 }
+
+// ── VPCorr 实现 ───────────────────────────────────────────────
+
+VPCorr::VPCorr(int32_t window)
+    : _window(window), _count(0), _nextIndex(0),
+      _prevClose(0), _prevVolume(0), _hasPrev(false)
+{
+    _retBuf.resize(window, 0.0);
+    _volBuf.resize(window, 0.0);
+}
+
+context_t VPCorr::operator()(const Map<String, context_t>& args) {
+    // 需要两个输入: price 和 volume
+    if (args.size() < 2) {
+        return std::nan("nan");
+    }
+
+    // 提取 price 和 volume
+    double close = 0, volume = 0;
+    bool hasPrice = false, hasVolume = false;
+
+    for (const auto& [key, val] : args) {
+        std::visit([&](const auto& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, double>) {
+                if (key.find("price") != String::npos || key.find("close") != String::npos) {
+                    close = v; hasPrice = true;
+                } else if (key.find("volume") != String::npos) {
+                    volume = v; hasVolume = true;
+                }
+            } else if constexpr (std::is_same_v<T, Vector<double>>) {
+                if (key.find("price") != String::npos || key.find("close") != String::npos) {
+                    close = v.back(); hasPrice = true;
+                } else if (key.find("volume") != String::npos) {
+                    volume = v.back(); hasVolume = true;
+                }
+            }
+        }, val);
+    }
+
+    if (!hasPrice || !hasVolume) {
+        return std::nan("nan");
+    }
+
+    // 计算对数收益率和成交量变化率
+    double ret = 0, volChg = 0;
+    if (_hasPrev && _prevClose > 0 && _prevVolume > 0) {
+        ret = std::log(close / _prevClose);
+        volChg = volume / _prevVolume - 1.0;
+    }
+    _prevClose = close;
+    _prevVolume = volume;
+    _hasPrev = true;
+
+    // 更新环形缓冲
+    if (_count < static_cast<size_t>(_window)) {
+        _retBuf[_count] = ret;
+        _volBuf[_count] = volChg;
+        ++_count;
+    } else {
+        _retBuf[_nextIndex] = ret;
+        _volBuf[_nextIndex] = volChg;
+        _nextIndex = (_nextIndex + 1) % _window;
+    }
+
+    // 数据不足窗口时返回 NaN
+    if (_count < static_cast<size_t>(_window)) {
+        return std::nan("nan");
+    }
+
+    // 计算滚动相关系数
+    double sumR = 0, sumV = 0, sumRR = 0, sumVV = 0, sumRV = 0;
+    size_t n = _count;
+    for (size_t i = 0; i < n; ++i) {
+        double r = _retBuf[i];
+        double v = _volBuf[i];
+        sumR += r;
+        sumV += v;
+        sumRR += r * r;
+        sumVV += v * v;
+        sumRV += r * v;
+    }
+
+    double meanR = sumR / n;
+    double meanV = sumV / n;
+    double varR = sumRR / n - meanR * meanR;
+    double varV = sumVV / n - meanV * meanV;
+    double covRV = sumRV / n - meanR * meanV;
+
+    double denom = std::sqrt(varR * varV);
+    if (denom < 1e-12) {
+        return 0.0;
+    }
+
+    double corr = covRV / denom;
+    // 截断到 [-1, 1]
+    if (corr < -1.0) corr = -1.0;
+    if (corr > 1.0) corr = 1.0;
+
+    return corr;
+}

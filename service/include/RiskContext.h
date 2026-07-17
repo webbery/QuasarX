@@ -9,7 +9,11 @@ enum class RiskTriggerType {
     StopLoss,       // 固定百分比止损
     TakeProfit,     // 固定百分比止盈
     TrailingStop,   // 追踪止损（移动止盈）
-    TimeStop        // 时间止损（超时平仓）
+    TimeStop,       // 时间止损（超时平仓）
+    VaRBreach,      // VaR 超限
+    DrawdownLevel1, // 回撤警戒（禁止新开仓）
+    DrawdownLevel2, // 回撤减仓（持仓减半）
+    DrawdownLevel3  // 回撤熔断（全部平仓，策略停机）
 };
 
 /**
@@ -26,11 +30,15 @@ enum class RiskAction {
  */
 inline const char* to_string(RiskTriggerType t) {
     switch (t) {
-        case RiskTriggerType::None:         return "none";
-        case RiskTriggerType::StopLoss:     return "stop_loss";
-        case RiskTriggerType::TakeProfit:   return "take_profit";
-        case RiskTriggerType::TrailingStop: return "trailing_stop";
-        case RiskTriggerType::TimeStop:     return "time_stop";
+        case RiskTriggerType::None:           return "none";
+        case RiskTriggerType::StopLoss:       return "stop_loss";
+        case RiskTriggerType::TakeProfit:     return "take_profit";
+        case RiskTriggerType::TrailingStop:   return "trailing_stop";
+        case RiskTriggerType::TimeStop:       return "time_stop";
+        case RiskTriggerType::VaRBreach:      return "var_breach";
+        case RiskTriggerType::DrawdownLevel1: return "drawdown_level1";
+        case RiskTriggerType::DrawdownLevel2: return "drawdown_level2";
+        case RiskTriggerType::DrawdownLevel3: return "drawdown_level3";
     }
     return "unknown";
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "Util/system.h"
 #include "json.hpp"
+#include <Eigen/Dense>
 #include <mutex>
 #include <functional>
 
@@ -12,46 +13,40 @@ class BrokerSubSystem;
  */
 struct CapitalRiskConfig {
     // 总资金止损线（相对于初始本金的百分比）
-    // 例如：0.85 表示当总资产跌至初始本金的 85% 时触发
     double _totalStopLossPercent = 0.85;
 
     // 单日最大亏损限额（相对于昨日权益的百分比）
-    // 例如：0.03 表示当日亏损超过昨日权益的 3% 时触发
     double _dailyMaxLossPercent = 0.03;
 
-    // 是否启用总资金止损
     bool _enableTotalStopLoss = false;
-
-    // 是否启用单日亏损限额
     bool _enableDailyLossLimit = false;
-
-    // 触及止损后是否自动平仓
     bool _autoClosePosition = false;
 
-    // 初始本金
     double _initialCapital = 0;
-
-    // 昨日权益（用于计算当日盈亏）
     double _lastDayEquity = 0;
 
-    // 风控触发后的状态
     bool _isTotalStopLossTriggered = false;
     bool _isDailyLossTriggered = false;
 
-    // 最后交易日（用于判断是否跨日）
     time_t _lastTradeDate = 0;
-
-    // 人工介入超时时间（秒），0 表示不启用超时
     int _manualInterventionTimeoutSec = 300;
-
-    // 超时后是否自动平仓
     bool _timeoutAutoClose = true;
-
-    // 报警后等待人工介入的开始时间
     time_t _alertTime = 0;
-
-    // 是否已发送报警
     bool _hasAlerted = false;
+
+    // ── VaR 配置 ──
+    bool _enableVaRLimit = false;
+    double _varLimit = 0.02;            // VaR 上限（占总资金比例）
+    double _varConfidence = 0.95;       // VaR 置信度
+    int _varLookback = 60;              // VaR 回看窗口（天）
+
+    // ── 回撤断路器配置 ──
+    bool _enableDrawdownBreaker = false;
+    double _ddLevel1 = 0.05;            // 警戒线（回撤 > 此值禁止新开仓）
+    double _ddLevel2 = 0.10;            // 减仓线（回撤 > 此值持仓减半）
+    double _ddLevel3 = 0.15;            // 熔断线（回撤 > 此值全部平仓+停机）
+    bool _ddDynamicThresholds = false;  // 是否使用 Bootstrap 动态阈值
+    int _ddBootstrapSamples = 1000;     // Bootstrap 重采样次数
 };
 
 /**
@@ -178,6 +173,85 @@ public:
      */
     void FromJson(const nlohmann::json& jsn);
 
+    // ── VaR 计算 ──
+
+    /**
+     * 历史模拟法计算 VaR
+     * @param returns 日收益率序列
+     * @param confidence 置信度 (0.95)
+     * @return VaR 值（正数表示损失）
+     */
+    static double computeHistoricalVaR(
+        const Vector<double>& returns, double confidence);
+
+    /**
+     * 更新 VaR 状态（每个 Bar 结束时调用）
+     * @param dailyReturn 当日收益率
+     * @return VaR 是否超限
+     */
+    bool updateVaR(double dailyReturn);
+
+    /**
+     * 获取当前 VaR 值
+     */
+    double GetCurrentVaR() const { return _currentVaR; }
+
+    /**
+     * VaR 是否超限
+     */
+    bool IsVaRBreached() const { return _varBreached; }
+
+    // ── 回撤断路器 ──
+
+    /**
+     * 更新回撤断路器状态
+     * @param currentEquity 当前权益
+     * @return 断路器级别 (0/1/2/3)
+     */
+    int updateDrawdownBreaker(double currentEquity);
+
+    /**
+     * 获取当前断路器级别
+     */
+    int GetBreakerLevel() const { return _breakerLevel; }
+
+    /**
+     * 获取当前回撤（从峰值计算）
+     */
+    double GetCurrentDrawdownFromPeak() const { return _currentDrawdownFromPeak; }
+
+    /**
+     * 人工解除熔断（Level 3 恢复）
+     */
+    void ResetBreaker();
+
+    /**
+     * 从历史收益率计算动态回撤阈值（Bootstrap）
+     */
+    void computeDynamicDrawdownThresholds(
+        const Vector<double>& returns, int nBootstrap = 1000);
+
+    // ── 风险贡献减仓 ──
+
+    /**
+     * 按风险贡献比例计算减仓后的新权重
+     * @param weights 当前权重 {symbol → weight}
+     * @param covMatrix 协方差矩阵 (Eigen::MatrixXd, n×n)
+     * @param symbols 标的列表（与协方差矩阵行列对应）
+     * @param targetScale 目标缩放比例 (0.7 = 风险降30%)
+     * @return 减仓后的新权重
+     */
+    static Map<symbol_t, double> reduceByRiskContribution(
+        const Map<symbol_t, double>& weights,
+        const Eigen::MatrixXd& covMatrix,
+        const Vector<symbol_t>& symbols,
+        double targetScale);
+
+    /**
+     * 获取风控状态摘要（供 API 返回）
+     */
+    nlohmann::json GetRiskStatus() const;
+
 private:
     /**
      * 发送报警
@@ -216,4 +290,15 @@ private:
     std::atomic<int> _pendingCloseOrders{0};
     std::atomic<int> _successCloseCount{0};
     std::atomic<int> _failedCloseCount{0};
+
+    // ── VaR 状态 ──
+    Vector<double> _dailyReturns;       // 滚动日收益率（VaR 计算用）
+    double _currentVaR = 0;             // 当前 VaR 值
+    bool _varBreached = false;          // VaR 是否超限
+
+    // ── 回撤断路器状态 ──
+    int _breakerLevel = 0;              // 当前断路器级别 (0/1/2/3)
+    double _peakEquity = 0;             // 历史最高权益
+    double _currentDrawdownFromPeak = 0; // 当前回撤（从峰值）
+    bool _breakerTripped = false;       // Level 3 熔断激活（需人工恢复）
 };

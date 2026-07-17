@@ -54,6 +54,57 @@
         </div>
       </div>
 
+      <!-- 风控状态：断路器 + VaR -->
+      <div class="section risk-section" :class="'risk-level-' + riskStatus.breaker_level" v-if="riskStatus">
+        <h3 class="section-title">
+          <i class="fas fa-shield-alt"></i> 风控状态
+          <span class="breaker-badge" :class="'level-' + riskStatus.breaker_level">
+            {{ breakerLabel }}
+          </span>
+        </h3>
+        <div class="risk-grid">
+          <!-- 回撤进度条 -->
+          <div class="risk-item">
+            <span class="label">当前回撤</span>
+            <span class="value" :class="{ negative: riskStatus.current_drawdown > 0 }">
+              -{{ (riskStatus.current_drawdown * 100).toFixed(2) }}%
+            </span>
+            <div class="progress-bar">
+              <div class="progress-fill" :style="{ width: drawdownPct + '%' }"
+                   :class="drawdownColorClass"></div>
+              <div class="threshold-markers">
+                <span class="marker l1" :style="{ left: (riskStatus.thresholds.level1 * 100) + '%' }" title="L1 警戒"></span>
+                <span class="marker l2" :style="{ left: (riskStatus.thresholds.level2 * 100) + '%' }" title="L2 减仓"></span>
+                <span class="marker l3" :style="{ left: (riskStatus.thresholds.level3 * 100) + '%' }" title="L3 熔断"></span>
+              </div>
+            </div>
+            <div class="threshold-labels">
+              <span>L1: {{ (riskStatus.thresholds.level1 * 100).toFixed(1) }}%</span>
+              <span>L2: {{ (riskStatus.thresholds.level2 * 100).toFixed(1) }}%</span>
+              <span>L3: {{ (riskStatus.thresholds.level3 * 100).toFixed(1) }}%</span>
+            </div>
+          </div>
+          <!-- VaR -->
+          <div class="risk-item">
+            <span class="label">VaR ({{ (riskStatus.var_limit * 100).toFixed(0) }}%上限)</span>
+            <span class="value" :class="{ negative: riskStatus.var_breached }">
+              {{ (riskStatus.var_ratio * 100).toFixed(2) }}%
+            </span>
+            <div class="progress-bar">
+              <div class="progress-fill var-fill" :style="{ width: varPct + '%' }"
+                   :class="{ breached: riskStatus.var_breached }"></div>
+            </div>
+          </div>
+          <!-- 解除熔断按钮 -->
+          <div class="risk-item" v-if="riskStatus.breaker_tripped">
+            <span class="label">熔断已触发</span>
+            <button class="btn-reset-breaker" @click="resetBreaker">
+              <i class="fas fa-unlock-alt"></i> 解除熔断
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 当前持仓 -->
       <div class="section">
         <h3 class="section-title">
@@ -201,6 +252,45 @@ const signalLogs = ref<LogEntry[]>([])
 const logKeyword = ref('')
 const logLevel = ref('')
 
+// 风控状态
+interface RiskStatus {
+  breaker_level: number
+  current_drawdown: number
+  peak_equity: number
+  breaker_tripped: boolean
+  var_current: number
+  var_limit: number
+  var_breached: boolean
+  var_ratio: number
+  thresholds: { level1: number; level2: number; level3: number }
+}
+const riskStatus = ref<RiskStatus | null>(null)
+
+const breakerLabel = computed(() => {
+  if (!riskStatus.value) return ''
+  const labels = ['🟢 正常运行', '🟡 警戒 — 禁止新开仓', '🟠 减仓 — 持仓已减半', '🔴 熔断 — 策略已停机']
+  return labels[riskStatus.value.breaker_level] || labels[0]
+})
+
+const drawdownPct = computed(() => {
+  if (!riskStatus.value) return 0
+  return Math.min(riskStatus.value.current_drawdown * 100 / (riskStatus.value.thresholds.level3 * 100) * 100, 100)
+})
+
+const drawdownColorClass = computed(() => {
+  if (!riskStatus.value) return ''
+  const dd = riskStatus.value.current_drawdown
+  if (dd >= riskStatus.value.thresholds.level3) return 'fill-l3'
+  if (dd >= riskStatus.value.thresholds.level2) return 'fill-l2'
+  if (dd >= riskStatus.value.thresholds.level1) return 'fill-l1'
+  return 'fill-ok'
+})
+
+const varPct = computed(() => {
+  if (!riskStatus.value || riskStatus.value.var_limit <= 0) return 0
+  return Math.min(riskStatus.value.var_ratio / riskStatus.value.var_limit * 100, 100)
+})
+
 // 自动刷新
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -259,10 +349,30 @@ async function loadLogs() {
   } catch { signalLogs.value = [] }
 }
 
+async function loadRiskStatus() {
+  try {
+    const res = await axios.get('/v0/risk/status', {
+      params: { strategy: selectedStrategy.value }
+    })
+    riskStatus.value = res.data
+  } catch { riskStatus.value = null }
+}
+
+async function resetBreaker() {
+  try {
+    await axios.post('/v0/risk/reset-breaker', {}, {
+      params: { strategy: selectedStrategy.value }
+    })
+    await loadRiskStatus()
+  } catch (e: any) {
+    console.error('Reset breaker failed:', e)
+  }
+}
+
 async function refreshAll() {
   if (!selectedStrategy.value || loading.value) return
   loading.value = true
-  await Promise.all([loadPositions(), loadTrades(), loadLogs()])
+  await Promise.all([loadPositions(), loadTrades(), loadLogs(), loadRiskStatus()])
   lastRefresh.value = new Date()
   loading.value = false
 }
@@ -493,4 +603,95 @@ onUnmounted(() => {
 .empty-state i { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
 .empty-state p { font-size: 18px; margin: 0 0 8px; color: #94a3b8; }
 .empty-state span { font-size: 13px; }
+
+/* 风控状态区域 */
+.risk-section { transition: border-color 0.3s; }
+.risk-section.risk-level-1 { border-color: rgba(251, 191, 36, 0.5); }
+.risk-section.risk-level-2 { border-color: rgba(251, 146, 60, 0.6); }
+.risk-section.risk-level-3 { border-color: rgba(239, 68, 68, 0.7); animation: pulse-border 2s infinite; }
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(239, 68, 68, 0.7); }
+  50% { border-color: rgba(239, 68, 68, 0.3); }
+}
+
+.breaker-badge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  margin-left: auto;
+}
+.breaker-badge.level-0 { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.breaker-badge.level-1 { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+.breaker-badge.level-2 { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
+.breaker-badge.level-3 { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+.risk-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.risk-item { display: flex; flex-direction: column; gap: 6px; }
+.risk-item .label { font-size: 11px; color: #64748b; }
+.risk-item .value { font-size: 15px; font-weight: 600; color: #e2e8f0; font-family: 'SF Mono', monospace; }
+
+.progress-bar {
+  position: relative;
+  height: 8px;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 4px;
+  overflow: visible;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+.progress-fill.fill-ok { background: #4ade80; }
+.progress-fill.fill-l1 { background: #fbbf24; }
+.progress-fill.fill-l2 { background: #fb923c; }
+.progress-fill.fill-l3 { background: #ef4444; }
+.progress-fill.var-fill { background: #60a5fa; }
+.progress-fill.var-fill.breached { background: #ef4444; }
+
+.threshold-markers {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  pointer-events: none;
+}
+.marker {
+  position: absolute;
+  width: 2px;
+  height: 12px;
+  transform: translateX(-1px);
+}
+.marker.l1 { background: #fbbf24; }
+.marker.l2 { background: #fb923c; }
+.marker.l3 { background: #ef4444; }
+
+.threshold-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #475569;
+}
+
+.btn-reset-breaker {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-reset-breaker:hover {
+  background: rgba(239, 68, 68, 0.35);
+}
 </style>

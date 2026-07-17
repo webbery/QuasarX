@@ -60,6 +60,7 @@
 #include "Handler/IndexHandler.h"
 #include "Handler/BackTestHandler.h"
 #include "Handler/CapacityHandler.h"
+#include "Handler/RiskStatusHandler.h"
 #include "Handler/UserHandler.h"
 #include "Handler/DataHandler.h"
 #include "Handler/FeatureHandler.h"
@@ -144,6 +145,8 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_STRATEGY_NODE   "/strategy/node"
 #define API_BACKTEST        "/backtest"
 #define API_CAPACITY        "/capacity"
+#define API_RISK_STATUS     "/risk/status"
+#define API_RISK_RESET      "/risk/reset-breaker"
 #define API_INDEX           "/index/quote"
 #define API_MONTECARLO      "/predict/montecarlo"
 #define API_FINITE_DIFF     "/predict/finite_diff"
@@ -377,6 +380,8 @@ void Server::Regist() {
 
     REGIST_POST(API_BACKTEST);
     REGIST_POST(API_CAPACITY);
+    REGIST_GET(API_RISK_STATUS);
+    REGIST_POST(API_RISK_RESET);
     REGIST_GET(API_VOLATILITY);
     REGIST_POST(API_CUSUM);
     REGIST_GET(API_SIGNAL);
@@ -1191,6 +1196,8 @@ void Server::InitHandlers() {
     RegistHandler(API_INDEX, IndexHandler);
     RegistHandler(API_BACKTEST, BackTestHandler);
     RegistHandler(API_CAPACITY, CapacityHandler);
+    RegistHandler(API_RISK_STATUS, RiskStatusHandler);
+    RegistHandler(API_RISK_RESET, RiskStatusHandler);
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_TRADE_ORDER, OrderHandler);
     RegistHandler(API_TRADE_HISTORY, HistoryTradeHandler);

@@ -360,6 +360,8 @@ float compute_annualized_return(double total_return, int count) {
 }
 
 Vector<double> simple_daily_return(const Vector<double>& daily_values) {
+    if (daily_values.empty())
+        return {};
     // 计算每日收益率: R_t = (V_t - V_{t-1}) / V_{t-1}
     size_t cnt = (int)daily_values.size() - 1;
     Vector<double> rets(cnt);

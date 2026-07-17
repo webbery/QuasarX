@@ -23,7 +23,7 @@
         />
 
         <!-- 连接点 -->
-        <StrategyNodeHandles :node-type="nodeType" />
+        <StrategyNodeHandles :node-type="nodeType" :params="node.data.params" />
 
         <!-- 参数列表 -->
         <div class="node-content">

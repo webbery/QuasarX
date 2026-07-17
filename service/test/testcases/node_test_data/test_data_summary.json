@@ -72,6 +72,16 @@
       "symbol": "sz.800001",
       "node": "R2(15)"
     },
+    "sine_vpcorr_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "VPCorr(5)"
+    },
+    "sine_vpcorr_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "VPCorr(15)"
+    },
     "sine_formula_add": {
       "dataset": "sine",
       "symbol": "sz.800001",
@@ -171,6 +181,16 @@
       "dataset": "step",
       "symbol": "sz.800002",
       "node": "R2(15)"
+    },
+    "step_vpcorr_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "VPCorr(5)"
+    },
+    "step_vpcorr_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "VPCorr(15)"
     },
     "step_formula_add": {
       "dataset": "step",
@@ -272,6 +292,16 @@
       "symbol": "sz.800003",
       "node": "R2(15)"
     },
+    "reversal_vpcorr_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "VPCorr(5)"
+    },
+    "reversal_vpcorr_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "VPCorr(15)"
+    },
     "reversal_formula_add": {
       "dataset": "reversal",
       "symbol": "sz.800003",
@@ -372,6 +402,16 @@
       "symbol": "sz.800004",
       "node": "R2(15)"
     },
+    "deterministic_vpcorr_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "VPCorr(5)"
+    },
+    "deterministic_vpcorr_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "VPCorr(15)"
+    },
     "deterministic_formula_add": {
       "dataset": "deterministic",
       "symbol": "sz.800004",
@@ -471,6 +511,16 @@
       "dataset": "anomaly",
       "symbol": "sz.800005",
       "node": "R2(15)"
+    },
+    "anomaly_vpcorr_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "VPCorr(5)"
+    },
+    "anomaly_vpcorr_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "VPCorr(15)"
     },
     "anomaly_formula_add": {
       "dataset": "anomaly",

@@ -2,6 +2,7 @@ import { nextTick } from 'vue'
 import { MarkerType } from '@vue-flow/core'
 import { getNode } from '@/lib/nodes'
 import { updateAllSuccessorDebugNodes } from '@/lib/nodes/useDebugNodeFields'
+import { functionInputSlots } from '@/lib/nodes/configs/function'
 
 /**
  * 流程图操作 composable
@@ -459,11 +460,53 @@ export function useFlowOperations(state) {
 
     // 验证连接方向：起点(source)只能连接到终点(target)
     // 普通节点: sourceHandle='output' -> targetHandle='input'
-    // 数据输入节点: sourceHandle='field-close'/'field-open'/'field-high'/'field-low'/'field-volume' -> targetHandle='input'
+    // 数据输入节点: sourceHandle='field-close'/'field-open'/'field-high'/'field-low'/'field-volume' -> targetHandle='input' 或 'input-{slot}'
     const dataFieldHandles = ['field-close', 'field-open', 'field-high', 'field-low', 'field-volume']
     const isValidSource = connection.sourceHandle === 'output' || dataFieldHandles.includes(connection.sourceHandle)
-    
-    if (!isValidSource || connection.targetHandle !== 'input') {
+
+    if (!isValidSource) {
+      return false
+    }
+
+    // 获取目标节点信息
+    const targetNode = getNodes.value.find(n => n.id === connection.target)
+    if (!targetNode) return false
+
+    const targetNodeType = targetNode.data?.nodeType
+    const targetHandle = connection.targetHandle
+
+    // FunctionNode 命名槽位验证
+    if (targetNodeType === 'function') {
+      // 目标 handle 必须是 'input-{slot}' 格式
+      if (!targetHandle || !targetHandle.startsWith('input-')) {
+        return false
+      }
+
+      const slotName = targetHandle.replace('input-', '')
+      const method = targetNode.data.params?.method?.value || 'MA'
+
+      // 从 functionInputSlots 获取该方法的槽位定义
+      const slots = functionInputSlots[method] || []
+      const targetSlot = slots.find(s => s.slot === slotName)
+
+      if (!targetSlot) return false
+
+      // 如果源是 InputNode 的 field handle，验证 field 匹配
+      if (connection.sourceHandle?.startsWith('field-')) {
+        const sourceField = connection.sourceHandle.replace('field-', '')
+        if (sourceField !== targetSlot.field) return false
+      }
+
+      // 防止重复连接同一槽位
+      const existingConnection = getEdges.value.find(edge =>
+        edge.target === connection.target &&
+        edge.targetHandle === connection.targetHandle
+      )
+      return !existingConnection
+    }
+
+    // 普通节点验证
+    if (targetHandle !== 'input') {
       return false
     }
 

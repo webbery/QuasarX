@@ -94,6 +94,10 @@ namespace {
             String cnt = (String)config["params"]["range"]["value"];
             return new ZScore(timeHorizon.at(cnt));
         }},
+        {"VPCorr", [] (const FunctionNode& node, const nlohmann::json& config) -> ICallable* {
+            String cnt = (String)config["params"]["range"]["value"];
+            return new VPCorr(timeHorizon.at(cnt));
+        }},
     };
 }
 
@@ -128,33 +132,84 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     DEBUG_INFO("[FunctionNode:{}] Init: _ins size = {}", _id, _ins.size());
     for (auto& item: _ins) {
         auto input_names = item.second->out_elements();
-        DEBUG_INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements", 
+        DEBUG_INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements",
              _id, item.first, input_names.size());
         _params.merge(input_names);
     }
 
     // 构建输入到输出的映射，并收集所有 symbol
     _label = (String)config["label"];
-    DEBUG_INFO("[FunctionNode:{}] Init: label='{}', _params size = {}", 
+    DEBUG_INFO("[FunctionNode:{}] Init: label='{}', _params size = {}",
          _id, _label, _params.size());
-    
-    for (auto& item: _params) {
-        auto& name = item.first;
-        Vector<String> tokens;
-        split(name, tokens, ".");
-        if (tokens.empty()) {
-            WARN("[FunctionNode:{}] Init: param '{}' has no dots, skipping", 
-                 _id, name);
-            continue;
-        }
-        tokens.pop_back();  // 去掉属性名
-        String symbol = boost::algorithm::join(tokens, ".");
 
-        // 建立映射: "sh600519.close" -> "sh600519.ReturnRate"
-        String output_key = symbol + "." + _label;
-        _param_to_output_map[name] = output_key;
-        DEBUG_INFO("[FunctionNode:{}] Init: mapped '{}' -> '{}'", 
-             _id, name, output_key);
+    // 获取方法名，判断是否需要命名槽位
+    String methodName = config["params"]["method"]["value"];
+    bool useNamedSlots = (methodName == "VPCorr");
+
+    if (useNamedSlots) {
+        // 命名槽位模式：按槽位名提取指定 field
+        // VPCorr 需要: price(close) + volume
+        // 从 _params 中筛选出匹配的 key
+        Map<String, ArgType> slotParams;
+        for (auto& item: _params) {
+            auto& name = item.first;
+            // 提取 field 名（最后一个 token）
+            Vector<String> tokens;
+            split(name, tokens, ".");
+            if (tokens.empty()) continue;
+            String field = tokens.back();
+
+            // 根据 field 名分配到槽位
+            if (field == "close" || field == "price") {
+                slotParams["price"] = item.second;
+            } else if (field == "volume") {
+                slotParams["volume"] = item.second;
+            }
+        }
+        _params = slotParams;
+
+        // 为命名槽位建立输出映射
+        // 取第一个 symbol 作为输出 symbol
+        String outputSymbol;
+        for (auto& item: _ins) {
+            auto outs = item.second->out_elements();
+            for (auto& [key, type] : outs) {
+                Vector<String> tokens;
+                split(key, tokens, ".");
+                if (tokens.size() >= 2) {
+                    outputSymbol = boost::algorithm::join(
+                        boost::span<String>(tokens.data(), tokens.size() - 1), ".");
+                    break;
+                }
+            }
+            if (!outputSymbol.empty()) break;
+        }
+
+        if (!outputSymbol.empty()) {
+            String output_key = outputSymbol + "." + _label;
+            _param_to_output_map["price"] = output_key;
+            _param_to_output_map["volume"] = output_key;
+        }
+    } else {
+        // 传统模式：按 symbol 建立映射
+        for (auto& item: _params) {
+            auto& name = item.first;
+            Vector<String> tokens;
+            split(name, tokens, ".");
+            if (tokens.empty()) {
+                WARN("[FunctionNode:{}] Init: param '{}' has no dots, skipping",
+                     _id, name);
+                continue;
+            }
+            tokens.pop_back();  // 去掉属性名
+            String symbol = boost::algorithm::join(tokens, ".");
+
+            // 建立映射: "sh600519.close" -> "sh600519.ReturnRate"
+            String output_key = symbol + "." + _label;
+            _param_to_output_map[name] = output_key;
+            DEBUG_INFO("[FunctionNode:{}] Init: mapped '{}' -> '{}'",
+                 _id, name, output_key);
+        }
     }
 
     String name = config["params"]["method"]["value"];
@@ -169,7 +224,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         // 函数输出是时间序列
         _outputs[output_key] = ArgType::Double_TimeSeries;
     }
-    DEBUG_INFO("[FunctionNode:{}] Init: _param_to_output_map has {} entries, _outputs has {} entries", 
+    DEBUG_INFO("[FunctionNode:{}] Init: _param_to_output_map has {} entries, _outputs has {} entries",
          _id, _param_to_output_map.size(), _outputs.size());
     return true;
 }
@@ -181,18 +236,62 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         return NodeProcessResult::Error;
     }
 
-    // 1. 收集所有 symbol 的输入数据
+    // 1. 收集输入数据
     Map<String, context_t> arguments;
-    Vector<String> output_keys;  // 保存输出 key 的顺序
+    Vector<String> output_keys;
 
-    for (auto& item: _params) {
-        auto& value = context.get(item.first);
-        arguments[item.first] = value;
+    String methodName;
+    if (context.exist("_function_method")) {
+        methodName = context.get<String>("_function_method");
+    }
+
+    bool useNamedSlots = (_param_to_output_map.count("price") > 0);
+
+    if (useNamedSlots) {
+        // 命名槽位模式：按槽位名提取数据
+        for (auto& [slot, output_key] : _param_to_output_map) {
+            if (arguments.count(slot)) continue; // 已添加
+            // 从 context 中查找匹配的 key
+            for (auto& [param_key, param_type] : _params) {
+                if (param_key == slot) {
+                    // 找到对应的 context key（需要找到实际的 symbol.field key）
+                    // 遍历 context 找到匹配的 key
+                    // 简化：直接用 slot 名作为 key 查找
+                    if (context.exist(slot)) {
+                        arguments[slot] = context.get(slot);
+                    }
+                }
+            }
+        }
+        // 如果上面没找到，尝试从 _params 的原始 key 中提取
+        if (arguments.empty()) {
+            for (auto& [param_key, param_type] : _params) {
+                Vector<String> tokens;
+                split(param_key, tokens, ".");
+                if (tokens.empty()) continue;
+                String field = tokens.back();
+                String slot;
+                if (field == "close" || field == "price") slot = "price";
+                else if (field == "volume") slot = "volume";
+                if (!slot.empty() && context.exist(param_key)) {
+                    arguments[slot] = context.get(param_key);
+                }
+            }
+        }
+    } else {
+        // 传统模式
+        for (auto& item: _params) {
+            auto& value = context.get(item.first);
+            arguments[item.first] = value;
+        }
     }
 
     // 2. 按 _param_to_output_map 的顺序构建输出 key 列表
+    Set<String> seen_outputs;
     for (auto& [input_key, output_key] : _param_to_output_map) {
-        output_keys.push_back(output_key);
+        if (seen_outputs.insert(output_key).second) {
+            output_keys.push_back(output_key);
+        }
     }
 
     DEBUG_INFO("[FunctionNode:{}] Processing, label='{}', output_keys={}", 

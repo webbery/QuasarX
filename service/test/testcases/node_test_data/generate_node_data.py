@@ -261,6 +261,36 @@ def r2_strategy(symbol, window, dataset_id):
                                 "R2", f"{window}d", f"debug_r2_{window}")
 
 
+def vpcorr_strategy(symbol, window, dataset_id):
+    """VPCorr 测试策略: Input(close+volume) → FunctionNode(VPCorr) → Debug
+
+    与单输入函数不同，VPCorr 需要同时连接 close 和 volume。
+    InputNode 默认输出所有 OHLCV 字段，FunctionNode 按字段名自动分配到槽位。
+    """
+    import re
+    window_num = re.match(r'(\d+)', f"{window}d").group(1)
+    node_label = f"VPCorr({window_num})"
+    return make_strategy(
+        f"test_{dataset_id}_vpcorr_{window}",
+        nodes=[
+            input_node("1", symbol),
+            function_node("2", "VPCorr", f"{window}d", label=node_label),
+            debug_node("3", f"debug_vpcorr_{window}"),
+            signal_node("4", symbol),
+            portfolio_node("5"),
+            execution_node("6"),
+        ],
+        edges=[
+            ("1", "2", "close"),   # close → price 槽位
+            ("1", "2", "volume"),  # volume → volume 槽位
+            ("2", "3"),
+            ("1", "4", "close"), ("4", "5"), ("5", "6"),
+        ],
+        start_date=START_DATE,
+        end_date=START_DATE + timedelta(days=250)
+    )
+
+
 def formula_add_strategy(symbol, dataset_id):
     """F-1: ma5[t] + std5[t]  基本加法（用 [t] 强制走时间索引路径，避免 Vector<double> 类型问题）"""
     return formula_strategy(symbol, dataset_id, "formula_add", "ma5[t] + std5[t]",
@@ -526,6 +556,9 @@ def main():
         (zscore_strategy, [15], "ZScore(15)"),
         (r2_strategy, [5], "R2(5)"),
         (r2_strategy, [15], "R2(15)"),
+        # VPCorr 节点 (量价相关性)
+        (vpcorr_strategy, [5], "VPCorr(5)"),
+        (vpcorr_strategy, [15], "VPCorr(15)"),
         # Formula 测试 (不需要参数)
         (formula_add_strategy, [], "Formula: MA(5)+STD(5)"),
         (formula_precedence_strategy, [], "Formula: MA(5)*2+STD(5)"),

@@ -103,3 +103,36 @@ public:
     Garch(int32_t p, int32_t q);
     virtual context_t operator()(const Map<String, context_t>& args);
 };
+
+/**
+ * 量价相关性: rolling_corr(log_return, volume_change, window)
+ *
+ * 输入:
+ *   args["price"]   — 收盘价时间序列 (Vector<double>)
+ *   args["volume"]  — 成交量时间序列 (Vector<double>)
+ *
+ * 计算:
+ *   ret[i]   = log(close[i] / close[i-1])
+ *   vol[i]   = volume[i] / volume[i-1] - 1
+ *   vp_corr  = rolling_corr(ret, vol, window)
+ *
+ * 含义:
+ *   ≈ +1: 价量齐升（放量上涨/缩量下跌，趋势健康）
+ *   ≈  0: 价量无关（趋势混乱）
+ *   ≈ -1: 价量背离（缩量上涨/放量下跌，趋势可疑）
+ */
+class VPCorr: public ICallable {
+public:
+    VPCorr(int32_t window);
+    virtual context_t operator()(const Map<String, context_t>& args);
+
+private:
+    int32_t _window;
+    std::vector<double> _retBuf;   // 收益率环形缓冲
+    std::vector<double> _volBuf;   // 成交量变化环形缓冲
+    size_t _count;
+    size_t _nextIndex;
+    double _prevClose;
+    double _prevVolume;
+    bool _hasPrev;
+};

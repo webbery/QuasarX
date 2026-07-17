@@ -74,6 +74,14 @@ def _load_close_prices(symbol: str) -> np.ndarray:
         return np.array([float(row["close"]) for row in reader])
 
 
+def _load_volume(symbol: str) -> np.ndarray:
+    """从 A_hfq 目录读取成交量"""
+    csv_path = CSV_DATA_DIR / f"{symbol}.csv"
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        return np.array([float(row["volume"]) for row in reader])
+
+
 def _run_backtest(strategy_path: Path, headers: dict) -> dict:
     """提交回测并返回响应"""
     with open(strategy_path) as f:
@@ -343,6 +351,51 @@ class TestR2Node:
         # R2 精度稍低（QR 分解 vs 直接公式），放宽到 1e-3
         assert max_diff < 1e-3, \
             f"[{dataset_id}] max diff {max_diff:.2e} exceeds tolerance 1e-3"
+
+
+# ============================================================
+# L1: VPCorr 节点测试
+# ============================================================
+
+class TestVPCorrNode:
+    """VPCorr(15) 节点：滚动量价相关系数
+
+    Python 黄金标准: pd.Series(ret).rolling(15).corr(pd.Series(vol_chg))
+    其中 ret = log(close[t]/close[t-1]), vol_chg = volume[t]/volume[t-1] - 1
+    """
+
+    @pytest.mark.parametrize("dataset_id", ["sine", "step", "reversal", "deterministic", "anomaly"])
+    def test_vpcorr_vs_pandas(self, headers, summary, dataset_id):
+        """5 个数据集 × VPCorr(15)"""
+        strategy_id = f"test_{dataset_id}_vpcorr_{WINDOW}"
+        strategy_path = TEST_DIR / f"{dataset_id}_vpcorr_{WINDOW}.json"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(strategy_path, headers)
+        df = _read_debug_csv(strategy_id, f"debug_vpcorr_{WINDOW}")
+        actual = _extract_node_series(df, symbol, f"VPCorr({WINDOW})")
+
+        closes = _load_close_prices(symbol)
+        volumes = _load_volume(symbol)
+
+        # Python 黄金标准
+        ret = pd.Series(np.log(closes[1:] / closes[:-1]))
+        vol_chg = pd.Series(volumes[1:] / volumes[:-1] - 1.0)
+        expected = ret.rolling(WINDOW).corr(vol_chg)
+
+        # 对齐长度（VPCorr 第一个值从 bar=1 开始，因为需要 prev）
+        n = min(len(actual), len(expected))
+        actual_valid = actual.iloc[:n].dropna().reset_index(drop=True)
+        expected_valid = expected.iloc[:n].dropna().reset_index(drop=True)
+
+        assert len(actual_valid) == len(expected_valid), \
+            f"Valid count mismatch: C++={len(actual_valid)}, Python={len(expected_valid)}"
+
+        diff = np.abs(actual_valid.values - expected_valid.values)
+        max_diff = np.max(diff)
+        # 相关系数精度：1e-4
+        assert max_diff < 1e-4, \
+            f"[{dataset_id}] max diff {max_diff:.2e} exceeds tolerance 1e-4"
 
 
 # ============================================================
