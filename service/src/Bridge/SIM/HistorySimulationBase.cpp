@@ -408,15 +408,27 @@ run_id_t HistorySimulationBase::createBacktestContext(
     const Set<symbol_t>& symbols,
     double initial_capital)
 {
-    // 确保数据已加载（回测模式下 Login 可能未被调用）
-    if (!_dataLoadSuccess) {
-        // 将 symbols 转换为字符串并设置到 filter
+    // 确保数据已加载：首次加载 或 请求的 symbols 与已加载不一致时重新加载
+    bool needReload = !_dataLoadSuccess;
+    if (!needReload) {
+        for (auto symbol : symbols) {
+            if (_csvs.find(symbol) == _csvs.end()) {
+                needReload = true;
+                break;
+            }
+        }
+    }
+    INFO("[createBacktestContext] strategy={}, _dataLoadSuccess={}, _csvs.size={}, symbols={}, needReload={}",
+         strategy_name, _dataLoadSuccess.load(), _csvs.size(), symbols.size(), needReload);
+    if (needReload) {
         QuoteFilter filter;
         for (auto symbol : symbols) {
             filter._symbols.insert(get_symbol(symbol));
         }
         SetFilter(filter);
+        INFO("[createBacktestContext] Calling Login with {} symbols in filter", filter._symbols.size());
         Login(AccountType::MAIN);
+        INFO("[createBacktestContext] After Login: _csvs.size={}, _dataLoadSuccess={}", _csvs.size(), _dataLoadSuccess.load());
     }
 
     uint16_t runId = _nextRunId.fetch_add(1, std::memory_order_relaxed);

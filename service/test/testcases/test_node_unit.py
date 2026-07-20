@@ -33,9 +33,11 @@ VERIFY_SSL = False
 # 路径
 TEST_DIR = Path(__file__).parent / "node_test_data"
 SUMMARY_FILE = TEST_DIR / "test_data_summary.json"
-# 从 service/test/ 运行时，build 在 ../build
-DEBUG_DIR = Path("../build/data/data/debug")
-CSV_DATA_DIR = Path("../build/data/A_hfq")
+# 使用绝对路径，避免依赖运行目录
+# __file__ 在 service/test/testcases/，需要三层 parent 到 service/
+SERVICE_ROOT = Path(__file__).parent.parent.parent
+DEBUG_DIR = SERVICE_ROOT / "build" / "data" / "data" / "debug"
+CSV_DATA_DIR = SERVICE_ROOT / "build" / "data" / "A_hfq"
 
 # 回测配置
 DEBUG_COLUMN_SUFFIX = "STD(15)"  # 窗口 15 的 STD 列名后缀
@@ -379,14 +381,20 @@ class TestVPCorrNode:
         volumes = _load_volume(symbol)
 
         # Python 黄金标准
+        # 注意: C++ VPCorr 的第一个 bar 仅记录 prev 不产生收益率，
+        # 从 bar=1 开始计算 ret = log(close[t]/close[t-1])。
+        # Python 的 ret[0] = log(close[1]/close[0]) 等价于 C++ bar=1 的收益率，
+        # 因此 rolling 窗口覆盖的 bar 范围天然对齐。
         ret = pd.Series(np.log(closes[1:] / closes[:-1]))
         vol_chg = pd.Series(volumes[1:] / volumes[:-1] - 1.0)
         expected = ret.rolling(WINDOW).corr(vol_chg)
 
-        # 对齐长度（VPCorr 第一个值从 bar=1 开始，因为需要 prev）
-        n = min(len(actual), len(expected))
-        actual_valid = actual.iloc[:n].dropna().reset_index(drop=True)
-        expected_valid = expected.iloc[:n].dropna().reset_index(drop=True)
+        # C++ CSV 可能因 DataFrame 截断丢失首个 NaN 导致长度少 1，取最小长度对齐
+        actual_valid = actual.dropna().reset_index(drop=True)
+        expected_valid = expected.dropna().reset_index(drop=True)
+        n = min(len(actual_valid), len(expected_valid))
+        actual_valid = actual_valid.iloc[:n]
+        expected_valid = expected_valid.iloc[:n]
 
         assert len(actual_valid) == len(expected_valid), \
             f"Valid count mismatch: C++={len(actual_valid)}, Python={len(expected_valid)}"

@@ -306,6 +306,9 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
 
     duckdb_result res;
     if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        SPDLOG_ERROR("[QuoteDB] Query failed: {} (SQL: {})", err ? err : "unknown", 
+                     sql.size() > 200 ? sql.substr(0, 200) + "..." : sql);
         duckdb_destroy_result(&res);
         return result;
     }

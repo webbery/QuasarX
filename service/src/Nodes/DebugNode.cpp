@@ -36,8 +36,6 @@ void DebugNode::Done(const String& strategy) {
     // 保存数据到/data/debug/strategy 路径以便下载
     auto& cfg = _server->GetConfig();
     auto dir = cfg.GetDatabasePath() + "/data/debug/" + strategy;
-    std::filesystem::create_directories(dir);
-    auto datapath = dir + "/" + _label;
     auto& times = _context->GetTime();
     DataFrame df;
     Vector<uint32_t> indexes(times.size());
@@ -71,6 +69,7 @@ void DebugNode::Done(const String& strategy) {
     }
     if (_suffix == "csv") {
         String save_path = dir + "/" + _label + ".csv";
+        std::filesystem::create_directories(dir);
         df.write<time_t, double>(save_path.c_str(), hmdf::io_format::csv2);
     }
 }

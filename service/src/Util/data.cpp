@@ -699,7 +699,7 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
             std::string db_dir = "./data/quote";
             if (!quoteDB.init(db_dir)) {
                 WARN("[LoadHistoryDataWithFreq] Failed to initialize QuoteDB at {}", db_dir);
-                goto fallback_csv;
+                // goto fallback_csv;
             }
         }
 
@@ -724,13 +724,9 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
             }
         }
         
-        for (const auto& t : tables) {
-            WARN("  - {}", t);
-        }
-        
         if (!table_exists) {
             WARN("[LoadHistoryDataWithFreq] Table {} not found in DuckDB", table);
-            goto fallback_csv;
+            // goto fallback_csv;
         }
 
         // 查询数据（使用 symbol_t 编码，内部会重新转换为字符串）
@@ -740,7 +736,7 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
 
         if (bars.empty()) {
             WARN("[LoadHistoryDataWithFreq] No data found for {} in {}", symbol_str, table);
-            goto fallback_csv;
+            // goto fallback_csv;
         }
 
         // 构建返回结果
@@ -797,80 +793,6 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
     } catch (const std::exception& e) {
         WARN("[LoadHistoryDataWithFreq] DuckDB query failed: {}, falling back to CSV", e.what());
     }
-
-fallback_csv:
-    // === 原 CSV 方法（已注释，保留作为回退） ===
-    /*
-    const String base_dir = "./data";
-
-    // 规范化 symbol
-    String normalized = symbol;
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
-
-    // 自动判断资产类型
-    const bool is_etf = is_etf_symbol(normalized);
-
-    // 静态路径表解析子目录（零开销）
-    const String subdir = resolveSubdir(is_etf, adj);
-
-    // 构建相对路径
-    String rel_path;
-    if (symbol.find('.') == String::npos) {
-        rel_path = "sz." + symbol + ".csv";
-        if (!std::filesystem::exists(base_dir + "/" + subdir + "/" + rel_path)) {
-            rel_path = "sh." + symbol + ".csv";
-        }
-    } else {
-        auto dot_pos = normalized.find('.');
-        std::string code = normalized.substr(0, dot_pos);
-        std::string exchange = normalized.substr(dot_pos + 1);
-        rel_path = exchange + "." + code + ".csv";
-    }
-
-    // 频率搜索优先级（从目标频率到更低频率）
-    static constexpr BarFreq freq_order[] = {
-        BarFreq::Min1, BarFreq::Min5, BarFreq::Min15, BarFreq::Min30,
-        BarFreq::Hour1, BarFreq::Hour2, BarFreq::Hour4,
-        BarFreq::Day, BarFreq::Week, BarFreq::Month
-    };
-    constexpr int kFreqCount = sizeof(freq_order) / sizeof(freq_order[0]);
-
-    // 1. 优先尝试加载目标频率
-    const String target_dir = getFreqDir(target_freq);
-    const String target_path = base_dir + "/" + subdir + "/" + target_dir + "/" + rel_path;
-
-    auto data = loadCsvDataFromPath(target_path, fields, start_date, end_date, out_dates);
-    if (!data.empty()) {
-        return data;
-    }
-
-    // 2. 遍历所有更低频率并聚合到目标频率
-    for (int i = 0; i < kFreqCount; ++i) {
-        const BarFreq src_freq = freq_order[i];
-        if (src_freq >= target_freq) break;  // 只尝试更低频率（数值更小）
-
-        const String src_dir = getFreqDir(src_freq);
-        const String src_path = base_dir + "/" + subdir + "/" + src_dir + "/" + rel_path;
-
-        if (!std::filesystem::exists(src_path)) continue;
-
-        Vector<String> src_dates;
-        auto src_data = loadCsvDataFromPath(src_path, fields, start_date, end_date, &src_dates);
-        if (src_data.empty()) continue;
-
-        INFO("[LoadHistoryDataWithFreq] Resampling {} → {} for {}",
-             toString(src_freq), toString(target_freq), symbol);
-        auto resampled = ResampleToFrequency(src_data, src_dates, src_freq, target_freq, fields);
-        if (out_dates) *out_dates = std::move(resampled.dates);
-        return std::move(resampled.data);
-    }
-
-    // 3. 回退：尝试顶层目录中的默认文件（无频率子目录）
-    const String default_path = base_dir + "/" + subdir + "/" + rel_path;
-    if (std::filesystem::exists(default_path)) {
-        return loadCsvDataFromPath(default_path, fields, start_date, end_date, out_dates);
-    }
-    */
 
     return {};
 }

@@ -1,0 +1,295 @@
+{
+  "id": "test_reversal_formula_envelope",
+  "name": "节点测试_test_reversal_formula_envelope",
+  "version": 1,
+  "description": "节点单元测试",
+  "backtest": {
+    "start": "2024-01-01",
+    "end": "2024-09-07"
+  },
+  "source": "A_hfq",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "行情数据",
+        "nodeType": "input",
+        "params": {
+          "source": {
+            "value": "股票",
+            "type": "text"
+          },
+          "code": {
+            "value": [
+              "sz.800003"
+            ],
+            "type": "text"
+          },
+          "freq": {
+            "value": "1d",
+            "type": "select"
+          },
+          "close": {
+            "value": "close",
+            "type": "text"
+          },
+          "open": {
+            "value": "open",
+            "type": "text"
+          },
+          "high": {
+            "value": "high",
+            "type": "text"
+          },
+          "low": {
+            "value": "low",
+            "type": "text"
+          },
+          "volume": {
+            "value": "volume",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "2",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "ma15",
+        "nodeType": "function",
+        "params": {
+          "method": {
+            "value": "MA",
+            "type": "select"
+          },
+          "range": {
+            "value": "15d",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "3",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "std15",
+        "nodeType": "function",
+        "params": {
+          "method": {
+            "value": "STD",
+            "type": "select"
+          },
+          "range": {
+            "value": "15d",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "4",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "formula_env",
+        "nodeType": "formula",
+        "params": {
+          "expression": {
+            "value": "ma15[t] + 2 * std15[t]",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "5",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "debug_formula_env",
+        "nodeType": "debug",
+        "params": {
+          "suffix": {
+            "value": "csv",
+            "type": "select"
+          }
+        }
+      }
+    },
+    {
+      "id": "6",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "买入信号",
+        "nodeType": "signal",
+        "params": {
+          "code": {
+            "value": [
+              "sz.800003"
+            ],
+            "type": "text"
+          },
+          "buy": {
+            "value": "true",
+            "type": "text"
+          },
+          "sell": {
+            "value": "false",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "7",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "投资组合",
+        "nodeType": "portfolio",
+        "params": {
+          "positionRatio": {
+            "value": 1.0,
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "8",
+      "type": "custom",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "交易执行",
+        "nodeType": "execution",
+        "params": {
+          "commission": {
+            "value": 0.0,
+            "type": "number"
+          },
+          "stampDuty": {
+            "value": 0.0,
+            "type": "number"
+          },
+          "minFee": {
+            "value": 0,
+            "type": "number"
+          },
+          "slippageModel": {
+            "value": 0,
+            "type": "number"
+          },
+          "slippage": {
+            "value": 0.0,
+            "type": "number"
+          },
+          "type": {
+            "value": 1,
+            "type": "select"
+          },
+          "contract": {
+            "value": 0,
+            "type": "select"
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "1-close->2",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "1-close",
+      "targetHandle": "2",
+      "type": "default"
+    },
+    {
+      "id": "1-close->3",
+      "source": "1",
+      "target": "3",
+      "sourceHandle": "1-close",
+      "targetHandle": "3",
+      "type": "default"
+    },
+    {
+      "id": "2->4",
+      "source": "2",
+      "target": "4",
+      "sourceHandle": "2",
+      "targetHandle": "4",
+      "type": "default"
+    },
+    {
+      "id": "3->4",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "3",
+      "targetHandle": "4",
+      "type": "default"
+    },
+    {
+      "id": "4->5",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "4",
+      "targetHandle": "5",
+      "type": "default"
+    },
+    {
+      "id": "1-close->6",
+      "source": "1",
+      "target": "6",
+      "sourceHandle": "1-close",
+      "targetHandle": "6",
+      "type": "default"
+    },
+    {
+      "id": "6->7",
+      "source": "6",
+      "target": "7",
+      "sourceHandle": "6",
+      "targetHandle": "7",
+      "type": "default"
+    },
+    {
+      "id": "7->8",
+      "source": "7",
+      "target": "8",
+      "sourceHandle": "7",
+      "targetHandle": "8",
+      "type": "default"
+    }
+  ]
+}

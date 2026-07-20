@@ -8,11 +8,7 @@ MA::MA(short count): _count(0), _nextIndex(0), _sum(0.) {
     _buffer.resize(count, 0.0);
 }
 
-context_t MA::operator()(const Map<String, context_t>& features) {
-    if (features.size() != 1) {
-        return std::nan("nan");
-    }
-    auto itr = features.begin();
+context_t MA::operator()(const Map<String, context_t>& args) {
     double value;
     std::visit([&value] (auto&& v) {
         using T = std::decay_t<decltype(v)>;
@@ -22,9 +18,9 @@ context_t MA::operator()(const Map<String, context_t>& features) {
         else if constexpr (std::is_same_v<T, Vector<double>>) {
             value = v.back();
         } else {
-            INFO("Not support MA");
+            value = std::nan("nan");
         }
-    }, itr->second);
+    }, args.begin()->second);
     if (_count < _buffer.size()) {
         _buffer[_count] = value;
         _sum += value;
@@ -63,10 +59,6 @@ STD::STD(int32_t count)
 }
 
 context_t STD::operator()(const Map<String, context_t>& args) {
-    if (args.size() != 1) {
-        return std::nan("nan");
-    }
-    auto itr = args.begin();
     double value;
     std::visit([&value] (auto&& v) {
         using T = std::decay_t<decltype(v)>;
@@ -76,9 +68,9 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         else if constexpr (std::is_same_v<T, Vector<double>>) {
             value = v.back();
         } else {
-            INFO("Not support STD");
+            value = std::nan("nan");
         }
-    }, itr->second);
+    }, args.begin()->second);
 
     if (_count < static_cast<size_t>(_window)) {
         _buffer[_count] = value;
@@ -116,44 +108,31 @@ Return::Return(int32_t count): _cnts(count){
 }
 
 /**
- * @brief 计算多个标的的收益率
- * 
+ * @brief 计算单个标的的收益率
+ *
  * 使用对数收益率公式: log(P(t) / P(t-n))
  * 其中 n = _cnts (由 range 参数映射而来)
- * 
- * @param args 输入参数，包含多个标的的价格时间序列
- *             key 格式: "symbol.property" (如 "sh600519.close")
+ *
+ * @param args 输入参数，包含单个标的的价格时间序列
+ *             key: 槽位名（如 "price"）
  *             value: Vector<double> 价格序列
- * @return Vector<double> 所有标的的对数收益率
+ * @return double 对数收益率
  */
 context_t Return::operator()(const Map<String, context_t>& args) {
-    Vector<double> returns;
-    
-    // 遍历所有标的的数据
-    for (auto& [key, value] : args) {
-        // INFO("type: {}", get_context_type_name(value));
-        auto& vec = std::get<Vector<double>>(value);
-        // 计算收益率: log(P(t) / P(t-_cnts))
-        size_t n = vec.size();
-        if (n <= _cnts) {
-            returns.push_back(std::nan("nan"));
-            continue;
-        }
-
-        double currentPrice = vec[n - 1];
-        double pastPrice = vec[n - 1 - _cnts];
-        
-        // 价格无效时跳过
-        if (pastPrice <= 0) {
-            returns.push_back(std::nan("nan"));
-            continue;
-        }
-        
-        // 对数收益率
-        returns.push_back(std::log(currentPrice / pastPrice));
+    auto& vec = std::get<Vector<double>>(args.begin()->second);
+    size_t n = vec.size();
+    if (n <= _cnts) {
+        return std::nan("nan");
     }
-    
-    return returns;
+
+    double currentPrice = vec[n - 1];
+    double pastPrice = vec[n - 1 - _cnts];
+
+    if (pastPrice <= 0) {
+        return std::nan("nan");
+    }
+
+    return std::log(currentPrice / pastPrice);
 }
 
 R2::R2(int32_t window)
@@ -162,12 +141,7 @@ R2::R2(int32_t window)
 }
 
 context_t R2::operator()(const Map<String, context_t>& args) {
-    if (args.size() != 1) {
-        return std::nan("nan");
-    }
-    auto itr = args.begin();
-    auto& prop_name = itr->first;
-    auto& vec = std::get<Vector<double>>(itr->second);
+    auto& vec = std::get<Vector<double>>(args.begin()->second);
     const int32_t n = static_cast<int32_t>(vec.size());
 
     // 检查数据量是否足够
@@ -228,10 +202,6 @@ ZScore::ZScore(int32_t window)
  * @return double Z-Score 值，数据不足时返回 NaN
  */
 context_t ZScore::operator()(const Map<String, context_t>& args) {
-    if (args.size() != 1) {
-        return std::nan("nan");
-    }
-    auto itr = args.begin();
     double value;
     std::visit([&value] (auto&& v) {
         using T = std::decay_t<decltype(v)>;
@@ -241,9 +211,9 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
         else if constexpr (std::is_same_v<T, Vector<double>>) {
             value = v.back();
         } else {
-            INFO("Not support ZScore");
+            value = std::nan("nan");
         }
-    }, itr->second);
+    }, args.begin()->second);
 
     // 滑动窗口更新
     if (_count < _window) {
@@ -295,6 +265,13 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
 }
 
 // ── VPCorr 实现 ───────────────────────────────────────────────
+//
+// 注意: VPCorr 的第一个 bar 仅记录 prev（前一个 close/volume），不产生收益率，
+// 从第二个 bar 开始计算 ret = log(close[t]/close[t-1]) 和 vol_chg。
+// 这意味着对于 N 个 bar 的输入，VPCorr 产生 N-1 个收益率，
+// 第一个 bar 的输出为 NaN。滚动窗口在累积 window 个收益率后开始输出有效相关系数。
+// Python 对齐: ret = pd.Series(np.log(closes[1:] / closes[:-1])) 天然匹配此行为。
+//
 
 VPCorr::VPCorr(int32_t window)
     : _window(window), _count(0), _nextIndex(0),
@@ -305,47 +282,43 @@ VPCorr::VPCorr(int32_t window)
 }
 
 context_t VPCorr::operator()(const Map<String, context_t>& args) {
-    // 需要两个输入: price 和 volume
-    if (args.size() < 2) {
+    // 按槽位名提取（与 FunctionNode::methodSlotMap 的契约）
+    // methodSlotMap 定义: {"price": "close", "volume": "volume"}
+    // FunctionNode 保证传入这些槽位，过滤掉上游其他值
+    if (args.find("price") == args.end() || args.find("volume") == args.end()) {
         return std::nan("nan");
     }
 
-    // 提取 price 和 volume
-    double close = 0, volume = 0;
-    bool hasPrice = false, hasVolume = false;
-
-    for (const auto& [key, val] : args) {
-        std::visit([&](const auto& v) {
+    auto extractDouble = [](const context_t& val) -> double {
+        return std::visit([](const auto& v) -> double {
             using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, double>) {
-                if (key.find("price") != String::npos || key.find("close") != String::npos) {
-                    close = v; hasPrice = true;
-                } else if (key.find("volume") != String::npos) {
-                    volume = v; hasVolume = true;
-                }
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                if (key.find("price") != String::npos || key.find("close") != String::npos) {
-                    close = v.back(); hasPrice = true;
-                } else if (key.find("volume") != String::npos) {
-                    volume = v.back(); hasVolume = true;
-                }
-            }
+            if constexpr (std::is_same_v<T, double>) return v;
+            else if constexpr (std::is_same_v<T, Vector<double>>) return v.empty() ? 0.0 : v.back();
+            else return 0.0;
         }, val);
-    }
+    };
 
-    if (!hasPrice || !hasVolume) {
+    double close = extractDouble(args.at("price"));
+    double volume = extractDouble(args.at("volume"));
+
+    // 第一个 bar：只记录 prev，不计算收益率，返回 NaN。
+    // 这是 VPCorr 的关键特性：N 个 bar 输入产生 N-1 个收益率输出，
+    // 第一个 bar 的 NaN 输出必须被 FunctionNode 写入 context 以保持与时间向量对齐。
+    if (!_hasPrev) {
+        _prevClose = close;
+        _prevVolume = volume;
+        _hasPrev = true;
         return std::nan("nan");
     }
 
     // 计算对数收益率和成交量变化率
     double ret = 0, volChg = 0;
-    if (_hasPrev && _prevClose > 0 && _prevVolume > 0) {
+    if (_prevClose > 0 && _prevVolume > 0) {
         ret = std::log(close / _prevClose);
         volChg = volume / _prevVolume - 1.0;
     }
     _prevClose = close;
     _prevVolume = volume;
-    _hasPrev = true;
 
     // 更新环形缓冲
     if (_count < static_cast<size_t>(_window)) {

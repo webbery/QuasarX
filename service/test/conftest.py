@@ -178,18 +178,23 @@ def upload_test_data(auth_api, is_backtest):
     yield
 
     # === 清理：删除导入的测试数据 ===
+    # 使用 DROP TABLE 而非逐行 DELETE，避免反复 DELETE/INSERT 触发 DuckDB ART 索引损坏
     if imported_keys:
         print(f"\n[cleanup] 清理 {len(imported_keys)} 个标的的测试数据...")
         cleanup_count = 0
+        dropped_tables = set()
         for table, symbol in imported_keys:
+            if table in dropped_tables:
+                continue
             try:
                 requests.delete(f"{BASE_URL}/v0/quote", params={
-                    "table": table, "symbol": symbol
+                    "table": table
                 }, headers=headers, verify=VERIFY_SSL)
+                dropped_tables.add(table)
                 cleanup_count += 1
             except Exception:
                 pass
-        print(f"[cleanup] 已清理 {cleanup_count} 个标的")
+        print(f"[cleanup] 已清理 {cleanup_count} 张表: {sorted(dropped_tables)}")
 
 
 class AuthAPI:
