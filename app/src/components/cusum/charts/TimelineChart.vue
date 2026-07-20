@@ -43,22 +43,35 @@ function renderChart() {
   if (!chartInstance || !props.events.length) return
 
   // dates 含 header 导致长度为 n+1，取 slice(1) 与收益率数量对齐
-  const dates = props.dates && props.dates.length > props.totalDays
+  const rawDates = props.dates && props.dates.length > props.totalDays
     ? props.dates.slice(1)
     : props.dates || []
+
+  // 格式化日期为 YYYY-MM-DD
+  const formatDates = rawDates.map((d: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d
+    try {
+      const date = new Date(d)
+      if (isNaN(date.getTime())) return d
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    } catch {
+      return d
+    }
+  })
 
   const events = props.events.map((e, i) => {
     // 从 drift 值的正负判断方向，如果没有 direction 字段则自动推断
     const direction = e.drift >= 0 ? 'positive' : 'negative'
     const iconMap = typeIconMap[e.type] || { positive: '📌', negative: '📌' }
     const icon = iconMap[direction] || '📌'
+    const dateLabel = formatDates[e.day] || `Day ${e.day}`
     return {
       ...e,
       direction,
       icon,
       driftDirection: direction,
       label: `${actionLabelMap[e.action] || e.action}`,
-      dateLabel: dates[e.day] ? `${dates[e.day]} (Day ${e.day})` : `Day ${e.day}`,
+      dateLabel,
     }
   })
 

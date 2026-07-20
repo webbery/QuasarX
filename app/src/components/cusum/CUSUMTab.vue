@@ -76,14 +76,16 @@
       <div class="result-section">
         <div class="section-header">
           <h3>📊 均值漂移检测 (Mean Shift)</h3>
-          <span class="status-badge normal">
-            {{ result.mean_cusum ? result.mean_cusum.length : 0 }} 只标的
-          </span>
+          <select v-if="result.mean_cusum && result.mean_cusum.length" v-model="meanSelectedSymbol" class="symbol-select">
+            <option value="__all__">全部标的</option>
+            <option v-for="sym in meanSymbolList" :key="sym" :value="sym">{{ sym }}</option>
+          </select>
         </div>
         <MeanShiftChart
           v-if="result.mean_cusum && result.mean_cusum.length"
-          :results="result.mean_cusum"
+          :results="filteredMeanResults"
           :dates="result.dates"
+          :selected-symbol="meanSelectedSymbol"
         />
       </div>
 
@@ -91,14 +93,16 @@
       <div class="result-section">
         <div class="section-header">
           <h3>📈 方差漂移检测 (Variance Shift)</h3>
-          <span class="status-badge normal">
-            {{ result.variance_cusum ? result.variance_cusum.length : 0 }} 只标的
-          </span>
+          <select v-if="result.variance_cusum && result.variance_cusum.length" v-model="varianceSelectedSymbol" class="symbol-select">
+            <option value="__all__">全部标的</option>
+            <option v-for="sym in varianceSymbolList" :key="sym" :value="sym">{{ sym }}</option>
+          </select>
         </div>
         <VarianceShiftChart
           v-if="result.variance_cusum && result.variance_cusum.length"
-          :results="result.variance_cusum"
+          :results="filteredVarianceResults"
           :dates="result.dates"
+          :selected-symbol="varianceSelectedSymbol"
         />
       </div>
 
@@ -227,6 +231,26 @@ const result = ref<any>({})
 
 // 合并加载状态
 const isLoading = computed(() => securitiesLoading.value || loading.value)
+
+// 均值漂移检测 - 标的选择和过滤
+const meanSelectedSymbol = ref('__all__')
+const meanSymbolList = computed(() => result.value.mean_cusum?.map((r: any) => r.symbol) || [])
+const filteredMeanResults = computed(() => {
+  if (!result.value.mean_cusum) return []
+  return meanSelectedSymbol.value === '__all__'
+    ? result.value.mean_cusum
+    : result.value.mean_cusum.filter((r: any) => r.symbol === meanSelectedSymbol.value)
+})
+
+// 方差漂移检测 - 标的选择和过滤
+const varianceSelectedSymbol = ref('__all__')
+const varianceSymbolList = computed(() => result.value.variance_cusum?.map((r: any) => r.symbol) || [])
+const filteredVarianceResults = computed(() => {
+  if (!result.value.variance_cusum) return []
+  return varianceSelectedSymbol.value === '__all__'
+    ? result.value.variance_cusum
+    : result.value.variance_cusum.filter((r: any) => r.symbol === varianceSelectedSymbol.value)
+})
 
 // 监听策略 ID 变化，自动加载标的
 watch(selectedStrategyId, (newId) => {
@@ -521,6 +545,28 @@ function resetForm() {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  color: #e0e0e0;
+}
+
+/* 标的选择下拉框 */
+.symbol-select {
+  padding: 4px 8px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.symbol-select:focus {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+
+.symbol-select option {
+  background: #1a2236;
   color: #e0e0e0;
 }
 

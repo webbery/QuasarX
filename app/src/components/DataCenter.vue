@@ -398,7 +398,7 @@
     </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { ipcRenderer } from 'electron'
 import axios from 'axios'
@@ -447,6 +447,14 @@ const loadingQuoteData = ref(false)
 const deletingQuote = ref(false)
 const deletingSymbol = ref(false)
 const updatingSymbol = ref(false)
+
+// 批量更新分组类型
+interface SymbolInfo {
+    table: string
+    symbol: string
+    endTime: string
+    startDate: string  // 增量起始日期
+}
 
 // 导出状态
 const exportDir = ref(localStorage.getItem('quoteExportPath') || '')
@@ -629,15 +637,20 @@ const onQuoteDownloadEvent = (msg) => {
     console.log('[QuoteDownload] 当前 quoteLogs 数量:', quoteLogs.value.length)
     switch (d.status) {
         case 'started':
-            addQuoteLog(`开始下载: ${d.symbols}`)
+            addQuoteLog(`📥 开始下载: ${d.total} 只标的 (${d.asset_type})`)
+            break
+        case 'symbol_downloaded':
+            addQuoteLog(`✅ ${d.symbol}: ${d.rows} 行 (${d.downloaded}/${d.total})`, 'success')
+            break
+        case 'symbol_failed':
+            addQuoteLog(`❌ ${d.symbol}: 下载失败 (${d.error})`, 'error')
             break
         case 'downloaded':
-            addQuoteLog('脚本下载完成，正在导入...')
+            addQuoteLog(`📥 下载完成: ${d.downloaded} 成功，${d.failed} 失败，开始导入...`)
             break
         case 'download_failed':
-            addQuoteLog('脚本下载失败', 'error')
+            addQuoteLog('脚本执行失败', 'error')
             if (d.output) {
-                // 按换行拆分多行输出
                 const lines = d.output.split(/\r?\n/).filter(l => l.trim())
                 lines.forEach(line => addQuoteLog(line, 'error'))
             }
@@ -648,7 +661,7 @@ const onQuoteDownloadEvent = (msg) => {
         case 'done':
             quoteDownloading.value = false
             if (d.success === 'true') {
-                addQuoteLog(`完成: 共导入 ${d.total_rows} 行 → ${d.table}`, 'done')
+                addQuoteLog(`✅ 完成: 共导入 ${d.total_rows} 行 → ${d.table}`, 'done')
                 quoteStatus.value = `下载完成，${d.total_rows} 行已导入 ${d.table}`
             } else {
                 addQuoteLog('下载失败', 'error')
@@ -942,67 +955,125 @@ const onBatchDeleteSymbols = async () => {
     deletingSymbol.value = false
 }
 
-// 批量更新选中的标的（增量更新）
+// 批量更新选中的标的（按起始时间分组合并，跳过已是最新日期的标的）
 const onBatchUpdateSymbols = async () => {
     updatingSymbol.value = true
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
 
-    let successCount = 0
-    let failCount = 0
+    // 获取今天的日期（YYYY-MM-DD）
+    const today = new Date()
+    const todayStr = today.toISOString().split('T')[0]
+
+    // === 第 1 步：构建标的信息映射，过滤已是最新日期的标的 ===
+    const symbolInfos: SymbolInfo[] = []
+    let skippedCount = 0
+    const skippedSymbols: string[] = []
 
     for (const key of selectedSymbols.value) {
         const [table, symbol] = key.split('|')
+        const item = allFlatSymbols.value.find(s => s.table === table && s.symbol === symbol)
+        const endTime = item?.end_time || ''
+
+        // 判断是否已是最新日期
+        if (endTime) {
+            const datePart = endTime.split(' ')[0]
+            if (datePart === todayStr) {
+                // 数据已是今天，无需再次下载
+                skippedCount++
+                skippedSymbols.push(symbol)
+                continue
+            }
+        }
+
+        // 计算增量 start
+        let startDate = ''
+        if (endTime) {
+            const datePart = endTime.split(' ')[0]
+            const nextDay = new Date(datePart)
+            nextDay.setDate(nextDay.getDate() + 1)
+            startDate = nextDay.toISOString().split('T')[0]
+        }
+
+        symbolInfos.push({ table, symbol, endTime, startDate })
+    }
+
+    // 报告跳过的标的
+    if (skippedCount > 0) {
+        console.log(`[DataCenter] Skipped ${skippedCount} symbols with up-to-date data:`, skippedSymbols)
+    }
+
+    // 如果所有标的都已是最细日期，直接返回
+    if (symbolInfos.length === 0) {
+        selectedSymbols.value = new Set()
+        quoteStatus.value = `所有 ${skippedCount} 只标的已是最新数据，无需更新`
+        updatingSymbol.value = false
+        return
+    }
+
+    // === 第 2 步：按 (table, startDate) 分组 ===
+    // key: "table|startDate" → SymbolInfo[]
+    const groupMap = new Map<string, SymbolInfo[]>()
+    for (const info of symbolInfos) {
+        const groupKey = `${info.table}|${info.startDate}`
+        if (!groupMap.has(groupKey)) {
+            groupMap.set(groupKey, [])
+        }
+        const group = groupMap.get(groupKey)
+        if (group) {
+            group.push(info)
+        }
+    }
+
+    // === 第 3 步：逐组发送批量请求 ===
+    const freqMap = {
+        '1d': 'daily', 'daily': 'daily', '日线': 'daily',
+        '5m': '5m', '5分钟': '5m',
+        '15m': '15m', '15分钟': '15m',
+        '30m': '30m', '30分钟': '30m',
+        '60m': '60m', '1h': '60m', '60分钟': '60m', '1小时': '60m',
+    }
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const [groupKey, group] of groupMap) {
+        const [table, startDate] = groupKey.split('|')
+        const symbols = group.map(s => s.symbol)
+
+        // 从表名提取频率
+        const rawFreq = table.includes('_') ? table.split('_').slice(1).join('_') : '5m'
+        const freq = freqMap[rawFreq] || rawFreq
+
+        // 转换 symbol 格式：sh.510300 → 510300.SH
+        const normalizedSymbols = symbols.map(s =>
+            s.replace(/^([a-z]+)\.(\d+)$/, '$2.$1').toUpperCase()
+        )
+
+        const params = {
+            symbols: normalizedSymbols.join(','),  // 逗号分隔的批量 symbols
+            freq,
+            ...(startDate && { start: startDate }),
+        }
+
         try {
-            // 从表名提取频率（如 "stock_1d" → "1d"）
-            const rawFreq = table.includes('_') ? table.split('_').slice(1).join('_') : '5m'
-            // 映射为 Python 脚本接受的频率格式
-            const freqMap = {
-                '1d': 'daily', 'daily': 'daily', '日线': 'daily',
-                '5m': '5m', '5分钟': '5m',
-                '15m': '15m', '15分钟': '15m',
-                '30m': '30m', '30分钟': '30m',
-                '60m': '60m', '1h': '60m', '60分钟': '60m', '1小时': '60m',
-            }
-            const freq = freqMap[rawFreq] || rawFreq
-
-            // 从 allFlatSymbols 中找到该标的的 end_time
-            const item = allFlatSymbols.value.find(s => s.table === table && s.symbol === symbol)
-            const endTime = item?.end_time || ''
-
-            // 计算增量 start：如果有 end_time，从 end_time+1 开始；否则全量下载
-            let startDate = ''
-            if (endTime) {
-                // end_time 格式: "2024-01-15" 或 "2024-01-15 09:30:00"
-                const datePart = endTime.split(' ')[0]
-                const nextDay = new Date(datePart)
-                nextDay.setDate(nextDay.getDate() + 1)
-                startDate = nextDay.toISOString().split('T')[0]
-            }
-
-            // 转换 symbol 格式：sh.510300 → 510300.SH
-            const normalizedSymbol = symbol.replace(/^([a-z]+)\.(\d+)$/, '$2.$1').toUpperCase()
-
-            const params = {
-                symbols: normalizedSymbol,
-                freq,
-                ...(startDate && { start: startDate }),
-            }
-            // end 不传，后端默认今天
-
             await axios.post(`https://${server}/v0/quote`, params, {
                 headers: { 'Authorization': token || '' }
             })
-            successCount++
+            successCount += symbols.length  // 该组所有标的都算成功
         } catch (err) {
-            failCount++
-            console.error(`[DataCenter] Failed to update ${symbol}:`, err)
+            failCount += symbols.length
+            console.error(`[DataCenter] Failed to batch update group [${groupKey}]:`, err)
         }
     }
 
     selectedSymbols.value = new Set()
-    quoteStatus.value = `批量更新完成：成功 ${successCount}，失败 ${failCount}`
+    let statusMsg = `批量更新完成：成功 ${successCount}，失败 ${failCount}`
+    if (skippedCount > 0) {
+        statusMsg += `，跳过 ${skippedCount} 只（已是最新数据）`
+    }
+    quoteStatus.value = statusMsg
     await loadQuoteData()
 
     updatingSymbol.value = false

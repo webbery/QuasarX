@@ -1,10 +1,11 @@
 <template>
-  <div ref="chartRef" style="width: 100%; height: 100%"></div>
+  <div ref="chartRef" style="width: 100%; height: 100%" @contextmenu.prevent="onContextMenu"></div>
 </template>
 
 <script setup lang="ts">
 import { watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 
 const props = defineProps<{
@@ -146,6 +147,34 @@ function buildOption() {
         itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0, 0, 0, 0.5)' }
       }
     }]
+  })
+}
+
+// 右键菜单：复制可见股票名单
+function onContextMenu() {
+  // 筛选 hotCount > 0 的股票（在 visualMap 范围内有相关性的）
+  const visibleSymbols = props.symbols
+    .map((s, idx) => ({ symbol: s, count: hotCounts[idx] || 0 }))
+    .filter(item => item.count > 0)
+    .map(item => {
+      // 转换为 sh.xxxxxx / sz.xxxxxx 格式
+      const parts = item.symbol.split('.')
+      if (parts.length === 2) {
+        return `${parts[1].toLowerCase()}.${parts[0]}`
+      }
+      return item.symbol
+    })
+
+  if (visibleSymbols.length === 0) {
+    ElMessage.warning('当前 visualMap 范围内没有可见股票')
+    return
+  }
+
+  const text = visibleSymbols.join(',')
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success(`已复制 ${visibleSymbols.length} 只股票: ${text}`)
+  }).catch(() => {
+    ElMessage.error('复制到剪贴板失败')
   })
 }
 

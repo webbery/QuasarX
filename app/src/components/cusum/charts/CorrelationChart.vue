@@ -9,11 +9,11 @@
     <div class="matrix-panels" v-if="matrixBefore.length && matrixAfter.length">
       <div class="matrix-panel">
         <h4>变点前 (正常)</h4>
-        <div ref="beforeHeatmapRef" class="chart"></div>
+        <div ref="beforeHeatmapRef" class="chart" @contextmenu.prevent="onContextMenu($event, 'before')"></div>
       </div>
       <div class="matrix-panel">
         <h4>变点后 (危机)</h4>
-        <div ref="afterHeatmapRef" class="chart"></div>
+        <div ref="afterHeatmapRef" class="chart" @contextmenu.prevent="onContextMenu($event, 'after')"></div>
       </div>
     </div>
   </div>
@@ -22,6 +22,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 
 interface Props {
   rollingAvg: number[]
@@ -46,11 +47,23 @@ function renderLineChart() {
 
   const n = props.rollingAvg.length
   // dates 含 header 导致长度为 n+1，取 slice(1) 与收益率数量对齐
-  const xData = props.dates.length > n
+  const rawDates = props.dates.length > n
     ? props.dates.slice(1).slice(0, n)
     : props.dates.length === n
       ? props.dates
-      : Array.from({ length: n }, (_, i) => `Day ${i + 1}`)
+      : []
+  
+  // 格式化日期为 YYYY-MM-DD
+  const xData = rawDates.map((d: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d
+    try {
+      const date = new Date(d)
+      if (isNaN(date.getTime())) return d
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    } catch {
+      return d
+    }
+  })
 
   const option = {
     tooltip: { trigger: 'axis' },
@@ -138,6 +151,31 @@ function renderHeatmap(ref: any, data: number[][], symbols: string[]) {
   }
 
   ref.setOption(option)
+}
+
+// 右键菜单：复制全部股票名单（CUSUM 热力图无 visualMap 过滤）
+function onContextMenu(_event: MouseEvent, panel: 'before' | 'after') {
+  const matrix = panel === 'before' ? props.matrixBefore : props.matrixAfter
+  if (!matrix.length) {
+    ElMessage.warning(`${panel === 'before' ? '变点前' : '变点后'}数据为空`)
+    return
+  }
+
+  const symbols = props.symbols.map(s => {
+    // 转换为 sh.xxxxxx / sz.xxxxxx 格式
+    const parts = s.split('.')
+    if (parts.length === 2) {
+      return `${parts[1].toLowerCase()}.${parts[0]}`
+    }
+    return s
+  })
+
+  const text = symbols.join(',')
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success(`已复制${panel === 'before' ? '变点前' : '变点后'} ${symbols.length} 只股票: ${text}`)
+  }).catch(() => {
+    ElMessage.error('复制到剪贴板失败')
+  })
 }
 
 onMounted(async () => {

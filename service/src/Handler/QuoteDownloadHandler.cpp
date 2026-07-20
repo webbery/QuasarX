@@ -26,6 +26,17 @@ static std::vector<std::string> splitSymbols(const std::string& str, char delim 
     return result;
 }
 
+// 辅助：解析脚本输出中的 JSON 进度行
+static bool parseProgressLine(const std::string& line, nlohmann::json& out) {
+    if (line.find("\"type\": \"download_progress\"") == std::string::npos) return false;
+    try {
+        out = nlohmann::json::parse(line);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
     try {
@@ -100,11 +111,10 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
 
     // 后台线程执行下载 + 导入（按组）
     std::thread([sse_sock, groups, quote_dir, freq, start, end, interpreter]() {
-        SetCurrentThreadName("QuoteDownload");
-
         for (auto& group : groups) {
             const auto& asset_type = group.asset_type;
             const auto& symbols_str = group.symbols_str;
+            auto sym_list = splitSymbols(symbols_str);
 
             // 构建命令（脚本内部已同时下载 HFQ + 不复权）
             std::string cmd = interpreter + " tools/download_etf_bs.py "
@@ -119,16 +129,51 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
             std::string org_dir = asset_type + "_org/" + freq;
 
             SendSSE(sse_sock, "quote_download", {
-                {"status", "started"}, {"asset_type", asset_type}, {"symbols", symbols_str}
+                {"status", "started"}, {"asset_type", asset_type},
+                {"symbols", symbols_str}, {"total", std::to_string(sym_list.size())}
             });
 
-            // 执行下载脚本
+            // 执行下载脚本，逐行解析进度
             String output;
             bool ok = RunCommand(cmd, output);
 
+            // 解析标的级进度
+            int downloaded = 0;
+            int failed = 0;
+            std::istringstream iss(output);
+            std::string line;
+            while (std::getline(iss, line)) {
+                nlohmann::json progress;
+                if (parseProgressLine(line, progress)) {
+                    std::string sym = progress.value("symbol", "");
+                    std::string status = progress.value("status", "");
+
+                    if (status == "done") {
+                        downloaded++;
+                        SendSSE(sse_sock, "quote_download", {
+                            {"status", "symbol_downloaded"},
+                            {"asset_type", asset_type},
+                            {"symbol", sym},
+                            {"rows", std::to_string(progress.value("rows", 0))},
+                            {"downloaded", std::to_string(downloaded)},
+                            {"total", std::to_string(sym_list.size())},
+                        });
+                    } else if (status == "failed") {
+                        failed++;
+                        SendSSE(sse_sock, "quote_download", {
+                            {"status", "symbol_failed"},
+                            {"asset_type", asset_type},
+                            {"symbol", sym},
+                            {"error", progress.value("error", "unknown")},
+                        });
+                    }
+                }
+            }
+
             SendSSE(sse_sock, "quote_download", {
                 {"status", ok ? "downloaded" : "download_failed"},
-                {"output", output}
+                {"downloaded", std::to_string(downloaded)},
+                {"failed", std::to_string(failed)},
             });
 
             // 检查 QuoteDB 是否仍有效（服务可能在退出）
