@@ -10,6 +10,7 @@
 #include <variant>
 #include "PortfolioSubsystem.h"
 #include "Util/string_algorithm.h"
+#include "Util/DailyDecision.h"
 
 namespace {
     // timeHorizon 映射：统一转换为秒（用于计算 warmup epoch 数）
@@ -136,6 +137,13 @@ List<String> StrategySubSystem::GetStrategyNames() {
     return  names;
 }
 
+List<String> StrategySubSystem::GetDailyStrategyNames() {
+    List<String> names;
+    for (auto& name: _strategies) {
+    }
+    return names;
+}
+
 void StrategySubSystem::SetupSimulation(const String& name) {
     _virtualStrategies.insert(name);
 }
@@ -164,8 +172,8 @@ int StrategySubSystem::GetWarmupEpochs(const String& strategy) const {
 // }
 
 bool StrategySubSystem::CreateStrategy(const String& name, const nlohmann::json& params) {
-    auto& features = params["feature"];
-    auto& agent = params["agent"];
+    // auto& features = params["feature"];
+    // auto& agent = params["agent"];
     _strategies.insert(name);
     return true;
 }
@@ -277,4 +285,159 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
 
     INFO("[StrategySubSystem] Strategy '{}'(version {}) initialized: warmup={} epochs, nodes={}",
         to_utf8(strategyName), version, warmup, sorted_nodes.size());
+}
+
+// ═══════════════════════════════════════════════════════════
+//  日级策略执行（收盘后依赖驱动）
+// ═══════════════════════════════════════════════════════════
+
+void StrategySubSystem::InitDailyExecution() {
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+
+    _dailyStrategySymbols.clear();
+
+    // 从所有已加载策略中提取依赖标的
+    for (auto& name : _strategies) {
+        auto pools = GetPools(name);
+        Set<String> symbols;
+        for (auto sym : pools) {
+            symbols.insert(get_symbol(sym));
+        }
+        if (!symbols.empty()) {
+            _dailyStrategySymbols[name] = symbols;
+        }
+    }
+
+    _dailyInitialized = true;
+    INFO("[DailyExecution] Initialized: {} strategies with symbols", _dailyStrategySymbols.size());
+    for (auto& [strategy, symbols] : _dailyStrategySymbols) {
+        String symList;
+        for (auto& s : symbols) {
+            if (!symList.empty()) symList += ",";
+            symList += s;
+        }
+        INFO("[DailyExecution]   {} → [{}]", strategy, symList);
+    }
+}
+
+void StrategySubSystem::ResetDaily() {
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+    _dailyReadySymbols.clear();
+    _dailyExecutedStrategies.clear();
+    INFO("[DailyExecution] Reset daily state");
+}
+
+void StrategySubSystem::MarkSymbolReady(const String& symbol) {
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+
+    if (!_dailyInitialized) return;
+
+    _dailyReadySymbols.insert(symbol);
+    INFO("[DailyExecution] Symbol ready: {} ({}/{} ready symbols)",
+         symbol, _dailyReadySymbols.size(), _dailyStrategySymbols.size());
+
+    // 检查是否有策略的所有依赖已就绪
+    for (auto& [strategy, symbols] : _dailyStrategySymbols) {
+        if (_dailyExecutedStrategies.count(strategy)) continue;
+
+        bool allReady = true;
+        for (auto& sym : symbols) {
+            if (!_dailyReadySymbols.count(sym)) {
+                allReady = false;
+                break;
+            }
+        }
+
+        if (allReady) {
+            INFO("[DailyExecution] All symbols ready for strategy '{}', executing", strategy);
+            _dailyExecutedStrategies.insert(strategy);
+
+            // StartDaily 内部异步执行，这里直接调用即可
+            ExecuteDailyStrategy(strategy);
+        }
+    }
+}
+
+void StrategySubSystem::ExecuteDailyStrategy(const String& strategy) {
+    INFO("[DailyExecution] Executing strategy: {}", strategy);
+
+    auto pools = GetPools(strategy);
+    String dataDir = _handle->GetConfig().GetDatabasePath();
+    String today = ToString(Now(), "%Y-%m-%d");
+
+    // 异步执行，回调中保存决策
+    _agentSystem->StartDaily(strategy, pools,
+        [this, strategy, dataDir, today](nlohmann::json decisions) {
+            DailyDecisionJson::Report report;
+            report.strategy = strategy;
+            report.executed_at = ToString(Now(), "%Y-%m-%d %H:%M:%S");
+            report.status = decisions.value("status", "unknown");
+
+            // 解析决策
+            if (decisions.contains("decisions")) {
+                for (auto& d : decisions["decisions"]) {
+                    DailyDecisionJson::Decision decision;
+                    decision.symbol = d.value("symbol", "");
+                    decision.action = DailyDecisionJson::parseAction(d.value("action", "HOLD"));
+                    decision.quantity = d.value("quantity", 0);
+                    decision.target_price = d.value("price", 0.0);
+                    report.decisions.push_back(decision);
+                }
+            }
+
+            DailyDecisionJson::saveReport(dataDir, today, report);
+            INFO("[DailyExecution] Strategy {} completed: {} decisions saved",
+                 strategy, report.decisions.size());
+        });
+}
+
+void StrategySubSystem::ForceExecuteAllDaily() {
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+
+    if (!_dailyInitialized) return;
+
+    for (auto& [strategy, symbols] : _dailyStrategySymbols) {
+        if (_dailyExecutedStrategies.count(strategy)) continue;
+
+        WARN("[DailyExecution] Force executing strategy '{}' (not all symbols ready)", strategy);
+        _dailyExecutedStrategies.insert(strategy);
+
+        // StartDaily 内部异步执行
+        ExecuteDailyStrategy(strategy);
+    }
+}
+
+nlohmann::json StrategySubSystem::GetDailyStatus() const {
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+
+    nlohmann::json status;
+    status["initialized"] = _dailyInitialized;
+    status["ready_symbols"] = nlohmann::json::array();
+    status["executed_strategies"] = nlohmann::json::array();
+    status["pending_strategies"] = nlohmann::json::array();
+
+    for (auto& sym : _dailyReadySymbols) {
+        status["ready_symbols"].push_back(sym);
+    }
+    for (auto& s : _dailyExecutedStrategies) {
+        status["executed_strategies"].push_back(s);
+    }
+    for (auto& [strategy, symbols] : _dailyStrategySymbols) {
+        if (!_dailyExecutedStrategies.count(strategy)) {
+            nlohmann::json pending;
+            pending["strategy"] = strategy;
+            pending["required_symbols"] = nlohmann::json::array();
+            pending["ready_count"] = 0;
+            for (auto& sym : symbols) {
+                pending["required_symbols"].push_back(sym);
+                if (_dailyReadySymbols.count(sym)) {
+                    pending["ready_count"] = pending["ready_count"].get<int>() + 1;
+                }
+            }
+            pending["total_count"] = static_cast<int>(symbols.size());
+            status["pending_strategies"].push_back(pending);
+        }
+    }
+
+    return status;
 }

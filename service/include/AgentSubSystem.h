@@ -7,6 +7,7 @@
 #include "Util/datetime.h"
 #include "json.hpp"
 #include <atomic>
+#include <functional>
 #include <memory>
 
 class Server;
@@ -176,6 +177,19 @@ public:
     };
 
     BacktestMcPaths GetBacktestMcPaths(const String& strategy) const;
+
+    /**
+     * @brief 日级策略执行（收盘后调用，异步模式）
+     * 
+     * 内部启动线程执行策略图到最新数据，完成后通过回调通知。
+     * 方案A：完整回测到最新 bar。
+     * 
+     * @param strategy 策略名称
+     * @param symbols 标的列表
+     * @param onComplete 完成回调，参数为决策 JSON
+     */
+    void StartDaily(const String& strategy, const Set<symbol_t>& symbols,
+                    std::function<void(nlohmann::json)> onComplete);
 
 private:
 

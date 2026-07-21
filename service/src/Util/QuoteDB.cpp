@@ -278,6 +278,40 @@ int QuoteDB::importCsv(const std::string& csv_path,
 }
 
 // ═══════════════════════════════════════════════════════════
+//  插入或更新单根 bar
+// ═══════════════════════════════════════════════════════════
+
+bool QuoteDB::upsertBar(const std::string& table, const QuoteBar& bar) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!initialized_) return false;
+
+    ensureTable(table);
+
+    int64_t sym_encoded = encodeSymbol(bar.symbol);
+
+    std::string sql = fmt::format(
+        "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext, "
+        "adj_open, adj_close, adj_high, adj_low) "
+        "VALUES ({}, '{}', {:.6f}, {:.6f}, {:.6f}, {:.6f}, {}, {:.4f}, {}, "
+        "{:.6f}, {:.6f}, {:.6f}, {:.6f}) "
+        "ON CONFLICT(symbol, datetime) DO UPDATE SET "
+        "open=excluded.open, close=excluded.close, high=excluded.high, low=excluded.low, "
+        "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext, "
+        "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
+        "adj_high=excluded.adj_high, adj_low=excluded.adj_low",
+        table, sym_encoded, bar.datetime,
+        bar.open, bar.close, bar.high, bar.low,
+        bar.volume, bar.turnover, (int)bar.ext,
+        bar.adj_open, bar.adj_close, bar.adj_high, bar.adj_low);
+
+    if (!exec(sql)) {
+        SPDLOG_ERROR("[QuoteDB] upsertBar failed for {} at {}", bar.symbol, bar.datetime);
+        return false;
+    }
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  查询
 // ═══════════════════════════════════════════════════════════
 

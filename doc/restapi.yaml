@@ -1803,6 +1803,123 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   # ═══════════════════════════════════════════════════════════
+  #  分红除权数据
+  # ═══════════════════════════════════════════════════════════
+  /dividend:
+    get:
+      summary: 查询分红除权数据
+      description: |
+        查询分红除权数据：
+        - 无参数：列出所有已导入分红数据的标的
+        - date=YYYY-MM-DD：查询该日所有除权除息事件
+        - code=XXXXXX.SH：查询该标的的分红历史
+        - code + start + end：查询指定日期范围的分红历史
+      tags:
+        - Dividend
+      parameters:
+        - in: query
+          name: date
+          schema:
+            type: string
+            format: date
+          description: 查询指定日期的除权除息事件（YYYY-MM-DD）
+          example: "2026-07-25"
+        - in: query
+          name: code
+          schema:
+            type: string
+          description: 标的代码（如 600519.SH）
+          example: 600519.SH
+        - in: query
+          name: start
+          schema:
+            type: string
+            format: date
+          description: 起始日期（YYYY-MM-DD，配合 code 使用）
+        - in: query
+          name: end
+          schema:
+            type: string
+            format: date
+          description: 结束日期（YYYY-MM-DD，配合 code 使用）
+      responses:
+        '200':
+          description: 分红数据查询结果
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/DividendByDateResponse"
+                  - $ref: "#/components/schemas/DividendBySymbolResponse"
+                  - $ref: "#/components/schemas/DividendSymbolListResponse"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      summary: 触发分红数据下载与导入
+      description: |
+        后台异步从 BaoStock 下载分红数据，保存 CSV 到 data/dividend/，
+        然后扫描该目录导入到 finance.db 的 dividend 表。
+        通过 SSE 推送进度事件（事件名: dividend_download）。
+
+        标的来源：
+        - symbols：显式传入选股列表（逗号分隔）
+        - from_strategies=true：从活跃策略自动收集标的（默认）
+        - 两者都为空：使用内置默认列表
+      tags:
+        - Dividend
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DividendDownloadRequest"
+      responses:
+        '200':
+          description: 下载任务已启动
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DividendDownloadResponse"
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 删除分红数据
+      description: |
+        删除分红除权数据：
+        - 无参数：删除整张 dividend 表
+        - code=XXXXXX.SH：仅删除该标的的分红记录
+      tags:
+        - Dividend
+      parameters:
+        - in: query
+          name: code
+          schema:
+            type: string
+          description: 标的代码（留空删除整表）
+          example: 600519.SH
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DividendDeleteResponse"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ═══════════════════════════════════════════════════════════
   #  XGBoost 训练与分析
   # ═══════════════════════════════════════════════════════════
   /xgboost:
@@ -3750,3 +3867,158 @@ components:
       type: object
       properties:
         message: { type: string, example: "deleted" }
+
+    # ── 分红除权数据 schemas ──
+
+    DividendRecord:
+      type: object
+      description: 单条分红除权记录
+      properties:
+        symbol:
+          type: string
+          description: 标的代码
+          example: 600519.SH
+        announce_date:
+          type: string
+          format: date
+          description: 公告日
+        report_year:
+          type: string
+          description: 年报年份
+          example: "2025"
+        ex_dividend_date:
+          type: string
+          format: date
+          description: 除权除息日
+        record_date:
+          type: string
+          format: date
+          description: 股权登记日
+        implement_date:
+          type: string
+          format: date
+          description: 实施日（红股/现金到账日）
+        bonus_per_10:
+          type: number
+          format: double
+          description: 每10股送股数
+          example: 0
+        transfer_per_10:
+          type: number
+          format: double
+          description: 每10股转增数
+          example: 0
+        cash_per_10:
+          type: number
+          format: double
+          description: 每10股派息金额（元）
+          example: 27.53
+        allot_per_10:
+          type: number
+          format: double
+          description: 每10股配股数
+        allot_price:
+          type: number
+          format: double
+          description: 配股价
+        ex_div_price:
+          type: number
+          format: double
+          description: 除权参考价
+          nullable: true
+        action_type:
+          type: integer
+          description: |
+            公司行为类型编码：
+            - 0=未知, 1=分红, 2=送股, 3=转增
+            - 4=送转, 5=分红送转, 6=配股, 7=混合
+          enum: [0, 1, 2, 3, 4, 5, 6, 7]
+
+    DividendByDateResponse:
+      type: object
+      description: 按日期查询的响应
+      properties:
+        date:
+          type: string
+          format: date
+          description: 查询日期
+        has_corporate_action:
+          type: boolean
+          description: 该日是否有除权除息事件
+        count:
+          type: integer
+          description: 事件条数
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DividendRecord"
+          description: 分红记录列表
+
+    DividendBySymbolResponse:
+      type: object
+      description: 按标的查询的响应
+      properties:
+        code:
+          type: string
+          description: 标的代码
+        count:
+          type: integer
+          description: 历史分红条数
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DividendRecord"
+          description: 分红记录列表
+
+    DividendSymbolListResponse:
+      type: object
+      description: 无参数查询返回已导入的标的列表
+      properties:
+        count:
+          type: integer
+          description: 标的数量
+        symbols:
+          type: array
+          items:
+            type: string
+          description: 标的代码列表
+
+    DividendDownloadRequest:
+      type: object
+      description: 手动触发分红下载请求体（所有字段可选）
+      properties:
+        symbols:
+          type: string
+          description: |
+            显式传入的标的列表，逗号分隔（如 000001.SZ,600519.SH）。
+            优先级最高，传入则覆盖 from_strategies。
+        from_strategies:
+          type: boolean
+          default: true
+          description: 是否从活跃策略自动收集标的（默认 true）
+        years:
+          type: string
+          description: 下载年份范围，如 2020-2026
+        env:
+          type: string
+          description: Python 环境名称
+
+    DividendDownloadResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: started
+        symbol_count:
+          type: integer
+          description: 本次下载的标的数量
+
+    DividendDeleteResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [deleted, dropped]
+        code:
+          type: string
+          description: 被删除的标的代码（删除标的时返回）

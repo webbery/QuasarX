@@ -20,6 +20,7 @@
 #include <exception>
 #include <stdexcept>
 #include <typeinfo>
+#include <thread>
 #include "RiskSubSystem.h"
 #include "Nodes/ScriptNode.h"
 #include "Nodes/ExecuteNode.h"
@@ -1022,4 +1023,166 @@ bool FlowSubsystem::RunTrainingCollect(
     worker.join();
 
     return success;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  日级策略执行（异步模式，方案A：完整回测到最新）
+// ═══════════════════════════════════════════════════════════
+
+void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symbols,
+                                std::function<void(nlohmann::json)> onComplete) {
+    // 异步执行，不阻塞调用线程
+    std::thread([this, strategy, symbols, onComplete = std::move(onComplete)]() {
+        SetCurrentThreadName(("Daily_" + strategy).c_str());
+
+        nlohmann::json result;
+        result["strategy"] = strategy;
+        result["timestamp"] = ToString(Now(), "%Y-%m-%d %H:%M:%S");
+        result["decisions"] = nlohmann::json::array();
+
+        auto it = _flows.find(strategy);
+        if (it == _flows.end()) {
+            WARN("[StartDaily] Strategy not found: {}", strategy);
+            result["status"] = "error";
+            result["error"] = "strategy not found";
+            if (onComplete) onComplete(result);
+            return;
+        }
+
+        auto& flow = it->second;
+        if (flow._graph.empty()) {
+            WARN("[StartDaily] Strategy graph is empty: {}", strategy);
+            result["status"] = "error";
+            result["error"] = "empty graph";
+            if (onComplete) onComplete(result);
+            return;
+        }
+
+        // 获取 Exchange
+        auto* exchangeMgr = _handle->GetExchangeManager();
+        if (!exchangeMgr) {
+            result["status"] = "error";
+            result["error"] = "no exchange manager";
+            if (onComplete) onComplete(result);
+            return;
+        }
+
+        // 启动所需的 Exchange
+        Set<String> requiredSources = GetRequiredSources(strategy);
+        exchangeMgr->StartRequiredExchanges(requiredSources);
+        exchangeMgr->SubscribeSymbols(strategy, requiredSources, symbols);
+
+        auto* exchange = dynamic_cast<HistorySimulationBase*>(
+            exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
+        if (!exchange) {
+            WARN("[StartDaily] Failed to get stock exchange");
+            result["status"] = "error";
+            result["error"] = "no stock exchange";
+            exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
+            exchangeMgr->StopRequiredExchanges(requiredSources);
+            if (onComplete) onComplete(result);
+            return;
+        }
+
+        // 创建回测上下文
+        run_id_t runId = exchange->createBacktestContext(strategy, symbols, 1000000.0);
+        BacktestContext* btContext = exchange->getBacktestContext(runId);
+        if (!btContext) {
+            result["status"] = "error";
+            result["error"] = "failed to create context";
+            exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
+            exchangeMgr->StopRequiredExchanges(requiredSources);
+            if (onComplete) onComplete(result);
+            return;
+        }
+
+        // 执行策略图到最新数据
+        DataContext context(strategy, _handle);
+        context.setBacktestRunId(runId);
+
+        try {
+            // Prepare 节点
+            for (auto node : flow._graph) {
+                node->Prepare(strategy, context);
+            }
+
+            uint64_t epoch = 0;
+            bool success = true;
+
+            // 运行到最新数据
+            while (!Server::IsExit()) {
+                context.SetEpoch(++epoch);
+                if (!exchange->stepForward(btContext)) {
+                    INFO("[StartDaily] Data finished for {} at epoch {}", strategy, epoch);
+                    break;
+                }
+                if (!RunGraph(strategy, flow, context)) {
+                    WARN("[StartDaily] RunGraph failed at epoch {}", epoch);
+                    success = false;
+                    break;
+                }
+            }
+
+            if (success) {
+                // 提取信号
+                const auto& signals = context.getAllSignals();
+                nlohmann::json::array_t decisions;
+
+                for (const auto& [sym, signal] : signals) {
+                    if (!signal) continue;
+
+                    nlohmann::json decision;
+                    decision["symbol"] = get_symbol(sym);
+
+                    switch (signal->GetAction()) {
+                        case TradeAction::BUY:
+                            decision["action"] = "BUY";
+                            break;
+                        case TradeAction::SELL:
+                            decision["action"] = "SELL";
+                            break;
+                        default:
+                            decision["action"] = "HOLD";
+                            break;
+                    }
+
+                    decision["quantity"] = signal->GetQuantity();
+                    decision["price"] = signal->GetPrice();
+                    decision["flag"] = signal->GetFlag();
+
+                    decisions.push_back(decision);
+                }
+
+                result["decisions"] = decisions;
+                result["status"] = "completed";
+                result["epochs"] = epoch;
+
+                INFO("[StartDaily] Strategy {} completed: {} epochs, {} decisions",
+                     strategy, epoch, decisions.size());
+            } else {
+                result["status"] = "error";
+                result["error"] = "graph execution failed";
+            }
+
+            // 清理
+            for (auto node : flow._graph) {
+                node->Done(strategy);
+            }
+
+        } catch (const std::exception& e) {
+            WARN("[StartDaily] Exception: {}", e.what());
+            result["status"] = "error";
+            result["error"] = e.what();
+        }
+
+        // 清理回测上下文
+        exchange->destroyBacktestContext(runId);
+
+        // 停止 Exchange
+        exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
+        exchangeMgr->StopRequiredExchanges(requiredSources);
+
+        // 回调通知
+        if (onComplete) onComplete(result);
+    }).detach();
 }

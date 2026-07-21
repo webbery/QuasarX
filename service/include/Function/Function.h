@@ -98,6 +98,34 @@ private:
     double _sumSq;                 // 当前窗口平方和
 };
 
+/**
+ * ATR — Average True Range (平均真实波幅)
+ *
+ * True Range = max(high - low, |high - prev_close|, |low - prev_close|)
+ * ATR = 滑动窗口均值(TR, period)
+ *
+ * 输入:
+ *   args["high"]  — 最高价 (double 或 Vector<double>)
+ *   args["low"]   — 最低价
+ *   args["close"] — 收盘价
+ *
+ * 用途: 自适应止损，止损距离 = ATR × multiplier
+ */
+class ATR : public ICallable {
+public:
+    ATR(int32_t period);
+    virtual context_t operator()(const Map<String, context_t>& args);
+
+private:
+    int32_t _period;
+    std::vector<double> _trBuffer;
+    size_t _count;
+    size_t _nextIndex;
+    double _sum;
+    double _prevClose;
+    bool _hasPrev;
+};
+
 class Garch: public ICallable {
 public:
     Garch(int32_t p, int32_t q);

@@ -33,6 +33,7 @@
 #include "Nodes/CUSUMNode.h"
 #include "Nodes/FactorCombineNode.h"
 #include "Nodes/XGBoostNode.h"
+#include "Nodes/BreakoutNode.h"
 
 namespace {
     Map<String, StrategyNodeType> node_type_map{
@@ -54,6 +55,7 @@ namespace {
         {"cusum", StrategyNodeType::CUSUM},
         {"factor_combine", StrategyNodeType::FactorCombine},
         {"xgboost", StrategyNodeType::XGBoost},
+        {"breakout", StrategyNodeType::Breakout},
     };
 
     Map<String, StatisticIndicator> statistics{
@@ -177,6 +179,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::XGBoost:
             nodeInstance = generate_node<XGBoostNode>(node["id"], server);
+            break;
+        case StrategyNodeType::Breakout:
+            nodeInstance = generate_node<BreakoutNode>(node["id"], server);
             break;
         default:
             WARN("Unknown node type: {}", node_type);

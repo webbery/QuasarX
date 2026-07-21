@@ -379,6 +379,76 @@
 
         <PromptDialog ref="promptDialogRef" />
 
+        <!-- 分红除权数据管理 -->
+        <div class="section-divider"></div>
+        <div class="section-title">
+            <i class="fas fa-coins"></i> 分红除权数据管理
+        </div>
+
+        <div class="input-row">
+            <div class="input-group">
+                <label>查询日期</label>
+                <input type="date" v-model="dividendQueryDate" />
+            </div>
+            <div class="input-group">
+                <label>查询标的</label>
+                <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="dividendQueryCode" />
+            </div>
+        </div>
+
+        <div class="button-row">
+            <button class="btn" @click="onLoadDividendData" :disabled="dividendLoading">
+                <i class="fas fa-search"></i> 查询
+            </button>
+            <button class="btn btn-primary" @click="onDownloadDividend" :disabled="dividendDownloading">
+                <i class="fas fa-download"></i>
+                {{ dividendDownloading ? '下载中...' : '更新分红数据' }}
+            </button>
+            <button class="btn-danger btn-sm" @click="onDeleteAllDividend" :disabled="dividendDeleting">
+                <i class="fas fa-trash"></i> 清空所有
+            </button>
+        </div>
+
+        <div v-if="dividendStatus" class="status-text" :class="{ 'status-error': dividendStatus.includes('失败') }">
+            {{ dividendStatus }}
+        </div>
+
+        <div v-if="dividendResults.length > 0" class="quote-data-table">
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead class="sticky-header">
+                        <tr>
+                            <th>标的代码</th>
+                            <th>除权除息日</th>
+                            <th>登记日</th>
+                            <th>类型</th>
+                            <th>送股(10股)</th>
+                            <th>转增(10股)</th>
+                            <th>派息(10股)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="(item, idx) in dividendResults" :key="idx">
+                            <td class="symbol-code">{{ item.symbol || item.code || '-' }}</td>
+                            <td>{{ item.ex_dividend_date || '-' }}</td>
+                            <td>{{ item.record_date || '-' }}</td>
+                            <td>{{ dividendActionTypeName[item.action_type] || item.action_type }}</td>
+                            <td>{{ item.bonus_per_10 || 0 }}</td>
+                            <td>{{ item.transfer_per_10 || 0 }}</td>
+                            <td>{{ item.cash_per_10 || 0 }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div v-if="dividendCount > 0" class="pagination-center" style="padding: 8px;">
+                <span class="page-info">共 {{ dividendCount }} 条记录</span>
+            </div>
+        </div>
+
+        <div v-if="dividendResults.length === 0 && !dividendLoading && dividendLoaded" class="empty-text">
+            <i class="fas fa-info-circle"></i> 暂无分红数据
+        </div>
+
         <!-- Tick 数据删除 -->
         <div class="section-divider danger"></div>
         <div class="section-title danger">
@@ -493,6 +563,21 @@ const financeDetailKeys = ref([])
 // 排序
 const sortKey = ref('')
 const sortOrder = ref('asc') // 'asc' or 'desc'
+
+// ── 分红除权数据状态 ──
+const dividendQueryDate = ref('')
+const dividendQueryCode = ref('')
+const dividendResults = ref([])
+const dividendStatus = ref('')
+const dividendLoading = ref(false)
+const dividendLoaded = ref(false)
+const dividendDownloading = ref(false)
+const dividendDeleting = ref(false)
+const dividendCount = ref(0)
+const dividendActionTypeName = {
+    0: '未知', 1: '分红', 2: '送股', 3: '转增',
+    4: '送转', 5: '分红送转', 6: '配股', 7: '混合'
+}
 
 const handleSort = (key) => {
     if (sortKey.value === key) {
@@ -1373,6 +1458,84 @@ const onDeleteAllFinance = async () => {
         financeStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         financeDeleting.value = false
+    }
+}
+
+// ── 分红除权数据方法 ──
+
+const onLoadDividendData = async () => {
+    if (!isLoggedIn.value) return
+    dividendLoading.value = true
+    dividendStatus.value = ''
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        const params = {}
+        if (dividendQueryDate.value) params.date = dividendQueryDate.value
+        if (dividendQueryCode.value.trim()) params.code = dividendQueryCode.value.trim()
+        const resp = await axios.get(`https://${server}/v0/dividend`, {
+            params, headers: { 'Authorization': token || '' }
+        })
+        if (params.date) {
+            dividendResults.value = resp.data.data || []
+        } else if (params.code) {
+            dividendResults.value = resp.data.data || []
+        } else {
+            // 无参数：返回所有标的列表
+            dividendResults.value = []
+            dividendStatus.value = `共 ${resp.data.count} 个标的已导入分红数据，输入日期或代码查询详情`
+        }
+        dividendCount.value = dividendResults.value.length
+        if (dividendResults.value.length > 0) {
+            dividendStatus.value = `查询完成，共 ${dividendCount.value} 条记录`
+        }
+    } catch (err) {
+        dividendStatus.value = `查询失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        dividendLoading.value = false
+        dividendLoaded.value = true
+    }
+}
+
+const onDownloadDividend = async () => {
+    dividendDownloading.value = true
+    dividendStatus.value = '正在从活跃策略收集标的并下载分红数据...'
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        const resp = await axios.post(`https://${server}/v0/dividend`, {
+            from_strategies: true
+        }, { headers: { 'Authorization': token || '' } })
+        dividendStatus.value = `已启动下载: ${resp.data.symbol_count} 个标的，后台执行中...`
+        // 10秒后自动刷新查询结果
+        setTimeout(onLoadDividendData, 10000)
+    } catch (err) {
+        dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        dividendDownloading.value = false
+    }
+}
+
+const onDeleteAllDividend = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: '确定要清空所有分红除权数据吗？此操作不可恢复！'
+    })
+    if (!confirmed) return
+    dividendDeleting.value = true
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        await axios.delete(`https://${server}/v0/dividend`, {
+            headers: { 'Authorization': token || '' }
+        })
+        dividendStatus.value = '所有分红数据已清空'
+        dividendResults.value = []
+        dividendCount.value = 0
+    } catch (err) {
+        dividendStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        dividendDeleting.value = false
     }
 }
 

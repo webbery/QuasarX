@@ -27,6 +27,7 @@ namespace {
         {"ZScore",  {{"price", "close"}}},
         {"Return",  {{"price", "close"}}},
         {"VPCorr",  {{"price", "close"}, {"volume", "volume"}}},
+        {"ATR",     {{"high", "high"}, {"low", "low"}, {"close", "close"}}},
     };
 
     using CallableFactory = std::function<ICallable*(const nlohmann::json&)>;
@@ -52,7 +53,8 @@ namespace {
             return nullptr;
         }},
         {"ATR", [] (const nlohmann::json& config) -> ICallable* {
-            return nullptr;
+            String cnt = (String)config["params"]["range"]["value"];
+            return new ATR(timeHorizon.at(cnt));
         }},
         {"VWAP", [] (const nlohmann::json& config) -> ICallable* {
             return nullptr;

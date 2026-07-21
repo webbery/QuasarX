@@ -17,9 +17,23 @@
       </div>
     </template>
 
+    <!-- BreakoutNode 命名输入槽位 -->
+    <template v-if="nodeType === 'breakout'">
+      <div v-for="slot in breakoutSlots" :key="slot.slot" class="named-input-row">
+        <Handle
+          type="target"
+          :position="Position.Left"
+          :id="'input-' + slot.slot"
+          class="connection-handle left-handle named-input-handle"
+        />
+        <span class="named-input-label">{{ slot.label }}</span>
+        <span class="named-input-field">[{{ slot.field }}]</span>
+      </div>
+    </template>
+
     <!-- 普通节点：单一输入连接点 -->
     <Handle
-      v-if="nodeType !== 'input' && nodeType !== 'function'"
+      v-if="nodeType !== 'input' && nodeType !== 'function' && nodeType !== 'breakout'"
       type="target"
       :position="Position.Left"
       id="input"
@@ -81,6 +95,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { computed } from 'vue'
 import { functionInputSlots } from '@/lib/nodes/configs/function'
+import { breakoutInputSlots } from '@/lib/nodes/configs/breakout'
 
 const props = defineProps<{
   nodeType: string
@@ -95,6 +110,11 @@ const functionSlots = computed(() => {
   if (props.nodeType !== 'function' || !props.params) return []
   const method = props.params.method?.value || 'MA'
   return functionInputSlots[method] || []
+})
+
+const breakoutSlots = computed(() => {
+  if (props.nodeType !== 'breakout') return []
+  return breakoutInputSlots
 })
 </script>
 

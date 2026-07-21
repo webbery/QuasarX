@@ -30,6 +30,10 @@ public:
                   const std::string& symbol_str,
                   AdjType adj = AdjType::HFQ);
 
+    // 插入或更新单根 bar（用于实时收盘数据写入）
+    // 如果 (symbol, datetime) 已存在则更新，否则插入
+    bool upsertBar(const std::string& table, const QuoteBar& bar);
+
     // 查询行情
     std::vector<QuoteBar> query(const std::string& table,
                                 const std::string& symbol,

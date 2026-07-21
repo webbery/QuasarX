@@ -20,6 +20,7 @@ import './configs/resample'
 import './configs/cusum'
 import './configs/formula'
 import './configs/factorCombine'
+import './configs/breakout'
 
 export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
 export { CATEGORY_ICONS } from './types'

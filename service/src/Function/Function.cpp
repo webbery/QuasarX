@@ -367,3 +367,75 @@ context_t VPCorr::operator()(const Map<String, context_t>& args) {
 
     return corr;
 }
+
+// ── ATR 实现 ───────────────────────────────────────────────
+//
+// True Range = max(high - low, |high - prev_close|, |low - prev_close|)
+// ATR = 滑动窗口均值(TR, period)
+//
+// 第一个 bar 仅记录 prevClose，不计算 TR，返回 NaN。
+// 从第二个 bar 开始计算 TR 并更新环形缓冲。
+// 累积满 period 个 TR 后开始输出有效 ATR 值。
+//
+
+ATR::ATR(int32_t period)
+    : _period(period), _count(0), _nextIndex(0), _sum(0.0),
+      _prevClose(0), _hasPrev(false)
+{
+    _trBuffer.resize(period, 0.0);
+}
+
+context_t ATR::operator()(const Map<String, context_t>& args) {
+    if (args.find("high") == args.end() ||
+        args.find("low") == args.end() ||
+        args.find("close") == args.end()) {
+        return std::nan("nan");
+    }
+
+    auto extractDouble = [](const context_t& val) -> double {
+        return std::visit([](const auto& v) -> double {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, double>) return v;
+            else if constexpr (std::is_same_v<T, Vector<double>>)
+                return v.empty() ? 0.0 : v.back();
+            else return 0.0;
+        }, val);
+    };
+
+    double high  = extractDouble(args.at("high"));
+    double low   = extractDouble(args.at("low"));
+    double close = extractDouble(args.at("close"));
+
+    // 第一个 bar：只记录 prevClose，不计算 TR
+    if (!_hasPrev) {
+        _prevClose = close;
+        _hasPrev = true;
+        return std::nan("nan");
+    }
+
+    // True Range = max(H-L, |H-prevC|, |L-prevC|)
+    double tr = std::max({high - low,
+                          std::abs(high - _prevClose),
+                          std::abs(low  - _prevClose)});
+    _prevClose = close;
+
+    // 更新环形缓冲
+    if (_count < static_cast<size_t>(_period)) {
+        _trBuffer[_count] = tr;
+        _sum += tr;
+        ++_count;
+    } else {
+        double old_tr = _trBuffer[_nextIndex];
+        _sum -= old_tr;
+        _trBuffer[_nextIndex] = tr;
+        _sum += tr;
+        _nextIndex = (_nextIndex + 1) % _period;
+    }
+
+    // 数据不足窗口时返回 NaN
+    if (_count < static_cast<size_t>(_period)) {
+        return std::nan("nan");
+    }
+
+    return _sum / _count;
+}

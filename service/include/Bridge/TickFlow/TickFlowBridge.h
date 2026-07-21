@@ -89,6 +89,9 @@ private:
     // 发布行情到 ExchangeManager 的统一分发队列
     void PublishQuote(const QuoteInfo& quote);
 
+    // 收盘数据写入 stock_1d（15:00 后的第一个 tick 触发）
+    void WriteCloseDataToStock1d(const QuoteInfo& quote);
+
 private:
     String _api_key;
     String _base_url;

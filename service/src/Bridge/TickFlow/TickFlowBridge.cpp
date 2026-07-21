@@ -1,7 +1,10 @@
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "ExchangeManager.h"
+#include "Util/QuoteDB.h"
+#include "Util/FinanceDB.h"
 #include "Util/datetime.h"
+#include "StrategySubSystem.h"
 #include "Util/finance.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
@@ -72,7 +75,9 @@ bool TickFlowBridge::Init(const ExchangeInfo& handle) {
         char endM = (endSec % 3600) / 60;
         SetWorkingRange(startH, endH, startM, endM);
     }
-    INFO("[TickFlow] Working hours configured from exchange time ranges");
+    // 扩展工作时段到 15:30，用于捕获盘后收盘数据（方案C：NextTick 触发）
+    SetWorkingRange(15, 15, 0, 30);
+    INFO("[TickFlow] Working hours configured: exchange hours + post-close 15:00-15:30");
 
     // 启动自治调度线程（nanomsg socket 的 init/use/destroy 都在此线程内）
     _workerThread = new std::thread(&TickFlowBridge::workerLoop, this);
@@ -448,6 +453,55 @@ void TickFlowBridge::PublishQuote(const QuoteInfo& quote) {
     exchMgr->QueueToPublish(quote);
 }
 
+// ==================== 收盘数据写入 ====================
+
+void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
+    // 只处理 15:00 后的数据
+    time_t now = quote._time;
+    std::tm* ltm = localtime(&now);
+    if (ltm->tm_hour < 15) return;
+
+    // 构建 QuoteBar
+    QuoteBar bar;
+    bar.symbol = get_symbol(quote._symbol);
+    bar.datetime = ToString(now, "%Y-%m-%d 00:00:00");  // 日线用当天日期
+    bar.open = quote._open;
+    bar.close = quote._close;
+    bar.high = quote._high;
+    bar.low = quote._low;
+    bar.volume = quote._volume;
+    bar.turnover = quote._turnover;
+    bar.ext = (quote._volume == 0) ? 0x01 : 0;  // 停牌标记
+
+    // 写入 stock_1d
+    auto& quoteDB = QuoteDB::instance();
+    if (!quoteDB.isInitialized()) {
+        WARN("[TickFlow] QuoteDB not initialized, cannot write close data");
+        return;
+    }
+
+    if (!quoteDB.upsertBar("stock_1d", bar)) {
+        WARN("[TickFlow] Failed to write close data for {}", bar.symbol);
+        return;
+    }
+
+    INFO("[TickFlow] Close data written to stock_1d: {} at {}", bar.symbol, bar.datetime);
+
+    // 计算该标的的后复权价格
+    auto& financeDB = FinanceDB::instance();
+    if (financeDB.isInitialized()) {
+        financeDB.recalcSymbolAdjPrices(bar.symbol);
+    }
+
+    // 通知策略子系统：该标的数据已就绪
+    if (_server) {
+        auto* strategySys = _server->GetStrategySystem();
+        if (strategySys) {
+            strategySys->MarkSymbolReady(bar.symbol);
+        }
+    }
+}
+
 // ==================== HTTP 请求 ====================
 
 void TickFlowBridge::FetchQuotes() {
@@ -579,6 +633,9 @@ void TickFlowBridge::ParseResponse(const String& response) {
 
             // 发布到 URI_RAW_QUOTE，供 RecordHandler 等订阅者使用
             PublishQuote(quote);
+
+            // 15:00 后的第一个 tick 写入 stock_1d（方案C：NextTick 触发）
+            WriteCloseDataToStock1d(quote);
         }
     } catch (const std::exception& e) {
         WARN("Parse error: {}", e.what());

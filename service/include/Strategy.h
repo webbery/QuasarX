@@ -75,6 +75,7 @@ enum class StrategyNodeType {
     Formula,    // 公式计算节点（自定义表达式计算）
     CUSUM,      // CUSUM 累积和变点检测节点
     FactorCombine,  // 多因子合成节点
+    Breakout,   // 包络突破状态机节点
 };
 
 struct AgentStrategyInfo;

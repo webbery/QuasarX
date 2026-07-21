@@ -47,6 +47,7 @@
 #include "Handler/QuoteDataHandler.h"
 #include "Handler/FinanceHandler.h"
 #include "Handler/FinanceDataHandler.h"
+#include "Handler/DividendHandler.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"
 #include "Nodes/PortfolioNode.h"
@@ -73,6 +74,8 @@
 #include "Handler/MacroHandler.h"
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
+#include "Util/FinanceDB.h"
+#include "Util/DailyDecision.h"
 #include "nng/nng.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 #include <boost/algorithm/string.hpp>
@@ -182,6 +185,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_QUOTE_DATA      "/quote/data"
 #define API_FINANCE         "/finance"
 #define API_FINANCE_DATA    "/finance/data"
+#define API_DIVIDEND        "/dividend"
 #define API_XGBOOST         "/xgboost"
 
 void trim(std::string& input) {
@@ -372,6 +376,9 @@ void Server::Regist() {
     REGIST_DEL(API_FINANCE);
     REGIST_POST(API_FINANCE_DATA);
     REGIST_DEL(API_FINANCE_DATA);
+    REGIST_POST(API_DIVIDEND);
+    REGIST_GET(API_DIVIDEND);
+    REGIST_DEL(API_DIVIDEND);
     REGIST_POST(API_XGBOOST);
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
@@ -1076,22 +1083,70 @@ void Server::UpdateQuoteQueryStatus(time_t curr) {
 }
 
 void Server::Schedules(time_t t) {
-    // start script 
+    // start script
     std::tm *ltm = localtime(&t);
     static int prev_day = -1;
     static bool daily_once = false;
+    static bool daily_init_done = false;
+    static bool daily_force_done = false;
     if (prev_day == -1) {
         prev_day = ltm->tm_wday;
     }
     if (prev_day != ltm->tm_wday) {
         daily_once = false;
+        daily_init_done = false;
+        daily_force_done = false;
         prev_day = ltm->tm_wday;
     }
+
+    // 15:00 初始化日级策略执行（收盘数据写入后由 TickFlowBridge 触发 MarkSymbolReady）
+    if (!daily_init_done && ltm->tm_hour == 15 && ltm->tm_min == 0) {
+        daily_init_done = true;
+        if (_strategySystem) {
+            _strategySystem->InitDailyExecution();
+            _strategySystem->ResetDaily();
+            INFO("[Schedules] Daily execution initialized at 15:00");
+        }
+    }
+
+    // 15:30 超时兜底：强制执行所有未完成的策略
+    if (!daily_force_done && ltm->tm_hour == 15 && ltm->tm_min == 30) {
+        daily_force_done = true;
+        if (_strategySystem) {
+            _strategySystem->ForceExecuteAllDaily();
+            INFO("[Schedules] Force executed all daily strategies at 15:30");
+        }
+    }
+
+    // 20:00 更新分红数据（为第二天准备）
     auto time = _config->GetDailyTime();
     if (!daily_once && ltm->tm_hour == time.first && ltm->tm_min == time.second) { // 20:00(default) run once
         daily_once = true;
         LOG("run once script");
         RunCommand("cd ../tools && python daily.py");
+
+        // 更新分红除权数据：从活跃策略收集标的 → 下载 → 导入 DuckDB
+        if (_strategySystem) {
+            Set<String> allSymbols;
+            auto names = _strategySystem->GetStrategyNames();
+            for (auto& name : names) {
+                auto pools = _strategySystem->GetPools(name);
+                for (auto sym : pools) {
+                    allSymbols.insert(get_symbol(sym));
+                }
+            }
+            if (!allSymbols.empty()) {
+                String symbolsStr = boost::algorithm::join(allSymbols, ",");
+                INFO("[Schedules] Updating dividends for {} symbols from {} strategies",
+                     allSymbols.size(), names.size());
+                String cmd = "cd ../tools && python fetch_dividend_data.py \""
+                           + symbolsStr + "\" --download --data-dir data";
+                RunCommand(cmd);
+                // 导入 CSV 到 finance.db
+                String dbPath = _config->GetDatabasePath();
+                FinanceDB::instance().importAllDividends(dbPath + "/dividend");
+            }
+        }
 
         if (prev_day == 6) {
             // every week 6 run once
@@ -1228,6 +1283,7 @@ void Server::InitHandlers() {
     RegistHandler(API_QUOTE_DATA, QuoteDataHandler);
     RegistHandler(API_FINANCE, FinanceHandler);
     RegistHandler(API_FINANCE_DATA, FinanceDataHandler);
+    RegistHandler(API_DIVIDEND, DividendHandler);
     RegistHandler(API_XGBOOST, XGBoostHandler);
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
