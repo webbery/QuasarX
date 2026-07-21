@@ -1,470 +1,463 @@
 <template>
-    <div class="data-center-container">
-        <!-- Tick 数据下载 -->
-        <div class="section-title">
-            <i class="fas fa-chart-bar"></i> Tick 数据下载 (DuckDB)
-        </div>
-
-        <div class="input-group">
-            <label>本地 DuckDB 路径</label>
-            <input
-                type="text"
-                placeholder="如留空，默认在数据文件夹下创建 tick_data.db"
-                v-model="tickDbPath"
+    <div class="data-center-root">
+        <!-- Tab 导航栏 -->
+        <div class="tab-bar">
+            <button
+                class="tab-btn"
+                :class="{ active: activeTab === 'quote' }"
+                @click="activeTab = 'quote'"
             >
-        </div>
-
-        <div class="input-group">
-            <label>标的代码 (留空下载全部)</label>
-            <input
-                type="text"
-                placeholder="如 600000.SH"
-                v-model="tickSymbol"
+                <i class="fas fa-chart-line"></i> 行情数据
+            </button>
+            <button
+                class="tab-btn"
+                :class="{ active: activeTab === 'finance' }"
+                @click="activeTab = 'finance'"
             >
-        </div>
-
-        <div class="input-row">
-            <div class="input-group">
-                <label>开始日期</label>
-                <input type="date" v-model="tickStartDate" />
-            </div>
-            <div class="input-group">
-                <label>结束日期</label>
-                <input type="date" v-model="tickEndDate" />
-            </div>
-        </div>
-
-        <div class="button-row">
-            <button class="btn" @click="onHandleTickDownload" :disabled="tickDownloading">
-                <i class="fas fa-download"></i>
-                {{ tickDownloading ? '下载中...' : '下载 Tick 到 DuckDB' }}
+                <i class="fas fa-file-invoice-dollar"></i> 基本面数据
             </button>
-            <span v-if="tickDownloading && tickProgress > 0" class="progress-text">
-                已下载 {{ tickCount }} 条
-            </span>
-        </div>
-
-        <div v-if="tickDownloadStatus" class="status-text" :class="{ 'status-error': tickDownloadStatus.includes('失败') }">
-            {{ tickDownloadStatus }}
-        </div>
-
-        <!-- 行情数据下载 (K线) -->
-        <div class="section-divider"></div>
-        <div class="section-title">
-            <i class="fas fa-chart-line"></i> 行情数据下载 (K线)
-        </div>
-
-        <div class="input-row">
-            <div class="input-group">
-                <label>频率</label>
-                <select v-model="quoteFreq" class="quote-select">
-                    <option value="daily">日线</option>
-                    <option value="5m">5分钟</option>
-                    <option value="15m">15分钟</option>
-                    <option value="30m">30分钟</option>
-                    <option value="60m">60分钟</option>
-                </select>
-            </div>
-            <div class="input-group">
-                <label>开始日期</label>
-                <input type="date" v-model="quoteStartDate" />
-            </div>
-            <div class="input-group">
-                <label>结束日期</label>
-                <input type="date" v-model="quoteEndDate" />
-            </div>
-        </div>
-
-        <div class="input-group">
-            <label>标的代码 (逗号分隔)</label>
-            <input
-                type="text"
-                placeholder="510300.SH, 510500.SH"
-                v-model="quoteSymbols"
+            <button
+                class="tab-btn"
+                :class="{ active: activeTab === 'dividend' }"
+                @click="activeTab = 'dividend'"
             >
-        </div>
-
-        <div class="button-row">
-            <button class="btn" @click="onHandleQuoteDownload" :disabled="quoteDownloading || !isLoggedIn">
-                <i class="fas fa-download"></i>
-                {{ quoteDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
-            </button>
-            <span v-if="!isLoggedIn" class="login-hint">
-                💡 行情数据下载需要先登录
-            </span>
-        </div>
-
-        <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
-            {{ quoteStatus }}
-        </div>
-
-        <div v-if="quoteLogs.length" class="quote-log-box">
-            <div class="quote-log-title">下载日志</div>
-            <div class="quote-log-content" ref="quoteLogRef">
-                <div v-for="(log, i) in quoteLogs" :key="i" class="quote-log-line"
-                     :class="{ 'log-error': log.type === 'error', 'log-success': log.type === 'done' }">
-                    <span class="log-time">{{ log.time }}</span> {{ log.text }}
-                </div>
-            </div>
-        </div>
-
-        <!-- 服务端数据管理 -->
-        <div class="section-divider danger"></div>
-        <div class="section-title danger">
-            <i class="fas fa-exclamation-triangle"></i> 服务端行情数据管理
-        </div>
-
-        <!-- 标的查询 -->
-        <div class="symbol-search-row">
-            <div class="search-item">
-                <span class="search-label">标的代码</span>
-                <input
-                    type="text"
-                    placeholder="如 600000.SH（留空显示全部）"
-                    v-model="symbolFilter"
-                    @input="currentPage = 1"
-                >
-            </div>
-            <div class="search-item">
-                <span class="search-label">资产类型</span>
-                <select v-model="assetTypeFilter" @change="currentPage = 1">
-                    <option value="">全部</option>
-                    <option value="Stock">Stock</option>
-                    <option value="ETF">ETF</option>
-                </select>
-            </div>
-        </div>
-
-        <!-- 已下载数据列表 -->
-        <div v-if="allFlatSymbols.length > 0" class="quote-data-table">
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead class="sticky-header">
-                        <tr>
-                            <th class="col-checkbox">
-                                <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll">
-                            </th>
-                            <th>类型</th>
-                            <th>频率</th>
-                            <th class="sortable" @click="handleSort('symbol')">
-                                标的代码
-                                <span class="sort-icon" v-if="sortKey === 'symbol'">
-                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
-                                </span>
-                            </th>
-                            <th class="sortable" @click="handleSort('start_time')">
-                                起始时间
-                                <span class="sort-icon" v-if="sortKey === 'start_time'">
-                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
-                                </span>
-                            </th>
-                            <th class="sortable" @click="handleSort('end_time')">
-                                结束时间
-                                <span class="sort-icon" v-if="sortKey === 'end_time'">
-                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
-                                </span>
-                            </th>
-                            <th class="sortable" @click="handleSort('count')">
-                                数据量
-                                <span class="sort-icon" v-if="sortKey === 'count'">
-                                    {{ sortOrder === 'asc' ? '↑' : '↓' }}
-                                </span>
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="(item, idx) in pagedSymbols" :key="`${item.table}-${item.symbol}`">
-                            <td class="col-checkbox">
-                                <input type="checkbox" :checked="isSelected(item)" @change="toggleSelect(item)">
-                            </td>
-                            <td class="asset-type">{{ item.assetType }}</td>
-                            <td class="freq">{{ item.freq }}</td>
-                            <td class="symbol-code">{{ item.symbol }}</td>
-                            <td class="time-range">{{ item.start_time || '-' }}</td>
-                            <td class="time-range">{{ item.end_time || '-' }}</td>
-                            <td class="symbol-count">{{ item.count.toLocaleString() }}</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- 分页控件 -->
-            <div class="pagination" v-if="allFlatSymbols.length > 0">
-                <div class="pagination-left">
-                    <button class="btn-warning btn-sm" @click="onBatchDeleteSymbols" :disabled="deletingSymbol || selectedSymbols.size === 0">
-                        <i class="fas fa-trash"></i>
-                        {{ deletingSymbol ? '删除中...' : `批量删除 (${selectedSymbols.size})` }}
-                    </button>
-                    <button class="btn-info btn-sm" @click="onBatchUpdateSymbols" :disabled="updatingSymbol || selectedSymbols.size === 0">
-                        <i class="fas fa-sync-alt"></i>
-                        {{ updatingSymbol ? '更新中...' : `批量更新 (${selectedSymbols.size})` }}
-                    </button>
-                    <button class="btn-success btn-sm" @click="onBatchDownloadCSV" :disabled="downloadingCSV || selectedSymbols.size === 0">
-                        <i class="fas fa-file-csv"></i>
-                        {{ downloadingCSV ? '下载中...' : `下载CSV (${selectedSymbols.size})` }}
-                    </button>
-                    <button class="btn-sm btn-icon" @click="onSelectExportDir" :title="exportDir || '未设置导出目录'">
-                        <i class="fas fa-folder-open"></i>
-                        下载路径
-                    </button>
-                    <span v-if="exportDir" class="export-dir-hint" :title="exportDir">
-                        <i class="fas fa-download"></i> {{ exportDir }}
-                    </span>
-                    <button class="btn-danger btn-sm" @click="onHandleDeleteAllQuoteData" :disabled="deletingQuote">
-                        <i class="fas fa-trash"></i>
-                        {{ deletingQuote ? '删除中...' : '清空所有数据' }}
-                    </button>
-                </div>
-                <div class="pagination-center" v-if="allFlatSymbols.length > 0">
-                    <button class="page-btn" @click="loadQuoteData" :disabled="loadingQuoteData" title="刷新数据">
-                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQuoteData }"></i>
-                    </button>
-                    <button class="page-btn" :disabled="currentPage === 1" @click="currentPage = 1">
-                        <i class="fas fa-angle-double-left"></i>
-                    </button>
-                    <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">
-                        <i class="fas fa-angle-left"></i>
-                    </button>
-                    <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条，总计 {{ allFlatSymbols.length }} 条）</span>
-                    <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage++">
-                        <i class="fas fa-angle-right"></i>
-                    </button>
-                    <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage = totalPages">
-                        <i class="fas fa-angle-double-right"></i>
-                    </button>
-                    <select class="page-size-select" v-model.number="pageSize" @change="currentPage = 1">
-                        <option :value="10">10 条/页</option>
-                        <option :value="20">20 条/页</option>
-                        <option :value="50">50 条/页</option>
-                        <option :value="100">100 条/页</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <div v-if="allFlatSymbols.length === 0 && loadingQuoteData" class="loading-text">
-            <i class="fas fa-spinner fa-spin"></i> 加载中...
-        </div>
-
-        <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length === 0" class="empty-text">
-            <i class="fas fa-info-circle"></i> 暂无已导入的行情数据
-        </div>
-
-        <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length > 0 && (symbolFilter || assetTypeFilter)" class="empty-text">
-            <i class="fas fa-search"></i> 无匹配的标的，请调整筛选条件
-        </div>
-
-        <!-- 基本面数据管理 -->
-        <div class="section-divider"></div>
-        <div class="section-title">
-            <i class="fas fa-file-invoice-dollar"></i> 基本面数据管理
-        </div>
-
-        <div class="input-row">
-            <div class="input-group">
-                <label>标的代码</label>
-                <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="financeCode" />
-            </div>
-            <div class="input-group">
-                <label>财务类别</label>
-                <select v-model="financeCategory">
-                    <option value="">全部</option>
-                    <option value="profit">盈利能力</option>
-                    <option value="operation">营运能力</option>
-                    <option value="growth">成长能力</option>
-                    <option value="balance">偿债能力</option>
-                    <option value="cashflow">现金流量</option>
-                    <option value="dupont">杜邦分析</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="button-row">
-            <button class="btn" @click="onLoadFinanceData">
-                <i class="fas fa-search"></i> 查询
-            </button>
-            <button class="btn btn-primary" @click="onDownloadFinance" :disabled="financeDownloading">
-                <i class="fas fa-download"></i>
-                {{ financeDownloading ? '下载中...' : '下载财务数据' }}
-            </button>
-            <button class="btn-danger btn-sm" @click="onDeleteAllFinance" :disabled="financeDeleting">
-                <i class="fas fa-trash"></i> 清空所有
+                <i class="fas fa-coins"></i> 分红除权
             </button>
         </div>
 
-        <div v-if="financeStatus" class="status-text" :class="{ 'status-error': financeStatus.includes('失败') }">
-            {{ financeStatus }}
-        </div>
+        <!-- ═══════════ Tab: 行情数据 ═══════════ -->
+        <div v-show="activeTab === 'quote'" class="tab-content">
+            <!-- 下载区 -->
+            <div class="download-section">
+                <div class="section-header" @click="downloadExpanded = !downloadExpanded">
+                    <div class="section-title">
+                        <i class="fas fa-download"></i> 数据下载
+                    </div>
+                    <i class="fas chevron-icon" :class="downloadExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                </div>
+                <div v-show="downloadExpanded" class="download-body">
+                    <!-- K线下载 -->
+                    <div class="download-card">
+                        <div class="card-title"><i class="fas fa-chart-line"></i> K线数据</div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>频率</label>
+                                <select v-model="quoteFreq" class="quote-select">
+                                    <option value="daily">日线</option>
+                                    <option value="5m">5分钟</option>
+                                    <option value="15m">15分钟</option>
+                                    <option value="30m">30分钟</option>
+                                    <option value="60m">60分钟</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label>开始日期</label>
+                                <input type="date" v-model="quoteStartDate" />
+                            </div>
+                            <div class="input-group">
+                                <label>结束日期</label>
+                                <input type="date" v-model="quoteEndDate" />
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label>标的代码 (逗号分隔)</label>
+                            <input type="text" placeholder="510300.SH, 510500.SH" v-model="quoteSymbols">
+                        </div>
+                        <div class="button-row">
+                            <button class="btn btn-primary" @click="onHandleQuoteDownload" :disabled="quoteDownloading || !isLoggedIn">
+                                <i class="fas fa-download"></i>
+                                {{ quoteDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
+                            </button>
+                            <span v-if="!isLoggedIn" class="login-hint">💡 需要先登录</span>
+                        </div>
+                        <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
+                            {{ quoteStatus }}
+                        </div>
+                        <div v-if="quoteLogs.length" class="quote-log-box">
+                            <div class="quote-log-title">下载日志</div>
+                            <div class="quote-log-content" ref="quoteLogRef">
+                                <div v-for="(log, i) in quoteLogs" :key="i" class="quote-log-line"
+                                     :class="{ 'log-error': log.type === 'error', 'log-success': log.type === 'done' }">
+                                    <span class="log-time">{{ log.time }}</span> {{ log.text }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-        <div v-if="financeTables.length > 0" class="quote-data-table">
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead class="sticky-header">
-                        <tr>
-                            <th class="col-checkbox">
-                                <input type="checkbox" :checked="isFinanceAllSelected" @change="toggleFinanceSelectAll" />
-                            </th>
-                            <th>类别</th>
-                            <th>标的代码</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="item in pagedFinanceItems" :key="`${item.category}-${item.symbol}`">
-                            <td class="col-checkbox">
-                                <input type="checkbox" :checked="isFinanceSelected(item)" @change="toggleFinanceSelect(item)" />
-                            </td>
-                            <td>{{ categoryNameMap[item.category] || item.category }}</td>
-                            <td class="symbol-code">{{ item.symbol }}</td>
-                            <td class="actions">
-                                <button class="btn-info btn-xs" @click="onViewFinanceDetail(item)">详情</button>
-                                <button class="btn-danger btn-xs" @click="onDeleteFinanceSymbol(item)">删除</button>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                    <!-- Tick 下载 -->
+                    <div class="download-card">
+                        <div class="card-title"><i class="fas fa-chart-bar"></i> Tick 数据 (DuckDB)</div>
+                        <div class="input-group">
+                            <label>本地 DuckDB 路径</label>
+                            <input type="text" placeholder="留空默认 tick_data.db" v-model="tickDbPath">
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>标的代码 (留空下载全部)</label>
+                                <input type="text" placeholder="如 600000.SH" v-model="tickSymbol">
+                            </div>
+                            <div class="input-group">
+                                <label>开始日期</label>
+                                <input type="date" v-model="tickStartDate" />
+                            </div>
+                            <div class="input-group">
+                                <label>结束日期</label>
+                                <input type="date" v-model="tickEndDate" />
+                            </div>
+                        </div>
+                        <div class="button-row">
+                            <button class="btn" @click="onHandleTickDownload" :disabled="tickDownloading">
+                                <i class="fas fa-download"></i>
+                                {{ tickDownloading ? '下载中...' : '下载 Tick 到 DuckDB' }}
+                            </button>
+                            <span v-if="tickDownloading && tickProgress > 0" class="progress-text">
+                                已下载 {{ tickCount }} 条
+                            </span>
+                        </div>
+                        <div v-if="tickDownloadStatus" class="status-text" :class="{ 'status-error': tickDownloadStatus.includes('失败') }">
+                            {{ tickDownloadStatus }}
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="pagination" v-if="financeFlatItems.length > 0">
-                <div class="pagination-left">
-                    <button class="btn-warning btn-sm" @click="onBatchDeleteFinance" :disabled="selectedFinance.size === 0">
-                        <i class="fas fa-trash"></i> 批量删除 ({{ selectedFinance.size }})
-                    </button>
-                    <button class="btn-info btn-sm" @click="onBatchUpdateFinance" :disabled="selectedFinance.size === 0">
-                        <i class="fas fa-sync-alt"></i> 批量更新 ({{ selectedFinance.size }})
-                    </button>
-                </div>
-                <div class="pagination-center" v-if="financeTotalPages > 1">
-                    <button class="page-btn" :disabled="financePage === 1" @click="financePage--">
-                        <i class="fas fa-angle-left"></i>
-                    </button>
-                    <span class="page-info">第 {{ financePage }} / {{ financeTotalPages }} 页（共 {{ financeFlatItems.length }} 条）</span>
-                    <button class="page-btn" :disabled="financePage === financeTotalPages" @click="financePage++">
-                        <i class="fas fa-angle-right"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
 
-        <div v-if="financeTables.length === 0 && !financeLoading && financeLoaded" class="empty-text">
-            <i class="fas fa-info-circle"></i> 暂无基本面数据，请先下载
-        </div>
-
-        <!-- 财务数据详情弹窗 -->
-        <div v-if="financeDetailVisible" class="finance-detail-overlay" @click.self="financeDetailVisible = false">
-            <div class="finance-detail-dialog">
-                <div class="finance-detail-header">
-                    <span>{{ financeDetailTitle }}</span>
-                    <button class="finance-detail-close" @click="financeDetailVisible = false">&times;</button>
+            <!-- 数据管理区 -->
+            <div class="manage-section">
+                <div class="section-title">
+                    <i class="fas fa-database"></i> 已下载数据
                 </div>
-                <div class="finance-detail-body">
-                    <div class="table-scroll" style="max-height: 500px;">
-                        <table class="data-table" v-if="financeDetailData.length > 0">
+
+                <!-- 筛选行 -->
+                <div class="symbol-search-row">
+                    <div class="search-item">
+                        <span class="search-label">标的代码</span>
+                        <input type="text" placeholder="如 600000.SH（留空显示全部）" v-model="symbolFilter" @input="currentPage = 1">
+                    </div>
+                    <div class="search-item">
+                        <span class="search-label">资产类型</span>
+                        <select v-model="assetTypeFilter" @change="currentPage = 1">
+                            <option value="">全部</option>
+                            <option value="Stock">Stock</option>
+                            <option value="ETF">ETF</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 数据表格 -->
+                <div v-if="allFlatSymbols.length > 0" class="quote-data-table">
+                    <div class="table-scroll">
+                        <table class="data-table">
                             <thead class="sticky-header">
                                 <tr>
-                                    <th v-for="key in financeDetailKeys" :key="key">{{ key }}</th>
+                                    <th class="col-checkbox">
+                                        <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll">
+                                    </th>
+                                    <th>类型</th>
+                                    <th>频率</th>
+                                    <th class="sortable" @click="handleSort('symbol')">
+                                        标的代码
+                                        <span class="sort-icon" v-if="sortKey === 'symbol'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                                    </th>
+                                    <th class="sortable" @click="handleSort('start_time')">
+                                        起始时间
+                                        <span class="sort-icon" v-if="sortKey === 'start_time'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                                    </th>
+                                    <th class="sortable" @click="handleSort('end_time')">
+                                        结束时间
+                                        <span class="sort-icon" v-if="sortKey === 'end_time'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                                    </th>
+                                    <th class="sortable" @click="handleSort('count')">
+                                        数据量
+                                        <span class="sort-icon" v-if="sortKey === 'count'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="(row, i) in financeDetailData" :key="i">
-                                    <td v-for="key in financeDetailKeys" :key="key">
-                                        {{ typeof row[key] === 'number' ? (Number.isInteger(row[key]) ? row[key] : row[key].toFixed(4)) : (row[key] || '-') }}
+                                <tr v-for="(item, idx) in pagedSymbols" :key="`${item.table}-${item.symbol}`">
+                                    <td class="col-checkbox">
+                                        <input type="checkbox" :checked="isSelected(item)" @change="toggleSelect(item)">
                                     </td>
+                                    <td class="asset-type">{{ item.assetType }}</td>
+                                    <td class="freq">{{ item.freq }}</td>
+                                    <td class="symbol-code">{{ item.symbol }}</td>
+                                    <td class="time-range">{{ item.start_time || '-' }}</td>
+                                    <td class="time-range">{{ item.end_time || '-' }}</td>
+                                    <td class="symbol-count">{{ item.count.toLocaleString() }}</td>
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- 分页 + 操作栏 -->
+                    <div class="pagination" v-if="allFlatSymbols.length > 0">
+                        <div class="pagination-left">
+                            <button class="btn-warning btn-sm" @click="onBatchDeleteSymbols" :disabled="deletingSymbol || selectedSymbols.size === 0">
+                                <i class="fas fa-trash"></i>
+                                {{ deletingSymbol ? '删除中...' : `批量删除 (${selectedSymbols.size})` }}
+                            </button>
+                            <button class="btn-info btn-sm" @click="onBatchUpdateSymbols" :disabled="updatingSymbol || selectedSymbols.size === 0">
+                                <i class="fas fa-sync-alt"></i>
+                                {{ updatingSymbol ? '更新中...' : `批量更新 (${selectedSymbols.size})` }}
+                            </button>
+                            <button class="btn-success btn-sm" @click="onBatchDownloadCSV" :disabled="downloadingCSV || selectedSymbols.size === 0">
+                                <i class="fas fa-file-csv"></i>
+                                {{ downloadingCSV ? '下载中...' : `下载CSV (${selectedSymbols.size})` }}
+                            </button>
+                            <button class="btn-sm btn-icon" @click="onSelectExportDir" :title="exportDir || '未设置导出目录'">
+                                <i class="fas fa-folder-open"></i>
+                                下载路径
+                            </button>
+                            <span v-if="exportDir" class="export-dir-hint" :title="exportDir">
+                                <i class="fas fa-download"></i> {{ exportDir }}
+                            </span>
+                            <button class="btn-danger btn-sm" @click="onHandleDeleteAllQuoteData" :disabled="deletingQuote">
+                                <i class="fas fa-trash"></i>
+                                {{ deletingQuote ? '删除中...' : '清空所有数据' }}
+                            </button>
+                            <button class="btn-danger btn-sm" @click="onHandleDeleteServerTicks" :disabled="deleting">
+                                <i class="fas fa-eraser"></i>
+                                {{ deleting ? '删除中...' : '清空 Tick' }}
+                            </button>
+                        </div>
+                        <div class="pagination-center" v-if="allFlatSymbols.length > 0">
+                            <button class="page-btn" @click="loadQuoteData" :disabled="loadingQuoteData" title="刷新数据">
+                                <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQuoteData }"></i>
+                            </button>
+                            <button class="page-btn" :disabled="currentPage === 1" @click="currentPage = 1">
+                                <i class="fas fa-angle-double-left"></i>
+                            </button>
+                            <button class="page-btn" :disabled="currentPage === 1" @click="currentPage--">
+                                <i class="fas fa-angle-left"></i>
+                            </button>
+                            <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页（共 {{ flatSymbols.length }} 条，总计 {{ allFlatSymbols.length }} 条）</span>
+                            <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage++">
+                                <i class="fas fa-angle-right"></i>
+                            </button>
+                            <button class="page-btn" :disabled="currentPage === totalPages" @click="currentPage = totalPages">
+                                <i class="fas fa-angle-double-right"></i>
+                            </button>
+                            <select class="page-size-select" v-model.number="pageSize" @change="currentPage = 1">
+                                <option :value="10">10 条/页</option>
+                                <option :value="20">20 条/页</option>
+                                <option :value="50">50 条/页</option>
+                                <option :value="100">100 条/页</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="allFlatSymbols.length === 0 && loadingQuoteData" class="loading-text">
+                    <i class="fas fa-spinner fa-spin"></i> 加载中...
+                </div>
+                <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length === 0" class="empty-text">
+                    <i class="fas fa-info-circle"></i> 暂无已导入的行情数据
+                </div>
+                <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length > 0 && (symbolFilter || assetTypeFilter)" class="empty-text">
+                    <i class="fas fa-search"></i> 无匹配的标的，请调整筛选条件
+                </div>
+
+                <div v-if="deleteStatus" class="status-text" :class="{ 'status-error': deleteStatus.includes('失败') }">
+                    {{ deleteStatus }}
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════ Tab: 基本面数据 ═══════════ -->
+        <div v-show="activeTab === 'finance'" class="tab-content">
+            <div class="section-title">
+                <i class="fas fa-file-invoice-dollar"></i> 基本面数据管理
+            </div>
+
+            <div class="input-row">
+                <div class="input-group">
+                    <label>标的代码</label>
+                    <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="financeCode" />
+                </div>
+                <div class="input-group">
+                    <label>财务类别</label>
+                    <select v-model="financeCategory">
+                        <option value="">全部</option>
+                        <option value="profit">盈利能力</option>
+                        <option value="operation">营运能力</option>
+                        <option value="growth">成长能力</option>
+                        <option value="balance">偿债能力</option>
+                        <option value="cashflow">现金流量</option>
+                        <option value="dupont">杜邦分析</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="button-row">
+                <button class="btn" @click="onLoadFinanceData">
+                    <i class="fas fa-search"></i> 查询
+                </button>
+                <button class="btn btn-primary" @click="onDownloadFinance" :disabled="financeDownloading">
+                    <i class="fas fa-download"></i>
+                    {{ financeDownloading ? '下载中...' : '下载财务数据' }}
+                </button>
+                <button class="btn-danger btn-sm" @click="onDeleteAllFinance" :disabled="financeDeleting">
+                    <i class="fas fa-trash"></i> 清空所有
+                </button>
+            </div>
+
+            <div v-if="financeStatus" class="status-text" :class="{ 'status-error': financeStatus.includes('失败') }">
+                {{ financeStatus }}
+            </div>
+
+            <div v-if="financeTables.length > 0" class="quote-data-table">
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead class="sticky-header">
+                            <tr>
+                                <th class="col-checkbox">
+                                    <input type="checkbox" :checked="isFinanceAllSelected" @change="toggleFinanceSelectAll" />
+                                </th>
+                                <th>类别</th>
+                                <th>标的代码</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="item in pagedFinanceItems" :key="`${item.category}-${item.symbol}`">
+                                <td class="col-checkbox">
+                                    <input type="checkbox" :checked="isFinanceSelected(item)" @change="toggleFinanceSelect(item)" />
+                                </td>
+                                <td>{{ categoryNameMap[item.category] || item.category }}</td>
+                                <td class="symbol-code">{{ item.symbol }}</td>
+                                <td class="actions">
+                                    <button class="btn-info btn-xs" @click="onViewFinanceDetail(item)">详情</button>
+                                    <button class="btn-danger btn-xs" @click="onDeleteFinanceSymbol(item)">删除</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" v-if="financeFlatItems.length > 0">
+                    <div class="pagination-left">
+                        <button class="btn-warning btn-sm" @click="onBatchDeleteFinance" :disabled="selectedFinance.size === 0">
+                            <i class="fas fa-trash"></i> 批量删除 ({{ selectedFinance.size }})
+                        </button>
+                        <button class="btn-info btn-sm" @click="onBatchUpdateFinance" :disabled="selectedFinance.size === 0">
+                            <i class="fas fa-sync-alt"></i> 批量更新 ({{ selectedFinance.size }})
+                        </button>
+                    </div>
+                    <div class="pagination-center" v-if="financeTotalPages > 1">
+                        <button class="page-btn" :disabled="financePage === 1" @click="financePage--">
+                            <i class="fas fa-angle-left"></i>
+                        </button>
+                        <span class="page-info">第 {{ financePage }} / {{ financeTotalPages }} 页（共 {{ financeFlatItems.length }} 条）</span>
+                        <button class="page-btn" :disabled="financePage === financeTotalPages" @click="financePage++">
+                            <i class="fas fa-angle-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="financeTables.length === 0 && !financeLoading && financeLoaded" class="empty-text">
+                <i class="fas fa-info-circle"></i> 暂无基本面数据，请先下载
+            </div>
+
+            <!-- 财务数据详情弹窗 -->
+            <div v-if="financeDetailVisible" class="finance-detail-overlay" @click.self="financeDetailVisible = false">
+                <div class="finance-detail-dialog">
+                    <div class="finance-detail-header">
+                        <span>{{ financeDetailTitle }}</span>
+                        <button class="finance-detail-close" @click="financeDetailVisible = false">&times;</button>
+                    </div>
+                    <div class="finance-detail-body">
+                        <div class="table-scroll" style="max-height: 500px;">
+                            <table class="data-table" v-if="financeDetailData.length > 0">
+                                <thead class="sticky-header">
+                                    <tr>
+                                        <th v-for="key in financeDetailKeys" :key="key">{{ key }}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(row, i) in financeDetailData" :key="i">
+                                        <td v-for="key in financeDetailKeys" :key="key">
+                                            {{ typeof row[key] === 'number' ? (Number.isInteger(row[key]) ? row[key] : row[key].toFixed(4)) : (row[key] || '-') }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
+        <!-- ═══════════ Tab: 分红除权 ═══════════ -->
+        <div v-show="activeTab === 'dividend'" class="tab-content">
+            <div class="section-title">
+                <i class="fas fa-coins"></i> 分红除权数据管理
+            </div>
+
+            <div class="input-row">
+                <div class="input-group">
+                    <label>查询日期</label>
+                    <input type="date" v-model="dividendQueryDate" />
+                </div>
+                <div class="input-group">
+                    <label>查询标的</label>
+                    <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="dividendQueryCode" />
+                </div>
+            </div>
+
+            <div class="button-row">
+                <button class="btn" @click="onLoadDividendData" :disabled="dividendLoading">
+                    <i class="fas fa-search"></i> 查询
+                </button>
+                <button class="btn btn-primary" @click="onDownloadDividend" :disabled="dividendDownloading">
+                    <i class="fas fa-download"></i>
+                    {{ dividendDownloading ? '下载中...' : '更新分红数据' }}
+                </button>
+                <button class="btn-danger btn-sm" @click="onDeleteAllDividend" :disabled="dividendDeleting">
+                    <i class="fas fa-trash"></i> 清空所有
+                </button>
+            </div>
+
+            <div v-if="dividendStatus" class="status-text" :class="{ 'status-error': dividendStatus.includes('失败') }">
+                {{ dividendStatus }}
+            </div>
+
+            <div v-if="dividendResults.length > 0" class="quote-data-table">
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead class="sticky-header">
+                            <tr>
+                                <th>标的代码</th>
+                                <th>除权除息日</th>
+                                <th>登记日</th>
+                                <th>类型</th>
+                                <th>送股(10股)</th>
+                                <th>转增(10股)</th>
+                                <th>派息(10股)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="(item, idx) in dividendResults" :key="idx">
+                                <td class="symbol-code">{{ item.symbol || item.code || '-' }}</td>
+                                <td>{{ item.ex_dividend_date || '-' }}</td>
+                                <td>{{ item.record_date || '-' }}</td>
+                                <td>{{ dividendActionTypeName[item.action_type] || item.action_type }}</td>
+                                <td>{{ item.bonus_per_10 || 0 }}</td>
+                                <td>{{ item.transfer_per_10 || 0 }}</td>
+                                <td>{{ item.cash_per_10 || 0 }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div v-if="dividendCount > 0" class="pagination-center" style="padding: 8px;">
+                    <span class="page-info">共 {{ dividendCount }} 条记录</span>
+                </div>
+            </div>
+
+            <div v-if="dividendResults.length === 0 && !dividendLoading && dividendLoaded" class="empty-text">
+                <i class="fas fa-info-circle"></i> 暂无分红数据
+            </div>
+        </div>
+
         <PromptDialog ref="promptDialogRef" />
-
-        <!-- 分红除权数据管理 -->
-        <div class="section-divider"></div>
-        <div class="section-title">
-            <i class="fas fa-coins"></i> 分红除权数据管理
-        </div>
-
-        <div class="input-row">
-            <div class="input-group">
-                <label>查询日期</label>
-                <input type="date" v-model="dividendQueryDate" />
-            </div>
-            <div class="input-group">
-                <label>查询标的</label>
-                <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="dividendQueryCode" />
-            </div>
-        </div>
-
-        <div class="button-row">
-            <button class="btn" @click="onLoadDividendData" :disabled="dividendLoading">
-                <i class="fas fa-search"></i> 查询
-            </button>
-            <button class="btn btn-primary" @click="onDownloadDividend" :disabled="dividendDownloading">
-                <i class="fas fa-download"></i>
-                {{ dividendDownloading ? '下载中...' : '更新分红数据' }}
-            </button>
-            <button class="btn-danger btn-sm" @click="onDeleteAllDividend" :disabled="dividendDeleting">
-                <i class="fas fa-trash"></i> 清空所有
-            </button>
-        </div>
-
-        <div v-if="dividendStatus" class="status-text" :class="{ 'status-error': dividendStatus.includes('失败') }">
-            {{ dividendStatus }}
-        </div>
-
-        <div v-if="dividendResults.length > 0" class="quote-data-table">
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead class="sticky-header">
-                        <tr>
-                            <th>标的代码</th>
-                            <th>除权除息日</th>
-                            <th>登记日</th>
-                            <th>类型</th>
-                            <th>送股(10股)</th>
-                            <th>转增(10股)</th>
-                            <th>派息(10股)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="(item, idx) in dividendResults" :key="idx">
-                            <td class="symbol-code">{{ item.symbol || item.code || '-' }}</td>
-                            <td>{{ item.ex_dividend_date || '-' }}</td>
-                            <td>{{ item.record_date || '-' }}</td>
-                            <td>{{ dividendActionTypeName[item.action_type] || item.action_type }}</td>
-                            <td>{{ item.bonus_per_10 || 0 }}</td>
-                            <td>{{ item.transfer_per_10 || 0 }}</td>
-                            <td>{{ item.cash_per_10 || 0 }}</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            <div v-if="dividendCount > 0" class="pagination-center" style="padding: 8px;">
-                <span class="page-info">共 {{ dividendCount }} 条记录</span>
-            </div>
-        </div>
-
-        <div v-if="dividendResults.length === 0 && !dividendLoading && dividendLoaded" class="empty-text">
-            <i class="fas fa-info-circle"></i> 暂无分红数据
-        </div>
-
-        <!-- Tick 数据删除 -->
-        <div class="section-divider danger"></div>
-        <div class="section-title danger">
-            <i class="fas fa-exclamation-triangle"></i> Tick 数据管理
-        </div>
-
-        <div class="button-row">
-            <button class="btn-danger" @click="onHandleDeleteServerTicks" :disabled="deleting">
-                <i class="fas fa-trash"></i>
-                {{ deleting ? '删除中...' : '删除服务端 Tick 数据' }}
-            </button>
-        </div>
-
-        <div v-if="deleteStatus" class="status-text" :class="{ 'status-error': deleteStatus.includes('失败') }">
-            {{ deleteStatus }}
-        </div>
     </div>
 </template>
 
@@ -480,6 +473,10 @@ defineEmits(['load-version', 'strategy-click'])
 
 // PromptDialog 引用
 const promptDialogRef = ref(null)
+
+// Tab 状态
+const activeTab = ref<'quote' | 'finance' | 'dividend'>('quote')
+const downloadExpanded = ref(true)
 
 // 登录状态
 const isLoggedIn = computed(() => {
@@ -1590,24 +1587,116 @@ const onBatchUpdateFinance = async () => {
 </script>
 
 <style scoped>
-/* ── 根容器（带滚动） ── */
-.data-center-container {
+/* ── 根容器 ── */
+.data-center-root {
+    display: flex;
+    flex-direction: column;
     max-height: calc(100vh - 60px);
-    overflow-y: auto;
-    padding-right: 4px;
+    overflow: hidden;
 }
-.data-center-container::-webkit-scrollbar {
+
+/* ── Tab 导航栏 ── */
+.tab-bar {
+    display: flex;
+    gap: 2px;
+    padding: 0 4px;
+    border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+    background: rgba(15, 20, 35, 0.4);
+    flex-shrink: 0;
+}
+.tab-btn {
+    padding: 8px 20px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: #999;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.tab-btn:hover {
+    color: #e0e0e0;
+    background: rgba(41, 98, 255, 0.05);
+}
+.tab-btn.active {
+    color: #2962ff;
+    border-bottom-color: #2962ff;
+    font-weight: 600;
+}
+
+/* ── Tab 内容区 ── */
+.tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 4px 12px 0;
+}
+.tab-content::-webkit-scrollbar {
     width: 6px;
 }
-.data-center-container::-webkit-scrollbar-track {
+.tab-content::-webkit-scrollbar-track {
     background: rgba(15, 20, 35, 0.5);
 }
-.data-center-container::-webkit-scrollbar-thumb {
+.tab-content::-webkit-scrollbar-thumb {
     background: rgba(74, 85, 104, 0.5);
     border-radius: 3px;
 }
-.data-center-container::-webkit-scrollbar-thumb:hover {
+.tab-content::-webkit-scrollbar-thumb:hover {
     background: rgba(74, 85, 104, 0.8);
+}
+
+/* ── 下载区 ── */
+.download-section {
+    border: 1px solid rgba(74, 85, 104, 0.25);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: rgba(26, 34, 54, 0.6);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+}
+.section-header:hover {
+    background: rgba(26, 34, 54, 0.9);
+}
+.chevron-icon {
+    color: #999;
+    font-size: 11px;
+}
+.download-body {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+}
+.download-card {
+    flex: 1;
+    border: 1px solid rgba(74, 85, 104, 0.2);
+    border-radius: 4px;
+    padding: 10px 12px;
+    background: rgba(15, 20, 35, 0.3);
+}
+.card-title {
+    color: #e0e0e0;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ── 管理区 ── */
+.manage-section {
+    margin-top: 4px;
 }
 
 /* ── 基础控件（与 AnalysisControlBar 统一） ── */
@@ -1738,15 +1827,7 @@ select option {
     color: #f87171;
 }
 
-/* ── 分区 ── */
-.section-divider {
-    height: 1px;
-    background: rgba(74, 85, 104, 0.3);
-    margin: 16px 0;
-}
-.section-divider.danger {
-    background: rgba(239, 68, 68, 0.3);
-}
+/* ── 分区标题 ── */
 .section-title {
     color: #e0e0e0;
     font-size: 13px;
@@ -1755,9 +1836,6 @@ select option {
     display: flex;
     align-items: center;
     gap: 6px;
-}
-.section-title.danger {
-    color: #f87171;
 }
 
 /* ── 标的筛选行 ── */
@@ -1788,7 +1866,7 @@ select option {
 /* ── 数据列表表格 ── */
 .quote-data-table {
     margin-top: 12px;
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    border: 1px solid rgba(74, 85, 104, 0.3);
     border-radius: 4px;
     overflow: hidden;
 }
