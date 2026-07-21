@@ -87,14 +87,22 @@
                         @keydown="onTitleInputKeydown"
                     />
 
-                    <!-- 数字输入框 -->
-                    <NumberParam
-                        v-else-if="paramConfig.type === 'number'"
-                        :param-key="key"
-                        :param-config="paramConfig"
-                        :value="paramConfig.value"
-                        @update="updateParam(key, $event)"
-                    />
+                    <!-- 数字输入框（带可选 Handle） -->
+                    <div v-else-if="paramConfig.type === 'number'" class="param-with-handle">
+                        <NumberParam
+                            :param-key="key"
+                            :param-config="paramConfig"
+                            :value="paramConfig.value"
+                            @update="updateParam(key, $event)"
+                        />
+                        <Handle
+                            v-if="getLabelHandleId(key)"
+                            type="source"
+                            :position="Position.Right"
+                            :id="getLabelHandleId(key)"
+                            class="connection-handle right-handle output-handle emd-handle"
+                        />
+                    </div>
 
                     <!-- 日期选择器 -->
                     <DateParam
@@ -161,6 +169,14 @@
                         @click="handleParamButtonClick(key)"
                     />
 
+                    <!-- 标签类型（只读文本，可带 Handle） -->
+                    <LabelParam
+                        v-else-if="paramConfig.type === 'label'"
+                        :param-key="key"
+                        :param-config="paramConfig"
+                        :handle-id="getLabelHandleId(key)"
+                    />
+
                     <!-- 默认显示 -->
                     <span v-else class="param-value">
                         {{ paramConfig.value }}
@@ -174,6 +190,7 @@
 
 <script setup lang="ts">
 import { computed, inject, ref, onMounted, onUnmounted, type PropType } from 'vue'
+import { Handle, Position } from '@vue-flow/core'
 import { getNodeIcon, getNodeColor } from '@/lib/nodes'
 import { useNodeSelection } from './composables/useNodeSelection'
 import { useNodeEditing } from './composables/useNodeEditing'
@@ -196,6 +213,7 @@ import FileParam from './params/FileParam.vue'
 import ConfigSelectParam from './params/ConfigSelectParam.vue'
 import DownloadParam from './params/DownloadParam.vue'
 import ButtonParam from './params/ButtonParam.vue'
+import LabelParam from './params/LabelParam.vue'
 
 interface FlowNodeData {
   id: string
@@ -211,7 +229,7 @@ interface FlowNode {
   [key: string]: any
 }
 
-const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file', 'config-select', 'button']
+const validParamTypes = ['text', 'select', 'date', 'daterange', 'multiselect', 'number', 'multiselect-dropdown', 'directory', 'file', 'config-select', 'button', 'label']
 
 const props = defineProps<{
     node: FlowNode
@@ -266,6 +284,16 @@ const getModelTypeText = (modelType: string) => {
 
 const isDataFieldParam = (key: string) => {
     return ['close', 'open', 'high', 'low', 'volume'].includes(key)
+}
+
+// Label 参数对应的 Handle ID 映射（key 是中文 label）
+const getLabelHandleId = (key: string) => {
+    const handleMap: Record<string, string> = {
+        'IMF 数量': 'IMF',
+        '能量变化率': 'energy_velocity',
+        '成交量体制': 'volume_regime',
+    }
+    return handleMap[key] || undefined
 }
 
 // 事件处理
@@ -428,6 +456,16 @@ const handleClickOutside = (event: MouseEvent) => {
     flex: 2 !important;
     display: flex !important;
     align-items: center !important;
+}
+
+/* 带 Handle 的参数行 */
+.param-with-handle {
+    flex: 2 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    position: relative !important;
+    padding-right: 14px !important;
 }
 
 /* ============================================

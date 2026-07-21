@@ -137,16 +137,35 @@ export function useFlowOperations(state) {
   }
 
   /**
-   * 删除选中的边
+   * 删除选中的边（或指定边列表）
    */
-  const deleteSelectedEdges = () => {
-    if (selectedEdges.value.length === 0) return
+  const deleteSelectedEdges = (edgesToDelete = null) => {
+    const edges = edgesToDelete || selectedEdges.value
+    if (edges.length === 0) return
 
-    const edgeIdsToDelete = selectedEdges.value.map(edge => edge.id)
+    const edgeIdsToDelete = edges.map(edge => edge.id)
+    
+    // 收集被删除边涉及的 EMD 源节点
+    const emdSourceNodes = new Set()
+    edges.forEach(edge => {
+      if (edge.sourceHandle === 'energy_velocity' || edge.sourceHandle === 'volume_regime') {
+        emdSourceNodes.add(edge.source)
+      }
+    })
+
     removeEdges(edgeIdsToDelete)
 
-    // 清空选择
-    clearEdgeSelection()
+    // 清空选择（仅当使用默认选中边时）
+    if (!edgesToDelete) {
+      clearEdgeSelection()
+    }
+
+    // 边删除后，更新相关 EMD 节点的 compute 参数
+    nextTick(() => {
+      emdSourceNodes.forEach(nodeId => {
+        updateEmdComputeFlags(nodeId, getNodes.value, getEdges.value)
+      })
+    })
   }
 
   /**
@@ -421,6 +440,31 @@ export function useFlowOperations(state) {
   }
 
   /**
+   * 更新 EMD 节点的 compute 参数（根据 handle 连接状态）
+   */
+  const updateEmdComputeFlags = (nodeId, nodes, edges) => {
+    const node = nodes.find(n => n.id === nodeId)
+    if (!node || node.data?.nodeType !== 'emd') return
+
+    const nodeEdges = edges.filter(e => e.source === nodeId)
+    const connectedHandles = new Set(nodeEdges.map(e => e.sourceHandle))
+
+    const hasEnergyVelocity = connectedHandles.has('energy_velocity')
+    const hasVolumeRegime = connectedHandles.has('volume_regime')
+
+    // 只有值变化时才更新（key 是中文 label）
+    const currentEV = node.data.params?.['能量变化率']?.value === '能量变化率'
+    const currentVR = node.data.params?.['成交量体制']?.value === '成交量体制'
+
+    if (currentEV !== hasEnergyVelocity || currentVR !== hasVolumeRegime) {
+      updateNodeData(nodeId, {
+        '能量变化率': { value: hasEnergyVelocity ? '能量变化率' : '' },
+        '成交量体制': { value: hasVolumeRegime ? '成交量体制' : '' }
+      })
+    }
+  }
+
+  /**
    * 连接创建事件处理
    */
   const onConnect = (connection) => {
@@ -446,6 +490,8 @@ export function useFlowOperations(state) {
     // 连接产生后，更新所有后继 DebugNode 的字段选项
     nextTick(() => {
       updateAllSuccessorDebugNodes(connection.target, getNodes.value, getEdges.value)
+      // 更新 EMD 节点的 compute 参数
+      updateEmdComputeFlags(connection.source, getNodes.value, getEdges.value)
     })
   }
 

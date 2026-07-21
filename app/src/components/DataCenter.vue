@@ -409,10 +409,21 @@
                 </button>
                 <button class="btn btn-primary" @click="onDownloadDividend" :disabled="dividendDownloading">
                     <i class="fas fa-download"></i>
-                    {{ dividendDownloading ? '下载中...' : '更新分红数据' }}
+                    {{ dividendDownloading ? '下载中...' : '从策略更新' }}
                 </button>
                 <button class="btn-danger btn-sm" @click="onDeleteAllDividend" :disabled="dividendDeleting">
                     <i class="fas fa-trash"></i> 清空所有
+                </button>
+            </div>
+
+            <div class="input-row" style="margin-top: 8px;">
+                <div class="input-group" style="flex: 1;">
+                    <label>按标的下载</label>
+                    <input type="text" placeholder="输入标的代码，多个用逗号分隔，如 600519.SH,000858.SZ" v-model="dividendDownloadSymbols" />
+                </div>
+                <button class="btn btn-primary" style="align-self: flex-end;" @click="onDownloadDividendBySymbol" :disabled="dividendDownloading || !dividendDownloadSymbols.trim()">
+                    <i class="fas fa-download"></i>
+                    {{ dividendDownloading ? '下载中...' : '下载指定标的' }}
                 </button>
             </div>
 
@@ -472,7 +483,7 @@ import PromptDialog from './PromptDialog.vue'
 defineEmits(['load-version', 'strategy-click'])
 
 // PromptDialog 引用
-const promptDialogRef = ref(null)
+const promptDialogRef = ref<{ confirm: (opts: { title: string; message: string }) => Promise<boolean> } | null>(null)
 
 // Tab 状态
 const activeTab = ref<'quote' | 'finance' | 'dividend'>('quote')
@@ -505,11 +516,11 @@ const quoteStartDate = ref('')
 const quoteEndDate = ref('')
 const quoteDownloading = ref(false)
 const quoteStatus = ref('')
-const quoteLogs = ref([])
-const quoteLogRef = ref(null)
+const quoteLogs = ref<any[]>([])
+const quoteLogRef = ref<HTMLElement | null>(null)
 
 // 服务端数据列表状态
-const quoteDataList = ref([])
+const quoteDataList = ref<any[]>([])
 const loadingQuoteData = ref(false)
 const deletingQuote = ref(false)
 const deletingSymbol = ref(false)
@@ -539,23 +550,23 @@ const assetTypeFilter = ref('')
 // ── 基本面数据状态 ──
 const financeCode = ref('')
 const financeCategory = ref('')
-const financeTables = ref([])
+const financeTables = ref<any[]>([])
 const financeStatus = ref('')
 const financeDownloading = ref(false)
 const financeDeleting = ref(false)
 const financeLoading = ref(false)
 const financeLoaded = ref(false)
 const financePage = ref(1)
-const selectedFinance = ref(new Set())
-const categoryNameMap = {
+const selectedFinance = ref(new Set<string>())
+const categoryNameMap: Record<string, string> = {
     profit: '盈利能力', operation: '营运能力', growth: '成长能力',
     balance: '偿债能力', cashflow: '现金流量', dupont: '杜邦分析'
 }
 // 详情弹窗
 const financeDetailVisible = ref(false)
 const financeDetailTitle = ref('')
-const financeDetailData = ref([])
-const financeDetailKeys = ref([])
+const financeDetailData = ref<any[]>([])
+const financeDetailKeys = ref<string[]>([])
 
 // 排序
 const sortKey = ref('')
@@ -564,19 +575,20 @@ const sortOrder = ref('asc') // 'asc' or 'desc'
 // ── 分红除权数据状态 ──
 const dividendQueryDate = ref('')
 const dividendQueryCode = ref('')
-const dividendResults = ref([])
+const dividendDownloadSymbols = ref('')
+const dividendResults = ref<any[]>([])
 const dividendStatus = ref('')
 const dividendLoading = ref(false)
 const dividendLoaded = ref(false)
 const dividendDownloading = ref(false)
 const dividendDeleting = ref(false)
 const dividendCount = ref(0)
-const dividendActionTypeName = {
+const dividendActionTypeName: Record<string, string> = {
     0: '未知', 1: '分红', 2: '送股', 3: '转增',
     4: '送转', 5: '分红送转', 6: '配股', 7: '混合'
 }
 
-const handleSort = (key) => {
+const handleSort = (key: string) => {
     if (sortKey.value === key) {
         // Toggle sort order
         sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
@@ -589,7 +601,7 @@ const handleSort = (key) => {
 
 // 将所有标的展平为一维列表（供分页使用）
 const allFlatSymbols = computed(() => {
-    const freqMap = {
+    const freqMap: Record<string, string> = {
         '1d': '日线', '5m': '5分钟', '15m': '15分钟',
         '30m': '30分钟', '60m': '60分钟', '1h': '1小时',
         'daily': '日线'
@@ -651,7 +663,7 @@ const flatSymbols = computed(() => {
 })
 
 // 批量选择
-const selectedSymbols = ref(new Set())  // key: "table|symbol"
+const selectedSymbols = ref(new Set<string>())  // key: "table|symbol"
 
 // 当前页的标的列表
 const pagedSymbols = computed(() => {
@@ -667,11 +679,11 @@ const isAllSelected = computed(() => {
     return pagedSymbols.value.length > 0 && pagedSymbols.value.every(item => isSelected(item))
 })
 
-const itemKey = (item) => `${item.table}|${item.symbol}`
+const itemKey = (item: any) => `${item.table}|${item.symbol}`
 
-const isSelected = (item) => selectedSymbols.value.has(itemKey(item))
+const isSelected = (item: any) => selectedSymbols.value.has(itemKey(item))
 
-const toggleSelect = (item) => {
+const toggleSelect = (item: any) => {
     const key = itemKey(item)
     if (selectedSymbols.value.has(key)) {
         selectedSymbols.value.delete(key)
@@ -697,12 +709,12 @@ const toggleSelectAll = () => {
 }
 
 // 监听进度事件
-const onTickProgress = (_, data) => {
+const onTickProgress = (_: any, data: any) => {
     tickCount.value = data.count
 }
 
 // 行情下载 SSE 事件处理
-const addQuoteLog = (text, type = 'info') => {
+const addQuoteLog = (text: string, type: string = 'info') => {
     const now = new Date()
     const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
     quoteLogs.value.push({ time, text, type })
@@ -711,7 +723,7 @@ const addQuoteLog = (text, type = 'info') => {
     })
 }
 
-const onQuoteDownloadEvent = (msg) => {
+const onQuoteDownloadEvent = (msg: any) => {
     console.log('[QuoteDownload] 收到 SSE 事件, msg:', msg)
     const d = msg.data
     console.log('[QuoteDownload] msg.data:', d)
@@ -733,8 +745,8 @@ const onQuoteDownloadEvent = (msg) => {
         case 'download_failed':
             addQuoteLog('脚本执行失败', 'error')
             if (d.output) {
-                const lines = d.output.split(/\r?\n/).filter(l => l.trim())
-                lines.forEach(line => addQuoteLog(line, 'error'))
+                const lines = d.output.split(/\r?\n/).filter((l: string) => l.trim())
+                lines.forEach((line: string) => addQuoteLog(line, 'error'))
             }
             break
         case 'importing':
@@ -804,7 +816,7 @@ const onHandleTickDownload = async () => {
         } else {
             tickDownloadStatus.value = `下载失败: ${result.error}`
         }
-    } catch (err) {
+    } catch (err: any) {
         tickDownloadStatus.value = `下载失败: ${err.message}`
     } finally {
         tickDownloading.value = false
@@ -840,7 +852,7 @@ const onHandleQuoteDownload = async () => {
             headers: { 'Authorization': token || '' }
         })
         // POST 立即返回，进度通过 SSE 推送
-    } catch (err) {
+    } catch (err: any) {
         quoteDownloading.value = false
         quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
         addQuoteLog(`请求失败: ${err.message}`, 'error')
@@ -871,7 +883,7 @@ const onHandleDeleteServerTicks = async () => {
         } else {
             deleteStatus.value = '删除完成'
         }
-    } catch (err) {
+    } catch (err: any) {
         deleteStatus.value = `删除失败: ${err.message}`
     } finally {
         deleting.value = false
@@ -897,7 +909,7 @@ const loadQuoteData = async () => {
             headers: { 'Authorization': token || '' }
         })
         quoteDataList.value = response.data
-    } catch (err) {
+    } catch (err: any) {
         quoteStatus.value = `加载数据列表失败: ${err.response?.data?.message || err.message}`
     } finally {
         loadingQuoteData.value = false
@@ -905,7 +917,7 @@ const loadQuoteData = async () => {
 }
 
 // 删除单个表
-const onDeleteTable = async (tableName) => {
+const onDeleteTable = async (tableName: string) => {
     const confirmed = await promptDialogRef.value?.confirm({
         title: '确认删除',
         message: `确定要删除表 "${tableName}" 的所有数据吗？此操作不可恢复！`
@@ -924,7 +936,7 @@ const onDeleteTable = async (tableName) => {
         quoteStatus.value = `表 ${tableName} 已删除`
         // 刷新列表
         await loadQuoteData()
-    } catch (err) {
+    } catch (err: any) {
         quoteStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         deletingQuote.value = false
@@ -932,7 +944,7 @@ const onDeleteTable = async (tableName) => {
 }
 
 // 更新单个标的（重新下载）
-const onUpdateSymbol = async (tableName, symbol) => {
+const onUpdateSymbol = async (tableName: string, symbol: string) => {
     const confirmed = await promptDialogRef.value?.confirm({
         title: '确认更新',
         message: `确定要重新下载表 "${tableName}" 中标的 "${symbol}" 的数据吗？`
@@ -948,7 +960,7 @@ const onUpdateSymbol = async (tableName, symbol) => {
         // 从表名提取频率（如 "etf_1d" → "1d"）
         const rawFreq = tableName.includes('_') ? tableName.split('_').slice(1).join('_') : '5m'
         // 映射为 Python 脚本接受的频率格式
-        const freqMap = {
+        const freqMap: Record<string, string> = {
             '1d': 'daily', 'daily': 'daily', '日线': 'daily',
             '5m': '5m', '5分钟': '5m',
             '15m': '15m', '15分钟': '15m',
@@ -967,7 +979,7 @@ const onUpdateSymbol = async (tableName, symbol) => {
             headers: { 'Authorization': token || '' }
         })
         quoteStatus.value = `标的 ${symbol} 更新任务已提交`
-    } catch (err) {
+    } catch (err: any) {
         quoteStatus.value = `更新失败: ${err.response?.data?.message || err.message}`
     } finally {
         updatingSymbol.value = false
@@ -975,7 +987,7 @@ const onUpdateSymbol = async (tableName, symbol) => {
 }
 
 // 删除单个标的
-const onDeleteSymbol = async (tableName, symbol) => {
+const onDeleteSymbol = async (tableName: string, symbol: string) => {
     const confirmed = await promptDialogRef.value?.confirm({
         title: '确认删除',
         message: `确定要删除表 "${tableName}" 中标的 "${symbol}" 的数据吗？此操作不可恢复！`
@@ -994,7 +1006,7 @@ const onDeleteSymbol = async (tableName, symbol) => {
         quoteStatus.value = `标的 ${symbol} 已删除`
         // 刷新列表（loadQuoteData 会重置 currentPage）
         await loadQuoteData()
-    } catch (err) {
+    } catch (err: any) {
         quoteStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         deletingSymbol.value = false
@@ -1024,7 +1036,7 @@ const onBatchDeleteSymbols = async () => {
                 headers: { 'Authorization': token || '' }
             })
             successCount++
-        } catch (err) {
+        } catch (err: any) {
             failCount++
             console.error(`[DataCenter] Failed to delete ${symbol}:`, err)
         }
@@ -1109,7 +1121,7 @@ const onBatchUpdateSymbols = async () => {
     }
 
     // === 第 3 步：逐组发送批量请求 ===
-    const freqMap = {
+    const freqMap: Record<string, string> = {
         '1d': 'daily', 'daily': 'daily', '日线': 'daily',
         '5m': '5m', '5分钟': '5m',
         '15m': '15m', '15分钟': '15m',
@@ -1144,7 +1156,7 @@ const onBatchUpdateSymbols = async () => {
                 headers: { 'Authorization': token || '' }
             })
             successCount += symbols.length  // 该组所有标的都算成功
-        } catch (err) {
+        } catch (err: any) {
             failCount += symbols.length
             console.error(`[DataCenter] Failed to batch update group [${groupKey}]:`, err)
         }
@@ -1204,7 +1216,7 @@ const onBatchDownloadCSV = async () => {
                 failCount++
                 console.error(`[DataCenter] Failed to save ${fileName}:`, saveResult.error)
             }
-        } catch (err) {
+        } catch (err: any) {
             failCount++
             console.error(`[DataCenter] Failed to export ${symbol}:`, err)
         }
@@ -1269,7 +1281,7 @@ const onBatchExport = async () => {
                 failCount++
                 console.error(`[DataCenter] Failed to save ${fileName}:`, saveResult.error)
             }
-        } catch (err) {
+        } catch (err: any) {
             failCount++
             console.error(`[DataCenter] Failed to export ${symbol}:`, err)
         }
@@ -1299,7 +1311,7 @@ const onHandleDeleteAllQuoteData = async () => {
         quoteStatus.value = '所有行情数据已清空'
         quoteDataList.value = []
         currentPage.value = 1
-    } catch (err) {
+    } catch (err: any) {
         quoteStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         deletingQuote.value = false
@@ -1330,14 +1342,14 @@ const pagedFinanceItems = computed(() => {
 
 const financeTotalPages = computed(() => Math.ceil(financeFlatItems.value.length / pageSize.value))
 
-const financeItemKey = (item) => `${item.category}|${item.symbol}`
-const isFinanceSelected = (item) => selectedFinance.value.has(financeItemKey(item))
+const financeItemKey = (item: any) => `${item.category}|${item.symbol}`
+const isFinanceSelected = (item: any) => selectedFinance.value.has(financeItemKey(item))
 
 const isFinanceAllSelected = computed(() => {
     return pagedFinanceItems.value.length > 0 && pagedFinanceItems.value.every(item => isFinanceSelected(item))
 })
 
-const toggleFinanceSelect = (item) => {
+const toggleFinanceSelect = (item: any) => {
     const key = financeItemKey(item)
     if (selectedFinance.value.has(key)) selectedFinance.value.delete(key)
     else selectedFinance.value.add(key)
@@ -1360,7 +1372,7 @@ const onLoadFinanceData = async () => {
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
     try {
-        const params = {}
+        const params: Record<string, string> = {}
         if (financeCategory.value) params.category = financeCategory.value
         if (financeCode.value.trim()) params.code = financeCode.value.trim()
         const resp = await axios.get(`https://${server}/v0/finance`, {
@@ -1368,7 +1380,7 @@ const onLoadFinanceData = async () => {
         })
         financeTables.value = resp.data.tables || []
         financeStatus.value = `查询完成，共 ${financeFlatItems.value.length} 条记录`
-    } catch (err) {
+    } catch (err: any) {
         financeStatus.value = `查询失败: ${err.response?.data?.message || err.message}`
     } finally {
         financeLoading.value = false
@@ -1392,14 +1404,14 @@ const onDownloadFinance = async () => {
         }, { headers: { 'Authorization': token || '' } })
         financeStatus.value = '下载任务已提交'
         setTimeout(onLoadFinanceData, 3000)
-    } catch (err) {
+    } catch (err: any) {
         financeStatus.value = `下载失败: ${err.response?.data?.message || err.message}`
     } finally {
         financeDownloading.value = false
     }
 }
 
-const onViewFinanceDetail = async (item) => {
+const onViewFinanceDetail = async (item: any) => {
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
     try {
@@ -1411,12 +1423,12 @@ const onViewFinanceDetail = async (item) => {
         financeDetailKeys.value = financeDetailData.value.length > 0 ? Object.keys(financeDetailData.value[0]) : []
         financeDetailTitle.value = `${item.symbol} - ${categoryNameMap[item.category] || item.category}`
         financeDetailVisible.value = true
-    } catch (err) {
+    } catch (err: any) {
         financeStatus.value = `查询详情失败: ${err.response?.data?.message || err.message}`
     }
 }
 
-const onDeleteFinanceSymbol = async (item) => {
+const onDeleteFinanceSymbol = async (item: any) => {
     const confirmed = await promptDialogRef.value?.confirm({
         title: '确认删除',
         message: `确定要删除 ${item.symbol} 的${categoryNameMap[item.category] || item.category}数据吗？`
@@ -1431,7 +1443,7 @@ const onDeleteFinanceSymbol = async (item) => {
         })
         financeStatus.value = `${item.symbol} 已删除`
         await onLoadFinanceData()
-    } catch (err) {
+    } catch (err: any) {
         financeStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     }
 }
@@ -1451,7 +1463,7 @@ const onDeleteAllFinance = async () => {
         })
         financeStatus.value = '所有基本面数据已清空'
         financeTables.value = []
-    } catch (err) {
+    } catch (err: any) {
         financeStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         financeDeleting.value = false
@@ -1467,7 +1479,7 @@ const onLoadDividendData = async () => {
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
     try {
-        const params = {}
+        const params: Record<string, string> = {}
         if (dividendQueryDate.value) params.date = dividendQueryDate.value
         if (dividendQueryCode.value.trim()) params.code = dividendQueryCode.value.trim()
         const resp = await axios.get(`https://${server}/v0/dividend`, {
@@ -1486,7 +1498,7 @@ const onLoadDividendData = async () => {
         if (dividendResults.value.length > 0) {
             dividendStatus.value = `查询完成，共 ${dividendCount.value} 条记录`
         }
-    } catch (err) {
+    } catch (err: any) {
         dividendStatus.value = `查询失败: ${err.response?.data?.message || err.message}`
     } finally {
         dividendLoading.value = false
@@ -1506,7 +1518,27 @@ const onDownloadDividend = async () => {
         dividendStatus.value = `已启动下载: ${resp.data.symbol_count} 个标的，后台执行中...`
         // 10秒后自动刷新查询结果
         setTimeout(onLoadDividendData, 10000)
-    } catch (err) {
+    } catch (err: any) {
+        dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
+    } finally {
+        dividendDownloading.value = false
+    }
+}
+
+const onDownloadDividendBySymbol = async () => {
+    const syms = dividendDownloadSymbols.value.trim()
+    if (!syms) return
+    dividendDownloading.value = true
+    dividendStatus.value = `正在下载指定标的分红数据: ${syms}`
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+        const resp = await axios.post(`https://${server}/v0/dividend`, {
+            symbols: syms
+        }, { headers: { 'Authorization': token || '' } })
+        dividendStatus.value = `已启动下载: ${resp.data.symbol_count} 个标的，后台执行中...`
+        setTimeout(onLoadDividendData, 10000)
+    } catch (err: any) {
         dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
     } finally {
         dividendDownloading.value = false
@@ -1529,7 +1561,7 @@ const onDeleteAllDividend = async () => {
         dividendStatus.value = '所有分红数据已清空'
         dividendResults.value = []
         dividendCount.value = 0
-    } catch (err) {
+    } catch (err: any) {
         dividendStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         dividendDeleting.value = false

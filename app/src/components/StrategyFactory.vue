@@ -274,7 +274,10 @@ const onSelectionDragStart = () => {}
 const onSelectionDrag = () => {}
 const onSelectionDragStop = () => {}
 
-const onEdgesDelete = (deletedEdges) => {}
+const onEdgesDelete = (deletedEdges) => {
+  // 调用 useFlowOperations 中的 deleteSelectedEdges 来处理 EMD 参数更新
+  deleteSelectedEdges(deletedEdges)
+}
 
 // 生命周期
 onMounted(async () => {

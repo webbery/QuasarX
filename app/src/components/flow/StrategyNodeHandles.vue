@@ -80,9 +80,11 @@
       </div>
     </template>
 
+    <!-- EMD 节点：无额外 handles，IMF 和衍生特征的 handles 在参数面板中渲染 -->
+
     <!-- 其他节点：单一输出连接点 -->
     <Handle
-      v-if="shouldShowOutput && nodeType !== 'hmm'"
+      v-if="shouldShowOutput && nodeType !== 'hmm' && nodeType !== 'emd'"
       type="source"
       :position="Position.Right"
       id="output"
@@ -103,7 +105,14 @@ const props = defineProps<{
 }>()
 
 const shouldShowOutput = computed(() => {
-  return !['output', 'input', 'execution'].includes(props.nodeType)
+  return !['output', 'input', 'execution', 'emd', 'hmm'].includes(props.nodeType)
+})
+
+const emdImfCount = computed(() => {
+  if (props.nodeType !== 'emd') return 0
+  // 注意：params 的键是中文 label（如 "IMF 数量"），不是英文 key
+  const numParam = props.params?.['IMF 数量'] || props.params?.['numIMFs']
+  return numParam?.value || 5
 })
 
 const functionSlots = computed(() => {
@@ -142,13 +151,13 @@ const breakoutSlots = computed(() => {
   left: -12px;
 }
 
-.hmm-outputs {
+.hmm-outputs, .emd-output {
   display: flex;
   align-items: center;
   gap: 4px;
   margin: 2px 0;
 }
-.hmm-handle-label {
+.hmm-handle-label, .emd-handle-label {
   font-size: 10px;
   color: var(--text-secondary, #a0aec0);
   user-select: none;

@@ -11,7 +11,7 @@ export type ParamType =
   | 'date' | 'daterange' | 'textarea'
   | 'multiselect' | 'multiselect-dropdown'
   | 'directory' | 'file' | 'config-select' | 'download'
-  | 'button'
+  | 'button' | 'label'
 
 export interface ParamSchema {
   key: string             // 参数键（英文，用于后端传输）

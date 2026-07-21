@@ -782,8 +782,8 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
 
 int FinanceDB::importAllDividends(const std::string& dividend_dir) {
     if (!std::filesystem::exists(dividend_dir)) {
-        SPDLOG_WARN("[FinanceDB] dividend directory not found: {}", dividend_dir);
-        return 0;
+        SPDLOG_INFO("[FinanceDB] dividend directory not found, creating: {}", dividend_dir);
+        std::filesystem::create_directories(dividend_dir);
     }
 
     int total = 0;

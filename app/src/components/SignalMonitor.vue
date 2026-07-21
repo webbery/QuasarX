@@ -208,7 +208,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, inject } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, inject, type Ref } from 'vue'
 import axios from 'axios'
 
 interface Position {
@@ -237,7 +237,7 @@ interface LogEntry {
   context?: any
 }
 
-const serverStrategies = inject('serverStrategies', ref([]))
+const serverStrategies = inject<Ref<{ name: string; running?: boolean }[]>>('serverStrategies', ref([]))
 const strategies = serverStrategies
 
 const selectedStrategy = ref('')
@@ -405,6 +405,7 @@ function formatTradePrice(t: Trade): string {
 
 function tradeStatus(t: Trade): string {
   const status = t.order?.status ?? t.trades?.[0]?.status
+  if (status == null) return '未知'
   const map: Record<number, string> = { 0: '待报', 1: '已报', 2: '部成', 3: '已成', 4: '撤单', 5: '废单' }
   return map[status] || '未知'
 }

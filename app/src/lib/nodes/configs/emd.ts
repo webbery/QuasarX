@@ -6,9 +6,9 @@ export const emdNode: NodeRegistryEntry = {
   label: 'EMD 分解',
   nodeType: 'emd',
   category: 'process',
-  description: '经验模态分解，将非平稳信号分解为多个本征模态函数（IMF）。支持 EMD、CEEMDAN 和 VMD 三种算法。',
-  inputs: ['timeseries'],
-  outputs: ['imf'],
+  description: '经验模态分解，将非平稳信号分解为多个本征模态函数（IMF）。支持 EMD、CEEMDAN 和 VMD 三种算法，以及全局/滚动窗口两种模式。',
+  inputs: ['timeseries', 'volume'],
+  outputs: ['imf', 'energy_velocity', 'volume_regime'],
   params: [
     { key: 'method', label: '算法', type: 'select', default: 'emd',
       options: [
@@ -19,6 +19,10 @@ export const emdNode: NodeRegistryEntry = {
       description: 'EMD 快速；CEEMDAN 抑制模态混叠；VMD 数学严格+中心频率可解释' },
     { key: 'numIMFs', label: 'IMF 数量', type: 'number', default: 5, min: 1, max: 20,
       description: '分解的 IMF 分量数量，一般 3~8 个即可' },
+    { key: 'windowSize', label: '滚动窗口', type: 'number', default: 0, min: 0, max: 500,
+      description: '0=全序列一次分解（全局 EMD），>0=滚动窗口 EMD（建议 120）。滚动模式避免数据泄漏，仅使用过去 window 天数据。' },
+    { key: 'energyVelocityLabel', label: '能量变化率', type: 'label', default: '' },
+    { key: 'volumeRegimeLabel', label: '成交量体制', type: 'label', default: '' },
     { key: 'ensembles', label: '集合数', type: 'number', default: 50, min: 10, max: 200,
       dependsOn: 'method', dependsValue: 'ceemdan',
       description: 'CEEMDAN 噪声样本数量，越大越精确但越慢' },
@@ -35,7 +39,7 @@ export const emdNode: NodeRegistryEntry = {
       dependsOn: 'method', dependsValue: 'vmd',
       description: 'VMD 收敛阈值：越小越精确但迭代越多' },
   ],
-  example: { method: 'emd', numIMFs: 5 }
+  example: { method: 'emd', numIMFs: 5, windowSize: 120, computeEnergyVelocity: true, computeVolumeRegime: true }
 }
 
 registerNode(emdNode)
