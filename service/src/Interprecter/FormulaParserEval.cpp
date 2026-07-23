@@ -243,8 +243,100 @@ context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, D
     return (this->*(statement::evalMap[ast.name]))(symbol, ast, context);
 }
 
+// 辅助：从 context_t 提取 double 标量
+static double ctxToDouble(const context_t& v) {
+    if (auto* p = std::get_if<double>(&v)) return *p;
+    if (auto* p = std::get_if<bool>(&v)) return *p ? 1.0 : 0.0;
+    if (auto* p = std::get_if<uint64_t>(&v)) return static_cast<double>(*p);
+    if (auto* p = std::get_if<Vector<double>>(&v)) return p->empty() ? 0.0 : p->back();
+    return 0.0;
+}
+
+// 辅助：对 context_t 逐元素应用一元数学函数（支持 double 标量和 Vector<double>）
+static context_t applyUnaryMath(const context_t& arg, double(*fn)(double)) {
+    if (auto* p = std::get_if<Vector<double>>(&arg)) {
+        Vector<double> result(p->size());
+        for (size_t i = 0; i < p->size(); ++i)
+            result[i] = fn((*p)[i]);
+        return result;
+    }
+    return fn(ctxToDouble(arg));
+}
+
+static double sigmoid_fn(double x) {
+    return 1.0 / (1.0 + std::exp(-x));
+}
+
 context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     auto funcName = String(ast.nodes[0]->token);
+
+    // ── 内置数学函数 ──────────────────────────────────────────────
+    // 一元: abs, exp, log, sqrt, sigmoid
+    // 二元: min, max
+    if (ast.nodes.size() >= 2) {
+        auto& argsNode = ast.nodes[1];
+        if (argsNode->name == "Arguments") {
+            if (funcName == "abs" && argsNode->nodes.size() == 1) {
+                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+                return applyUnaryMath(arg, std::abs);
+            }
+            if (funcName == "exp" && argsNode->nodes.size() == 1) {
+                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+                return applyUnaryMath(arg, std::exp);
+            }
+            if (funcName == "log" && argsNode->nodes.size() == 1) {
+                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+                return applyUnaryMath(arg, std::log);
+            }
+            if (funcName == "sqrt" && argsNode->nodes.size() == 1) {
+                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+                return applyUnaryMath(arg, std::sqrt);
+            }
+            if (funcName == "sigmoid" && argsNode->nodes.size() == 1) {
+                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+                return applyUnaryMath(arg, sigmoid_fn);
+            }
+            if (funcName == "min" && argsNode->nodes.size() == 2) {
+                auto a = evalNode(symbol, *argsNode->nodes[0], context);
+                auto b = evalNode(symbol, *argsNode->nodes[1], context);
+                // 如果任一参数是 Vector，逐元素取 min
+                if (auto* va = std::get_if<Vector<double>>(&a)) {
+                    double bv = ctxToDouble(b);
+                    Vector<double> result(va->size());
+                    for (size_t i = 0; i < va->size(); ++i)
+                        result[i] = std::min((*va)[i], bv);
+                    return result;
+                }
+                if (auto* vb = std::get_if<Vector<double>>(&b)) {
+                    double av = ctxToDouble(a);
+                    Vector<double> result(vb->size());
+                    for (size_t i = 0; i < vb->size(); ++i)
+                        result[i] = std::min(av, (*vb)[i]);
+                    return result;
+                }
+                return std::min(ctxToDouble(a), ctxToDouble(b));
+            }
+            if (funcName == "max" && argsNode->nodes.size() == 2) {
+                auto a = evalNode(symbol, *argsNode->nodes[0], context);
+                auto b = evalNode(symbol, *argsNode->nodes[1], context);
+                if (auto* va = std::get_if<Vector<double>>(&a)) {
+                    double bv = ctxToDouble(b);
+                    Vector<double> result(va->size());
+                    for (size_t i = 0; i < va->size(); ++i)
+                        result[i] = std::max((*va)[i], bv);
+                    return result;
+                }
+                if (auto* vb = std::get_if<Vector<double>>(&b)) {
+                    double av = ctxToDouble(a);
+                    Vector<double> result(vb->size());
+                    for (size_t i = 0; i < vb->size(); ++i)
+                        result[i] = std::max(av, (*vb)[i]);
+                    return result;
+                }
+                return std::max(ctxToDouble(a), ctxToDouble(b));
+            }
+        }
+    }
 
     // 如果是截面函数，在 envokeMixedCase 中已经预计算，直接从 context 读取
     if (isCrossSectionFunction(funcName)) {

@@ -1,6 +1,7 @@
 import { message } from '@/tool'
 import { useHistoryStore } from '@/stores/history'
 import { convertKeysToLabels } from '@/lib/nodes'
+import { functionInputSlots } from '@/lib/nodes/configs/function'
 
 /**
  * 导出文件格式标识
@@ -108,33 +109,85 @@ function convertNodeKeys(nodes) {
 
 /**
  * 将后端边的 handle ID 转换为前端格式
- * 后端: sourceHandle 为 "nodeId-fieldName" 或 "nodeId"，targetHandle 为 "nodeId"
- * 前端: 字段输出 handle 为 "field-xxx"，普通输出 handle 为 "output"，输入 handle 为 "input"
+ * 
+ * sourceHandle 转换:
+ *   "1-close"         → "field-close"          (QuoteInput 字段输出)
+ *   "11-IMF_0"        → "emd_IMF_0"            (EMD 命名输出)
+ *   "11-energy_velocity" → "emd_energy_velocity" (EMD 衍生特征)
+ *   "2"               → "output"               (通用单输出)
+ * 
+ * targetHandle 转换:
+ *   BreakoutNode: 保留 "input-value/upper/lower"
+ *   FunctionNode:  根据 sourceHandle 字段名映射到 "input-{slot}"
+ *   其他节点:      → "input"
  */
 function normalizeEdgeHandles(edges, nodes) {
-  // 找出 input 类型节点的 ID
-  const inputNodeIds = new Set(
-    nodes.filter(n => n.data?.nodeType === 'input').map(n => n.id)
-  )
+  // 构建节点 ID → nodeType 映射
+  const nodeTypeMap = {}
+  const nodeMethodMap = {}
+  for (const n of nodes) {
+    nodeTypeMap[n.id] = n.data?.nodeType || ''
+    // FunctionNode 需要知道 method 来确定槽位
+    if (n.data?.nodeType === 'function') {
+      nodeMethodMap[n.id] = n.data?.params?.method?.value || 'MA'
+    }
+  }
 
   return edges.map(edge => {
     let { sourceHandle, targetHandle } = edge
+    const targetNodeType = nodeTypeMap[edge.target] || ''
+    const sourceNodeType = nodeTypeMap[edge.source] || ''
 
-    // 转换 sourceHandle
+    // ── 转换 sourceHandle ──
     if (sourceHandle) {
       if (sourceHandle.includes('-')) {
-        // "1-close" -> "field-close"
         const fieldName = sourceHandle.split('-').slice(1).join('-')
-        sourceHandle = `field-${fieldName}`
+        if (sourceNodeType === 'emd') {
+          // EMD 命名输出: "11-IMF_0" → "IMF", "11-energy_velocity" → "energy_velocity"
+          if (fieldName.startsWith('IMF_')) {
+            sourceHandle = 'IMF'
+          } else {
+            sourceHandle = fieldName
+          }
+        } else {
+          // QuoteInput 字段输出: "1-close" → "field-close"
+          sourceHandle = `field-${fieldName}`
+        }
       } else {
-        // "2" -> "output"
+        // 通用单输出: "2" → "output"
         sourceHandle = 'output'
       }
     }
 
-    // 转换 targetHandle -> "input"
+    // ── 转换 targetHandle ──
     if (targetHandle) {
-      targetHandle = 'input'
+      if (targetNodeType === 'breakout') {
+        // BreakoutNode: 保留命名 handle "input-value/upper/lower"
+        if (!targetHandle.startsWith('input-')) {
+          targetHandle = 'input-value' // 默认
+        }
+      } else if (targetNodeType === 'function') {
+        // FunctionNode: 根据 sourceHandle 中的字段名推断目标槽位
+        const method = nodeMethodMap[edge.target] || 'MA'
+        const slots = functionInputSlots[method] || [{ slot: 'price' }]
+        
+        // 从原始 sourceHandle 提取字段名
+        let srcField = ''
+        if (edge.sourceHandle && edge.sourceHandle.includes('-')) {
+          srcField = edge.sourceHandle.split('-').slice(1).join('-')
+        }
+        
+        // 匹配槽位: 字段名 → slot 名
+        let targetSlot = slots[0]?.slot || 'price'
+        if (srcField && slots.length > 1) {
+          const matchedSlot = slots.find(s => s.field === srcField)
+          if (matchedSlot) targetSlot = matchedSlot.slot
+        }
+        targetHandle = `input-${targetSlot}`
+      } else {
+        // 其他节点: 单一输入
+        targetHandle = 'input'
+      }
     }
 
     return { ...edge, sourceHandle, targetHandle }

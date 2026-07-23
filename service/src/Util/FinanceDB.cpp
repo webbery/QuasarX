@@ -1125,7 +1125,11 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
         char timebuf[32];
         struct tm tm_val;
         time_t t = b.datetime;
+#ifdef _WIN32
+        gmtime_s(&tm_val, &t);
+#else
         gmtime_r(&t, &tm_val);
+#endif
         strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
         u.datetime = timebuf;
         u.adj_open  = b.open * b.adj_factor;

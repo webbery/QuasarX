@@ -19,17 +19,6 @@ namespace {
         {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, {"15d", 15},
     };
 
-    /// 每种方法的槽位 → 字段映射
-    static const Map<String, Map<String, String>> methodSlotMap{
-        {"MA",      {{"price", "close"}}},
-        {"STD",     {{"price", "close"}}},
-        {"R2",      {{"price", "close"}}},
-        {"ZScore",  {{"price", "close"}}},
-        {"Return",  {{"price", "close"}}},
-        {"VPCorr",  {{"price", "close"}, {"volume", "volume"}}},
-        {"ATR",     {{"high", "high"}, {"low", "low"}, {"close", "close"}}},
-    };
-
     using CallableFactory = std::function<ICallable*(const nlohmann::json&)>;
 
     Map<String, CallableFactory> intrinsic_functions{
@@ -98,6 +87,73 @@ FunctionNode::FunctionNode(Server* server)
 
 }
 
+// 从连接信息中解析实际输入映射
+// 遍历 _ins，对每个上游节点查找其 _outs 中连接到本节点的 sourceHandle
+// 返回: slot → context key 的映射
+Map<String, String> FunctionNode::resolveInputConnections() {
+    Map<String, String> slotToKey;
+    
+    for (auto& [targetHandle, upstreamNode] : _ins) {
+        // 遍历上游节点的 _outs，找到连接到本节点的 sourceHandle
+        for (auto& [sourceHandle, downstreamNode] : upstreamNode->outs()) {
+            if (downstreamNode != this) continue;
+            
+            auto outs = upstreamNode->out_elements();
+            
+            // 从 sourceHandle 提取数据名（去掉 nodeId 前缀）
+            // 格式: "11-IMF_0" → "IMF_0", "1-close" → "close", "2" → ""
+            String dataName;
+            auto dashPos = sourceHandle.find('-');
+            if (dashPos != String::npos) {
+                dataName = sourceHandle.substr(dashPos + 1);
+            }
+            
+            if (!dataName.empty()) {
+                // 有明确的数据名，从 out_elements 中匹配 context key
+                String contextKey;
+                for (auto& [key, type] : outs) {
+                    if (key.find(dataName) != String::npos) {
+                        contextKey = key;
+                        break;
+                    }
+                }
+                if (contextKey.empty()) continue;
+                
+                // 根据数据名推断 slot
+                if (dataName == "volume") {
+                    slotToKey["volume"] = contextKey;
+                } else {
+                    if (slotToKey.find("price") == slotToKey.end()) {
+                        slotToKey["price"] = contextKey;
+                    }
+                }
+            } else {
+                // sourceHandle 仅为节点 ID，无明确数据名
+                // 如果上游只有一个输出，直接使用
+                if (outs.size() == 1) {
+                    auto& [key, type] = *outs.begin();
+                    // 提取字段名（key 格式: "symbol.field" 或 "label.field"）
+                    String fieldName;
+                    auto dotPos = key.rfind('.');
+                    if (dotPos != String::npos) {
+                        fieldName = key.substr(dotPos + 1);
+                    }
+                    if (fieldName == "volume") {
+                        slotToKey["volume"] = key;
+                    } else {
+                        if (slotToKey.find("price") == slotToKey.end()) {
+                            slotToKey["price"] = key;
+                        }
+                    }
+                }
+                // 多个输出时需要明确的 sourceHandle，跳过
+            }
+        }
+    }
+    
+    return slotToKey;
+}
+
 FunctionNode::~FunctionNode() {
     for (auto& [sym, callable] : _callables) {
         delete callable;
@@ -131,15 +187,8 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     DEBUG_INFO("[FunctionNode:{}] Init: label='{}', _params size = {}",
          _id, _label, _params.size());
 
-    // 2. 获取方法名和槽位映射
+    // 2. 获取方法名
     String methodName = config["params"]["method"]["value"];
-    auto slotIt = methodSlotMap.find(methodName);
-    if (slotIt == methodSlotMap.end()) {
-        // 未知方法，使用默认单槽位
-        _slot_to_field["price"] = "close";
-    } else {
-        _slot_to_field = slotIt->second;
-    }
 
     // 3. 从 _params 的 key 中提取所有 symbol
     //    key 格式: "sz.800001.close" → symbol = "sz.800001"
@@ -172,8 +221,11 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         _outputs[output_key] = ArgType::Double_TimeSeries;
     }
 
-    DEBUG_INFO("[FunctionNode:{}] Init: _slot_to_field has {} entries, _callables has {} entries, _outputs has {} entries",
-         _id, _slot_to_field.size(), _callables.size(), _outputs.size());
+    // 6. 从连接信息解析实际输入映射
+    _resolvedInputs = resolveInputConnections();
+
+    DEBUG_INFO("[FunctionNode:{}] Init: _resolvedInputs has {} entries, _callables has {} entries, _outputs has {} entries",
+         _id, _resolvedInputs.size(), _callables.size(), _outputs.size());
     return true;
 }
 
@@ -187,12 +239,11 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
     // 对每个 symbol 独立计算
     for (auto& item : _callables) {
         auto& symbol = item.first;
-        // 构建该 symbol 的输入参数（按槽位名）
+        // 构建该 symbol 的输入参数（从连接信息解析的映射）
         Map<String, context_t> args;
-        for (auto& [slot, field] : _slot_to_field) {
-            String key = symbol + "." + field;
-            if (context.exist(key)) {
-                args[slot] = context.get(key);
+        for (auto& [slot, contextKey] : _resolvedInputs) {
+            if (context.exist(contextKey)) {
+                args[slot] = context.get(contextKey);
             }
         }
 

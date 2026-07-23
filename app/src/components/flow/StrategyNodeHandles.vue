@@ -110,7 +110,6 @@ const shouldShowOutput = computed(() => {
 
 const emdImfCount = computed(() => {
   if (props.nodeType !== 'emd') return 0
-  // 注意：params 的键是中文 label（如 "IMF 数量"），不是英文 key
   const numParam = props.params?.['IMF 数量'] || props.params?.['numIMFs']
   return numParam?.value || 5
 })

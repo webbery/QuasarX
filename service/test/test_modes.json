@@ -19,6 +19,7 @@
         "test_macro",
         "test_quote_finance",
         "test_node_unit",
+        "test_formula_math",
         "test_position_events"
       ]
     },

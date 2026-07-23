@@ -25,7 +25,8 @@ public:
 
     Server* GetServer() const { return _server; }
 private:
-
+    // 从 _ins/上游 _outs 连接信息解析实际输入映射
+    Map<String, String> resolveInputConnections();
 
 private:
     Server* _server;
@@ -35,8 +36,8 @@ private:
     Map<String, ArgType> _outputs;
 
     // ── 新架构：按 symbol 分组处理 ──
-    // 槽位名 → 字段名（如 "price" → "close"）
-    Map<String, String> _slot_to_field;
+    // 从连接信息解析的实际输入映射: slot → context key
+    Map<String, String> _resolvedInputs;
     // 每个 symbol 独立的 callable 实例（状态隔离）
     Map<String, ICallable*> _callables;
 
