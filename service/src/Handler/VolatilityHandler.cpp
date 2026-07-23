@@ -360,29 +360,11 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
         result.annual_volatility.push_back(std::sqrt(result.covariance_matrix[i][i] * 252.0));
     }
 
-    // 特征值分解 (幂迭代法求最大/最小特征值)
-    // 简化：用 Gershgorin 圆估计条件数
-    double max_eigen = 0;
-    double min_eigen = std::numeric_limits<double>::max();
-    for (size_t i = 0; i < n; ++i) {
-        double center = result.covariance_matrix[i][i];
-        double radius = 0;
-        for (size_t j = 0; j < n; ++j) {
-            if (i != j) radius += std::abs(result.covariance_matrix[i][j]);
-        }
-        max_eigen = std::max(max_eigen, center + radius);
-        min_eigen = std::min(min_eigen, std::max(0.0, center - radius));
-    }
-
-    result.condition_number = (min_eigen > 1e-15) ? (max_eigen / min_eigen) : 1e15;
-    result.is_positive_definite = (min_eigen > 1e-15);
-
-    // 简化特征值 (对角线作为近似)
-    result.eigenvalues.reserve(n);
-    for (size_t i = 0; i < n; ++i) {
-        result.eigenvalues.push_back(result.covariance_matrix[i][i]);
-    }
-    std::sort(result.eigenvalues.rbegin(), result.eigenvalues.rend());
+    // 真实特征值分解 (对称矩阵使用 SelfAdjointEigenSolver，比 Jacobi 通用分解快)
+    evaluateCovarianceQuality(result.covariance_matrix,
+                              result.eigenvalues,
+                              result.condition_number,
+                              result.is_positive_definite);
 
     // === 多资产预测外推 ===
     // 收集各资产的 Forecast 结果（按 symbols 请求顺序）
@@ -811,5 +793,126 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         nlohmann::json err;
         err["error"] = e.what();
         res.set_content(err.dump(), "application/json");
+    }
+}
+
+// === 协方差质量诊断 (共用算法: SelfAdjointEigenSolver) ===
+//
+// 对称 NxN 矩阵的真实特征值分解, 输出:
+//   - eigenvalues (降序)
+//   - condition_number (κ = λ_max / λ_min, 接近奇异时返回 1e15)
+//   - is_positive_definite (λ_min > 1e-12)
+// 病态时安全回退 Gershgorin 估计, 保证接口语义稳定。
+void VolatilityHandler::evaluateCovarianceQuality(
+    const std::vector<std::vector<double>>& cov,
+    std::vector<double>& eigenvalues_out,
+    double& condition_number_out,
+    bool& is_positive_definite_out)
+{
+    const size_t n = cov.size();
+    eigenvalues_out.clear();
+    eigenvalues_out.reserve(n);
+
+    if (n == 0) {
+        condition_number_out = 0;
+        is_positive_definite_out = false;
+        return;
+    }
+
+    if (n == 1) {
+        eigenvalues_out.push_back(cov[0][0]);
+        condition_number_out = 1.0;
+        is_positive_definite_out = (cov[0][0] > 1e-12);
+        return;
+    }
+
+    Eigen::MatrixXd cov_2d(n, n);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            cov_2d(i, j) = cov[i][j];
+        }
+    }
+
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(cov_2d);
+    if (es.info() == Eigen::Success) {
+        const Eigen::VectorXd evals = es.eigenvalues();  // 升序
+        const double min_eigen = evals(0);
+        const double max_eigen = evals(n - 1);
+        eigenvalues_out.resize(n);
+        for (size_t i = 0; i < n; ++i) {
+            eigenvalues_out[i] = evals(n - 1 - i);  // 降序
+        }
+        condition_number_out = (min_eigen > 1e-12) ? (max_eigen / min_eigen) : 1e15;
+        is_positive_definite_out = (min_eigen > 1e-12);
+        return;
+    }
+
+    // 回退: Gershgorin 圆估计
+    double max_eigen = 0;
+    double min_eigen = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < n; ++i) {
+        double center = cov[i][i];
+        double radius = 0;
+        for (size_t j = 0; j < n; ++j) {
+            if (i != j) radius += std::abs(cov[i][j]);
+        }
+        max_eigen = std::max(max_eigen, center + radius);
+        min_eigen = std::min(min_eigen, std::max(0.0, center - radius));
+        eigenvalues_out.push_back(center);
+    }
+    std::sort(eigenvalues_out.rbegin(), eigenvalues_out.rend());
+    condition_number_out = (min_eigen > 1e-15) ? (max_eigen / min_eigen) : 1e15;
+    is_positive_definite_out = (min_eigen > 1e-15);
+    WARN("[Volatility] SelfAdjointEigenSolver failed (n={}), fell back to Gershgorin estimate", n);
+}
+
+// === POST /analysis/covariance_diagnostics ===
+//
+// Debug 端点: 客户端传入对称 NxN 协方差矩阵，返回特征值分解 + 质量诊断。
+// 用于不需要真实市场数据的纯算法单元测试 / 可视化调试。
+void VolatilityHandler::post(const httplib::Request& req, httplib::Response& res) {
+    nlohmann::json resp;
+    try {
+        auto j = nlohmann::json::parse(req.body);
+        if (!j.contains("covariance_matrix") || !j["covariance_matrix"].is_array()) {
+            throw std::runtime_error("missing 'covariance_matrix' (NxN array)");
+        }
+        const auto& mat = j["covariance_matrix"];
+        const size_t n = mat.size();
+
+        if (n == 0 || !mat[0].is_array() || mat[0].size() != n) {
+            throw std::runtime_error("covariance_matrix must be a non-empty square NxN array");
+        }
+
+        std::vector<std::vector<double>> cov(n, std::vector<double>(n, 0.0));
+        for (size_t i = 0; i < n; ++i) {
+            if (!mat[i].is_array() || mat[i].size() != n) {
+                throw std::runtime_error("covariance_matrix is not square");
+            }
+            for (size_t j = 0; j < n; ++j) {
+                if (!mat[i][j].is_number()) {
+                    throw std::runtime_error("non-numeric element at [" +
+                                             std::to_string(i) + "][" + std::to_string(j) + "]");
+                }
+                cov[i][j] = mat[i][j].get<double>();
+            }
+        }
+
+        std::vector<double> eigenvalues;
+        double condition_number = 0;
+        bool is_positive_definite = false;
+        evaluateCovarianceQuality(cov, eigenvalues, condition_number, is_positive_definite);
+
+        resp["n"] = n;
+        resp["eigenvalues"] = eigenvalues;
+        resp["condition_number"] = condition_number;
+        resp["is_positive_definite"] = is_positive_definite;
+
+        res.set_content(resp.dump(), "application/json");
+        res.status = 200;
+    } catch (const std::exception& e) {
+        resp["error"] = e.what();
+        res.status = 400;
+        res.set_content(resp.dump(), "application/json");
     }
 }

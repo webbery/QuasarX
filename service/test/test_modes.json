@@ -17,7 +17,9 @@
         "test_cusum_api",
         "test_risk",
         "test_macro",
-        "test_quote_finance"
+        "test_quote_finance",
+        "test_node_unit",
+        "test_position_events"
       ]
     },
     "tickflow": {

@@ -466,3 +466,24 @@ std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::st
     duckdb_destroy_result(&db_result);
     return result;
 }
+
+int QuoteDB::updateAdjPrices(const std::string& table, int64_t encoded_symbol,
+                             const std::vector<AdjPriceUpdate>& updates) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!initialized_) return -1;
+
+    exec("BEGIN TRANSACTION");
+    int updated = 0;
+    for (auto& u : updates) {
+        String sql = fmt::format(
+            "UPDATE {} SET adj_open={:.6f}, adj_close={:.6f}, adj_high={:.6f}, adj_low={:.6f} "
+            "WHERE symbol={} AND datetime='{}'",
+            table, u.adj_open, u.adj_close, u.adj_high, u.adj_low,
+            encoded_symbol, u.datetime);
+        if (exec(sql)) ++updated;
+    }
+    exec("COMMIT");
+
+    SPDLOG_INFO("[QuoteDB] updateAdjPrices: {} rows updated for symbol={}", updated, encoded_symbol);
+    return updated;
+}

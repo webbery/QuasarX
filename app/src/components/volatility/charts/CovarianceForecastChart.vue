@@ -1,5 +1,13 @@
 <template>
-  <div ref="chartRef" style="width: 100%; height: 100%"></div>
+  <div class="forecast-card">
+    <div class="forecast-header">
+      <h3 class="forecast-title">
+        {{ data?.horizon || 0 }}步协方差膨胀矩阵
+        <TipHint content="用历史 AR 模型外推 h 期后的协方差矩阵，反映预测期内资产共同运动的演变。预测期相关性 vs 真实相关性的差可用于识别相关性抬升（危机前兆）现象" />
+      </h3>
+    </div>
+    <div ref="chartRef" class="chart-container"></div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -7,6 +15,7 @@ import { watch, onMounted } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../../report/composables/useECharts'
 import type { MultiForecast } from '../composables/useVolatilityState'
+import TipHint from '../../TipHint.vue'
 
 const props = defineProps<{
   data: MultiForecast | null
@@ -17,7 +26,7 @@ const { chartRef, initChart, updateChart } = useECharts(false)
 function buildOption() {
   if (!props.data?.forecast_corr) return {}
 
-  const { symbols, forecast_corr, forecast_cov, horizon } = props.data
+  const { symbols, forecast_corr, forecast_cov } = props.data
   const n = symbols.length
 
   // 构建热力图数据
@@ -34,20 +43,13 @@ function buildOption() {
   })
 
   return createBaseChartOption({
-    title: {
-      text: `${horizon}步协方差膨胀矩阵`,
-      subtext: '预测期内资产间相关系数外推',
-      left: 'center',
-      textStyle: { color: '#e0e0e0', fontSize: 14 },
-      subtextStyle: { color: '#666', fontSize: 11 }
-    },
     tooltip: {
       formatter: (p: any) => {
         const i = p.data[1], j = p.data[0]
         return `${symbols[i]} ↔ ${symbols[j]}<br/>相关系数: ${p.data[2].toFixed(3)}<br/>协方差: ${forecast_cov[i][j].toExponential(4)}`
       }
     },
-    grid: { left: '15%', right: '15%', top: '20%', bottom: '20%' },
+    grid: { left: '15%', right: '15%', top: '10%', bottom: '15%' },
     xAxis: {
       type: 'category',
       data: shortNames,
@@ -104,3 +106,32 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+.forecast-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+.forecast-header {
+  flex-shrink: 0;
+  padding-bottom: 8px;
+}
+
+.forecast-title {
+  margin: 0;
+  font-size: 14px;
+  color: #e0e0e0;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chart-container {
+  flex: 1;
+  min-height: 0;
+}
+</style>

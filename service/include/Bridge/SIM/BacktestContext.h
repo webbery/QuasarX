@@ -92,6 +92,18 @@ public:
     void setLastTradeDay(time_t day) { _lastTradeDay = day; }
     void onDayChange() { _positionMgr.OnDayChange(); }
 
+    // === 持仓事件处理（分红/送股等被动事件）===
+
+    /// @brief 设置标的的持仓事件列表（createBacktestContext 时调用）
+    void setPositionEvents(symbol_t symbol, Vector<std::unique_ptr<IPositionEvent>> events) {
+        _positionEvents[symbol] = std::move(events);
+        _nextEventIdx[symbol] = 0;
+    }
+
+    /// @brief 处理到指定日期为止的所有待触发事件
+    /// 在 stepForward 的跨日检测之后调用
+    void processPositionEvents(time_t barDate, double currentPrice);
+
     // 涉及的所有标的
     void addSymbol(symbol_t symbol);
     const Set<symbol_t>& getSymbols() const { return _symbols; }
@@ -259,5 +271,9 @@ private:
     CUSUMDetector _cusum_detector;
     Vector<double> _cusum_returns;      // 用于自适应校准的返回值缓存
     bool _cusum_calibrated = false;     // 是否已完成 mu/sigma 校准
+
+    // === 持仓事件（分红/送股等被动事件）===
+    Map<symbol_t, Vector<std::unique_ptr<IPositionEvent>>> _positionEvents;
+    Map<symbol_t, size_t> _nextEventIdx;  // 每个标的下一个待处理事件索引
 };
 

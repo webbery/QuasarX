@@ -174,6 +174,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_STRATEGIES "/risk/strategies"
 #define API_NAV_HISTORY     "/nav/history"
 #define API_VOLATILITY      "/analysis/volatility"
+#define API_COVARIANCE_DIAG "/analysis/covariance_diagnostics"
 #define API_CUSUM           "/analysis/cusum"
 #define API_SIGNAL          "/analysis/signal"
 #define API_PCA             "/analysis/pca"
@@ -390,6 +391,7 @@ void Server::Regist() {
     REGIST_GET(API_RISK_STATUS);
     REGIST_POST(API_RISK_RESET);
     REGIST_GET(API_VOLATILITY);
+    REGIST_POST(API_COVARIANCE_DIAG);
     REGIST_POST(API_CUSUM);
     REGIST_GET(API_SIGNAL);
     REGIST_GET(API_PCA);
@@ -1273,6 +1275,7 @@ void Server::InitHandlers() {
     RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
     RegistHandler(API_STOCK_PARAMS, StockParams);
     RegistHandler(API_VOLATILITY, VolatilityHandler);
+    RegistHandler(API_COVARIANCE_DIAG, VolatilityHandler);
     RegistHandler(API_CUSUM, CUSUMHandler);
     RegistHandler(API_SIGNAL, SignalHandler);
     RegistHandler(API_PCA, PCAHandler);

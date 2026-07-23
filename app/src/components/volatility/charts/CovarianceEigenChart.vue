@@ -1,23 +1,35 @@
 <template>
   <div class="eigen-card">
-    <h3 class="card-title">协方差矩阵质量诊断</h3>
+    <h3 class="card-title">
+      协方差矩阵质量诊断
+      <TipHint content="用 Eigen 真实特征值分解评估协方差矩阵质量：检测近共线性、判定正定性、确认能否用于组合优化 / 蒙特卡洛模拟" />
+    </h3>
     <div class="metrics-grid">
       <div class="metric-item">
-        <span class="metric-label">条件数 (κ)</span>
+        <span class="metric-label">
+          条件数 (κ)
+          <TipHint content="κ = λ_max / λ_min。κ < 100 健康，100-1000 需注意，> 1000 近共线性，组合优化会给出极端杠杆权重" />
+        </span>
         <span class="metric-value" :class="conditionClass">
           {{ data?.condition_number?.toFixed(2) || '-' }}
         </span>
         <span class="metric-hint">{{ conditionHint }}</span>
       </div>
       <div class="metric-item">
-        <span class="metric-label">正定性</span>
+        <span class="metric-label">
+          正定性
+          <TipHint content="所有特征值 > 0，可 Cholesky 分解。判定为否时，蒙特卡洛模拟路径会失真" />
+        </span>
         <span class="metric-value" :class="pdClass">
           {{ data?.is_positive_definite ? '✓ 正定' : '✗ 非正定' }}
         </span>
       </div>
     </div>
     <div v-if="data?.eigenvalues?.length" class="eigen-values">
-      <span class="metric-label">特征值: </span>
+      <span class="metric-label">
+        特征值:
+        <TipHint content="降序排列。最大特征值 / 总和 > 70% 意味着标的是同一因子（如 β）的不同暴露，分散化失效" />
+      </span>
       <span class="eigen-list">{{ eigenStr }}</span>
     </div>
   </div>
@@ -25,6 +37,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import TipHint from '../../TipHint.vue'
 
 const props = defineProps<{
   data: {

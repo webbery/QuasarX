@@ -123,6 +123,7 @@ public:
     VolatilityHandler(Server* server): HttpHandler(server) {}
 
     virtual void get(const httplib::Request& req, httplib::Response& res);
+    virtual void post(const httplib::Request& req, httplib::Response& res);
 
 private:
     static VolatilityResult compute(const std::string& db_path,
@@ -150,4 +151,11 @@ private:
     static double kurtosis(const std::vector<double>& data);
     static ACFDecayAnalysis analyzeACFDecay(const std::vector<double>& abs_acf,
                                              const std::vector<double>& abs_returns);
+
+    // 协方差质量诊断: Eigen SelfAdjoint 特征值分解, 返回 (降序特征值, 条件数, 正定性)
+    // cov 必须为对称 NxN, N >= 1
+    static void evaluateCovarianceQuality(const std::vector<std::vector<double>>& cov,
+                                           std::vector<double>& eigenvalues_out,
+                                           double& condition_number_out,
+                                           bool& is_positive_definite_out);
 };

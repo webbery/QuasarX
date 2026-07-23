@@ -1,5 +1,6 @@
 #pragma once
 #include "Bridge/exchange.h"
+#include "Bridge/PositionEvent.h"
 #include <mutex>
 
 // 股票模拟持仓信息
@@ -45,6 +46,11 @@ public:
 
     /// @brief 调整持仓（通用：delta > 0 买入，delta < 0 卖出）
     TradeFees AdjustPosition(symbol_t symbol, int64_t delta, double price);
+
+    /// @brief 应用持仓事件（分红/送股等被动事件，不走 Buy/Sell 路径）
+    /// 不产生佣金/印花税，不触发 T+1
+    /// @return 实际效果（调用方负责现金变动）
+    PositionEffect ApplyEvent(symbol_t symbol, const IPositionEvent& event, double currentPrice);
 
     // === 查询 ===
 

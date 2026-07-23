@@ -1,4 +1,6 @@
 #include "Bridge/SIM/BacktestContext.h"
+#include "Util/datetime.h"
+#include "Util/system.h"
 #include <atomic>
 
 BacktestContext::BacktestContext(run_id_t run_id, const String& strategy_name)
@@ -177,4 +179,29 @@ double BacktestContext::getProgress() const {
 void BacktestContext::addSymbol(symbol_t symbol) {
     std::lock_guard<std::mutex> lock(_symbolsMtx);
     _symbols.insert(symbol);
+}
+
+void BacktestContext::processPositionEvents(time_t barDate, double currentPrice) {
+    for (auto& [symbol, events] : _positionEvents) {
+        size_t& nextIdx = _nextEventIdx[symbol];
+
+        while (nextIdx < events.size() && events[nextIdx]->triggerDate() <= barDate) {
+            const auto& event = events[nextIdx];
+
+            PositionEffect fx = _positionMgr.ApplyEvent(symbol, *event, currentPrice);
+
+            if (fx.cashDelta != 0.0 && _capitalPool && !_strategyNameForCapital.empty()) {
+                _capitalPool->updateAvailable(_strategyNameForCapital, fx.cashDelta);
+            }
+
+            if (fx.qtyDelta != 0 || fx.cashDelta != 0) {
+                INFO("[BacktestContext] Event applied: symbol={}, date={}, "
+                     "qtyDelta={}, cashDelta={}",
+                     get_symbol(symbol), ToString(event->triggerDate(), "%Y-%m-%d"),
+                     fx.qtyDelta, fx.cashDelta);
+            }
+
+            ++nextIdx;
+        }
+    }
 }

@@ -1411,6 +1411,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /analysis/covariance_diagnostics:
+    post:
+      summary: 协方差矩阵质量诊断 (debug 端点)
+      description: |
+        客户端传入对称 NxN 协方差矩阵，返回真实特征值分解 (Eigen SelfAdjointEigenSolver) + 质量诊断。
+        用于纯算法单元测试和可视化调试，不依赖市场数据。
+        - eigenvalues: 降序排列的特征值
+        - condition_number: κ = λ_max / λ_min，矩阵接近奇异时返回 1e15
+        - is_positive_definite: 最小特征值 > 1e-12
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CovarianceDiagnosticsRequest"
+      responses:
+        '200':
+          description: 协方差诊断结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CovarianceDiagnosticsResponse"
+        '400':
+          description: 参数错误 (矩阵非方阵/非数值/为空)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ═══════════════════════════════════════════════════════════
   #  行情数据
   # ═══════════════════════════════════════════════════════════
@@ -3429,6 +3460,38 @@ components:
           description: 单标的分析结果，key 为标的代码
         multi:
           $ref: "#/components/schemas/VolatilityMultiResult"
+
+    CovarianceDiagnosticsRequest:
+      type: object
+      required: [covariance_matrix]
+      properties:
+        covariance_matrix:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: 对称 NxN 协方差矩阵 (N >= 1)
+          example: [[2.0, 0.5], [0.5, 1.0]]
+
+    CovarianceDiagnosticsResponse:
+      type: object
+      description: 协方差质量诊断响应
+      properties:
+        n:
+          type: integer
+          description: 矩阵阶数 N
+        eigenvalues:
+          type: array
+          items:
+            type: number
+          description: 降序排列的特征值 (eigenvector 对应 λ)
+        condition_number:
+          type: number
+          description: κ = λ_max / λ_min；接近奇异时为 1e15
+        is_positive_definite:
+          type: boolean
+          description: 是否正定 (λ_min > 1e-12)
 
     # ═══════════════════════════════════════════════════════════
     #  行情数据 Schemas

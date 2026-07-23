@@ -135,5 +135,5 @@ private:
     duckdb_database db_ = nullptr;
     duckdb_connection conn_ = nullptr;
     bool initialized_ = false;
-    std::mutex mtx_;
+    std::recursive_mutex mtx_;
 };

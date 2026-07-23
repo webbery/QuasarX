@@ -4,6 +4,7 @@
 #include "Util/log.h"
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <cstring>
 #include <algorithm>
@@ -13,12 +14,12 @@
 // ═══════════════════════════════════════════════════════════
 
 struct CategoryDef {
-    std::string name;  // 中文名
+    String name;  // 中文名
     // CSV 列名 -> DB 列名
-    std::vector<std::pair<std::string, std::string>> field_map;
+    Vector<std::pair<String, String>> field_map;
 };
 
-static const std::map<std::string, CategoryDef> CATEGORY_DEFS = {
+static const std::map<String, CategoryDef> CATEGORY_DEFS = {
     {"profit", {
         "盈利能力",
         {
@@ -89,11 +90,11 @@ static const std::map<std::string, CategoryDef> CATEGORY_DEFS = {
 //  symbol 编解码（复用 QuoteDB 逻辑）
 // ═══════════════════════════════════════════════════════════
 
-int64_t FinanceDB::encodeSymbol(const std::string& sym) {
+int64_t FinanceDB::encodeSymbol(const String& sym) {
     return QuoteDB::encodeSymbol(sym);
 }
 
-std::string FinanceDB::decodeSymbol(int64_t encoded) {
+String FinanceDB::decodeSymbol(int64_t encoded) {
     return QuoteDB::decodeSymbol(encoded);
 }
 
@@ -101,18 +102,18 @@ std::string FinanceDB::decodeSymbol(int64_t encoded) {
 //  类别工具函数
 // ═══════════════════════════════════════════════════════════
 
-bool FinanceDB::isValidCategory(const std::string& category) {
+bool FinanceDB::isValidCategory(const String& category) {
     return CATEGORY_DEFS.count(category) > 0;
 }
 
-std::string FinanceDB::categoryName(const std::string& category) {
+String FinanceDB::categoryName(const String& category) {
     auto it = CATEGORY_DEFS.find(category);
     return it != CATEGORY_DEFS.end() ? it->second.name : category;
 }
 
-const std::vector<std::pair<std::string, std::string>>&
-FinanceDB::categoryFields(const std::string& category) {
-    static const std::vector<std::pair<std::string, std::string>> empty;
+const Vector<std::pair<String, String>>&
+FinanceDB::categoryFields(const String& category) {
+    static const Vector<std::pair<String, String>> empty;
     auto it = CATEGORY_DEFS.find(category);
     return it != CATEGORY_DEFS.end() ? it->second.field_map : empty;
 }
@@ -131,9 +132,9 @@ FinanceDB::~FinanceDB() {
 }
 
 void FinanceDB::shutdown() {
-    std::lock_guard<std::mutex> lock(mtx_);
     if (!initialized_) return;
     initialized_ = false;
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (conn_) {
         duckdb_result result;
         duckdb_query(conn_, "CHECKPOINT", &result);
@@ -143,7 +144,7 @@ void FinanceDB::shutdown() {
     if (db_) duckdb_close(&db_);
 }
 
-bool FinanceDB::exec(const std::string& sql) {
+bool FinanceDB::exec(const String& sql) {
     duckdb_result result;
     duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
     if (state != DuckDBSuccess) {
@@ -154,11 +155,11 @@ bool FinanceDB::exec(const std::string& sql) {
     return true;
 }
 
-bool FinanceDB::init(const std::string& db_dir) {
+bool FinanceDB::init(const String& db_dir) {
     if (initialized_) return true;
 
     std::filesystem::create_directories(db_dir);
-    std::string db_path = db_dir + "/finance.db";
+    String db_path = db_dir + "/finance.db";
 
     char* open_error = nullptr;
     duckdb_state state = duckdb_open_ext(db_path.c_str(), &db_, nullptr, &open_error);
@@ -186,13 +187,13 @@ bool FinanceDB::init(const std::string& db_dir) {
 //  动态建表
 // ═══════════════════════════════════════════════════════════
 
-void FinanceDB::ensureTable(const std::string& category) {
+void FinanceDB::ensureTable(const String& category) {
     auto it = CATEGORY_DEFS.find(category);
     if (it == CATEGORY_DEFS.end()) return;
 
     const auto& fields = it->second.field_map;
 
-    std::string sql = fmt::format(
+    String sql = fmt::format(
         "CREATE TABLE IF NOT EXISTS {} (\n"
         "    id          INTEGER,\n"
         "    symbol      BIGINT NOT NULL,\n"
@@ -216,15 +217,14 @@ void FinanceDB::ensureTable(const std::string& category) {
 //  CSV 导入
 // ═══════════════════════════════════════════════════════════
 
-int FinanceDB::importCsv(const std::string& csv_path, const std::string& category) {
-    std::lock_guard<std::mutex> lock(mtx_);
-
+int FinanceDB::importCsv(const String& csv_path, const String& category) {
     auto cat_it = CATEGORY_DEFS.find(category);
     if (cat_it == CATEGORY_DEFS.end()) {
         SPDLOG_ERROR("[FinanceDB] Unknown category: {}", category);
         return -1;
     }
 
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     ensureTable(category);
 
     std::ifstream ifs(csv_path);
@@ -236,7 +236,7 @@ int FinanceDB::importCsv(const std::string& csv_path, const std::string& categor
     const auto& field_map = cat_it->second.field_map;
 
     // ── 阶段 1：读取 CSV header，建立列索引映射 ──
-    std::string header_line;
+    String header_line;
     if (!std::getline(ifs, header_line)) {
         SPDLOG_WARN("[FinanceDB] Empty file: {}", csv_path);
         return 0;
@@ -247,10 +247,10 @@ int FinanceDB::importCsv(const std::string& csv_path, const std::string& categor
         header_line = header_line.substr(3);
     }
 
-    std::vector<std::string> csv_headers;
+    Vector<String> csv_headers;
     {
         std::istringstream ss(header_line);
-        std::string tok;
+        String tok;
         while (std::getline(ss, tok, ',')) {
             // 去除 \r
             if (!tok.empty() && tok.back() == '\r') tok.pop_back();
@@ -260,7 +260,7 @@ int FinanceDB::importCsv(const std::string& csv_path, const std::string& categor
 
     // 找到 code, pubDate, statDate 和各字段的列索引
     int col_code = -1, col_pub = -1, col_stat = -1;
-    std::map<std::string, int> field_col_idx;  // db_col_name -> csv column index
+    std::map<String, int> field_col_idx;  // db_col_name -> csv column index
 
     for (size_t i = 0; i < csv_headers.size(); i++) {
         const auto& h = csv_headers[i];
@@ -285,22 +285,22 @@ int FinanceDB::importCsv(const std::string& csv_path, const std::string& categor
     // ── 阶段 2：解析数据行 ──
     struct Row {
         int64_t symbol;
-        std::string stat_date;
-        std::string pub_date;
-        std::vector<double> values;  // 按 field_map 顺序，NaN 用 0 代替
-        std::vector<bool> valid;     // 标记每个值是否有效
+        String stat_date;
+        String pub_date;
+        Vector<double> values;  // 按 field_map 顺序，NaN 用 0 代替
+        Vector<bool> valid;     // 标记每个值是否有效
     };
-    std::vector<Row> rows;
+    Vector<Row> rows;
     rows.reserve(64);
 
-    std::string line;
+    String line;
     while (std::getline(ifs, line)) {
         if (line.empty()) continue;
         if (!line.empty() && line.back() == '\r') line.pop_back();
 
         std::istringstream ss(line);
-        std::string tok;
-        std::vector<std::string> cols;
+        String tok;
+        Vector<String> cols;
         while (std::getline(ss, tok, ',')) cols.push_back(tok);
 
         Row r;
@@ -350,7 +350,7 @@ int FinanceDB::importCsv(const std::string& csv_path, const std::string& categor
     }
 
     // ── 阶段 3：构建批量 INSERT SQL ──
-    std::string sql;
+    String sql;
     sql.reserve(rows.size() * 256 + 512);
 
     // INSERT INTO {category} (symbol, stat_date, pub_date, field1, field2, ...) VALUES
@@ -405,12 +405,11 @@ int FinanceDB::importCsv(const std::string& csv_path, const std::string& categor
 //  查询
 // ═══════════════════════════════════════════════════════════
 
-nlohmann::json FinanceDB::query(const std::string& category,
-                                const std::string& symbol,
-                                const std::string& start_date,
-                                const std::string& end_date,
+nlohmann::json FinanceDB::query(const String& category,
+                                const String& symbol,
+                                const String& start_date,
+                                const String& end_date,
                                 int limit) {
-    std::lock_guard<std::mutex> lock(mtx_);
     nlohmann::json result;
 
     if (!initialized_) {
@@ -427,7 +426,7 @@ nlohmann::json FinanceDB::query(const std::string& category,
     const auto& field_map = cat_it->second.field_map;
 
     // 构建 SELECT
-    std::string sql = fmt::format(
+    String sql = fmt::format(
         "SELECT symbol, CAST(stat_date AS VARCHAR), CAST(pub_date AS VARCHAR)");
     for (const auto& [csv_col, db_col] : field_map) {
         sql += ", " + db_col;
@@ -450,6 +449,7 @@ nlohmann::json FinanceDB::query(const std::string& category,
 
     sql += fmt::format(" ORDER BY stat_date ASC LIMIT {}", limit);
 
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     duckdb_result res;
     if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
@@ -493,11 +493,11 @@ nlohmann::json FinanceDB::query(const std::string& category,
 //  列出表 / symbols
 // ═══════════════════════════════════════════════════════════
 
-std::vector<std::string> FinanceDB::listTables() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    std::vector<std::string> tables;
+Vector<String> FinanceDB::listTables() {
+    Vector<String> tables;
     if (!initialized_) return tables;
 
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     duckdb_result res;
     if (duckdb_query(conn_,
             "SELECT table_name FROM information_schema.tables "
@@ -511,13 +511,13 @@ std::vector<std::string> FinanceDB::listTables() {
     return tables;
 }
 
-std::vector<std::string> FinanceDB::listSymbols(const std::string& table) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    std::vector<std::string> symbols;
+Vector<String> FinanceDB::listSymbols(const String& table) {
+    Vector<String> symbols;
     if (!initialized_) return symbols;
 
-    std::string sql = fmt::format("SELECT DISTINCT symbol FROM {}", table);
+    String sql = fmt::format("SELECT DISTINCT symbol FROM {}", table);
     duckdb_result res;
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     if (duckdb_query(conn_, sql.c_str(), &res) == DuckDBSuccess) {
         idx_t rows = duckdb_row_count(&res);
         for (idx_t i = 0; i < rows; i++) {
@@ -533,15 +533,15 @@ std::vector<std::string> FinanceDB::listSymbols(const std::string& table) {
 //  删除
 // ═══════════════════════════════════════════════════════════
 
-bool FinanceDB::dropTable(const std::string& table) {
-    std::lock_guard<std::mutex> lock(mtx_);
+bool FinanceDB::dropTable(const String& table) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     return exec(fmt::format("DROP TABLE IF EXISTS {}", table));
 }
 
-bool FinanceDB::deleteSymbol(const std::string& table, const std::string& symbol) {
-    std::lock_guard<std::mutex> lock(mtx_);
+bool FinanceDB::deleteSymbol(const String& table, const String& symbol) {
     int64_t sym_encoded = encodeSymbol(symbol);
-    std::string sql = fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
+    String sql = fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     bool ok = exec(sql);
     if (ok) {
         SPDLOG_INFO("[FinanceDB] Deleted symbol {} from {}", symbol, table);
@@ -585,8 +585,8 @@ void FinanceDB::ensureDividendTable() {
 //  dividend 表 — CSV 导入
 // ═══════════════════════════════════════════════════════════
 
-int FinanceDB::importDividendCsv(const std::string& csv_path) {
-    std::lock_guard<std::mutex> lock(mtx_);
+int FinanceDB::importDividendCsv(const String& csv_path) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     ensureDividendTable();
 
     std::ifstream ifs(csv_path);
@@ -596,7 +596,7 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
     }
 
     // ── 解析 header，建立列索引 ──
-    std::string header_line;
+    String header_line;
     if (!std::getline(ifs, header_line)) {
         SPDLOG_WARN("[FinanceDB] Empty file: {}", csv_path);
         return 0;
@@ -607,10 +607,10 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
         header_line = header_line.substr(3);
     }
 
-    std::vector<std::string> csv_headers;
+    Vector<String> csv_headers;
     {
         std::istringstream ss(header_line);
-        std::string tok;
+        String tok;
         while (std::getline(ss, tok, ',')) {
             if (!tok.empty() && tok.back() == '\r') tok.pop_back();
             csv_headers.push_back(tok);
@@ -618,7 +618,7 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
     }
 
     // 列名 → 索引映射
-    auto colIdx = [&](const std::string& name) -> int {
+    auto colIdx = [&](const String& name) -> int {
         for (size_t i = 0; i < csv_headers.size(); i++) {
             if (csv_headers[i] == name) return static_cast<int>(i);
         }
@@ -647,47 +647,47 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
     // ── 解析数据行 ──
     struct DivRow {
         int64_t symbol;
-        std::string announce_date;
-        std::string report_year;
-        std::string ex_dividend_date;
-        std::string record_date;
-        std::string implement_date;
+        String announce_date;
+        String report_year;
+        String ex_dividend_date;
+        String record_date;
+        String implement_date;
         double bonus_per_10;
         double transfer_per_10;
         double cash_per_10;
         double allot_per_10;
         double allot_price;
-        std::string ex_div_price;
+        String ex_div_price;
         int action_type;
     };
-    std::vector<DivRow> rows;
+    Vector<DivRow> rows;
     rows.reserve(64);
 
-    auto safeDouble = [](const std::string& s) -> double {
+    auto safeDouble = [](const String& s) -> double {
         if (s.empty()) return 0.0;
         try { return std::stod(s); } catch (...) { return 0.0; }
     };
-    auto safeInt = [](const std::string& s) -> int {
+    auto safeInt = [](const String& s) -> int {
         if (s.empty()) return 0;
         try { return std::stoi(s); } catch (...) { return 0; }
     };
-    auto getField = [&](const std::vector<std::string>& cols, int idx) -> std::string {
+    auto getField = [&](const Vector<String>& cols, int idx) -> String {
         if (idx >= 0 && idx < static_cast<int>(cols.size())) return cols[idx];
         return "";
     };
 
-    std::string line;
+    String line;
     while (std::getline(ifs, line)) {
         if (line.empty()) continue;
         if (!line.empty() && line.back() == '\r') line.pop_back();
 
         std::istringstream ss(line);
-        std::string tok;
-        std::vector<std::string> cols;
+        String tok;
+        Vector<String> cols;
         while (std::getline(ss, tok, ',')) cols.push_back(tok);
 
         DivRow r{};
-        std::string sym_str = getField(cols, c_symbol);
+        String sym_str = getField(cols, c_symbol);
         if (sym_str.empty()) continue;
         r.symbol = encodeSymbol(sym_str);
 
@@ -715,7 +715,7 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
     }
 
     // ── 构建批量 INSERT ──
-    std::string sql;
+    String sql;
     sql.reserve(rows.size() * 320 + 512);
     sql +=
         "INSERT INTO dividend (symbol, announce_date, report_year, ex_dividend_date, "
@@ -729,7 +729,7 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
         sql += fmt::format("({},", r.symbol);
 
         // 可空 TIMESTAMP 字段
-        auto tsVal = [](const std::string& s) -> std::string {
+        auto tsVal = [](const String& s) -> String {
             return s.empty() ? "NULL" : fmt::format("'{}'", s);
         };
         sql += fmt::format("{},'{}',{},{},{},",
@@ -780,7 +780,7 @@ int FinanceDB::importDividendCsv(const std::string& csv_path) {
 //  dividend 表 — 批量导入目录下所有 CSV
 // ═══════════════════════════════════════════════════════════
 
-int FinanceDB::importAllDividends(const std::string& dividend_dir) {
+int FinanceDB::importAllDividends(const String& dividend_dir) {
     if (!std::filesystem::exists(dividend_dir)) {
         SPDLOG_INFO("[FinanceDB] dividend directory not found, creating: {}", dividend_dir);
         std::filesystem::create_directories(dividend_dir);
@@ -806,8 +806,7 @@ int FinanceDB::importAllDividends(const std::string& dividend_dir) {
 //  dividend 表 — 按日期查询
 // ═══════════════════════════════════════════════════════════
 
-nlohmann::json FinanceDB::queryDividendByDate(const std::string& date) {
-    std::lock_guard<std::mutex> lock(mtx_);
+nlohmann::json FinanceDB::queryDividendByDate(const String& date) {
     nlohmann::json result;
 
     if (!initialized_) {
@@ -815,7 +814,7 @@ nlohmann::json FinanceDB::queryDividendByDate(const std::string& date) {
         return result;
     }
 
-    std::string sql = fmt::format(
+    String sql = fmt::format(
         "SELECT symbol, CAST(announce_date AS VARCHAR), report_year, "
         "CAST(ex_dividend_date AS VARCHAR), CAST(record_date AS VARCHAR), "
         "CAST(implement_date AS VARCHAR), "
@@ -824,6 +823,7 @@ nlohmann::json FinanceDB::queryDividendByDate(const std::string& date) {
         "FROM dividend WHERE ex_dividend_date = '{}' "
         "ORDER BY symbol", date);
 
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     duckdb_result res;
     if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
@@ -868,10 +868,9 @@ nlohmann::json FinanceDB::queryDividendByDate(const std::string& date) {
 //  dividend 表 — 按标的查询
 // ═══════════════════════════════════════════════════════════
 
-nlohmann::json FinanceDB::queryDividendBySymbol(const std::string& symbol,
-                                                 const std::string& start_date,
-                                                 const std::string& end_date) {
-    std::lock_guard<std::mutex> lock(mtx_);
+nlohmann::json FinanceDB::queryDividendBySymbol(const String& symbol,
+                                                 const String& start_date,
+                                                 const String& end_date) {
     nlohmann::json result;
 
     if (!initialized_) {
@@ -880,7 +879,7 @@ nlohmann::json FinanceDB::queryDividendBySymbol(const std::string& symbol,
     }
 
     int64_t sym_encoded = encodeSymbol(symbol);
-    std::string sql = fmt::format(
+    String sql = fmt::format(
         "SELECT CAST(announce_date AS VARCHAR), report_year, "
         "CAST(ex_dividend_date AS VARCHAR), CAST(record_date AS VARCHAR), "
         "CAST(implement_date AS VARCHAR), "
@@ -895,6 +894,7 @@ nlohmann::json FinanceDB::queryDividendBySymbol(const std::string& symbol,
 
     sql += " ORDER BY ex_dividend_date ASC";
 
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     duckdb_result res;
     if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
@@ -967,25 +967,30 @@ double FinanceDB::calcEventAdjFactor(double prev_close, const DividendEvent& eve
     return prev_close / ex_ref_price;
 }
 
-std::vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const std::string& symbol) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    std::vector<DividendEvent> result;
+Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symbol) {
+    Vector<DividendEvent> result;
 
     if (!initialized_) return result;
     int64_t sym = encodeSymbol(symbol);
 
-    std::string sql = fmt::format(
-        "SELECT CAST(ex_dividend_date AS BIGINT), cash_per_10, bonus_per_10, "
+    String sql = fmt::format(
+        "SELECT epoch(ex_dividend_date), cash_per_10, bonus_per_10, "
         "transfer_per_10, ex_div_price, action_type "
         "FROM dividend WHERE symbol = {} ORDER BY ex_dividend_date ASC", sym);
 
+    SPDLOG_INFO("[FinanceDB] getDividendEvents: symbol='{}' encoded={}", symbol, sym);
+
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
     duckdb_result res;
     if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        SPDLOG_ERROR("[FinanceDB] getDividendEvents query FAILED: {}", err ? err : "unknown");
         duckdb_destroy_result(&res);
         return result;
     }
 
     idx_t rows = duckdb_row_count(&res);
+    SPDLOG_INFO("[FinanceDB] getDividendEvents: rows={}", rows);
     result.reserve(rows);
     for (idx_t i = 0; i < rows; i++) {
         DividendEvent e;
@@ -1003,8 +1008,7 @@ std::vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const std::st
     return result;
 }
 
-int FinanceDB::recalcSymbolAdjPrices(const std::string& symbol) {
-    std::lock_guard<std::mutex> lock(mtx_);
+int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
 
     if (!initialized_) {
         SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: not initialized");
@@ -1020,36 +1024,54 @@ int FinanceDB::recalcSymbolAdjPrices(const std::string& symbol) {
 
     int64_t sym = encodeSymbol(symbol);
 
-    // 2. ATTACH quote.db 以便访问 stock_1d
-    std::string attach_sql = "ATTACH 'data/quote/quote.db' AS quote (READ_ONLY)";
-    if (!exec(attach_sql)) {
-        SPDLOG_ERROR("[FinanceDB] Failed to attach quote.db");
+    // 2. 打开独立连接直接访问 quote.db（不用 ATTACH/DETACH，避免状态泄漏）
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+    duckdb_database quote_db = nullptr;
+    duckdb_connection quote_conn = nullptr;
+    if (duckdb_open("data/quote/quote.db", &quote_db) != DuckDBSuccess) {
+        SPDLOG_ERROR("[FinanceDB] Failed to open quote.db");
         return -1;
     }
+    if (duckdb_connect(quote_db, &quote_conn) != DuckDBSuccess) {
+        SPDLOG_ERROR("[FinanceDB] Failed to connect to quote.db");
+        duckdb_close(&quote_db);
+        return -1;
+    }
+    SPDLOG_INFO("[FinanceDB] recalc: opened quote.db OK, sym_encoded={}", sym);
+
+    // RAII 守卫：保证函数退出时一定关闭连接
+    struct QuoteConnGuard {
+        duckdb_connection* conn;
+        duckdb_database* db;
+        ~QuoteConnGuard() {
+            if (conn && *conn) duckdb_disconnect(conn);
+            if (db && *db) duckdb_close(db);
+        }
+    } connGuard{&quote_conn, &quote_db};
 
     // 3. 读取 stock_1d 中该标的的所有 bar (按日期升序)
-    std::string read_sql = fmt::format(
-        "SELECT CAST(datetime AS BIGINT), open, close, high, low "
-        "FROM quote.stock_1d WHERE symbol = {} ORDER BY datetime ASC", sym);
+    String read_sql = fmt::format(
+        "SELECT epoch(datetime), open, close, high, low "
+        "FROM stock_1d WHERE symbol = {} ORDER BY datetime ASC", sym);
 
     duckdb_result res;
-    if (duckdb_query(conn_, read_sql.c_str(), &res) != DuckDBSuccess) {
+    if (duckdb_query(quote_conn, read_sql.c_str(), &res) != DuckDBSuccess) {
         SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: read failed for {}",
                      duckdb_result_error(&res));
         duckdb_destroy_result(&res);
-        exec("DETACH quote");
         return -1;
     }
 
     idx_t n = duckdb_row_count(&res);
+    SPDLOG_INFO("[FinanceDB] recalc: SELECT returned {} rows", n);
     if (n == 0) {
         duckdb_destroy_result(&res);
-        exec("DETACH quote");
         return 0;
     }
 
     // 4. 对每个事件，找到 ex_date 之前最近一根 bar 的 close 作为 prev_close
-    std::vector<double> prev_closes(events.size(), 0.0);
+    Vector<double> prev_closes(events.size(), 0.0);
     for (size_t i = 0; i < events.size(); i++) {
         for (idx_t j = 0; j < n; j++) {
             time_t bar_t = static_cast<time_t>(duckdb_value_int64(&res, 0, j));
@@ -1059,6 +1081,8 @@ int FinanceDB::recalcSymbolAdjPrices(const std::string& symbol) {
                 break;
             }
         }
+        SPDLOG_INFO("[FinanceDB] recalc: event[{}] ex_date={} prev_close={}",
+                     i, static_cast<int64_t>(events[i].ex_dividend_date), prev_closes[i]);
     }
 
     // 5. 为每根 bar 计算累乘因子
@@ -1067,7 +1091,7 @@ int FinanceDB::recalcSymbolAdjPrices(const std::string& symbol) {
         double open, close, high, low;
         double adj_factor;
     };
-    std::vector<BarData> bars;
+    Vector<BarData> bars;
     bars.reserve(n);
 
     for (idx_t i = 0; i < n; i++) {
@@ -1088,22 +1112,30 @@ int FinanceDB::recalcSymbolAdjPrices(const std::string& symbol) {
     }
     duckdb_destroy_result(&res);
 
-    // 6. 逐 bar UPDATE 回 stock_1d
-    exec("BEGIN TRANSACTION");
-    int updated = 0;
-    for (auto& b : bars) {
-        std::string sql = fmt::format(
-            "UPDATE quote.stock_1d SET "
-            "adj_open = {:.6f}, adj_close = {:.6f}, "
-            "adj_high = {:.6f}, adj_low = {:.6f} "
-            "WHERE symbol = {} AND datetime = {}",
-            b.open * b.adj_factor, b.close * b.adj_factor,
-            b.high * b.adj_factor, b.low * b.adj_factor,
-            sym, static_cast<int64_t>(b.datetime));
-        if (exec(sql)) ++updated;
+    if (!bars.empty()) {
+        SPDLOG_INFO("[FinanceDB] recalc: bar[0] dt={} open={} adj_factor={:.6f}",
+                     static_cast<int64_t>(bars[0].datetime), bars[0].open, bars[0].adj_factor);
     }
-    exec("COMMIT");
-    exec("DETACH quote");
+
+    // 6. 通过 QuoteDB 自身连接写回复权价格（避免跨连接 MVCC 不可见）
+    Vector<QuoteDB::AdjPriceUpdate> updates;
+    updates.reserve(bars.size());
+    for (auto& b : bars) {
+        QuoteDB::AdjPriceUpdate u;
+        char timebuf[32];
+        struct tm tm_val;
+        time_t t = b.datetime;
+        gmtime_r(&t, &tm_val);
+        strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
+        u.datetime = timebuf;
+        u.adj_open  = b.open * b.adj_factor;
+        u.adj_close = b.close * b.adj_factor;
+        u.adj_high  = b.high * b.adj_factor;
+        u.adj_low   = b.low * b.adj_factor;
+        updates.push_back(std::move(u));
+    }
+
+    int updated = QuoteDB::instance().updateAdjPrices("stock_1d", sym, updates);
 
     SPDLOG_INFO("[FinanceDB] Recalculated adj prices for {}: {} bars, {} events",
                 symbol, updated, events.size());
@@ -1111,7 +1143,6 @@ int FinanceDB::recalcSymbolAdjPrices(const std::string& symbol) {
 }
 
 nlohmann::json FinanceDB::recalcAllAdjPrices() {
-    std::lock_guard<std::mutex> lock(mtx_);
     nlohmann::json result;
 
     if (!initialized_) {
@@ -1119,7 +1150,7 @@ nlohmann::json FinanceDB::recalcAllAdjPrices() {
         return result;
     }
 
-    std::vector<std::string> symbols = listSymbols("dividend");
+    Vector<String> symbols = listSymbols("dividend");
     int total_bars = 0;
     nlohmann::json::array_t errors;
 

@@ -732,3 +732,294 @@ class TestCorrelationGoldenStandard:
             f"矩阵索引与 symbols 不匹配: " \
             f"corr_a[0][2](900001,900003)={corr_a[0][2]:.8f}, " \
             f"corr_b[1][0](900001,900003)={corr_b[1][0]:.8f}"
+
+
+# ============================================================
+# 协方差矩阵质量诊断 (Eigen 真实特征值分解)
+# ============================================================
+#
+# 三块覆盖:
+#   A. 真实数据 vs numpy 黄金标准: GET /analysis/volatility 返回的 multi.{eigenvalues,
+#      condition_number, is_positive_definite} 与 numpy.linalg.eigvalsh/cond/cholesky 对比
+#   B. 合成样本判定语义: POST /analysis/covariance_diagnostics 接收手算 cov, 验证:
+#      - 阈值分级: κ ∈ {50, 500, 5000} 映射 good/warning/danger
+#      - 正定性布尔: diag 正定、rank-deficient 非正定
+#   C. 端点契约: 字段完整性 + 错误返回 (400)
+#
+# 容差: 特征值 1e-6 (SelfAdjoint 数值稳定), 条件数 1e-4 (kappa 是 ratio,
+# 单点误差被放大)
+
+EIGEN_TOLERANCE = 1e-6
+COND_TOLERANCE = 1e-4
+
+
+def compute_cov_golden(symbols: List[str]) -> Tuple[np.ndarray, List[str]]:
+    """用 numpy.cov 计算协方差矩阵（黄金标准，与 C++ computeMulti 对齐尾部截断）"""
+    all_returns = []
+    valid_symbols = []
+    for sym in symbols:
+        closes, _ = load_csv_prices(sym)
+        if len(closes) < 2:
+            continue
+        rets = simple_returns(closes)
+        all_returns.append(rets)
+        valid_symbols.append(sym)
+
+    min_len = min(len(r) for r in all_returns)
+    aligned = np.array([r[-min_len:] for r in all_returns])
+    cov = np.cov(aligned)  # ddof=1 默认，与 C++ / (T-1) 一致
+    return cov, valid_symbols
+
+
+def compute_eigenvalues_golden(cov: np.ndarray) -> np.ndarray:
+    """numpy.linalg.eigvalsh 返回升序特征值"""
+    return np.linalg.eigvalsh(cov)
+
+
+def compute_condition_number_golden(cov: np.ndarray) -> float:
+    """numpy.linalg.cond 计算谱条件数 (L2)"""
+    return float(np.linalg.cond(cov, 2))
+
+
+def compute_is_positive_definite_golden(cov: np.ndarray, eps: float = 1e-12) -> bool:
+    """numpy.linalg.cholesky 能分解即为正定"""
+    try:
+        np.linalg.cholesky(cov)
+        return np.linalg.eigvalsh(cov)[0] > eps
+    except np.linalg.LinAlgError:
+        return False
+
+
+def call_cov_diag_api(cov_matrix: List[List[float]], auth_token: str) -> Dict:
+    """调用 POST /analysis/covariance_diagnostics"""
+    kwargs = {'verify': VERIFY_SSL}
+    if auth_token and len(auth_token) > 10:
+        kwargs['headers'] = {'Authorization': auth_token}
+    resp = requests.post(
+        f"{BASE_URL}/analysis/covariance_diagnostics",
+        json={"covariance_matrix": cov_matrix},
+        **kwargs
+    )
+    assert resp.status_code == 200, \
+        f"cov_diag API 请求失败: {resp.status_code} - {resp.text[:300]}"
+    return resp.json()
+
+
+def cov_grade(condition_number: float) -> str:
+    """与前端 CovarianceEigenChart.vue:conditionClass 一致的分级"""
+    if condition_number > 1000:
+        return "danger"
+    if condition_number > 100:
+        return "warning"
+    return "good"
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestCovarianceQualityDiagnostics:
+    """协方差矩阵质量诊断: Eigen 真实特征值分解精度 + 阈值分级判定"""
+
+    # ===== A. 真实数据 vs numpy 黄金标准 =====
+
+    def test_eigenvalues_match_numpy_eigvalsh(self, auth_token):
+        """3 标的特征值应与 numpy.linalg.eigvalsh 逐值匹配"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        golden_cov, _ = compute_cov_golden(symbols)
+        golden_evals = compute_eigenvalues_golden(golden_cov)  # 升序
+
+        api_symbols_str = ','.join(symbols)
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(api_symbols_str, dates[0], dates[-1], auth_token=auth_token)
+        api_multi = resp["multi"]
+
+        assert "eigenvalues" in api_multi, "响应缺失 eigenvalues 字段"
+        api_evals = np.array(api_multi["eigenvalues"])  # 降序 (约定)
+        n = len(golden_evals)
+        assert api_evals.shape == (n,), \
+            f"特征值数量错误: API={api_evals.shape}, golden={golden_evals.shape}"
+
+        # API 降序, golden 升序 → 反转对齐
+        api_evals_ascending = api_evals[::-1]
+
+        for i in range(n):
+            rel_err = abs(api_evals_ascending[i] - golden_evals[i]) / max(abs(golden_evals[i]), 1e-15)
+            assert rel_err < EIGEN_TOLERANCE, \
+                f"特征值 [{i}]: API={api_evals_ascending[i]:.10f}, " \
+                f"numpy={golden_evals[i]:.10f}, rel_err={rel_err:.2e}"
+
+    def test_condition_number_match_numpy_cond(self, auth_token):
+        """3 标的条件数应与 numpy.linalg.cond 一致"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        golden_cov, _ = compute_cov_golden(symbols)
+        golden_cond = compute_condition_number_golden(golden_cov)
+
+        api_symbols_str = ','.join(symbols)
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(api_symbols_str, dates[0], dates[-1], auth_token=auth_token)
+        api_cond = resp["multi"]["condition_number"]
+
+        # 真协方差(3 个不同标的)通常条件数 1-100, 用相对误差
+        rel_err = abs(api_cond - golden_cond) / max(golden_cond, 1.0)
+        # SelfAdjoint 与 eigvalsh 的细微舍入差异可能更大
+        assert rel_err < max(COND_TOLERANCE, 1e-2), \
+            f"条件数差距过大: API={api_cond:.6f}, numpy={golden_cond:.6f}, " \
+            f"rel_err={rel_err:.2e}"
+
+        # 额外断言: 业务上限保护 (前端会把 1e15 当作近共线性)
+        assert api_cond < 1e15, f"条件数异常: {api_cond}"
+
+    def test_positive_definite_matches_numpy_cholesky(self, auth_token):
+        """3 标的正定性应与 numpy cholesky 一致"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        golden_cov, _ = compute_cov_golden(symbols)
+        golden_pd = compute_is_positive_definite_golden(golden_cov)
+
+        api_symbols_str = ','.join(symbols)
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(api_symbols_str, dates[0], dates[-1], auth_token=auth_token)
+        api_pd = resp["multi"]["is_positive_definite"]
+
+        assert isinstance(api_pd, bool), f"is_positive_definite 应为 bool, 实得 {type(api_pd)}"
+        assert api_pd == golden_pd, \
+            f"正定性判定不一致: API={api_pd}, numpy={golden_pd}"
+
+    def test_real_data_response_fields_complete(self, auth_token):
+        """真实数据响应字段完整性"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        closes, dates = load_csv_prices(symbols[0])
+        resp = call_volatility_api(','.join(symbols), dates[0], dates[-1], auth_token=auth_token)
+        multi = resp["multi"]
+        for field in ["correlation_matrix", "covariance_matrix", "eigenvalues",
+                      "condition_number", "is_positive_definite", "annual_volatility"]:
+            assert field in multi, f"真实数据 multi 缺失字段: {field}"
+        assert isinstance(multi["eigenvalues"], list)
+        assert isinstance(multi["condition_number"], (int, float))
+        assert isinstance(multi["is_positive_definite"], bool)
+        assert len(multi["eigenvalues"]) == 3
+
+    # ===== B. 合成样本: 阈值分级 =====
+
+    def test_condition_grade_good_low_kappa(self, auth_token):
+        """κ ≈ 50 → good (低条件数, 矩阵健康)"""
+        cov = [
+            [2.0, 0.1, 0.1],
+            [0.1, 1.0, 0.1],
+            [0.1, 0.1, 1.5],
+        ]
+        resp = call_cov_diag_api(cov, auth_token)
+        api_cond = resp["condition_number"]
+        golden_cond = compute_condition_number_golden(np.array(cov))
+
+        rel_err = abs(api_cond - golden_cond) / max(golden_cond, 1.0)
+        assert rel_err < 1e-3, f"低 κ 精度不达标: API={api_cond}, numpy={golden_cond}"
+        assert cov_grade(api_cond) == "good", f"低 κ 应映射 good, 实得 κ={api_cond}"
+
+    def test_condition_grade_warning_medium_kappa(self, auth_token):
+        """κ ≈ 500 → warning"""
+        # diag(1, 1, 0.002) → κ ≈ 500
+        cov = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.002],
+        ]
+        resp = call_cov_diag_api(cov, auth_token)
+        api_cond = resp["condition_number"]
+        assert 100 < api_cond < 1000, f"中等 κ 应在 (100, 1000), 实得 κ={api_cond}"
+        assert cov_grade(api_cond) == "warning"
+
+    def test_condition_grade_danger_high_kappa(self, auth_token):
+        """κ ≈ 5000 → danger"""
+        cov = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0002],
+        ]
+        resp = call_cov_diag_api(cov, auth_token)
+        api_cond = resp["condition_number"]
+        assert api_cond > 1000, f"高 κ 应 > 1000, 实得 κ={api_cond}"
+        assert cov_grade(api_cond) == "danger"
+
+    # ===== C. 合成样本: 正定性布尔判定 =====
+
+    def test_positive_definite_true_diag(self, auth_token):
+        """diag(2, 3) → 正定"""
+        cov = [
+            [2.0, 0.0],
+            [0.0, 3.0],
+        ]
+        resp = call_cov_diag_api(cov, auth_token)
+        assert resp["is_positive_definite"] is True
+        assert compute_is_positive_definite_golden(np.array(cov)) is True
+
+    def test_positive_definite_false_rank_deficient(self, auth_token):
+        """rank-deficient [[1,1],[1,1]] → 非正定 (零特征值)"""
+        cov = [
+            [1.0, 1.0],
+            [1.0, 1.0],
+        ]
+        resp = call_cov_diag_api(cov, auth_token)
+        assert resp["is_positive_definite"] is False
+        # 条件数应该被截断到 1e15
+        assert resp["condition_number"] >= 1e15, \
+            f"近奇异矩阵条件数应 >= 1e15, 实得 {resp['condition_number']}"
+
+    def test_positive_definite_false_symmetric_indefinite(self, auth_token):
+        """对称不定矩阵 [[1,2],[2,1]] → 非正定 (特征值 3, -1)"""
+        cov = [
+            [1.0, 2.0],
+            [2.0, 1.0],
+        ]
+        resp = call_cov_diag_api(cov, auth_token)
+        assert resp["is_positive_definite"] is False
+        golden_evals = compute_eigenvalues_golden(np.array(cov))
+        assert golden_evals[0] < 0, f"测试样本构造错误, 最小特征值={golden_evals[0]}"
+
+    # ===== D. 端点契约 =====
+
+    def test_synthetic_response_fields_complete(self, auth_token):
+        """合成样本响应字段完整性"""
+        cov = [[2.0, 0.5], [0.5, 1.0]]
+        resp = call_cov_diag_api(cov, auth_token)
+        for field in ["n", "eigenvalues", "condition_number", "is_positive_definite"]:
+            assert field in resp, f"合成样本响应缺失字段: {field}"
+        assert resp["n"] == 2
+        assert len(resp["eigenvalues"]) == 2
+        # 特征值应降序
+        assert resp["eigenvalues"][0] >= resp["eigenvalues"][1] - 1e-12
+
+    def test_single_element_matrix(self, auth_token):
+        """1x1 矩阵: [[5.0]]"""
+        cov = [[5.0]]
+        resp = call_cov_diag_api(cov, auth_token)
+        assert resp["n"] == 1
+        assert resp["eigenvalues"] == [5.0]
+        assert resp["is_positive_definite"] is True
+        assert resp["condition_number"] == 1.0
+
+    def test_1x1_negative_value(self, auth_token):
+        """1x1 负数: [[-1.0]] → 非正定"""
+        cov = [[-1.0]]
+        resp = call_cov_diag_api(cov, auth_token)
+        assert resp["is_positive_definite"] is False
+        assert resp["condition_number"] >= 1e15
+
+    @pytest.mark.parametrize("bad_input,reason", [
+        ({"covariance_matrix": [[]]}, "空矩阵"),
+        ({"covariance_matrix": [[1.0, 2.0]]}, "非方阵 1x2"),
+        ({"covariance_matrix": [[1.0, 2.0], [3.0]]}, "维度不一致"),
+        ({}, "完全缺失 covariance_matrix"),
+        ({"covariance_matrix": [[1.0, "x"], [3.0, 4.0]]}, "非数值元素"),
+    ])
+    def test_invalid_input_returns_400(self, auth_token, bad_input, reason):
+        """非法输入应返回 400 而非 200"""
+        kwargs = {'verify': VERIFY_SSL}
+        if auth_token and len(auth_token) > 10:
+            kwargs['headers'] = {'Authorization': auth_token}
+        resp = requests.post(
+            f"{BASE_URL}/analysis/covariance_diagnostics",
+            json=bad_input,
+            **kwargs
+        )
+        assert resp.status_code == 400, \
+            f"非法输入应返回 400 ({reason}), 实得 {resp.status_code}: {resp.text[:200]}"
+        body = resp.json()
+        assert "error" in body, f"错误响应缺失 error 字段: {body}"

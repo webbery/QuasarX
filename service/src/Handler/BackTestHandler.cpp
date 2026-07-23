@@ -152,6 +152,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         res.status = 500;
         String msg = R"({"message": "Failed to initialize strategy: )" + String(e.what()) + R"("})";
         res.set_content(msg.c_str(), "application/json");
+        WARN("{}", msg);
         return;
     }
 

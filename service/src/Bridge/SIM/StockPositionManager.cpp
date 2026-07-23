@@ -102,6 +102,37 @@ TradeFees StockPositionManager::AdjustPosition(symbol_t symbol, int64_t delta, d
     return TradeFees{};
 }
 
+PositionEffect StockPositionManager::ApplyEvent(
+    symbol_t symbol, const IPositionEvent& event, double currentPrice)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    auto it = _positions.find(symbol);
+    int64_t curQty = (it != _positions.end()) ? it->second._qty : 0;
+
+    PositionEffect fx = event.computeEffect(curQty, currentPrice);
+
+    if (fx.qtyDelta == 0 && fx.cashDelta == 0.0 && fx.costBasisDelta == 0.0)
+        return fx;
+
+    auto& pos = _positions[symbol];
+    pos._symbol = symbol;
+    pos._qty += fx.qtyDelta;
+    pos._totalCost += fx.costBasisDelta;
+
+    if (pos._qty > 0 && pos._totalCost > 0) {
+        pos._cost = pos._totalCost / pos._qty;
+    }
+    if (pos._qty == 0) {
+        pos._cost = 0;
+        pos._totalCost = 0;
+    }
+
+    INFO("EVENT symbol={} qtyDelta={} cashDelta={} newQty={}",
+         symbol, fx.qtyDelta, fx.cashDelta, pos._qty);
+    return fx;
+}
+
 // ==================== 查询 ====================
 
 int64_t StockPositionManager::GetPosition(symbol_t symbol) const {

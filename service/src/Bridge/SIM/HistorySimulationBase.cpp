@@ -1,6 +1,8 @@
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "Bridge/PositionEvent.h"
 #include "Bridge/exchange.h"
+#include "Util/FinanceDB.h"
 #include "DataFrame/DataFrameTypes.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
@@ -537,6 +539,25 @@ run_id_t HistorySimulationBase::createBacktestContext(
     context->setTotalBars(commonBars);
     context->reserveDailySnapshots(commonBars);
 
+    // === 加载持仓事件（分红/送股等被动事件）===
+    if (FinanceDB::instance().isInitialized()) {
+        for (auto symbol : symbols) {
+            std::string symStr = get_symbol(symbol);
+            auto dbEvents = FinanceDB::instance().getDividendEvents(symStr);
+            if (dbEvents.empty()) continue;
+
+            Vector<std::unique_ptr<IPositionEvent>> events;
+            for (auto& e : dbEvents) {
+                events.push_back(std::make_unique<StockDividendEvent>(
+                    e.ex_dividend_date, symbol,
+                    e.bonus_per_10, e.transfer_per_10, e.cash_per_10
+                ));
+            }
+            context->setPositionEvents(symbol, std::move(events));
+            INFO("Loaded {} dividend events for {}", dbEvents.size(), symStr);
+        }
+    }
+
     _backtestContexts.emplace(runId, std::move(context));
 
     INFO("Created backtest context: runId={}, strategy={}, symbols={}, initialCapital={}",
@@ -676,6 +697,19 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
                 context->onDayChange();
             }
             context->setLastTradeDay(curDay);
+        }
+    }
+
+    // === 持仓事件处理（分红/送股等被动事件）===
+    {
+        const QuoteInfo* firstQuote = nullptr;
+        for (auto symbol : symbols) {
+            const QuoteInfo* q = context->getQuote(symbol);
+            if (q && q->_time > 0) { firstQuote = q; break; }
+        }
+        if (firstQuote) {
+            time_t barDate = DateOnly(firstQuote->_time);
+            context->processPositionEvents(barDate, firstQuote->_close);
         }
     }
 

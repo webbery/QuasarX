@@ -72,6 +72,14 @@ public:
     // 频率标准化: "daily" → "1d"
     static std::string normalizeFreq(const std::string& freq);
 
+    // 批量更新复权价格（由 FinanceDB 调用，通过 QuoteDB 自身连接写入）
+    struct AdjPriceUpdate {
+        std::string datetime;  // "2024-01-02 00:00:00"
+        double adj_open, adj_close, adj_high, adj_low;
+    };
+    int updateAdjPrices(const std::string& table, int64_t encoded_symbol,
+                        const std::vector<AdjPriceUpdate>& updates);
+
 private:
     QuoteDB() = default;
     ~QuoteDB();
