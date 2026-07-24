@@ -53,6 +53,7 @@ function buildOption() {
     },
     tooltip: {
       trigger: 'axis',
+      position: 'top',
       formatter: (params: any[]) => {
         const p = params[0]
         return `${p.name}<br/>频数: ${p.value}`

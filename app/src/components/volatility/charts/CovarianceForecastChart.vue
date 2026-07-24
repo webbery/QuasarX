@@ -44,6 +44,7 @@ function buildOption() {
 
   return createBaseChartOption({
     tooltip: {
+      position: 'top',
       formatter: (p: any) => {
         const i = p.data[1], j = p.data[0]
         return `${symbols[i]} ↔ ${symbols[j]}<br/>相关系数: ${p.data[2].toFixed(3)}<br/>协方差: ${forecast_cov[i][j].toExponential(4)}`

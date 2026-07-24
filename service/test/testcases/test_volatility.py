@@ -35,7 +35,7 @@ except ImportError:
     raise ImportError("需要 empyrical 库，请运行: pip install empyrical")
 
 try:
-    from statsmodels.tsa.stattools import yule_walker, acf as sm_acf
+    from statsmodels.tsa.stattools import yule_walker, acf as sm_acf, grangercausality, coint
     from statsmodels.tsa.ar_model import AutoReg
 except ImportError:
     raise ImportError("需要 statsmodels 库，请运行: pip install statsmodels")

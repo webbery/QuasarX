@@ -109,13 +109,14 @@ function convertNodeKeys(nodes) {
 
 /**
  * 将后端边的 handle ID 转换为前端格式
- * 
+ *
  * sourceHandle 转换:
  *   "1-close"         → "field-close"          (QuoteInput 字段输出)
- *   "11-IMF_0"        → "emd_IMF_0"            (EMD 命名输出)
- *   "11-energy_velocity" → "emd_energy_velocity" (EMD 衍生特征)
+ *   "11-IMF_0"        → "IMF" + data.imfIndex=0 (EMD 命名输出，老格式)
+ *   "11-IMF"          → "IMF" + data.imfIndex 透传 (EMD 命名输出，新格式)
+ *   "11-energy_velocity" → "energy_velocity"    (EMD 衍生特征)
  *   "2"               → "output"               (通用单输出)
- * 
+ *
  * targetHandle 转换:
  *   BreakoutNode: 保留 "input-value/upper/lower"
  *   FunctionNode:  根据 sourceHandle 字段名映射到 "input-{slot}"
@@ -137,15 +138,24 @@ function normalizeEdgeHandles(edges, nodes) {
     let { sourceHandle, targetHandle } = edge
     const targetNodeType = nodeTypeMap[edge.target] || ''
     const sourceNodeType = nodeTypeMap[edge.source] || ''
+    let edgeData = edge.data ? { ...edge.data } : null
 
     // ── 转换 sourceHandle ──
     if (sourceHandle) {
       if (sourceHandle.includes('-')) {
         const fieldName = sourceHandle.split('-').slice(1).join('-')
         if (sourceNodeType === 'emd') {
-          // EMD 命名输出: "11-IMF_0" → "IMF", "11-energy_velocity" → "energy_velocity"
-          if (fieldName.startsWith('IMF_')) {
+          // EMD 命名输出: "11-IMF_0" / "11-IMF" → "IMF"
+          if (fieldName === 'IMF' || fieldName.startsWith('IMF_')) {
             sourceHandle = 'IMF'
+            // 老格式 "11-IMF_0" → 从 IMF_0 后缀提取 imfIndex
+            if (fieldName.startsWith('IMF_')) {
+              const idx = parseInt(fieldName.slice(4), 10)
+              if (!isNaN(idx) && idx >= 0) {
+                edgeData = { ...(edgeData || {}), imfIndex: idx }
+              }
+            }
+            // 新格式 "11-IMF" → edge.data.imfIndex 已在原数据中，保留
           } else {
             sourceHandle = fieldName
           }
@@ -170,13 +180,13 @@ function normalizeEdgeHandles(edges, nodes) {
         // FunctionNode: 根据 sourceHandle 中的字段名推断目标槽位
         const method = nodeMethodMap[edge.target] || 'MA'
         const slots = functionInputSlots[method] || [{ slot: 'price' }]
-        
+
         // 从原始 sourceHandle 提取字段名
         let srcField = ''
         if (edge.sourceHandle && edge.sourceHandle.includes('-')) {
           srcField = edge.sourceHandle.split('-').slice(1).join('-')
         }
-        
+
         // 匹配槽位: 字段名 → slot 名
         let targetSlot = slots[0]?.slot || 'price'
         if (srcField && slots.length > 1) {
@@ -190,7 +200,7 @@ function normalizeEdgeHandles(edges, nodes) {
       }
     }
 
-    return { ...edge, sourceHandle, targetHandle }
+    return edgeData ? { ...edge, sourceHandle, targetHandle, data: edgeData } : { ...edge, sourceHandle, targetHandle }
   })
 }
 

@@ -31,6 +31,7 @@ function buildOption() {
     },
     tooltip: {
       trigger: 'item',
+      position: 'top',
       formatter: (p: any) => {
         const [vol, absRet, idx] = p.data
         return `交易日 #${idx}<br/>成交量: ${vol}<br/>|收益率|: ${(absRet * 100).toFixed(3)}%`

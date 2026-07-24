@@ -742,3 +742,113 @@ Vector<Vector<double>> finance::computeRollingEMDEnergy(const Vector<double>& da
 
     return result;
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// 协方差收缩 + 投资组合优化
+// ══════════════════════════════════════════════════════════════════════
+//
+// 所有矩阵运算均在 Eigen::MatrixXd / Eigen::VectorXd 上完成。
+// 与项目偏好一致 (feedback/eigen_matrix_operations.md)。
+
+/// Ledoit-Wolf 协方差收缩 (OAS 闭式, Chen-Wiesel-Eldar-Hero 2010)
+/// 比经典 LW 数值更稳, 无超参.
+///
+/// 公式:  Σ̂ = (1-δ)·S + δ·F
+///        F  = (tr(S)/N)·I
+///        δ  = min(1, ((1-2/N)·tr(S²) + tr(S)²)
+///                  / ((T+1-2/N)·(tr(S²) - tr(S)²/N)))
+///
+/// 输入: returns - Eigen::MatrixXd, N 行 × T 列 (行=标的, 列=时间点)
+finance::LedoitWolfResult finance::ledoitWolfShrinkage(const Eigen::MatrixXd& returns) {
+    finance::LedoitWolfResult result;
+    const Eigen::Index N = returns.rows();
+    const Eigen::Index T = returns.cols();
+    if (N < 2 || T < 2) return result;
+
+    // Per-row mean (across columns) and centered matrix
+    Eigen::VectorXd mu = returns.rowwise().mean();
+    Eigen::MatrixXd centered = returns.rowwise() - mu.transpose();
+
+    // Sample covariance S = (T-1)^-1 · centered · centeredᵀ
+    Eigen::MatrixXd S = (centered * centered.transpose()) / static_cast<double>(T - 1);
+
+    // OAS shrinkage intensity
+    const double tr_S = S.trace();
+    const double tr_S2 = S.squaredNorm();
+    const double num = (1.0 - 2.0 / N) * tr_S2 + tr_S * tr_S;
+    const double den = (T + 1.0 - 2.0 / N) * (tr_S2 - tr_S * tr_S / N);
+    double delta = (den > 0.0) ? std::min(1.0, num / den) : 1.0;
+    if (delta < 0.0) delta = 0.0;
+
+    // Target: constant-variance diagonal F = (tr(S)/N)·I
+    Eigen::MatrixXd F = Eigen::MatrixXd::Identity(N, N) * (tr_S / static_cast<double>(N));
+
+    result._covariance = (1.0 - delta) * S + delta * F;
+    result._shrinkage = delta;
+    result._n_observations = static_cast<int>(T);
+    result._n_variables = static_cast<int>(N);
+    return result;
+}
+
+/// Risk Parity 权重 (Qian 2005 Spin-Glass 迭代)
+///
+/// 求解 w_i · (Σw)_i = const (各标的对组合方差贡献相等)。
+/// 协方差自动由 ledoitWolfShrinkage 提供 (OAS 收缩).
+///
+/// 不收敛时返回 last-iter 权重 + converged=false, 不抛异常.
+finance::RiskParityResult finance::riskParityWeights(const Eigen::MatrixXd& returns,
+                                    double tolerance,
+                                    int max_iterations) {
+    finance::RiskParityResult result;
+    const Eigen::Index N = returns.rows();
+    const Eigen::Index T = returns.cols();
+    if (N < 2 || T < 2) return result;
+    if (tolerance <= 0.0) tolerance = 1e-6;
+    if (max_iterations <= 0) max_iterations = 200;
+
+    finance::LedoitWolfResult lw = ledoitWolfShrinkage(returns);
+    if (lw._covariance.size() == 0) return result;
+    const Eigen::MatrixXd& Sigma = lw._covariance;
+
+    // Spin-Glass initialization: equal weight
+    Eigen::VectorXd w = Eigen::VectorXd::Constant(N, 1.0 / static_cast<double>(N));
+    const double target_share = 1.0 / static_cast<double>(N);
+
+    result._converged = false;
+    result._iterations = 0;
+
+    Eigen::VectorXd rc;
+    for (int iter = 0; iter < max_iterations; ++iter) {
+        rc = w.cwiseProduct(Sigma * w);
+        const double rc_mean = rc.mean();
+        if (rc_mean < 1e-15) {
+            // 退化协方差 (e.g., 全部零), 返回等权
+            w = Eigen::VectorXd::Constant(N, 1.0 / static_cast<double>(N));
+            rc = w.cwiseProduct(Sigma * w);
+            break;
+        }
+        Eigen::VectorXd deviation = (rc.array() / rc_mean - 1.0).abs();
+        const double max_dev = deviation.maxCoeff();
+        result._iterations = iter;
+        if (max_dev < tolerance) {
+            result._converged = true;
+            break;
+        }
+        // Spin-Glass update: w_i ← w_i × (target_share · RC̄ / RC_i), 归一化
+        Eigen::VectorXd ratio = (target_share * rc_mean) * rc.cwiseInverse();
+        w = w.cwiseProduct(ratio);
+        const double sum = w.sum();
+        if (sum < 1e-15) {
+            w = Eigen::VectorXd::Constant(N, 1.0 / static_cast<double>(N));
+        } else {
+            w /= sum;
+        }
+    }
+
+    rc = w.cwiseProduct(Sigma * w);
+    Eigen::VectorXd final_dev = (rc.array() / rc.mean() - 1.0).abs();
+    result._max_rc_deviation = final_dev.maxCoeff();
+    result._weights = std::move(w);
+    result._risk_contributions = std::move(rc);
+    return result;
+}

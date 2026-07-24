@@ -173,6 +173,7 @@ function buildOption() {
       },
       tooltip: {
         trigger: 'axis',
+        position: 'top',
         formatter: (params: any[]) => {
           if (!params || params.length === 0) return ''
           let result = `${params[0].axisValue}<br/>`

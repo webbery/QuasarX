@@ -99,7 +99,7 @@ watch(() => props.data, () => {
 
     const option = createBaseChartOption({
       title: { text: '|收益率| ACF（波动率聚集信号）', left: 'center', textStyle: { color: '#e0e0e0', fontSize: 13 } },
-      tooltip: { trigger: 'axis', formatter: (p: any) => `Lag ${p[0].name}<br/>ACF: ${p[0].value.toFixed(4)}` },
+      tooltip: { trigger: 'axis', position: 'top', formatter: (p: any) => `Lag ${p[0].name}<br/>ACF: ${p[0].value.toFixed(4)}` },
       grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
       xAxis: {
         type: 'category',
@@ -137,7 +137,7 @@ onMounted(() => {
     const ci = 1.96 / Math.sqrt(props.data.returns.length)
     const option = createBaseChartOption({
       title: { text: '|收益率| ACF（波动率聚集信号）', left: 'center', textStyle: { color: '#e0e0e0', fontSize: 13 } },
-      tooltip: { trigger: 'axis', formatter: (p: any) => `Lag ${p[0].name}<br/>ACF: ${p[0].value.toFixed(4)}` },
+      tooltip: { trigger: 'axis', position: 'top', formatter: (p: any) => `Lag ${p[0].name}<br/>ACF: ${p[0].value.toFixed(4)}` },
       grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
       xAxis: {
         type: 'category',

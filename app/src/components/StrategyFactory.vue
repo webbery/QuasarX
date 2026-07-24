@@ -59,7 +59,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted, provide, computed, inject } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, provide, computed, inject, shallowRef } from 'vue'
 import ReportView from './report/ReportView.vue'
 import InfoPanel from './strategy/InfoPanel.vue'
 import FlowCanvas from './FlowCanvas.vue'
@@ -118,7 +118,7 @@ const {
   deleteSelectedNodes, deleteSelectedEdges, duplicateSelectedNodes,
   onNodeContextMenu, onNodeClick, onPaneClick, onEdgeClick,
   onSelectionContextMenu, onDrop, onDragOver, onPaneReady,
-  updateNodeData, onConnect, isValidConnection
+  updateNodeData, onConnect, setEdgeImfIndex, isValidConnection
 } = operations
 
 // 初始化 saveLoad
@@ -161,6 +161,18 @@ provide('selectedNodes', selectedNodes)
 provide('selectedEdges', selectedEdges)
 provide('backtestRange', backtestRange)
 provide('portfolioConfigs', computed(() => portfolioStore.portfolioConfigs))
+provide('setEdgeImfIndex', setEdgeImfIndex)
+
+// EMD 出边 IMF 编号属性面板：共享 clickedEdge 状态
+const clickedEdge = ref(null)
+provide('clickedEdge', clickedEdge)
+// 使用 shallowRef 包装 getNodes，减少响应式开销
+// 只在 clickedEdge 变化时才需要访问 nodes
+const flowNodesShallow = shallowRef(getNodes.value)
+watch(getNodes, (newNodes) => {
+  flowNodesShallow.value = newNodes
+}, { deep: false })  // 只监听数组引用变化，不深度监听
+provide('flowNodes', flowNodesShallow)
 
 // 监听 Vue Flow 的选中状态变化
 watch(getSelectedNodes, (newSelectedNodes) => {

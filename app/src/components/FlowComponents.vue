@@ -19,11 +19,55 @@
             </div>
         </div>
     </div>
+
+    <!-- EMD 出边 IMF 编号属性面板（点击 EMD 出边后显示在底部）-->
+    <EdgeImfSelector
+      v-if="clickedEdge"
+      :edge="clickedEdge"
+      :num-imfs="imfPanelNumImfs"
+      :target-node-label="imfPanelTargetLabel"
+      @set="handleSetEdgeImf"
+    />
 </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, inject, computed, watch } from 'vue'
+import EdgeImfSelector from './flow/EdgeImfSelector.vue'
+
+// EMD 出边 IMF 编号属性面板：inject 共享状态
+// FlowCanvas 已做前置检查，仅当源节点是 EMD 时才设置 clickedEdge
+const clickedEdge = inject('clickedEdge', ref(null))
+const setEdgeImfIndex = inject('setEdgeImfIndex', () => {})
+const flowNodes = inject('flowNodes', ref([]))
+
+// 优化：使用 ref + watch 避免 flowNodes 频繁变化导致的性能问题
+// 只在 clickedEdge 变化时重新计算
+const imfPanelNumImfs = ref(5)
+const imfPanelTargetLabel = ref('')
+
+watch(clickedEdge, (edge) => {
+  if (!edge) {
+    imfPanelNumImfs.value = 5
+    imfPanelTargetLabel.value = ''
+    return
+  }
+  // 计算 IMF 数量
+  const sourceNode = flowNodes.value?.find(n => n.id === edge.source)
+  const numIMFs = sourceNode?.data?.params?.numIMFs?.value ?? sourceNode?.data?.params?.numIMFs ?? 5
+  const n = Number(numIMFs)
+  imfPanelNumImfs.value = Number.isInteger(n) && n > 0 ? Math.min(n, 20) : 5
+  // 计算目标节点 label
+  const targetNode = flowNodes.value?.find(n => n.id === edge.target)
+  imfPanelTargetLabel.value = targetNode?.data?.label || `节点 ${edge.target}`
+}, { immediate: true })
+
+// 处理 IMF 编号切换
+const handleSetEdgeImf = (newIndex) => {
+  const edge = clickedEdge.value
+  if (!edge) return
+  setEdgeImfIndex(edge.id, newIndex)
+}
 
 // 分类显示名称
 const categoryLabels = {

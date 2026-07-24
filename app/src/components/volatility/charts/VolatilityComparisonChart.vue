@@ -25,7 +25,7 @@ function buildOption() {
       left: 'center',
       textStyle: { color: '#e0e0e0', fontSize: 14 }
     },
-    tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}<br/>年化波动率: ${(p[0].value * 100).toFixed(2)}%` },
+    tooltip: { trigger: 'axis', position: 'top', formatter: (p: any) => `${p[0].name}<br/>年化波动率: ${(p[0].value * 100).toFixed(2)}%` },
     grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
     xAxis: {
       type: 'category',

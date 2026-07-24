@@ -1,5 +1,6 @@
 #pragma once
 #include "std_header.h"
+#include <Eigen/Dense>
 
 namespace finance {
 
@@ -81,6 +82,40 @@ GrangerCausalityResult grangerCausalityTest(
 /// 检验 x 和 y 是否存在长期均衡关系
 CointegrationResult engleGrangerTest(
     const Vector<double>& x, const Vector<double>& y);
+
+// ──────────────────────────────────────────────────────────────────────
+// 协方差收缩 + 投资组合优化
+// ──────────────────────────────────────────────────────────────────────
+
+/// Ledoit-Wolf 收缩结果 (Ledoit-Wolf OAS 闭式, Chen-Wiesel-Eldar-Hero 2010)
+struct LedoitWolfResult {
+    Eigen::MatrixXd _covariance;        // (N x N) 收缩后协方差
+    double _shrinkage = 0;              // δ ∈ [0, 1]
+    int _n_observations = 0;            // 时间点 T (列数)
+    int _n_variables = 0;               // 标的数 N (行数)
+};
+
+/// Risk Parity 求解结果 (Qian 2005 Spin-Glass 迭代)
+struct RiskParityResult {
+    Eigen::VectorXd _weights;                // 归一化权重, Σw = 1
+    Eigen::VectorXd _risk_contributions;     // RC_i = w_i × (Σw)_i
+    double _max_rc_deviation = 0;            // max |RC_i / RC̄ - 1|, < tolerance 收敛
+    int _iterations = 0;                     // 迭代步数
+    bool _converged = false;
+};
+
+/// Ledoit-Wolf 协方差收缩 (Ledoit-Wolf OAS 闭式)
+/// 返回的 _covariance 是线性收缩结果: (1-δ)·S + δ·F
+/// F = (tr(S)/N)·I (常数方差目标)
+/// 输入 returns: N 行 × T 列 (每行一个标的，每列一个时间点)
+LedoitWolfResult ledoitWolfShrinkage(const Eigen::MatrixXd& returns);
+
+/// Risk Parity 权重 (Qian 2005 Spin-Glass 迭代)
+/// 求解 w_i·(Σw)_i = const 等风险贡献, 协方差由 ledoitWolfShrinkage 提供
+/// 输入 returns: N 行 × T 列
+RiskParityResult riskParityWeights(const Eigen::MatrixXd& returns,
+                                    double tolerance = 1e-6,
+                                    int max_iterations = 200);
 
 // ──────────────────────────────────────────────────────────────────────
 // 信号分析 / 时序分析工具函数

@@ -46,7 +46,7 @@ function buildOption() {
       left: 'center',
       textStyle: { color: '#e0e0e0', fontSize: 14 }
     },
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', position: 'top' },
     legend: { data: windows.map(w => `${w}日滚动`), top: 25, textStyle: { color: '#999' } },
     grid: { left: '3%', right: '4%', bottom: '3%', top: '20%', containLabel: true },
     xAxis: {

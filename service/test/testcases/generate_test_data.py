@@ -152,6 +152,141 @@ def generate_mean_shift(total_days=200, shift_point=100, base_price=100.0,
 
 
 # ============================================================
+# 格兰杰因果检验 + 协整检验数据生成
+# ============================================================
+
+def generate_granger_data(n_samples: int = 500):
+    """
+    生成 VAR(1) 模型数据，Y → X 单向因果关系
+
+    Y_t = 0.5 * Y_{t-1} + ε_t
+    X_t = 0.3 * Y_{t-1} + 0.7 * X_{t-1} + η_t
+
+    Y 是 X 的格兰杰原因（Y 的滞后项显著影响 X）
+    X 不是 Y 的格兰杰原因
+
+    返回:
+        (X, Y) - 两个时间序列
+    """
+    np.random.seed(42)
+    Y = np.zeros(n_samples)
+    X = np.zeros(n_samples)
+
+    # 初始值
+    Y[0] = np.random.normal(0, 1)
+    X[0] = np.random.normal(0, 1)
+
+    for t in range(1, n_samples):
+        eps_y = np.random.normal(0, 1)
+        eps_x = np.random.normal(0, 1)
+
+        Y[t] = 0.5 * Y[t-1] + eps_y
+        X[t] = 0.3 * Y[t-1] + 0.7 * X[t-1] + eps_x
+
+    return X, Y
+
+
+def generate_cointegration_data(n_samples: int = 500):
+    """
+    生成协整序列：共同随机游走趋势 + 平稳噪声
+
+    Z_t = Z_{t-1} + ε_t          # 共同随机游走
+    A_t = Z_t + η_t              # 平稳噪声
+    B_t = 2 * Z_t + ξ_t          # 平稳噪声，系数为 2
+
+    A 和 B 存在协整关系，协整向量约为 (1, -0.5)
+    即 B - 2*A 是平稳序列
+
+    返回:
+        (A, B) - 两个协整序列
+    """
+    np.random.seed(42)
+    Z = np.zeros(n_samples)
+    A = np.zeros(n_samples)
+    B = np.zeros(n_samples)
+
+    # 共同趋势
+    Z[0] = 100  # 初始值
+    for t in range(1, n_samples):
+        Z[t] = Z[t-1] + np.random.normal(0, 0.5)
+
+    # 平稳噪声
+    for t in range(n_samples):
+        A[t] = Z[t] + np.random.normal(0, 1)
+        B[t] = 2 * Z[t] + np.random.normal(0, 1)
+
+    return A, B
+
+
+def generate_granger_cointegration_test_data():
+    """
+    生成格兰杰因果检验和协整检验的测试数据
+
+    生成 4 个标的：
+    - sz.910001: X 序列（被 Y 格兰杰引起）
+    - sz.910002: Y 序列（X 的格兰杰原因）
+    - sz.910003: 协整序列 A
+    - sz.910004: 协整序列 B（与 A 协整，B ≈ 2*A）
+    """
+    print("\n" + "=" * 80)
+    print("生成格兰杰因果检验 + 协整检验测试数据")
+    print("=" * 80)
+
+    n_samples = 500
+    start_date = datetime(2020, 1, 2)
+
+    # 生成日期序列（跳过周末）
+    dates = []
+    current_date = start_date
+    while len(dates) < n_samples:
+        if current_date.weekday() < 5:  # 周一到周五
+            dates.append(current_date)
+        current_date += timedelta(days=1)
+
+    # 1. 格兰杰因果数据
+    print("\n1. 格兰杰因果检验数据 (Y → X)")
+    X, Y = generate_granger_data(n_samples)
+
+    symbol_x = "sz.910001"
+    symbol_y = "sz.910002"
+
+    hfq_path_x = HFQ_DIR / f"{symbol_x}.csv"
+    hfq_path_y = HFQ_DIR / f"{symbol_y}.csv"
+    org_path_x = ORG_DIR / f"{symbol_x}.csv"
+    org_path_y = ORG_DIR / f"{symbol_y}.csv"
+
+    generate_csv(symbol_x, X, start_date, hfq_path_x, org_path_x)
+    generate_csv(symbol_y, Y, start_date, hfq_path_y, org_path_y)
+
+    print(f"  {symbol_x} (X): {hfq_path_x}")
+    print(f"  {symbol_y} (Y): {hfq_path_y}")
+    print(f"  数据条数: {n_samples}")
+    print(f"  预期: Y 是 X 的格兰杰原因")
+
+    # 2. 协整数据
+    print("\n2. 协整检验数据 (A 和 B 协整)")
+    A, B = generate_cointegration_data(n_samples)
+
+    symbol_a = "sz.910003"
+    symbol_b = "sz.910004"
+
+    hfq_path_a = HFQ_DIR / f"{symbol_a}.csv"
+    hfq_path_b = HFQ_DIR / f"{symbol_b}.csv"
+    org_path_a = ORG_DIR / f"{symbol_a}.csv"
+    org_path_b = ORG_DIR / f"{symbol_b}.csv"
+
+    generate_csv(symbol_a, A, start_date, hfq_path_a, org_path_a)
+    generate_csv(symbol_b, B, start_date, hfq_path_b, org_path_b)
+
+    print(f"  {symbol_a} (A): {hfq_path_a}")
+    print(f"  {symbol_b} (B): {hfq_path_b}")
+    print(f"  数据条数: {n_samples}")
+    print(f"  预期: A 和 B 存在协整关系，B ≈ 2*A")
+
+    print("\n" + "=" * 80)
+
+
+# ============================================================
 # CSV 数据生成
 # ============================================================
 
@@ -564,6 +699,9 @@ def main():
     print(f"\n生成完成！共 {len(all_cases)} 个测试用例")
     print(f"服务数据目录: {SERVICE_DATA_DIR}")
     print(f"策略脚本目录:   {METRIC_TEST_DIR}")
+
+    # 9. 生成格兰杰因果检验 + 协整检验测试数据
+    generate_granger_cointegration_test_data()
 
 
 if __name__ == "__main__":

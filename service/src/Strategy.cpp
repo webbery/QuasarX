@@ -210,6 +210,19 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         if (next_itr == nodeMap.end()) {
             continue;
         }
+        // EMD 边 data.imf_index：sourceHandle 以 "-IMF" 结尾且 data.imf_index
+        // 是有效数字 → 内部转换为 "{from}-IMF_{idx}"，下游 FunctionNode 的
+        // dash 拆分能解析 dataName="IMF_k" 匹配 upstream key "{label}.IMF_k"。
+        // 未设置 / null / 老格式 → 保持原 sourceHandle（默认 "IMF"，所有 IMF 都给下游）。
+        if (boost::algorithm::ends_with(sourceHandle, "-IMF") &&
+            edge.contains("data") && edge["data"].is_object() &&
+            edge["data"].contains("imf_index") &&
+            edge["data"]["imf_index"].is_number_integer()) {
+            int idx = edge["data"]["imf_index"].get<int>();
+            if (idx >= 0) {
+                sourceHandle = from + "-IMF_" + std::to_string(idx);
+            }
+        }
         if (sourceHandle == "output") {
             sourceHandle = from;
         } else {

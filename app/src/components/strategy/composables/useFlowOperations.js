@@ -496,6 +496,34 @@ export function useFlowOperations(state) {
   }
 
   /**
+   * 设置 EMD 出边的 IMF 编号（用于节点底部 EdgeImfSelector）
+   *
+   * newIndex: null = 未选择（所有 IMF 都给下游）/ 0~N-1 = 具体 IMF 编号
+   * 通过 remove + addEdges 重写 edge.id 触发 Vue Flow 重渲染
+   */
+  const setEdgeImfIndex = (edgeId, newIndex) => {
+    const edge = getEdges.value.find(e => e.id === edgeId)
+    if (!edge) return
+
+    const normalized = (newIndex === null || newIndex === undefined) ? null : Number(newIndex)
+    if (normalized !== null && (!Number.isInteger(normalized) || normalized < 0)) return
+
+    const current = (edge.data?.imfIndex === undefined) ? null : edge.data.imfIndex
+    if (current === normalized) return
+
+    const newData = { ...(edge.data || {}), imfIndex: normalized }
+    const imfPart = normalized !== null ? `-IMF_${normalized}` : ''
+    const newId = `e${edge.source}${imfPart}-${edge.target}-${edge.targetHandle}`
+
+    removeEdges([edge])
+    addEdges([{ ...edge, id: newId, data: newData }])
+    nextTick(() => {
+      const updated = getEdges.value.find(e => e.id === newId)
+      if (updated) addSelectedEdges([updated])
+    })
+  }
+
+  /**
    * 连接验证
    */
   const isValidConnection = (connection) => {
@@ -593,6 +621,7 @@ export function useFlowOperations(state) {
     onPaneReady,
     updateNodeData,
     onConnect,
+    setEdgeImfIndex,
     isValidConnection
   }
 }
