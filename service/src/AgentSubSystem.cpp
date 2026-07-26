@@ -947,7 +947,8 @@ bool FlowSubsystem::RunTrainingCollect(
     const Set<String>& requiredSources,
     const Set<symbol_t>& symbols,
     double initialCapital,
-    Map<String, Vector<double>>& outCollected
+    Map<String, Vector<double>>& outCollected,
+    Vector<String>& outDates
 ) {
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (!exchangeMgr) {
@@ -969,7 +970,7 @@ bool FlowSubsystem::RunTrainingCollect(
     }
 
     bool success = false;
-    std::thread worker([strategy, runId, &upstreamGraph, this, exchangeMgr, exchange, &outCollected, &success]() {
+    std::thread worker([strategy, runId, &upstreamGraph, this, exchangeMgr, exchange, &outCollected, &outDates, &success]() {
         DataContext context(strategy, _handle);
         context.setBacktestRunId(runId);
 
@@ -1008,8 +1009,17 @@ bool FlowSubsystem::RunTrainingCollect(
             }
 
             context.CollectNumericOutputs(outCollected);
-            INFO("[TrainingCollect] Collected {} numeric outputs ({} epochs)",
-                 outCollected.size(), epoch);
+            // 收集日期序列（time_t → String）
+            if (btContext) {
+                const auto& timestamps = btContext->getDates();
+                outDates.clear();
+                outDates.reserve(timestamps.size());
+                for (auto ts : timestamps) {
+                    outDates.push_back(ToString(static_cast<time_t>(ts), "%Y-%m-%d"));
+                }
+            }
+            INFO("[TrainingCollect] Collected {} numeric outputs, {} dates ({} epochs)",
+                 outCollected.size(), outDates.size(), epoch);
             success = !outCollected.empty();
         } catch (const std::exception& e) {
             WARN("[TrainingCollect] Exception: {}", e.what());

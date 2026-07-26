@@ -142,6 +142,7 @@ public:
      * @param symbols 回测标的列表
      * @param initialCapital 初始资金
      * @param outCollected 输出：收集到的节点输出（变量名 → 时间序列）
+     * @param outDates 输出：日期序列（与 outCollected 的时间索引对应）
      * @return 是否成功
      */
     bool RunTrainingCollect(
@@ -150,7 +151,8 @@ public:
         const Set<String>& requiredSources,
         const Set<symbol_t>& symbols,
         double initialCapital,
-        Map<String, Vector<double>>& outCollected
+        Map<String, Vector<double>>& outCollected,
+        Vector<String>& outDates
     );
     BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
 

@@ -6,8 +6,8 @@ XGBoost 离线训练脚本（QuasarX 后端调用）
   --label-source   标签来源变量名（如 "sh.600000.close"）
   --label-period   未来收益周期 N（默认 5）
   --label-type     classification / regression
-  --threshold      分类阈值（默认 0.0）
-  --objective      XGBoost 目标函数：binary:logistic / multi:softprob / reg:squarederror
+  --vol-k          自适应阈值系数 vol_k (threshold = vol_k × σ × √N, 默认 0.5)
+  --objective      XGBoost 目标函数：multi:softprob / binary:logistic / reg:squarederror（分类时自动推导）
   --model-output   模型保存路径（.json 格式）
   --params         超参数 JSON 字符串
   --test-ratio     测试集比例（默认 0.2，时序切分）
@@ -42,15 +42,31 @@ def emit(obj):
     print(json.dumps(obj, ensure_ascii=False, default=str), flush=True)
 
 
-def compute_label(values, period, label_type, threshold):
+def compute_label(values, period, label_type, vol_k):
     """计算标签：future_return = source[t+N]/source[t] - 1
-    classification: label = (future_return > threshold).astype(int)
-    regression:     label = future_return
+
+    classification (自适应三分类):
+      threshold = vol_k × σ × √N  (σ = 对数收益率标准差)
+      future > +threshold  → 0 (UP)
+      future < -threshold  → 2 (DOWN)
+      otherwise            → 1 (FLAT)
+    regression: label = future_return
     """
     s = pd.Series(values, dtype=float)
     future = s.shift(-period) / s - 1.0
     if label_type == "classification":
-        label = (future > threshold).astype(int)
+        log_ret = np.log(s / s.shift(1))
+        log_ret = log_ret.replace([np.inf, -np.inf], np.nan).dropna()
+        sigma = log_ret.std()
+        if len(log_ret) < 20 or sigma < 1e-12:
+            threshold = 0.015
+        else:
+            threshold = vol_k * sigma * np.sqrt(period)
+            threshold = float(np.clip(threshold, 0.005, 0.10))
+        label = pd.Series(np.nan, index=future.index)
+        label[future > threshold] = 0    # UP
+        label[future < -threshold] = 2   # DOWN
+        label[(future >= -threshold) & (future <= threshold)] = 1  # FLAT
     else:
         label = future
     return label, future
@@ -63,12 +79,15 @@ def main():
     parser.add_argument("--label-period", type=int, default=5, help="未来收益周期 N")
     parser.add_argument("--label-type", choices=["classification", "regression"],
                         default="classification")
-    parser.add_argument("--threshold", type=float, default=0.0, help="分类阈值")
-    parser.add_argument("--objective", default="binary:logistic")
-    parser.add_argument("--num-class", type=int, default=2)
+    parser.add_argument("--vol-k", type=float, default=0.5, help="自适应阈值系数 vol_k (threshold = vol_k × σ × √N)")
+    parser.add_argument("--objective", default="multi:softprob")
+    parser.add_argument("--num-class", type=int, default=3)
     parser.add_argument("--model-output", required=True, help="模型保存路径")
     parser.add_argument("--params", default="{}", help="XGBoost 超参数 JSON")
     parser.add_argument("--test-ratio", type=float, default=0.2)
+    parser.add_argument("--start-date", default="", help="训练数据开始日期 (YYYY-MM-DD)")
+    parser.add_argument("--end-date", default="", help="训练数据结束日期 (YYYY-MM-DD)")
+    parser.add_argument("--frequency", default="1d", help="数据频率 (1d/1w/1M)")
     parser.add_argument("--xtest-output", default="", help="X_test 保存路径")
     parser.add_argument("--ytest-output", default="", help="y_test 保存路径")
     args = parser.parse_args()
@@ -82,6 +101,23 @@ def main():
     df = pd.read_csv(args.data)
     emit({"type": "progress", "phase": "load_data", "rows": len(df), "cols": len(df.columns)})
 
+    # 日期过滤（如果 CSV 包含 date 列且指定了日期范围）
+    if "date" in df.columns and (args.start_date or args.end_date):
+        df["date"] = pd.to_datetime(df["date"])
+        if args.start_date:
+            df = df[df["date"] >= args.start_date]
+        if args.end_date:
+            df = df[df["date"] <= args.end_date]
+        df = df.drop(columns=["date"])
+        emit({"type": "info", "phase": "date_filter",
+              "start": args.start_date, "end": args.end_date, "rows_after": len(df)})
+    elif args.start_date or args.end_date:
+        emit({"type": "info", "phase": "date_filter",
+              "message": "CSV 无 date 列，跳过日期过滤。需 C++ 端 writeCsv 输出日期列"})
+
+    # 频率重采样（如果指定了非日级频率且 CSV 有日期列）
+    # TODO: 需要 C++ 端在 CSV 中输出日期列才能支持
+
     if args.label_source not in df.columns:
         emit({"type": "error", "message": f"标签来源列 '{args.label_source}' 不在数据中。可用列: {list(df.columns)}"})
         sys.exit(1)
@@ -90,10 +126,12 @@ def main():
         df[args.label_source].values,
         args.label_period,
         args.label_type,
-        args.threshold,
+        args.vol_k,
     )
 
-    feature_cols = [c for c in df.columns if c != args.label_source]
+    # 排除标签列和日期列
+    exclude_cols = {args.label_source, "date"}
+    feature_cols = [c for c in df.columns if c not in exclude_cols]
     if len(feature_cols) == 0:
         emit({"type": "error", "message": "没有可用的特征列"})
         sys.exit(1)
@@ -114,6 +152,22 @@ def main():
 
     is_classification = args.label_type == "classification"
 
+    # 自适应分类数：分类模式下自动检测实际标签数
+    if is_classification:
+        unique_labels = sorted(set(y[~np.isnan(y)]))
+        n_classes = len(unique_labels)
+        if n_classes <= 1:
+            emit({"type": "error", "message": f"标签只有 {n_classes} 个类别，无法训练分类模型"})
+            sys.exit(1)
+        if n_classes == 2:
+            args.objective = "binary:logistic"
+            args.num_class = 1  # XGBoost binary 不需要 num_class
+        else:
+            args.objective = "multi:softprob"
+            args.num_class = n_classes
+        emit({"type": "info", "phase": "label_stats", "n_classes": n_classes,
+              "classes": [int(c) for c in unique_labels], "objective": args.objective})
+
     default_params = {
         "learning_rate": 0.1,
         "max_depth": 6,
@@ -130,6 +184,10 @@ def main():
         default_params["eval_metric"] = "rmse"
 
     default_params.update(params)
+
+    # 多分类时强制设置 num_class
+    if is_classification and args.num_class > 1:
+        default_params["num_class"] = args.num_class
 
     if "early_stopping_rounds" in default_params:
         del default_params["early_stopping_rounds"]

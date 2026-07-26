@@ -3,6 +3,8 @@
 #include "ExchangeManager.h"
 #include "Util/datetime.h"
 #include "Util/string_algorithm.h"
+#include "Util/data.h"
+#include "Util/system.h"
 #include "server.h"
 #include "Util/finance.h"
 #include <tuple>
@@ -70,52 +72,41 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
   String start = req.get_param_value("start");
   auto start_t = FromTick(start);
   String end = req.get_param_value("end");
-  String right = req.get_param_value("right");
   auto end_t = FromTick(end);
-  DataFrequencyType dft = DataFrequencyType::Day;
-  if (type == "5m") {
-    dft = DataFrequencyType::Min5;
-  }
-  else if (type == "1d") {
-    dft = DataFrequencyType::Day;
-  }
-  StockAdjustType rightType = StockAdjustType::None;
-  String dir = "Astock";
-  if (right == "1") {
-    rightType = StockAdjustType::After;
-    dir = "A_hfq";
-  }
-  auto symbol = format_symbol(id);
-  auto& config = _server->GetConfig();
-  String path = config.GetDatabasePath() + "/" + dir + "/" + symbol + ".csv";
-  DataFrame df;
-  if (!LoadStockQuote(df, path)) {
-    res.status = 400;
-  }
-  else {
-    auto size = df.get_index().size();
-    nlohmann::json result;
+  String right = req.get_param_value("right");
 
-    for (size_t i = 0; i < size; ++i) {
-      auto datetime = df.get_column<time_t>("datetime")[i];
-      if (datetime < start_t || datetime > end_t)
-        continue;
-      nlohmann::json row;
-      row["datetime"] = datetime;
-      using Extractor = QuoteExtractor<
-        FixedString{"open"},
-        FixedString{"close"},
-        FixedString{"low"},
-        FixedString{"high"},
-        FixedString{"volume"},
-        FixedString{"turnover"}
-      >;
-      Extractor::extract<double>(row, df, i);
-      result.emplace_back(std::move(row));
-    }
-    res.status = 200;
-    res.set_content(result.dump(), "application/json");
+  // 转换为 LoadHistoryDataWithFreq 参数
+  symbol_t sym = to_symbol(toInternalSymbol(id));
+  String start_date = ToString(start_t, "%Y-%m-%d");
+  String end_date = ToString(end_t, "%Y-%m-%d");
+  BarFreq freq = type.empty() ? BarFreq::Day : parseBarFreq(type);
+  AdjType adj = (right == "1") ? AdjType::HFQ : AdjType::None;
+
+  Vector<String> dates;
+  auto data = LoadHistoryDataWithFreq(sym,
+      {"open", "close", "high", "low", "volume", "turnover"},
+      start_date, end_date, freq, adj, &dates);
+
+  if (dates.empty()) {
+    res.status = 400;
+    return;
   }
+
+  nlohmann::json result = nlohmann::json::array();
+  for (size_t i = 0; i < dates.size(); ++i) {
+    nlohmann::json row;
+    row["datetime"] = FromStr(dates[i]);
+    row["open"]    = (i < data["open"].size())    ? data["open"][i]    : 0.0;
+    row["close"]   = (i < data["close"].size())   ? data["close"][i]   : 0.0;
+    row["high"]    = (i < data["high"].size())     ? data["high"][i]    : 0.0;
+    row["low"]     = (i < data["low"].size())      ? data["low"][i]     : 0.0;
+    row["volume"]  = (i < data["volume"].size())   ? data["volume"][i]  : 0.0;
+    row["turnover"] = (i < data["turnover"].size()) ? data["turnover"][i] : 0.0;
+    result.emplace_back(std::move(row));
+  }
+
+  res.status = 200;
+  res.set_content(result.dump(), "application/json");
 }
 
 StockDetailHandler::StockDetailHandler(Server* server)

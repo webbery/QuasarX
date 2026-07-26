@@ -12,8 +12,10 @@
           :id="'input-' + slot.slot"
           class="connection-handle left-handle named-input-handle"
         />
-        <span class="named-input-label">{{ slot.label }}</span>
-        <span class="named-input-field">[{{ slot.field }}]</span>
+        <template v-if="functionSlots.length > 1">
+          <span class="named-input-label">{{ slot.label }}</span>
+          <span class="named-input-field">[{{ slot.field }}]</span>
+        </template>
       </div>
     </template>
 

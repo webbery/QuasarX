@@ -6,8 +6,9 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useHistoryStore } from '@/stores/history'
 import { extractSecuritiesFromFlowData, type FlowData, type Security } from '@/lib/strategyPool'
 
-export function useStrategySecurities() {
+export function useStrategySecurities(options?: { defaultCheckAll?: boolean }) {
   const historyStore = useHistoryStore()
+  const defaultCheckAll = options?.defaultCheckAll ?? true
 
   // 选中的策略 ID
   const selectedStrategyId = ref('')
@@ -44,8 +45,10 @@ export function useStrategySecurities() {
       if (flowData) {
         const securities = extractSecuritiesFromFlowData(flowData as unknown as FlowData)
         availableSecurities.value = securities
-        // 默认全选
-        checkedSymbols.value = new Set(securities.map(s => s.code))
+        // 根据配置决定是否默认全选
+        checkedSymbols.value = defaultCheckAll
+          ? new Set(securities.map(s => s.code))
+          : new Set()
       } else {
         availableSecurities.value = []
       }

@@ -3,6 +3,7 @@ import { MarkerType } from '@vue-flow/core'
 import { getNode } from '@/lib/nodes'
 import { updateAllSuccessorDebugNodes } from '@/lib/nodes/useDebugNodeFields'
 import { functionInputSlots } from '@/lib/nodes/configs/function'
+import { breakoutInputSlots } from '@/lib/nodes/configs/breakout'
 
 /**
  * 流程图操作 composable
@@ -532,11 +533,21 @@ export function useFlowOperations(state) {
       return false
     }
 
-    // 验证连接方向：起点(source)只能连接到终点(target)
-    // 普通节点: sourceHandle='output' -> targetHandle='input'
-    // 数据输入节点: sourceHandle='field-close'/'field-open'/'field-high'/'field-low'/'field-volume' -> targetHandle='input' 或 'input-{slot}'
-    const dataFieldHandles = ['field-close', 'field-open', 'field-high', 'field-low', 'field-volume']
-    const isValidSource = connection.sourceHandle === 'output' || dataFieldHandles.includes(connection.sourceHandle)
+    // 验证 source：按源节点类型判断 sourceHandle 合法性
+    const sourceNode = getNodes.value.find(n => n.id === connection.source)
+    if (!sourceNode) return false
+
+    const sourceNodeType = sourceNode.data?.nodeType
+    const sourceHandle = connection.sourceHandle
+
+    let isValidSource = false
+    if (sourceNodeType === 'input') {
+      isValidSource = sourceHandle?.startsWith('field-')
+    } else if (sourceNodeType === 'emd' || sourceNodeType === 'hmm') {
+      isValidSource = !!sourceHandle
+    } else {
+      isValidSource = sourceHandle === 'output'
+    }
 
     if (!isValidSource) {
       return false
@@ -570,6 +581,24 @@ export function useFlowOperations(state) {
         const sourceField = connection.sourceHandle.replace('field-', '')
         if (sourceField !== targetSlot.field) return false
       }
+
+      // 防止重复连接同一槽位
+      const existingConnection = getEdges.value.find(edge =>
+        edge.target === connection.target &&
+        edge.targetHandle === connection.targetHandle
+      )
+      return !existingConnection
+    }
+
+    // BreakoutNode 命名槽位验证
+    if (targetNodeType === 'breakout') {
+      if (!targetHandle || !targetHandle.startsWith('input-')) {
+        return false
+      }
+
+      const slotName = targetHandle.replace('input-', '')
+      const targetSlot = breakoutInputSlots.find(s => s.slot === slotName)
+      if (!targetSlot) return false
 
       // 防止重复连接同一槽位
       const existingConnection = getEdges.value.find(edge =>

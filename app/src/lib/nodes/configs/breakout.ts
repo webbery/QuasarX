@@ -28,8 +28,13 @@ export const breakoutNode: NodeRegistryEntry = {
   description: '包络突破状态机（4 态，含 hysteresis）。检测价格对上下轨的突破与回落，输出状态编码供 XGBoost 学习。状态 1=突破上轨, 2=回落上轨内, 3=突破下轨, 4=回落下轨内。',
   inputs: ['value', 'upper', 'lower'],
   outputs: ['state', 'duration'],
-  params: [],
-  example: {}
+  params: [
+    { key: 'label', label: '标签', type: 'text', default: 'breakout',
+      placeholder: '用于输出变量命名，如 breakout / env_state',
+      description: '输出 key 格式：{symbol}.{label}（状态）、{symbol}.{label}_duration（持续 bar 数）' },
+    // TODO: hysteresis 阈值（突破确认比例）、最小突破幅度等可调参数，需同步修改 C++ BreakoutNode
+  ],
+  example: { label: 'breakout' }
 }
 
 registerNode(breakoutNode)

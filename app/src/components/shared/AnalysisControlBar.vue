@@ -1,7 +1,7 @@
 <template>
   <div class="analysis-control-bar">
     <!-- 模式切换 -->
-    <div class="mode-toggle">
+    <div v-if="resolvedShowModeToggle" class="mode-toggle">
       <button
         v-for="m in resolvedModes"
         :key="m.value"
@@ -71,7 +71,7 @@
 
     <!-- 开始分析按钮 -->
     <button class="btn btn-primary btn-small" :disabled="loading || !canAnalyze" @click="$emit('run-analysis')">
-      {{ loading ? '分析中...' : '开始分析' }}
+      {{ loading ? '分析中...' : (props.runLabel || '开始分析') }}
     </button>
   </div>
 </template>
@@ -109,6 +109,7 @@ interface Mode {
 const props = defineProps<{
   mode: string
   modes?: Mode[]
+  showModeToggle?: boolean
   selectedStrategyId?: string
   strategyOptions?: StrategyOption[]
   availableSecurities?: Security[]
@@ -124,6 +125,7 @@ const props = defineProps<{
   frequencyOptions?: FrequencyOption[]
   loading: boolean
   canAnalyze: boolean
+  runLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -189,6 +191,7 @@ const defaultFrequencyOptions: FrequencyOption[] = [
 ]
 
 const resolvedModes = computed(() => props.modes ?? defaultModes)
+const resolvedShowModeToggle = computed(() => props.showModeToggle ?? true)
 const resolvedQuickRanges = computed(() => props.quickRanges ?? defaultQuickRanges)
 const resolvedFrequencyOptions = computed(() => props.frequencyOptions ?? defaultFrequencyOptions)
 const resolvedShowFrequency = computed(() => props.showFrequency ?? true)

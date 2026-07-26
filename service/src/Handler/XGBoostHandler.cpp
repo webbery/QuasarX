@@ -33,9 +33,12 @@ String makeTempPath(const String& prefix, const String& ext) {
     return fmt::format("/tmp/{}_{}_{}.{}", prefix, getpid(), gen() & 0xFFFFFF, ext);
 }
 
-bool writeCsv(const String& path, const Map<String, Vector<double>>& data) {
+bool writeCsv(const String& path, const Map<String, Vector<double>>& data, const Vector<String>& dates) {
     std::ofstream ofs(path);
     if (!ofs.is_open()) return false;
+    // 写表头：date 列 + 数据列
+    bool hasDates = !dates.empty();
+    if (hasDates) ofs << "date,";
     bool first = true;
     for (auto& [k, _] : data) {
         if (!first) ofs << ",";
@@ -49,6 +52,10 @@ bool writeCsv(const String& path, const Map<String, Vector<double>>& data) {
     }
     for (size_t i = 0; i < rows; ++i) {
         first = true;
+        if (hasDates) {
+            ofs << (i < dates.size() ? dates[i] : "");
+            ofs << ",";
+        }
         for (auto& [k, v] : data) {
             if (!first) ofs << ",";
             double val = (i < v.size()) ? v[i] : 0.0;
@@ -121,14 +128,20 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
 
     nlohmann::json labelCfg = params.value("label", nlohmann::json::object());
     nlohmann::json xgbParams = params.value("params", nlohmann::json::object());
+    nlohmann::json dateRangeCfg = params.value("date_range", nlohmann::json::object());
     double testRatio = params.value("test_ratio", 0.2);
 
     String labelSource = labelCfg.value("source", "");
     int labelPeriod = labelCfg.value("period", 5);
     String labelType = labelCfg.value("type", "classification");
-    double threshold = labelCfg.value("threshold", 0.0);
-    String objective = params.value("objective", labelType == "classification" ? "binary:logistic" : "reg:squarederror");
-    int numClass = params.value("num_class", 2);
+    double volK = labelCfg.value("vol_k", 0.5);
+    String objective = params.value("objective", labelType == "classification" ? "multi:softprob" : "reg:squarederror");
+    int numClass = params.value("num_class", 3);
+
+    // 日期范围和频率（与标签分析一致）
+    String startDate = dateRangeCfg.value("start", "");
+    String endDate = dateRangeCfg.value("end", "");
+    String frequency = dateRangeCfg.value("frequency", "1d");
 
     String strategyName = script.value("id", "xgboost_train");
     if (labelSource.empty()) {
@@ -222,9 +235,10 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
     String tmpStrategyName = strategyName + "_train";
 
     Map<String, Vector<double>> collected;
+    Vector<String> collectedDates;
     bool collectOk = flowSubsystem->RunTrainingCollect(
         tmpStrategyName, upstreamSubgraph, requiredSources,
-        symbols, initialCapital, collected);
+        symbols, initialCapital, collected, collectedDates);
 
     if (!collectOk || collected.empty()) {
         for (auto n : fullGraph) delete n;
@@ -251,7 +265,7 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
     String csvPath = makeTempPath("xgb_data", "csv");
     String modelPath = makeTempPath("xgb_model", "json");
 
-    writeCsv(csvPath, collected);
+    writeCsv(csvPath, collected, collectedDates);
 
     auto pyEnv = PythonEnv::fromConfig(server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(params.value("py_env", ""));
@@ -261,12 +275,15 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
         "--label-source", labelSource,
         "--label-period", std::to_string(labelPeriod),
         "--label-type", labelType,
-        "--threshold", std::to_string(threshold),
+        "--vol-k", std::to_string(volK),
         "--objective", objective,
         "--num-class", std::to_string(numClass),
         "--model-output", modelPath,
         "--params", xgbParams.dump(),
         "--test-ratio", std::to_string(testRatio),
+        "--start-date", startDate,
+        "--end-date", endDate,
+        "--frequency", frequency,
     };
 
     String scriptPath = "tools/xgboost_train.py";
