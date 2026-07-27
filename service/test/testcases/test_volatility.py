@@ -35,7 +35,7 @@ except ImportError:
     raise ImportError("需要 empyrical 库，请运行: pip install empyrical")
 
 try:
-    from statsmodels.tsa.stattools import yule_walker, acf as sm_acf, grangercausality, coint
+    from statsmodels.tsa.stattools import yule_walker, acf as sm_acf, grangercausalitytests, coint
     from statsmodels.tsa.ar_model import AutoReg
 except ImportError:
     raise ImportError("需要 statsmodels 库，请运行: pip install statsmodels")
@@ -948,7 +948,7 @@ class TestCovarianceQualityDiagnostics:
         ]
         resp = call_cov_diag_api(cov, auth_token)
         assert resp["is_positive_definite"] is True
-        assert compute_is_positive_definite_golden(np.array(cov)) is True
+        assert compute_is_positive_definite_golden(np.array(cov)) == True
 
     def test_positive_definite_false_rank_deficient(self, auth_token):
         """rank-deficient [[1,1],[1,1]] → 非正定 (零特征值)"""

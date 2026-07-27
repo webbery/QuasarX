@@ -1,0 +1,29 @@
+{
+  "id": "test_cusum_sz800001",
+  "name": "CUSUM 测试策略",
+  "version": 1,
+  "description": "用于 CUSUM API 测试，确保 sz.800001 数据被导入 QuoteDB",
+  "source": "A_hfq",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "custom",
+      "position": {"x": 0, "y": 0},
+      "data": {
+        "label": "行情数据",
+        "nodeType": "input",
+        "params": {
+          "source": {"value": "股票", "type": "text"},
+          "code": {"value": ["sz.800001"], "type": "text"},
+          "freq": {"value": "1d", "type": "select"},
+          "close": {"value": "close", "type": "text"},
+          "open": {"value": "open", "type": "text"},
+          "high": {"value": "high", "type": "text"},
+          "low": {"value": "low", "type": "text"},
+          "volume": {"value": "volume", "type": "text"}
+        }
+      }
+    }
+  ],
+  "edges": []
+}

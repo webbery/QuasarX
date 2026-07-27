@@ -20,6 +20,8 @@ bool EMDNode::Init(const nlohmann::json& config) {
     boost::algorithm::to_lower(methodStr);
     if (methodStr == "ceemdan") {
         _method = EMDMethod::CEEMDAN;
+    } else if (methodStr == "vmd") {
+        _method = EMDMethod::VMD;
     } else {
         _method = EMDMethod::EMD;
     }
@@ -30,7 +32,9 @@ bool EMDNode::Init(const nlohmann::json& config) {
     }
 
     // 滚动窗口大小：0 = 全序列一次分解，>0 = 滚动窗口 EMD
-    _windowSize = config["params"]["windowSize"]["value"].get<int>();
+    if (config["params"].contains("windowSize")) {
+        _windowSize = config["params"]["windowSize"]["value"].get<int>();
+    }
     if (_windowSize < 0 || (_windowSize > 0 && _windowSize < 30)) {
         throw std::runtime_error("EMD windowSize must be 0 (global) or >= 30, got: " + std::to_string(_windowSize));
     }

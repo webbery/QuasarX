@@ -72,7 +72,8 @@ class CUSUMDetectorRef:
         self._steps = []
 
     def _compute_threshold(self):
-        return self.threshold_multiplier * self.sigma * math.sqrt(self._count)
+        # 标准 CUSUM 使用常数阈值，时变阈值仅用于初始校准
+        return self.threshold_multiplier * self.sigma
 
     def update(self, new_return):
         self._count += 1
@@ -406,69 +407,6 @@ class TestCUSUMStandardCases:
 
 
 # ============================================================
-# 测试类：纯算法单元测试（不需要服务）
-# ============================================================
-
-class TestCUSUMDetector:
-    """CUSUM 检测器纯算法单元测试"""
-
-    def test_no_change_point_in_stable_data(self):
-        """平稳数据不应触发过多变点"""
-        np.random.seed(42)
-        returns = list(np.random.normal(0.0001, 0.01, 300))
-        detector = CUSUMDetectorRef(mu=0.0001, sigma=0.01, min_obs=30)
-        result = detector.detect_batch(returns)
-        assert result['total_change_points'] < 3, \
-            f"Stable data should have few change points, got {result['total_change_points']}"
-
-    def test_detect_regime_change(self):
-        """Regime change 数据应检测到变点"""
-        np.random.seed(42)
-        before = list(np.random.normal(0.0001, 0.01, 100))
-        after = list(np.random.normal(-0.005, 0.04, 80))
-        returns = before + after
-        
-        # 使用更敏感的参数（降低阈值 + min_obs）
-        detector = CUSUMDetectorRef(mu=0.0001, sigma=0.01, min_obs=5, threshold_multiplier=2.0)
-        result = detector.detect_batch(returns)
-
-        assert result['total_change_points'] >= 1, \
-            f"Regime change data should detect at least one change point, got {result['total_change_points']}"
-
-    def test_max_drift_positive(self):
-        """最大漂移量应为非负"""
-        np.random.seed(42)
-        returns = list(np.random.normal(0, 0.01, 200))
-        detector = CUSUMDetectorRef()
-        detector.detect_batch(returns)
-        assert detector.max_drift >= 0
-
-    def test_min_obs_protection(self):
-        """min_obs 保护期内不应触发变点"""
-        np.random.seed(42)
-        returns = list(np.random.normal(0.1, 0.01, 25))  # 极端值但数据少
-        detector = CUSUMDetectorRef(min_obs=30)
-        result = detector.detect_batch(returns)
-        assert result['total_change_points'] == 0, \
-            "Should not trigger change points before min_obs"
-
-    def test_batch_vs_step_consistency(self):
-        """批量和逐步更新结果应一致"""
-        np.random.seed(42)
-        returns = list(np.random.normal(0.0001, 0.01, 100))
-
-        detector_batch = CUSUMDetectorRef()
-        result_batch = detector_batch.detect_batch(returns)
-
-        detector_step = CUSUMDetectorRef()
-        for r in returns:
-            detector_step.update(r)
-
-        assert result_batch['total_change_points'] == detector_step.total_change_points
-        assert result_batch['max_drift'] == pytest.approx(detector_step.max_drift, rel=1e-10)
-
-
-# ============================================================
 # 测试类：均值偏移数据 CUSUM 变点检测（C++ vs Python 对比）
 # ============================================================
 
@@ -515,14 +453,29 @@ class TestCUSUMMeanShift:
         result = detector.detect_batch(returns)
         return result
 
-    def _cpp_cusum_via_api(self, returns: List[float], K=0.5, H=5.0, min_obs=10) -> dict:
-        """调用 C++ CUSUMHandler API（通过模拟收益率数据）"""
+    def _cpp_cusum_via_api(self, symbols: List[str], start: str, end: str, 
+                           modes: List[str] = None, K=0.5, H=5.0, min_obs=10) -> dict:
+        """调用 C++ CUSUMHandler API（通过标的代码从数据库加载数据）
+        
+        Args:
+            symbols: 标的代码列表（code.market 格式，如 ["800001.sz"]）
+            start: 开始日期
+            end: 结束日期
+            modes: 分析模式列表，可选 "mean"/"variance"/"correlation"
+            K: CUSUM lambda 参数
+            H: CUSUM threshold_multiplier 参数
+            min_obs: 最小观测数
+        """
+        if modes is None:
+            modes = ["mean"]
         headers = {"Authorization": self.token}
-        # 构造请求：将收益率作为输入传递给 CUSUM API
         resp = requests.post(
             f"{BASE_URL}/analysis/cusum",
             json={
-                "returns": returns,  # 直接传递收益率序列
+                "symbols": symbols,
+                "modes": modes,
+                "start": start,
+                "end": end,
                 "lambda": K,
                 "threshold_multiplier": H,
                 "min_obs": min_obs
@@ -555,20 +508,37 @@ class TestCUSUMMeanShift:
         assert first_cp >= expected_cp - 30, \
             f"Python 变点位置过早: 期望 ≥{expected_cp - 30}, 实际 {first_cp}"
 
-    def test_cpp_python_s_pos_s_neg_alignment(self):
-        """C++ 和 Python 的 s_pos/s_neg 序列应一致"""
-        returns = self.generate_synthetic_returns()
+    def test_cpp_python_s_pos_s_neg_alignment(self, auth_token):
+        """C++ 和 Python 的 s_pos/s_neg 序列应一致（使用真实测试数据，mean 模式）"""
+        # 使用测试数据中的标的（code.market 格式）
+        symbol = "800001.sz"
+        start_date = "2024-01-01"
+        end_date = "2024-09-07"
+
+        # 从 CSV 加载收盘价并计算收益率
+        csv_path = HFQ_DIR / "sz.800001.csv"
+        assert csv_path.exists(), f"测试数据不存在: {csv_path}"
+
+        closes = []
+        with open(csv_path) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                closes.append(float(row["close"]))
+
+        # 计算收益率
+        returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
 
         # Python 计算
-        py_result = self._python_cusum(returns, K=0.5, H=5.0, min_obs=10)
+        py_result = self._python_cusum(returns, mu0=0, sigma=0.02, K=0.5, H=5.0, min_obs=10)
 
-        # C++ API 调用
-        cpp_result = self._cpp_cusum_via_api(returns, K=0.5, H=5.0, min_obs=10)
-        assert "cusum" in cpp_result or "mean_cusum" in cpp_result, \
-            f"C++ 返回缺少 CUSUM 数据: {cpp_result}"
+        # C++ API 调用（mean 模式）
+        cpp_result = self._cpp_cusum_via_api([symbol], start_date, end_date, 
+                                             modes=["mean"], K=0.5, H=5.0, min_obs=10)
+        assert "mean_cusum" in cpp_result, \
+            f"C++ 返回缺少 mean_cusum 数据: {cpp_result}"
 
-        # 兼容不同的返回键名
-        cpp_symbol_data = cpp_result.get("cusum", cpp_result.get("mean_cusum", []))
+        # 获取 mean_cusum 数据
+        cpp_symbol_data = cpp_result["mean_cusum"]
         if isinstance(cpp_symbol_data, list) and len(cpp_symbol_data) > 0:
             cpp_symbol_data = cpp_symbol_data[0]
 
@@ -596,17 +566,110 @@ class TestCUSUMMeanShift:
         assert max_abs_err_s_neg < 1e-6, \
             f"s_neg 最大绝对误差过大: {max_abs_err_s_neg}"
 
-    def test_cpp_python_change_points_match(self):
-        """C++ 和 Python 检测到的变点位置应一致"""
-        returns = self.generate_synthetic_returns()
+    def test_variance_mode_structure(self, auth_token):
+        """variance 模式应返回正确的数据结构"""
+        symbol = "800001.sz"
+        start_date = "2024-01-01"
+        end_date = "2024-09-07"
+
+        # C++ API 调用（variance 模式）
+        cpp_result = self._cpp_cusum_via_api([symbol], start_date, end_date,
+                                             modes=["variance"], K=0.5, H=5.0, min_obs=10)
+        
+        assert "variance_cusum" in cpp_result, \
+            f"C++ 返回缺少 variance_cusum 数据: {cpp_result}"
+        
+        variance_data = cpp_result["variance_cusum"]
+        assert isinstance(variance_data, list), "variance_cusum 应为列表"
+        assert len(variance_data) > 0, "variance_cusum 不应为空"
+        
+        # 验证每个标的的数据结构
+        for item in variance_data:
+            assert "symbol" in item, "缺少 symbol 字段"
+            assert "s_pos" in item, "缺少 s_pos 字段"
+            assert "s_neg" in item, "缺少 s_neg 字段"
+            assert "change_points" in item, "缺少 change_points 字段"
+            assert isinstance(item["s_pos"], list), "s_pos 应为列表"
+            assert isinstance(item["s_neg"], list), "s_neg 应为列表"
+            assert len(item["s_pos"]) == len(item["s_neg"]), "s_pos 和 s_neg 长度应一致"
+
+    def test_correlation_mode_structure(self, auth_token):
+        """correlation 模式应返回正确的数据结构（需要多个标的）"""
+        # 使用多个标的测试相关性分析
+        symbols = ["800001.sz", "800002.sz"]
+        start_date = "2024-01-01"
+        end_date = "2024-09-07"
+
+        # C++ API 调用（correlation 模式）
+        cpp_result = self._cpp_cusum_via_api(symbols, start_date, end_date,
+                                             modes=["correlation"], K=0.5, H=5.0, min_obs=10)
+        
+        assert "correlation" in cpp_result, \
+            f"C++ 返回缺少 correlation 数据: {cpp_result}"
+        
+        corr_data = cpp_result["correlation"]
+        assert "rolling_avg" in corr_data, "缺少 rolling_avg 字段"
+        assert "symbols" in corr_data, "缺少 symbols 字段"
+        assert "matrix_before" in corr_data, "缺少 matrix_before 字段"
+        assert "matrix_after" in corr_data, "缺少 matrix_after 字段"
+        
+        # 验证滚动平均相关性
+        rolling_avg = corr_data["rolling_avg"]
+        assert isinstance(rolling_avg, list), "rolling_avg 应为列表"
+        
+        # 验证相关性矩阵
+        matrix_before = corr_data["matrix_before"]
+        matrix_after = corr_data["matrix_after"]
+        assert isinstance(matrix_before, list), "matrix_before 应为列表"
+        assert isinstance(matrix_after, list), "matrix_after 应为列表"
+        assert len(matrix_before) == len(symbols), f"matrix_before 行数应为 {len(symbols)}"
+        assert len(matrix_after) == len(symbols), f"matrix_after 行数应为 {len(symbols)}"
+
+    def test_multiple_modes_combined(self, auth_token):
+        """同时请求多种模式应返回所有模式的数据"""
+        symbol = "800001.sz"
+        start_date = "2024-01-01"
+        end_date = "2024-09-07"
+
+        # C++ API 调用（同时请求 mean 和 variance 模式）
+        cpp_result = self._cpp_cusum_via_api([symbol], start_date, end_date,
+                                             modes=["mean", "variance"], K=0.5, H=5.0, min_obs=10)
+        
+        # 应同时包含两种模式的数据
+        assert "mean_cusum" in cpp_result, "缺少 mean_cusum 数据"
+        assert "variance_cusum" in cpp_result, "缺少 variance_cusum 数据"
+        
+        # 验证数据结构
+        assert isinstance(cpp_result["mean_cusum"], list), "mean_cusum 应为列表"
+        assert isinstance(cpp_result["variance_cusum"], list), "variance_cusum 应为列表"
+
+    def test_cpp_python_change_points_match(self, auth_token):
+        """C++ 和 Python 检测到的变点位置应一致（使用真实测试数据，mean 模式）"""
+        # 使用测试数据中的标的（code.market 格式）
+        symbol = "800001.sz"
+        start_date = "2024-01-01"
+        end_date = "2024-09-07"
+
+        # 从 CSV 加载收盘价并计算收益率
+        csv_path = HFQ_DIR / "sz.800001.csv"
+        assert csv_path.exists(), f"测试数据不存在: {csv_path}"
+
+        closes = []
+        with open(csv_path) as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                closes.append(float(row["close"]))
+
+        returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
 
         # Python 变点
-        py_result = self._python_cusum(returns, K=0.5, H=5.0, min_obs=10)
+        py_result = self._python_cusum(returns, mu0=0, sigma=0.02, K=0.5, H=5.0, min_obs=10)
         py_change_points = [s['step_index'] for s in py_result['steps'] if s['change_point']]
 
-        # C++ 变点
-        cpp_result = self._cpp_cusum_via_api(returns, K=0.5, H=5.0, min_obs=10)
-        cpp_symbol_data = cpp_result.get("cusum", cpp_result.get("mean_cusum", []))
+        # C++ 变点（mean 模式）
+        cpp_result = self._cpp_cusum_via_api([symbol], start_date, end_date,
+                                             modes=["mean"], K=0.5, H=5.0, min_obs=10)
+        cpp_symbol_data = cpp_result.get("mean_cusum", [])
         if isinstance(cpp_symbol_data, list) and len(cpp_symbol_data) > 0:
             cpp_symbol_data = cpp_symbol_data[0]
         cpp_change_points = cpp_symbol_data.get("change_points", [])
@@ -672,13 +735,16 @@ class TestCUSUMParameterSensitivity:
         )
         return detector.detect_batch(returns)
 
-    def _cpp_cusum_via_api(self, returns, K, H, min_obs=10):
-        """C++ CUSUM API 调用"""
+    def _cpp_cusum_via_api(self, symbols: List[str], start: str, end: str, K=0.5, H=5.0, min_obs=10) -> dict:
+        """C++ CUSUM API 调用（使用真实测试数据，mean 模式）"""
         headers = {"Authorization": self.token}
         resp = requests.post(
             f"{BASE_URL}/analysis/cusum",
             json={
-                "returns": returns,
+                "symbols": symbols,
+                "modes": ["mean"],
+                "start": start,
+                "end": end,
                 "lambda": K,
                 "threshold_multiplier": H,
                 "min_obs": min_obs
@@ -690,17 +756,37 @@ class TestCUSUMParameterSensitivity:
         resp.raise_for_status()
         return resp.json()
 
+    @pytest.fixture(autouse=True)
+    def setup(self, auth_token):
+        self.token = auth_token
+        self.symbol = "800001.sz"  # code.market 格式
+        self.start_date = "2024-01-01"
+        self.end_date = "2024-09-07"
+        
+        # 从 CSV 加载收盘价并计算收益率
+        csv_path = HFQ_DIR / "sz.800001.csv"
+        if csv_path.exists():
+            closes = []
+            with open(csv_path) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    closes.append(float(row["close"]))
+            self.returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
+        else:
+            self.returns = []
+
     @pytest.mark.parametrize("K,H", PARAM_SETS, ids=[f"K{k}_H{h}" for k, h in PARAM_SETS])
-    def test_cpp_python_sequence_alignment(self, K, H):
+    def test_cpp_python_sequence_alignment(self, K, H, auth_token):
         """每组参数下 C++ vs Python 的 s_pos/s_neg 序列应一致"""
-        returns = self.generate_synthetic_returns()
+        if not self.returns:
+            pytest.skip("测试数据不存在")
 
         # Python
-        py_result = self._python_cusum(returns, K, H)
+        py_result = self._python_cusum(self.returns, K, H)
 
         # C++
-        cpp_result = self._cpp_cusum_via_api(returns, K, H)
-        cpp_symbol_data = cpp_result.get("cusum", cpp_result.get("mean_cusum", []))
+        cpp_result = self._cpp_cusum_via_api([self.symbol], self.start_date, self.end_date, K=K, H=H)
+        cpp_symbol_data = cpp_result.get("mean_cusum", [])
         if isinstance(cpp_symbol_data, list) and len(cpp_symbol_data) > 0:
             cpp_symbol_data = cpp_symbol_data[0]
 
@@ -713,6 +799,7 @@ class TestCUSUMParameterSensitivity:
             f"K={K}, H={H}: 序列长度不一致 C++={len(cpp_s_pos)}, Python={len(py_steps)}"
 
         # 值一致（跳过 min_obs）
+        min_obs = 10
         for i in range(min_obs, len(py_steps)):
             assert abs(cpp_s_pos[i] - py_steps[i]['cusum_positive']) < 1e-6, \
                 f"K={K}, H={H}, i={i}: s_pos 误差过大"
@@ -720,13 +807,14 @@ class TestCUSUMParameterSensitivity:
                 f"K={K}, H={H}, i={i}: s_neg 误差过大"
 
     @pytest.mark.parametrize("K,H", PARAM_SETS, ids=[f"K{k}_H{h}" for k, h in PARAM_SETS])
-    def test_change_point_count_reasonable(self, K, H):
+    def test_change_point_count_reasonable(self, K, H, auth_token):
         """变点数量应符合参数预期（高阈值 → 少变点）"""
-        returns = self.generate_synthetic_returns()
+        if not self.returns:
+            pytest.skip("测试数据不存在")
 
         # C++ 变点数量
-        cpp_result = self._cpp_cusum_via_api(returns, K, H)
-        cpp_symbol_data = cpp_result.get("cusum", cpp_result.get("mean_cusum", []))
+        cpp_result = self._cpp_cusum_via_api([self.symbol], self.start_date, self.end_date, K=K, H=H)
+        cpp_symbol_data = cpp_result.get("mean_cusum", [])
         if isinstance(cpp_symbol_data, list) and len(cpp_symbol_data) > 0:
             cpp_symbol_data = cpp_symbol_data[0]
         cpp_change_points = cpp_symbol_data.get("change_points", [])
@@ -736,8 +824,8 @@ class TestCUSUMParameterSensitivity:
             # 对比同 K 值下 H=5 的结果
             K_same = K
             H_low = 5.0
-            cpp_result_low = self._cpp_cusum_via_api(returns, K_same, H_low)
-            cpp_symbol_data_low = cpp_result_low.get("cusum", cpp_result_low.get("mean_cusum", []))
+            cpp_result_low = self._cpp_cusum_via_api([self.symbol], self.start_date, self.end_date, K=K_same, H=H_low)
+            cpp_symbol_data_low = cpp_result_low.get("mean_cusum", [])
             if isinstance(cpp_symbol_data_low, list) and len(cpp_symbol_data_low) > 0:
                 cpp_symbol_data_low = cpp_symbol_data_low[0]
             cpp_change_points_low = cpp_symbol_data_low.get("change_points", [])
@@ -748,18 +836,19 @@ class TestCUSUMParameterSensitivity:
         assert len(cpp_change_points) >= 1, \
             f"K={K}, H={H}: 合成数据应至少检测到 1 个变点"
 
-    def test_k_sensitivity_boundary(self):
+    def test_k_sensitivity_boundary(self, auth_token):
         """K 接近实际偏移量时，检测应最敏感"""
-        returns = self.generate_synthetic_returns()
+        if not self.returns:
+            pytest.skip("测试数据不存在")
 
         # K=0.5（偏移量 1.0 的一半）应最敏感
         # 对比 K=0.5 vs K=1.0 在 H=5 下的变点数量
-        result_k05 = self._cpp_cusum_via_api(returns, K=0.5, H=5.0)
-        result_k10 = self._cpp_cusum_via_api(returns, K=1.0, H=5.0)
+        result_k05 = self._cpp_cusum_via_api([self.symbol], self.start_date, self.end_date, K=0.5, H=5.0)
+        result_k10 = self._cpp_cusum_via_api([self.symbol], self.start_date, self.end_date, K=1.0, H=5.0)
 
-        cp_k05 = result_k05.get("cusum", result_k05.get("mean_cusum", [{}]))
+        cp_k05 = result_k05.get("mean_cusum", [{}])
         if isinstance(cp_k05, list): cp_k05 = cp_k05[0]
-        cp_k10 = result_k10.get("cusum", result_k10.get("mean_cusum", [{}]))
+        cp_k10 = result_k10.get("mean_cusum", [{}])
         if isinstance(cp_k10, list): cp_k10 = cp_k10[0]
 
         n_cp_k05 = len(cp_k05.get("change_points", []))

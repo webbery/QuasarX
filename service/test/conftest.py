@@ -86,6 +86,12 @@ def upload_test_data(auth_api, is_backtest):
     stock_symbols |= s
     etf_symbols |= e
 
+    # ai_test_data/ 目录（AI 模型训练测试策略）
+    ai_dir = Path(__file__).parent / "testcases" / "ai_test_data"
+    s, e = _extract_symbols(ai_dir)
+    stock_symbols |= s
+    etf_symbols |= e
+
     if not stock_symbols and not etf_symbols:
         print("\n[upload_test_data] 未找到策略引用的标的，跳过")
         yield

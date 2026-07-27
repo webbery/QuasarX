@@ -821,8 +821,8 @@ void VolatilityHandler::evaluateCovarianceQuality(
 
     if (n == 1) {
         eigenvalues_out.push_back(cov[0][0]);
-        condition_number_out = 1.0;
         is_positive_definite_out = (cov[0][0] > 1e-12);
+        condition_number_out = is_positive_definite_out ? 1.0 : 1e15;
         return;
     }
 

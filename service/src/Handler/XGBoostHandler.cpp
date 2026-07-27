@@ -9,13 +9,16 @@
 #include "Nodes/QuoteNode.h"
 #include "Nodes/XGBoostNode.h"
 #include "Util/PythonRunner.h"
+#include "Util/log.h"
 #include "Util/string_algorithm.h"
+#include "Util/datetime.h"
 #include "server.h"
 #include "std_header.h"
 #include <fstream>
 #include <sstream>
 #include <random>
 #include <algorithm>
+#include <filesystem>
 #ifdef WIN32
 #else
 #include <unistd.h>
@@ -105,11 +108,9 @@ bool XGBoostHandler::deleteModel(uint64_t id) {
     return true;
 }
 
-namespace {
-
 // ============ 各个 action 的处理函数 ============
 
-void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Response& res, Server* server) {
+void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
     // ============== 1. 解析请求 ==============
     String strScript = params.value("script", "");
     if (strScript.empty()) {
@@ -154,7 +155,7 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
     List<QNode*> fullGraph;
     Set<QNode*> upstreamSet;
     try {
-        fullGraph = parse_strategy_script_v2(script, server);
+        fullGraph = parse_strategy_script_v2(script, _server);
         fullGraph = topo_sort(fullGraph);
     } catch (const std::exception& e) {
         for (auto n : fullGraph) delete n;
@@ -204,7 +205,7 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
     }
 
     // ============== 4. 启动 Exchange + 创建回测上下文 ==============
-    auto* exchangeMgr = server->GetExchangeManager();
+    auto* exchangeMgr = _server->GetExchangeManager();
     if (!exchangeMgr) {
         for (auto n : fullGraph) delete n;
         res.status = 500;
@@ -230,7 +231,7 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
     }
 
     // ============== 5. 部分回测 + 数据收集 ==============
-    auto* flowSubsystem = server->GetStrategySystem()->GetFlowSubsystem();
+    auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
     double initialCapital = 100000.0;
     String tmpStrategyName = strategyName + "_train";
 
@@ -267,7 +268,7 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
 
     writeCsv(csvPath, collected, collectedDates);
 
-    auto pyEnv = PythonEnv::fromConfig(server->GetConfig().GetRawConfig());
+    auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
     auto interpreter = pyEnv.resolve(params.value("py_env", ""));
 
     std::vector<std::string> args = {
@@ -298,6 +299,7 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
 
     PythonOutput out;
     String resultLine;
+    String stderrLines;
     while (runner.readLine(out, 60000)) {
         if (out.type == PythonOutput::DONE) break;
         if (out.type == PythonOutput::STDOUT) {
@@ -308,6 +310,9 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
             }
         } else if (out.type == PythonOutput::STDERR) {
             WARN("[XGBoostTrain stderr] {}", out.line);
+            if (stderrLines.size() < 1000) {
+                stderrLines += out.line + "\n";
+            }
         }
     }
 
@@ -315,7 +320,11 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
 
     if (resultLine.empty()) {
         res.status = 500;
-        res.set_content(R"({"message":"训练脚本未输出 result，请查看日志"})", "application/json");
+        String msg = stderrLines.empty() ? "训练脚本未输出 result" : stderrLines.substr(0, 500);
+        // 去除末尾换行
+        while (!msg.empty() && msg.back() == '\n') msg.pop_back();
+        nlohmann::json errResp = {{"message", "训练失败: " + msg}};
+        res.set_content(errResp.dump(), "application/json");
         std::remove(csvPath.c_str());
         return;
     }
@@ -331,7 +340,41 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
         return;
     }
 
-    // ============== 7. 加载模型到内存供 SHAP ==============
+    // ============== 7. 持久化模型到 experiments/ ==============
+    String dbPath = _server->GetConfig().GetDatabasePath();
+    String expDir = dbPath + "/models/experiments";
+    std::filesystem::create_directories(expDir);
+
+    time_t now = Now();
+    String ts = ToString(now, "%Y%m%d_%H%M%S");
+    String persistName = strategyName + "_" + ts;
+    String persistPath = expDir + "/" + persistName + ".json";
+    std::filesystem::copy(modelPath, persistPath, std::filesystem::copy_options::overwrite_existing);
+
+    // 写 meta.json
+    {
+        nlohmann::json meta;
+        meta["strategy_id"] = strategyName;
+        meta["created_at"] = ToString(now, "%Y-%m-%dT%H:%M:%S");
+        meta["source"] = "experiment";
+        meta["label"] = labelCfg;
+        meta["objective"] = objective;
+        meta["num_class"] = numClass;
+        meta["test_ratio"] = testRatio;
+        meta["params"] = xgbParams;
+        meta["date_range"] = dateRangeCfg;
+        meta["features"] = featureNames;
+        if (trainResult.contains("eval_metrics")) meta["eval_metrics"] = trainResult["eval_metrics"];
+        if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
+        if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
+        meta["n_features"] = featureNames.size();
+
+        String metaPath = expDir + "/" + persistName + ".meta.json";
+        std::ofstream ofs(metaPath);
+        if (ofs.is_open()) ofs << meta.dump(2);
+    }
+
+    // ============== 8. 加载模型到内存供 SHAP ==============
     BoosterHandle booster = nullptr;
     if (XGBoosterCreate(nullptr, 0, &booster) == 0 && booster) {
         if (XGBoosterLoadModel(booster, modelPath.c_str()) != 0) {
@@ -353,18 +396,28 @@ void handleTrain(XGBoostHandler* self, const nlohmann::json& params, httplib::Re
 
     uint64_t modelId = 0;
     if (booster) {
-        modelId = self->registerModel(booster, featureNames, Xtest);
+        // 使用 Python 训练时实际的特征列表（排除了 label 列），而非 C++ 上游节点的全部输出
+        Vector<String> actualFeatures;
+        if (trainResult.contains("features") && trainResult["features"].is_array()) {
+            for (auto& f : trainResult["features"]) {
+                actualFeatures.push_back(f.get<String>());
+            }
+        } else {
+            actualFeatures = featureNames;
+        }
+        modelId = registerModel(booster, actualFeatures, Xtest);
         trainResult["model_id"] = modelId;
     }
 
     trainResult.erase("X_test");
+    trainResult["model_path"] = persistPath;
     std::remove(csvPath.c_str());
     std::remove(modelPath.c_str());
 
     res.set_content(trainResult.dump(), "application/json");
 }
 
-void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Response& res) {
+void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response& res) {
     uint64_t modelId = 0;
     if (params.contains("model_id")) {
         try { modelId = params["model_id"].get<uint64_t>(); }
@@ -379,7 +432,7 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
         return;
     }
 
-    auto* model = self->getModel(modelId);
+    auto* model = getModel(modelId);
     if (!model || !model->booster) {
         res.status = 404;
         res.set_content(R"({"message":"model not found"})", "application/json");
@@ -417,16 +470,39 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
 
     bst_ulong out_dim = 0;
     const float* out_data = nullptr;
-    size_t n_out = 0;
+    size_t n_out;
+
+    // 调试日志：调用前
+    INFO("[XGBoost SHAP] Before predict: booster={}, dmat={}, n_samples={}, n_features={}", 
+         (void*)model->booster, (void*)dmat, n_samples, n_features);
 
 #if XGBOOST_VER_MAJOR >= 2
     // XGBoost >= 2.x: 使用 config JSON 字符串
-    const char* predict_config = R"({"type": 0, "training": false, "strict_shape": true})";
+    // PredictionType: kValue=0, kMargin=1, kContribution=2 (SHAP), kApproxContribution=3, kInteraction=4
+    const char* predict_config = R"({"type": 2, "training": false, "iteration_begin": 0, "iteration_end": 0, "strict_shape": true})";
     bst_ulong const* out_shape = nullptr;
+    
     ret = XGBoosterPredictFromDMatrix(model->booster, dmat,
                                        predict_config,
                                        &out_shape, &out_dim, &out_data);
-    n_samples = out_shape ? out_shape[0] : 0;
+    
+    // 调试日志：调用后
+    INFO("[XGBoost SHAP] After predict: ret={}, out_dim={}, out_data={}, out_shape={}",
+         ret, out_dim, (void*)out_data, (void*)out_shape);
+    if (ret != 0 || !out_data) {
+        FATAL("[XGBoost SHAP] XGBoost error: {}", XGBGetLastError());
+    }
+    if (out_shape && out_dim > 0) {
+        String shapeStr = "out_shape=[";
+        for (bst_ulong d = 0; d < out_dim; ++d) {
+            if (d > 0) shapeStr += ", ";
+            shapeStr += std::to_string(out_shape[d]);
+        }
+        shapeStr += "]";
+        INFO("[XGBoost SHAP] {}", shapeStr);
+    }
+    
+    // out_shape[0] = 总元素数 = n_samples × out_dim；n_samples 沿用预设值
     n_out = n_samples * out_dim;
 #else
     // XGBoost < 2.x: 旧版 (option, ntree_limit, training) 参数
@@ -448,25 +524,58 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
         return;
     }
 
-    // out_shape[0] = 总元素数（== n_samples * out_dim）
-    if (!out_shape || out_shape[0] == 0) {
-        res.status = 500;
-        res.set_content(R"({"message":"SHAP output shape invalid"})", "application/json");
-        return;
-    }
-
     nlohmann::json shapList = nlohmann::json::array();
     nlohmann::json baseList = nlohmann::json::array();
+
+    // 多分类 SHAP 输出为 3D: (n_samples, n_classes, n_features+1)
+    // 二分类 SHAP 输出为 2D: (n_samples, n_features+1)
+    // out_dim 是维度数（3D=3, 2D=2），不是每样本元素数
+    // 需要从 out_shape 获取实际形状
+    size_t stridePerSample = 0;
+    size_t nClasses = 1;
+    bool isMultiClass = false;
+
+    if (out_shape && out_dim >= 2) {
+        if (out_dim == 3) {
+            // 3D: (n_samples, n_classes, n_features+1)
+            nClasses = out_shape[1];
+            stridePerSample = nClasses * (n_features + 1);
+            isMultiClass = true;
+        } else {
+            // 2D: (n_samples, n_features+1)
+            stridePerSample = n_features + 1;
+        }
+    } else {
+        // fallback: 假设 2D
+        stridePerSample = n_features + 1;
+    }
+
     for (size_t i = 0; i < n_samples; ++i) {
         nlohmann::json featsArr = nlohmann::json::array();
-        for (size_t j = 0; j < n_features; ++j) {
-            featsArr.push_back(out_data[i * out_dim + j]);
+        if (isMultiClass) {
+            // 多分类：每个特征取所有类别 SHAP 的平均值
+            for (size_t j = 0; j < n_features; ++j) {
+                double sum = 0;
+                for (size_t c = 0; c < nClasses; ++c) {
+                    sum += out_data[i * stridePerSample + c * (n_features + 1) + j];
+                }
+                featsArr.push_back(sum / nClasses);
+            }
+            // base_value 取所有类别的平均
+            double baseSum = 0;
+            for (size_t c = 0; c < nClasses; ++c) {
+                baseSum += out_data[i * stridePerSample + c * (n_features + 1) + n_features];
+            }
+            baseList.push_back(baseSum / nClasses);
+        } else {
+            // 二分类：直接取前 n_features 个值
+            for (size_t j = 0; j < n_features; ++j) {
+                featsArr.push_back(out_data[i * stridePerSample + j]);
+            }
+            // base_value 是最后一个值
+            baseList.push_back(out_data[i * stridePerSample + n_features]);
         }
         shapList.push_back(featsArr);
-        // SHAP 输出最后一维为 base_value
-        if (out_dim > n_features) {
-            baseList.push_back(out_data[i * out_dim + n_features]);
-        }
     }
 
     nlohmann::json featuresArr = nlohmann::json::array();
@@ -482,29 +591,168 @@ void handleShap(XGBoostHandler* self, const nlohmann::json& params, httplib::Res
     res.set_content(resp.dump(), "application/json");
 }
 
-void handleDelete(XGBoostHandler* self, const nlohmann::json& params, httplib::Response& res) {
-    uint64_t id = 0;
-    if (params.contains("model_id")) {
-        try { id = params["model_id"].get<uint64_t>(); }
-        catch (...) {
-            res.status = 400;
-            res.set_content(R"({"message":"invalid model_id"})", "application/json");
-            return;
-        }
-    } else {
+void XGBoostHandler::handlePublish(const nlohmann::json& params, httplib::Response& res) {
+    String modelPath = params.value("model_path", "");
+    if (modelPath.empty()) {
         res.status = 400;
-        res.set_content(R"({"message":"missing model_id"})", "application/json");
+        res.set_content(R"({"message":"missing 'model_path'"})", "application/json");
         return;
     }
-    if (self->deleteModel(id)) {
+
+    if (!std::filesystem::exists(modelPath)) {
+        res.status = 404;
+        res.set_content(R"({"message":"model file not found"})", "application/json");
+        return;
+    }
+
+    // 从文件名提取 strategy_id 和 timestamp
+    std::filesystem::path p(modelPath);
+    String stem = p.stem().string();  // e.g. "strategy_xgb_20260727_153012"
+    // 去掉末尾的时间戳 _YYYYMMDD_HHMMSS 得到 strategy_id
+    String strategyId = stem;
+    auto lastUnderscore = stem.rfind('_');
+    if (lastUnderscore != String::npos) {
+        auto prevUnderscore = stem.rfind('_', lastUnderscore - 1);
+        if (prevUnderscore != String::npos) {
+            // 检查是否符合 _YYYYMMDD_HHMMSS 格式
+            String suffix = stem.substr(prevUnderscore + 1);
+            if (suffix.size() == 15 && suffix[8] == '_') {
+                strategyId = stem.substr(0, prevUnderscore);
+            }
+        }
+    }
+
+    String dbPath = _server->GetConfig().GetDatabasePath();
+    String prodDir = dbPath + "/models/production";
+    std::filesystem::create_directories(prodDir);
+
+    String prodModelPath = prodDir + "/" + strategyId + ".json";
+    String prodMetaPath = prodDir + "/" + strategyId + ".meta.json";
+
+    // 复制模型文件
+    std::filesystem::copy(modelPath, prodModelPath, std::filesystem::copy_options::overwrite_existing);
+
+    // 读取实验 meta 并写入 production meta（附加发布来源信息）
+    String expMetaPath = modelPath;
+    auto dotPos = expMetaPath.rfind('.');
+    if (dotPos != String::npos) {
+        expMetaPath = expMetaPath.substr(0, dotPos) + ".meta.json";
+    }
+
+    nlohmann::json prodMeta;
+    if (std::filesystem::exists(expMetaPath)) {
+        std::ifstream ifs(expMetaPath);
+        if (ifs.is_open()) {
+            try {
+                prodMeta = nlohmann::json::parse(ifs);
+            } catch (...) {}
+        }
+    }
+    prodMeta["source"] = "experiment";
+    prodMeta["published_from"] = stem;
+    prodMeta["published_at"] = ToString(Now(), "%Y-%m-%dT%H:%M:%S");
+
+    std::ofstream ofs(prodMetaPath);
+    if (ofs.is_open()) ofs << prodMeta.dump(2);
+
+    nlohmann::json resp = {
+        {"message", "published"},
+        {"production_path", prodModelPath},
+        {"strategy_id", strategyId},
+    };
+    res.set_content(resp.dump(), "application/json");
+}
+
+void XGBoostHandler::handleList(httplib::Response& res) {
+    String dbPath = _server->GetConfig().GetDatabasePath();
+    String expDir = dbPath + "/models/experiments";
+    String prodDir = dbPath + "/models/production";
+
+    nlohmann::json experiments = nlohmann::json::array();
+
+    if (std::filesystem::exists(expDir) && std::filesystem::is_directory(expDir)) {
+        // 收集所有 .json（非 .meta.json）文件
+        Vector<std::filesystem::path> modelFiles;
+        for (auto& entry : std::filesystem::directory_iterator(expDir)) {
+            String fname = entry.path().filename().string();
+            if (fname.size() > 5 && fname.substr(fname.size() - 5) == ".json"
+                && fname.find(".meta.json") == String::npos) {
+                modelFiles.push_back(entry.path());
+            }
+        }
+        // 按文件名降序（最新在前）
+        std::sort(modelFiles.begin(), modelFiles.end(), std::greater<>());
+
+        for (auto& fp : modelFiles) {
+            nlohmann::json item;
+            item["path"] = fp.string();
+            item["filename"] = fp.filename().string();
+
+            String metaPath = fp.string();
+            auto dotPos = metaPath.rfind('.');
+            if (dotPos != String::npos) {
+                metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+            }
+            if (std::filesystem::exists(metaPath)) {
+                std::ifstream ifs(metaPath);
+                if (ifs.is_open()) {
+                    try {
+                        item["meta"] = nlohmann::json::parse(ifs);
+                    } catch (...) {
+                        item["meta"] = nullptr;
+                    }
+                }
+            }
+            experiments.push_back(item);
+        }
+    }
+
+    nlohmann::json production = nullptr;
+    if (std::filesystem::exists(prodDir) && std::filesystem::is_directory(prodDir)) {
+        for (auto& entry : std::filesystem::directory_iterator(prodDir)) {
+            String fname = entry.path().filename().string();
+            if (fname.size() > 5 && fname.substr(fname.size() - 5) == ".json"
+                && fname.find(".meta.json") == String::npos) {
+                nlohmann::json item;
+                item["path"] = entry.path().string();
+                item["filename"] = fname;
+
+                String metaPath = entry.path().string();
+                auto dotPos = metaPath.rfind('.');
+                if (dotPos != String::npos) {
+                    metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+                }
+                if (std::filesystem::exists(metaPath)) {
+                    std::ifstream ifs(metaPath);
+                    if (ifs.is_open()) {
+                        try {
+                            item["meta"] = nlohmann::json::parse(ifs);
+                        } catch (...) {
+                            item["meta"] = nullptr;
+                        }
+                    }
+                }
+                production = item;
+                break;
+            }
+        }
+    }
+
+    nlohmann::json resp = {
+        {"experiments", experiments},
+        {"production", production},
+    };
+    res.set_content(resp.dump(), "application/json");
+}
+
+void XGBoostHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
+    if (deleteModel(modelId)) {
         res.set_content(R"({"message":"deleted"})", "application/json");
     } else {
         res.status = 404;
         res.set_content(R"({"message":"model not found"})", "application/json");
     }
 }
-
-}  // namespace
 
 void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
@@ -518,16 +766,64 @@ void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
 
     String action = params.value("action", "");
     if (action == "train") {
-        handleTrain(this, params, res, _server);
+        handleTrain(params, res);
     } else if (action == "shap") {
-        handleShap(this, params, res);
-    } else if (action == "delete") {
-        handleDelete(this, params, res);
+        handleShap(params, res);
+    } else if (action == "publish") {
+        handlePublish(params, res);
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|shap|delete)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|shap|publish)\"}",
             "application/json");
         return;
     }
+}
+
+void XGBoostHandler::get(const httplib::Request& req, httplib::Response& res) {
+    String action = req.get_param_value("action");
+    if (action == "list") {
+        handleList(res);
+    } else if (action == "shap") {
+        // 从 query params 构造 params json
+        nlohmann::json params;
+        String modelIdStr = req.get_param_value("model_id");
+        if (modelIdStr.empty()) {
+            res.status = 400;
+            res.set_content(R"({"message":"missing model_id"})", "application/json");
+            return;
+        }
+        try {
+            params["model_id"] = std::stoull(modelIdStr);
+        } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"message":"invalid model_id"})", "application/json");
+            return;
+        }
+        handleShap(params, res);
+    } else {
+        res.status = 400;
+        res.set_content(
+            "{\"message\":\"missing or invalid 'action' (list|shap)\"}",
+            "application/json");
+        return;
+    }
+}
+
+void XGBoostHandler::del(const httplib::Request& req, httplib::Response& res) {
+    String modelIdStr = req.get_param_value("model_id");
+    if (modelIdStr.empty()) {
+        res.status = 400;
+        res.set_content(R"({"message":"missing model_id"})", "application/json");
+        return;
+    }
+    uint64_t modelId = 0;
+    try {
+        modelId = std::stoull(modelIdStr);
+    } catch (...) {
+        res.status = 400;
+        res.set_content(R"({"message":"invalid model_id"})", "application/json");
+        return;
+    }
+    handleDelete(modelId, res);
 }

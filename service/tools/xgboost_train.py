@@ -38,8 +38,8 @@ except ImportError:
 
 
 def emit(obj):
-    """输出一行 JSON 到 stdout"""
-    print(json.dumps(obj, ensure_ascii=False, default=str), flush=True)
+    """输出一行紧凑 JSON 到 stdout（无空格分隔符）"""
+    print(json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":")), flush=True)
 
 
 def compute_label(values, period, label_type, vol_k):
@@ -179,7 +179,7 @@ def main():
         "verbosity": 0,
     }
     if is_classification:
-        default_params["eval_metric"] = "logloss"
+        default_params["eval_metric"] = "mlogloss" if args.num_class > 1 else "logloss"
     else:
         default_params["eval_metric"] = "rmse"
 
@@ -208,18 +208,24 @@ def main():
     progress_state = {"it": 0}
     last_emit = [time.time()]
 
-    def progress_cb(env):
-        now = time.time()
-        if now - last_emit[0] < 0.2 and env.iteration != env.end_iteration - 1:
-            return
-        last_emit[0] = now
-        train_loss = env.evaluation_result_list[0][1] if env.evaluation_result_list else None
-        emit({
-            "type": "progress",
-            "phase": "training",
-            "iteration": env.iteration,
-            "train_loss": float(train_loss) if train_loss is not None else None,
-        })
+    class ProgressCallback(xgb.callback.TrainingCallback):
+        def after_iteration(self, model, epoch, evals_log):
+            now = time.time()
+            if now - last_emit[0] < 0.2 and epoch != model.num_boosted_rounds() - 1:
+                return False
+            last_emit[0] = now
+            train_loss = None
+            if evals_log and "train" in evals_log:
+                for metric_vals in evals_log["train"].values():
+                    train_loss = float(metric_vals[-1])
+                    break
+            emit({
+                "type": "progress",
+                "phase": "training",
+                "iteration": epoch,
+                "train_loss": train_loss,
+            })
+            return False
 
     booster = xgb.train(
         default_params,
@@ -228,7 +234,7 @@ def main():
         evals=[(dtrain, "train"), (dtest, "eval")],
         early_stopping_rounds=esr if len(X_test) > 0 else None,
         verbose_eval=False,
-        callbacks=[progress_cb],
+        callbacks=[ProgressCallback()],
     )
 
     best_iteration = booster.best_iteration if hasattr(booster, "best_iteration") else n_estimators - 1
