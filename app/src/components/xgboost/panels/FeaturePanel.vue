@@ -10,14 +10,14 @@
         <div class="section-header">
           <h3 class="section-title">特征重要性</h3>
           <div class="metric-toggle">
-            <button v-for="m in ['gain', 'weight', 'cover']" :key="m"
-                    :class="{ active: currentMetric === m }"
-                    @click="currentMetric = m as Metric">
-              {{ m }}
+            <button v-for="m in METRICS" :key="m.value"
+                    :class="{ active: currentMetric === m.value }"
+                    @click="setMetric(m.value)">
+              {{ m.label }}
             </button>
           </div>
         </div>
-        <FeatureImportanceChart :data="result.feature_importance" :metric="currentMetric" />
+        <FeatureImportanceChart ref="importanceRef" :data="result.feature_importance" :metric="currentMetric" />
       </div>
 
       <!-- SHAP -->
@@ -25,15 +25,15 @@
         <div class="section-header">
           <h3 class="section-title">SHAP 特征贡献</h3>
           <button class="btn btn-primary" :disabled="shapLoading || !result" @click="onComputeShap">
-            {{ shapLoading ? '计算中…' : (state.trainResult.shap ? '重新计算 SHAP' : '计算 SHAP') }}
+            {{ shapLoading ? '计算中…' : (props.state.trainResult.shap ? '重新计算 SHAP' : '计算 SHAP') }}
           </button>
         </div>
-        <div v-if="state.trainResult.shap" class="shap-info">
-          <span class="info-pill">📊 {{ state.trainResult.shap.n_samples }} 个测试样本</span>
-          <span class="info-pill">📐 {{ state.trainResult.shap.features.length }} 个特征</span>
+        <div v-if="props.state.trainResult.shap" class="shap-info">
+          <span class="info-pill">📊 {{ props.state.trainResult.shap.n_samples }} 个测试样本</span>
+          <span class="info-pill">📐 {{ props.state.trainResult.shap.features.length }} 个特征</span>
           <span class="info-pill">✅ base_value + ΣSHAP ≈ prediction</span>
         </div>
-        <ShapSummaryChart v-if="state.trainResult.shap" :data="state.trainResult.shap" />
+        <ShapSummaryChart v-if="props.state.trainResult.shap" :data="props.state.trainResult.shap" />
       </div>
     </template>
   </div>
@@ -47,12 +47,24 @@ import { useXGBoostData } from '../composables/useXGBoostData'
 
 type Metric = 'gain' | 'weight' | 'cover'
 
+const METRICS: { value: Metric; label: string }[] = [
+  { value: 'gain', label: 'Gain · 总增益' },
+  { value: 'weight', label: 'Weight · 使用次数' },
+  { value: 'cover', label: 'Cover · 覆盖样本' },
+]
+
 const props = defineProps<{ state: any }>()
 const { shap } = useXGBoostData()
 
 const result = computed(() => props.state.trainResult.data)
 const currentMetric = ref<Metric>('gain')
+const importanceRef = ref<{ setMetric: (m: Metric) => void } | null>(null)
 const shapLoading = ref(false)
+
+function setMetric(m: Metric) {
+  currentMetric.value = m
+  importanceRef.value?.setMetric(m)
+}
 
 async function onComputeShap() {
   if (!result.value) return

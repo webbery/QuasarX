@@ -17,12 +17,13 @@ function render() {
   const posScores = props.predictions.filter(p => p.actual === 1).map(p => Number(p.predicted))
   const negScores = props.predictions.filter(p => p.actual === 0).map(p => Number(p.predicted))
   const opts = {
-    title: { text: '正/负样本预测概率分布', left: 'center' },
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['正样本 (actual=1)', '负样本 (actual=0)'], top: 24 },
+    backgroundColor: 'transparent',
+    title: { text: '正/负样本预测概率分布', left: 'center', textStyle: { color: '#e2e8f0', fontSize: 13 } },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,25,41,0.95)', borderColor: '#2b3a55', textStyle: { color: '#e0e0e0' } },
+    legend: { data: ['正样本 (actual=1)', '负样本 (actual=0)'], top: 24, textStyle: { color: '#94a3b8' } },
     grid: { left: 50, right: 30, top: 70, bottom: 40 },
-    xAxis: { type: 'value', name: '预测概率', min: 0, max: 1 },
-    yAxis: { type: 'value', name: '频次' },
+    xAxis: { type: 'value', name: '预测概率', min: 0, max: 1, nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+    yAxis: { type: 'value', name: '频次', nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
     series: [
       {
         name: '正样本 (actual=1)',

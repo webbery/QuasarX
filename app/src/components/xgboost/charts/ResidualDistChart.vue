@@ -16,11 +16,12 @@ function render() {
   if (!chart) return
   const residuals = props.predictions.map(p => Number(p.predicted) - Number(p.actual))
   const opts = {
-    title: { text: '残差分布', left: 'center' },
-    tooltip: { trigger: 'axis' },
-    grid: { left: 50, right: 30, top: 60, bottom: 40 },
-    xAxis: { type: 'value', name: 'residual' },
-    yAxis: { type: 'value', name: '频次' },
+    backgroundColor: 'transparent',
+    title: { text: '残差分布', left: 'center', textStyle: { color: '#e2e8f0', fontSize: 13 } },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,25,41,0.95)', borderColor: '#2b3a55', textStyle: { color: '#e0e0e0' } },
+    grid: { left: 50, right: 30, top: 50, bottom: 40 },
+    xAxis: { type: 'value', name: 'residual', nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+    yAxis: { type: 'value', name: '频次', nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
     series: [{
       name: 'residual',
       type: 'bar',

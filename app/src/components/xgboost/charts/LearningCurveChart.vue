@@ -15,16 +15,20 @@ const chartEl = ref<HTMLDivElement | null>(null)
 function render() {
   if (!chart) return
   const opts = {
-    title: { text: '学习曲线', left: 'center' },
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['train_loss', 'eval_loss'], top: 24 },
+    backgroundColor: 'transparent',
+    title: { text: '学习曲线', left: 'center', textStyle: { color: '#e2e8f0', fontSize: 13 } },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,25,41,0.95)', borderColor: '#2b3a55', textStyle: { color: '#e0e0e0' } },
+    legend: { data: ['train_loss', 'eval_loss'], top: 24, textStyle: { color: '#94a3b8' } },
     grid: { left: 50, right: 24, top: 70, bottom: 40 },
     xAxis: {
       type: 'category',
       data: props.data.map(d => d.iteration),
       name: 'Iteration',
+      nameTextStyle: { color: '#94a3b8' },
+      axisLabel: { color: '#94a3b8' },
+      axisLine: { lineStyle: { color: '#2b3a55' } },
     },
-    yAxis: { type: 'value', name: 'Loss', scale: true },
+    yAxis: { type: 'value', name: 'Loss', scale: true, nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
     series: [
       {
         name: 'train_loss',
@@ -33,6 +37,7 @@ function render() {
         showSymbol: false,
         data: props.data.map(d => Number(d.train_loss.toFixed(4))),
         itemStyle: { color: '#5470c6' },
+        lineStyle: { width: 1.6 },
       },
       {
         name: 'eval_loss',
@@ -41,6 +46,7 @@ function render() {
         showSymbol: false,
         data: props.data.map(d => Number(d.eval_loss.toFixed(4))),
         itemStyle: { color: '#ee6666' },
+        lineStyle: { width: 1.6 },
       },
     ],
   }

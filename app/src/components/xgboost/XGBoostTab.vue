@@ -43,112 +43,160 @@
       </template>
     </AnalysisControlBar>
 
-    <!-- 标签分析图表 + 控制面板 -->
-    <div v-if="state.labelAnalysis.result" class="label-chart-section">
-      <LabelAnalysisChart :data="state.labelAnalysis.result" />
-
-      <!-- 标签分布条 -->
-      <div class="label-distribution">
-        <div class="dist-bar">
-          <div class="dist-seg up" :style="{ width: labelStats.upPct + '%' }"></div>
-          <div class="dist-seg flat" :style="{ width: labelStats.flatPct + '%' }"></div>
-          <div class="dist-seg down" :style="{ width: labelStats.downPct + '%' }"></div>
-        </div>
-        <div class="dist-stats">
-          <span class="dist-item"><i class="dot up"></i>UP {{ labelStats.up }} ({{ labelStats.upPct.toFixed(1) }}%)</span>
-          <span class="dist-item"><i class="dot flat"></i>FLAT {{ labelStats.flat }} ({{ labelStats.flatPct.toFixed(1) }}%)</span>
-          <span class="dist-item"><i class="dot down"></i>DOWN {{ labelStats.down }} ({{ labelStats.downPct.toFixed(1) }}%)</span>
-          <span class="dist-threshold">阈值: {{ (state.labelAnalysis.result.threshold * 100).toFixed(2) }}%</span>
-        </div>
-      </div>
-
-      <!-- 参数控制 -->
-      <div class="label-controls">
-        <div class="control-row">
-          <label>预测周期 N:</label>
-          <input type="range" min="1" max="30" step="1" v-model.number="state.config.labelPeriod" />
-          <input type="number" min="1" max="60" v-model.number="state.config.labelPeriod" class="num-input" />
-          <span class="unit">天</span>
-        </div>
-        <div class="control-row">
-          <label>阈值系数 vol_k:</label>
-          <input type="range" min="0.1" max="2.0" step="0.05" v-model.number="state.config.volK" />
-          <input type="number" min="0.1" max="2.0" step="0.1" v-model.number="state.config.volK" class="num-input" />
-        </div>
-        <div class="control-row batch-row">
-          <button class="btn-batch" :disabled="state.batchAnalysis.loading || availableSecurities.length === 0" @click="runBatchAnalysis">
-            {{ state.batchAnalysis.loading ? state.batchAnalysis.progress : '批量标签分析' }}
-          </button>
-          <span class="batch-hint">对策略全部 {{ availableSecurities.length }} 只标的计算标签分布（N={{ state.config.labelPeriod }}, vol_k={{ state.config.volK.toFixed(2) }}）</span>
-        </div>
-      </div>
-
-      <!-- 批量分析结果表 -->
-      <div v-if="state.batchAnalysis.results.length > 0" class="batch-table-section">
-        <table class="batch-table">
-          <thead>
-            <tr>
-              <th>标的</th>
-              <th>UP</th>
-              <th>FLAT</th>
-              <th>DOWN</th>
-              <th>总数</th>
-              <th>分布</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="stat in paginatedBatchResults" :key="stat.symbol" :class="{ imbalanced: isImbalanced(stat) }">
-              <td class="sym-cell">{{ stat.symbol }}</td>
-              <td class="pct-cell up-text">{{ stat.upPct.toFixed(1) }}%</td>
-              <td class="pct-cell flat-text">{{ stat.flatPct.toFixed(1) }}%</td>
-              <td class="pct-cell down-text">{{ stat.downPct.toFixed(1) }}%</td>
-              <td class="num-cell">{{ stat.total }}</td>
-              <td class="bar-cell">
-                <div class="mini-bar">
-                  <div class="mini-seg up" :style="{ width: stat.upPct + '%' }"></div>
-                  <div class="mini-seg flat" :style="{ width: stat.flatPct + '%' }"></div>
-                  <div class="mini-seg down" :style="{ width: stat.downPct + '%' }"></div>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <!-- 翻页 -->
-        <div v-if="batchTotalPages > 1" class="pagination">
-          <button class="page-btn" :disabled="batchPage <= 1" @click="batchPage--">‹</button>
-          <span class="page-info">{{ batchPage }} / {{ batchTotalPages }}</span>
-          <button class="page-btn" :disabled="batchPage >= batchTotalPages" @click="batchPage++">›</button>
-        </div>
+    <div v-if="!selectedStrategyId" class="stage-empty stage-empty-hero">
+      <div class="stage-icon">00</div>
+      <div>
+        <span class="section-eyebrow">GETTING STARTED</span>
+        <h3>选择一个含 XGBoost 节点的策略</h3>
+        <p>工作流按 标签验证 → 模型训练 → 特征解释 → 模型诊断 四阶段推进，每一阶段的输出会成为下一阶段的输入。</p>
+        <ul class="stage-list">
+          <li><b>标签验证</b>：先用选定标的检查 UP/FLAT/DOWN 分布与阈值</li>
+          <li><b>模型训练</b>：基于上一步质量合格的标签训练 XGBoost</li>
+          <li><b>特征解释</b>：用 SHAP 解释当前模型关注的特征</li>
+          <li><b>模型诊断</b>：通过 ROC/混淆矩阵/残差图评估泛化能力</li>
+        </ul>
       </div>
     </div>
 
-    <!-- 内容 -->
-    <div v-if="!selectedStrategyId" class="empty-tab">
-      <div class="empty-icon">🧠</div>
-      <h2>XGBoost 训练与分析</h2>
-      <p>选择一个使用 XGBoost 节点的策略后开始训练</p>
-      <p class="note">支持的训练流程：<br />
-        • 部分回测：仅执行 XGBoost 上游节点收集特征数据<br />
-        • 离线训练：调用 xgboost (Python) 训练模型<br />
-        • SHAP 分析：C++ 端 XGBoost C API 计算特征贡献
-      </p>
-    </div>
-
-    <div v-else-if="!hasXGBoost" class="empty-tab">
-      <div class="empty-icon">⚠️</div>
-      <h2>策略中未找到 XGBoost 节点</h2>
-      <p>请在策略图中添加 XGBoost 节点后再使用此面板</p>
+    <div v-else-if="!hasXGBoost" class="stage-empty">
+      <div class="stage-icon">⚠️</div>
+      <div>
+        <span class="section-eyebrow">MISSING NODE</span>
+        <h3>策略中未找到 XGBoost 节点</h3>
+        <p>请在策略图中加入 XGBoost 节点后，再回到此面板使用训练与解释功能。</p>
+      </div>
     </div>
 
     <template v-else>
+      <div class="workflow-summary">
+        <div class="workflow-kicker">MODEL RESEARCH WORKSPACE</div>
+        <div class="workflow-title-row">
+          <div>
+            <h2>XGBoost 研究台</h2>
+            <p>从标签质量到模型解释，按阶段完成训练前后的验证闭环。</p>
+          </div>
+          <span class="node-status"><i></i>XGBoost 节点已连接</span>
+        </div>
+        <div class="workflow-meta">
+          <span><b>策略</b>{{ selectedStrategyName }}</span>
+          <span><b>数据</b>{{ dateRange?.[0] || '—' }} → {{ dateRange?.[1] || '—' }}</span>
+          <span><b>频率</b>{{ frequency }}</span>
+          <span v-if="state.trainResult.data"><b>模型</b>#{{ state.trainResult.data.model_id }}</span>
+        </div>
+      </div>
+
       <el-tabs v-model="activeTab" class="sub-tabs">
-        <el-tab-pane label="训练" name="train">
+        <el-tab-pane label="标签验证" name="label">
+          <div class="label-workspace">
+            <div v-if="state.labelAnalysis.result" class="label-result">
+              <LabelAnalysisChart :data="state.labelAnalysis.result" />
+
+              <div class="label-distribution">
+                <div class="dist-heading">
+                  <span class="section-eyebrow">LABEL BALANCE</span>
+                  <span class="dist-threshold">自适应阈值 {{ (state.labelAnalysis.result.threshold * 100).toFixed(2) }}%</span>
+                </div>
+                <div class="dist-bar">
+                  <div class="dist-seg up" :style="{ width: labelStats.upPct + '%' }"></div>
+                  <div class="dist-seg flat" :style="{ width: labelStats.flatPct + '%' }"></div>
+                  <div class="dist-seg down" :style="{ width: labelStats.downPct + '%' }"></div>
+                </div>
+                <div class="dist-stats">
+                  <span class="dist-item"><i class="dot up"></i><b>UP</b>{{ labelStats.up }} · {{ labelStats.upPct.toFixed(1) }}%</span>
+                  <span class="dist-item"><i class="dot flat"></i><b>FLAT</b>{{ labelStats.flat }} · {{ labelStats.flatPct.toFixed(1) }}%</span>
+                  <span class="dist-item"><i class="dot down"></i><b>DOWN</b>{{ labelStats.down }} · {{ labelStats.downPct.toFixed(1) }}%</span>
+                  <span class="dist-count">有效样本 {{ labelStats.total }}</span>
+                </div>
+              </div>
+
+              <div class="label-controls">
+                <div class="section-heading">
+                  <div>
+                    <span class="section-eyebrow">LABEL PARAMETERS</span>
+                    <h3>快速检查标签敏感度</h3>
+                  </div>
+                  <span class="section-hint">拖动后本地重算，不重新请求行情</span>
+                </div>
+                <div class="control-row">
+                  <label>预测周期 N</label>
+                  <input type="range" min="1" max="30" step="1" v-model.number="state.config.labelPeriod" />
+                  <input type="number" min="1" max="60" v-model.number="state.config.labelPeriod" class="num-input" />
+                  <span class="unit">天</span>
+                </div>
+                <div class="control-row">
+                  <label>波动阈值 vol_k</label>
+                  <input type="range" min="0.1" max="2.0" step="0.05" v-model.number="state.config.volK" />
+                  <input type="number" min="0.1" max="2.0" step="0.1" v-model.number="state.config.volK" class="num-input" />
+                </div>
+                <div class="batch-row">
+                  <button class="btn-batch" :disabled="state.batchAnalysis.loading || availableSecurities.length === 0" @click="runBatchAnalysis">
+                    {{ state.batchAnalysis.loading ? state.batchAnalysis.progress : '扫描全部标的' }}
+                  </button>
+                  <span class="batch-hint">对策略内 {{ availableSecurities.length }} 只标的检查标签分布</span>
+                </div>
+              </div>
+
+              <div v-if="state.batchAnalysis.results.length > 0" class="batch-table-section">
+                <div class="section-heading table-heading">
+                  <div>
+                    <span class="section-eyebrow">CROSS-SECTION CHECK</span>
+                    <h3>标的间标签分布</h3>
+                  </div>
+                  <span class="section-hint">红色行表示类别明显失衡</span>
+                </div>
+                <table class="batch-table">
+                  <thead>
+                    <tr>
+                      <th>标的</th>
+                      <th>UP</th>
+                      <th>FLAT</th>
+                      <th>DOWN</th>
+                      <th>样本</th>
+                      <th>分布</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="stat in paginatedBatchResults" :key="stat.symbol" :class="{ imbalanced: isImbalanced(stat) }">
+                      <td class="sym-cell">{{ stat.symbol }}</td>
+                      <td class="pct-cell up-text">{{ stat.upPct.toFixed(1) }}%</td>
+                      <td class="pct-cell flat-text">{{ stat.flatPct.toFixed(1) }}%</td>
+                      <td class="pct-cell down-text">{{ stat.downPct.toFixed(1) }}%</td>
+                      <td class="num-cell">{{ stat.total }}</td>
+                      <td class="bar-cell">
+                        <div class="mini-bar">
+                          <div class="mini-seg up" :style="{ width: stat.upPct + '%' }"></div>
+                          <div class="mini-seg flat" :style="{ width: stat.flatPct + '%' }"></div>
+                          <div class="mini-seg down" :style="{ width: stat.downPct + '%' }"></div>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div v-if="batchTotalPages > 1" class="pagination">
+                  <button class="page-btn" :disabled="batchPage <= 1" @click="batchPage--">‹</button>
+                  <span class="page-info">{{ batchPage }} / {{ batchTotalPages }}</span>
+                  <button class="page-btn" :disabled="batchPage >= batchTotalPages" @click="batchPage++">›</button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="stage-empty">
+              <div class="stage-icon">01</div>
+              <div>
+                <span class="section-eyebrow">LABEL VALIDATION</span>
+                <h3>先确认标签是否适合训练</h3>
+                <p>选择标签标的、字段和日期范围，运行标签分析后再决定预测周期与波动阈值。</p>
+                <button class="empty-action" :disabled="!canRunLabel" @click="runLabelAnalysis">运行标签分析</button>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="模型训练" name="train">
           <TrainPanel :state="state" :script="script" @trained="onTrained" />
         </el-tab-pane>
-        <el-tab-pane label="特征分析" name="feature">
+        <el-tab-pane label="特征解释" name="feature">
           <FeaturePanel :state="state" />
         </el-tab-pane>
-        <el-tab-pane label="诊断" name="diagnostic">
+        <el-tab-pane label="模型诊断" name="diagnostic">
           <DiagnosticPanel :state="state" />
         </el-tab-pane>
       </el-tabs>
@@ -168,7 +216,7 @@ import AnalysisControlBar from '@/components/shared/AnalysisControlBar.vue'
 import { useStrategySecurities } from '@/components/shared/composables/useStrategySecurities'
 import { useHistoryStore } from '@/stores/history'
 
-const activeTab = ref('train')
+const activeTab = ref('label')
 const state = useXGBoostState()
 const { field, quickRange, frequency, dateRange, labelSymbol, QUICK_RANGES, setQuickRange, setFrequency, setField } = state
 const { fetchLabelAnalysis, runBatchLabelAnalysis } = useXGBoostData()
@@ -306,6 +354,10 @@ watch(() => state.batchAnalysis.results.length, () => { batchPage.value = 1 })
 function onTrained() {
   activeTab.value = 'feature'
 }
+
+const selectedStrategyName = computed(() => {
+  return strategyOptions.value.find(opt => opt.id === selectedStrategyId.value)?.name || '—'
+})
 
 // 监听策略 ID 变化
 watch(selectedStrategyId, (newId) => {
@@ -686,5 +738,258 @@ onMounted(() => {
 }
 :deep(.el-tabs__item.is-active) {
   color: #3b82f6;
+}
+
+/* === 工作流摘要 === */
+.workflow-summary {
+  margin: 12px 8px 0;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, rgba(41, 98, 255, 0.18), rgba(41, 98, 255, 0.05) 60%, transparent);
+  border: 1px solid rgba(74, 85, 104, 0.35);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.workflow-kicker {
+  font-size: 11px;
+  letter-spacing: 2.4px;
+  color: #5b8ff9;
+  font-weight: 600;
+}
+.workflow-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.workflow-title-row h2 {
+  font-size: 20px;
+  margin: 4px 0 6px;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+.workflow-title-row p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.node-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(38, 166, 91, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(38, 166, 91, 0.35);
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.node-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 6px rgba(38, 166, 91, 0.7);
+  display: inline-block;
+}
+.workflow-meta {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: #94a3b8;
+  border-top: 1px dashed rgba(74, 85, 104, 0.4);
+  padding-top: 10px;
+}
+.workflow-meta span b {
+  color: #5b8ff9;
+  font-weight: 600;
+  margin-right: 6px;
+  letter-spacing: 1px;
+  font-size: 10.5px;
+}
+
+/* === 标签验证工作区 === */
+.label-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 4px 24px;
+}
+.label-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.section-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 2.2px;
+  color: #5b8ff9;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.section-heading h3 {
+  margin: 4px 0 0;
+  font-size: 15px;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+.section-hint {
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+.table-heading {
+  align-items: center;
+}
+
+.label-distribution {
+  background: rgba(15, 25, 41, 0.55);
+  border: 1px solid rgba(74, 85, 104, 0.25);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.dist-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.dist-threshold {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  color: #5b8ff9;
+  font-size: 11.5px;
+  background: rgba(91, 143, 249, 0.12);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.dist-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  font-size: 11.5px;
+  color: #94a3b8;
+  margin-top: 10px;
+}
+.dist-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dist-item b {
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-right: 2px;
+}
+.dist-count {
+  margin-left: auto;
+  color: #64748b;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 11px;
+}
+
+.label-controls {
+  background: rgba(15, 25, 41, 0.55);
+  border: 1px solid rgba(74, 85, 104, 0.25);
+  border-radius: 8px;
+  padding: 14px 16px 16px;
+}
+.batch-table-section {
+  background: rgba(15, 25, 41, 0.55);
+  border: 1px solid rgba(74, 85, 104, 0.25);
+  border-radius: 8px;
+  padding: 14px 16px 6px;
+}
+
+/* === 阶段空态 === */
+.stage-empty {
+  display: flex;
+  gap: 18px;
+  margin: 8px;
+  padding: 28px 32px;
+  background: rgba(15, 25, 41, 0.6);
+  border: 1px dashed rgba(74, 85, 104, 0.5);
+  border-radius: 10px;
+  align-items: flex-start;
+}
+.stage-empty-hero {
+  margin: 16px;
+  padding: 36px 40px;
+}
+.stage-icon {
+  font-size: 32px;
+  font-weight: 600;
+  color: #5b8ff9;
+  background: rgba(91, 143, 249, 0.12);
+  border: 1px solid rgba(91, 143, 249, 0.35);
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: 1px;
+}
+.stage-empty h3 {
+  margin: 6px 0 8px;
+  font-size: 18px;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+.stage-empty p {
+  margin: 0 0 12px;
+  color: #94a3b8;
+  font-size: 12.5px;
+  line-height: 1.7;
+  max-width: 640px;
+}
+.stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 18px;
+  font-size: 12px;
+  color: #94a3b8;
+  max-width: 720px;
+}
+.stage-list li {
+  position: relative;
+  padding-left: 14px;
+}
+.stage-list li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #5b8ff9;
+}
+.stage-list b {
+  color: #cbd5e1;
+  margin-right: 4px;
+}
+.empty-action {
+  background: #3b82f6;
+  border: none;
+  color: white;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.empty-action:disabled {
+  background: #475569;
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 </style>

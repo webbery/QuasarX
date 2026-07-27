@@ -31,14 +31,16 @@ function render() {
   const sortedMeans = order.map(i => Number(means[i].toFixed(4)))
 
   const opts = {
-    title: { text: 'SHAP 摘要（平均 |SHAP|）', left: 'center' },
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: 100, right: 30, top: 50, bottom: 30 },
-    xAxis: { type: 'value', name: 'mean |SHAP|' },
+    backgroundColor: 'transparent',
+    title: { text: 'SHAP 摘要（平均 |SHAP|）', left: 'center', textStyle: { color: '#e2e8f0', fontSize: 13 } },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: 'rgba(15,25,41,0.95)', borderColor: '#2b3a55', textStyle: { color: '#e0e0e0' } },
+    grid: { left: 110, right: 30, top: 50, bottom: 30 },
+    xAxis: { type: 'value', name: 'mean |SHAP|', nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
     yAxis: {
       type: 'category',
       data: sortedFeats,
       inverse: true,
+      axisLabel: { color: '#cbd5e1' },
     },
     series: [{
       name: 'mean |SHAP|',

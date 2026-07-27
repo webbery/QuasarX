@@ -19,14 +19,18 @@ function render() {
   const maxV = Math.max(...points.flat())
 
   const opts = {
-    title: { text: '预测 vs 实际', left: 'center' },
+    backgroundColor: 'transparent',
+    title: { text: '预测 vs 实际', left: 'center', textStyle: { color: '#e2e8f0', fontSize: 13 } },
     tooltip: {
       trigger: 'item',
+      backgroundColor: 'rgba(15,25,41,0.95)',
+      borderColor: '#2b3a55',
+      textStyle: { color: '#e0e0e0' },
       formatter: (p: any) => `Actual=${p.data[0].toFixed(4)}<br/>Pred=${p.data[1].toFixed(4)}`,
     },
-    grid: { left: 60, right: 30, top: 60, bottom: 50 },
-    xAxis: { type: 'value', name: 'Actual', min: minV, max: maxV },
-    yAxis: { type: 'value', name: 'Predicted', min: minV, max: maxV },
+    grid: { left: 60, right: 30, top: 50, bottom: 50 },
+    xAxis: { type: 'value', name: 'Actual', min: minV, max: maxV, nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+    yAxis: { type: 'value', name: 'Predicted', min: minV, max: maxV, nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
     series: [
       {
         name: 'Pred vs Actual',
@@ -40,7 +44,7 @@ function render() {
         type: 'line',
         showSymbol: false,
         data: [[minV, minV], [maxV, maxV]],
-        lineStyle: { type: 'dashed', color: '#999' },
+        lineStyle: { type: 'dashed', color: '#64748b' },
       },
     ],
   }

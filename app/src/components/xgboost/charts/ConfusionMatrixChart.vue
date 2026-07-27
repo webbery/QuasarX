@@ -34,21 +34,35 @@ function computeMatrix(predictions: Prediction[]) {
 function render() {
   if (!chart) return
   const { labels, data } = computeMatrix(props.predictions)
+  const labelMap: Record<string, string> = { '0': 'UP', '1': 'FLAT', '2': 'DOWN' }
+  const displayLabels = labels.map(l => labelMap[l] || l)
   const opts = {
-    title: { text: '混淆矩阵', left: 'center' },
+    backgroundColor: 'transparent',
+    title: { text: '混淆矩阵', left: 'center', textStyle: { color: '#e2e8f0', fontSize: 13 } },
     tooltip: {
       position: 'top',
-      formatter: (p: any) => `Actual=${p.data[1]}<br/>Pred=${p.data[0]}<br/>Count=${p.data[2]}`,
+      backgroundColor: 'rgba(15,25,41,0.95)',
+      borderColor: '#2b3a55',
+      textStyle: { color: '#e0e0e0' },
+      formatter: (p: any) => `Actual=${labelMap[String(p.data[1])] || p.data[1]}<br/>Pred=${labelMap[String(p.data[0])] || p.data[0]}<br/>Count=${p.data[2]}`,
     },
-    grid: { left: 80, right: 30, top: 60, bottom: 80 },
-    xAxis: { type: 'category', data: labels, name: 'Predicted', nameLocation: 'middle', nameGap: 30 },
-    yAxis: { type: 'category', data: labels, name: 'Actual', nameLocation: 'middle', nameGap: 40 },
-    visualMap: { min: 0, max: Math.max(1, ...data.map(d => d.v)), calculable: true, orient: 'vertical', right: 0, top: 'middle' },
+    grid: { left: 80, right: 60, top: 50, bottom: 70 },
+    xAxis: { type: 'category', data: displayLabels, name: 'Predicted', nameLocation: 'middle', nameGap: 28, nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#cbd5e1' } },
+    yAxis: { type: 'category', data: displayLabels, name: 'Actual', nameLocation: 'middle', nameGap: 36, nameTextStyle: { color: '#94a3b8' }, axisLabel: { color: '#cbd5e1' } },
+    visualMap: {
+      min: 0,
+      max: Math.max(1, ...data.map(d => d.v)),
+      calculable: true,
+      orient: 'vertical',
+      right: 0,
+      top: 'middle',
+      textStyle: { color: '#94a3b8' },
+    },
     series: [{
       name: 'Count',
       type: 'heatmap',
-      data: data.map(d => [d.x, d.y, d.v]),
-      label: { show: true },
+      data: data.map(d => [displayLabels[labels.indexOf(d.x)], displayLabels[labels.indexOf(d.y)], d.v]),
+      label: { show: true, color: '#f8fafc' },
     }],
   }
   chart.setOption(opts, true)
