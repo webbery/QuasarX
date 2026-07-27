@@ -13,6 +13,9 @@ EMDNode::EMDNode(Server* server)
       _computeEnergyVelocity(false), _computeVolumeRegime(false) {}
 
 bool EMDNode::Init(const nlohmann::json& config) {
+    _rollingIMFs.clear();
+    _rollingInitialized = false;
+
     _label = (String)config["label"];
 
     // 解析算法类型
@@ -245,27 +248,80 @@ Vector<double> EMDNode::computeVolumeRegime(const Vector<Vector<double>>& imfs,
 
 NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context) {
     for (auto& [inputKey, argType] : _params) {
-        // 从 DataContext 获取输入时间序列
+        // 从 DataContext 获取输入时间序列（避免拷贝，用 const 引用）
         auto& value = context.get(inputKey);
-        Vector<double> input_data;
-        if (auto* p = std::get_if<Vector<double>>(&value)) {
-            input_data = *p;
-        } else {
+        const Vector<double>* pInput = std::get_if<Vector<double>>(&value);
+        if (!pInput) {
             WARN("EMDNode input {} is not a time series", inputKey);
             return NodeProcessResult::Error;
         }
+        const auto& input_data = *pInput;
+        const int n = static_cast<int>(input_data.size());
 
         const int minLen = _windowSize > 0 ? _windowSize : 10;
-        if (static_cast<int>(input_data.size()) < minLen) {
+        if (n < minLen) {
             WARN("EMDNode input {} too short ({} points), need at least {}",
-                 inputKey, input_data.size(), minLen);
+                 inputKey, n, minLen);
             return NodeProcessResult::Skip;
         }
 
         Vector<Vector<double>> imfs;
-        if (!decomposeOne(input_data, imfs)) {
-            WARN("EMDNode decomposition failed for input {}", inputKey);
-            return NodeProcessResult::Skip;
+
+        if (_windowSize > 0) {
+            // ===== 滚动模式：增量计算，只处理最新窗口 =====
+            auto& stored = _rollingIMFs[inputKey];
+
+            if (!_rollingInitialized || stored.empty()) {
+                // 首次：计算全部位置（bootstrap）
+                if (!decomposeOne(input_data, imfs)) {
+                    WARN("EMDNode decomposition failed for input {}", inputKey);
+                    return NodeProcessResult::Skip;
+                }
+                stored = imfs;
+                _rollingInitialized = true;
+            } else {
+                // 后续 epoch：只计算最新一个窗口（O(1) 而非 O(n)）
+                const int w = _windowSize;
+                Vector<double> window_data(w);
+                for (int j = 0; j < w; ++j) {
+                    window_data[j] = input_data[n - w + j];
+                }
+
+                Vector<Vector<double>> win_imfs;
+                if (_method == EMDMethod::VMD) {
+                    VMD vmd;
+                    VMD::Config cfg;
+                    cfg.K = _numIMFs; cfg.alpha = _alpha;
+                    cfg.tau = _tau; cfg.tol = _tol;
+                    win_imfs = vmd.decompose(window_data, cfg).imfs;
+                } else if (_method == EMDMethod::CEEMDAN) {
+                    CEEMDAN ceemdan;
+                    CEEMDAN::Config cfg;
+                    cfg.numIMFs = _numIMFs; cfg.ensembles = _ensembles;
+                    cfg.noiseStd = _noiseStd; cfg.seed = 42;
+                    win_imfs = ceemdan.decompose(window_data, cfg).imfs;
+                } else {
+                    EMD emd_algo;
+                    win_imfs = emd_algo.emd(window_data, _numIMFs);
+                }
+
+                // 追加最新值到持久存储
+                for (int k = 0; k < _numIMFs && k < static_cast<int>(win_imfs.size()); ++k) {
+                    if (!win_imfs[k].empty()) {
+                        if (k >= static_cast<int>(stored.size())) {
+                            stored.emplace_back(Vector<double>(n - 1, 0.0));
+                        }
+                        stored[k].push_back(win_imfs[k].back());
+                    }
+                }
+                imfs = stored;
+            }
+        } else {
+            // ===== 全局模式：每次完整分解 =====
+            if (!decomposeOne(input_data, imfs)) {
+                WARN("EMDNode decomposition failed for input {}", inputKey);
+                return NodeProcessResult::Skip;
+            }
         }
 
         // 写入 IMF 输出
@@ -283,7 +339,6 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
             context.set(_label + ".energy_velocity", energy_vel);
         }
         if (_computeVolumeRegime) {
-            // 需要 volume 输入
             try {
                 const auto& vol = context.get<Vector<double>>("volume");
                 auto vol_regime = computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);

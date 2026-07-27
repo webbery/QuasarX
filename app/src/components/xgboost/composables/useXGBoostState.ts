@@ -3,6 +3,20 @@
 
 import { reactive, ref } from 'vue'
 
+export interface TrainStep {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  elapsedMs?: number
+  detail?: string
+}
+
+export interface TrainLog {
+  step: string
+  level: 'info' | 'warning' | 'error'
+  line: string
+}
+
 export interface LearningCurvePoint {
   iteration: number
   train_loss: number
@@ -149,11 +163,15 @@ export function useXGBoostState() {
     shap: ShapResult | null
     loading: boolean
     progressMsg: string
+    steps: TrainStep[]
+    logs: TrainLog[]
   }>({
     data: null,
     shap: null,
     loading: false,
     progressMsg: '',
+    steps: [],
+    logs: [],
   })
 
   // 训练配置
@@ -201,6 +219,8 @@ export function useXGBoostState() {
     trainResult.shap = null
     trainResult.progressMsg = ''
     trainResult.loading = false
+    trainResult.steps = []
+    trainResult.logs = []
     labelAnalysis.result = null
     labelAnalysis.loading = false
     labelSymbol.value = ''

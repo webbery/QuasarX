@@ -4,6 +4,9 @@
 #include <xgboost/version_config.h>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <functional>
 
 struct CachedXGBoostModel {
     BoosterHandle booster = nullptr;
@@ -22,13 +25,39 @@ struct CachedXGBoostModel {
     }
 };
 
-// 单一端点：POST /v0/xgboost
-// 通过 body 中的 "action" 字段路由：
-//   action=train    训练模型（返回完整结果 JSON）
-//   action=shap     计算 SHAP 值
-//   action=publish  发布实验模型到生产目录
-//   action=list     列出实验和生产模型
-//   action=delete   释放内存中已注册的模型
+// 训练会话：记录事件历史，支持 SSE 重连回放
+struct TrainSession {
+    String sessionId;
+    std::atomic<bool> done{false};
+    std::atomic<bool> cancelled{false};
+
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    // 事件历史（用于重连后回放）
+    struct Event { String type; nlohmann::json data; };
+    Vector<Event> eventLog;
+
+    // 最终结果（训练完成后设置）
+    nlohmann::json result;
+    bool hasError = false;
+
+    // 线程安全地推送事件
+    void pushEvent(const String& type, const nlohmann::json& data) {
+        std::lock_guard<std::mutex> lk(mtx);
+        eventLog.push_back({type, data});
+        cv.notify_all();
+    }
+
+    void finish(const nlohmann::json& res, bool error = false) {
+        std::lock_guard<std::mutex> lk(mtx);
+        result = res;
+        hasError = error;
+        done = true;
+        cv.notify_all();
+    }
+};
+
 class XGBoostHandler : public HttpHandler {
 public:
     using HttpHandler::HttpHandler;
@@ -44,6 +73,7 @@ public:
 
 private:
     void handleTrain(const nlohmann::json& params, httplib::Response& res);
+    void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);
     void handlePublish(const nlohmann::json& params, httplib::Response& res);
     void handleList(httplib::Response& res);
@@ -52,4 +82,8 @@ private:
     Map<uint64_t, CachedXGBoostModel> _cache;
     std::atomic<uint64_t> _nextId{1};
     std::mutex _mtx;
+
+    // 训练会话管理
+    static std::shared_ptr<TrainSession> s_activeSession;
+    static std::mutex s_sessionMtx;
 };

@@ -21,6 +21,35 @@
       </div>
     </div>
 
+    <!-- 训练进度面板 -->
+    <div v-if="state.trainResult.steps.length > 0" class="training-progress">
+      <div class="progress-header">
+        <span class="progress-title">训练进度</span>
+        <span v-if="!state.trainResult.loading" class="progress-done">完成</span>
+      </div>
+      <div class="step-list">
+        <div v-for="step in state.trainResult.steps" :key="step.id" class="step-item">
+          <span class="step-icon" :class="step.status">
+            <template v-if="step.status === 'done'">✓</template>
+            <template v-else-if="step.status === 'running'">⏳</template>
+            <template v-else-if="step.status === 'error'">✗</template>
+            <template v-else>○</template>
+          </span>
+          <span class="step-label">{{ step.label }}</span>
+          <span v-if="step.detail" class="step-detail">{{ step.detail }}</span>
+          <span v-if="step.elapsedMs" class="step-time">{{ step.elapsedMs }}ms</span>
+          <!-- epoch 进度条 -->
+          <div v-if="step.status === 'running' && step.detail && step.detail.includes('/')" class="step-progress-bar">
+            <div class="step-progress-fill" :style="{ width: parseProgressPct(step.detail) + '%' }"></div>
+          </div>
+        </div>
+        <div v-for="(log, i) in state.trainResult.logs" :key="'log-'+i" class="log-item" :class="log.level">
+          <span class="log-icon">{{ log.level === 'warning' ? '⚠' : log.level === 'error' ? '✗' : 'ℹ' }}</span>
+          <span class="log-line">{{ log.line }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 基础参数 -->
     <div class="config-section">
       <div class="section-heading">
@@ -216,6 +245,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { LABEL_TYPES, REG_MODES } from '../composables/useXGBoostState'
+import type { TrainStep, TrainLog } from '../composables/useXGBoostState'
 import { useXGBoostData } from '../composables/useXGBoostData'
 import LearningCurveChart from '../charts/LearningCurveChart.vue'
 import MetricsCard from '../charts/MetricsCard.vue'
@@ -252,7 +282,14 @@ watch(() => props.script, (s) => {
           const params = node.data.params || {}
           const codeParam = params['code'] || params['代码']
           if (codeParam?.value) {
-            const codes = Array.isArray(codeParam.value) ? codeParam.value : [codeParam.value]
+            let codes: string[]
+            if (Array.isArray(codeParam.value)) {
+              codes = codeParam.value
+            } else if (typeof codeParam.value === 'string' && codeParam.value.includes(',')) {
+              codes = codeParam.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+            } else {
+              codes = [String(codeParam.value)]
+            }
             if (codes.length > 0) {
               config.labelSource = `${codes[0]}.close`
               break
@@ -268,16 +305,34 @@ function onLabelTypeChange() {
   props.state.syncObjective()
 }
 
+const STEP_LABELS: Record<string, string> = {
+  parse_script: '解析策略图',
+  init_nodes: '初始化节点',
+  start_exchange: '启动数据源',
+  collect_data: '收集特征数据',
+  train_model: 'Python 训练',
+}
+
+function parseProgressPct(detail: string): number {
+  const m = detail.match(/(\d+)\s*\/\s*(\d+)/)
+  if (m && Number(m[2]) > 0) return Math.round(Number(m[1]) / Number(m[2]) * 100)
+  return 0
+}
+
 async function onTrain() {
   props.state.trainResult.loading = true
   props.state.trainResult.progressMsg = '开始训练...'
-  try {
-    // 根据正则化模式计算 reg_alpha / reg_lambda
-    let regAlpha = 0, regLambda = 0
-    if (config.regMode === 'l1') regAlpha = config.regValue
-    else if (config.regMode === 'l2') regLambda = config.regValue
-    else if (config.regMode === 'both') { regAlpha = config.regValue; regLambda = config.regValue }
+  props.state.trainResult.steps = []
+  props.state.trainResult.logs = []
 
+  const stepStartTimes: Record<string, number> = {}
+
+  let regAlpha = 0, regLambda = 0
+  if (config.regMode === 'l1') regAlpha = config.regValue
+  else if (config.regMode === 'l2') regLambda = config.regValue
+  else if (config.regMode === 'both') { regAlpha = config.regValue; regLambda = config.regValue }
+
+  try {
     const result = await train(props.script, {
       labelSource: config.labelSource,
       labelPeriod: config.labelPeriod,
@@ -297,11 +352,60 @@ async function onTrain() {
       scalePosWeight: config.scalePosWeight,
       regAlpha,
       regLambda,
-      // 时间范围与标签分析一致
-      startDate: props.state.dateRange?.[0] || '',
-      endDate: props.state.dateRange?.[1] || '',
-      frequency: props.state.frequency || '1d',
-    })
+      startDate: props.state.dateRange.value?.[0] || '',
+      endDate: props.state.dateRange.value?.[1] || '',
+      frequency: props.state.frequency.value || '1d',
+  }, (type: string, data: any) => {
+    if (type === 'step') {
+      const stepId = data.step
+      const existing = props.state.trainResult.steps.find((s: TrainStep) => s.id === stepId)
+      if (data.status === 'start') {
+        if (existing) {
+          // 重连重放：重置已有步骤而非新增
+          existing.status = 'running'
+          existing.detail = data.msg
+          existing.elapsedMs = undefined
+        } else {
+          stepStartTimes[stepId] = Date.now()
+          props.state.trainResult.steps.push({
+            id: stepId,
+            label: STEP_LABELS[stepId] || stepId,
+            status: 'running',
+            detail: data.msg,
+          })
+        }
+      } else if (data.status === 'done') {
+        if (existing) {
+          existing.status = 'done'
+          existing.elapsedMs = Date.now() - (stepStartTimes[stepId] || 0)
+          if (data.features) existing.detail = `${data.features} 个特征`
+          else if (data.bars) existing.detail = `${data.bars} bars`
+          else if (data.symbols) existing.detail = `${data.symbols} 个标的`
+        }
+      }
+    } else if (type === 'progress') {
+      // 更新步骤的进度信息（epoch 进度条）
+      const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
+      if (step && data.total > 0) {
+        step.detail = `${data.current} / ${data.total} epochs`
+      }
+    } else if (type === 'warning') {
+      const line = data.msg || data.line || ''
+      // 去重：避免重连时重复显示相同警告
+      if (!props.state.trainResult.logs.some((l: TrainLog) => l.line === line && l.level === 'warning')) {
+        props.state.trainResult.logs.push({ step: data.step || '', level: 'warning', line })
+      }
+    } else if (type === 'log') {
+      props.state.trainResult.logs.push({ step: data.step || '', level: 'info', line: data.line || '' })
+    } else if (type === 'error') {
+      const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
+      if (step) step.status = 'error'
+      const line = data.msg || ''
+      if (!props.state.trainResult.logs.some((l: TrainLog) => l.line === line && l.level === 'error')) {
+        props.state.trainResult.logs.push({ step: data.step || '', level: 'error', line })
+      }
+    }
+  })
     props.state.trainResult.data = result
     if (result) emit('trained')
   } finally {
@@ -312,6 +416,97 @@ async function onTrain() {
 
 <style scoped>
 .train-panel { padding: 16px 4px 24px; }
+
+/* 训练进度面板 */
+.training-progress {
+  margin-bottom: 16px;
+  background: rgba(15, 25, 41, 0.55);
+  border: 1px solid rgba(74, 85, 104, 0.25);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.progress-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.progress-done {
+  font-size: 11px;
+  color: #34d399;
+  font-weight: 600;
+}
+.step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.step-icon {
+  width: 18px;
+  text-align: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.step-icon.done { color: #34d399; }
+.step-icon.running { color: #fbbf24; }
+.step-icon.error { color: #f87171; }
+.step-icon.pending { color: #64748b; }
+.step-label {
+  color: #cbd5e1;
+  flex: 1;
+}
+.step-detail {
+  color: #94a3b8;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+.step-time {
+  color: #64748b;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  min-width: 50px;
+  text-align: right;
+}
+.step-progress-bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(74, 85, 104, 0.3);
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.step-progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.log-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  padding: 2px 0 2px 26px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+.log-item.warning { color: #fbbf24; }
+.log-item.error { color: #f87171; }
+.log-item.info { color: #94a3b8; }
+.log-icon { flex-shrink: 0; }
+.log-line { word-break: break-all; }
+
 .config-section, .metrics-section, .chart-section {
   margin-bottom: 18px;
   background: rgba(15, 25, 41, 0.55);

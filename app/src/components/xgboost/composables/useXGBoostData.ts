@@ -3,41 +3,18 @@
 
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import type { ShapResult, TrainResult, LabelAnalysisResult, BatchLabelStat } from './useXGBoostState'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
+import type { ShapResult, TrainResult, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useXGBoostState'
+import { convertLabelsToKeys } from '@/lib/nodes'
 
-// 中文参数键 → 英文参数键映射（C++ 后端只识别英文键）
-const PARAM_KEY_MAP: Record<string, string> = {
-  '代码': 'code',
-  '来源': 'source',
-  '频率': 'freq',
-  '收盘价': 'close',
-  '开盘价': 'open',
-  '最高价': 'high',
-  '最低价': 'low',
-  '成交量': 'volume',
-  '缺失处理': 'missingHandle',
-  '回测周期': 'range',
-  '标签': 'label',
-  '标的': 'symbol',
-}
-
-/** 将策略 JSON 中节点的中文参数键转为英文（C++ 后端兼容） */
-function normalizeScriptParamKeys(scriptStr: string): string {
+/** 确保 code 参数为数组格式（C++ 端期望数组） */
+function normalizeCodeParams(scriptStr: string): string {
   try {
     const parsed = JSON.parse(scriptStr)
     if (Array.isArray(parsed.nodes)) {
       for (const node of parsed.nodes) {
         const params = node?.data?.params
         if (!params || typeof params !== 'object') continue
-        const keys = Object.keys(params)
-        for (const key of keys) {
-          const englishKey = PARAM_KEY_MAP[key]
-          if (englishKey && key !== englishKey) {
-            params[englishKey] = params[key]
-            delete params[key]
-          }
-        }
-        // 确保 code 参数是数组格式（C++ 端期望数组）
         const codeParam = params.code
         if (codeParam?.value != null) {
           if (typeof codeParam.value === 'string') {
@@ -85,11 +62,12 @@ export function useXGBoostData() {
       endDate: string
       frequency: string
     },
+    onEvent?: (type: string, data: any) => void,
   ): Promise<TrainResult | null> {
     try {
       const body = {
         action: 'train',
-        script: normalizeScriptParamKeys(script),
+        script: normalizeCodeParams(convertLabelsToKeys(script)),
         label: {
           source: config.labelSource,
           period: config.labelPeriod,
@@ -118,8 +96,51 @@ export function useXGBoostData() {
           reg_lambda: config.regLambda,
         },
       }
-      const resp = await axios.post('/v0/xgboost', body, { timeout: 600_000 })
-      return resp.data as TrainResult
+      const plainBody = JSON.parse(JSON.stringify(body))
+      const server = localStorage.getItem('remote') || 'localhost:19107'
+      const token = localStorage.getItem('token') || ''
+
+      // Step 1: POST 触发训练（幂等：已有训练在跑则返回现有 session_id）
+      const postResp = await axios.post('/v0/xgboost', plainBody)
+      const sessionId = postResp.data?.session_id
+      if (!sessionId) {
+        ElMessage.error('训练启动失败：未返回 session_id')
+        return null
+      }
+
+      // Step 2: GET SSE 订阅进度（可安全重连，自动回放历史事件）
+      let result: TrainResult | null = null
+      await fetchEventSource(
+        `https://${server}/v0/xgboost?action=train&session_id=${sessionId}`,
+        {
+          method: 'GET',
+          headers: { 'Authorization': token },
+
+          onopen: async (response) => {
+            if (response.ok) return
+            const text = await response.text()
+            throw new Error(text || `HTTP ${response.status}`)
+          },
+
+          onmessage: (event) => {
+            if (!event.data) return
+            try {
+              const data = JSON.parse(event.data)
+              onEvent?.(event.event || 'message', data)
+              if (event.event === 'result') {
+                result = data as TrainResult
+              } else if (event.event === 'error') {
+                ElMessage.error(`训练失败: ${data.msg || data.message || '未知错误'}`)
+              }
+            } catch { /* skip malformed */ }
+          },
+
+          onclose: () => {},
+          onerror: (err) => { throw err },
+        }
+      )
+
+      return result
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '训练失败'
       ElMessage.error(`XGBoost 训练失败: ${msg}`)

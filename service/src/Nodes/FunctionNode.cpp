@@ -1,6 +1,7 @@
 #include "Nodes/FunctionNode.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
+#include "Util/datetime.h"
 #include "server.h"
 #include "boost/algorithm/string/join.hpp"
 #include "boost/algorithm/string/replace.hpp"
@@ -15,25 +16,30 @@
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 namespace {
-    static const Map<String, int> timeHorizon{
-        {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600}, {"1d", 1}, {"3d", 3}, {"5d", 5}, {"15d", 15},
+    // 从 config 中提取 range 参数并转为秒数
+    auto rangeToSeconds = [](const nlohmann::json& config) -> int {
+        String range = (String)config["params"]["range"]["value"];
+        TimeValue tv = ParseTimeValue(range);
+        switch (tv.unit) {
+            case 's': return tv.value;
+            case 'm': return tv.value * 60;
+            case 'h': return tv.value * 3600;
+            case 'd': return tv.value * 86400;
+            default:  return tv.value;
+        }
+    };
+
+    // 从 config 中提取 range 参数的数值部分（用于 MA 等按 bar 数计算的场景）
+    auto rangeValue = [](const nlohmann::json& config) -> int {
+        String range = (String)config["params"]["range"]["value"];
+        return ParseTimeValue(range).value;
     };
 
     using CallableFactory = std::function<ICallable*(const nlohmann::json&)>;
 
     Map<String, CallableFactory> intrinsic_functions{
         {"MA", [] (const nlohmann::json& config) {
-            String range = config["params"]["range"]["value"].dump();
-            std::regex re(R"(\d+)");
-            std::smatch match;
-            if (std::regex_search(range, match, re)) {
-                int period = std::stoi(match.str());
-                if (period <= 0) {
-                    throw std::runtime_error("MA range period must be positive, got: " + range);
-                }
-                return new MA(period);
-            }
-            throw std::runtime_error("Invalid MA range format: " + range);
+            return new MA(rangeValue(config));
         }},
         {"MinMax", [] (const nlohmann::json& config) -> ICallable* {
             return nullptr;
@@ -42,8 +48,7 @@ namespace {
             return nullptr;
         }},
         {"ATR", [] (const nlohmann::json& config) -> ICallable* {
-            String cnt = (String)config["params"]["range"]["value"];
-            return new ATR(timeHorizon.at(cnt));
+            return new ATR(rangeToSeconds(config));
         }},
         {"VWAP", [] (const nlohmann::json& config) -> ICallable* {
             return nullptr;
@@ -52,24 +57,19 @@ namespace {
             return nullptr;
         }},
         {"STD", [] (const nlohmann::json& config) -> ICallable* {
-            String cnt = (String)config["params"]["range"]["value"];
-            return new STD(timeHorizon.at(cnt));
+            return new STD(rangeToSeconds(config));
         }},
         {"Return", [] (const nlohmann::json& config) -> ICallable* {
-            String cnt = (String)config["params"]["range"]["value"];
-            return new Return(timeHorizon.at(cnt));
+            return new Return(rangeToSeconds(config));
         }},
         {"R2", [] (const nlohmann::json& config) -> ICallable* {
-            String cnt = (String)config["params"]["range"]["value"];
-            return new R2(timeHorizon.at(cnt));
+            return new R2(rangeToSeconds(config));
         }},
         {"ZScore", [] (const nlohmann::json& config) -> ICallable* {
-            String cnt = (String)config["params"]["range"]["value"];
-            return new ZScore(timeHorizon.at(cnt));
+            return new ZScore(rangeToSeconds(config));
         }},
         {"VPCorr", [] (const nlohmann::json& config) -> ICallable* {
-            String cnt = (String)config["params"]["range"]["value"];
-            return new VPCorr(timeHorizon.at(cnt));
+            return new VPCorr(rangeToSeconds(config));
         }},
     };
 }
@@ -188,6 +188,11 @@ bool FunctionNode::Init(const nlohmann::json& config) {
          _id, _label, _params.size());
 
     // 2. 获取方法名
+    if (!config.contains("params") || !config["params"].contains("method")
+        || !config["params"]["method"].contains("value")) {
+        throw std::runtime_error(fmt::format(
+            "[FunctionNode:{}] Init: missing params.method.value in config", _id));
+    }
     String methodName = config["params"]["method"]["value"];
 
     // 3. 从 _params 的 key 中提取所有 symbol

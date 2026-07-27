@@ -152,7 +152,8 @@ public:
         const Set<symbol_t>& symbols,
         double initialCapital,
         Map<String, Vector<double>>& outCollected,
-        Vector<String>& outDates
+        Vector<String>& outDates,
+        std::function<void(uint64_t epoch, uint64_t totalBars)> onProgress = nullptr
     );
     BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
 

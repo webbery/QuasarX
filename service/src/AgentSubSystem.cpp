@@ -948,7 +948,8 @@ bool FlowSubsystem::RunTrainingCollect(
     const Set<symbol_t>& symbols,
     double initialCapital,
     Map<String, Vector<double>>& outCollected,
-    Vector<String>& outDates
+    Vector<String>& outDates,
+    std::function<void(uint64_t epoch, uint64_t totalBars)> onProgress
 ) {
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (!exchangeMgr) {
@@ -962,15 +963,16 @@ bool FlowSubsystem::RunTrainingCollect(
         WARN("[TrainingCollect] No stock backtest exchange available");
         return false;
     }
-
+    INFO("[TrainingCollect] Creating backtest context: strategy='{}', symbols={}", strategy, symbols.size());
     run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
     if (runId == 0) {
         WARN("[TrainingCollect] Failed to create backtest context");
         return false;
     }
+    INFO("[TrainingCollect] Backtest context created: runId={}", runId);
 
     bool success = false;
-    std::thread worker([strategy, runId, &upstreamGraph, this, exchangeMgr, exchange, &outCollected, &outDates, &success]() {
+    std::thread worker([strategy, runId, &upstreamGraph, this, exchangeMgr, exchange, &outCollected, &outDates, &success, onProgress]() {
         DataContext context(strategy, _handle);
         context.setBacktestRunId(runId);
 
@@ -981,31 +983,46 @@ bool FlowSubsystem::RunTrainingCollect(
         }
 
         try {
+            INFO("[TrainingCollect] Prepare: {} nodes", upstreamGraph.size());
             for (auto node : upstreamGraph) {
                 node->Prepare(strategy, context);
             }
+            INFO("[TrainingCollect] Prepare done, starting epoch loop");
 
             uint64_t epoch = 0;
             bool running = true;
+            // 估算总 bar 数（取第一个 symbol 的数据长度作为参考）
+            uint64_t totalBars = btContext ? btContext->getTotalBars() : 0;
             while (running && !Server::IsExit()) {
                 context.SetEpoch(++epoch);
                 if (!exchange->stepForward(btContext)) {
-                    INFO("[TrainingCollect] Data finished for {}", strategy);
+                    INFO("[TrainingCollect] Data finished at epoch {}", epoch);
                     break;
                 }
                 for (auto node : upstreamGraph) {
                     auto result = node->Process(strategy, context);
                     if (result == NodeProcessResult::Finished) {
-                        INFO("[TrainingCollect] Node returned Finished: {}", node->id());
+                        INFO("[TrainingCollect] Node {} returned Finished at epoch {}", node->id(), epoch);
                         running = false;
                         break;
                     }
                     if (result == NodeProcessResult::Error) {
-                        WARN("[TrainingCollect] Node error: {}", node->id());
+                        WARN("[TrainingCollect] Node {} error at epoch {}", node->id(), epoch);
                         running = false;
                         break;
                     }
                 }
+                // 每 50 个 epoch 回调一次进度（避免锁开销）
+                if (onProgress && epoch % 50 == 0) {
+                    onProgress(epoch, totalBars);
+                }
+                if (epoch % 500 == 0) {
+                    INFO("[TrainingCollect] ... epoch {} running", epoch);
+                }
+            }
+            // 最终进度回调
+            if (onProgress) {
+                onProgress(epoch, totalBars);
             }
 
             context.CollectNumericOutputs(outCollected);

@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <string.h>
 #include <string>
+#include <regex>
 #include "Util/system.h"
 
 time_t FromStr(const std::string& dateString, const char* fmt) {
@@ -55,6 +56,20 @@ time_t Now()
 
   std::tm local_tm = *std::localtime(&utc_time);
   return std::mktime(&local_tm);
+}
+
+TimeValue ParseTimeValue(const std::string& str) {
+    std::regex re(R"(^(\d+)([smhdSMHD])?$)");
+    std::smatch match;
+    if (!std::regex_match(str, match, re)) {
+        throw std::invalid_argument("Invalid time value format: " + str);
+    }
+    int val = std::stoi(match[1].str());
+    if (val <= 0) {
+        throw std::invalid_argument("Time value must be positive: " + str);
+    }
+    char unit = match[2].matched ? static_cast<char>(std::tolower(match[2].str()[0])) : '\0';
+    return {val, unit};
 }
 
 // std::chrono::time_point<std::chrono::system_clock> FromLocalTime(time_t t) {

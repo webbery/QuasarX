@@ -58,4 +58,9 @@ private:
     bool _computeVolumeRegime;     // 是否计算 volume_regime
     Map<String, ArgType> _params;  // 输入参数（来自上游节点的输出）
     Map<String, ArgType> _outputs; // 输出元素声明
+
+    // 滚动模式持久状态：避免每个 epoch 重复计算全部历史
+    // key = inputKey, value = 累积的 IMF 输出向量
+    Map<String, Vector<Vector<double>>> _rollingIMFs;
+    bool _rollingInitialized = false;
 };

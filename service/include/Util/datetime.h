@@ -10,6 +10,17 @@ std::string ToString(time_t, const char* fmt = "%Y-%m-%d %H:%M:%S");
 
 time_t Now();
 
+/**
+ * 解析带后缀的时间字符串，返回数值和单位
+ * 支持后缀: s(秒), m(分), h(时), d(日)，无后缀视为裸数字
+ * 例: "5d" → {5, 'd'}, "30m" → {30, 'm'}, "1h" → {1, 'h'}, "10" → {10, '\0'}
+ */
+struct TimeValue {
+    int value;
+    char unit;  // 's', 'm', 'h', 'd', '\0'
+};
+TimeValue ParseTimeValue(const std::string& str);
+
 float Hour(const String& time);
 
 bool IsInTimeRange(time_t tick, char start_hour, char end_hour, char start_min, char end_min);

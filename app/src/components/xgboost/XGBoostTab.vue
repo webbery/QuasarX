@@ -46,43 +46,30 @@
     <div v-if="!selectedStrategyId" class="stage-empty stage-empty-hero">
       <div class="stage-icon">00</div>
       <div>
-        <span class="section-eyebrow">GETTING STARTED</span>
         <h3>选择一个含 XGBoost 节点的策略</h3>
-        <p>工作流按 标签验证 → 模型训练 → 特征解释 → 模型诊断 四阶段推进，每一阶段的输出会成为下一阶段的输入。</p>
-        <ul class="stage-list">
-          <li><b>标签验证</b>：先用选定标的检查 UP/FLAT/DOWN 分布与阈值</li>
-          <li><b>模型训练</b>：基于上一步质量合格的标签训练 XGBoost</li>
-          <li><b>特征解释</b>：用 SHAP 解释当前模型关注的特征</li>
-          <li><b>模型诊断</b>：通过 ROC/混淆矩阵/残差图评估泛化能力</li>
-        </ul>
+        <p>工作流：标签验证 → 模型训练 → 特征解释 → 模型诊断，各阶段输出作为下一阶段的输入。</p>
       </div>
     </div>
 
     <div v-else-if="!hasXGBoost" class="stage-empty">
       <div class="stage-icon">⚠️</div>
       <div>
-        <span class="section-eyebrow">MISSING NODE</span>
         <h3>策略中未找到 XGBoost 节点</h3>
         <p>请在策略图中加入 XGBoost 节点后，再回到此面板使用训练与解释功能。</p>
       </div>
     </div>
 
     <template v-else>
-      <div class="workflow-summary">
-        <div class="workflow-kicker">MODEL RESEARCH WORKSPACE</div>
-        <div class="workflow-title-row">
-          <div>
-            <h2>XGBoost 研究台</h2>
-            <p>从标签质量到模型解释，按阶段完成训练前后的验证闭环。</p>
-          </div>
-          <span class="node-status"><i></i>XGBoost 节点已连接</span>
-        </div>
-        <div class="workflow-meta">
-          <span><b>策略</b>{{ selectedStrategyName }}</span>
-          <span><b>数据</b>{{ dateRange?.[0] || '—' }} → {{ dateRange?.[1] || '—' }}</span>
-          <span><b>频率</b>{{ frequency }}</span>
-          <span v-if="state.trainResult.data"><b>模型</b>#{{ state.trainResult.data.model_id }}</span>
-        </div>
+      <div class="compact-status">
+        <span class="node-status"><i></i>XGBoost</span>
+        <span class="status-sep">·</span>
+        <span>{{ selectedStrategyName }}</span>
+        <span class="status-sep">·</span>
+        <span>{{ dateRange?.[0] || '—' }} → {{ dateRange?.[1] || '—' }}</span>
+        <span class="status-sep">·</span>
+        <span>{{ frequency }}</span>
+        <span v-if="state.trainResult.data" class="status-sep">·</span>
+        <span v-if="state.trainResult.data">模型 #{{ state.trainResult.data.model_id }}</span>
       </div>
 
       <el-tabs v-model="activeTab" class="sub-tabs">
@@ -93,8 +80,8 @@
 
               <div class="label-distribution">
                 <div class="dist-heading">
-                  <span class="section-eyebrow">LABEL BALANCE</span>
-                  <span class="dist-threshold">自适应阈值 {{ (state.labelAnalysis.result.threshold * 100).toFixed(2) }}%</span>
+                  <span class="dist-label">标签分布</span>
+                  <span class="dist-threshold">阈值 {{ (state.labelAnalysis.result.threshold * 100).toFixed(2) }}%</span>
                 </div>
                 <div class="dist-bar">
                   <div class="dist-seg up" :style="{ width: labelStats.upPct + '%' }"></div>
@@ -110,12 +97,9 @@
               </div>
 
               <div class="label-controls">
-                <div class="section-heading">
-                  <div>
-                    <span class="section-eyebrow">LABEL PARAMETERS</span>
-                    <h3>快速检查标签敏感度</h3>
-                  </div>
-                  <span class="section-hint">拖动后本地重算，不重新请求行情</span>
+                <div class="controls-header">
+                  <span class="controls-title">参数调节</span>
+                  <span class="controls-hint">拖动后本地重算</span>
                 </div>
                 <div class="control-row">
                   <label>预测周期 N</label>
@@ -137,12 +121,9 @@
               </div>
 
               <div v-if="state.batchAnalysis.results.length > 0" class="batch-table-section">
-                <div class="section-heading table-heading">
-                  <div>
-                    <span class="section-eyebrow">CROSS-SECTION CHECK</span>
-                    <h3>标的间标签分布</h3>
-                  </div>
-                  <span class="section-hint">红色行表示类别明显失衡</span>
+                <div class="controls-header" style="margin-bottom: 8px">
+                  <span class="controls-title">标的间标签分布</span>
+                  <span class="controls-hint">红色行表示类别失衡</span>
                 </div>
                 <table class="batch-table">
                   <thead>
@@ -182,8 +163,7 @@
             <div v-else class="stage-empty">
               <div class="stage-icon">01</div>
               <div>
-                <span class="section-eyebrow">LABEL VALIDATION</span>
-                <h3>先确认标签是否适合训练</h3>
+                <h3>确认标签是否适合训练</h3>
                 <p>选择标签标的、字段和日期范围，运行标签分析后再决定预测周期与波动阈值。</p>
                 <button class="empty-action" :disabled="!canRunLabel" @click="runLabelAnalysis">运行标签分析</button>
               </div>
@@ -229,7 +209,7 @@ const {
   loading: securitiesLoading,
   loadSecuritiesForStrategy,
   toggleSymbol,
-} = useStrategySecurities({ defaultCheckAll: false })
+} = useStrategySecurities({ defaultCheckAll: true })
 const historyStore = useHistoryStore()
 
 const script = ref('')
@@ -448,31 +428,6 @@ onMounted(() => {
   color: #e0e0e0;
 }
 
-.label-chart-section {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-  background: rgba(26, 34, 54, 0.5);
-  border-bottom: 1px solid rgba(74, 85, 104, 0.2);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-}
-.label-chart-section::-webkit-scrollbar {
-  width: 6px;
-}
-.label-chart-section::-webkit-scrollbar-track {
-  background: transparent;
-}
-.label-chart-section::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-
-/* 标签分布条 */
-.label-distribution {
-  padding: 8px 12px;
-}
 .dist-bar {
   display: flex;
   height: 8px;
@@ -486,18 +441,6 @@ onMounted(() => {
 .dist-seg.up { background: #26a65b; }
 .dist-seg.flat { background: #9e9e9e; }
 .dist-seg.down { background: #ea3943; }
-.dist-stats {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  font-size: 11px;
-  color: #999;
-}
-.dist-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .dot {
   width: 8px;
   height: 8px;
@@ -507,18 +450,16 @@ onMounted(() => {
 .dot.up { background: #26a65b; }
 .dot.flat { background: #9e9e9e; }
 .dot.down { background: #ea3943; }
-.dist-threshold {
-  margin-left: auto;
-  color: #5b8ff9;
-  font-family: 'SF Mono', 'Consolas', monospace;
-}
 
 /* 参数控制 */
 .label-controls {
-  padding: 8px 12px 12px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  background: rgba(15, 25, 41, 0.55);
+  border: 1px solid rgba(74, 85, 104, 0.25);
+  border-radius: 6px;
 }
 .control-row {
   display: flex;
@@ -612,7 +553,7 @@ onMounted(() => {
 
 /* 批量结果表 */
 .batch-table-section {
-  padding: 0 12px 12px;
+  padding: 0 0 8px;
   overflow-x: auto;
 }
 .batch-table {
@@ -711,25 +652,12 @@ onMounted(() => {
   text-align: center;
 }
 
-.empty-tab {
-  padding: 80px 20px;
-  text-align: center;
-  color: #64748b;
-}
-.empty-tab h2 { color: #cbd5e1; margin: 16px 0 8px; }
-.empty-tab .note {
-  margin-top: 24px;
-  font-size: 13px;
-  color: #94a3b8;
-  line-height: 1.8;
-}
-.empty-icon { font-size: 64px; margin-bottom: 16px; }
 .sub-tabs {
   flex: 1;
   background: #131c2e;
-  border-radius: 8px;
-  padding: 8px 16px;
-  margin: 8px;
+  border-radius: 6px;
+  padding: 4px 12px;
+  margin: 4px 8px 8px;
   overflow: auto;
 }
 :deep(.el-tabs__item) {
@@ -740,129 +668,81 @@ onMounted(() => {
   color: #3b82f6;
 }
 
-/* === 工作流摘要 === */
-.workflow-summary {
-  margin: 12px 8px 0;
-  padding: 18px 22px;
-  background: linear-gradient(135deg, rgba(41, 98, 255, 0.18), rgba(41, 98, 255, 0.05) 60%, transparent);
-  border: 1px solid rgba(74, 85, 104, 0.35);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.workflow-kicker {
-  font-size: 11px;
-  letter-spacing: 2.4px;
-  color: #5b8ff9;
-  font-weight: 600;
-}
-.workflow-title-row {
+/* === 紧凑状态栏 === */
+.compact-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-.workflow-title-row h2 {
-  font-size: 20px;
-  margin: 4px 0 6px;
-  color: #f1f5f9;
-  font-weight: 600;
-}
-.workflow-title-row p {
-  margin: 0;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
   color: #94a3b8;
-  font-size: 12.5px;
-  line-height: 1.6;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.2);
+  flex-wrap: wrap;
+}
+.status-sep {
+  color: #4a5568;
 }
 .node-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: rgba(38, 166, 91, 0.12);
+  gap: 5px;
   color: #34d399;
-  border: 1px solid rgba(38, 166, 91, 0.35);
-  border-radius: 999px;
   font-size: 11px;
-  white-space: nowrap;
+  font-weight: 600;
 }
 .node-status i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: #34d399;
-  box-shadow: 0 0 6px rgba(38, 166, 91, 0.7);
+  box-shadow: 0 0 4px rgba(38, 166, 91, 0.5);
   display: inline-block;
-}
-.workflow-meta {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-  font-size: 11.5px;
-  color: #94a3b8;
-  border-top: 1px dashed rgba(74, 85, 104, 0.4);
-  padding-top: 10px;
-}
-.workflow-meta span b {
-  color: #5b8ff9;
-  font-weight: 600;
-  margin-right: 6px;
-  letter-spacing: 1px;
-  font-size: 10.5px;
 }
 
 /* === 标签验证工作区 === */
 .label-workspace {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 8px 4px 24px;
+  gap: 10px;
+  padding: 4px 4px 16px;
 }
 .label-result {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
-.section-eyebrow {
-  font-size: 10.5px;
-  letter-spacing: 2.2px;
-  color: #5b8ff9;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-.section-heading {
+.controls-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
 }
-.section-heading h3 {
-  margin: 4px 0 0;
-  font-size: 15px;
+.controls-title {
+  font-size: 13px;
   color: #e2e8f0;
   font-weight: 600;
 }
-.section-hint {
-  font-size: 11.5px;
+.controls-hint {
+  font-size: 11px;
   color: #94a3b8;
-}
-.table-heading {
-  align-items: center;
 }
 
 .label-distribution {
   background: rgba(15, 25, 41, 0.55);
   border: 1px solid rgba(74, 85, 104, 0.25);
-  border-radius: 8px;
-  padding: 14px 16px;
+  border-radius: 6px;
+  padding: 10px 14px;
 }
 .dist-heading {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+.dist-label {
+  font-size: 12px;
+  color: #cbd5e1;
+  font-weight: 500;
 }
 .dist-threshold {
   font-family: 'SF Mono', 'Consolas', monospace;
@@ -913,17 +793,17 @@ onMounted(() => {
 /* === 阶段空态 === */
 .stage-empty {
   display: flex;
-  gap: 18px;
+  gap: 14px;
   margin: 8px;
-  padding: 28px 32px;
+  padding: 20px 24px;
   background: rgba(15, 25, 41, 0.6);
   border: 1px dashed rgba(74, 85, 104, 0.5);
-  border-radius: 10px;
+  border-radius: 8px;
   align-items: flex-start;
 }
 .stage-empty-hero {
-  margin: 16px;
-  padding: 36px 40px;
+  margin: 12px 8px;
+  padding: 24px 28px;
 }
 .stage-icon {
   font-size: 32px;
@@ -947,36 +827,11 @@ onMounted(() => {
   font-weight: 600;
 }
 .stage-empty p {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
   color: #94a3b8;
   font-size: 12.5px;
-  line-height: 1.7;
+  line-height: 1.6;
   max-width: 640px;
-}
-.stage-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 18px;
-  font-size: 12px;
-  color: #94a3b8;
-  max-width: 720px;
-}
-.stage-list li {
-  position: relative;
-  padding-left: 14px;
-}
-.stage-list li::before {
-  content: '▸';
-  position: absolute;
-  left: 0;
-  color: #5b8ff9;
-}
-.stage-list b {
-  color: #cbd5e1;
-  margin-right: 4px;
 }
 .empty-action {
   background: #3b82f6;

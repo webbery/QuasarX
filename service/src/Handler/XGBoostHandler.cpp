@@ -19,6 +19,10 @@
 #include <random>
 #include <algorithm>
 #include <filesystem>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
 #ifdef WIN32
 #else
 #include <unistd.h>
@@ -27,6 +31,10 @@
 extern "C" {
 #include <xgboost/c_api.h>
 }
+
+// 静态成员定义
+std::shared_ptr<TrainSession> XGBoostHandler::s_activeSession = nullptr;
+std::mutex XGBoostHandler::s_sessionMtx;
 
 namespace {
 
@@ -111,6 +119,19 @@ bool XGBoostHandler::deleteModel(uint64_t id) {
 // ============ 各个 action 的处理函数 ============
 
 void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
+    // ============== 幂等检查：如果已有活跃训练，返回其 session_id ==============
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && !s_activeSession->done) {
+            nlohmann::json resp;
+            resp["session_id"] = s_activeSession->sessionId;
+            resp["status"] = "running";
+            res.set_content(resp.dump(), "application/json");
+            INFO("[XGBoostTrain] Returning existing session: {}", s_activeSession->sessionId);
+            return;
+        }
+    }
+
     // ============== 1. 解析请求 ==============
     String strScript = params.value("script", "");
     if (strScript.empty()) {
@@ -151,270 +172,341 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         return;
     }
 
-    // ============== 2. 解析策略图 + 提取上游子图 ==============
-    List<QNode*> fullGraph;
-    Set<QNode*> upstreamSet;
-    try {
-        fullGraph = parse_strategy_script_v2(script, _server);
-        fullGraph = topo_sort(fullGraph);
-    } catch (const std::exception& e) {
-        for (auto n : fullGraph) delete n;
-        res.status = 400;
-        String msg = R"({"message":"strategy parse failed: )" + String(e.what()) + R"("})";
-        res.set_content(msg.c_str(), "application/json");
-        return;
+    // ============== 创建训练会话 ==============
+    // 训练中间状态（不在 TrainSession 中，仅训练线程使用）
+    struct TrainState {
+        List<QNode*> fullGraph;
+        Set<QNode*> upstreamSet;
+        List<QNode*> upstreamSubgraph;
+        Vector<String> featureNames;
+        String tmpStrategyName;
+        String csvPath, modelPath;
+    };
+    auto state = std::make_shared<TrainState>();
+
+    auto session = std::make_shared<TrainSession>();
+    session->sessionId = "xgb_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        s_activeSession = session;
     }
 
-    upstreamSet = collectUpstreamNodes(fullGraph);
-    if (upstreamSet.empty()) {
-        for (auto n : fullGraph) delete n;
-        res.status = 400;
-        res.set_content(R"({"message":"未找到 XGBoost 节点或上游子图为空"})", "application/json");
-        return;
-    }
-
-    List<QNode*> upstreamSubgraph;
-    for (auto n : fullGraph) {
-        if (upstreamSet.count(n)) upstreamSubgraph.push_back(n);
-    }
-
-    // ============== 3. Init 上游节点 + 提取特征列 ==============
-    Vector<String> featureNames;
-    try {
-        std::map<uint32_t, nlohmann::json> nodeConfigMap;
-        for (auto& node : script["nodes"]) {
-            uint32_t id = atoi(node["id"].get<std::string>().c_str());
-            nodeConfigMap[id] = node["data"];
-        }
-        for (auto n : upstreamSubgraph) {
-            auto cfgItr = nodeConfigMap.find(n->id());
-            if (cfgItr != nodeConfigMap.end()) {
-                n->Init(cfgItr->second);
-            }
-        }
-        for (auto n : upstreamSubgraph) {
-            auto elements = n->out_elements();
-            for (auto& [k, _] : elements) featureNames.push_back(k);
-        }
-    } catch (const std::exception& e) {
-        for (auto n : fullGraph) delete n;
-        res.status = 400;
-        String msg = R"({"message":"node init failed: )" + String(e.what()) + R"("})";
-        res.set_content(msg.c_str(), "application/json");
-        return;
-    }
-
-    // ============== 4. 启动 Exchange + 创建回测上下文 ==============
-    auto* exchangeMgr = _server->GetExchangeManager();
-    if (!exchangeMgr) {
-        for (auto n : fullGraph) delete n;
-        res.status = 500;
-        res.set_content(R"({"message":"ExchangeManager unavailable"})", "application/json");
-        return;
-    }
-
-    Set<String> requiredSources = sourcesFromNodes(upstreamSubgraph);
-    exchangeMgr->StartRequiredExchanges(requiredSources);
-
-    Set<symbol_t> symbols;
-    for (auto n : upstreamSubgraph) {
-        if (auto* qn = dynamic_cast<QuoteInputNode*>(n)) {
-            auto& syms = qn->GetSymbols();
-            for (auto s : syms) symbols.insert(s);
-        }
-    }
-    if (symbols.empty()) {
-        for (auto n : fullGraph) delete n;
-        res.status = 400;
-        res.set_content(R"({"message":"未找到可用的 symbols"})", "application/json");
-        return;
-    }
-
-    // ============== 5. 部分回测 + 数据收集 ==============
-    auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
-    double initialCapital = 100000.0;
-    String tmpStrategyName = strategyName + "_train";
-
-    Map<String, Vector<double>> collected;
-    Vector<String> collectedDates;
-    bool collectOk = flowSubsystem->RunTrainingCollect(
-        tmpStrategyName, upstreamSubgraph, requiredSources,
-        symbols, initialCapital, collected, collectedDates);
-
-    if (!collectOk || collected.empty()) {
-        for (auto n : fullGraph) delete n;
-        res.status = 500;
-        res.set_content(R"({"message":"数据收集失败，请确认 Quote 节点已配置标的数据"})", "application/json");
-        return;
-    }
-
-    if (collected.find(labelSource) == collected.end()) {
-        String availableKeys;
-        int cnt = 0;
-        for (auto& [k, _] : collected) {
-            if (cnt++ > 0) availableKeys += ", ";
-            availableKeys += k;
-        }
-        for (auto n : fullGraph) delete n;
-        res.status = 400;
-        String msg = R"({"message":"label.source ')" + labelSource + R"(' not in collected data. Available: )" + availableKeys + R"("})";
-        res.set_content(msg.c_str(), "application/json");
-        return;
-    }
-
-    // ============== 6. 写出临时 CSV + 调用 Python 训练 ==============
-    String csvPath = makeTempPath("xgb_data", "csv");
-    String modelPath = makeTempPath("xgb_model", "json");
-
-    writeCsv(csvPath, collected, collectedDates);
-
-    auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
-    auto interpreter = pyEnv.resolve(params.value("py_env", ""));
-
-    std::vector<std::string> args = {
-        "--data", csvPath,
-        "--label-source", labelSource,
-        "--label-period", std::to_string(labelPeriod),
-        "--label-type", labelType,
-        "--vol-k", std::to_string(volK),
-        "--objective", objective,
-        "--num-class", std::to_string(numClass),
-        "--model-output", modelPath,
-        "--params", xgbParams.dump(),
-        "--test-ratio", std::to_string(testRatio),
-        "--start-date", startDate,
-        "--end-date", endDate,
-        "--frequency", frequency,
+    // sendSSE: 推送事件到会话（线程安全，支持重连回放）
+    auto sendSSE = [session](const String& type, const nlohmann::json& data) {
+        session->pushEvent(type, data);
     };
 
-    String scriptPath = "tools/xgboost_train.py";
+    // 立即返回 session_id，前端通过 GET 订阅进度
+    nlohmann::json resp;
+    resp["session_id"] = session->sessionId;
+    resp["status"] = "started";
+    res.set_content(resp.dump(), "application/json");
 
-    PythonRunner runner;
-    if (!runner.start(scriptPath, args, interpreter)) {
-        for (auto n : fullGraph) delete n;
-        res.status = 500;
-        res.set_content(R"({"message":"failed to start training script"})", "application/json");
-        return;
-    }
+    // 后台训练线程：执行所有训练阶段，通过 sendSSE 推送进度
+    std::thread trainThread([state, session, sendSSE, params, this,
+        script, labelCfg, xgbParams, dateRangeCfg, testRatio,
+        labelSource, labelPeriod, labelType, volK, objective, numClass,
+        startDate, endDate, frequency, strategyName]() mutable {
 
-    PythonOutput out;
-    String resultLine;
-    String stderrLines;
-    while (runner.readLine(out, 60000)) {
-        if (out.type == PythonOutput::DONE) break;
-        if (out.type == PythonOutput::STDOUT) {
-            if (out.line.find("\"type\":\"result\"") != std::string::npos) {
-                resultLine = out.line;
-            } else if (out.line.find("\"type\":\"progress\"") != std::string::npos) {
-                INFO("[XGBoostTrain] {}", out.line);
+        auto cleanupGraph = [&]() { for (auto n : state->fullGraph) delete n; };
+        state->tmpStrategyName = strategyName + "_train";
+
+        // ============== 2. 解析策略图 ==============
+        sendSSE("step", {{"step","parse_script"},{"status","start"},{"msg","解析策略图..."}});
+        try {
+            state->fullGraph = parse_strategy_script_v2(script, _server);
+            state->fullGraph = topo_sort(state->fullGraph);
+        } catch (const std::exception& e) {
+            cleanupGraph();
+            sendSSE("error", {{"step","parse_script"},{"msg", String("strategy parse failed: ") + e.what()}});
+            session->finish({{"error", String("strategy parse failed: ") + e.what()}}, true);
+            return;
+        }
+        sendSSE("step", {{"step","parse_script"},{"status","done"}});
+
+        state->upstreamSet = collectUpstreamNodes(state->fullGraph);
+        if (state->upstreamSet.empty()) {
+            cleanupGraph();
+            sendSSE("error", {{"step","parse_script"},{"msg","未找到 XGBoost 节点或上游子图为空"}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        for (auto n : state->fullGraph) {
+            if (state->upstreamSet.count(n)) state->upstreamSubgraph.push_back(n);
+        }
+
+        // ============== 3. Init 上游节点 ==============
+        sendSSE("step", {{"step","init_nodes"},{"status","start"},{"msg","初始化上游节点..."}});
+        try {
+            std::map<uint32_t, nlohmann::json> nodeConfigMap;
+            for (auto& node : script["nodes"]) {
+                uint32_t id = atoi(node["id"].get<std::string>().c_str());
+                nodeConfigMap[id] = node["data"];
             }
-        } else if (out.type == PythonOutput::STDERR) {
-            WARN("[XGBoostTrain stderr] {}", out.line);
-            if (stderrLines.size() < 1000) {
-                stderrLines += out.line + "\n";
+            for (auto n : state->upstreamSubgraph) {
+                auto cfgItr = nodeConfigMap.find(n->id());
+                if (cfgItr != nodeConfigMap.end()) {
+                    try {
+                        n->Init(cfgItr->second);
+                    } catch (const std::exception& initEx) {
+                        sendSSE("warning", {{"step","init_nodes"},{"msg", String(initEx.what())}});
+                        throw;
+                    }
+                }
+            }
+            for (auto n : state->upstreamSubgraph) {
+                auto elements = n->out_elements();
+                for (auto& [k, _] : elements) state->featureNames.push_back(k);
+            }
+        } catch (const std::exception& e) {
+            cleanupGraph();
+            sendSSE("error", {{"step","init_nodes"},{"msg", String("node init failed: ") + e.what()}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        sendSSE("step", {{"step","init_nodes"},{"status","done"},{"features",(int)state->featureNames.size()}});
+
+        // ============== 4. 启动 Exchange ==============
+        sendSSE("step", {{"step","start_exchange"},{"status","start"},{"msg","启动数据源..."}});
+        auto* exchangeMgr = _server->GetExchangeManager();
+        if (!exchangeMgr) {
+            cleanupGraph();
+            sendSSE("error", {{"step","start_exchange"},{"msg","ExchangeManager unavailable"}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        Set<String> requiredSources = sourcesFromNodes(state->upstreamSubgraph);
+        exchangeMgr->StartRequiredExchanges(requiredSources);
+        Set<symbol_t> symbols;
+        for (auto n : state->upstreamSubgraph) {
+            if (auto* qn = dynamic_cast<QuoteInputNode*>(n)) {
+                for (auto s : qn->GetSymbols()) symbols.insert(s);
             }
         }
-    }
+        if (symbols.empty()) {
+            cleanupGraph();
+            sendSSE("error", {{"step","start_exchange"},{"msg","未找到可用的 symbols"}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        sendSSE("step", {{"step","start_exchange"},{"status","done"},{"symbols",(int)symbols.size()}});
 
-    for (auto n : fullGraph) delete n;
+        // ============== 5. 数据收集 ==============
+        sendSSE("step", {{"step","collect_data"},{"status","start"},{"msg","收集特征数据..."}});
+        INFO("[XGBoostTrain] === Collect start: strategy='{}', symbols={}, nodes={}, sources={}",
+             state->tmpStrategyName, symbols.size(), state->upstreamSubgraph.size(), requiredSources.size());
+        for (auto s : symbols) {
+            INFO("[XGBoostTrain]   symbol: {}", s);
+        }
+        for (auto& src : requiredSources) {
+            INFO("[XGBoostTrain]   source: {}", src);
+        }
+        auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
+        Map<String, Vector<double>> collected;
+        Vector<String> collectedDates;
+        bool collectOk = flowSubsystem->RunTrainingCollect(
+            state->tmpStrategyName, state->upstreamSubgraph, requiredSources, 
+            symbols, 100000.0, collected, collectedDates,
+            [sendSSE](uint64_t epoch, uint64_t totalBars) {
+                sendSSE("progress", {
+                    {"step","collect_data"},
+                    {"current",(int)epoch},
+                    {"total",(int)totalBars}
+                });
+            }
+        );
 
-    if (resultLine.empty()) {
-        res.status = 500;
-        String msg = stderrLines.empty() ? "训练脚本未输出 result" : stderrLines.substr(0, 500);
-        // 去除末尾换行
-        while (!msg.empty() && msg.back() == '\n') msg.pop_back();
-        nlohmann::json errResp = {{"message", "训练失败: " + msg}};
-        res.set_content(errResp.dump(), "application/json");
-        std::remove(csvPath.c_str());
+        INFO("[XGBoostTrain] === Collect done: ok={}, collected_keys={}, dates={}",
+             collectOk, collected.size(), collectedDates.size());
+        if (!collected.empty()) {
+            for (auto& [k, v] : collected) {
+                INFO("[XGBoostTrain]   key='{}' points={}", k, v.size());
+            }
+            if (!collectedDates.empty()) {
+                INFO("[XGBoostTrain]   date range: {} -> {}", collectedDates.front(), collectedDates.back());
+            }
+        }
+        if (!collectOk || collected.empty()) {
+            cleanupGraph();
+            sendSSE("error", {{"step","collect_data"},{"msg","数据收集失败，请确认 Quote 节点已配置标的数据"}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        if (collected.find(labelSource) == collected.end()) {
+            String avail; int cnt = 0;
+            for (auto& [k, _] : collected) { if (cnt++ > 0) avail += ", "; avail += k; }
+            cleanupGraph();
+            sendSSE("error", {{"step","collect_data"},{"msg", String("label.source '") + labelSource + "' not found. Available: " + avail}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});
+
+        // ============== 6. Python 训练 ==============
+        sendSSE("step", {{"step","train_model"},{"status","start"},{"msg","Python 训练..."}});
+        state->csvPath = makeTempPath("xgb_data", "csv");
+        state->modelPath = makeTempPath("xgb_model", "json");
+        writeCsv(state->csvPath, collected, collectedDates);
+
+        auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
+        auto interpreter = pyEnv.resolve(params.value("py_env", ""));
+        std::vector<std::string> args = {
+            "--data", state->csvPath, "--label-source", labelSource,
+            "--label-period", std::to_string(labelPeriod), "--label-type", labelType,
+            "--vol-k", std::to_string(volK), "--objective", objective,
+            "--num-class", std::to_string(numClass), "--model-output", state->modelPath,
+            "--params", xgbParams.dump(), "--test-ratio", std::to_string(testRatio),
+            "--start-date", startDate, "--end-date", endDate, "--frequency", frequency,
+        };
+        PythonRunner runner;
+        if (!runner.start("tools/xgboost_train.py", args, interpreter)) {
+            cleanupGraph();
+            sendSSE("error", {{"step","train_model"},{"msg","failed to start training script"}});
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        PythonOutput out;
+        String resultLine, stderrLines;
+        while (runner.readLine(out, 60000)) {
+            if (out.type == PythonOutput::DONE) break;
+            if (out.type == PythonOutput::STDOUT) {
+                if (out.line.find("\"type\":\"result\"") != std::string::npos) resultLine = out.line;
+                else if (out.line.find("\"type\":\"progress\"") != std::string::npos)
+                    sendSSE("log", {{"step","train_model"},{"line",out.line}});
+            } else if (out.type == PythonOutput::STDERR) {
+                WARN("[XGBoostTrain stderr] {}", out.line);
+                sendSSE("warning", {{"step","train_model"},{"line",out.line}});
+                if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
+            }
+        }
+        cleanupGraph();
+
+        if (resultLine.empty()) {
+            String msg = stderrLines.empty() ? "训练脚本未输出 result" : stderrLines.substr(0, 500);
+            while (!msg.empty() && msg.back() == '\n') msg.pop_back();
+            sendSSE("error", {{"step","train_model"},{"msg", String("训练失败: ") + msg}});
+            std::remove(state->csvPath.c_str());
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+
+        nlohmann::json trainResult;
+        try { trainResult = nlohmann::json::parse(resultLine); }
+        catch (...) {
+            sendSSE("error", {{"step","train_model"},{"msg", String("训练结果解析失败: ") + resultLine.substr(0, 200)}});
+            std::remove(state->csvPath.c_str()); std::remove(state->modelPath.c_str());
+            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+        }
+        sendSSE("step", {{"step","train_model"},{"status","done"}});
+
+        // ============== 7. 持久化模型 ==============
+        String dbPath = _server->GetConfig().GetDatabasePath();
+        String expDir = dbPath + "/models/experiments";
+        std::filesystem::create_directories(expDir);
+        time_t now = Now();
+        String ts = ToString(now, "%Y%m%d_%H%M%S");
+        String persistName = strategyName + "_" + ts;
+        String persistPath = expDir + "/" + persistName + ".json";
+        std::filesystem::copy(state->modelPath, persistPath, std::filesystem::copy_options::overwrite_existing);
+        {
+            nlohmann::json meta;
+            meta["strategy_id"] = strategyName;
+            meta["created_at"] = ToString(now, "%Y-%m-%dT%H:%M:%S");
+            meta["source"] = "experiment";
+            meta["label"] = labelCfg; meta["objective"] = objective;
+            meta["num_class"] = numClass; meta["test_ratio"] = testRatio;
+            meta["params"] = xgbParams; meta["date_range"] = dateRangeCfg;
+            meta["features"] = state->featureNames;
+            if (trainResult.contains("eval_metrics")) meta["eval_metrics"] = trainResult["eval_metrics"];
+            if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
+            if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
+            meta["n_features"] = state->featureNames.size();
+            std::ofstream ofs(expDir + "/" + persistName + ".meta.json");
+            if (ofs.is_open()) ofs << meta.dump(2);
+        }
+
+        // ============== 8. 加载模型 ==============
+        BoosterHandle booster = nullptr;
+        if (XGBoosterCreate(nullptr, 0, &booster) == 0 && booster) {
+            if (XGBoosterLoadModel(booster, state->modelPath.c_str()) != 0) {
+                XGBoosterFree(booster); booster = nullptr;
+            }
+        }
+        Vector<Vector<double>> Xtest;
+        if (trainResult.contains("X_test") && trainResult["X_test"].is_array()) {
+            for (auto& row : trainResult["X_test"]) {
+                Vector<double> rv;
+                for (auto& v : row) rv.push_back(v.get<double>());
+                Xtest.push_back(std::move(rv));
+            }
+        }
+        uint64_t modelId = 0;
+        if (booster) {
+            Vector<String> actualFeatures;
+            if (trainResult.contains("features") && trainResult["features"].is_array())
+                for (auto& f : trainResult["features"]) actualFeatures.push_back(f.get<String>());
+            else actualFeatures = state->featureNames;
+            modelId = registerModel(booster, actualFeatures, Xtest);
+            trainResult["model_id"] = modelId;
+        }
+        trainResult.erase("X_test");
+        trainResult["model_path"] = persistPath;
+        std::remove(state->csvPath.c_str());
+        std::remove(state->modelPath.c_str());
+
+        sendSSE("result", trainResult);
+        session->finish(trainResult);
+    });
+    trainThread.detach();
+}
+
+void XGBoostHandler::handleTrainProgress(const httplib::Request& req, httplib::Response& res) {
+    String sessionId = req.get_param_value("session_id");
+    if (sessionId.empty()) {
+        res.status = 400;
+        res.set_content(R"({"message":"missing session_id"})", "application/json");
         return;
     }
 
-    nlohmann::json trainResult;
-    try {
-        trainResult = nlohmann::json::parse(resultLine);
-    } catch (...) {
-        res.status = 500;
-        res.set_content(R"({"message":"训练结果解析失败: )" + resultLine.substr(0, 200) + R"("})", "application/json");
-        std::remove(csvPath.c_str());
-        std::remove(modelPath.c_str());
-        return;
-    }
-
-    // ============== 7. 持久化模型到 experiments/ ==============
-    String dbPath = _server->GetConfig().GetDatabasePath();
-    String expDir = dbPath + "/models/experiments";
-    std::filesystem::create_directories(expDir);
-
-    time_t now = Now();
-    String ts = ToString(now, "%Y%m%d_%H%M%S");
-    String persistName = strategyName + "_" + ts;
-    String persistPath = expDir + "/" + persistName + ".json";
-    std::filesystem::copy(modelPath, persistPath, std::filesystem::copy_options::overwrite_existing);
-
-    // 写 meta.json
+    // 查找会话
+    std::shared_ptr<TrainSession> session;
     {
-        nlohmann::json meta;
-        meta["strategy_id"] = strategyName;
-        meta["created_at"] = ToString(now, "%Y-%m-%dT%H:%M:%S");
-        meta["source"] = "experiment";
-        meta["label"] = labelCfg;
-        meta["objective"] = objective;
-        meta["num_class"] = numClass;
-        meta["test_ratio"] = testRatio;
-        meta["params"] = xgbParams;
-        meta["date_range"] = dateRangeCfg;
-        meta["features"] = featureNames;
-        if (trainResult.contains("eval_metrics")) meta["eval_metrics"] = trainResult["eval_metrics"];
-        if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
-        if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
-        meta["n_features"] = featureNames.size();
-
-        String metaPath = expDir + "/" + persistName + ".meta.json";
-        std::ofstream ofs(metaPath);
-        if (ofs.is_open()) ofs << meta.dump(2);
-    }
-
-    // ============== 8. 加载模型到内存供 SHAP ==============
-    BoosterHandle booster = nullptr;
-    if (XGBoosterCreate(nullptr, 0, &booster) == 0 && booster) {
-        if (XGBoosterLoadModel(booster, modelPath.c_str()) != 0) {
-            XGBoosterFree(booster);
-            booster = nullptr;
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && s_activeSession->sessionId == sessionId) {
+            session = s_activeSession;
         }
     }
+    if (!session) {
+        res.status = 404;
+        res.set_content(R"({"message":"session not found"})", "application/json");
+        return;
+    }
 
-    Vector<Vector<double>> Xtest;
-    if (trainResult.contains("X_test") && trainResult["X_test"].is_array()) {
-        for (auto& row : trainResult["X_test"]) {
-            Vector<double> rowVec;
-            for (auto& v : row) {
-                rowVec.push_back(v.get<double>());
+    // SSE 流：先回放历史事件，再实时推送新事件
+    res.set_header("Content-Type", "text/event-stream");
+    res.set_header("Cache-Control", "no-cache");
+    res.set_header("Connection", "keep-alive");
+    res.set_header("Access-Control-Allow-Origin", "*");
+
+    size_t replayIdx = 0;
+    res.set_chunked_content_provider("text/event-stream",
+        [session, replayIdx](size_t /*offset*/, httplib::DataSink& sink) mutable -> bool {
+            if (!sink.is_writable()) return false;
+
+            while (true) {
+                std::unique_lock<std::mutex> lk(session->mtx);
+
+                // 回放历史事件
+                if (replayIdx < session->eventLog.size()) {
+                    auto& ev = session->eventLog[replayIdx++];
+                    lk.unlock();
+                    String msg = "event:" + ev.type + "\ndata:" + ev.data.dump() + "\n\n";
+                    sink.write(msg.c_str(), msg.size());
+                    return true;
+                }
+
+                // 训练已完成，发送最终结果后关闭
+                if (session->done) {
+                    lk.unlock();
+                    return false;
+                }
+
+                // 等待新事件
+                session->cv.wait_for(lk, std::chrono::milliseconds(500));
             }
-            Xtest.push_back(std::move(rowVec));
-        }
-    }
-
-    uint64_t modelId = 0;
-    if (booster) {
-        // 使用 Python 训练时实际的特征列表（排除了 label 列），而非 C++ 上游节点的全部输出
-        Vector<String> actualFeatures;
-        if (trainResult.contains("features") && trainResult["features"].is_array()) {
-            for (auto& f : trainResult["features"]) {
-                actualFeatures.push_back(f.get<String>());
-            }
-        } else {
-            actualFeatures = featureNames;
-        }
-        modelId = registerModel(booster, actualFeatures, Xtest);
-        trainResult["model_id"] = modelId;
-    }
-
-    trainResult.erase("X_test");
-    trainResult["model_path"] = persistPath;
-    std::remove(csvPath.c_str());
-    std::remove(modelPath.c_str());
-
-    res.set_content(trainResult.dump(), "application/json");
+        });
 }
 
 void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response& res) {
@@ -784,6 +876,8 @@ void XGBoostHandler::get(const httplib::Request& req, httplib::Response& res) {
     String action = req.get_param_value("action");
     if (action == "list") {
         handleList(res);
+    } else if (action == "train") {
+        handleTrainProgress(req, res);
     } else if (action == "shap") {
         // 从 query params 构造 params json
         nlohmann::json params;
