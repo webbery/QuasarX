@@ -262,7 +262,7 @@ jobs:
         run: |
           pip install pytest requests pyyaml \
             numpy pandas scipy matplotlib \
-            xgboost PyEMD empyrical
+            xgboost PyEMD empyrical-reloaded
 
       - name: Create TLS certificates
         run: |
@@ -385,7 +385,6 @@ jobs:
           SMTP_MAIL: ${{ secrets.SMTP_MAIL }}
 
       # === 阶段 1: 服务生命周期测试（启动 + 稳定 + 优雅退出）===
-
       - name: Start service (lifecycle test)
         id: start_service
         run: |
@@ -533,9 +532,8 @@ jobs:
           exit $TEST_EXIT_CODE
 
       # === 阶段 3: 测试通过后上传最终构建 ===
-
       - name: Upload Build (passed tests)
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-output
