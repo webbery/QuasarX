@@ -36,12 +36,14 @@
             <template v-else>○</template>
           </span>
           <span class="step-label">{{ step.label }}</span>
-          <span v-if="step.detail" class="step-detail">{{ step.detail }}</span>
-          <span v-if="step.elapsedMs" class="step-time">{{ step.elapsedMs }}ms</span>
-          <!-- epoch 进度条 -->
-          <div v-if="step.status === 'running' && step.detail && step.detail.includes('/')" class="step-progress-bar">
-            <div class="step-progress-fill" :style="{ width: parseProgressPct(step.detail) + '%' }"></div>
+          <div v-if="step.status === 'running' && step.detail && step.detail.includes('/')" class="step-progress-inline">
+            <div class="step-progress-bar">
+              <div class="step-progress-fill" :style="{ width: parseProgressPct(step.detail) + '%' }"></div>
+            </div>
+            <span class="step-progress-pct">{{ parseProgressPct(step.detail) }}%</span>
           </div>
+          <span v-else-if="step.detail" class="step-detail">{{ step.detail }}</span>
+          <span v-if="step.elapsedMs" class="step-time">{{ step.elapsedMs }}ms</span>
         </div>
         <div v-for="(log, i) in state.trainResult.logs" :key="'log-'+i" class="log-item" :class="log.level">
           <span class="log-icon">{{ log.level === 'warning' ? '⚠' : log.level === 'error' ? '✗' : 'ℹ' }}</span>
@@ -452,6 +454,7 @@ async function onTrain() {
   gap: 8px;
   font-size: 12px;
   padding: 3px 0;
+  flex-wrap: nowrap;
 }
 .step-icon {
   width: 18px;
@@ -465,12 +468,14 @@ async function onTrain() {
 .step-icon.pending { color: #64748b; }
 .step-label {
   color: #cbd5e1;
-  flex: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .step-detail {
   color: #94a3b8;
   font-size: 11px;
   font-family: 'SF Mono', 'Consolas', monospace;
+  white-space: nowrap;
 }
 .step-time {
   color: #64748b;
@@ -478,20 +483,37 @@ async function onTrain() {
   font-family: 'SF Mono', 'Consolas', monospace;
   min-width: 50px;
   text-align: right;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.step-progress-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 .step-progress-bar {
-  width: 100%;
-  height: 3px;
+  flex: 1;
+  height: 4px;
   background: rgba(74, 85, 104, 0.3);
   border-radius: 2px;
-  margin-top: 4px;
   overflow: hidden;
+  min-width: 60px;
 }
 .step-progress-fill {
   height: 100%;
   background: #3b82f6;
   border-radius: 2px;
   transition: width 0.3s ease;
+}
+.step-progress-pct {
+  color: #5b8ff9;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  min-width: 36px;
+  text-align: right;
+  flex-shrink: 0;
 }
 .log-item {
   display: flex;

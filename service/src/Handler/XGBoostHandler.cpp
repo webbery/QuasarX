@@ -373,10 +373,16 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             if (out.type == PythonOutput::DONE) break;
             if (out.type == PythonOutput::STDOUT) {
                 if (out.line.find("\"type\":\"result\"") != std::string::npos) resultLine = out.line;
-                else if (out.line.find("\"type\":\"progress\"") != std::string::npos)
+                else if (out.line.find("\"type\":\"error\"") != std::string::npos) {
+                    WARN("[XGBoostTrain error] {}", to_utf8(out.line));
+                    sendSSE("warning", {{"step","train_model"},{"line",out.line}});
+                    if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
+                }
+                else if (out.line.find("\"type\":\"progress\"") != std::string::npos
+                      || out.line.find("\"type\":\"info\"") != std::string::npos)
                     sendSSE("log", {{"step","train_model"},{"line",out.line}});
             } else if (out.type == PythonOutput::STDERR) {
-                WARN("[XGBoostTrain stderr] {}", out.line);
+                WARN("[XGBoostTrain stderr] {}", to_utf8(out.line));
                 sendSSE("warning", {{"step","train_model"},{"line",out.line}});
                 if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
             }
@@ -400,63 +406,71 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         }
         sendSSE("step", {{"step","train_model"},{"status","done"}});
 
-        // ============== 7. 持久化模型 ==============
-        String dbPath = _server->GetConfig().GetDatabasePath();
-        String expDir = dbPath + "/models/experiments";
-        std::filesystem::create_directories(expDir);
-        time_t now = Now();
-        String ts = ToString(now, "%Y%m%d_%H%M%S");
-        String persistName = strategyName + "_" + ts;
-        String persistPath = expDir + "/" + persistName + ".json";
-        std::filesystem::copy(state->_modelPath, persistPath, std::filesystem::copy_options::overwrite_existing);
-        {
-            nlohmann::json meta;
-            meta["strategy_id"] = strategyName;
-            meta["created_at"] = ToString(now, "%Y-%m-%dT%H:%M:%S");
-            meta["source"] = "experiment";
-            meta["label"] = labelCfg; meta["objective"] = objective;
-            meta["num_class"] = numClass; meta["test_ratio"] = testRatio;
-            meta["params"] = xgbParams; meta["date_range"] = dateRangeCfg;
-            meta["features"] = state->_featureNames;
-            if (trainResult.contains("eval_metrics")) meta["eval_metrics"] = trainResult["eval_metrics"];
-            if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
-            if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
-            meta["n_features"] = state->_featureNames.size();
-            std::ofstream ofs(expDir + "/" + persistName + ".meta.json");
-            if (ofs.is_open()) ofs << meta.dump(2);
-        }
-
-        // ============== 8. 加载模型 ==============
-        BoosterHandle booster = nullptr;
-        if (XGBoosterCreate(nullptr, 0, &booster) == 0 && booster) {
-            if (XGBoosterLoadModel(booster, state->_modelPath.c_str()) != 0) {
-                XGBoosterFree(booster); booster = nullptr;
+        // ============== 7. 持久化模型 + 8. 加载模型 ==============
+        try {
+            String dbPath = _server->GetConfig().GetDatabasePath();
+            String expDir = dbPath + "/models/experiments";
+            std::filesystem::create_directories(expDir);
+            time_t now = Now();
+            String ts = ToString(now, "%Y%m%d_%H%M%S");
+            String persistName = strategyName + "_" + ts;
+            String persistPath = expDir + "/" + persistName + ".json";
+            std::filesystem::copy(state->_modelPath, persistPath, std::filesystem::copy_options::overwrite_existing);
+            {
+                nlohmann::json meta;
+                meta["strategy_id"] = strategyName;
+                meta["created_at"] = ToString(now, "%Y-%m-%dT%H:%M:%S");
+                meta["source"] = "experiment";
+                meta["label"] = labelCfg; meta["objective"] = objective;
+                meta["num_class"] = numClass; meta["test_ratio"] = testRatio;
+                meta["params"] = xgbParams; meta["date_range"] = dateRangeCfg;
+                meta["features"] = state->_featureNames;
+                if (trainResult.contains("eval_metrics")) meta["eval_metrics"] = trainResult["eval_metrics"];
+                if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
+                if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
+                meta["n_features"] = state->_featureNames.size();
+                std::ofstream ofs(expDir + "/" + persistName + ".meta.json");
+                if (ofs.is_open()) ofs << meta.dump(2);
             }
-        }
-        Vector<Vector<double>> Xtest;
-        if (trainResult.contains("X_test") && trainResult["X_test"].is_array()) {
-            for (auto& row : trainResult["X_test"]) {
-                Vector<double> rv;
-                for (auto& v : row) rv.push_back(v.get<double>());
-                Xtest.push_back(std::move(rv));
-            }
-        }
-        uint64_t modelId = 0;
-        if (booster) {
-            Vector<String> actualFeatures;
-            if (trainResult.contains("features") && trainResult["features"].is_array())
-                for (auto& f : trainResult["features"]) actualFeatures.push_back(f.get<String>());
-            else actualFeatures = state->_featureNames;
-            modelId = registerModel(booster, actualFeatures, Xtest);
-            trainResult["model_id"] = modelId;
-        }
-        trainResult.erase("X_test");
-        trainResult["model_path"] = persistPath;
-        std::remove(state->_csvPath.c_str());
-        std::remove(state->_modelPath.c_str());
 
-        sendSSE("result", trainResult);
-        session->finish(trainResult);
+            BoosterHandle booster = nullptr;
+            if (XGBoosterCreate(nullptr, 0, &booster) == 0 && booster) {
+                if (XGBoosterLoadModel(booster, state->_modelPath.c_str()) != 0) {
+                    XGBoosterFree(booster); booster = nullptr;
+                }
+            }
+            Vector<Vector<double>> Xtest;
+            if (trainResult.contains("X_test") && trainResult["X_test"].is_array()) {
+                for (auto& row : trainResult["X_test"]) {
+                    Vector<double> rv;
+                    for (auto& v : row) rv.push_back(v.get<double>());
+                    Xtest.push_back(std::move(rv));
+                }
+            }
+            uint64_t modelId = 0;
+            if (booster) {
+                Vector<String> actualFeatures;
+                if (trainResult.contains("features") && trainResult["features"].is_array())
+                    for (auto& f : trainResult["features"]) actualFeatures.push_back(f.get<String>());
+                else actualFeatures = state->_featureNames;
+                modelId = registerModel(booster, actualFeatures, Xtest);
+                trainResult["model_id"] = modelId;
+            }
+            trainResult.erase("X_test");
+            trainResult["model_path"] = persistPath;
+            std::remove(state->_csvPath.c_str());
+            std::remove(state->_modelPath.c_str());
+
+            sendSSE("result", trainResult);
+            session->finish(trainResult);
+
+        } catch (const std::exception& e) {
+            WARN("[XGBoostTrain] 模型持久化/加载异常: {}", e.what());
+            sendSSE("error", {{"step","train_model"},{"msg", String("模型持久化失败: ") + e.what()}});
+            trainResult.erase("X_test");
+            sendSSE("result", trainResult);
+            session->finish(trainResult);
+        }
     });
     trainThread.detach();
 }
@@ -500,8 +514,8 @@ void XGBoostHandler::handleTrainProgress(const httplib::Request& req, httplib::R
                 // 回放历史事件
                 if (replayIdx < session->_eventLog.size()) {
                     auto& ev = session->_eventLog[replayIdx++];
+                    String msg = "event:" + ev._type + "\ndata:" + ev._dataStr + "\n\n";
                     lk.unlock();
-                    String msg = "event:" + ev._type + "\ndata:" + ev._data.dump() + "\n\n";
                     sink.write(msg.c_str(), msg.size());
                     return true;
                 }

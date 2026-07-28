@@ -27,8 +27,13 @@ import json
 import os
 import sys
 import time
+import traceback
 import numpy as np
 import pandas as pd
+
+# 强制 stdout/stderr 无缓冲，防止管道模式下进程退出时数据丢失
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 try:
     import xgboost as xgb
@@ -136,12 +141,42 @@ def main():
         emit({"type": "error", "message": "没有可用的特征列"})
         sys.exit(1)
 
+    # NaN 诊断：统计每列有效值数量
+    nan_stats = {c: int(df[c].notna().sum()) for c in feature_cols}
+    total_rows = len(df)
+    all_nan_cols = [c for c, cnt in nan_stats.items() if cnt == 0]
+    partial_nan_cols = [c for c, cnt in nan_stats.items() if cnt < total_rows]
+
+    emit({"type": "info", "phase": "nan_stats",
+          "total_rows": total_rows,
+          "all_nan_cols": all_nan_cols,
+          "partial_nan_cols_count": len(partial_nan_cols),
+          "fully_valid_cols": total_rows - len(all_nan_cols)})
+
+    # 丢弃全 NaN 列（该特征对所有样本都无效，无法使用）
+    if all_nan_cols:
+        feature_cols = [c for c in feature_cols if c not in set(all_nan_cols)]
+        emit({"type": "info", "phase": "drop_all_nan",
+              "dropped": all_nan_cols, "remaining_features": len(feature_cols)})
+
+    if len(feature_cols) == 0:
+        emit({"type": "error", "message": f"所有 {total_rows} 行特征数据均为 NaN，无法训练。"
+              f"原始列: {list(nan_stats.keys())}"})
+        sys.exit(1)
+
     valid_mask = raw_label.notna() & df[feature_cols].notna().all(axis=1)
     X = df.loc[valid_mask, feature_cols].values
     y = raw_label[valid_mask].values
 
     if len(X) == 0:
-        emit({"type": "error", "message": "数据全部为 NaN，请检查输入"})
+        # 诊断：报告每列剩余有效行数
+        col_valid = {c: int(df[c].notna().sum()) for c in feature_cols}
+        min_col = min(col_valid, key=col_valid.get)
+        emit({"type": "error", "message": (
+            f"标签过滤后无有效样本。标签有效: {int(raw_label.notna().sum())}/{total_rows}。"
+            f"特征列最少有效值: {min_col}={col_valid[min_col]}/{total_rows}。"
+            f"可能原因：特征间时间对齐不一致，或标签来源列与特征列日期范围不重叠。"
+        )})
         sys.exit(1)
 
     split = int(len(X) * (1 - args.test_ratio))
@@ -330,4 +365,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        emit({"type": "error", "message": f"未捕获异常: {e}", "traceback": traceback.format_exc()})
+        traceback.print_exc()
+        sys.exit(1)

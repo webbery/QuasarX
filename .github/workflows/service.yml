@@ -499,9 +499,7 @@ jobs:
       - name: Run backtest tests
         id: test
         run: |
-          # 从 service/build/ 启动服务（工作目录需要是 build/）
-          cd service/build
-          nohup ./QuantService ../../stock_hist_sim.json > service_test.log 2>&1 &
+          nohup ./QuantService ../stock_hist_sim.json > service_test.log 2>&1 &
           TEST_PID=$!
           echo "Test service PID: $TEST_PID"
 
@@ -520,7 +518,7 @@ jobs:
           done
 
           # 生成测试数据并运行测试
-          cd ../test
+          cd test
           python testcases/generate_test_data.py 2>/dev/null || true
           python run_tests.py --mode stock_hist_sim --no-service
           TEST_EXIT_CODE=$?

@@ -72,9 +72,20 @@
         <span v-if="state.trainResult.data">模型 #{{ state.trainResult.data.model_id }}</span>
       </div>
 
-      <el-tabs v-model="activeTab" class="sub-tabs">
-        <el-tab-pane label="标签验证" name="label">
-          <div class="label-workspace">
+      <div class="card-nav">
+        <button
+          v-for="step in STEPS"
+          :key="step.key"
+          :class="['card-btn', { active: activeTab === step.key }]"
+          @click="activeTab = step.key"
+        >
+          <span class="card-icon">{{ step.icon }}</span>
+          <span class="card-label">{{ step.label }}</span>
+        </button>
+      </div>
+
+      <div class="card-body">
+          <div v-show="activeTab === 'label'" class="label-workspace">
             <div v-if="state.labelAnalysis.result" class="label-result">
               <LabelAnalysisChart :data="state.labelAnalysis.result" />
 
@@ -169,17 +180,19 @@
               </div>
             </div>
           </div>
-        </el-tab-pane>
-        <el-tab-pane label="模型训练" name="train">
-          <TrainPanel :state="state" :script="script" @trained="onTrained" />
-        </el-tab-pane>
-        <el-tab-pane label="特征解释" name="feature">
-          <FeaturePanel :state="state" />
-        </el-tab-pane>
-        <el-tab-pane label="模型诊断" name="diagnostic">
-          <DiagnosticPanel :state="state" />
-        </el-tab-pane>
-      </el-tabs>
+
+          <div v-show="activeTab === 'train'">
+            <TrainPanel :state="state" :script="script" @trained="onTrained" />
+          </div>
+
+          <div v-show="activeTab === 'feature'">
+            <FeaturePanel :state="state" />
+          </div>
+
+          <div v-show="activeTab === 'diagnostic'">
+            <DiagnosticPanel :state="state" />
+          </div>
+      </div>
     </template>
   </div>
 </template>
@@ -195,6 +208,13 @@ import LabelAnalysisChart from './charts/LabelAnalysisChart.vue'
 import AnalysisControlBar from '@/components/shared/AnalysisControlBar.vue'
 import { useStrategySecurities } from '@/components/shared/composables/useStrategySecurities'
 import { useHistoryStore } from '@/stores/history'
+
+const STEPS = [
+  { key: 'label', label: '标签验证', icon: '🏷' },
+  { key: 'train', label: '模型训练', icon: '⚡' },
+  { key: 'feature', label: '特征解释', icon: '🔍' },
+  { key: 'diagnostic', label: '模型诊断', icon: '📊' },
+] as const
 
 const activeTab = ref('label')
 const state = useXGBoostState()
@@ -652,20 +672,66 @@ onMounted(() => {
   text-align: center;
 }
 
-.sub-tabs {
+/* === 卡片式导航 === */
+.card-nav {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+.card-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  background: rgba(15, 25, 41, 0.5);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.card-btn:hover {
+  background: rgba(20, 32, 55, 0.7);
+  color: #94a3b8;
+}
+.card-btn.active {
+  background: #131c2e;
+  color: #e2e8f0;
+  border-color: rgba(59, 130, 246, 0.4);
+  border-bottom: 1px solid #131c2e;
+  z-index: 1;
+}
+.card-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #3b82f6;
+  border-radius: 2px 2px 0 0;
+}
+.card-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+.card-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.card-body {
   flex: 1;
   background: #131c2e;
-  border-radius: 6px;
-  padding: 4px 12px;
-  margin: 4px 8px 8px;
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 0 0 8px 8px;
+  padding: 12px;
+  margin: 0 12px 8px;
   overflow: auto;
-}
-:deep(.el-tabs__item) {
-  color: #94a3b8;
-  font-size: 14px;
-}
-:deep(.el-tabs__item.is-active) {
-  color: #3b82f6;
 }
 
 /* === 紧凑状态栏 === */

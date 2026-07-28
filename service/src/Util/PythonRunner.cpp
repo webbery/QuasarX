@@ -117,9 +117,24 @@ bool PythonRunner::start(const std::string& script,
     si.hStdError  = hErrWr;
     si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
 
-    // 构建命令行: interpreter script arg1 arg2 ...
-    std::string cmdline = interpreter + " " + script;
-    for (auto& a : args) cmdline += " " + a;
+    // 构建命令行: interpreter -u script arg1 arg2 ...
+    // -u: 强制 stdout/stderr 无缓冲，防止管道模式下进程退出时输出丢失
+    std::string cmdline = interpreter + " -u " + script;
+    for (auto& a : args) {
+        // 含引号/花括号/空格的参数需要用引号包裹并转义内部双引号（如 JSON）
+        bool needQuote = a.find_first_of(" \"{}[]") != std::string::npos;
+        if (needQuote) {
+            std::string escaped = "\"";
+            for (char c : a) {
+                if (c == '"') escaped += "\\\"";
+                else escaped += c;
+            }
+            escaped += "\"";
+            cmdline += " " + escaped;
+        } else {
+            cmdline += " " + a;
+        }
+    }
 
     BOOL ok = CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr,
                              TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
@@ -186,6 +201,17 @@ void PythonRunner::readerThread() {
                         splitLines(sbuf, type, queue_, mtx_, cv_);
                     }
                 }
+                // 推送 drain 后残留的无换行尾数据（防止进程退出时最后一行丢失）
+                auto flushRemnant = [&](std::string& remnant, PythonOutput::Type type) {
+                    if (!remnant.empty()) {
+                        std::lock_guard<std::mutex> lock(mtx_);
+                        queue_.push({type, std::move(remnant)});
+                        cv_.notify_one();
+                    }
+                };
+                flushRemnant(stdout_buf, PythonOutput::STDOUT);
+                flushRemnant(stderr_buf, PythonOutput::STDERR);
+
                 DWORD exit_code = 0;
                 GetExitCodeProcess(hProcess_, &exit_code);
                 drainAndFinish((int)exit_code);
@@ -245,6 +271,7 @@ bool PythonRunner::start(const std::string& script,
 
         std::vector<const char*> argv;
         argv.push_back(interpreter.c_str());
+        argv.push_back("-u");  // 强制无缓冲，防止管道模式下输出丢失
         argv.push_back(script.c_str());
         for (auto& a : args) argv.push_back(a.c_str());
         argv.push_back(nullptr);
@@ -306,6 +333,17 @@ void PythonRunner::readerThread() {
                     splitLines(sbuf, type, queue_, mtx_, cv_);
                 }
             }
+            // 推送 drain 后残留的无换行尾数据
+            auto flushRemnant = [&](std::string& remnant, PythonOutput::Type type) {
+                if (!remnant.empty()) {
+                    std::lock_guard<std::mutex> lock(mtx_);
+                    queue_.push({type, std::move(remnant)});
+                    cv_.notify_one();
+                }
+            };
+            flushRemnant(stdout_buf, PythonOutput::STDOUT);
+            flushRemnant(stderr_buf, PythonOutput::STDERR);
+
             int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
             drainAndFinish(exit_code);
             break;

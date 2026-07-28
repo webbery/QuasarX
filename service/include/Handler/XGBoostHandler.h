@@ -35,7 +35,8 @@ struct TrainSession {
     std::condition_variable _cv;
 
     // 事件历史（用于重连后回放）
-    struct Event { String _type; nlohmann::json _data; };
+    // 存储预序列化的 JSON 字符串，避免 replay 时 dump 已损坏的 json 对象
+    struct Event { String _type; String _dataStr; };
     Vector<Event> _eventLog;
 
     // 最终结果（训练完成后设置）
@@ -44,8 +45,14 @@ struct TrainSession {
 
     // 线程安全地推送事件
     void pushEvent(const String& type, const nlohmann::json& data) {
+        String dataStr;
+        try {
+            dataStr = data.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        } catch (...) {
+            dataStr = "{}";
+        }
         std::lock_guard<std::mutex> lk(_mtx);
-        _eventLog.push_back({type, data});
+        _eventLog.push_back({type, std::move(dataStr)});
         _cv.notify_all();
     }
 
