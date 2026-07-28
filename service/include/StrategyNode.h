@@ -101,6 +101,10 @@ public:
 
     uint32_t id() { return _id; }
 protected:
+    // 从连接图解析所有输入映射: dataName → contextKey
+    // 遍历 _ins，匹配上游 out_elements，提取 sourceHandle 中的数据名
+    Map<String, String> resolveInputConnections();
+
     uint32_t _id;
     // key是handle名
     Edges _outs;

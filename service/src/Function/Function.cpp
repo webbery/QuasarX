@@ -4,7 +4,7 @@
 #include <variant>
 #include <Eigen/Dense>
 
-MA::MA(short count): _count(0), _nextIndex(0), _sum(0.) {
+MA::MA(short count): _count(0), _nextIndex(0) {
     _buffer.resize(count, 0.0);
 }
 
@@ -23,20 +23,20 @@ context_t MA::operator()(const Map<String, context_t>& args) {
     }, args.begin()->second);
     if (_count < _buffer.size()) {
         _buffer[_count] = value;
-        _sum += value;
+        _sumAcc.add(value);
         ++_count;
         return average();
     }
-    _sum -= _buffer[_nextIndex];
+    _sumAcc.sub(_buffer[_nextIndex]);
     _buffer[_nextIndex] = value;
-    _sum += value;
+    _sumAcc.add(value);
     _nextIndex = (_nextIndex + 1) % _buffer.size();
     return average();
 }
 
 double MA::average() {
     if (_count == 0) return 0.0;
-    return _sum / _count;
+    return _sumAcc.sum() / _count;
 }
 
 EMA::EMA(short count, double alpha)
@@ -54,7 +54,7 @@ context_t MACD::operator()(const Map<String, context_t>& args) {
 }
 
 STD::STD(int32_t count)
-: _window(count), _count(0), _nextIndex(0), _sum(0.0), _sumSq(0.0) {
+: _window(count), _count(0), _nextIndex(0) {
     _buffer.resize(count, 0.0);
 }
 
@@ -74,17 +74,17 @@ context_t STD::operator()(const Map<String, context_t>& args) {
 
     if (_count < static_cast<size_t>(_window)) {
         _buffer[_count] = value;
-        _sum += value;
-        _sumSq += value * value;
+        _sumAcc.add(value);
+        _sumSqAcc.add(value * value);
         ++_count;
     } else {
         double old_value = _buffer[_nextIndex];
-        _sum -= old_value;
-        _sumSq -= old_value * old_value;
+        _sumAcc.sub(old_value);
+        _sumSqAcc.sub(old_value * old_value);
 
         _buffer[_nextIndex] = value;
-        _sum += value;
-        _sumSq += value * value;
+        _sumAcc.add(value);
+        _sumSqAcc.add(value * value);
 
         _nextIndex = (_nextIndex + 1) % _window;
     }
@@ -93,8 +93,8 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         return std::nan("nan");
     }
 
-    double mean = _sum / _count;
-    double variance = (_sumSq / _count) - (mean * mean);
+    double mean = _sumAcc.sum() / _count;
+    double variance = (_sumSqAcc.sum() / _count) - (mean * mean);
 
     if (variance <= 0.0) {
         return 0.0;
@@ -182,20 +182,20 @@ context_t R2::operator()(const Map<String, context_t>& args) {
 }
 
 ZScore::ZScore(int32_t window)
-: _window(window), _count(0), _nextIndex(0), _sum(0.0), _sumSq(0.0) {
+: _window(window), _count(0), _nextIndex(0) {
     _buffer.resize(window, 0.0);
 }
 
 /**
  * @brief Z-Score 标准化计算
- * 
+ *
  * Z-Score = (x - μ) / σ
  * 其中:
  *   μ = 均值 (窗口内平均值)
  *   σ = 标准差 (窗口内标准差)
- * 
+ *
  * 使用滑动窗口高效计算，避免重复遍历数据。
- * 
+ *
  * @param args 输入参数，包含价格时间序列
  *             key 格式: "symbol.property" (如 "spread.value")
  *             value: Vector<double> 或 double
@@ -219,19 +219,19 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
     if (_count < _window) {
         // 窗口未填满，直接追加
         _buffer[_count] = value;
-        _sum += value;
-        _sumSq += value * value;
+        _sumAcc.add(value);
+        _sumSqAcc.add(value * value);
         ++_count;
     } else {
         // 窗口已满，替换最旧的数据
         double old_value = _buffer[_nextIndex];
-        _sum -= old_value;
-        _sumSq -= old_value * old_value;
-        
+        _sumAcc.sub(old_value);
+        _sumSqAcc.sub(old_value * old_value);
+
         _buffer[_nextIndex] = value;
-        _sum += value;
-        _sumSq += value * value;
-        
+        _sumAcc.add(value);
+        _sumSqAcc.add(value * value);
+
         _nextIndex = (_nextIndex + 1) % _window;
     }
 
@@ -241,9 +241,9 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
     }
 
     // 计算均值和标准差
-    double mean = _sum / _count;
-    double variance = (_sumSq / _count) - (mean * mean);
-    
+    double mean = _sumAcc.sum() / _count;
+    double variance = (_sumSqAcc.sum() / _count) - (mean * mean);
+
     // 方差为负（浮点误差）或接近零时处理
     if (variance <= 0.0) {
         if (variance < -1e-12) {
@@ -253,14 +253,14 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
         // 方差接近零，所有值相同，Z-Score 为 0
         return 0.0;
     }
-    
+
     double std_dev = std::sqrt(variance);
-    
+
     // 避免除以零
     if (std_dev < 1e-12) {
         return 0.0;
     }
-    
+
     return (value - mean) / std_dev;
 }
 
@@ -379,7 +379,7 @@ context_t VPCorr::operator()(const Map<String, context_t>& args) {
 //
 
 ATR::ATR(int32_t period)
-    : _period(period), _count(0), _nextIndex(0), _sum(0.0),
+    : _period(period), _count(0), _nextIndex(0),
       _prevClose(0), _hasPrev(false)
 {
     _trBuffer.resize(period, 0.0);
@@ -422,13 +422,13 @@ context_t ATR::operator()(const Map<String, context_t>& args) {
     // 更新环形缓冲
     if (_count < static_cast<size_t>(_period)) {
         _trBuffer[_count] = tr;
-        _sum += tr;
+        _sumAcc.add(tr);
         ++_count;
     } else {
         double old_tr = _trBuffer[_nextIndex];
-        _sum -= old_tr;
+        _sumAcc.sub(old_tr);
         _trBuffer[_nextIndex] = tr;
-        _sum += tr;
+        _sumAcc.add(tr);
         _nextIndex = (_nextIndex + 1) % _period;
     }
 
@@ -437,5 +437,5 @@ context_t ATR::operator()(const Map<String, context_t>& args) {
         return std::nan("nan");
     }
 
-    return _sum / _count;
+    return _sumAcc.sum() / _count;
 }

@@ -84,7 +84,6 @@ void CUSUMDetector::reset() {
 }
 
 double CUSUMDetector::compute_threshold() const {
-    // h = threshold_multiplier * sigma * sqrt(N)
-    // N 使用当前观测数，动态调整阈值
-    return _config._threshold_multiplier * _config._sigma * std::sqrt(static_cast<double>(_count));
+    // h = threshold_multiplier * sigma（固定阈值，与标准 CUSUM 一致）
+    return _config._threshold_multiplier * _config._sigma;
 }

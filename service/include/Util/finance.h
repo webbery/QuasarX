@@ -171,6 +171,20 @@ Vector<Vector<double>> computeRollingEMDEnergy(const Vector<double>& data,
                                                 int numIMFs,
                                                 const Vector<String>& dates);
 
+/**
+ * @brief EWMA 波动率标准化
+ *
+ * 将收益率序列除以 EWMA 条件波动率，得到标准化序列 z_t = r_t / sigma_t。
+ * 标准化后的序列近似 N(0,1)，消除了波动率时变的影响。
+ *
+ * EWMA 方差递推：sigma_t^2 = decay * sigma_{t-1}^2 + (1 - decay) * r_{t-1}^2
+ *
+ * @param returns  原始收益率序列
+ * @param decay    EWMA 衰减系数（典型值 0.94，RiskMetrics 推荐）
+ * @return         标准化收益率序列（与输入等长）
+ */
+Vector<double> ewmaVolatilityStandardize(const Vector<double>& returns, double decay = 0.94);
+
 }
 
 bool LoadStockQuote(DataFrame& df, const String& path);

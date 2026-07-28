@@ -87,73 +87,6 @@ FunctionNode::FunctionNode(Server* server)
 
 }
 
-// 从连接信息中解析实际输入映射
-// 遍历 _ins，对每个上游节点查找其 _outs 中连接到本节点的 sourceHandle
-// 返回: slot → context key 的映射
-Map<String, String> FunctionNode::resolveInputConnections() {
-    Map<String, String> slotToKey;
-    
-    for (auto& [targetHandle, upstreamNode] : _ins) {
-        // 遍历上游节点的 _outs，找到连接到本节点的 sourceHandle
-        for (auto& [sourceHandle, downstreamNode] : upstreamNode->outs()) {
-            if (downstreamNode != this) continue;
-            
-            auto outs = upstreamNode->out_elements();
-            
-            // 从 sourceHandle 提取数据名（去掉 nodeId 前缀）
-            // 格式: "11-IMF_0" → "IMF_0", "1-close" → "close", "2" → ""
-            String dataName;
-            auto dashPos = sourceHandle.find('-');
-            if (dashPos != String::npos) {
-                dataName = sourceHandle.substr(dashPos + 1);
-            }
-            
-            if (!dataName.empty()) {
-                // 有明确的数据名，从 out_elements 中匹配 context key
-                String contextKey;
-                for (auto& [key, type] : outs) {
-                    if (key.find(dataName) != String::npos) {
-                        contextKey = key;
-                        break;
-                    }
-                }
-                if (contextKey.empty()) continue;
-                
-                // 根据数据名推断 slot
-                if (dataName == "volume") {
-                    slotToKey["volume"] = contextKey;
-                } else {
-                    if (slotToKey.find("price") == slotToKey.end()) {
-                        slotToKey["price"] = contextKey;
-                    }
-                }
-            } else {
-                // sourceHandle 仅为节点 ID，无明确数据名
-                // 如果上游只有一个输出，直接使用
-                if (outs.size() == 1) {
-                    auto& [key, type] = *outs.begin();
-                    // 提取字段名（key 格式: "symbol.field" 或 "label.field"）
-                    String fieldName;
-                    auto dotPos = key.rfind('.');
-                    if (dotPos != String::npos) {
-                        fieldName = key.substr(dotPos + 1);
-                    }
-                    if (fieldName == "volume") {
-                        slotToKey["volume"] = key;
-                    } else {
-                        if (slotToKey.find("price") == slotToKey.end()) {
-                            slotToKey["price"] = key;
-                        }
-                    }
-                }
-                // 多个输出时需要明确的 sourceHandle，跳过
-            }
-        }
-    }
-    
-    return slotToKey;
-}
-
 FunctionNode::~FunctionNode() {
     for (auto& [sym, callable] : _callables) {
         delete callable;
@@ -226,7 +159,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         _outputs[output_key] = ArgType::Double_TimeSeries;
     }
 
-    // 6. 从连接信息解析实际输入映射
+    // 6. 从连接信息解析实际输入映射（保持原始 dataName 作为 key）
     _resolvedInputs = resolveInputConnections();
 
     DEBUG_INFO("[FunctionNode:{}] Init: _resolvedInputs has {} entries, _callables has {} entries, _outputs has {} entries",
@@ -245,9 +178,11 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
     for (auto& item : _callables) {
         auto& symbol = item.first;
         // 构建该 symbol 的输入参数（从连接信息解析的映射）
+        // callable 期望 "price" 作为收盘价 key，_resolvedInputs 中为 "close"
         Map<String, context_t> args;
-        for (auto& [slot, contextKey] : _resolvedInputs) {
+        for (auto& [dataName, contextKey] : _resolvedInputs) {
             if (context.exist(contextKey)) {
+                String slot = (dataName == "close") ? "price" : dataName;
                 args[slot] = context.get(contextKey);
             }
         }

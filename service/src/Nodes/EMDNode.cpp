@@ -82,10 +82,10 @@ bool EMDNode::Init(const nlohmann::json& config) {
         _params.merge(input_names);
     }
 
-    // 构建基础输出: label.IMF_0, label.IMF_1, ...
+    // 构建基础输出: label.nimf_0, label.nimf_1, ...
     for (auto& item : _params) {
         for (int i = 0; i < _numIMFs; ++i) {
-            String outKey = _label + ".IMF_" + std::to_string(i);
+            String outKey = _label + ".nimf_" + std::to_string(i);
             _outputs[outKey] = ArgType::Double_TimeSeries;
         }
     }
@@ -328,7 +328,7 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
         int idx = 0;
         for (auto& imf : imfs) {
             if (idx >= _numIMFs) break;
-            String outKey = _label + ".IMF_" + std::to_string(idx);
+            String outKey = _label + ".nimf_" + std::to_string(idx);
             context.set(outKey, imf);
             ++idx;
         }

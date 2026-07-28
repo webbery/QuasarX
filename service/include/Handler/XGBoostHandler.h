@@ -9,52 +9,52 @@
 #include <functional>
 
 struct CachedXGBoostModel {
-    BoosterHandle booster = nullptr;
-    Vector<String> features;
-    Vector<Vector<double>> X_test;
+    BoosterHandle _booster = nullptr;
+    Vector<String> _features;
+    Vector<Vector<double>> _x_test;
 
     ~CachedXGBoostModel() { clear(); }
 
     void clear() {
-        if (booster) {
-            XGBoosterFree(booster);
-            booster = nullptr;
+        if (_booster) {
+            XGBoosterFree(_booster);
+            _booster = nullptr;
         }
-        features.clear();
-        X_test.clear();
+        _features.clear();
+        _x_test.clear();
     }
 };
 
 // 训练会话：记录事件历史，支持 SSE 重连回放
 struct TrainSession {
-    String sessionId;
-    std::atomic<bool> done{false};
-    std::atomic<bool> cancelled{false};
+    String _sessionId;
+    std::atomic<bool> _done{false};
+    std::atomic<bool> _cancelled{false};
 
-    std::mutex mtx;
-    std::condition_variable cv;
+    std::mutex _mtx;
+    std::condition_variable _cv;
 
     // 事件历史（用于重连后回放）
-    struct Event { String type; nlohmann::json data; };
-    Vector<Event> eventLog;
+    struct Event { String _type; nlohmann::json _data; };
+    Vector<Event> _eventLog;
 
     // 最终结果（训练完成后设置）
-    nlohmann::json result;
-    bool hasError = false;
+    nlohmann::json _result;
+    bool _hasError = false;
 
     // 线程安全地推送事件
     void pushEvent(const String& type, const nlohmann::json& data) {
-        std::lock_guard<std::mutex> lk(mtx);
-        eventLog.push_back({type, data});
-        cv.notify_all();
+        std::lock_guard<std::mutex> lk(_mtx);
+        _eventLog.push_back({type, data});
+        _cv.notify_all();
     }
 
     void finish(const nlohmann::json& res, bool error = false) {
-        std::lock_guard<std::mutex> lk(mtx);
-        result = res;
-        hasError = error;
-        done = true;
-        cv.notify_all();
+        std::lock_guard<std::mutex> lk(_mtx);
+        _result = res;
+        _hasError = error;
+        _done = true;
+        _cv.notify_all();
     }
 };
 

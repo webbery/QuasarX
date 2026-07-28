@@ -1,5 +1,6 @@
 #include "Handler/CUSUMHandler.h"
 #include "Util/data.h"
+#include "Util/finance.h"
 #include "KBarBuilder.h"
 #include "Metric/CUSUMDetector.h"
 #include "Metric/RiskMetric.h"
@@ -42,6 +43,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         double lambda = body.value("lambda", 0.5);
         double threshold_multiplier = body.value("threshold_multiplier", 4.0);
         size_t min_obs = body.value("min_obs", 30);
+        double ewma_decay = body.value("ewma_decay", 0.94);  // EWMA 衰减系数（RiskMetrics 标准值）
 
         if (symbols.empty()) {
             res.status = 400;
@@ -152,7 +154,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             result["symbols"].push_back(sym);
         }
 
-        // 4. 均值漂移 CUSUM — 对每个标的单独检测 + 组合
+        // 4. 均值漂移 CUSUM — EWMA 标准化后检测
         if (std::find(modes.begin(), modes.end(), "mean") != modes.end()) {
             nlohmann::json per_symbol = nlohmann::json::array();
 
@@ -160,20 +162,20 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
             for (auto& [sym, rets] : returns_map) {
                 if (rets.size() < min_obs) continue;
 
-                double sym_mean = std::accumulate(rets.begin(), rets.end(), 0.0) / rets.size();
-                double sym_var = 0;
-                for (double r : rets) sym_var += (r - sym_mean) * (r - sym_mean);
-                sym_var /= rets.size();
-                double sym_sigma = std::sqrt(sym_var);
+                // EWMA 波动率标准化
+                Vector<double> standardized_rets = finance::ewmaVolatilityStandardize(rets, ewma_decay);
+
+                // 对标准化收益率跑 CUSUM（sigma=1，因为已标准化）
+                double std_mean = std::accumulate(standardized_rets.begin(), standardized_rets.end(), 0.0) / standardized_rets.size();
 
                 CUSUMDetector mean_detector({
-                    ._mu = sym_mean,
-                    ._sigma = sym_sigma,
+                    ._mu = std_mean,
+                    ._sigma = 1.0,  // 标准化后 sigma ≈ 1
                     ._lambda = lambda,
                     ._threshold_multiplier = threshold_multiplier,
                     ._min_obs = min_obs,
                 });
-                auto cusum_result = mean_detector.detect_batch(rets);
+                auto cusum_result = mean_detector.detect_batch(standardized_rets);
 
                 nlohmann::json sym_json;
                 sym_json["symbol"] = sym;
@@ -188,7 +190,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     }
                 }
                 sym_json["change_points"] = change_points;
-                sym_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
+                sym_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma;
                 per_symbol.push_back(sym_json);
             }
 
@@ -235,7 +237,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     }
                 }
                 sym_json["change_points"] = change_points;
-                sym_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
+                sym_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma;
                 per_symbol_var.push_back(sym_json);
             }
 

@@ -243,6 +243,7 @@ Map<String, EvalPtr> evalMap{
     {"NotPrefix", &FormulaParser::evalNotPrefix},
     {"Primary", &FormulaParser::evalPrimary},
     {"ArithExpr", &FormulaParser::evalArithmetic},
+    {"Expression", &FormulaParser::evalExpression},
     {"ExpressionStmt", &FormulaParser::evalStatement}
 };
 

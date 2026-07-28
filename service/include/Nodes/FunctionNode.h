@@ -25,10 +25,6 @@ public:
 
     Server* GetServer() const { return _server; }
 private:
-    // 从 _ins/上游 _outs 连接信息解析实际输入映射
-    Map<String, String> resolveInputConnections();
-
-private:
     Server* _server;
     Map<String, std::variant<int>> _args;
     Map<String, ArgType> _params;

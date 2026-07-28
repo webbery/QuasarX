@@ -18,13 +18,22 @@ void XGBoostNode::cleanup() {
     _loaded = false;
 }
 
+XGBObjective XGBoostNode::parseObjective(const String& s) {
+    if (s == "binary:logistic") return XGBObjective::BinaryLogistic;
+    if (s == "multi:softprob") return XGBObjective::MultiSoftprob;
+    if (s == "multi:softmax") return XGBObjective::MultiSoftmax;
+    if (s == "reg:squarederror") return XGBObjective::RegSquaredError;
+    WARN("[XGBoost] Unknown objective '{}', defaulting to multi:softprob", s);
+    return XGBObjective::MultiSoftprob;
+}
+
 bool XGBoostNode::Init(const nlohmann::json& config) {
     _label = (String)config["label"];
 
     if (config.contains("params")) {
         auto& p = config["params"];
         if (p.contains("modelFile")) _model_file = (String)p["modelFile"]["value"];
-        if (p.contains("objective")) _objective = (String)p["objective"]["value"];
+        if (p.contains("objective")) _objective = parseObjective((String)p["objective"]["value"]);
         if (p.contains("num_class")) _num_class = (int)p["num_class"]["value"];
         if (p.contains("features")) {
             String feat_str = (String)p["features"]["value"];
@@ -68,118 +77,172 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
         return false;
     }
 
-    buildOutputs();
+    // ── 从连接图发现 symbol 并解析特征 ──
+    // 收集所有上游 out_elements 的 key，构建 短名→全名 和 全名→全名 双重映射
+    Map<String, String> allOutKeys;
+    Set<String> symbols;
+    for (auto& [nodeId, nodePtr] : _ins) {
+        for (auto& [key, type] : nodePtr->out_elements()) {
+            allOutKeys[key] = key;  // 全名: "sz.800001.norm_ret" → itself
+            auto dotPos = key.rfind('.');
+            if (dotPos != String::npos) {
+                String field = key.substr(dotPos + 1);
+                allOutKeys[field] = key;  // 短名: "norm_ret" → "sz.800001.norm_ret"
+                if (field == "close" || field == "open" || field == "volume")
+                    symbols.insert(key.substr(0, dotPos));
+            }
+        }
+    }
 
-    INFO("[XGBoost] Loaded model '{}', features={}, objective={}, num_class={}",
-         _model_file, _n_features, _objective, _num_class);
+    if (symbols.empty()) {
+        WARN("[XGBoost:{}] Cannot discover symbol from upstream connections", _id);
+        return false;
+    }
+
+    // 为每个 symbol 解析特征 → context key
+    _outputs.clear();
+    for (auto& symbol : symbols) {
+        Vector<String> resolved;
+        for (auto& feat : _feature_keys) {
+            if (allOutKeys.count(feat)) {
+                // 精确匹配（如 "cusum_signal.drift" 或 "norm_ret"）
+                resolved.push_back(allOutKeys[feat]);
+            } else if (allOutKeys.count(symbol + "." + feat)) {
+                // symbol + feat 拼接（兜底）
+                resolved.push_back(symbol + "." + feat);
+            } else {
+                // 直接作为 context key（全局 key）
+                resolved.push_back(feat);
+            }
+        }
+        _resolved_features[symbol] = resolved;
+        buildOutputs(symbol + ".");
+    }
+
+    INFO("[XGBoost:{}] Loaded '{}', {} symbols, {} features",
+         _id, _model_file, symbols.size(), _n_features);
+
     _loaded = true;
     return true;
 }
 
-void XGBoostNode::buildOutputs() {
-    _outputs.clear();
-    if (_objective == "binary:logistic") {
-        _outputs["xgb_prob_0"] = ArgType::Double_TimeSeries;
-        _outputs["xgb_prob_1"] = ArgType::Double_TimeSeries;
-    } else if (_objective == "multi:softprob" || _objective == "multi:softmax") {
-        for (int i = 0; i < _num_class; i++) {
-            _outputs["xgb_prob_" + std::to_string(i)] = ArgType::Double_TimeSeries;
-        }
-    } else {
-        _outputs["xgb_prediction"] = ArgType::Double_TimeSeries;
+void XGBoostNode::buildOutputs(const String& symbolPrefix) {
+    switch (_objective) {
+    case XGBObjective::BinaryLogistic:
+        _outputs[symbolPrefix + "xgb_probs_0"] = ArgType::Double_TimeSeries;
+        _outputs[symbolPrefix + "xgb_probs_1"] = ArgType::Double_TimeSeries;
+        break;
+    case XGBObjective::MultiSoftprob:
+    case XGBObjective::MultiSoftmax:
+        for (int i = 0; i < _num_class; i++)
+            _outputs[symbolPrefix + "xgb_probs_" + std::to_string(i)] = ArgType::Double_TimeSeries;
+        break;
+    case XGBObjective::RegSquaredError:
+        _outputs[symbolPrefix + "xgb_prediction"] = ArgType::Double_TimeSeries;
+        break;
     }
 }
 
 NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& context) {
     if (!_loaded) return NodeProcessResult::Skip;
 
-    // 收集当前时刻特征值
-    Vector<float> features(_n_features);
-    for (int d = 0; d < _n_features; d++) {
-        const String& key = _feature_keys[d];
-        try {
-            const auto& vec = context.get<Vector<double>>(key);
-            if (vec.empty()) return NodeProcessResult::Skip;
-            features[d] = static_cast<float>(vec.back());
-        } catch (...) {
-            return NodeProcessResult::Skip;
+    bool anySuccess = false;
+
+    for (auto& [symbol, resolvedKeys] : _resolved_features) {
+        // 收集当前时刻特征值
+        Vector<float> features(_n_features);
+        bool ok = true;
+        for (int d = 0; d < _n_features; d++) {
+            try {
+                const auto& vec = context.get<Vector<double>>(resolvedKeys[d]);
+                if (vec.empty()) { ok = false; break; }
+                features[d] = static_cast<float>(vec.back());
+            } catch (...) {
+                ok = false; break;
+            }
         }
-    }
+        if (!ok) continue;
 
-    // 创建 DMatrix (1 row × n_features)
-    DMatrixHandle dmat = nullptr;
-    int ret = XGDMatrixCreateFromMat(features.data(), 1, _n_features, NAN, &dmat);
-    if (ret != 0) {
-        WARN("[XGBoost] Failed to create DMatrix: {}", XGBGetLastError());
-        return NodeProcessResult::Skip;
-    }
+        // 创建 DMatrix (1 row × n_features)
+        DMatrixHandle dmat = nullptr;
+        int ret = XGDMatrixCreateFromMat(features.data(), 1, _n_features, NAN, &dmat);
+        if (ret != 0) {
+            WARN("[XGBoost:{}] Failed to create DMatrix: {}", _id, XGBGetLastError());
+            continue;
+        }
 
-    // 推理
+        // 推理
+        bst_ulong const* out_shape = nullptr;
+        bst_ulong out_dim = 0;
+        const float* out_result = nullptr;
+
 #if XGBOOST_VER_MAJOR >= 2
-    const char* config = R"({"type": 0, "training": false, "strict_shape": true})";
-    bst_ulong const* out_shape = nullptr;
-    bst_ulong out_dim = 0;
-    const float* out_result = nullptr;
-
-    ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
+        const char* config = R"({"type": 0, "training": false, "strict_shape": true})";
+        ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
 #else
-    bst_ulong out_shape_val = 0;
-    bst_ulong out_dim = 0;
-    float* out_result_mut = nullptr;
-
-    ret = XGBoosterPredictFromDMatrix(_booster, dmat,
-                                       0, 0, 0,  // 旧版: option, ntree_limit, training
-                                       &out_shape_val, &out_dim, &out_result_mut);
-    const bst_ulong* out_shape = &out_shape_val;
-    const float* out_result = out_result_mut;
+        bst_ulong out_shape_val = 0;
+        bst_ulong out_dim_val = 0;
+        float* out_result_mut = nullptr;
+        ret = XGBoosterPredictFromDMatrix(_booster, dmat,
+                                           0, 0, 0, &out_shape_val, &out_dim_val, &out_result_mut);
+        out_shape = &out_shape_val;
+        out_dim = out_dim_val;
+        out_result = out_result_mut;
 #endif
-    XGDMatrixFree(dmat);
+        XGDMatrixFree(dmat);
 
-    if (ret != 0) {
-        WARN("[XGBoost] Prediction failed: {}", XGBGetLastError());
-        return NodeProcessResult::Skip;
-    }
-
-    // 计算总输出元素数
-    bst_ulong total = 1;
-    for (bst_ulong i = 0; i < out_dim; i++) total *= out_shape[i];
-
-    // 写入 context
-    if (_objective == "binary:logistic") {
-        float p1 = (total > 0) ? out_result[0] : 0.0f;
-        float p0 = 1.0f - p1;
-
-        if (context.exist("xgb_prob_0")) {
-            context.add("xgb_prob_0", static_cast<double>(p0));
-            context.add("xgb_prob_1", static_cast<double>(p1));
-        } else {
-            Vector<double> v0{static_cast<double>(p0)};
-            Vector<double> v1{static_cast<double>(p1)};
-            context.set("xgb_prob_0", v0);
-            context.set("xgb_prob_1", v1);
+        if (ret != 0) {
+            WARN("[XGBoost:{}] Prediction failed for {}: {}", _id, symbol, XGBGetLastError());
+            continue;
         }
-    } else if (_objective == "multi:softprob" || _objective == "multi:softmax") {
-        for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
-            String key = "xgb_prob_" + std::to_string(i);
-            double val = static_cast<double>(out_result[i]);
+
+        bst_ulong total = 1;
+        for (bst_ulong i = 0; i < out_dim; i++) total *= out_shape[i];
+
+        // 写入 context（带 symbol 前缀，xgb_probs_N 命名）
+        String prefix = symbol + ".";
+        switch (_objective) {
+        case XGBObjective::BinaryLogistic: {
+            float p1 = (total > 0) ? out_result[0] : 0.0f;
+            float p0 = 1.0f - p1;
+            String k0 = prefix + "xgb_probs_0";
+            String k1 = prefix + "xgb_probs_1";
+            if (context.exist(k0)) {
+                context.add(k0, static_cast<double>(p0));
+                context.add(k1, static_cast<double>(p1));
+            } else {
+                context.set(k0, Vector<double>{static_cast<double>(p0)});
+                context.set(k1, Vector<double>{static_cast<double>(p1)});
+            }
+            break;
+        }
+        case XGBObjective::MultiSoftprob:
+        case XGBObjective::MultiSoftmax:
+            for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
+                String key = prefix + "xgb_probs_" + std::to_string(i);
+                double val = static_cast<double>(out_result[i]);
+                if (context.exist(key)) {
+                    context.add(key, val);
+                } else {
+                    context.set(key, Vector<double>{val});
+                }
+            }
+            break;
+        case XGBObjective::RegSquaredError: {
+            double val = (total > 0) ? static_cast<double>(out_result[0]) : 0.0;
+            String key = prefix + "xgb_prediction";
             if (context.exist(key)) {
                 context.add(key, val);
             } else {
-                Vector<double> v{val};
-                context.set(key, v);
+                context.set(key, Vector<double>{val});
             }
+            break;
         }
-    } else {
-        double val = (total > 0) ? static_cast<double>(out_result[0]) : 0.0;
-        if (context.exist("xgb_prediction")) {
-            context.add("xgb_prediction", val);
-        } else {
-            Vector<double> v{val};
-            context.set("xgb_prediction", v);
         }
+        anySuccess = true;
     }
 
-    return NodeProcessResult::Success;
+    return anySuccess ? NodeProcessResult::Success : NodeProcessResult::Skip;
 }
 
 Map<String, ArgType> XGBoostNode::out_elements() {

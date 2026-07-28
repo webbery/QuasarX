@@ -88,6 +88,14 @@ context_t FormulaParser::evalProgram(const symbol_t& symbol, const peg::Ast& ast
     return last_result;
 }
 
+context_t FormulaParser::evalExpression(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+    // Expression <- OrExpr，直接转发到子节点
+    if (!ast.nodes.empty()) {
+        return evalNode(symbol, *ast.nodes[0], context);
+    }
+    return 0.0;
+}
+
 context_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     if (ast.name == "ExpressionStmt") {
         return evalNode(symbol, *ast.nodes[0], context);
@@ -176,6 +184,17 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
     String key = name + "." + var_name;
 
     if (!context.exist(key)) {
+        // 数组展开: name[N] → name_N (如 xgb_probs[0] → xgb_probs_0)
+        if (time_offset >= 0) {
+            String arrayKey = name + "." + var_name + "_" + std::to_string(time_offset);
+            if (context.exist(arrayKey)) {
+                auto& vec = context.get<Vector<double>>(arrayKey);
+                if (!vec.empty()) {
+                    int idx = (int)vec.size() - 1;  // 取最新值
+                    return vec[idx];
+                }
+            }
+        }
         // 输出 DataContext 中所有可用的键，帮助调试
         String availableKeys;
         // 注意：DataContext 没有暴露 _outputs 的迭代接口，这里只能提示
@@ -275,30 +294,53 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
     // 二元: min, max
     if (ast.nodes.size() >= 2) {
         auto& argsNode = ast.nodes[1];
-        if (argsNode->name == "Arguments") {
-            if (funcName == "abs" && argsNode->nodes.size() == 1) {
-                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+        
+        // 辅助 lambda：获取参数列表
+        // PEG 对单参数 Arguments 会优化，直接返回参数节点而非 Arguments 节点
+        auto getArgs = [&]() -> std::vector<const peg::Ast*> {
+            if (argsNode->name == "Arguments") {
+                std::vector<const peg::Ast*> result;
+                for (auto& n : argsNode->nodes) {
+                    result.push_back(n.get());
+                }
+                return result;
+            } else {
+                // 单参数优化：argsNode 本身就是参数（Primary/Number 等）
+                return {argsNode.get()};
+            }
+        };
+        
+        auto args = getArgs();
+        
+        // 一元函数
+        if (args.size() == 1) {
+            if (funcName == "abs") {
+                auto arg = evalNode(symbol, *args[0], context);
                 return applyUnaryMath(arg, std::abs);
             }
-            if (funcName == "exp" && argsNode->nodes.size() == 1) {
-                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+            if (funcName == "exp") {
+                auto arg = evalNode(symbol, *args[0], context);
                 return applyUnaryMath(arg, std::exp);
             }
-            if (funcName == "log" && argsNode->nodes.size() == 1) {
-                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+            if (funcName == "log") {
+                auto arg = evalNode(symbol, *args[0], context);
                 return applyUnaryMath(arg, std::log);
             }
-            if (funcName == "sqrt" && argsNode->nodes.size() == 1) {
-                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+            if (funcName == "sqrt") {
+                auto arg = evalNode(symbol, *args[0], context);
                 return applyUnaryMath(arg, std::sqrt);
             }
-            if (funcName == "sigmoid" && argsNode->nodes.size() == 1) {
-                auto arg = evalNode(symbol, *argsNode->nodes[0], context);
+            if (funcName == "sigmoid") {
+                auto arg = evalNode(symbol, *args[0], context);
                 return applyUnaryMath(arg, sigmoid_fn);
             }
-            if (funcName == "min" && argsNode->nodes.size() == 2) {
-                auto a = evalNode(symbol, *argsNode->nodes[0], context);
-                auto b = evalNode(symbol, *argsNode->nodes[1], context);
+        }
+        
+        // 二元函数
+        if (args.size() == 2) {
+            if (funcName == "min") {
+                auto a = evalNode(symbol, *args[0], context);
+                auto b = evalNode(symbol, *args[1], context);
                 // 如果任一参数是 Vector，逐元素取 min
                 if (auto* va = std::get_if<Vector<double>>(&a)) {
                     double bv = ctxToDouble(b);
@@ -316,9 +358,9 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
                 }
                 return std::min(ctxToDouble(a), ctxToDouble(b));
             }
-            if (funcName == "max" && argsNode->nodes.size() == 2) {
-                auto a = evalNode(symbol, *argsNode->nodes[0], context);
-                auto b = evalNode(symbol, *argsNode->nodes[1], context);
+            if (funcName == "max") {
+                auto a = evalNode(symbol, *args[0], context);
+                auto b = evalNode(symbol, *args[1], context);
                 if (auto* va = std::get_if<Vector<double>>(&a)) {
                     double bv = ctxToDouble(b);
                     Vector<double> result(va->size());

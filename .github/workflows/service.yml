@@ -260,7 +260,9 @@ jobs:
 
       - name: Install test dependencies (Python)
         run: |
-          pip install pytest requests pyyaml
+          pip install pytest requests pyyaml \
+            numpy pandas scipy matplotlib \
+            xgboost PyEMD empyrical
 
       - name: Create TLS certificates
         run: |
@@ -353,6 +355,17 @@ jobs:
           with open('tickflow.json', 'w') as f:
               json.dump(tickflow_config, f, indent=4)
           print('tickflow.json generated successfully')
+
+          # stock_hist_sim.json: 仅保留历史回测 exchange（回测测试用）
+          stock_config = copy.deepcopy(template)
+          stock_config['exchange'] = [
+              ex for ex in stock_config.get('exchange', [])
+              if ex.get('api') in ('stock_hist_sim', 'etf_hist_sim')
+          ]
+          fill_config(stock_config)
+          with open('stock_hist_sim.json', 'w') as f:
+              json.dump(stock_config, f, indent=4)
+          print('stock_hist_sim.json generated successfully')
           "
         env:
           # 必填
@@ -482,29 +495,42 @@ jobs:
           cat service_lifecycle.log || true
           exit 1
 
-      # === 阶段 2: 回测功能测试 ===
+      # === 阶段 2: 回测功能测试（stock_hist_sim 模式）===
 
-      # - name: Run backtest tests
-      #   id: test
-      #   run: |
-      #     nohup ./QuantService config.json > service_test.log 2>&1 &
-      #     TEST_PID=$!
-      #     echo "Test service PID: $TEST_PID"
-      #     for i in $(seq 1 30); do
-      #       if curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status >/dev/null 2>&1; then
-      #         echo "Test service ready"
-      #         break
-      #       fi
-      #       sleep 1
-      #     done
-      #     cd ../test
-      #     python testcases/generate_test_data.py 2>/dev/null || true
-      #     python run_tests.py --mode stock_hist_sim --no-service
-      #     TEST_EXIT_CODE=$?
-      #     curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
-      #     sleep 2
-      #     kill -9 $TEST_PID 2>/dev/null || true
-      #     exit $TEST_EXIT_CODE
+      - name: Run backtest tests
+        id: test
+        run: |
+          # 从 service/build/ 启动服务（工作目录需要是 build/）
+          cd service/build
+          nohup ./QuantService ../../stock_hist_sim.json > service_test.log 2>&1 &
+          TEST_PID=$!
+          echo "Test service PID: $TEST_PID"
+
+          # 等待服务就绪
+          for i in $(seq 1 30); do
+            if curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status >/dev/null 2>&1; then
+              echo "Test service ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Service failed to start within 30s"
+              cat service_test.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # 生成测试数据并运行测试
+          cd ../test
+          python testcases/generate_test_data.py 2>/dev/null || true
+          python run_tests.py --mode stock_hist_sim --no-service
+          TEST_EXIT_CODE=$?
+
+          # 停止服务
+          curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+          sleep 2
+          kill -9 $TEST_PID 2>/dev/null || true
+          exit $TEST_EXIT_CODE
 
       # === 阶段 3: 测试通过后上传最终构建 ===
 

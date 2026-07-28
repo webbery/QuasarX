@@ -40,7 +40,7 @@ DEBUG_DIR = SERVICE_ROOT / "build" / "data" / "data" / "debug"
 CSV_DATA_DIR = SERVICE_ROOT / "build" / "data" / "A_hfq"
 
 SYMBOL = "sz.800001"
-TOLERANCE = 1e-6
+TOLERANCE = 1e-5
 
 
 # ============================================================

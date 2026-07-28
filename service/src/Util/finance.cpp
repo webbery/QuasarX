@@ -743,6 +743,21 @@ Vector<Vector<double>> finance::computeRollingEMDEnergy(const Vector<double>& da
     return result;
 }
 
+Vector<double> finance::ewmaVolatilityStandardize(const Vector<double>& returns, double decay) {
+    Vector<double> standardized(returns.size());
+    if (returns.empty()) return standardized;
+
+    double sigma2 = returns[0] * returns[0];
+    for (size_t i = 0; i < returns.size(); ++i) {
+        double sigma = std::sqrt(std::max(sigma2, 1e-12));
+        standardized[i] = returns[i] / sigma;
+        if (i + 1 < returns.size()) {
+            sigma2 = decay * sigma2 + (1.0 - decay) * returns[i] * returns[i];
+        }
+    }
+    return standardized;
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // 协方差收缩 + 投资组合优化
 // ══════════════════════════════════════════════════════════════════════

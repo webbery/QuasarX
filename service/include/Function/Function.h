@@ -1,5 +1,6 @@
 #pragma once
 #include "Callable.h"
+#include "Algorithms/Kahan.h"
 #include <cstdint>
 
 class MA : public ICallable {
@@ -13,7 +14,7 @@ private:
     std::vector<double> _buffer;
     size_t _count;
     size_t _nextIndex;
-    double _sum;
+    KahanAccumulator _sumAcc;  // Kahan 补偿求和，降低累积误差
 };
 
 class EMA: public ICallable {
@@ -46,8 +47,8 @@ private:
     std::vector<double> _buffer;
     size_t _count;
     size_t _nextIndex;
-    double _sum;
-    double _sumSq;
+    KahanAccumulator _sumAcc;    // Kahan 补偿求和
+    KahanAccumulator _sumSqAcc;  // Kahan 补偿平方和
 };
 
 /**
@@ -94,8 +95,8 @@ private:
     std::vector<double> _buffer;  // 滑动窗口缓冲区
     size_t _count;                 // 当前已填充数量
     size_t _nextIndex;             // 下一个写入位置
-    double _sum;                   // 当前窗口总和
-    double _sumSq;                 // 当前窗口平方和
+    KahanAccumulator _sumAcc;      // Kahan 补偿求和
+    KahanAccumulator _sumSqAcc;    // Kahan 补偿平方和
 };
 
 /**
@@ -121,7 +122,7 @@ private:
     std::vector<double> _trBuffer;
     size_t _count;
     size_t _nextIndex;
-    double _sum;
+    KahanAccumulator _sumAcc;  // Kahan 补偿求和
     double _prevClose;
     bool _hasPrev;
 };
