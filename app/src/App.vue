@@ -138,6 +138,8 @@
         <component :is="activeComponent" ref="dynamicComponentRef"
           @load-version="onLoadVersion"
           @strategy-click="onStrategyRiskClick"
+          @emd-edge-selected="onEmdEdgeSelected"
+          @flow-nodes-updated="onFlowNodesUpdated"
         />
       </KeepAlive>
     </main>
@@ -170,6 +172,9 @@
           <FlowComponents
             v-else
             ref="flowComponentsRef"
+            :clicked-edge="clickedEmdEdge"
+            :flow-nodes="flowNodes"
+            @set-edge-imf="onSetEdgeImf"
             @visualize-debug="onVisualizeDebug"
           />
         </div>
@@ -315,6 +320,26 @@ const flowComponentsRef = ref(null); // 用于引用 FlowComponents（策略编�
 let isBacktesting = ref(false);
 let rightPanelTab = ref(localStorage.getItem('rightPanelTab') || 'components');
 let selectedStrategyId = ref(null); // 当前选中的策略ID（用于风险详情）
+const clickedEmdEdge = ref(null)
+const flowNodes = ref([])
+
+const onEmdEdgeSelected = (edge) => {
+  clickedEmdEdge.value = edge
+  if (edge) {
+    rightPanelTab.value = 'components'
+  }
+}
+
+const onFlowNodesUpdated = (nodes) => {
+  flowNodes.value = nodes
+}
+
+const onSetEdgeImf = ({ edgeId, newIndex }) => {
+  const updatedEdge = dynamicComponentRef.value?.setEdgeImfIndex?.(edgeId, newIndex)
+  if (updatedEdge) {
+    clickedEmdEdge.value = updatedEdge
+  }
+}
 
 // === 策略编辑状态保存（用于视图切换后恢复） ===
 const strategyEditorState = ref(null)

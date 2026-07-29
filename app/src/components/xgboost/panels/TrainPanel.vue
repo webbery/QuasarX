@@ -225,16 +225,20 @@
       <MetricsCard :metrics="state.trainResult.data.eval_metrics" />
     </div>
 
-    <!-- 学习曲线 -->
+    <!-- Loss 曲线 -->
     <div v-if="state.trainResult.data?.learning_curve?.length" class="chart-section">
       <div class="section-heading">
         <div>
-          <span class="section-eyebrow">LEARNING CURVE</span>
-          <h3 class="section-title">学习曲线</h3>
+          <span class="section-eyebrow">LOSS CURVE</span>
+          <h3 class="section-title">Loss 曲线</h3>
         </div>
-        <span class="section-hint">训练/验证损失随迭代变化</span>
+        <span class="section-hint">训练/验证损失随迭代变化，虚线为早停触发点</span>
       </div>
-      <LearningCurveChart :data="state.trainResult.data.learning_curve" />
+      <LearningCurveChart
+        :data="state.trainResult.data.learning_curve"
+        :best-iteration="state.trainResult.data.best_iteration"
+        :objective="config.objective"
+      />
     </div>
 
     <div v-if="!state.trainResult.data && !state.trainResult.loading" class="empty-state">

@@ -563,5 +563,20 @@ jobs:
           path: |
             service_lifecycle.log
             service_test.log
+            config.json
+            stock_hist_sim.json
+            tickflow.json
           compression-level: 0
           retention-days: 7
+
+      - name: Upload configs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-configs
+          path: |
+            config.json
+            stock_hist_sim.json
+            tickflow.json
+          compression-level: 5
+          retention-days: 3

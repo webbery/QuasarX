@@ -78,13 +78,44 @@ export interface NodeRegistryEntry {
 
 // === 节点实例数据（序列化到 JSON 的结构）===
 
+export interface NodeParamConfig {
+  value: any
+  type: ParamType
+  options?: any[]
+  visible?: boolean
+  placeholder?: string
+  pattern?: string
+  errorMsg?: string
+  min?: number
+  max?: number
+  step?: number | string
+  unit?: string
+}
+
 export interface NodeInstanceData {
   label: string
   nodeType: string
-  params: Record<string, {
-    value: any
-    type: string
-    options?: any[]
-    visible?: boolean
-  }>
+  params: Record<string, NodeParamConfig>
+}
+
+export interface StrategyFlowNode {
+  id: string
+  type: 'custom'
+  position: {
+    x: number
+    y: number
+  }
+  data: NodeInstanceData
+}
+
+export interface CreateStrategyNodeOptions {
+  id: string | number
+  registryId?: string
+  nodeType?: string
+  position: {
+    x: number
+    y: number
+  }
+  label?: string
+  params?: Record<string, unknown>
 }

@@ -54,12 +54,9 @@
 
 <script setup>
 import { VueFlow } from '@vue-flow/core'
-import { watch, inject } from 'vue'
+import { watch } from 'vue'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
-
-// EMD 出边 IMF 编号属性面板：共享 clickedEdge 状态
-const clickedEdge = inject('clickedEdge', null)
 
 const props = defineProps({
   nodes: {
@@ -91,7 +88,8 @@ const emit = defineEmits([
   'edges-delete',
   'node-click',
   'update-node',
-  'visualize-debug'
+  'visualize-debug',
+  'emd-edge-selected'
 ])
 
 const handlePaneReady = (vueFlowInstance) => {
@@ -110,48 +108,30 @@ const handleNodeContextMenu = (event) => {
   emit('node-context-menu', event)
 }
 
+const resolveEmdImfEdge = (event) => {
+  const edgeId = event?.edge?.id
+  const edge = props.edges.find(e => e.id === edgeId)
+  if (!edge || edge.sourceHandle !== 'IMF') return null
+
+  const sourceNode = props.nodes.find(n => n.id === edge.source)
+  return sourceNode?.data?.nodeType === 'emd' ? edge : null
+}
+
 const handleEdgeClick = (event) => {
   console.log('[FlowCanvas] VueFlow native edge-click:', event)
-  // 更新 clickedEdge 状态（用于右侧面板 EdgeImfSelector）
-  // 前置检查：仅当源节点是 EMD 类型时才更新
-  if (clickedEdge && event.edge) {
-    const sourceNode = props.nodes.value?.find(n => n.id === event.edge.source)
-    if (sourceNode?.data?.nodeType === 'emd') {
-      clickedEdge.value = event.edge
-    } else {
-      clickedEdge.value = null
-    }
-  }
+  emit('emd-edge-selected', resolveEmdImfEdge(event))
   emit('edge-click', event)
 }
 
 const handleEdgeClickFromCustom = (event) => {
   console.log('[FlowCanvas] Custom edge-click from FlowConnectLine:', event)
-  // 更新 clickedEdge 状态（用于右侧面板 EdgeImfSelector）
-  // 前置检查：仅当源节点是 EMD 类型时才更新
-  if (clickedEdge && event.edge) {
-    const sourceNode = props.nodes.value?.find(n => n.id === event.edge.source)
-    if (sourceNode?.data?.nodeType === 'emd') {
-      clickedEdge.value = event.edge
-    } else {
-      clickedEdge.value = null
-    }
-  }
+  emit('emd-edge-selected', resolveEmdImfEdge(event))
   emit('edge-click', event)
 }
 
 const handleConnectionClick = (event) => {
   console.log('[FlowCanvas] Connection-line click:', event)
-  // 更新 clickedEdge 状态（用于右侧面板 EdgeImfSelector）
-  // 前置检查：仅当源节点是 EMD 类型时才更新
-  if (clickedEdge && event.edge) {
-    const sourceNode = props.nodes.value?.find(n => n.id === event.edge.source)
-    if (sourceNode?.data?.nodeType === 'emd') {
-      clickedEdge.value = event.edge
-    } else {
-      clickedEdge.value = null
-    }
-  }
+  emit('emd-edge-selected', resolveEmdImfEdge(event))
   emit('edge-click', event)
 }
 
@@ -172,10 +152,7 @@ const handleSelectionContextMenu = (event) => {
 }
 
 const handlePaneClick = (event) => {
-  // 点击空白处清除 clickedEdge（隐藏右侧面板 EdgeImfSelector）
-  if (clickedEdge) {
-    clickedEdge.value = null
-  }
+  emit('emd-edge-selected', null)
   emit('pane-click', event)
 }
 
@@ -184,6 +161,7 @@ const handleConnect = (connection) => {
 }
 
 const handleEdgesDelete = (deletedEdges) => {
+  emit('emd-edge-selected', null)
   emit('edges-delete', deletedEdges)
 }
 

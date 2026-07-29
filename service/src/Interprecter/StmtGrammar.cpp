@@ -36,7 +36,8 @@ String grammar = R"(
         NotPrefix       <- ('not' / '!') NotExpr { no_ast_opt }
         CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
         ArithExpr       <- Term (AddOp Term)*
-        Term            <- Primary (MulOp Primary)*
+        Term            <- Unary (MulOp Unary)*
+        Unary           <- '-' Unary / Primary { no_ast_opt }
         Primary         <- Atom (Trailer)*
         Atom            <- Number / String / BoolLiteral / FunctionCall / ListExpr / Identifier / '(' Expression ')'
 
@@ -235,6 +236,7 @@ Map<String, EvalPtr> evalMap{
     {"CompareExpr", &FormulaParser::evalComparison},
     {"FunctionCall", &FormulaParser::evalFunctionCall},
     {"Term", &FormulaParser::evalTerm},
+    {"Unary", &FormulaParser::evalUnary},
     {"Program", &FormulaParser::evalProgram},
     {"Statement", &FormulaParser::evalStatement},
     {"AndExpr", &FormulaParser::evalAndExpr},

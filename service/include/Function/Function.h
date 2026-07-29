@@ -10,11 +10,13 @@ public:
 
 private:
     double average();
+    void recomputeSum();
 private:
     std::vector<double> _buffer;
     size_t _count;
     size_t _nextIndex;
     KahanAccumulator _sumAcc;  // Kahan 补偿求和，降低累积误差
+    size_t _stepsSinceRecompute; // 定期重算计数器，防止滑动窗口 compensation 漂移
 };
 
 class EMA: public ICallable {
@@ -49,6 +51,7 @@ private:
     size_t _nextIndex;
     KahanAccumulator _sumAcc;    // Kahan 补偿求和
     KahanAccumulator _sumSqAcc;  // Kahan 补偿平方和
+    size_t _stepsSinceRecompute; // 定期重算计数器
 };
 
 /**
@@ -97,6 +100,7 @@ private:
     size_t _nextIndex;             // 下一个写入位置
     KahanAccumulator _sumAcc;      // Kahan 补偿求和
     KahanAccumulator _sumSqAcc;    // Kahan 补偿平方和
+    size_t _stepsSinceRecompute;   // 定期重算计数器
 };
 
 /**

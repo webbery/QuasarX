@@ -129,6 +129,7 @@ public:
     context_t evalComparison(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalFunctionCall(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalTerm(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
+    context_t evalUnary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalProgram(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalOrExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);
     context_t evalAndExpr(const symbol_t& symbol, const peg::Ast& ast, DataContext& context);

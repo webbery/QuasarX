@@ -1,6 +1,5 @@
 import { message } from '@/tool'
-import { useHistoryStore } from '@/stores/history'
-import { convertKeysToLabels } from '@/lib/nodes'
+import { createStrategyNode } from '@/lib/nodes'
 import { functionInputSlots } from '@/lib/nodes/configs/function'
 
 /**
@@ -86,25 +85,6 @@ export async function exportStrategy(strategyId, strategies, versions, historySt
  */
 function isBackendFormat(data) {
   return !data.format && data.nodes && Array.isArray(data.nodes) && data.name
-}
-
-/**
- * 将节点 params 中的英文 key 转换为中文 key
- */
-function convertNodeKeys(nodes) {
-  return nodes.map(node => {
-    if (!node.data?.params) return node
-
-    const convertedParams = convertKeysToLabels(node.data.params)
-
-    return {
-      ...node,
-      data: {
-        ...node.data,
-        params: convertedParams
-      }
-    }
-  })
 }
 
 /**
@@ -211,8 +191,8 @@ function normalizeEdgeHandles(edges, nodes) {
  */
 function convertBackendToFrontend(data) {
   const now = new Date().toISOString()
-  const convertedNodes = convertNodeKeys(data.nodes || [])
-  const normalizedEdges = normalizeEdgeHandles(data.edges || [], convertedNodes)
+  const backendNodes = data.nodes || []
+  const normalizedEdges = normalizeEdgeHandles(data.edges || [], backendNodes)
 
   return {
     format: EXPORT_FORMAT,
@@ -225,7 +205,7 @@ function convertBackendToFrontend(data) {
       name: data.name,
       remark: data.description || '',
       saveTime: now,
-      flowData: { nodes: convertedNodes, edges: normalizedEdges },
+      flowData: { nodes: backendNodes, edges: normalizedEdges },
       backtestResult: null
     }]
   }
@@ -248,6 +228,24 @@ async function processImportData(data, historyStore) {
   if (!validateStrategyFormat(data)) {
     message.error('文件格式不正确，无法导入')
     return null
+  }
+
+  for (const versionData of data.versions) {
+    if (!versionData.flowData) continue
+    if (!Array.isArray(versionData.flowData.nodes)) {
+      throw new Error(`版本 ${versionData.id} 缺少 nodes 数组`)
+    }
+
+    versionData.flowData = {
+      ...versionData.flowData,
+      nodes: versionData.flowData.nodes.map(node => createStrategyNode({
+        id: node.id,
+        nodeType: node.data?.nodeType,
+        position: node.position,
+        label: node.data?.label,
+        params: node.data?.params,
+      }))
+    }
   }
 
   // 检查策略名是否冲突，冲突则自动重命名

@@ -1,6 +1,6 @@
 import { nextTick } from 'vue'
 import { MarkerType } from '@vue-flow/core'
-import { getNode } from '@/lib/nodes'
+import { createStrategyNode } from '@/lib/nodes'
 import { updateAllSuccessorDebugNodes } from '@/lib/nodes/useDebugNodeFields'
 import { functionInputSlots } from '@/lib/nodes/configs/function'
 import { breakoutInputSlots } from '@/lib/nodes/configs/breakout'
@@ -333,51 +333,24 @@ export function useFlowOperations(state) {
   const onDrop = (event) => {
     const { dataTransfer, clientX, clientY } = event
     const nodeId = dataTransfer?.getData('application/vueflow')
-
-    const entry = getNode(nodeId)
-    if (!entry) {
-      console.warn(`[Flow] 未找到节点类型配置: ${nodeId}`)
-      return
-    }
+    if (!nodeId) return
 
     const position = screenToFlowCoordinate({
       x: clientX,
       y: clientY,
     })
 
-    // 从注册表构建参数
-    const params = {}
-    for (const p of entry.params) {
-      const optArr = Array.isArray(p.options)
-        ? (typeof p.options[0] === 'object' ? p.options.map(o => typeof o === 'object' ? o : { label: o, value: o }) : p.options)
-        : undefined
-      params[p.label] = {
-        value: p.default,
-        type: p.type,
-        options: optArr,
-        visible: p.visible ?? true,
-        ...(p.placeholder && { placeholder: p.placeholder }),
-        ...(p.pattern && { pattern: p.pattern }),
-        ...(p.errorMsg && { errorMsg: p.errorMsg }),
-        ...(p.min !== undefined && { min: p.min }),
-        ...(p.max !== undefined && { max: p.max }),
-        ...(p.step !== undefined && { step: p.step }),
-        ...(p.unit && { unit: p.unit }),
-      }
+    try {
+      const newNode = createStrategyNode({
+        id: nodeIdCounter.value,
+        registryId: nodeId,
+        position,
+      })
+      nodeIdCounter.value++
+      addNodes([newNode])
+    } catch (error) {
+      console.warn(`[Flow] ${error.message}`)
     }
-
-    const newNode = {
-      id: `${nodeIdCounter.value++}`,
-      type: 'custom',
-      position,
-      data: {
-        label: entry.label,
-        nodeType: entry.nodeType,
-        params,
-      },
-    }
-
-    addNodes([newNode])
   }
 
   /**
@@ -504,24 +477,26 @@ export function useFlowOperations(state) {
    */
   const setEdgeImfIndex = (edgeId, newIndex) => {
     const edge = getEdges.value.find(e => e.id === edgeId)
-    if (!edge) return
+    if (!edge) return null
 
     const normalized = (newIndex === null || newIndex === undefined) ? null : Number(newIndex)
-    if (normalized !== null && (!Number.isInteger(normalized) || normalized < 0)) return
+    if (normalized !== null && (!Number.isInteger(normalized) || normalized < 0)) return null
 
     const current = (edge.data?.imfIndex === undefined) ? null : edge.data.imfIndex
-    if (current === normalized) return
+    if (current === normalized) return edge
 
     const newData = { ...(edge.data || {}), imfIndex: normalized }
     const imfPart = normalized !== null ? `-IMF_${normalized}` : ''
     const newId = `e${edge.source}${imfPart}-${edge.target}-${edge.targetHandle}`
+    const newEdge = { ...edge, id: newId, data: newData }
 
     removeEdges([edge])
-    addEdges([{ ...edge, id: newId, data: newData }])
+    addEdges([newEdge])
     nextTick(() => {
       const updated = getEdges.value.find(e => e.id === newId)
       if (updated) addSelectedEdges([updated])
     })
+    return newEdge
   }
 
   /**

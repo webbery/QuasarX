@@ -11,7 +11,7 @@
 
 import { tool } from "@langchain/core/tools"
 import { z } from "zod"
-import { getAllNodes, getNode, searchNodes } from "../nodes"
+import { createStrategyNode, getAllNodes, getNode, searchNodes } from "../nodes"
 import { useHistoryStore } from "@/stores/history"
 
 // === 策略图 CRUD（使用 historyStore 管理）===
@@ -115,6 +115,21 @@ function validateStrategyGraph(data: any): { valid: boolean; errors: string[]; s
   return { valid: errors.length === 0, errors, suggestions }
 }
 
+function normalizeStrategyGraphNodes(data: any): any {
+  if (!Array.isArray(data?.nodes)) return data
+
+  return {
+    ...data,
+    nodes: data.nodes.map((node: any) => createStrategyNode({
+      id: node.id,
+      nodeType: node.data?.nodeType,
+      position: node.position,
+      label: node.data?.label,
+      params: node.data?.params,
+    }))
+  }
+}
+
 /** 获取所有已保存策略 */
 function listStrategies(): string {
   const historyStore = useHistoryStore()
@@ -148,8 +163,15 @@ async function updateStrategy(id: string, data: any): Promise<string> {
   const strategy = historyStore.strategies.find(s => s.id === id)
   if (!strategy) return `未找到策略图 "${id}"，请先使用 create_strategy 创建`
 
-  // 解析策略图数据
-  const flowData = data.nodes && data.edges ? data : data.graph || data
+  // 解析并规范化策略图数据
+  const sourceFlowData = data.nodes && data.edges ? data : data.graph || data
+  let flowData: any
+  try {
+    flowData = normalizeStrategyGraphNodes(sourceFlowData)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return `策略图 "${strategy.name}" (${id}) 更新失败：${reason}`
+  }
 
   // 验证策略图结构
   const validation = validateStrategyGraph(flowData)
@@ -198,8 +220,15 @@ async function deleteStrategy(id: string): Promise<string> {
 async function createStrategy(name: string, data: any): Promise<string> {
   const historyStore = useHistoryStore()
 
-  // 解析策略图数据
-  const flowData = data.nodes && data.edges ? data : data.graph || data
+  // 解析并规范化策略图数据
+  const sourceFlowData = data.nodes && data.edges ? data : data.graph || data
+  let flowData: any
+  try {
+    flowData = normalizeStrategyGraphNodes(sourceFlowData)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return `策略图 "${name}" 创建失败：${reason}`
+  }
 
   // 验证策略图结构
   const validation = validateStrategyGraph(flowData)

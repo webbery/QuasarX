@@ -4,7 +4,7 @@
 #include <variant>
 #include <Eigen/Dense>
 
-MA::MA(short count): _count(0), _nextIndex(0) {
+MA::MA(short count): _count(0), _nextIndex(0), _stepsSinceRecompute(0) {
     _buffer.resize(count, 0.0);
 }
 
@@ -31,12 +31,23 @@ context_t MA::operator()(const Map<String, context_t>& args) {
     _buffer[_nextIndex] = value;
     _sumAcc.add(value);
     _nextIndex = (_nextIndex + 1) % _buffer.size();
+    // 定期从 buffer 重算完整和，重置 Kahan compensation 漂移
+    if (++_stepsSinceRecompute >= _buffer.size()) {
+        recomputeSum();
+        _stepsSinceRecompute = 0;
+    }
     return average();
 }
 
 double MA::average() {
     if (_count == 0) return 0.0;
     return _sumAcc.sum() / _count;
+}
+
+void MA::recomputeSum() {
+    _sumAcc.reset();
+    for (size_t i = 0; i < _count; ++i)
+        _sumAcc.add(_buffer[i]);
 }
 
 EMA::EMA(short count, double alpha)
@@ -54,7 +65,7 @@ context_t MACD::operator()(const Map<String, context_t>& args) {
 }
 
 STD::STD(int32_t count)
-: _window(count), _count(0), _nextIndex(0) {
+: _window(count), _count(0), _nextIndex(0), _stepsSinceRecompute(0) {
     _buffer.resize(count, 0.0);
 }
 
@@ -87,6 +98,16 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         _sumSqAcc.add(value * value);
 
         _nextIndex = (_nextIndex + 1) % _window;
+        // 定期从 buffer 重算，重置 Kahan compensation 漂移
+        if (++_stepsSinceRecompute >= static_cast<size_t>(_window)) {
+            _sumAcc.reset();
+            _sumSqAcc.reset();
+            for (int32_t i = 0; i < _window; ++i) {
+                _sumAcc.add(_buffer[i]);
+                _sumSqAcc.add(_buffer[i] * _buffer[i]);
+            }
+            _stepsSinceRecompute = 0;
+        }
     }
 
     if (_count < static_cast<size_t>(_window)) {
@@ -182,7 +203,7 @@ context_t R2::operator()(const Map<String, context_t>& args) {
 }
 
 ZScore::ZScore(int32_t window)
-: _window(window), _count(0), _nextIndex(0) {
+: _window(window), _count(0), _nextIndex(0), _stepsSinceRecompute(0) {
     _buffer.resize(window, 0.0);
 }
 
@@ -233,6 +254,16 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
         _sumSqAcc.add(value * value);
 
         _nextIndex = (_nextIndex + 1) % _window;
+        // 定期从 buffer 重算，重置 Kahan compensation 漂移
+        if (++_stepsSinceRecompute >= static_cast<size_t>(_window)) {
+            _sumAcc.reset();
+            _sumSqAcc.reset();
+            for (int32_t i = 0; i < _window; ++i) {
+                _sumAcc.add(_buffer[i]);
+                _sumSqAcc.add(_buffer[i] * _buffer[i]);
+            }
+            _stepsSinceRecompute = 0;
+        }
     }
 
     // 数据不足窗口大小时返回 NaN

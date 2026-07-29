@@ -70,7 +70,7 @@ FormulaParser::ExprType FormulaParser::inferExpressionType(
         return ExprType::BOOL;  // 比较表达式返回布尔值
     }
 
-    if (ast.name == "ArithExpr" || ast.name == "Term") {
+    if (ast.name == "ArithExpr" || ast.name == "Term" || ast.name == "Unary") {
         // 算术运算返回 double 标量
         return ExprType::DOUBLE_SCALAR;
     }
@@ -183,7 +183,7 @@ bool FormulaParser::validateArithmetic(const peg::Ast& ast,
                                        const Map<String, ArgType>& availableVars) {
     // 检查算术表达式中的操作数
     for (auto& node : ast.nodes) {
-        if (node->name == "Primary" || node->name == "Term" || node->name == "ArithExpr") {
+        if (node->name == "Primary" || node->name == "Term" || node->name == "ArithExpr" || node->name == "Unary") {
             auto type = inferExpressionType(*node, availableVars);
             if (type == ExprType::DOUBLE_TIMESERIES ||
                 type == ExprType::INTEGER_TIMESERIES) {

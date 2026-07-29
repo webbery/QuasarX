@@ -39,7 +39,7 @@
         }
     },
     "server": {
-        "productID": "HX5ZWWQ4VI",
+        "productID": "",
         "addr": "localhost",
         "db_path": "data",
         "default": {
@@ -59,14 +59,14 @@
         "notice": {
             "email": ""
         },
-        "passwd": "admin",
-        "port": 19107,
+        "passwd": "",
+        "port": 0,
         "smtp": {
             "addr": "",
             "auth": "",
             "mail": ""
         },
         "ssl": "",
-        "user": "admin"
+        "user": "0"
     }
 }

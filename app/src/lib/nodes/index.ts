@@ -23,5 +23,14 @@ import './configs/factorCombine'
 import './configs/breakout'
 
 export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
+export { createStrategyNode } from './factory'
 export { CATEGORY_ICONS } from './types'
-export type { NodeRegistryEntry, ParamSchema, NodeCategory } from './types'
+export type {
+  NodeRegistryEntry,
+  ParamSchema,
+  NodeCategory,
+  NodeParamConfig,
+  NodeInstanceData,
+  StrategyFlowNode,
+  CreateStrategyNodeOptions,
+} from './types'

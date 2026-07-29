@@ -32,41 +32,44 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, inject, computed, watch } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import EdgeImfSelector from './flow/EdgeImfSelector.vue'
 
-// EMD 出边 IMF 编号属性面板：inject 共享状态
-// FlowCanvas 已做前置检查，仅当源节点是 EMD 时才设置 clickedEdge
-const clickedEdge = inject('clickedEdge', ref(null))
-const setEdgeImfIndex = inject('setEdgeImfIndex', () => {})
-const flowNodes = inject('flowNodes', ref([]))
-
-// 优化：使用 ref + watch 避免 flowNodes 频繁变化导致的性能问题
-// 只在 clickedEdge 变化时重新计算
-const imfPanelNumImfs = ref(5)
-const imfPanelTargetLabel = ref('')
-
-watch(clickedEdge, (edge) => {
-  if (!edge) {
-    imfPanelNumImfs.value = 5
-    imfPanelTargetLabel.value = ''
-    return
+const props = defineProps({
+  clickedEdge: {
+    type: Object,
+    default: null
+  },
+  flowNodes: {
+    type: Array,
+    default: () => []
   }
-  // 计算 IMF 数量
-  const sourceNode = flowNodes.value?.find(n => n.id === edge.source)
-  const numIMFs = sourceNode?.data?.params?.numIMFs?.value ?? sourceNode?.data?.params?.numIMFs ?? 5
-  const n = Number(numIMFs)
-  imfPanelNumImfs.value = Number.isInteger(n) && n > 0 ? Math.min(n, 20) : 5
-  // 计算目标节点 label
-  const targetNode = flowNodes.value?.find(n => n.id === edge.target)
-  imfPanelTargetLabel.value = targetNode?.data?.label || `节点 ${edge.target}`
-}, { immediate: true })
+})
 
-// 处理 IMF 编号切换
+const emit = defineEmits(['set-edge-imf'])
+
+const imfPanelNumImfs = computed(() => {
+  if (!props.clickedEdge) return 5
+
+  const sourceNode = props.flowNodes.find(n => n.id === props.clickedEdge.source)
+  const param = sourceNode?.data?.params?.['IMF 数量'] ?? sourceNode?.data?.params?.numIMFs
+  const numIMFs = param?.value ?? param ?? 5
+  const count = Number(numIMFs)
+  return Number.isInteger(count) && count > 0 ? Math.min(count, 20) : 5
+})
+
+const imfPanelTargetLabel = computed(() => {
+  if (!props.clickedEdge) return ''
+  const targetNode = props.flowNodes.find(n => n.id === props.clickedEdge.target)
+  return targetNode?.data?.label || `节点 ${props.clickedEdge.target}`
+})
+
 const handleSetEdgeImf = (newIndex) => {
-  const edge = clickedEdge.value
-  if (!edge) return
-  setEdgeImfIndex(edge.id, newIndex)
+  if (!props.clickedEdge) return
+  emit('set-edge-imf', {
+    edgeId: props.clickedEdge.id,
+    newIndex
+  })
 }
 
 // 分类显示名称

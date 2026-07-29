@@ -36,6 +36,7 @@
           @node-click="onNodeClick"
           @update-node="updateNodeData"
           @visualize-debug="onVisualizeDebug"
+          @emd-edge-selected="onEmdEdgeSelected"
         />
 
         <FlowContextMenu
@@ -59,7 +60,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted, provide, computed, inject, shallowRef } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, provide, computed, inject } from 'vue'
 import ReportView from './report/ReportView.vue'
 import InfoPanel from './strategy/InfoPanel.vue'
 import FlowCanvas from './FlowCanvas.vue'
@@ -74,6 +75,8 @@ import { useFlowOperations } from '@/components/strategy/composables/useFlowOper
 import { useFlowSaveLoad } from '@/components/strategy/composables/useFlowSaveLoad'
 import { useBacktest } from '@/components/strategy/composables/useBacktest'
 import { convertLabelsToKeys } from '@/lib/nodes'
+
+const emit = defineEmits(['load-version', 'emd-edge-selected', 'flow-nodes-updated'])
 
 // 注入报表配置面板控制方法（从 App.vue）
 const onShowReportConfig = inject('onShowReportConfig', () => {
@@ -161,18 +164,14 @@ provide('selectedNodes', selectedNodes)
 provide('selectedEdges', selectedEdges)
 provide('backtestRange', backtestRange)
 provide('portfolioConfigs', computed(() => portfolioStore.portfolioConfigs))
-provide('setEdgeImfIndex', setEdgeImfIndex)
 
-// EMD 出边 IMF 编号属性面板：共享 clickedEdge 状态
-const clickedEdge = ref(null)
-provide('clickedEdge', clickedEdge)
-// 使用 shallowRef 包装 getNodes，减少响应式开销
-// 只在 clickedEdge 变化时才需要访问 nodes
-const flowNodesShallow = shallowRef(getNodes.value)
 watch(getNodes, (newNodes) => {
-  flowNodesShallow.value = newNodes
-}, { deep: false })  // 只监听数组引用变化，不深度监听
-provide('flowNodes', flowNodesShallow)
+  emit('flow-nodes-updated', newNodes)
+}, { deep: true, immediate: true })
+
+const onEmdEdgeSelected = (edge) => {
+  emit('emd-edge-selected', edge)
+}
 
 // 监听 Vue Flow 的选中状态变化
 watch(getSelectedNodes, (newSelectedNodes) => {
@@ -302,6 +301,8 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('click', closeContextMenu)
   document.removeEventListener('keydown', onKeyDown)
+  emit('emd-edge-selected', null)
+  emit('flow-nodes-updated', [])
   console.log('[StrategyFactory] onUnmounted: 移除 SSE handlers')
 })
 
@@ -311,11 +312,9 @@ const handleRunBacktest = async () => {
 }
 
 const handleLoadVersionFromHistory = async (version) => {
+  emit('emd-edge-selected', null)
   return loadVersionFromHistory(version, message, reportViewRef)
 }
-
-// 对外暴露
-const emit = defineEmits(['load-version'])
 
 /**
  * 如果当前画布显示的正是被删除的策略，则清空
@@ -323,6 +322,7 @@ const emit = defineEmits(['load-version'])
 const clearCanvasIfStrategyMatches = (strategyId) => {
   if (currentStrategyId.value === strategyId) {
     console.info(`[StrategyFactory] 策略 ${strategyId} 已删除，清空画布`)
+    emit('emd-edge-selected', null)
     removeNodes(getNodes.value.map(n => n.id))
     removeEdges(getEdges.value.map(e => e.id))
     currentStrategyId.value = null
@@ -336,6 +336,7 @@ const clearCanvasIfStrategyMatches = (strategyId) => {
 const clearCanvasIfVersionMatches = (versionId) => {
   if (currentVersionId.value === versionId) {
     console.info(`[StrategyFactory] 版本 ${versionId} 已删除，清空画布`)
+    emit('emd-edge-selected', null)
     removeNodes(getNodes.value.map(n => n.id))
     removeEdges(getEdges.value.map(e => e.id))
     currentStrategyId.value = null
@@ -385,6 +386,7 @@ defineExpose({
   clearCanvasIfStrategyMatches,
   clearCanvasIfVersionMatches,
   getStrategyGraph,
+  setEdgeImfIndex,
   onVisualizeDebug,
 })
 </script>

@@ -74,6 +74,25 @@ context_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, D
     return 0.;
 }
 
+context_t FormulaParser::evalUnary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
+    // Unary <- '-' Unary / Primary
+    if (ast.nodes.size() == 2 && ast.nodes[0]->token[0] == '-') {
+        auto val = evalNode(symbol, *ast.nodes[1], context);
+        if (auto* d = std::get_if<double>(&val)) {
+            return -(*d);
+        }
+        if (auto* v = std::get_if<Vector<double>>(&val)) {
+            Vector<double> result(v->size());
+            for (size_t i = 0; i < v->size(); ++i)
+                result[i] = -(*v)[i];
+            return result;
+        }
+        return -std::get<double>(val);
+    }
+    // Fallback: Primary
+    return evalNode(symbol, *ast.nodes[0], context);
+}
+
 context_t FormulaParser::evalProgram(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     if (ast.nodes.empty())
         return 0.;
