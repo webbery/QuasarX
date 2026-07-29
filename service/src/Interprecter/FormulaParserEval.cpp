@@ -75,8 +75,8 @@ context_t FormulaParser::evalTerm(const symbol_t& symbol, const peg::Ast& ast, D
 }
 
 context_t FormulaParser::evalUnary(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    // Unary <- '-' Unary / Primary
-    if (ast.nodes.size() == 2 && ast.nodes[0]->token[0] == '-') {
+    // Unary <- UnaryOp Unary / Primary
+    if (ast.nodes.size() == 2 && ast.nodes[0]->name == "UnaryOp") {
         auto val = evalNode(symbol, *ast.nodes[1], context);
         if (auto* d = std::get_if<double>(&val)) {
             return -(*d);

@@ -81,6 +81,7 @@ public:
 private:
     void handleTrain(const nlohmann::json& params, httplib::Response& res);
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
+    void handleTrainStatus(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);
     void handlePublish(const nlohmann::json& params, httplib::Response& res);
     void handleList(httplib::Response& res);

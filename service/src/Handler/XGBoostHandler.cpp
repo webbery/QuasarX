@@ -532,6 +532,41 @@ void XGBoostHandler::handleTrainProgress(const httplib::Request& req, httplib::R
         });
 }
 
+void XGBoostHandler::handleTrainStatus(const httplib::Request& req, httplib::Response& res) {
+    String sessionId = req.get_param_value("session_id");
+    if (sessionId.empty()) {
+        res.status = 400;
+        res.set_content(R"({"message":"missing session_id"})", "application/json");
+        return;
+    }
+
+    std::shared_ptr<TrainSession> session;
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && s_activeSession->_sessionId == sessionId) {
+            session = s_activeSession;
+        }
+    }
+    if (!session) {
+        res.status = 404;
+        res.set_content(R"({"message":"session not found"})", "application/json");
+        return;
+    }
+
+    nlohmann::json resp;
+    std::lock_guard<std::mutex> lk(session->_mtx);
+    if (!session->_done) {
+        resp["status"] = "running";
+    } else if (session->_hasError) {
+        resp = session->_result;
+        resp["status"] = "error";
+    } else {
+        resp = session->_result;
+        resp["status"] = "done";
+    }
+    res.set_content(resp.dump(), "application/json");
+}
+
 void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response& res) {
     uint64_t modelId = 0;
     if (params.contains("model_id")) {
@@ -901,6 +936,8 @@ void XGBoostHandler::get(const httplib::Request& req, httplib::Response& res) {
         handleList(res);
     } else if (action == "train") {
         handleTrainProgress(req, res);
+    } else if (action == "train_status") {
+        handleTrainStatus(req, res);
     } else if (action == "shap") {
         // 从 query params 构造 params json
         nlohmann::json params;

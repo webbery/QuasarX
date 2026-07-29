@@ -17,6 +17,7 @@ XGBoost 训练与分析 API 测试
 """
 
 import json
+import time
 import pytest
 import urllib3
 import requests
@@ -75,15 +76,44 @@ def trained_model(auth_token):
             timeout=120,
         )
     except requests.exceptions.Timeout:
-        pytest.skip("训练超时（可能缺少测试数据或 Python 环境）")
+        pytest.skip("训练请求超时（可能缺少测试数据或 Python 环境）")
 
     if resp.status_code != 200:
         pytest.skip(f"训练失败（依赖缺失）: {resp.text[:200]}")
 
-    result = resp.json()
-    assert "model_id" in result, "训练响应缺少 model_id"
-    assert "model_path" in result, "训练响应缺少 model_path"
-    return result
+    submit_result = resp.json()
+    session_id = submit_result.get("session_id")
+    if not session_id:
+        pytest.skip(f"训练响应缺少 session_id: {submit_result}")
+
+    # 轮询 train_status 直到训练完成（最多 120s）
+    for _ in range(120):
+        time.sleep(1)
+        try:
+            status_resp = requests.get(
+                f"{BASE_URL}/xgboost",
+                params={"action": "train_status", "session_id": session_id},
+                headers=_headers(auth_token),
+                verify=VERIFY_SSL,
+                timeout=10,
+            )
+        except requests.exceptions.RequestException:
+            continue
+
+        if status_resp.status_code != 200:
+            continue
+
+        data = status_resp.json()
+        status = data.get("status")
+        if status == "done":
+            assert "model_id" in data, "训练完成但响应缺少 model_id"
+            assert "model_path" in data, "训练完成但响应缺少 model_path"
+            return data
+        if status == "error":
+            pytest.skip(f"训练失败: {data.get('error', 'unknown')}")
+        # status == "running" → 继续轮询
+
+    pytest.skip("训练超时（120s 内未完成）")
 
 
 # ============== 错误场景测试（无需训练） ==============

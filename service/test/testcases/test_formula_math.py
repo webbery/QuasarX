@@ -398,16 +398,16 @@ class TestFormulaMathComposite:
     """复合公式测试 — 模拟 trend_strength 计算"""
 
     def test_clamp_abs_pattern(self, headers):
-        """min(abs(x) * 50, 5) — 绝对值 + 缩放 + clamp"""
+        """min(abs(x) * 10, 1) — 绝对值 + 缩放 + clamp"""
         sid = "test_comp_clamp_abs"
-        strategy = _build_strategy("min(abs(ma5[t] - 100) * 50, 5)", sid)
+        strategy = _build_strategy("min(abs(ma5[t] - 100) * 5, 1)", sid)
         _run_backtest(strategy, headers)
 
         df = _read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
-        expected = np.minimum(np.abs(ma5 - 100) * 50, 5.0)
+        expected = np.minimum(np.abs(ma5 - 100) * 5, 1.0)
         _compare_series(actual, expected, label="clamp_abs")
 
     def test_trend_strength_formula(self, headers):

@@ -1,4 +1,5 @@
 #include "Nodes/FunctionNode.h"
+#include "Nodes/QuoteNode.h"
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
@@ -16,30 +17,35 @@
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 namespace {
-    // 从 config 中提取 range 参数并转为秒数
-    auto rangeToSeconds = [](const nlohmann::json& config) -> int {
-        String range = (String)config["params"]["range"]["value"];
-        TimeValue tv = ParseTimeValue(range);
-        switch (tv.unit) {
-            case 's': return tv.value;
-            case 'm': return tv.value * 60;
-            case 'h': return tv.value * 3600;
-            case 'd': return tv.value * 86400;
-            default:  return tv.value;
+    // 每 bar 对应的分钟数
+    int MinutesPerBar(DataFrequencyType freq) {
+        switch (freq) {
+            case DataFrequencyType::Day:    return 240;
+            case DataFrequencyType::Min1:   return 1;
+            case DataFrequencyType::Min5:   return 5;
+            case DataFrequencyType::Second: return 1;
+            default: return 240;
         }
-    };
+    }
 
-    // 从 config 中提取 range 参数的数值部分（用于 MA 等按 bar 数计算的场景）
-    auto rangeValue = [](const nlohmann::json& config) -> int {
-        String range = (String)config["params"]["range"]["value"];
-        return ParseTimeValue(range).value;
-    };
+    // 将 TimeValue 按数据频率换算为 bar 数
+    int TimeValueToBars(const TimeValue& tv, DataFrequencyType freq) {
+        int totalMinutes;
+        switch (tv.unit) {
+            case 's': totalMinutes = 1; break;             // 不足 1 bar 按 1 bar
+            case 'm': totalMinutes = tv.value; break;
+            case 'h': totalMinutes = tv.value * 60; break;
+            case 'd': totalMinutes = tv.value * 240; break; // 1 交易日 = 240 分钟
+            default:  return tv.value;                      // 无单位 → 裸数字即 bar 数
+        }
+        return std::max(1, totalMinutes / MinutesPerBar(freq));
+    }
 
     using CallableFactory = std::function<ICallable*(const nlohmann::json&)>;
 
     Map<String, CallableFactory> intrinsic_functions{
         {"MA", [] (const nlohmann::json& config) {
-            return new MA(rangeValue(config));
+            return new MA(config.value("_windowBars", 15));
         }},
         {"MinMax", [] (const nlohmann::json& config) -> ICallable* {
             return nullptr;
@@ -48,7 +54,7 @@ namespace {
             return nullptr;
         }},
         {"ATR", [] (const nlohmann::json& config) -> ICallable* {
-            return new ATR(rangeToSeconds(config));
+            return new ATR(config.value("_windowBars", 14));
         }},
         {"VWAP", [] (const nlohmann::json& config) -> ICallable* {
             return nullptr;
@@ -57,19 +63,19 @@ namespace {
             return nullptr;
         }},
         {"STD", [] (const nlohmann::json& config) -> ICallable* {
-            return new STD(rangeToSeconds(config));
+            return new STD(config.value("_windowBars", 15));
         }},
         {"Return", [] (const nlohmann::json& config) -> ICallable* {
-            return new Return(rangeToSeconds(config));
+            return new Return(config.value("_windowBars", 1));
         }},
         {"R2", [] (const nlohmann::json& config) -> ICallable* {
-            return new R2(rangeToSeconds(config));
+            return new R2(config.value("_windowBars", 15));
         }},
         {"ZScore", [] (const nlohmann::json& config) -> ICallable* {
-            return new ZScore(rangeToSeconds(config));
+            return new ZScore(config.value("_windowBars", 15));
         }},
         {"VPCorr", [] (const nlohmann::json& config) -> ICallable* {
-            return new VPCorr(rangeToSeconds(config));
+            return new VPCorr(config.value("_windowBars", 15));
         }},
     };
 }
@@ -128,6 +134,25 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     }
     String methodName = config["params"]["method"]["value"];
 
+    // 2.5 从上游 input 节点提取数据频率，将 range 换算为 bar 数
+    DataFrequencyType dataFreq = DataFrequencyType::Day;
+    for (auto& [handle, node] : _ins) {
+        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
+            dataFreq = quoteNode->GetFreq();
+            break;
+        }
+    }
+    int windowBars = 15; // 默认值
+    if (config["params"].contains("range") && config["params"]["range"].contains("value")) {
+        String rangeStr = (String)config["params"]["range"]["value"];
+        TimeValue tv = ParseTimeValue(rangeStr);
+        windowBars = TimeValueToBars(tv, dataFreq);
+        DEBUG_INFO("[FunctionNode:{}] Init: range='{}', dataFreq={}, windowBars={}",
+             _id, rangeStr, static_cast<int>(dataFreq), windowBars);
+    }
+    auto callableConfig = config;
+    callableConfig["_windowBars"] = windowBars;
+
     // 3. 从 _params 的 key 中提取所有 symbol
     //    key 格式: "sz.800001.close" → symbol = "sz.800001"
     Set<String> symbolSet;
@@ -150,7 +175,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     auto& factory = factoryIt->second;
 
     for (auto& symbol : symbolSet) {
-        _callables[symbol] = factory(config);
+        _callables[symbol] = factory(callableConfig);
     }
 
     // 5. 构建输出要素

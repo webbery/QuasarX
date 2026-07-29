@@ -37,7 +37,8 @@ String grammar = R"(
         CompareExpr     <- ArithExpr (CompareOp ArithExpr)*
         ArithExpr       <- Term (AddOp Term)*
         Term            <- Unary (MulOp Unary)*
-        Unary           <- '-' Unary / Primary { no_ast_opt }
+        Unary           <- UnaryOp Unary / Primary { no_ast_opt }
+        UnaryOp         <- '-'
         Primary         <- Atom (Trailer)*
         Atom            <- Number / String / BoolLiteral / FunctionCall / ListExpr / Identifier / '(' Expression ')'
 

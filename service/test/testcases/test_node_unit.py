@@ -746,7 +746,7 @@ class TestEMDNode:
     """EMD 经验模态分解节点
 
     Python 参考实现: PyEMD.EMD (15% 容差，插值方法差异)
-    关键输出: {label}.IMF_0 ~ {label}.IMF_4
+    关键输出: {label}.nimf_0 ~ {label}.nimf_4
     """
 
     @pytest.mark.parametrize("dataset_id", ["sine", "step", "reversal", "deterministic", "anomaly"])
@@ -760,9 +760,9 @@ class TestEMDNode:
         df = _read_debug_csv(strategy_id, "debug_emd_5")
 
         # 验证有 5 个 IMF 列
-        imf_cols = [c for c in df.columns if "IMF_" in c]
+        imf_cols = [c for c in df.columns if "nimf_" in c]
         assert len(imf_cols) == 5, \
-            f"[{dataset_id}] expected 5 IMF columns, got {len(imf_cols)}: {imf_cols}"
+            f"[{dataset_id}] expected 5 nimf columns, got {len(imf_cols)}: {imf_cols}"
 
         # 验证每个 IMF 都有有效值
         for col in imf_cols:
@@ -779,7 +779,7 @@ class TestEMDNode:
         _run_backtest(strategy_path, headers)
         df = _read_debug_csv(strategy_id, "debug_emd_5")
 
-        imf_cols = [c for c in df.columns if "IMF_" in c]
+        imf_cols = [c for c in df.columns if "nimf_" in c]
         for col in imf_cols:
             series = pd.to_numeric(df[col], errors="coerce").dropna()
             mean_val = series.mean()
