@@ -72,6 +72,9 @@
 #include "Handler/StrategyRiskHandler.h"
 #include "Handler/ShiborHandler.h"
 #include "Handler/MacroHandler.h"
+#ifdef _DEBUG
+#include "Handler/SimulateBarHandler.h"
+#endif
 #include "StrategySubSystem.h"
 #include "AgentSubSystem.h"
 #include "Util/FinanceDB.h"
@@ -177,6 +180,9 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_COVARIANCE_DIAG "/analysis/covariance_diagnostics"
 #define API_CUSUM           "/analysis/cusum"
 #define API_SIGNAL          "/analysis/signal"
+#ifdef _DEBUG
+#define API_SIMULATE_BAR    "/strategy/simulate/bar"
+#endif
 #define API_PCA             "/analysis/pca"
 #define API_CAPITAL_STATUS  "/server/capital"
 #define API_STRATEGY_LOGS   "/strategy/logs"
@@ -1290,6 +1296,10 @@ void Server::InitHandlers() {
     RegistHandler(API_FINANCE_DATA, FinanceDataHandler);
     RegistHandler(API_DIVIDEND, DividendHandler);
     RegistHandler(API_XGBOOST, XGBoostHandler);
+
+#ifdef _DEBUG
+    RegistHandler(API_SIMULATE_BAR, SimulateBarHandler);
+#endif
 
     //StopLossHandler* risk = (StopLossHandler*)_handlers[API_RISK_STOP_LOSS];
     //risk->doWork({});
