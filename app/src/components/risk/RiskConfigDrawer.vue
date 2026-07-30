@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import axios from 'axios'
 import type { StrategyRiskItem, StrategyRiskConfig, RiskMetricConfig } from './types/risk'
 
 const props = defineProps<{
@@ -109,11 +110,28 @@ watch(() => props.strategy, (s) => {
   }
 }, { immediate: true })
 
-function handleSave() {
-  if (config.value) {
-    emit('save', config.value)
-    visible.value = false
+async function handleSave() {
+  if (!config.value) return
+
+  const body: Record<string, number> = {}
+  for (const m of config.value.metrics) {
+    if (!m.enabled) continue
+    if (m.key === 'var_95') {
+      body.var_limit = m.criticalThreshold / 100
+    } else if (m.key === 'maxDrawdown') {
+      body.breaker_l1 = m.warningThreshold / 100
+      body.breaker_l2 = m.criticalThreshold / 100
+    }
   }
+
+  try {
+    await axios.post('/v0/risk/capital', body)
+  } catch (err) {
+    console.error('[RiskConfigDrawer] Save error:', err)
+  }
+
+  emit('save', config.value)
+  visible.value = false
 }
 </script>
 

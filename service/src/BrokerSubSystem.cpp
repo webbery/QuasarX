@@ -347,6 +347,16 @@ StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   case StatisticIndicator::EWMA_VaR:
     return "ewma_var";
 
+  // 凸性 VaR 附加
+  case StatisticIndicator::VaRConvexity:
+    return "var_convexity";
+  case StatisticIndicator::CUSUMDriftRatio:
+    return "cusum_drift_ratio";
+  case StatisticIndicator::ExcessKurtosis:
+    return "excess_kurtosis";
+  case StatisticIndicator::AvgWinLossRatio:
+    return "avg_win_loss_ratio";
+
   default:
     return "unknown";
   }

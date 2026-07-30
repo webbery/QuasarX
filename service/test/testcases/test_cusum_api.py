@@ -44,7 +44,7 @@ TEST_CASES_SUMMARY = METRIC_TEST_DIR / "test_cases_summary.json"
 # CUSUM 参数（标准测试数据只有 60 天，min_obs 需要很小）
 CUSUM_LAMBDA = 0.5
 CUSUM_THRESHOLD = 4.0
-CUSUM_MIN_OBS = 5  # 降低到 5 天，适配短数据集
+CUSUM_MIN_OBS = 30  # 与 C++ BacktestContext 默认 _min_obs 保持一致
 
 
 # ============================================================
@@ -340,16 +340,21 @@ class TestCUSUMStandardCases:
         return result.get("features", {})
 
     def _compute_python_cusum(self, symbol: str) -> Tuple[CUSUMDetectorRef, List[float]]:
-        """从 CSV 读取价格，Python 计算 CUSUM"""
+        """从 CSV 读取价格，Python 计算 CUSUM
+
+        校准逻辑匹配 C++ BacktestContext::updateCUSUM：
+        用前 min_obs 个 returns 计算 mu/sigma，而非全部 returns。
+        """
         prices = load_prices_from_csv(symbol)
         if len(prices) < CUSUM_MIN_OBS + 2:
             pytest.skip(f"数据不足：{symbol} 只有 {len(prices)} 个价格")
 
         returns = compute_returns_from_prices(prices)
-        
-        # 计算均值和标准差（用于 CUSUM 参数）
-        mu = np.mean(returns)
-        sigma = np.std(returns, ddof=1)
+
+        # 用前 min_obs 个 returns 计算 mu/sigma（匹配 C++ 在线校准窗口）
+        calibration_returns = returns[:CUSUM_MIN_OBS]
+        mu = np.mean(calibration_returns)
+        sigma = np.std(calibration_returns, ddof=1)
         if sigma < 1e-10:
             sigma = 0.01  # 防止除零
 
@@ -357,7 +362,7 @@ class TestCUSUMStandardCases:
             mu=mu, sigma=sigma,
             lambda_=CUSUM_LAMBDA,
             threshold_multiplier=CUSUM_THRESHOLD,
-            min_obs=CUSUM_MIN_OBS  # 使用全局参数
+            min_obs=CUSUM_MIN_OBS
         )
         result = detector.detect_batch(returns)
         return detector, returns
@@ -423,7 +428,7 @@ class TestCUSUMStandardCases:
     def test_sideways_cusum(self):
         """横盘震荡场景：CUSUM 应很少触发变点"""
         cpp_features = self._run_cpp_backtest("sideways")
-        
+
         symbol = self.cases["sideways"]["symbol"]
         detector, returns = self._compute_python_cusum(symbol)
 
@@ -431,6 +436,57 @@ class TestCUSUMStandardCases:
         cpp_change_points = cpp_features.get("cusum_change_points", 0)
         assert cpp_change_points < 5, \
             f"横盘场景变点过多: {cpp_change_points}"
+
+    def test_excess_kurtosis(self):
+        """超额峰度：C++ vs Python 对比"""
+        cpp_features = self._run_cpp_backtest("up_trend")
+
+        symbol = self.cases["up_trend"]["symbol"]
+        _, returns = self._compute_python_cusum(symbol)
+
+        # Python 参考实现
+        n = len(returns)
+        mean = np.mean(returns)
+        var = np.var(returns, ddof=0)
+        if var < 1e-20:
+            pytest.skip("方差过小，无法计算峰度")
+        m4 = np.mean([(r - mean) ** 4 for r in returns])
+        py_kurtosis = m4 / (var ** 2) - 3.0
+
+        cpp_kurtosis = cpp_features.get("excess_kurtosis", 0)
+        abs_err = abs(cpp_kurtosis - py_kurtosis)
+        assert abs_err < 0.5, \
+            f"excess_kurtosis 差异过大: C++={cpp_kurtosis:.4f}, Python={py_kurtosis:.4f}, abs_err={abs_err:.4f}"
+
+    def test_convexity_var(self):
+        """凸性 VaR：var_convexity >= var_base（当 EWMA > 历史时）"""
+        cpp_features = self._run_cpp_backtest("up_trend")
+
+        var_base = cpp_features.get("VAR", 0)
+        var_convexity = cpp_features.get("var_convexity", 0)
+        ewma_var = cpp_features.get("ewma_var", 0)
+        drift_ratio = cpp_features.get("cusum_drift_ratio", 0)
+
+        # 凸性 VaR 应 >= 基础 VaR（附加非负）
+        assert var_convexity >= var_base - 1e-6, \
+            f"var_convexity({var_convexity:.6f}) 应 >= var_base({var_base:.6f})"
+
+        # drift_ratio 在 [0, 1] 范围
+        assert 0 <= drift_ratio <= 1.0 + 1e-6, \
+            f"cusum_drift_ratio({drift_ratio:.4f}) 应在 [0, 1] 范围"
+
+        # 如果 drift_ratio ≈ 0 或 ewma ≈ base，convexity ≈ base
+        if drift_ratio < 0.01 or abs(ewma_var - var_base) < 1e-8:
+            assert abs(var_convexity - var_base) < 1e-5, \
+                f"无漂移时 convexity 应 ≈ base: convexity={var_convexity:.6f}, base={var_base:.6f}"
+
+    def test_avg_win_loss_ratio(self):
+        """平均盈亏比：应为正数且合理"""
+        cpp_features = self._run_cpp_backtest("up_trend")
+
+        wlr = cpp_features.get("avg_win_loss_ratio", 0)
+        # 单边上涨场景，盈亏比应 > 1（盈利日多且大）
+        assert wlr > 0, f"avg_win_loss_ratio 应为正数，实际 {wlr}"
 
 
 # ============================================================

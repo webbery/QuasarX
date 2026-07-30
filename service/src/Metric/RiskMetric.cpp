@@ -136,6 +136,75 @@ float compute_adaptive_var(const std::vector<double>& returns,
 }
 
 // ============================================================
+// 超额峰度
+// ============================================================
+
+double compute_excess_kurtosis(const std::vector<double>& returns) {
+    if (returns.size() < 4) return 0.0;
+
+    double n = static_cast<double>(returns.size());
+    double mean = 0.0;
+    for (double r : returns) mean += r;
+    mean /= n;
+
+    double var = 0.0;
+    for (double r : returns) {
+        double d = r - mean;
+        var += d * d;
+    }
+    var /= n;
+    if (var < 1e-20) return 0.0;
+
+    double m4 = 0.0;
+    for (double r : returns) {
+        double d = r - mean;
+        m4 += d * d * d * d;
+    }
+    m4 /= n;
+
+    return m4 / (var * var) - 3.0;
+}
+
+// ============================================================
+// 凸性 VaR 附加
+// ============================================================
+
+ConvexityVaRResult compute_convexity_var(
+    const std::vector<double>& returns,
+    const CUSUMDetector& detector,
+    double confidence,
+    double ewma_decay)
+{
+    ConvexityVaRResult result;
+    if (returns.empty()) return result;
+
+    // ① 历史模拟法 VaR（基准）
+    double var_base = compute_var(returns, confidence);
+
+    // ② EWMA VaR（对近期分布变化更敏感）
+    double var_ewma = compute_ewma_var(returns, confidence, ewma_decay);
+    result.var_ewma = var_ewma;
+
+    // ③ 超额峰度 → α 自动推断
+    double kurtosis = compute_excess_kurtosis(returns);
+    result.kurtosis = kurtosis;
+    double alpha = 1.0 + std::clamp(kurtosis / 3.0, -0.5, 1.0);
+    result.alpha = alpha;
+
+    // ④ CUSUM 归一化漂移
+    double h = detector.get_config()._threshold_multiplier * detector.get_config()._sigma;
+    double current_drift = std::abs(detector.get_s_pos() - detector.get_s_neg());
+    double drift_ratio = (h > 1e-10) ? std::min(current_drift / h, 1.0) : 0.0;
+    result.drift_ratio = drift_ratio;
+
+    // ⑤ 凸性附加：只在 EWMA > 历史时加（风险被低估）
+    double gap = std::max(var_ewma - var_base, 0.0);
+    result.var_convexity = var_base + alpha * drift_ratio * gap;
+
+    return result;
+}
+
+// ============================================================
 // 自相关函数（Eigen 实现）
 // ============================================================
 

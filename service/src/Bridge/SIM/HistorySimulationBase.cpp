@@ -228,7 +228,7 @@ bool HistorySimulationBase::LoadCSVToDataFrame(const String& file_path,
     INFO("load {} success", file_path);
     char cache[CACHE_SIZE] = {0};
     Vector<time_t> dates;
-    Vector<float> open, close, high, low;
+    Vector<double> open, close, high, low;
     Vector<int64_t> volume;
     header.clear();
 
@@ -261,10 +261,10 @@ bool HistorySimulationBase::LoadCSVToDataFrame(const String& file_path,
         }
 
         dates.emplace_back(timestamp);
-        open.emplace_back(std::stof(row[1]));
-        close.emplace_back(std::stof(row[2]));
-        high.emplace_back(std::stof(row[3]));
-        low.emplace_back(std::stof(row[4]));
+        open.emplace_back(std::stod(row[1]));
+        close.emplace_back(std::stod(row[2]));
+        high.emplace_back(std::stod(row[3]));
+        low.emplace_back(std::stod(row[4]));
         volume.emplace_back(std::stol(row[5]));
     }
     ifs.close();
@@ -296,7 +296,7 @@ void HistorySimulationBase::BuildDataFrameFromMap(
     header = {"date", "open", "close", "high", "low", "volume"};
 
     Vector<time_t> timestamps;
-    Vector<float> open, close, high, low;
+    Vector<double> open, close, high, low;
     Vector<int64_t> volume;
 
     timestamps.reserve(dates.size());
@@ -309,10 +309,10 @@ void HistorySimulationBase::BuildDataFrameFromMap(
     for (size_t i = 0; i < dates.size(); ++i) {
         const char* fmt = (dates[i].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
         timestamps.emplace_back(FromStr(dates[i], fmt));
-        open.emplace_back(static_cast<float>(data.at("open")[i]));
-        close.emplace_back(static_cast<float>(data.at("close")[i]));
-        high.emplace_back(static_cast<float>(data.at("high")[i]));
-        low.emplace_back(static_cast<float>(data.at("low")[i]));
+        open.emplace_back(data.at("open")[i]);
+        close.emplace_back(data.at("close")[i]);
+        high.emplace_back(data.at("high")[i]);
+        low.emplace_back(data.at("low")[i]);
         volume.emplace_back(static_cast<int64_t>(data.at("volume")[i]));
     }
 
@@ -637,10 +637,10 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             anyFinished = true;
             break;
         }
-        const auto& open = df.get_column<float>(header[1].c_str());
-        const auto& close = df.get_column<float>(header[2].c_str());
-        const auto& high = df.get_column<float>(header[3].c_str());
-        const auto& low = df.get_column<float>(header[4].c_str());
+        const auto& open = df.get_column<double>(header[1].c_str());
+        const auto& close = df.get_column<double>(header[2].c_str());
+        const auto& high = df.get_column<double>(header[3].c_str());
+        const auto& low = df.get_column<double>(header[4].c_str());
         const auto& volume = df.get_column<int64_t>(header[5].c_str());
 
         auto org_itr = _org_csvs.find(symbol);
@@ -656,10 +656,10 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             if (org_index >= org_df.get_index().size()) {
                 org_index = org_df.get_index().size() - 1;
             }
-            info._open = org_df.get_column<float>(org_header[1].c_str())[org_index];
-            info._close = org_df.get_column<float>(org_header[2].c_str())[org_index];
-            info._high = org_df.get_column<float>(org_header[3].c_str())[org_index];
-            info._low = df.get_column<float>(org_header[4].c_str())[org_index];
+            info._open = org_df.get_column<double>(org_header[1].c_str())[org_index];
+            info._close = org_df.get_column<double>(org_header[2].c_str())[org_index];
+            info._high = org_df.get_column<double>(org_header[3].c_str())[org_index];
+            info._low = df.get_column<double>(org_header[4].c_str())[org_index];
         }
         else {
             info._open = open[curIndex];
@@ -734,8 +734,8 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
         uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
 
         if (priceIndex < hfq_df.get_index().size() && priceIndex < org_df.get_index().size()) {
-            double hfqClose = hfq_df.get_column<float>(hfq_header[2].c_str())[priceIndex];
-            double origClose = org_df.get_column<float>(org_header[2].c_str())[priceIndex];
+            double hfqClose = hfq_df.get_column<double>(hfq_header[2].c_str())[priceIndex];
+            double origClose = org_df.get_column<double>(org_header[2].c_str())[priceIndex];
             double ratio = (origClose > 0.0 && hfqClose > 0.0) ? hfqClose / origClose : 1.0;
             context->setCurrentAdjRatio(symbol, ratio);
         } else {
@@ -770,7 +770,7 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             auto curIndex = context->getCurIndex(symbol);
             uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
             if (priceIndex < df.get_index().size()) {
-                double hfqClose = df.get_column<float>(header[2].c_str())[priceIndex];
+                double hfqClose = df.get_column<double>(header[2].c_str())[priceIndex];
                 double ratio = context->getCurrentAdjRatio(symbol);
                 double assetValue = position * hfqClose / ratio;
                 assetValues[symbol] = assetValue;
@@ -793,13 +793,22 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             context->recordDailySnapshot(firstQuote->_time, totalEquity);
             context->recordDailyAssetSnapshot(firstQuote->_time, assetValues);
 
-            // 记录快照后，计算当日收益率并更新 CUSUM 检测
-            size_t snapshotCount = context->dailySnapshotCount();
-            if (snapshotCount > 1) {
-                double prevEquity = context->getPortfolioValues()[snapshotCount - 2];
-                if (prevEquity > 1e-6) {
-                    double daily_return = (totalEquity - prevEquity) / prevEquity;
-                    context->updateCUSUM(daily_return);
+            // 记录快照后，用资产收益率更新 CUSUM 检测（不依赖策略是否交易）
+            for (auto symbol : symbols) {
+                auto itr = _csvs.find(symbol);
+                if (itr == _csvs.end()) continue;
+                auto hdrIt = _headers.find(symbol);
+                if (hdrIt == _headers.end() || hdrIt->second.empty()) continue;
+                const auto& header = hdrIt->second;
+                auto curIndex = context->getCurIndex(symbol);
+                uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
+                if (priceIndex < 1) continue;
+
+                const auto& closes = itr->second.get_column<double>(header[2].c_str());
+                double cur = closes[priceIndex];
+                double prev = closes[priceIndex - 1];
+                if (std::abs(prev) > 1e-10) {
+                    context->updateCUSUM((cur - prev) / prev);
                 }
             }
         } else {
@@ -852,7 +861,7 @@ double HistorySimulationBase::GetPrimitivePrice(symbol_t symbol, uint32_t index)
         return GetAdjPrice(symbol, index);
     }
 
-    auto& org_close = org_df.get_column<float>(org_header[2].c_str());
+    auto& org_close = org_df.get_column<double>(org_header[2].c_str());
     if (index >= org_close.size()) {
         index = org_close.size() - 1;
     }
@@ -869,7 +878,7 @@ double HistorySimulationBase::GetAdjPrice(symbol_t symbol, uint32_t index) const
     if (header.empty()) {
         return 0.0;
     }
-    auto& close = df.get_column<float>(header[2].c_str());
+    auto& close = df.get_column<double>(header[2].c_str());
     if (index >= close.size()) {
         index = close.size() - 1;
     }

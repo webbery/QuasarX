@@ -84,6 +84,8 @@ public:
     double get_max_drift() const { return _max_drift; }
     size_t get_last_change_index() const { return _last_change_index; }
     size_t get_observation_count() const { return _count; }
+    double get_s_pos() const { return _s_pos; }
+    double get_s_neg() const { return _s_neg; }
 
     const CUSUMConfig& get_config() const { return _config; }
     void set_config(CUSUMConfig config) { _config = config; reset(); }

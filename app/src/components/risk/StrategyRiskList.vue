@@ -7,6 +7,7 @@
           <th class="col-type">类型</th>
           <th class="col-risk">风险等级</th>
           <th class="col-var">VaR(95%)</th>
+          <th class="col-trend">风险趋势</th>
           <th class="col-drawdown">最大回撤</th>
           <th class="col-sharpe">夏普比率</th>
           <th class="col-ir">信息比率</th>
@@ -51,9 +52,22 @@
             </div>
           </td>
 
-          <!-- VaR(95%) -->
+          <!-- VaR(95%) 分解条 -->
           <td class="col-var">
-            <span>{{ (row.var_95 || 0).toFixed(1) }}%</span>
+            <div class="var-cell">
+              <span class="var-value">{{ (row.var_95 || 0).toFixed(2) }}%</span>
+              <div class="var-bar" v-if="row.var_convexity > row.var_95">
+                <div class="var-base" :style="{ width: varBasePercent(row) + '%' }" title="基础 VaR"></div>
+                <div class="var-convexity" :style="{ width: varConvexityPercent(row) + '%' }" title="凸性附加"></div>
+              </div>
+            </div>
+          </td>
+
+          <!-- 风险趋势 -->
+          <td class="col-trend">
+            <span :class="riskTrendClass(row.cusum_drift_ratio, row.cusumSignal)">
+              {{ riskTrendArrow(row.cusum_drift_ratio, row.cusumSignal) }}
+            </span>
           </td>
 
           <!-- 最大回撤 -->
@@ -76,7 +90,7 @@
             <div class="health-cell">
               <span class="health-icon">{{ healthIcon(row.healthLevel) }}</span>
               <span :class="healthClass(row.healthLevel)">{{ healthLabel(row.healthLevel) }}</span>
-              <span class="health-suggestion">{{ row.healthSuggestion }}</span>
+              <span class="health-score">{{ row.healthScore }}</span>
             </div>
           </td>
 
@@ -170,6 +184,32 @@ function healthLabel(level: string): string {
 function healthClass(level: string): string {
   return `health-${level}`
 }
+
+// VaR 分解百分比
+function varBasePercent(row: StrategyRiskItem): number {
+  if (!row.var_convexity || row.var_convexity <= 0) return 100
+  return Math.round((row.var_95 / row.var_convexity) * 100)
+}
+
+function varConvexityPercent(row: StrategyRiskItem): number {
+  if (!row.var_convexity || row.var_convexity <= row.var_95) return 0
+  return 100 - varBasePercent(row)
+}
+
+// 风险趋势箭头
+function riskTrendArrow(driftRatio: number, signal: number): string {
+  if (!driftRatio || driftRatio < 0.3) return '→'
+  if (signal === -1) return '↑'  // 风险恶化
+  if (signal === 1) return '↓'   // 风险改善
+  return '→'
+}
+
+function riskTrendClass(driftRatio: number, signal: number): string {
+  if (!driftRatio || driftRatio < 0.3) return 'trend-stable'
+  if (signal === -1) return 'trend-worsening'
+  if (signal === 1) return 'trend-improving'
+  return 'trend-stable'
+}
 </script>
 
 <style scoped lang="scss">
@@ -229,7 +269,8 @@ function healthClass(level: string): string {
   .col-name { min-width: 180px; }
   .col-type { width: 80px; text-align: center; }
   .col-risk { width: 140px; }
-  .col-var { width: 90px; text-align: right; }
+  .col-var { width: 110px; text-align: right; }
+  .col-trend { width: 70px; text-align: center; }
   .col-drawdown { width: 90px; text-align: right; }
   .col-sharpe { width: 90px; text-align: right; }
   .col-ir { width: 90px; text-align: right; }
@@ -262,6 +303,65 @@ function healthClass(level: string): string {
   font-size: 11px;
   color: var(--text-secondary);
   margin-left: 2px;
+}
+
+.health-score {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+// VaR 分解条
+.var-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.var-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.var-bar {
+  width: 80px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  display: flex;
+  overflow: hidden;
+}
+
+.var-base {
+  background: #2962ff;
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.var-convexity {
+  background: #ff9800;
+  height: 100%;
+  transition: width 0.3s;
+}
+
+// 风险趋势箭头
+.trend-stable {
+  color: var(--text-secondary);
+  font-size: 16px;
+}
+
+.trend-worsening {
+  color: #ff1744;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.trend-improving {
+  color: #00c853;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .strategy-name {

@@ -176,14 +176,16 @@ public:
         // 收集足够数据后自适应校准：用实际收益率的 mu/sigma 替换默认值
         if (!_cusum_calibrated &&
             _cusum_returns.size() >= _cusum_detector.get_config()._min_obs) {
+            double n = static_cast<double>(_cusum_returns.size());
             double mu = 0.0, sigma = 0.0;
             for (double r : _cusum_returns) mu += r;
-            mu /= _cusum_returns.size();
+            mu /= n;
             for (double r : _cusum_returns) {
                 double d = r - mu;
                 sigma += d * d;
             }
-            sigma = std::sqrt(sigma / _cusum_returns.size());
+            // 样本标准差 (ddof=1)，与 Python np.std(ddof=1) 一致
+            sigma = std::sqrt(sigma / (n - 1.0));
             if (sigma < 1e-10) sigma = 1e-10;  // 防止除零
 
             // 用实际统计量重置 detector 并重喂历史数据
@@ -191,20 +193,20 @@ public:
             cfg._mu = mu;
             cfg._sigma = sigma;
             _cusum_detector.set_config(cfg);  // set_config 内部会 reset()
+            CUSUMStepResult last_step{};
             for (double r : _cusum_returns) {
-                _cusum_detector.update(r);
+                last_step = _cusum_detector.update(r);
             }
             _cusum_calibrated = true;
+            // 重喂已包含 current return，直接返回，避免二次处理
+            return last_step._change_point;
         }
 
-        // 校准前用默认参数 update，校准后用实际参数 update
-        if (_cusum_calibrated) {
-            return _cusum_detector.update(daily_return)._change_point;
-        }
         return _cusum_detector.update(daily_return)._change_point;
     }
 
     const CUSUMDetector& getCUSUMDetector() const noexcept { return _cusum_detector; }
+    const Vector<double>& getCUSUMReturns() const noexcept { return _cusum_returns; }
 
 private:
     run_id_t _runId;                    // 回测运行 ID

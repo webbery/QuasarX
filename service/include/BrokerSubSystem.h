@@ -100,6 +100,12 @@ enum class StatisticIndicator: char {
   CUSUMLastChangeIndex,  // 最后变点索引（0 表示未触发）
   AdaptiveVaR,           // 自适应 VaR（95% 或 99%）
   EWMA_VaR,              // EWMA VaR（用于对比）
+
+  // 凸性 VaR 附加（VaRBase 复用已有 VaR 枚举）
+  VaRConvexity,          // 凸性调整后 VaR = VaR + α × drift_ratio × (EWMA_VaR - VaR)
+  CUSUMDriftRatio,       // 当前归一化漂移 |S+-S-|/h（实时，0~1）
+  ExcessKurtosis,        // 超额峰度（驱动 α 自动推断）
+  AvgWinLossRatio,       // 平均盈亏比（前端策略类型推断用）
 };
 
 class ICommission {

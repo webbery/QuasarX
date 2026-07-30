@@ -435,6 +435,40 @@ void FlowSubsystem::ComputeBacktestMetrics(
     flow._collections[StatisticIndicator::VaR] = compute_var(daily_returns_std, 0.95);
     flow._collections[StatisticIndicator::ES]  = compute_cvar(daily_returns_std, 0.95);
 
+    // 凸性 VaR 附加（使用 CUSUM 资产收益率，与 drift_ratio 数据源一致）
+    {
+        const auto& cusum = btContext ? btContext->getCUSUMDetector()
+                                       : CUSUMDetector{};
+        std::vector<double> cusum_returns;
+        if (btContext && !btContext->getCUSUMReturns().empty()) {
+            const auto& cr = btContext->getCUSUMReturns();
+            cusum_returns.assign(cr.begin(), cr.end());
+        } else {
+            cusum_returns = daily_returns_std;
+        }
+        auto cv = compute_convexity_var(cusum_returns, cusum);
+        flow._collections[StatisticIndicator::VaRConvexity] =
+            static_cast<float>(cv.var_convexity);
+        flow._collections[StatisticIndicator::CUSUMDriftRatio] =
+            static_cast<float>(cv.drift_ratio);
+        flow._collections[StatisticIndicator::ExcessKurtosis] =
+            static_cast<float>(cv.kurtosis);
+    }
+
+    // 平均盈亏比（前端策略类型推断用）
+    {
+        double sumWin = 0.0, sumLoss = 0.0;
+        int nWin = 0, nLoss = 0;
+        for (double r : daily_returns_std) {
+            if (r > 0) { sumWin += r; ++nWin; }
+            else if (r < 0) { sumLoss += std::abs(r); ++nLoss; }
+        }
+        double avgWin = nWin > 0 ? sumWin / nWin : 0.0;
+        double avgLoss = nLoss > 0 ? sumLoss / nLoss : 1e-10;
+        flow._collections[StatisticIndicator::AvgWinLossRatio] =
+            static_cast<float>(avgWin / avgLoss);
+    }
+
     // MonteCarlo 分析
     auto* stockExch = dynamic_cast<HistorySimulationBase*>(
         exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));

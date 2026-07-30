@@ -79,6 +79,45 @@ float compute_adaptive_var(const std::vector<double>& returns,
                            const AdaptiveVaRConfig& config = {});
 
 /*
+ * @brief 凸性 VaR 计算结果
+ */
+struct ConvexityVaRResult {
+    double var_ewma = 0.0;       // EWMA VaR
+    double var_convexity = 0.0;  // 凸性调整后 VaR
+    double kurtosis = 0.0;       // 超额峰度
+    double alpha = 1.0;          // 自动推断的 α
+    double drift_ratio = 0.0;    // CUSUM 归一化漂移（0~1）
+};
+
+/*
+ * @brief 凸性 VaR 附加计算
+ *
+ * 公式：var_convexity = var_base + α × drift_ratio × max(var_ewma - var_base, 0)
+ *
+ * - α 由超额峰度自动推断：α = 1.0 + clamp(kurtosis/3, -0.5, 1.0)
+ * - drift_ratio = |S+ - S-| / h，归一化到 [0, 1]
+ * - 只在 EWMA VaR > 历史 VaR 时加附加（风险被低估时）
+ *
+ * @param returns 日收益率序列
+ * @param detector CUSUM 检测器（已运行）
+ * @param confidence VaR 置信度（默认 0.95）
+ * @param ewma_decay EWMA 衰减因子（默认 0.94）
+ * @return ConvexityVaRResult 完整结果
+ */
+ConvexityVaRResult compute_convexity_var(
+    const std::vector<double>& returns,
+    const CUSUMDetector& detector,
+    double confidence = 0.95,
+    double ewma_decay = 0.94);
+
+/*
+ * @brief 计算收益率序列的超额峰度
+ * @param returns 收益率序列
+ * @return 超额峰度 κ = E[(r-μ)⁴]/σ⁴ - 3
+ */
+double compute_excess_kurtosis(const std::vector<double>& returns);
+
+/*
  * @brief 计算两个收益率向量的相关系数
  * @param x 收益率序列 1
  * @param y 收益率序列 2

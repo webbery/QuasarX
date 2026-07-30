@@ -351,6 +351,9 @@ jobs:
               ex for ex in tickflow_config.get('exchange', [])
               if ex.get('name') == 'tickflow-quote'
           ]
+          tickflow_config['server']['default']['exchange'] = [
+              ex['name'] for ex in tickflow_config['exchange']
+          ]
           fill_config(tickflow_config)
           with open('tickflow.json', 'w') as f:
               json.dump(tickflow_config, f, indent=4)
@@ -361,6 +364,9 @@ jobs:
           stock_config['exchange'] = [
               ex for ex in stock_config.get('exchange', [])
               if ex.get('api') in ('stock_hist_sim', 'etf_hist_sim')
+          ]
+          stock_config['server']['default']['exchange'] = [
+              ex['name'] for ex in stock_config['exchange']
           ]
           fill_config(stock_config)
           with open('stock_hist_sim.json', 'w') as f:

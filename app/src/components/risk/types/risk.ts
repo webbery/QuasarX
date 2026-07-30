@@ -28,14 +28,20 @@ export interface StrategyRiskItem {
   riskLevel: RiskLevel
   riskScore: number          // 0-100，用于排序
   var_95: number            // 95% VaR
+  var_convexity: number     // 凸性调整后 VaR
   maxDrawdown: number       // 最大回撤
   sharpeRatio: number       // 夏普比率
   informationRatio: number  // 信息比率 IR
   cusumSignal: number       // CUSUM 信号值：-1/0/1
   cusumTriggered: boolean   // CUSUM 是否刚触发变点
+  cusum_drift_ratio: number // CUSUM 归一化漂移 0~1
+  excess_kurtosis: number   // 超额峰度
+  avg_win_loss_ratio: number // 平均盈亏比
   winRate: number           // 胜率
-  healthLevel: 'excellent' | 'good' | 'warning' | 'critical'  // 健康度等级
-  healthSuggestion: string  // 操作建议
+  healthLevel: 'excellent' | 'good' | 'warning' | 'critical'
+  healthSuggestion: string
+  healthScore: number        // 0~100 综合评分
+  inferredType: string       // 推断的策略类型
   updatedAt: string
 }
 

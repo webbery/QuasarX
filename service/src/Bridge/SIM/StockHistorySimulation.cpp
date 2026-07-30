@@ -122,7 +122,7 @@ std::pair<std::vector<time_t>, std::vector<double>> StockHistorySimulation::GetH
     }
 
     const auto& datetime_col = df.get_column<time_t>(header[0].c_str());
-    const auto& close_col = df.get_column<float>(header[2].c_str());
+    const auto& close_col = df.get_column<double>(header[2].c_str());
 
     datetimes.reserve(datetime_col.size());
     closes.reserve(close_col.size());

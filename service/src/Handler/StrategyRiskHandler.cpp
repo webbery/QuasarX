@@ -84,7 +84,39 @@ void StrategyRiskHandler::get(const httplib::Request& req, httplib::Response& re
         auto cusumResult = CalculateCusumSignal(name);
         item["cusum_signal"] = cusumResult.signal;
         item["cusum_triggered"] = cusumResult.triggered;
-        
+
+        // 凸性 VaR
+        auto cvIt = collections.find(StatisticIndicator::VaRConvexity);
+        if (cvIt != collections.end()) {
+            item["var_convexity"] = std::get<float>(cvIt->second);
+        } else {
+            item["var_convexity"] = 0.0;
+        }
+
+        // CUSUM 归一化漂移
+        auto drIt = collections.find(StatisticIndicator::CUSUMDriftRatio);
+        if (drIt != collections.end()) {
+            item["cusum_drift_ratio"] = std::get<float>(drIt->second);
+        } else {
+            item["cusum_drift_ratio"] = 0.0;
+        }
+
+        // 超额峰度
+        auto kurtIt = collections.find(StatisticIndicator::ExcessKurtosis);
+        if (kurtIt != collections.end()) {
+            item["excess_kurtosis"] = std::get<float>(kurtIt->second);
+        } else {
+            item["excess_kurtosis"] = 0.0;
+        }
+
+        // 平均盈亏比
+        auto wlrIt = collections.find(StatisticIndicator::AvgWinLossRatio);
+        if (wlrIt != collections.end()) {
+            item["avg_win_loss_ratio"] = std::get<float>(wlrIt->second);
+        } else {
+            item["avg_win_loss_ratio"] = 0.0;
+        }
+
         response.push_back(item);
     }
     

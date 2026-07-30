@@ -79,6 +79,43 @@ void CapitalRiskHandler::post(const httplib::Request& req, httplib::Response& re
             }
         }
 
+        // VaR 上限
+        if (params.contains("var_limit")) {
+            double limit = params["var_limit"];
+            if (limit <= 0 || limit > 0.5) {
+                res.status = 400;
+                res.set_content(R"({"error": "var_limit must be between 0 and 0.5"})", "application/json");
+                return;
+            }
+            config._varLimit = limit;
+            config._enableVaRLimit = true;
+        }
+
+        // 回撤断路器 L1（禁止开仓）
+        if (params.contains("breaker_l1")) {
+            double l1 = params["breaker_l1"];
+            if (l1 <= 0 || l1 > 0.5) {
+                res.status = 400;
+                res.set_content(R"({"error": "breaker_l1 must be between 0 and 0.5"})", "application/json");
+                return;
+            }
+            config._ddLevel1 = l1;
+            config._enableDrawdownBreaker = true;
+        }
+
+        // 回撤断路器 L2（减仓）
+        if (params.contains("breaker_l2")) {
+            double l2 = params["breaker_l2"];
+            if (l2 <= 0 || l2 > 0.5) {
+                res.status = 400;
+                res.set_content(R"({"error": "breaker_l2 must be between 0 and 0.5"})", "application/json");
+                return;
+            }
+            config._ddLevel2 = l2;
+            config._ddLevel3 = l2 * 1.25;  // L3 安全兜底
+            config._enableDrawdownBreaker = true;
+        }
+
         _riskManager->SetConfig(config);
 
         // 返回当前配置

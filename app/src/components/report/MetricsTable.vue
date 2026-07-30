@@ -14,7 +14,12 @@
     </div>
     <div v-else class="metrics-grid">
       <div v-for="group in metricGroups" :key="group.title" class="metric-group">
-        <div class="group-title">{{ group.title }}</div>
+        <div class="group-title">
+          {{ group.title }}
+          <span v-if="group.tooltip" class="group-tooltip-hint">ⓘ
+            <span class="group-tooltip-text">{{ group.tooltip }}</span>
+          </span>
+        </div>
         <table class="group-table">
           <tbody>
             <tr v-for="item in group.items" :key="item.key">
@@ -46,6 +51,7 @@ onMounted(() => {
 interface MetricGroupDef {
   title: string
   keys: string[]
+  tooltip?: string
 }
 
 const metricGroupsDef: MetricGroupDef[] = [
@@ -93,10 +99,24 @@ const metricGroupsDef: MetricGroupDef[] = [
   },
   {
     title: 'CUSUM 变点检测',
+    tooltip: '基于标的资产收益率，检测市场收益率分布的结构性变化（regime change）',
     keys: [
       'cusum_change_points', 'cusum_max_drift', 'cusum_last_change_index',
       'cusum_consensus_count', 'cusum_consensus_triggered',
+    ],
+  },
+  {
+    title: 'CUSUM 风险度量',
+    tooltip: '基于组合日收益率，经 CUSUM 自适应调整的风险价值估计',
+    keys: [
       'adaptive_var', 'ewma_var',
+    ],
+  },
+  {
+    title: '凸性 VaR',
+    tooltip: '考虑分布尾部凸性效应的 VaR 调整。凸性附加 = α × drift_ratio × (EWMA_VaR - VaR_base)',
+    keys: [
+      'var_convexity', 'cusum_drift_ratio', 'excess_kurtosis', 'avg_win_loss_ratio',
     ],
   },
 ]
@@ -156,6 +176,11 @@ const metricNameMap: Record<string, string> = {
   cusum_consensus_triggered: '系统性风险',
   adaptive_var: '自适应 VaR',
   ewma_var: 'EWMA VaR',
+  // 凸性 VaR
+  var_convexity: '凸性 VaR',
+  cusum_drift_ratio: 'CUSUM 漂移率',
+  excess_kurtosis: '超额峰度',
+  avg_win_loss_ratio: '平均盈亏比',
 }
 
 // === 格式化 ===
@@ -348,6 +373,7 @@ interface MetricItem {
 interface GroupedMetrics {
   title: string
   items: MetricItem[]
+  tooltip?: string
 }
 
 const metricGroups = computed<GroupedMetrics[]>(() => {
@@ -364,7 +390,7 @@ const metricGroups = computed<GroupedMetrics[]>(() => {
         })
       }
     }
-    return { title: group.title, items }
+    return { title: group.title, items, tooltip: group.tooltip }
   }).filter(g => g.items.length > 0)
 
   console.log('[MetricsTable] metricGroups 计算: 总分组数 =', result.length, '总指标数 =', result.reduce((sum, g) => sum + g.items.length, 0))
@@ -485,6 +511,44 @@ const metricGroups = computed<GroupedMetrics[]>(() => {
   color: #ff9800;
   background: rgba(42, 52, 77, 0.6);
   border-bottom: 1px solid var(--border, #2a3449);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-tooltip-hint {
+  position: relative;
+  cursor: help;
+  font-size: 12px;
+  opacity: 0.6;
+  line-height: 1;
+}
+
+.group-tooltip-hint:hover {
+  opacity: 1;
+}
+
+.group-tooltip-text {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e2a40;
+  color: var(--text-secondary, #a0aec0);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 6px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  border: 1px solid var(--border, #2a3449);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.group-tooltip-hint:hover .group-tooltip-text {
+  display: block;
 }
 
 .group-table {
