@@ -250,15 +250,21 @@ def main():
                 return False
             last_emit[0] = now
             train_loss = None
+            eval_loss = None
             if evals_log and "train" in evals_log:
                 for metric_vals in evals_log["train"].values():
                     train_loss = float(metric_vals[-1])
+                    break
+            if evals_log and "eval" in evals_log:
+                for metric_vals in evals_log["eval"].values():
+                    eval_loss = float(metric_vals[-1])
                     break
             emit({
                 "type": "progress",
                 "phase": "training",
                 "iteration": epoch,
                 "train_loss": train_loss,
+                "eval_loss": eval_loss,
             })
             return False
 
@@ -277,8 +283,14 @@ def main():
     learning_curve = []
     history = booster.evals_result() if hasattr(booster, "evals_result") else {}
     if history:
-        train_losses = history.get("train", {}).get("logloss") or history.get("train", {}).get("rmse") or []
-        eval_losses = history.get("eval", {}).get("logloss") or history.get("eval", {}).get("rmse") or []
+        def _first_metric(d):
+            """取第一个可用指标的列表（优先 logloss/mlogloss/rmse）"""
+            for key in ("logloss", "mlogloss", "rmse"):
+                if key in d:
+                    return d[key]
+            return next(iter(d.values()), []) if d else []
+        train_losses = _first_metric(history.get("train", {}))
+        eval_losses = _first_metric(history.get("eval", {}))
         for i in range(min(len(train_losses), len(eval_losses))):
             learning_curve.append({
                 "iteration": i,

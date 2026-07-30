@@ -4,7 +4,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import type { ShapResult, TrainResult, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useXGBoostState'
+import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useXGBoostState'
 import { convertLabelsToKeys } from '@/lib/nodes'
 
 /** 确保 code 参数为数组格式（C++ 端期望数组） */
@@ -36,6 +36,7 @@ export function useXGBoostData() {
    * 触发训练
    * @param script 策略图 JSON（字符串形式）
    * @param config 训练配置
+   * @param csvPath 可选：预收集的特征 CSV 路径（跳过数据收集阶段）
    */
   async function train(
     script: string,
@@ -63,9 +64,10 @@ export function useXGBoostData() {
       frequency: string
     },
     onEvent?: (type: string, data: any) => void,
+    csvPath?: string,
   ): Promise<TrainResult | null> {
     try {
-      const body = {
+      const body: Record<string, any> = {
         action: 'train',
         script: normalizeCodeParams(convertLabelsToKeys(script)),
         label: {
@@ -96,6 +98,7 @@ export function useXGBoostData() {
           reg_lambda: config.regLambda,
         },
       }
+      if (csvPath) body.csv_path = csvPath
       const plainBody = JSON.parse(JSON.stringify(body))
       const server = localStorage.getItem('remote') || 'localhost:19107'
       const token = localStorage.getItem('token') || ''
@@ -115,6 +118,8 @@ export function useXGBoostData() {
         {
           method: 'GET',
           headers: { 'Authorization': token },
+          // 页面隐藏时保持连接（Electron 切换 Tab 不断 SSE）
+          openWhenHidden: true,
 
           onopen: async (response) => {
             if (response.ok) return
@@ -136,7 +141,12 @@ export function useXGBoostData() {
           },
 
           onclose: () => {},
-          onerror: (err) => { throw err },
+          onerror: (err) => {
+            // 已收到 result → 训练正常完成，连接关闭是 httplib chunked 正常行为
+            // （Chromium 对 chunked SSE 关闭报 ERR_INCOMPLETE_CHUNKED_ENCODING，可忽略）
+            if (result) return
+            throw err
+          },
         }
       )
 
@@ -145,6 +155,80 @@ export function useXGBoostData() {
       const msg = err.response?.data?.message || err.message || '训练失败'
       ElMessage.error(`XGBoost 训练失败: ${msg}`)
       console.error('[XGBoost] train error:', err)
+      return null
+    }
+  }
+
+  /**
+   * 特征收集：收集上游子图数据并计算统计信息
+   */
+  async function collect(
+    script: string,
+    config: {
+      labelSource: string
+      startDate: string
+      endDate: string
+      frequency: string
+    },
+    onEvent?: (type: string, data: any) => void,
+  ): Promise<FeatureReport | null> {
+    try {
+      const body = {
+        action: 'collect',
+        script: normalizeCodeParams(convertLabelsToKeys(script)),
+        label: { source: config.labelSource },
+        date_range: {
+          start: config.startDate,
+          end: config.endDate,
+          frequency: config.frequency,
+        },
+      }
+      const plainBody = JSON.parse(JSON.stringify(body))
+      const server = localStorage.getItem('remote') || 'localhost:19107'
+      const token = localStorage.getItem('token') || ''
+
+      const postResp = await axios.post('/v0/xgboost', plainBody)
+      const sessionId = postResp.data?.session_id
+      if (!sessionId) {
+        ElMessage.error('特征收集启动失败')
+        return null
+      }
+
+      let report: FeatureReport | null = null
+      await fetchEventSource(
+        `https://${server}/v0/xgboost?action=train&session_id=${sessionId}`,
+        {
+          method: 'GET',
+          headers: { 'Authorization': token },
+          openWhenHidden: true,
+          onopen: async (response) => {
+            if (response.ok) return
+            throw new Error(`HTTP ${response.status}`)
+          },
+          onmessage: (event) => {
+            if (!event.data) return
+            try {
+              const data = JSON.parse(event.data)
+              onEvent?.(event.event || 'message', data)
+              if (event.event === 'feature_stats') {
+                report = data as FeatureReport
+              } else if (event.event === 'error') {
+                ElMessage.error(`特征收集失败: ${data.msg || data.error || '未知错误'}`)
+              }
+            } catch { /* skip */ }
+          },
+          onclose: () => {},
+          onerror: (err) => {
+            if (report) return
+            throw err
+          },
+        }
+      )
+      return report
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || '特征收集失败'
+      ElMessage.error(`特征收集失败: ${msg}`)
+      console.error('[XGBoost] collect error:', err)
       return null
     }
   }
@@ -350,5 +434,5 @@ export function useXGBoostData() {
     return results
   }
 
-  return { train, shap, deleteModel, fetchLabelAnalysis, runBatchLabelAnalysis }
+  return { train, collect, shap, deleteModel, fetchLabelAnalysis, runBatchLabelAnalysis }
 }

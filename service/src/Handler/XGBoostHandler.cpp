@@ -18,6 +18,8 @@
 #include <sstream>
 #include <random>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <filesystem>
 #include <thread>
 #include <mutex>
@@ -127,6 +129,16 @@ bool XGBoostHandler::deleteModel(uint64_t id) {
 
 // ============ 各个 action 的处理函数 ============
 
+// 训练中间状态（不在 TrainSession 中，仅训练/收集线程使用）
+struct TrainState {
+    List<QNode*> _fullGraph;
+    Set<QNode*> _upstreamSet;
+    List<QNode*> _upstreamSubgraph;
+    Vector<String> _featureNames;
+    String _tmpStrategyName;
+    String _csvPath, _modelPath;
+};
+
 void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
     // ============== 幂等检查：如果已有活跃训练，返回其 session_id ==============
     {
@@ -182,15 +194,6 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
     }
 
     // ============== 创建训练会话 ==============
-    // 训练中间状态（不在 TrainSession 中，仅训练线程使用）
-    struct TrainState {
-        List<QNode*> _fullGraph;
-        Set<QNode*> _upstreamSet;
-        List<QNode*> _upstreamSubgraph;
-        Vector<String> _featureNames;
-        String _tmpStrategyName;
-        String _csvPath, _modelPath;
-    };
     auto state = std::make_shared<TrainState>();
 
     auto session = std::make_shared<TrainSession>();
@@ -219,6 +222,17 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
 
         auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
         state->_tmpStrategyName = strategyName + "_train";
+
+        // 检查是否提供了预收集的 CSV（跳过步骤 2~5）
+        String csvPath = params.value("csv_path", String());
+        if (!csvPath.empty()) {
+            state->_csvPath = csvPath;
+            INFO("[XGBoostTrain] 使用预收集 CSV: {}", csvPath);
+            sendSSE("step", {{"step","parse_script"},{"status","done"},{"msg","跳过（使用预收集数据）"}});
+            sendSSE("step", {{"step","init_nodes"},{"status","done"},{"msg","跳过"}});
+            sendSSE("step", {{"step","start_exchange"},{"status","done"},{"msg","跳过"}});
+            sendSSE("step", {{"step","collect_data"},{"status","done"},{"msg","跳过（使用预收集数据）"}});
+        } else {
 
         // ============== 2. 解析策略图 ==============
         sendSSE("step", {{"step","parse_script"},{"status","start"},{"msg","解析策略图..."}});
@@ -345,11 +359,16 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         }
         sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});
 
+        // 写 CSV（仅在新收集数据时）
+        state->_csvPath = makeTempPath("xgb_data", "csv");
+        writeCsv(state->_csvPath, collected, collectedDates);
+        INFO("[XGBoostTrain] 训练数据 CSV: {}", state->_csvPath);
+
+        } // end else (no csv_path)
+
         // ============== 6. Python 训练 ==============
         sendSSE("step", {{"step","train_model"},{"status","start"},{"msg","Python 训练..."}});
-        state->_csvPath = makeTempPath("xgb_data", "csv");
         state->_modelPath = makeTempPath("xgb_model", "json");
-        writeCsv(state->_csvPath, collected, collectedDates);
 
         auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
         auto interpreter = pyEnv.resolve(params.value("py_env", ""));
@@ -393,7 +412,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             String msg = stderrLines.empty() ? "训练脚本未输出 result" : stderrLines.substr(0, 500);
             while (!msg.empty() && msg.back() == '\n') msg.pop_back();
             sendSSE("error", {{"step","train_model"},{"msg", String("训练失败: ") + msg}});
-            std::remove(state->_csvPath.c_str());
+            // 保留 CSV 供调试分析
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
         }
 
@@ -401,7 +420,8 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         try { trainResult = nlohmann::json::parse(resultLine); }
         catch (...) {
             sendSSE("error", {{"step","train_model"},{"msg", String("训练结果解析失败: ") + resultLine.substr(0, 200)}});
-            std::remove(state->_csvPath.c_str()); std::remove(state->_modelPath.c_str());
+            // 保留 CSV 供调试分析
+            std::remove(state->_modelPath.c_str());
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
         }
         sendSSE("step", {{"step","train_model"},{"status","done"}});
@@ -458,7 +478,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             }
             trainResult.erase("X_test");
             trainResult["model_path"] = persistPath;
-            std::remove(state->_csvPath.c_str());
+            // 保留 CSV 供调试分析（临时目录由系统定期清理）
             std::remove(state->_modelPath.c_str());
 
             sendSSE("result", trainResult);
@@ -473,6 +493,232 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         }
     });
     trainThread.detach();
+}
+
+// ============== 特征统计辅助函数 ==============
+static nlohmann::json computeFeatureStats(const Map<String, Vector<double>>& collected,
+                                           const Vector<String>& dates) {
+    nlohmann::json stats;
+    stats["total_rows"] = dates.size();
+    stats["n_features"] = collected.size();
+    if (!dates.empty()) {
+        stats["date_start"] = dates.front();
+        stats["date_end"] = dates.back();
+    }
+
+    nlohmann::json features = nlohmann::json::array();
+    for (auto& [name, values] : collected) {
+        nlohmann::json fs;
+        fs["name"] = name;
+
+        size_t total = values.size();
+        size_t nanCount = 0;
+        double sum = 0, sumSq = 0;
+        double mn = std::numeric_limits<double>::max();
+        double mx = std::numeric_limits<double>::lowest();
+        Vector<double> validVals;
+        validVals.reserve(total);
+
+        for (size_t i = 0; i < total; ++i) {
+            double v = values[i];
+            if (v != v || std::isinf(v)) {  // NaN or Inf
+                ++nanCount;
+                continue;
+            }
+            validVals.push_back(v);
+            sum += v;
+            sumSq += v * v;
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+
+        fs["valid"] = validVals.size();
+        fs["nan_count"] = nanCount;
+        fs["nan_pct"] = total > 0 ? (double)nanCount / total * 100.0 : 0.0;
+
+        if (validVals.empty()) {
+            fs["min"] = nullptr; fs["max"] = nullptr;
+            fs["mean"] = nullptr; fs["std"] = nullptr; fs["median"] = nullptr;
+        } else {
+            double mean = sum / validVals.size();
+            double variance = sumSq / validVals.size() - mean * mean;
+            double stdDev = variance > 0 ? std::sqrt(variance) : 0.0;
+            std::sort(validVals.begin(), validVals.end());
+            double median = validVals.size() % 2 == 0
+                ? (validVals[validVals.size()/2 - 1] + validVals[validVals.size()/2]) / 2.0
+                : validVals[validVals.size()/2];
+
+            fs["min"] = mn;
+            fs["max"] = mx;
+            fs["mean"] = mean;
+            fs["std"] = stdDev;
+            fs["median"] = median;
+        }
+        features.push_back(fs);
+    }
+    stats["features"] = features;
+    return stats;
+}
+
+void XGBoostHandler::handleCollect(const nlohmann::json& params, httplib::Response& res) {
+    // 幂等检查
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && !s_activeSession->_done) {
+            nlohmann::json resp;
+            resp["session_id"] = s_activeSession->_sessionId;
+            resp["status"] = "running";
+            res.set_content(resp.dump(), "application/json");
+            return;
+        }
+    }
+
+    auto session = std::make_shared<TrainSession>();
+    session->_sessionId = fmt::format("xgb_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        s_activeSession = session;
+    }
+
+    nlohmann::json resp;
+    resp["session_id"] = session->_sessionId;
+    resp["status"] = "started";
+    res.set_content(resp.dump(), "application/json");
+
+    // 提取参数
+    auto script = params.value("script", nlohmann::json::object());
+    auto labelCfg = params.value("label", nlohmann::json::object());
+    auto dateRangeCfg = params.value("date_range", nlohmann::json::object());
+    String labelSource = labelCfg.value("source", "");
+    String startDate = dateRangeCfg.value("start", "");
+    String endDate = dateRangeCfg.value("end", "");
+    String frequency = dateRangeCfg.value("frequency", "1d");
+    String strategyName = params.value("strategy_name", String("default"));
+
+    std::thread collectThread([session, params, script, labelCfg, dateRangeCfg,
+        labelSource, startDate, endDate, frequency, strategyName, this]() mutable {
+
+        auto state = std::make_shared<TrainState>();
+        auto sendSSE = [session](const String& type, const nlohmann::json& data) {
+            session->pushEvent(type, data);
+        };
+        auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
+        state->_tmpStrategyName = strategyName + "_collect";
+
+        // ============== 1. 解析策略图 ==============
+        sendSSE("step", {{"step","parse_script"},{"status","start"},{"msg","解析策略图..."}});
+        try {
+            state->_fullGraph = parse_strategy_script_v2(script, _server);
+            state->_fullGraph = topo_sort(state->_fullGraph);
+        } catch (const std::exception& e) {
+            cleanupGraph();
+            sendSSE("error", {{"step","parse_script"},{"msg", String("strategy parse failed: ") + e.what()}});
+            session->finish({{"error", String("strategy parse failed: ") + e.what()}}, true);
+            return;
+        }
+        sendSSE("step", {{"step","parse_script"},{"status","done"}});
+
+        state->_upstreamSet = collectUpstreamNodes(state->_fullGraph);
+        if (state->_upstreamSet.empty()) {
+            cleanupGraph();
+            sendSSE("error", {{"step","parse_script"},{"msg","未找到 XGBoost 节点或上游子图为空"}});
+            session->finish({{"error","上游子图为空"}}, true); return;
+        }
+        for (auto n : state->_fullGraph) {
+            if (state->_upstreamSet.count(n)) state->_upstreamSubgraph.push_back(n);
+        }
+
+        // ============== 2. Init 上游节点 ==============
+        sendSSE("step", {{"step","init_nodes"},{"status","start"},{"msg","初始化上游节点..."}});
+        try {
+            std::map<uint32_t, nlohmann::json> nodeConfigMap;
+            for (auto& node : script["nodes"]) {
+                uint32_t id = atoi(node["id"].get<std::string>().c_str());
+                nodeConfigMap[id] = node["data"];
+            }
+            for (auto n : state->_upstreamSubgraph) {
+                auto cfgItr = nodeConfigMap.find(n->id());
+                if (cfgItr != nodeConfigMap.end()) {
+                    try { n->Init(cfgItr->second); }
+                    catch (const std::exception& initEx) {
+                        sendSSE("warning", {{"step","init_nodes"},{"msg", String(initEx.what())}});
+                        throw;
+                    }
+                }
+            }
+            for (auto n : state->_upstreamSubgraph) {
+                auto elements = n->out_elements();
+                for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+            }
+        } catch (const std::exception& e) {
+            cleanupGraph();
+            sendSSE("error", {{"step","init_nodes"},{"msg", String("node init failed: ") + e.what()}});
+            session->finish({{"error", String("node init failed: ") + e.what()}}, true); return;
+        }
+        sendSSE("step", {{"step","init_nodes"},{"status","done"},{"features",(int)state->_featureNames.size()}});
+
+        // ============== 3. 启动 Exchange ==============
+        sendSSE("step", {{"step","start_exchange"},{"status","start"},{"msg","启动数据源..."}});
+        auto* exchangeMgr = _server->GetExchangeManager();
+        if (!exchangeMgr) {
+            cleanupGraph();
+            sendSSE("error", {{"step","start_exchange"},{"msg","ExchangeManager unavailable"}});
+            session->finish({{"error","ExchangeManager unavailable"}}, true); return;
+        }
+        Set<String> requiredSources = sourcesFromNodes(state->_upstreamSubgraph);
+        exchangeMgr->StartRequiredExchanges(requiredSources);
+        Set<symbol_t> symbols;
+        for (auto n : state->_upstreamSubgraph) {
+            if (auto* qn = dynamic_cast<QuoteInputNode*>(n)) {
+                for (auto s : qn->GetSymbols()) symbols.insert(s);
+            }
+        }
+        if (symbols.empty()) {
+            cleanupGraph();
+            sendSSE("error", {{"step","start_exchange"},{"msg","未找到可用的 symbols"}});
+            session->finish({{"error","未找到可用的 symbols"}}, true); return;
+        }
+        sendSSE("step", {{"step","start_exchange"},{"status","done"},{"symbols",(int)symbols.size()}});
+
+        // ============== 4. 数据收集 ==============
+        sendSSE("step", {{"step","collect_data"},{"status","start"},{"msg","收集特征数据..."}});
+        auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
+        Map<String, Vector<double>> collected;
+        Vector<String> collectedDates;
+        bool collectOk = flowSubsystem->RunTrainingCollect(
+            state->_tmpStrategyName, state->_upstreamSubgraph, requiredSources,
+            symbols, 100000.0, collected, collectedDates,
+            [sendSSE](uint64_t epoch, uint64_t totalBars) {
+                sendSSE("progress", {
+                    {"step","collect_data"},
+                    {"current",(int)epoch},
+                    {"total",(int)totalBars}
+                });
+            }
+        );
+        if (!collectOk || collected.empty()) {
+            cleanupGraph();
+            sendSSE("error", {{"step","collect_data"},{"msg","数据收集失败"}});
+            session->finish({{"error","数据收集失败"}}, true); return;
+        }
+        sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});
+
+        // ============== 5. 计算特征统计 + 写 CSV ==============
+        sendSSE("step", {{"step","analyze"},{"status","start"},{"msg","分析特征数据..."}});
+        auto featureStats = computeFeatureStats(collected, collectedDates);
+
+        state->_csvPath = makeTempPath("xgb_data", "csv");
+        writeCsv(state->_csvPath, collected, collectedDates);
+        INFO("[XGBoostCollect] CSV: {}", state->_csvPath);
+
+        featureStats["csv_path"] = state->_csvPath;
+        sendSSE("step", {{"step","analyze"},{"status","done"}});
+        sendSSE("feature_stats", featureStats);
+
+        cleanupGraph();
+        session->finish(featureStats);
+    });
+    collectThread.detach();
 }
 
 void XGBoostHandler::handleTrainProgress(const httplib::Request& req, httplib::Response& res) {
@@ -917,6 +1163,8 @@ void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
     String action = params.value("action", "");
     if (action == "train") {
         handleTrain(params, res);
+    } else if (action == "collect") {
+        handleCollect(params, res);
     } else if (action == "shap") {
         handleShap(params, res);
     } else if (action == "publish") {
@@ -924,7 +1172,7 @@ void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|shap|publish)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|collect|shap|publish)\"}",
             "application/json");
         return;
     }

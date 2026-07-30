@@ -43,6 +43,10 @@ struct TrainSession {
     nlohmann::json _result;
     bool _hasError = false;
 
+    // 特征收集阶段产出（collect 完成后设置，train 可复用）
+    String _csvPath;
+    nlohmann::json _featureStats;
+
     // 线程安全地推送事件
     void pushEvent(const String& type, const nlohmann::json& data) {
         String dataStr;
@@ -80,6 +84,7 @@ public:
 
 private:
     void handleTrain(const nlohmann::json& params, httplib::Response& res);
+    void handleCollect(const nlohmann::json& params, httplib::Response& res);
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleTrainStatus(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);

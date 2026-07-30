@@ -8,7 +8,11 @@
         <p>基础参数覆盖 80% 的调参场景；高级正则项在折叠区内，通常只在过拟合/欠拟合时调整。</p>
       </div>
       <div class="summary-action">
-        <button class="btn btn-primary" :disabled="state.trainResult.loading || !config.labelSource" @click="onTrain">
+        <button class="btn btn-secondary" :disabled="state.featureReport.loading || state.trainResult.loading || !config.labelSource" @click="onCollect">
+          <i v-if="state.featureReport.loading" class="fas fa-spinner fa-spin"></i>
+          {{ state.featureReport.loading ? '收集中…' : '检查数据' }}
+        </button>
+        <button class="btn btn-primary" :disabled="state.trainResult.loading || !config.labelSource" @click="onTrain()">
           <i v-if="state.trainResult.loading" class="fas fa-spinner fa-spin"></i>
           {{ state.trainResult.loading ? '训练中…' : '开始训练' }}
         </button>
@@ -194,6 +198,18 @@
       </div>
     </div>
 
+    <!-- 特征检查报告 -->
+    <div v-if="state.featureReport.data" class="chart-section">
+      <div class="section-heading">
+        <div>
+          <span class="section-eyebrow">FEATURE REPORT</span>
+          <h3 class="section-title">特征数据检查</h3>
+        </div>
+        <span class="section-hint">NaN% &gt; 30% 的特征可能影响训练质量</span>
+      </div>
+      <FeatureInspectionPanel :report="state.featureReport.data" @start-train="onTrainWithCsv" />
+    </div>
+
     <!-- 训练结果摘要 -->
     <div v-if="state.trainResult.data" class="result-summary">
       <div class="result-stat">
@@ -225,20 +241,54 @@
       <MetricsCard :metrics="state.trainResult.data.eval_metrics" />
     </div>
 
-    <!-- Loss 曲线 -->
-    <div v-if="state.trainResult.data?.learning_curve?.length" class="chart-section">
+    <!-- Loss 曲线（训练中实时显示，训练后使用最终数据） -->
+    <div v-if="chartData.length > 0" class="chart-section">
       <div class="section-heading">
         <div>
           <span class="section-eyebrow">LOSS CURVE</span>
           <h3 class="section-title">Loss 曲线</h3>
         </div>
-        <span class="section-hint">训练/验证损失随迭代变化，虚线为早停触发点</span>
+        <span class="section-hint">{{ state.trainResult.loading ? '实时更新中…' : '训练/验证损失随迭代变化，虚线为早停触发点' }}</span>
       </div>
       <LearningCurveChart
-        :data="state.trainResult.data.learning_curve"
-        :best-iteration="state.trainResult.data.best_iteration"
+        :data="chartData"
+        :best-iteration="state.trainResult.data?.best_iteration"
         :objective="config.objective"
       />
+    </div>
+
+    <!-- 训练结果分析图表 -->
+    <div v-if="state.trainResult.data?.predictions?.length" class="chart-section">
+      <div class="section-heading">
+        <div>
+          <span class="section-eyebrow">ANALYSIS</span>
+          <h3 class="section-title">预测分析</h3>
+        </div>
+        <span class="section-hint">测试集 {{ state.trainResult.data.n_test }} 个样本</span>
+      </div>
+      <div class="analysis-grid">
+        <!-- 分类模式 -->
+        <template v-if="config.labelType === 'classification'">
+          <div class="analysis-item">
+            <ConfusionMatrixChart :predictions="state.trainResult.data.predictions" />
+          </div>
+          <div class="analysis-item">
+            <RocCurveChart :predictions="state.trainResult.data.predictions" :objective="config.objective" />
+          </div>
+          <div v-if="hasBinaryPredictions" class="analysis-item">
+            <ProbabilityDistChart :predictions="state.trainResult.data.predictions" />
+          </div>
+        </template>
+        <!-- 回归模式 -->
+        <template v-else>
+          <div class="analysis-item">
+            <PredVsActualChart :predictions="state.trainResult.data.predictions" />
+          </div>
+          <div class="analysis-item">
+            <ResidualDistChart :predictions="state.trainResult.data.predictions" />
+          </div>
+        </template>
+      </div>
     </div>
 
     <div v-if="!state.trainResult.data && !state.trainResult.loading" class="empty-state">
@@ -251,10 +301,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { LABEL_TYPES, REG_MODES } from '../composables/useXGBoostState'
-import type { TrainStep, TrainLog } from '../composables/useXGBoostState'
+import type { TrainStep, TrainLog, LearningCurvePoint } from '../composables/useXGBoostState'
 import { useXGBoostData } from '../composables/useXGBoostData'
 import LearningCurveChart from '../charts/LearningCurveChart.vue'
 import MetricsCard from '../charts/MetricsCard.vue'
+import RocCurveChart from '../charts/RocCurveChart.vue'
+import ConfusionMatrixChart from '../charts/ConfusionMatrixChart.vue'
+import ProbabilityDistChart from '../charts/ProbabilityDistChart.vue'
+import PredVsActualChart from '../charts/PredVsActualChart.vue'
+import ResidualDistChart from '../charts/ResidualDistChart.vue'
+import FeatureInspectionPanel from './FeatureInspectionPanel.vue'
 
 const showAdvanced = ref(false)
 
@@ -267,9 +323,20 @@ const emit = defineEmits<{
   (e: 'trained'): void
 }>()
 
-const { train } = useXGBoostData()
+const { train, collect } = useXGBoostData()
 
 const config = props.state.config
+
+const liveLearningCurve = ref<LearningCurvePoint[]>([])
+const chartData = computed(() => {
+  if (props.state.trainResult.loading) return liveLearningCurve.value
+  return props.state.trainResult.data?.learning_curve || []
+})
+const hasBinaryPredictions = computed(() => {
+  return props.state.trainResult.data?.predictions?.some(
+    (p: { actual: number }) => p.actual === 0 || p.actual === 1,
+  ) ?? false
+})
 
 // 正则化提示文本
 const regHint = computed(() => {
@@ -316,6 +383,7 @@ const STEP_LABELS: Record<string, string> = {
   init_nodes: '初始化节点',
   start_exchange: '启动数据源',
   collect_data: '收集特征数据',
+  analyze: '分析特征数据',
   train_model: 'Python 训练',
 }
 
@@ -325,11 +393,59 @@ function parseProgressPct(detail: string): number {
   return 0
 }
 
-async function onTrain() {
+async function onCollect() {
+  props.state.featureReport.loading = true
+  props.state.featureReport.data = null
+  props.state.featureReport.steps = []
+  props.state.featureReport.logs = []
+
+  try {
+    const report = await collect(props.script, {
+      labelSource: config.labelSource,
+      startDate: props.state.dateRange.value?.[0] || '',
+      endDate: props.state.dateRange.value?.[1] || '',
+      frequency: props.state.frequency.value || '1d',
+    }, (type: string, data: any) => {
+      if (type === 'step') {
+        const stepId = data.step
+        const existing = props.state.featureReport.steps.find((s: TrainStep) => s.id === stepId)
+        if (data.status === 'start') {
+          if (!existing) {
+            props.state.featureReport.steps.push({
+              id: stepId,
+              label: STEP_LABELS[stepId] || stepId,
+              status: 'running',
+              detail: data.msg,
+            })
+          }
+        } else if (data.status === 'done' && existing) {
+          existing.status = 'done'
+        }
+      } else if (type === 'progress') {
+        const step = props.state.featureReport.steps.find((s: TrainStep) => s.id === data.step)
+        if (step) step.detail = `${data.current} / ${data.total}`
+      }
+    })
+    if (report) {
+      props.state.featureReport.data = report
+    }
+  } catch (err: any) {
+    console.error('[XGBoost] collect failed:', err)
+  } finally {
+    props.state.featureReport.loading = false
+  }
+}
+
+function onTrainWithCsv(csvPath: string) {
+  onTrain(csvPath)
+}
+
+async function onTrain(csvPath?: string) {
   props.state.trainResult.loading = true
   props.state.trainResult.progressMsg = '开始训练...'
   props.state.trainResult.steps = []
   props.state.trainResult.logs = []
+  liveLearningCurve.value = []
 
   const stepStartTimes: Record<string, number> = {}
 
@@ -403,6 +519,17 @@ async function onTrain() {
       }
     } else if (type === 'log') {
       props.state.trainResult.logs.push({ step: data.step || '', level: 'info', line: data.line || '' })
+      // 解析训练进度 JSON，构建实时 Loss 曲线
+      try {
+        const logData = JSON.parse(data.line)
+        if (logData.phase === 'training' && logData.iteration != null && logData.train_loss != null) {
+          liveLearningCurve.value.push({
+            iteration: logData.iteration,
+            train_loss: logData.train_loss,
+            eval_loss: logData.eval_loss ?? logData.train_loss,
+          })
+        }
+      } catch { /* not JSON or not training progress */ }
     } else if (type === 'error') {
       const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
       if (step) step.status = 'error'
@@ -411,7 +538,7 @@ async function onTrain() {
         props.state.trainResult.logs.push({ step: data.step || '', level: 'error', line })
       }
     }
-  })
+  }, csvPath)
     props.state.trainResult.data = result
     if (result) emit('trained')
   } finally {
@@ -657,6 +784,12 @@ async function onTrain() {
   gap: 6px;
 }
 .btn:disabled { background: #475569; cursor: not-allowed; }
+.btn-secondary {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.btn-secondary:hover:not(:disabled) { background: rgba(59, 130, 246, 0.25); }
 .source-chip {
   display: inline-flex;
   align-items: center;
@@ -737,4 +870,15 @@ async function onTrain() {
   color: #64748b;
 }
 .empty-icon { font-size: 48px; margin-bottom: 12px; }
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 16px;
+}
+.analysis-item {
+  background: rgba(15, 25, 41, 0.4);
+  border: 1px solid rgba(74, 85, 104, 0.2);
+  border-radius: 6px;
+  padding: 8px;
+}
 </style>

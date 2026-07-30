@@ -79,6 +79,27 @@ export interface BatchLabelStat {
   threshold: number
 }
 
+export interface FeatureStat {
+  name: string
+  valid: number
+  nan_count: number
+  nan_pct: number
+  min: number | null
+  max: number | null
+  mean: number | null
+  std: number | null
+  median: number | null
+}
+
+export interface FeatureReport {
+  total_rows: number
+  n_features: number
+  date_start: string
+  date_end: string
+  csv_path: string
+  features: FeatureStat[]
+}
+
 export const LABEL_TYPES = [
   { label: '自适应分类（涨/平/跌）', value: 'classification' },
   { label: '回归（收益率）', value: 'regression' },
@@ -174,6 +195,18 @@ export function useXGBoostState() {
     logs: [],
   })
 
+  const featureReport = reactive<{
+    data: FeatureReport | null
+    loading: boolean
+    steps: TrainStep[]
+    logs: TrainLog[]
+  }>({
+    data: null,
+    loading: false,
+    steps: [],
+    logs: [],
+  })
+
   // 训练配置
   const config = reactive({
     labelSource: '',         // 标签来源变量（如 "sh.600000.close"）
@@ -221,6 +254,10 @@ export function useXGBoostState() {
     trainResult.loading = false
     trainResult.steps = []
     trainResult.logs = []
+    featureReport.data = null
+    featureReport.loading = false
+    featureReport.steps = []
+    featureReport.logs = []
     labelAnalysis.result = null
     labelAnalysis.loading = false
     labelSymbol.value = ''
@@ -317,6 +354,7 @@ export function useXGBoostState() {
     batchAnalysis,
     recomputeLabels,
     trainResult,
+    featureReport,
     config,
     QUICK_RANGES,
     setQuickRange,
