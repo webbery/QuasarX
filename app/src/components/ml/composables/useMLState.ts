@@ -1,5 +1,5 @@
-// app/src/components/xgboost/composables/useXGBoostState.ts
-// XGBoost 训练与分析面板状态管理
+// app/src/components/ml/composables/useMLState.ts
+// ML 训练与分析面板状态管理
 
 import { reactive, ref } from 'vue'
 
@@ -140,7 +140,7 @@ const QUICK_RANGES: [string, () => [string, string]][] = [
   }],
 ]
 
-export function useXGBoostState() {
+export function useMLState() {
   const selectedStrategyId = ref<string>('')
   const field = ref('close')
   const quickRange = ref('近1年')

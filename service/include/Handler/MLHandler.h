@@ -8,12 +8,33 @@
 #include <queue>
 #include <functional>
 
-struct CachedXGBoostModel {
+enum class ModelType : uint8_t {
+    XGBoost = 0,
+    NARX,
+    // 预留：LightGBM, CatBoost, ...
+};
+
+inline String modelTypeToString(ModelType t) {
+    switch (t) {
+        case ModelType::XGBoost: return "xgboost";
+        case ModelType::NARX:    return "narx";
+        default: return "unknown";
+    }
+}
+
+inline ModelType stringToModelType(const String& s) {
+    if (s == "xgboost" || s == "xgb") return ModelType::XGBoost;
+    if (s == "narx") return ModelType::NARX;
+    return ModelType::XGBoost;  // 默认
+}
+
+struct CachedMLModel {
+    ModelType _modelType = ModelType::XGBoost;
     BoosterHandle _booster = nullptr;
     Vector<String> _features;
     Vector<Vector<double>> _x_test;
 
-    ~CachedXGBoostModel() { clear(); }
+    ~CachedMLModel() { clear(); }
 
     void clear() {
         if (_booster) {
@@ -69,7 +90,7 @@ struct TrainSession {
     }
 };
 
-class XGBoostHandler : public HttpHandler {
+class MLHandler : public HttpHandler {
 public:
     using HttpHandler::HttpHandler;
 
@@ -78,8 +99,8 @@ public:
     void del(const httplib::Request& req, httplib::Response& res) override;
 
     // 注册模型到缓存（SHAP 计算用）
-    uint64_t registerModel(BoosterHandle booster, Vector<String> features, Vector<Vector<double>> x_test);
-    CachedXGBoostModel* getModel(uint64_t id);
+    uint64_t registerModel(ModelType type, BoosterHandle booster, Vector<String> features, Vector<Vector<double>> x_test);
+    CachedMLModel* getModel(uint64_t id);
     bool deleteModel(uint64_t id);
 
 private:
@@ -92,7 +113,7 @@ private:
     void handleList(httplib::Response& res);
     void handleDelete(uint64_t modelId, httplib::Response& res);
 
-    Map<uint64_t, CachedXGBoostModel> _cache;
+    Map<uint64_t, CachedMLModel> _cache;
     std::atomic<uint64_t> _nextId{1};
     std::mutex _mtx;
 

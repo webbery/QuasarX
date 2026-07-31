@@ -138,16 +138,17 @@ function renderChart() {
         name: 'Change Points (变点)',
         type: 'scatter',
         data: res.change_points.map(idx => ({
-          value: [idx, res.s_pos[idx] > res.s_neg[idx] ? res.s_pos[idx] : res.s_neg[idx]],
+          value: [xData[idx], res.s_pos[idx] > res.s_neg[idx] ? res.s_pos[idx] : res.s_neg[idx]],
+          _idx: idx,
         })),
         symbol: 'triangle',
         symbolSize: 12,
         itemStyle: { color: '#ff1744' },
         tooltip: {
           formatter: (p: any) => {
-            const idx = p.data[0]
+            const idx = p.data._idx
             const sVal = res.s_pos[idx] > res.s_neg[idx] ? res.s_pos[idx] : res.s_neg[idx]
-            return `⚠ <b>变点 detected</b><br/>日期: ${xData[idx]}<br/>CUSUM 值: ${sVal.toFixed(4)}`
+            return `⚠ <b>变点 detected</b><br/>日期: ${p.data.value[0]}<br/>CUSUM 值: ${sVal.toFixed(4)}`
           },
         },
       })

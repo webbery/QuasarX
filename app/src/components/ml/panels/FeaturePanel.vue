@@ -43,7 +43,7 @@
 import { ref, computed } from 'vue'
 import FeatureImportanceChart from '../charts/FeatureImportanceChart.vue'
 import ShapSummaryChart from '../charts/ShapSummaryChart.vue'
-import { useXGBoostData } from '../composables/useXGBoostData'
+import { useMLData } from '../composables/useMLData'
 
 type Metric = 'gain' | 'weight' | 'cover'
 
@@ -54,7 +54,7 @@ const METRICS: { value: Metric; label: string }[] = [
 ]
 
 const props = defineProps<{ state: any }>()
-const { shap } = useXGBoostData()
+const { shap } = useMLData()
 
 const result = computed(() => props.state.trainResult.data)
 const currentMetric = ref<Metric>('gain')

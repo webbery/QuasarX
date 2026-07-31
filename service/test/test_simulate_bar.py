@@ -19,9 +19,13 @@ import time
 from pathlib import Path
 
 import requests
+import urllib3
 
-BASE_URL = "http://localhost:19107/v0"
-VERIFY_SSL = False
+# 抑制自签名证书警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+BASE_URL = "https://localhost:19107/v0"
+VERIFY_SSL = False  # 自签名证书，跳过验证
 
 
 def get_auth_token() -> str:
@@ -110,6 +114,20 @@ def simulate_bar(token: str, bar: dict) -> dict:
     return resp.json()
 
 
+def load_strategy(token: str, name: str, script: dict) -> dict:
+    """POST /v0/strategy action=load — 加载策略到 StrategySubSystem（不保存文件、不 Run）"""
+    headers = {"Authorization": token}
+    resp = requests.post(
+        f"{BASE_URL}/strategy",
+        json={"action": "load", "name": name, "script": script},
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def get_decisions(date: str) -> dict:
     """获取指定日期的决策文件"""
     decisions_path = Path(f"../build/data/decisions/{date}.json")
@@ -152,6 +170,12 @@ def main():
     # 获取 token
     token = get_auth_token()
     print(f"Token: {token[:20]}...")
+
+    # 加载策略到 StrategySubSystem
+    print(f"\n=== 加载策略 ===")
+    strategy_filename = Path(args.strategy).name
+    result = load_strategy(token, strategy_filename, strategy)
+    print(f"  {result.get('message', 'unknown')}: {result.get('name', '')}")
 
     # 确定日期
     date = args.date or time.strftime("%Y-%m-%d")

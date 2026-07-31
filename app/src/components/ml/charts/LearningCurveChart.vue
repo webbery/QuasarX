@@ -17,7 +17,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
-import type { LearningCurvePoint } from '../composables/useXGBoostState'
+import type { LearningCurvePoint } from '../composables/useMLState'
 
 const props = defineProps<{
   data: LearningCurvePoint[]

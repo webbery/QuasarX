@@ -179,6 +179,7 @@ jobs:
             service/build/QuantService
             service/build/QuantService.debug
             service/build/config.template.json
+            service/tools/
           compression-level: 5
           retention-days: 1
 
@@ -501,10 +502,11 @@ jobs:
           exit 1
 
       # === 阶段 2: 回测功能测试（stock_hist_sim 模式）===
-
       - name: Run backtest tests
         id: test
         run: |
+          # 将 tools 目录链接到 QuantService 同级，供 Handler 和 run_task.py 使用
+          ln -sfn ../tools tools
           nohup ./QuantService ../stock_hist_sim.json > service_test.log 2>&1 &
           TEST_PID=$!
           echo "Test service PID: $TEST_PID"

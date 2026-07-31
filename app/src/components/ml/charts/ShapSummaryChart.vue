@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, watch, ref } from 'vue'
 import * as echarts from 'echarts'
-import type { ShapResult } from '../composables/useXGBoostState'
+import type { ShapResult } from '../composables/useMLState'
 
 const props = defineProps<{ data: ShapResult }>()
 

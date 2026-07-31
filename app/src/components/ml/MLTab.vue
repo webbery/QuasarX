@@ -1,5 +1,5 @@
 <template>
-  <div class="xgboost-tab">
+  <div class="ml-tab">
     <!-- 顶部控制栏 -->
     <AnalysisControlBar
       mode="strategy"
@@ -12,7 +12,7 @@
       :available-securities="availableSecurities"
       :checked-symbols="checkedSymbols"
       :quick-ranges="QUICK_RANGES"
-      :loading="state.labelAnalysis.loading"
+      :loading="loadingAny"
       :can-analyze="canRunLabel"
       run-label="标签分析"
       show-frequency
@@ -46,22 +46,22 @@
     <div v-if="!selectedStrategyId" class="stage-empty stage-empty-hero">
       <div class="stage-icon">00</div>
       <div>
-        <h3>选择一个含 XGBoost 节点的策略</h3>
-        <p>工作流：标签验证 → 模型训练 → 特征解释 → 模型诊断，各阶段输出作为下一阶段的输入。</p>
+        <h3>选择一个含 ML 节点的策略</h3>
+        <p>工作流：特征分析 → 标签分析 → 训练分析 → 结果分析，各阶段独立可自由切换。</p>
       </div>
     </div>
 
-    <div v-else-if="!hasXGBoost" class="stage-empty">
+    <div v-else-if="!hasMLNode" class="stage-empty">
       <div class="stage-icon">⚠️</div>
       <div>
-        <h3>策略中未找到 XGBoost 节点</h3>
-        <p>请在策略图中加入 XGBoost 节点后，再回到此面板使用训练与解释功能。</p>
+        <h3>策略中未找到 ML 节点</h3>
+        <p>请在策略图中加入 XGBoost（或未来支持的 ML 节点）后，再回到此面板使用训练与分析功能。</p>
       </div>
     </div>
 
     <template v-else>
       <div class="compact-status">
-        <span class="node-status"><i></i>XGBoost</span>
+        <span class="node-status"><i></i>ML</span>
         <span class="status-sep">·</span>
         <span>{{ selectedStrategyName }}</span>
         <span class="status-sep">·</span>
@@ -85,113 +85,113 @@
       </div>
 
       <div class="card-body">
-          <div v-show="activeTab === 'label'" class="label-workspace">
-            <div v-if="state.labelAnalysis.result" class="label-result">
-              <LabelAnalysisChart :data="state.labelAnalysis.result" />
+        <div v-show="activeTab === 'feature'">
+          <FeatureAnalysisPanel :state="state" :script="script" />
+        </div>
 
-              <div class="label-distribution">
-                <div class="dist-heading">
-                  <span class="dist-label">标签分布</span>
-                  <span class="dist-threshold">阈值 {{ (state.labelAnalysis.result.threshold * 100).toFixed(2) }}%</span>
-                </div>
-                <div class="dist-bar">
-                  <div class="dist-seg up" :style="{ width: labelStats.upPct + '%' }"></div>
-                  <div class="dist-seg flat" :style="{ width: labelStats.flatPct + '%' }"></div>
-                  <div class="dist-seg down" :style="{ width: labelStats.downPct + '%' }"></div>
-                </div>
-                <div class="dist-stats">
-                  <span class="dist-item"><i class="dot up"></i><b>UP</b>{{ labelStats.up }} · {{ labelStats.upPct.toFixed(1) }}%</span>
-                  <span class="dist-item"><i class="dot flat"></i><b>FLAT</b>{{ labelStats.flat }} · {{ labelStats.flatPct.toFixed(1) }}%</span>
-                  <span class="dist-item"><i class="dot down"></i><b>DOWN</b>{{ labelStats.down }} · {{ labelStats.downPct.toFixed(1) }}%</span>
-                  <span class="dist-count">有效样本 {{ labelStats.total }}</span>
-                </div>
+        <div v-show="activeTab === 'label'" class="label-workspace">
+          <div v-if="state.labelAnalysis.result" class="label-result">
+            <LabelAnalysisChart :data="state.labelAnalysis.result" />
+
+            <div class="label-distribution">
+              <div class="dist-heading">
+                <span class="dist-label">标签分布</span>
+                <span class="dist-threshold">阈值 {{ (state.labelAnalysis.result.threshold * 100).toFixed(2) }}%</span>
               </div>
-
-              <div class="label-controls">
-                <div class="controls-header">
-                  <span class="controls-title">参数调节</span>
-                  <span class="controls-hint">拖动后本地重算</span>
-                </div>
-                <div class="control-row">
-                  <label>预测周期 N</label>
-                  <input type="range" min="1" max="30" step="1" v-model.number="state.config.labelPeriod" />
-                  <input type="number" min="1" max="60" v-model.number="state.config.labelPeriod" class="num-input" />
-                  <span class="unit">天</span>
-                </div>
-                <div class="control-row">
-                  <label>波动阈值 vol_k</label>
-                  <input type="range" min="0.1" max="2.0" step="0.05" v-model.number="state.config.volK" />
-                  <input type="number" min="0.1" max="2.0" step="0.1" v-model.number="state.config.volK" class="num-input" />
-                </div>
-                <div class="batch-row">
-                  <button class="btn-batch" :disabled="state.batchAnalysis.loading || availableSecurities.length === 0" @click="runBatchAnalysis">
-                    {{ state.batchAnalysis.loading ? state.batchAnalysis.progress : '扫描全部标的' }}
-                  </button>
-                  <span class="batch-hint">对策略内 {{ availableSecurities.length }} 只标的检查标签分布</span>
-                </div>
+              <div class="dist-bar">
+                <div class="dist-seg up" :style="{ width: labelStats.upPct + '%' }"></div>
+                <div class="dist-seg flat" :style="{ width: labelStats.flatPct + '%' }"></div>
+                <div class="dist-seg down" :style="{ width: labelStats.downPct + '%' }"></div>
               </div>
-
-              <div v-if="state.batchAnalysis.results.length > 0" class="batch-table-section">
-                <div class="controls-header" style="margin-bottom: 8px">
-                  <span class="controls-title">标的间标签分布</span>
-                  <span class="controls-hint">红色行表示类别失衡</span>
-                </div>
-                <table class="batch-table">
-                  <thead>
-                    <tr>
-                      <th>标的</th>
-                      <th>UP</th>
-                      <th>FLAT</th>
-                      <th>DOWN</th>
-                      <th>样本</th>
-                      <th>分布</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="stat in paginatedBatchResults" :key="stat.symbol" :class="{ imbalanced: isImbalanced(stat) }">
-                      <td class="sym-cell">{{ stat.symbol }}</td>
-                      <td class="pct-cell up-text">{{ stat.upPct.toFixed(1) }}%</td>
-                      <td class="pct-cell flat-text">{{ stat.flatPct.toFixed(1) }}%</td>
-                      <td class="pct-cell down-text">{{ stat.downPct.toFixed(1) }}%</td>
-                      <td class="num-cell">{{ stat.total }}</td>
-                      <td class="bar-cell">
-                        <div class="mini-bar">
-                          <div class="mini-seg up" :style="{ width: stat.upPct + '%' }"></div>
-                          <div class="mini-seg flat" :style="{ width: stat.flatPct + '%' }"></div>
-                          <div class="mini-seg down" :style="{ width: stat.downPct + '%' }"></div>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                <div v-if="batchTotalPages > 1" class="pagination">
-                  <button class="page-btn" :disabled="batchPage <= 1" @click="batchPage--">‹</button>
-                  <span class="page-info">{{ batchPage }} / {{ batchTotalPages }}</span>
-                  <button class="page-btn" :disabled="batchPage >= batchTotalPages" @click="batchPage++">›</button>
-                </div>
+              <div class="dist-stats">
+                <span class="dist-item"><i class="dot up"></i><b>UP</b>{{ labelStats.up }} · {{ labelStats.upPct.toFixed(1) }}%</span>
+                <span class="dist-item"><i class="dot flat"></i><b>FLAT</b>{{ labelStats.flat }} · {{ labelStats.flatPct.toFixed(1) }}%</span>
+                <span class="dist-item"><i class="dot down"></i><b>DOWN</b>{{ labelStats.down }} · {{ labelStats.downPct.toFixed(1) }}%</span>
+                <span class="dist-count">有效样本 {{ labelStats.total }}</span>
               </div>
             </div>
-            <div v-else class="stage-empty">
-              <div class="stage-icon">01</div>
-              <div>
-                <h3>确认标签是否适合训练</h3>
-                <p>选择标签标的、字段和日期范围，运行标签分析后再决定预测周期与波动阈值。</p>
-                <button class="empty-action" :disabled="!canRunLabel" @click="runLabelAnalysis">运行标签分析</button>
+
+            <div class="label-controls">
+              <div class="controls-header">
+                <span class="controls-title">参数调节</span>
+                <span class="controls-hint">拖动后本地重算</span>
+              </div>
+              <div class="control-row">
+                <label>预测周期 N</label>
+                <input type="range" min="1" max="30" step="1" v-model.number="state.config.labelPeriod" />
+                <input type="number" min="1" max="60" v-model.number="state.config.labelPeriod" class="num-input" />
+                <span class="unit">天</span>
+              </div>
+              <div class="control-row">
+                <label>波动阈值 vol_k</label>
+                <input type="range" min="0.1" max="2.0" step="0.05" v-model.number="state.config.volK" />
+                <input type="number" min="0.1" max="2.0" step="0.1" v-model.number="state.config.volK" class="num-input" />
+              </div>
+              <div class="batch-row">
+                <button class="btn-batch" :disabled="state.batchAnalysis.loading || availableSecurities.length === 0" @click="runBatchAnalysis">
+                  {{ state.batchAnalysis.loading ? state.batchAnalysis.progress : '扫描全部标的' }}
+                </button>
+                <span class="batch-hint">对策略内 {{ availableSecurities.length }} 只标的检查标签分布</span>
+              </div>
+            </div>
+
+            <div v-if="state.batchAnalysis.results.length > 0" class="batch-table-section">
+              <div class="controls-header" style="margin-bottom: 8px">
+                <span class="controls-title">标的间标签分布</span>
+                <span class="controls-hint">红色行表示类别失衡</span>
+              </div>
+              <table class="batch-table">
+                <thead>
+                  <tr>
+                    <th>标的</th>
+                    <th>UP</th>
+                    <th>FLAT</th>
+                    <th>DOWN</th>
+                    <th>样本</th>
+                    <th>分布</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="stat in paginatedBatchResults" :key="stat.symbol" :class="{ imbalanced: isImbalanced(stat) }">
+                    <td class="sym-cell">{{ stat.symbol }}</td>
+                    <td class="pct-cell up-text">{{ stat.upPct.toFixed(1) }}%</td>
+                    <td class="pct-cell flat-text">{{ stat.flatPct.toFixed(1) }}%</td>
+                    <td class="pct-cell down-text">{{ stat.downPct.toFixed(1) }}%</td>
+                    <td class="num-cell">{{ stat.total }}</td>
+                    <td class="bar-cell">
+                      <div class="mini-bar">
+                        <div class="mini-seg up" :style="{ width: stat.upPct + '%' }"></div>
+                        <div class="mini-seg flat" :style="{ width: stat.flatPct + '%' }"></div>
+                        <div class="mini-seg down" :style="{ width: stat.downPct + '%' }"></div>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="batchTotalPages > 1" class="pagination">
+                <button class="page-btn" :disabled="batchPage <= 1" @click="batchPage--">‹</button>
+                <span class="page-info">{{ batchPage }} / {{ batchTotalPages }}</span>
+                <button class="page-btn" :disabled="batchPage >= batchTotalPages" @click="batchPage++">›</button>
               </div>
             </div>
           </div>
-
-          <div v-show="activeTab === 'train'">
-            <TrainPanel :state="state" :script="script" @trained="onTrained" />
+          <div v-else class="stage-empty">
+            <div class="stage-icon">02</div>
+            <div>
+              <h3>确认标签是否适合训练</h3>
+              <p>选择标签标的、字段和日期范围，运行标签分析后再决定预测周期与波动阈值。</p>
+              <button class="empty-action" :disabled="!canRunLabel" @click="runLabelAnalysis">运行标签分析</button>
+            </div>
           </div>
+        </div>
 
-          <div v-show="activeTab === 'feature'">
-            <FeaturePanel :state="state" />
-          </div>
+        <div v-show="activeTab === 'train'">
+          <TrainPanel :state="state" :script="script" @trained="onTrained" />
+        </div>
 
-          <div v-show="activeTab === 'diagnostic'">
-            <DiagnosticPanel :state="state" />
-          </div>
+        <div v-show="activeTab === 'result'">
+          <ResultPanel :state="state" />
+        </div>
       </div>
     </template>
   </div>
@@ -199,27 +199,27 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useXGBoostState } from './composables/useXGBoostState'
-import { useXGBoostData } from './composables/useXGBoostData'
+import { useMLState } from './composables/useMLState'
+import { useMLData } from './composables/useMLData'
+import FeatureAnalysisPanel from './panels/FeatureAnalysisPanel.vue'
 import TrainPanel from './panels/TrainPanel.vue'
-import FeaturePanel from './panels/FeaturePanel.vue'
-import DiagnosticPanel from './panels/DiagnosticPanel.vue'
+import ResultPanel from './panels/ResultPanel.vue'
 import LabelAnalysisChart from './charts/LabelAnalysisChart.vue'
 import AnalysisControlBar from '@/components/shared/AnalysisControlBar.vue'
 import { useStrategySecurities } from '@/components/shared/composables/useStrategySecurities'
 import { useHistoryStore } from '@/stores/history'
 
 const STEPS = [
-  { key: 'label', label: '标签验证', icon: '🏷' },
-  { key: 'train', label: '模型训练', icon: '⚡' },
-  { key: 'feature', label: '特征解释', icon: '🔍' },
-  { key: 'diagnostic', label: '模型诊断', icon: '📊' },
+  { key: 'feature', label: '特征分析', icon: '🔍' },
+  { key: 'label', label: '标签分析', icon: '🏷' },
+  { key: 'train', label: '训练分析', icon: '⚡' },
+  { key: 'result', label: '结果分析', icon: '📊' },
 ] as const
 
-const activeTab = ref('label')
-const state = useXGBoostState()
+const activeTab = ref('feature')
+const state = useMLState()
 const { field, quickRange, frequency, dateRange, labelSymbol, QUICK_RANGES, setQuickRange, setFrequency, setField } = state
-const { fetchLabelAnalysis, runBatchLabelAnalysis } = useXGBoostData()
+const { fetchLabelAnalysis, runBatchLabelAnalysis } = useMLData()
 
 const {
   strategyOptions,
@@ -233,7 +233,7 @@ const {
 const historyStore = useHistoryStore()
 
 const script = ref('')
-const hasXGBoost = ref(false)
+const hasMLNode = ref(false)
 
 // 标签标的选项（从已勾选标的中取）
 const labelSymbolOptions = computed(() => Array.from(checkedSymbols.value))
@@ -246,6 +246,10 @@ const canRunLabel = computed(() => {
     && !!dateRange.value
 })
 
+const loadingAny = computed(() =>
+  state.labelAnalysis.loading || state.batchAnalysis.loading || state.featureReport.loading || state.trainResult.loading,
+)
+
 function updateDateRange(value: string, type: 'start' | 'end') {
   if (dateRange.value) {
     dateRange.value = type === 'start'
@@ -257,7 +261,7 @@ function updateDateRange(value: string, type: 'start' | 'end') {
 async function onStrategyChange() {
   if (!selectedStrategyId.value) {
     script.value = ''
-    hasXGBoost.value = false
+    hasMLNode.value = false
     return
   }
 
@@ -274,12 +278,15 @@ async function onStrategyChange() {
     const data = await historyStore.loadVersionFlowData(latest.id)
     if (!data) return
     const graphData = typeof data === 'string' ? JSON.parse(data) : data
-    // 补充策略 ID（parse_strategy_script_v2 需要 content["id"]）
     graphData.id = selectedStrategyId.value
     script.value = JSON.stringify(graphData)
-    hasXGBoost.value = graphData.nodes?.some((n: any) => n?.data?.nodeType === 'xgboost') ?? false
+    // 检测是否包含任何 ML 节点（当前仅 XGBoost）
+    hasMLNode.value = graphData.nodes?.some((n: any) => {
+      const t = n?.data?.nodeType
+      return t === 'xgboost' || t === 'ml' || t === 'narx'
+    }) ?? false
   } catch (e) {
-    console.error('[XGBoostTab] 加载策略失败:', e)
+    console.error('[MLTab] 加载策略失败:', e)
   }
 }
 
@@ -334,12 +341,10 @@ async function runBatchAnalysis() {
   }
 }
 
-/** 判断某行是否极端不平衡 */
 function isImbalanced(stat: any): boolean {
   return stat.upPct < 10 || stat.downPct < 10 || stat.upPct > 55 || stat.downPct > 55 || stat.flatPct > 70
 }
 
-// 批量结果翻页
 const batchPage = ref(1)
 const BATCH_PAGE_SIZE = 15
 const batchTotalPages = computed(() => Math.ceil(state.batchAnalysis.results.length / BATCH_PAGE_SIZE) || 1)
@@ -348,29 +353,26 @@ const paginatedBatchResults = computed(() => {
   return state.batchAnalysis.results.slice(start, start + BATCH_PAGE_SIZE)
 })
 
-// 批量分析完成后重置到第一页
 watch(() => state.batchAnalysis.results.length, () => { batchPage.value = 1 })
 
 function onTrained() {
-  activeTab.value = 'feature'
+  activeTab.value = 'result'
 }
 
 const selectedStrategyName = computed(() => {
   return strategyOptions.value.find(opt => opt.id === selectedStrategyId.value)?.name || '—'
 })
 
-// 监听策略 ID 变化
 watch(selectedStrategyId, (newId) => {
   if (newId) {
     onStrategyChange()
   } else {
     script.value = ''
-    hasXGBoost.value = false
+    hasMLNode.value = false
     state.reset()
   }
 })
 
-// 当已勾选标的变化时，自动选择标签标的
 watch(checkedSymbols, (syms) => {
   if (syms.size === 0) {
     labelSymbol.value = ''
@@ -379,11 +381,9 @@ watch(checkedSymbols, (syms) => {
   }
 }, { deep: false })
 
-// 预测周期 / 阈值系数变化时，实时重算标签（无需网络请求）
 watch(() => state.config.labelPeriod, () => state.recomputeLabels())
 watch(() => state.config.volK, () => state.recomputeLabels())
 
-// 标签分布统计
 const labelStats = computed(() => {
   const result = state.labelAnalysis.result
   if (!result) return { up: 0, flat: 0, down: 0, total: 0, upPct: 0, flatPct: 0, downPct: 0 }
@@ -406,7 +406,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.xgboost-tab {
+.ml-tab {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -471,7 +471,6 @@ onMounted(() => {
 .dot.flat { background: #9e9e9e; }
 .dot.down { background: #ea3943; }
 
-/* 参数控制 */
 .label-controls {
   padding: 10px 14px;
   display: flex;
@@ -540,7 +539,6 @@ onMounted(() => {
   color: #666;
 }
 
-/* 批量分析按钮 */
 .batch-row {
   margin-top: 4px;
   padding-top: 8px;
@@ -571,7 +569,6 @@ onMounted(() => {
   font-family: 'SF Mono', 'Consolas', monospace;
 }
 
-/* 批量结果表 */
 .batch-table-section {
   padding: 0 0 8px;
   overflow-x: auto;
@@ -634,7 +631,6 @@ onMounted(() => {
 .mini-seg.flat { background: #9e9e9e; }
 .mini-seg.down { background: #ea3943; }
 
-/* 翻页 */
 .pagination {
   display: flex;
   align-items: center;
@@ -672,7 +668,6 @@ onMounted(() => {
   text-align: center;
 }
 
-/* === 卡片式导航 === */
 .card-nav {
   display: flex;
   gap: 8px;
@@ -734,7 +729,6 @@ onMounted(() => {
   overflow: auto;
 }
 
-/* === 紧凑状态栏 === */
 .compact-status {
   display: flex;
   align-items: center;
@@ -765,7 +759,6 @@ onMounted(() => {
   display: inline-block;
 }
 
-/* === 标签验证工作区 === */
 .label-workspace {
   display: flex;
   flex-direction: column;
@@ -856,7 +849,6 @@ onMounted(() => {
   padding: 14px 16px 6px;
 }
 
-/* === 阶段空态 === */
 .stage-empty {
   display: flex;
   gap: 14px;

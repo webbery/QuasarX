@@ -66,7 +66,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { FeatureReport, FeatureStat } from '../composables/useXGBoostState'
+import type { FeatureReport, FeatureStat } from '../composables/useMLState'
 
 const props = defineProps<{
   report: FeatureReport | null

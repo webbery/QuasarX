@@ -1,10 +1,10 @@
-// app/src/components/xgboost/composables/useXGBoostData.ts
-// XGBoost 训练分析 API 调用
+// app/src/components/ml/composables/useMLData.ts
+// ML 训练分析 API 调用
 
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useXGBoostState'
+import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useMLState'
 import { convertLabelsToKeys } from '@/lib/nodes'
 
 /** 确保 code 参数为数组格式（C++ 端期望数组） */
@@ -31,7 +31,7 @@ function normalizeCodeParams(scriptStr: string): string {
   }
 }
 
-export function useXGBoostData() {
+export function useMLData() {
   /**
    * 触发训练
    * @param script 策略图 JSON（字符串形式）
@@ -104,7 +104,7 @@ export function useXGBoostData() {
       const token = localStorage.getItem('token') || ''
 
       // Step 1: POST 触发训练（幂等：已有训练在跑则返回现有 session_id）
-      const postResp = await axios.post('/v0/xgboost', plainBody)
+      const postResp = await axios.post('/v0/ml', plainBody)
       const sessionId = postResp.data?.session_id
       if (!sessionId) {
         ElMessage.error('训练启动失败：未返回 session_id')
@@ -114,7 +114,7 @@ export function useXGBoostData() {
       // Step 2: GET SSE 订阅进度（可安全重连，自动回放历史事件）
       let result: TrainResult | null = null
       await fetchEventSource(
-        `https://${server}/v0/xgboost?action=train&session_id=${sessionId}`,
+        `https://${server}/v0/ml?action=train&session_id=${sessionId}`,
         {
           method: 'GET',
           headers: { 'Authorization': token },
@@ -153,11 +153,12 @@ export function useXGBoostData() {
       return result
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '训练失败'
-      ElMessage.error(`XGBoost 训练失败: ${msg}`)
-      console.error('[XGBoost] train error:', err)
+      ElMessage.error(`ML 训练失败: ${msg}`)
+      console.error('[ML] train error:', err)
       return null
     }
   }
+
 
   /**
    * 特征收集：收集上游子图数据并计算统计信息
@@ -187,7 +188,7 @@ export function useXGBoostData() {
       const server = localStorage.getItem('remote') || 'localhost:19107'
       const token = localStorage.getItem('token') || ''
 
-      const postResp = await axios.post('/v0/xgboost', plainBody)
+      const postResp = await axios.post('/v0/ml', plainBody)
       const sessionId = postResp.data?.session_id
       if (!sessionId) {
         ElMessage.error('特征收集启动失败')
@@ -196,7 +197,7 @@ export function useXGBoostData() {
 
       let report: FeatureReport | null = null
       await fetchEventSource(
-        `https://${server}/v0/xgboost?action=train&session_id=${sessionId}`,
+        `https://${server}/v0/ml?action=train&session_id=${sessionId}`,
         {
           method: 'GET',
           headers: { 'Authorization': token },
@@ -228,7 +229,7 @@ export function useXGBoostData() {
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '特征收集失败'
       ElMessage.error(`特征收集失败: ${msg}`)
-      console.error('[XGBoost] collect error:', err)
+      console.error('[ML] collect error:', err)
       return null
     }
   }
@@ -236,7 +237,7 @@ export function useXGBoostData() {
   /** 计算 SHAP 值 */
   async function shap(modelId: number): Promise<ShapResult | null> {
     try {
-      const resp = await axios.post('/v0/xgboost', { action: 'shap', model_id: modelId })
+      const resp = await axios.post('/v0/ml', { action: 'shap', model_id: modelId })
       return resp.data as ShapResult
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'SHAP 计算失败'
@@ -248,12 +249,40 @@ export function useXGBoostData() {
   /** 删除已注册的模型 */
   async function deleteModel(modelId: number): Promise<boolean> {
     try {
-      await axios.post('/v0/xgboost', { action: 'delete', model_id: modelId })
+      await axios.post('/v0/ml', { action: 'delete', model_id: modelId })
       return true
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '删除失败'
       ElMessage.error(`模型删除失败: ${msg}`)
       return false
+    }
+  }
+
+  /** 列出实验/生产模型 */
+  async function listModels(): Promise<{
+    experiments: Array<{ path: string; filename: string; meta: any }>
+    production: { path: string; filename: string; meta: any } | null
+  } | null> {
+    try {
+      const resp = await axios.get('/v0/ml', { params: { action: 'list' } })
+      return resp.data
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || '模型列表获取失败'
+      ElMessage.error(`模型列表获取失败: ${msg}`)
+      return null
+    }
+  }
+
+  /** 发布实验模型到生产 */
+  async function publishModel(modelPath: string): Promise<{ production_path: string } | null> {
+    try {
+      const resp = await axios.post('/v0/ml', { action: 'publish', model_path: modelPath })
+      ElMessage.success('已发布到生产')
+      return resp.data
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || '发布失败'
+      ElMessage.error(`发布失败: ${msg}`)
+      return null
     }
   }
 
@@ -348,7 +377,7 @@ export function useXGBoostData() {
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '标签分析失败'
       ElMessage.error(`标签分析失败: ${msg}`)
-      console.error('[XGBoost] fetchLabelAnalysis error:', err)
+      console.error('[ML] fetchLabelAnalysis error:', err)
       return null
     }
   }
@@ -428,11 +457,11 @@ export function useXGBoostData() {
           })
         }
       } catch (err) {
-        console.warn(`[XGBoost] batch: ${symbol} 失败`, err)
+        console.warn(`[ML] batch: ${symbol} 失败`, err)
       }
     }
     return results
   }
 
-  return { train, collect, shap, deleteModel, fetchLabelAnalysis, runBatchLabelAnalysis }
+  return { train, collect, shap, deleteModel, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis }
 }

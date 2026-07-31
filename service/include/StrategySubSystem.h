@@ -84,8 +84,16 @@ public:
     // ── 日级策略执行（收盘后依赖驱动）──
 
     /**
+     * @brief 确保日级执行已初始化（幂等）
+     *
+     * 首次调用时执行 InitDailyExecution + ResetDaily，
+     * 后续调用直接返回。供 SimulateBarHandler 等手动触发场景使用。
+     */
+    void EnsureDailyReady();
+
+    /**
      * @brief 初始化日级执行状态
-     * 
+     *
      * 从已加载策略中提取依赖关系，建立策略→标的映射
      * 应在每日 15:00 前调用
      */
@@ -93,7 +101,7 @@ public:
 
     /**
      * @brief 重置每日状态
-     * 
+     *
      * 清空已就绪标的和已执行策略标记
      * 应在每日 15:00 前调用（InitDailyExecution 之后）
      */

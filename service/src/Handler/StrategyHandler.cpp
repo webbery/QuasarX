@@ -83,6 +83,12 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    // 检查是否是加载请求（只 InitStrategy，不保存文件、不 Run）
+    if (params.contains("action") && params["action"] == "load") {
+        load(params, res);
+        return;
+    }
+
     int mode = params["mode"];
     if (mode == 2) {// 暂停
         String name = params["name"];
@@ -206,6 +212,18 @@ void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res
     result["message"] = "success";
     result["name"] = name;
     result["running"] = running;
+    res.set_content(result.dump(), "application/json");
+}
+
+void StrategyHandler::load(const nlohmann::json& param, httplib::Response& res) {
+    String name = param["name"];
+    auto strategySys = _server->GetStrategySystem();
+    strategySys->InitStrategy(name, param["script"]);
+
+    res.status = 200;
+    nlohmann::json result;
+    result["message"] = "loaded";
+    result["name"] = name;
     res.set_content(result.dump(), "application/json");
 }
 

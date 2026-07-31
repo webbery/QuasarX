@@ -13,7 +13,7 @@ const defaultPanels: AnalysisPanelItem[] = [
   { id: 'signal', label: '信号分析', enabled: true },
   { id: 'pca', label: 'PCA 主成分', enabled: true },
   { id: 'cusum', label: 'CUSUM 结构变化', enabled: true },
-  { id: 'xgboost', label: 'XGBoost 分析', enabled: false },
+  { id: 'ml', label: '机器学习分析', enabled: false },
   { id: 'fundamental', label: '基本面分析', enabled: true },
   { id: 'capacity', label: '容量分析', enabled: false },
   { id: 'flow', label: '资金流向', enabled: true },

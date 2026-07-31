@@ -200,6 +200,15 @@ if (USE_LIBTORCH)
     target_link_libraries(${PROJECT_NAME} ${TORCH_LIBRARIES})
 endif (USE_LIBTORCH)
 
+# ── 预编译头 (PCH) ──
+# std_header.h 传递包含 Eigen(127), Boost(141), spdlog(36), DataFrame(28) 等重头文件
+# json.hpp 被 127 个编译单元使用
+# 预编译后所有 .cpp 共享，避免重复解析 ~370 个头文件
+# pch.h 内部用 #ifdef __cplusplus 保护，C 文件跳过 C++ 头文件
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    <pch.h>
+)
+
 if (CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
   find_program(OBJCOPY_EXE objcopy REQUIRED)
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

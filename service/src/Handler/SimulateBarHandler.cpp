@@ -66,6 +66,7 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
         // ── 3. 触发策略管道 ──
         auto* strategySys = _server->GetStrategySystem();
         if (strategySys) {
+            strategySys->EnsureDailyReady();
             strategySys->MarkSymbolReady(symbol);
         }
 

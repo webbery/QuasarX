@@ -1,4 +1,4 @@
-#include "Handler/XGBoostHandler.h"
+#include "Handler/MLHandler.h"
 #include "AgentSubSystem.h"
 #include "Strategy.h"
 #include "StrategyNode.h"
@@ -36,8 +36,8 @@ extern "C" {
 }
 
 // 静态成员定义
-std::shared_ptr<TrainSession> XGBoostHandler::s_activeSession = nullptr;
-std::mutex XGBoostHandler::s_sessionMtx;
+std::shared_ptr<TrainSession> MLHandler::s_activeSession = nullptr;
+std::mutex MLHandler::s_sessionMtx;
 
 namespace {
 
@@ -103,22 +103,23 @@ Set<String> sourcesFromNodes(const List<QNode*>& nodes) {
 
 }  // namespace
 
-uint64_t XGBoostHandler::registerModel(BoosterHandle booster, Vector<String> features, Vector<Vector<double>> x_test) {
+uint64_t MLHandler::registerModel(ModelType type, BoosterHandle booster, Vector<String> features, Vector<Vector<double>> x_test) {
     std::lock_guard<std::mutex> lock(_mtx);
     uint64_t id = _nextId.fetch_add(1);
+    _cache[id]._modelType = type;
     _cache[id]._booster = booster;
     _cache[id]._features = std::move(features);
     _cache[id]._x_test = std::move(x_test);
     return id;
 }
 
-CachedXGBoostModel* XGBoostHandler::getModel(uint64_t id) {
+CachedMLModel* MLHandler::getModel(uint64_t id) {
     std::lock_guard<std::mutex> lock(_mtx);
     auto itr = _cache.find(id);
     return itr == _cache.end() ? nullptr : &itr->second;
 }
 
-bool XGBoostHandler::deleteModel(uint64_t id) {
+bool MLHandler::deleteModel(uint64_t id) {
     std::lock_guard<std::mutex> lock(_mtx);
     auto itr = _cache.find(id);
     if (itr == _cache.end()) return false;
@@ -139,7 +140,7 @@ struct TrainState {
     String _csvPath, _modelPath;
 };
 
-void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
+void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
     // ============== 幂等检查：如果已有活跃训练，返回其 session_id ==============
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
@@ -148,7 +149,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             resp["session_id"] = s_activeSession->_sessionId;
             resp["status"] = "running";
             res.set_content(resp.dump(), "application/json");
-            INFO("[XGBoostTrain] Returning existing session: {}", s_activeSession->_sessionId);
+            INFO("[MLTrain] Returning existing session: {}", s_activeSession->_sessionId);
             return;
         }
     }
@@ -186,6 +187,13 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
     String endDate = dateRangeCfg.value("end", "");
     String frequency = dateRangeCfg.value("frequency", "1d");
 
+    ModelType modelType = stringToModelType(params.value("model_type", "xgboost"));
+    if (modelType != ModelType::XGBoost) {
+        res.status = 400;
+        res.set_content(R"({"message":"model_type ')" + modelTypeToString(modelType) + R"(' not implemented yet"})", "application/json");
+        return;
+    }
+
     String strategyName = script.value("id", "xgboost_train");
     if (labelSource.empty()) {
         res.status = 400;
@@ -218,7 +226,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
     std::thread trainThread([state, session, sendSSE, params, this,
         script, labelCfg, xgbParams, dateRangeCfg, testRatio,
         labelSource, labelPeriod, labelType, volK, objective, numClass,
-        startDate, endDate, frequency, strategyName]() mutable {
+        startDate, endDate, frequency, strategyName, modelType]() mutable {
 
         auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
         state->_tmpStrategyName = strategyName + "_train";
@@ -227,7 +235,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         String csvPath = params.value("csv_path", String());
         if (!csvPath.empty()) {
             state->_csvPath = csvPath;
-            INFO("[XGBoostTrain] 使用预收集 CSV: {}", csvPath);
+            INFO("[MLTrain] 使用预收集 CSV: {}", csvPath);
             sendSSE("step", {{"step","parse_script"},{"status","done"},{"msg","跳过（使用预收集数据）"}});
             sendSSE("step", {{"step","init_nodes"},{"status","done"},{"msg","跳过"}});
             sendSSE("step", {{"step","start_exchange"},{"status","done"},{"msg","跳过"}});
@@ -312,13 +320,13 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
 
         // ============== 5. 数据收集 ==============
         sendSSE("step", {{"step","collect_data"},{"status","start"},{"msg","收集特征数据..."}});
-        INFO("[XGBoostTrain] === Collect start: strategy='{}', symbols={}, nodes={}, sources={}",
+        INFO("[MLTrain] === Collect start: strategy='{}', symbols={}, nodes={}, sources={}",
              state->_tmpStrategyName, symbols.size(), state->_upstreamSubgraph.size(), requiredSources.size());
         for (auto s : symbols) {
-            INFO("[XGBoostTrain]   symbol: {}", s);
+            INFO("[MLTrain]   symbol: {}", s);
         }
         for (auto& src : requiredSources) {
-            INFO("[XGBoostTrain]   source: {}", src);
+            INFO("[MLTrain]   source: {}", src);
         }
         auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
         Map<String, Vector<double>> collected;
@@ -335,14 +343,14 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             }
         );
 
-        INFO("[XGBoostTrain] === Collect done: ok={}, collected_keys={}, dates={}",
+        INFO("[MLTrain] === Collect done: ok={}, collected_keys={}, dates={}",
              collectOk, collected.size(), collectedDates.size());
         if (!collected.empty()) {
             for (auto& [k, v] : collected) {
-                INFO("[XGBoostTrain]   key='{}' points={}", k, v.size());
+                INFO("[MLTrain]   key='{}' points={}", k, v.size());
             }
             if (!collectedDates.empty()) {
-                INFO("[XGBoostTrain]   date range: {} -> {}", collectedDates.front(), collectedDates.back());
+                INFO("[MLTrain]   date range: {} -> {}", collectedDates.front(), collectedDates.back());
             }
         }
         if (!collectOk || collected.empty()) {
@@ -362,7 +370,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
         // 写 CSV（仅在新收集数据时）
         state->_csvPath = makeTempPath("xgb_data", "csv");
         writeCsv(state->_csvPath, collected, collectedDates);
-        INFO("[XGBoostTrain] 训练数据 CSV: {}", state->_csvPath);
+        INFO("[MLTrain] 训练数据 CSV: {}", state->_csvPath);
 
         } // end else (no csv_path)
 
@@ -393,7 +401,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             if (out.type == PythonOutput::STDOUT) {
                 if (out.line.find("\"type\":\"result\"") != std::string::npos) resultLine = out.line;
                 else if (out.line.find("\"type\":\"error\"") != std::string::npos) {
-                    WARN("[XGBoostTrain error] {}", to_utf8(out.line));
+                    WARN("[MLTrain error] {}", to_utf8(out.line));
                     sendSSE("warning", {{"step","train_model"},{"line",out.line}});
                     if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
                 }
@@ -401,7 +409,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
                       || out.line.find("\"type\":\"info\"") != std::string::npos)
                     sendSSE("log", {{"step","train_model"},{"line",out.line}});
             } else if (out.type == PythonOutput::STDERR) {
-                WARN("[XGBoostTrain stderr] {}", to_utf8(out.line));
+                WARN("[MLTrain stderr] {}", to_utf8(out.line));
                 sendSSE("warning", {{"step","train_model"},{"line",out.line}});
                 if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
             }
@@ -441,6 +449,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
                 meta["strategy_id"] = strategyName;
                 meta["created_at"] = ToString(now, "%Y-%m-%dT%H:%M:%S");
                 meta["source"] = "experiment";
+                meta["model_type"] = modelTypeToString(modelType);
                 meta["label"] = labelCfg; meta["objective"] = objective;
                 meta["num_class"] = numClass; meta["test_ratio"] = testRatio;
                 meta["params"] = xgbParams; meta["date_range"] = dateRangeCfg;
@@ -473,8 +482,9 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
                 if (trainResult.contains("features") && trainResult["features"].is_array())
                     for (auto& f : trainResult["features"]) actualFeatures.push_back(f.get<String>());
                 else actualFeatures = state->_featureNames;
-                modelId = registerModel(booster, actualFeatures, Xtest);
+                modelId = registerModel(modelType, booster, actualFeatures, Xtest);
                 trainResult["model_id"] = modelId;
+                trainResult["model_type"] = modelTypeToString(modelType);
             }
             trainResult.erase("X_test");
             trainResult["model_path"] = persistPath;
@@ -485,7 +495,7 @@ void XGBoostHandler::handleTrain(const nlohmann::json& params, httplib::Response
             session->finish(trainResult);
 
         } catch (const std::exception& e) {
-            WARN("[XGBoostTrain] 模型持久化/加载异常: {}", e.what());
+            WARN("[MLTrain] 模型持久化/加载异常: {}", e.what());
             sendSSE("error", {{"step","train_model"},{"msg", String("模型持久化失败: ") + e.what()}});
             trainResult.erase("X_test");
             sendSSE("result", trainResult);
@@ -560,7 +570,7 @@ static nlohmann::json computeFeatureStats(const Map<String, Vector<double>>& col
     return stats;
 }
 
-void XGBoostHandler::handleCollect(const nlohmann::json& params, httplib::Response& res) {
+void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& res) {
     // 幂等检查
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
@@ -709,7 +719,7 @@ void XGBoostHandler::handleCollect(const nlohmann::json& params, httplib::Respon
 
         state->_csvPath = makeTempPath("xgb_data", "csv");
         writeCsv(state->_csvPath, collected, collectedDates);
-        INFO("[XGBoostCollect] CSV: {}", state->_csvPath);
+        INFO("[MLCollect] CSV: {}", state->_csvPath);
 
         featureStats["csv_path"] = state->_csvPath;
         sendSSE("step", {{"step","analyze"},{"status","done"}});
@@ -721,7 +731,7 @@ void XGBoostHandler::handleCollect(const nlohmann::json& params, httplib::Respon
     collectThread.detach();
 }
 
-void XGBoostHandler::handleTrainProgress(const httplib::Request& req, httplib::Response& res) {
+void MLHandler::handleTrainProgress(const httplib::Request& req, httplib::Response& res) {
     String sessionId = req.get_param_value("session_id");
     if (sessionId.empty()) {
         res.status = 400;
@@ -778,7 +788,7 @@ void XGBoostHandler::handleTrainProgress(const httplib::Request& req, httplib::R
         });
 }
 
-void XGBoostHandler::handleTrainStatus(const httplib::Request& req, httplib::Response& res) {
+void MLHandler::handleTrainStatus(const httplib::Request& req, httplib::Response& res) {
     String sessionId = req.get_param_value("session_id");
     if (sessionId.empty()) {
         res.status = 400;
@@ -813,7 +823,7 @@ void XGBoostHandler::handleTrainStatus(const httplib::Request& req, httplib::Res
     res.set_content(resp.dump(), "application/json");
 }
 
-void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response& res) {
+void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res) {
     uint64_t modelId = 0;
     if (params.contains("model_id")) {
         try { modelId = params["model_id"].get<uint64_t>(); }
@@ -869,7 +879,7 @@ void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response&
     size_t n_out;
 
     // 调试日志：调用前
-    INFO("[XGBoost SHAP] Before predict: booster={}, dmat={}, n_samples={}, n_features={}", 
+    INFO("[ML SHAP] Before predict: booster={}, dmat={}, n_samples={}, n_features={}", 
          (void*)model->_booster, (void*)dmat, n_samples, n_features);
 
 #if XGBOOST_VER_MAJOR >= 2
@@ -883,10 +893,10 @@ void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response&
                                        &out_shape, &out_dim, &out_data);
     
     // 调试日志：调用后
-    INFO("[XGBoost SHAP] After predict: ret={}, out_dim={}, out_data={}, out_shape={}",
+    INFO("[ML SHAP] After predict: ret={}, out_dim={}, out_data={}, out_shape={}",
          ret, out_dim, (void*)out_data, (void*)out_shape);
     if (ret != 0 || !out_data) {
-        FATAL("[XGBoost SHAP] XGBoost error: {}", XGBGetLastError());
+        FATAL("[ML SHAP] XGBoost error: {}", XGBGetLastError());
     }
     if (out_shape && out_dim > 0) {
         String shapeStr = "out_shape=[";
@@ -895,7 +905,7 @@ void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response&
             shapeStr += std::to_string(out_shape[d]);
         }
         shapeStr += "]";
-        INFO("[XGBoost SHAP] {}", shapeStr);
+        INFO("[ML SHAP] {}", shapeStr);
     }
     
     // out_shape[0] = 总元素数 = n_samples × out_dim；n_samples 沿用预设值
@@ -987,7 +997,7 @@ void XGBoostHandler::handleShap(const nlohmann::json& params, httplib::Response&
     res.set_content(resp.dump(), "application/json");
 }
 
-void XGBoostHandler::handlePublish(const nlohmann::json& params, httplib::Response& res) {
+void MLHandler::handlePublish(const nlohmann::json& params, httplib::Response& res) {
     String modelPath = params.value("model_path", "");
     if (modelPath.empty()) {
         res.status = 400;
@@ -1059,7 +1069,7 @@ void XGBoostHandler::handlePublish(const nlohmann::json& params, httplib::Respon
     res.set_content(resp.dump(), "application/json");
 }
 
-void XGBoostHandler::handleList(httplib::Response& res) {
+void MLHandler::handleList(httplib::Response& res) {
     String dbPath = _server->GetConfig().GetDatabasePath();
     String expDir = dbPath + "/models/experiments";
     String prodDir = dbPath + "/models/production";
@@ -1141,7 +1151,7 @@ void XGBoostHandler::handleList(httplib::Response& res) {
     res.set_content(resp.dump(), "application/json");
 }
 
-void XGBoostHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
+void MLHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
     if (deleteModel(modelId)) {
         res.set_content(R"({"message":"deleted"})", "application/json");
     } else {
@@ -1150,7 +1160,7 @@ void XGBoostHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
     }
 }
 
-void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
+void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
     try {
         params = nlohmann::json::parse(req.body);
@@ -1178,7 +1188,7 @@ void XGBoostHandler::post(const httplib::Request& req, httplib::Response& res) {
     }
 }
 
-void XGBoostHandler::get(const httplib::Request& req, httplib::Response& res) {
+void MLHandler::get(const httplib::Request& req, httplib::Response& res) {
     String action = req.get_param_value("action");
     if (action == "list") {
         handleList(res);
@@ -1212,7 +1222,7 @@ void XGBoostHandler::get(const httplib::Request& req, httplib::Response& res) {
     }
 }
 
-void XGBoostHandler::del(const httplib::Request& req, httplib::Response& res) {
+void MLHandler::del(const httplib::Request& req, httplib::Response& res) {
     String modelIdStr = req.get_param_value("model_id");
     if (modelIdStr.empty()) {
         res.status = 400;

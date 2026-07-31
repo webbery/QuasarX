@@ -1,17 +1,13 @@
 <template>
   <div class="train-panel">
-    <!-- 摘要 + 训练入口 -->
+    <!-- 训练入口 -->
     <div class="train-summary">
       <div class="summary-text">
         <span class="section-eyebrow">TRAINING INPUT</span>
-        <h3>调整基础训练参数</h3>
+        <h3>调整训练参数并启动训练</h3>
         <p>基础参数覆盖 80% 的调参场景；高级正则项在折叠区内，通常只在过拟合/欠拟合时调整。</p>
       </div>
       <div class="summary-action">
-        <button class="btn btn-secondary" :disabled="state.featureReport.loading || state.trainResult.loading || !config.labelSource" @click="onCollect">
-          <i v-if="state.featureReport.loading" class="fas fa-spinner fa-spin"></i>
-          {{ state.featureReport.loading ? '收集中…' : '检查数据' }}
-        </button>
         <button class="btn btn-primary" :disabled="state.trainResult.loading || !config.labelSource" @click="onTrain()">
           <i v-if="state.trainResult.loading" class="fas fa-spinner fa-spin"></i>
           {{ state.trainResult.loading ? '训练中…' : '开始训练' }}
@@ -25,7 +21,7 @@
       </div>
     </div>
 
-    <!-- 训练进度面板 -->
+    <!-- 训练进度 -->
     <div v-if="state.trainResult.steps.length > 0" class="training-progress">
       <div class="progress-header">
         <span class="progress-title">训练进度</span>
@@ -132,7 +128,7 @@
       </div>
     </div>
 
-    <!-- 高级参数折叠 -->
+    <!-- 高级参数 -->
     <div class="config-section">
       <button class="advanced-toggle" @click="showAdvanced = !showAdvanced">
         <i :class="showAdvanced ? 'fas fa-chevron-down' : 'fas fa-chevron-right'"></i>
@@ -198,23 +194,15 @@
       </div>
     </div>
 
-    <!-- 特征检查报告 -->
-    <div v-if="state.featureReport.data" class="chart-section">
-      <div class="section-heading">
-        <div>
-          <span class="section-eyebrow">FEATURE REPORT</span>
-          <h3 class="section-title">特征数据检查</h3>
-        </div>
-        <span class="section-hint">NaN% &gt; 30% 的特征可能影响训练质量</span>
-      </div>
-      <FeatureInspectionPanel :report="state.featureReport.data" @start-train="onTrainWithCsv" />
-    </div>
-
     <!-- 训练结果摘要 -->
     <div v-if="state.trainResult.data" class="result-summary">
       <div class="result-stat">
         <span class="result-label">模型 ID</span>
         <span class="result-value">#{{ state.trainResult.data.model_id }}</span>
+      </div>
+      <div class="result-stat">
+        <span class="result-label">模型类型</span>
+        <span class="result-value">{{ state.trainResult.data.model_type || 'xgboost' }}</span>
       </div>
       <div class="result-stat">
         <span class="result-label">训练 / 测试</span>
@@ -230,18 +218,7 @@
       </div>
     </div>
 
-    <!-- 评估指标卡片 -->
-    <div v-if="state.trainResult.data?.eval_metrics" class="metrics-section">
-      <div class="section-heading">
-        <div>
-          <span class="section-eyebrow">EVALUATION</span>
-          <h3 class="section-title">评估指标</h3>
-        </div>
-      </div>
-      <MetricsCard :metrics="state.trainResult.data.eval_metrics" />
-    </div>
-
-    <!-- Loss 曲线（训练中实时显示，训练后使用最终数据） -->
+    <!-- Loss 曲线 -->
     <div v-if="chartData.length > 0" class="chart-section">
       <div class="section-heading">
         <div>
@@ -257,42 +234,8 @@
       />
     </div>
 
-    <!-- 训练结果分析图表 -->
-    <div v-if="state.trainResult.data?.predictions?.length" class="chart-section">
-      <div class="section-heading">
-        <div>
-          <span class="section-eyebrow">ANALYSIS</span>
-          <h3 class="section-title">预测分析</h3>
-        </div>
-        <span class="section-hint">测试集 {{ state.trainResult.data.n_test }} 个样本</span>
-      </div>
-      <div class="analysis-grid">
-        <!-- 分类模式 -->
-        <template v-if="config.labelType === 'classification'">
-          <div class="analysis-item">
-            <ConfusionMatrixChart :predictions="state.trainResult.data.predictions" />
-          </div>
-          <div class="analysis-item">
-            <RocCurveChart :predictions="state.trainResult.data.predictions" :objective="config.objective" />
-          </div>
-          <div v-if="hasBinaryPredictions" class="analysis-item">
-            <ProbabilityDistChart :predictions="state.trainResult.data.predictions" />
-          </div>
-        </template>
-        <!-- 回归模式 -->
-        <template v-else>
-          <div class="analysis-item">
-            <PredVsActualChart :predictions="state.trainResult.data.predictions" />
-          </div>
-          <div class="analysis-item">
-            <ResidualDistChart :predictions="state.trainResult.data.predictions" />
-          </div>
-        </template>
-      </div>
-    </div>
-
     <div v-if="!state.trainResult.data && !state.trainResult.loading" class="empty-state">
-      <div class="empty-icon">📈</div>
+      <div class="empty-icon">⚡</div>
       <div>确认标签来源并配置训练参数后点击"开始训练"</div>
     </div>
   </div>
@@ -300,30 +243,23 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { LABEL_TYPES, REG_MODES } from '../composables/useXGBoostState'
-import type { TrainStep, TrainLog, LearningCurvePoint } from '../composables/useXGBoostState'
-import { useXGBoostData } from '../composables/useXGBoostData'
+import { LABEL_TYPES, REG_MODES } from '../composables/useMLState'
+import type { TrainStep, TrainLog, LearningCurvePoint } from '../composables/useMLState'
+import { useMLData } from '../composables/useMLData'
 import LearningCurveChart from '../charts/LearningCurveChart.vue'
-import MetricsCard from '../charts/MetricsCard.vue'
-import RocCurveChart from '../charts/RocCurveChart.vue'
-import ConfusionMatrixChart from '../charts/ConfusionMatrixChart.vue'
-import ProbabilityDistChart from '../charts/ProbabilityDistChart.vue'
-import PredVsActualChart from '../charts/PredVsActualChart.vue'
-import ResidualDistChart from '../charts/ResidualDistChart.vue'
-import FeatureInspectionPanel from './FeatureInspectionPanel.vue'
 
 const showAdvanced = ref(false)
 
 const props = defineProps<{
-  state: any  // useXGBoostState() 的返回
-  script: string  // 选中策略的 JSON 字符串
+  state: any
+  script: string
 }>()
 
 const emit = defineEmits<{
   (e: 'trained'): void
 }>()
 
-const { train, collect } = useXGBoostData()
+const { train } = useMLData()
 
 const config = props.state.config
 
@@ -332,13 +268,7 @@ const chartData = computed(() => {
   if (props.state.trainResult.loading) return liveLearningCurve.value
   return props.state.trainResult.data?.learning_curve || []
 })
-const hasBinaryPredictions = computed(() => {
-  return props.state.trainResult.data?.predictions?.some(
-    (p: { actual: number }) => p.actual === 0 || p.actual === 1,
-  ) ?? false
-})
 
-// 正则化提示文本
 const regHint = computed(() => {
   if (config.regMode === 'none') return '不施加正则化'
   if (config.regMode === 'l1') return `reg_alpha = ${config.regValue}`
@@ -393,54 +323,7 @@ function parseProgressPct(detail: string): number {
   return 0
 }
 
-async function onCollect() {
-  props.state.featureReport.loading = true
-  props.state.featureReport.data = null
-  props.state.featureReport.steps = []
-  props.state.featureReport.logs = []
-
-  try {
-    const report = await collect(props.script, {
-      labelSource: config.labelSource,
-      startDate: props.state.dateRange.value?.[0] || '',
-      endDate: props.state.dateRange.value?.[1] || '',
-      frequency: props.state.frequency.value || '1d',
-    }, (type: string, data: any) => {
-      if (type === 'step') {
-        const stepId = data.step
-        const existing = props.state.featureReport.steps.find((s: TrainStep) => s.id === stepId)
-        if (data.status === 'start') {
-          if (!existing) {
-            props.state.featureReport.steps.push({
-              id: stepId,
-              label: STEP_LABELS[stepId] || stepId,
-              status: 'running',
-              detail: data.msg,
-            })
-          }
-        } else if (data.status === 'done' && existing) {
-          existing.status = 'done'
-        }
-      } else if (type === 'progress') {
-        const step = props.state.featureReport.steps.find((s: TrainStep) => s.id === data.step)
-        if (step) step.detail = `${data.current} / ${data.total}`
-      }
-    })
-    if (report) {
-      props.state.featureReport.data = report
-    }
-  } catch (err: any) {
-    console.error('[XGBoost] collect failed:', err)
-  } finally {
-    props.state.featureReport.loading = false
-  }
-}
-
-function onTrainWithCsv(csvPath: string) {
-  onTrain(csvPath)
-}
-
-async function onTrain(csvPath?: string) {
+async function onTrain() {
   props.state.trainResult.loading = true
   props.state.trainResult.progressMsg = '开始训练...'
   props.state.trainResult.steps = []
@@ -477,68 +360,64 @@ async function onTrain(csvPath?: string) {
       startDate: props.state.dateRange.value?.[0] || '',
       endDate: props.state.dateRange.value?.[1] || '',
       frequency: props.state.frequency.value || '1d',
-  }, (type: string, data: any) => {
-    if (type === 'step') {
-      const stepId = data.step
-      const existing = props.state.trainResult.steps.find((s: TrainStep) => s.id === stepId)
-      if (data.status === 'start') {
-        if (existing) {
-          // 重连重放：重置已有步骤而非新增
-          existing.status = 'running'
-          existing.detail = data.msg
-          existing.elapsedMs = undefined
-        } else {
-          stepStartTimes[stepId] = Date.now()
-          props.state.trainResult.steps.push({
-            id: stepId,
-            label: STEP_LABELS[stepId] || stepId,
-            status: 'running',
-            detail: data.msg,
-          })
+    }, (type: string, data: any) => {
+      if (type === 'step') {
+        const stepId = data.step
+        const existing = props.state.trainResult.steps.find((s: TrainStep) => s.id === stepId)
+        if (data.status === 'start') {
+          if (existing) {
+            existing.status = 'running'
+            existing.detail = data.msg
+            existing.elapsedMs = undefined
+          } else {
+            stepStartTimes[stepId] = Date.now()
+            props.state.trainResult.steps.push({
+              id: stepId,
+              label: STEP_LABELS[stepId] || stepId,
+              status: 'running',
+              detail: data.msg,
+            })
+          }
+        } else if (data.status === 'done') {
+          if (existing) {
+            existing.status = 'done'
+            existing.elapsedMs = Date.now() - (stepStartTimes[stepId] || 0)
+            if (data.features) existing.detail = `${data.features} 个特征`
+            else if (data.bars) existing.detail = `${data.bars} bars`
+            else if (data.symbols) existing.detail = `${data.symbols} 个标的`
+          }
         }
-      } else if (data.status === 'done') {
-        if (existing) {
-          existing.status = 'done'
-          existing.elapsedMs = Date.now() - (stepStartTimes[stepId] || 0)
-          if (data.features) existing.detail = `${data.features} 个特征`
-          else if (data.bars) existing.detail = `${data.bars} bars`
-          else if (data.symbols) existing.detail = `${data.symbols} 个标的`
+      } else if (type === 'progress') {
+        const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
+        if (step && data.total > 0) {
+          step.detail = `${data.current} / ${data.total} epochs`
+        }
+      } else if (type === 'warning') {
+        const line = data.msg || data.line || ''
+        if (!props.state.trainResult.logs.some((l: TrainLog) => l.line === line && l.level === 'warning')) {
+          props.state.trainResult.logs.push({ step: data.step || '', level: 'warning', line })
+        }
+      } else if (type === 'log') {
+        props.state.trainResult.logs.push({ step: data.step || '', level: 'info', line: data.line || '' })
+        try {
+          const logData = JSON.parse(data.line)
+          if (logData.phase === 'training' && logData.iteration != null && logData.train_loss != null) {
+            liveLearningCurve.value.push({
+              iteration: logData.iteration,
+              train_loss: logData.train_loss,
+              eval_loss: logData.eval_loss ?? logData.train_loss,
+            })
+          }
+        } catch { /* not JSON or not training progress */ }
+      } else if (type === 'error') {
+        const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
+        if (step) step.status = 'error'
+        const line = data.msg || ''
+        if (!props.state.trainResult.logs.some((l: TrainLog) => l.line === line && l.level === 'error')) {
+          props.state.trainResult.logs.push({ step: data.step || '', level: 'error', line })
         }
       }
-    } else if (type === 'progress') {
-      // 更新步骤的进度信息（epoch 进度条）
-      const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
-      if (step && data.total > 0) {
-        step.detail = `${data.current} / ${data.total} epochs`
-      }
-    } else if (type === 'warning') {
-      const line = data.msg || data.line || ''
-      // 去重：避免重连时重复显示相同警告
-      if (!props.state.trainResult.logs.some((l: TrainLog) => l.line === line && l.level === 'warning')) {
-        props.state.trainResult.logs.push({ step: data.step || '', level: 'warning', line })
-      }
-    } else if (type === 'log') {
-      props.state.trainResult.logs.push({ step: data.step || '', level: 'info', line: data.line || '' })
-      // 解析训练进度 JSON，构建实时 Loss 曲线
-      try {
-        const logData = JSON.parse(data.line)
-        if (logData.phase === 'training' && logData.iteration != null && logData.train_loss != null) {
-          liveLearningCurve.value.push({
-            iteration: logData.iteration,
-            train_loss: logData.train_loss,
-            eval_loss: logData.eval_loss ?? logData.train_loss,
-          })
-        }
-      } catch { /* not JSON or not training progress */ }
-    } else if (type === 'error') {
-      const step = props.state.trainResult.steps.find((s: TrainStep) => s.id === data.step)
-      if (step) step.status = 'error'
-      const line = data.msg || ''
-      if (!props.state.trainResult.logs.some((l: TrainLog) => l.line === line && l.level === 'error')) {
-        props.state.trainResult.logs.push({ step: data.step || '', level: 'error', line })
-      }
-    }
-  }, csvPath)
+    })
     props.state.trainResult.data = result
     if (result) emit('trained')
   } finally {
@@ -550,7 +429,79 @@ async function onTrain(csvPath?: string) {
 <style scoped>
 .train-panel { padding: 16px 4px 24px; }
 
-/* 训练进度面板 */
+.train-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, rgba(41, 98, 255, 0.18), rgba(41, 98, 255, 0.04) 70%, transparent);
+  border: 1px solid rgba(74, 85, 104, 0.35);
+  border-radius: 10px;
+}
+.summary-text h3 {
+  margin: 4px 0 6px;
+  font-size: 17px;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+.summary-text p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12.5px;
+  line-height: 1.6;
+  max-width: 640px;
+}
+.summary-action {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.section-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 2.2px;
+  color: #5b8ff9;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+.btn-primary:hover:not(:disabled) { background: #2563eb; }
+.btn-primary:disabled { background: #475569; cursor: not-allowed; opacity: 0.7; }
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(91, 143, 249, 0.12);
+  color: #93c5fd;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-chip.warn {
+  background: rgba(234, 57, 67, 0.12);
+  color: #f87171;
+}
+
 .training-progress {
   margin-bottom: 16px;
   background: rgba(15, 25, 41, 0.55);
@@ -564,21 +515,9 @@ async function onTrain(csvPath?: string) {
   align-items: center;
   margin-bottom: 10px;
 }
-.progress-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-.progress-done {
-  font-size: 11px;
-  color: #34d399;
-  font-weight: 600;
-}
-.step-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
+.progress-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+.progress-done { font-size: 11px; color: #34d399; font-weight: 600; }
+.step-list { display: flex; flex-direction: column; gap: 4px; }
 .step-item {
   display: flex;
   align-items: center;
@@ -597,11 +536,7 @@ async function onTrain(csvPath?: string) {
 .step-icon.running { color: #fbbf24; }
 .step-icon.error { color: #f87171; }
 .step-icon.pending { color: #64748b; }
-.step-label {
-  color: #cbd5e1;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
+.step-label { color: #cbd5e1; white-space: nowrap; flex-shrink: 0; }
 .step-detail {
   color: #94a3b8;
   font-size: 11px;
@@ -660,19 +595,12 @@ async function onTrain(csvPath?: string) {
 .log-icon { flex-shrink: 0; }
 .log-line { word-break: break-all; }
 
-.config-section, .metrics-section, .chart-section {
+.config-section, .chart-section {
   margin-bottom: 18px;
   background: rgba(15, 25, 41, 0.55);
   border: 1px solid rgba(74, 85, 104, 0.25);
   border-radius: 8px;
   padding: 14px 16px 16px;
-}
-.section-eyebrow {
-  font-size: 10.5px;
-  letter-spacing: 2.2px;
-  color: #5b8ff9;
-  font-weight: 600;
-  text-transform: uppercase;
 }
 .section-heading {
   display: flex;
@@ -686,10 +614,7 @@ async function onTrain(csvPath?: string) {
   margin: 4px 0 0;
   font-weight: 600;
 }
-.section-hint {
-  font-size: 11.5px;
-  color: #94a3b8;
-}
+.section-hint { font-size: 11.5px; color: #94a3b8; }
 .config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -720,129 +645,62 @@ async function onTrain(csvPath?: string) {
   background: #3b4a6b;
   color: #94a3b8;
   font-size: 10px;
-  font-weight: bold;
-  cursor: help;
-  position: relative;
-}
-.tip-icon:hover {
-  background: #4b5a7b;
-  color: #e0e6f0;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 .select-input {
   width: 100%;
-  background: #0f1929;
-  color: #e0e6f0;
-  border: 1px solid #2b3a55;
-  border-radius: 4px;
   padding: 6px 10px;
-  font-size: 13px;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
 }
-.readonly-input {
-  opacity: 0.6;
+.select-input:focus {
+  border-color: rgba(41, 98, 255, 0.5);
+}
+.select-input:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
-.train-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 16px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, rgba(41, 98, 255, 0.18), rgba(41, 98, 255, 0.04) 70%, transparent);
-  border: 1px solid rgba(74, 85, 104, 0.35);
-  border-radius: 10px;
-}
-.summary-text h3 {
-  margin: 4px 0 6px;
-  font-size: 17px;
-  color: #f1f5f9;
-  font-weight: 600;
-}
-.summary-text p {
-  margin: 0;
+.readonly-input {
+  background: rgba(26, 34, 54, 0.4);
   color: #94a3b8;
-  font-size: 12.5px;
-  line-height: 1.6;
-  max-width: 540px;
 }
-.summary-action {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-}
-.btn {
-  background: #3b82f6;
-  color: white;
-  border: none;
-  padding: 8px 20px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.btn:disabled { background: #475569; cursor: not-allowed; }
-.btn-secondary {
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-.btn-secondary:hover:not(:disabled) { background: rgba(59, 130, 246, 0.25); }
-.source-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  background: rgba(91, 143, 249, 0.12);
-  color: #5b8ff9;
-  border: 1px solid rgba(91, 143, 249, 0.35);
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-family: 'SF Mono', 'Consolas', monospace;
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.source-chip.warn {
-  background: rgba(234, 179, 8, 0.12);
-  color: #fbbf24;
-  border-color: rgba(234, 179, 8, 0.35);
-}
+
 .advanced-toggle {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 8px 0;
   background: transparent;
   border: none;
   color: #cbd5e1;
   font-size: 13px;
-  font-weight: 600;
   cursor: pointer;
-  padding: 4px 2px;
   text-align: left;
 }
-.advanced-toggle i { color: #5b8ff9; }
+.advanced-toggle:hover { color: #e2e8f0; }
 .advanced-hint {
   margin-left: auto;
-  font-weight: 400;
   font-size: 11px;
-  color: #94a3b8;
+  color: #64748b;
+  font-weight: normal;
 }
 .advanced-body {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed rgba(74, 85, 104, 0.4);
+  padding-top: 8px;
+  border-top: 1px solid rgba(74, 85, 104, 0.15);
 }
+
 .result-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  gap: 18px;
   margin-bottom: 18px;
-  padding: 12px 16px;
+  padding: 14px 20px;
   background: rgba(15, 25, 41, 0.55);
   border: 1px solid rgba(74, 85, 104, 0.25);
   border-radius: 8px;
@@ -853,32 +711,22 @@ async function onTrain(csvPath?: string) {
   gap: 2px;
 }
 .result-label {
-  font-size: 10.5px;
+  font-size: 11px;
   color: #94a3b8;
-  letter-spacing: 1.2px;
   text-transform: uppercase;
+  letter-spacing: 1px;
 }
 .result-value {
   font-size: 16px;
-  color: #f1f5f9;
+  color: #e2e8f0;
   font-weight: 600;
   font-family: 'SF Mono', 'Consolas', monospace;
 }
+
 .empty-state {
   padding: 60px 20px;
   text-align: center;
   color: #64748b;
 }
 .empty-icon { font-size: 48px; margin-bottom: 12px; }
-.analysis-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: 16px;
-}
-.analysis-item {
-  background: rgba(15, 25, 41, 0.4);
-  border: 1px solid rgba(74, 85, 104, 0.2);
-  border-radius: 6px;
-  padding: 8px;
-}
 </style>

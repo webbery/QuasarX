@@ -31,9 +31,9 @@
           <CUSUMTab />
         </div>
 
-        <!-- XGBoost 分析 Tab -->
-        <div v-show="activeTab === 'xgboost'" class="tab-content">
-          <XGBoostTab />
+        <!-- ML 机器学习分析 Tab -->
+        <div v-show="activeTab === 'ml'" class="tab-content">
+          <MLTab />
         </div>
 
         <!-- 基本面分析 Tab -->
@@ -238,7 +238,7 @@ import VolatilityTab from './volatility/VolatilityTab.vue'
 import SignalTab from './signal/SignalTab.vue'
 import PCATab from './pca/PCATab.vue'
 import CUSUMTab from './cusum/CUSUMTab.vue'
-import XGBoostTab from './xgboost/XGBoostTab.vue'
+import MLTab from './ml/MLTab.vue'
 import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
 
@@ -250,7 +250,7 @@ const tabs = [
   { label: '信号分析', name: 'signal' },
   { label: 'PCA 主成分', name: 'pca' },
   { label: 'CUSUM 结构变化', name: 'cusum' },
-  { label: 'XGBoost 分析', name: 'xgboost' },
+  { label: '机器学习分析', name: 'ml' },
   { label: '基本面分析', name: 'fundamental' },
   { label: '容量分析', name: 'capacity' },
   { label: '资金流向', name: 'flow' },

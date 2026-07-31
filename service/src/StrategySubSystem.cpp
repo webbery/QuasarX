@@ -283,6 +283,8 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;
 
+    _strategies.insert(strategyName);
+
     INFO("[StrategySubSystem] Strategy '{}'(version {}) initialized: warmup={} epochs, nodes={}",
         to_utf8(strategyName), version, warmup, sorted_nodes.size());
 }
@@ -290,6 +292,30 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
 // ═══════════════════════════════════════════════════════════
 //  日级策略执行（收盘后依赖驱动）
 // ═══════════════════════════════════════════════════════════
+
+void StrategySubSystem::EnsureDailyReady() {
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+    if (_dailyInitialized) return;
+
+    // 内联 InitDailyExecution 逻辑（避免嵌套锁）
+    _dailyStrategySymbols.clear();
+    for (auto& name : _strategies) {
+        auto pools = GetPools(name);
+        Set<String> symbols;
+        for (auto sym : pools) {
+            symbols.insert(get_symbol(sym));
+        }
+        if (!symbols.empty()) {
+            _dailyStrategySymbols[name] = symbols;
+        }
+    }
+    _dailyInitialized = true;
+    INFO("[DailyExecution] EnsureDailyReady: initialized {} strategies", _dailyStrategySymbols.size());
+
+    // 内联 ResetDaily 逻辑
+    _dailyReadySymbols.clear();
+    _dailyExecutedStrategies.clear();
+}
 
 void StrategySubSystem::InitDailyExecution() {
     std::lock_guard<std::mutex> lock(_dailyMtx);

@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, watch, ref } from 'vue'
 import * as echarts from 'echarts'
-import type { FeatureImportance } from '../composables/useXGBoostState'
+import type { FeatureImportance } from '../composables/useMLState'
 
 type Metric = 'gain' | 'weight' | 'cover'
 const props = defineProps<{ data: FeatureImportance[]; metric?: Metric }>()

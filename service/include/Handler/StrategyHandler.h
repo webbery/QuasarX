@@ -26,6 +26,8 @@ private:
 
   void deploy(const nlohmann::json& param, httplib::Response& res);
 
+  void load(const nlohmann::json& param, httplib::Response& res);
+
   void connect_strategy_service(const String& name, httplib::DataSink& sink);
 private:
     //std::map<std::string, StrategyPlugin*> _strategies;

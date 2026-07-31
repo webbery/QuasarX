@@ -1951,11 +1951,11 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   # ═══════════════════════════════════════════════════════════
-  #  XGBoost 训练与分析
+  #  机器学习训练与分析
   # ═══════════════════════════════════════════════════════════
-  /xgboost:
+  /ml:
     post:
-      summary: XGBoost 训练 / SHAP 计算 / 模型删除
+      summary: ML 训练 / SHAP 计算 / 模型管理
       description: |
         单端点设计，通过 body 中的 "action" 字段路由不同操作：
 

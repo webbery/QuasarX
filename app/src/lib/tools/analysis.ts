@@ -163,7 +163,7 @@ export const analysisTool = tool(
           if (!strategyGraph) return "错误：xgboost_train 需要 strategyGraph 参数（策略图 JSON）"
           if (!label) return "错误：xgboost_train 需要 label 参数（标签配置）"
 
-          const res = await axios.post(`${BASE_URL}/xgboost`, {
+          const res = await axios.post(`${BASE_URL}/ml`, {
             action: "train",
             script: JSON.stringify(strategyGraph),
             label,
@@ -208,7 +208,7 @@ export const analysisTool = tool(
           const { model_id } = params
           if (!model_id) return "错误：xgboost_shap 需要 model_id 参数"
 
-          const res = await axios.post(`${BASE_URL}/xgboost`, {
+          const res = await axios.post(`${BASE_URL}/ml`, {
             action: "shap", model_id,
           })
           const d = res.data
@@ -243,7 +243,7 @@ export const analysisTool = tool(
           const { model_id } = params
           if (!model_id) return "错误：xgboost_delete 需要 model_id 参数"
 
-          await axios.post(`${BASE_URL}/xgboost`, {
+          await axios.post(`${BASE_URL}/ml`, {
             action: "delete", model_id,
           })
           return `模型 ${model_id} 已释放。`
@@ -336,7 +336,7 @@ export const analysisTool = tool(
         threshold: z.number().describe("标签阈值"),
       }).optional().describe("标签配置（xgboost_train 需要）"),
       params: z.record(z.string(), z.any()).optional().describe("XGBoost 训练参数"),
-      model_id: z.string().optional().describe("模型 ID（xgboost_shap/xgboost_delete 需要）"),
+      model_id: z.string().optional().describe("模型 ID（xgboost_shap/ml_delete 需要）"),
       times: z.number().optional().describe("Monte Carlo 模拟次数（默认 1000）"),
       steps: z.number().optional().describe("Monte Carlo 预测步数（默认 20）"),
     }),

@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as echarts from 'echarts'
-import type { LabelAnalysisResult } from '../composables/useXGBoostState'
+import type { LabelAnalysisResult } from '../composables/useMLState'
 
 const props = defineProps<{ data: LabelAnalysisResult }>()
 

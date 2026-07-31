@@ -42,7 +42,7 @@
 #include "Handler/StrategyLogHandler.h"
 #include "Handler/NodeIOHandler.h"
 #include "Handler/PythonRunnerHandler.h"
-#include "Handler/XGBoostHandler.h"
+#include "Handler/MLHandler.h"
 #include "Handler/QuoteDownloadHandler.h"
 #include "Handler/QuoteDataHandler.h"
 #include "Handler/FinanceHandler.h"
@@ -193,7 +193,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_FINANCE         "/finance"
 #define API_FINANCE_DATA    "/finance/data"
 #define API_DIVIDEND        "/dividend"
-#define API_XGBOOST         "/xgboost"
+#define API_ML         "/ml"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -326,6 +326,10 @@ void Server::Regist() {
     REGIST_GET(API_STOCK_HISTORY);
     REGIST_GET(API_TRADE_HISTORY);
 
+#ifdef _DEBUG
+    REGIST_POST(API_SIMULATE_BAR);
+#endif
+
     REGIST_GET(API_RISK_VAR);
     REGIST_POST(API_RISK_VAR);
 
@@ -386,9 +390,9 @@ void Server::Regist() {
     REGIST_POST(API_DIVIDEND);
     REGIST_GET(API_DIVIDEND);
     REGIST_DEL(API_DIVIDEND);
-    REGIST_POST(API_XGBOOST);
-    REGIST_GET(API_XGBOOST);
-    REGIST_DEL(API_XGBOOST);
+    REGIST_POST(API_ML);
+    REGIST_GET(API_ML);
+    REGIST_DEL(API_ML);
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
     REGIST_GET(API_OPTION_HISTORY);
@@ -1113,8 +1117,7 @@ void Server::Schedules(time_t t) {
     if (!daily_init_done && ltm->tm_hour == 15 && ltm->tm_min == 0) {
         daily_init_done = true;
         if (_strategySystem) {
-            _strategySystem->InitDailyExecution();
-            _strategySystem->ResetDaily();
+            _strategySystem->EnsureDailyReady();
             INFO("[Schedules] Daily execution initialized at 15:00");
         }
     }
@@ -1295,7 +1298,7 @@ void Server::InitHandlers() {
     RegistHandler(API_FINANCE, FinanceHandler);
     RegistHandler(API_FINANCE_DATA, FinanceDataHandler);
     RegistHandler(API_DIVIDEND, DividendHandler);
-    RegistHandler(API_XGBOOST, XGBoostHandler);
+    RegistHandler(API_ML, MLHandler);
 
 #ifdef _DEBUG
     RegistHandler(API_SIMULATE_BAR, SimulateBarHandler);

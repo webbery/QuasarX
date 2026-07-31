@@ -2,7 +2,7 @@
 """
 XGBoost 训练与分析 API 测试
 
-测试 /v0/xgboost 端点：
+测试 /v0/ml 端点：
 - POST action=train    训练模型
 - POST action=publish  发布实验模型到生产
 - POST action=shap     计算 SHAP 值（兼容旧 POST 方式）
@@ -29,7 +29,7 @@ BASE_URL = "https://localhost:19107/v0"
 VERIFY_SSL = False
 
 # 训练策略脚本路径
-STRATEGY_PATH = Path(__file__).parent / "ai_test_data" / "xgboost_train_strategy.json"
+STRATEGY_PATH = Path(__file__).parent / "ai_test_data" / "ml_train_strategy.json"
 
 
 def _headers(auth_token):
@@ -69,7 +69,7 @@ def trained_model(auth_token):
     }
     try:
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json=body,
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -91,7 +91,7 @@ def trained_model(auth_token):
         time.sleep(1)
         try:
             status_resp = requests.get(
-                f"{BASE_URL}/xgboost",
+                f"{BASE_URL}/ml",
                 params={"action": "train_status", "session_id": session_id},
                 headers=_headers(auth_token),
                 verify=VERIFY_SSL,
@@ -124,7 +124,7 @@ class TestXGBoostErrors:
     def test_post_missing_action(self, auth_token):
         """POST 缺少 action 返回 400"""
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"script": "{}"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -134,7 +134,7 @@ class TestXGBoostErrors:
     def test_post_invalid_action(self, auth_token):
         """POST 无效 action 返回 400"""
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"action": "foo"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -144,7 +144,7 @@ class TestXGBoostErrors:
     def test_get_invalid_action(self, auth_token):
         """GET 无效 action 返回 400"""
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "foo"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -154,7 +154,7 @@ class TestXGBoostErrors:
     def test_get_shap_missing_model_id(self, auth_token):
         """GET shap 缺少 model_id 返回 400"""
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "shap"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -164,7 +164,7 @@ class TestXGBoostErrors:
     def test_get_shap_invalid_model_id(self, auth_token):
         """GET shap 不存在的 model_id 返回 404"""
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "shap", "model_id": "99999"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -174,7 +174,7 @@ class TestXGBoostErrors:
     def test_delete_missing_model_id(self, auth_token):
         """DELETE 缺少 model_id 返回 400"""
         resp = requests.delete(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
         )
@@ -183,7 +183,7 @@ class TestXGBoostErrors:
     def test_delete_nonexistent_model(self, auth_token):
         """DELETE 不存在的 model_id 返回 404"""
         resp = requests.delete(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"model_id": "99999"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -193,7 +193,7 @@ class TestXGBoostErrors:
     def test_publish_missing_path(self, auth_token):
         """publish 缺少 model_path 返回 400"""
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"action": "publish"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -203,7 +203,7 @@ class TestXGBoostErrors:
     def test_publish_nonexistent_file(self, auth_token):
         """publish 不存在的文件路径返回 404"""
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"action": "publish", "model_path": "/nonexistent/model.json"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -219,7 +219,7 @@ class TestXGBoostList:
     def test_list_structure(self, auth_token):
         """GET list 返回正确结构"""
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "list"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -233,7 +233,7 @@ class TestXGBoostList:
     def test_list_experiment_has_meta(self, auth_token, trained_model):
         """list 中实验模型包含 meta 字段"""
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "list"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -288,7 +288,7 @@ class TestXGBoostShap:
         """GET shap 返回正确结构"""
         model_id = trained_model["model_id"]
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "shap", "model_id": str(model_id)},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -309,7 +309,7 @@ class TestXGBoostShap:
         """POST shap（兼容旧方式）返回正确结构"""
         model_id = trained_model["model_id"]
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"action": "shap", "model_id": model_id},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -328,7 +328,7 @@ class TestXGBoostPublish:
     def test_publish(self, auth_token, trained_model):
         """publish 返回 production_path"""
         resp = requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"action": "publish", "model_path": trained_model["model_path"]},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -343,7 +343,7 @@ class TestXGBoostPublish:
         """publish 后 list 的 production 不为空"""
         # 先 publish
         requests.post(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             json={"action": "publish", "model_path": trained_model["model_path"]},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -351,7 +351,7 @@ class TestXGBoostPublish:
 
         # 再 list
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "list"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -373,7 +373,7 @@ class TestXGBoostDelete:
         """DELETE 删除模型成功"""
         model_id = trained_model["model_id"]
         resp = requests.delete(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"model_id": str(model_id)},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -385,7 +385,7 @@ class TestXGBoostDelete:
         """删除后 shap 返回 404"""
         model_id = trained_model["model_id"]
         resp = requests.get(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"action": "shap", "model_id": str(model_id)},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
@@ -396,7 +396,7 @@ class TestXGBoostDelete:
         """重复删除返回 404"""
         model_id = trained_model["model_id"]
         resp = requests.delete(
-            f"{BASE_URL}/xgboost",
+            f"{BASE_URL}/ml",
             params={"model_id": str(model_id)},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
