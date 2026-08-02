@@ -24,7 +24,7 @@
     <!-- 收集进度 -->
     <div v-if="state.featureReport.steps.length > 0" class="training-progress">
       <div class="progress-header">
-        <span class="progress-title">收集进度</span>
+        <span class="progress-title">收集进度<span v-if="elapsedText" class="progress-elapsed">（{{ elapsedText }}）</span></span>
         <span v-if="!state.featureReport.loading" class="progress-done">完成</span>
       </div>
       <div class="step-list">
@@ -61,6 +61,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref, onBeforeUnmount } from 'vue'
 import { useMLData } from '../composables/useMLData'
 import type { TrainStep } from '../composables/useMLState'
 import FeatureInspectionPanel from './FeatureInspectionPanel.vue'
@@ -81,11 +82,40 @@ const STEP_LABELS: Record<string, string> = {
   analyze: '分析特征数据',
 }
 
+const elapsedText = ref('')
+let collectTimer: ReturnType<typeof setInterval> | null = null
+
+function formatElapsed(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  if (totalSec < 60) return `${totalSec}秒`
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  return sec > 0 ? `${min}分${sec}秒` : `${min}分`
+}
+
+function startElapsedTimer() {
+  const startTime = Date.now()
+  elapsedText.value = '0秒'
+  collectTimer = setInterval(() => {
+    elapsedText.value = formatElapsed(Date.now() - startTime)
+  }, 1000)
+}
+
+function stopElapsedTimer() {
+  if (collectTimer) {
+    clearInterval(collectTimer)
+    collectTimer = null
+  }
+}
+
+onBeforeUnmount(() => stopElapsedTimer())
+
 async function onCollect() {
   props.state.featureReport.loading = true
   props.state.featureReport.data = null
   props.state.featureReport.steps = []
   props.state.featureReport.logs = []
+  startElapsedTimer()
 
   try {
     const report = await collect(props.script, {
@@ -120,6 +150,7 @@ async function onCollect() {
   } catch (err: any) {
     console.error('[ML] collect failed:', err)
   } finally {
+    stopElapsedTimer()
     props.state.featureReport.loading = false
   }
 }
@@ -216,6 +247,7 @@ async function onCollect() {
   margin-bottom: 10px;
 }
 .progress-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+.progress-elapsed { font-weight: 400; color: #94a3b8; font-size: 12px; }
 .progress-done { font-size: 11px; color: #34d399; font-weight: 600; }
 .step-list { display: flex; flex-direction: column; gap: 4px; }
 .step-item {

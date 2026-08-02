@@ -29,6 +29,9 @@ export const breakoutNode: NodeRegistryEntry = {
   inputs: ['value', 'upper', 'lower'],
   outputs: ['state', 'duration'],
   params: [
+    { key: '当前价格', label: '当前价格', type: 'label', default: 'close' },
+    { key: '上轨', label: '上轨', type: 'label', default: 'upper' },
+    { key: '下轨', label: '下轨', type: 'label', default: 'lower' },
     { key: 'label', label: '标签', type: 'text', default: 'breakout',
       placeholder: '用于输出变量命名，如 breakout / env_state',
       description: '输出 key 格式：{symbol}.{label}（状态）、{symbol}.{label}_duration（持续 bar 数）' },

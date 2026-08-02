@@ -220,12 +220,18 @@ jobs:
     env:
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
     steps:
-      # 下载构建产物（二进制 + config 模板），artifact 保留原始路径前缀，下载到仓库根目录
+      # 下载构建产物（二进制 + config 模板），download-artifact@v4 会放入 <artifact-name>/ 子目录，需提取到根目录
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: build-artifact
-          path: .
+
+      - name: Extract build artifact to workspace root
+        run: |
+          cp -f build-artifact/QuantService build-artifact/QuantService.debug build-artifact/config.template.json . 2>/dev/null || true
+          cp -rf build-artifact/tools . 2>/dev/null || true
+          ls -la QuantService tools/ config.template.json
+          rm -rf build-artifact
 
       # 下载第三方 so
       - name: Download runtime libs
@@ -505,9 +511,7 @@ jobs:
       - name: Run backtest tests
         id: test
         run: |
-          # 将 tools 目录链接到 QuantService 同级，供 Handler 和 run_task.py 使用
-          ln -sfn ../tools tools
-          nohup ./QuantService ../stock_hist_sim.json > service_test.log 2>&1 &
+          nohup ./QuantService stock_hist_sim.json > service_test.log 2>&1 &
           TEST_PID=$!
           echo "Test service PID: $TEST_PID"
 
@@ -526,7 +530,7 @@ jobs:
           done
 
           # 生成测试数据并运行测试
-          cd test
+          cd service/test
           python testcases/generate_test_data.py 2>/dev/null || true
           python run_tests.py --mode stock_hist_sim --no-service
           TEST_EXIT_CODE=$?

@@ -84,8 +84,10 @@ const props = defineProps({
     },
     source: String,
     target: String,
-    sourceHandle: String,
-    targetHandle: String
+    // Vue Flow ConnectionLine slot 在拖拽过程中传 HandleElement 对象（id/type/nodeId/position/x/y），
+    // onConnect 完成时才传 ID 字符串
+    sourceHandle: { type: Object, default: null },
+    targetHandle: { type: Object, default: null }
 })
 
 console.log('[FlowConnectLine] === MOUNTED ===, props keys:', Object.keys(props), 'selected:', props.selected, 'id:', props.id)
@@ -99,9 +101,14 @@ watch(() => ({ ...props }), (newProps) => {
         sourceY: newProps.sourceY,
         targetX: newProps.targetX,
         targetY: newProps.targetY,
+        source: newProps.source,
+        target: newProps.target,
+        sourceHandle: newProps.sourceHandle,
+        sourceHandleType: typeof newProps.sourceHandle,
+        targetHandle: newProps.targetHandle,
+        targetHandleType: typeof newProps.targetHandle,
         hasEdge: !!newProps.edge,
         style: newProps.connectionLineStyle,
-        allKeys: Object.keys(newProps)
     })
 }, { deep: true, immediate: true })
 
@@ -117,7 +124,9 @@ const connectionLinePath = computed(() => {
             targetY: props.targetY,
             targetPosition: props.targetPosition || 'left',
         })
-        console.log('[FlowConnectLine] Path computed OK, id:', props.id)
+        console.log('[FlowConnectLine] Path computed OK, id:', props.id,
+            'sourceHandle:', props.sourceHandle, '(', typeof props.sourceHandle, ')',
+            'targetHandle:', props.targetHandle, '(', typeof props.targetHandle, ')')
         return path
     }
     console.warn('[FlowConnectLine] Missing coordinates, returning empty path. sourceX:', props.sourceX, 'targetX:', props.targetX)

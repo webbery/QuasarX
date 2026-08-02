@@ -47,6 +47,7 @@ void PythonRunnerHandler::post(const httplib::Request& req, httplib::Response& r
         [&](size_t offset, httplib::DataSink& sink) {
             if (!sink.is_writable() || Server::IsExit()) {
                 runner.kill();
+                sink.done();
                 return false;
             }
 
@@ -56,6 +57,7 @@ void PythonRunnerHandler::post(const httplib::Request& req, httplib::Response& r
                     auto msg = format_sse("done",
                         {{"exit_code", std::to_string(out.exit_code)}});
                     sink.write(msg.c_str(), msg.size());
+                    sink.done();
                     return false;
                 }
                 auto msg = format_sse(

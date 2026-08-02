@@ -27,7 +27,8 @@
       <table class="feature-table">
         <thead>
           <tr>
-            <th>特征名</th>
+            <th>标的</th>
+            <th>特征</th>
             <th>有效值</th>
             <th>NaN%</th>
             <th>最小值</th>
@@ -38,9 +39,13 @@
             <th>状态</th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="f in sortedFeatures" :key="f.name" :class="rowClass(f)">
-            <td class="feature-name" :title="f.name">{{ f.name }}</td>
+        <tbody v-for="group in groupedFeatures" :key="group.symbol" class="symbol-group">
+          <tr v-for="(f, idx) in group.features" :key="f.name" :class="rowClass(f)">
+            <td v-if="idx === 0" :rowspan="group.features.length" class="symbol-cell">
+              <div class="symbol-name">{{ group.symbol }}</div>
+              <div class="symbol-count">({{ group.features.length }})</div>
+            </td>
+            <td class="feature-name" :title="f.feature">{{ f.feature }}</td>
             <td>{{ f.valid }}/{{ f.valid + f.nan_count }}</td>
             <td :class="nanClass(f.nan_pct)">{{ f.nan_pct.toFixed(1) }}%</td>
             <td>{{ fmtNum(f.min) }}</td>
@@ -55,12 +60,6 @@
     </div>
 
     <!-- 操作按钮 -->
-    <div v-if="report" class="action-bar">
-      <button class="btn-primary" @click="$emit('startTrain', report.csv_path)">
-        开始训练
-      </button>
-      <span class="hint">使用已收集的特征数据，跳过数据收集阶段</span>
-    </div>
   </div>
 </template>
 
@@ -68,17 +67,45 @@
 import { computed } from 'vue'
 import type { FeatureReport, FeatureStat } from '../composables/useMLState'
 
+interface FeatureRow extends FeatureStat {
+  symbol: string
+  feature: string
+}
+
+interface SymbolGroup {
+  symbol: string
+  features: FeatureRow[]
+  maxNanPct: number
+}
+
 const props = defineProps<{
   report: FeatureReport | null
 }>()
 
-defineEmits<{
-  startTrain: [csvPath: string]
-}>()
+function parseFeatureName(name: string): { symbol: string; feature: string } {
+  const lastDot = name.lastIndexOf('.')
+  if (lastDot === -1) return { symbol: '', feature: name }
+  return { symbol: name.slice(0, lastDot), feature: name.slice(lastDot + 1) }
+}
 
-const sortedFeatures = computed(() => {
+const groupedFeatures = computed<SymbolGroup[]>(() => {
   if (!props.report?.features) return []
-  return [...props.report.features].sort((a, b) => b.nan_pct - a.nan_pct)
+  const map = new Map<string, FeatureRow[]>()
+  for (const f of props.report.features) {
+    const { symbol, feature } = parseFeatureName(f.name)
+    const row: FeatureRow = { ...f, symbol, feature }
+    const arr = map.get(symbol)
+    if (arr) arr.push(row)
+    else map.set(symbol, [row])
+  }
+  const groups: SymbolGroup[] = []
+  for (const [symbol, features] of map) {
+    features.sort((a, b) => b.nan_pct - a.nan_pct)
+    const maxNanPct = features.length > 0 ? features[0].nan_pct : 0
+    groups.push({ symbol, features, maxNanPct })
+  }
+  groups.sort((a, b) => b.maxNanPct - a.maxNanPct)
+  return groups
 })
 
 const problemCount = computed(() => {
@@ -173,37 +200,36 @@ function statusIcon(f: FeatureStat): string {
 }
 .feature-table tr:hover { background: rgba(59, 130, 246, 0.05); }
 .feature-name {
-  max-width: 200px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: monospace;
   font-size: 11px;
 }
+.symbol-cell {
+  vertical-align: middle;
+  border-right: 2px solid rgba(74, 85, 104, 0.35);
+  background: rgba(15, 25, 41, 0.3);
+  text-align: center;
+  padding: 6px 12px;
+}
+.symbol-name {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+.symbol-count {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 2px;
+}
+.symbol-group + .symbol-group {
+  border-top: 2px solid rgba(74, 85, 104, 0.35);
+}
 .row-warn { background: rgba(239, 68, 68, 0.06); }
 .row-caution { background: rgba(245, 158, 11, 0.06); }
 .nan-high { color: #ef4444; font-weight: 600; }
 .nan-mid { color: #f59e0b; }
-
-.action-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-top: 4px;
-}
-.btn-primary {
-  padding: 8px 20px;
-  background: #3b82f6;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.btn-primary:hover { background: #2563eb; }
-.hint {
-  font-size: 12px;
-  color: #64748b;
-}
 </style>

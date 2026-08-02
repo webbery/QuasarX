@@ -62,6 +62,7 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
         }
         if (!sink.is_writable() || Server::IsExit()) {
             nng_close(sock);
+            sink.done();
             return false;
         }
         char* buff = NULL;

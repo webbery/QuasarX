@@ -8,11 +8,14 @@
         <p>基础参数覆盖 80% 的调参场景；高级正则项在折叠区内，通常只在过拟合/欠拟合时调整。</p>
       </div>
       <div class="summary-action">
-        <button class="btn btn-primary" :disabled="state.trainResult.loading || !config.labelSource" @click="onTrain()">
+        <button class="btn btn-primary" :disabled="state.trainResult.loading || !config.labelSource || !state.featureReport.data" @click="onTrain()">
           <i v-if="state.trainResult.loading" class="fas fa-spinner fa-spin"></i>
           {{ state.trainResult.loading ? '训练中…' : '开始训练' }}
         </button>
-        <span v-if="config.labelSource" class="source-chip" :title="`标签来源：${config.labelSource}`">
+        <span v-if="!state.featureReport.data" class="source-chip warn">
+          <i class="fas fa-exclamation-circle"></i>请先完成特征分析
+        </span>
+        <span v-else-if="config.labelSource" class="source-chip" :title="`标签来源：${config.labelSource}`">
           <i class="fas fa-tag"></i>{{ config.labelSource }}
         </span>
         <span v-else class="source-chip warn">
@@ -236,7 +239,8 @@
 
     <div v-if="!state.trainResult.data && !state.trainResult.loading" class="empty-state">
       <div class="empty-icon">⚡</div>
-      <div>确认标签来源并配置训练参数后点击"开始训练"</div>
+      <div v-if="!state.featureReport.data">请先在"特征分析"面板完成数据收集</div>
+      <div v-else>确认标签来源并配置训练参数后点击"开始训练"</div>
     </div>
   </div>
 </template>
@@ -417,7 +421,7 @@ async function onTrain() {
           props.state.trainResult.logs.push({ step: data.step || '', level: 'error', line })
         }
       }
-    })
+    }, props.state.featureReport.data?.csv_path)
     props.state.trainResult.data = result
     if (result) emit('trained')
   } finally {

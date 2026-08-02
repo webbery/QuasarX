@@ -231,6 +231,8 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
         state->_tmpStrategyName = strategyName + "_train";
 
+        try {
+
         // 检查是否提供了预收集的 CSV（跳过步骤 2~5）
         String csvPath = params.value("csv_path", String());
         if (!csvPath.empty()) {
@@ -501,6 +503,18 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             sendSSE("result", trainResult);
             session->finish(trainResult);
         }
+
+        } catch (const std::exception& e) {
+            cleanupGraph();
+            FATAL("[MLTrain] uncaught exception: {}", e.what());
+            sendSSE("error", {{"step","train"},{"msg", String("internal error: ") + e.what()}});
+            session->finish({{"error", String("internal error: ") + e.what()}}, true);
+        } catch (...) {
+            cleanupGraph();
+            FATAL("[MLTrain] unknown uncaught exception");
+            sendSSE("error", {{"step","train"},{"msg","unknown internal error"}});
+            session->finish({{"error","unknown internal error"}}, true);
+        }
     });
     trainThread.detach();
 }
@@ -571,6 +585,17 @@ static nlohmann::json computeFeatureStats(const Map<String, Vector<double>>& col
 }
 
 void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& res) {
+    // 先解析 script（在发送任何响应之前，以便失败时能返回 400）
+    String strScript = params.value("script", "");
+    nlohmann::json script;
+    try {
+        script = nlohmann::json::parse(strScript);
+    } catch (...) {
+        res.status = 400;
+        res.set_content(R"({"message":"invalid 'script' JSON"})", "application/json");
+        return;
+    }
+
     // 幂等检查
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
@@ -595,8 +620,7 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
     resp["status"] = "started";
     res.set_content(resp.dump(), "application/json");
 
-    // 提取参数
-    auto script = params.value("script", nlohmann::json::object());
+    // 提取其余参数
     auto labelCfg = params.value("label", nlohmann::json::object());
     auto dateRangeCfg = params.value("date_range", nlohmann::json::object());
     String labelSource = labelCfg.value("source", "");
@@ -614,6 +638,8 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
         };
         auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
         state->_tmpStrategyName = strategyName + "_collect";
+
+        try {
 
         // ============== 1. 解析策略图 ==============
         sendSSE("step", {{"step","parse_script"},{"status","start"},{"msg","解析策略图..."}});
@@ -727,6 +753,18 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
 
         cleanupGraph();
         session->finish(featureStats);
+
+        } catch (const std::exception& e) {
+            cleanupGraph();
+            FATAL("[MLCollect] uncaught exception: {}", e.what());
+            sendSSE("error", {{"step","collect"},{"msg", String("internal error: ") + e.what()}});
+            session->finish({{"error", String("internal error: ") + e.what()}}, true);
+        } catch (...) {
+            cleanupGraph();
+            FATAL("[MLCollect] unknown uncaught exception");
+            sendSSE("error", {{"step","collect"},{"msg","unknown internal error"}});
+            session->finish({{"error","unknown internal error"}}, true);
+        }
     });
     collectThread.detach();
 }
@@ -779,6 +817,7 @@ void MLHandler::handleTrainProgress(const httplib::Request& req, httplib::Respon
                 // 训练已完成，发送最终结果后关闭
                 if (session->_done) {
                     lk.unlock();
+                    sink.done();
                     return false;
                 }
 

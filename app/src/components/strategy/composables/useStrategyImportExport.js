@@ -110,7 +110,12 @@ function normalizeEdgeHandles(edges, nodes) {
     nodeTypeMap[n.id] = n.data?.nodeType || ''
     // FunctionNode 需要知道 method 来确定槽位
     if (n.data?.nodeType === 'function') {
-      nodeMethodMap[n.id] = n.data?.params?.method?.value || 'MA'
+      // params key 是中文 label（如 "方法"），不是英文 schema.key（如 "method"）
+      const params = n.data?.params || {}
+      const method = params['方法']?.value || params.method?.value
+        || Object.values(params).find((c) => c && c.type === 'select' && Array.isArray(c.options) && c.options.some((o) => o && o.value === 'VPCorr'))?.value
+        || 'MA'
+      nodeMethodMap[n.id] = method
     }
   }
 

@@ -19,7 +19,13 @@
       type="source"
       :position="Position.Right"
       :id="`field-${paramKey}`"
+      :style="{ position: 'absolute', right: '-10px', top: '50%', transform: 'translateY(-50%)', zIndex: 10 }"
       class="field-output-handle"
+      @mousedown.stop
+      @pointerdown.stop
+      @click.stop
+      @mouseenter="onHandleEnter"
+      @mouseleave="onHandleLeave"
     />
   </div>
 </template>
@@ -50,6 +56,16 @@ const onInput = (event: Event) => {
   const value = (event.target as HTMLInputElement).value
   showError.value = false  // 输入时隐藏错误
   emit('update', value)
+}
+
+const onHandleEnter = () => {
+  const el = document.querySelector(`[data-handleid="field-${props.paramKey}"]`)
+  const rect = el?.getBoundingClientRect()
+  console.log('[FieldHandle] enter', props.paramKey, 'rect:', rect ? { x: rect.x, y: rect.y, w: rect.width, h: rect.height } : 'null')
+}
+
+const onHandleLeave = () => {
+  console.log('[FieldHandle] leave', props.paramKey)
 }
 
 const validate = () => {

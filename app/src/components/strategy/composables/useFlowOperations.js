@@ -376,25 +376,24 @@ export function useFlowOperations(state) {
    * 更新节点数据
    */
   const updateNodeData = (nodeId, paramKey, newValue) => {
+    console.log('[updateNodeData]', { nodeId, paramKey, newValue, typeOfPK: typeof paramKey, typeOfNV: typeof newValue })
     const nodeIndex = getNodes.value.findIndex(node => node.id === nodeId)
     if (nodeIndex !== -1) {
-      // 创建新的节点对象以触发响应式更新
-      const updatedNode = {
-        ...getNodes.value[nodeIndex],
-        data: {
-          ...getNodes.value[nodeIndex].data,
-          params: {
-            ...getNodes.value[nodeIndex].data.params,
-            [paramKey]: {
-              ...getNodes.value[nodeIndex].data.params[paramKey],
-              value: newValue
-            }
-          }
+      const currentNode = getNodes.value[nodeIndex]
+      const updatedParams = {
+        ...currentNode.data.params,
+        [paramKey]: {
+          ...currentNode.data.params[paramKey],
+          value: newValue
         }
       }
-
-      // 更新节点
-      getNodes.value[nodeIndex] = updatedNode
+      // 使用 Vue Flow 的 updateNode API 触发正确的响应式更新
+      updateNode(nodeId, {
+        data: {
+          ...currentNode.data,
+          params: updatedParams
+        }
+      })
 
       // 如果参数变化影响其他参数的可见性，可以在这里处理
       if (paramKey === '缺失值' && newValue === '填充') {
@@ -543,7 +542,11 @@ export function useFlowOperations(state) {
       }
 
       const slotName = targetHandle.replace('input-', '')
-      const method = targetNode.data.params?.method?.value || 'MA'
+      // params key 是中文 label（如 "方法"），不是英文 schema.key（如 "method"）
+      const targetParams = targetNode.data?.params || {}
+      const method = targetParams['方法']?.value || targetParams.method?.value
+        || Object.values(targetParams).find((c) => c && c.type === 'select' && Array.isArray(c.options) && c.options.some((o) => o && o.value === 'VPCorr'))?.value
+        || 'MA'
 
       // 从 functionInputSlots 获取该方法的槽位定义
       const slots = functionInputSlots[method] || []

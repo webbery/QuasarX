@@ -27,6 +27,22 @@
 
         <!-- 参数列表 -->
         <div class="node-content">
+            <!-- 多输入指标槽位（VPCorr/ATR 等），Handle 在节点左边缘 -->
+            <template v-if="getFunctionInputSlots().length > 1">
+                <div class="node-param function-slot-param" v-for="slot in getFunctionInputSlots()" :key="'fslot-' + slot.slot">
+                    <Handle
+                        type="target"
+                        :position="Position.Left"
+                        :id="'input-' + slot.slot"
+                        class="connection-handle left-handle function-slot-handle"
+                    />
+                    <div class="param-label">{{ slot.label }}</div>
+                    <div class="param-control">
+                        <span class="slot-field-tag">[{{ slot.field }}]</span>
+                    </div>
+                </div>
+            </template>
+
             <div
                 class="node-param"
                 v-for="(paramConfig, key) in node.data.params"
@@ -169,13 +185,24 @@
                         @click="handleParamButtonClick(key)"
                     />
 
-                    <!-- 标签类型（只读文本，可带 Handle） -->
-                    <LabelParam
-                        v-else-if="paramConfig.type === 'label'"
-                        :param-key="key"
-                        :param-config="paramConfig"
-                        :handle-id="getLabelHandleId(key)"
-                    />
+                    <!-- 标签类型（只读文本，Handle 在 node-param 边缘） -->
+                    <template v-else-if="paramConfig.type === 'label'">
+                        <Handle
+                            v-if="getLabelHandleId(key) && getLabelHandlePosition(key) === 'left'"
+                            type="target"
+                            :position="Position.Left"
+                            :id="getLabelHandleId(key)"
+                            class="connection-handle left-handle label-input-handle"
+                        />
+                        <span class="label-param-text">{{ paramConfig.label || key }}</span>
+                        <Handle
+                            v-if="getLabelHandleId(key) && getLabelHandlePosition(key) === 'right'"
+                            type="source"
+                            :position="Position.Right"
+                            :id="getLabelHandleId(key)"
+                            class="connection-handle right-handle label-output-handle"
+                        />
+                    </template>
 
                     <!-- 默认显示 -->
                     <span v-else class="param-value">
@@ -189,8 +216,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, onMounted, onUnmounted, type PropType } from 'vue'
+import { computed, inject, ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
+import { functionInputSlots } from '@/lib/nodes/configs/function'
 import { getNodeIcon, getNodeColor } from '@/lib/nodes'
 import { useNodeSelection } from './composables/useNodeSelection'
 import { useNodeEditing } from './composables/useNodeEditing'
@@ -260,6 +288,63 @@ const headerClass = computed(() => `header-type-${nodeType.value}`)
 const iconClass = computed(() => `icon-type-${nodeType.value}`)
 const iconType = computed(() => getNodeIcon(props.node.data.label))
 
+// 指标节点的多输入槽位
+function getFunctionInputSlots() {
+    if (nodeType.value !== 'function') return []
+    // 查找 method 参数（key 是中文 label "方法"，params 是用 label 作为 key 存储的）
+    const params = props.node.data.params
+    let method = 'MA'
+    let methodSource = 'default'
+    if (params) {
+        if (params.method?.value) { method = params.method.value; methodSource = 'method-key' }
+        else if (params['方法']?.value) { method = params['方法'].value; methodSource = 'chinese-key' }
+        else {
+            for (const [, cfg] of Object.entries(params)) {
+                if (cfg?.type === 'select' && Array.isArray(cfg.options)) {
+                    const hasVpcorr = cfg.options.some((o: any) => o?.value === 'VPCorr')
+                    if (hasVpcorr) {
+                        method = cfg.value || 'MA'
+                        methodSource = 'iterate'
+                        break
+                    }
+                }
+            }
+        }
+    }
+    const slots = functionInputSlots[method] || []
+    console.log('[FunctionSlots]', {
+        nodeId: props.node.id,
+        method,
+        methodSource,
+        slotsLength: slots.length,
+        // 输出每个 param 的 key + value 用于诊断
+        paramsDetail: params ? Object.fromEntries(Object.entries(params).map(([k, v]: any) => [k, v?.value])) : null,
+    })
+    return slots
+}
+
+// 监听 method 参数变化（debug 用）
+function getCurrentMethod(): string {
+    const params = props.node.data.params
+    if (!params) return 'MA'
+    if (params.method?.value) return params.method.value
+    if (params['方法']?.value) return params['方法'].value
+    for (const [, cfg] of Object.entries(params)) {
+        if (cfg?.type === 'select' && Array.isArray(cfg.options)) {
+            const hasVpcorr = cfg.options.some((o: any) => o?.value === 'VPCorr')
+            if (hasVpcorr) return cfg.value || 'MA'
+        }
+    }
+    return 'MA'
+}
+
+watch(
+    () => getCurrentMethod(),
+    (newMethod, oldMethod) => {
+        console.log('[Watch method]', { nodeId: props.node.id, oldMethod, newMethod })
+    }
+)
+
 const configOptions = computed(() => {
     const configs = (portfolioConfigs as any).value || []
     return configs.map((config: any) => ({
@@ -289,11 +374,22 @@ const isDataFieldParam = (key: string) => {
 // Label 参数对应的 Handle ID 映射（key 是中文 label）
 const getLabelHandleId = (key: string) => {
     const handleMap: Record<string, string> = {
+        // EMD 输出
         'IMF 数量': 'IMF',
         '能量变化率': 'energy_velocity',
         '成交量体制': 'volume_regime',
+        // Breakout 输入
+        '当前价格': 'input-value',
+        '上轨': 'input-upper',
+        '下轨': 'input-lower',
     }
     return handleMap[key] || undefined
+}
+
+// Breakout 输入 handle 在左侧
+const getLabelHandlePosition = (key: string): 'left' | 'right' => {
+    if (['当前价格', '上轨', '下轨'].includes(key)) return 'left'
+    return 'right'
 }
 
 // 事件处理
@@ -322,6 +418,7 @@ const onTitleInputKeydown = (event: KeyboardEvent) => {
 }
 
 const updateParam = (paramKey: string, newValue: any) => {
+    console.log('[updateParam]', { nodeId: props.node.id, paramKey, newValue, nodeType: props.node.data.nodeType })
     if (props.node.data.nodeType === 'portfolio' && paramKey === '预设模板') {
         if (newValue === 'full_position') {
             emit('update-node', props.node.id, '仓位比例', 1.0)
@@ -467,6 +564,53 @@ const handleClickOutside = (event: MouseEvent) => {
     position: relative !important;
     padding-right: 14px !important;
 }
+
+/* 标签类型参数行：param-label 自适应宽度，param-control 填充到右侧边缘 */
+.node-param:has(> .param-control > .label-param-text) {
+    padding: 0 !important;
+}
+.node-param:has(> .param-control > .label-param-text) > .param-label {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    padding-left: 14px !important;
+}
+.node-param:has(> .param-control > .label-param-text) > .param-control {
+    flex: 1 1 auto !important;
+    justify-content: flex-end !important;
+    padding-right: 14px !important;
+}
+.label-param-text {
+    font-size: 11px;
+    color: var(--text-secondary, #a0aec0);
+    font-weight: 500;
+    user-select: none;
+    white-space: nowrap;
+}
+.label-input-handle {
+    left: 0 !important;
+}
+.label-output-handle {
+    right: 0 !important;
+}
+
+/* 多输入指标槽位行（VPCorr/ATR）：Handle 在节点左边缘 */
+.function-slot-param {
+    position: relative !important;
+    border-bottom: 1px dashed rgba(74, 85, 104, 0.2) !important;
+    margin-bottom: 4px !important;
+    padding-bottom: 4px !important;
+}
+.function-slot-handle {
+    left: -10px !important;
+}
+.slot-field-tag {
+    font-size: 10px;
+    color: var(--text-tertiary, #718096);
+    font-family: 'SF Mono', 'Consolas', monospace;
+    user-select: none;
+}
+
+/* 数据源节点 field handle：定位由 TextParam 内部的 .field-output-handle 处理 */
 
 /* ============================================
    Flow Node Input/Select/Date 美化样式
@@ -999,11 +1143,15 @@ select.param-input:disabled {
 .left-handle {
     background: var(--secondary) !important;
     left: -6px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
 }
 
 .right-handle {
     background: var(--primary) !important;
     right: -6px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
 }
 
 .connection-handle:hover {
