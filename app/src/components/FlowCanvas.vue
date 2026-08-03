@@ -111,7 +111,7 @@ const handleNodeContextMenu = (event) => {
 const resolveEmdImfEdge = (event) => {
   const edgeId = event?.edge?.id
   const edge = props.edges.find(e => e.id === edgeId)
-  if (!edge || edge.sourceHandle !== 'IMF') return null
+  if (!edge || edge.sourceHandle !== 'field-IMF') return null
 
   const sourceNode = props.nodes.find(n => n.id === edge.source)
   return sourceNode?.data?.nodeType === 'emd' ? edge : null

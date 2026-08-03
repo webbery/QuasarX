@@ -32,13 +32,31 @@ double QuoteInputNode::getProp(const QuoteInfo& quote, const String& property) c
 
 /**
  * @brief 将单个 symbol 的行情数据写入 context
+ *
+ * 默认语义: close/open/high/low = 后复权价格（指标/XGBoost 与训练数据一致），
+ * 原始价格另存 org_close/org_open/org_high/org_low（撮合等需要原始价的场景用）。
+ * 后复权数据缺失（=0）时回退写原始价，避免空值污染下游。
  */
 void QuoteInputNode::writeQuote(DataContext& context, const QuoteInfo& quote) {
     auto name = get_symbol(quote._symbol);
     auto baseKey = name + ".";
     for (auto& property : _properties[name]) {
-        auto key = baseKey + property;
-        addQuoteProperty(context, key, getProp(quote, property));
+        if (property == "open") {
+            addQuoteProperty(context, baseKey + property, quote._adj_open > 0.0 ? quote._adj_open : quote._open);
+            addQuoteProperty(context, baseKey + "org_open", quote._open);
+        } else if (property == "close") {
+            addQuoteProperty(context, baseKey + property, quote._adj_close > 0.0 ? quote._adj_close : quote._close);
+            addQuoteProperty(context, baseKey + "org_close", quote._close);
+        } else if (property == "high") {
+            addQuoteProperty(context, baseKey + property, quote._adj_high > 0.0 ? quote._adj_high : quote._high);
+            addQuoteProperty(context, baseKey + "org_high", quote._high);
+        } else if (property == "low") {
+            addQuoteProperty(context, baseKey + property, quote._adj_low > 0.0 ? quote._adj_low : quote._low);
+            addQuoteProperty(context, baseKey + "org_low", quote._low);
+        } else {
+            // volume 无复权概念，其他属性原样写
+            addQuoteProperty(context, baseKey + property, getProp(quote, property));
+        }
     }
     // 同步到 QuoteInfo 缓存，供其他模块通过 context.GetQuote() 获取
     context.SetQuote(quote._symbol, quote);
@@ -282,7 +300,8 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
             if (item == "volume") {
                 names[baseKey + item] = ArgType::Integer_TimeSeries;
             } else {
-                names[baseKey + item] = ArgType::Double_TimeSeries;
+                names[baseKey + item] = ArgType::Double_TimeSeries;   // 默认后复权
+                names[baseKey + "org_" + item] = ArgType::Double_TimeSeries;  // 原始价
             }
         }
     }

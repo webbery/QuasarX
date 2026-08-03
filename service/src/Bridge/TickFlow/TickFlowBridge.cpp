@@ -111,6 +111,11 @@ void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
 
     _interval_ms = 10000;
     INFO("SetFilter: {} symbols, interval={}ms", filter._symbols.size(), _interval_ms);
+
+    // 初始化后复权因子缓存（登录/启动时低频调用，查询 DuckDB 安全）
+    for (const auto& code : filter._symbols) {
+        refreshAdjFactor(code);
+    }
 }
 
 void TickFlowBridge::AddSymbols(const Set<String>& symbols) {
@@ -130,6 +135,10 @@ void TickFlowBridge::AddSymbols(const Set<String>& symbols) {
     }
     if (added > 0) {
         INFO("AddSymbols: +{} symbols, total={}", added, _filter._symbols.size());
+        // 新加入标的同步初始化复权因子缓存
+        for (const auto& code : symbols) {
+            if (_filter._symbols.count(code)) refreshAdjFactor(code);
+        }
     }
 }
 
@@ -144,6 +153,33 @@ void TickFlowBridge::RemoveSymbols(const Set<String>& symbols) {
     if (removed > 0) {
         INFO("RemoveSymbols: -{} symbols, total={}", removed, _filter._symbols.size());
     }
+}
+
+// 从 stock_1d 最新 bar 查 adj_close/close 作为后复权因子，更新缓存
+void TickFlowBridge::refreshAdjFactor(const String& code) {
+    auto& quoteDB = QuoteDB::instance();
+    if (!quoteDB.isInitialized()) return;
+
+    // query 为 ASC 排序，取最后一条即最新 bar
+    auto bars = quoteDB.query("stock_1d", code, "", "", 5000);
+    if (bars.empty()) return;
+
+    const auto& last = bars.back();
+    if (last.close > 0 && last.adj_close > 0) {
+        double factor = last.adj_close / last.close;
+        symbol_t sym = TickFlowToSymbol(code);
+        if (!is_null(sym)) {
+            std::lock_guard<std::mutex> lock(_adjFactorMtx);
+            _adjFactorCache[sym] = factor;
+        }
+    }
+}
+
+double TickFlowBridge::getAdjFactor(symbol_t sym) const {
+    std::lock_guard<std::mutex> lock(_adjFactorMtx);
+    auto it = _adjFactorCache.find(sym);
+    // 无缓存（如盘中首次 tick、stock_1d 尚无数据）时因子为 1.0，adj_close = 原始价
+    return (it != _adjFactorCache.end()) ? it->second : 1.0;
 }
 
 bool TickFlowBridge::Release() {
@@ -493,6 +529,9 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
         financeDB.recalcSymbolAdjPrices(bar.symbol);
     }
 
+    // 重算完成后刷新复权因子缓存（次日盘中 QuoteInfo._adj_close 用新因子）
+    refreshAdjFactor(bar.symbol);
+
     // 通知策略子系统：该标的数据已就绪
     if (_server) {
         auto* strategySys = _server->GetStrategySystem();
@@ -617,6 +656,13 @@ void TickFlowBridge::ParseResponse(const String& response) {
 
             quote._source = 'T';  // TickFlow 来源标记
             quote._confidence = 100;
+
+            // 后复权价格: 原始价 × 复权因子（指标/XGBoost 默认用，与训练数据一致）
+            double factor = getAdjFactor(quote._symbol);
+            quote._adj_open  = quote._open  * factor;
+            quote._adj_close = quote._close * factor;
+            quote._adj_high  = quote._high  * factor;
+            quote._adj_low   = quote._low   * factor;
 
             _quotes.insert({quote._symbol, quote});
 

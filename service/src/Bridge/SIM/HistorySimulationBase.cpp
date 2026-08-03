@@ -659,13 +659,24 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             info._open = org_df.get_column<double>(org_header[1].c_str())[org_index];
             info._close = org_df.get_column<double>(org_header[2].c_str())[org_index];
             info._high = org_df.get_column<double>(org_header[3].c_str())[org_index];
-            info._low = df.get_column<double>(org_header[4].c_str())[org_index];
+            info._low = org_df.get_column<double>(org_header[4].c_str())[org_index];
+            // 后复权价格（指标/XGBoost 默认用）：从 _csvs（HFQ）取，
+            // 与撮合原始价（_org_csvs）分离，保证训练/推理价格一致
+            info._adj_open  = open[curIndex];
+            info._adj_close = close[curIndex];
+            info._adj_high  = high[curIndex];
+            info._adj_low   = low[curIndex];
         }
         else {
             info._open = open[curIndex];
             info._close = close[curIndex];
             info._high = high[curIndex];
             info._low = low[curIndex];
+            // 无原始价数据时退化为后复权价
+            info._adj_open  = open[curIndex];
+            info._adj_close = close[curIndex];
+            info._adj_high  = high[curIndex];
+            info._adj_low   = low[curIndex];
         }
         quotes[symbol] = std::move(info);
     }

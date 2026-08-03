@@ -91,11 +91,13 @@ function isBackendFormat(data) {
  * 将后端边的 handle ID 转换为前端格式
  *
  * sourceHandle 转换:
- *   "1-close"         → "field-close"          (QuoteInput 字段输出)
- *   "11-IMF_0"        → "IMF" + data.imfIndex=0 (EMD 命名输出，老格式)
- *   "11-IMF"          → "IMF" + data.imfIndex 透传 (EMD 命名输出，新格式)
- *   "11-energy_velocity" → "energy_velocity"    (EMD 衍生特征)
- *   "2"               → "output"               (通用单输出)
+ *   "1-close"         → "field-close"                  (QuoteInput 字段输出)
+ *   "11-IMF_0"        → "field-IMF" + data.imfIndex=0  (EMD 命名输出，老格式)
+ *   "11-IMF"          → "field-IMF" + data.imfIndex 透传 (EMD 命名输出，新格式)
+ *   "11-energy_velocity" → "field-energy_velocity"      (EMD 衍生特征)
+ *   "11-volume_regime"   → "field-volume_regime"        (EMD 衍生特征)
+ *   "5-hmm_state"     → "field-hmm_state"              (HMM 输出)
+ *   "2"               → "output"                       (通用单输出)
  *
  * targetHandle 转换:
  *   BreakoutNode: 保留 "input-value/upper/lower"
@@ -130,9 +132,9 @@ function normalizeEdgeHandles(edges, nodes) {
       if (sourceHandle.includes('-')) {
         const fieldName = sourceHandle.split('-').slice(1).join('-')
         if (sourceNodeType === 'emd') {
-          // EMD 命名输出: "11-IMF_0" / "11-IMF" → "IMF"
+          // EMD 命名输出: "11-IMF_0" / "11-IMF" → "field-IMF"
           if (fieldName === 'IMF' || fieldName.startsWith('IMF_')) {
-            sourceHandle = 'IMF'
+            sourceHandle = 'field-IMF'
             // 老格式 "11-IMF_0" → 从 IMF_0 后缀提取 imfIndex
             if (fieldName.startsWith('IMF_')) {
               const idx = parseInt(fieldName.slice(4), 10)
@@ -142,10 +144,14 @@ function normalizeEdgeHandles(edges, nodes) {
             }
             // 新格式 "11-IMF" → edge.data.imfIndex 已在原数据中，保留
           } else {
-            sourceHandle = fieldName
+            // EMD 衍生特征: "11-energy_velocity" → "field-energy_velocity"
+            sourceHandle = `field-${fieldName}`
           }
-        } else {
+        } else if (sourceNodeType === 'input') {
           // QuoteInput 字段输出: "1-close" → "field-close"
+          sourceHandle = `field-${fieldName}`
+        } else {
+          // 其他节点多输出（HMM 等）: "5-hmm_state" → "field-hmm_state"
           sourceHandle = `field-${fieldName}`
         }
       } else {

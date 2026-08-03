@@ -59,8 +59,7 @@ private:
     int _cooldownDays = 0;
     int _consensusThreshold = 2;
 
-    // Detector 管理
-    std::unique_ptr<CUSUMDetector> _singleDetector;
+    // Detector 管理（所有模式统一使用 per-symbol detector）
     Map<String, std::unique_ptr<CUSUMDetector>> _assetDetectors;
 
     // 状态管理

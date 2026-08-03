@@ -56,6 +56,8 @@ private:
     int _windowSize;               // 滚动窗口大小（0 = 全序列一次分解）
     bool _computeEnergyVelocity;   // 是否计算 energy_velocity
     bool _computeVolumeRegime;     // 是否计算 volume_regime
+    String _volumeContextKey;      // 从实际连接解析出的 volume 输入 context key（如 "sz.002825.volume"）
+    Set<String> _symbolPrefixes;   // 来自 discoverUpstreamSymbols() 的 symbol 列表（带 "." 后缀，如 "sz.002825."），用于 Process 中从 inputKey 匹配出正确 prefix
     Map<String, ArgType> _params;  // 输入参数（来自上游节点的输出）
     Map<String, ArgType> _outputs; // 输出元素声明
 

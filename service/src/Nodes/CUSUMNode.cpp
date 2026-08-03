@@ -36,40 +36,31 @@ bool CUSUMNode::Init(const nlohmann::json& config) {
         _params.merge(input_names);
     }
 
-    // 多资产模式：从输入节点推断标的列表
-    if (_mode == CUSUMMode::Asset || _mode == CUSUMMode::Consensus) {
-        for (auto& kv : _params) {
-            // 输入格式: {symbol}.return 或 return
-            Vector<String> tokens;
-            boost::algorithm::split(tokens, kv.first, boost::is_any_of("."));
-            if (tokens.size() >= 2) {
-                String sym = tokens[0];
-                _assetSymbols.insert(sym);
-                _assetDetectors[sym] = std::make_unique<CUSUMDetector>(_config);
-                _assetLastSignals[sym] = 0.0;
-            }
-        }
-
-        if (_assetSymbols.empty()) {
-            WARN("[CUSUM] No asset symbols found for multi-asset mode in node {}", _label);
-            return false;
-        }
-
-        INFO("[CUSUM] Multi-asset mode: {} assets detected: {}",
-             _assetSymbols.size(),
-             boost::algorithm::join(_assetSymbols, ", "));
-    } else {
-        // 单资产模式
-        _singleDetector = std::make_unique<CUSUMDetector>(_config);
+    // BFS 上游发现 symbol 列表
+    auto symbolSet = discoverUpstreamSymbols();
+    if (symbolSet.empty()) {
+        WARN("[CUSUM:{}] No upstream symbols found", _id);
+        return false;
     }
 
-    // 注册输出
-    _outputs[_signalLabel + ".signal"] = ArgType::Double_Scalar;
-    _outputs[_signalLabel + ".triggered"] = ArgType::Bool_Scalar;
-    _outputs[_signalLabel + ".s_pos"] = ArgType::Double_Scalar;
-    _outputs[_signalLabel + ".s_neg"] = ArgType::Double_Scalar;
-    _outputs[_signalLabel + ".drift"] = ArgType::Double_Scalar;
-    _outputs[_signalLabel + ".change_points"] = ArgType::Integer_Scalar;
+    // 为每个 symbol 创建独立 detector
+    for (auto& sym : symbolSet) {
+        String symStr = get_symbol(sym);
+        _assetSymbols.insert(symStr);
+        _assetDetectors[symStr] = std::make_unique<CUSUMDetector>(_config);
+        _assetLastSignals[symStr] = 0.0;
+    }
+
+    INFO("[CUSUM:{}] {} symbols: {}", _id, _assetSymbols.size(),
+         boost::algorithm::join(_assetSymbols, ", "));
+
+    // 注册 per-symbol 输出: {symbol}.signalLabel.field
+    for (auto& symStr : _assetSymbols) {
+        _outputs[symStr + "." + _signalLabel + ".signal"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _signalLabel + ".drift"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _signalLabel + ".s_pos"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _signalLabel + ".s_neg"] = ArgType::Double_TimeSeries;
+    }
 
     if (_mode == CUSUMMode::Asset || _mode == CUSUMMode::Consensus) {
         _outputs[_signalLabel + ".asset_results"] = ArgType::Double_TimeSeries;
@@ -98,57 +89,73 @@ NodeProcessResult CUSUMNode::Process(const String& strategy, DataContext& contex
 }
 
 NodeProcessResult CUSUMNode::ProcessSingleAsset(const String& strategy, DataContext& context) {
-    // 从 DataContext 读取收益率（默认 "return"）
-    double ret = 0.0;
-    bool has_return = false;
+    bool anySuccess = false;
 
-    // 尝试从输入参数中找到收益率变量
-    for (auto& kv : _params) {
+    for (auto& sym : _assetSymbols) {
+        // 从 _params 中找到该 symbol 的输入 key（如 sz.000423.ret1）
+        String retKey;
+        for (auto& kv : _params) {
+            if (kv.first.find(sym + ".") == 0) {
+                retKey = kv.first;
+                break;
+            }
+        }
+        if (retKey.empty()) continue;
+
+        // 读取该 symbol 的收益率
+        double ret = 0.0;
+        bool has_return = false;
         try {
-            const auto& vec = context.get<Vector<double>>(kv.first);
+            const auto& vec = context.get<Vector<double>>(retKey);
             if (!vec.empty()) {
                 ret = vec.back();
                 has_return = true;
-                break;
             }
         } catch (...) {
             continue;
         }
+        if (!has_return) continue;
+
+        // 冷却期检查
+        if (_cooldownCounter > 0) continue;
+
+        auto it = _assetDetectors.find(sym);
+        if (it == _assetDetectors.end()) continue;
+
+        // 更新该 symbol 的 CUSUM detector
+        auto result = it->second->update(ret);
+
+        bool triggered = result._change_point;
+        bool s_pos_triggered = triggered && (result._cusum_positive > 0);
+        bool s_neg_triggered = triggered && (result._cusum_negative > 0);
+        double signal = InterpretSignal(triggered, s_pos_triggered, s_neg_triggered);
+
+        // 触发后启动冷却
+        if (triggered && _cooldownDays > 0) {
+            _cooldownCounter = _cooldownDays;
+        }
+
+        // 写入 per-symbol 输出（时间序列）
+        String prefix = sym + "." + _signalLabel + ".";
+
+        // 首次 set 创建 Vector<double>，后续 add 追加
+        if (!context.exist(prefix + "signal")) {
+            context.set<Vector<double>>(prefix + "signal", {signal});
+            context.set<Vector<double>>(prefix + "s_pos", {result._cusum_positive});
+            context.set<Vector<double>>(prefix + "s_neg", {result._cusum_negative});
+            context.set<Vector<double>>(prefix + "drift", {result._current_drift});
+        } else {
+            context.add(prefix + "signal", signal);
+            context.add(prefix + "s_pos", result._cusum_positive);
+            context.add(prefix + "s_neg", result._cusum_negative);
+            context.add(prefix + "drift", result._current_drift);
+        }
+
+        _assetLastSignals[sym] = signal;
+        anySuccess = true;
     }
 
-    if (!has_return) {
-        return NodeProcessResult::Skip;
-    }
-
-    // 冷却期检查
-    if (_cooldownCounter > 0) {
-        --_cooldownCounter;
-        return NodeProcessResult::Skip;
-    }
-
-    // 更新 CUSUM
-    auto result = _singleDetector->update(ret);
-
-    bool triggered = result._change_point;
-    bool s_pos_triggered = triggered && (result._cusum_positive > 0);
-    bool s_neg_triggered = triggered && (result._cusum_negative > 0);
-
-    double signal = InterpretSignal(triggered, s_pos_triggered, s_neg_triggered);
-
-    // 触发后启动冷却
-    if (triggered && _cooldownDays > 0) {
-        _cooldownCounter = _cooldownDays;
-    }
-
-    // 输出到 DataContext
-    context.set<double>(_signalLabel + ".signal", signal);
-    context.set<bool>(_signalLabel + ".triggered", triggered);
-    context.set<double>(_signalLabel + ".s_pos", result._cusum_positive);
-    context.set<double>(_signalLabel + ".s_neg", result._cusum_negative);
-    context.set<double>(_signalLabel + ".drift", result._current_drift);
-    context.set<uint64_t>(_signalLabel + ".change_points", (uint64_t)_singleDetector->get_total_change_points());
-
-    return NodeProcessResult::Success;
+    return anySuccess ? NodeProcessResult::Success : NodeProcessResult::Skip;
 }
 
 NodeProcessResult CUSUMNode::ProcessMultiAsset(const String& strategy, DataContext& context) {

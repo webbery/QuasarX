@@ -2,7 +2,9 @@
 #include "server.h"
 #include "Util/log.h"
 #include "boost/algorithm/string.hpp"
+#include <cmath>
 #include <cstring>
+#include <limits>
 
 XGBoostNode::XGBoostNode(Server* server) : _server(server) {}
 
@@ -80,7 +82,6 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
     // ── 从连接图发现 symbol 并解析特征 ──
     // 收集所有上游 out_elements 的 key，构建 短名→全名 和 全名→全名 双重映射
     Map<String, String> allOutKeys;
-    Set<String> symbols;
     for (auto& [nodeId, nodePtr] : _ins) {
         for (auto& [key, type] : nodePtr->out_elements()) {
             allOutKeys[key] = key;  // 全名: "sz.800001.norm_ret" → itself
@@ -88,30 +89,31 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
             if (dotPos != String::npos) {
                 String field = key.substr(dotPos + 1);
                 allOutKeys[field] = key;  // 短名: "norm_ret" → "sz.800001.norm_ret"
-                if (field == "close" || field == "open" || field == "volume")
-                    symbols.insert(key.substr(0, dotPos));
             }
         }
     }
 
-    if (symbols.empty()) {
+    // BFS 上游找到所有可达的 QuoteInputNode 的 symbol
+    auto symbolSet = discoverUpstreamSymbols();
+    if (symbolSet.empty()) {
         WARN("[XGBoost:{}] Cannot discover symbol from upstream connections", _id);
         return false;
     }
 
     // 为每个 symbol 解析特征 → context key
     _outputs.clear();
-    for (auto& symbol : symbols) {
+    for (auto& sym : symbolSet) {
+        String symbol = get_symbol(sym);
         Vector<String> resolved;
         for (auto& feat : _feature_keys) {
-            if (allOutKeys.count(feat)) {
-                // 精确匹配（如 "cusum_signal.drift" 或 "norm_ret"）
+            if (allOutKeys.count(symbol + "." + feat)) {
+                // symbol 前缀匹配优先（如 "sz.000423.norm_ret"）
+                resolved.push_back(allOutKeys[symbol + "." + feat]);
+            } else if (allOutKeys.count(feat)) {
+                // 短名兜底：全局 key（如 "cusum_signal.drift"、"emd.energy_velocity"）
                 resolved.push_back(allOutKeys[feat]);
-            } else if (allOutKeys.count(symbol + "." + feat)) {
-                // symbol + feat 拼接（兜底）
-                resolved.push_back(symbol + "." + feat);
             } else {
-                // 直接作为 context key（全局 key）
+                // 直接作为 context key
                 resolved.push_back(feat);
             }
         }
@@ -120,7 +122,7 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
     }
 
     INFO("[XGBoost:{}] Loaded '{}', {} symbols, {} features",
-         _id, _model_file, symbols.size(), _n_features);
+         _id, _model_file, symbolSet.size(), _n_features);
 
     _loaded = true;
     return true;
@@ -152,20 +154,50 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         // 收集当前时刻特征值
         Vector<float> features(_n_features);
         bool ok = true;
+        int validCount = 0;  // 统计有效 feature 数量（finite）
         for (int d = 0; d < _n_features; d++) {
             try {
-                const auto& vec = context.get<Vector<double>>(resolvedKeys[d]);
-                if (vec.empty()) { ok = false; break; }
-                features[d] = static_cast<float>(vec.back());
+                // 兼容时间序列(Vector<double>)和标量(double)两种特征：
+                // 时间序列取当前时刻值(vec.back())，标量直接用当前值
+                const auto& value = context.get(resolvedKeys[d]);
+                if (auto* vec = std::get_if<Vector<double>>(&value)) {
+                    if (vec->empty()) { ok = false; break; }
+                    features[d] = static_cast<float>(vec->back());
+                } else if (auto* scalar = std::get_if<double>(&value)) {
+                    features[d] = static_cast<float>(*scalar);
+                } else {
+                    ok = false; break;
+                }
+                if (std::isfinite(features[d])) ++validCount;
             } catch (...) {
                 ok = false; break;
             }
         }
         if (!ok) continue;
+        // 有效 feature 不足时跳过推理（早期 epoch 滚动窗口未填满：
+        // EMD 120d + ZScore 20d → 前 119 根 K 线 EMD 派生 features 全 NaN），
+        // 避免 XGBoost 收到大量 NaN + 少量 finite 走 default branch 输出均匀分布
+        // 阈值 80%：15 维特征中至少 12 个有效才推理
+        const int minValid = (_n_features * 4 + 4) / 5;  // 80% 向上取整
+        if (validCount < minValid) {
+            DEBUG_INFO("[XGBoost:{}] skip predict for {}: only {}/{} features valid (need >={}, insufficient warmup)",
+                       _id, symbol, validCount, _n_features, minValid);
+            continue;
+        }
+
+        // 把 inf 替换为 NaN，让 XGBoost 把它们都识别为 missing
+        // 修复: XGBoost 2.x 严格校验 — data 含 inf 但 missing=NaN 会报
+        // "Input data contains inf, while missing is not set to inf"
+        for (int d = 0; d < _n_features; d++) {
+            if (std::isinf(features[d])) features[d] = NAN;
+        }
 
         // 创建 DMatrix (1 row × n_features)
+        // missing=INFINITY: 让 XGBoost 把 inf/NaN 都识别为 missing（兼容 FormulaNode
+        // 除零产生的 inf 和滚动窗口未填满产生的 NaN）
         DMatrixHandle dmat = nullptr;
-        int ret = XGDMatrixCreateFromMat(features.data(), 1, _n_features, NAN, &dmat);
+        int ret = XGDMatrixCreateFromMat(features.data(), 1, _n_features,
+                                          std::numeric_limits<float>::infinity(), &dmat);
         if (ret != 0) {
             WARN("[XGBoost:{}] Failed to create DMatrix: {}", _id, XGBGetLastError());
             continue;
@@ -177,7 +209,7 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         const float* out_result = nullptr;
 
 #if XGBOOST_VER_MAJOR >= 2
-        const char* config = R"({"type": 0, "training": false, "strict_shape": true})";
+        const char* config = R"({"type": 0, "training": false, "strict_shape": true, "iteration_begin": 0, "iteration_end": -1})";
         ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
 #else
         bst_ulong out_shape_val = 0;
@@ -227,6 +259,16 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                     context.set(key, Vector<double>{val});
                 }
             }
+#ifdef _DEBUG
+            // 调试：打印 probs（仅首个 symbol 避免刷屏）
+            if (!_resolved_features.empty() && symbol == _resolved_features.begin()->first) {
+                String msg = "[XGBoost:" + std::to_string(_id) + "] " + symbol + " probs:";
+                for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
+                    msg += " " + std::to_string(static_cast<double>(out_result[i]));
+                }
+                INFO("{}", msg);
+            }
+#endif
             break;
         case XGBObjective::RegSquaredError: {
             double val = (total > 0) ? static_cast<double>(out_result[0]) : 0.0;

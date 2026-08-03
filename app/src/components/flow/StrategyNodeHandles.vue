@@ -12,13 +12,13 @@
       class="connection-handle left-handle input-handle"
     />
 
-    <!-- HMM 特殊处理：多个独立输出 handles -->
+    <!-- HMM 特殊处理：多个独立输出 handles（多输出统一 field-* 格式） -->
     <template v-if="nodeType === 'hmm'">
       <div class="hmm-outputs">
         <Handle
           type="source"
           :position="Position.Right"
-          id="hmm_state"
+          id="field-hmm_state"
           class="connection-handle right-handle output-handle hmm-handle"
         />
         <span class="hmm-handle-label">状态</span>
@@ -27,7 +27,7 @@
         <Handle
           type="source"
           :position="Position.Right"
-          id="hmm_probs"
+          id="field-hmm_probs"
           class="connection-handle right-handle output-handle hmm-handle"
         />
         <span class="hmm-handle-label">概率</span>
@@ -36,7 +36,7 @@
         <Handle
           type="source"
           :position="Position.Right"
-          id="hmm_transition"
+          id="field-hmm_transition"
           class="connection-handle right-handle output-handle hmm-handle"
         />
         <span class="hmm-handle-label">转移</span>
@@ -45,7 +45,7 @@
         <Handle
           type="source"
           :position="Position.Right"
-          id="hmm_duration"
+          id="field-hmm_duration"
           class="connection-handle right-handle output-handle hmm-handle"
         />
         <span class="hmm-handle-label">持续</span>

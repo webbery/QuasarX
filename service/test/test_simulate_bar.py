@@ -114,7 +114,7 @@ def simulate_bar(token: str, bar: dict) -> dict:
     return resp.json()
 
 
-def load_strategy(token: str, name: str, script: dict) -> dict:
+def api_load_strategy(token: str, name: str, script: dict) -> dict:
     """POST /v0/strategy action=load — 加载策略到 StrategySubSystem（不保存文件、不 Run）"""
     headers = {"Authorization": token}
     resp = requests.post(
@@ -174,7 +174,7 @@ def main():
     # 加载策略到 StrategySubSystem
     print(f"\n=== 加载策略 ===")
     strategy_filename = Path(args.strategy).name
-    result = load_strategy(token, strategy_filename, strategy)
+    result = api_load_strategy(token, strategy_filename, strategy)
     print(f"  {result.get('message', 'unknown')}: {result.get('name', '')}")
 
     # 确定日期

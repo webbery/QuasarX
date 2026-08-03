@@ -497,6 +497,19 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
                 price = histExchange->GetPrimitivePrice(item._symbol, curIndex - 1);
             }
         }
+        // 日终/实盘模式：BacktestContext 不存在（histExchange 为 null），
+        // 从 DataContext 拿原始收盘价（org_close，QuoteInputNode 写入）
+        if (price <= 0.0) {
+            String orgKey = symbolName + ".org_close";
+            if (context.exist(orgKey)) {
+                const auto& val = context.get(orgKey);
+                if (auto* vec = std::get_if<Vector<double>>(&val)) {
+                    if (!vec->empty()) price = vec->back();
+                } else if (auto* scalar = std::get_if<double>(&val)) {
+                    price = *scalar;
+                }
+            }
+        }
 
         if (price <= 0) {
             WARN("Invalid price for symbol {} in backtest context", symbolName);

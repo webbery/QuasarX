@@ -374,11 +374,11 @@ const isDataFieldParam = (key: string) => {
 // Label 参数对应的 Handle ID 映射（key 是中文 label）
 const getLabelHandleId = (key: string) => {
     const handleMap: Record<string, string> = {
-        // EMD 输出
-        'IMF 数量': 'IMF',
-        '能量变化率': 'energy_velocity',
-        '成交量体制': 'volume_regime',
-        // Breakout 输入
+        // EMD 输出（多输出统一 field-* 格式）
+        'IMF 数量': 'field-IMF',
+        '能量变化率': 'field-energy_velocity',
+        '成交量体制': 'field-volume_regime',
+        // Breakout 输入（多输入统一 input-* 格式）
         '当前价格': 'input-value',
         '上轨': 'input-upper',
         '下轨': 'input-lower',

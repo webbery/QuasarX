@@ -100,6 +100,10 @@ public:
     const Edges& ins() const { return _ins; }
 
     uint32_t id() { return _id; }
+
+    // BFS 遍历所有上游节点，找到 QuoteInputNode 并提取其 symbol 集合
+    Set<symbol_t> discoverUpstreamSymbols();
+
 protected:
     // 从连接图解析所有输入映射: dataName → contextKey
     // 遍历 _ins，匹配上游 out_elements，提取 sourceHandle 中的数据名

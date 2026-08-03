@@ -3,6 +3,7 @@
 #include "StrategyNode.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
+#include "Util/system.h"
 #include "server.h"
 #include "boost/algorithm/string/join.hpp"
 #include "boost/algorithm/string/replace.hpp"
@@ -153,18 +154,19 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     auto callableConfig = config;
     callableConfig["_windowBars"] = windowBars;
 
-    // 3. 从 _params 的 key 中提取所有 symbol
-    //    key 格式: "sz.800001.close" → symbol = "sz.800001"
+    // 3. 从上游 QuoteInputNode 提取 symbol 集合（BFS 遍历）
+    //    旧实现: 从 _params key 字符串按 '.' 拆分取最后一段之前的部分作为 symbol。
+    //    旧实现的 bug: 上游 key 格式为 {symbol}.{label}.{field}（3 段，如 EMDNode）
+    //    时会错误地把 "sz.000423.emd" 解析为 symbol，导致 _callables key 错位
+    //    和 output_key 与上游 key 冲突。
+    //    新实现: 用基类的 discoverUpstreamSymbols() 从所有上游 QuoteInputNode
+    //    收集真正的 symbol 集合，绕过字符串格式假设。
     Set<String> symbolSet;
-    for (auto& [key, type] : _params) {
-        Vector<String> tokens;
-        split(key, tokens, ".");
-        if (tokens.size() < 2) continue;
-        // 去掉最后一个 token（字段名），剩余部分拼接为 symbol
-        tokens.pop_back();
-        String symbol = boost::algorithm::join(tokens, ".");
-        symbolSet.insert(symbol);
+    for (auto sym : discoverUpstreamSymbols()) {
+        symbolSet.insert(get_symbol(sym));
     }
+    DEBUG_INFO("[FunctionNode:{}] Init: discoverUpstreamSymbols → {} symbols",
+         _id, symbolSet.size());
 
     // 4. 为每个 symbol 创建独立的 callable 实例
     auto factoryIt = intrinsic_functions.find(methodName);

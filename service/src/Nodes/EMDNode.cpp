@@ -82,20 +82,49 @@ bool EMDNode::Init(const nlohmann::json& config) {
         _params.merge(input_names);
     }
 
-    // 构建基础输出: label.nimf_0, label.nimf_1, ...
-    for (auto& item : _params) {
-        for (int i = 0; i < _numIMFs; ++i) {
-            String outKey = _label + ".nimf_" + std::to_string(i);
-            _outputs[outKey] = ArgType::Double_TimeSeries;
+    // BFS 上游发现 symbol 列表，用于 per-symbol 输出注册
+    auto symbolSet = discoverUpstreamSymbols();
+    if (symbolSet.empty()) {
+        WARN("EMDNode: no upstream symbols found");
+        return false;
+    }
+    // 缓存 "sz.000423." 形式的 prefix 集合，Process 中按 inputKey 前缀匹配
+    // 修复 bug: 旧实现用 inputKey.find('.') 截取 prefix，对 "sz.000423.volume"
+    // 会截成 "sz."（symbol 自身的 '.' 被错误吃掉），导致 per-symbol 输出
+    // 全部写到错误 key "sz.emd.nimf_0"，下游 FunctionNode 找不到对应 context
+    _symbolPrefixes.clear();
+    for (auto sym : symbolSet) {
+        _symbolPrefixes.insert(get_symbol(sym) + ".");
+    }
+
+    // 解析实际连接的输入，找出 volume 数据的 context key
+    // resolveInputConnections() 从 sourceHandle 提取数据名（如 "1-volume" → "volume"）
+    if (_computeVolumeRegime) {
+        auto resolvedInputs = resolveInputConnections();
+        for (auto& [dataName, contextKey] : resolvedInputs) {
+            if (dataName == "volume") {
+                _volumeContextKey = contextKey;
+                break;
+            }
+        }
+        if (_volumeContextKey.empty()) {
+            WARN("EMDNode: volume_regime requested but no volume input connected (sourceHandle must carry 'volume')");
         }
     }
 
-    // 根据开关注册衍生特征输出
-    if (_computeEnergyVelocity) {
-        _outputs[_label + ".energy_velocity"] = ArgType::Double_TimeSeries;
-    }
-    if (_computeVolumeRegime) {
-        _outputs[_label + ".volume_regime"] = ArgType::Double_TimeSeries;
+    // 构建 per-symbol 输出: {symbol}.label.nimf_0, ...
+    for (auto& sym : symbolSet) {
+        String prefix = get_symbol(sym);
+        for (int i = 0; i < _numIMFs; ++i) {
+            String outKey = prefix + "." + _label + ".nimf_" + std::to_string(i);
+            _outputs[outKey] = ArgType::Double_TimeSeries;
+        }
+        if (_computeEnergyVelocity) {
+            _outputs[prefix + "." + _label + ".energy_velocity"] = ArgType::Double_TimeSeries;
+        }
+        if (_computeVolumeRegime) {
+            _outputs[prefix + "." + _label + ".volume_regime"] = ArgType::Double_TimeSeries;
+        }
     }
 
     String methodName;
@@ -265,6 +294,23 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
             return NodeProcessResult::Skip;
         }
 
+        // 从 inputKey 匹配出正确的 symbol prefix
+        // 修复 bug: 旧实现用 inputKey.find('.') 截取，对 "sz.000423.volume"
+        // 会截成 "sz."（symbol 自身的 '.' 被吃掉）。改用 Init 时缓存的
+        // _symbolPrefixes（"sz.000423."）按前缀匹配，避免被 symbol 中的 '.' 干扰
+        String prefix;
+        for (auto& p : _symbolPrefixes) {
+            if (inputKey.size() > p.size() &&
+                inputKey.compare(0, p.size(), p) == 0) {
+                prefix = p;
+                break;
+            }
+        }
+        if (prefix.empty()) {
+            WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
+            return NodeProcessResult::Skip;
+        }
+
         Vector<Vector<double>> imfs;
 
         if (_windowSize > 0) {
@@ -324,11 +370,11 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
             }
         }
 
-        // 写入 IMF 输出
+        // 写入 per-symbol IMF 输出: {symbol}.label.nimf_N
         int idx = 0;
         for (auto& imf : imfs) {
             if (idx >= _numIMFs) break;
-            String outKey = _label + ".nimf_" + std::to_string(idx);
+            String outKey = prefix + _label + ".nimf_" + std::to_string(idx);
             context.set(outKey, imf);
             ++idx;
         }
@@ -336,15 +382,17 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
         // 计算衍生特征（如果启用）
         if (_computeEnergyVelocity) {
             auto energy_vel = computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
-            context.set(_label + ".energy_velocity", energy_vel);
+            context.set(prefix + _label + ".energy_velocity", energy_vel);
         }
         if (_computeVolumeRegime) {
+            // 从当前 inputKey 推导同 symbol 的 volume key
+            String volKey = prefix + "volume";
             try {
-                const auto& vol = context.get<Vector<double>>("volume");
+                const auto& vol = context.get<Vector<double>>(volKey);
                 auto vol_regime = computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);
-                context.set(_label + ".volume_regime", vol_regime);
+                context.set(prefix + _label + ".volume_regime", vol_regime);
             } catch (...) {
-                WARN("EMDNode: volume_regime requested but no volume input found");
+                WARN("EMDNode: volume_regime requested but no volume input found for {}", prefix);
             }
         }
     }

@@ -92,6 +92,11 @@ private:
     // 收盘数据写入 stock_1d（15:00 后的第一个 tick 触发）
     void WriteCloseDataToStock1d(const QuoteInfo& quote);
 
+    // 后复权因子: 从 stock_1d 最新 bar 查 adj_close/close，更新 _adjFactorCache
+    void refreshAdjFactor(const String& code);
+    // 读缓存因子（无缓存时返回 1.0）
+    double getAdjFactor(symbol_t sym) const;
+
 private:
     String _api_key;
     String _base_url;
@@ -143,4 +148,8 @@ private:
 
     // 批次偏移（worker 线程内使用，记录当前请求到哪一批）
     int _offset = 0;
+
+    // 后复权因子缓存: symbol → adj_close/close（收盘 recalc 后刷新，盘中用旧值近似）
+    Map<symbol_t, double> _adjFactorCache;
+    mutable std::mutex _adjFactorMtx;
 };

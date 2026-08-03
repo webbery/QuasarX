@@ -73,47 +73,15 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error(error);
     }
 
-    // 沿路径回溯，找到所有可达的 QuoteInputNode（数据源的真实入口）
-    // 使用 BFS 遍历所有上游节点，收集所有 QuoteInputNode 的 symbol
-    Set<symbol_t> upstreamSymbols;
-    Set<QNode*> visited;
-    Vector<QNode*> queue;
-
-    // 从直接上游节点开始 BFS
-    for (auto& item: _ins) {
-        queue.push_back(item.second);
-    }
-
-    while (!queue.empty()) {
-        QNode* current = queue.back();
-        queue.pop_back();
-
-        if (visited.count(current)) continue;
-        visited.insert(current);
-
-        // 如果是 QuoteInputNode，提取其 symbol
-        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(current)) {
-            const auto& symbols = quoteNode->GetSymbols();
-            for (const auto& sym : symbols) {
-                upstreamSymbols.insert(sym);
-            }
-        }
-
-        // 继续向上游遍历
-        for (auto& item: current->ins()) {
-            if (!visited.count(item.second)) {
-                queue.push_back(item.second);
-            }
-        }
-    }
+    // BFS 上游找到所有可达的 QuoteInputNode 的 symbol
+    Set<symbol_t> upstreamSymbols = discoverUpstreamSymbols();
 
     if (upstreamSymbols.empty()) {
-        WARN("[SignalNode:{}] No upstream symbols found from QuoteInputNode (traversed {} nodes), signal node will be skipped", _id, visited.size());
+        WARN("[SignalNode:{}] No upstream symbols found from QuoteInputNode, signal node will be skipped", _id);
         return false;
     }
 
-    INFO("[SignalNode:{}] Found {} symbols from {} upstream nodes (traversed {} nodes)",
-         _id, upstreamSymbols.size(), _ins.size(), visited.size());
+    INFO("[SignalNode:{}] Found {} symbols from upstream", _id, upstreamSymbols.size());
 
     for (const auto& sym : upstreamSymbols) {
         _pools.emplace_back(sym);

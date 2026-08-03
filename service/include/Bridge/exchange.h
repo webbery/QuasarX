@@ -370,6 +370,11 @@ struct QuoteInfo {
   time_t _time = 0;
   double _open;
   double _close;
+  // 后复权价格（指标/XGBoost 默认用；回测从 _csvs HFQ 取，实盘/日终从复权因子换算）
+  double _adj_open = 0.0;
+  double _adj_close = 0.0;
+  double _adj_high = 0.0;
+  double _adj_low = 0.0;
 
   uint64_t _volume;
   double _value;
@@ -391,7 +396,7 @@ struct QuoteInfo {
   char _confidence;// 置信度 0-100
 
   YAS_DEFINE_STRUCT_SERIALIZE("QuoteInfo", _symbol, _time, _open, _close,
-    _volume, _value, _turnover, _high, _low, _bidPrice, _bidVolume, _askPrice, _askVolume,
+    _adj_open, _adj_close, _adj_high, _adj_low, _volume, _value, _turnover, _high, _low, _bidPrice, _bidVolume, _askPrice, _askVolume,
     _source, _confidence, _upper, _lower);
 };
 

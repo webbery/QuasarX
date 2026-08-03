@@ -214,9 +214,12 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>> arithme
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_same_v<T, double>) {
                 auto r = std::get<double>(right);
-                if (std::abs(r) < 1e-10) {
-                    WARN("Division by zero detected for symbol: {}", r);
-                    result = 0.0;
+                // 修复: r 接近 0 时旧实现返回 0.0，污染下游特征（如 pvs_ma），
+                // 让 XGBoost 收到错误值并产生误导预测。改为返回 NaN，
+                // 让 XGBoost 当 missing 处理 + XGBoostNode.allInvalid 触发 skip
+                if (std::abs(r) < 1e-10 || std::isnan(r)) {
+                    WARN("Division by zero / NaN detected for symbol: {}", r);
+                    result = std::nan("nan");
                 } else { [[likely]]
                     result = (l / r);
                 }

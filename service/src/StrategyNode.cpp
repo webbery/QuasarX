@@ -1,5 +1,37 @@
 #include "StrategyNode.h"
+#include "Nodes/QuoteNode.h"
 
+Set<symbol_t> QNode::discoverUpstreamSymbols() {
+    Set<symbol_t> symbols;
+    Set<QNode*> visited;
+    Vector<QNode*> queue;
+
+    for (auto& item : _ins) {
+        queue.push_back(item.second);
+    }
+
+    while (!queue.empty()) {
+        QNode* current = queue.back();
+        queue.pop_back();
+
+        if (visited.count(current)) continue;
+        visited.insert(current);
+
+        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(current)) {
+            for (const auto& sym : quoteNode->GetSymbols()) {
+                symbols.insert(sym);
+            }
+        }
+
+        for (auto& item : current->ins()) {
+            if (!visited.count(item.second)) {
+                queue.push_back(item.second);
+            }
+        }
+    }
+
+    return symbols;
+}
 
 Map<String, ArgType> QNode::out_elements() {
     Map<String, ArgType> elems;
@@ -25,11 +57,22 @@ Map<String, String> QNode::resolveInputConnections() {
 
             if (!dataName.empty()) {
                 // 有明确的数据名，从 out_elements 中匹配 context key
+                // 优先精确匹配（key 以 ".{dataName}" 结尾），回退到子串匹配
+                String fallbackKey;
                 for (auto& [key, type] : outs) {
-                    if (key.find(dataName) != String::npos) {
+                    auto suffix = "." + dataName;
+                    if (key.size() >= suffix.size() &&
+                        key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
                         dataToContext[dataName] = key;
+                        fallbackKey.clear();
                         break;
                     }
+                    if (fallbackKey.empty() && key.find(dataName) != String::npos) {
+                        fallbackKey = key;
+                    }
+                }
+                if (dataToContext.find(dataName) == dataToContext.end() && !fallbackKey.empty()) {
+                    dataToContext[dataName] = fallbackKey;
                 }
             } else {
                 // sourceHandle 仅为节点 ID，无明确数据名

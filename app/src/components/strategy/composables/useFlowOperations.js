@@ -149,7 +149,7 @@ export function useFlowOperations(state) {
     // 收集被删除边涉及的 EMD 源节点
     const emdSourceNodes = new Set()
     edges.forEach(edge => {
-      if (edge.sourceHandle === 'energy_velocity' || edge.sourceHandle === 'volume_regime') {
+      if (edge.sourceHandle === 'field-energy_velocity' || edge.sourceHandle === 'field-volume_regime') {
         emdSourceNodes.add(edge.source)
       }
     })
@@ -422,8 +422,8 @@ export function useFlowOperations(state) {
     const nodeEdges = edges.filter(e => e.source === nodeId)
     const connectedHandles = new Set(nodeEdges.map(e => e.sourceHandle))
 
-    const hasEnergyVelocity = connectedHandles.has('energy_velocity')
-    const hasVolumeRegime = connectedHandles.has('volume_regime')
+    const hasEnergyVelocity = connectedHandles.has('field-energy_velocity')
+    const hasVolumeRegime = connectedHandles.has('field-volume_regime')
 
     // 只有值变化时才更新（key 是中文 label）
     const currentEV = node.data.params?.['能量变化率']?.value === '能量变化率'
@@ -516,11 +516,11 @@ export function useFlowOperations(state) {
 
     let isValidSource = false
     if (sourceNodeType === 'input') {
+      // Input 节点：只允许 field-* 输出
       isValidSource = sourceHandle?.startsWith('field-')
-    } else if (sourceNodeType === 'emd' || sourceNodeType === 'hmm') {
-      isValidSource = !!sourceHandle
     } else {
-      isValidSource = sourceHandle === 'output'
+      // 任何节点：output（通用单输出）或 field-*（多输出统一格式）
+      isValidSource = sourceHandle === 'output' || sourceHandle?.startsWith('field-')
     }
 
     if (!isValidSource) {
@@ -555,9 +555,13 @@ export function useFlowOperations(state) {
       if (!targetSlot) return false
 
       // 如果源是 InputNode 的 field handle，验证 field 匹配
+      // 非 Input 节点的 field-* 输出（EMD/HMM/Function 等）：只验证 slot 存在，不做 field 名匹配
       if (connection.sourceHandle?.startsWith('field-')) {
-        const sourceField = connection.sourceHandle.replace('field-', '')
-        if (sourceField !== targetSlot.field) return false
+        if (sourceNodeType === 'input') {
+          const sourceField = connection.sourceHandle.replace('field-', '')
+          if (sourceField !== targetSlot.field) return false
+        }
+        // 非 Input 节点的 field-* 输出：允许连接到任何 input-* 槽位
       }
 
       // 防止重复连接同一槽位
