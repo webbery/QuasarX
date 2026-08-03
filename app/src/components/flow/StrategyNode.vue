@@ -33,7 +33,7 @@
                     <Handle
                         type="target"
                         :position="Position.Left"
-                        :id="'input-' + slot.slot"
+                        :id="getSlotInputHandleId(slot)"
                         class="connection-handle left-handle function-slot-handle"
                     />
                     <div class="param-label">{{ slot.label }}</div>
@@ -218,7 +218,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch, onMounted, onUnmounted, type PropType } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import { functionInputSlots } from '@/lib/nodes/configs/function'
+import { functionInputSlots, getSlotInputHandleId } from '@/lib/nodes/configs/function'
 import { getNodeIcon, getNodeColor } from '@/lib/nodes'
 import { useNodeSelection } from './composables/useNodeSelection'
 import { useNodeEditing } from './composables/useNodeEditing'

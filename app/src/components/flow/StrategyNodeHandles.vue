@@ -3,12 +3,21 @@
 
 <template>
   <div class="node-connection-row">
-    <!-- 普通节点 / 单输入指标：单一输入连接点 -->
+    <!-- 非 function / 非 input / 非 breakout 节点：通用单输入 -->
     <Handle
-      v-if="(nodeType !== 'input' && nodeType !== 'function' && nodeType !== 'breakout') || (nodeType === 'function' && functionSlots.length <= 1)"
+      v-if="shouldShowGenericInput"
       type="target"
       :position="Position.Left"
       id="input"
+      class="connection-handle left-handle input-handle"
+    />
+
+    <!-- 单输入 function 节点（MA/STD/R2/ZScore/Return）：命名 id 与多输入保持一致 -->
+    <Handle
+      v-if="shouldShowSingleFunctionInput"
+      type="target"
+      :position="Position.Left"
+      :id="singleFunctionInputId"
       class="connection-handle left-handle input-handle"
     />
 
@@ -68,7 +77,7 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
 import { computed } from 'vue'
-import { functionInputSlots } from '@/lib/nodes/configs/function'
+import { functionInputSlots, getFunctionInputHandleId } from '@/lib/nodes/configs/function'
 
 const props = defineProps<{
   nodeType: string
@@ -85,15 +94,26 @@ const emdImfCount = computed(() => {
   return numParam?.value || 5
 })
 
-const functionSlots = computed(() => {
-  if (props.nodeType !== 'function' || !props.params) return []
+const functionMethod = computed(() => {
+  if (props.nodeType !== 'function' || !props.params) return 'MA'
   // params key 是中文 label（如 "方法"），不是英文 schema.key（如 "method"）
   const params = props.params
-  const method = params['方法']?.value || params.method?.value
+  return params['方法']?.value || params.method?.value
     || Object.values(params).find((c: any) => c?.type === 'select' && Array.isArray(c.options))?.value
     || 'MA'
-  return functionInputSlots[method] || []
 })
+
+const functionSlots = computed(() => functionInputSlots[functionMethod.value] || [])
+
+const shouldShowGenericInput = computed(() => {
+  return props.nodeType !== 'input' && props.nodeType !== 'function' && props.nodeType !== 'breakout'
+})
+
+const shouldShowSingleFunctionInput = computed(() => {
+  return props.nodeType === 'function' && functionSlots.value.length <= 1
+})
+
+const singleFunctionInputId = computed(() => getFunctionInputHandleId(functionMethod.value))
 </script>
 
 <style scoped>

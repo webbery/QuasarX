@@ -279,6 +279,9 @@ async function onStrategyChange() {
     if (!data) return
     const graphData = typeof data === 'string' ? JSON.parse(data) : data
     graphData.id = selectedStrategyId.value
+    // 切换策略前清空旧 labelSource，避免发往后端的 symbol 指向已删除标的
+    // TrainPanel.vue 的 watch 在 script 变化时会用新策略的首位 code 自动重新填充
+    state.config.labelSource = ''
     script.value = JSON.stringify(graphData)
     // 检测是否包含任何 ML 节点（当前仅 XGBoost）
     hasMLNode.value = graphData.nodes?.some((n: any) => {

@@ -1,6 +1,6 @@
 import { message } from '@/tool'
 import { createStrategyNode } from '@/lib/nodes'
-import { functionInputSlots } from '@/lib/nodes/configs/function'
+import { functionInputSlots, getFunctionInputHandleId, getSlotInputHandleId } from '@/lib/nodes/configs/function'
 
 /**
  * 导出文件格式标识
@@ -168,23 +168,23 @@ function normalizeEdgeHandles(edges, nodes) {
           targetHandle = 'input-value' // 默认
         }
       } else if (targetNodeType === 'function') {
-        // FunctionNode: 根据 sourceHandle 中的字段名推断目标槽位
+        // FunctionNode: 与渲染共享同一工具函数
+        // - 单输入方法（MA/STD/...）：getFunctionInputHandleId 直接给出首槽 id
+        // - 多输入方法（VPCorr/ATR）：按源字段名匹配槽位，再走 getSlotInputHandleId
         const method = nodeMethodMap[edge.target] || 'MA'
-        const slots = functionInputSlots[method] || [{ slot: 'price' }]
+        const slots = functionInputSlots[method] || functionInputSlots['MA'] || []
 
-        // 从原始 sourceHandle 提取字段名
-        let srcField = ''
-        if (edge.sourceHandle && edge.sourceHandle.includes('-')) {
-          srcField = edge.sourceHandle.split('-').slice(1).join('-')
+        if (slots.length <= 1) {
+          targetHandle = getFunctionInputHandleId(method)
+        } else {
+          // 从原始 sourceHandle 提取字段名
+          let srcField = ''
+          if (edge.sourceHandle && edge.sourceHandle.includes('-')) {
+            srcField = edge.sourceHandle.split('-').slice(1).join('-')
+          }
+          const matchedSlot = srcField ? slots.find(s => s.field === srcField) : null
+          targetHandle = getSlotInputHandleId(matchedSlot || slots[0])
         }
-
-        // 匹配槽位: 字段名 → slot 名
-        let targetSlot = slots[0]?.slot || 'price'
-        if (srcField && slots.length > 1) {
-          const matchedSlot = slots.find(s => s.field === srcField)
-          if (matchedSlot) targetSlot = matchedSlot.slot
-        }
-        targetHandle = `input-${targetSlot}`
       } else {
         // 其他节点: 单一输入
         targetHandle = 'input'

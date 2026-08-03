@@ -28,6 +28,40 @@ export const functionInputSlots: Record<string, Array<{ slot: string; field: str
   ],
 }
 
+const INPUT_HANDLE_PREFIX = 'input-'
+
+/**
+ * 统一 function 节点输入 handle id 规则
+ * - 单输入方法（MA/STD/R2/ZScore/Return）→ "input-{firstSlot.slot}"，如 "input-price"
+ * - 多输入方法（VPCorr/ATR）→ 同样的命名格式
+ * - 未识别方法兜底为 "input-price"（MA 槽位）
+ *
+ * 渲染（StrategyNode / StrategyNodeHandles）、导入（useStrategyImportExport）、
+ * 校验（useFlowOperations 的 input- 前缀检查）共用此函数，避免历史 bug 再次分叉。
+ */
+export const getFunctionInputHandleId = (method: string): string => {
+  const slots = functionInputSlots[method]
+  if (slots && slots.length > 0) {
+    return `${INPUT_HANDLE_PREFIX}${slots[0].slot}`
+  }
+  return `${INPUT_HANDLE_PREFIX}${(functionInputSlots['MA']?.[0]?.slot) || 'price'}`
+}
+
+/**
+ * 获取指定方法全部输入 handle id（多输入节点用）
+ */
+export const getFunctionInputHandleIds = (method: string): string[] => {
+  const slots = functionInputSlots[method] || []
+  return slots.map(s => `${INPUT_HANDLE_PREFIX}${s.slot}`)
+}
+
+/**
+ * 任意槽位 → handle id。多输入节点每个 slot 渲染 handle 时调用，与单输入规则共享同一前缀常量。
+ */
+export const getSlotInputHandleId = (slot: { slot: string }): string => {
+  return `${INPUT_HANDLE_PREFIX}${slot.slot}`
+}
+
 export const basicIndexNode: NodeRegistryEntry = {
   id: 'basic-index',
   label: '指标计算',

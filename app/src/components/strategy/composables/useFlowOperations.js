@@ -537,9 +537,11 @@ export function useFlowOperations(state) {
     // FunctionNode 命名槽位验证
     if (targetNodeType === 'function') {
       // 目标 handle 必须是 'input-{slot}' 格式
-      if (!targetHandle || !targetHandle.startsWith('input-')) {
+      if (!targetHandle) {
         return false
       }
+      if (targetHandle === 'input')
+        return true
 
       const slotName = targetHandle.replace('input-', '')
       // params key 是中文 label（如 "方法"），不是英文 schema.key（如 "method"）
@@ -553,16 +555,6 @@ export function useFlowOperations(state) {
       const targetSlot = slots.find(s => s.slot === slotName)
 
       if (!targetSlot) return false
-
-      // 如果源是 InputNode 的 field handle，验证 field 匹配
-      // 非 Input 节点的 field-* 输出（EMD/HMM/Function 等）：只验证 slot 存在，不做 field 名匹配
-      if (connection.sourceHandle?.startsWith('field-')) {
-        if (sourceNodeType === 'input') {
-          const sourceField = connection.sourceHandle.replace('field-', '')
-          if (sourceField !== targetSlot.field) return false
-        }
-        // 非 Input 节点的 field-* 输出：允许连接到任何 input-* 槽位
-      }
 
       // 防止重复连接同一槽位
       const existingConnection = getEdges.value.find(edge =>

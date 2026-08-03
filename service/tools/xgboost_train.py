@@ -169,12 +169,26 @@ def main():
     y = raw_label[valid_mask].values
 
     if len(X) == 0:
-        # 诊断：报告每列剩余有效行数
+        # 诊断：报告每列剩余有效行数 + 所有 partial NaN 列的 NaN 位置
         col_valid = {c: int(df[c].notna().sum()) for c in feature_cols}
-        min_col = min(col_valid, key=col_valid.get)
+        label_valid = int(raw_label.notna().sum())
+        partial = sorted(
+            [(c, v) for c, v in col_valid.items() if v < total_rows],
+            key=lambda kv: kv[1]
+        )
+        partial_detail = []
+        for c, v in partial[:6]:   # 最多展示 6 个最差列，避免日志过长
+            nan_idx = df.index[df[c].isna()].tolist()
+            if len(nan_idx) <= 10:
+                idx_str = ",".join(str(i) for i in nan_idx)
+            else:
+                idx_str = f"{','.join(str(i) for i in nan_idx[:5])}...{','.join(str(i) for i in nan_idx[-5:])} (共{len(nan_idx)}个)"
+            partial_detail.append(f"{c}={v}/{total_rows} (NaN@[{idx_str}])")
+        if len(partial) > 6:
+            partial_detail.append(f"...其余 {len(partial) - 6} 列省略")
         emit({"type": "error", "message": (
-            f"标签过滤后无有效样本。标签有效: {int(raw_label.notna().sum())}/{total_rows}。"
-            f"特征列最少有效值: {min_col}={col_valid[min_col]}/{total_rows}。"
+            f"标签过滤后无有效样本。标签有效: {label_valid}/{total_rows}。"
+            f"部分 NaN 特征列 ({len(partial)} 个): {'; '.join(partial_detail)}。"
             f"可能原因：特征间时间对齐不一致，或标签来源列与特征列日期范围不重叠。"
         )})
         sys.exit(1)
