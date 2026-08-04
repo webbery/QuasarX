@@ -485,21 +485,22 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
         item._action = action;
 
         String symbolName = get_symbol(item._symbol);
-
+        if (symbolName == "sz.002825") {
+            printf("111");
+        }
         // 获取未复权价格（原始价格）用于回测交易
         // 使用 BacktestContext 中每个 symbol 独立的 curIndex，而非全局 epoch
         // stepForward 已经 incrementCurIndex，所以当前 bar 的索引是 curIndex - 1
         double price = 0.0;
-        if (histExchange && btContext) {
+        if (_server->GetRunningMode() == RuningType::Backtest && histExchange && btContext) {
             uint32_t curIndex = btContext->getCurIndex(item._symbol);
-            auto t = context.Current();
             if (curIndex > 0) {
                 price = histExchange->GetPrimitivePrice(item._symbol, curIndex - 1);
             }
         }
         // 日终/实盘模式：BacktestContext 不存在（histExchange 为 null），
         // 从 DataContext 拿原始收盘价（org_close，QuoteInputNode 写入）
-        if (price <= 0.0) {
+        else {
             String orgKey = symbolName + ".org_close";
             if (context.exist(orgKey)) {
                 const auto& val = context.get(orgKey);

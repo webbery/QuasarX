@@ -445,8 +445,18 @@ run_id_t HistorySimulationBase::createBacktestContext(
 
     // 设置 CapitalPool 引用（资金统一管理）
     if (broker) {
-        context->setCapitalPool(broker->GetCapitalPool());
+        auto* pool = broker->GetCapitalPool();
+        context->setCapitalPool(pool);
         context->setStrategyName(strategy_name);
+        // 仅 Backtest/Simulation 在这里注册资金到 CapitalPool：
+        //   - Real 模式资金由券商账户管理，不进 CapitalPool
+        //   - Shadow 模式只记录日志不下单，无需资金
+        //   - BackTestHandler 路径（HTTP /v0/backtest）已 allocate 过，hasStrategy 跳过避免覆盖累积的资金
+        auto mode = _server->GetRunningMode();
+        if ((mode == RuningType::Backtest || mode == RuningType::Simualtion)
+            && pool && !pool->hasStrategy(strategy_name)) {
+            pool->allocate(strategy_name, initial_capital);
+        }
     }
 
     // 计算共同时间范围

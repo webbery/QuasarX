@@ -289,7 +289,7 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
 
         const int minLen = _windowSize > 0 ? _windowSize : 10;
         if (n < minLen) {
-            WARN("EMDNode input {} too short ({} points), need at least {}",
+            DEBUG_INFO("EMDNode input {} too short ({} points), need at least {}",
                  inputKey, n, minLen);
             return NodeProcessResult::Skip;
         }

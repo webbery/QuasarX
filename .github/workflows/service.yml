@@ -228,7 +228,8 @@ jobs:
 
       - name: Extract build artifact to workspace root
         run: |
-          cp -f build-artifact/build/QuantService build-artifact/build/QuantService.debug build-artifact/build/config.template.json . 2>/dev/null || true
+          ls -la .
+          cp -rf build-artifact/build/* . 2>/dev/null || true
           cp -rf build-artifact/tools . 2>/dev/null || true
           ls -la QuantService tools/ config.template.json
           rm -rf build-artifact

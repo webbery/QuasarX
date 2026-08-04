@@ -44,6 +44,10 @@ public:
     // 查询策略可用资金（快捷方法）
     double getAvailable(const String& strategy) const;
 
+    // 判断策略是否已在池中注册（与 BackTestHandler 路径的对接检查，
+    // 避免 StartDaily 路径重复 allocate 把已累积的资金覆盖回 initial_capital）
+    bool hasStrategy(const String& strategy) const;
+
     // 查询策略已用资金（持仓市值 + 费用占用）
     double getUsed(const String& strategy) const;
 

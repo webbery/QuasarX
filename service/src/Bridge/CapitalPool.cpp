@@ -107,6 +107,11 @@ double CapitalPool::getAvailable(const String& strategy) const {
     return 0.0;
 }
 
+bool CapitalPool::hasStrategy(const String& strategy) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _strategies.count(strategy) > 0;
+}
+
 double CapitalPool::getUsed(const String& strategy) const {
     std::lock_guard<std::mutex> lock(_mutex);
 

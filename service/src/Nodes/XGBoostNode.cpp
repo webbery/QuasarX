@@ -209,7 +209,10 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         const float* out_result = nullptr;
 
 #if XGBOOST_VER_MAJOR >= 2
-        const char* config = R"({"type": 0, "training": false, "strict_shape": true, "iteration_begin": 0, "iteration_end": -1})";
+        // iteration_end=0 表示使用全部迭代（0 在 2.x/3.x 中特殊处理为 BoostedRounds）。
+        // 注意：iteration_end=-1 在 XGBoost 2.x C API 中等价于 0 棵树，
+        // 输出恒为 base_score 的均匀分布（margin=[0.5,0.5,0.5] → prob=1/3），任何输入都不变。
+        const char* config = R"({"type": 0, "training": false, "strict_shape": true, "iteration_begin": 0, "iteration_end": 0})";
         ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
 #else
         bst_ulong out_shape_val = 0;
@@ -262,7 +265,8 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
 #ifdef _DEBUG
             // 调试：打印 probs（仅首个 symbol 避免刷屏）
             if (!_resolved_features.empty() && symbol == _resolved_features.begin()->first) {
-                String msg = "[XGBoost:" + std::to_string(_id) + "] " + symbol + " probs:";
+                auto epoch = context.GetEpoch();
+                String msg = "[XGBoost:" + std::to_string(epoch) + "] " + symbol + " probs:";
                 for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
                     msg += " " + std::to_string(static_cast<double>(out_result[i]));
                 }
