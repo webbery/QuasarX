@@ -485,9 +485,6 @@ ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol
         item._action = action;
 
         String symbolName = get_symbol(item._symbol);
-        if (symbolName == "sz.002825") {
-            printf("111");
-        }
         // 获取未复权价格（原始价格）用于回测交易
         // 使用 BacktestContext 中每个 symbol 独立的 curIndex，而非全局 epoch
         // stepForward 已经 incrementCurIndex，所以当前 bar 的索引是 curIndex - 1

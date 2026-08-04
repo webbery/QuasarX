@@ -152,7 +152,7 @@ public:
         _epoch = epoch;
     }
 
-    uint64_t GetEpoch() {
+    uint64_t GetEpoch() const {
         return _epoch;
     }
 

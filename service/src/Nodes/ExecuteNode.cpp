@@ -2,6 +2,7 @@
 #include "ExchangeManager.h"
 #include "Nodes/ExecutionPlan.h"
 #include "MarketTiming/ImmediateTiming.h"
+#include "MarketTiming/ManualTiming.h"
 #include "MarketTiming/ShadowTiming.h"
 #include "server.h"
 #include "RiskContext.h"
@@ -32,12 +33,29 @@ namespace{
     };
 }
 ExecuteNode::ExecuteNode(Server* server):_server(server), _timing(nullptr){
+}
 
+ExecuteNode::~ExecuteNode() {
+    delete _timing;
+    _timing = nullptr;
 }
 
 bool ExecuteNode::Init(const nlohmann::json& config) {
-    int type = config["params"]["type"]["value"];
-    _timing = GenerateTiming((ExecuteType)type);
+    ExecuteType type = ExecuteType::Manual;
+    if (config.contains("params") && config["params"].contains("type")
+        && config["params"]["type"].contains("value")) {
+        int raw = config["params"]["type"]["value"].get<int>();
+        int maxVal = static_cast<int>(ExecuteType::Manual);
+        if (raw >= 0 && raw <= maxVal) {
+            type = static_cast<ExecuteType>(raw);
+        } else {
+            WARN("[ExecuteNode] Invalid ExecuteType value: {}, fallback to Manual", raw);
+        }
+    }
+    _execType = type;
+
+    delete _timing;
+    _timing = GenerateTiming(_execType);
     return true;
 }
 
@@ -248,7 +266,13 @@ ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)
         return new ShadowTiming(_server, config);
     }
 
-    // 非影子模式：使用原有逻辑
+    // 决策型（默认）：策略只产意图，不实际下单
+    if (type == ExecuteType::Manual) {
+        return new ManualTiming(_server);
+    }
+
+    // 实际下单（前端 ExecutionNode 下拉框可选配置）
+    // TODO: 完整支持 VWAP/TWAP/Breakout/LA/MOC
     switch (type)
     {
     case ExecuteType::ImmediatlyLimit:
@@ -256,9 +280,10 @@ ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)
     case ExecuteType::ImmediatlyMarket:
         return new ImmediateTiming(_server, false);
     default:
-        break;
+        WARN("[ExecuteNode] ExecuteType {} not implemented yet, fallback to Manual",
+             static_cast<int>(type));
+        return new ManualTiming(_server);
     }
-    return nullptr;
 }
 
 const List<Pair<symbol_t, TradeReport>>& ExecuteNode::GetReports() const {

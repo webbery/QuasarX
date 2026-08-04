@@ -1,0 +1,34 @@
+#pragma once
+#include "MarketTiming.h"
+
+class Server;
+enum class TradeAction: char;
+
+// 决策快照（ManualTiming 内部使用）
+struct DecisionSnapshot {
+    symbol_t _symbol;
+    TradeAction _action;
+    int64_t _quantity = 0;
+    double _price = 0.0;
+    int _flag = 0;
+    int _epoch = -1;
+};
+
+/**
+ * 决策型 Timing（ManualTiming）
+ *
+ * 用于 ExecuteType::Manual（默认）：策略只产意图，不实际下单。
+ * 累积决策，日终由 AgentSubSystem 调用 SendSummaryEmail 发送 SSE + 邮件。
+ */
+class ManualTiming : public ITimingStrategy {
+public:
+    ManualTiming(Server* server) : ITimingStrategy(server) {}
+    virtual bool processSignal(const String& strategy, const TradeSignal& signal,
+                               const DataContext& context) override;
+
+    // 发送汇总邮件（含 SSE），清空累积器
+    void SendSummaryEmail(const String& strategy);
+
+private:
+    Vector<DecisionSnapshot> _decisions;
+};

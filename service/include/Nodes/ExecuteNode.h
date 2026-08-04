@@ -11,11 +11,13 @@ enum class ExecuteType : char {
     Breakout,       // 突破入场
     LA,             // LiquidityAdaptive 流动性自适应
     MOC,
+    Manual,               // 决策型（默认）：策略只产意图，不实际下单
 };
 
 class ExecuteNode: public QNode {
 public:
-    ExecuteNode(Server* );
+    ExecuteNode(Server* server);
+    virtual ~ExecuteNode();
     virtual bool Init(const nlohmann::json& config);
     virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
 
@@ -23,9 +25,13 @@ public:
 
     const List<Pair<symbol_t, TradeReport>>& GetReports() const;
 
+    ExecuteType GetExecType() const { return _execType; }
+    ITimingStrategy* GetTiming() const { return _timing; }
+
 private:
     ITimingStrategy* GenerateTiming(ExecuteType type);
 private:
     Server* _server;
-    ITimingStrategy* _timing;
+    ITimingStrategy* _timing = nullptr;
+    ExecuteType _execType = ExecuteType::Manual;
 };

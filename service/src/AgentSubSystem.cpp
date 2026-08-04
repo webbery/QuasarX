@@ -17,6 +17,8 @@
 #include "yas/serialize.hpp"
 #include "BrokerSubSystem.h"
 #include "Nodes/SignalNode.h"
+#include "Nodes/ExecuteNode.h"
+#include "MarketTiming/ManualTiming.h"
 #include <exception>
 #include <stdexcept>
 #include <typeinfo>
@@ -1185,6 +1187,18 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             }
 
             if (success) {
+                // ManualTiming 模式下发送 SSE + 邮件通知
+                for (auto& node : flow._graph) {
+                    if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
+                        if (execNode->GetExecType() == ExecuteType::Manual) {
+                            if (auto* manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming())) {
+                                manualTiming->SendSummaryEmail(strategy);
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 // 提取信号
                 const auto& signals = context.getAllSignals();
                 nlohmann::json::array_t decisions;

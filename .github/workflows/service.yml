@@ -228,10 +228,11 @@ jobs:
 
       - name: Extract build artifact to workspace root
         run: |
-          ls -la .
+          ls -la build-artifact/build
           cp -rf build-artifact/build/* . 2>/dev/null || true
           cp -rf build-artifact/tools . 2>/dev/null || true
-          ls -la QuantService tools/ config.template.json
+          ls -la tools/
+          ls -la .
           rm -rf build-artifact
 
       # 下载第三方 so
