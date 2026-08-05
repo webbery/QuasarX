@@ -24,6 +24,7 @@
 #include "Util/DuckDBLogger.h"
 #include "Util/QuoteDB.h"
 #include "Util/FinanceDB.h"
+#include "Util/DecisionDB.h"
 #ifdef WIN32
 #define popen _popen
 #define pclose _pclose
@@ -386,6 +387,7 @@ void graceful_shutdown(int signo) {
     try { DuckDBLogger::instance().shutdown(); } catch (...) {}
     try { QuoteDB::instance().shutdown(); } catch (...) {}
     try { FinanceDB::instance().shutdown(); } catch (...) {}
+    try { DecisionDB::instance().shutdown(); } catch (...) {}
 
     // 2. 刷新日志
     try { spdlog::default_logger_raw()->flush(); } catch (...) {}
@@ -565,6 +567,7 @@ int main(int argc, char* argv[])
     SPDLOG_INFO("[Main] Shutting down...");
     QuoteDB::instance().shutdown();
     FinanceDB::instance().shutdown();
+    DecisionDB::instance().shutdown();
     DuckDBLogger::instance().shutdown();
     spdlog::shutdown();
 

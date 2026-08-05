@@ -41,7 +41,7 @@ void FinanceHandler::post(const httplib::Request& req, httplib::Response& res) {
     // 初始化 FinanceDB
     auto& financeDB = FinanceDB::instance();
     if (!financeDB.isInitialized()) {
-        if (!financeDB.init(finance_dir)) {
+        if (!financeDB.init(finance_dir, "finance.db")) {
             res.status = 500;
             res.set_content(R"({"message":"Failed to init FinanceDB"})", "application/json");
             return;
@@ -147,7 +147,7 @@ void FinanceHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto& financeDB = FinanceDB::instance();
     if (!financeDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();
-        if (!financeDB.init(db_path + "/finance")) {
+        if (!financeDB.init(db_path + "/finance", "finance.db")) {
             res.status = 500;
             res.set_content(R"({"message":"FinanceDB not initialized"})", "application/json");
             return;

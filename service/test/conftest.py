@@ -119,19 +119,20 @@ def upload_test_data(auth_api, is_backtest):
                     result.append(line)
         return result
 
-    def _import_csv(csv_path, table, symbol, adj):
+    def _import_csv(csv_path, table, symbol):
         with open(csv_path, 'r') as f:
             lines = f.read().strip().split('\n')
         if len(lines) < 2:
             return False
         lines = _ensure_turnover(lines)
         try:
+            # 一次调用同时传不复权(data) + 后复权(data_hfq)数据，后端合并后插入并替换
             resp = requests.post(f"{BASE_URL}/v0/quote/data", json={
                 "action": "import",
                 "table": table,
                 "symbol": symbol,
-                "adj": adj,
-                "data": lines
+                "data": lines,
+                "data_hfq": lines,
             }, headers=headers, verify=VERIFY_SSL)
             return resp.status_code == 200
         except Exception:
@@ -144,9 +145,8 @@ def upload_test_data(auth_api, is_backtest):
         if not csv_path.exists():
             print(f"  [SKIP] 股票 {symbol}: CSV 不存在")
             continue
-        ok1 = _import_csv(csv_path, "stock_1d", symbol, "hfq")
-        ok2 = _import_csv(csv_path, "stock_1d", symbol, "none")
-        if ok1 and ok2:
+        ok = _import_csv(csv_path, "stock_1d", symbol)
+        if ok:
             imported_keys.append(("stock_1d", symbol))
             success_count += 1
         else:
@@ -166,9 +166,8 @@ def upload_test_data(auth_api, is_backtest):
             if not csv_path.exists():
                 continue
             table = f"etf_{freq_dir.name}"
-            ok1 = _import_csv(csv_path, table, symbol, "hfq")
-            ok2 = _import_csv(csv_path, table, symbol, "none")
-            if ok1 and ok2:
+            ok = _import_csv(csv_path, table, symbol)
+            if ok:
                 imported_keys.append((table, symbol))
                 imported = True
         if imported:

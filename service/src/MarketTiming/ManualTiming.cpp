@@ -3,13 +3,15 @@
 #include "Util/log.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
+#include "BrokerSubSystem.h"
+#include "Decision.h"
 
 bool ManualTiming::processSignal(const String& strategy, const TradeSignal& signal,
                                  const DataContext& context) {
     auto action = signal.GetAction();
     if (action == TradeAction::HOLD) return true;
 
-    // 累积决策
+    // per-symbol 覆盖，只保留最终决策
     DecisionSnapshot snap;
     snap._symbol = signal.GetSymbol();
     snap._action = action;
@@ -17,7 +19,7 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
     snap._price = signal.GetPrice();
     snap._flag = (action == TradeAction::SELL) ? 1 : 0;
     snap._epoch = context.GetEpoch();
-    _decisions.push_back(snap);
+    _decisions[signal.GetSymbol()] = snap;
 
     // 日志
     const char* actionStr = (action == TradeAction::BUY) ? "BUY" : "SELL";
@@ -34,15 +36,25 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
         return;
     }
 
-    // 构建 SSE 消息（所有决策合并为一条）
+    auto* broker = _server->GetBrokerSubSystem();
+
+    // 构建 SSE 消息 + 写入 BrokerSubSystem 决策存储
     nlohmann::json ssePayload;
     ssePayload["strategy"] = strategy;
     ssePayload["decisions"] = nlohmann::json::array();
 
-    for (const auto& d : _decisions) {
+    for (const auto& [sym, d] : _decisions) {
+        // 写入决策存储（内存 + DuckDB）
+        DecisionAction da = to_decision_action(d._action, static_cast<unsigned char>(d._flag));
+        int decisionId = broker->AddDecision(strategy, d._symbol, da,
+                                             d._quantity, d._price, d._epoch);
+
+        // SSE payload
         nlohmann::json decision;
+        decision["id"] = decisionId;
         decision["symbol"] = get_symbol(d._symbol);
-        decision["action"] = (d._action == TradeAction::BUY) ? "BUY" : "SELL";
+        decision["action"] = decision_action_name(da);
+        decision["label"] = decision_action_label(da);
         decision["quantity"] = d._quantity;
         decision["price"] = d._price;
         decision["epoch"] = d._epoch;
@@ -60,7 +72,7 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
     String body = "Strategy: " + strategy + "\n";
     body += "Decisions: " + std::to_string(_decisions.size()) + "\n\n";
 
-    for (const auto& d : _decisions) {
+    for (const auto& [sym, d] : _decisions) {
         const char* actionStr = (d._action == TradeAction::BUY) ? "BUY" : "SELL";
         body += fmt::format("{} {} qty={} price={:.2f} epoch={}\n",
                            actionStr, get_symbol(d._symbol),

@@ -228,8 +228,7 @@ jobs:
 
       - name: Extract build artifact to workspace root
         run: |
-          ls -la build-artifact/build
-          cp -rf build-artifact/build/* . 2>/dev/null || true
+          ls -la build-artifact/
           cp -rf build-artifact/tools . 2>/dev/null || true
           ls -la tools/
           ls -la .

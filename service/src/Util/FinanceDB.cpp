@@ -127,60 +127,11 @@ FinanceDB& FinanceDB::instance() {
     return inst;
 }
 
-FinanceDB::~FinanceDB() {
-    shutdown();
-}
+FinanceDB::~FinanceDB() = default;
 
-void FinanceDB::shutdown() {
-    if (!initialized_) return;
-    initialized_ = false;
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
-    if (conn_) {
-        duckdb_result result;
-        duckdb_query(conn_, "CHECKPOINT", &result);
-        duckdb_destroy_result(&result);
-        duckdb_disconnect(&conn_);
-    }
-    if (db_) duckdb_close(&db_);
-}
-
-bool FinanceDB::exec(const String& sql) {
-    duckdb_result result;
-    duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
-    if (state != DuckDBSuccess) {
-        duckdb_destroy_result(&result);
-        return false;
-    }
-    duckdb_destroy_result(&result);
-    return true;
-}
-
-bool FinanceDB::init(const String& db_dir) {
-    if (initialized_) return true;
-
-    std::filesystem::create_directories(db_dir);
-    String db_path = db_dir + "/finance.db";
-
-    char* open_error = nullptr;
-    duckdb_state state = duckdb_open_ext(db_path.c_str(), &db_, nullptr, &open_error);
-    if (state != DuckDBSuccess) {
-        SPDLOG_ERROR("[FinanceDB] Failed to open: {}", open_error ? open_error : "unknown");
-        if (open_error) duckdb_free(open_error);
-        return false;
-    }
-
-    state = duckdb_connect(db_, &conn_);
-    if (state != DuckDBSuccess) {
-        SPDLOG_ERROR("[FinanceDB] Failed to connect");
-        duckdb_close(&db_);
-        db_ = nullptr;
-        return false;
-    }
-
-    exec("PRAGMA threads=2");
-    initialized_ = true;
-    SPDLOG_INFO("[FinanceDB] Initialized at {}", db_path);
-    return true;
+void FinanceDB::ensureTables() {
+    ensureDividendTable();
+    // 类别表按需创建（importCsv 时调 ensureTable）
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -206,9 +157,9 @@ void FinanceDB::ensureTable(const String& category) {
     }
 
     sql += "    UNIQUE(symbol, stat_date)\n)";
-    exec(sql);
+    exec_unsafe(sql);
 
-    exec(fmt::format(
+    exec_unsafe(fmt::format(
         "CREATE INDEX IF NOT EXISTS idx_{}_sym_date ON {}(symbol, stat_date)",
         category, category));
 }
@@ -224,7 +175,7 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
         return -1;
     }
 
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     ensureTable(category);
 
     std::ifstream ifs(csv_path);
@@ -384,7 +335,7 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
     // ── 阶段 4：执行 ──
     exec("BEGIN TRANSACTION");
     duckdb_result result;
-    duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
+    duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
     if (state != DuckDBSuccess) {
         const char* err = duckdb_result_error(&result);
         SPDLOG_ERROR("[FinanceDB] Batch insert failed for {} ({}): {}",
@@ -412,7 +363,7 @@ nlohmann::json FinanceDB::query(const String& category,
                                 int limit) {
     nlohmann::json result;
 
-    if (!initialized_) {
+    if (!isInitialized()) {
         result["error"] = "FinanceDB not initialized";
         return result;
     }
@@ -449,9 +400,9 @@ nlohmann::json FinanceDB::query(const String& category,
 
     sql += fmt::format(" ORDER BY stat_date ASC LIMIT {}", limit);
 
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     duckdb_result res;
-    if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
         result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
         duckdb_destroy_result(&res);
@@ -495,11 +446,11 @@ nlohmann::json FinanceDB::query(const String& category,
 
 Vector<String> FinanceDB::listTables() {
     Vector<String> tables;
-    if (!initialized_) return tables;
+    if (!isInitialized()) return tables;
 
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     duckdb_result res;
-    if (duckdb_query(conn_,
+    if (duckdb_query(conn(),
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema='main' ORDER BY table_name", &res) == DuckDBSuccess) {
         idx_t rows = duckdb_row_count(&res);
@@ -513,12 +464,12 @@ Vector<String> FinanceDB::listTables() {
 
 Vector<String> FinanceDB::listSymbols(const String& table) {
     Vector<String> symbols;
-    if (!initialized_) return symbols;
+    if (!isInitialized()) return symbols;
 
     String sql = fmt::format("SELECT DISTINCT symbol FROM {}", table);
     duckdb_result res;
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
-    if (duckdb_query(conn_, sql.c_str(), &res) == DuckDBSuccess) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (duckdb_query(conn(), sql.c_str(), &res) == DuckDBSuccess) {
         idx_t rows = duckdb_row_count(&res);
         for (idx_t i = 0; i < rows; i++) {
             int64_t encoded = duckdb_value_int64(&res, 0, i);
@@ -534,14 +485,14 @@ Vector<String> FinanceDB::listSymbols(const String& table) {
 // ═══════════════════════════════════════════════════════════
 
 bool FinanceDB::dropTable(const String& table) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     return exec(fmt::format("DROP TABLE IF EXISTS {}", table));
 }
 
 bool FinanceDB::deleteSymbol(const String& table, const String& symbol) {
     int64_t sym_encoded = encodeSymbol(symbol);
     String sql = fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     bool ok = exec(sql);
     if (ok) {
         SPDLOG_INFO("[FinanceDB] Deleted symbol {} from {}", symbol, table);
@@ -586,7 +537,7 @@ void FinanceDB::ensureDividendTable() {
 // ═══════════════════════════════════════════════════════════
 
 int FinanceDB::importDividendCsv(const String& csv_path) {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     ensureDividendTable();
 
     std::ifstream ifs(csv_path);
@@ -760,7 +711,7 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
     // ── 执行 ──
     exec("BEGIN TRANSACTION");
     duckdb_result result;
-    duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
+    duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
     if (state != DuckDBSuccess) {
         const char* err = duckdb_result_error(&result);
         SPDLOG_ERROR("[FinanceDB] dividend insert failed ({}): {}", csv_path, err ? err : "unknown");
@@ -809,7 +760,7 @@ int FinanceDB::importAllDividends(const String& dividend_dir) {
 nlohmann::json FinanceDB::queryDividendByDate(const String& date) {
     nlohmann::json result;
 
-    if (!initialized_) {
+    if (!isInitialized()) {
         result["error"] = "FinanceDB not initialized";
         return result;
     }
@@ -823,9 +774,9 @@ nlohmann::json FinanceDB::queryDividendByDate(const String& date) {
         "FROM dividend WHERE ex_dividend_date = '{}' "
         "ORDER BY symbol", date);
 
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     duckdb_result res;
-    if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
         result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
         duckdb_destroy_result(&res);
@@ -873,7 +824,7 @@ nlohmann::json FinanceDB::queryDividendBySymbol(const String& symbol,
                                                  const String& end_date) {
     nlohmann::json result;
 
-    if (!initialized_) {
+    if (!isInitialized()) {
         result["error"] = "FinanceDB not initialized";
         return result;
     }
@@ -894,9 +845,9 @@ nlohmann::json FinanceDB::queryDividendBySymbol(const String& symbol,
 
     sql += " ORDER BY ex_dividend_date ASC";
 
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     duckdb_result res;
-    if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
         result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
         duckdb_destroy_result(&res);
@@ -970,7 +921,7 @@ double FinanceDB::calcEventAdjFactor(double prev_close, const DividendEvent& eve
 Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symbol) {
     Vector<DividendEvent> result;
 
-    if (!initialized_) return result;
+    if (!isInitialized()) return result;
     int64_t sym = encodeSymbol(symbol);
 
     String sql = fmt::format(
@@ -980,9 +931,9 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
 
     SPDLOG_INFO("[FinanceDB] getDividendEvents: symbol='{}' encoded={}", symbol, sym);
 
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     duckdb_result res;
-    if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
         SPDLOG_ERROR("[FinanceDB] getDividendEvents query FAILED: {}", err ? err : "unknown");
         duckdb_destroy_result(&res);
@@ -1010,7 +961,7 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
 
 int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
 
-    if (!initialized_) {
+    if (!isInitialized()) {
         SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: not initialized");
         return -1;
     }
@@ -1025,7 +976,7 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
     int64_t sym = encodeSymbol(symbol);
 
     // 2. 打开独立连接直接访问 quote.db（不用 ATTACH/DETACH，避免状态泄漏）
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
 
     duckdb_database quote_db = nullptr;
     duckdb_connection quote_conn = nullptr;
@@ -1149,7 +1100,7 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
 nlohmann::json FinanceDB::recalcAllAdjPrices() {
     nlohmann::json result;
 
-    if (!initialized_) {
+    if (!isInitialized()) {
         result["error"] = "FinanceDB not initialized";
         return result;
     }

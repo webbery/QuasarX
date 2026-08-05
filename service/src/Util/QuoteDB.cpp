@@ -1,5 +1,6 @@
 #include "Util/QuoteDB.h"
 #include "Util/system.h"
+#include "Util/datetime.h"
 #include "Util/log.h"
 #include <filesystem>
 #include <fstream>
@@ -30,7 +31,7 @@ std::string QuoteDB::decodeSymbol(int64_t encoded) {
 
 std::string QuoteDB::normalizeFreq(const std::string& freq) {
     if (freq == "daily") return "1d";
-    return freq;  // 5m, 15m, 30m, 60m 保持不变
+    return freq;
 }
 
 std::string QuoteDB::tableName(const std::string& asset_type, const std::string& freq) {
@@ -38,7 +39,7 @@ std::string QuoteDB::tableName(const std::string& asset_type, const std::string&
 }
 
 // ═══════════════════════════════════════════════════════════
-//  初始化
+//  单例 / ensureTables
 // ═══════════════════════════════════════════════════════════
 
 QuoteDB& QuoteDB::instance() {
@@ -46,62 +47,13 @@ QuoteDB& QuoteDB::instance() {
     return inst;
 }
 
-QuoteDB::~QuoteDB() {
-    shutdown();
+void QuoteDB::ensureTables() {
+    // QuoteDB 表按需创建（importCsv/upsertBar 调 ensureTable），此处不做集中建表
 }
 
-void QuoteDB::shutdown() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!initialized_) return;
-    initialized_ = false;
-    if (conn_) {
-        // CHECKPOINT 强制 WAL 落盘，确保数据一致性
-        duckdb_result result;
-        duckdb_query(conn_, "CHECKPOINT", &result);
-        duckdb_destroy_result(&result);
-        duckdb_disconnect(&conn_);
-    }
-    if (db_) duckdb_close(&db_);
-}
-
-bool QuoteDB::exec(const std::string& sql) {
-    duckdb_result result;
-    duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
-    if (state != DuckDBSuccess) {
-        duckdb_destroy_result(&result);
-        return false;
-    }
-    duckdb_destroy_result(&result);
-    return true;
-}
-
-bool QuoteDB::init(const std::string& db_dir) {
-    if (initialized_) return true;
-
-    std::filesystem::create_directories(db_dir);
-    std::string db_path = db_dir + "/quote.db";
-
-    char* open_error = nullptr;
-    duckdb_state state = duckdb_open_ext(db_path.c_str(), &db_, nullptr, &open_error);
-    if (state != DuckDBSuccess) {
-        SPDLOG_ERROR("[QuoteDB] Failed to open: {}", open_error ? open_error : "unknown");
-        if (open_error) duckdb_free(open_error);
-        return false;
-    }
-
-    state = duckdb_connect(db_, &conn_);
-    if (state != DuckDBSuccess) {
-        SPDLOG_ERROR("[QuoteDB] Failed to connect");
-        duckdb_close(&db_);
-        db_ = nullptr;
-        return false;
-    }
-
-    exec("PRAGMA threads=2");
-    initialized_ = true;
-    SPDLOG_INFO("[QuoteDB] Initialized at {}", db_path);
-    return true;
-}
+// ═══════════════════════════════════════════════════════════
+//  按需建表（子类内部使用）
+// ═══════════════════════════════════════════════════════════
 
 void QuoteDB::ensureTable(const std::string& table) {
     std::string sql = fmt::format(R"(
@@ -123,158 +75,215 @@ void QuoteDB::ensureTable(const std::string& table) {
             UNIQUE(symbol, datetime)
         )
     )", table);
-    exec(sql);
+    exec_unsafe(sql);
 
-    // 索引
-    exec(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_sym_time ON {}(symbol, datetime)", table, table));
-    exec(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_time ON {}(datetime DESC)", table, table));
+    exec_unsafe(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_sym_time ON {}(symbol, datetime)", table, table));
+    exec_unsafe(fmt::format("CREATE INDEX IF NOT EXISTS idx_{}_time ON {}(datetime DESC)", table, table));
 }
 
 // ═══════════════════════════════════════════════════════════
 //  CSV 导入
 // ═══════════════════════════════════════════════════════════
 
-int QuoteDB::importCsv(const std::string& csv_path,
+int QuoteDB::importCsv(const std::string& org_csv_path,
+                       const std::string& hfq_csv_path,
                        const std::string& table,
-                       const std::string& symbol_str,
-                       AdjType adj) {
-    std::lock_guard<std::mutex> lock(mtx_);
+                       const std::string& symbol_str) {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
 
     ensureTable(table);
 
-    std::ifstream ifs(csv_path);
-    if (!ifs.is_open()) {
-        SPDLOG_ERROR("[QuoteDB] Cannot open: {}", csv_path);
-        return -1;
-    }
-
     int64_t sym_encoded = encodeSymbol(symbol_str);
-    bool is_hfq = (adj == AdjType::HFQ);
 
-    // ── 阶段 1：解析 CSV，累积所有行 ──
     struct Row {
         std::string datetime;
         double open, close, high, low, turnover;
         int64_t volume;
         uint8_t ext;
     };
-    std::vector<Row> rows;
-    rows.reserve(2048);
 
-    std::string line;
-    bool headerSkipped = false;
-    while (std::getline(ifs, line)) {
-        if (line.empty()) continue;
-        if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF')
-            line = line.substr(3);
+    // 解析 CSV → Map<datetime, Row>（按 datetime 对齐合并）
+    auto parseCsv = [](const std::string& path, Map<String, Row>& out) -> int {
+        std::ifstream ifs(path);
+        if (!ifs.is_open()) {
+            SPDLOG_ERROR("[QuoteDB] Cannot open: {}", path);
+            return -1;
+        }
 
-        std::istringstream ss(line);
-        std::string tok;
-        std::vector<std::string> cols;
-        while (std::getline(ss, tok, ',')) cols.push_back(tok);
-        if (cols.size() < 7) continue;
+        std::string line;
+        bool headerSkipped = false;
+        int count = 0;
+        while (std::getline(ifs, line)) {
+            if (line.empty()) continue;
+            if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF')
+                line = line.substr(3);
 
-        if (!headerSkipped) {
-            std::string first = cols[0];
-            std::transform(first.begin(), first.end(), first.begin(), ::tolower);
-            if (first == "datetime" || first == "date") {
+            std::istringstream ss(line);
+            std::string tok;
+            std::vector<std::string> cols;
+            while (std::getline(ss, tok, ',')) cols.push_back(tok);
+            if (cols.size() < 7) continue;
+
+            if (!headerSkipped) {
+                std::string first = cols[0];
+                std::transform(first.begin(), first.end(), first.begin(), ::tolower);
+                if (first == "datetime" || first == "date") {
+                    headerSkipped = true;
+                    continue;
+                }
                 headerSkipped = true;
-                continue;
             }
-            headerSkipped = true;
-        }
 
-        try {
-            Row r;
-            r.datetime = cols[0];
-            // 如果 datetime 只有日期部分（YYYY-MM-DD），补充时间部分
-            if (r.datetime.length() == 10 && r.datetime[4] == '-' && r.datetime[7] == '-') {
-                r.datetime += " 00:00:00";
+            try {
+                Row r;
+                r.datetime = cols[0];
+                if (r.datetime.length() == 10 && r.datetime[4] == '-' && r.datetime[7] == '-') {
+                    r.datetime += " 00:00:00";
+                }
+                r.open   = std::stod(cols[1]);
+                r.close  = std::stod(cols[2]);
+                r.high   = std::stod(cols[3]);
+                r.low    = std::stod(cols[4]);
+                r.volume = static_cast<int64_t>(std::stod(cols[5]));
+                r.turnover = std::stod(cols[6]);
+                r.ext = (r.volume == 0 || (r.open == 0 && r.close == 0 && r.high == 0 && r.low == 0)) ? 0x01 : 0;
+                out[r.datetime] = std::move(r);
+                ++count;
+            } catch (const std::exception& e) {
+                SPDLOG_WARN("[QuoteDB] Skip invalid row: {} ({})", line, e.what());
             }
-            r.open   = std::stod(cols[1]);
-            r.close  = std::stod(cols[2]);
-            r.high   = std::stod(cols[3]);
-            r.low    = std::stod(cols[4]);
-            r.volume = static_cast<int64_t>(std::stod(cols[5]));
-            r.turnover = std::stod(cols[6]);
-            r.ext = (r.volume == 0 || (r.open == 0 && r.close == 0 && r.high == 0 && r.low == 0)) ? 0x01 : 0;
-            rows.push_back(std::move(r));
-        } catch (const std::exception& e) {
-            SPDLOG_WARN("[QuoteDB] Skip invalid row: {} ({})", line, e.what());
         }
-    }
-    ifs.close();
+        return count;
+    };
 
-    if (rows.empty()) {
-        SPDLOG_WARN("[QuoteDB] No valid rows in {}", csv_path);
+    // ── 1. 解析两份 CSV ──
+    Map<String, Row> org_rows, hfq_rows;
+    int org_count = parseCsv(org_csv_path, org_rows);
+    int hfq_count = parseCsv(hfq_csv_path, hfq_rows);
+
+    auto t_parse = std::chrono::high_resolution_clock::now();
+    auto parse_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_parse - t_start).count();
+    SPDLOG_INFO("[QuoteDB] CSV parse: org={} hfq={} in {}ms", org_count, hfq_count, parse_ms);
+
+    if (org_rows.empty() && hfq_rows.empty()) {
+        SPDLOG_WARN("[QuoteDB] No valid rows in {} / {}", org_csv_path, hfq_csv_path);
         return 0;
     }
 
-    // ── 阶段 2：分块批量 INSERT（防止大批量导致 ART 索引损坏）──
-    static constexpr size_t CHUNK_SIZE = 500;
-
-    auto buildUpsertClause = [&](bool hfq) -> std::string {
-        if (hfq) {
-            return " ON CONFLICT(symbol, datetime) DO UPDATE SET "
-                   "adj_open=excluded.adj_open, adj_close=excluded.adj_close, "
-                   "adj_high=excluded.adj_high, adj_low=excluded.adj_low, "
-                   "volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
-        } else {
-            return " ON CONFLICT(symbol, datetime) DO UPDATE SET "
-                   "open=excluded.open, close=excluded.close, high=excluded.high, "
-                   "low=excluded.low, volume=excluded.volume, turnover=excluded.turnover, ext=excluded.ext";
-        }
+    // ── 2. 合并：原始列取 org，adj 列取 hfq，datetime 取并集 ──
+    struct MergedRow {
+        std::string datetime;
+        double open = 0, close = 0, high = 0, low = 0;      // 原始
+        double adj_open = 0, adj_close = 0, adj_high = 0, adj_low = 0;  // 复权
+        int64_t volume = 0;
+        double turnover = 0;
+        uint8_t ext = 0;
     };
+    std::vector<MergedRow> merged;
+    merged.reserve(std::max(org_rows.size(), hfq_rows.size()));
 
-    std::string upsert_clause = buildUpsertClause(is_hfq);
-    int total_inserted = 0;
-
-    exec("BEGIN TRANSACTION");
-
-    for (size_t chunk_start = 0; chunk_start < rows.size(); chunk_start += CHUNK_SIZE) {
-        size_t chunk_end = std::min(chunk_start + CHUNK_SIZE, rows.size());
-        std::string sql;
-        sql.reserve((chunk_end - chunk_start) * 128 + 512);
-
-        if (is_hfq) {
-            sql += fmt::format(
-                "INSERT INTO {} (symbol, datetime, adj_open, adj_close, adj_high, adj_low, volume, turnover, ext) VALUES ",
-                table);
-        } else {
-            sql += fmt::format(
-                "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext) VALUES ",
-                table);
+    for (const auto& [dt, r] : org_rows) {
+        MergedRow m;
+        m.datetime = dt;
+        m.open = r.open; m.close = r.close; m.high = r.high; m.low = r.low;
+        m.volume = r.volume; m.turnover = r.turnover; m.ext = r.ext;
+        auto it = hfq_rows.find(dt);
+        if (it != hfq_rows.end()) {
+            m.adj_open = it->second.open;
+            m.adj_close = it->second.close;
+            m.adj_high = it->second.high;
+            m.adj_low = it->second.low;
         }
-
-        for (size_t i = chunk_start; i < chunk_end; ++i) {
-            const auto& r = rows[i];
-            if (i > chunk_start) sql += ", ";
-            sql += fmt::format("({},'{}',{:.4f},{:.4f},{:.4f},{:.4f},{},{:.2f},{})",
-                               sym_encoded, r.datetime,
-                               r.open, r.close, r.high, r.low,
-                               r.volume, r.turnover, static_cast<int>(r.ext));
+        merged.push_back(std::move(m));
+    }
+    // hfq 独有（org 缺失）的行：原始列 0，adj 列取 hfq
+    for (const auto& [dt, r] : hfq_rows) {
+        if (!org_rows.count(dt)) {
+            MergedRow m;
+            m.datetime = dt;
+            m.adj_open = r.open; m.adj_close = r.close;
+            m.adj_high = r.high; m.adj_low = r.low;
+            m.volume = r.volume; m.turnover = r.turnover; m.ext = r.ext;
+            merged.push_back(std::move(m));
         }
-        sql += upsert_clause;
-
-        duckdb_result result;
-        duckdb_state state = duckdb_query(conn_, sql.c_str(), &result);
-        if (state != DuckDBSuccess) {
-            const char* err = duckdb_result_error(&result);
-            SPDLOG_ERROR("[QuoteDB] Batch insert failed for {} ({}): {}",
-                         symbol_str, table, err ? err : "unknown");
-            duckdb_destroy_result(&result);
-            exec("ROLLBACK");
-            return -1;
-        }
-        duckdb_destroy_result(&result);
-        total_inserted += static_cast<int>(chunk_end - chunk_start);
     }
 
-    exec("COMMIT");
+    // ── 3. DELETE 原数据 + Appender 全量列式插入（插入并替换）──
+    exec_unsafe("BEGIN TRANSACTION");
+    auto t_begin = std::chrono::high_resolution_clock::now();
 
-    SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {} (adj={})",
-                total_inserted, table, symbol_str, is_hfq ? "HFQ" : "None");
-    return total_inserted;
+    // 删除该 symbol 旧数据（批量，一条 SQL）
+    exec_unsafe(fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded));
+
+    duckdb_appender appender = nullptr;
+    if (duckdb_appender_create(conn(), nullptr, table.c_str(), &appender) != DuckDBSuccess) {
+        const char* err = duckdb_appender_error(appender);
+        SPDLOG_ERROR("[QuoteDB] appender create failed: {}", err ? err : "unknown");
+        duckdb_appender_destroy(&appender);
+        exec_unsafe("ROLLBACK");
+        return -1;
+    }
+
+    bool append_ok = true;
+    int inserted = 0;
+    for (const auto& m : merged) {
+        time_t t = FromStr(m.datetime, "%Y-%m-%d %H:%M:%S");
+        duckdb_timestamp ts{ t * 1000000 };
+
+        duckdb_state st = duckdb_append_null(appender);                    // id
+        if (st == DuckDBSuccess) st = duckdb_append_int64(appender, sym_encoded);   // symbol
+        if (st == DuckDBSuccess) st = duckdb_append_timestamp(appender, ts);        // datetime
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.open);       // open
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.close);      // close
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.high);       // high
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.low);        // low
+        if (st == DuckDBSuccess) st = duckdb_append_int64(appender, m.volume);      // volume
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.turnover);   // turnover
+        if (st == DuckDBSuccess) st = duckdb_append_int64(appender, m.ext);         // ext
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.adj_open);   // adj_open
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.adj_close);  // adj_close
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.adj_high);   // adj_high
+        if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.adj_low);    // adj_low
+        if (st == DuckDBSuccess) st = duckdb_appender_end_row(appender);
+
+        if (st != DuckDBSuccess) {
+            const char* err = duckdb_appender_error(appender);
+            SPDLOG_ERROR("[QuoteDB] appender append failed at {}: {}", m.datetime, err ? err : "unknown");
+            append_ok = false;
+            break;
+        }
+        ++inserted;
+    }
+
+    if (append_ok) {
+        duckdb_state st = duckdb_appender_flush(appender);
+        if (st != DuckDBSuccess) {
+            const char* err = duckdb_appender_error(appender);
+            SPDLOG_ERROR("[QuoteDB] appender flush failed: {}", err ? err : "unknown");
+            append_ok = false;
+        }
+    }
+
+    duckdb_appender_destroy(&appender);
+
+    if (!append_ok) {
+        exec_unsafe("ROLLBACK");
+        return -1;
+    }
+
+    exec_unsafe("COMMIT");
+
+    auto t_commit = std::chrono::high_resolution_clock::now();
+    auto commit_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_commit - t_begin).count();
+    SPDLOG_INFO("[QuoteDB] Transaction: {} rows replaced in {}ms (BEGIN to COMMIT)", inserted, commit_ms);
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+    SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {} in {}ms total",
+                inserted, table, symbol_str, total_ms);
+    return inserted;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -282,8 +291,8 @@ int QuoteDB::importCsv(const std::string& csv_path,
 // ═══════════════════════════════════════════════════════════
 
 bool QuoteDB::upsertBar(const std::string& table, const QuoteBar& bar) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!initialized_) return false;
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return false;
 
     ensureTable(table);
 
@@ -320,9 +329,9 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
                                      const std::string& start_time,
                                      const std::string& end_time,
                                      int limit) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<QuoteBar> result;
-    if (!initialized_) return result;
+    if (!isInitialized()) return result;
 
     int64_t sym_encoded = encodeSymbol(symbol);
 
@@ -339,9 +348,9 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     sql += fmt::format(" ORDER BY datetime ASC LIMIT {}", limit);
 
     duckdb_result res;
-    if (duckdb_query(conn_, sql.c_str(), &res) != DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
         const char* err = duckdb_result_error(&res);
-        SPDLOG_ERROR("[QuoteDB] Query failed: {} (SQL: {})", err ? err : "unknown", 
+        SPDLOG_ERROR("[QuoteDB] Query failed: {} (SQL: {})", err ? err : "unknown",
                      sql.size() > 200 ? sql.substr(0, 200) + "..." : sql);
         duckdb_destroy_result(&res);
         return result;
@@ -350,7 +359,7 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     idx_t row_count = duckdb_row_count(&res);
     for (idx_t i = 0; i < row_count; i++) {
         QuoteBar bar;
-        bar.symbol   = symbol;  // 直接用请求的 symbol 字符串
+        bar.symbol   = symbol;
         bar.datetime = duckdb_value_varchar(&res, 1, i);
         bar.open     = duckdb_value_double(&res, 2, i);
         bar.close    = duckdb_value_double(&res, 3, i);
@@ -359,7 +368,6 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
         bar.volume   = duckdb_value_int64(&res, 6, i);
         bar.turnover = duckdb_value_double(&res, 7, i);
         bar.ext      = static_cast<uint8_t>(duckdb_value_int8(&res, 8, i));
-        // 后复权价格（NULL 时 duckdb_value_double 返回 0.0）
         bar.adj_open  = duckdb_value_double(&res, 9, i);
         bar.adj_close = duckdb_value_double(&res, 10, i);
         bar.adj_high  = duckdb_value_double(&res, 11, i);
@@ -376,29 +384,29 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
 // ═══════════════════════════════════════════════════════════
 
 std::vector<std::string> QuoteDB::listTables() {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<std::string> tables;
-    if (!initialized_) return tables;
+    if (!isInitialized()) return tables;
 
-    duckdb_result res;
-    if (duckdb_query(conn_, "SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name", &res) == DuckDBSuccess) {
-        idx_t rows = duckdb_row_count(&res);
-        for (idx_t i = 0; i < rows; i++) {
-            tables.push_back(duckdb_value_varchar(&res, 0, i));
-        }
-    }
-    duckdb_destroy_result(&res);
+    DuckDBBaseT<QuoteDB>::query("SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name",
+          [&](duckdb_result& res) -> bool {
+              idx_t rows = duckdb_row_count(&res);
+              for (idx_t i = 0; i < rows; i++) {
+                  tables.push_back(duckdb_value_varchar(&res, 0, i));
+              }
+              return true;
+          });
     return tables;
 }
 
 std::vector<std::string> QuoteDB::listSymbols(const std::string& table) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<std::string> symbols;
-    if (!initialized_) return symbols;
+    if (!isInitialized()) return symbols;
 
     std::string sql = fmt::format("SELECT DISTINCT symbol FROM {}", table);
     duckdb_result res;
-    if (duckdb_query(conn_, sql.c_str(), &res) == DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &res) == DuckDBSuccess) {
         idx_t rows = duckdb_row_count(&res);
         for (idx_t i = 0; i < rows; i++) {
             int64_t encoded = duckdb_value_int64(&res, 0, i);
@@ -410,21 +418,17 @@ std::vector<std::string> QuoteDB::listSymbols(const std::string& table) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  删除表
+//  删除表 / 标的
 // ═══════════════════════════════════════════════════════════
 
 bool QuoteDB::dropTable(const std::string& table) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     std::string sql = fmt::format("DROP TABLE IF EXISTS {}", table);
     return exec(sql);
 }
 
-// ═══════════════════════════════════════════════════════════
-//  删除标的 / 查询时间范围
-// ═══════════════════════════════════════════════════════════
-
 bool QuoteDB::deleteSymbol(const std::string& table, const std::string& symbol) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     int64_t sym_encoded = encodeSymbol(symbol);
     std::string sql = fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
     bool ok = exec(sql);
@@ -437,16 +441,16 @@ bool QuoteDB::deleteSymbol(const std::string& table, const std::string& symbol) 
 }
 
 std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::string& table) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<SymbolTimeRange> result;
-    if (!initialized_) return result;
+    if (!isInitialized()) return result;
 
     std::string sql = fmt::format(
         "SELECT symbol, MIN(datetime), MAX(datetime), COUNT(*) FROM {} GROUP BY symbol ORDER BY symbol",
         table);
 
     duckdb_result db_result;
-    if (duckdb_query(conn_, sql.c_str(), &db_result) != DuckDBSuccess) {
+    if (duckdb_query(conn(), sql.c_str(), &db_result) != DuckDBSuccess) {
         duckdb_destroy_result(&db_result);
         return result;
     }
@@ -455,7 +459,6 @@ std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::st
     for (idx_t i = 0; i < rows; i++) {
         SymbolTimeRange range;
         int64_t encoded = duckdb_value_int64(&db_result, 0, i);
-        // 将 int64_t 直接拷贝到 symbol_t（size 相同）
         std::memcpy(&range.symbol, &encoded, sizeof(symbol_t));
         range.start_time = duckdb_value_varchar(&db_result, 1, i);
         range.end_time = duckdb_value_varchar(&db_result, 2, i);
@@ -469,10 +472,10 @@ std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::st
 
 int QuoteDB::updateAdjPrices(const std::string& table, int64_t encoded_symbol,
                              const std::vector<AdjPriceUpdate>& updates) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!initialized_) return -1;
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return -1;
 
-    exec("BEGIN TRANSACTION");
+    exec_unsafe("BEGIN TRANSACTION");
     int updated = 0;
     for (auto& u : updates) {
         String sql = fmt::format(
@@ -482,8 +485,31 @@ int QuoteDB::updateAdjPrices(const std::string& table, int64_t encoded_symbol,
             encoded_symbol, u.datetime);
         if (exec(sql)) ++updated;
     }
-    exec("COMMIT");
+    exec_unsafe("COMMIT");
 
     SPDLOG_INFO("[QuoteDB] updateAdjPrices: {} rows updated for symbol={}", updated, encoded_symbol);
     return updated;
+}
+
+double QuoteDB::getLatestClose(const std::string& table, const std::string& symbol_str) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return 0.0;
+
+    int64_t encoded = encodeSymbol(symbol_str);
+    std::string sql = fmt::format(
+        "SELECT close FROM {} WHERE symbol = {} ORDER BY datetime DESC LIMIT 1",
+        table, encoded);
+
+    duckdb_result result;
+    if (duckdb_query(conn(), sql.c_str(), &result) != DuckDBSuccess) {
+        duckdb_destroy_result(&result);
+        return 0.0;
+    }
+
+    double close = 0.0;
+    if (duckdb_row_count(&result) > 0) {
+        close = duckdb_value_double(&result, 0, 0);
+    }
+    duckdb_destroy_result(&result);
+    return close;
 }

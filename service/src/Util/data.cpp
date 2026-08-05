@@ -697,7 +697,7 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
         auto& quoteDB = QuoteDB::instance();
         if (!quoteDB.isInitialized()) {
             std::string db_dir = "./data/quote";
-            if (!quoteDB.init(db_dir)) {
+            if (!quoteDB.init(db_dir, "quote.db")) {
                 WARN("[LoadHistoryDataWithFreq] Failed to initialize QuoteDB at {}", db_dir);
                 // goto fallback_csv;
             }

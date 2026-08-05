@@ -18,7 +18,7 @@ struct DecisionSnapshot {
  * 决策型 Timing（ManualTiming）
  *
  * 用于 ExecuteType::Manual（默认）：策略只产意图，不实际下单。
- * 累积决策，日终由 AgentSubSystem 调用 SendSummaryEmail 发送 SSE + 邮件。
+ * 累积 per-symbol 最终决策（Map 覆盖），日终由 AgentSubSystem 调用 SendSummaryEmail。
  */
 class ManualTiming : public ITimingStrategy {
 public:
@@ -30,5 +30,5 @@ public:
     void SendSummaryEmail(const String& strategy);
 
 private:
-    Vector<DecisionSnapshot> _decisions;
+    Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策
 };

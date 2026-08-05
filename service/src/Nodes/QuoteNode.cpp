@@ -85,7 +85,16 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         filer._symbols.emplace(code);
     }
 
+    // 默认输出字段：当前节点输出的所有行情属性
+    // 注：_outs 的 key 是 sourceHandle（前端生成 "output"），不是字段名；
+    //     单纯依赖 _outs 解析字段名会让 _properties 为空导致 out_elements() 返回 0。
+    //     这里默认填充标准字段（open/close/high/low/volume/turnover），覆盖前端单 output handle 场景。
+    static const Set<String> default_props = {
+        "open", "close", "high", "low", "volume", "turnover"
+    };
+
     Set<String> visited_propers;
+    bool has_prop_spec = false;
     for (auto& item: _outs) {
         auto& handle = item.first;
         if (visited_propers.count(handle)) continue;
@@ -93,9 +102,18 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
         Vector<String> froms;
         split(handle, froms, "-");
         if (froms.size() == 2) {
+            // prop-spec 格式 handle（如 "output-close"）— 提取字段名
             for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
                 _properties[get_symbol(*itr)].insert(froms[1]);
             }
+            has_prop_spec = true;
+        }
+    }
+
+    // 默认字段填充（prop-spec 缺失或 _outs 为空时）
+    if (!has_prop_spec) {
+        for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
+            _properties[get_symbol(*itr)].insert(default_props.begin(), default_props.end());
         }
     }
 

@@ -33,6 +33,12 @@
             >
                 <i class="fas fa-satellite-dish"></i> 信号监控
             </button>
+            <button
+                :class="{ active: activeTab === 'orderdesk' }"
+                @click="activeTab = 'orderdesk'; viewingLogs = false"
+            >
+                <i class="fas fa-clipboard-list"></i> 下单管理
+            </button>
         </div>
 
         <!-- 实时监控面板 -->
@@ -158,15 +164,21 @@
         <div v-if="activeTab === 'signals'" class="tab-content">
             <SignalMonitor />
         </div>
+
+        <!-- 下单管理面板 -->
+        <div v-if="activeTab === 'orderdesk'" class="tab-content">
+            <OrderDesk />
+        </div>
     </div>
 </template>
 
 <script setup>
-import { ref, computed, inject, watch, onMounted } from 'vue'
+import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { message } from '../tool'
 import ReviewPanel from './review/ReviewPanel.vue'
 import SignalMonitor from './SignalMonitor.vue'
+import OrderDesk from './orderdesk/OrderDesk.vue'
 import StrategySelectPanel from './StrategySelectPanel.vue'
 
 const activeTab = ref('realtime')
@@ -285,6 +297,18 @@ watch([selectedStrategy, activeTab], ([newStrategy, newTab]) => {
 // 挂载时获取服务端策略信息
 onMounted(async () => {
     await fetchServerStrategies()
+    // 监听通知弹框的 tab 切换事件
+    window.addEventListener('switch-tracker-tab', onSwitchTab)
+})
+
+const onSwitchTab = (e) => {
+    if (e instanceof CustomEvent && e.detail) {
+        activeTab.value = e.detail
+    }
+}
+
+onUnmounted(() => {
+    window.removeEventListener('switch-tracker-tab', onSwitchTab)
 })
 </script>
 

@@ -8,6 +8,8 @@
 #include <thread>
 #include <sstream>
 #include <algorithm>
+#include <map>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -64,7 +66,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     // 初始化 QuoteDB
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
-        if (!quoteDB.init(quote_dir)) {
+        if (!quoteDB.init(quote_dir, "quote.db")) {
             res.status = 500;
             res.set_content(R"({"message":"Failed to init QuoteDB"})", "application/json");
             return;
@@ -186,47 +188,49 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
                 continue;
             }
 
-            // 扫描 CSV 并导入 DuckDB
+            // 扫描 CSV 并导入 DuckDB（org + hfq 合并，插入并替换）
             int total_rows = 0;
 
-            // 导入后复权数据
-            if (fs::exists(quote_dir + "/" + hfq_dir)) {
-                for (auto& entry : fs::directory_iterator(quote_dir + "/" + hfq_dir)) {
+            // 收集 hfq / org 两份目录的文件（symbol → path）
+            std::map<std::string, std::string> hfq_files, org_files;
+            std::string hfq_path_full = quote_dir + "/" + hfq_dir;
+            std::string org_path_full = quote_dir + "/" + org_dir;
+
+            if (fs::exists(hfq_path_full)) {
+                for (auto& entry : fs::directory_iterator(hfq_path_full)) {
                     if (entry.path().extension() != ".csv") continue;
-                    std::string sym = entry.path().stem().string();
-                    int rows = quoteDB.importCsv(
-                        entry.path().string(), table, toInternalSymbol(sym), AdjType::HFQ);
-                    if (rows > 0) {
-                        total_rows += rows;
-                        SendSSE(sse_sock, "quote_download", {
-                            {"status", "importing"},
-                            {"table", table},
-                            {"symbol", sym},
-                            {"rows", std::to_string(rows)}
-                        });
-                    }
-                    fs::remove(entry.path());
+                    hfq_files[entry.path().stem().string()] = entry.path().string();
+                }
+            }
+            if (fs::exists(org_path_full)) {
+                for (auto& entry : fs::directory_iterator(org_path_full)) {
+                    if (entry.path().extension() != ".csv") continue;
+                    org_files[entry.path().stem().string()] = entry.path().string();
                 }
             }
 
-            // 导入不复权数据
-            if (fs::exists(quote_dir + "/" + org_dir)) {
-                for (auto& entry : fs::directory_iterator(quote_dir + "/" + org_dir)) {
-                    if (entry.path().extension() != ".csv") continue;
-                    std::string sym = entry.path().stem().string();
-                    int rows = quoteDB.importCsv(
-                        entry.path().string(), table, toInternalSymbol(sym), AdjType::None);
-                    if (rows > 0) {
-                        total_rows += rows;
-                        SendSSE(sse_sock, "quote_download", {
-                            {"status", "importing"},
-                            {"table", table},
-                            {"symbol", sym},
-                            {"rows", std::to_string(rows)}
-                        });
-                    }
-                    fs::remove(entry.path());
+            // symbol 并集，成对导入
+            std::set<std::string> all_symbols;
+            for (auto& [s, p] : hfq_files) all_symbols.insert(s);
+            for (auto& [s, p] : org_files) all_symbols.insert(s);
+
+            for (auto& sym : all_symbols) {
+                // 只有一份时，另一份用相同路径（原始列 = 复权列，简化处理）
+                std::string org_path = org_files.count(sym) ? org_files[sym] : hfq_files[sym];
+                std::string hfq_path = hfq_files.count(sym) ? hfq_files[sym] : org_files[sym];
+
+                int rows = quoteDB.importCsv(org_path, hfq_path, table, toInternalSymbol(sym));
+                if (rows > 0) {
+                    total_rows += rows;
+                    SendSSE(sse_sock, "quote_download", {
+                        {"status", "importing"},
+                        {"table", table},
+                        {"symbol", sym},
+                        {"rows", std::to_string(rows)}
+                    });
                 }
+                fs::remove(org_path);
+                fs::remove(hfq_path);
             }
 
             SendSSE(sse_sock, "quote_download", {
@@ -258,7 +262,7 @@ void QuoteDownloadHandler::get(const httplib::Request& req, httplib::Response& r
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();
-        if (!quoteDB.init(db_path + "/quote")) {
+        if (!quoteDB.init(db_path + "/quote", "quote.db")) {
             res.status = 500;
             res.set_content(R"({"message":"QuoteDB not initialized"})", "application/json");
             return;
@@ -335,7 +339,7 @@ void QuoteDownloadHandler::del(const httplib::Request& req, httplib::Response& r
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();
-        if (!quoteDB.init(db_path + "/quote")) {
+        if (!quoteDB.init(db_path + "/quote", "quote.db")) {
             res.status = 500;
             res.set_content(R"({"message":"QuoteDB not initialized"})", "application/json");
             return;

@@ -48,6 +48,16 @@ class HistoryTradeHandler: public HttpHandler {
 public:
   HistoryTradeHandler(Server* server);
   ~HistoryTradeHandler();
-  
+
     virtual void get(const httplib::Request& req, httplib::Response& res);
+};
+
+/**
+ * 决策查询接口
+ * GET /v0/trade/decisions?date=YYYY-MM-DD
+ */
+class DecisionHandler : public HttpHandler {
+public:
+    DecisionHandler(Server* server) : HttpHandler(server) {}
+    void get(const httplib::Request& req, httplib::Response& res) override;
 };

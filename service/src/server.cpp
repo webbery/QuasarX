@@ -20,6 +20,7 @@
 #include "PortfolioSubsystem.h"
 #include "StrategyNode.h"
 #include "Util/QuoteDB.h"
+#include "Util/DecisionDB.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
@@ -169,6 +170,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_SHIBOR          "/market/shibor"
 #define API_TRADE_ORDER     "/trade/order"
 #define API_TRADE_HISTORY   "/trade/history"
+#define API_TRADE_DECISIONS "/trade/decisions"
 #define API_POSITION        "/position"
 #define API_SERVER_EVENT    "/server/event"
 #define API_RISK_CAPITAL    "/risk/capital"
@@ -368,6 +370,7 @@ void Server::Regist() {
     REGIST_GET(API_SHIBOR);
     REGIST_GET(API_MACRO);
     REGIST_GET(API_TRADE_ORDER);
+    REGIST_GET(API_TRADE_DECISIONS);
     REGIST_GET(API_USER_FUNDS);
     REGIST_GET(API_POSITION);
     REGIST_GET(API_STRATEGY_NODES);
@@ -433,10 +436,20 @@ void Server::InitDefault() {
     auto& quoteDB = QuoteDB::instance();
     auto db_path = _config->GetDatabasePath();
     if (!quoteDB.isInitialized()) {
-        if (quoteDB.init(db_path + "/quote")) {
+        if (quoteDB.init(db_path + "/quote", "quote.db")) {
             INFO("[InitDefault] QuoteDB initialized at {}/quote", db_path);
         } else {
             WARN("[InitDefault] Failed to initialize QuoteDB at {}/quote", db_path);
+        }
+    }
+
+    // 初始化 DecisionDB
+    auto& decisionDB = DecisionDB::instance();
+    if (!decisionDB.isInitialized()) {
+        if (decisionDB.init(db_path + "/decisions", "decisions.db")) {
+            INFO("[InitDefault] DecisionDB initialized at {}/decisions", db_path);
+        } else {
+            WARN("[InitDefault] Failed to initialize DecisionDB at {}/decisions", db_path);
         }
     }
 
@@ -1269,6 +1282,7 @@ void Server::InitHandlers() {
     RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_TRADE_ORDER, OrderHandler);
     RegistHandler(API_TRADE_HISTORY, HistoryTradeHandler);
+    RegistHandler(API_TRADE_DECISIONS, DecisionHandler);
     RegistHandler(API_NAV_HISTORY, NavHandler);
     RegistHandler(API_USER_LOGIN, UserLoginHandler);
     RegistHandler(API_USER_FUNDS, UserFundHandler);

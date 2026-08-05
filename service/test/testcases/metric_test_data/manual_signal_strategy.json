@@ -1,0 +1,130 @@
+{
+  "id": "test_manual_signal",
+  "name": "测试Manual决策策略",
+  "version": 1,
+  "description": "ManualTiming 测试策略：close>open 时买入 100 股，不直接下单",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "custom",
+      "data": {
+        "label": "行情数据",
+        "nodeType": "input",
+        "params": {
+          "source": {
+            "value": "股票",
+            "type": "select"
+          },
+          "code": {
+            "value": ["sz.900001"],
+            "type": "text"
+          },
+          "freq": {
+            "value": "1d",
+            "type": "select"
+          },
+          "close": {
+            "value": "close",
+            "type": "text"
+          },
+          "open": {
+            "value": "open",
+            "type": "text"
+          },
+          "high": {
+            "value": "high",
+            "type": "text"
+          },
+          "low": {
+            "value": "low",
+            "type": "text"
+          },
+          "volume": {
+            "value": "volume",
+            "type": "text"
+          },
+          "turnover": {
+            "value": "turnover",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "2",
+      "type": "custom",
+      "data": {
+        "label": "买入信号",
+        "nodeType": "signal",
+        "params": {
+          "code": {
+            "value": ["sz.900001"],
+            "type": "text"
+          },
+          "buy": {
+            "value": "close > open",
+            "type": "text"
+          },
+          "sell": {
+            "value": "false",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "3",
+      "type": "custom",
+      "data": {
+        "label": "手动下单",
+        "nodeType": "execution",
+        "params": {
+          "commission": {
+            "value": 0.0003,
+            "type": "number"
+          },
+          "stamp": {
+            "value": 0.001,
+            "type": "number"
+          },
+          "minCommission": {
+            "value": 5,
+            "type": "number"
+          },
+          "slippageModel": {
+            "value": 0,
+            "type": "number"
+          },
+          "slippage": {
+            "value": 0.0,
+            "type": "number"
+          },
+          "type": {
+            "value": 7,
+            "type": "select"
+          },
+          "contract": {
+            "value": 0,
+            "type": "select"
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "1->2",
+      "source": "1",
+      "target": "2",
+      "sourceHandle": "output",
+      "targetHandle": "input"
+    },
+    {
+      "id": "2->3",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "output",
+      "targetHandle": "input"
+    }
+  ]
+}

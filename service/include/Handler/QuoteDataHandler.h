@@ -12,7 +12,8 @@ struct QuoteDataRequest {
     std::string start_time;       // 导出起始时间
     std::string end_time;         // 导出结束时间
     std::string format;           // 导出格式：csv / json
-    std::vector<std::string> csv_lines;  // CSV 行数据（仅 import 用）
+    std::vector<std::string> csv_lines;       // 不复权 CSV 行数据（仅 import 用）
+    std::vector<std::string> csv_lines_hfq;   // 后复权 CSV 行数据（仅 import 用，缺省用 csv_lines）
 };
 
 class QuoteDataHandler : public HttpHandler {

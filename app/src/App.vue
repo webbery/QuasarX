@@ -248,6 +248,9 @@
     
     <!-- AI 聊天框 -->
     <ChatBox />
+
+    <!-- 决策通知弹框 -->
+    <DecisionNotification @navigate="onDecisionNavigate" />
 </template>
 <script setup >
 import { defineProps, ref, defineEmits, onMounted, onUnmounted, computed, provide, watch } from "vue";
@@ -261,6 +264,7 @@ import AccountView from "./components/AccountView.vue";
 import RiskPanel from "./components/RiskPanel.vue";
 import StrategyFactory from "./components/StrategyFactory.vue";
 import StrategyTracker from "./components/StrategyTracker.vue";
+import DecisionNotification from "./components/DecisionNotification.vue";
 import FlowComponents from "./components/FlowComponents.vue";
 import { getAllDebugNodes } from '@/lib/nodes/useDebugNodeFields'
 import DataCenter from "./components/DataCenter.vue";
@@ -714,6 +718,12 @@ const onHandlePosition = () => {
 
 const onHandleStrategyTracker = () => {
   currentView.value = VIEWS.STRATEGY_TRACKER;
+}
+
+const onDecisionNavigate = () => {
+  currentView.value = VIEWS.STRATEGY_TRACKER;
+  // 通过 CustomEvent 通知 StrategyTracker 切换到 orderdesk tab
+  window.dispatchEvent(new CustomEvent('switch-tracker-tab', { detail: 'orderdesk' }));
 }
 const onLoginSwitch = () => {
   showLogin.value = !showLogin.value

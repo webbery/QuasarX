@@ -13,6 +13,7 @@
 #include <thread>
 #include <condition_variable>
 #include "PortfolioSubsystem.h"
+#include "Decision.h"
 #include <boost/lockfree/queue.hpp>
 
 // class Broker {
@@ -192,6 +193,17 @@ public:
     // 持久化指定 run_id 的交易记录
     void PersistTrades(run_id_t run_id);
 
+    // ─── 决策管理 ───
+    // 添加决策记录（内存 + DuckDB 持久化），返回分配的 id
+    int AddDecision(const String& strategy, symbol_t symbol, DecisionAction action,
+                    int64_t quantity, double price, int epoch);
+    // 查询当日决策列表（date 格式 "YYYY-MM-DD"）
+    Vector<DecisionRecord> GetDecisions(const String& date);
+    // 标记决策已执行
+    bool MarkDecisionExecuted(int id, int64_t exec_qty, double exec_price);
+    // 回测直接模拟成交（取 QuoteDB 最新 close）
+    TradeReport SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side);
+
     // 注册统计指标
     void RegistIndicator(const String& strategy, StatisticIndicator indicator);
     void UnRegistIndicator(const String& strategy, StatisticIndicator indicator);
@@ -309,7 +321,12 @@ private:
 
     // 订单队列
     boost::lockfree::queue<OrderContext*> _order_queue;
-    // 
+    //
     static Map<ExchangeType, ExchangeInterface*> _exchanges;
+
+    // 决策管理
+    std::mutex _decisionMtx;
+    Vector<DecisionRecord> _todayDecisions;
+    std::atomic<int> _decisionIdCounter{0};
 
 };

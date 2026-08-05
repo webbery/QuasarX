@@ -26,7 +26,7 @@ void QuoteDataHandler::post(const httplib::Request& req, httplib::Response& res)
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();
-        if (!quoteDB.init(db_path + "/quote")) {
+        if (!quoteDB.init(db_path + "/quote", "quote.db")) {
             res.status = 500;
             res.set_content(R"({"error":"QuoteDB not initialized"})", "application/json");
             return;
@@ -105,7 +105,7 @@ void QuoteDataHandler::del(const httplib::Request& req, httplib::Response& res) 
     auto& quoteDB = QuoteDB::instance();
     if (!quoteDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();
-        if (!quoteDB.init(db_path + "/quote")) {
+        if (!quoteDB.init(db_path + "/quote", "quote.db")) {
             res.status = 500;
             res.set_content(R"({"error":"QuoteDB not initialized"})", "application/json");
             return;
@@ -145,6 +145,8 @@ bool QuoteDataHandler::parseRequest(const std::string& json_str,
         req.end_time = json.value("end_time", "");
         req.format = json.value("format", "csv");
         req.csv_lines = json.value("data", std::vector<std::string>());
+        // data_hfq 缺省时复用 data（常见于测试：同一文件同时作为原始/复权数据）
+        req.csv_lines_hfq = json.value("data_hfq", req.csv_lines);
 
         if (req.action.empty()) {
             error_msg = "Missing required field: action (import/export/cleanup)";
@@ -176,17 +178,20 @@ bool QuoteDataHandler::importCsv(const QuoteDataRequest& req,
                                  std::string& error_msg) {
     try {
         std::string name = fmt::format("{}_{}", req.symbol, req.table);
-        auto tmp_path = DataUtil::WriteTempCsv(req.csv_lines, name);
-        if (tmp_path.empty()) {
+        auto tmp_org = DataUtil::WriteTempCsv(req.csv_lines, name + "_org");
+        auto tmp_hfq = DataUtil::WriteTempCsv(req.csv_lines_hfq, name + "_hfq");
+        if (tmp_org.empty() || tmp_hfq.empty()) {
             error_msg = "Failed to create temp CSV file";
+            DataUtil::CleanupTempFile(tmp_org);
+            DataUtil::CleanupTempFile(tmp_hfq);
             return false;
         }
 
         auto& quoteDB = QuoteDB::instance();
-        AdjType adj = (req.adj_type == "none") ? AdjType::None : AdjType::HFQ;
-        imported_rows = quoteDB.importCsv(tmp_path, req.table, req.symbol, adj);
+        imported_rows = quoteDB.importCsv(tmp_org, tmp_hfq, req.table, req.symbol);
 
-        DataUtil::CleanupTempFile(tmp_path);
+        DataUtil::CleanupTempFile(tmp_org);
+        DataUtil::CleanupTempFile(tmp_hfq);
 
         if (imported_rows < 0) {
             error_msg = "QuoteDB::importCsv failed";

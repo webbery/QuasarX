@@ -1,10 +1,12 @@
 #include "Handler/OrderHandler.h"
 #include "ExchangeManager.h"
 #include "Util/system.h"
+#include "Util/QuoteDB.h"
 #include "server.h"
 #include <cstdint>
 #include <string>
 #include "BrokerSubSystem.h"
+#include "Decision.h"
 
 namespace {
     nlohmann::json TradeInfo2Json(const TradeInfo& info, size_t& buy_count) {
@@ -93,68 +95,93 @@ OrderHandler::~OrderHandler() {
 void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
     int direct = params["direct"];
-    int kind = params["kind"];
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
     double prices = params["price"];
-    auto lambda_sendResult = [symbol, this](const TradeReport& report) {
+    int decisionId = params.value("decisionId", -1);
+
+    auto broker = _server->GetBrokerSubSystem();
+    auto mode = _server->GetRunningMode();
+    nlohmann::json result;
+
+    // 回测模式：直接模拟成交，不走 order queue
+    if (mode == RuningType::Backtest) {
+        // 从 QuoteDB 取最新 close 作为成交价（如果前端未传价格）
+        double fillPrice = prices;
+        if (fillPrice <= 0) {
+            String table = is_fund(symbol) ? "etf_1d" : "stock_1d";
+            fillPrice = QuoteDB::instance().getLatestClose(table, get_symbol(symbol));
+            if (fillPrice <= 0) {
+                res.status = 400;
+                res.set_content(R"({"error": "no price data for backtest fill"})", "application/json");
+                return;
+            }
+        }
+
+        TradeAction side = (direct == 0) ? TradeAction::BUY : TradeAction::SELL;
+        auto report = broker->SimulateFill(symbol, quantity, fillPrice, side);
+
+        if (decisionId >= 0) {
+            broker->MarkDecisionExecuted(decisionId, quantity, fillPrice);
+        }
+
+        // SSE 推送成交回报
         auto sock = Server::GetSocket();
         auto info = to_sse_string(symbol, report);
         nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
+
+        result["id"] = 0;
+        result["price"] = fillPrice;
+        result["quantity"] = quantity;
+        res.status = 200;
+        res.set_content(result.dump(), "application/json");
+        return;
+    }
+
+    // Simulation / Real：走 BrokerSubSystem 虚函数链路
+    auto lambda_sendResult = [symbol, decisionId, broker, this](const TradeReport& report) {
+        auto sock = Server::GetSocket();
+        auto info = to_sse_string(symbol, report);
+        nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
+
+        if (decisionId >= 0) {
+            broker->MarkDecisionExecuted(decisionId, report._quantity, report._price);
+        }
     };
+
     Order order;
     order._volume = quantity;
     order._time = Now();
     if (params.contains("timeType")) {
         order._validTime = (OrderTimeValid)params["timeType"];
-    }
-    else {
+    } else {
         order._validTime = OrderTimeValid::Today;
     }
     order._type = GetOrderType(params);
     order._price = prices;
-    if (kind == 1) {
+    if (params.contains("kind") && params["kind"] == 1) {
         order._flag = (int)params["open"];
         order._hedge = (OptionHedge)params["hedge"];
     }
-    int perf = 1;
-#ifdef _DEBUG
-    if (params.contains("perf")) {
-        // 循环请求,测试性能
-        perf = params["perf"];
-    }
-#endif
-    nlohmann::json result;
-    auto broker = _server->GetBrokerSubSystem();
+
     if (direct == 0) {
         order._side = 0;
-        for (int i = 0; i < perf; ++i) {
-            auto id = broker->Buy(0, "_custom_", symbol, order, lambda_sendResult);
-            if (id._error) {
-                return ProcessError(id._error, res);
-            }
-            else {
-                res.status = 200;
-                result["id"] = id._id;
-                result["sysID"] = id._sysID;
-            }
+        auto id = broker->Buy(0, "_custom_", symbol, order, lambda_sendResult);
+        if (id._error) {
+            return ProcessError(id._error, res);
         }
-    }
-    else if (direct == 1) {
-        order._side = true;
-        for (int i = 0; i < perf; ++i) {
-            auto id = broker->Sell(0, "_custom_", symbol, order, lambda_sendResult);
-
-            if (id._error) {
-                return ProcessError(id._error, res);
-            }
-            else {
-                res.status = 200;
-                result["id"] = id._id;
-                result["sysID"] = id._sysID;
-            }
+        result["id"] = id._id;
+        result["sysID"] = id._sysID;
+    } else if (direct == 1) {
+        order._side = 1;
+        auto id = broker->Sell(0, "_custom_", symbol, order, lambda_sendResult);
+        if (id._error) {
+            return ProcessError(id._error, res);
         }
+        result["id"] = id._id;
+        result["sysID"] = id._sysID;
     }
+    res.status = 200;
     res.set_content(result.dump(), "application/json");
 }
 
@@ -431,4 +458,44 @@ void HistoryTradeHandler::get(const httplib::Request& req, httplib::Response& re
         nlohmann::json error = {{"error", e.what()}};
         res.set_content(error.dump(), "application/json");
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DecisionHandler
+// ═══════════════════════════════════════════════════════════
+
+void DecisionHandler::get(const httplib::Request& req, httplib::Response& res) {
+    auto date = req.get_param_value("date");
+    if (date.empty()) {
+        // 默认当日
+        time_t now = time(nullptr);
+        struct tm tm_val;
+        localtime_r(&now, &tm_val);
+        char buf[16];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
+        date = buf;
+    }
+
+    auto* broker = _server->GetBrokerSubSystem();
+    auto decisions = broker->GetDecisions(date);
+
+    nlohmann::json result = nlohmann::json::array();
+    for (const auto& rec : decisions) {
+        nlohmann::json item;
+        item["id"] = rec._id;
+        item["strategy"] = rec._strategy;
+        item["symbol"] = get_symbol(rec._symbol);
+        item["action"] = decision_action_name(rec._action);
+        item["label"] = decision_action_label(rec._action);
+        item["quantity"] = rec._quantity;
+        item["price"] = rec._price;
+        item["epoch"] = rec._epoch;
+        item["timestamp"] = rec._timestamp;
+        item["executed"] = rec._executed;
+        item["executedQuantity"] = rec._executed_quantity;
+        item["executedPrice"] = rec._executed_price;
+        result.push_back(item);
+    }
+
+    res.set_content(result.dump(), "application/json");
 }

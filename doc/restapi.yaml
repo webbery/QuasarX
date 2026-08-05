@@ -47,7 +47,7 @@ paths:
   /stocks/history:
     get:
       summary: get stock history
-      description: 获取指数信息
+      description: 获取股票历史 K 线数据
       tags:
         - Stocks
       parameters:
@@ -55,38 +55,43 @@ paths:
           name: id
           schema:
             type: string
-          description: 要获取的代码
-          example: 000001
+          description: 标的代码，格式为 代码.交易所大写（如 000001.SZ、600000.SH、920108.BJ）
+          example: 000001.SZ
         - in: query
           name: type
           schema:
             type: string
-          description: 数据频率
+          description: 数据频率（1d=日线, 5m=5分钟, 15m=15分钟, 30m=30分钟, 60m=60分钟）
           example: 1d
         - in: query
           name: start
           schema:
             type: integer
-          description: 起始时间
+          description: 起始时间，Unix 秒级时间戳（如 1672531200 表示 2023-01-01 00:00:00）
+          example: 1672531200
         - in: query
           name: end
           schema:
             type: integer
-          description: 结束时间
+          description: 结束时间，Unix 秒级时间戳（如 1767225599 表示 2025-12-31 23:59:59）
+          example: 1767225599
         - in: query
           name: right
           schema:
             type: integer
-          description: 复权方式,1-后复权
+          description: 复权方式，1=后复权(HFQ)，其他/缺省=不复权
+          example: 1
       responses:
         '200':
-          description: An array of stocks
+          description: 历史 K 线数据数组（按时间升序）
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/Quote"
+        '400':
+          description: 查询无数据（标的不存在、时间范围无数据或标的不在市场注册表中）
   /stocks/params:
     get:
       summary: 获取股票下单参数

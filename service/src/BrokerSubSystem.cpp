@@ -14,6 +14,7 @@
 #include "PortfolioSubsystem.h"
 #include "Util/lmdb.h"
 #include "Util/string_algorithm.h"
+#include "Util/DecisionDB.h"
 #include "json.hpp"
 #include "Util/system.h"
 #include "server.h"
@@ -1157,4 +1158,113 @@ BrokerSubSystem::NavResult BrokerSubSystem::QueryNav(run_id_t runId, time_t star
     }
 
     return result;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  决策管理
+// ═══════════════════════════════════════════════════════════
+
+int BrokerSubSystem::AddDecision(const String& strategy, symbol_t symbol, DecisionAction action,
+                                 int64_t quantity, double price, int epoch) {
+    std::lock_guard<std::mutex> lock(_decisionMtx);
+
+    DecisionRecord rec{};
+    rec._id = ++_decisionIdCounter;
+    rec._symbol = symbol;
+    rec._action = action;
+    rec._is_open = (decision_to_flag(action) == 0);
+    rec._quantity = quantity;
+    rec._price = price;
+    rec._epoch = epoch;
+    rec._timestamp = time(nullptr);
+    rec._executed = false;
+    rec._executed_quantity = 0;
+    rec._executed_price = 0;
+    rec._reserved = 0;
+    std::strncpy(rec._strategy, strategy.c_str(), sizeof(rec._strategy) - 1);
+    rec._strategy[sizeof(rec._strategy) - 1] = '\0';
+
+    _todayDecisions.push_back(rec);
+
+    // 持久化到 DuckDB
+    DecisionDB::instance().insertDecision(rec);
+
+    INFO("[Broker] Decision added: id={} {} {} {} qty={} price={:.2f}",
+         rec._id, strategy, decision_action_label(action),
+         get_symbol(symbol), quantity, price);
+
+    return rec._id;
+}
+
+Vector<DecisionRecord> BrokerSubSystem::GetDecisions(const String& date) {
+    // 优先从 DuckDB 查询（支持历史日期）
+    auto records = DecisionDB::instance().queryByDate(date);
+
+    // 如果是查当日，用内存数据覆盖（可能有更新的 executed 状态）
+    if (records.empty()) {
+        std::lock_guard<std::mutex> lock(_decisionMtx);
+        return _todayDecisions;
+    }
+
+    // 合并：内存中已执行的决策更新 DuckDB 结果
+    std::lock_guard<std::mutex> lock(_decisionMtx);
+    for (auto& dbRec : records) {
+        for (const auto& memRec : _todayDecisions) {
+            if (memRec._id == dbRec._id && memRec._executed) {
+                dbRec._executed = true;
+                dbRec._executed_quantity = memRec._executed_quantity;
+                dbRec._executed_price = memRec._executed_price;
+                break;
+            }
+        }
+    }
+    return records;
+}
+
+bool BrokerSubSystem::MarkDecisionExecuted(int id, int64_t exec_qty, double exec_price) {
+    {
+        std::lock_guard<std::mutex> lock(_decisionMtx);
+        for (auto& rec : _todayDecisions) {
+            if (rec._id == id) {
+                rec._executed = true;
+                rec._executed_quantity = exec_qty;
+                rec._executed_price = exec_price;
+                break;
+            }
+        }
+    }
+    return DecisionDB::instance().markExecuted(id, exec_qty, exec_price);
+}
+
+TradeReport BrokerSubSystem::SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side) {
+    TradeReport report{};
+    report._status = OrderStatus::OrderSuccess;
+    report._side = (side == TradeAction::BUY) ? 0 : 1;
+    report._flag = 0;
+    report._quantity = static_cast<int>(quantity);
+    report._price = price;
+    report._trade_amount = quantity * price;
+    report._time = time(nullptr);
+
+    // 构造 OrderContext 写入 _historyTrades（与策略成交同路径）
+    OrderContext ctx{};
+    ctx._order._symbol = symbol;
+    ctx._order._volume = static_cast<uint32_t>(quantity);
+    ctx._order._price = price;
+    ctx._order._side = report._side;
+    ctx._order._flag = 0;
+    ctx._order._time = report._time;
+    ctx._trades._symbol = symbol;
+    ctx._trades._reports.push_back(report);
+    ctx._strategy_hash = std::hash<String>{}("_custom_");
+    ctx._backtest_run_id = 0;
+    ctx._running_type = static_cast<uint8_t>(_server->GetRunningMode());
+
+    RecordTrade(ctx);
+
+    INFO("[Broker] SimulateFill: {} {} qty={} price={:.2f}",
+         (side == TradeAction::BUY) ? "BUY" : "SELL",
+         get_symbol(symbol), quantity, price);
+
+    return report;
 }
