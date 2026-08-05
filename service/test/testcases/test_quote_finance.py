@@ -260,6 +260,131 @@ class TestQuoteDataLifecycle:
 
 
 @pytest.mark.usefixtures("auth_token")
+class TestQuoteSelectiveDelete:
+    """测试选择性删除：增量更新只替换时间冲突的行，保留其他历史数据"""
+
+    TEST_SYMBOL = 'sh.888888'
+    TEST_TABLE = 'stock_1d'
+
+    def _kwargs(self, auth_token):
+        kwargs = {'verify': False}
+        if auth_token and len(auth_token) > 10:
+            kwargs['headers'] = {'Authorization': auth_token}
+        return kwargs
+
+    def _import(self, auth_token, csv_lines):
+        """Helper: 导入数据"""
+        kwargs = self._kwargs(auth_token)
+        kwargs['json'] = {
+            'action': 'import',
+            'table': self.TEST_TABLE,
+            'symbol': self.TEST_SYMBOL,
+            'data': csv_lines,
+        }
+        response = requests.post(f"{BASE_URL}/quote/data", **kwargs)
+        return check_response(response)
+
+    def _query(self, auth_token):
+        """Helper: 查询数据"""
+        kwargs = self._kwargs(auth_token)
+        params = {'table': self.TEST_TABLE, 'symbol': self.TEST_SYMBOL}
+        response = requests.get(f"{BASE_URL}/quote", params=params, **kwargs)
+        return check_response(response)
+
+    def _cleanup(self, auth_token):
+        """Helper: 清理测试数据"""
+        kwargs = self._kwargs(auth_token)
+        params = {'table': self.TEST_TABLE, 'symbol': self.TEST_SYMBOL}
+        requests.delete(f"{BASE_URL}/quote", params=params, **kwargs)
+
+    @pytest.mark.timeout(10)
+    def test_selective_delete_preserves_old_data(self, auth_token):
+        """增量更新：只替换时间冲突的行，保留其他历史数据"""
+        try:
+            # Step 1: 初始导入 3 天数据 (2024-01-02, 03, 04)
+            initial_csv = [
+                "datetime,open,close,high,low,volume,turnover",
+                "2024-01-02 00:00:00,10.00,10.50,10.60,9.90,100000,1050000",
+                "2024-01-03 00:00:00,10.50,10.80,10.90,10.40,120000,1296000",
+                "2024-01-04 00:00:00,10.80,10.30,11.00,10.20,150000,1545000",
+            ]
+            result = self._import(auth_token, initial_csv)
+            assert result['imported_rows'] == 3
+
+            # 验证初始数据
+            data = self._query(auth_token)
+            assert data['count'] == 3
+            # 按日期排序，第一行是 2024-01-02
+            assert data['data'][0]['datetime'] == '2024-01-02'
+            assert data['data'][0]['open'] == 10.0
+
+            # Step 2: 增量更新 3 天数据 (2024-01-03, 04, 05)
+            # 03 和 04 与初始数据重叠，05 是新增
+            update_csv = [
+                "datetime,open,close,high,low,volume,turnover",
+                "2024-01-03 00:00:00,11.00,11.50,11.60,10.90,130000,1495000",  # 更新
+                "2024-01-04 00:00:00,11.50,11.80,11.90,11.40,140000,1652000",  # 更新
+                "2024-01-05 00:00:00,11.80,12.00,12.10,11.70,150000,1800000",  # 新增
+            ]
+            result = self._import(auth_token, update_csv)
+            assert result['imported_rows'] == 3
+
+            # Step 3: 验证选择性删除
+            data = self._query(auth_token)
+            assert data['count'] == 4, f"Expected 4 rows (02 preserved, 03/04 updated, 05 added), got {data['count']}"
+
+            # 按日期排序
+            sorted_data = sorted(data['data'], key=lambda x: x['datetime'])
+
+            # 2024-01-02: 保留初始值
+            assert sorted_data[0]['datetime'] == '2024-01-02'
+            assert sorted_data[0]['open'] == 10.0, "2024-01-02 should preserve initial value"
+
+            # 2024-01-03: 更新后的值
+            assert sorted_data[1]['datetime'] == '2024-01-03'
+            assert sorted_data[1]['open'] == 11.0, "2024-01-03 should have updated value"
+
+            # 2024-01-04: 更新后的值
+            assert sorted_data[2]['datetime'] == '2024-01-04'
+            assert sorted_data[2]['open'] == 11.5, "2024-01-04 should have updated value"
+
+            # 2024-01-05: 新增
+            assert sorted_data[3]['datetime'] == '2024-01-05'
+            assert sorted_data[3]['open'] == 11.8, "2024-01-05 should be newly added"
+
+        finally:
+            # 清理测试数据
+            self._cleanup(auth_token)
+
+    @pytest.mark.timeout(10)
+    def test_import_empty_csv_preserves_existing(self, auth_token):
+        """导入空 CSV 不应删除现有数据"""
+        try:
+            # 先导入一些数据
+            initial_csv = [
+                "datetime,open,close,high,low,volume,turnover",
+                "2024-02-01 00:00:00,20.00,20.50,20.60,19.90,200000,4100000",
+            ]
+            self._import(auth_token, initial_csv)
+
+            data = self._query(auth_token)
+            assert data['count'] == 1
+
+            # 导入空 CSV（只有 header）
+            empty_csv = ["datetime,open,close,high,low,volume,turnover"]
+            result = self._import(auth_token, empty_csv)
+            # 空 CSV 应该返回 0 行
+            assert result['imported_rows'] == 0
+
+            # 验证原数据保留
+            data = self._query(auth_token)
+            assert data['count'] == 1, "Empty import should not delete existing data"
+
+        finally:
+            self._cleanup(auth_token)
+
+
+@pytest.mark.usefixtures("auth_token")
 class TestQuoteCleanup:
     """DELETE /v0/quote/data 清理接口测试"""
 

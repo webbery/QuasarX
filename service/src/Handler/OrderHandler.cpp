@@ -470,7 +470,11 @@ void DecisionHandler::get(const httplib::Request& req, httplib::Response& res) {
         // 默认当日
         time_t now = time(nullptr);
         struct tm tm_val;
+#ifdef _WIN32
+        localtime_s(&tm_val, &now);
+#else
         localtime_r(&now, &tm_val);
+#endif
         char buf[16];
         std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
         date = buf;

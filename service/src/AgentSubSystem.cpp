@@ -1030,11 +1030,11 @@ bool FlowSubsystem::RunTrainingCollect(
             // 估算总 bar 数（取第一个 symbol 的数据长度作为参考）
             uint64_t totalBars = btContext ? btContext->getTotalBars() : 0;
             while (running && !Server::IsExit()) {
-                context.SetEpoch(++epoch);
                 if (!exchange->stepForward(btContext)) {
                     INFO("[TrainingCollect] Data finished at epoch {}", epoch);
                     break;
                 }
+                context.SetEpoch(++epoch);
                 for (auto node : upstreamGraph) {
                     auto result = node->Process(strategy, context);
                     if (result == NodeProcessResult::Finished) {

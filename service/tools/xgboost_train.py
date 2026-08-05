@@ -47,7 +47,7 @@ def emit(obj):
     print(json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":")), flush=True)
 
 
-def compute_label(values, period, label_type, vol_k):
+def compute_label(s, period, label_type, vol_k):
     """计算标签：future_return = source[t+N]/source[t] - 1
 
     classification (自适应三分类):
@@ -56,8 +56,10 @@ def compute_label(values, period, label_type, vol_k):
       future < -threshold  → 2 (DOWN)
       otherwise            → 1 (FLAT)
     regression: label = future_return
+
+    参数 s 可以是 numpy 数组或 pd.Series；返回的 label / future 会保留 s 的 index（用于按时间对齐）
     """
-    s = pd.Series(values, dtype=float)
+    s = pd.Series(s) if not isinstance(s, pd.Series) else s.astype(float)
     future = s.shift(-period) / s - 1.0
     if label_type == "classification":
         log_ret = np.log(s / s.shift(1))
@@ -68,7 +70,7 @@ def compute_label(values, period, label_type, vol_k):
         else:
             threshold = vol_k * sigma * np.sqrt(period)
             threshold = float(np.clip(threshold, 0.005, 0.10))
-        label = pd.Series(np.nan, index=future.index)
+        label = pd.Series(np.nan, index=s.index)
         label[future > threshold] = 0    # UP
         label[future < -threshold] = 2   # DOWN
         label[(future >= -threshold) & (future <= threshold)] = 1  # FLAT
@@ -106,16 +108,21 @@ def main():
     df = pd.read_csv(args.data)
     emit({"type": "progress", "phase": "load_data", "rows": len(df), "cols": len(df.columns)})
 
-    # 日期过滤（如果 CSV 包含 date 列且指定了日期范围）
+    # 日期过滤 + date 作 index（按时间对齐，避免 RangeIndex 错位）
     if "date" in df.columns and (args.start_date or args.end_date):
         df["date"] = pd.to_datetime(df["date"])
         if args.start_date:
             df = df[df["date"] >= args.start_date]
         if args.end_date:
             df = df[df["date"] <= args.end_date]
-        df = df.drop(columns=["date"])
+        df = df.set_index("date").sort_index()
         emit({"type": "info", "phase": "date_filter",
-              "start": args.start_date, "end": args.end_date, "rows_after": len(df)})
+              "start": args.start_date, "end": args.end_date,
+              "rows_after": len(df), "date_range": f"{df.index.min()} ~ {df.index.max()}"})
+    elif "date" in df.columns:
+        # 有 date 列但未指定范围：仍转为 datetime index 便于按时间对齐
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
     elif args.start_date or args.end_date:
         emit({"type": "info", "phase": "date_filter",
               "message": "CSV 无 date 列，跳过日期过滤。需 C++ 端 writeCsv 输出日期列"})
@@ -128,14 +135,14 @@ def main():
         sys.exit(1)
 
     raw_label, future = compute_label(
-        df[args.label_source].values,
+        df[args.label_source],
         args.label_period,
         args.label_type,
         args.vol_k,
     )
 
-    # 排除标签列和日期列
-    exclude_cols = {args.label_source, "date"}
+    # 排除标签列（date 已在 index 中，不需要 exclude）
+    exclude_cols = {args.label_source}
     feature_cols = [c for c in df.columns if c not in exclude_cols]
     if len(feature_cols) == 0:
         emit({"type": "error", "message": "没有可用的特征列"})
@@ -188,6 +195,7 @@ def main():
             partial_detail.append(f"...其余 {len(partial) - 6} 列省略")
         emit({"type": "error", "message": (
             f"标签过滤后无有效样本。标签有效: {label_valid}/{total_rows}。"
+            f"日期范围: {df.index.min()} ~ {df.index.max()}。"
             f"部分 NaN 特征列 ({len(partial)} 个): {'; '.join(partial_detail)}。"
             f"可能原因：特征间时间对齐不一致，或标签来源列与特征列日期范围不重叠。"
         )})

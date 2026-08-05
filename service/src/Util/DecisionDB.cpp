@@ -58,7 +58,11 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
     char timebuf[64];
     struct tm tm_val;
     time_t ts = record._timestamp;
+#ifdef _WIN32
+    gmtime_s(&tm_val, &ts);
+#else
     gmtime_r(&ts, &tm_val);
+#endif
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
 
     std::string sql = fmt::format(

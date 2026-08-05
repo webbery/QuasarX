@@ -581,6 +581,26 @@ static nlohmann::json computeFeatureStats(const Map<String, Vector<double>>& col
         features.push_back(fs);
     }
     stats["features"] = features;
+
+    // 输出原始时序（用于前端绘制折线图和异常检测）
+    nlohmann::json series;
+    series["dates"] = dates;
+    nlohmann::json data = nlohmann::json::object();
+    for (auto& [name, values] : collected) {
+        nlohmann::json arr = nlohmann::json::array();
+        arr.get_ref<nlohmann::json::array_t&>().reserve(values.size());
+        for (double v : values) {
+            if (std::isnan(v) || std::isinf(v)) {
+                arr.push_back(nullptr);  // NaN/Inf → JSON null
+            } else {
+                arr.push_back(v);
+            }
+        }
+        data[name] = std::move(arr);
+    }
+    series["data"] = std::move(data);
+    stats["series"] = std::move(series);
+
     return stats;
 }
 

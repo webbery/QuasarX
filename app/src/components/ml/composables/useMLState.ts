@@ -91,6 +91,11 @@ export interface FeatureStat {
   median: number | null
 }
 
+export interface FeatureSeries {
+  dates: string[]
+  data: Record<string, (number | null)[]>  // null = NaN/Inf
+}
+
 export interface FeatureReport {
   total_rows: number
   n_features: number
@@ -98,6 +103,20 @@ export interface FeatureReport {
   date_end: string
   csv_path: string
   features: FeatureStat[]
+  series: FeatureSeries
+}
+
+export type AnomalyType = 'nan_run' | 'jump_to_zero' | 'stale_run'
+
+export interface Anomaly {
+  type: AnomalyType
+  symbol: string
+  feature: string
+  start_date: string
+  end_date: string
+  length: number
+  severity: 'high' | 'mid' | 'low'
+  detail: string
 }
 
 export const LABEL_TYPES = [

@@ -210,12 +210,27 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
         }
     }
 
-    // ── 3. DELETE 原数据 + Appender 全量列式插入（插入并替换）──
+    // ── 3. 选择性 DELETE（只删时间冲突的行）+ Appender 插入 ──
+    if (merged.empty()) {
+        SPDLOG_WARN("[QuoteDB] merged empty for {} ({}), skip", table, symbol_str);
+        return 0;
+    }
+
     exec_unsafe("BEGIN TRANSACTION");
     auto t_begin = std::chrono::high_resolution_clock::now();
 
-    // 删除该 symbol 旧数据（批量，一条 SQL）
-    exec_unsafe(fmt::format("DELETE FROM {} WHERE symbol = {}", table, sym_encoded));
+    // 只删除 datetime 与新 CSV 冲突的行，保留该 symbol 其他时间的历史数据
+    std::string in_clause;
+    in_clause.reserve(merged.size() * 24);
+    for (size_t i = 0; i < merged.size(); ++i) {
+        if (i > 0) in_clause += ",";
+        in_clause += '\'';
+        in_clause += merged[i].datetime;
+        in_clause += '\'';
+    }
+    exec_unsafe(fmt::format(
+        "DELETE FROM {} WHERE symbol = {} AND datetime IN ({})",
+        table, sym_encoded, in_clause));
 
     duckdb_appender appender = nullptr;
     if (duckdb_appender_create(conn(), nullptr, table.c_str(), &appender) != DuckDBSuccess) {

@@ -228,10 +228,9 @@ jobs:
 
       - name: Extract build artifact to workspace root
         run: |
-          ls -la build-artifact/
+          ls -la .
           cp -rf build-artifact/tools . 2>/dev/null || true
           ls -la tools/
-          ls -la .
           rm -rf build-artifact
 
       # 下载第三方 so
