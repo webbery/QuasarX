@@ -164,6 +164,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     nlohmann::json script;
     try {
         script = nlohmann::json::parse(strScript);
+        INFO("[MLTrain] Parsed script keys: {}", script.dump().substr(0, 200));
     } catch (...) {
         res.status = 400;
         res.set_content(R"({"message":"Invalid strategy script JSON"})", "application/json");
@@ -391,7 +392,9 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             "--start-date", startDate, "--end-date", endDate, "--frequency", frequency,
         };
         PythonRunner runner;
+        INFO("[MLTrain] Starting Python training: interpreter='{}', script='{}', data='{}'", interpreter, "tools/xgboost_train.py", state->_csvPath);
         if (!runner.start("tools/xgboost_train.py", args, interpreter)) {
+            WARN("[MLTrain] PythonRunner::start() failed");
             cleanupGraph();
             sendSSE("error", {{"step","train_model"},{"msg","failed to start training script"}});
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;

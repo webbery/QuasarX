@@ -180,6 +180,7 @@ jobs:
             service/build/QuantService.debug
             service/build/config.template.json
             service/tools/
+            service/test/
           compression-level: 5
           retention-days: 1
 
@@ -230,6 +231,7 @@ jobs:
         run: |
           ls -la .
           cp -rf build-artifact/tools . 2>/dev/null || true
+          cp -rf build-artifact/test . 2>/dev/null || true
           cp -rf build/QuantService . 2>/dev/null || true
           cp -rf build/QuantService.debug . 2>/dev/null || true
           cp -rf build/config.template.json . 2>/dev/null || true
@@ -533,7 +535,7 @@ jobs:
           done
 
           # 生成测试数据并运行测试
-          cd service/test
+          cd test
           python testcases/generate_test_data.py 2>/dev/null || true
           python run_tests.py --mode stock_hist_sim --no-service
           TEST_EXIT_CODE=$?

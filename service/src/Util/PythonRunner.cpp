@@ -256,10 +256,23 @@ bool PythonRunner::start(const std::string& script,
                          const std::vector<std::string>& args,
                          const std::string& interpreter) {
     int out_pipe[2], err_pipe[2];
-    if (pipe(out_pipe) != 0 || pipe(err_pipe) != 0) return false;
+    if (pipe(out_pipe) != 0) {
+        WARN("PythonRunner: pipe(out_pipe) failed: {}", strerror(errno));
+        return false;
+    }
+    if (pipe(err_pipe) != 0) {
+        WARN("PythonRunner: pipe(err_pipe) failed: {}", strerror(errno));
+        close(out_pipe[0]); close(out_pipe[1]);
+        return false;
+    }
 
     pid_t pid = fork();
-    if (pid < 0) return false;
+    if (pid < 0) {
+        WARN("PythonRunner: fork() failed: {}", strerror(errno));
+        close(out_pipe[0]); close(out_pipe[1]);
+        close(err_pipe[0]); close(err_pipe[1]);
+        return false;
+    }
 
     if (pid == 0) {
         close(out_pipe[0]);
