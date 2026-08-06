@@ -308,6 +308,21 @@ watch(() => props.script, (s) => {
   }
 }, { immediate: true })
 
+// 从策略 JSON 中提取首个 XGBoostNode 的 label 作为 bind 时的 production 文件名后缀
+function extractXgbNodeLabel(script: string): string | undefined {
+  try {
+    const parsed = JSON.parse(script)
+    const nodes = parsed?.graph?.nodes ?? parsed?.nodes
+    if (!Array.isArray(nodes)) return undefined
+    for (const n of nodes) {
+      if (n?.data?.nodeType === 'xgboost' && typeof n.data.label === 'string' && n.data.label.trim()) {
+        return n.data.label.trim()
+      }
+    }
+  } catch { /* ignore */ }
+  return undefined
+}
+
 function onLabelTypeChange() {
   props.state.syncObjective()
 }
@@ -421,7 +436,7 @@ async function onTrain() {
           props.state.trainResult.logs.push({ step: data.step || '', level: 'error', line })
         }
       }
-    }, props.state.featureReport.data?.csv_path)
+    }, props.state.featureReport.data?.csv_path, extractXgbNodeLabel(props.script))
     props.state.trainResult.data = result
     if (result) emit('trained')
   } finally {

@@ -65,6 +65,7 @@ export function useMLData() {
     },
     onEvent?: (type: string, data: any) => void,
     csvPath?: string,
+    nodeLabel?: string,
   ): Promise<TrainResult | null> {
     try {
       const body: Record<string, any> = {
@@ -134,6 +135,7 @@ export function useMLData() {
               onEvent?.(event.event || 'message', data)
               if (event.event === 'result') {
                 result = data as TrainResult
+                if (nodeLabel) result.node_label = nodeLabel
               } else if (event.event === 'error') {
                 ElMessage.error(`训练失败: ${data.msg || data.message || '未知错误'}`)
               }
@@ -273,17 +275,9 @@ export function useMLData() {
     }
   }
 
-  /** 发布实验模型到生产 */
-  async function publishModel(modelPath: string): Promise<{ production_path: string } | null> {
-    try {
-      const resp = await axios.post('/v0/ml', { action: 'publish', model_path: modelPath })
-      ElMessage.success('已发布到生产')
-      return resp.data
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || '发布失败'
-      ElMessage.error(`发布失败: ${msg}`)
-      return null
-    }
+  /** 已废弃：模型绑定由 useModelBinding.bindModel 处理 */
+  async function publishModel(_modelPath: string): Promise<null> {
+    return null
   }
 
   /** 获取价格数据并计算标签（UP/FLAT/DOWN） */

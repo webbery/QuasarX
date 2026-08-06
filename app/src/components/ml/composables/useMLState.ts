@@ -39,6 +39,7 @@ export interface Prediction {
 export interface TrainResult {
   model_id: number
   model_path: string
+  node_label?: string        // 训练来源的 XGBoostNode label（bind 时作为 production 文件名后缀）
   best_iteration: number
   n_train: number
   n_test: number

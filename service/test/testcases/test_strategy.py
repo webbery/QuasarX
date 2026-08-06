@@ -351,3 +351,104 @@ class TestStrategy:
         assert found['epochCount'] >= 1, f"聚合完成后 epochCount 应 >= 1，实际 {found['epochCount']}"
 
         self.cleanup_strategy(auth_token, name)
+
+
+# ============== Multipart 部署（含模型文件 + 跨策略共享校验） ==============
+
+class TestStrategyMultipartDeploy:
+    """multipart deploy：策略 JSON + 模型文件上传
+
+    - 正常 multipart deploy 应返回 200
+    - 跨策略引用校验：XGBoostNode.modelFile 指向其他策略 → 400 拒绝
+    - 不带 multipart 的旧 JSON 部署路径仍然工作（向后兼容）
+    """
+
+    DEPLOY_NAME = "test_xgb_deploy"
+
+    def _xgb_strategy(self, name, xgb_label="XGBTestNode", model_file=None):
+        expected = f"production/{name}-{xgb_label}.json"
+        if model_file is None:
+            model_file = expected
+        return {
+            "id": name, "name": name, "version": 1, "source": "A_hfq",
+            "graph": {
+                "nodes": [
+                    {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+                     "data": {"label": "行情", "nodeType": "input",
+                              "params": {"code": {"value": ["sz.000001"], "type": "text"},
+                                         "freq": {"value": "1d", "type": "select"}}}},
+                    {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
+                     "data": {"label": "MA", "nodeType": "function",
+                              "params": {"method": {"value": "MA", "type": "select"},
+                                         "range": {"value": "5d", "type": "text"}}}},
+                    {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
+                     "data": {"label": xgb_label, "nodeType": "xgboost",
+                              "params": {"modelFile": {"value": model_file, "type": "text"},
+                                         "features": {"value": "close", "type": "text"},
+                                         "objective": {"value": "binary:logistic", "type": "select"},
+                                         "num_class": {"value": 2, "type": "number"}}}},
+                ],
+                "edges": [
+                    {"id": "e1->2", "source": "1", "target": "2",
+                     "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+                    {"id": "e2->3", "source": "2", "target": "3",
+                     "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+                ],
+            },
+        }
+
+    def _model_bytes(self):
+        return json.dumps({
+            "model_type": "xgboost", "objective": "binary:logistic",
+            "num_class": 2, "version": 1, "trees": [], "learner_model_param": {},
+        }).encode("utf-8")
+
+    def _meta_bytes(self):
+        return json.dumps({
+            "strategy_id": "xgb_test", "created_at": "2026-08-06T15:30:12",
+            "label": {"type": "classification", "period": 5, "threshold": 0.0},
+            "objective": "binary:logistic", "num_class": 2,
+            "params": {"learning_rate": 0.1, "max_depth": 3}, "features": ["close"],
+        }).encode("utf-8")
+
+    def _deploy_multipart(self, auth_token, name, xgb_label="XGBTestNode",
+                          model_file=None, include_model_meta=True):
+        strategy = self._xgb_strategy(name, xgb_label, model_file)
+        files = {
+            "script": ("script.json", json.dumps(strategy).encode("utf-8"), "application/json"),
+            f"model_{xgb_label}": (f"{xgb_label}.json", self._model_bytes(), "application/json"),
+        }
+        if include_model_meta:
+            files[f"model_{xgb_label}_meta"] = (
+                f"{xgb_label}.meta.json", self._meta_bytes(), "application/json"
+            )
+        headers = {"Authorization": auth_token} if auth_token else {}
+        return requests.post(
+            f"{BASE_URL}/strategy", files=files, data={"name": name},
+            headers=headers, verify=VERIFY_SSL, timeout=60,
+        )
+
+    def test_multipart_deploy_succeeds(self, auth_token):
+        resp = self._deploy_multipart(auth_token, self.DEPLOY_NAME)
+        assert resp.status_code == 200, f"deploy failed: {resp.status_code} {resp.text}"
+        assert resp.json()["name"] == self.DEPLOY_NAME
+        TestStrategy().cleanup_strategy(auth_token, self.DEPLOY_NAME)
+
+    def test_cross_strategy_model_file_rejected(self, auth_token):
+        resp = self._deploy_multipart(
+            auth_token, self.DEPLOY_NAME, "XGBTestNode",
+            model_file="production/other_strategy-xgb.json",
+        )
+        assert resp.status_code == 400, f"应拒绝跨策略引用，实际 {resp.status_code}: {resp.text}"
+        body = resp.json()
+        assert "不匹配" in body.get("message", "") or "cross" in body.get("message", "").lower()
+
+    def test_plain_json_deploy_still_works(self, auth_token):
+        plain_name = self.DEPLOY_NAME + "_plain"
+        strategy = self._xgb_strategy(plain_name, "XGBTestNode", model_file="")
+        headers = {"Authorization": auth_token} if auth_token else {}
+        kwargs = {"verify": False, "headers": headers, "json":
+                  {"mode": 0, "name": plain_name, "script": strategy}}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=60)
+        assert resp.status_code == 200, f"plain deploy failed: {resp.status_code} {resp.text}"
+        TestStrategy().cleanup_strategy(auth_token, plain_name)

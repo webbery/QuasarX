@@ -230,7 +230,10 @@ jobs:
         run: |
           ls -la .
           cp -rf build-artifact/tools . 2>/dev/null || true
-          ls -la tools/
+          cp -rf build/QuantService . 2>/dev/null || true
+          cp -rf build/QuantService.debug . 2>/dev/null || true
+          cp -rf build/config.template.json . 2>/dev/null || true
+          ls -la .
           rm -rf build-artifact
 
       # 下载第三方 so

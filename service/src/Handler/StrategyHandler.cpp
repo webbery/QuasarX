@@ -75,7 +75,35 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
 }
 
 void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) {
-    auto params = nlohmann::json::parse(req.body);
+    // multipart/form-data（含 model_* 文件 part）走单独解析路径
+    bool isMultipart = req.is_multipart_form_data();
+    nlohmann::json params;
+    if (isMultipart) {
+        String scriptStr = req.body;  // 先占位，下面覆盖
+        if (!req.has_file("script")) {
+            res.status = 400;
+            res.set_content(R"({"message":"missing 'script' part in multipart"})", "application/json");
+            return;
+        }
+        scriptStr = req.get_file_value("script").content;
+        try {
+            params = nlohmann::json::parse(scriptStr);
+        } catch (const std::exception& e) {
+            res.status = 400;
+            nlohmann::json err;
+            err["message"] = "invalid 'script' JSON in multipart";
+            err["error"] = e.what();
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        // name 是普通文本字段（不是 file part），用 get_param_value 拿
+        String nameStr = req.get_param_value("name");
+        if (!nameStr.empty()) {
+            params["name"] = nameStr;
+        }
+    } else {
+        params = nlohmann::json::parse(req.body);
+    }
 
     // 检查是否是验证请求
     if (params.contains("action") && params["action"] == "validate") {
@@ -89,7 +117,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    int mode = params["mode"];
+    int mode = params.value("mode", 0);
     if (mode == 2) {// 暂停
         String name = params["name"];
         stop(name, res);
@@ -98,8 +126,9 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         String name = params["name"];
         run(name, res);
     } else {
-        // 部署并运行
-        deploy(params, res);
+        // 部署并运行；multipart 时把 req 一起传给 deploy（用于读 model_* parts）
+        if (isMultipart) deploy(params, req, res);
+        else deploy(params, res);
     }
 }
 
@@ -121,6 +150,14 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
 }
 
 void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res) {
+    deployImpl(param, nullptr, res);
+}
+
+void StrategyHandler::deploy(const nlohmann::json& param, const httplib::Request& req, httplib::Response& res) {
+    deployImpl(param, &req, res);
+}
+
+void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Request* reqPtr, httplib::Response& res) {
     String scripts = param["script"].dump();
     String name = param["name"];
 
@@ -193,6 +230,78 @@ void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res
 #endif
 
     INFO("[StrategyHandler] Strategy '{}' saved successfully", name);
+
+    // ============ 处理 multipart 模型文件 ============
+    // 1. 校验每个 XGBoostNode.modelFile 必须匹配 production/{name}-{label}.json（禁止跨策略）
+    if (param.contains("graph") && param["graph"].contains("nodes")) {
+        for (const auto& n : param["graph"]["nodes"]) {
+            if (!n.contains("data") || n["data"].value("nodeType", "") != "xgboost") continue;
+            String xgbLabel = n["data"].value("label", "");
+            String modelFile = "";
+            if (n["data"].contains("params") && n["data"]["params"].contains("modelFile")) {
+                const auto& mf = n["data"]["params"]["modelFile"];
+                modelFile = mf.is_string() ? mf.get<String>() : mf.value("value", "");
+            }
+            String expected = "production/" + name + "-" + xgbLabel + ".json";
+            if (modelFile != expected) {
+                WARN("[StrategyHandler] XGBoostNode '{}' modelFile='{}' != expected '{}', cross-strategy ref forbidden",
+                     xgbLabel, modelFile, expected);
+                res.status = 400;
+                nlohmann::json err;
+                err["message"] = "XGBoostNode '" + xgbLabel + "' modelFile='" + modelFile +
+                                  "' 与策略 '" + name + "' 不匹配，禁止跨策略引用（应为 '" + expected + "'）";
+                res.set_content(err.dump(), "application/json");
+                return;
+            }
+        }
+    }
+
+    // 2. 从 multipart parts 提取 model_{label} + model_{label}_meta，写到 production/{name}-{label}.json + .meta.json
+    if (reqPtr) {
+        String dbPath = _server->GetConfig().GetDatabasePath();
+        std::filesystem::path prodDir = std::filesystem::path(dbPath) / "models" / "production";
+        try {
+            std::filesystem::create_directories(prodDir);
+        } catch (const std::filesystem::filesystem_error& e) {
+            WARN("[StrategyHandler] Failed to create production dir: {}", e.what());
+        }
+
+        for (const auto& file : reqPtr->files) {
+            const String& partName = file.first;
+            // 匹配 model_{label} 但不是 _meta 后缀
+            if (partName.rfind("model_", 0) != 0) continue;
+            String labelPart = partName.substr(6);  // 去掉 "model_"
+            if (labelPart.size() > 5 && labelPart.substr(labelPart.size() - 5) == "_meta") continue;
+            // 主文件：model_{label} → production/{name}-{label}.json
+            String modelFileName = name + "-" + labelPart + ".json";
+            String metaFileName = name + "-" + labelPart + ".meta.json";
+            std::filesystem::path modelOut = prodDir / modelFileName;
+            std::filesystem::path metaOut = prodDir / metaFileName;
+            try {
+                std::ofstream mofs(modelOut, std::ios::out | std::ios::trunc | std::ios::binary);
+                mofs << file.second.content;
+                mofs.close();
+                // meta 部分（可能不存在）
+                String metaPartName = "model_" + labelPart + "_meta";
+                if (reqPtr->has_file(metaPartName)) {
+                    std::ofstream mefs(metaOut, std::ios::out | std::ios::trunc | std::ios::binary);
+                    mefs << reqPtr->get_file_value(metaPartName).content;
+                    mefs.close();
+                }
+                INFO("[StrategyHandler] Saved model file: {} (meta: {})", modelOut.string(),
+                     std::filesystem::exists(metaOut) ? metaOut.string() : "<none>");
+            } catch (const std::exception& e) {
+                WARN("[StrategyHandler] Failed to save model '{}': {}", modelFileName, e.what());
+                res.status = 500;
+                nlohmann::json err;
+                err["message"] = "Failed to save model file";
+                err["model"] = modelFileName;
+                err["error"] = e.what();
+                res.set_content(err.dump(), "application/json");
+                return;
+            }
+        }
+    }
 
     // 运行
     auto strategySys = _server->GetStrategySystem();

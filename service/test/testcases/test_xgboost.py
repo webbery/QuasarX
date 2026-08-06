@@ -29,7 +29,7 @@ BASE_URL = "https://localhost:19107/v0"
 VERIFY_SSL = False
 
 # 训练策略脚本路径
-STRATEGY_PATH = Path(__file__).parent / "ai_test_data" / "ml_train_strategy.json"
+STRATEGY_PATH = Path(__file__).parent / "ai_test_data" / "xgboost_train_strategy.json"
 
 
 def _headers(auth_token):
@@ -190,21 +190,31 @@ class TestXGBoostErrors:
         )
         assert resp.status_code == 404
 
-    def test_publish_missing_path(self, auth_token):
-        """publish 缺少 model_path 返回 400"""
-        resp = requests.post(
+    def test_download_missing_model_id(self, auth_token):
+        """download 缺少 model_id 返回 400"""
+        resp = requests.get(
             f"{BASE_URL}/ml",
-            json={"action": "publish"},
+            params={"action": "download"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
         )
         assert resp.status_code == 400
 
-    def test_publish_nonexistent_file(self, auth_token):
-        """publish 不存在的文件路径返回 404"""
-        resp = requests.post(
+    def test_download_invalid_model_id(self, auth_token):
+        """download 无效 model_id 返回 400"""
+        resp = requests.get(
             f"{BASE_URL}/ml",
-            json={"action": "publish", "model_path": "/nonexistent/model.json"},
+            params={"action": "download", "model_id": "abc"},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 400
+
+    def test_download_nonexistent_model(self, auth_token):
+        """download 不存在的 model_id 返回 404"""
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": "99999999"},
             headers=_headers(auth_token),
             verify=VERIFY_SSL,
         )
@@ -257,6 +267,25 @@ class TestXGBoostList:
         assert "params" in meta
         assert "features" in meta
         assert "objective" in meta
+
+    def test_download_returns_model_json(self, auth_token, trained_model):
+        """download 返回 model_json + meta_json（供前端 bind 使用）"""
+        model_id = trained_model["model_id"]
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": str(model_id)},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["model_id"] == model_id
+        assert "model_json" in data and len(data["model_json"]) > 0
+        assert "meta_json" in data
+        # model_json 必须是合法 JSON
+        import json as _json
+        parsed = _json.loads(data["model_json"])
+        assert isinstance(parsed, dict)
 
 
 # ============== 训练结果验证 ==============
@@ -318,50 +347,6 @@ class TestXGBoostShap:
         assert resp.status_code == 200
         sh = resp.json()
         assert sh["n_samples"] > 0
-
-
-# ============== Publish 测试 ==============
-
-class TestXGBoostPublish:
-    """发布功能测试"""
-
-    def test_publish(self, auth_token, trained_model):
-        """publish 返回 production_path"""
-        resp = requests.post(
-            f"{BASE_URL}/ml",
-            json={"action": "publish", "model_path": trained_model["model_path"]},
-            headers=_headers(auth_token),
-            verify=VERIFY_SSL,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["message"] == "published"
-        assert "production_path" in data
-        assert "strategy_id" in data
-
-    def test_list_after_publish(self, auth_token, trained_model):
-        """publish 后 list 的 production 不为空"""
-        # 先 publish
-        requests.post(
-            f"{BASE_URL}/ml",
-            json={"action": "publish", "model_path": trained_model["model_path"]},
-            headers=_headers(auth_token),
-            verify=VERIFY_SSL,
-        )
-
-        # 再 list
-        resp = requests.get(
-            f"{BASE_URL}/ml",
-            params={"action": "list"},
-            headers=_headers(auth_token),
-            verify=VERIFY_SSL,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["production"] is not None
-        prod_meta = data["production"].get("meta", {})
-        assert prod_meta.get("published_from") is not None
-        assert prod_meta.get("published_at") is not None
 
 
 # ============== Delete 测试（放最后，会清除内存缓存） ==============

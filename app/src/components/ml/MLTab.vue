@@ -190,7 +190,7 @@
         </div>
 
         <div v-show="activeTab === 'result'">
-          <ResultPanel :state="state" />
+          <ResultPanel :state="state" :selected-strategy-id="selectedStrategyId" />
         </div>
       </div>
     </template>

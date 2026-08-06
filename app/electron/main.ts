@@ -363,6 +363,60 @@ ipcMain.handle('save-csv-to-dir', async (_, directory: string, fileName: string,
     }
 });
 
+// 模型绑定：将训练产物写入 appData/models/{strategyName}/{label}.json（覆盖）
+ipcMain.handle('model-bind-write', async (_, args: {
+    strategyName: string;
+    label: string;
+    modelJson: string;
+    metaJson: string;
+}) => {
+    try {
+        const dir = join(app.getPath('userData'), 'models', args.strategyName);
+        mkdirSync(dir, { recursive: true });
+        const modelPath = join(dir, `${args.label}.json`);
+        const metaPath = join(dir, `${args.label}.meta.json`);
+        writeFileSync(modelPath, args.modelJson, 'utf-8');
+        writeFileSync(metaPath, args.metaJson || '{}', 'utf-8');
+        return { success: true, modelPath, metaPath };
+    } catch (error: any) {
+        console.error('[model-bind-write] 错误:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 部署时读取模型文件：返回 {modelBytes, metaBytes} 供 multipart 打包
+ipcMain.handle('model-read-for-deploy', async (_, args: { strategyName: string; label: string }) => {
+    try {
+        const dir = join(app.getPath('userData'), 'models', args.strategyName);
+        const modelPath = join(dir, `${args.label}.json`);
+        const metaPath = join(dir, `${args.label}.meta.json`);
+        if (!existsSync(modelPath)) {
+            return { success: false, error: `model ${args.label} not found locally` };
+        }
+        const modelBytes = Array.from(readFileSync(modelPath));
+        const metaBytes = existsSync(metaPath) ? Array.from(readFileSync(metaPath)) : [];
+        return { success: true, modelBytes, metaBytes };
+    } catch (error: any) {
+        console.error('[model-read-for-deploy] 错误:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 列出某策略已 bind 的所有 label（扫描 appData/models/{strategyName}/*.json 去掉 .meta.json）
+ipcMain.handle('model-list-bindings', async (_, strategyName: string) => {
+    try {
+        const dir = join(app.getPath('userData'), 'models', strategyName);
+        if (!existsSync(dir)) return { success: true, labels: [] };
+        const labels = readdirSync(dir)
+            .filter(f => f.endsWith('.json') && !f.endsWith('.meta.json'))
+            .map(f => f.replace(/\.json$/, ''));
+        return { success: true, labels };
+    } catch (error: any) {
+        console.error('[model-list-bindings] 错误:', error);
+        return { success: false, error: error.message, labels: [] };
+    }
+});
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.

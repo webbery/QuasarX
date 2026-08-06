@@ -103,7 +103,7 @@ Set<String> sourcesFromNodes(const List<QNode*>& nodes) {
 
 }  // namespace
 
-uint64_t MLHandler::registerModel(ModelType type, BoosterHandle booster, Vector<String> features, Vector<Vector<double>> x_test) {
+uint64_t MLHandler::registerModel(ModelType type, BoosterHandle booster, Vector<String> features, Eigen::MatrixXd x_test) {
     std::lock_guard<std::mutex> lock(_mtx);
     uint64_t id = _nextId.fetch_add(1);
     _cache[id]._modelType = type;
@@ -470,12 +470,19 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     XGBoosterFree(booster); booster = nullptr;
                 }
             }
-            Vector<Vector<double>> Xtest;
+            // X_test: 行=样本, 列=特征；先确定行/列数，再 resize 后逐元素填充
+            Eigen::MatrixXd Xtest;
             if (trainResult.contains("X_test") && trainResult["X_test"].is_array()) {
-                for (auto& row : trainResult["X_test"]) {
-                    Vector<double> rv;
-                    for (auto& v : row) rv.push_back(v.get<double>());
-                    Xtest.push_back(std::move(rv));
+                size_t nRows = trainResult["X_test"].size();
+                size_t nCols = 0;
+                if (nRows > 0 && trainResult["X_test"][0].is_array())
+                    nCols = trainResult["X_test"][0].size();
+                Xtest.resize(nRows, nCols);
+                for (size_t i = 0; i < nRows; ++i) {
+                    const auto& row = trainResult["X_test"][i];
+                    for (size_t j = 0; j < nCols && j < row.size(); ++j) {
+                        Xtest(i, j) = row[j].get<double>();
+                    }
                 }
             }
             uint64_t modelId = 0;
@@ -487,6 +494,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 modelId = registerModel(modelType, booster, actualFeatures, Xtest);
                 trainResult["model_id"] = modelId;
                 trainResult["model_type"] = modelTypeToString(modelType);
+                if (auto* m = getModel(modelId)) m->_modelPath = persistPath;
             }
             trainResult.erase("X_test");
             trainResult["model_path"] = persistPath;
@@ -904,19 +912,19 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
         return;
     }
 
-    if (model->_x_test.empty()) {
+    if (model->_x_test.size() == 0) {
         res.status = 400;
         res.set_content(R"({"message":"model has no test data"})", "application/json");
         return;
     }
 
     size_t n_features = model->_features.size();
-    size_t n_samples = model->_x_test.size();
+    size_t n_samples = static_cast<size_t>(model->_x_test.rows());
 
     std::vector<float> flat(n_samples * n_features);
     for (size_t i = 0; i < n_samples; ++i) {
         for (size_t j = 0; j < n_features; ++j) {
-            double v = (j < model->_x_test[i].size()) ? model->_x_test[i][j] : 0.0;
+            double v = (j < static_cast<size_t>(model->_x_test.cols())) ? model->_x_test(i, j) : 0.0;
             flat[i * n_features + j] = static_cast<float>(v);
         }
     }
@@ -1056,78 +1064,6 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
     res.set_content(resp.dump(), "application/json");
 }
 
-void MLHandler::handlePublish(const nlohmann::json& params, httplib::Response& res) {
-    String modelPath = params.value("model_path", "");
-    if (modelPath.empty()) {
-        res.status = 400;
-        res.set_content(R"({"message":"missing 'model_path'"})", "application/json");
-        return;
-    }
-
-    if (!std::filesystem::exists(modelPath)) {
-        res.status = 404;
-        res.set_content(R"({"message":"model file not found"})", "application/json");
-        return;
-    }
-
-    // 从文件名提取 strategy_id 和 timestamp
-    std::filesystem::path p(modelPath);
-    String stem = p.stem().string();  // e.g. "strategy_xgb_20260727_153012"
-    // 去掉末尾的时间戳 _YYYYMMDD_HHMMSS 得到 strategy_id
-    String strategyId = stem;
-    auto lastUnderscore = stem.rfind('_');
-    if (lastUnderscore != String::npos) {
-        auto prevUnderscore = stem.rfind('_', lastUnderscore - 1);
-        if (prevUnderscore != String::npos) {
-            // 检查是否符合 _YYYYMMDD_HHMMSS 格式
-            String suffix = stem.substr(prevUnderscore + 1);
-            if (suffix.size() == 15 && suffix[8] == '_') {
-                strategyId = stem.substr(0, prevUnderscore);
-            }
-        }
-    }
-
-    String dbPath = _server->GetConfig().GetDatabasePath();
-    String prodDir = dbPath + "/models/production";
-    std::filesystem::create_directories(prodDir);
-
-    String prodModelPath = prodDir + "/" + strategyId + ".json";
-    String prodMetaPath = prodDir + "/" + strategyId + ".meta.json";
-
-    // 复制模型文件
-    std::filesystem::copy(modelPath, prodModelPath, std::filesystem::copy_options::overwrite_existing);
-
-    // 读取实验 meta 并写入 production meta（附加发布来源信息）
-    String expMetaPath = modelPath;
-    auto dotPos = expMetaPath.rfind('.');
-    if (dotPos != String::npos) {
-        expMetaPath = expMetaPath.substr(0, dotPos) + ".meta.json";
-    }
-
-    nlohmann::json prodMeta;
-    if (std::filesystem::exists(expMetaPath)) {
-        std::ifstream ifs(expMetaPath);
-        if (ifs.is_open()) {
-            try {
-                prodMeta = nlohmann::json::parse(ifs);
-            } catch (...) {}
-        }
-    }
-    prodMeta["source"] = "experiment";
-    prodMeta["published_from"] = stem;
-    prodMeta["published_at"] = ToString(Now(), "%Y-%m-%dT%H:%M:%S");
-
-    std::ofstream ofs(prodMetaPath);
-    if (ofs.is_open()) ofs << prodMeta.dump(2);
-
-    nlohmann::json resp = {
-        {"message", "published"},
-        {"production_path", prodModelPath},
-        {"strategy_id", strategyId},
-    };
-    res.set_content(resp.dump(), "application/json");
-}
-
 void MLHandler::handleList(httplib::Response& res) {
     String dbPath = _server->GetConfig().GetDatabasePath();
     String expDir = dbPath + "/models/experiments";
@@ -1236,12 +1172,10 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
         handleCollect(params, res);
     } else if (action == "shap") {
         handleShap(params, res);
-    } else if (action == "publish") {
-        handlePublish(params, res);
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|collect|shap|publish)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|collect|shap)\"}",
             "application/json");
         return;
     }
@@ -1255,6 +1189,54 @@ void MLHandler::get(const httplib::Request& req, httplib::Response& res) {
         handleTrainProgress(req, res);
     } else if (action == "train_status") {
         handleTrainStatus(req, res);
+    } else if (action == "download") {
+        // 下载训练产物：model_id → .json + .meta.json，打包成 zip 流式返回
+        String modelIdStr = req.get_param_value("model_id");
+        if (modelIdStr.empty()) {
+            res.status = 400;
+            res.set_content(R"({"message":"missing model_id"})", "application/json");
+            return;
+        }
+        uint64_t modelId = 0;
+        try { modelId = std::stoull(modelIdStr); }
+        catch (...) {
+            res.status = 400;
+            res.set_content(R"({"message":"invalid model_id"})", "application/json");
+            return;
+        }
+        auto* m = getModel(modelId);
+        if (!m || m->_modelPath.empty()) {
+            res.status = 404;
+            res.set_content(R"({"message":"model not found or path missing"})", "application/json");
+            return;
+        }
+        if (!std::filesystem::exists(m->_modelPath)) {
+            res.status = 404;
+            res.set_content(R"({"message":"model file not found on disk"})", "application/json");
+            return;
+        }
+        // 流式读取 .json + .meta.json，合并为单一 JSON 响应
+        std::ifstream ifs(m->_modelPath, std::ios::binary);
+        std::string modelJson((std::istreambuf_iterator<char>(ifs)),
+                              std::istreambuf_iterator<char>());
+        std::string metaJson;
+        String metaPath = m->_modelPath;
+        auto dotPos = metaPath.rfind('.');
+        if (dotPos != String::npos) {
+            metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+            if (std::filesystem::exists(metaPath)) {
+                std::ifstream mifs(metaPath);
+                metaJson = std::string((std::istreambuf_iterator<char>(mifs)),
+                                       std::istreambuf_iterator<char>());
+            }
+        }
+        nlohmann::json resp = {
+            {"model_id", modelId},
+            {"model_path", m->_modelPath},
+            {"model_json", modelJson},
+            {"meta_json", metaJson},
+        };
+        res.set_content(resp.dump(), "application/json");
     } else if (action == "shap") {
         // 从 query params 构造 params json
         nlohmann::json params;
@@ -1275,7 +1257,7 @@ void MLHandler::get(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (list|shap)\"}",
+            "{\"message\":\"missing or invalid 'action' (list|shap|download)\"}",
             "application/json");
         return;
     }

@@ -32,7 +32,8 @@ struct CachedMLModel {
     ModelType _modelType = ModelType::XGBoost;
     BoosterHandle _booster = nullptr;
     Vector<String> _features;
-    Vector<Vector<double>> _x_test;
+    Eigen::MatrixXd _x_test;  // 行=样本, 列=特征
+    String _modelPath;        // 实验文件路径，用于下载 / bind
 
     ~CachedMLModel() { clear(); }
 
@@ -42,7 +43,7 @@ struct CachedMLModel {
             _booster = nullptr;
         }
         _features.clear();
-        _x_test.clear();
+        _modelPath.clear();
     }
 };
 
@@ -99,7 +100,7 @@ public:
     void del(const httplib::Request& req, httplib::Response& res) override;
 
     // 注册模型到缓存（SHAP 计算用）
-    uint64_t registerModel(ModelType type, BoosterHandle booster, Vector<String> features, Vector<Vector<double>> x_test);
+    uint64_t registerModel(ModelType type, BoosterHandle booster, Vector<String> features, Eigen::MatrixXd x_test);
     CachedMLModel* getModel(uint64_t id);
     bool deleteModel(uint64_t id);
 
@@ -109,7 +110,6 @@ private:
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleTrainStatus(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);
-    void handlePublish(const nlohmann::json& params, httplib::Response& res);
     void handleList(httplib::Response& res);
     void handleDelete(uint64_t modelId, httplib::Response& res);
 

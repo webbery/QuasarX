@@ -314,8 +314,8 @@ class TestQuoteSelectiveDelete:
             # 验证初始数据
             data = self._query(auth_token)
             assert data['count'] == 3
-            # 按日期排序，第一行是 2024-01-02
-            assert data['data'][0]['datetime'] == '2024-01-02'
+            # 按日期排序，第一行是 2024-01-02（GET /v0/quote 返回完整 datetime 字符串）
+            assert data['data'][0]['datetime'] == '2024-01-02 00:00:00'
             assert data['data'][0]['open'] == 10.0
 
             # Step 2: 增量更新 3 天数据 (2024-01-03, 04, 05)
@@ -337,19 +337,19 @@ class TestQuoteSelectiveDelete:
             sorted_data = sorted(data['data'], key=lambda x: x['datetime'])
 
             # 2024-01-02: 保留初始值
-            assert sorted_data[0]['datetime'] == '2024-01-02'
+            assert sorted_data[0]['datetime'] == '2024-01-02 00:00:00'
             assert sorted_data[0]['open'] == 10.0, "2024-01-02 should preserve initial value"
 
             # 2024-01-03: 更新后的值
-            assert sorted_data[1]['datetime'] == '2024-01-03'
+            assert sorted_data[1]['datetime'] == '2024-01-03 00:00:00'
             assert sorted_data[1]['open'] == 11.0, "2024-01-03 should have updated value"
 
             # 2024-01-04: 更新后的值
-            assert sorted_data[2]['datetime'] == '2024-01-04'
+            assert sorted_data[2]['datetime'] == '2024-01-04 00:00:00'
             assert sorted_data[2]['open'] == 11.5, "2024-01-04 should have updated value"
 
             # 2024-01-05: 新增
-            assert sorted_data[3]['datetime'] == '2024-01-05'
+            assert sorted_data[3]['datetime'] == '2024-01-05 00:00:00'
             assert sorted_data[3]['open'] == 11.8, "2024-01-05 should be newly added"
 
         finally:

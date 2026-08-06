@@ -25,9 +25,9 @@
             <i v-if="loadingList" class="fas fa-spinner fa-spin"></i>
             {{ loadingList ? '刷新中…' : '历史模型' }}
           </button>
-          <button class="btn btn-primary" @click="onPublish" :disabled="publishing">
-            <i v-if="publishing" class="fas fa-spinner fa-spin"></i>
-            {{ publishing ? '发布中…' : '发布到生产' }}
+          <button class="btn btn-primary" @click="onBind" :disabled="binding || !canBind" :title="canBind ? '' : bindTooltip">
+            <i v-if="binding" class="fas fa-spinner fa-spin"></i>
+            {{ binding ? '应用中…' : '应用到策略' }}
           </button>
         </div>
       </div>
@@ -40,6 +40,23 @@
             <h3 class="section-title">历史模型</h3>
           </div>
           <span class="section-hint">点击行查看对应模型的指标与图表</span>
+        </div>
+
+        <div v-if="bindings.length" class="bind-list-section">
+          <div class="section-heading">
+            <div>
+              <span class="section-eyebrow">BOUND</span>
+              <h3 class="section-title">已绑定到当前策略</h3>
+            </div>
+          </div>
+          <div class="bind-table">
+            <div v-for="b in bindings" :key="b.label" class="bind-row">
+              <span class="bind-badge">BOUND</span>
+              <span class="bind-label">{{ b.label }}</span>
+              <span class="bind-version">v{{ b.version }}</span>
+              <span class="bind-path">production/{{ currentStrategyName }}-{{ b.label }}.json</span>
+            </div>
+          </div>
         </div>
 
         <div v-if="modelList" class="model-table">
@@ -159,6 +176,8 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useMLData } from '../composables/useMLData'
+import { useModelBinding } from '../composables/useModelBinding'
+import { useStrategyStore } from '../../../stores/history'
 import MetricsCard from '../charts/MetricsCard.vue'
 import RocCurveChart from '../charts/RocCurveChart.vue'
 import ConfusionMatrixChart from '../charts/ConfusionMatrixChart.vue'
@@ -176,8 +195,10 @@ const METRICS: { value: Metric; label: string }[] = [
   { value: 'cover', label: 'Cover · 覆盖样本' },
 ]
 
-const props = defineProps<{ state: any }>()
-const { shap, listModels, publishModel } = useMLData()
+const props = defineProps<{ state: any; selectedStrategyId?: string }>()
+const { shap, listModels } = useMLData()
+const { binding, bindModel } = useModelBinding()
+const strategyStore = useStrategyStore()
 
 const result = computed(() => props.state.trainResult.data)
 const objective = computed(() => props.state.config.objective)
@@ -192,12 +213,37 @@ const shapLoading = ref(false)
 // 模型管理
 const showModelList = ref(false)
 const loadingList = ref(false)
-const publishing = ref(false)
 const modelList = ref<{
   experiments: Array<{ path: string; filename: string; meta: any }>
   production: { path: string; filename: string; meta: any } | null
 } | null>(null)
 const activeModelPath = ref<string>('')
+
+// 当前下拉选择的策略
+const currentStrategyName = computed(() => {
+  const id = props.selectedStrategyId
+  return strategyStore.strategies.find(s => s.id === id)?.name || ''
+})
+const nodeLabel = computed(() => result.value?.node_label || '')
+
+// 当前策略已绑定的模型列表
+const bindings = computed(() => {
+  const id = props.selectedStrategyId
+  const s = strategyStore.strategies.find(st => st.id === id)
+  const models = (s as any)?.data?.models
+  return Array.isArray(models) ? models.filter((m: any) => m?.label) : []
+})
+
+// bind 按钮可用条件：训练已完成 + 有 model_id + 有当前策略 + 有 nodeLabel
+const canBind = computed(() => {
+  return !!(result.value?.model_id && currentStrategyName.value && nodeLabel.value)
+})
+const bindTooltip = computed(() => {
+  if (!result.value?.model_id) return '请先完成训练'
+  if (!currentStrategyName.value) return '请先在顶部下拉选择目标策略'
+  if (!nodeLabel.value) return '当前策略中未找到 XGBoostNode 节点'
+  return ''
+})
 
 function setMetric(m: Metric) {
   currentMetric.value = m
@@ -233,17 +279,45 @@ function onSelectModel(m: { path: string; filename: string; meta: any }) {
   }
 }
 
-async function onPublish() {
-  if (!result.value?.model_path) {
-    ElMessage.warning('当前模型无路径信息')
-    return
+async function onBind() {
+  if (!result.value?.model_id || !currentStrategyName.value || !nodeLabel.value) return
+  await bindModel(
+    result.value.model_id,
+    currentStrategyName.value,
+    nodeLabel.value,
+    (bindings) => updateStrategyBindings(bindings),
+  )
+}
+
+/**
+ * 把 binding 信息写入当前策略的 graph.data.models。
+ * 静默覆盖：若同 label 已存在则更新 version/bound_at，否则追加。
+ */
+function updateStrategyBindings(bindings: { label: string; version: string; bound_at: string }[]) {
+  const id = props.selectedStrategyId
+  const idx = strategyStore.strategies.findIndex(s => s.id === id)
+  if (idx < 0) return
+  const strategy = strategyStore.strategies[idx]
+  const strategyName = strategy.name
+  if (!strategy.data) strategy.data = {}
+  const existing: any[] = Array.isArray(strategy.data.models) ? strategy.data.models : []
+  for (const b of bindings) {
+    const i = existing.findIndex(m => m.label === b.label)
+    if (i >= 0) existing[i] = b
+    else existing.push(b)
+    // 同步更新 XGBoostNode 的 modelFile param：production/{strategyName}-{label}.json
+    if (strategy.graph?.nodes) {
+      for (const n of strategy.graph.nodes) {
+        if (n?.data?.nodeType === 'xgboost' && n.data.label === b.label) {
+          if (!n.data.params) n.data.params = {}
+          n.data.params.modelFile = { value: `production/${strategyName}-${b.label}.json`, type: 'text' }
+        }
+      }
+    }
   }
-  publishing.value = true
-  try {
-    await publishModel(result.value.model_path)
-  } finally {
-    publishing.value = false
-  }
+  strategy.data.models = existing
+  strategyStore.strategies[idx] = strategy
+  strategyStore.persistStrategies()
 }
 </script>
 
@@ -357,6 +431,34 @@ async function onPublish() {
 .model-row:hover { background: rgba(74, 85, 104, 0.15); }
 .model-row.active { background: rgba(91, 143, 249, 0.18); }
 .model-row.production { background: rgba(38, 166, 91, 0.08); }
+
+.bind-list-section { margin-bottom: 14px; }
+.bind-table { display: flex; flex-direction: column; gap: 6px; }
+.bind-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  background: rgba(91, 143, 249, 0.06);
+  border: 1px solid rgba(91, 143, 249, 0.25);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.bind-badge {
+  font-size: 10px; padding: 2px 8px;
+  background: rgba(91, 143, 249, 0.2); color: #93c5fd;
+  border-radius: 999px; font-family: 'SF Mono','Consolas',monospace;
+}
+.bind-label { color: #f1f5f9; font-weight: 600; min-width: 100px; }
+.bind-version {
+  color: #34d399; font-family: 'SF Mono','Consolas',monospace;
+  font-size: 11px; padding: 2px 6px;
+  background: rgba(38, 166, 91, 0.12);
+  border-radius: 4px;
+}
+.bind-path {
+  color: #94a3b8; font-family: 'SF Mono','Consolas',monospace;
+  font-size: 11px; flex: 1; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .model-badge {
   display: inline-block;
   font-size: 10px;

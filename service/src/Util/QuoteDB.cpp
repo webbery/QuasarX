@@ -219,18 +219,17 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     exec_unsafe("BEGIN TRANSACTION");
     auto t_begin = std::chrono::high_resolution_clock::now();
 
-    // 只删除 datetime 与新 CSV 冲突的行，保留该 symbol 其他时间的历史数据
-    std::string in_clause;
-    in_clause.reserve(merged.size() * 24);
-    for (size_t i = 0; i < merged.size(); ++i) {
-        if (i > 0) in_clause += ",";
-        in_clause += '\'';
-        in_clause += merged[i].datetime;
-        in_clause += '\'';
+    // 选择性 DELETE：取新数据 datetime 范围作为边界，保留 symbol 其他历史数据
+    // BETWEEN 范围查询比 IN-list 字符串拼接快 N→1 数量级，且无 SQL 字符串拼接开销
+    std::string min_dt = merged.front().datetime;
+    std::string max_dt = merged.front().datetime;
+    for (const auto& m : merged) {
+        if (m.datetime < min_dt) min_dt = m.datetime;
+        if (m.datetime > max_dt) max_dt = m.datetime;
     }
     exec_unsafe(fmt::format(
-        "DELETE FROM {} WHERE symbol = {} AND datetime IN ({})",
-        table, sym_encoded, in_clause));
+        "DELETE FROM {} WHERE symbol = {} AND datetime BETWEEN '{}' AND '{}'",
+        table, sym_encoded, min_dt, max_dt));
 
     duckdb_appender appender = nullptr;
     if (duckdb_appender_create(conn(), nullptr, table.c_str(), &appender) != DuckDBSuccess) {
@@ -244,12 +243,11 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     bool append_ok = true;
     int inserted = 0;
     for (const auto& m : merged) {
-        time_t t = FromStr(m.datetime, "%Y-%m-%d %H:%M:%S");
-        duckdb_timestamp ts{ t * 1000000 };
-
+        // 直接以 VARCHAR 写入 datetime 列：DuckDB 在 flush 时按 naive timestamp
+        // 解析（无时区转换），保证 input "YYYY-MM-DD HH:MM:SS" → stored → output 恒等
         duckdb_state st = duckdb_append_null(appender);                    // id
         if (st == DuckDBSuccess) st = duckdb_append_int64(appender, sym_encoded);   // symbol
-        if (st == DuckDBSuccess) st = duckdb_append_timestamp(appender, ts);        // datetime
+        if (st == DuckDBSuccess) st = duckdb_append_varchar(appender, m.datetime.c_str());  // datetime
         if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.open);       // open
         if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.close);      // close
         if (st == DuckDBSuccess) st = duckdb_append_double(appender, m.high);       // high
