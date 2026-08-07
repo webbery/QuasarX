@@ -177,7 +177,7 @@ import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useMLData } from '../composables/useMLData'
 import { useModelBinding } from '../composables/useModelBinding'
-import { useStrategyStore } from '../../../stores/history'
+import { useHistoryStore, type Strategy } from '../../../stores/history'
 import MetricsCard from '../charts/MetricsCard.vue'
 import RocCurveChart from '../charts/RocCurveChart.vue'
 import ConfusionMatrixChart from '../charts/ConfusionMatrixChart.vue'
@@ -198,7 +198,7 @@ const METRICS: { value: Metric; label: string }[] = [
 const props = defineProps<{ state: any; selectedStrategyId?: string }>()
 const { shap, listModels } = useMLData()
 const { binding, bindModel } = useModelBinding()
-const strategyStore = useStrategyStore()
+const strategyStore = useHistoryStore()
 
 const result = computed(() => props.state.trainResult.data)
 const objective = computed(() => props.state.config.objective)
@@ -222,14 +222,14 @@ const activeModelPath = ref<string>('')
 // 当前下拉选择的策略
 const currentStrategyName = computed(() => {
   const id = props.selectedStrategyId
-  return strategyStore.strategies.find(s => s.id === id)?.name || ''
+  return strategyStore.strategies.find((s: Strategy) => s.id === id)?.name || ''
 })
 const nodeLabel = computed(() => result.value?.node_label || '')
 
 // 当前策略已绑定的模型列表
 const bindings = computed(() => {
   const id = props.selectedStrategyId
-  const s = strategyStore.strategies.find(st => st.id === id)
+  const s = strategyStore.strategies.find((st: Strategy) => st.id === id)
   const models = (s as any)?.data?.models
   return Array.isArray(models) ? models.filter((m: any) => m?.label) : []
 })

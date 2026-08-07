@@ -6,6 +6,12 @@
 time_t FromStr(const String& str, const char* fmt = "%Y-%m-%d");
 time_t FromTick(const String& str);
 
+/**
+ * 按壁钟分量解析 "YYYY-MM-DD[ HH:MM:SS]" 为 epoch 微秒（naive，无时区转换）。
+ * 与 DuckDB VARCHAR→TIMESTAMP 解析语义一致；FromStr 的 mktime 会引入本地时区偏移
+ */
+int64_t FromNaiveTimestamp(const String& str);
+
 std::string ToString(time_t, const char* fmt = "%Y-%m-%d %H:%M:%S");
 
 time_t Now();

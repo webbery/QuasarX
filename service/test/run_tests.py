@@ -76,6 +76,19 @@ SERVICE_BIN = BUILD_DIR / "QuantService"
 MODES_FILE = SCRIPT_DIR / "test_modes.json"
 TEMPLATE_FILE = SCRIPT_DIR.parent / "config.template.json"
 
+
+def _find_tls_certs() -> bool:
+    """在多个位置搜索 TLS 证书（BUILD_DIR / cwd / 项目根目录）"""
+    candidates = [
+        BUILD_DIR,
+        Path.cwd(),
+        SCRIPT_DIR.parent,
+    ]
+    return any(
+        (d / "server.crt").exists() and (d / "server.key").exists()
+        for d in candidates
+    )
+
 # ==================== 模式加载 ====================
 
 def load_modes() -> Dict:
@@ -171,10 +184,8 @@ class ServiceManager:
         self._scheme = self._detect_scheme()
 
     def _detect_scheme(self) -> str:
-        """根据 build 目录下是否存在 TLS 证书判断 HTTP/HTTPS"""
-        if (BUILD_DIR / "server.crt").exists() and (BUILD_DIR / "server.key").exists():
-            return "https"
-        return "http"
+        """根据多个位置是否存在 TLS 证书判断 HTTP/HTTPS"""
+        return "https" if _find_tls_certs() else "http"
 
     @property
     def base_url(self) -> str:
@@ -490,7 +501,7 @@ def run_mode(mode_name: str, mode_info: Dict, args) -> dict:
         manager = None
         # 检查服务是否已在运行
         import http.client
-        scheme = "https" if (BUILD_DIR / "server.crt").exists() and (BUILD_DIR / "server.key").exists() else "http"
+        scheme = "https" if _find_tls_certs() else "http"
         check_url = f"{scheme}://localhost:{args.port}/v0/server/status"
         ctx = ssl.create_default_context()
         ctx.check_hostname = False

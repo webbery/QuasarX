@@ -32,6 +32,29 @@ time_t FromTick(const std::string& str) {
     return atoll(str.c_str());
 }
 
+int64_t FromNaiveTimestamp(const std::string& str) {
+    int y = 0, mo = 1, d = 1, hh = 0, mi = 0, ss = 0;
+    if (str.size() >= 10) {
+        y = std::stoi(str.substr(0, 4));
+        mo = std::stoi(str.substr(5, 2));
+        d = std::stoi(str.substr(8, 2));
+    }
+    if (str.size() >= 19) {
+        hh = std::stoi(str.substr(11, 2));
+        mi = std::stoi(str.substr(14, 2));
+        ss = std::stoi(str.substr(17, 2));
+    }
+    // days-from-civil (Howard Hinnant)
+    int64_t yy = y - (mo <= 2);
+    int64_t era = (yy >= 0 ? yy : yy - 399) / 400;
+    int64_t yoe = yy - era * 400;
+    int64_t mp = mo + (mo > 2 ? -3 : 9);
+    int64_t doy = (153 * mp + 2) / 5 + d - 1;
+    int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    int64_t days = era * 146097 + doe - 719468;
+    return (days * 86400 + (int64_t)hh * 3600 + (int64_t)mi * 60 + ss) * 1000000;
+}
+
 std::string ToString(time_t t, const char* fmt) {
     // 将 time_t 转换为 tm 结构
         std::tm ltm = {};

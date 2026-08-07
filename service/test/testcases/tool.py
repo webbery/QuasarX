@@ -20,6 +20,7 @@ def _load_base_url_from_config():
     return _DEFAULT_BASE_URL
 
 BASE_URL = _load_base_url_from_config()
+VERIFY_SSL = False
 
 # --------------------------
 # 测试工具函数

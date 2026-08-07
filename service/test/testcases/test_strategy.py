@@ -1,6 +1,6 @@
 import requests
 import sys
-from tool import check_response, BASE_URL
+from tool import check_response, BASE_URL, VERIFY_SSL
 import pytest
 import json
 import os
@@ -371,30 +371,28 @@ class TestStrategyMultipartDeploy:
             model_file = expected
         return {
             "id": name, "name": name, "version": 1, "source": "A_hfq",
-            "graph": {
-                "nodes": [
-                    {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-                     "data": {"label": "行情", "nodeType": "input",
-                              "params": {"code": {"value": ["sz.000001"], "type": "text"},
-                                         "freq": {"value": "1d", "type": "select"}}}},
-                    {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-                     "data": {"label": "MA", "nodeType": "function",
-                              "params": {"method": {"value": "MA", "type": "select"},
-                                         "range": {"value": "5d", "type": "text"}}}},
-                    {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
-                     "data": {"label": xgb_label, "nodeType": "xgboost",
-                              "params": {"modelFile": {"value": model_file, "type": "text"},
-                                         "features": {"value": "close", "type": "text"},
-                                         "objective": {"value": "binary:logistic", "type": "select"},
-                                         "num_class": {"value": 2, "type": "number"}}}},
-                ],
-                "edges": [
-                    {"id": "e1->2", "source": "1", "target": "2",
-                     "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-                    {"id": "e2->3", "source": "2", "target": "3",
-                     "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-                ],
-            },
+            "nodes": [
+                {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+                 "data": {"label": "行情", "nodeType": "input",
+                          "params": {"code": {"value": ["sz.000001"], "type": "text"},
+                                     "freq": {"value": "1d", "type": "select"}}}},
+                {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
+                 "data": {"label": "MA", "nodeType": "function",
+                          "params": {"method": {"value": "MA", "type": "select"},
+                                     "range": {"value": "5d", "type": "text"}}}},
+                {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
+                 "data": {"label": xgb_label, "nodeType": "xgboost",
+                          "params": {"modelFile": {"value": model_file, "type": "text"},
+                                     "features": {"value": "close", "type": "text"},
+                                     "objective": {"value": "binary:logistic", "type": "select"},
+                                     "num_class": {"value": 2, "type": "number"}}}},
+            ],
+            "edges": [
+                {"id": "e1->2", "source": "1", "target": "2",
+                 "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+                {"id": "e2->3", "source": "2", "target": "3",
+                 "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            ],
         }
 
     def _model_bytes(self):

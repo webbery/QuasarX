@@ -210,7 +210,10 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
         }
     }
 
-    // ── 3. 选择性 DELETE（只删时间冲突的行）+ Appender 插入 ──
+    // ── 3. 冲突行预编译 UPDATE + 新行 Appender 插入（同一事务）──
+    //    不用 DELETE：Appender 的索引更新是缓冲的（buffered replay），下一次
+    //    DELETE 的表扫描触发 ApplyBufferedReplays 回放，与 DELETE 交织会触发
+    //    DuckDB ART 索引损坏（BoundIndex::Delete 错误路径格式化 chunk 时卡死）
     if (merged.empty()) {
         SPDLOG_WARN("[QuoteDB] merged empty for {} ({}), skip", table, symbol_str);
         return 0;
@@ -219,17 +222,96 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     exec_unsafe("BEGIN TRANSACTION");
     auto t_begin = std::chrono::high_resolution_clock::now();
 
-    // 选择性 DELETE：取新数据 datetime 范围作为边界，保留 symbol 其他历史数据
-    // BETWEEN 范围查询比 IN-list 字符串拼接快 N→1 数量级，且无 SQL 字符串拼接开销
     std::string min_dt = merged.front().datetime;
     std::string max_dt = merged.front().datetime;
     for (const auto& m : merged) {
         if (m.datetime < min_dt) min_dt = m.datetime;
         if (m.datetime > max_dt) max_dt = m.datetime;
     }
-    exec_unsafe(fmt::format(
-        "DELETE FROM {} WHERE symbol = {} AND datetime BETWEEN '{}' AND '{}'",
-        table, sym_encoded, min_dt, max_dt));
+
+    // 已有 datetime 集合（限制在本次数据范围内，走 (symbol, datetime) 索引）
+    // CAST(datetime AS VARCHAR) 与 appender 写入的 naive 字符串恒等
+    UnorderedSet<std::string> existing;
+    {
+        duckdb_result sel;
+        std::string sql = fmt::format(
+            "SELECT CAST(datetime AS VARCHAR) FROM {} WHERE symbol = {} AND datetime BETWEEN '{}' AND '{}'",
+            table, sym_encoded, min_dt, max_dt);
+        if (duckdb_query(conn(), sql.c_str(), &sel) != DuckDBSuccess) {
+            const char* err = duckdb_result_error(&sel);
+            SPDLOG_ERROR("[QuoteDB] select existing datetime failed: {}", err ? err : "unknown");
+            duckdb_destroy_result(&sel);
+            exec_unsafe("ROLLBACK");
+            return -1;
+        }
+        idx_t rows = duckdb_row_count(&sel);
+        for (idx_t i = 0; i < rows; ++i) {
+            char* s = duckdb_value_varchar(&sel, 0, i);
+            if (s) {
+                existing.insert(s);
+                duckdb_free(s);
+            }
+        }
+        duckdb_destroy_result(&sel);
+    }
+
+    // 冲突行：预编译 UPDATE（prepare 一次逐行 bind，UNIQUE(symbol,datetime) 索引定位）
+    int updated = 0;
+    {
+        duckdb_prepared_statement upd = nullptr;
+        std::string upd_sql = fmt::format(
+            "UPDATE {} SET open=?, close=?, high=?, low=?, volume=?, turnover=?, ext=?, "
+            "adj_open=?, adj_close=?, adj_high=?, adj_low=? WHERE symbol=? AND datetime=?",
+            table);
+        if (duckdb_prepare(conn(), upd_sql.c_str(), &upd) != DuckDBSuccess) {
+            const char* err = upd ? duckdb_prepare_error(upd) : "unknown";
+            SPDLOG_ERROR("[QuoteDB] prepare update failed: {}", err ? err : "unknown");
+            if (upd) duckdb_destroy_prepare(&upd);
+            exec_unsafe("ROLLBACK");
+            return -1;
+        }
+
+        for (const auto& m : merged) {
+            if (!existing.count(m.datetime)) continue;
+            duckdb_state st = DuckDBSuccess;
+            st = duckdb_bind_double(upd, 1, m.open);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 2, m.close);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 3, m.high);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 4, m.low);
+            if (st == DuckDBSuccess) st = duckdb_bind_int64(upd, 5, m.volume);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 6, m.turnover);
+            if (st == DuckDBSuccess) st = duckdb_bind_int64(upd, 7, m.ext);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 8, m.adj_open);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 9, m.adj_close);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 10, m.adj_high);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(upd, 11, m.adj_low);
+            if (st == DuckDBSuccess) st = duckdb_bind_int64(upd, 12, sym_encoded);
+            if (st == DuckDBSuccess) st = duckdb_bind_timestamp(upd, 13, duckdb_timestamp{FromNaiveTimestamp(m.datetime)});
+
+            if (st != DuckDBSuccess) {
+                SPDLOG_ERROR("[QuoteDB] bind update failed at {}", m.datetime);
+                duckdb_destroy_prepare(&upd);
+                exec_unsafe("ROLLBACK");
+                return -1;
+            }
+
+            duckdb_result upd_res;
+            st = duckdb_execute_prepared(upd, &upd_res);
+            bool ok = (st == DuckDBSuccess);
+            if (!ok) {
+                const char* err = duckdb_result_error(&upd_res);
+                SPDLOG_ERROR("[QuoteDB] update failed at {}: {}", m.datetime, err ? err : "unknown");
+            }
+            duckdb_destroy_result(&upd_res);
+            if (!ok) {
+                duckdb_destroy_prepare(&upd);
+                exec_unsafe("ROLLBACK");
+                return -1;
+            }
+            ++updated;
+        }
+        duckdb_destroy_prepare(&upd);
+    }
 
     duckdb_appender appender = nullptr;
     if (duckdb_appender_create(conn(), nullptr, table.c_str(), &appender) != DuckDBSuccess) {
@@ -243,6 +325,7 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     bool append_ok = true;
     int inserted = 0;
     for (const auto& m : merged) {
+        if (existing.count(m.datetime)) continue;  // 冲突行已走 UPDATE
         // 直接以 VARCHAR 写入 datetime 列：DuckDB 在 flush 时按 naive timestamp
         // 解析（无时区转换），保证 input "YYYY-MM-DD HH:MM:SS" → stored → output 恒等
         duckdb_state st = duckdb_append_null(appender);                    // id
@@ -290,13 +373,14 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
 
     auto t_commit = std::chrono::high_resolution_clock::now();
     auto commit_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_commit - t_begin).count();
-    SPDLOG_INFO("[QuoteDB] Transaction: {} rows replaced in {}ms (BEGIN to COMMIT)", inserted, commit_ms);
+    SPDLOG_INFO("[QuoteDB] Transaction: {} updated + {} inserted in {}ms (BEGIN to COMMIT)", updated, inserted, commit_ms);
 
     auto t_end = std::chrono::high_resolution_clock::now();
     auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
-    SPDLOG_INFO("[QuoteDB] Imported {} rows into {} for {} in {}ms total",
-                inserted, table, symbol_str, total_ms);
-    return inserted;
+    int total = updated + inserted;
+    SPDLOG_INFO("[QuoteDB] Imported {} rows ({}+{}) into {} for {} in {}ms total",
+                total, updated, inserted, table, symbol_str, total_ms);
+    return total;
 }
 
 // ═══════════════════════════════════════════════════════════

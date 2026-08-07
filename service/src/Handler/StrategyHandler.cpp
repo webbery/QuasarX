@@ -86,8 +86,9 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
             return;
         }
         scriptStr = req.get_file_value("script").content;
+        nlohmann::json scriptJson;
         try {
-            params = nlohmann::json::parse(scriptStr);
+            scriptJson = nlohmann::json::parse(scriptStr);
         } catch (const std::exception& e) {
             res.status = 400;
             nlohmann::json err;
@@ -96,8 +97,13 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
             res.set_content(err.dump(), "application/json");
             return;
         }
-        // name 是普通文本字段（不是 file part），用 get_param_value 拿
-        String nameStr = req.get_param_value("name");
+        // deployImpl 期望 params["script"]，需要包裹一层
+        params["script"] = scriptJson;
+        // name 在 multipart 中是非文件 part，httplib 统一放在 req.files 里
+        String nameStr;
+        if (req.has_file("name")) {
+            nameStr = req.get_file_value("name").content;
+        }
         if (!nameStr.empty()) {
             params["name"] = nameStr;
         }
@@ -119,14 +125,16 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     int mode = params.value("mode", 0);
     if (mode == 2) {// 暂停
-        String name = params["name"];
+        String name = params.value("name", "");
         stop(name, res);
     }
     else if (mode == 1) {// 运行
-        String name = params["name"];
+        String name = params.value("name", "");
         run(name, res);
     } else {
         // 部署并运行；multipart 时把 req 一起传给 deploy（用于读 model_* parts）
+        INFO("[StrategyHandler] params type={}, is_object={}, keys={}", 
+             params.type_name(), params.is_object(), params.dump());
         if (isMultipart) deploy(params, req, res);
         else deploy(params, res);
     }
@@ -134,7 +142,14 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
 
 void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
     auto params = nlohmann::json::parse(req.body);
-    String name = params["name"];
+    if (!params.is_object()) {
+        res.status = 400;
+        nlohmann::json err;
+        err["message"] = "invalid param: expected JSON object";
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+    String name = params.value("name", "");
     auto strategySys = _server->GetStrategySystem();
     strategySys->Stop(name);
     strategySys->UninstallStrategy(name);
@@ -158,8 +173,20 @@ void StrategyHandler::deploy(const nlohmann::json& param, const httplib::Request
 }
 
 void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Request* reqPtr, httplib::Response& res) {
-    String scripts = param["script"].dump();
-    String name = param["name"];
+    INFO("[StrategyHandler] deployImpl: param type={}, is_object={}", param.type_name(), param.is_object());
+    if (!param.is_object()) {
+        WARN("[StrategyHandler] deployImpl: param is not an object, type={}", param.type_name());
+        res.status = 400;
+        nlohmann::json err;
+        err["message"] = "invalid param: expected JSON object";
+        err["type"] = param.type_name();
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+    nlohmann::json scriptJson = param.value("script", nlohmann::json());
+    String scripts = scriptJson.dump();
+    String name = param.value("name", "");
+    INFO("[StrategyHandler] deployImpl: name='{}', script size={}", name, scripts.size());
 
     // 使用 std::filesystem::path 正确拼接路径（跨平台）
     std::filesystem::path scripts_dir(SCRIPTS_DIR);
@@ -233,8 +260,9 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
 
     // ============ 处理 multipart 模型文件 ============
     // 1. 校验每个 XGBoostNode.modelFile 必须匹配 production/{name}-{label}.json（禁止跨策略）
-    if (param.contains("graph") && param["graph"].contains("nodes")) {
-        for (const auto& n : param["graph"]["nodes"]) {
+    // 策略 JSON 在 scriptJson 中，结构：{"nodes": [...], "edges": [...]}
+    if (scriptJson.contains("nodes") && scriptJson["nodes"].is_array()) {
+        for (const auto& n : scriptJson["nodes"]) {
             if (!n.contains("data") || n["data"].value("nodeType", "") != "xgboost") continue;
             String xgbLabel = n["data"].value("label", "");
             String modelFile = "";
@@ -243,7 +271,7 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
                 modelFile = mf.is_string() ? mf.get<String>() : mf.value("value", "");
             }
             String expected = "production/" + name + "-" + xgbLabel + ".json";
-            if (modelFile != expected) {
+            if (!modelFile.empty() && modelFile != expected) {
                 WARN("[StrategyHandler] XGBoostNode '{}' modelFile='{}' != expected '{}', cross-strategy ref forbidden",
                      xgbLabel, modelFile, expected);
                 res.status = 400;
@@ -305,7 +333,7 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
 
     // 运行
     auto strategySys = _server->GetStrategySystem();
-    strategySys->InitStrategy(name, param["script"]);
+    strategySys->InitStrategy(name, scriptJson);
     strategySys->Run(name);
 
     bool running = false;
@@ -325,9 +353,17 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
 }
 
 void StrategyHandler::load(const nlohmann::json& param, httplib::Response& res) {
-    String name = param["name"];
+    if (!param.is_object()) {
+        res.status = 400;
+        nlohmann::json err;
+        err["message"] = "invalid param: expected JSON object";
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+    String name = param.value("name", "");
+    nlohmann::json scriptJson = param.value("script", nlohmann::json());
     auto strategySys = _server->GetStrategySystem();
-    strategySys->InitStrategy(name, param["script"]);
+    strategySys->InitStrategy(name, scriptJson);
 
     res.status = 200;
     nlohmann::json result;

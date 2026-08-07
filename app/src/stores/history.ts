@@ -6,6 +6,8 @@ export interface Strategy {
   name: string
   createdAt: string
   updatedAt: string
+  data?: Record<string, any>
+  graph?: { nodes: any[]; edges: any[] }
 }
 
 export interface BacktestResult {
