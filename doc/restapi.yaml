@@ -1416,6 +1416,176 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /analysis/cointegration:
+    get:
+      summary: 协整分析 (Engle-Granger / Johansen / Granger / 单位根)
+      description: |
+        对指定标的进行协整分析，包含：
+        - **单位根检验**: 各标的 ADF (MacKinnon 临界值) + KPSS 互补检验
+        - **二元 Engle-Granger 两步法**: 协整回归 → 残差 ADF/KPSS → OU 过程 MLE 拟合 → 残差序列
+        - **Johansen 多元协整**: trace + max-eigen 统计量 (≥3 标的时返回)
+        - **Granger 因果检验**: 二元 F 检验 + 多元 VAR+Wald 检验 (≥3 标的时返回多元)
+      tags:
+        - Analysis
+      parameters:
+        - in: query
+          name: symbols
+          required: true
+          schema:
+            type: string
+          description: 标的代码列表，逗号分隔（至少 2 个）
+          example: sz.000001,sz.000002,sz.000003
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date
+          description: 开始日期（YYYY-MM-DD）
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date
+          description: 结束日期（YYYY-MM-DD）
+        - in: query
+          name: max_lag
+          schema:
+            type: integer
+            default: 10
+          description: Granger 检验最大滞后阶数
+      responses:
+        '200':
+          description: 协整分析结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbols:
+                    type: array
+                    items:
+                      type: string
+                  dates:
+                    type: array
+                    items:
+                      type: string
+                  unit_root:
+                    type: object
+                    description: 各标的单位根检验 (key=标的代码)
+                    additionalProperties:
+                      type: object
+                      properties:
+                        adf:
+                          type: object
+                          properties:
+                            statistic: { type: number }
+                            p_value: { type: number }
+                            cv_1pct: { type: number }
+                            cv_5pct: { type: number }
+                            cv_10pct: { type: number }
+                            lags: { type: integer }
+                            is_stationary: { type: boolean }
+                        kpss:
+                          type: object
+                          properties:
+                            statistic: { type: number }
+                            p_value: { type: number }
+                            lags: { type: integer }
+                            lr_variance: { type: number }
+                            is_stationary: { type: boolean }
+                  pairwise_eg:
+                    type: array
+                    description: 二元 Engle-Granger 两步法结果
+                    items:
+                      type: object
+                      properties:
+                        symbol_x: { type: string }
+                        symbol_y: { type: string }
+                        alpha: { type: number }
+                        beta: { type: number }
+                        r_squared: { type: number }
+                        adf:
+                          type: object
+                          description: 残差 ADF 检验 (MacKinnon)
+                        kpss:
+                          type: object
+                          description: 残差 KPSS 检验
+                        half_life: { type: number }
+                        is_cointegrated: { type: boolean }
+                        ou:
+                          type: object
+                          description: OU 过程 MLE 拟合
+                          properties:
+                            theta: { type: number, description: 均值回复速度 }
+                            mu: { type: number, description: 长期均值 }
+                            sigma: { type: number, description: 波动率 }
+                            half_life: { type: number }
+                            log_likelihood: { type: number }
+                            aic: { type: number }
+                            se_theta: { type: number }
+                            se_mu: { type: number }
+                            se_sigma: { type: number }
+                        residuals:
+                          type: array
+                          items: { type: number }
+                          description: 协整残差序列
+                  johansen:
+                    type: object
+                    description: Johansen 多元协整检验 (≥3 标的)
+                    properties:
+                      n_variables: { type: integer }
+                      rank: { type: integer, description: 估计的协整秩 }
+                      trace_stats: { type: array, items: { type: number } }
+                      trace_cv_95: { type: array, items: { type: number } }
+                      trace_cv_99: { type: array, items: { type: number } }
+                      trace_significant: { type: array, items: { type: boolean } }
+                      max_eigen_stats: { type: array, items: { type: number } }
+                      max_eigen_cv_95: { type: array, items: { type: number } }
+                      max_eigen_cv_99: { type: array, items: { type: number } }
+                      max_eigen_significant: { type: array, items: { type: boolean } }
+                      eigenvectors: { type: array, items: { type: array, items: { type: number } } }
+                  granger:
+                    type: object
+                    properties:
+                      pairwise:
+                        type: array
+                        description: 二元 Granger F 检验
+                        items:
+                          type: object
+                          properties:
+                            from: { type: string }
+                            f_statistic: { type: number }
+                            p_value: { type: number }
+                            is_significant: { type: boolean }
+                            optimal_lag: { type: integer }
+                      multivariate:
+                        type: array
+                        description: 多元 Granger Wald 检验 (≥3 标的)
+                        items:
+                          type: object
+                          properties:
+                            from: { type: string }
+                            to: { type: string }
+                            wald_stat: { type: number }
+                            p_value: { type: number }
+                            optimal_lag: { type: integer }
+                            is_significant: { type: boolean }
+                            condition_set:
+                              type: array
+                              items: { type: string }
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /analysis/covariance_diagnostics:
     post:
       summary: 协方差矩阵质量诊断 (debug 端点)

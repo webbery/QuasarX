@@ -426,6 +426,67 @@ void install_signal_handler() {
 #endif
 }
 
+// 检测并打印 CPU 向量化指令支持情况
+void print_cpu_features() {
+    INFO("[CPU] ========== CPU Vectorization Support ==========");
+    
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    // x86/x64 平台
+    #if defined(__GNUC__) || defined(__clang__)
+        // 使用 GCC/Clang 内置函数检测
+        INFO("[CPU] SSE:     {} {}", __builtin_cpu_supports("sse") ? "✓" : "✗", 
+             __builtin_cpu_supports("sse") ? "(128-bit)" : "");
+        INFO("[CPU] SSE2:    {} {}", __builtin_cpu_supports("sse2") ? "✓" : "✗",
+             __builtin_cpu_supports("sse2") ? "(128-bit)" : "");
+        INFO("[CPU] SSE3:    {} {}", __builtin_cpu_supports("sse3") ? "✓" : "✗",
+             __builtin_cpu_supports("sse3") ? "(128-bit)" : "");
+        INFO("[CPU] SSSE3:   {} {}", __builtin_cpu_supports("ssse3") ? "✓" : "✗",
+             __builtin_cpu_supports("ssse3") ? "(128-bit)" : "");
+        INFO("[CPU] SSE4.1:  {} {}", __builtin_cpu_supports("sse4.1") ? "✓" : "✗",
+             __builtin_cpu_supports("sse4.1") ? "(128-bit)" : "");
+        INFO("[CPU] SSE4.2:  {} {}", __builtin_cpu_supports("sse4.2") ? "✓" : "✗",
+             __builtin_cpu_supports("sse4.2") ? "(128-bit)" : "");
+        INFO("[CPU] AVX:     {} {}", __builtin_cpu_supports("avx") ? "✓" : "✗",
+             __builtin_cpu_supports("avx") ? "(256-bit)" : "");
+        INFO("[CPU] AVX2:    {} {}", __builtin_cpu_supports("avx2") ? "✓" : "✗",
+             __builtin_cpu_supports("avx2") ? "(256-bit)" : "");
+        INFO("[CPU] AVX-512: {} {}", __builtin_cpu_supports("avx512f") ? "✓" : "✗",
+             __builtin_cpu_supports("avx512f") ? "(512-bit)" : "");
+        INFO("[CPU] FMA:     {} {}", __builtin_cpu_supports("fma") ? "✓" : "✗",
+             __builtin_cpu_supports("fma") ? "(Fused Multiply-Add)" : "");
+        INFO("[CPU] AES-NI:  {} {}", __builtin_cpu_supports("aes") ? "✓" : "✗",
+             __builtin_cpu_supports("aes") ? "(AES encryption)" : "");
+    #else
+        INFO("[CPU] CPU feature detection not available for this compiler");
+    #endif
+    
+    // 总结最高支持的指令集
+    const char* max_isa = "None";
+    #if defined(__GNUC__) || defined(__clang__)
+        if (__builtin_cpu_supports("avx512f")) max_isa = "AVX-512 (512-bit)";
+        else if (__builtin_cpu_supports("avx2")) max_isa = "AVX2 (256-bit)";
+        else if (__builtin_cpu_supports("avx")) max_isa = "AVX (256-bit)";
+        else if (__builtin_cpu_supports("sse4.2")) max_isa = "SSE4.2 (128-bit)";
+        else if (__builtin_cpu_supports("sse4.1")) max_isa = "SSE4.1 (128-bit)";
+        else if (__builtin_cpu_supports("ssse3")) max_isa = "SSSE3 (128-bit)";
+        else if (__builtin_cpu_supports("sse3")) max_isa = "SSE3 (128-bit)";
+        else if (__builtin_cpu_supports("sse2")) max_isa = "SSE2 (128-bit)";
+        else if (__builtin_cpu_supports("sse")) max_isa = "SSE (128-bit)";
+    #endif
+    INFO("[CPU] Maximum ISA: {}", max_isa);
+    
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    // ARM64 平台
+    INFO("[CPU] ARM NEON:  ✓ (128-bit, mandatory on ARM64)");
+    INFO("[CPU] Maximum ISA: NEON (128-bit)");
+    
+#else
+    INFO("[CPU] Unknown architecture, CPU feature detection not available");
+#endif
+    
+    INFO("[CPU] ================================================");
+}
+
 // C++ terminate handler（捕获 std::terminate，通常是未捕获异常）
 void on_terminate() {
 #ifdef WIN32
@@ -542,6 +603,9 @@ int main(int argc, char* argv[])
 
     // init log
     init_logger();
+
+    // 打印 CPU 向量化指令支持情况
+    print_cpu_features();
 
     // 初始化 DuckDB 策略日志（表不存在则自动创建）
     if (!DuckDBLogger::instance().init("logs/strategy_logs.db")) {

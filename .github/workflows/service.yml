@@ -540,6 +540,12 @@ jobs:
           python run_tests.py --mode stock_hist_sim --no-service
           TEST_EXIT_CODE=$?
 
+          # 上传 stock_hist_sim.json 用于诊断
+          cd ..
+          echo "=== stock_hist_sim.json content ==="
+          cat stock_hist_sim.json
+          echo "==================================="
+
           # 停止服务
           curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
           sleep 2
@@ -554,6 +560,7 @@ jobs:
           name: build-output
           path: |
             QuantService
+            stock_hist_sim.json
           compression-level: 5
 
       - name: Show service log (last 100 lines)

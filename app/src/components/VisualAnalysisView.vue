@@ -45,6 +45,11 @@
           <CapacityTab />
         </div>
 
+        <!-- 协整分析 Tab -->
+        <div v-show="activeTab === 'cointegration'" class="tab-content">
+          <CointegrationTab />
+        </div>
+
         <!-- 资金流向 Tab -->
         <div v-show="activeTab === 'flow'" class="tab-content flow-tab">
           <!-- 头部控制区（移入资金流向 Tab） -->
@@ -241,6 +246,7 @@ import CUSUMTab from './cusum/CUSUMTab.vue'
 import MLTab from './ml/MLTab.vue'
 import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
+import CointegrationTab from './cointegration/CointegrationTab.vue'
 
 const unit = 100000000 // 单位:亿
 
@@ -253,6 +259,7 @@ const tabs = [
   { label: '机器学习分析', name: 'ml' },
   { label: '基本面分析', name: 'fundamental' },
   { label: '容量分析', name: 'capacity' },
+  { label: '协整分析', name: 'cointegration' },
   { label: '资金流向', name: 'flow' },
   { label: '策略数据', name: 'strategyData' }
 ]

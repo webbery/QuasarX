@@ -16,6 +16,7 @@ const defaultPanels: AnalysisPanelItem[] = [
   { id: 'ml', label: '机器学习分析', enabled: false },
   { id: 'fundamental', label: '基本面分析', enabled: true },
   { id: 'capacity', label: '容量分析', enabled: false },
+  { id: 'cointegration', label: '协整分析', enabled: true },
   { id: 'flow', label: '资金流向', enabled: true },
   { id: 'strategyData', label: '策略数据', enabled: true },
 ]

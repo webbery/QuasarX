@@ -33,6 +33,7 @@
 #include <stdexcept>
 #include "Handler/AssetHandler.h"
 #include "Handler/VolatilityHandler.h"
+#include "Handler/CointegrationHandler.h"
 #include "Handler/SignalHandler.h"
 #include "Handler/PCAHandler.h"
 #include "Handler/CUSUMHandler.h"
@@ -179,6 +180,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_RISK_STRATEGIES "/risk/strategies"
 #define API_NAV_HISTORY     "/nav/history"
 #define API_VOLATILITY      "/analysis/volatility"
+#define API_COINTEGRATION   "/analysis/cointegration"
 #define API_COVARIANCE_DIAG "/analysis/covariance_diagnostics"
 #define API_CUSUM           "/analysis/cusum"
 #define API_SIGNAL          "/analysis/signal"
@@ -406,6 +408,7 @@ void Server::Regist() {
     REGIST_GET(API_RISK_STATUS);
     REGIST_POST(API_RISK_RESET);
     REGIST_GET(API_VOLATILITY);
+    REGIST_GET(API_COINTEGRATION);
     REGIST_POST(API_COVARIANCE_DIAG);
     REGIST_POST(API_CUSUM);
     REGIST_GET(API_SIGNAL);
@@ -1300,6 +1303,7 @@ void Server::InitHandlers() {
     RegistHandler(API_STOCK_PRIVILEGE, StockPrivilege);
     RegistHandler(API_STOCK_PARAMS, StockParams);
     RegistHandler(API_VOLATILITY, VolatilityHandler);
+    RegistHandler(API_COINTEGRATION, CointegrationHandler);
     RegistHandler(API_COVARIANCE_DIAG, VolatilityHandler);
     RegistHandler(API_CUSUM, CUSUMHandler);
     RegistHandler(API_SIGNAL, SignalHandler);

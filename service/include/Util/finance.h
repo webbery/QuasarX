@@ -63,6 +63,85 @@ struct CointegrationResult {
     double half_life;          // 均值回归半衰期 (bar 数)
 };
 
+/// ADF 检验结果 (含 MacKinnon 临界值)
+struct ADFResult {
+    double _statistic = 0;     // ADF t-统计量
+    double _p_value = 1;       // MacKinnon p 值
+    double _cv_1pct = 0;       // 1% 临界值
+    double _cv_5pct = 0;       // 5% 临界值
+    double _cv_10pct = 0;      // 10% 临界值
+    int _lags = 0;             // 使用的增广滞后阶数
+    bool _is_stationary = false; // p < 0.05
+};
+
+/// KPSS 检验结果
+struct KPSSResult {
+    double _statistic = 0;     // η 统计量
+    double _p_value = 1;       // 近似 p 值
+    int _lags = 0;             // Newey-West 带宽
+    double _lr_variance = 0;   // 长期方差 (Bartlett kernel)
+    bool _is_stationary = true; // H0: 平稳, p > 0.05
+};
+
+/// OU 过程 MLE 拟合结果
+/// dX = θ(μ - X)dt + σdW
+struct OUProcessResult {
+    double _theta = 0;         // 均值回复速度
+    double _mu = 0;            // 长期均值
+    double _sigma = 0;         // 波动率
+    double _half_life = 0;     // ln(2)/θ
+    double _log_likelihood = 0;// 对数似然
+    double _aic = 0;           // 2k - 2lnL
+    double _se_theta = 0;      // 标准误
+    double _se_mu = 0;
+    double _se_sigma = 0;
+};
+
+/// Engle-Granger 两步法完整结果
+struct EGFullResult {
+    String _symbol_x, _symbol_y;
+    // Step 1: 协整回归
+    double _alpha = 0, _beta = 0;
+    double _r_squared = 0;
+    // Step 2: 残差平稳性检验
+    ADFResult _adf;
+    KPSSResult _kpss;
+    double _half_life = 0;     // 从 AR(1) 系数反推
+    bool _is_cointegrated = false;
+    // OU 过程拟合
+    OUProcessResult _ou_fit;
+    // 残差序列 (前端画图用)
+    Eigen::VectorXd _residuals;
+};
+
+/// Johansen 协整检验结果
+struct JohansenResult {
+    int _n_variables = 0;
+    // trace 统计量 (r=0, r≤1, ..., r≤n-1)
+    Eigen::VectorXd _trace_stats;
+    Eigen::VectorXd _trace_cv_95;
+    Eigen::VectorXd _trace_cv_99;
+    Vector<bool> _trace_significant;
+    // max-eigen 统计量
+    Eigen::VectorXd _max_eigen_stats;
+    Eigen::VectorXd _max_eigen_cv_95;
+    Eigen::VectorXd _max_eigen_cv_99;
+    Vector<bool> _max_eigen_significant;
+    // 协整向量矩阵 (N × N, 列=特征向量)
+    Eigen::MatrixXd _eigenvectors;
+    int _rank = 0;             // 估计的协整秩 (5% 显著性)
+};
+
+/// 多元 Granger 因果检验结果 (VAR + Wald)
+struct MultivariateGrangerResult {
+    String _from, _to;
+    double _wald_stat = 0;     // Wald 统计量
+    double _p_value = 1;       // χ² 分布 p 值
+    int _optimal_lag = 0;      // AIC 选择的最优滞后
+    bool _is_significant = false; // p < 0.05
+    Vector<String> _condition_set; // 条件集 (其他变量)
+};
+
 /// OLS 回归: y = α + βx + ε
 OLSResult olsRegression(const Vector<double>& x, const Vector<double>& y);
 
@@ -82,6 +161,43 @@ GrangerCausalityResult grangerCausalityTest(
 /// 检验 x 和 y 是否存在长期均衡关系
 CointegrationResult engleGrangerTest(
     const Vector<double>& x, const Vector<double>& y);
+
+// ──────────────────────────────────────────────────────────────────────
+// 协整分析增强：ADF (MacKinnon) / KPSS / OU / Johansen / 多元Granger
+// ──────────────────────────────────────────────────────────────────────
+
+/// ADF 检验 (完整 MacKinnon 临界值 + p 值)
+/// reg_type: "c" = 截距, "ct" = 截距+趋势, "nc" = 无截距无趋势
+ADFResult adfTestFull(const Vector<double>& series, int max_lag = -1,
+                       const String& reg_type = "c");
+
+/// KPSS 平稳性检验
+/// H0: 序列平稳; lags=-1 自动选 (Schwert 1989)
+/// reg_type: "level" = 水平检验, "trend" = 趋势平稳检验
+KPSSResult kpssTest(const Vector<double>& series, int lags = -1,
+                     const String& reg_type = "level");
+
+/// OU 过程 MLE 拟合: dX = θ(μ - X)dt + σdW
+/// dt: 采样间隔 (默认 1.0)
+OUProcessResult fitOUProcess(const Eigen::VectorXd& x, double dt = 1.0);
+
+/// Engle-Granger 两步法完整结果 (含 OU 拟合 + 残差序列)
+EGFullResult engleGrangerFull(const Vector<double>& x, const Vector<double>& y,
+                               const String& symbol_x = "X",
+                               const String& symbol_y = "Y");
+
+/// Johansen 协整检验 (多元)
+/// data: N 行 × T 列 (行=标的, 列=时间点)
+/// detrend: "none" / "const" / "trend"
+JohansenResult johansenTest(const Eigen::MatrixXd& data, int lag = 1,
+                             const String& detrend = "const");
+
+/// 多元 Granger 因果检验 (VAR + Wald)
+/// data: N 行 × T 列
+Vector<MultivariateGrangerResult> multivariateGrangerTest(
+    const Eigen::MatrixXd& data,
+    const Vector<String>& symbols,
+    int max_lag = 10);
 
 // ──────────────────────────────────────────────────────────────────────
 // 协方差收缩 + 投资组合优化

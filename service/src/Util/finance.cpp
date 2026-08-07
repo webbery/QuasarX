@@ -5,6 +5,8 @@
 #include <filesystem>
 #include "csv.h"
 #include <cmath>
+#include <numeric>
+#include <algorithm>
 
 namespace finance {
 
@@ -404,6 +406,894 @@ CointegrationResult engleGrangerTest(
     }
 
     return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 协整分析增强算法
+// ──────────────────────────────────────────────────────────────────────
+
+/// 标准正态 CDF
+static double normalCDF(double x) {
+    return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
+}
+
+/// MacKinnon (1994, 2010) ADF 临界值回归
+/// cv(α, T) = β_∞(α) + β_1(α)/T + β_2(α)/T²
+/// reg_type: 0="c"(截距), 1="ct"(截距+趋势), 2="nc"(无常数)
+static double mackinnonCV(double alpha, int T, int reg_type) {
+    // MacKinnon 响应面回归系数 [β_∞, β_1, β_2]
+    // 来源: MacKinnon (1994) Table 1, 单位根检验
+    // reg_type=0 (intercept only):
+    static const double cv_c[][3] = {
+        {-3.90040, -5.53120, -18.5610},   // α=0.01
+        {-3.33889, -4.83670,  -7.8831},   // α=0.05
+        {-3.00033, -3.88830,  -1.2795},   // α=0.10
+    };
+    // reg_type=1 (intercept + trend):
+    static const double cv_ct[][3] = {
+        {-4.37410, -8.35370, -39.6360},   // α=0.01
+        {-3.89910, -6.40490, -17.9870},   // α=0.05
+        {-3.58760, -4.89230,  -7.5030},   // α=0.10
+    };
+    // reg_type=2 (no constant):
+    static const double cv_nc[][3] = {
+        {-3.22380, -3.22380,   0.0000},   // α=0.01 (approx)
+        {-2.66000, -2.66000,   0.0000},   // α=0.05
+        {-2.36000, -2.36000,   0.0000},   // α=0.10
+    };
+
+    const double (*table)[3];
+    switch (reg_type) {
+        case 1: table = cv_ct; break;
+        case 2: table = cv_nc; break;
+        default: table = cv_c; break;
+    }
+
+    int idx;
+    if (alpha <= 0.015) idx = 0;       // 1%
+    else if (alpha <= 0.075) idx = 1;  // 5%
+    else idx = 2;                       // 10%
+
+    double Td = std::max((double)T, 10.0);
+    return table[idx][0] + table[idx][1] / Td + table[idx][2] / (Td * Td);
+}
+
+/// MacKinnon p 值: 从 ADF 统计量 + 样本量计算 p 值
+static double mackinnonPValue(double adf_stat, int T, int reg_type) {
+    // 用三个标准 α 水平的临界值做分段线性插值
+    double cv_01 = mackinnonCV(0.01, T, reg_type);
+    double cv_05 = mackinnonCV(0.05, T, reg_type);
+    double cv_10 = mackinnonCV(0.10, T, reg_type);
+
+    if (adf_stat <= cv_01) {
+        // 非常显著，外推 p < 0.01
+        double excess = (adf_stat - cv_01) / (cv_01 - cv_05);
+        return std::max(0.0001, 0.01 * std::exp(excess * 2.0));
+    } else if (adf_stat <= cv_05) {
+        double t = (adf_stat - cv_01) / (cv_05 - cv_01);
+        return 0.01 + t * 0.04;
+    } else if (adf_stat <= cv_10) {
+        double t = (adf_stat - cv_05) / (cv_10 - cv_05);
+        return 0.05 + t * 0.05;
+    } else {
+        // 大于 10% 临界值，用指数衰减近似
+        double excess = adf_stat - cv_10;
+        double p = 0.10 + 0.90 * (1.0 - std::exp(-excess * 1.5));
+        return std::min(p, 0.999);
+    }
+}
+
+/// 多元 OLS: Y = X * B + E
+/// Y: n×m, X: n×k → B: k×m, residuals: n×m
+static Eigen::MatrixXd multiOLS(const Eigen::MatrixXd& X,
+                                 const Eigen::MatrixXd& Y,
+                                 Eigen::MatrixXd& residuals) {
+    // B = (X'X)^{-1} X'Y
+    Eigen::MatrixXd XtX = X.transpose() * X;
+    Eigen::MatrixXd XtY = X.transpose() * Y;
+    Eigen::MatrixXd B = XtX.ldlt().solve(XtY);
+    residuals = Y - X * B;
+    return B;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ADF 检验 (完整 MacKinnon)
+// ──────────────────────────────────────────────────────────────────────
+
+ADFResult adfTestFull(const Vector<double>& series, int max_lag,
+                       const String& reg_type)
+{
+    ADFResult result;
+    size_t n = series.size();
+    if (n < 10) return result;
+
+    // 自动选滞后阶数 (BIC)
+    if (max_lag < 0) {
+        max_lag = std::min((int)std::floor(std::pow(n - 1, 1.0 / 3.0)), 40);
+    }
+
+    int reg_code = 0;
+    if (reg_type == "ct") reg_code = 1;
+    else if (reg_type == "nc") reg_code = 2;
+
+    double best_bic = std::numeric_limits<double>::max();
+    int best_lag = 0;
+
+    // 选最优滞后阶数
+    for (int p = 0; p <= max_lag; ++p) {
+        size_t eff_n = n - 1 - p;
+        if (eff_n < 10) break;
+
+        // 构造回归数据
+        int k = (reg_code == 2) ? 1 + p : 2 + p;  // 回归变量数
+        Eigen::MatrixXd Y(eff_n, 1);
+        Eigen::MatrixXd X(eff_n, k);
+
+        for (size_t i = 0; i < eff_n; ++i) {
+            size_t t = i + 1 + p;
+            Y(i, 0) = series[t] - series[t - 1];  // Δy_t
+            int col = 0;
+            if (reg_code <= 1) X(i, col++) = 1.0;  // 截距
+            if (reg_code == 1) X(i, col++) = (double)(t);  // 趋势
+            X(i, col++) = series[t - 1];  // y_{t-1}
+            for (int j = 0; j < p; ++j) {
+                X(i, col++) = series[t - 1 - j] - series[t - 2 - j];  // Δy_{t-1-j}
+            }
+        }
+
+        Eigen::MatrixXd resid;
+        multiOLS(X, Y, resid);
+        double rss = resid.squaredNorm();
+        double sigma2 = rss / eff_n;
+        if (sigma2 < 1e-15) continue;
+
+        double bic = std::log(sigma2) + (double)k * std::log((double)eff_n) / eff_n;
+        if (bic < best_bic) {
+            best_bic = bic;
+            best_lag = p;
+        }
+    }
+
+    // 用最优滞后做最终回归
+    int p = best_lag;
+    size_t eff_n = n - 1 - p;
+    int k = (reg_code == 2) ? 1 + p : 2 + p;
+    Eigen::MatrixXd Y(eff_n, 1);
+    Eigen::MatrixXd X(eff_n, k);
+
+    for (size_t i = 0; i < eff_n; ++i) {
+        size_t t = i + 1 + p;
+        Y(i, 0) = series[t] - series[t - 1];
+        int col = 0;
+        if (reg_code <= 1) X(i, col++) = 1.0;
+        if (reg_code == 1) X(i, col++) = (double)(t);
+        X(i, col++) = series[t - 1];
+        for (int j = 0; j < p; ++j) {
+            X(i, col++) = series[t - 1 - j] - series[t - 2 - j];
+        }
+    }
+
+    Eigen::MatrixXd resid;
+    Eigen::MatrixXd B = multiOLS(X, Y, resid);
+
+    // y_{t-1} 的系数在 B 中的位置
+    int y_lag_idx = (reg_code == 2) ? 0 : (reg_code == 1 ? 2 : 1);
+    double beta = B(y_lag_idx, 0);
+
+    // 标准误: (X'X)^{-1} * sigma^2
+    double rss = resid.squaredNorm();
+    double sigma2 = rss / (double)eff_n;
+    Eigen::MatrixXd XtX_inv = (X.transpose() * X).inverse();
+    double se_beta = std::sqrt(sigma2 * XtX_inv(y_lag_idx, y_lag_idx));
+
+    result._statistic = (se_beta > 1e-15) ? (beta / se_beta) : 0.0;
+    result._lags = p;
+    result._p_value = mackinnonPValue(result._statistic, (int)eff_n, reg_code);
+    result._cv_1pct = mackinnonCV(0.01, (int)eff_n, reg_code);
+    result._cv_5pct = mackinnonCV(0.05, (int)eff_n, reg_code);
+    result._cv_10pct = mackinnonCV(0.10, (int)eff_n, reg_code);
+    result._is_stationary = (result._p_value < 0.05);
+
+    return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// KPSS 检验
+// ──────────────────────────────────────────────────────────────────────
+
+KPSSResult kpssTest(const Vector<double>& series, int lags,
+                     const String& reg_type)
+{
+    KPSSResult result;
+    size_t n = series.size();
+    if (n < 10) return result;
+
+    // 自动滞后选择: Schwert (1989)
+    if (lags < 0) {
+        lags = (int)std::floor(0.75 * std::pow((double)n, 1.0 / 3.0));
+    }
+    result._lags = lags;
+
+    bool detrend = (reg_type == "trend");
+
+    // 去均值 (或去趋势) 回归残差
+    Vector<double> e(n);
+    if (!detrend) {
+        double mu = calcMean(series);
+        for (size_t i = 0; i < n; ++i) e[i] = series[i] - mu;
+    } else {
+        // y = α + βt + e
+        Vector<double> t_vec(n);
+        for (size_t i = 0; i < n; ++i) t_vec[i] = (double)i;
+        auto ols = olsRegression(t_vec, series);
+        for (size_t i = 0; i < n; ++i) e[i] = ols.residuals[i];
+    }
+
+    // 部分和 S_t = Σ e_i (i=1..t)
+    Vector<double> S(n);
+    S[0] = e[0];
+    for (size_t i = 1; i < n; ++i) S[i] = S[i - 1] + e[i];
+
+    // 长期方差: Newey-West Bartlett kernel
+    // σ²_LR = (1/n) Σ e²_t + (2/n) Σ_{j=1}^{l} w_j Σ_{t=j+1}^{n} e_t * e_{t-j}
+    // w_j = 1 - j/(l+1) (Bartlett)
+    double gamma0 = 0;
+    for (size_t i = 0; i < n; ++i) gamma0 += e[i] * e[i];
+    gamma0 /= (double)n;
+
+    double lr_var = gamma0;
+    for (int j = 1; j <= lags; ++j) {
+        double gamma_j = 0;
+        for (size_t t = j; t < n; ++t) {
+            gamma_j += e[t] * e[t - j];
+        }
+        gamma_j /= (double)n;
+        double w_j = 1.0 - (double)j / ((double)lags + 1.0);
+        lr_var += 2.0 * w_j * gamma_j;
+    }
+    result._lr_variance = lr_var;
+
+    if (lr_var < 1e-15) {
+        result._statistic = 0;
+        result._p_value = 1.0;
+        result._is_stationary = true;
+        return result;
+    }
+
+    // KPSS η = (1/n²) Σ S²_t / σ²_LR
+    double sum_S2 = 0;
+    for (size_t i = 0; i < n; ++i) sum_S2 += S[i] * S[i];
+    result._statistic = sum_S2 / ((double)n * (double)n * lr_var);
+
+    // KPSS 临界值 (Kwiatkowski et al. 1992)
+    // level:  10%=0.347, 5%=0.463, 2.5%=0.574, 1%=0.739
+    // trend:  10%=0.119, 5%=0.146, 2.5%=0.176, 1%=0.216
+    double cv_10, cv_05, cv_025, cv_01;
+    if (detrend) {
+        cv_10 = 0.119; cv_05 = 0.146; cv_025 = 0.176; cv_01 = 0.216;
+    } else {
+        cv_10 = 0.347; cv_05 = 0.463; cv_025 = 0.574; cv_01 = 0.739;
+    }
+
+    // p 值插值
+    if (result._statistic >= cv_01) {
+        result._p_value = 0.005;
+    } else if (result._statistic >= cv_025) {
+        double t = (result._statistic - cv_025) / (cv_01 - cv_025);
+        result._p_value = 0.025 - t * 0.02;
+    } else if (result._statistic >= cv_05) {
+        double t = (result._statistic - cv_05) / (cv_025 - cv_05);
+        result._p_value = 0.05 - t * 0.025;
+    } else if (result._statistic >= cv_10) {
+        double t = (result._statistic - cv_10) / (cv_05 - cv_10);
+        result._p_value = 0.10 - t * 0.05;
+    } else {
+        result._p_value = 0.10 + 0.90 * (1.0 - std::exp(-result._statistic * 3.0));
+        result._p_value = std::min(result._p_value, 0.999);
+    }
+
+    // H0: 平稳, p > 0.05 → 不拒绝 → 平稳
+    result._is_stationary = (result._p_value > 0.05);
+
+    return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// OU 过程 MLE 拟合
+// ──────────────────────────────────────────────────────────────────────
+
+OUProcessResult fitOUProcess(const Eigen::VectorXd& x, double dt)
+{
+    OUProcessResult result;
+    int n = (int)x.size();
+    if (n < 3) return result;
+
+    // OU: dX = θ(μ - X)dt + σdW
+    // 离散化: X_{t+1} = a + b*X_t + ε,  ε ~ N(0, v)
+    // b = e^{-θΔt}, a = μ(1-b), v = σ²(1-e^{-2θΔt})/(2θ)
+
+    // Step 1: OLS 初始估计
+    Eigen::MatrixXd X_mat(n - 1, 2);
+    Eigen::VectorXd Y_vec(n - 1);
+    for (int i = 0; i < n - 1; ++i) {
+        X_mat(i, 0) = 1.0;
+        X_mat(i, 1) = x(i);
+        Y_vec(i) = x(i + 1);
+    }
+
+    Eigen::MatrixXd resid;
+    Eigen::MatrixXd B = multiOLS(X_mat, Y_vec, resid);
+    double a_ols = B(0, 0);
+    double b_ols = B(1, 0);
+    double v_ols = resid.squaredNorm() / (double)(n - 1);
+
+    // Step 2: 从 AR(1) 参数反推 OU 参数
+    if (b_ols <= 0 || b_ols >= 1) {
+        // 不满足平稳性条件
+        result._theta = 0;
+        result._mu = 0;
+        result._sigma = 0;
+        result._half_life = -1;
+        return result;
+    }
+
+    double theta = -std::log(b_ols) / dt;
+    double mu = a_ols / (1.0 - b_ols);
+    double sigma2 = v_ols * 2.0 * theta / (1.0 - b_ols * b_ols);
+    double sigma = (sigma2 > 0) ? std::sqrt(sigma2) : 0;
+
+    // Step 3: 精确 MLE (Newton-Raphson 优化)
+    // 对数似然: L = -(n-1)/2 * log(2π) - (n-1)/2 * log(v) - 1/(2v) * Σ(Y - a - bX)²
+    // 其中 v = σ²(1-e^{-2θΔt})/(2θ), a = μ(1-e^{-θΔt}), b = e^{-θΔt}
+    // 参数化: (θ, μ, σ²)
+    double logL = 0;
+    for (int i = 0; i < n - 1; ++i) {
+        double pred = a_ols + b_ols * x(i);
+        logL += -0.5 * std::log(2 * M_PI * v_ols) - 0.5 * (Y_vec(i) - pred) * (Y_vec(i) - pred) / v_ols;
+    }
+
+    // 数值优化: 在 OLS 解附近做网格搜索精化
+    double best_logL = logL;
+    double best_theta = theta, best_mu = mu, best_sigma = sigma;
+
+    for (double dtheta = -0.1 * theta; dtheta <= 0.1 * theta; dtheta += std::max(0.001, theta * 0.02)) {
+        double th = theta + dtheta;
+        if (th <= 0) continue;
+        double b = std::exp(-th * dt);
+        double a = mu * (1 - b);
+        double v = sigma * sigma * (1 - b * b) / (2 * th);
+        if (v <= 0) continue;
+
+        double ll = 0;
+        for (int i = 0; i < n - 1; ++i) {
+            double pred = a + b * x(i);
+            ll += -0.5 * std::log(2 * M_PI * v) - 0.5 * (Y_vec(i) - pred) * (Y_vec(i) - pred) / v;
+        }
+        if (ll > best_logL) {
+            best_logL = ll;
+            best_theta = th;
+        }
+    }
+
+    // 用最优 θ 重新计算
+    theta = best_theta;
+    double b_final = std::exp(-theta * dt);
+    mu = a_ols / (1.0 - b_final);
+    double v_final = v_ols;
+    sigma2 = v_final * 2.0 * theta / (1.0 - b_final * b_final);
+    sigma = (sigma2 > 0) ? std::sqrt(sigma2) : 0;
+
+    result._theta = theta;
+    result._mu = mu;
+    result._sigma = sigma;
+    result._half_life = (theta > 1e-10) ? (std::log(2.0) / theta) : -1.0;
+    result._log_likelihood = best_logL;
+    result._aic = 2.0 * 3.0 - 2.0 * best_logL;  // k=3 (θ, μ, σ)
+
+    // 标准误 (Fisher 信息矩阵逆的对角线, 数值近似)
+    // 用 Hessian 数值差分近似
+    double eps = 1e-5;
+    double params[3] = {theta, mu, sigma};
+    double hess[3][3] = {};
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = i; j < 3; ++j) {
+            auto evalLL = [&](double pi_val, double pj_val) -> double {
+                double th = (i == 0 || j == 0) ? pi_val : theta;
+                double m = (i == 1 || j == 1) ? pi_val : mu;
+                double s = (i == 2 || j == 2) ? pi_val : sigma;
+                if (i == 0 && j == 0) { th = pi_val; m = mu; s = sigma; }
+                else if (i == 1 && j == 1) { th = theta; m = pi_val; s = sigma; }
+                else if (i == 2 && j == 2) { th = theta; m = mu; s = pi_val; }
+                else if ((i == 0 && j == 1) || (i == 1 && j == 0)) { th = pi_val; m = pj_val; s = sigma; }
+                else if ((i == 0 && j == 2) || (i == 2 && j == 0)) { th = pi_val; m = mu; s = pj_val; }
+                else { th = theta; m = pi_val; s = pj_val; }
+
+                if (th <= 0 || s <= 0) return -1e10;
+                double bb = std::exp(-th * dt);
+                double aa = m * (1 - bb);
+                double vv = s * s * (1 - bb * bb) / (2 * th);
+                if (vv <= 0) return -1e10;
+                double ll = 0;
+                for (int k = 0; k < n - 1; ++k) {
+                    double pred = aa + bb * x(k);
+                    ll += -0.5 * std::log(2 * M_PI * vv) - 0.5 * (x(k + 1) - pred) * (x(k + 1) - pred) / vv;
+                }
+                return ll;
+            };
+
+            double f_pp = evalLL(params[i] + eps, params[j] + eps);
+            double f_pm = evalLL(params[i] + eps, params[j] - eps);
+            double f_mp = evalLL(params[i] - eps, params[j] + eps);
+            double f_mm = evalLL(params[i] - eps, params[j] - eps);
+            hess[i][j] = (f_pp - f_pm - f_mp + f_mm) / (4 * eps * eps);
+            hess[j][i] = hess[i][j];
+        }
+    }
+
+    // 标准误 = sqrt(diag(-H^{-1}))
+    Eigen::Matrix3d H;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            H(i, j) = -hess[i][j];
+
+    Eigen::Matrix3d H_inv = H.inverse();
+    result._se_theta = (H_inv(0, 0) > 0) ? std::sqrt(H_inv(0, 0)) : 0;
+    result._se_mu = (H_inv(1, 1) > 0) ? std::sqrt(H_inv(1, 1)) : 0;
+    result._se_sigma = (H_inv(2, 2) > 0) ? std::sqrt(H_inv(2, 2)) : 0;
+
+    return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Engle-Granger 两步法 (完整版)
+// ──────────────────────────────────────────────────────────────────────
+
+EGFullResult engleGrangerFull(const Vector<double>& x, const Vector<double>& y,
+                               const String& symbol_x, const String& symbol_y)
+{
+    EGFullResult result;
+    result._symbol_x = symbol_x;
+    result._symbol_y = symbol_y;
+
+    size_t n = x.size();
+    if (n < 20 || y.size() != n) return result;
+
+    // Step 1: 协整回归 y = α + βx + ε
+    auto ols = olsRegression(x, y);
+    result._alpha = ols.alpha;
+    result._beta = ols.beta;
+    result._r_squared = ols.r_squared;
+    result._residuals = Eigen::Map<const Eigen::VectorXd>(
+        ols.residuals.data(), ols.residuals.size());
+
+    // Step 2: 残差 ADF 检验 (MacKinnon)
+    result._adf = adfTestFull(ols.residuals, -1, "c");
+
+    // KPSS 互补检验
+    result._kpss = kpssTest(ols.residuals, -1, "level");
+
+    // 半衰期: 从 AR(1) 系数反推
+    if (ols.residuals.size() > 2) {
+        Vector<double> eps_lag, d_eps;
+        for (size_t i = 1; i < ols.residuals.size(); ++i) {
+            eps_lag.push_back(ols.residuals[i - 1]);
+            d_eps.push_back(ols.residuals[i] - ols.residuals[i - 1]);
+        }
+        auto ar_ols = olsRegression(eps_lag, d_eps);
+        double gamma = ar_ols.beta;
+        result._half_life = (gamma < 0) ? (-std::log(2.0) / gamma) : -1.0;
+    }
+
+    // 协整判定: ADF p < 0.05
+    result._is_cointegrated = result._adf._is_stationary;
+
+    // OU 过程拟合
+    result._ou_fit = fitOUProcess(result._residuals);
+
+    return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Johansen 协整检验
+// ──────────────────────────────────────────────────────────────────────
+
+/// Johansen 临界值 (硬编码, 来自 Johansen & Nielsen 1992)
+/// 按 [detrend_type][stat_type][p-1][r] 索引
+/// detrend_type: 0=none, 1=const, 2=trend
+/// stat_type: 0=trace, 1=max_eigen
+/// p: 变量个数 (1-6), r: 协整秩 (0-based)
+static double johansenCV(int stat_type, int p, int r, double alpha, bool detrend_is_trend) {
+    // trace 95% 临界值 [p-1][r], case: const
+    static const double trace_95_const[][6] = {
+        {15.41, 0, 0, 0, 0, 0},          // p=1
+        {29.68, 15.41, 0, 0, 0, 0},      // p=2
+        {42.44, 25.54, 13.42, 0, 0, 0},  // p=3
+        {53.95, 34.88, 20.04, 10.60, 0, 0},  // p=4
+        {65.17, 43.97, 26.23, 15.41, 7.53, 0},  // p=5
+        {76.07, 52.88, 32.09, 20.04, 12.44, 5.42},  // p=6
+    };
+    // trace 99% 临界值
+    static const double trace_99_const[][6] = {
+        {20.04, 0, 0, 0, 0, 0},
+        {35.41, 20.04, 0, 0, 0, 0},
+        {49.40, 31.52, 17.14, 0, 0, 0},
+        {61.94, 40.52, 25.32, 14.07, 0, 0},
+        {73.31, 49.40, 32.64, 19.19, 9.42, 0},
+        {84.45, 57.70, 39.37, 25.32, 13.28, 4.82},
+    };
+    // max-eigen 95%
+    static const double me_95_const[][6] = {
+        {15.41, 0, 0, 0, 0, 0},
+        {22.30, 15.41, 0, 0, 0, 0},
+        {27.58, 21.13, 17.14, 0, 0, 0},
+        {31.69, 25.54, 21.13, 17.14, 0, 0},
+        {35.18, 28.83, 24.25, 20.04, 16.02, 0},
+        {38.34, 31.69, 26.94, 22.30, 18.27, 14.90},
+    };
+    // max-eigen 99%
+    static const double me_99_const[][6] = {
+        {20.04, 0, 0, 0, 0, 0},
+        {27.06, 20.04, 0, 0, 0, 0},
+        {32.24, 25.32, 21.74, 0, 0, 0},
+        {36.65, 29.68, 25.32, 22.30, 0, 0},
+        {40.07, 33.24, 28.43, 24.60, 21.32, 0},
+        {43.45, 36.65, 31.52, 27.06, 23.78, 20.32},
+    };
+    // trace 95%, trend
+    static const double trace_95_trend[][6] = {
+        {17.86, 0, 0, 0, 0, 0},
+        {31.52, 17.86, 0, 0, 0, 0},
+        {44.44, 28.71, 16.92, 0, 0, 0},
+        {55.24, 38.78, 24.50, 14.07, 0, 0},
+        {66.23, 47.85, 31.52, 20.04, 10.60, 0},
+        {76.94, 56.28, 38.34, 25.54, 15.41, 7.53},
+    };
+    // trace 99%, trend
+    static const double trace_99_trend[][6] = {
+        {22.30, 0, 0, 0, 0, 0},
+        {37.22, 22.30, 0, 0, 0, 0},
+        {50.17, 33.24, 20.04, 0, 0, 0},
+        {62.91, 43.97, 28.83, 17.14, 0, 0},
+        {74.31, 53.25, 36.65, 23.78, 13.28, 0},
+        {85.18, 62.09, 43.97, 29.68, 17.94, 9.42},
+    };
+    // max-eigen 95%, trend
+    static const double me_95_trend[][6] = {
+        {17.86, 0, 0, 0, 0, 0},
+        {24.50, 17.86, 0, 0, 0, 0},
+        {29.18, 23.11, 18.89, 0, 0, 0},
+        {32.47, 26.50, 22.30, 18.27, 0, 0},
+        {35.18, 29.68, 25.32, 21.32, 17.14, 0},
+        {37.74, 32.09, 27.58, 23.11, 19.36, 15.95},
+    };
+    // max-eigen 99%, trend
+    static const double me_99_trend[][6] = {
+        {22.30, 0, 0, 0, 0, 0},
+        {28.83, 22.30, 0, 0, 0, 0},
+        {33.24, 27.06, 23.11, 0, 0, 0},
+        {36.65, 30.60, 26.50, 22.30, 0, 0},
+        {39.60, 33.24, 28.83, 25.32, 21.74, 0},
+        {42.44, 36.65, 31.52, 27.58, 24.25, 20.92},
+    };
+
+    int pi = std::clamp(p - 1, 0, 5);
+    int ri = std::clamp(r, 0, 5);
+
+    if (stat_type == 0) {  // trace
+        if (alpha <= 0.015) {  // 99%
+            return (detrend_is_trend) ? trace_99_trend[pi][ri] : trace_99_const[pi][ri];
+        } else {  // 95%
+            return (detrend_is_trend) ? trace_95_trend[pi][ri] : trace_95_const[pi][ri];
+        }
+    } else {  // max-eigen
+        if (alpha <= 0.015) {
+            return (detrend_is_trend) ? me_99_trend[pi][ri] : me_99_const[pi][ri];
+        } else {
+            return (detrend_is_trend) ? me_95_trend[pi][ri] : me_95_const[pi][ri];
+        }
+    }
+}
+
+JohansenResult johansenTest(const Eigen::MatrixXd& data, int lag,
+                             const String& detrend)
+{
+    JohansenResult result;
+    int N = (int)data.rows();  // 标的数
+    int T = (int)data.cols();  // 时间点
+    result._n_variables = N;
+
+    if (N < 2 || T < N * lag + 10) return result;
+
+    bool detrend_is_trend = (detrend == "trend");
+    bool has_const = (detrend != "none");
+
+    // Step 1: 估计 VAR(p), 获取残差 R0 (Δy_t) 和 R1 (y_{t-1})
+    // 对于 VAR(p): Δy_t = Π y_{t-1} + Σ Γ_i Δy_{t-i} + ε_t
+    // 简化: 先做 VAR(1) 的 Johansen 检验
+
+    int eff_T = T - lag;
+    Eigen::MatrixXd R0(N, eff_T);  // Δy_t
+    Eigen::MatrixXd R1(N, eff_T);  // y_{t-1}
+
+    for (int t = 0; t < eff_T; ++t) {
+        int time_idx = t + lag;
+        for (int i = 0; i < N; ++i) {
+            R0(i, t) = data(i, time_idx) - data(i, time_idx - 1);
+            R1(i, t) = data(i, time_idx - 1);
+        }
+    }
+
+    // 去均值 (或去趋势)
+    if (has_const) {
+        Eigen::VectorXd ones = Eigen::VectorXd::Ones(eff_T);
+        Eigen::VectorXd mean0 = R0 * ones / eff_T;
+        Eigen::VectorXd mean1 = R1 * ones / eff_T;
+        if (!detrend_is_trend) {
+            R0.colwise() -= mean0;
+            R1.colwise() -= mean1;
+        } else {
+            // 去线性趋势
+            Eigen::VectorXd t_vec(eff_T);
+            for (int i = 0; i < eff_T; ++i) t_vec(i) = (double)i;
+            double t_mean = t_vec.mean();
+            Eigen::VectorXd t_centered = t_vec.array() - t_mean;
+            double t_var = t_centered.squaredNorm();
+
+            for (int i = 0; i < N; ++i) {
+                double slope0 = R0.row(i).dot(t_centered) / t_var;
+                double slope1 = R1.row(i).dot(t_centered) / t_var;
+                R0.row(i).array() -= slope0 * t_centered.array();
+                R1.row(i).array() -= slope1 * t_centered.array();
+            }
+        }
+    }
+
+    // Step 2: 计算 S_ij 矩阵
+    Eigen::MatrixXd S00 = R0 * R0.transpose() / eff_T;
+    Eigen::MatrixXd S11 = R1 * R1.transpose() / eff_T;
+    Eigen::MatrixXd S01 = R0 * R1.transpose() / eff_T;
+    Eigen::MatrixXd S10 = S01.transpose();
+
+    // Step 3: 广义特征值问题 |λ S11 - S10 S00^{-1} S01| = 0
+    Eigen::MatrixXd S00_inv = S00.inverse();
+    Eigen::MatrixXd M = S10 * S00_inv * S01;
+
+    // 求解 S11^{-1} M 的特征值和特征向量
+    Eigen::MatrixXd S11_inv = S11.inverse();
+    Eigen::MatrixXd A = S11_inv * M;
+
+    Eigen::EigenSolver<Eigen::MatrixXd> es(A);
+    Eigen::VectorXd eigenvalues = es.eigenvalues().real();
+    Eigen::MatrixXd eigenvectors = es.eigenvectors().real();
+
+    // 按特征值降序排列
+    std::vector<int> idx(N);
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(), [&](int a, int b) {
+        return eigenvalues(a) > eigenvalues(b);
+    });
+
+    Eigen::VectorXd sorted_evals(N);
+    Eigen::MatrixXd sorted_evecs(N, N);
+    for (int i = 0; i < N; ++i) {
+        sorted_evals(i) = eigenvalues(idx[i]);
+        sorted_evecs.col(i) = eigenvectors.col(idx[i]);
+        // 限制特征值在 [0, 1)
+        sorted_evals(i) = std::clamp(sorted_evals(i), 0.0, 0.9999);
+    }
+
+    result._eigenvectors = sorted_evecs;
+
+    // Step 4: 计算 trace 和 max-eigen 统计量
+    result._trace_stats.resize(N);
+    result._max_eigen_stats.resize(N);
+    result._trace_cv_95.resize(N);
+    result._trace_cv_99.resize(N);
+    result._max_eigen_cv_95.resize(N);
+    result._max_eigen_cv_99.resize(N);
+    result._trace_significant.resize(N);
+    result._max_eigen_significant.resize(N);
+
+    double trace_sum = 0;
+    for (int r = 0; r < N; ++r) {
+        // trace: H(r): rank ≤ r, 统计量 = -T Σ_{i=r+1}^{N} ln(1-λ_i)
+        trace_sum += -std::log(1.0 - sorted_evals(r));
+        // 注意: 这里 r 从 0 开始, trace_stats[r] = -T Σ_{i=r}^{N-1} ln(1-λ_i)
+        // 但标准定义是 trace_stats[r] 对应 H0: rank = r
+        // 所以 trace_stats[r] = -T Σ_{i=r}^{N-1} ln(1-λ_i)
+    }
+
+    // 重新计算: trace_stats[r] = -T * Σ_{i=r}^{N-1} ln(1-λ_i)
+    trace_sum = 0;
+    for (int r = N - 1; r >= 0; --r) {
+        trace_sum += -std::log(1.0 - sorted_evals(r));
+        result._trace_stats(r) = (double)eff_T * trace_sum;
+    }
+
+    // max-eigen: -T * ln(1-λ_r)
+    for (int r = 0; r < N; ++r) {
+        result._max_eigen_stats(r) = -(double)eff_T * std::log(1.0 - sorted_evals(r));
+    }
+
+    // 临界值
+    for (int r = 0; r < N; ++r) {
+        // trace 检验 H0: rank = r, 维度 = N - r (检验 N-r 个特征值)
+        int trace_dim = N - r;
+        result._trace_cv_95(r) = johansenCV(0, trace_dim, 0, 0.05, detrend_is_trend);
+        result._trace_cv_99(r) = johansenCV(0, trace_dim, 0, 0.01, detrend_is_trend);
+        result._trace_significant[r] = (result._trace_stats(r) > result._trace_cv_95(r));
+
+        // max-eigen 检验 H0: rank = r vs rank = r+1
+        result._max_eigen_cv_95(r) = johansenCV(1, N - r, 0, 0.05, detrend_is_trend);
+        result._max_eigen_cv_99(r) = johansenCV(1, N - r, 0, 0.01, detrend_is_trend);
+        result._max_eigen_significant[r] = (result._max_eigen_stats(r) > result._max_eigen_cv_95(r));
+    }
+
+    // 估计协整秩 (5% 显著性, trace 检验)
+    result._rank = 0;
+    for (int r = 0; r < N; ++r) {
+        if (result._trace_significant[r]) {
+            result._rank = r + 1;
+        } else {
+            break;
+        }
+    }
+
+    return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 多元 Granger 因果检验 (VAR + Wald)
+// ──────────────────────────────────────────────────────────────────────
+
+/// χ² p 值近似 (Wilson-Hilferty)
+static double chiSquaredPValue(double x, int df) {
+    if (x <= 0 || df < 1) return 1.0;
+    // Wilson-Hilferty 近似: (X/df)^{1/3} ≈ N(1 - 2/(9*df), 2/(9*df))
+    double h = 2.0 / (9.0 * df);
+    double z = (std::pow(x / df, 1.0 / 3.0) - (1.0 - h)) / std::sqrt(h);
+    return 1.0 - normalCDF(z);
+}
+
+Vector<MultivariateGrangerResult> multivariateGrangerTest(
+    const Eigen::MatrixXd& data,
+    const Vector<String>& symbols,
+    int max_lag)
+{
+    Vector<MultivariateGrangerResult> results;
+    int N = (int)data.rows();
+    int T = (int)data.cols();
+    if (N < 2 || T < N * max_lag + 20) return results;
+
+    // 对每对 (i, j) 做 VAR(p) + Wald 检验
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            if (i == j) continue;
+
+            MultivariateGrangerResult gr;
+            gr._from = symbols[j];
+            gr._to = symbols[i];
+
+            // 收集条件集 (其他变量)
+            for (int k = 0; k < N; ++k) {
+                if (k != i && k != j) gr._condition_set.push_back(symbols[k]);
+            }
+
+            double best_aic = std::numeric_limits<double>::max();
+            int best_p = 1;
+
+            for (int p = 1; p <= max_lag; ++p) {
+                int eff_T = T - p;
+                if (eff_T < N * p + 5) break;
+
+                // 构建 VAR(p) 回归
+                // Y: Δx_i (eff_T × 1)
+                // X: [x_i_lags, x_j_lags, other_lags, const] (eff_T × k)
+                int k_restricted = 1 + N * p;   // const + x_i 的 p 个滞后
+                int k_full = 1 + N * p;          // const + 所有变量的 p 个滞后
+
+                // 受限模型: x_i 仅受自身滞后影响
+                Eigen::MatrixXd Y(eff_T, 1);
+                Eigen::MatrixXd X_r(eff_T, k_restricted);
+
+                for (int t = 0; t < eff_T; ++t) {
+                    int time_idx = t + p;
+                    Y(t, 0) = data(i, time_idx);
+                    int col = 0;
+                    X_r(t, col++) = 1.0;  // 截距
+                    for (int lag = 1; lag <= p; ++lag) {
+                        X_r(t, col++) = data(i, time_idx - lag);
+                    }
+                }
+
+                Eigen::MatrixXd resid_r;
+                multiOLS(X_r, Y, resid_r);
+                double rss_r = resid_r.squaredNorm();
+
+                // 非受限模型: x_i 受所有变量滞后影响
+                Eigen::MatrixXd X_f(eff_T, k_full);
+                for (int t = 0; t < eff_T; ++t) {
+                    int time_idx = t + p;
+                    int col = 0;
+                    X_f(t, col++) = 1.0;
+                    for (int var = 0; var < N; ++var) {
+                        for (int lag = 1; lag <= p; ++lag) {
+                            if (col < k_full)
+                                X_f(t, col++) = data(var, time_idx - lag);
+                        }
+                    }
+                }
+
+                Eigen::MatrixXd resid_f;
+                multiOLS(X_f, Y, resid_f);
+                double rss_f = resid_f.squaredNorm();
+
+                // AIC
+                double sigma2 = rss_f / eff_T;
+                if (sigma2 > 0) {
+                    double aic = std::log(sigma2) + 2.0 * k_full / eff_T;
+                    if (aic < best_aic) {
+                        best_aic = aic;
+                        best_p = p;
+                    }
+                }
+            }
+
+            // 用最优滞后计算 Wald 统计量
+            int p = best_p;
+            int eff_T = T - p;
+            int q = p;  // 约束数 = x_j 的滞后个数
+
+            // 受限模型
+            int k_r = 1 + p;
+            Eigen::MatrixXd Y(eff_T, 1);
+            Eigen::MatrixXd X_r(eff_T, k_r);
+            for (int t = 0; t < eff_T; ++t) {
+                int time_idx = t + p;
+                Y(t, 0) = data(i, time_idx);
+                int col = 0;
+                X_r(t, col++) = 1.0;
+                for (int lag = 1; lag <= p; ++lag)
+                    X_r(t, col++) = data(i, time_idx - lag);
+            }
+            Eigen::MatrixXd resid_r;
+            multiOLS(X_r, Y, resid_r);
+            double rss_r = resid_r.squaredNorm();
+
+            // 非受限模型
+            int k_f = 1 + N * p;
+            Eigen::MatrixXd X_f(eff_T, k_f);
+            for (int t = 0; t < eff_T; ++t) {
+                int time_idx = t + p;
+                int col = 0;
+                X_f(t, col++) = 1.0;
+                for (int var = 0; var < N; ++var) {
+                    for (int lag = 1; lag <= p; ++lag) {
+                        if (col < k_f)
+                            X_f(t, col++) = data(var, time_idx - lag);
+                    }
+                }
+            }
+            Eigen::MatrixXd resid_f;
+            Eigen::MatrixXd B_f = multiOLS(X_f, Y, resid_f);
+            double rss_f = resid_f.squaredNorm();
+
+            // F 统计量 → Wald 统计量
+            if (rss_f > 1e-15 && q > 0) {
+                double f_stat = ((rss_r - rss_f) / q) / (rss_f / (eff_T - k_f));
+                // Wald = F * q (近似 χ²(q))
+                gr._wald_stat = f_stat * q;
+                gr._p_value = chiSquaredPValue(gr._wald_stat, q);
+            }
+            gr._optimal_lag = p;
+            gr._is_significant = (gr._p_value < 0.05);
+
+            results.push_back(gr);
+        }
+    }
+
+    return results;
 }
 
 double stage3GM(double g1, double g2, double D, double T1, double T2, double r) {
