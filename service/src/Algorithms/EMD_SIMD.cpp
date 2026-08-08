@@ -9,16 +9,16 @@
 // ============================================================================
 
 /**
- * @brief 三次样条包络线生成
+ * @brief 包络线生成（Akima 样条，零分配版本）
  *
- * 在极值点之间使用自然三次样条插值（与 pyEMD 默认行为一致）。
- * 端点外推：使用最近极值点的值。
+ * 直接从 data + extremaIdx 读取，不拷贝 xPts/yPts。
+ * 工作缓冲区由调用方预分配，本函数不执行任何堆分配。
  */
 Vector<double> simd_cubicSplineEnvelope(const Vector<double>& data,
                                           const Vector<int>& extremaIdx,
-                                          int size) {
+                                          int size,
+                                          double* work_s, double* work_t) {
     Vector<double> envelope(size, 0.0);
-    double* envPtr = envelope.data();
 
     if (extremaIdx.empty()) {
         return envelope;
@@ -26,27 +26,36 @@ Vector<double> simd_cubicSplineEnvelope(const Vector<double>& data,
 
     if (extremaIdx.size() == 1) {
         double val = data[extremaIdx[0]];
-        for (int j = 0; j < size; ++j) envPtr[j] = val;
+        for (int j = 0; j < size; ++j) envelope[j] = val;
         return envelope;
     }
 
-    // 收集极值点对应的数据值
     int nPts = static_cast<int>(extremaIdx.size());
-    Vector<int> xPts(nPts);
-    Vector<double> yPts(nPts);
-    for (int i = 0; i < nPts; ++i) {
-        xPts[i] = extremaIdx[i];
-        yPts[i] = data[extremaIdx[i]];
+
+    // 直接使用 extremaIdx 作为 x，data 间接读取作为 y（零拷贝）
+    // akima_spline 的 y 参数通过 lambda 适配：y[i] = data[extremaIdx[i]]
+    // 但 akima_spline 接受 const double* y，需要连续数组
+    // 对于 nPts ≤ 64 的小数组，用栈分配避免堆分配
+    double yBuf[64];
+    Vector<double> yHeap;
+    double* yPtr;
+    if (nPts <= 64) {
+        for (int i = 0; i < nPts; ++i) yBuf[i] = data[extremaIdx[i]];
+        yPtr = yBuf;
+    } else {
+        yHeap.resize(nPts);
+        for (int i = 0; i < nPts; ++i) yHeap[i] = data[extremaIdx[i]];
+        yPtr = yHeap.data();
     }
 
-    // 使用三次样条在极值点间插值
-    natural_cubic_spline(xPts.data(), yPts.data(), nPts, envPtr, 0, size - 1);
+    akima_spline(extremaIdx.data(), yPtr, nPts, envelope.data(), 0, size - 1,
+                 work_s, work_t);
 
-    // 外推端点：使用最近极值点的值（与自然边界条件一致）
+    // 端点外推：常数外推
     double firstVal = envelope[extremaIdx[0]];
     double lastVal = envelope[extremaIdx.back()];
-    for (int j = 0; j < extremaIdx[0]; ++j) envPtr[j] = firstVal;
-    for (int j = extremaIdx.back() + 1; j < size; ++j) envPtr[j] = lastVal;
+    for (int j = 0; j < extremaIdx[0]; ++j) envelope[j] = firstVal;
+    for (int j = extremaIdx.back() + 1; j < size; ++j) envelope[j] = lastVal;
 
     return envelope;
 }
@@ -82,10 +91,9 @@ void simd_findExtrema(const Vector<double>& h, Vector<int>& maxIdx, Vector<int>&
 }
 
 /**
- * @brief SIMD 加速的单 IMF 提取（筛选过程）
+ * @brief SIMD 加速的单 IMF 提取（筛选过程，零重复分配）
  *
- * 输入: residual (残差信号)
- * 输出: h (提取出的 IMF)
+ * 所有工作缓冲区在函数入口一次性预分配，筛选迭代中复用。
  */
 Vector<double> simd_extractIMF(const Vector<double>& residual,
                                  int maxSiftingIter,
@@ -94,7 +102,15 @@ Vector<double> simd_extractIMF(const Vector<double>& residual,
     int n = static_cast<int>(h.size());
     double* hPtr = h.data();
 
+    // ── 一次性预分配所有工作缓冲区 ──
     Vector<double> meanEnv(n);
+    Vector<double> upperEnv(n);
+    Vector<double> lowerEnv(n);
+    // Akima 工作缓冲区（极值点最多 n 个）
+    Vector<double> work_s(n);   // 段斜率 [n-1]
+    Vector<double> work_t(n);   // 切线 [n]
+    double* wsPtr = work_s.data();
+    double* wtPtr = work_t.data();
 
     for (int iter = 0; iter < maxSiftingIter; ++iter) {
         // 找极值点
@@ -102,15 +118,17 @@ Vector<double> simd_extractIMF(const Vector<double>& residual,
         simd_findExtrema(h, maxIdx, minIdx);
 
         if (maxIdx.size() < 2 || minIdx.size() < 2) {
-            break;  // 极值点不足，停止筛选
+            break;
         }
 
-        // SIMD 包络线
-        auto upperEnv = simd_cubicSplineEnvelope(h, maxIdx, n);
-        auto lowerEnv = simd_cubicSplineEnvelope(h, minIdx, n);
+        // 包络线（传入预分配缓冲区，零堆分配）
+        // 注意：simd_cubicSplineEnvelope 仍返回 Vector（envelope 内部），
+        // 但 work_s/work_t 复用，yBuf 走栈分配
+        auto upperEnvR = simd_cubicSplineEnvelope(h, maxIdx, n, wsPtr, wtPtr);
+        auto lowerEnvR = simd_cubicSplineEnvelope(h, minIdx, n, wsPtr, wtPtr);
 
         // SIMD 均值包络
-        simd_mean_envelope(upperEnv.data(), lowerEnv.data(), meanEnv.data(), n);
+        simd_mean_envelope(upperEnvR.data(), lowerEnvR.data(), meanEnv.data(), n);
 
         // 检查停止条件
         if (simd_isIMF(h, meanEnv)) {

@@ -54,6 +54,19 @@ bool BreakoutNode::Init(const nlohmann::json& config) {
         return false;
     }
 
+    // 提取字段后缀（跳过 symbol 部分的两个点），Process 时按 symbol 拼接
+    // "sz.000001.close" → ".close"
+    auto extractSuffix = [](const String& key) -> String {
+        auto d1 = key.find('.');
+        if (d1 == String::npos) return "";
+        auto d2 = key.find('.', d1 + 1);
+        if (d2 == String::npos) return "";
+        return key.substr(d2);
+    };
+    _valueSuffix = extractSuffix(_valueKey);
+    _upperSuffix = extractSuffix(_upperKey);
+    _lowerSuffix = extractSuffix(_lowerKey);
+
     // 从 valueKey 推断 symbol 列表（value 来自 QuoteInput，覆盖所有标的）
     for (auto& key : handleKeys["input-value"]) {
         Vector<String> tokens;
@@ -82,14 +95,19 @@ NodeProcessResult BreakoutNode::Process(const String& strategy, DataContext& con
     }
 
     for (auto& [symbol, state] : _states) {
+        // 构造当前 symbol 的 context key
+        String valueKey = symbol + _valueSuffix;
+        String upperKey = symbol + _upperSuffix;
+        String lowerKey = symbol + _lowerSuffix;
+
         // 读取输入
-        if (!context.exist(_valueKey) || !context.exist(_upperKey) || !context.exist(_lowerKey)) {
+        if (!context.exist(valueKey) || !context.exist(upperKey) || !context.exist(lowerKey)) {
             continue;
         }
 
-        const auto& valueVec = context.get<Vector<double>>(_valueKey);
-        const auto& upperVec = context.get<Vector<double>>(_upperKey);
-        const auto& lowerVec = context.get<Vector<double>>(_lowerKey);
+        const auto& valueVec = context.get<Vector<double>>(valueKey);
+        const auto& upperVec = context.get<Vector<double>>(upperKey);
+        const auto& lowerVec = context.get<Vector<double>>(lowerKey);
 
         if (valueVec.empty() || upperVec.empty() || lowerVec.empty()) {
             continue;

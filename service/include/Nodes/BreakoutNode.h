@@ -43,9 +43,12 @@ private:
     Map<String, SymbolState> _states;
 
     // handle → context key 映射
-    String _valueKey;  // close 价格的 context key
+    String _valueKey;  // close 价格的 context key（Init 时取第一个，仅用于提取后缀）
     String _upperKey;  // 上轨 context key
     String _lowerKey;  // 下轨 context key
+    String _valueSuffix;  // ".close" — Process 时拼接 symbol 前缀
+    String _upperSuffix;  // ".xxx" — 上轨字段后缀
+    String _lowerSuffix;  // ".xxx" — 下轨字段后缀
 
     Map<String, ArgType> _outputs;
 };

@@ -30,9 +30,14 @@ Vector<double> EMD::cubicSplineEnvelope(const Vector<double>& data,
         yPts[i] = data[extremaIdx[i]];
     }
 
-    // 调用 EMD_SIMD.h 中的自然三次样条
-    natural_cubic_spline(xPts.data(), yPts.data(), nPts,
-                         envelope.data(), 0, size - 1);
+    // Akima 样条插值（替代自然三次样条，无全局求解）
+    // 工作缓冲区局部分配
+    int nSeg = static_cast<int>(nPts) - 1;
+    Vector<double> work_s(nSeg > 0 ? nSeg : 1);
+    Vector<double> work_t(nPts);
+    akima_spline(xPts.data(), yPts.data(), nPts,
+                 envelope.data(), 0, size - 1,
+                 work_s.data(), work_t.data());
 
     // 端点外推：常数外推（与 pyEMD 默认行为一致）
     for (int j = 0; j < extremaIdx[0]; ++j) {

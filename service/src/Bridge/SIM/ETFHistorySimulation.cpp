@@ -41,7 +41,7 @@ bool ETFHistorySimulation::LoadData(const String& code) {
     Vector<String> adjDates;
     auto adjData = LoadHistoryDataWithFreq(
         symbol, {"open", "close", "high", "low", "volume"},
-        "", "", freq, AdjType::HFQ, &adjDates);
+        _loadStartDate, _loadEndDate, freq, AdjType::HFQ, &adjDates);
 
     if (adjData.empty()) {
         String err_msg = fmt::format("No ETF data for '{}' from DuckDB (freq={}, adj=HFQ)", code, toString(freq));
@@ -55,7 +55,7 @@ bool ETFHistorySimulation::LoadData(const String& code) {
     Vector<String> orgDates;
     auto orgData = LoadHistoryDataWithFreq(
         symbol, {"open", "close", "high", "low", "volume"},
-        "", "", freq, AdjType::None, &orgDates);
+        _loadStartDate, _loadEndDate, freq, AdjType::None, &orgDates);
 
     if (orgData.empty()) {
         String err_msg = fmt::format("No ETF data for '{}' from DuckDB (freq={}, adj=None)", code, toString(freq));

@@ -77,7 +77,7 @@ bool StockHistorySimulation::LoadData(const String& code) {
         Vector<String> adjDates;
         auto adjData = LoadHistoryDataWithFreq(
             symbol, {"open", "close", "high", "low", "volume"},
-            "", "", freq, AdjType::HFQ, &adjDates);
+            _loadStartDate, _loadEndDate, freq, AdjType::HFQ, &adjDates);
 
         if (adjData.empty()) {
             WARN("[StockHistorySimulation] No HFQ data for {} (freq={}), skipping", code, toString(freq));
@@ -90,7 +90,7 @@ bool StockHistorySimulation::LoadData(const String& code) {
         Vector<String> orgDates;
         auto orgData = LoadHistoryDataWithFreq(
             symbol, {"open", "close", "high", "low", "volume"},
-            "", "", freq, AdjType::None, &orgDates);
+            _loadStartDate, _loadEndDate, freq, AdjType::None, &orgDates);
 
         if (orgData.empty()) {
             WARN("[StockHistorySimulation] No original data for {} (freq={}), skipping", code, toString(freq));

@@ -4,6 +4,7 @@
 #ifdef WIN32
 #define WIN32_LEAN_AND_MEAN  // 阻止 windows.h 包含 winsock.h（避免 sockaddr 重定义）
 #include <windows.h>
+#include <intrin.h>  // __cpuid, __cpuidex
 #include <dbghelp.h>
 #include <excpt.h>
 #pragma comment(lib, "dbghelp.lib")
@@ -429,12 +430,12 @@ void install_signal_handler() {
 // 检测并打印 CPU 向量化指令支持情况
 void print_cpu_features() {
     INFO("[CPU] ========== CPU Vectorization Support ==========");
-    
+
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
     // x86/x64 平台
     #if defined(__GNUC__) || defined(__clang__)
-        // 使用 GCC/Clang 内置函数检测
-        INFO("[CPU] SSE:     {} {}", __builtin_cpu_supports("sse") ? "✓" : "✗", 
+        // GCC/Clang 内置函数检测
+        INFO("[CPU] SSE:     {} {}", __builtin_cpu_supports("sse") ? "✓" : "✗",
              __builtin_cpu_supports("sse") ? "(128-bit)" : "");
         INFO("[CPU] SSE2:    {} {}", __builtin_cpu_supports("sse2") ? "✓" : "✗",
              __builtin_cpu_supports("sse2") ? "(128-bit)" : "");
@@ -456,10 +457,39 @@ void print_cpu_features() {
              __builtin_cpu_supports("fma") ? "(Fused Multiply-Add)" : "");
         INFO("[CPU] AES-NI:  {} {}", __builtin_cpu_supports("aes") ? "✓" : "✗",
              __builtin_cpu_supports("aes") ? "(AES encryption)" : "");
+    #elif defined(_MSC_VER)
+        // MSVC: 使用 __cpuid 检测
+        int cpuInfo[4] = {};
+        __cpuid(cpuInfo, 1);
+        bool sse    = (cpuInfo[3] & (1 << 25)) != 0;
+        bool sse2   = (cpuInfo[3] & (1 << 26)) != 0;
+        bool sse3   = (cpuInfo[2] & (1 <<  0)) != 0;
+        bool ssse3  = (cpuInfo[2] & (1 <<  9)) != 0;
+        bool sse41  = (cpuInfo[2] & (1 << 19)) != 0;
+        bool sse42  = (cpuInfo[2] & (1 << 20)) != 0;
+        bool avx    = (cpuInfo[2] & (1 << 28)) != 0;
+        bool fma    = (cpuInfo[2] & (1 << 12)) != 0;
+        bool aesni  = (cpuInfo[2] & (1 << 25)) != 0;
+        // AVX2 需要 leaf 7
+        __cpuidex(cpuInfo, 7, 0);
+        bool avx2   = (cpuInfo[1] & (1 <<  5)) != 0;
+        bool avx512 = (cpuInfo[1] & (1 << 16)) != 0;
+
+        INFO("[CPU] SSE:     {} {}", sse    ? "✓" : "✗", sse    ? "(128-bit)" : "");
+        INFO("[CPU] SSE2:    {} {}", sse2   ? "✓" : "✗", sse2   ? "(128-bit)" : "");
+        INFO("[CPU] SSE3:    {} {}", sse3   ? "✓" : "✗", sse3   ? "(128-bit)" : "");
+        INFO("[CPU] SSSE3:   {} {}", ssse3  ? "✓" : "✗", ssse3  ? "(128-bit)" : "");
+        INFO("[CPU] SSE4.1:  {} {}", sse41  ? "✓" : "✗", sse41  ? "(128-bit)" : "");
+        INFO("[CPU] SSE4.2:  {} {}", sse42  ? "✓" : "✗", sse42  ? "(128-bit)" : "");
+        INFO("[CPU] AVX:     {} {}", avx    ? "✓" : "✗", avx    ? "(256-bit)" : "");
+        INFO("[CPU] AVX2:    {} {}", avx2   ? "✓" : "✗", avx2   ? "(256-bit)" : "");
+        INFO("[CPU] AVX-512: {} {}", avx512 ? "✓" : "✗", avx512 ? "(512-bit)" : "");
+        INFO("[CPU] FMA:     {} {}", fma    ? "✓" : "✗", fma    ? "(Fused Multiply-Add)" : "");
+        INFO("[CPU] AES-NI:  {} {}", aesni  ? "✓" : "✗", aesni  ? "(AES encryption)" : "");
     #else
         INFO("[CPU] CPU feature detection not available for this compiler");
     #endif
-    
+
     // 总结最高支持的指令集
     const char* max_isa = "None";
     #if defined(__GNUC__) || defined(__clang__)
@@ -472,6 +502,26 @@ void print_cpu_features() {
         else if (__builtin_cpu_supports("sse3")) max_isa = "SSE3 (128-bit)";
         else if (__builtin_cpu_supports("sse2")) max_isa = "SSE2 (128-bit)";
         else if (__builtin_cpu_supports("sse")) max_isa = "SSE (128-bit)";
+    #elif defined(_MSC_VER)
+        {
+            int ci[4] = {};
+            __cpuid(ci, 1);
+            bool m_avx = (ci[2] & (1 << 28)) != 0;
+            bool m_fma = (ci[2] & (1 << 12)) != 0;
+            __cpuidex(ci, 7, 0);
+            bool m_avx2   = (ci[1] & (1 <<  5)) != 0;
+            bool m_avx512 = (ci[1] & (1 << 16)) != 0;
+            if (m_avx512) max_isa = "AVX-512 (512-bit)";
+            else if (m_avx2) max_isa = "AVX2 (256-bit)";
+            else if (m_avx) max_isa = "AVX (256-bit)";
+            else if (ci[2] & (1 << 20)) max_isa = "SSE4.2 (128-bit)";
+            else if (ci[2] & (1 << 19)) max_isa = "SSE4.1 (128-bit)";
+            else if (ci[2] & (1 <<  9)) max_isa = "SSSE3 (128-bit)";
+            else if (ci[2] & (1 <<  0)) max_isa = "SSE3 (128-bit)";
+            else if (ci[3] & (1 << 26)) max_isa = "SSE2 (128-bit)";
+            else if (ci[3] & (1 << 25)) max_isa = "SSE (128-bit)";
+            (void)m_fma;
+        }
     #endif
     INFO("[CPU] Maximum ISA: {}", max_isa);
     

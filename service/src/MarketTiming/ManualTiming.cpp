@@ -9,9 +9,8 @@
 bool ManualTiming::processSignal(const String& strategy, const TradeSignal& signal,
                                  const DataContext& context) {
     auto action = signal.GetAction();
-    if (action == TradeAction::HOLD) return true;
 
-    // per-symbol 覆盖，只保留最终决策
+    // per-symbol 覆盖，只保留最终决策（含 HOLD）
     DecisionSnapshot snap;
     snap._symbol = signal.GetSymbol();
     snap._action = action;
@@ -22,7 +21,8 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
     _decisions[signal.GetSymbol()] = snap;
 
     // 日志
-    const char* actionStr = (action == TradeAction::BUY) ? "BUY" : "SELL";
+    const char* actionStr = (action == TradeAction::BUY) ? "BUY" :
+                            (action == TradeAction::SELL) ? "SELL" : "HOLD";
     INFO("[Manual] decision-only: {} {} qty={} price={:.2f} (strategy={})",
          actionStr, get_symbol(signal.GetSymbol()),
          signal.GetQuantity(), signal.GetPrice(), strategy);
@@ -43,22 +43,29 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
     ssePayload["strategy"] = strategy;
     ssePayload["decisions"] = nlohmann::json::array();
 
+    // 分类统计
+    Vector<const DecisionSnapshot*> buys, sells, holds;
     for (const auto& [sym, d] : _decisions) {
-        // 写入决策存储（内存 + DuckDB）
-        DecisionAction da = to_decision_action(d._action, static_cast<unsigned char>(d._flag));
-        int decisionId = broker->AddDecision(strategy, d._symbol, da,
-                                             d._quantity, d._price, d._epoch);
+        if (d._action == TradeAction::BUY) buys.push_back(&d);
+        else if (d._action == TradeAction::SELL) sells.push_back(&d);
+        else holds.push_back(&d);
 
-        // SSE payload
-        nlohmann::json decision;
-        decision["id"] = decisionId;
-        decision["symbol"] = get_symbol(d._symbol);
-        decision["action"] = decision_action_name(da);
-        decision["label"] = decision_action_label(da);
-        decision["quantity"] = d._quantity;
-        decision["price"] = d._price;
-        decision["epoch"] = d._epoch;
-        ssePayload["decisions"].push_back(decision);
+        // 写入决策存储（内存 + DuckDB）—— 仅 BUY/SELL
+        if (d._action != TradeAction::HOLD) {
+            DecisionAction da = to_decision_action(d._action, static_cast<unsigned char>(d._flag));
+            int decisionId = broker->AddDecision(strategy, d._symbol, da,
+                                                 d._quantity, d._price, d._epoch);
+
+            nlohmann::json decision;
+            decision["id"] = decisionId;
+            decision["symbol"] = get_symbol(d._symbol);
+            decision["action"] = decision_action_name(da);
+            decision["label"] = decision_action_label(da);
+            decision["quantity"] = d._quantity;
+            decision["price"] = d._price;
+            decision["epoch"] = d._epoch;
+            ssePayload["decisions"].push_back(decision);
+        }
     }
 
     Map<String, String> sseData;
@@ -68,20 +75,42 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
     auto msg = format_sse("manual_decision", sseData);
     nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
 
-    // 构建邮件正文
+    // 构建邮件正文（含 BUY / SELL / HOLD 三部分）
     String body = "Strategy: " + strategy + "\n";
-    body += "Decisions: " + std::to_string(_decisions.size()) + "\n\n";
+    body += fmt::format("Total: {} (BUY={}, SELL={}, HOLD={})\n\n",
+                        _decisions.size(), buys.size(), sells.size(), holds.size());
 
-    for (const auto& [sym, d] : _decisions) {
-        const char* actionStr = (d._action == TradeAction::BUY) ? "BUY" : "SELL";
-        body += fmt::format("{} {} qty={} price={:.2f} epoch={}\n",
-                           actionStr, get_symbol(d._symbol),
-                           d._quantity, d._price, d._epoch);
+    if (!buys.empty()) {
+        body += "=== BUY ===\n";
+        for (auto* d : buys) {
+            body += fmt::format("  BUY {} qty={} price={:.2f} epoch={}\n",
+                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
+        }
+        body += "\n";
+    }
+
+    if (!sells.empty()) {
+        body += "=== SELL ===\n";
+        for (auto* d : sells) {
+            body += fmt::format("  SELL {} qty={} price={:.2f} epoch={}\n",
+                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
+        }
+        body += "\n";
+    }
+
+    if (!holds.empty()) {
+        body += "=== HOLD ===\n";
+        for (auto* d : holds) {
+            body += fmt::format("  HOLD {} qty={} price={:.2f} epoch={}\n",
+                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
+        }
+        body += "\n";
     }
 
     _server->SendEmail(body);
 
-    INFO("[Manual] Sent summary notification for strategy {} with {} decisions", strategy, _decisions.size());
+    INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={})",
+         strategy, buys.size(), sells.size(), holds.size());
 
     // 清空累积器
     _decisions.clear();

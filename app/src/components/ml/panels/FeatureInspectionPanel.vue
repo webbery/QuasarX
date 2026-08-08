@@ -511,6 +511,30 @@ function anomalyTypeLabel(t: string): string {
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* ── 统一滚动条风格 ── */
+.symbol-chips::-webkit-scrollbar,
+.feature-table-wrapper::-webkit-scrollbar,
+.anomaly-list::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.symbol-chips::-webkit-scrollbar-track,
+.feature-table-wrapper::-webkit-scrollbar-track,
+.anomaly-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.symbol-chips::-webkit-scrollbar-thumb,
+.feature-table-wrapper::-webkit-scrollbar-thumb,
+.anomaly-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.symbol-chips::-webkit-scrollbar-thumb:hover,
+.feature-table-wrapper::-webkit-scrollbar-thumb:hover,
+.anomaly-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
 .anomaly-item {
   display: grid;
   grid-template-columns: 60px 200px 220px 1fr;

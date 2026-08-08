@@ -68,20 +68,24 @@ private:
     /// 计算信号的标准差
     static double computeStd(const Vector<double>& data);
 
+    // ---- 噪声 IMF 预计算 ----
+    /// 预计算每个噪声样本的完整 EMD 分解，缓存所有 IMF 分量
+    /// noiseIMFs[i][k] = 第 i 个噪声的第 k 个 IMF（0-indexed）
+    Vector<Vector<Vector<double>>> precomputeNoiseIMFs(
+        const Vector<Vector<double>>& noises, const Config& cfg);
+
     // ---- CEEMDAN 阶段函数 ----
     /// 阶段 1: IMF_1 = mean( EMD_1(x + ε_0·w^i) )
     Vector<double> computeFirstIMF(const Vector<double>& data,
                                     const Vector<Vector<double>>& noises,
                                     const Config& cfg);
 
-    /// 阶段 k (k≥2): IMF_k = mean( EMD_1(r_{k-1} + ε_{k-1}·EMD_k(w^i)) )
+    /// 阶段 k (k≥2): IMF_k = mean( EMD_1(r_{k-1} + ε_{k-1}·noiseIMF[k][i]) )
+    /// 使用预计算的 noiseIMFs 避免重复 EMD 分解
     Vector<double> computeIMFk(const Vector<double>& residual,
                                 int k,
-                                const Vector<Vector<double>>& noises,
+                                const Vector<Vector<Vector<double>>>& noiseIMFs,
                                 const Config& cfg);
-
-    /// 对单个噪声信号执行 EMD 并提取第 k 个 IMF
-    Vector<double> getNoiseIMF(const Vector<double>& noise, int k, const Config& cfg);
 
     /// 检查向量是否单调
     static bool isMonotonic(const Vector<double>& v);

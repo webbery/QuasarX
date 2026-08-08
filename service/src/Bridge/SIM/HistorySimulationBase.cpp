@@ -63,6 +63,10 @@ bool HistorySimulationBase::Login(AccountType t) {
         }
     }
 
+    // 清除加载日期范围（一次性使用，避免影响后续 Login 调用）
+    _loadStartDate.clear();
+    _loadEndDate.clear();
+
     OnDataLoaded();
     _dataLoadSuccess = true;
     return true;
@@ -408,7 +412,9 @@ void HistorySimulationBase::matchOrders(BacktestContext* context, symbol_t symbo
 run_id_t HistorySimulationBase::createBacktestContext(
     const String& strategy_name,
     const Set<symbol_t>& symbols,
-    double initial_capital)
+    double initial_capital,
+    const String& load_start_date,
+    const String& load_end_date)
 {
     // 确保数据已加载：首次加载 或 请求的 symbols 与已加载不一致时重新加载
     bool needReload = !_dataLoadSuccess;
@@ -419,6 +425,11 @@ run_id_t HistorySimulationBase::createBacktestContext(
                 break;
             }
         }
+    }
+    // 指定了加载日期范围时，强制重新加载以使用最新数据
+    if (!load_start_date.empty() || !load_end_date.empty()) {
+        needReload = true;
+        SetLoadDateRange(load_start_date, load_end_date);
     }
     INFO("[createBacktestContext] strategy={}, _dataLoadSuccess={}, _csvs.size={}, symbols={}, needReload={}",
          strategy_name, _dataLoadSuccess.load(), _csvs.size(), symbols.size(), needReload);
@@ -1210,6 +1221,11 @@ void HistorySimulationBase::SetBacktestTimeRange(time_t start, time_t end) {
     _hasBacktestTimeRange = true;
     _backtestStartTime = start;
     _backtestEndTime = end;
+}
+
+void HistorySimulationBase::SetLoadDateRange(const String& startDate, const String& endDate) {
+    _loadStartDate = startDate;
+    _loadEndDate = endDate;
 }
 
 bool HistorySimulationBase::HasBacktestTimeRange() const {

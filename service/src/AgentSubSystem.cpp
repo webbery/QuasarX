@@ -985,7 +985,9 @@ bool FlowSubsystem::RunTrainingCollect(
     double initialCapital,
     Map<String, Vector<double>>& outCollected,
     Vector<String>& outDates,
-    std::function<void(uint64_t epoch, uint64_t totalBars)> onProgress
+    std::function<void(uint64_t epoch, uint64_t totalBars)> onProgress,
+    const String& startDate,
+    const String& endDate
 ) {
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (!exchangeMgr) {
@@ -1000,7 +1002,7 @@ bool FlowSubsystem::RunTrainingCollect(
         return false;
     }
     INFO("[TrainingCollect] Creating backtest context: strategy='{}', symbols={}", strategy, symbols.size());
-    run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital);
+    run_id_t runId = exchange->createBacktestContext(strategy, symbols, initialCapital, startDate, endDate);
     if (runId == 0) {
         WARN("[TrainingCollect] Failed to create backtest context");
         return false;

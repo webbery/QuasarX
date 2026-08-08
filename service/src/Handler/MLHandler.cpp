@@ -335,7 +335,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         Map<String, Vector<double>> collected;
         Vector<String> collectedDates;
         bool collectOk = flowSubsystem->RunTrainingCollect(
-            state->_tmpStrategyName, state->_upstreamSubgraph, requiredSources, 
+            state->_tmpStrategyName, state->_upstreamSubgraph, requiredSources,
             symbols, 100000.0, collected, collectedDates,
             [sendSSE](uint64_t epoch, uint64_t totalBars) {
                 sendSSE("progress", {
@@ -343,7 +343,8 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     {"current",(int)epoch},
                     {"total",(int)totalBars}
                 });
-            }
+            },
+            startDate, endDate
         );
 
         INFO("[MLTrain] === Collect done: ok={}, collected_keys={}, dates={}",
@@ -761,7 +762,8 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
                     {"current",(int)epoch},
                     {"total",(int)totalBars}
                 });
-            }
+            },
+            startDate, endDate
         );
         if (!collectOk || collected.empty()) {
             cleanupGraph();

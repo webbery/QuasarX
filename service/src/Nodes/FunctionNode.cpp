@@ -208,9 +208,20 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         // callable 期望 "price" 作为收盘价 key，_resolvedInputs 中为 "close"
         Map<String, context_t> args;
         for (auto& [dataName, contextKey] : _resolvedInputs) {
-            if (context.exist(contextKey)) {
+            // 将上游解析到的 context key 中的 symbol 前缀替换为当前 symbol
+            // contextKey 格式: "sz.000001.close"，symbol 格式: "sz.000001"
+            // 跳过 symbol 自身的点（exchange.code），从第2个点开始分割字段名
+            String symbolKey = contextKey;
+            auto firstDot = contextKey.find('.');
+            if (firstDot != String::npos) {
+                auto secondDot = contextKey.find('.', firstDot + 1);
+                if (secondDot != String::npos) {
+                    symbolKey = symbol + contextKey.substr(secondDot);
+                }
+            }
+            if (context.exist(symbolKey)) {
                 String slot = (dataName == "close") ? "price" : dataName;
-                args[slot] = context.get(contextKey);
+                args[slot] = context.get(symbolKey);
             }
         }
 

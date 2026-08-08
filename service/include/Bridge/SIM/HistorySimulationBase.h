@@ -63,7 +63,9 @@ public:
     run_id_t createBacktestContext(
         const String& strategy_name,
         const Set<symbol_t>& symbols,
-        double initial_capital = 100000.0
+        double initial_capital = 100000.0,
+        const String& load_start_date = String(),
+        const String& load_end_date = String()
     );
 
     BacktestContext* getBacktestContext(run_id_t run_id);
@@ -93,6 +95,9 @@ public:
     bool HasBacktestTimeRange() const;
     time_t GetBacktestStartTime() const;
     time_t GetBacktestEndTime() const;
+
+    // === 数据加载日期范围（LoadData 从 DB 查询时使用）===
+    void SetLoadDateRange(const String& startDate, const String& endDate);
 
     // === 滑点 ===
     void SetSlippageModel(std::unique_ptr<ISlippageModel> model) { _slippageModel = std::move(model); }
@@ -158,4 +163,8 @@ protected:
     bool _hasBacktestTimeRange = false;
     time_t _backtestStartTime = 0;
     time_t _backtestEndTime = 0;
+
+    // 数据加载日期范围（LoadData 查询 DB 时使用，Login 后自动清除）
+    String _loadStartDate;
+    String _loadEndDate;
 };

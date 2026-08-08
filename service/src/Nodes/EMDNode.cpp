@@ -76,12 +76,6 @@ bool EMDNode::Init(const nlohmann::json& config) {
         }
     }
 
-    // 从输入节点获取输入数据名
-    for (auto& item : _ins) {
-        auto input_names = item.second->out_elements();
-        _params.merge(input_names);
-    }
-
     // BFS 上游发现 symbol 列表，用于 per-symbol 输出注册
     auto symbolSet = discoverUpstreamSymbols();
     if (symbolSet.empty()) {
@@ -89,18 +83,37 @@ bool EMDNode::Init(const nlohmann::json& config) {
         return false;
     }
     // 缓存 "sz.000423." 形式的 prefix 集合，Process 中按 inputKey 前缀匹配
-    // 修复 bug: 旧实现用 inputKey.find('.') 截取 prefix，对 "sz.000423.volume"
-    // 会截成 "sz."（symbol 自身的 '.' 被错误吃掉），导致 per-symbol 输出
-    // 全部写到错误 key "sz.emd.nimf_0"，下游 FunctionNode 找不到对应 context
     _symbolPrefixes.clear();
     for (auto sym : symbolSet) {
         _symbolPrefixes.insert(get_symbol(sym) + ".");
     }
 
-    // 解析实际连接的输入，找出 volume 数据的 context key
+    // 解析实际 edge 连接的输入，确定需要分解的数据字段（如 "volume"）
     // resolveInputConnections() 从 sourceHandle 提取数据名（如 "1-volume" → "volume"）
+    auto resolvedInputs = resolveInputConnections();
+    Set<String> connectedFields;
+    for (auto& [dataName, contextKey] : resolvedInputs) {
+        connectedFields.insert(dataName);
+    }
+
+    // 从上游节点的全部输出中，筛选出已连接字段的所有 symbol 的 context key
+    // 例：连接了 "volume" → 收集 sz.800001.volume, sh.600519.volume, ...
+    for (auto& item : _ins) {
+        auto input_names = item.second->out_elements();
+        for (auto& [key, type] : input_names) {
+            for (auto& field : connectedFields) {
+                String suffix = "." + field;
+                if (key.size() > suffix.size() &&
+                    key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                    _params[key] = type;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 从实际连接中找出 volume 数据的 context key
     if (_computeVolumeRegime) {
-        auto resolvedInputs = resolveInputConnections();
         for (auto& [dataName, contextKey] : resolvedInputs) {
             if (dataName == "volume") {
                 _volumeContextKey = contextKey;

@@ -153,7 +153,9 @@ public:
         double initialCapital,
         Map<String, Vector<double>>& outCollected,
         Vector<String>& outDates,
-        std::function<void(uint64_t epoch, uint64_t totalBars)> onProgress = nullptr
+        std::function<void(uint64_t epoch, uint64_t totalBars)> onProgress = nullptr,
+        const String& startDate = String(),
+        const String& endDate = String()
     );
     BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
 

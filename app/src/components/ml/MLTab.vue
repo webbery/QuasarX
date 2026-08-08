@@ -908,4 +908,24 @@ onMounted(() => {
   cursor: not-allowed;
   opacity: 0.7;
 }
+
+/* ── 统一滚动条风格 ── */
+.card-body::-webkit-scrollbar,
+.batch-table-section::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.card-body::-webkit-scrollbar-track,
+.batch-table-section::-webkit-scrollbar-track {
+  background: transparent;
+}
+.card-body::-webkit-scrollbar-thumb,
+.batch-table-section::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.card-body::-webkit-scrollbar-thumb:hover,
+.batch-table-section::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
 </style>

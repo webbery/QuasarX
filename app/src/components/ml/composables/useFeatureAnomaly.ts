@@ -20,9 +20,18 @@ const isNum = (v: number | null): v is number => v !== null && Number.isFinite(v
  * 把 "symbol.feature" 拆成 {symbol, feature}，与现有 FeatureInspectionPanel 一致
  */
 export function parseFeatureName(name: string): { symbol: string; feature: string } {
-  const lastDot = name.lastIndexOf('.')
-  if (lastDot === -1) return { symbol: '', feature: name }
-  return { symbol: name.slice(0, lastDot), feature: name.slice(lastDot + 1) }
+  // symbol 格式固定为 "{exchange}.{code}"（如 sz.000001），只有一个点
+  // 找第二个点作为 symbol/feature 的分界线
+  // "sz.000001.ma20"          → symbol="sz.000001", feature="ma20"
+  // "sz.000001.emd.nimf_0"    → symbol="sz.000001", feature="emd.nimf_0"
+  const firstDot = name.indexOf('.')
+  if (firstDot === -1) return { symbol: '', feature: name }
+  const secondDot = name.indexOf('.', firstDot + 1)
+  if (secondDot === -1) {
+    // 只有一个点：可能是 "exchange.code" 无 feature，或 "symbol.feature" 旧格式
+    return { symbol: name.slice(0, firstDot), feature: name.slice(firstDot + 1) }
+  }
+  return { symbol: name.slice(0, secondDot), feature: name.slice(secondDot + 1) }
 }
 
 /**
@@ -39,7 +48,15 @@ export function detectAnomalies(
   const dates = series.dates
   const anomalies: Anomaly[] = []
 
-  // ── NaN 段 ──
+  // 跳过预热期：找到第一个有效值的位置
+  // 预热期（如 MA(20) 前 19 个 bar）的 NaN 是指标计算所需的正常现象，不应报告为异常
+  let startIdx = 0
+  while (startIdx < values.length && !isNum(values[startIdx])) {
+    startIdx++
+  }
+  if (startIdx >= values.length) return []  // 全部是 NaN，无法分析
+
+  // ── NaN 段（从预热结束开始检测） ──
   let runStart = -1
   const flushNanRun = (endIdx: number) => {
     if (runStart < 0) return
@@ -57,7 +74,7 @@ export function detectAnomalies(
     }
     runStart = -1
   }
-  for (let i = 0; i < values.length; i++) {
+  for (let i = startIdx; i < values.length; i++) {
     if (!isNum(values[i])) {
       if (runStart < 0) runStart = i
     } else {
@@ -67,7 +84,7 @@ export function detectAnomalies(
   flushNanRun(values.length - 1)
 
   // ── 跳 0 突变：|prev| > eps && |cur| < eps，且后续 K 天保持 ≤ eps ──
-  for (let i = 1; i < values.length; i++) {
+  for (let i = Math.max(1, startIdx); i < values.length; i++) {
     const prev = values[i - 1]
     const cur = values[i]
     if (!isNum(prev) || !isNum(cur)) continue
@@ -114,7 +131,7 @@ export function detectAnomalies(
     staleStart = -1
     lastVal = null
   }
-  for (let i = 0; i < values.length; i++) {
+  for (let i = startIdx; i < values.length; i++) {
     const v = values[i]
     if (isNum(v)) {
       if (lastVal !== null && v === lastVal) {

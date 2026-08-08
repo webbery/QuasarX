@@ -226,6 +226,22 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
         output["signals_skipped"] = signals_skipped_json;
     );
 
+    // 为执行计划中尚无 signal 的标的创建 HOLD signal，
+    // 确保 ManualTiming 能在日终邮件中展示所有标的的决策（含"保持不变"）
+    if (context.GetExecutionPlan()._hasChanged) {
+        for (const auto& item : context.GetExecutionPlan()._items) {
+            if (!context.getSignalBySymbol(item._symbol)) {
+                auto* signal = new TradeSignal(item._symbol, TradeAction::HOLD);
+                signal->SetQuantity(item._quantity);
+                signal->SetPrice(item._limitPrice);
+                if (_server->GetRunningMode() == RuningType::Backtest) {
+                    signal->SetBacktestTime(context.Current());
+                }
+                context.AddSignal(signal);
+            }
+        }
+    }
+
     context.ConsumeSignals();
     return NodeProcessResult::Success;
 }
