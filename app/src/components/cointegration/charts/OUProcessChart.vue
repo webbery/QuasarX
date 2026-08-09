@@ -20,7 +20,7 @@ function render() {
   if (!chartRef.value || !props.ou) return
   if (!chart) chart = echarts.init(chartRef.value)
 
-  const { _theta: theta, _mu: mu, _sigma: sigma, _half_life: hl } = props.ou
+  const { theta, mu, sigma, half_life: hl } = props.ou
   const xData = props.residuals.map((_, i) => i)
 
   // OU 拟合路径: 从第一个残差开始, 用 OU 参数模拟均值回复路径

@@ -49,7 +49,7 @@ bool ETFHistorySimulation::LoadData(const String& code) {
         throw std::runtime_error(err_msg);
     }
 
-    BuildDataFrameFromMap(adjData, adjDates, _csvs[symbol], _headers[symbol]);
+    BuildOHLCVDataFromMap(adjData, adjDates, _csvs[symbol]);
 
     // 原始价数据（撮合）
     Vector<String> orgDates;
@@ -63,7 +63,7 @@ bool ETFHistorySimulation::LoadData(const String& code) {
         throw std::runtime_error(err_msg);
     }
 
-    BuildDataFrameFromMap(orgData, orgDates, _org_csvs[symbol], _org_headers[symbol]);
+    BuildOHLCVDataFromMap(orgData, orgDates, _org_csvs[symbol]);
 
     return true;
 }

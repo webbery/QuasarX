@@ -78,9 +78,10 @@ TEMPLATE_FILE = SCRIPT_DIR.parent / "config.template.json"
 
 
 def _find_tls_certs() -> bool:
-    """在多个位置搜索 TLS 证书（BUILD_DIR / cwd / 项目根目录）"""
+    """在多个位置搜索 TLS 证书（BUILD_DIR / winbuild / cwd / 项目根目录）"""
     candidates = [
         BUILD_DIR,
+        BUILD_DIR.parent / "winbuild",
         Path.cwd(),
         SCRIPT_DIR.parent,
     ]

@@ -32,17 +32,16 @@ NodeProcessResult DebugNode::Process(const String& strategy, DataContext& contex
 void DebugNode::Done(const String& strategy) {
     if (!_context)
         return;
-    
+
     // 保存数据到/data/debug/strategy 路径以便下载
     auto& cfg = _server->GetConfig();
     auto dir = cfg.GetDatabasePath() + "/data/debug/" + strategy;
     auto& times = _context->GetTime();
-    DataFrame df;
-    Vector<uint32_t> indexes(times.size());
-    std::iota(indexes.begin(), indexes.end(), 1);
-    df.load_index(std::move(indexes));
-    auto ts = Vector<time_t>(times.begin(), times.end());
-    df.load_column("datetime", std::move(ts));
+
+    // 收集列数据
+    Vector<time_t> ts(times.begin(), times.end());
+    Map<String, Vector<double>> columns;
+
     for (auto& name: _inNames) {
         if (!_context->exist(name)) {
             WARN("DebugNode: key {} not found in context, skipping", name);
@@ -50,27 +49,41 @@ void DebugNode::Done(const String& strategy) {
         }
         auto& feature = _context->get(name);
         INFO("read colunm {}", name);
-        std::visit([&name, &df](auto&& val) {
-            using T = std::decay_t<decltype(val)>; // 移除引用和 cv
+        std::visit([&name, &columns](auto&& val) {
+            using T = std::decay_t<decltype(val)>;
             if constexpr (std::is_same_v<T, double>) {
-                // double 标量值，直接添加到 DataFrame
-                df.load_column(name.c_str(), Vector<double>{val});
-                // INFO("DebugNode::Done - collected double value: {}", val);
+                columns[name] = Vector<double>{val};
             }
             else if constexpr (std::is_same_v<T, Vector<float>>) {
-                df.load_column(name.c_str(), val);
+                columns[name] = Vector<double>(val.begin(), val.end());
             }
             else if constexpr (std::is_same_v<T, Vector<double>>) {
-                df.load_column(name.c_str(), val);
+                columns[name] = val;
             } else {
                 INFO("DebugNode::Done");
             }
         }, feature);
     }
-    if (_suffix == "csv") {
+
+    if (_suffix == "csv" && !ts.empty()) {
         String save_path = dir + "/" + _label + ".csv";
         std::filesystem::create_directories(dir);
-        df.write<time_t, double>(save_path.c_str(), hmdf::io_format::csv2);
+
+        std::ofstream ofs(save_path);
+        // header
+        ofs << "datetime";
+        for (auto& [name, col] : columns) {
+            ofs << "," << name;
+        }
+        ofs << "\n";
+        // rows
+        for (size_t i = 0; i < ts.size(); ++i) {
+            ofs << ToString(ts[i], "%Y-%m-%d %H:%M:%S");
+            for (auto& [name, col] : columns) {
+                ofs << "," << (i < col.size() ? std::to_string(col[i]) : "");
+            }
+            ofs << "\n";
+        }
     }
 }
 

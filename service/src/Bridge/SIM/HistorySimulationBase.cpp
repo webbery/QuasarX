@@ -3,7 +3,6 @@
 #include "Bridge/PositionEvent.h"
 #include "Bridge/exchange.h"
 #include "Util/FinanceDB.h"
-#include "DataFrame/DataFrameTypes.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
@@ -217,125 +216,33 @@ bool HistorySimulationBase::SetStockLimitation(char type, int limitation) {
     return false;
 }
 
-// ============ CSV 加载 ============
+// ============ 数据构建 ============
 
-#define CACHE_SIZE 2048
-
-bool HistorySimulationBase::LoadCSVToDataFrame(const String& file_path,
-                                                DataFrame& df,
-                                                Vector<String>& header) {
-    std::ifstream ifs(file_path);
-    if (!ifs.is_open()) {
-        return false;
-    }
-
-    INFO("load {} success", file_path);
-    char cache[CACHE_SIZE] = {0};
-    Vector<time_t> dates;
-    Vector<double> open, close, high, low;
-    Vector<int64_t> volume;
-    header.clear();
-
-    int index = 0;
-    while (ifs.getline(cache, CACHE_SIZE)) {
-        Vector<String> row;
-        split(cache, row, ",");
-
-        if (index++ == 0) {
-            for (int i = 0; i < 6; ++i) {
-                header.emplace_back(row[i]);
-            }
-            continue;
-        }
-
-        // 跳过空行或格式错误的行
-        if (row.empty() || row[0].empty()) {
-            --index;  // 不计数空行
-            continue;
-        }
-
-        const char* timeFmt = (row[0].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
-        time_t timestamp = FromStr(row[0], timeFmt);
-
-        // 跳过无效时间戳（FromStr 返回 -1 表示解析失败）
-        if (timestamp < 0) {
-            WARN("Invalid timestamp in CSV: {}, skipping row", row[0]);
-            --index;
-            continue;
-        }
-
-        dates.emplace_back(timestamp);
-        open.emplace_back(std::stod(row[1]));
-        close.emplace_back(std::stod(row[2]));
-        high.emplace_back(std::stod(row[3]));
-        low.emplace_back(std::stod(row[4]));
-        volume.emplace_back(std::stol(row[5]));
-    }
-    ifs.close();
-
-    if (header.empty() || dates.empty()) {
-        return false;
-    }
-
-    size_t numRows = dates.size();
-    Vector<uint32_t> indexes(numRows);
-    std::iota(indexes.begin(), indexes.end(), 1);
-    df.load_index(std::move(indexes));
-    df.load_column(header[0].c_str(), std::move(dates));
-    df.load_column(header[1].c_str(), std::move(open));
-    df.load_column(header[2].c_str(), std::move(close));
-    df.load_column(header[3].c_str(), std::move(high));
-    df.load_column(header[4].c_str(), std::move(low));
-    df.load_column(header[5].c_str(), std::move(volume));
-
-    return true;
-}
-
-void HistorySimulationBase::BuildDataFrameFromMap(
+void HistorySimulationBase::BuildOHLCVDataFromMap(
     const Map<String, Vector<double>>& data,
     const Vector<String>& dates,
-    DataFrame& df,
-    Vector<String>& header)
+    OHLCVData& out)
 {
-    header = {"date", "open", "close", "high", "low", "volume"};
-
-    Vector<time_t> timestamps;
-    Vector<double> open, close, high, low;
-    Vector<int64_t> volume;
-
-    timestamps.reserve(dates.size());
-    open.reserve(dates.size());
-    close.reserve(dates.size());
-    high.reserve(dates.size());
-    low.reserve(dates.size());
-    volume.reserve(dates.size());
+    out._datetime.reserve(dates.size());
+    out._open.reserve(dates.size());
+    out._close.reserve(dates.size());
+    out._high.reserve(dates.size());
+    out._low.reserve(dates.size());
+    out._volume.reserve(dates.size());
 
     for (size_t i = 0; i < dates.size(); ++i) {
         const char* fmt = (dates[i].size() <= 10) ? "%Y-%m-%d" : "%Y-%m-%d %H:%M:%S";
-        timestamps.emplace_back(FromStr(dates[i], fmt));
-        open.emplace_back(data.at("open")[i]);
-        close.emplace_back(data.at("close")[i]);
-        high.emplace_back(data.at("high")[i]);
-        low.emplace_back(data.at("low")[i]);
-        volume.emplace_back(static_cast<int64_t>(data.at("volume")[i]));
+        out._datetime.emplace_back(FromStr(dates[i], fmt));
+        out._open.emplace_back(data.at("open")[i]);
+        out._close.emplace_back(data.at("close")[i]);
+        out._high.emplace_back(data.at("high")[i]);
+        out._low.emplace_back(data.at("low")[i]);
+        out._volume.emplace_back(static_cast<int64_t>(data.at("volume")[i]));
     }
 
-    if (timestamps.empty()) {
-        WARN("BuildDataFrameFromMap: empty dates");
-        return;
+    if (out._datetime.empty()) {
+        WARN("BuildOHLCVDataFromMap: empty dates");
     }
-
-    size_t numRows = timestamps.size();
-    Vector<uint32_t> indexes(numRows);
-    std::iota(indexes.begin(), indexes.end(), 1);
-
-    df.load_index(std::move(indexes));
-    df.load_column(header[0].c_str(), std::move(timestamps));
-    df.load_column(header[1].c_str(), std::move(open));
-    df.load_column(header[2].c_str(), std::move(close));
-    df.load_column(header[3].c_str(), std::move(high));
-    df.load_column(header[4].c_str(), std::move(low));
-    df.load_column(header[5].c_str(), std::move(volume));
 }
 
 // ============ 订单撮合 ============
@@ -485,14 +392,11 @@ run_id_t HistorySimulationBase::createBacktestContext(
 
         auto itr = _csvs.find(symbol);
         if (itr != _csvs.end()) {
-            const auto& df = itr->second;
-            const auto& header = _headers.at(symbol);
+            const auto& data = itr->second;
 
-            if (df.get_index().size() > 0) {
-                const auto& datetime = df.get_column<time_t>(header[0].c_str());
-
-                time_t startTime = datetime[0];
-                time_t endTime = datetime[datetime.size() - 1];
+            if (!data.empty()) {
+                time_t startTime = data._datetime[0];
+                time_t endTime = data._datetime.back();
 
                 if (startTime > maxStartTime) {
                     maxStartTime = startTime;
@@ -527,13 +431,11 @@ run_id_t HistorySimulationBase::createBacktestContext(
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
         if (itr != _csvs.end()) {
-            const auto& df = itr->second;
-            const auto& header = _headers.at(symbol);
-            const auto& datetime = df.get_column<time_t>(header[0].c_str());
+            const auto& data = itr->second;
 
             uint32_t startIndex = 0;
-            for (uint32_t i = 0; i < datetime.size(); ++i) {
-                if (datetime[i] >= maxStartTime) {
+            for (uint32_t i = 0; i < data.size(); ++i) {
+                if (data._datetime[i] >= maxStartTime) {
                     startIndex = i;
                     break;
                 }
@@ -542,8 +444,7 @@ run_id_t HistorySimulationBase::createBacktestContext(
             context->setCurIndex(symbol, startIndex);
             INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
 
-            // 计算该 symbol 在共同时间范围内的 bar 数量
-            size_t symbolBars = (datetime.size() > startIndex) ? (datetime.size() - startIndex) : 0;
+            size_t symbolBars = (data.size() > startIndex) ? (data.size() - startIndex) : 0;
             if (symbolBars < commonBars) {
                 commonBars = symbolBars;
             }
@@ -642,62 +543,50 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             continue;
         }
 
-        const auto& df = itr->second;
-        const auto& header = _headers.at(symbol);
-        if (header.empty()) continue;
+        const auto& data = itr->second;
+        if (data.empty()) continue;
 
-        const auto& datetime = df.get_column<time_t>(header[0].c_str());
         uint32_t curIndex = context->getCurIndex(symbol);
-        if (curIndex < datetime.size()) {
-            if (datetime[curIndex] < minTime)
-                minTime = datetime[curIndex];
+        if (curIndex < data.size()) {
+            if (data._datetime[curIndex] < minTime)
+                minTime = data._datetime[curIndex];
         }
         else {
-            // 任何 symbol 数据用完，立即结束整个回测
             context->setFinished(true);
             anyFinished = true;
             break;
         }
-        const auto& open = df.get_column<double>(header[1].c_str());
-        const auto& close = df.get_column<double>(header[2].c_str());
-        const auto& high = df.get_column<double>(header[3].c_str());
-        const auto& low = df.get_column<double>(header[4].c_str());
-        const auto& volume = df.get_column<int64_t>(header[5].c_str());
 
         auto org_itr = _org_csvs.find(symbol);
         QuoteInfo info;
         info._symbol = symbol;
-        info._volume = volume[curIndex];
-        info._time = datetime[curIndex];
+        info._volume = data._volume[curIndex];
+        info._time = data._datetime[curIndex];
 
-        if (org_itr != _org_csvs.end() && !_org_headers.at(symbol).empty()) {
-            const auto& org_df = org_itr->second;
-            const auto& org_header = _org_headers.at(symbol);
+        if (org_itr != _org_csvs.end() && !org_itr->second.empty()) {
+            const auto& org = org_itr->second;
             uint32_t org_index = curIndex;
-            if (org_index >= org_df.get_index().size()) {
-                org_index = org_df.get_index().size() - 1;
+            if (org_index >= org.size()) {
+                org_index = org.size() - 1;
             }
-            info._open = org_df.get_column<double>(org_header[1].c_str())[org_index];
-            info._close = org_df.get_column<double>(org_header[2].c_str())[org_index];
-            info._high = org_df.get_column<double>(org_header[3].c_str())[org_index];
-            info._low = org_df.get_column<double>(org_header[4].c_str())[org_index];
-            // 后复权价格（指标/XGBoost 默认用）：从 _csvs（HFQ）取，
-            // 与撮合原始价（_org_csvs）分离，保证训练/推理价格一致
-            info._adj_open  = open[curIndex];
-            info._adj_close = close[curIndex];
-            info._adj_high  = high[curIndex];
-            info._adj_low   = low[curIndex];
+            info._open = org._open[org_index];
+            info._close = org._close[org_index];
+            info._high = org._high[org_index];
+            info._low = org._low[org_index];
+            info._adj_open  = data._open[curIndex];
+            info._adj_close = data._close[curIndex];
+            info._adj_high  = data._high[curIndex];
+            info._adj_low   = data._low[curIndex];
         }
         else {
-            info._open = open[curIndex];
-            info._close = close[curIndex];
-            info._high = high[curIndex];
-            info._low = low[curIndex];
-            // 无原始价数据时退化为后复权价
-            info._adj_open  = open[curIndex];
-            info._adj_close = close[curIndex];
-            info._adj_high  = high[curIndex];
-            info._adj_low   = low[curIndex];
+            info._open = data._open[curIndex];
+            info._close = data._close[curIndex];
+            info._high = data._high[curIndex];
+            info._low = data._low[curIndex];
+            info._adj_open  = data._open[curIndex];
+            info._adj_close = data._close[curIndex];
+            info._adj_high  = data._high[curIndex];
+            info._adj_low   = data._low[curIndex];
         }
         quotes[symbol] = std::move(info);
     }
@@ -749,25 +638,22 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
     for (auto symbol : symbols) {
         auto hfq_itr = _csvs.find(symbol);
         auto org_itr = _org_csvs.find(symbol);
-        auto org_header_it = _org_headers.find(symbol);
 
         if (hfq_itr == _csvs.end() || org_itr == _org_csvs.end() ||
-            org_header_it == _org_headers.end() || org_header_it->second.empty()) {
+            hfq_itr->second.empty() || org_itr->second.empty()) {
             context->setCurrentAdjRatio(symbol, 1.0);
             continue;
         }
 
-        const auto& hfq_df = hfq_itr->second;
-        const auto& hfq_header = _headers.at(symbol);
-        const auto& org_df = org_itr->second;
-        const auto& org_header = org_header_it->second;
+        const auto& hfq = hfq_itr->second;
+        const auto& org = org_itr->second;
 
         auto curIndex = context->getCurIndex(symbol);
         uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
 
-        if (priceIndex < hfq_df.get_index().size() && priceIndex < org_df.get_index().size()) {
-            double hfqClose = hfq_df.get_column<double>(hfq_header[2].c_str())[priceIndex];
-            double origClose = org_df.get_column<double>(org_header[2].c_str())[priceIndex];
+        if (priceIndex < hfq.size() && priceIndex < org.size()) {
+            double hfqClose = hfq._close[priceIndex];
+            double origClose = org._close[priceIndex];
             double ratio = (origClose > 0.0 && hfqClose > 0.0) ? hfqClose / origClose : 1.0;
             context->setCurrentAdjRatio(symbol, ratio);
         } else {
@@ -794,15 +680,13 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
 
             auto itr = _csvs.find(symbol);
             if (itr == _csvs.end()) continue;
-            const auto& header_it = _headers.find(symbol);
-            if (header_it == _headers.end() || header_it->second.empty()) continue;
 
-            const auto& df = itr->second;
-            const auto& header = header_it->second;
+            const auto& data = itr->second;
+            if (data.empty()) continue;
             auto curIndex = context->getCurIndex(symbol);
             uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
-            if (priceIndex < df.get_index().size()) {
-                double hfqClose = df.get_column<double>(header[2].c_str())[priceIndex];
+            if (priceIndex < data.size()) {
+                double hfqClose = data._close[priceIndex];
                 double ratio = context->getCurrentAdjRatio(symbol);
                 double assetValue = position * hfqClose / ratio;
                 assetValues[symbol] = assetValue;
@@ -829,16 +713,14 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
             for (auto symbol : symbols) {
                 auto itr = _csvs.find(symbol);
                 if (itr == _csvs.end()) continue;
-                auto hdrIt = _headers.find(symbol);
-                if (hdrIt == _headers.end() || hdrIt->second.empty()) continue;
-                const auto& header = hdrIt->second;
+                const auto& data = itr->second;
+                if (data.empty()) continue;
                 auto curIndex = context->getCurIndex(symbol);
                 uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
                 if (priceIndex < 1) continue;
 
-                const auto& closes = itr->second.get_column<double>(header[2].c_str());
-                double cur = closes[priceIndex];
-                double prev = closes[priceIndex - 1];
+                double cur = data._close[priceIndex];
+                double prev = data._close[priceIndex - 1];
                 if (std::abs(prev) > 1e-10) {
                     context->updateCUSUM((cur - prev) / prev);
                 }
@@ -884,37 +766,26 @@ QuoteInfo HistorySimulationBase::GetQuote(symbol_t symbol, run_id_t run_id) {
 
 double HistorySimulationBase::GetPrimitivePrice(symbol_t symbol, uint32_t index) const {
     auto org_itr = _org_csvs.find(symbol);
-    if (org_itr == _org_csvs.end()) {
+    if (org_itr == _org_csvs.end() || org_itr->second.empty()) {
         return GetAdjPrice(symbol, index);
     }
-    auto& org_df = org_itr->second;
-    auto& org_header = _org_headers.at(symbol);
-    if (org_header.empty()) {
-        return GetAdjPrice(symbol, index);
+    const auto& org = org_itr->second;
+    if (index >= org.size()) {
+        index = org.size() - 1;
     }
-
-    auto& org_close = org_df.get_column<double>(org_header[2].c_str());
-    if (index >= org_close.size()) {
-        index = org_close.size() - 1;
-    }
-    return org_close[index];
+    return org._close[index];
 }
 
 double HistorySimulationBase::GetAdjPrice(symbol_t symbol, uint32_t index) const {
     auto itr = _csvs.find(symbol);
-    if (itr == _csvs.end()) {
+    if (itr == _csvs.end() || itr->second.empty()) {
         return 0.0;
     }
-    auto& df = itr->second;
-    auto& header = _headers.at(symbol);
-    if (header.empty()) {
-        return 0.0;
+    const auto& data = itr->second;
+    if (index >= data.size()) {
+        index = data.size() - 1;
     }
-    auto& close = df.get_column<double>(header[2].c_str());
-    if (index >= close.size()) {
-        index = close.size() - 1;
-    }
-    return close[index];
+    return data._close[index];
 }
 
 int64_t HistorySimulationBase::GetPositionQuantity(symbol_t symbol) const {
@@ -1209,8 +1080,6 @@ void HistorySimulationBase::RefreshSymbolList() {
 void HistorySimulationBase::Clear() {
     _csvs.clear();
     _org_csvs.clear();
-    _headers.clear();
-    _org_headers.clear();
     _reports.clear();
     _cur_id = 0;
 

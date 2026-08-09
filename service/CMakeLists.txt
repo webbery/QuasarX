@@ -30,7 +30,7 @@ set(SIMD_LEVEL "none")
 if(MSVC)
     # MSVC: /arch:AVX512 定义 __AVX512F__; /arch:AVX2 定义 __AVX2__
     # 注意：SIMD 宏和编译标志都必须 per-file，不能全局设置
-    # 全局 __AVX512F__/__AVX2__ 会导致 Eigen/DataFrame 等库在非 SIMD 文件中生成 AVX 代码
+    # 全局 __AVX512F__/__AVX2__ 会导致 Eigen 等库在非 SIMD 文件中生成 AVX 代码
     # 而没有对应的 /arch 标志 → 寄存器状态不保存 → 崩溃
     #
     # 重要：check_cxx_compiler_flag 只检测编译器是否接受标志，不检测 CPU 是否支持
@@ -241,7 +241,7 @@ source_group(TREE ${PROJECT_SOURCE_DIR}/src PREFIX "SourceFiles" FILES ${prj_fil
 add_executable(${PROJECT_NAME} ${prj_files_cpp} ${prj_files_header})
 
 # ── SIMD 编译标志仅应用于算法文件 ──
-# 全局 /arch:AVX2 或 __AVX2__ 会导致第三方库（Eigen/DataFrame/fmt 等）
+# 全局 /arch:AVX2 或 __AVX2__ 会导致第三方库（Eigen/fmt 等）
 # 在非 SIMD 文件中生成 AVX 代码，但没有对应的 /arch 标志 → 寄存器状态不保存 → 崩溃
 if(SIMD_COMPILE_FLAG)
     set(SIMD_SOURCE_FILES
@@ -317,8 +317,7 @@ endif(WIN32)
 set(FMT_TEST OFF)
 set(FMT_DOC OFF) 
 add_subdirectory(third_party/fmt)
-add_subdirectory(third_party/DataFrame)
-target_link_libraries(${PROJECT_NAME} fmt::fmt DataFrame::DataFrame xgboost)
+target_link_libraries(${PROJECT_NAME} fmt::fmt xgboost)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
 endif()
@@ -330,7 +329,7 @@ if (USE_LIBTORCH)
 endif (USE_LIBTORCH)
 
 # ── 预编译头 (PCH) ──
-# std_header.h 传递包含 Eigen(127), Boost(141), spdlog(36), DataFrame(28) 等重头文件
+# std_header.h 传递包含 Eigen(127), Boost(141), spdlog(36) 等重头文件
 # json.hpp 被 127 个编译单元使用
 # 预编译后所有 .cpp 共享，避免重复解析 ~370 个头文件
 # pch.h 内部用 #ifdef __cplusplus 保护，C 文件跳过 C++ 头文件

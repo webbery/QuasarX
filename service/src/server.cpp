@@ -7,7 +7,6 @@
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/ETFHistorySimulation.h"
 #include "BrokerSubSystem.h"
-#include "DataFrame/DataFrameTypes.h"
 #include "ExchangeManager.h"
 #include "Handler/PositionHandler.h"
 #include "Handler/PredictionHandler.h"
@@ -1075,36 +1074,6 @@ void Server::TimerWorker(nng_socket sock) {
     //     return;
     // }
     // auto featureSystem = _strategySystem->GetFeatureSystem();
-    // auto symbols = featureSystem->GetFeatureSymbols();
-    // static constexpr std::size_t flags = yas::mem|yas::binary;
-    // for (auto symbol: symbols) {
-    //     if (is_stock(symbol)) {
-    //         DataFrame df;
-    //         String path = _config->GetDatabasePath() + "/" + get_symbol(symbol) + "_hist_data.csv";
-    //         if (!LoadStock(df, path)) {
-    //             WARN("Load stock {} data fail.", get_symbol(symbol));
-    //             continue;
-    //         }
-    //         auto& close = df.get_column<double>("close");
-    //         if (close.empty())
-    //             continue;
-
-    //         QuoteInfo info;
-    //         info._symbol = symbol;
-    //         info._time = FromStr(df.get_column<String>("datetime").back());
-    //         info._open = df.get_column<double>("open").back();
-    //         info._high = df.get_column<double>("high").back();
-    //         info._volume = df.get_column<double>("volume").back();
-    //         info._close = close.back();
-    //         info._low = df.get_column<double>("low").back();
-            
-    //         yas::shared_buffer buf = yas::save<flags>(info);
-    //         if (0 != nng_send(send, buf.data.get(), buf.size, 0)) {
-    //             WARN("send daily close quote message fail.");
-    //             return;
-    //         }
-    //     }
-    // }
     // nng_close(send);
 // }
 
@@ -1340,26 +1309,6 @@ Set<String> Server::GetAccounts() {
     }
     return accs;
 }
-
-// Vector<double> Server::GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust) {
-//     Vector<double> ret;
-//     if (is_stock(symbol)) {
-//         DataFrame df;
-//         if (!LoadStock(df, symbol, N)) {
-//             return ret;
-//         }
-//         if (adjust == StockAdjustType::After) {
-
-//         } else {
-//             auto& close = df.get_column<double>("close");
-//             int min_size = std::min((int)close.size(), N);
-//             for (int i = min_size - 1; i >= 0; --i) {
-//                 ret.insert(ret.begin(), close[i]);
-//             }
-//         }
-//     }
-//     return ret;
-// }
 
 bool Server::GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info) {
     auto path = _config->GetDatabasePath();

@@ -6,7 +6,7 @@ class DebugNode: public QNode {
 public:
     RegistClassName(DebugNode);
     DebugNode(Server* server);
-    
+
     static const nlohmann::json getParams();
 
     virtual bool Init(const nlohmann::json& config);
@@ -15,8 +15,6 @@ public:
 
     virtual void Done(const String& strategy);
 
-private:
-    void SaveCSV(const DataFrame& df, const String& dir);
 private:
     Server* _server;
     String _suffix;

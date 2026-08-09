@@ -5,6 +5,7 @@
 #include <filesystem>
 #include "csv.h"
 #include <cmath>
+#include <numbers>
 #include <numeric>
 #include <algorithm>
 
@@ -749,7 +750,7 @@ OUProcessResult fitOUProcess(const Eigen::VectorXd& x, double dt)
     double logL = 0;
     for (int i = 0; i < n - 1; ++i) {
         double pred = a_ols + b_ols * x(i);
-        logL += -0.5 * std::log(2 * M_PI * v_ols) - 0.5 * (Y_vec(i) - pred) * (Y_vec(i) - pred) / v_ols;
+        logL += -0.5 * std::log(2 * std::numbers::pi * v_ols) - 0.5 * (Y_vec(i) - pred) * (Y_vec(i) - pred) / v_ols;
     }
 
     // 数值优化: 在 OLS 解附近做网格搜索精化
@@ -767,7 +768,7 @@ OUProcessResult fitOUProcess(const Eigen::VectorXd& x, double dt)
         double ll = 0;
         for (int i = 0; i < n - 1; ++i) {
             double pred = a + b * x(i);
-            ll += -0.5 * std::log(2 * M_PI * v) - 0.5 * (Y_vec(i) - pred) * (Y_vec(i) - pred) / v;
+            ll += -0.5 * std::log(2 * std::numbers::pi * v) - 0.5 * (Y_vec(i) - pred) * (Y_vec(i) - pred) / v;
         }
         if (ll > best_logL) {
             best_logL = ll;
@@ -817,7 +818,7 @@ OUProcessResult fitOUProcess(const Eigen::VectorXd& x, double dt)
                 double ll = 0;
                 for (int k = 0; k < n - 1; ++k) {
                     double pred = aa + bb * x(k);
-                    ll += -0.5 * std::log(2 * M_PI * vv) - 0.5 * (x(k + 1) - pred) * (x(k + 1) - pred) / vv;
+                    ll += -0.5 * std::log(2 * std::numbers::pi * vv) - 0.5 * (x(k + 1) - pred) * (x(k + 1) - pred) / vv;
                 }
                 return ll;
             };
@@ -1379,35 +1380,6 @@ double amihud_illiquidity(const Vector<double>& prices,
 
 }
 
-bool LoadStockQuote(DataFrame& df, const String& path) {
-    if (!std::filesystem::exists(path))
-        return false;
-
-    String datetime;
-    double open, close, high, low, volumn, amount, price_volatility, change_percent, turnover_rate;
-
-    Vector<String> sv;
-    df.load_column("datetime", sv);
-    Vector<double> dv;
-    for (auto name : { "open", "close", "high","low", "volume", "turnover",
-        }) {
-        df.load_column(name, dv);
-    }
-    uint32_t index = 0;
-    io::CSVReader<7> reader(path);
-    // 日期,开盘,收盘,最高,最低,成交量,成交额,换手率
-    reader.read_header(io::ignore_extra_column, "datetime", "open", "close", "high", "low", "volume", "turnover");
-    while (reader.read_row(datetime, open, close, high, low, volumn, turnover_rate)) {
-        auto t = FromStr(datetime);
-        df.append_row(&index, std::make_pair("datetime", t), std::make_pair("open", open), std::make_pair("close", close),
-            std::make_pair("high", high), std::make_pair("low", low), std::make_pair("volume", volumn),
-            std::make_pair("turnover", turnover_rate)
-        );
-        ++index;
-    }
-    return true;
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // 信号分析 / 时序分析工具函数
 // ──────────────────────────────────────────────────────────────────────
@@ -1500,7 +1472,7 @@ double finance::estimateMeanPeriod(const Vector<double>& data) {
     for (int k = 1; k < half_n; ++k) {  // 跳过 k=0（DC 分量）
         double real = 0, imag = 0;
         for (int t = 0; t < n; ++t) {
-            double angle = -2.0 * M_PI * k * t / n;
+            double angle = -2.0 * std::numbers::pi * k * t / n;
             real += centered[t] * std::cos(angle);
             imag += centered[t] * std::sin(angle);
         }

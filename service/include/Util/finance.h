@@ -302,5 +302,3 @@ Vector<Vector<double>> computeRollingEMDEnergy(const Vector<double>& data,
 Vector<double> ewmaVolatilityStandardize(const Vector<double>& returns, double decay = 0.94);
 
 }
-
-bool LoadStockQuote(DataFrame& df, const String& path);

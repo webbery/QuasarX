@@ -1,7 +1,6 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "Bridge/exchange.h"
-#include "DataFrame/DataFrameTypes.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
@@ -84,7 +83,7 @@ bool StockHistorySimulation::LoadData(const String& code) {
             return false;
         }
 
-        BuildDataFrameFromMap(adjData, adjDates, _csvs[symbol], _headers[symbol]);
+        BuildOHLCVDataFromMap(adjData, adjDates, _csvs[symbol]);
 
         // 原始价数据（撮合）
         Vector<String> orgDates;
@@ -97,7 +96,7 @@ bool StockHistorySimulation::LoadData(const String& code) {
             return false;
         }
 
-        BuildDataFrameFromMap(orgData, orgDates, _org_csvs[symbol], _org_headers[symbol]);
+        BuildOHLCVDataFromMap(orgData, orgDates, _org_csvs[symbol]);
 
         return true;
     } catch (const std::exception& e) {
@@ -115,21 +114,17 @@ std::pair<std::vector<time_t>, std::vector<double>> StockHistorySimulation::GetH
         return {datetimes, closes};
     }
 
-    const auto& df = itr->second;
-    const auto& header = _headers.at(symbol);
-    if (header.empty()) {
+    const auto& data = itr->second;
+    if (data.empty()) {
         return {datetimes, closes};
     }
 
-    const auto& datetime_col = df.get_column<time_t>(header[0].c_str());
-    const auto& close_col = df.get_column<double>(header[2].c_str());
+    datetimes.reserve(data.size());
+    closes.reserve(data.size());
 
-    datetimes.reserve(datetime_col.size());
-    closes.reserve(close_col.size());
-
-    for (size_t i = 0; i < datetime_col.size(); ++i) {
-        datetimes.push_back(datetime_col[i]);
-        closes.push_back(static_cast<double>(close_col[i]));
+    for (size_t i = 0; i < data.size(); ++i) {
+        datetimes.push_back(data._datetime[i]);
+        closes.push_back(static_cast<double>(data._close[i]));
     }
 
     return {datetimes, closes};

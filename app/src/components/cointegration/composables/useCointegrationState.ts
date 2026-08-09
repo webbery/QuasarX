@@ -63,6 +63,7 @@ export interface JohansenResult {
 
 export interface GrangerPairResult {
   from: string
+  to?: string
   f_statistic?: number
   wald_stat?: number
   p_value: number

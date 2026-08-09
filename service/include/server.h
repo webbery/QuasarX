@@ -274,8 +274,6 @@ private:
     static std::mutex _sseMutex;
     static Map<std::thread::id, nng_socket> _sseSockets;
     // 数据缓存
-    Map<String, DataFrame> _data;
-    Map<String, DataFrame> _hfqdata;
     List<String> _symbolCache;
     // 除权出息信息
     TickMap<symbol_t, Map<time_t, DividendData>> _dividends;

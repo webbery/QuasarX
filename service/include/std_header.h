@@ -131,6 +131,14 @@ struct alignas(4) symbol_t {
 using run_id_t = uint32_t;
 using context_t = std::variant<bool, String, uint64_t, Vector<float>, List<symbol_t>, double, Vector<double>, Vector<uint64_t>, Eigen::MatrixXd>;
 
-// DataFrame 类型定义
-#include "DataFrame/DataFrame.h"
-typedef hmdf::StdDataFrame<uint32_t> DataFrame;
+struct OHLCVData {
+    Vector<time_t> _datetime;
+    Vector<double> _open;
+    Vector<double> _close;
+    Vector<double> _high;
+    Vector<double> _low;
+    Vector<int64_t> _volume;
+
+    size_t size() const { return _datetime.size(); }
+    bool empty() const { return _datetime.empty(); }
+};

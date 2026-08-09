@@ -2,6 +2,7 @@
 #include "std_header.h"
 #include <complex>
 #include <cmath>
+#include <numbers>
 
 /**
  * FFT — 轻量级 radix-2 Cooley-Tukey FFT
@@ -55,7 +56,7 @@ inline void transform(complex_t* data, size_t n, bool inv = false) {
     double sign = inv ? 1.0 : -1.0;
     for (size_t len = 2; len <= n; len <<= 1) {
         size_t half = len >> 1;
-        double angle = sign * 2.0 * M_PI / static_cast<double>(len);
+        double angle = sign * 2.0 * std::numbers::pi / static_cast<double>(len);
         complex_t wn(std::cos(angle), std::sin(angle));
 
         for (size_t i = 0; i < n; i += len) {

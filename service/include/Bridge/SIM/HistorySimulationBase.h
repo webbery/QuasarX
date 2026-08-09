@@ -2,14 +2,11 @@
 #include "Bridge/exchange.h"
 #include "Bridge/SlippageModel.h"
 #include "Bridge/SIM/BacktestContext.h"
-#include "DataFrame/DataFrame.h"
 #include "Util/system.h"
 #include <nng/nng.h>
 #include <atomic>
 #include <shared_mutex>
 #include <memory>
-
-using DataFrame = hmdf::StdDataFrame<uint32_t>;
 
 /**
  * @brief 历史数据回测基类
@@ -125,12 +122,10 @@ protected:
     virtual void OnDataLoaded() {}
 
     // === 共同工具方法 ===
-    bool LoadCSVToDataFrame(const String& file_path, DataFrame& df, Vector<String>& header);
-    void BuildDataFrameFromMap(
+    void BuildOHLCVDataFromMap(
         const Map<String, Vector<double>>& data,
         const Vector<String>& dates,
-        DataFrame& df,
-        Vector<String>& header);
+        OHLCVData& out);
     void matchOrders(BacktestContext* context, symbol_t symbol);
     bool OrderReport(BacktestContext* context, order_id id, const TradeReport& report);
     TradeReport OrderMatch(const Order& order, const QuoteInfo& quote);
@@ -143,10 +138,8 @@ protected:
     std::atomic<bool> _dataLoadSuccess{false};
 
     mutable std::shared_mutex _dataMutex;
-    Map<symbol_t, DataFrame> _csvs;       // 复权数据（用于指标计算）
-    Map<symbol_t, DataFrame> _org_csvs;   // 原始数据（用于实际买卖）
-    Map<symbol_t, Vector<String>> _headers;
-    Map<symbol_t, Vector<String>> _org_headers;
+    Map<symbol_t, OHLCVData> _csvs;       // 复权数据（用于指标计算）
+    Map<symbol_t, OHLCVData> _org_csvs;   // 原始数据（用于实际买卖）
 
     // ============ 线程隔离数据 ============
     ConcurrentMap<uint16_t, std::unique_ptr<BacktestContext>> _backtestContexts;
