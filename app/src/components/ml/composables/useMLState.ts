@@ -125,6 +125,11 @@ export const LABEL_TYPES = [
   { label: '回归（收益率）', value: 'regression' },
 ]
 
+export const LABEL_SHAPES = [
+  { label: '多标签矩阵 (N×K)', value: 'matrix', desc: '每个标的独立标签（基于各自价格计算涨/跌/平）' },
+  { label: '单标签向量 (N×1)', value: 'vector', desc: '所有标的共享一个标签（基于 labelSource 计算）' },
+]
+
 export const REG_MODES = [
   { label: 'L1 (Lasso)', value: 'l1' },
   { label: 'L2 (Ridge)', value: 'l2' },
@@ -232,6 +237,7 @@ export function useMLState() {
     labelSource: '',         // 标签来源变量（如 "sh.600000.close"）
     labelPeriod: 5,          // 未来周期
     labelType: 'classification',
+    labelShape: 'matrix',    // 'vector' = 单标签(N×1), 'matrix' = 多标签矩阵(N×K, per-symbol)
     volK: 0.5,               // 自适应阈值系数：threshold = volK × σ × √N
     objective: 'multi:softprob',
     numClass: 3,

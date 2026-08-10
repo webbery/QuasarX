@@ -189,6 +189,9 @@ bool EMDNode::decomposeOne(const Vector<double>& input_data,
     const int w = _windowSize;
     out_imfs.resize(_numIMFs, Vector<double>(n, 0.0));
 
+    // 记录每个 IMF 上一个有效值（用于窗口产出不足时延续前值，避免虚假零值）
+    Vector<double> lastValid(_numIMFs, 0.0);
+
     for (int i = w - 1; i < n; ++i) {
         // 取窗口内数据
         Vector<double> window_data(w);
@@ -196,7 +199,7 @@ bool EMDNode::decomposeOne(const Vector<double>& input_data,
             window_data[j] = input_data[i - w + 1 + j];
         }
 
-        // 对窗口数据做 EMD
+        // 对窗口数据做 EMD（zeroPad=false：不补零，返回实际产出的 IMF）
         Vector<Vector<double>> win_imfs;
         if (_method == EMDMethod::VMD) {
             VMD vmd;
@@ -213,17 +216,21 @@ bool EMDNode::decomposeOne(const Vector<double>& input_data,
             cfg.ensembles = _ensembles;
             cfg.noiseStd = _noiseStd;
             cfg.seed = 42;
+            cfg.zeroPad = false;
             win_imfs = ceemdan.decompose(window_data, cfg).imfs;
         } else {
             EMD emd_algo;
-            win_imfs = emd_algo.emd(window_data, _numIMFs);
+            win_imfs = emd_algo.emd(window_data, _numIMFs, /*zeroPad=*/false);
         }
 
         // 只取窗口最后一个 bar 的 IMF 值（即当前 bar）
-        for (int k = 0; k < _numIMFs && k < static_cast<int>(win_imfs.size()); ++k) {
-            if (!win_imfs[k].empty()) {
-                out_imfs[k][i] = win_imfs[k].back();
+        // 不足 _numIMFs 的 IMF 延续前一窗口的值，避免虚假零值触发异常检测
+        const int actual = static_cast<int>(win_imfs.size());
+        for (int k = 0; k < _numIMFs; ++k) {
+            if (k < actual && !win_imfs[k].empty()) {
+                lastValid[k] = win_imfs[k].back();
             }
+            out_imfs[k][i] = lastValid[k];
         }
     }
 
@@ -358,20 +365,24 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
                     CEEMDAN::Config cfg;
                     cfg.numIMFs = _numIMFs; cfg.ensembles = _ensembles;
                     cfg.noiseStd = _noiseStd; cfg.seed = 42;
+                    cfg.zeroPad = false;
                     win_imfs = ceemdan.decompose(window_data, cfg).imfs;
                 } else {
                     EMD emd_algo;
-                    win_imfs = emd_algo.emd(window_data, _numIMFs);
+                    win_imfs = emd_algo.emd(window_data, _numIMFs, /*zeroPad=*/false);
                 }
 
                 // 追加最新值到持久存储
-                for (int k = 0; k < _numIMFs && k < static_cast<int>(win_imfs.size()); ++k) {
-                    if (!win_imfs[k].empty()) {
-                        if (k >= static_cast<int>(stored.size())) {
-                            stored.emplace_back(Vector<double>(n - 1, 0.0));
-                        }
-                        stored[k].push_back(win_imfs[k].back());
+                // 不足 _numIMFs 的 IMF 延续前一值，避免虚假零值
+                const int actual = static_cast<int>(win_imfs.size());
+                for (int k = 0; k < _numIMFs; ++k) {
+                    if (k >= static_cast<int>(stored.size())) {
+                        stored.emplace_back(Vector<double>(n - 1, 0.0));
                     }
+                    double val = (k < actual && !win_imfs[k].empty())
+                        ? win_imfs[k].back()
+                        : (stored[k].empty() ? 0.0 : stored[k].back());
+                    stored[k].push_back(val);
                 }
                 imfs = stored;
             }

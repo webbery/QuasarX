@@ -90,7 +90,7 @@ function buildOption() {
     smooth: false
   })
 
-  // === 预测段 ===
+  // === 预测段（仅显示预测价格线，不显示预测 sigma）===
   const forecast = props.forecast
   if (forecast?.has_autocorrelation && forecast.forecast_values.length > 0) {
     const fcSteps = forecast.forecast_values.length
@@ -98,54 +98,10 @@ function buildOption() {
 
     // 预测价格序列（基于最后价格推导）
     const fcPrices = forecast.forecast_values.map(v => lastPrice * (1 + v))
-    
-    // 2sigma 是收益率级别的标准差，需要加到预测价格上
-    // 正确做法：预测价格 + lastPrice * std（将收益率标准差转换为价格标准差）
-    const fcStdPerStep = forecast.forecast_std || []
-    const fcUpper2 = fcPrices.map((p, i) => p + lastPrice * 2 * (fcStdPerStep[i] || 0))
-    const fcLower2 = fcPrices.map((p, i) => p - lastPrice * 2 * (fcStdPerStep[i] || 0))
 
     // x 轴扩展
     const fcLabels = Array.from({ length: fcSteps }, (_, i) => `预测+${i + 1}`)
     const allDates = [...displayDates, ...fcLabels]
-
-    // 拼接数据（历史 + 预测）
-    const padArray = (arr: number[], fill: number, count: number) => {
-      const result = [...arr]
-      for (let i = 0; i < count; i++) result.push(fill)
-      return result
-    }
-
-    // 渐变颜色生成
-    const gradStops = (r: number, g: number, b: number, alphaStart: number) => {
-      const stops: { offset: number; color: string }[] = []
-      for (let i = 0; i <= fcSteps; i++) {
-        const t = i / fcSteps
-        const alpha = alphaStart * Math.pow(1 - t, 1.5)
-        stops.push({ offset: t, color: `rgba(${r},${g},${b},${alpha.toFixed(4)})` })
-      }
-      return stops
-    }
-
-    // 预测 ±2σ
-    series.push({
-      name: '预测±2σ',
-      type: 'line',
-      data: [...upper2, ...fcUpper2],
-      xAxisIndex: 0,
-      lineStyle: { color: '#ef232a', width: 1, type: 'dashed' },
-      showSymbol: false
-    })
-    series.push({
-      name: '预测±2σ',
-      type: 'line',
-      data: [...lower2, ...fcLower2],
-      lineStyle: { color: '#ef232a', width: 1, type: 'dashed' },
-      showSymbol: false,
-      areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, gradStops(239, 35, 42, 0.05))
-      }
-    })
 
     // 预测价格线
     series.push({
@@ -184,7 +140,7 @@ function buildOption() {
           return result
         }
       },
-      legend: { data: ['价格', '±2σ', '预测价格', '预测±2σ'], top: 25, textStyle: { color: '#999' } },
+      legend: { data: ['价格', '±2σ', '预测价格'], top: 25, textStyle: { color: '#999' } },
       grid: { left: '3%', right: '4%', bottom: '8%', top: '18%', containLabel: true },
       dataZoom: [
         {

@@ -148,7 +148,8 @@ Vector<double> simd_extractIMF(const Vector<double>& residual,
 Vector<Vector<double>> simd_emd(const Vector<double>& data,
                                 int numIMFs,
                                 int maxSiftingIter,
-                                double sdThreshold) {
+                                double sdThreshold,
+                                bool zeroPad) {
     Vector<Vector<double>> imfs;
     Vector<double> residual = data;
 
@@ -170,9 +171,11 @@ Vector<Vector<double>> simd_emd(const Vector<double>& data,
         if (monotonic) break;
     }
 
-    // 补齐不足 numIMFs 的空 IMF
-    while (static_cast<int>(imfs.size()) < numIMFs) {
-        imfs.push_back(Vector<double>(data.size(), 0.0));
+    // 补齐不足 numIMFs 的空 IMF（仅全局模式需要）
+    if (zeroPad) {
+        while (static_cast<int>(imfs.size()) < numIMFs) {
+            imfs.push_back(Vector<double>(data.size(), 0.0));
+        }
     }
 
     return imfs;

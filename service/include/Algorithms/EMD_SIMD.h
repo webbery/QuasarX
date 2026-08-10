@@ -819,4 +819,5 @@ inline void simd_accumulate(const double* a, double* acc, size_t n) {
 Vector<Vector<double>> simd_emd(const Vector<double>& data,
                                 int numIMFs,
                                 int maxSiftingIter = 10,
-                                double sdThreshold = 0.02);
+                                double sdThreshold = 0.02,
+                                bool zeroPad = true);

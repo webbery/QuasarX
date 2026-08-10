@@ -40,6 +40,12 @@
             <option v-for="opt in labelSymbolOptions" :key="opt" :value="opt">{{ opt }}</option>
           </select>
         </div>
+        <div class="label-shape-selector">
+          <label>标签形状:</label>
+          <select v-model="config.labelShape" class="select-small">
+            <option v-for="s in LABEL_SHAPES" :key="s.value" :value="s.value">{{ s.label }}</option>
+          </select>
+        </div>
       </template>
     </AnalysisControlBar>
 
@@ -199,7 +205,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useMLState } from './composables/useMLState'
+import { useMLState, LABEL_SHAPES } from './composables/useMLState'
 import { useMLData } from './composables/useMLData'
 import FeatureAnalysisPanel from './panels/FeatureAnalysisPanel.vue'
 import TrainPanel from './panels/TrainPanel.vue'
@@ -219,6 +225,7 @@ const STEPS = [
 const activeTab = ref('feature')
 const state = useMLState()
 const { field, quickRange, frequency, dateRange, labelSymbol, QUICK_RANGES, setQuickRange, setFrequency, setField } = state
+const config = state.config
 const { fetchLabelAnalysis, runBatchLabelAnalysis } = useMLData()
 
 const {
@@ -240,10 +247,9 @@ const labelSymbolOptions = computed(() => Array.from(checkedSymbols.value))
 
 // 是否可以运行标签分析
 const canRunLabel = computed(() => {
-  return !!selectedStrategyId.value
-    && checkedSymbols.value.size > 0
-    && !!labelSymbol.value
-    && !!dateRange.value
+  if (!selectedStrategyId.value || checkedSymbols.value.size === 0 || !dateRange.value) return false
+  if (config.labelShape === 'vector') return !!labelSymbol.value
+  return true  // matrix 模式不需要选择标签标的
 })
 
 const loadingAny = computed(() =>
@@ -418,14 +424,16 @@ onMounted(() => {
 }
 
 .field-selector,
-.label-symbol-selector {
+.label-symbol-selector,
+.label-shape-selector {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .field-selector label,
-.label-symbol-selector label {
+.label-symbol-selector label,
+.label-shape-selector label {
   font-size: 12px;
   color: #999;
   white-space: nowrap;

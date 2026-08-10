@@ -82,10 +82,12 @@ def compute_label(s, period, label_type, vol_k):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True, help="特征数据 CSV 路径")
-    parser.add_argument("--label-source", required=True, help="标签来源列名")
+    parser.add_argument("--label-source", default="", help="标签来源列名（vector 模式必填，matrix 模式自动从各标的 close 计算）")
     parser.add_argument("--label-period", type=int, default=5, help="未来收益周期 N")
     parser.add_argument("--label-type", choices=["classification", "regression"],
                         default="classification")
+    parser.add_argument("--label-shape", choices=["vector", "matrix"], default="matrix",
+                        help="标签形状: vector=单标签(N×1), matrix=多标签矩阵(N×K, per-symbol)")
     parser.add_argument("--vol-k", type=float, default=0.5, help="自适应阈值系数 vol_k (threshold = vol_k × σ × √N)")
     parser.add_argument("--objective", default="multi:softprob")
     parser.add_argument("--num-class", type=int, default=3)
@@ -130,77 +132,180 @@ def main():
     # 频率重采样（如果指定了非日级频率且 CSV 有日期列）
     # TODO: 需要 C++ 端在 CSV 中输出日期列才能支持
 
-    if args.label_source not in df.columns:
-        emit({"type": "error", "message": f"标签来源列 '{args.label_source}' 不在数据中。可用列: {list(df.columns)}"})
-        sys.exit(1)
+    # ========== 标签形状处理 ==========
+    if args.label_shape == "matrix":
+        # --- 多标签矩阵模式：per-symbol 标签 + 匿名化特征拼接 ---
+        # 从列名解析 symbol 前缀（market.code 格式，如 sz.000001, sh.600000）
+        symbol_prefixes = set()
+        for col in df.columns:
+            if col == "date":
+                continue
+            parts = col.split(".")
+            if len(parts) >= 3:
+                prefix = f"{parts[0]}.{parts[1]}."
+                symbol_prefixes.add(prefix)
+        symbols = sorted(symbol_prefixes)
 
-    raw_label, future = compute_label(
-        df[args.label_source],
-        args.label_period,
-        args.label_type,
-        args.vol_k,
-    )
+        if len(symbols) == 0:
+            emit({"type": "error", "message": "matrix 模式无法从列名解析标的前缀（期望 market.code.feature 格式）"})
+            sys.exit(1)
 
-    # 排除标签列（date 已在 index 中，不需要 exclude）
-    exclude_cols = {args.label_source}
-    feature_cols = [c for c in df.columns if c not in exclude_cols]
-    if len(feature_cols) == 0:
-        emit({"type": "error", "message": "没有可用的特征列"})
-        sys.exit(1)
+        emit({"type": "info", "phase": "label_shape",
+              "shape": "matrix", "symbols": symbols, "n_symbols": len(symbols)})
 
-    # NaN 诊断：统计每列有效值数量
-    nan_stats = {c: int(df[c].notna().sum()) for c in feature_cols}
-    total_rows = len(df)
-    all_nan_cols = [c for c, cnt in nan_stats.items() if cnt == 0]
-    partial_nan_cols = [c for c, cnt in nan_stats.items() if cnt < total_rows]
+        # 按 feature 名分组：col_name → 去掉 symbol 前缀后的 feature 名
+        def strip_prefix(col, prefix):
+            return col[len(prefix):] if col.startswith(prefix) else None
 
-    emit({"type": "info", "phase": "nan_stats",
-          "total_rows": total_rows,
-          "all_nan_cols": all_nan_cols,
-          "partial_nan_cols_count": len(partial_nan_cols),
-          "fully_valid_cols": total_rows - len(all_nan_cols)})
+        # 发现所有 feature 名（取第一个 symbol 的列为参考）
+        feature_names = []
+        for col in df.columns:
+            if col == "date":
+                continue
+            feat = strip_prefix(col, symbols[0])
+            if feat is not None:
+                feature_names.append(feat)
 
-    # 丢弃全 NaN 列（该特征对所有样本都无效，无法使用）
-    if all_nan_cols:
-        feature_cols = [c for c in feature_cols if c not in set(all_nan_cols)]
-        emit({"type": "info", "phase": "drop_all_nan",
-              "dropped": all_nan_cols, "remaining_features": len(feature_cols)})
+        # 为每个 symbol 提取特征子集并计算独立标签
+        X_parts = []
+        y_parts = []
+        close_suffix = ".close"
 
-    if len(feature_cols) == 0:
-        emit({"type": "error", "message": f"所有 {total_rows} 行特征数据均为 NaN，无法训练。"
-              f"原始列: {list(nan_stats.keys())}"})
-        sys.exit(1)
+        for sym in symbols:
+            sym_cols = [sym + f for f in feature_names if (sym + f) in df.columns]
+            if not sym_cols:
+                emit({"type": "warning", "message": f"标的 {sym} 无有效特征列，跳过"})
+                continue
 
-    valid_mask = raw_label.notna() & df[feature_cols].notna().all(axis=1)
-    X = df.loc[valid_mask, feature_cols].values
-    y = raw_label[valid_mask].values
+            # 构建该 symbol 的特征 DataFrame（列名匿名化，去掉 symbol 前缀）
+            sym_df = df[sym_cols].rename(columns=lambda c, p=sym: c[len(p):])
 
-    if len(X) == 0:
-        # 诊断：报告每列剩余有效行数 + 所有 partial NaN 列的 NaN 位置
-        col_valid = {c: int(df[c].notna().sum()) for c in feature_cols}
-        label_valid = int(raw_label.notna().sum())
-        partial = sorted(
-            [(c, v) for c, v in col_valid.items() if v < total_rows],
-            key=lambda kv: kv[1]
-        )
-        partial_detail = []
-        for c, v in partial[:6]:   # 最多展示 6 个最差列，避免日志过长
-            nan_idx = df.index[df[c].isna()].tolist()
-            if len(nan_idx) <= 10:
-                idx_str = ",".join(str(i) for i in nan_idx)
+            # 找该 symbol 的 close 列用于计算标签
+            close_col = None
+            for candidate in ["quote.close", "input.close", "close"]:
+                if candidate in sym_df.columns:
+                    close_col = candidate
+                    break
+            if close_col is None:
+                # 尝试从原始 df 中找 sym + close_suffix
+                raw_close = sym + "close"
+                if raw_close in df.columns:
+                    close_col = raw_close
+                    sym_df_for_label = df[raw_close]
+                else:
+                    emit({"type": "warning", "message": f"标的 {sym} 无 close 列，无法计算标签，跳过"})
+                    continue
             else:
-                idx_str = f"{','.join(str(i) for i in nan_idx[:5])}...{','.join(str(i) for i in nan_idx[-5:])} (共{len(nan_idx)}个)"
-            partial_detail.append(f"{c}={v}/{total_rows} (NaN@[{idx_str}])")
-        if len(partial) > 6:
-            partial_detail.append(f"...其余 {len(partial) - 6} 列省略")
-        emit({"type": "error", "message": (
-            f"标签过滤后无有效样本。标签有效: {label_valid}/{total_rows}。"
-            f"日期范围: {df.index.min()} ~ {df.index.max()}。"
-            f"部分 NaN 特征列 ({len(partial)} 个): {'; '.join(partial_detail)}。"
-            f"可能原因：特征间时间对齐不一致，或标签来源列与特征列日期范围不重叠。"
-        )})
-        sys.exit(1)
+                sym_df_for_label = sym_df[close_col]
+                sym_df = sym_df.drop(columns=[close_col], errors="ignore")
+                # 更新 feature_names 去掉 close
+                feature_names = [f for f in feature_names if f != close_col]
+                sym_cols = [sym + f for f in feature_names if (sym + f) in df.columns]
+                sym_df = df[sym_cols].rename(columns=lambda c, p=sym: c[len(p):])
 
+            # 计算该 symbol 的标签
+            sym_label, sym_future = compute_label(sym_df_for_label, args.label_period, args.label_type, args.vol_k)
+
+            # 有效性掩码
+            valid = sym_label.notna() & sym_df.notna().all(axis=1)
+            X_parts.append(sym_df.loc[valid].values)
+            y_parts.append(sym_label[valid].values)
+
+        if not X_parts:
+            emit({"type": "error", "message": "matrix 模式：所有标的均无有效数据"})
+            sys.exit(1)
+
+        X = np.vstack(X_parts)
+        y = np.concatenate(y_parts)
+        feature_cols = list(feature_names)
+
+        emit({"type": "info", "phase": "matrix_reshape",
+              "symbols": len(symbols), "samples_per_symbol": [len(xp) for xp in X_parts],
+              "total_samples": len(X), "n_features": len(feature_cols),
+              "features": feature_cols})
+
+        # 跳过后续通用流程中的 label/feature 解析，直接进入 split
+        # 设置标志避免重复处理
+        _matrix_mode_done = True
+    else:
+        # --- 单标签向量模式（原始逻辑） ---
+        _matrix_mode_done = False
+
+        if not args.label_source:
+            emit({"type": "error", "message": "vector 模式需要指定 --label-source"})
+            sys.exit(1)
+        if args.label_source not in df.columns:
+            emit({"type": "error", "message": f"标签来源列 '{args.label_source}' 不在数据中。可用列: {list(df.columns)}"})
+            sys.exit(1)
+
+        raw_label, future = compute_label(
+            df[args.label_source],
+            args.label_period,
+            args.label_type,
+            args.vol_k,
+        )
+
+        # 排除标签列
+        exclude_cols = {args.label_source}
+        feature_cols = [c for c in df.columns if c not in exclude_cols]
+        if len(feature_cols) == 0:
+            emit({"type": "error", "message": "没有可用的特征列"})
+            sys.exit(1)
+
+    if not _matrix_mode_done:
+        # NaN 诊断：统计每列有效值数量
+        nan_stats = {c: int(df[c].notna().sum()) for c in feature_cols}
+        total_rows = len(df)
+        all_nan_cols = [c for c, cnt in nan_stats.items() if cnt == 0]
+        partial_nan_cols = [c for c, cnt in nan_stats.items() if cnt < total_rows]
+
+        emit({"type": "info", "phase": "nan_stats",
+              "total_rows": total_rows,
+              "all_nan_cols": all_nan_cols,
+              "partial_nan_cols_count": len(partial_nan_cols),
+              "fully_valid_cols": total_rows - len(all_nan_cols)})
+
+        # 丢弃全 NaN 列
+        if all_nan_cols:
+            feature_cols = [c for c in feature_cols if c not in set(all_nan_cols)]
+            emit({"type": "info", "phase": "drop_all_nan",
+                  "dropped": all_nan_cols, "remaining_features": len(feature_cols)})
+
+        if len(feature_cols) == 0:
+            emit({"type": "error", "message": f"所有 {total_rows} 行特征数据均为 NaN，无法训练。"
+                  f"原始列: {list(nan_stats.keys())}"})
+            sys.exit(1)
+
+        valid_mask = raw_label.notna() & df[feature_cols].notna().all(axis=1)
+        X = df.loc[valid_mask, feature_cols].values
+        y = raw_label[valid_mask].values
+
+        if len(X) == 0:
+            col_valid = {c: int(df[c].notna().sum()) for c in feature_cols}
+            label_valid = int(raw_label.notna().sum())
+            partial = sorted(
+                [(c, v) for c, v in col_valid.items() if v < total_rows],
+                key=lambda kv: kv[1]
+            )
+            partial_detail = []
+            for c, v in partial[:6]:
+                nan_idx = df.index[df[c].isna()].tolist()
+                if len(nan_idx) <= 10:
+                    idx_str = ",".join(str(i) for i in nan_idx)
+                else:
+                    idx_str = f"{','.join(str(i) for i in nan_idx[:5])}...{','.join(str(i) for i in nan_idx[-5:])} (共{len(nan_idx)}个)"
+                partial_detail.append(f"{c}={v}/{total_rows} (NaN@[{idx_str}])")
+            if len(partial) > 6:
+                partial_detail.append(f"...其余 {len(partial) - 6} 列省略")
+            emit({"type": "error", "message": (
+                f"标签过滤后无有效样本。标签有效: {label_valid}/{total_rows}。"
+                f"日期范围: {df.index.min()} ~ {df.index.max()}。"
+                f"部分 NaN 特征列 ({len(partial)} 个): {'; '.join(partial_detail)}。"
+                f"可能原因：特征间时间对齐不一致，或标签来源列与特征列日期范围不重叠。"
+            )})
+            sys.exit(1)
+
+    # ========== 两条路径在此汇合：X, y, feature_cols 已就绪 ==========
     split = int(len(X) * (1 - args.test_ratio))
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]

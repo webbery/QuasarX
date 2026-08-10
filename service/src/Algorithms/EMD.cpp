@@ -71,7 +71,7 @@ bool EMD::isIMF(const Vector<double>& signal, const Vector<double>& meanEnvelope
     return (meanMax / signalRange) < 0.02;
 }
 
-Vector<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs) {
+Vector<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs, bool zeroPad) {
     Vector<Vector<double>> imfs;
     Vector<double> residual = data;
     int maxSiftingIter = 10;
@@ -131,9 +131,11 @@ Vector<Vector<double>> EMD::emd(const Vector<double>& data, int numIMFs) {
         if (monotonic) break;
     }
 
-    // 补齐不足 numIMFs 的空 IMF
-    while ((int)imfs.size() < numIMFs) {
-        imfs.push_back(Vector<double>(data.size(), 0.0));
+    // 补齐不足 numIMFs 的空 IMF（仅全局模式需要）
+    if (zeroPad) {
+        while ((int)imfs.size() < numIMFs) {
+            imfs.push_back(Vector<double>(data.size(), 0.0));
+        }
     }
 
     return imfs;

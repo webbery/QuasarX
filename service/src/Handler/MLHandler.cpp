@@ -179,6 +179,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     String labelSource = labelCfg.value("source", "");
     int labelPeriod = labelCfg.value("period", 5);
     String labelType = labelCfg.value("type", "classification");
+    String labelShape = labelCfg.value("shape", "matrix");
     double volK = labelCfg.value("vol_k", 0.5);
     String objective = params.value("objective", labelType == "classification" ? "multi:softprob" : "reg:squarederror");
     int numClass = params.value("num_class", 3);
@@ -196,9 +197,9 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     }
 
     String strategyName = script.value("id", "xgboost_train");
-    if (labelSource.empty()) {
+    if (labelSource.empty() && labelShape != "matrix") {
         res.status = 400;
-        res.set_content(R"({"message":"missing label.source"})", "application/json");
+        res.set_content(R"xx({"message":"missing label.source (required for vector mode)"})xx", "application/json");
         return;
     }
 
@@ -226,7 +227,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     // 后台训练线程：执行所有训练阶段，通过 sendSSE 推送进度
     std::thread trainThread([state, session, sendSSE, params, this,
         script, labelCfg, xgbParams, dateRangeCfg, testRatio,
-        labelSource, labelPeriod, labelType, volK, objective, numClass,
+        labelSource, labelPeriod, labelType, labelShape, volK, objective, numClass,
         startDate, endDate, frequency, strategyName, modelType]() mutable {
 
         auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
@@ -362,7 +363,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             sendSSE("error", {{"step","collect_data"},{"msg","数据收集失败，请确认 Quote 节点已配置标的数据"}});
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
         }
-        if (collected.find(labelSource) == collected.end()) {
+        if (!labelSource.empty() && collected.find(labelSource) == collected.end()) {
             String avail; int cnt = 0;
             for (auto& [k, _] : collected) { if (cnt++ > 0) avail += ", "; avail += k; }
             cleanupGraph();
@@ -387,6 +388,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         std::vector<std::string> args = {
             "--data", state->_csvPath, "--label-source", labelSource,
             "--label-period", std::to_string(labelPeriod), "--label-type", labelType,
+            "--label-shape", labelShape,
             "--vol-k", std::to_string(volK), "--objective", objective,
             "--num-class", std::to_string(numClass), "--model-output", state->_modelPath,
             "--params", xgbParams.dump(), "--test-ratio", std::to_string(testRatio),

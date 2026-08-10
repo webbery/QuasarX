@@ -44,6 +44,7 @@ export function useMLData() {
       labelSource: string
       labelPeriod: number
       labelType: string
+      labelShape: string
       volK: number
       objective: string
       numClass: number
@@ -75,6 +76,7 @@ export function useMLData() {
           source: config.labelSource,
           period: config.labelPeriod,
           type: config.labelType,
+          shape: config.labelShape,
           vol_k: config.volK,
         },
         date_range: {

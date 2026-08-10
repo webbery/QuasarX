@@ -30,6 +30,7 @@ public:
         int maxSiftingIter = 10;  ///< 每轮筛选最大迭代次数
         double sdThreshold = 0.02;///< IMF 停止条件阈值 (均值包络/信号范围)
         uint64_t seed = 42;       ///< 随机种子 (设为 0 时使用 system_random，保证可复现)
+        bool zeroPad = true;      ///< 不足 numIMFs 时是否补零（滚动模式设 false）
     };
 
     /**

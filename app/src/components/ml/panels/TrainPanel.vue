@@ -8,12 +8,15 @@
         <p>基础参数覆盖 80% 的调参场景；高级正则项在折叠区内，通常只在过拟合/欠拟合时调整。</p>
       </div>
       <div class="summary-action">
-        <button class="btn btn-primary" :disabled="state.trainResult.loading || !config.labelSource || !state.featureReport.data" @click="onTrain()">
+        <button class="btn btn-primary" :disabled="state.trainResult.loading || (config.labelShape === 'vector' && !config.labelSource) || !state.featureReport.data" @click="onTrain()">
           <i v-if="state.trainResult.loading" class="fas fa-spinner fa-spin"></i>
           {{ state.trainResult.loading ? '训练中…' : '开始训练' }}
         </button>
         <span v-if="!state.featureReport.data" class="source-chip warn">
           <i class="fas fa-exclamation-circle"></i>请先完成特征分析
+        </span>
+        <span v-else-if="config.labelShape === 'matrix'" class="source-chip">
+          <i class="fas fa-th"></i>多标签矩阵 (per-symbol)
         </span>
         <span v-else-if="config.labelSource" class="source-chip" :title="`标签来源：${config.labelSource}`">
           <i class="fas fa-tag"></i>{{ config.labelSource }}
@@ -69,6 +72,16 @@
           <select v-model="config.labelType" class="select-input" @change="onLabelTypeChange">
             <option v-for="t in LABEL_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
           </select>
+        </div>
+        <div class="config-item">
+          <label>
+            标签形状
+            <span class="tip-icon" title="定义标签与标的的对应关系。&#10;多标签矩阵：每个标的根据自身价格独立计算涨/跌/平标签，样本数=N×K，特征匿名化拼接。&#10;单标签向量：所有标的共享一个标签（基于 labelSource），样本数=N。">?</span>
+          </label>
+          <select v-model="config.labelShape" class="select-input">
+            <option v-for="s in LABEL_SHAPES" :key="s.value" :value="s.value">{{ s.label }}</option>
+          </select>
+          <span class="config-hint">{{ labelShapeDesc }}</span>
         </div>
         <div class="config-item">
           <label>预测周期 N (天)</label>
@@ -247,7 +260,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { LABEL_TYPES, REG_MODES } from '../composables/useMLState'
+import { LABEL_TYPES, LABEL_SHAPES, REG_MODES } from '../composables/useMLState'
 import type { TrainStep, TrainLog, LearningCurvePoint } from '../composables/useMLState'
 import { useMLData } from '../composables/useMLData'
 import LearningCurveChart from '../charts/LearningCurveChart.vue'
@@ -278,6 +291,11 @@ const regHint = computed(() => {
   if (config.regMode === 'l1') return `reg_alpha = ${config.regValue}`
   if (config.regMode === 'l2') return `reg_lambda = ${config.regValue}`
   return `reg_alpha = ${config.regValue}, reg_lambda = ${config.regValue}`
+})
+
+const labelShapeDesc = computed(() => {
+  if (config.labelShape === 'matrix') return '每个标的独立标签，样本数 = N×K'
+  return '共享标签（基于 labelSource），样本数 = N'
 })
 
 watch(() => props.script, (s) => {
@@ -361,6 +379,7 @@ async function onTrain() {
       labelSource: config.labelSource,
       labelPeriod: config.labelPeriod,
       labelType: config.labelType,
+      labelShape: config.labelShape,
       volK: config.volK,
       objective: config.objective,
       numClass: config.numClass,

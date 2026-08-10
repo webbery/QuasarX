@@ -224,7 +224,7 @@ void DuckDBLogger::init_tables() {
                 strategy_name VARCHAR NOT NULL,
                 level VARCHAR NOT NULL,
                 message TEXT NOT NULL,
-                context JSON
+                context TEXT
             )
         )");
     }
@@ -244,9 +244,9 @@ void DuckDBLogger::init_node_io_table() {
                 epoch BIGINT NOT NULL,
                 node_type VARCHAR NOT NULL,
                 node_id VARCHAR,
-                input JSON,
-                output JSON,
-                metadata JSON
+                input TEXT,
+                output TEXT,
+                metadata TEXT
             )
         )");
     }
