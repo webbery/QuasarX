@@ -544,6 +544,53 @@ def generate_strategy_script(symbol, strategy_id, start_date, end_date, disable_
 
 
 # ============================================================
+# 分红事件数据生成
+# ============================================================
+
+DIVIDEND_DIR = SERVICE_DATA_DIR / "dividend"
+
+
+def generate_dividend_data():
+    """为测试标的生成分红事件 CSV，供 FinanceDB 导入"""
+    DIVIDEND_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 为 high_volatility 标的 sz.900005 生成一次现金分红
+    # 数据期: 2023-01-01 起 60 天 ≈ 到 2023-03-31
+    # 除权日设在第 30 个交易日 (约 2023-02-10)
+    dividends = [
+        {
+            "symbol": "sz.900005",
+            "announce_date": "2023-02-05",
+            "report_year": "2022",
+            "ex_dividend_date": "2023-02-10",
+            "record_date": "2023-02-09",
+            "implement_date": "2023-02-10",
+            "bonus_per_10": 0,
+            "transfer_per_10": 0,
+            "cash_per_10": 3.0,    # 每10股派3元
+            "allot_per_10": 0,
+            "allot_price": 0,
+            "ex_div_price": 0,
+            "action_type": 0,
+        },
+    ]
+
+    csv_path = DIVIDEND_DIR / "sz.900005.csv"
+    fieldnames = [
+        "symbol", "announce_date", "report_year", "ex_dividend_date",
+        "record_date", "implement_date", "bonus_per_10", "transfer_per_10",
+        "cash_per_10", "allot_per_10", "allot_price", "ex_div_price", "action_type",
+    ]
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in dividends:
+            writer.writerow(row)
+
+    print(f"\n分红数据: {csv_path} ({len(dividends)} 条)")
+
+
+# ============================================================
 # 主流程
 # ============================================================
 
@@ -702,6 +749,9 @@ def main():
 
     # 9. 生成格兰杰因果检验 + 协整检验测试数据
     generate_granger_cointegration_test_data()
+
+    # 10. 生成分红事件数据
+    generate_dividend_data()
 
 
 if __name__ == "__main__":

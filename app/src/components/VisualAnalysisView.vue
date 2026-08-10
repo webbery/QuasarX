@@ -50,6 +50,11 @@
           <CointegrationTab />
         </div>
 
+        <!-- 非线性分析 Tab -->
+        <div v-show="activeTab === 'nonlinear'" class="tab-content">
+          <NonlinearTab />
+        </div>
+
         <!-- 资金流向 Tab -->
         <div v-show="activeTab === 'flow'" class="tab-content flow-tab">
           <!-- 头部控制区（移入资金流向 Tab） -->
@@ -247,6 +252,7 @@ import MLTab from './ml/MLTab.vue'
 import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
 import CointegrationTab from './cointegration/CointegrationTab.vue'
+import NonlinearTab from './nonlinear/NonlinearTab.vue'
 
 const unit = 100000000 // 单位:亿
 
@@ -260,6 +266,7 @@ const tabs = [
   { label: '基本面分析', name: 'fundamental' },
   { label: '容量分析', name: 'capacity' },
   { label: '协整分析', name: 'cointegration' },
+  { label: '非线性分析', name: 'nonlinear' },
   { label: '资金流向', name: 'flow' },
   { label: '策略数据', name: 'strategyData' }
 ]

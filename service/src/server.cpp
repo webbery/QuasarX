@@ -34,6 +34,7 @@
 #include "Handler/VolatilityHandler.h"
 #include "Handler/CointegrationHandler.h"
 #include "Handler/SignalHandler.h"
+#include "Handler/NonlinearHandler.h"
 #include "Handler/PCAHandler.h"
 #include "Handler/CUSUMHandler.h"
 #include "Handler/OrderHandler.h"
@@ -183,6 +184,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_COVARIANCE_DIAG "/analysis/covariance_diagnostics"
 #define API_CUSUM           "/analysis/cusum"
 #define API_SIGNAL          "/analysis/signal"
+#define API_NONLINEAR       "/analysis/nonlinear"
 #ifdef _DEBUG
 #define API_SIMULATE_BAR    "/strategy/simulate/bar"
 #endif
@@ -411,6 +413,7 @@ void Server::Regist() {
     REGIST_POST(API_COVARIANCE_DIAG);
     REGIST_POST(API_CUSUM);
     REGIST_GET(API_SIGNAL);
+    REGIST_GET(API_NONLINEAR);
     REGIST_GET(API_PCA);
     REGIST_POST(API_SERVER_CONFIG);
 
@@ -1276,6 +1279,7 @@ void Server::InitHandlers() {
     RegistHandler(API_COVARIANCE_DIAG, VolatilityHandler);
     RegistHandler(API_CUSUM, CUSUMHandler);
     RegistHandler(API_SIGNAL, SignalHandler);
+    RegistHandler(API_NONLINEAR, NonlinearHandler);
     RegistHandler(API_PCA, PCAHandler);
     RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
     RegistHandler(API_NODE_IO, NodeIOHandler);

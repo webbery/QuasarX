@@ -79,8 +79,11 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
             WARN("QuoteInputNode: {} not yet implemented (requires TickFlow full market symbol list)", code);
             continue;
         }
-        auto& security = Server::GetSecurity(code);
-        auto symbol = to_symbol(code, security);
+        auto symbol = to_symbol(code);
+        if (is_null(symbol)) {
+            WARN("QuoteInputNode: invalid symbol code '{}'", code);
+            continue;
+        }
         _symbols.insert(symbol);
         filer._symbols.emplace(code);
     }

@@ -333,8 +333,19 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
 
     // 运行
     auto strategySys = _server->GetStrategySystem();
-    strategySys->InitStrategy(name, scriptJson);
-    strategySys->Run(name);
+    try {
+        strategySys->InitStrategy(name, scriptJson);
+        strategySys->Run(name);
+    } catch (const std::exception& e) {
+        WARN("[StrategyHandler] InitStrategy/Run failed for '{}': {}", name, e.what());
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Strategy init/run failed";
+        err["error"] = e.what();
+        err["name"] = name;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
 
     bool running = false;
     if (auto flow = strategySys->GetFlowSubsystem()) {

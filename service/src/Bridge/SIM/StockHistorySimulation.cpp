@@ -65,8 +65,7 @@ void StockHistorySimulation::OnDataLoaded() {
 }
 
 bool StockHistorySimulation::LoadData(const String& code) {
-    auto& security = Server::GetSecurity(code);
-    auto symbol = to_symbol(code, security);
+    auto symbol = to_symbol(code);
 
     // 确定频率：T1 → 日线，T0 → 分钟级
     BarFreq freq = (_tradingMode == TradingMode::T1) ? BarFreq::Day : parseBarFreq(_t0Freq.empty() ? "1m" : _t0Freq);

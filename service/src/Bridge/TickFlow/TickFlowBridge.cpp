@@ -123,9 +123,7 @@ void TickFlowBridge::AddSymbols(const Set<String>& symbols) {
     int added = 0;
     for (const auto& code : symbols) {
         if (_filter._symbols.insert(code).second) {
-            // code 已是内部格式（如 "sh.600000"），用 to_symbol 转换
-            auto& security = Server::GetSecurity(code);
-            symbol_t sym = to_symbol(code, security);
+            symbol_t sym = to_symbol(code);
             if (!is_null(sym)) {
                 _symbol_to_code[sym] = code;
                 _code_to_symbol[code] = sym;
@@ -461,6 +459,17 @@ void TickFlowBridge::workerLoop() {
         // 执行 HTTP 请求 + 发布行情（同线程内 nanomsg 安全）
         FetchQuotes();
 
+        // 诊断：每 5 分钟输出一次 worker 存活日志
+        {
+            static time_t last_log = 0;
+            time_t now_t = _server ? Now() : std::time(nullptr);
+            if (now_t - last_log >= 300) {
+                INFO("[TickFlow] Worker alive: symbols={}, offset={}",
+                     _filter._symbols.size(), _offset);
+                last_log = now_t;
+            }
+        }
+
         // 下一轮唤醒
         nextWakeup += std::chrono::milliseconds(_interval_ms);
         auto sleepDur = nextWakeup - Clock::now();
@@ -576,7 +585,7 @@ void TickFlowBridge::FetchQuotes() {
         { "x-api-key", _api_key }
     };
 
-    DEBUG_INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
+    INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
                 _api_key.empty() ? "(empty)" : _api_key.substr(0, 8), body_str);
 
     auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
@@ -599,9 +608,9 @@ void TickFlowBridge::FetchQuotes() {
         return;
     }
 
-    DEBUG_INFO("[TickFlow] Response: status={} body_len={}, body: {}", res->status, res->body.size(), res->body.substr(0, std::min(20, (int)res->body.size())));
+    INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
     if (res->status != 200) {
-        DEBUG_INFO("[TickFlow] Response body: {}", res->body);
+        INFO("[TickFlow] Response body: {}", res->body);
     }
 
     if (res->status == 200) {
@@ -791,14 +800,25 @@ bool TickFlowBridge::FetchStockSymbolsFromExchange(const String& exchangeCode, L
 
         for (const auto& item : json["data"]) {
             SymbolInfo info;
-            info._code = item.value("code", "");
+            String tfCode = item.value("code", "");
             info._name = item.value("name", "");
             info._exchange = exName;
             info._type = static_cast<char>(ContractType::AStock);
 
             // 过滤空代码
-            if (info._code.empty()) {
+            if (tfCode.empty()) {
                 continue;
+            }
+
+            // TickFlow 格式 "000001.SZ" → 内部格式 "sz.000001"
+            List<String> codeTokens;
+            split(tfCode, codeTokens, ".");
+            if (codeTokens.size() == 2) {
+                String exchLower = exchangeCode;
+                for (auto& c : exchLower) c = std::tolower(c);
+                info._code = exchLower + "." + codeTokens.front();
+            } else {
+                info._code = tfCode;
             }
 
             symbols.push_back(info);

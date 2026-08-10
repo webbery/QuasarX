@@ -180,6 +180,24 @@ def upload_test_data(auth_api, is_backtest):
     print(f"  股票: {sorted(stock_symbols)}")
     print(f"  ETF:  {sorted(etf_symbols)}")
 
+    # === 导入分红数据 ===
+    dividend_dir = data_dir / "dividend"
+    dividend_imported = False
+    if dividend_dir.exists() and any(dividend_dir.glob("*.csv")):
+        try:
+            resp = requests.post(f"{BASE_URL}/v0/dividend", json={
+                "action": "import",
+                "dividend_dir": str(dividend_dir),
+            }, headers=headers, verify=VERIFY_SSL)
+            if resp.status_code == 200:
+                dividend_imported = True
+                rows = resp.json().get("imported_rows", 0)
+                print(f"  分红: 导入 {rows} 条 (from {dividend_dir})")
+            else:
+                print(f"  分红: 导入失败 HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"  分红: 导入异常 {e}")
+
     yield
 
     # === 清理：删除导入的测试数据 ===

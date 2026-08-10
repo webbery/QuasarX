@@ -374,7 +374,7 @@ class TestStrategyMultipartDeploy:
             "nodes": [
                 {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
                  "data": {"label": "行情", "nodeType": "input",
-                          "params": {"code": {"value": ["sz.000001"], "type": "text"},
+                          "params": {"code": {"value": ["sz.800001"], "type": "text"},
                                      "freq": {"value": "1d", "type": "select"}}}},
                 {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
                  "data": {"label": "MA", "nodeType": "function",

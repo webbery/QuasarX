@@ -44,7 +44,8 @@ namespace {
 
     using CallableFactory = std::function<ICallable*(const nlohmann::json&)>;
 
-    Map<String, CallableFactory> intrinsic_functions{
+    Map<String, CallableFactory>& intrinsic_functions() {
+        static Map<String, CallableFactory> instance{
         {"MA", [] (const nlohmann::json& config) {
             return new MA(config.value("_windowBars", 15));
         }},
@@ -79,11 +80,13 @@ namespace {
             return new VPCorr(config.value("_windowBars", 15));
         }},
     };
+    return instance;
+    }
 }
 
 List<String> GetAllFunctionNames() {
     List<String> names;
-    for (auto& item: intrinsic_functions) {
+    for (auto& item: intrinsic_functions()) {
         names.push_back(item.first);
     }
     return names;
@@ -169,8 +172,8 @@ bool FunctionNode::Init(const nlohmann::json& config) {
          _id, symbolSet.size());
 
     // 4. 为每个 symbol 创建独立的 callable 实例
-    auto factoryIt = intrinsic_functions.find(methodName);
-    if (factoryIt == intrinsic_functions.end()) {
+    auto factoryIt = intrinsic_functions().find(methodName);
+    if (factoryIt == intrinsic_functions().end()) {
         String info = fmt::format("function {} not implement.", methodName);
         throw std::runtime_error(info.c_str());
     }
@@ -269,7 +272,7 @@ Map<String, ArgType> FunctionNode::out_elements() {
 
 const nlohmann::json FunctionNode::getParams() {
     nlohmann::json params;
-    for (auto& item: intrinsic_functions) {
+    for (auto& item: intrinsic_functions()) {
         auto key = item.first;
         params[key] = {{"args", "type"}};
     }

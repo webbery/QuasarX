@@ -430,6 +430,12 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     std::vector<QuoteBar> result;
     if (!isInitialized()) return result;
 
+    // 检查表是否存在（quote.db 刚创建时表尚未建立）
+    auto tables = listTables();
+    if (std::find(tables.begin(), tables.end(), table) == tables.end()) {
+        return result;
+    }
+
     int64_t sym_encoded = encodeSymbol(symbol);
 
     std::string sql = fmt::format(

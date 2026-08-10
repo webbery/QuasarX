@@ -11,6 +11,7 @@
 #include "Util/log.h"
 #include "server.h"
 #include "Util/system.h"
+#include "Util/QuoteDB.h"
 #include "StrategySubSystem.h"
 #include "json.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
@@ -1137,123 +1138,221 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
         exchangeMgr->StartRequiredExchanges(requiredSources);
         exchangeMgr->SubscribeSymbols(strategy, requiredSources, symbols);
 
-        auto* exchange = dynamic_cast<HistorySimulationBase*>(
+        // 判断运行模式：回测走 simulation exchange，实盘走 QuoteDB 数据回放
+        RuningType runningMode = _handle->GetRunningMode();
+        auto* simExchange = dynamic_cast<HistorySimulationBase*>(
             exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
-        if (!exchange) {
-            WARN("[StartDaily] Failed to get stock exchange");
-            result["status"] = "error";
-            result["error"] = "no stock exchange";
-            exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
-            exchangeMgr->StopRequiredExchanges(requiredSources);
-            if (onComplete) onComplete(result);
-            return;
-        }
 
-        // 创建回测上下文
-        run_id_t runId = exchange->createBacktestContext(strategy, symbols, 1000000.0);
-        BacktestContext* btContext = exchange->getBacktestContext(runId);
-        if (!btContext) {
-            result["status"] = "error";
-            result["error"] = "failed to create context";
-            exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
-            exchangeMgr->StopRequiredExchanges(requiredSources);
-            if (onComplete) onComplete(result);
-            return;
-        }
-
-        // 执行策略图到最新数据
+        // 执行策略图
         DataContext context(strategy, _handle);
-        context.setBacktestRunId(runId);
+        run_id_t runId = 0;
+        bool useSimulation = (simExchange != nullptr && runningMode == RuningType::Backtest);
 
-        try {
-            // Prepare 节点
-            for (auto node : flow._graph) {
-                node->Prepare(strategy, context);
+        if (useSimulation) {
+            // ── 回测路径：simulation exchange + BacktestContext ──
+            runId = simExchange->createBacktestContext(strategy, symbols, 1000000.0);
+            BacktestContext* btContext = simExchange->getBacktestContext(runId);
+            if (!btContext) {
+                result["status"] = "error";
+                result["error"] = "failed to create context";
+                exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
+                exchangeMgr->StopRequiredExchanges(requiredSources);
+                if (onComplete) onComplete(result);
+                return;
+            }
+            context.setBacktestRunId(runId);
+
+            try {
+                for (auto node : flow._graph) node->Prepare(strategy, context);
+
+                uint64_t epoch = 0;
+                bool success = true;
+                while (!Server::IsExit()) {
+                    context.SetEpoch(++epoch);
+                    if (!simExchange->stepForward(btContext)) {
+                        INFO("[StartDaily] Data finished for {} at epoch {}", strategy, epoch);
+                        break;
+                    }
+                    if (!RunGraph(strategy, flow, context)) {
+                        WARN("[StartDaily] RunGraph failed at epoch {}", epoch);
+                        success = false;
+                        break;
+                    }
+                }
+
+                if (success) {
+                    // 提取信号
+                    const auto& signals = context.getAllSignals();
+                    nlohmann::json::array_t decisions;
+                    for (const auto& [sym, signal] : signals) {
+                        if (!signal) continue;
+                        nlohmann::json decision;
+                        decision["symbol"] = get_symbol(sym);
+                        switch (signal->GetAction()) {
+                            case TradeAction::BUY: decision["action"] = "BUY"; break;
+                            case TradeAction::SELL: decision["action"] = "SELL"; break;
+                            default: decision["action"] = "HOLD"; break;
+                        }
+                        decision["quantity"] = signal->GetQuantity();
+                        decision["price"] = signal->GetPrice();
+                        decision["flag"] = signal->GetFlag();
+                        decisions.push_back(decision);
+                    }
+                    result["decisions"] = decisions;
+                    result["status"] = "completed";
+                    result["epochs"] = epoch;
+                    INFO("[StartDaily] Strategy {} completed: {} epochs, {} decisions", strategy, epoch, decisions.size());
+                } else {
+                    result["status"] = "error";
+                    result["error"] = "graph execution failed";
+                }
+                for (auto node : flow._graph) node->Done(strategy);
+            } catch (const std::exception& e) {
+                WARN("[StartDaily] Exception: {}", e.what());
+                result["status"] = "error";
+                result["error"] = e.what();
+            }
+            simExchange->destroyBacktestContext(runId);
+
+        } else {
+            // ── 实盘路径：QuoteDB 数据回放 ──
+            // 从 QuoteDB 加载所有 symbol 的历史日线
+            auto& quoteDB = QuoteDB::instance();
+            if (!quoteDB.isInitialized()) {
+                WARN("[StartDaily] QuoteDB not initialized");
+                result["status"] = "error";
+                result["error"] = "QuoteDB not initialized";
+                exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
+                exchangeMgr->StopRequiredExchanges(requiredSources);
+                if (onComplete) onComplete(result);
+                return;
             }
 
-            uint64_t epoch = 0;
-            bool success = true;
+            // 收集每个 symbol 的历史 bars
+            Vector<symbol_t> symbolVec(symbols.begin(), symbols.end());
+            Map<symbol_t, Vector<QuoteBar>> allBars;
+            size_t maxBars = 0;
 
-            // 运行到最新数据
-            while (!Server::IsExit()) {
-                context.SetEpoch(++epoch);
-                if (!exchange->stepForward(btContext)) {
-                    INFO("[StartDaily] Data finished for {} at epoch {}", strategy, epoch);
-                    break;
+            for (auto sym : symbolVec) {
+                String symStr = get_symbol(sym);
+                auto bars = quoteDB.query("stock_1d", symStr, "", "", 0);
+                if (bars.empty()) {
+                    WARN("[StartDaily] No historical data for {}", symStr);
                 }
-                if (!RunGraph(strategy, flow, context)) {
-                    WARN("[StartDaily] RunGraph failed at epoch {}", epoch);
-                    success = false;
-                    break;
-                }
+                allBars[sym] = std::move(bars);
+                maxBars = std::max(maxBars, allBars[sym].size());
             }
 
-            if (success) {
-                // ManualTiming 模式下发送 SSE + 邮件通知
-                for (auto& node : flow._graph) {
-                    if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
-                        if (execNode->GetExecType() == ExecuteType::Manual) {
-                            if (auto* manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming())) {
-                                manualTiming->SendSummaryEmail(strategy);
-                            }
+            if (maxBars == 0) {
+                WARN("[StartDaily] No historical data for any symbol in strategy {}", strategy);
+                result["status"] = "error";
+                result["error"] = "no historical data in QuoteDB";
+                exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
+                exchangeMgr->StopRequiredExchanges(requiredSources);
+                if (onComplete) onComplete(result);
+                return;
+            }
+
+            INFO("[StartDaily] Live mode: {} bars max across {} symbols for {}",
+                 maxBars, symbolVec.size(), strategy);
+
+            try {
+                for (auto node : flow._graph) node->Prepare(strategy, context);
+
+                uint64_t epoch = 0;
+                bool success = true;
+
+                for (size_t i = 0; i < maxBars && !Server::IsExit(); ++i) {
+                    context.SetEpoch(++epoch);
+
+                    // 为每个 symbol 构建 QuoteInfo 写入 context
+                    for (auto sym : symbolVec) {
+                        auto& bars = allBars[sym];
+                        if (i >= bars.size()) continue;
+
+                        const auto& bar = bars[i];
+                        QuoteInfo quote{};
+                        quote._symbol = sym;
+                        quote._time = FromStr(bar.datetime, "%Y-%m-%d %H:%M:%S");
+                        quote._open = bar.open;
+                        quote._close = bar.close;
+                        quote._high = bar.high;
+                        quote._low = bar.low;
+                        quote._volume = bar.volume;
+                        quote._turnover = bar.turnover;
+                        // 后复权价格
+                        quote._adj_open = bar.adj_open > 0 ? bar.adj_open : bar.open;
+                        quote._adj_close = bar.adj_close > 0 ? bar.adj_close : bar.close;
+                        quote._adj_high = bar.adj_high > 0 ? bar.adj_high : bar.high;
+                        quote._adj_low = bar.adj_low > 0 ? bar.adj_low : bar.low;
+                        quote._source = 'D';  // Daily replay
+                        quote._confidence = 100;
+
+                        context.SetQuote(sym, quote);
+                    }
+
+                    // 设置时间为当前 bar 的时间
+                    for (auto sym : symbolVec) {
+                        auto& bars = allBars[sym];
+                        if (i < bars.size()) {
+                            context.SetTime(FromStr(bars[i].datetime, "%Y-%m-%d %H:%M:%S"));
                             break;
                         }
                     }
+
+                    if (!RunGraph(strategy, flow, context)) {
+                        WARN("[StartDaily] RunGraph failed at epoch {}", epoch);
+                        success = false;
+                        break;
+                    }
                 }
 
-                // 提取信号
-                const auto& signals = context.getAllSignals();
-                nlohmann::json::array_t decisions;
-
-                for (const auto& [sym, signal] : signals) {
-                    if (!signal) continue;
-
-                    nlohmann::json decision;
-                    decision["symbol"] = get_symbol(sym);
-
-                    switch (signal->GetAction()) {
-                        case TradeAction::BUY:
-                            decision["action"] = "BUY";
-                            break;
-                        case TradeAction::SELL:
-                            decision["action"] = "SELL";
-                            break;
-                        default:
-                            decision["action"] = "HOLD";
-                            break;
+                if (success) {
+                    // ManualTiming 邮件通知
+                    for (auto& node : flow._graph) {
+                        if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
+                            if (execNode->GetExecType() == ExecuteType::Manual) {
+                                if (auto* manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming())) {
+                                    manualTiming->SendSummaryEmail(strategy);
+                                }
+                                break;
+                            }
+                        }
                     }
 
-                    decision["quantity"] = signal->GetQuantity();
-                    decision["price"] = signal->GetPrice();
-                    decision["flag"] = signal->GetFlag();
-
-                    decisions.push_back(decision);
+                    // 提取信号
+                    const auto& signals = context.getAllSignals();
+                    nlohmann::json::array_t decisions;
+                    for (const auto& [sym, signal] : signals) {
+                        if (!signal) continue;
+                        nlohmann::json decision;
+                        decision["symbol"] = get_symbol(sym);
+                        switch (signal->GetAction()) {
+                            case TradeAction::BUY: decision["action"] = "BUY"; break;
+                            case TradeAction::SELL: decision["action"] = "SELL"; break;
+                            default: decision["action"] = "HOLD"; break;
+                        }
+                        decision["quantity"] = signal->GetQuantity();
+                        decision["price"] = signal->GetPrice();
+                        decision["flag"] = signal->GetFlag();
+                        decisions.push_back(decision);
+                    }
+                    result["decisions"] = decisions;
+                    result["status"] = "completed";
+                    result["epochs"] = epoch;
+                    INFO("[StartDaily] Live mode: {} completed {} epochs, {} decisions",
+                         strategy, epoch, decisions.size());
+                } else {
+                    result["status"] = "error";
+                    result["error"] = "graph execution failed";
                 }
-
-                result["decisions"] = decisions;
-                result["status"] = "completed";
-                result["epochs"] = epoch;
-
-                INFO("[StartDaily] Strategy {} completed: {} epochs, {} decisions",
-                     strategy, epoch, decisions.size());
-            } else {
+                for (auto node : flow._graph) node->Done(strategy);
+            } catch (const std::exception& e) {
+                WARN("[StartDaily] Live mode exception: {}", e.what());
                 result["status"] = "error";
-                result["error"] = "graph execution failed";
+                result["error"] = e.what();
             }
-
-            // 清理
-            for (auto node : flow._graph) {
-                node->Done(strategy);
-            }
-
-        } catch (const std::exception& e) {
-            WARN("[StartDaily] Exception: {}", e.what());
-            result["status"] = "error";
-            result["error"] = e.what();
         }
-
-        // 清理回测上下文
-        exchange->destroyBacktestContext(runId);
 
         // 停止 Exchange
         exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);

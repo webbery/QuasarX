@@ -32,8 +32,7 @@ bool ETFHistorySimulation::IsT0(const String& code) const {
 }
 
 bool ETFHistorySimulation::LoadData(const String& code) {
-    auto& security = Server::GetSecurity(code);
-    auto symbol = to_symbol(code, security);
+    auto symbol = to_symbol(code);
 
     BarFreq freq = parseBarFreq(_freq);
 
