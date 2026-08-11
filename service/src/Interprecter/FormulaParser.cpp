@@ -135,9 +135,9 @@ static std::optional<double> tryExtractNumber(const std::shared_ptr<peg::Ast>& n
     if (node->name == "Number") {
         return node->token_to_number<double>();
     }
-    // NotExpr 内层可能是 Number（如 "not 2" 这种异常但存在的语法）
-    if (node->name == "NotExpr" && !node->nodes.empty()) {
-        return tryExtractNumber(node->nodes.back());
+    // Primary / Atom 等透传节点，递归到子节点
+    if (node->nodes.size() == 1) {
+        return tryExtractNumber(node->nodes.front());
     }
     return std::nullopt;
 }

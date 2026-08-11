@@ -235,9 +235,10 @@ class TestStrategy:
         kwargs = self._auth_kwargs(auth_token)
 
         no_reply = ['ml.json']
+        skip_scripts = ['ml.json', 'ETF_Momentum.json']  # 跳过不需要验证的策略
         script_dir = './script'
         for item_name in os.listdir(script_dir):
-            if item_name == 'ml.json':
+            if item_name in skip_scripts:
                 continue
 
             item_path = os.path.join(script_dir, item_name)

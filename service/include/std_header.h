@@ -96,6 +96,10 @@ using Boolean = Expected<bool, int>;
 #define SECOND_PER_DAY 86400
 #endif
 
+// AVX512 编译时禁用 Eigen 对齐要求，避免 _mm512_load_pd 在动态矩阵上 segfault
+#if defined(__AVX512F__)
+#define EIGEN_DONT_ALIGN
+#endif
 #include "Eigen/Core"
 #include "Util/log.h"
 

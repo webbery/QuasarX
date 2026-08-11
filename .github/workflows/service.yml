@@ -514,12 +514,26 @@ jobs:
       # === 阶段 2: 回测功能测试（stock_hist_sim 模式）===
       - name: Run backtest tests
         id: test
+        timeout-minutes: 10
         run: |
+          # 严格模式：命令失败立即退出，捕获未定义变量和 pipeline 失败
+          set -euo pipefail
+
+          # 注册清理 trap：脚本退出时强制 kill 服务，避免残留进程 hang 后续 stage
+          cleanup() {
+            echo "=== Cleanup: stopping service (PID=${TEST_PID:-unknown}) ==="
+            curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+            sleep 1
+            [ -n "${TEST_PID:-}" ] && kill -9 "$TEST_PID" 2>/dev/null || true
+            echo "=== Cleanup done ==="
+          }
+          trap cleanup EXIT
+
           nohup ./QuantService stock_hist_sim.json > service_test.log 2>&1 &
           TEST_PID=$!
           echo "Test service PID: $TEST_PID"
 
-          # 等待服务就绪
+          # 等待服务就绪（最多 30s）
           for i in $(seq 1 30); do
             if curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status >/dev/null 2>&1; then
               echo "Test service ready after ${i}s"
@@ -533,22 +547,21 @@ jobs:
             sleep 1
           done
 
-          # 生成测试数据并运行测试
-          cd test
+          # 生成测试数据（失败不影响后续）
           python testcases/generate_test_data.py 2>/dev/null || true
-          python run_tests.py --mode stock_hist_sim --no-service
+          python testcases/node_test_data/generate_node_data.py 2>/dev/null || true
+
+          # 运行测试（--maxfail=1 让 pytest 在首个失败时停止，节省 CI 时间）
+          cd test
+          python run_tests.py --mode stock_hist_sim --no-service --maxfail 1
           TEST_EXIT_CODE=$?
+          cd ..
 
           # 上传 stock_hist_sim.json 用于诊断
-          cd ..
           echo "=== stock_hist_sim.json content ==="
           cat stock_hist_sim.json
           echo "==================================="
 
-          # 停止服务
-          curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
-          sleep 2
-          kill -9 $TEST_PID 2>/dev/null || true
           exit $TEST_EXIT_CODE
 
       # === 阶段 3: 测试通过后上传最终构建 ===

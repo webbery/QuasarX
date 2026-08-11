@@ -220,7 +220,7 @@ watch(checkedSymbols, (next) => {
   if (mode.value !== 'strategy') return
   // 非线性分析只取第一个标的
   if (next.size > 1) {
-    const first = next.values().next().value
+    const first = next.values().next().value as string
     checkedSymbols.value = new Set([first])
   }
 })

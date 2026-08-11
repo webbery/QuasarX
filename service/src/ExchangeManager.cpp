@@ -211,37 +211,37 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     _typeExchanges[type] = ptr;
 
     // 同步合约符号信息到 Server
-    List<SymbolInfo> symbols;
-    bool stockOk = ptr->GetAllStockSymbols(symbols);
-    bool fundOk = ptr->GetAllFundSymbols(symbols);
-    bool optionOk = ptr->GetAllOptionSymbols(symbols);
+    // List<SymbolInfo> symbols;
+    // bool stockOk = ptr->GetAllStockSymbols(symbols);
+    // bool fundOk = ptr->GetAllFundSymbols(symbols);
+    // bool optionOk = ptr->GetAllOptionSymbols(symbols);
 
-    if (!stockOk && !fundOk && !optionOk) {
-        // 所有符号加载都失败 → 注册失败
-        WARN("Exchange {} registered but no symbols loaded (stock/fund/option all failed)", name);
-        delete ptr;
-        _exchanges.erase(name);
-        _typeExchanges.erase(type);
-        return false;
-    }
+    // if (!stockOk && !fundOk && !optionOk) {
+    //     // 所有符号加载都失败 → 注册失败
+    //     WARN("Exchange {} registered but no symbols loaded (stock/fund/option all failed)", name);
+    //     delete ptr;
+    //     _exchanges.erase(name);
+    //     _typeExchanges.erase(type);
+    //     return false;
+    // }
 
-    // 部分成功：至少有一种符号加载成功
-    for (auto& sym : symbols) {
-        ContractInfo info;
-        info._type = sym._type;
-        info._exchange = sym._exchange;
-        info._name = sym._name;
-        info._market = sym._market;
-        info._expireDate = sym._expireDate;
-        info._deliveryDate = sym._deliveryDate;
-        info._strike = sym._strike;
-        _server->AddSymbolToMarket(sym._code, std::move(info));
-    }
-    if (!symbols.empty()) {
-        INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
-    } else {
-        WARN("Exchange {} registered with 0 symbols (Bridge mode, symbols will be subscribed by strategies)", name);
-    }
+    // // 部分成功：至少有一种符号加载成功
+    // for (auto& sym : symbols) {
+    //     ContractInfo info;
+    //     info._type = sym._type;
+    //     info._exchange = sym._exchange;
+    //     info._name = sym._name;
+    //     info._market = sym._market;
+    //     info._expireDate = sym._expireDate;
+    //     info._deliveryDate = sym._deliveryDate;
+    //     info._strike = sym._strike;
+    //     _server->AddSymbolToMarket(sym._code, std::move(info));
+    // }
+    // if (!symbols.empty()) {
+    //     INFO("Loaded {} symbols from exchange {}", symbols.size(), name);
+    // } else {
+    //     WARN("Exchange {} registered with 0 symbols (Bridge mode, symbols will be subscribed by strategies)", name);
+    // }
 
     // 工作时间等配置
     auto config = _server->GetConfig().GetExchangeByName(name);

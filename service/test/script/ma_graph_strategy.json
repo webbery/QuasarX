@@ -5,8 +5,8 @@
     "description": "使用 FunctionNode 计算均线 + SignalNode 生成交叉信号 + DebugNode 调试输出",
     "shadow": true,
     "backtest": {
-        "start": "2024-01-01",
-        "end": "2024-12-31"
+        "start": "2023-01-01",
+        "end": "2023-06-30"
     },
     "nodes": [
         {
@@ -22,7 +22,7 @@
                         "options": ["股票", "期货"]
                     },
                     "code": {
-                        "value": ["sz.000001"],
+                        "value": ["sz.900005"],
                         "type": "text"
                     },
                     "freq": {
@@ -102,7 +102,7 @@
                 "nodeType": "signal",
                 "params": {
                     "code": {
-                        "value": ["sz.000001"],
+                        "value": ["sz.900005"],
                         "type": "text"
                     },
                     "buy": {

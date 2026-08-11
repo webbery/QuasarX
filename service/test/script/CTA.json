@@ -4,14 +4,14 @@
     "version": 1,
     "description": "日内CTA策略",
     "backtest": {
-        "start": "2022-05-01",
-        "end": "2023-05-01"
+        "start": "2023-01-01",
+        "end": "2023-04-01"
     },
     "nodes": [
         {
             "id": "1",
             "type": "custom",
-            "data": { 
+            "data": {
                 "label": "行情数据输入",
                 "nodeType": "input",
                 "params": {
@@ -21,7 +21,7 @@
                         "options": ["股票", "期货"]
                     },
                     "code": {
-                        "value": ["sz.000001", "sz.002825", "sz.003007", "sz.301110", "sz.000423"],
+                        "value": ["sz.900001", "sz.900002", "sz.900003", "sz.900004", "sz.900005"],
                         "type": "text"
                     },
                     "freq": {
@@ -82,7 +82,7 @@
                 "nodeType": "signal",
                 "params": {
                     "code": {
-                        "value": ["sz.000001", "sz.002825", "sz.003007", "sz.301110", "sz.000423"],
+                        "value": ["sz.900001", "sz.900002", "sz.900003", "sz.900004", "sz.900005"],
                         "type": "text"
                     },
                     "buy": {

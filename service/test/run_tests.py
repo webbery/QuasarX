@@ -423,10 +423,12 @@ class ServiceManager:
 
 # ==================== 测试执行 ====================
 
-def run_test_module(test_name: str, specific_tests: list = None) -> dict:
+def run_test_module(test_name: str, specific_tests: list = None, maxfail: int = 1) -> dict:
     """运行单个测试模块，返回结果
 
     支持子目录路径格式，如 "hx/test_hx_trade" 会解析为 testcases/hx/test_hx_trade.py
+
+    maxfail: pytest --maxfail 参数，控制第 N 个失败后停止（默认 1，fail-fast）
     """
     # 支持子目录路径：将 "/" 替换为 os.sep
     test_file = TESTCASES_DIR / f"{test_name.replace('/', os.sep)}.py"
@@ -434,7 +436,8 @@ def run_test_module(test_name: str, specific_tests: list = None) -> dict:
     if not test_file.exists():
         return {"name": test_name, "status": "SKIP", "reason": "文件不存在"}
 
-    cmd = ["pytest", str(test_file), "-v", "--tb=short", "--color=yes"]
+    cmd = ["pytest", str(test_file), "-v", "--tb=short", "--color=yes",
+           "--maxfail", str(maxfail)]
 
     if specific_tests:
         for t in specific_tests:
@@ -527,7 +530,7 @@ def run_mode(mode_name: str, mode_info: Dict, args) -> dict:
         for i, test_name in enumerate(tests_to_run, 1):
             section(f"[{i}/{len(tests_to_run)}] {test_name}")
 
-            result = run_test_module(test_name, args.tests)
+            result = run_test_module(test_name, args.tests, maxfail=args.maxfail)
             results["tests"].append(result)
 
             status_icon = {
@@ -687,6 +690,12 @@ def main():
         type=int,
         default=19107,
         help="服务端口 (默认: 19107)",
+    )
+    parser.add_argument(
+        "--maxfail",
+        type=int,
+        default=1,
+        help="pytest 在第 N 个失败后停止（默认: 1，fail-fast；0 表示跑完所有测试）",
     )
 
     args = parser.parse_args()
