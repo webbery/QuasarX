@@ -5,31 +5,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useMLState'
-import { convertLabelsToKeys } from '@/lib/nodes'
-
-/** 确保 code 参数为数组格式（C++ 端期望数组） */
-function normalizeCodeParams(scriptStr: string): string {
-  try {
-    const parsed = JSON.parse(scriptStr)
-    if (Array.isArray(parsed.nodes)) {
-      for (const node of parsed.nodes) {
-        const params = node?.data?.params
-        if (!params || typeof params !== 'object') continue
-        const codeParam = params.code
-        if (codeParam?.value != null) {
-          if (typeof codeParam.value === 'string') {
-            codeParam.value = codeParam.value.split(',').map((s: string) => s.trim()).filter(Boolean)
-          } else if (!Array.isArray(codeParam.value)) {
-            codeParam.value = [String(codeParam.value)]
-          }
-        }
-      }
-    }
-    return JSON.stringify(parsed)
-  } catch {
-    return scriptStr
-  }
-}
+import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
 
 export function useMLData() {
   /**

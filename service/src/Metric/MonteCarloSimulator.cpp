@@ -1,5 +1,6 @@
 #include "Metric/MonteCarloSimulator.h"
 #include <numeric>
+#include <algorithm>
 
 // ============================================================
 // 初始化
@@ -114,21 +115,17 @@ McResult MonteCarloSimulator::Run(int n_simulations) {
 
         // 2b. 流动性压力：尾部收益率折扣
         if (_config.stress_liquidity) {
-            // 先拷贝 _returns 到缓冲区
             std::vector<double> liq_returns = _returns;
-            std::vector<double> sorted_for_tail = liq_returns;
-            std::sort(sorted_for_tail.begin(), sorted_for_tail.end());
-
             int tail_count = std::max(1, static_cast<int>(_config.liquidity_tail_pct * _nBars));
 
-            // 对最差 tail_count 个收益率应用折扣（简化实现：直接排序后修改）
-            std::vector<size_t> indices(_nBars);
-            std::iota(indices.begin(), indices.end(), 0);
-            std::sort(indices.begin(), indices.end(),
-                      [&](size_t a, size_t b) { return _returns[a] < _returns[b]; });
+            // 用 partial_sort 只找最差 tail_count 个收益率的索引
+            std::vector<int> liq_indices(_nBars);
+            std::iota(liq_indices.begin(), liq_indices.end(), 0);
+            std::partial_sort(liq_indices.begin(), liq_indices.begin() + tail_count, liq_indices.end(),
+                [this](int a, int b) { return _returns[a] < _returns[b]; });
 
             for (int i = 0; i < tail_count; ++i) {
-                liq_returns[indices[i]] *= _config.liquidity_factor;
+                liq_returns[liq_indices[i]] *= _config.liquidity_factor;
             }
 
             std::vector<PathResult> liq_paths;
@@ -425,70 +422,98 @@ McResult MonteCarloSimulator::aggregateResults(
 ) {
     McResult result{};
     int n = static_cast<int>(paths.size());
+    if (n == 0) {
+        result.method = method;
+        result.block_size = block_size;
+        result.autocorrelation = acf;
+        result.n_simulations = 0;
+        return result;
+    }
 
-    // 构建 PathDetail 列表
-    std::vector<PathDetail> all_details;
-    all_details.reserve(n);
+    // 使用索引排序，避免为所有路径构建 PathDetail（含 equity curve 拷贝）
+    std::vector<int> indices(n);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    // === 分位数统计：用 nth_element 代替全排序 ===
+    int median_idx = static_cast<int>(0.50 * n);
+    std::nth_element(indices.begin(), indices.begin() + median_idx, indices.end(),
+        [&](int a, int b) { return paths[a].total_return < paths[b].total_return; });
+
+    int p5_idx  = std::max(0, static_cast<int>(0.05 * n));
+    int p10_idx = std::max(0, static_cast<int>(0.10 * n));
+    int p90_idx = std::min(n - 1, static_cast<int>(0.90 * n));
+    int p95_idx = std::min(n - 1, static_cast<int>(0.95 * n));
+
+    // 左半部分找 p5, p10
+    std::nth_element(indices.begin(), indices.begin() + p10_idx, indices.begin() + median_idx,
+        [&](int a, int b) { return paths[a].total_return < paths[b].total_return; });
+    p5_idx = std::max(0, static_cast<int>(0.05 * n));
+
+    // 右半部分找 p90, p95
+    std::nth_element(indices.begin() + median_idx + 1, indices.begin() + p90_idx, indices.end(),
+        [&](int a, int b) { return paths[a].total_return < paths[b].total_return; });
+    p90_idx = std::min(n - 1, static_cast<int>(0.90 * n));
+    p95_idx = std::min(n - 1, static_cast<int>(0.95 * n));
+
+    // === 保存极端路径（仅对选中路径构建 PathDetail）===
+    int worst_count = (_config.save_worst_paths_count > 0) ? std::min(_config.save_worst_paths_count, n) : 0;
+    int best_count  = (_config.save_best_paths_count > 0) ? std::min(_config.save_best_paths_count, n) : 0;
+
+    if (worst_count > 0) {
+        std::partial_sort(indices.begin(), indices.begin() + worst_count, indices.end(),
+            [&](int a, int b) { return paths[a].total_return < paths[b].total_return; });
+        result.worst_paths.reserve(worst_count);
+        for (int i = 0; i < worst_count; ++i)
+            result.worst_paths.push_back(buildDetail(paths[indices[i]]));
+    }
+    if (best_count > 0) {
+        int start = n - best_count;
+        std::partial_sort(indices.begin() + start, indices.begin() + start + best_count, indices.end(),
+            [&](int a, int b) { return paths[a].total_return > paths[b].total_return; });
+        result.best_paths.reserve(best_count);
+        for (int i = start; i < n; ++i)
+            result.best_paths.push_back(buildDetail(paths[indices[i]]));
+    }
+    if (_config.save_percentile_paths) {
+        int i10 = std::max(0, static_cast<int>(0.10 * n));
+        int i50 = std::max(0, static_cast<int>(0.50 * n));
+        int i90 = std::min(n - 1, static_cast<int>(0.90 * n));
+        result.p10_path    = buildDetail(paths[indices[i10]]);
+        result.median_path = buildDetail(paths[indices[i50]]);
+        result.p90_path    = buildDetail(paths[indices[i90]]);
+    }
+
+    // === 基础统计指标（直接从 PathResult 计算）===
+    int ruined_high = 0, ruined_low = 0;
+    double high_threshold = _config.initial_capital * _ruinThresholdHigh;
+    double low_threshold  = _config.initial_capital * _ruinThresholdLow;
     for (const auto& p : paths) {
-        all_details.push_back(buildDetail(p));
-    }
-
-    // 按总收益率排序
-    std::sort(all_details.begin(), all_details.end(),
-              [](const PathDetail& a, const PathDetail& b) { return a.total_return < b.total_return; });
-
-    // 保存最差路径
-    if (_config.save_worst_paths_count > 0 && n > 0) {
-        int count = std::min(_config.save_worst_paths_count, n);
-        result.worst_paths.assign(all_details.begin(), all_details.begin() + count);
-    }
-
-    // 保存最好路径
-    if (_config.save_best_paths_count > 0 && n > 0) {
-        int count = std::min(_config.save_best_paths_count, n);
-        result.best_paths.assign(all_details.end() - count, all_details.end());
-    }
-
-    // 保存分位数路径
-    if (_config.save_percentile_paths && n > 0) {
-        result.p10_path    = all_details[std::max(0, static_cast<int>(0.10 * n))];
-        result.median_path = all_details[std::max(0, static_cast<int>(0.50 * n))];
-        result.p90_path    = all_details[std::min(n - 1, static_cast<int>(0.90 * n))];
-    }
-
-    // === 基础统计指标 ===
-    int ruined_high = 0;
-    int ruined_low = 0;
-    for (const auto& d : all_details) {
-        double high_threshold = _config.initial_capital * _ruinThresholdHigh;
-        double low_threshold = _config.initial_capital * _ruinThresholdLow;
-        if ((_config.initial_capital + d.total_return) < high_threshold) ruined_high++;
-        if ((_config.initial_capital + d.total_return) < low_threshold) ruined_low++;
+        if ((_config.initial_capital + p.total_return) < high_threshold) ruined_high++;
+        if ((_config.initial_capital + p.total_return) < low_threshold)  ruined_low++;
     }
 
     result.ruin_prob_high = static_cast<float>(ruined_high) / n;
-    result.ruin_prob_low = static_cast<float>(ruined_low) / n;
-    result.return_p5 = static_cast<float>(all_details[std::max(0, static_cast<int>(0.05 * n))].total_return);
-    result.return_p50 = static_cast<float>(all_details[std::max(0, static_cast<int>(0.50 * n))].total_return);
-    result.return_p95 = static_cast<float>(all_details[std::min(n - 1, static_cast<int>(0.95 * n))].total_return);
-    result.max_dd_p50 = static_cast<float>(all_details[std::max(0, static_cast<int>(0.50 * n))].max_drawdown);
-    result.max_dd_p95 = static_cast<float>(all_details[std::min(n - 1, static_cast<int>(0.95 * n))].max_drawdown);
+    result.ruin_prob_low  = static_cast<float>(ruined_low) / n;
+    result.return_p5  = static_cast<float>(paths[indices[p5_idx]].total_return);
+    result.return_p50 = static_cast<float>(paths[indices[median_idx]].total_return);
+    result.return_p95 = static_cast<float>(paths[indices[p95_idx]].total_return);
+    result.max_dd_p50 = static_cast<float>(paths[indices[median_idx]].max_drawdown);
+    result.max_dd_p95 = static_cast<float>(paths[indices[p95_idx]].max_drawdown);
 
     double annualize_factor = static_cast<double>(_config.bars_per_year) / _nBars;
     result.median_annual_ret = static_cast<float>(
-        std::pow(1.0 + all_details[std::max(0, static_cast<int>(0.50 * n))].total_return, annualize_factor) - 1.0
+        std::pow(1.0 + paths[indices[median_idx]].total_return, annualize_factor) - 1.0
     );
 
     {
-        // 最差 1% 平均回撤：按 max_drawdown 排序
-        std::vector<double> sorted_dd;
-        sorted_dd.reserve(n);
-        for (const auto& d : all_details) sorted_dd.push_back(d.max_drawdown);
-        std::sort(sorted_dd.begin(), sorted_dd.end());
-
+        // 最差 1% 平均回撤：partial_sort by max_drawdown
+        std::vector<int> dd_idx(n);
+        std::iota(dd_idx.begin(), dd_idx.end(), 0);
         int tail_count = std::max(1, static_cast<int>(0.01 * n));
+        std::partial_sort(dd_idx.begin(), dd_idx.begin() + tail_count, dd_idx.end(),
+            [&](int a, int b) { return paths[a].max_drawdown < paths[b].max_drawdown; });
         double sum = 0.0;
-        for (int i = 0; i < tail_count; ++i) sum += sorted_dd[i];
+        for (int i = 0; i < tail_count; ++i) sum += paths[dd_idx[i]].max_drawdown;
         result.tail_1pct_avg_dd = static_cast<float>(sum / tail_count);
     }
 
@@ -520,36 +545,36 @@ void MonteCarloSimulator::aggregateStressResults(
         return;
     }
 
-    std::vector<PathDetail> details;
-    details.reserve(n);
+    // 索引排序，避免为所有路径构建 PathDetail
+    std::vector<int> indices(n);
+    std::iota(indices.begin(), indices.end(), 0);
+    int median_idx = static_cast<int>(0.50 * n);
+    std::nth_element(indices.begin(), indices.begin() + median_idx, indices.end(),
+        [&](int a, int b) { return paths[a].total_return < paths[b].total_return; });
+
+    int ruined_high = 0, ruined_low = 0;
+    double high_threshold = _config.initial_capital * _ruinThresholdHigh;
+    double low_threshold  = _config.initial_capital * _ruinThresholdLow;
     for (const auto& p : paths) {
-        details.push_back(buildDetail(p));
-    }
-
-    // 按总收益率排序
-    std::sort(details.begin(), details.end(),
-              [](const PathDetail& a, const PathDetail& b) { return a.total_return < b.total_return; });
-
-    // 保存最差路径
-    if (worst_count > 0) {
-        int count = std::min(worst_count, n);
-        out_worst_paths.assign(details.begin(), details.begin() + count);
-    }
-
-    int ruined_high = 0;
-    int ruined_low = 0;
-    for (const auto& d : details) {
-        double high_threshold = _config.initial_capital * _ruinThresholdHigh;
-        double low_threshold = _config.initial_capital * _ruinThresholdLow;
-        if ((_config.initial_capital + d.total_return) < high_threshold) ruined_high++;
-        if ((_config.initial_capital + d.total_return) < low_threshold) ruined_low++;
+        if ((_config.initial_capital + p.total_return) < high_threshold) ruined_high++;
+        if ((_config.initial_capital + p.total_return) < low_threshold)  ruined_low++;
     }
 
     out_ruin_prob_high = static_cast<float>(ruined_high) / n;
-    out_ruin_prob_low = static_cast<float>(ruined_low) / n;
-    out_return_p5 = static_cast<float>(details[std::max(0, static_cast<int>(0.05 * n))].total_return);
-    out_return_p50 = static_cast<float>(details[std::max(0, static_cast<int>(0.50 * n))].total_return);
-    out_max_dd_p50 = static_cast<float>(details[std::max(0, static_cast<int>(0.50 * n))].max_drawdown);
+    out_ruin_prob_low  = static_cast<float>(ruined_low) / n;
+    out_return_p5  = static_cast<float>(paths[indices[std::max(0, static_cast<int>(0.05 * n))]].total_return);
+    out_return_p50 = static_cast<float>(paths[indices[median_idx]].total_return);
+    out_max_dd_p50 = static_cast<float>(paths[indices[median_idx]].max_drawdown);
+
+    // 仅对需要保存的最差路径构建 PathDetail
+    if (worst_count > 0) {
+        int count = std::min(worst_count, n);
+        std::partial_sort(indices.begin(), indices.begin() + count, indices.end(),
+            [&](int a, int b) { return paths[a].total_return < paths[b].total_return; });
+        out_worst_paths.reserve(count);
+        for (int i = 0; i < count; ++i)
+            out_worst_paths.push_back(buildDetail(paths[indices[i]]));
+    }
 }
 
 // ============================================================

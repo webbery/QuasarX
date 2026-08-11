@@ -84,6 +84,33 @@ export function convertLabelsToKeys(graphJson: string): string {
 }
 
 /**
+ * 确保所有节点的 code 参数为数组格式（C++ 端期望数组）
+ * TextParam 编辑后 value 会变成逗号分隔字符串，需在发送前统一转回数组
+ */
+export function normalizeCodeParams(scriptStr: string): string {
+  try {
+    const parsed = JSON.parse(scriptStr)
+    if (Array.isArray(parsed.nodes)) {
+      for (const node of parsed.nodes) {
+        const params = node?.data?.params
+        if (!params || typeof params !== 'object') continue
+        const codeParam = params.code
+        if (codeParam?.value != null) {
+          if (typeof codeParam.value === 'string') {
+            codeParam.value = codeParam.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+          } else if (!Array.isArray(codeParam.value)) {
+            codeParam.value = [String(codeParam.value)]
+          }
+        }
+      }
+    }
+    return JSON.stringify(parsed)
+  } catch {
+    return scriptStr
+  }
+}
+
+/**
  * 将后端返回的英文键名转换为中文参数键名（UI 显示用）
  */
 export function convertKeysToLabels(params: Record<string, any>): Record<string, any> {

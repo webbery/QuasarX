@@ -22,7 +22,7 @@ import './configs/formula'
 import './configs/factorCombine'
 import './configs/breakout'
 
-export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels } from './registry'
+export { getNode, getAllNodes, getNodesByCategory, getAllCategories, searchNodes, getNodeIcon, getNodeColor, convertLabelsToKeys, convertKeysToLabels, normalizeCodeParams } from './registry'
 export { createStrategyNode } from './factory'
 export { CATEGORY_ICONS } from './types'
 export type {

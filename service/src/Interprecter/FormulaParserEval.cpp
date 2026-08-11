@@ -214,17 +214,12 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
                 }
             }
         }
-        // 输出 DataContext 中所有可用的键，帮助调试
-        String availableKeys;
-        // 注意：DataContext 没有暴露 _outputs 的迭代接口，这里只能提示
-        WARN("FormulaParser: key '{}' not found for symbol '{}', expression may reference a non-existent feature", key, name);
-        WARN("FormulaParser: checking for '{}.ma_short' or '{}.ma_long'?", name, name);
+        DEBUG_INFO("FormulaParser: key '{}' not found for symbol '{}'", key, name);
         return 0.0;
     }
 
     auto& vec = context.get<Vector<double>>(key);
     if (vec.empty()) {
-        WARN("FormulaParser: key '{}' exists but vector is empty for symbol '{}'", key, name);
         return 0.0;
     }
 
@@ -232,8 +227,7 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
     if (idx >= 0 && idx < (int)vec.size()) {
         return vec[idx];
     } else {
-        WARN("getHistoricalValue - index out of range, idx={}, size={}, key={}", idx, vec.size(), key);
-        return vec.back();
+        return vec.front();
     }
 }
 

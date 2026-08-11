@@ -74,7 +74,7 @@ import { useFlowState } from '@/components/strategy/composables/useFlowState'
 import { useFlowOperations } from '@/components/strategy/composables/useFlowOperations'
 import { useFlowSaveLoad } from '@/components/strategy/composables/useFlowSaveLoad'
 import { useBacktest } from '@/components/strategy/composables/useBacktest'
-import { convertLabelsToKeys } from '@/lib/nodes'
+import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
 
 const emit = defineEmits(['load-version', 'emd-edge-selected', 'flow-nodes-updated'])
 
@@ -373,10 +373,11 @@ const getStrategyGraph = () => {
     edges: getEdges.value
   }
 
-  // 先序列化为 JSON 字符串，转换中文键名为英文键名，再解析回对象
+  // 先序列化为 JSON 字符串，转换中文键名为英文键名，确保 code 为数组，再解析回对象
   const graphJson = JSON.stringify(curGraph)
   const convertedJson = convertLabelsToKeys(graphJson)
-  return JSON.parse(convertedJson)
+  const normalizedJson = normalizeCodeParams(convertedJson)
+  return JSON.parse(normalizedJson)
 }
 
 // 对外暴露

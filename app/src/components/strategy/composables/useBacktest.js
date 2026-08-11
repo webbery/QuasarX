@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { convertLabelsToKeys } from '@/lib/nodes'
+import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 
@@ -58,6 +58,8 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
     let graph = JSON.stringify(curGraph)
     // 替换中文键名
     graph = convertLabelsToKeys(graph)
+    // 确保 code 参数为数组（TextParam 编辑后会变成逗号分隔字符串）
+    graph = normalizeCodeParams(graph)
 
     try {
       const response = await axios.post('/v0/backtest', { script: graph })
