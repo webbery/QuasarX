@@ -67,6 +67,7 @@ export const basicIndexNode: NodeRegistryEntry = {
   label: '指标计算',
   nodeType: 'function',
   category: 'process',
+  icon: 'fas fa-calculator',
   description: '计算技术指标：移动平均(MA)、标准差(STD)、收益率(Return)、拟合优度(R2)、标准化(ZScore)、量价相关性(VPCorr)、平均真实波幅(ATR)。',
   inputs: ['timeseries'],
   outputs: ['indicator'],

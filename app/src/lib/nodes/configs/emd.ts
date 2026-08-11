@@ -6,6 +6,7 @@ export const emdNode: NodeRegistryEntry = {
   label: 'EMD 分解',
   nodeType: 'emd',
   category: 'process',
+  icon: 'fas fa-wave-square',
   description: '经验模态分解，将非平稳信号分解为多个本征模态函数（IMF）。支持 EMD、CEEMDAN 和 VMD 三种算法，以及全局/滚动窗口两种模式。',
   inputs: ['timeseries', 'volume'],
   outputs: ['imf', 'energy_velocity', 'volume_regime'],

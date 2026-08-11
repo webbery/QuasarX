@@ -10,6 +10,7 @@ export const formulaNode: NodeRegistryEntry = {
   label: '公式计算',
   nodeType: 'formula',
   category: 'process',
+  icon: 'fas fa-square-root-alt',
   description: '通过自定义公式对输入数据进行计算，输出数值结果。支持四则运算、逻辑运算和截面函数（topk/rank/zscore）。',
   inputs: ['indicator', 'timeseries'],
   outputs: ['value'],

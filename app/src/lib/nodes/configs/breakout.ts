@@ -25,6 +25,7 @@ export const breakoutNode: NodeRegistryEntry = {
   label: '突破检测',
   nodeType: 'breakout',
   category: 'process',
+  icon: 'fas fa-arrow-up',
   description: '包络突破状态机（4 态，含 hysteresis）。检测价格对上下轨的突破与回落，输出状态编码供 XGBoost 学习。状态 1=突破上轨, 2=回落上轨内, 3=突破下轨, 4=回落下轨内。',
   inputs: ['value', 'upper', 'lower'],
   outputs: ['state', 'duration'],

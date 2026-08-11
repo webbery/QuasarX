@@ -3,6 +3,7 @@
 #include "Util/finance.h"
 #include "KBarBuilder.h"
 #include "Metric/CUSUMDetector.h"
+#include "Metric/CUSUMCalibrator.h"
 #include "Metric/RiskMetric.h"
 #include "Util/log.h"
 #include "json.hpp"
@@ -36,20 +37,91 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
     try {
         auto body = nlohmann::json::parse(req.body);
         auto symbols = body["symbols"].get<std::vector<String>>();
-        auto modes = body["modes"].get<std::vector<String>>();
         String start = body.value("start", "");
         String end = body.value("end", "");
         String freq = body.value("freq", "Day");  // 默认日线
-        double lambda = body.value("lambda", 0.5);
-        double threshold_multiplier = body.value("threshold_multiplier", 4.0);
-        size_t min_obs = body.value("min_obs", 30);
-        double ewma_decay = body.value("ewma_decay", 0.94);  // EWMA 衰减系数（RiskMetrics 标准值）
+        String action = body.value("action", "analyze");  // analyze | calibrate
 
         if (symbols.empty()) {
             res.status = 400;
             res.set_content(R"({"error": "symbols is empty"})", "application/json");
             return;
         }
+
+        // === 校准模式：每个标的独立校准 ===
+        if (action == "calibrate") {
+            double detectable_shift = body.value("detectable_shift_sigma", 0.5);
+            double target_arl0 = body.value("target_arl0", 500.0);
+            int mc_sims = body.value("mc_simulations", 5000);
+            int bootstrap_iters = body.value("bootstrap_iters", 1000);
+
+            BarFreq target_freq = BarFreq::Day;
+            if (freq == "1m") target_freq = BarFreq::Min1;
+            else if (freq == "5m") target_freq = BarFreq::Min5;
+            else if (freq == "15m") target_freq = BarFreq::Min15;
+            else if (freq == "30m") target_freq = BarFreq::Min30;
+            else if (freq == "1h") target_freq = BarFreq::Hour1;
+
+            nlohmann::json result;
+            result["symbols"] = nlohmann::json::array();
+            result["calibrations"] = nlohmann::json::array();
+
+            for (auto& sym : symbols) {
+                symbol_t sym_t = to_symbol(toInternalSymbol(sym));
+                Vector<String> sym_dates;
+                auto data = LoadHistoryDataWithFreq(sym_t, {"close"}, start, end, target_freq, AdjType::HFQ, &sym_dates);
+                auto close_it = data.find("close");
+                if (close_it == data.end() || close_it->second.size() < 30) {
+                    WARN("[CUSUMCalibrate] Insufficient data for {}", sym);
+                    continue;
+                }
+
+                const auto& closes = close_it->second;
+                Vector<double> returns;
+                returns.reserve(closes.size() - 1);
+                for (size_t i = 1; i < closes.size(); ++i) {
+                    returns.push_back((closes[i] - closes[i-1]) / closes[i-1]);
+                }
+
+                auto cal = CUSUMCalibrator::calibrate(returns, detectable_shift, target_arl0, mc_sims, bootstrap_iters);
+
+                nlohmann::json cal_json;
+                cal_json["symbol"] = sym;
+                cal_json["mu"] = cal.mu;
+                cal_json["sigma"] = cal.sigma;
+                cal_json["lambda"] = cal.lambda;
+                cal_json["H"] = cal.H;
+                cal_json["min_obs"] = cal.min_obs;
+                cal_json["sigma_ci_lower"] = cal.sigma_ci_lower;
+                cal_json["sigma_ci_upper"] = cal.sigma_ci_upper;
+                cal_json["sigma_cv"] = cal.sigma_cv;
+                cal_json["actual_arl0"] = cal.actual_arl0;
+                cal_json["arl_curve_H"] = cal.arl_curve_H;
+                cal_json["arl_curve_arl"] = cal.arl_curve_arl;
+                cal_json["bootstrap_sizes"] = cal.bootstrap_sizes;
+                cal_json["bootstrap_cv"] = cal.bootstrap_cv;
+                cal_json["data_points"] = returns.size();
+
+                result["symbols"].push_back(sym);
+                result["calibrations"].push_back(cal_json);
+            }
+
+            if (result["calibrations"].empty()) {
+                res.status = 404;
+                res.set_content(R"({"error": "No valid data for calibration"})", "application/json");
+                return;
+            }
+
+            res.set_content(result.dump(), "application/json");
+            return;
+        }
+
+        // === 分析模式（原有逻辑） ===
+        auto modes = body["modes"].get<std::vector<String>>();
+        double lambda = body.value("lambda", 0.5);
+        double threshold_multiplier = body.value("threshold_multiplier", 4.0);
+        size_t min_obs = body.value("min_obs", 30);
+        double ewma_decay = body.value("ewma_decay", 0.94);
 
         // 解析频率
         BarFreq target_freq = BarFreq::Day;

@@ -9,6 +9,7 @@
         <!-- 节点头部 -->
         <StrategyNodeHeader
             :label="node.data.label"
+            :node-type="nodeType"
             :icon="iconType"
             :header-class="headerClass"
             :icon-class="iconClass"
@@ -286,7 +287,7 @@ const nodeType = computed(() => props.node.data.nodeType)
 const nodeClass = computed(() => `node-type-${nodeType.value}`)
 const headerClass = computed(() => `header-type-${nodeType.value}`)
 const iconClass = computed(() => `icon-type-${nodeType.value}`)
-const iconType = computed(() => getNodeIcon(props.node.data.label))
+const iconType = computed(() => getNodeIcon(nodeType.value))
 
 // 指标节点的多输入槽位
 function getFunctionInputSlots() {

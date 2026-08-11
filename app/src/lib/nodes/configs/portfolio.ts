@@ -10,6 +10,7 @@ export const portfolioNode: NodeRegistryEntry = {
   label: '投资组合',
   nodeType: 'portfolio',
   category: 'execution',
+  icon: 'fas fa-layer-group',
   description: '管理多标的投资组合，可配置仓位比例、sizing 方法和约束条件。',
   inputs: ['signal'],
   outputs: ['signal'],

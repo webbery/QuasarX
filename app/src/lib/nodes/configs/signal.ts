@@ -10,6 +10,7 @@ export const signalGenerationNode: NodeRegistryEntry = {
   label: '交易信号生成',
   nodeType: 'signal',
   category: 'signal',
+  icon: 'fas fa-bolt',
   description: '根据指标或公式生成买卖信号。支持自定义买入/卖出条件表达式。',
   inputs: ['indicator', 'timeseries'],
   outputs: ['signal'],

@@ -10,6 +10,7 @@ export const executionNode: NodeRegistryEntry = {
   label: '执行交易',
   nodeType: 'execution',
   category: 'execution',
+  icon: 'fas fa-exchange-alt',
   description: '接收交易信号后执行实际下单操作。可配置佣金费率、印花税、滑点等交易成本。',
   inputs: ['signal'],
   outputs: [],

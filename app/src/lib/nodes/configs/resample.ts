@@ -13,6 +13,7 @@ export const resampleNode: NodeRegistryEntry = {
   label: '数据重采样',
   nodeType: 'resample',
   category: 'process',
+  icon: 'fas fa-compress-arrows-alt',
   description: '将高频数据重采样为低频（如分钟→小时），支持 OHLCV 标准聚合。适用于多频率策略（如 1min 交易 + 1h 趋势判断）。',
   inputs: ['timeseries'],
   outputs: ['resampled'],

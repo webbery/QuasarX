@@ -10,6 +10,7 @@ export const factorCombineNode: NodeRegistryEntry = {
   label: '因子合成',
   nodeType: 'factor_combine',
   category: 'process',
+  icon: 'fas fa-object-group',
   description: '将多个因子加权合成为综合得分（composite_score）。支持等权平均和自定义权重。输出供 SignalNode 使用。',
   inputs: ['indicator', 'timeseries'],
   outputs: ['composite_score'],

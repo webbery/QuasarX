@@ -12,6 +12,7 @@ export const hmmNode: NodeRegistryEntry = {
   label: 'HMM 市场状态识别',
   nodeType: 'hmm',
   category: 'causal',
+  icon: 'fas fa-project-diagram',
   description: '隐马尔可夫模型，用于推断市场状态（牛/熊/震荡...）。离线批量训练，diag 协方差。输出状态编号、概率分布、转移矩阵和期望持续时间。',
   inputs: ['timeseries'],
   outputs: ['hmm_state', 'hmm_probs', 'hmm_transition', 'hmm_duration'],

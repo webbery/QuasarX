@@ -1246,7 +1246,12 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             if (maxBars == 0) {
                 WARN("[StartDaily] No historical data for any symbol in strategy {}", strategy);
                 result["status"] = "error";
-                result["error"] = "no historical data in QuoteDB";
+                String syms;
+                for (auto sym : symbolVec) {
+                    if (!syms.empty()) syms += ", ";
+                    syms += get_symbol(sym);
+                }
+                result["error"] = "no historical data in QuoteDB: " + syms;
                 exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
                 exchangeMgr->StopRequiredExchanges(requiredSources);
                 if (onComplete) onComplete(result);

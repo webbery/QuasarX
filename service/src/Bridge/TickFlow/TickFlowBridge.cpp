@@ -12,6 +12,7 @@
 #include "json.hpp"
 #include "server.h"
 #include <algorithm>
+#include <cctype>
 #include <format>
 #include <deque>
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
@@ -570,7 +571,18 @@ void TickFlowBridge::FetchQuotes() {
     int offset = upper - _offset;
     if (offset <= 0) return;
 
-    Vector<String> batch(symbols.begin() + _offset, symbols.begin() + upper);
+    Vector<String> batch;
+    batch.reserve(upper - _offset);
+    for (int i = _offset; i < upper; ++i) {
+        const auto& s = symbols[i];
+        // TickFlow API 要求 600000.SH 格式，内部存储为 sh.600000
+        // 检查是否已是 TickFlow 格式（数字开头），否则转换
+        if (!s.empty() && std::isdigit(s[0])) {
+            batch.push_back(s);
+        } else {
+            batch.push_back(SymbolToTickFlow(to_symbol(s)));
+        }
+    }
     _offset = upper;
 
     // 构建请求体
@@ -585,7 +597,7 @@ void TickFlowBridge::FetchQuotes() {
         { "x-api-key", _api_key }
     };
 
-    INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
+    DEBUG_INFO("[TickFlow] POST /v1/quotes | key_prefix={} | symbols={}",
                 _api_key.empty() ? "(empty)" : _api_key.substr(0, 8), body_str);
 
     auto res = _http_client->Post("/v1/quotes", headers, body_str.c_str(), body_str.size(), "application/json");
@@ -608,7 +620,7 @@ void TickFlowBridge::FetchQuotes() {
         return;
     }
 
-    INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
+    DEBUG_INFO("[TickFlow] Response: status={} body_len={}", res->status, res->body.size());
     if (res->status != 200) {
         INFO("[TickFlow] Response body: {}", res->body);
     }
@@ -635,7 +647,13 @@ void TickFlowBridge::ParseResponse(const String& response) {
     try {
         auto json = nlohmann::json::parse(response);
         if (!json.contains("data") || !json["data"].is_array()) {
-            WARN("Invalid response format");
+            // API 可能返回错误信息（如 FREE_TIER_RESTRICTED），输出具体原因
+            if (json.contains("code")) {
+                WARN("[TickFlow] API error: code={}, message={}",
+                     json.value("code", ""), json.value("message", ""));
+            } else {
+                WARN("[TickFlow] Invalid response format: {}", response.substr(0, 200));
+            }
             return;
         }
 

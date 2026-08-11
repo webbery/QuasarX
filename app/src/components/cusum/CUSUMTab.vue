@@ -24,35 +24,57 @@
         />
       </div>
 
+      <!-- 模式切换 -->
       <div class="control-group">
-        <label>CUSUM 参数：</label>
-        <span class="param-label">λ</span>
-        <input type="number" v-model.number="lambda" class="select-small" step="0.1" min="0.1" max="2.0" />
-        <span class="param-label">h</span>
-        <input type="number" v-model.number="threshold" class="select-small" step="0.5" min="1.0" max="10.0" />
-        <span class="param-label">min_obs</span>
-        <input type="number" v-model.number="minObs" class="select-small" step="5" min="10" max="100" />
+        <div class="mode-toggle">
+          <button :class="['mode-btn', { active: tabMode === 'analyze' }]" @click="tabMode = 'analyze'">分析</button>
+          <button :class="['mode-btn', { active: tabMode === 'calibrate' }]" @click="tabMode = 'calibrate'">校准</button>
+        </div>
       </div>
 
-      <div class="control-group">
-        <label>检测模式：</label>
-        <label class="checkbox-label">
-          <input type="checkbox" v-model="modes.mean" />
-          <span>均值漂移</span>
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" v-model="modes.variance" />
-          <span>方差漂移</span>
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" v-model="modes.correlation" />
-          <span>相关性变化</span>
-        </label>
-      </div>
+      <!-- 分析模式参数 -->
+      <template v-if="tabMode === 'analyze'">
+        <div class="control-group">
+          <label>CUSUM 参数：</label>
+          <span class="param-label">λ</span>
+          <input type="number" v-model.number="lambda" class="select-small" step="0.1" min="0.1" max="2.0" />
+          <span class="param-label">h</span>
+          <input type="number" v-model.number="threshold" class="select-small" step="0.5" min="1.0" max="10.0" />
+          <span class="param-label">min_obs</span>
+          <input type="number" v-model.number="minObs" class="select-small" step="5" min="10" max="100" />
+        </div>
+
+        <div class="control-group">
+          <label>检测模式：</label>
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="modes.mean" />
+            <span>均值漂移</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="modes.variance" />
+            <span>方差漂移</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="modes.correlation" />
+            <span>相关性变化</span>
+          </label>
+        </div>
+      </template>
+
+      <!-- 校准模式参数 -->
+      <template v-if="tabMode === 'calibrate'">
+        <div class="control-group">
+          <label>校准参数：</label>
+          <span class="param-label">δ (σ倍数)</span>
+          <input type="number" v-model.number="detectableShift" class="select-small" step="0.1" min="0.1" max="3.0" />
+          <span class="param-label">目标 ARL₀</span>
+          <input type="number" v-model.number="targetArl0" class="select-small" step="100" min="50" max="5000" style="width:70px" />
+        </div>
+      </template>
 
       <div class="control-group actions">
-        <button class="btn btn-primary btn-small" @click="runAnalysis" :disabled="isLoading || checkedSymbols.size === 0">
-          {{ isLoading ? '分析中...' : '开始分析' }}
+        <button class="btn btn-primary btn-small" @click="tabMode === 'analyze' ? runAnalysis() : runCalibration()" :disabled="isLoading || checkedSymbols.size === 0">
+          {{ isLoading ? (tabMode === 'analyze' ? '分析中...' : '校准中...') : (tabMode === 'analyze' ? '开始分析' : '自动校准') }}
         </button>
       </div>
     </header>
@@ -60,17 +82,87 @@
     <!-- 加载状态 -->
     <div v-if="isLoading" class="loading-state">
       <div class="spinner"></div>
-      <span>CUSUM 检测中，请稍候...</span>
+      <span>{{ tabMode === 'analyze' ? 'CUSUM 检测中，请稍候...' : 'Monte Carlo 校准中，请稍候...' }}</span>
     </div>
 
     <!-- 空状态 -->
-    <div v-else-if="!hasResult" class="empty-state">
-      <div class="empty-icon">🔍</div>
-      <div class="empty-text">配置参数后点击"开始分析"</div>
-      <div class="empty-hint">支持检测均值漂移、方差漂移、相关性结构变化</div>
+    <div v-else-if="!hasResult && !hasCalibResult" class="empty-state">
+      <div class="empty-icon">{{ tabMode === 'analyze' ? '🔍' : '⚙️' }}</div>
+      <div class="empty-text">{{ tabMode === 'analyze' ? '配置参数后点击"开始分析"' : '配置校准参数后点击"自动校准"' }}</div>
+      <div class="empty-hint">{{ tabMode === 'analyze' ? '支持检测均值漂移、方差漂移、相关性结构变化' : '基于统计检验自动确定 μ/σ/λ/H/min_obs 参数' }}</div>
     </div>
 
-    <!-- 结果展示区 -->
+    <!-- 校准结果 -->
+    <div v-if="hasCalibResult" class="results-container">
+      <div class="result-section">
+        <div class="section-header">
+          <h3>⚙️ 参数校准结果</h3>
+          <span class="status-badge normal">
+            {{ calibResult.calibrations?.length || 0 }} 个标的已校准
+          </span>
+        </div>
+        <div class="calib-table-wrapper">
+          <table class="calib-table">
+            <thead>
+              <tr>
+                <th>标的</th>
+                <th>μ (均值)</th>
+                <th>σ (波动率)</th>
+                <th>λ</th>
+                <th>H</th>
+                <th>min_obs</th>
+                <th>实际 ARL₀</th>
+                <th>σ CV</th>
+                <th>数据量</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="cal in calibResult.calibrations" :key="cal.symbol">
+                <td class="sym-cell">{{ cal.symbol }}</td>
+                <td>{{ fmt(cal.mu, 6) }}</td>
+                <td>{{ fmt(cal.sigma, 4) }}</td>
+                <td>{{ fmt(cal.lambda, 3) }}</td>
+                <td class="highlight">{{ fmt(cal.H, 2) }}</td>
+                <td>{{ cal.min_obs }}</td>
+                <td>{{ Math.round(cal.actual_arl0) }}</td>
+                <td :class="{ warn: cal.sigma_cv > 0.2 }">{{ (cal.sigma_cv * 100).toFixed(1) }}%</td>
+                <td>{{ cal.data_points }}</td>
+                <td>
+                  <button class="btn-apply" @click="applyCalibration(cal)" title="应用此参数到分析模式">
+                    应用 →
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- σ 置信区间 -->
+        <div class="calib-diagnostics">
+          <div v-for="cal in calibResult.calibrations" :key="cal.symbol + '_ci'" class="ci-row">
+            <span class="ci-label">{{ cal.symbol }}：</span>
+            <span>σ 95% CI [{{ fmt(cal.sigma_ci_lower, 4) }}, {{ fmt(cal.sigma_ci_upper, 4) }}]</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 诊断图表 -->
+      <div v-if="selectedCalibData" class="result-section">
+        <div class="section-header">
+          <h3>📉 诊断图表</h3>
+          <select v-model="calibChartSymbol" class="symbol-select">
+            <option v-for="cal in calibResult.calibrations" :key="cal.symbol" :value="cal.symbol">{{ cal.symbol }}</option>
+          </select>
+        </div>
+        <CalibrationChart
+          :data="selectedCalibData"
+          :target-arl0="targetArl0"
+          :lambda="selectedCalibData?.lambda ?? 0.5"
+        />
+      </div>
+    </div>
+
+    <!-- 分析结果 -->
     <div v-if="hasResult" class="results-container">
       <!-- 1. 均值漂移检测 -->
       <div class="result-section">
@@ -148,6 +240,7 @@ import MeanShiftChart from './charts/MeanShiftChart.vue'
 import VarianceShiftChart from './charts/VarianceShiftChart.vue'
 import CorrelationChart from './charts/CorrelationChart.vue'
 import TimelineChart from './charts/TimelineChart.vue'
+import CalibrationChart from './charts/CalibrationChart.vue'
 import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
 
 interface Security {
@@ -228,6 +321,33 @@ const modes = reactive({
 const loading = ref(false)
 const hasResult = ref(false)
 const result = ref<any>({})
+
+// === 校准模式状态 ===
+const tabMode = ref<'analyze' | 'calibrate'>('analyze')
+const detectableShift = ref(0.5)
+const targetArl0 = ref(500)
+const hasCalibResult = ref(false)
+const calibResult = ref<any>({})
+const calibChartSymbol = ref('')
+
+const selectedCalibData = computed(() => {
+  if (!calibResult.value.calibrations?.length) return null
+  const cal = calibResult.value.calibrations.find((c: any) => c.symbol === calibChartSymbol.value)
+    || calibResult.value.calibrations[0]
+  return cal
+})
+
+function fmt(v: number, digits: number): string {
+  if (v == null || isNaN(v)) return '-'
+  return v.toFixed(digits)
+}
+
+function applyCalibration(cal: any) {
+  lambda.value = cal.lambda
+  threshold.value = cal.H
+  minObs.value = cal.min_obs
+  tabMode.value = 'analyze'
+}
 
 // 合并加载状态
 const isLoading = computed(() => securitiesLoading.value || loading.value)
@@ -320,6 +440,49 @@ async function runAnalysis() {
   } catch (err: any) {
     console.error('[CUSUMTab] Analysis error:', err)
     alert(`分析失败：${err.message}`)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function runCalibration() {
+  if (checkedSymbols.value.size === 0) {
+    alert('请先选择标的池')
+    return
+  }
+  if (!dateRange.value) {
+    alert('请选择参考期时间范围')
+    return
+  }
+
+  loading.value = true
+  hasCalibResult.value = false
+
+  try {
+    const requestBody = {
+      action: 'calibrate',
+      symbols: Array.from(checkedSymbols.value),
+      start: dateRange.value[0],
+      end: dateRange.value[1],
+      detectable_shift_sigma: detectableShift.value,
+      target_arl0: targetArl0.value,
+      freq: '1d',
+    }
+
+    console.log('[CUSUMTab] Calibration request:', requestBody)
+    const response = await axios.post('/v0/analysis/cusum', requestBody)
+    console.log('[CUSUMTab] Calibration response:', response.data)
+
+    calibResult.value = response.data
+    hasCalibResult.value = true
+
+    // 默认选中第一个标的的图表
+    if (response.data.calibrations?.length) {
+      calibChartSymbol.value = response.data.calibrations[0].symbol
+    }
+  } catch (err: any) {
+    console.error('[CUSUMTab] Calibration error:', err)
+    alert(`校准失败：${err.message}`)
   } finally {
     loading.value = false
   }
@@ -587,5 +750,117 @@ function resetForm() {
   background: rgba(255, 23, 68, 0.2);
   color: #ff1744;
   border: 1px solid #ff1744;
+}
+
+/* === 模式切换 === */
+
+.mode-toggle {
+  display: flex;
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mode-btn {
+  padding: 4px 12px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:not(:last-child) {
+  border-right: 1px solid rgba(74, 85, 104, 0.3);
+}
+
+.mode-btn.active {
+  background: #2962ff;
+  color: #fff;
+  font-weight: 600;
+}
+
+.mode-btn:hover:not(.active) {
+  background: rgba(41, 98, 255, 0.1);
+  color: #bbb;
+}
+
+/* === 校准结果表格 === */
+
+.calib-table-wrapper {
+  overflow-x: auto;
+  padding: 0 4px;
+}
+
+.calib-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.calib-table th {
+  padding: 10px 12px;
+  text-align: left;
+  color: #888;
+  font-weight: 500;
+  border-bottom: 1px solid #2a3449;
+  white-space: nowrap;
+  background: rgba(42, 52, 77, 0.3);
+}
+
+.calib-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(42, 52, 77, 0.5);
+  white-space: nowrap;
+}
+
+.calib-table .sym-cell {
+  font-weight: 600;
+  color: #2962ff;
+}
+
+.calib-table .highlight {
+  color: #ff6d00;
+  font-weight: 600;
+}
+
+.calib-table .warn {
+  color: #ff1744;
+}
+
+.btn-apply {
+  padding: 2px 8px;
+  background: rgba(41, 98, 255, 0.15);
+  border: 1px solid rgba(41, 98, 255, 0.3);
+  border-radius: 3px;
+  color: #2962ff;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.btn-apply:hover {
+  background: rgba(41, 98, 255, 0.3);
+  border-color: #2962ff;
+}
+
+.calib-diagnostics {
+  padding: 12px 20px;
+  border-top: 1px solid #2a3449;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.ci-row {
+  font-size: 11px;
+  color: #888;
+}
+
+.ci-label {
+  color: #aaa;
+  font-weight: 500;
 }
 </style>

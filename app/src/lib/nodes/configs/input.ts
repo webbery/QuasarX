@@ -10,6 +10,7 @@ export const dataSourceNode: NodeRegistryEntry = {
   label: '数据输入',
   nodeType: 'input',
   category: 'input',
+  icon: 'fas fa-database',
   description: '从外部获取行情数据，作为策略的基础输入。支持股票、期货，可配置 OHLCV 字段映射和缺失值处理。',
   inputs: [],
   outputs: ['ohlcv'],

@@ -964,3 +964,423 @@ if __name__ == "__main__":
     print(f"   Last change index: {result['last_change_index']}")
     
     print("\n=== Validation complete (run pytest for full tests) ===")
+
+
+# ============================================================
+# 测试类：CUSUM 自适应参数校准（合成数据 + Python 对比）
+# ============================================================
+
+class CUSUMCalibratorRef:
+    """CUSUM 参数自动校准器（Python 参考实现）"""
+
+    def __init__(self, seed=42):
+        self.rng = np.random.RandomState(seed)
+
+    def calibrate(self, returns, detectable_shift_sigma=0.5, target_arl0=500.0,
+                  mc_simulations=2000, bootstrap_iters=500):
+        returns = np.array(returns)
+        n = len(returns)
+
+        mu = float(np.mean(returns))
+        sigma = float(np.std(returns, ddof=0))
+        if sigma < 1e-12:
+            sigma = 1.0
+
+        lambda_ = detectable_shift_sigma / 2.0
+        H = self._find_h_for_arl0(target_arl0, lambda_, mc_simulations=mc_simulations)
+        actual_arl0 = self._simulate_arl0(H, lambda_, mc_simulations=mc_simulations)
+
+        min_obs, bs_sizes, bs_cvs = self._bootstrap_min_obs(
+            returns, cv_threshold=0.15, bootstrap_iters=bootstrap_iters)
+
+        # Bootstrap sigma CI
+        sigma_samples = []
+        for _ in range(bootstrap_iters):
+            sample = self.rng.choice(returns, size=n, replace=True)
+            sigma_samples.append(float(np.std(sample, ddof=0)))
+        sigma_samples.sort()
+        sigma_ci_lower = sigma_samples[int(bootstrap_iters * 0.025)]
+        sigma_ci_upper = sigma_samples[int(bootstrap_iters * 0.975)]
+        sigma_mean = np.mean(sigma_samples)
+        sigma_cv = float(np.std(sigma_samples) / sigma_mean) if sigma_mean > 1e-12 else 0.0
+
+        return {
+            'mu': mu, 'sigma': sigma, 'lambda': lambda_, 'H': H,
+            'min_obs': min_obs, 'actual_arl0': actual_arl0,
+            'sigma_ci_lower': sigma_ci_lower, 'sigma_ci_upper': sigma_ci_upper,
+            'sigma_cv': sigma_cv,
+        }
+
+    def _simulate_arl0(self, H, lambda_, simulations=2000, max_length=10000):
+        k = lambda_
+        total = 0
+        for _ in range(simulations):
+            s_pos = s_neg = 0.0
+            triggered_at = max_length
+            for t in range(max_length):
+                z = self.rng.normal(0, 1)
+                s_pos = max(0.0, s_pos + z - k)
+                s_neg = max(0.0, s_neg - z - k)
+                if max(s_pos, s_neg) > H:
+                    triggered_at = t + 1
+                    break
+            total += triggered_at
+        return total / simulations
+
+    def _find_h_for_arl0(self, target_arl0, lambda_, tol=0.05, mc_simulations=2000):
+        h_low, h_high = 0.1, 12.0
+        for _ in range(25):
+            h_mid = (h_low + h_high) / 2.0
+            arl = self._simulate_arl0(h_mid, lambda_, mc_simulations)
+            if abs(arl - target_arl0) / target_arl0 < tol:
+                return h_mid
+            if arl < target_arl0:
+                h_low = h_mid
+            else:
+                h_high = h_mid
+        return (h_low + h_high) / 2.0
+
+    def _bootstrap_min_obs(self, returns, cv_threshold=0.15, bootstrap_iters=500):
+        n = len(returns)
+        step = max(1, n // 20)
+        sizes, cvs = [], []
+        min_obs = n
+
+        for test_n in range(10, n + 1, step):
+            sigma_ests = []
+            for _ in range(bootstrap_iters):
+                sample = self.rng.choice(returns, size=test_n, replace=True)
+                sigma_ests.append(float(np.std(sample, ddof=0)))
+            mean_s = np.mean(sigma_ests)
+            cv = float(np.std(sigma_ests) / mean_s) if mean_s > 1e-12 else 0.0
+            sizes.append(test_n)
+            cvs.append(cv)
+            if cv < cv_threshold and test_n < min_obs:
+                min_obs = test_n
+                break
+
+        min_obs = ((min_obs + 4) // 5) * 5
+        return max(min_obs, 10), sizes, cvs
+
+
+def _generate_synthetic_prices(mu=0.0003, sigma=0.02, n=250, start_price=10.0, seed=42):
+    """从几何布朗运动生成合成收盘价序列"""
+    rng = np.random.RandomState(seed)
+    log_returns = rng.normal(mu, sigma, n)
+    prices = [start_price]
+    for r in log_returns:
+        prices.append(prices[-1] * (1 + r))
+    return prices
+
+
+def _prices_to_csv_lines(prices, start_date="2024-01-02"):
+    """将价格序列转为 CUSUM API 可导入的 CSV 行格式"""
+    lines = ["datetime,open,close,high,low,volume,turnover"]
+    from datetime import datetime, timedelta
+    dt = datetime.strptime(start_date, "%Y-%m-%d")
+    for i, p in enumerate(prices):
+        d = (dt + timedelta(days=i)).strftime("%Y-%m-%d")
+        # open/close/high/low 都用同一价格（简化，不影响收益率计算）
+        lines.append(f"{d},{p},{p},{p},{p},1000,{p * 1000}")
+    return lines
+
+
+class TestCUSUMCalibration:
+    """
+    CUSUM 自适应参数校准测试（合成数据 + Python 对比）。
+
+    测试流程：
+    1. Python 生成合成价格序列 → 导入 DuckDB
+    2. 调用 POST /v0/analysis/cusum { action: "calibrate" }
+    3. 对比 C++ 返回的 μ/σ/λ/H/min_obs 与 Python 参考实现
+    """
+
+    # 校准参数
+    DETECTABLE_SHIFT = 0.5
+    TARGET_ARL0 = 500
+    MC_SIMULATIONS = 2000  # 测试用较少次数，加速
+    BOOTSTRAP_ITERS = 500
+
+    # 合成数据标的
+    CALIB_SYMBOLS = {
+        "normal": {"symbol": "800010.sz", "mu": 0.0003, "sigma": 0.02, "n": 250, "seed": 42},
+        "high_vol": {"symbol": "800011.sz", "mu": 0.0001, "sigma": 0.05, "n": 250, "seed": 43},
+        "low_vol": {"symbol": "800012.sz", "mu": 0.0005, "sigma": 0.008, "n": 250, "seed": 44},
+    }
+
+    @pytest.fixture(autouse=True)
+    def setup(self, auth_token):
+        self.token = auth_token
+        self.headers = {"Authorization": self.token}
+        self._imported = []
+        yield
+        self._cleanup()
+
+    def _import_synthetic_data(self, symbol, prices):
+        """导入合成价格数据到 DuckDB"""
+        lines = _prices_to_csv_lines(prices)
+        resp = requests.post(f"{BASE_URL}/v0/quote/data", json={
+            "action": "import",
+            "table": "stock_1d",
+            "symbol": symbol,
+            "data": lines,
+            "data_hfq": lines,
+        }, headers=self.headers, verify=VERIFY_SSL)
+        assert resp.status_code == 200, f"导入合成数据失败: {resp.text}"
+        self._imported.append(symbol)
+
+    def _cleanup(self):
+        """清理导入的合成数据"""
+        for symbol in self._imported:
+            try:
+                requests.delete(f"{BASE_URL}/v0/quote", params={
+                    "table": "stock_1d"
+                }, headers=self.headers, verify=VERIFY_SSL)
+            except Exception:
+                pass
+
+    def _calibrate_via_api(self, symbols, start="2024-01-02", end="2024-12-31",
+                           detectable_shift=0.5, target_arl0=500):
+        """调用校准 API"""
+        resp = requests.post(f"{BASE_URL}/v0/analysis/cusum", json={
+            "action": "calibrate",
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "detectable_shift_sigma": detectable_shift,
+            "target_arl0": target_arl0,
+            "mc_simulations": self.MC_SIMULATIONS,
+            "bootstrap_iters": self.BOOTSTRAP_ITERS,
+            "freq": "1d",
+        }, headers=self.headers, verify=VERIFY_SSL, timeout=120)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_cal_for_symbol(self, result, symbol):
+        """从校准结果中提取指定标的的数据"""
+        for cal in result.get("calibrations", []):
+            if cal["symbol"] == symbol:
+                return cal
+        return None
+
+    # --- 基本功能测试 ---
+
+    def test_calibrate_returns_valid_structure(self):
+        """校准 API 应返回正确的数据结构"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        result = self._calibrate_via_api([cfg["symbol"]])
+
+        assert "calibrations" in result
+        assert len(result["calibrations"]) == 1
+
+        cal = result["calibrations"][0]
+        required_fields = ["symbol", "mu", "sigma", "lambda", "H", "min_obs",
+                           "sigma_ci_lower", "sigma_ci_upper", "sigma_cv",
+                           "actual_arl0", "arl_curve_H", "arl_curve_arl",
+                           "bootstrap_sizes", "bootstrap_cv", "data_points"]
+        for field in required_fields:
+            assert field in cal, f"缺少字段: {field}"
+
+    def test_calibrate_mu_sigma_accuracy(self):
+        """μ 和 σ 应与合成数据的参数接近"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        true_mu, true_sigma = cfg["mu"], cfg["sigma"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(result, cfg["symbol"])
+        assert cal is not None
+
+        # μ 容差：250 个样本，SE ≈ sigma/sqrt(N) ≈ 0.02/15.8 ≈ 0.0013，5 倍容差
+        assert abs(cal["mu"] - true_mu) < true_sigma / np.sqrt(cfg["n"]) * 5, \
+            f"μ 偏差过大: got={cal['mu']:.6f}, expected≈{true_mu}"
+
+        # σ 容差：10%
+        assert abs(cal["sigma"] - true_sigma) / true_sigma < 0.10, \
+            f"σ 偏差过大: got={cal['sigma']:.6f}, expected≈{true_sigma}"
+
+    def test_calibrate_lambda_formula(self):
+        """λ = detectable_shift_sigma / 2"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        for shift in [0.3, 0.5, 1.0]:
+            result = self._calibrate_via_api([cfg["symbol"]], detectable_shift=shift)
+            cal = self._get_cal_for_symbol(result, cfg["symbol"])
+            expected_lambda = shift / 2.0
+            assert abs(cal["lambda"] - expected_lambda) < 1e-6, \
+                f"shift={shift}: λ={cal['lambda']}, expected={expected_lambda}"
+
+    # --- C++ vs Python 对比 ---
+
+    def test_cpp_python_mu_sigma_match(self):
+        """C++ 和 Python 的 μ/σ 应一致（同一数据集）"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        # Python 参考
+        py_cal = CUSUMCalibratorRef(seed=42)
+        py_result = py_cal.calibrate(returns, self.DETECTABLE_SHIFT, self.TARGET_ARL0,
+                                     self.MC_SIMULATIONS, self.BOOTSTRAP_ITERS)
+
+        # C++ API
+        cpp_result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(cpp_result, cfg["symbol"])
+
+        # μ 应完全一致（都是样本均值）
+        assert abs(cal["mu"] - py_result["mu"]) < 1e-10, \
+            f"μ 不一致: C++={cal['mu']}, Python={py_result['mu']}"
+
+        # σ 应完全一致（都是总体标准差）
+        assert abs(cal["sigma"] - py_result["sigma"]) < 1e-10, \
+            f"σ 不一致: C++={cal['sigma']}, Python={py_result['sigma']}"
+
+    def test_cpp_python_H_close(self):
+        """C++ 和 Python 的 H 应接近（MC 模拟有随机性，容差 15%）"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        py_cal = CUSUMCalibratorRef(seed=42)
+        py_result = py_cal.calibrate(returns, self.DETECTABLE_SHIFT, self.TARGET_ARL0,
+                                     self.MC_SIMULATIONS, self.BOOTSTRAP_ITERS)
+
+        cpp_result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(cpp_result, cfg["symbol"])
+
+        # H 容差 15%（MC 模拟的随机性）
+        rel_err = abs(cal["H"] - py_result["H"]) / py_result["H"]
+        assert rel_err < 0.15, \
+            f"H 差异过大: C++={cal['H']:.3f}, Python={py_result['H']:.3f}, rel_err={rel_err:.2%}"
+
+    def test_cpp_python_min_obs_close(self):
+        """C++ 和 Python 的 min_obs 应接近（容差 20 或 20%，取大值）"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        py_cal = CUSUMCalibratorRef(seed=42)
+        py_result = py_cal.calibrate(returns, self.DETECTABLE_SHIFT, self.TARGET_ARL0,
+                                     self.MC_SIMULATIONS, self.BOOTSTRAP_ITERS)
+
+        cpp_result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(cpp_result, cfg["symbol"])
+
+        diff = abs(cal["min_obs"] - py_result["min_obs"])
+        tolerance = max(20, py_result["min_obs"] * 0.2)
+        assert diff <= tolerance, \
+            f"min_obs 差异过大: C++={cal['min_obs']}, Python={py_result['min_obs']}, diff={diff}"
+
+    # --- 多标的独立校准 ---
+
+    def test_multi_symbol_independent_calibration(self):
+        """多标的应独立校准，各自得到不同的 μ/σ"""
+        symbols_data = {}
+        for name, cfg in self.CALIB_SYMBOLS.items():
+            prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+            symbols_data[cfg["symbol"]] = {"prices": prices, "cfg": cfg}
+            self._import_synthetic_data(cfg["symbol"], prices)
+
+        all_symbols = [cfg["symbol"] for cfg in self.CALIB_SYMBOLS.values()]
+        result = self._calibrate_via_api(all_symbols)
+
+        assert len(result["calibrations"]) == len(all_symbols), \
+            f"应返回 {len(all_symbols)} 个校准结果，实际 {len(result['calibrations'])}"
+
+        # 不同波动率的标的，σ 应有明显差异
+        sigmas = {}
+        for cal in result["calibrations"]:
+            sigmas[cal["symbol"]] = cal["sigma"]
+
+        # high_vol (σ≈0.05) 应 > normal (σ≈0.02) > low_vol (σ≈0.008)
+        high_vol_sigma = sigmas.get("800011.sz", 0)
+        normal_sigma = sigmas.get("800010.sz", 0)
+        low_vol_sigma = sigmas.get("800012.sz", 0)
+        assert high_vol_sigma > normal_sigma > low_vol_sigma, \
+            f"σ 排序错误: high={high_vol_sigma:.4f}, normal={normal_sigma:.4f}, low={low_vol_sigma:.4f}"
+
+    # --- 诊断数据 ---
+
+    def test_arl_curve_monotonic(self):
+        """ARL-H 曲线应单调递增"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(result, cfg["symbol"])
+
+        arl_curve = list(zip(cal["arl_curve_H"], cal["arl_curve_arl"]))
+        for i in range(1, len(arl_curve)):
+            assert arl_curve[i][1] >= arl_curve[i-1][1] * 0.9, \
+                f"ARL 曲线非单调: H[{i-1}]={arl_curve[i-1][0]:.2f}→ARL={arl_curve[i-1][0]:.0f}, " \
+                f"H[{i}]={arl_curve[i][0]:.2f}→ARL={arl_curve[i][1]:.0f}"
+
+    def test_bootstrap_cv_decreasing(self):
+        """Bootstrap CV 应随样本量增大而递减"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(result, cfg["symbol"])
+
+        cvs = cal["bootstrap_cv"]
+        # 至少最后一个 CV 应 < 第一个（趋势递减）
+        assert cvs[-1] < cvs[0], \
+            f"CV 未递减: first={cvs[0]:.3f}, last={cvs[-1]:.3f}"
+
+    def test_sigma_ci_contains_estimate(self):
+        """σ 的 Bootstrap 95% CI 应包含点估计值"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        result = self._calibrate_via_api([cfg["symbol"]])
+        cal = self._get_cal_for_symbol(result, cfg["symbol"])
+
+        assert cal["sigma_ci_lower"] <= cal["sigma"] <= cal["sigma_ci_upper"], \
+            f"σ 不在 CI 内: σ={cal['sigma']:.6f}, CI=[{cal['sigma_ci_lower']:.6f}, {cal['sigma_ci_upper']:.6f}]"
+
+    # --- 边界条件 ---
+
+    def test_insufficient_data_returns_error(self):
+        """数据不足时应返回错误"""
+        # 导入只有 5 天的数据（少于 min_obs 最低要求）
+        symbol = "800013.sz"
+        prices = _generate_synthetic_prices(n=5, seed=99)
+        self._import_synthetic_data(symbol, prices)
+
+        resp = requests.post(f"{BASE_URL}/v0/analysis/cusum", json={
+            "action": "calibrate",
+            "symbols": [symbol],
+            "start": "2024-01-02",
+            "end": "2024-12-31",
+            "freq": "1d",
+        }, headers=self.headers, verify=VERIFY_SSL, timeout=30)
+
+        # 应返回 404（无有效数据）
+        assert resp.status_code == 404, \
+            f"数据不足应返回 404，实际 {resp.status_code}: {resp.text}"
+
+    def test_actual_arl0_close_to_target(self):
+        """实际 ARL₀ 应接近目标值（MC 容差 30%）"""
+        cfg = self.CALIB_SYMBOLS["normal"]
+        prices = _generate_synthetic_prices(**{k: v for k, v in cfg.items() if k != "symbol"})
+        self._import_synthetic_data(cfg["symbol"], prices)
+
+        result = self._calibrate_via_api([cfg["symbol"]], target_arl0=self.TARGET_ARL0)
+        cal = self._get_cal_for_symbol(result, cfg["symbol"])
+
+        rel_err = abs(cal["actual_arl0"] - self.TARGET_ARL0) / self.TARGET_ARL0
+        assert rel_err < 0.30, \
+            f"实际 ARL₀ 偏离目标: actual={cal['actual_arl0']:.0f}, target={self.TARGET_ARL0}, err={rel_err:.1%}"

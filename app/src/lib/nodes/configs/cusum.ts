@@ -13,6 +13,7 @@ export const cusumNode: NodeRegistryEntry = {
   label: 'CUSUM 变点检测',
   nodeType: 'cusum',
   category: 'utility',
+  icon: 'fas fa-chart-area',
   description: '累积和变点检测节点。检测收益率序列的结构性变化（regime change），支持趋势跟踪、均值反转、逐资产检测和系统性风险共识模式。输出信号到 DataContext 供 SignalNode 使用。',
   inputs: ['return'],
   outputs: ['signal', 'triggered', 's_pos', 's_neg', 'drift', 'change_points'],

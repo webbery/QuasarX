@@ -105,17 +105,18 @@ export function convertKeysToLabels(params: Record<string, any>): Record<string,
   return result
 }
 
-/** 获取节点图标（使用分类默认图标） */
-export function getNodeIcon(label: string): string {
-  for (const n of getAllNodes()) {
-    if (n.label === label) return CATEGORY_ICONS[n.category] || 'fas fa-cube'
-  }
+/** 获取节点图标（按 nodeType 查找，优先节点自定义 icon，回退到分类默认） */
+export function getNodeIcon(nodeType: string): string {
+  const n = getAllNodes().find(n => n.nodeType === nodeType)
+  if (n?.icon) return n.icon
+  if (n) return CATEGORY_ICONS[n.category] || 'fas fa-cube'
   return 'fas fa-cube'
 }
 
 /** 获取节点图标（按节点 ID 查找） */
 export function getNodeIconById(id: string): string {
   const n = registry.get(id)
+  if (n?.icon) return n.icon
   return n ? CATEGORY_ICONS[n.category] || 'fas fa-cube' : 'fas fa-cube'
 }
 

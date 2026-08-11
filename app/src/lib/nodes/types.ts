@@ -71,6 +71,7 @@ export interface NodeRegistryEntry {
   example: Record<string, any>  // 典型 params 示例（用于 AI 生成策略图）
 
   // 视觉配置（可选，不设置则使用分类默认值）
+  icon?: string           // 节点图标（FontAwesome class），覆盖分类默认
   color?: string          // 节点边框/头部颜色
   hasInput?: boolean      // 是否有左侧输入连接点（默认 true）
   hasOutput?: boolean     // 是否有右侧输出连接点（默认 true）

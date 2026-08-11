@@ -10,6 +10,7 @@ export const spreadNode: NodeRegistryEntry = {
   label: '价差计算',
   nodeType: 'spread',
   category: 'process',
+  icon: 'fas fa-arrows-alt-h',
   description: '计算两个标的之间的价差，支持简单价差(A-B)、对数价差(ln(A)-ln(B))和滚动回归(A-β×B)。适用于配对交易。',
   inputs: ['timeseries', 'timeseries'],
   outputs: ['spread'],

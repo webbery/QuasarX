@@ -315,6 +315,7 @@ void StrategySubSystem::EnsureDailyReady() {
     // 内联 ResetDaily 逻辑
     _dailyReadySymbols.clear();
     _dailyExecutedStrategies.clear();
+    _dailyErrors.clear();
 }
 
 void StrategySubSystem::InitDailyExecution() {
@@ -350,6 +351,7 @@ void StrategySubSystem::ResetDaily() {
     std::lock_guard<std::mutex> lock(_dailyMtx);
     _dailyReadySymbols.clear();
     _dailyExecutedStrategies.clear();
+    _dailyErrors.clear();
     INFO("[DailyExecution] Reset daily state");
 }
 
@@ -414,6 +416,23 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy) {
             DailyDecisionJson::saveReport(dataDir, today, report);
             INFO("[DailyExecution] Strategy {} completed: {} decisions saved",
                  strategy, report.decisions.size());
+
+            // 收集错误 + 检查是否全部完成，统一发送通知
+            std::lock_guard<std::mutex> lock(_dailyMtx);
+            if (report.status == "error") {
+                String errMsg = strategy + ": " + decisions.value("error", "unknown error");
+                _dailyErrors.push_back(errMsg);
+            }
+
+            if (_dailyExecutedStrategies.size() >= _dailyStrategySymbols.size() && !_dailyErrors.empty()) {
+                String body = "[日终策略执行异常]\n\n";
+                for (auto& e : _dailyErrors) {
+                    body += "  - " + e + "\n";
+                }
+                body += "\n请检查行情数据是否已正确导入。";
+                if (_handle) _handle->SendEmail(body);
+                _dailyErrors.clear();
+            }
         });
 }
 

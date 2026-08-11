@@ -10,6 +10,7 @@ export const protectionNode: NodeRegistryEntry = {
   label: '风控保护',
   nodeType: 'protection',
   category: 'risk',
+  icon: 'fas fa-shield-alt',
   description: '合并止损、止盈、追踪止损和时间止损四种保护机制。可同时启用，取最先触发的一个。',
   inputs: ['signal'],
   outputs: ['signal'],

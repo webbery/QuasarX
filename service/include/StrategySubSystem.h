@@ -149,6 +149,7 @@ private:
     Map<String, Set<String>> _dailyStrategySymbols;  // 策略→依赖标的
     Set<String> _dailyReadySymbols;                   // 已就绪标的
     Set<String> _dailyExecutedStrategies;             // 已执行策略
+    Vector<String> _dailyErrors;                      // 日终执行失败信息
     bool _dailyInitialized = false;
     mutable std::mutex _dailyMtx;
 
