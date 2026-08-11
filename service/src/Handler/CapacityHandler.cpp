@@ -51,6 +51,9 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto constraints = params.value("constraints", nlohmann::json::object());
     double max_participation = constraints.value("max_participation_rate", 0.05);
 
+    // 日终策略：收盘流动性比例（默认 0 = 用全天 ADV，即日内模式）
+    double closing_liquidity_ratio = params.value("closing_liquidity_ratio", 0.0);
+
     // ── 2. 加载策略 JSON ─────────────────────────────────────
 
     String scripts_dir = "scripts";
@@ -235,7 +238,7 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     auto curve = scanner.scan(
         trades, adv_data, vol_data,
         initialCapital, min_capital, max_capital, steps,
-        eta, max_participation
+        eta, max_participation, closing_liquidity_ratio
     );
 
     // 基准指标（第一个点）
@@ -284,6 +287,7 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     result["baseline"] = baseline;
     result["capacity_curve"] = curve_json;
     result["summary"] = summary_json;
+    result["closing_liquidity_ratio"] = closing_liquidity_ratio;
 
     strategySys->ReleaseStrategy(strategyName);
 

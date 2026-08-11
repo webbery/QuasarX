@@ -16,7 +16,8 @@ Vector<CapacityPoint> Capacity::scan(
     double max_capital,
     int steps,
     double eta,
-    double max_participation)
+    double max_participation,
+    double closing_liquidity_ratio)
 {
     if (trades.empty() || base_capital <= 0) {
         return {};
@@ -51,7 +52,7 @@ Vector<CapacityPoint> Capacity::scan(
         auto daily_returns = replayWithImpact(
             trades, adv_data, vol_data,
             base_capital, capital, eta, total_days,
-            max_participation,
+            max_participation, closing_liquidity_ratio,
             avg_part, max_part, avg_slippage_bps, orders_above
         );
 
@@ -88,6 +89,7 @@ Vector<double> Capacity::replayWithImpact(
     double eta,
     size_t total_days,
     double max_participation,
+    double closing_liquidity_ratio,
     double& out_avg_part,
     double& out_max_part,
     double& out_avg_slippage_bps,
@@ -136,7 +138,13 @@ Vector<double> Capacity::replayWithImpact(
                 sigma = vol_series[trade->day_index];
             }
 
-            double participation = (adv > 0) ? static_cast<double>(adjusted_shares) / adv : 0;
+            // 日终策略：流动性池 = ADV × closing_liquidity_ratio
+            double liquidity = adv;
+            if (closing_liquidity_ratio > 0 && adv > 0) {
+                liquidity = adv * closing_liquidity_ratio;
+            }
+
+            double participation = (liquidity > 0) ? static_cast<double>(adjusted_shares) / liquidity : 0;
             double slippage = computeSlippage(sigma, participation, eta);
 
             sum_part += participation;

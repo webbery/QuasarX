@@ -522,6 +522,15 @@ jobs:
           # 注册清理 trap：脚本退出时强制 kill 服务，避免残留进程 hang 后续 stage
           cleanup() {
             echo "=== Cleanup: stopping service (PID=${TEST_PID:-unknown}) ==="
+            # 诊断：服务退出前的内存状态
+            if [ -n "${TEST_PID:-}" ] && kill -0 "$TEST_PID" 2>/dev/null; then
+              echo "Service still alive, RSS memory:"
+              ps -o pid,rss,vsz,%mem,comm -p "$TEST_PID" 2>/dev/null || true
+            else
+              echo "Service already dead (PID=${TEST_PID:-unknown})"
+              # 检查是否被 OOM killer 杀掉
+              sudo dmesg -T 2>/dev/null | grep -i "oom\|killed process" | tail -5 || true
+            fi
             curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
             sleep 1
             [ -n "${TEST_PID:-}" ] && kill -9 "$TEST_PID" 2>/dev/null || true
@@ -563,6 +572,35 @@ jobs:
           echo "==================================="
 
           exit $TEST_EXIT_CODE
+
+      # === 阶段 2.5: 失败时诊断 OOM / 内存 ===
+      - name: Diagnose OOM and memory (on failure)
+        if: failure()
+        run: |
+          echo "========== OOM / Memory Diagnosis =========="
+
+          echo "--- dmesg OOM kills (last 20 lines) ---"
+          sudo dmesg -T 2>/dev/null | grep -i -E "oom|killed process|out of memory" | tail -20 || \
+            dmesg 2>/dev/null | grep -i -E "oom|killed process|out of memory" | tail -20 || \
+            echo "(dmesg not available or no OOM found)"
+
+          echo ""
+          echo "--- Current memory status ---"
+          free -h
+          echo ""
+          cat /proc/meminfo | head -10
+
+          echo ""
+          echo "--- Service process RSS before exit ---"
+          # service_test.log 中最后几行可能包含崩溃信息
+          echo "--- service_test.log tail (last 30 lines) ---"
+          tail -30 service_test.log 2>/dev/null || echo "(log not found)"
+
+          echo ""
+          echo "--- QuantService core dump check ---"
+          ls -lh core* /tmp/core* 2>/dev/null || echo "(no core dumps found)"
+
+          echo "========== End OOM Diagnosis =========="
 
       # === 阶段 3: 测试通过后上传最终构建 ===
       - name: Upload Build (passed tests)

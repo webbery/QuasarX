@@ -52,6 +52,7 @@ public:
     /// @param steps          扫描步数（对数均匀）
     /// @param eta            冲击系数（平方根模型，A股默认1.0）
     /// @param max_participation 参与率上限
+    /// @param closing_liquidity_ratio 收盘流动性比例（0~1），日终策略用0.05，<=0表示用全天ADV
     Vector<CapacityPoint> scan(
         const Vector<CapacityTrade>& trades,
         const Map<symbol_t, Vector<double>>& adv_data,
@@ -61,7 +62,8 @@ public:
         double max_capital,
         int steps,
         double eta,
-        double max_participation
+        double max_participation,
+        double closing_liquidity_ratio = 0.0
     );
 
     /// 计算摘要
@@ -95,6 +97,7 @@ private:
         double eta,
         size_t total_days,
         double max_participation,
+        double closing_liquidity_ratio,
         double& out_avg_part,
         double& out_max_part,
         double& out_avg_slippage_bps,

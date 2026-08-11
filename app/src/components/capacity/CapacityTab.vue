@@ -33,6 +33,11 @@
         <label>参与率上限:</label>
         <input v-model.number="maxParticipation" type="number" class="ctrl-input xs" min="0.01" max="0.2" step="0.01" />
       </div>
+      <div class="control-group">
+        <label>收盘流动性:</label>
+        <input v-model.number="closingLiquidityRatio" type="number" class="ctrl-input xs" min="0" max="1" step="0.01" />
+        <span class="field-hint" title="日终策略填 0.05（收盘成交占全日 5%），日内策略填 0（用全天 ADV）">ⓘ</span>
+      </div>
       <button class="run-btn" :disabled="!selectedStrategy || loading" @click="runScan">
         {{ loading ? '扫描中...' : '执行扫描' }}
       </button>
@@ -135,6 +140,7 @@ const steps = ref(20)
 const eta = ref(1.0)
 const advWindow = ref(20)
 const maxParticipation = ref(0.05)
+const closingLiquidityRatio = ref(0.0)
 const loading = ref(false)
 const error = ref('')
 const result = ref<CapacityResult | null>(null)
@@ -170,7 +176,8 @@ async function runScan() {
       },
       constraints: {
         max_participation_rate: maxParticipation.value
-      }
+      },
+      closing_liquidity_ratio: closingLiquidityRatio.value
     })
     result.value = res.data
   } catch (e: any) {
@@ -326,5 +333,22 @@ function rowClass(p: CapacityPoint): string {
   font-size: 12px;
   color: #555;
   margin-top: 8px;
+}
+.field-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+  color: #888;
+  font-size: 10px;
+  cursor: help;
+  position: relative;
+}
+.field-hint:hover {
+  color: #4fc3f7;
+  background: rgba(79,195,247,0.12);
 }
 </style>
