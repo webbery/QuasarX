@@ -258,8 +258,11 @@ class AuthAPI:
         return self._mode
 
     def is_backtest_mode(self):
-        """判断是否为回测模式"""
-        return self._mode and 'backtest' in str(self._mode).lower()
+        """判断是否为回测模式（含 Simulation/stock_hist_sim）"""
+        if not self._mode:
+            return False
+        m = self._mode.lower()
+        return 'backtest' in m or 'simulation' in m or 'sim' in m
 
 
 @pytest.fixture(scope="session")

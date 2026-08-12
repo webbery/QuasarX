@@ -1372,7 +1372,7 @@ class TestSpectrumIndicators:
         """单标的不应返回 spectrum_indicators"""
         symbol = "sz.900001"
         closes, dates = load_csv_prices(symbol)
-        resp = call_volatility_api(to_api_symbol(symbol), dates[0], dates[-1],
+        resp = call_volatility_api(symbol, dates[0], dates[-1],
                                    auth_token=auth_token)
         si = resp.get("multi", {}).get("spectrum_indicators")
         assert si is None or (isinstance(si, dict) and len(si.get("dates", [])) == 0), \

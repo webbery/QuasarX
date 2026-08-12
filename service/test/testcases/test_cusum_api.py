@@ -556,7 +556,7 @@ class TestCUSUMMeanShift:
         """调用 C++ CUSUMHandler API（通过标的代码从数据库加载数据）
         
         Args:
-            symbols: 标的代码列表（code.market 格式，如 ["800001.sz"]）
+            symbols: 标的代码列表（market.code 格式，如 ["sz.800001"]）
             start: 开始日期
             end: 结束日期
             modes: 分析模式列表，可选 "mean"/"variance"/"correlation"
@@ -588,7 +588,7 @@ class TestCUSUMMeanShift:
     def test_cpp_python_s_pos_s_neg_alignment(self, auth_token):
         """C++ 和 Python 的 s_pos/s_neg 序列应一致（使用合成均值偏移数据，mean 模式）"""
         # 使用合成数据（有明确均值偏移，变点在 index 100）
-        symbol = "900007.sz"
+        symbol = "sz.900007"
         start_date = "2023-01-02"
         end_date = "2023-10-06"
 
@@ -647,7 +647,7 @@ class TestCUSUMMeanShift:
 
     def test_variance_mode_structure(self, auth_token):
         """variance 模式应返回正确的数据结构"""
-        symbol = "800001.sz"
+        symbol = "sz.800001"
         start_date = "2024-01-01"
         end_date = "2024-09-07"
 
@@ -675,7 +675,7 @@ class TestCUSUMMeanShift:
     def test_correlation_mode_structure(self, auth_token):
         """correlation 模式应返回正确的数据结构（需要多个标的）"""
         # 使用多个标的测试相关性分析
-        symbols = ["800001.sz", "800002.sz"]
+        symbols = ["sz.800001", "sz.800002"]
         start_date = "2024-01-01"
         end_date = "2024-09-07"
 
@@ -706,7 +706,7 @@ class TestCUSUMMeanShift:
 
     def test_multiple_modes_combined(self, auth_token):
         """同时请求多种模式应返回所有模式的数据"""
-        symbol = "800001.sz"
+        symbol = "sz.800001"
         start_date = "2024-01-01"
         end_date = "2024-09-07"
 
@@ -724,8 +724,8 @@ class TestCUSUMMeanShift:
 
     def test_cpp_python_change_points_match(self, auth_token):
         """C++ 和 Python 检测到的变点位置应一致（使用真实测试数据，mean 模式）"""
-        # 使用测试数据中的标的（code.market 格式）
-        symbol = "800001.sz"
+        # 使用测试数据中的标的（market.code 格式）
+        symbol = "sz.800001"
         start_date = "2024-01-01"
         end_date = "2024-09-07"
 
@@ -841,7 +841,7 @@ class TestCUSUMParameterSensitivity:
     @pytest.fixture(autouse=True)
     def setup(self, auth_token):
         self.token = auth_token
-        self.symbol = "900007.sz"  # 合成均值偏移数据（变点在 index 100）
+        self.symbol = "sz.900007"  # 合成均值偏移数据（变点在 index 100）
         self.start_date = "2023-01-02"
         self.end_date = "2023-10-06"
 
@@ -1103,9 +1103,9 @@ class TestCUSUMCalibration:
 
     # 合成数据标的
     CALIB_SYMBOLS = {
-        "normal": {"symbol": "800010.sz", "mu": 0.0003, "sigma": 0.02, "n": 250, "seed": 42},
-        "high_vol": {"symbol": "800011.sz", "mu": 0.0001, "sigma": 0.05, "n": 250, "seed": 43},
-        "low_vol": {"symbol": "800012.sz", "mu": 0.0005, "sigma": 0.008, "n": 250, "seed": 44},
+        "normal": {"symbol": "sz.800010", "mu": 0.0003, "sigma": 0.02, "n": 250, "seed": 42},
+        "high_vol": {"symbol": "sz.800011", "mu": 0.0001, "sigma": 0.05, "n": 250, "seed": 43},
+        "low_vol": {"symbol": "sz.800012", "mu": 0.0005, "sigma": 0.008, "n": 250, "seed": 44},
     }
 
     @pytest.fixture(autouse=True)
@@ -1126,15 +1126,17 @@ class TestCUSUMCalibration:
             "data": lines,
             "data_hfq": lines,
         }, headers=self.headers, verify=VERIFY_SSL)
-        assert resp.status_code == 200, f"导入合成数据失败: {resp.text}"
+        assert resp.status_code == 200, \
+            f"导入合成数据失败: status={resp.status_code}, body={resp.text}"
         self._imported.append(symbol)
 
     def _cleanup(self):
         """清理导入的合成数据"""
         for symbol in self._imported:
             try:
-                requests.delete(f"{BASE_URL}/v0/quote", params={
-                    "table": "stock_1d"
+                requests.delete(f"{BASE_URL}/v0/quote/data", params={
+                    "table": "stock_1d",
+                    "symbol": symbol,
                 }, headers=self.headers, verify=VERIFY_SSL)
             except Exception:
                 pass
@@ -1302,9 +1304,9 @@ class TestCUSUMCalibration:
             sigmas[cal["symbol"]] = cal["sigma"]
 
         # high_vol (σ≈0.05) 应 > normal (σ≈0.02) > low_vol (σ≈0.008)
-        high_vol_sigma = sigmas.get("800011.sz", 0)
-        normal_sigma = sigmas.get("800010.sz", 0)
-        low_vol_sigma = sigmas.get("800012.sz", 0)
+        high_vol_sigma = sigmas.get("sz.800011", 0)
+        normal_sigma = sigmas.get("sz.800010", 0)
+        low_vol_sigma = sigmas.get("sz.800012", 0)
         assert high_vol_sigma > normal_sigma > low_vol_sigma, \
             f"σ 排序错误: high={high_vol_sigma:.4f}, normal={normal_sigma:.4f}, low={low_vol_sigma:.4f}"
 
@@ -1356,7 +1358,7 @@ class TestCUSUMCalibration:
     def test_insufficient_data_returns_error(self):
         """数据不足时应返回错误"""
         # 导入只有 5 天的数据（少于 min_obs 最低要求）
-        symbol = "800013.sz"
+        symbol = "sz.800013"
         prices = _generate_synthetic_prices(n=5, seed=99)
         self._import_synthetic_data(symbol, prices)
 
