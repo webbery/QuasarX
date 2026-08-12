@@ -25,12 +25,15 @@ namespace {
         {1, ExchangeName::MT_Shenzhen}, {2, ExchangeName::MT_Shenzhen}, {3, ExchangeName::MT_Shenzhen},{4, ExchangeName::MT_Shenzhen},
         {5, ExchangeName::MT_Shanghai}, {6, ExchangeName::MT_Shanghai}, {7, ExchangeName::MT_Shanghai}, {8, ExchangeName::MT_Shanghai}, {9, ExchangeName::MT_Shanghai},
     };
-    // 短编码对应合约编码code
-    boost::concurrent_flat_map<uint32_t, String> etf_code_map;
-    // 合约编码code对应短编码
-    boost::concurrent_flat_map<String, uint32_t> code_etf_map;
 
-    boost::concurrent_flat_map<String, symbol_t> code_symbol_map;
+    // Meyers singleton: 延迟初始化，避免静态构造阶段 boost::concurrent_flat_map 崩溃
+    using EtfCodeMap = boost::concurrent_flat_map<uint32_t, String>;
+    using CodeEtfMap = boost::concurrent_flat_map<String, uint32_t>;
+    using CodeSymbolMap = boost::concurrent_flat_map<String, symbol_t>;
+
+    EtfCodeMap& etf_code_map() { static EtfCodeMap m; return m; }
+    CodeEtfMap& code_etf_map() { static CodeEtfMap m; return m; }
+    CodeSymbolMap& code_symbol_map() { static CodeSymbolMap m; return m; }
 }
 
 String ETFObjectName(int type)
@@ -45,16 +48,16 @@ ExchangeName GetETFOptionExchangeName(const String& object)
 
 ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
 {
-    if (code_symbol_map.contains(code)) {
-        code_symbol_map.visit(code, [this](boost::concurrent_flat_map<String, symbol_t>::value_type& value) {
+    if (code_symbol_map().contains(code)) {
+        code_symbol_map().visit(code, [this](CodeSymbolMap::value_type& value) {
             _symbol = value.second;
         });
         return;
     }
-    auto idx = etf_code_map.size() + 1;
-    if (!code_etf_map.contains(code)) {
-        code_etf_map.emplace(code, idx);
-        etf_code_map.emplace(idx, code);
+    auto idx = etf_code_map().size() + 1;
+    if (!code_etf_map().contains(code)) {
+        code_etf_map().emplace(code, idx);
+        etf_code_map().emplace(idx, code);
     }
     contract_type t = contract_type::call;
     char month;
@@ -92,8 +95,8 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
         _symbol._year = 0;
     }
     
-    if (!code_symbol_map.contains(code)) {
-        code_symbol_map.emplace(code, _symbol);
+    if (!code_symbol_map().contains(code)) {
+        code_symbol_map().emplace(code, _symbol);
     }
 }
 
@@ -167,8 +170,8 @@ String ETFOptionSymbol::name()
 symbol_t get_etf_option_symbol(const String& code) {
     symbol_t result;
     memset(&result, 0, sizeof(symbol_t));
-    if (code_symbol_map.contains(code)) {
-        code_symbol_map.visit(code, [&result](boost::concurrent_flat_map<String, symbol_t>::value_type& value) {
+    if (code_symbol_map().contains(code)) {
+        code_symbol_map().visit(code, [&result](CodeSymbolMap::value_type& value) {
             result = value.second;
         });
     }
@@ -179,7 +182,7 @@ String get_etf_option_code(symbol_t symbol)
 {
     String result;
     uint32_t shortID = symbol._opt >> SHORT_ID_OFFSET;
-    etf_code_map.cvisit(shortID, [&result](const boost::concurrent_flat_map<uint32_t, String>::value_type& value) {
+    etf_code_map().cvisit(shortID, [&result](const EtfCodeMap::value_type& value) {
         result = value.second;
         });
     return result;
