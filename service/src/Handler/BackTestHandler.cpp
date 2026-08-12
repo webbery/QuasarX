@@ -55,6 +55,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     String strategyName = script.value("id", "unknown");
     INFO("[Backtest] Starting backtest for strategy: {}", strategyName);
+    double rss_start = getProcessRSS();
+    INFO("[Backtest][RSS] start: {:.1f} MB", rss_start);
 
     // 解析策略资金配置
     double strategyCapital = 0.0;  // 0 表示自动分配
@@ -155,17 +157,23 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         WARN("{}", msg);
         return;
     }
+    INFO("[Backtest][RSS] after InitStrategy: {:.1f} MB", getProcessRSS());
 
     // 启动需要的 Exchange
+    INFO("[Backtest] StartRequiredExchanges (sources={})...", requiredSources.size()); fflush(stdout);
     exchangeMgr->StartRequiredExchanges(requiredSources);
+    INFO("[Backtest][RSS] after LoadData: {:.1f} MB", getProcessRSS());
 
     // 4. 执行回测（多线程版本）
     // 获取策略的标的列表
     auto symbols = strategySys->GetPools(strategyName);
+    INFO("[Backtest] GetPools returned {} symbols", symbols.size()); fflush(stdout);
 
     // 使用 ExchangeManager 创建多 Exchange 回测上下文
     double initialCapital = BACKTEST_INITIAL_CAPITAL;
+    INFO("[Backtest] CreateMultiContext (capital={:.0f})...", initialCapital); fflush(stdout);
     run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital);
+    INFO("[Backtest] CreateMultiContext done, runId={}", runId); fflush(stdout);
 
     // 发送进度 (带 run_id)
     SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.000000"}, {"message", "开始执行回测"}});
@@ -220,17 +228,18 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         INFO("[Backtest] Reclaimed {:.0f} from strategy {}", reclaimed, strategyName);
     }
 
+    INFO("[Backtest][RSS] after backtest loop: {:.1f} MB", getProcessRSS());
+
     // 停止推送线程
     pushRunning = false;
     pushThread.join();
-
-    INFO("Backtest finish {}", lastProgress);
 
     // 确保最终进度推送
     if (lastProgress < 1.0) {
         SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.700000"}, {"message", "回测执行完成"}});
     }
     exchangeMgr->StopRequiredExchanges(requiredSources);
+    INFO("[Backtest][RSS] after StopExchanges: {:.1f} MB", getProcessRSS());
     SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.800000"}, {"message", "PersistTrades"}});
 
     // 6. 收集结果
@@ -430,6 +439,8 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "1.000000"}, {"message", "回测全部完成"}});
 
     strategySys->ReleaseStrategy(strategyName);
+    INFO("[Backtest][RSS] after ReleaseStrategy: {:.1f} MB (delta from start: {:+.1f} MB)",
+         getProcessRSS(), getProcessRSS() - rss_start);
 
 
     INFO("[Backtest] Completed: {}, {}", features.dump(), results["summary"].dump());

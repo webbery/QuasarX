@@ -14,6 +14,8 @@
 #ifdef WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
@@ -906,6 +908,35 @@ std::pair<double, double> getMemoryInfo()
     total_mem = std::stol(info[1]);
 #endif
     return std::make_pair(memory_usage, total_mem);
+}
+
+double getProcessRSS() {
+#ifdef __linux__
+    // 读 /proc/self/status 的 VmRSS 行，单位 kB → 转 MB
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return 0.0;
+    char line[256];
+    double rss_kb = 0.0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "VmRSS:", 6) == 0) {
+            // 格式: "VmRSS:    12345 kB\n"
+            rss_kb = strtod(line + 6, nullptr);
+            break;
+        }
+    }
+    fclose(f);
+    return rss_kb / 1024.0;
+#elif defined(_WIN32)
+    // Windows: GetProcessMemoryInfo → WorkingSetSize
+    HANDLE hProcess = GetCurrentProcess();
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(hProcess, &pmc, sizeof(pmc))) {
+        return static_cast<double>(pmc.WorkingSetSize) / (1024.0 * 1024.0);
+    }
+    return 0.0;
+#else
+    return 0.0;
+#endif
 }
 
 bool get_system_status(nlohmann::json&  status) {

@@ -301,4 +301,47 @@ Vector<Vector<double>> computeRollingEMDEnergy(const Vector<double>& data,
  */
 Vector<double> ewmaVolatilityStandardize(const Vector<double>& returns, double decay = 0.94);
 
+// ──────────────────────────────────────────────────────────────────────
+// Marchenko-Pastur 谱指标 (m+/m-) 滚动窗口分析
+// 参考: Grassia et al. (2026) "Lower spectrum of financial correlation matrices"
+// ──────────────────────────────────────────────────────────────────────
+
+/// 单个时间点的谱指标
+struct SpectrumSnapshot {
+    int m_plus = 0;           // 特征值 > λ₊ 的数量
+    int m_minus = 0;          // 特征值 < λ₋ 的数量
+    int n_effective = 0;      // 降维后的有效标的数 k (若未降维则 = n)
+    double lambda_plus = 0;   // MP 上界
+    double lambda_minus = 0;  // MP 下界
+};
+
+/// 滚动窗口谱指标结果
+struct SpectrumIndicatorResult {
+    Vector<String> dates;              // 每个窗口结束日期
+    Vector<int> m_plus;                // m+ 时间序列
+    Vector<int> m_minus;               // m- 时间序列
+    Vector<int> n_effective;           // 有效标的数时间序列
+    double lambda_plus = 0;            // MP 上界 (由 Q=T/N 决定，窗口固定则不变)
+    double lambda_minus = 0;           // MP 下界
+    int original_n = 0;                // 原始标的数
+    int window_size = 0;               // 滚动窗口大小
+};
+
+/// 贪心层次聚类降维：基于相关系数将 n 个标的聚成 k 个簇
+/// @param corr_matrix  n×n 相关矩阵
+/// @param target_k     目标簇数 (需满足 target_k < window_size)
+/// @return             每个标的的簇标签 (0..target_k-1)
+Vector<int> correlationCluster(const Eigen::MatrixXd& corr_matrix, int target_k);
+
+/// 滚动窗口计算 m+/m- 谱指标
+/// @param ret_matrix   n×T 收益率矩阵 (每行一个标的)
+/// @param dates        日期序列 (长度 T)
+/// @param window_size  滚动窗口大小
+/// @param max_clusters 降维后的最大簇数 (当 n > window_size 时启用聚类)
+SpectrumIndicatorResult computeSpectrumIndicators(
+    const Eigen::MatrixXd& ret_matrix,
+    const Vector<String>& dates,
+    int window_size,
+    int max_clusters = 10);
+
 }

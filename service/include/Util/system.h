@@ -407,5 +407,10 @@ public:
 
 bool get_system_status(nlohmann::json&);
 
+/// @brief 获取当前进程的 RSS（Resident Set Size），单位 MB
+/// Linux 读 /proc/self/status VmRSS，Windows 用 GetProcessMemoryInfo
+/// 失败返回 0
+double getProcessRSS();
+
 void strategy_error(const String& strategy, const String& info);
 void strategy_log(const String & strategy, const String & info);

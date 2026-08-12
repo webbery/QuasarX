@@ -101,21 +101,30 @@ void TickFlowBridge::SetFilter(const QuoteFilter& filter) {
     std::lock_guard<std::mutex> lock(_filterMtx);
     _filter = filter;
 
-    // 初始化符号映射表
+    // 统一转为 TickFlow 格式（600000.SH），兼容内部格式输入（sh.600000）
+    Set<String> converted;
     for (const auto& code : filter._symbols) {
-        symbol_t sym = TickFlowToSymbol(code);
-        if (is_null(sym)) {
-            _symbol_to_code[sym] = code;
-            _code_to_symbol[code] = sym;
+        if (!code.empty() && std::isdigit(code[0])) {
+            converted.insert(code);
+        } else {
+            symbol_t sym = to_symbol(code);
+            if (!is_null(sym)) {
+                String tf = SymbolToTickFlow(sym);
+                converted.insert(tf);
+                _symbol_to_code[sym] = tf;
+                _code_to_symbol[tf] = sym;
+            }
         }
     }
+    _filter._symbols = std::move(converted);
 
     _interval_ms = 10000;
-    INFO("SetFilter: {} symbols, interval={}ms", filter._symbols.size(), _interval_ms);
+    INFO("SetFilter: {} symbols, interval={}ms", _filter._symbols.size(), _interval_ms);
 
-    // 初始化后复权因子缓存（登录/启动时低频调用，查询 DuckDB 安全）
-    for (const auto& code : filter._symbols) {
-        refreshAdjFactor(code);
+    // 初始化后复权因子缓存
+    for (const auto& code : _filter._symbols) {
+        symbol_t sym = TickFlowToSymbol(code);
+        if (!is_null(sym)) refreshAdjFactor(sym);
     }
 }
 
@@ -123,20 +132,30 @@ void TickFlowBridge::AddSymbols(const Set<String>& symbols) {
     std::lock_guard<std::mutex> lock(_filterMtx);
     int added = 0;
     for (const auto& code : symbols) {
-        if (_filter._symbols.insert(code).second) {
-            symbol_t sym = to_symbol(code);
-            if (!is_null(sym)) {
-                _symbol_to_code[sym] = code;
-                _code_to_symbol[code] = sym;
-            }
+        // 输入为内部格式（sh.600000），转为 TickFlow 格式（600000.SH）存储
+        String tfCode;
+        symbol_t sym;
+        if (!code.empty() && std::isdigit(code[0])) {
+            tfCode = code;
+            sym = TickFlowToSymbol(code);
+        } else {
+            sym = to_symbol(code);
+            if (is_null(sym)) continue;
+            tfCode = SymbolToTickFlow(sym);
+        }
+        if (_filter._symbols.insert(tfCode).second) {
+            _symbol_to_code[sym] = tfCode;
+            _code_to_symbol[tfCode] = sym;
             added++;
         }
     }
     if (added > 0) {
         INFO("AddSymbols: +{} symbols, total={}", added, _filter._symbols.size());
-        // 新加入标的同步初始化复权因子缓存
         for (const auto& code : symbols) {
-            if (_filter._symbols.count(code)) refreshAdjFactor(code);
+            symbol_t sym = (!code.empty() && std::isdigit(code[0]))
+                ? TickFlowToSymbol(code) : to_symbol(code);
+            if (!is_null(sym) && _filter._symbols.count(SymbolToTickFlow(sym)))
+                refreshAdjFactor(sym);
         }
     }
 }
@@ -145,7 +164,10 @@ void TickFlowBridge::RemoveSymbols(const Set<String>& symbols) {
     std::lock_guard<std::mutex> lock(_filterMtx);
     int removed = 0;
     for (const auto& code : symbols) {
-        if (_filter._symbols.erase(code)) {
+        // 输入可能为内部格式，转为 TickFlow 格式后再删除
+        String tfCode = (!code.empty() && std::isdigit(code[0]))
+            ? code : SymbolToTickFlow(to_symbol(code));
+        if (_filter._symbols.erase(tfCode)) {
             removed++;
         }
     }
@@ -155,22 +177,19 @@ void TickFlowBridge::RemoveSymbols(const Set<String>& symbols) {
 }
 
 // 从 stock_1d 最新 bar 查 adj_close/close 作为后复权因子，更新缓存
-void TickFlowBridge::refreshAdjFactor(const String& code) {
+void TickFlowBridge::refreshAdjFactor(symbol_t sym) {
     auto& quoteDB = QuoteDB::instance();
-    if (!quoteDB.isInitialized()) return;
+    if (!quoteDB.isInitialized() || is_null(sym)) return;
 
     // query 为 ASC 排序，取最后一条即最新 bar
-    auto bars = quoteDB.query("stock_1d", code, "", "", 5000);
+    auto bars = quoteDB.query("stock_1d", get_symbol(sym), "", "", 5000);
     if (bars.empty()) return;
 
     const auto& last = bars.back();
     if (last.close > 0 && last.adj_close > 0) {
         double factor = last.adj_close / last.close;
-        symbol_t sym = TickFlowToSymbol(code);
-        if (!is_null(sym)) {
-            std::lock_guard<std::mutex> lock(_adjFactorMtx);
-            _adjFactorCache[sym] = factor;
-        }
+        std::lock_guard<std::mutex> lock(_adjFactorMtx);
+        _adjFactorCache[sym] = factor;
     }
 }
 
@@ -218,10 +237,6 @@ void TickFlowBridge::InitHttpClient() {
 // ==================== 符号转换 ====================
 
 String TickFlowBridge::SymbolToTickFlow(symbol_t s) {
-    auto it = _symbol_to_code.find(s);
-    if (it != _symbol_to_code.end()) {
-        return it->second;
-    }
     // 回退：手动构造
     const Map<char, String> exchange_rev = {
         {MT_Shenzhen, "SZ"}, {MT_Shanghai, "SH"}, {MT_Beijing, "BJ"}
@@ -540,7 +555,7 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     }
 
     // 重算完成后刷新复权因子缓存（次日盘中 QuoteInfo._adj_close 用新因子）
-    refreshAdjFactor(bar.symbol);
+    refreshAdjFactor(quote._symbol);
 
     // 通知策略子系统：该标的数据已就绪
     if (_server) {
@@ -574,14 +589,7 @@ void TickFlowBridge::FetchQuotes() {
     Vector<String> batch;
     batch.reserve(upper - _offset);
     for (int i = _offset; i < upper; ++i) {
-        const auto& s = symbols[i];
-        // TickFlow API 要求 600000.SH 格式，内部存储为 sh.600000
-        // 检查是否已是 TickFlow 格式（数字开头），否则转换
-        if (!s.empty() && std::isdigit(s[0])) {
-            batch.push_back(s);
-        } else {
-            batch.push_back(SymbolToTickFlow(to_symbol(s)));
-        }
+        batch.push_back(symbols[i]);  // _filter._symbols 已存储为 TickFlow 格式
     }
     _offset = upper;
 

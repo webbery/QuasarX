@@ -93,7 +93,7 @@ private:
     void WriteCloseDataToStock1d(const QuoteInfo& quote);
 
     // 后复权因子: 从 stock_1d 最新 bar 查 adj_close/close，更新 _adjFactorCache
-    void refreshAdjFactor(const String& code);
+    void refreshAdjFactor(symbol_t sym);
     // 读缓存因子（无缓存时返回 1.0）
     double getAdjFactor(symbol_t sym) const;
 

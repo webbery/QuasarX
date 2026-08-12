@@ -64,6 +64,7 @@
 #include "Handler/BackTestHandler.h"
 #include "Handler/CapacityHandler.h"
 #include "Handler/RiskStatusHandler.h"
+#include "Handler/SRHandler.h"
 #include "Handler/UserHandler.h"
 #include "Handler/DataHandler.h"
 #include "Handler/FeatureHandler.h"
@@ -189,6 +190,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_SIMULATE_BAR    "/strategy/simulate/bar"
 #endif
 #define API_PCA             "/analysis/pca"
+#define API_SR              "/sr/run"
 #define API_CAPITAL_STATUS  "/server/capital"
 #define API_STRATEGY_LOGS   "/strategy/logs"
 #define API_NODE_IO         "/node/io"
@@ -415,6 +417,7 @@ void Server::Regist() {
     REGIST_GET(API_SIGNAL);
     REGIST_GET(API_NONLINEAR);
     REGIST_GET(API_PCA);
+    REGIST_POST(API_SR);
     REGIST_POST(API_SERVER_CONFIG);
 
     REGIST_PUT(API_STRATEGY_NODE);
@@ -1102,7 +1105,11 @@ void Server::Schedules(time_t t) {
     }
 
     // 15:00 初始化日级策略执行（收盘数据写入后由 TickFlowBridge 触发 MarkSymbolReady）
-    if (!daily_init_done && ltm->tm_hour == 15 && ltm->tm_min == 0) {
+    if (!daily_init_done
+#ifndef _DEBUG
+        && ltm->tm_hour == 15 && ltm->tm_min == 0
+#endif
+    ) {
         daily_init_done = true;
         if (_strategySystem) {
             _strategySystem->EnsureDailyReady();
@@ -1111,13 +1118,13 @@ void Server::Schedules(time_t t) {
     }
 
     // 15:30 超时兜底：强制执行所有未完成的策略
-    if (!daily_force_done && ltm->tm_hour == 15 && ltm->tm_min == 30) {
-        daily_force_done = true;
-        if (_strategySystem) {
-            _strategySystem->ForceExecuteAllDaily();
-            INFO("[Schedules] Force executed all daily strategies at 15:30");
-        }
-    }
+    // if (!daily_force_done && ltm->tm_hour == 15 && ltm->tm_min == 30) {
+    //     daily_force_done = true;
+    //     if (_strategySystem) {
+    //         _strategySystem->ForceExecuteAllDaily();
+    //         INFO("[Schedules] Force executed all daily strategies at 15:30");
+    //     }
+    // }
 
     // 20:00 更新分红数据（为第二天准备）
     auto time = _config->GetDailyTime();
@@ -1281,6 +1288,7 @@ void Server::InitHandlers() {
     RegistHandler(API_SIGNAL, SignalHandler);
     RegistHandler(API_NONLINEAR, NonlinearHandler);
     RegistHandler(API_PCA, PCAHandler);
+    RegistHandler(API_SR, SRHandler);
     RegistHandler(API_STRATEGY_LOGS, StrategyLogHandler);
     RegistHandler(API_NODE_IO, NodeIOHandler);
     RegistHandler(API_PYTHON_RUNNER, PythonRunnerHandler);
@@ -1444,7 +1452,7 @@ bool Server::SendEmail(const String& content) {
     if (pwd.empty() || sender.empty())
         return false;
 
-    String scriptFile("tool/mail.py");
+    String scriptFile("tools/mail.py");
     if (!std::filesystem::exists(scriptFile))
         return false;
     String prefix = "python " + scriptFile +" ";
@@ -1460,6 +1468,7 @@ bool Server::SendEmail(const String& content) {
         WARN("send email fail, unknow reason.");
         return false;
     }
+    return true;
 }
 
 bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) {

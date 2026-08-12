@@ -1378,13 +1378,12 @@ double amihud_illiquidity(const Vector<double>& prices,
     return count > 0 ? sum_amihud / count : 0.0;
 }
 
-}
 
 // ──────────────────────────────────────────────────────────────────────
 // 信号分析 / 时序分析工具函数
 // ──────────────────────────────────────────────────────────────────────
 
-Vector<double> finance::computeACF(const Vector<double>& data, int max_lag) {
+Vector<double> computeACF(const Vector<double>& data, int max_lag) {
     Vector<double> acf;
     if (data.empty()) return acf;
 
@@ -1413,7 +1412,7 @@ Vector<double> finance::computeACF(const Vector<double>& data, int max_lag) {
     return acf;
 }
 
-Vector<double> finance::computePACF(const Vector<double>& acf, int max_lag) {
+Vector<double> computePACF(const Vector<double>& acf, int max_lag) {
     Vector<double> pacf;
     int n = static_cast<int>(acf.size()) - 1;
     if (n < 0) return pacf;
@@ -1451,7 +1450,7 @@ Vector<double> finance::computePACF(const Vector<double>& acf, int max_lag) {
     return pacf;
 }
 
-double finance::estimateMeanPeriod(const Vector<double>& data) {
+double estimateMeanPeriod(const Vector<double>& data) {
     if (data.size() < 4) return 0;
 
     int n = static_cast<int>(data.size());
@@ -1496,7 +1495,7 @@ double finance::estimateMeanPeriod(const Vector<double>& data) {
     return 0;
 }
 
-double finance::computeEnergyPct(const Vector<double>& component,
+double computeEnergyPct(const Vector<double>& component,
                                   const Vector<double>& original) {
     if (component.empty() || original.empty()) return 0;
 
@@ -1526,7 +1525,7 @@ double finance::computeEnergyPct(const Vector<double>& component,
     return comp_var / orig_var;
 }
 
-Vector<Vector<double>> finance::computeRollingEMDEnergy(const Vector<double>& data,
+Vector<Vector<double>> computeRollingEMDEnergy(const Vector<double>& data,
                                                           int window,
                                                           int numIMFs,
                                                           const Vector<String>& dates) {
@@ -1605,7 +1604,7 @@ Vector<Vector<double>> finance::computeRollingEMDEnergy(const Vector<double>& da
     return result;
 }
 
-Vector<double> finance::ewmaVolatilityStandardize(const Vector<double>& returns, double decay) {
+Vector<double> ewmaVolatilityStandardize(const Vector<double>& returns, double decay) {
     Vector<double> standardized(returns.size());
     if (returns.empty()) return standardized;
 
@@ -1636,8 +1635,8 @@ Vector<double> finance::ewmaVolatilityStandardize(const Vector<double>& returns,
 ///                  / ((T+1-2/N)·(tr(S²) - tr(S)²/N)))
 ///
 /// 输入: returns - Eigen::MatrixXd, N 行 × T 列 (行=标的, 列=时间点)
-finance::LedoitWolfResult finance::ledoitWolfShrinkage(const Eigen::MatrixXd& returns) {
-    finance::LedoitWolfResult result;
+LedoitWolfResult ledoitWolfShrinkage(const Eigen::MatrixXd& returns) {
+    LedoitWolfResult result;
     const Eigen::Index N = returns.rows();
     const Eigen::Index T = returns.cols();
     if (N < 2 || T < 2) return result;
@@ -1673,17 +1672,17 @@ finance::LedoitWolfResult finance::ledoitWolfShrinkage(const Eigen::MatrixXd& re
 /// 协方差自动由 ledoitWolfShrinkage 提供 (OAS 收缩).
 ///
 /// 不收敛时返回 last-iter 权重 + converged=false, 不抛异常.
-finance::RiskParityResult finance::riskParityWeights(const Eigen::MatrixXd& returns,
+RiskParityResult riskParityWeights(const Eigen::MatrixXd& returns,
                                     double tolerance,
                                     int max_iterations) {
-    finance::RiskParityResult result;
+    RiskParityResult result;
     const Eigen::Index N = returns.rows();
     const Eigen::Index T = returns.cols();
     if (N < 2 || T < 2) return result;
     if (tolerance <= 0.0) tolerance = 1e-6;
     if (max_iterations <= 0) max_iterations = 200;
 
-    finance::LedoitWolfResult lw = ledoitWolfShrinkage(returns);
+    LedoitWolfResult lw = ledoitWolfShrinkage(returns);
     if (lw._covariance.size() == 0) return result;
     const Eigen::MatrixXd& Sigma = lw._covariance;
 
@@ -1728,4 +1727,226 @@ finance::RiskParityResult finance::riskParityWeights(const Eigen::MatrixXd& retu
     result._weights = std::move(w);
     result._risk_contributions = std::move(rc);
     return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Marchenko-Pastur 谱指标 (m+/m-) 滚动窗口分析
+// ──────────────────────────────────────────────────────────────────────
+
+Vector<int> correlationCluster(const Eigen::MatrixXd& corr_matrix, int target_k) {
+    int n = corr_matrix.rows();
+    if (target_k >= n) {
+        // 不需要降维，每个标的自成一簇
+        Vector<int> labels(n);
+        for (int i = 0; i < n; ++i) labels[i] = i;
+        return labels;
+    }
+
+    // 贪心层次聚类 (single linkage): 反复合并最相关的两个簇
+    // 距离定义为 d = 1 - |ρ|，越小越相似
+    Vector<int> labels(n);
+    Vector<bool> active(n, true);  // 簇是否还活跃
+    Vector<Vector<int>> members(n);  // 每个簇包含的原始标的
+    for (int i = 0; i < n; ++i) {
+        labels[i] = i;
+        members[i] = {i};
+    }
+
+    int num_clusters = n;
+    while (num_clusters > target_k) {
+        // 找最相关的两个活跃簇 (平均链接: 簇间平均 |ρ|)
+        double best_sim = -1e9;
+        int merge_i = -1, merge_j = -1;
+
+        for (int i = 0; i < n; ++i) {
+            if (!active[i]) continue;
+            for (int j = i + 1; j < n; ++j) {
+                if (!active[j]) continue;
+                // 计算两簇间的平均 |ρ|
+                double sum_abs_corr = 0;
+                int count = 0;
+                for (int a : members[i]) {
+                    for (int b : members[j]) {
+                        sum_abs_corr += std::abs(corr_matrix(a, b));
+                        ++count;
+                    }
+                }
+                double avg_sim = (count > 0) ? sum_abs_corr / count : 0;
+                if (avg_sim > best_sim) {
+                    best_sim = avg_sim;
+                    merge_i = i;
+                    merge_j = j;
+                }
+            }
+        }
+
+        if (merge_i < 0 || merge_j < 0) break;  // 无法继续合并
+
+        // 合并 merge_j 到 merge_i
+        for (int idx : members[merge_j]) {
+            labels[idx] = merge_i;
+            members[merge_i].push_back(idx);
+        }
+        members[merge_j].clear();
+        active[merge_j] = false;
+        --num_clusters;
+    }
+
+    // 重新编号为 0..target_k-1
+    int new_label = 0;
+    Vector<int> remap(n, -1);
+    for (int i = 0; i < n; ++i) {
+        if (active[i]) {
+            remap[i] = new_label++;
+        }
+    }
+    for (int i = 0; i < n; ++i) {
+        labels[i] = remap[labels[i]];
+    }
+
+    return labels;
+}
+
+SpectrumIndicatorResult computeSpectrumIndicators(
+    const Eigen::MatrixXd& ret_matrix,
+    const Vector<String>& dates,
+    int window_size,
+    int max_clusters)
+{
+    SpectrumIndicatorResult result;
+    int n = ret_matrix.rows();
+    int T = ret_matrix.cols();
+
+    if (n < 2 || T < window_size || window_size < 3) return result;
+
+    result.original_n = n;
+    result.window_size = window_size;
+
+    // 确定有效标的数 k (若 n > window_size 则需降维)
+    int k = n;
+    bool need_clustering = (n >= window_size);
+    if (need_clustering) {
+        k = std::min(max_clusters, window_size - 1);
+        k = std::min(k, n);
+    }
+
+    // MP 边界 (基于 Q = window/k)
+    double Q = static_cast<double>(window_size) / k;
+    result.lambda_plus = std::pow(1.0 + 1.0 / std::sqrt(Q), 2);
+    result.lambda_minus = std::pow(1.0 - 1.0 / std::sqrt(Q), 2);
+
+    // 滚动窗口
+    int num_windows = T - window_size + 1;
+    result.dates.reserve(num_windows);
+    result.m_plus.reserve(num_windows);
+    result.m_minus.reserve(num_windows);
+    result.n_effective.reserve(num_windows);
+
+    for (int w_start = 0; w_start < num_windows; ++w_start) {
+        int w_end = w_start + window_size;
+
+        // 提取窗口内的收益率子矩阵
+        Eigen::MatrixXd window_ret = ret_matrix.middleCols(w_start, window_size);
+
+        // 计算相关矩阵
+        Eigen::MatrixXd corr;
+        int effective_n;
+
+        if (need_clustering) {
+            // 先用全窗口数据做聚类 (聚类结构相对稳定，不需要每窗口重算)
+            // 但为简单起见，这里每窗口重算 (可优化)
+            Eigen::MatrixXd full_corr;
+            {
+                Eigen::VectorXd means = window_ret.rowwise().mean();
+                Eigen::MatrixXd centered = window_ret.colwise() - means;
+                Eigen::MatrixXd cov = (centered * centered.transpose()) / (window_size - 1);
+                Eigen::VectorXd std_devs = cov.diagonal().array().sqrt();
+                for (int i = 0; i < n; ++i) {
+                    if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
+                }
+                full_corr.resize(n, n);
+                for (int i = 0; i < n; ++i) {
+                    for (int j = 0; j < n; ++j) {
+                        full_corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+                    }
+                }
+                full_corr.diagonal().setOnes();
+            }
+
+            // 聚类降维
+            Vector<int> labels = correlationCluster(full_corr, k);
+
+            // 构建簇代表组合 (等权平均)
+            Eigen::MatrixXd cluster_ret = Eigen::MatrixXd::Zero(k, window_size);
+            Vector<int> cluster_counts(k, 0);
+            for (int i = 0; i < n; ++i) {
+                int c = labels[i];
+                cluster_ret.row(c) += window_ret.row(i);
+                cluster_counts[c]++;
+            }
+            for (int c = 0; c < k; ++c) {
+                if (cluster_counts[c] > 0) {
+                    cluster_ret.row(c) /= cluster_counts[c];
+                }
+            }
+
+            // 计算簇间相关矩阵
+            Eigen::VectorXd cluster_means = cluster_ret.rowwise().mean();
+            Eigen::MatrixXd centered = cluster_ret.colwise() - cluster_means;
+            Eigen::MatrixXd cov = (centered * centered.transpose()) / (window_size - 1);
+            Eigen::VectorXd std_devs = cov.diagonal().array().sqrt();
+            for (int i = 0; i < k; ++i) {
+                if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
+            }
+            corr.resize(k, k);
+            for (int i = 0; i < k; ++i) {
+                for (int j = 0; j < k; ++j) {
+                    corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+                }
+            }
+            corr.diagonal().setOnes();
+            effective_n = k;
+        } else {
+            // 无需降维
+            Eigen::VectorXd means = window_ret.rowwise().mean();
+            Eigen::MatrixXd centered = window_ret.colwise() - means;
+            Eigen::MatrixXd cov = (centered * centered.transpose()) / (window_size - 1);
+            Eigen::VectorXd std_devs = cov.diagonal().array().sqrt();
+            for (int i = 0; i < n; ++i) {
+                if (std_devs(i) < 1e-10) std_devs(i) = 1.0;
+            }
+            corr.resize(n, n);
+            for (int i = 0; i < n; ++i) {
+                for (int j = 0; j < n; ++j) {
+                    corr(i, j) = cov(i, j) / (std_devs(i) * std_devs(j));
+                }
+            }
+            corr.diagonal().setOnes();
+            effective_n = n;
+        }
+
+        // 特征值分解
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(corr);
+        Eigen::VectorXd eigenvalues = es.eigenvalues().real();
+
+        // 降序排序
+        std::vector<double> sorted_evals(eigenvalues.data(), eigenvalues.data() + eigenvalues.size());
+        std::sort(sorted_evals.begin(), sorted_evals.end(), std::greater<double>());
+
+        // 计算 m+ 和 m-
+        int m_plus = 0, m_minus = 0;
+        for (double ev : sorted_evals) {
+            if (ev > result.lambda_plus) ++m_plus;
+            if (ev < result.lambda_minus) ++m_minus;
+        }
+
+        result.m_plus.push_back(m_plus);
+        result.m_minus.push_back(m_minus);
+        result.n_effective.push_back(effective_n);
+        result.dates.push_back(dates[w_end - 1]);  // 窗口结束日期
+    }
+
+    return result;
+}
+
 }

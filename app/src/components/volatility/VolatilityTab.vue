@@ -156,6 +156,20 @@
             </div>
           </div>
 
+          <!-- Marchenko-Pastur 信号/噪声分解 -->
+          <div class="chart-grid">
+            <div class="chart-card full">
+              <MarchenkoPasturChart :data="state.result.multi" />
+            </div>
+          </div>
+
+          <!-- 谱指标 m+/m- 时间序列 -->
+          <div v-if="state.result?.multi?.spectrum_indicators" class="chart-grid">
+            <div class="chart-card full">
+              <SpectrumIndicatorChart :data="state.result.multi.spectrum_indicators" />
+            </div>
+          </div>
+
           <!-- 多资产预测外推 -->
           <div v-if="state.result?.multi?.multi_forecast?.horizon" class="chart-grid">
             <div class="chart-card half">
@@ -182,14 +196,9 @@
           </div>
 
           <div v-if="state.result?.multi?.time_series_analysis" class="chart-grid">
-            <div class="chart-card half">
+            <div class="chart-card full">
               <GrangerTable
                 :data="state.result.multi.time_series_analysis.granger_causality"
-              />
-            </div>
-            <div class="chart-card half">
-              <CointegrationTable
-                :data="state.result.multi.time_series_analysis.cointegration"
               />
             </div>
           </div>
@@ -227,10 +236,11 @@ import CorrelationHeatmapChart from './charts/CorrelationHeatmapChart.vue'
 import VolatilityComparisonChart from './charts/VolatilityComparisonChart.vue'
 import CovarianceEigenChart from './charts/CovarianceEigenChart.vue'
 import CovarianceForecastChart from './charts/CovarianceForecastChart.vue'
+import MarchenkoPasturChart from './charts/MarchenkoPasturChart.vue'
+import SpectrumIndicatorChart from './charts/SpectrumIndicatorChart.vue'
 // 时间序列分析组件
 import LeadLagHeatmapChart from './charts/LeadLagHeatmapChart.vue'
 import GrangerTable from './charts/GrangerTable.vue'
-import CointegrationTable from './charts/CointegrationTable.vue'
 
 const { state, QUICK_RANGES, removeSymbol, setQuickRange } = useVolatilityState()
 const { fetchVolatility } = useVolatilityData()

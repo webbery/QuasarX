@@ -290,7 +290,9 @@ VolatilitySingleResult VolatilityHandler::computeSingle(
 VolatilityMultiResult VolatilityHandler::computeMulti(
     const std::map<std::string, std::vector<double>>& returns_map,
     const std::vector<std::string>& symbols,
-    int max_lag)
+    const std::vector<std::string>& dates,
+    int max_lag,
+    int spectrum_window)
 {
     VolatilityMultiResult result;
 
@@ -359,12 +361,20 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
     for (size_t i = 0; i < n; ++i) {
         result.annual_volatility.push_back(std::sqrt(result.covariance_matrix[i][i] * 252.0));
     }
+    result.num_observations = min_len;
 
     // 真实特征值分解 (对称矩阵使用 SelfAdjointEigenSolver，比 Jacobi 通用分解快)
     evaluateCovarianceQuality(result.covariance_matrix,
                               result.eigenvalues,
                               result.condition_number,
                               result.is_positive_definite);
+
+    // === Marchenko-Pastur 谱指标滚动窗口分析 ===
+    if (!dates.empty() && ret_matrix.cols() == static_cast<int>(dates.size())) {
+        Vector<String> dates_vec(dates.begin(), dates.end());
+        result.spectrum_indicators = finance::computeSpectrumIndicators(
+            ret_matrix, dates_vec, spectrum_window);
+    }
 
     // === 多资产预测外推 ===
     // 收集各资产的 Forecast 结果（按 symbols 请求顺序）
@@ -468,15 +478,6 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
                 sym_list[i], sym_list[j],
                 gr_xy.f_statistic, gr_xy.p_value, gr_xy.is_significant, gr_xy.optimal_lag
             });
-
-            // 3. 协整检验
-            auto coint = finance::engleGrangerTest(rets_i, rets_j);
-            result.cointegration_results.push_back({
-                sym_list[i], sym_list[j],
-                coint.beta, coint.alpha,
-                coint.adf_statistic, coint.p_value,
-                coint.is_cointegrated, coint.half_life
-            });
         }
     }
 
@@ -494,7 +495,8 @@ VolatilityResult VolatilityHandler::compute(
     PriceField field,
     FillMethod fill,
     int band_window,
-    BarFreq target_freq)
+    BarFreq target_freq,
+    int spectrum_window)
 {
     VolatilityResult result;
     // 注意：result.symbols 在循环中动态收集（跳过数据不足的标的）
@@ -566,7 +568,7 @@ VolatilityResult VolatilityHandler::compute(
     }
 
     result.dates = common_dates;
-    result.multi = computeMulti(returns_map, symbols, 10);
+    result.multi = computeMulti(returns_map, symbols, common_dates, 10, spectrum_window);
 
     return result;
 }
@@ -605,6 +607,7 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         auto fill_param = req.get_param_value("fill_method");
         auto band_window_param = req.get_param_value("band_window");
         auto frequency_param = req.get_param_value("frequency");
+        auto spectrum_window_param = req.get_param_value("spectrum_window");
 
         if (symbols_param.empty()) {
             res.status = 400;
@@ -652,7 +655,18 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         FillMethod fill = fill_param.empty() ? FillMethod::None : parseFillMethod(fill_param);
         BarFreq target_freq = frequency_param.empty() ? BarFreq::Day : parseBarFreq(frequency_param);
 
-        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window, target_freq);
+        int spectrum_window = 60;
+        if (!spectrum_window_param.empty()) {
+            try {
+                spectrum_window = std::stoi(spectrum_window_param);
+                if (spectrum_window < 5) spectrum_window = 5;
+                if (spectrum_window > 500) spectrum_window = 500;
+            } catch (...) {
+                spectrum_window = 60;
+            }
+        }
+
+        auto result = compute(db_path, symbols, start_date, end_date, windows, field, fill, band_window, target_freq, spectrum_window);
 
         // 构建 JSON 响应
         nlohmann::json json;
@@ -721,6 +735,22 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
         multi_json["condition_number"] = result.multi.condition_number;
         multi_json["is_positive_definite"] = result.multi.is_positive_definite;
         multi_json["annual_volatility"] = result.multi.annual_volatility;
+        multi_json["num_observations"] = result.multi.num_observations;
+
+        // === Marchenko-Pastur 谱指标 ===
+        if (!result.multi.spectrum_indicators.dates.empty()) {
+            nlohmann::json si;
+            const auto& spec = result.multi.spectrum_indicators;
+            si["dates"] = spec.dates;
+            si["m_plus"] = spec.m_plus;
+            si["m_minus"] = spec.m_minus;
+            si["n_effective"] = spec.n_effective;
+            si["lambda_plus"] = spec.lambda_plus;
+            si["lambda_minus"] = spec.lambda_minus;
+            si["original_n"] = spec.original_n;
+            si["window_size"] = spec.window_size;
+            multi_json["spectrum_indicators"] = si;
+        }
 
         // 多资产预测外推
         if (result.multi.multi_forecast.horizon > 0) {
@@ -763,22 +793,6 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
                 gr_array.push_back(item);
             }
             ts["granger_causality"] = gr_array;
-
-            // 协整检验
-            nlohmann::json ci_array = nlohmann::json::array();
-            for (const auto& ci : result.multi.cointegration_results) {
-                nlohmann::json item;
-                item["symbol_x"] = ci.symbol_x;
-                item["symbol_y"] = ci.symbol_y;
-                item["beta"] = ci.beta;
-                item["alpha"] = ci.alpha;
-                item["adf_statistic"] = ci.adf_statistic;
-                item["p_value"] = ci.p_value;
-                item["is_cointegrated"] = ci.is_cointegrated;
-                item["half_life"] = ci.half_life;
-                ci_array.push_back(item);
-            }
-            ts["cointegration"] = ci_array;
 
             multi_json["time_series_analysis"] = ts;
         }

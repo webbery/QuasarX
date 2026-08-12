@@ -70,6 +70,10 @@ struct VolatilityMultiResult {
     double condition_number = 0;
     bool is_positive_definite = true;
     std::vector<double> annual_volatility;
+    size_t num_observations = 0;  // T: 用于 MP 分布分析 (Q = T/N)
+
+    // Marchenko-Pastur 谱指标滚动窗口分析
+    finance::SpectrumIndicatorResult spectrum_indicators;
 
     // 多资产预测外推
     struct MultiForecast {
@@ -97,18 +101,8 @@ struct VolatilityMultiResult {
         int optimal_lag;
     };
 
-    struct CointegrationPair {
-        std::string symbol_x, symbol_y;
-        double beta, alpha;
-        double adf_statistic;
-        double p_value;
-        bool is_cointegrated;
-        double half_life;
-    };
-
     std::vector<LeadLagPair> lead_lag_results;
     std::vector<GrangerPair> granger_results;
-    std::vector<CointegrationPair> cointegration_results;
 };
 
 struct VolatilityResult {
@@ -134,7 +128,8 @@ private:
                                      PriceField field = PriceField::Close,
                                      FillMethod fill = FillMethod::None,
                                      int band_window = 20,
-                                     BarFreq target_freq = BarFreq::Day);
+                                     BarFreq target_freq = BarFreq::Day,
+                                     int spectrum_window = 60);
 
     static VolatilitySingleResult computeSingle(const std::vector<double>& prices,
                                                   const std::vector<double>& volumes,
@@ -144,7 +139,9 @@ private:
     static VolatilityMultiResult computeMulti(
         const std::map<std::string, std::vector<double>>& returns_map,
         const std::vector<std::string>& symbols,
-        int max_lag = 10);
+        const std::vector<std::string>& dates,
+        int max_lag = 10,
+        int spectrum_window = 60);
 
     static std::vector<double> simpleReturns(const std::vector<double>& prices);
     static double skewness(const std::vector<double>& data);

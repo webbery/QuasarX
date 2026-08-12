@@ -1023,3 +1023,357 @@ class TestCovarianceQualityDiagnostics:
             f"非法输入应返回 400 ({reason}), 实得 {resp.status_code}: {resp.text[:200]}"
         body = resp.json()
         assert "error" in body, f"错误响应缺失 error 字段: {body}"
+
+
+# ============================================================
+# 测试类 9：Marchenko-Pastur 谱指标 (m⁺/m⁻)
+# 参考: Grassia et al. (2026) "Lower spectrum of financial correlation matrices"
+# ============================================================
+
+SPECTRUM_TOLERANCE = 1e-6  # 特征值/边界容差
+
+
+def compute_mp_bounds(Q: float) -> Tuple[float, float]:
+    """Marchenko-Pastur 理论边界 (黄金标准)"""
+    if Q <= 0:
+        return 0.0, 0.0
+    lp = (1.0 + 1.0 / np.sqrt(Q)) ** 2
+    lm = (1.0 - 1.0 / np.sqrt(Q)) ** 2
+    return lp, lm
+
+
+def greedy_correlation_cluster(corr_matrix: np.ndarray, target_k: int) -> List[int]:
+    """复现 C++ correlationCluster: 贪心层次聚类 (平均链接)
+
+    反复合并平均 |ρ| 最大的两个簇，直到剩下 target_k 个簇。
+    返回每个标的的簇标签 (0..target_k-1)。
+    """
+    n = corr_matrix.shape[0]
+    if target_k >= n:
+        return list(range(n))
+
+    labels = list(range(n))
+    active = [True] * n
+    members = [[i] for i in range(n)]
+    num_clusters = n
+
+    while num_clusters > target_k:
+        best_sim = -1e9
+        merge_i, merge_j = -1, -1
+        for i in range(n):
+            if not active[i]:
+                continue
+            for j in range(i + 1, n):
+                if not active[j]:
+                    continue
+                total = sum(abs(corr_matrix[a, b])
+                            for a in members[i] for b in members[j])
+                count = len(members[i]) * len(members[j])
+                avg = total / count if count > 0 else 0
+                if avg > best_sim:
+                    best_sim = avg
+                    merge_i, merge_j = i, j
+
+        if merge_i < 0 or merge_j < 0:
+            break
+
+        for idx in members[merge_j]:
+            labels[idx] = merge_i
+            members[merge_i].append(idx)
+        members[merge_j] = []
+        active[merge_j] = False
+        num_clusters -= 1
+
+    # 重新编号为 0..target_k-1
+    remap = {}
+    new_label = 0
+    for i in range(n):
+        if active[i]:
+            remap[i] = new_label
+            new_label += 1
+    return [remap[labels[i]] for i in range(n)]
+
+
+def compute_spectrum_golden(
+    returns_matrix: np.ndarray,
+    window_size: int,
+    max_clusters: int = 10
+) -> Dict:
+    """完整复现 C++ computeSpectrumIndicators
+
+    Returns:
+        dict with m_plus, m_minus, lambda_plus, lambda_minus,
+        n_effective, original_n, window_size, cluster_labels (per window)
+    """
+    n, T = returns_matrix.shape
+    if n < 2 or T < window_size or window_size < 3:
+        return {"m_plus": [], "m_minus": [], "lambda_plus": 0, "lambda_minus": 0,
+                "n_effective": [], "cluster_labels": []}
+
+    need_clustering = (n >= window_size)
+    k = min(max_clusters, window_size - 1, n) if need_clustering else n
+
+    Q = float(window_size) / k
+    lp, lm = compute_mp_bounds(Q)
+
+    m_plus_list = []
+    m_minus_list = []
+    n_eff_list = []
+    all_labels = []
+
+    for w_start in range(T - window_size + 1):
+        window_ret = returns_matrix[:, w_start:w_start + window_size]
+
+        if need_clustering:
+            corr = np.corrcoef(window_ret)
+            labels = greedy_correlation_cluster(corr, k)
+            all_labels.append(labels)
+
+            # 构建簇代表组合 (等权平均)
+            cluster_ret = np.zeros((k, window_size))
+            cluster_counts = [0] * k
+            for i in range(n):
+                c = labels[i]
+                cluster_ret[c] += window_ret[i]
+                cluster_counts[c] += 1
+            for c in range(k):
+                if cluster_counts[c] > 0:
+                    cluster_ret[c] /= cluster_counts[c]
+
+            corr_reduced = np.corrcoef(cluster_ret)
+            eigenvalues = np.sort(np.linalg.eigvalsh(corr_reduced))[::-1]
+            effective_n = k
+        else:
+            corr = np.corrcoef(window_ret)
+            eigenvalues = np.sort(np.linalg.eigvalsh(corr))[::-1]
+            effective_n = n
+            all_labels.append(list(range(n)))
+
+        m_p = int(np.sum(eigenvalues > lp))
+        m_m = int(np.sum(eigenvalues < lm))
+        m_plus_list.append(m_p)
+        m_minus_list.append(m_m)
+        n_eff_list.append(effective_n)
+
+    return {
+        "m_plus": m_plus_list,
+        "m_minus": m_minus_list,
+        "lambda_plus": lp,
+        "lambda_minus": lm,
+        "n_effective": n_eff_list,
+        "original_n": n,
+        "window_size": window_size,
+        "cluster_labels": all_labels,
+    }
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestSpectrumIndicators:
+    """Marchenko-Pastur 谱指标 (m⁺/m⁻) 正确性测试
+
+    策略: Python 完整复现 C++ 算法 (含贪心聚类)，端到端对比。
+    """
+
+    def _load_returns_matrix(self, symbols: List[str]) -> Tuple[np.ndarray, List[str]]:
+        """加载多标的收益率矩阵 (对齐到共同长度)"""
+        all_returns = []
+        valid_symbols = []
+        for sym in symbols:
+            closes, _ = load_csv_prices(sym)
+            if len(closes) < 2:
+                continue
+            all_returns.append(simple_returns(closes))
+            valid_symbols.append(sym)
+        min_len = min(len(r) for r in all_returns)
+        matrix = np.array([r[-min_len:] for r in all_returns])
+        return matrix, valid_symbols
+
+    def _call_api(self, symbols: List[str], auth_token: str,
+                  spectrum_window: int = 60) -> Dict:
+        """调用波动率 API 并返回 spectrum_indicators"""
+        api_symbols = ','.join(to_api_symbol(s) for s in symbols)
+        _, dates = load_csv_prices(symbols[0])
+        kwargs = {'verify': VERIFY_SSL}
+        if auth_token and len(auth_token) > 10:
+            kwargs['headers'] = {'Authorization': auth_token}
+        resp = requests.get(
+            f"{BASE_URL}/analysis/volatility",
+            params={
+                "symbols": api_symbols,
+                "start_date": dates[0],
+                "end_date": dates[-1],
+                "spectrum_window": str(spectrum_window),
+            },
+            **kwargs
+        )
+        assert resp.status_code == 200, f"API 请求失败: {resp.status_code} - {resp.text}"
+        data = resp.json()
+        return data.get("multi", {}).get("spectrum_indicators", {})
+
+    # --- 1. MP 边界 ---
+
+    def test_mp_bounds_formula(self, auth_token):
+        """λ₊/λ₋ 应与理论公式精确一致"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        n = si["original_n"]
+        w = si["window_size"]
+        k = si["n_effective"][0]
+        Q = w / k
+        expected_lp, expected_lm = compute_mp_bounds(Q)
+
+        assert abs(si["lambda_plus"] - expected_lp) < 1e-10, \
+            f"λ₊: API={si['lambda_plus']:.10f}, expected={expected_lp:.10f}"
+        assert abs(si["lambda_minus"] - expected_lm) < 1e-10, \
+            f"λ₋: API={si['lambda_minus']:.10f}, expected={expected_lm:.10f}"
+
+    # --- 2. 无聚类场景 (n < window) ---
+
+    def test_no_clustering_m_values(self, auth_token):
+        """n < window 时 m⁺/m⁻ 应与 numpy 黄金标准精确一致"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        ret_matrix, valid_syms = self._load_returns_matrix(symbols)
+        window_size = 60
+
+        if ret_matrix.shape[1] < window_size:
+            pytest.skip(f"数据不足: {ret_matrix.shape[1]} < {window_size}")
+        if ret_matrix.shape[0] >= window_size:
+            pytest.skip(f"标的数 {ret_matrix.shape[0]} >= 窗口 {window_size}，会触发聚类")
+
+        golden = compute_spectrum_golden(ret_matrix, window_size)
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        # 对比最后 20 个窗口
+        n_compare = min(20, len(si["m_plus"]), len(golden["m_plus"]))
+        for i in range(n_compare):
+            api_idx = len(si["m_plus"]) - n_compare + i
+            g_idx = len(golden["m_plus"]) - n_compare + i
+            assert si["m_plus"][api_idx] == golden["m_plus"][g_idx], \
+                f"m⁺[{api_idx}]: API={si['m_plus'][api_idx]}, golden={golden['m_plus'][g_idx]}"
+            assert si["m_minus"][api_idx] == golden["m_minus"][g_idx], \
+                f"m⁻[{api_idx}]: API={si['m_minus'][api_idx]}, golden={golden['m_minus'][g_idx]}"
+
+    def test_no_clustering_n_effective(self, auth_token):
+        """n < window 时 n_effective 应等于 n"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        n = si["original_n"]
+        w = si["window_size"]
+        if n >= w:
+            pytest.skip(f"n={n} >= w={w}，会触发聚类")
+
+        for i, k in enumerate(si["n_effective"]):
+            assert k == n, f"n_effective[{i}]={k} != n={n}"
+
+    # --- 3. 聚类场景 (n >= window) ---
+
+    def test_with_clustering_reduces_dimension(self, auth_token):
+        """n >= window 时 n_effective 应 < n"""
+        # 用 6 个标的 + 窗口 5 触发聚类
+        symbols = ["sz.900001", "sz.900002", "sz.900003",
+                   "sz.900004", "sz.900005", "sz.900006"]
+        ret_matrix, valid_syms = self._load_returns_matrix(symbols)
+        window_size = 5
+
+        if len(valid_syms) < window_size:
+            pytest.skip(f"标的数 {len(valid_syms)} < 窗口 {window_size}")
+
+        si = self._call_api(valid_syms, auth_token, spectrum_window=window_size)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        n = si["original_n"]
+        for i, k in enumerate(si["n_effective"]):
+            assert k < n, f"n_effective[{i}]={k} 应 < n={n}"
+            assert k < window_size, f"n_effective[{i}]={k} 应 < window={window_size}"
+
+    def test_with_clustering_m_values(self, auth_token):
+        """聚类场景 m⁺/m⁻ 应与 Python 黄金标准一致"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003",
+                   "sz.900004", "sz.900005", "sz.900006"]
+        ret_matrix, valid_syms = self._load_returns_matrix(symbols)
+        window_size = 5
+
+        if ret_matrix.shape[0] < window_size:
+            pytest.skip(f"标的数 {ret_matrix.shape[0]} < 窗口 {window_size}")
+
+        golden = compute_spectrum_golden(ret_matrix, window_size)
+        si = self._call_api(valid_syms, auth_token, spectrum_window=window_size)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        # 对比最后 10 个窗口
+        n_compare = min(10, len(si["m_plus"]), len(golden["m_plus"]))
+        for i in range(n_compare):
+            api_idx = len(si["m_plus"]) - n_compare + i
+            g_idx = len(golden["m_plus"]) - n_compare + i
+            assert si["m_plus"][api_idx] == golden["m_plus"][g_idx], \
+                f"m⁺[{api_idx}]: API={si['m_plus'][api_idx]}, golden={golden['m_plus'][g_idx]}"
+            assert si["m_minus"][api_idx] == golden["m_minus"][g_idx], \
+                f"m⁻[{api_idx}]: API={si['m_minus'][api_idx]}, golden={golden['m_minus'][g_idx]}"
+
+    # --- 4. 结构/长度 ---
+
+    def test_rolling_length(self, auth_token):
+        """时间序列长度 = T - window + 1"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        ret_matrix, _ = self._load_returns_matrix(symbols)
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        T = ret_matrix.shape[1]
+        w = si["window_size"]
+        expected_len = T - w + 1
+
+        assert len(si["m_plus"]) == expected_len, \
+            f"m⁺ 长度 {len(si['m_plus'])} != 预期 {expected_len}"
+        assert len(si["m_minus"]) == expected_len, \
+            f"m⁻ 长度 {len(si['m_minus'])} != 预期 {expected_len}"
+        assert len(si["dates"]) == expected_len, \
+            f"dates 长度 {len(si['dates'])} != 预期 {expected_len}"
+        assert len(si["n_effective"]) == expected_len, \
+            f"n_effective 长度 {len(si['n_effective'])} != 预期 {expected_len}"
+
+    def test_m_values_non_negative(self, auth_token):
+        """m⁺/m⁻ 应 >= 0"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        for v in si["m_plus"]:
+            assert v >= 0, f"m⁺ 不应为负: {v}"
+        for v in si["m_minus"]:
+            assert v >= 0, f"m⁻ 不应为负: {v}"
+
+    def test_m_values_bounded_by_n_effective(self, auth_token):
+        """m⁺/m⁻ 应 <= n_effective"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        for i, (mp, mm, k) in enumerate(zip(si["m_plus"], si["m_minus"], si["n_effective"])):
+            assert mp <= k, f"m⁺[{i}]={mp} > k={k}"
+            assert mm <= k, f"m⁻[{i}]={mm} > k={k}"
+
+    # --- 5. 边界情况 ---
+
+    def test_single_symbol_no_spectrum(self, auth_token):
+        """单标的不应返回 spectrum_indicators"""
+        symbol = "sz.900001"
+        closes, dates = load_csv_prices(symbol)
+        resp = call_volatility_api(to_api_symbol(symbol), dates[0], dates[-1],
+                                   auth_token=auth_token)
+        si = resp.get("multi", {}).get("spectrum_indicators")
+        assert si is None or (isinstance(si, dict) and len(si.get("dates", [])) == 0), \
+            f"单标的不应有谱指标，但得到: {si}"

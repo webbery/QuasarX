@@ -357,6 +357,7 @@ void FlowSubsystem::ComputeBacktestMetrics(
     ExchangeManager* exchangeMgr
 ) {
     Vector<double> portfolio_values;
+    INFO("[Backtest][RSS] ComputeBacktestMetrics enter: {:.1f} MB", getProcessRSS());
 
     if (btContext && btContext->dailySnapshotCount() > 0) {
         portfolio_values = btContext->takePortfolioValues();
@@ -518,6 +519,7 @@ void FlowSubsystem::ComputeBacktestMetrics(
     flow._collections[StatisticIndicator::BootVolClusterStressMaxDDP50]   = mcResult.vol_cluster_stress_max_dd_p50;
 
     INFO("MonteCarlo Analysis:\n{}", mcResult.toString());
+    INFO("[Backtest][RSS] after MonteCarlo: {:.1f} MB", getProcessRSS());
 
     auto& mcPaths = flow._mcPaths;
     for (const auto& p : mcResult.worst_paths) {

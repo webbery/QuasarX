@@ -9,5 +9,5 @@ export type {
   TimeSeriesAnalysis,
   LeadLagPair,
   GrangerPair,
-  CointegrationPair
+  SpectrumIndicatorData
 } from './composables/useVolatilityState'

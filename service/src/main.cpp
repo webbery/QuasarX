@@ -284,6 +284,10 @@ void print_stacktrace(int signo) {
     const char flush_msg[] = "\n[CRASH HANDLER] Attempting to flush logs...\n";
     write(STDERR_FILENO, flush_msg, sizeof(flush_msg) - 1);
 
+    // 刷新 stdout/stderr（INFO 宏的 fmt::print 输出到 stdout，CI 重定向到文件）
+    fflush(stdout);
+    fflush(stderr);
+
     try {
         // 刷新 spdlog 日志到磁盘
         auto* logger = spdlog::default_logger_raw();

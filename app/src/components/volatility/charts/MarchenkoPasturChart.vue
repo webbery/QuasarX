@@ -1,0 +1,413 @@
+<template>
+  <div class="mp-card">
+    <h3 class="card-title">
+      Marchenko-Pastur 信号/噪声分解
+      <TipHint content="随机矩阵理论 (RMT)：若相关矩阵特征值服从 Marchenko-Pastur 分布，则为纯噪声。超出 λ₊ 上界的特征值代表真实相关结构（信号）。Q = T/N 为样本比，Q > 3 结果可信。" />
+    </h3>
+
+    <div v-if="!hasData" class="empty-hint">需要至少 3 个标的且 Q = T/N > 1</div>
+
+    <template v-else>
+      <!-- 统计量 -->
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-label">
+            Q (T/N)
+            <TipHint content="样本比。Q > 3 时 MP 近似良好，Q < 2 结果不可靠" />
+          </span>
+          <span class="stat-value" :class="qClass">{{ Q.toFixed(2) }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">
+            λ₊ 上界
+            <TipHint content="MP 理论上界 (1+1/√Q)²。经验特征值超过此值的为信号" />
+          </span>
+          <span class="stat-value">{{ lambdaPlus.toFixed(4) }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">
+            信号维度
+            <TipHint content="特征值 > λ₊ 的数量。占比越低说明标的间越接近独立噪声" />
+          </span>
+          <span class="stat-value" :class="signalClass">{{ nSignal }} / {{ N }} <span class="stat-unit">({{ (100 * nSignal / N).toFixed(0) }}%)</span></span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">
+            信号方差占比
+            <TipHint content="信号特征值之和 / 全部特征值之和。越高说明系统性风险越强，分散化效果越差" />
+          </span>
+          <span class="stat-value" :class="signalClass">{{ (100 * signalVarRatio).toFixed(1) }}%</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">
+            λ_max / λ₊
+            <TipHint content="最大特征值超出 MP 上界的倍数。越大说明第一主成分越强" />
+          </span>
+          <span class="stat-value">{{ lambdaRatio.toFixed(2) }}×</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">
+            N (标的数) / T (观测数)
+          </span>
+          <span class="stat-value stat-dim">{{ N }} / {{ T }}</span>
+        </div>
+      </div>
+
+      <!-- 图表 -->
+      <div class="charts-row">
+        <div class="chart-half">
+          <div ref="histRef" class="chart-container"></div>
+        </div>
+        <div class="chart-half">
+          <div ref="screeRef" class="chart-container"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import * as echarts from 'echarts'
+import TipHint from '../../TipHint.vue'
+
+const props = defineProps<{
+  data: {
+    eigenvalues: number[]
+    num_observations?: number
+  } | null
+}>()
+
+const histRef = ref<HTMLElement | null>(null)
+const screeRef = ref<HTMLElement | null>(null)
+let histChart: echarts.EChartsType | null = null
+let screeChart: echarts.EChartsType | null = null
+let resizeObserver: ResizeObserver | null = null
+
+// === MP 理论计算 ===
+const N = computed(() => props.data?.eigenvalues?.length || 0)
+const T = computed(() => props.data?.num_observations || 0)
+const Q = computed(() => (N.value > 0 && T.value > 0) ? T.value / N.value : 0)
+const lambdaPlus = computed(() => {
+  const q = Q.value
+  return q > 0 ? Math.pow(1 + 1 / Math.sqrt(q), 2) : 0
+})
+const lambdaMinus = computed(() => {
+  const q = Q.value
+  return q > 0 ? Math.pow(1 - 1 / Math.sqrt(q), 2) : 0
+})
+
+const hasData = computed(() => {
+  const evals = props.data?.eigenvalues
+  return evals && evals.length >= 3 && Q.value > 1
+})
+
+// 信号/噪声分解
+const nSignal = computed(() => {
+  if (!hasData.value) return 0
+  const lp = lambdaPlus.value
+  return props.data!.eigenvalues.filter(v => v > lp).length
+})
+
+const signalVarRatio = computed(() => {
+  if (!hasData.value) return 0
+  const evals = props.data!.eigenvalues
+  const total = evals.reduce((s, v) => s + v, 0)
+  if (total <= 0) return 0
+  const lp = lambdaPlus.value
+  const signalSum = evals.filter(v => v > lp).reduce((s, v) => s + v, 0)
+  return signalSum / total
+})
+
+const lambdaRatio = computed(() => {
+  if (!hasData.value) return 0
+  const evals = props.data!.eigenvalues
+  return evals.length > 0 && lambdaPlus.value > 0 ? evals[0] / lambdaPlus.value : 0
+})
+
+const qClass = computed(() => Q.value >= 3 ? 'good' : Q.value >= 2 ? 'warning' : 'danger')
+const signalClass = computed(() => {
+  const ratio = signalVarRatio.value
+  return ratio > 0.5 ? 'danger' : ratio > 0.2 ? 'warning' : 'good'
+})
+
+// === MP 理论 PDF ===
+function mpPDF(x: number, q: number): number {
+  const lp = Math.pow(1 + 1 / Math.sqrt(q), 2)
+  const lm = Math.pow(1 - 1 / Math.sqrt(q), 2)
+  if (x < lm || x > lp) return 0
+  return Math.sqrt((lp - x) * (x - lm)) / (2 * Math.PI * x / q)
+}
+
+// === 图表渲染 ===
+function buildHistOption() {
+  if (!hasData.value) return {}
+  const evals = props.data!.eigenvalues.filter(v => v > 0)
+  const q = Q.value
+  const lp = lambdaPlus.value
+  const lm = lambdaMinus.value
+
+  // 直方图 bin
+  const maxVal = Math.max(...evals) * 1.1
+  const minVal = Math.max(0, Math.min(...evals) * 0.9)
+  const nBins = Math.min(30, Math.max(10, Math.ceil(Math.sqrt(evals.length))))
+  const binWidth = (maxVal - minVal) / nBins
+  const bins = new Array(nBins).fill(0)
+  const binCenters: number[] = []
+  for (let i = 0; i < nBins; i++) {
+    binCenters.push(minVal + (i + 0.5) * binWidth)
+  }
+  for (const v of evals) {
+    const idx = Math.min(Math.floor((v - minVal) / binWidth), nBins - 1)
+    if (idx >= 0) bins[idx]++
+  }
+  // 归一化为密度
+  const totalArea = evals.length * binWidth
+  const density = bins.map(b => b / totalArea)
+
+  // MP 理论 PDF 曲线
+  const pdfPoints = 200
+  const mpX: number[] = []
+  const mpY: number[] = []
+  for (let i = 0; i <= pdfPoints; i++) {
+    const x = lm + (lp - lm) * i / pdfPoints
+    mpX.push(x)
+    mpY.push(mpPDF(x, q))
+  }
+
+  return {
+    backgroundColor: 'transparent',
+    title: { text: '经验谱 vs MP 理论分布', left: 'center', top: 4, textStyle: { color: '#ccc', fontSize: 12 } },
+    tooltip: { trigger: 'axis' },
+    grid: { left: 50, right: 20, top: 40, bottom: 35 },
+    xAxis: {
+      type: 'category',
+      data: binCenters.map(v => v.toFixed(3)),
+      axisLabel: { color: '#999', fontSize: 10, interval: Math.floor(nBins / 6) },
+      axisLine: { lineStyle: { color: '#444' } }
+    },
+    yAxis: {
+      type: 'value',
+      name: '密度',
+      nameTextStyle: { color: '#999', fontSize: 10 },
+      axisLabel: { color: '#999', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#333' } }
+    },
+    series: [
+      {
+        name: '经验密度',
+        type: 'bar',
+        data: density,
+        itemStyle: { color: 'rgba(41, 98, 255, 0.6)' },
+        barWidth: '90%'
+      },
+      {
+        name: 'MP 理论 PDF',
+        type: 'line',
+        data: mpY.map((y, i) => {
+          // 将 mpX 映射到 bin index
+          const binIdx = (mpX[i] - minVal) / binWidth - 0.5
+          return [binIdx, y] as [number, number]
+        }),
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#ff9800', width: 2 },
+        // 用 xAxis index 模式不好对齐，改用自定义
+      },
+      // λ₊ 标线
+      {
+        name: 'λ₊',
+        type: 'line',
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color: '#ef232a', type: 'dashed', width: 1.5 },
+          label: { formatter: 'λ₊={c}', color: '#ef232a', fontSize: 10 },
+          data: [{ xAxis: ((lp - minVal) / binWidth - 0.5).toFixed(1) }]
+        },
+        data: []
+      }
+    ]
+  }
+}
+
+function buildScreeOption() {
+  if (!hasData.value) return {}
+  const evals = props.data!.eigenvalues
+  const lp = lambdaPlus.value
+  const N = evals.length
+
+  const signalData = evals.map((v, i) => ({
+    value: v,
+    itemStyle: { color: v > lp ? '#ef232a' : '#2962ff' }
+  }))
+
+  return {
+    backgroundColor: 'transparent',
+    title: { text: 'Scree Plot (特征值降序)', left: 'center', top: 4, textStyle: { color: '#ccc', fontSize: 12 } },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = params[0]
+        const isSignal = p.value > lp
+        return `λ<sub>${p.dataIndex + 1}</sub> = ${p.value.toFixed(6)}<br/>${isSignal ? '🔴 信号' : '🔵 噪声'}`
+      }
+    },
+    grid: { left: 55, right: 20, top: 40, bottom: 35 },
+    xAxis: {
+      type: 'category',
+      data: evals.map((_, i) => `${i + 1}`),
+      axisLabel: { color: '#999', fontSize: 10, interval: Math.floor(N / 8) },
+      axisLine: { lineStyle: { color: '#444' } },
+      name: '序号',
+      nameTextStyle: { color: '#999', fontSize: 10 }
+    },
+    yAxis: {
+      type: 'log',
+      name: 'λ (log)',
+      nameTextStyle: { color: '#999', fontSize: 10 },
+      axisLabel: { color: '#999', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#333' } },
+      min: (value: any) => Math.max(value.min * 0.5, 1e-10)
+    },
+    series: [
+      {
+        type: 'bar',
+        data: signalData,
+        barWidth: '60%'
+      },
+      {
+        name: 'λ₊',
+        type: 'line',
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color: '#ef232a', type: 'dashed', width: 1.5 },
+          label: { formatter: 'λ₊', color: '#ef232a', fontSize: 10, position: 'end' },
+          data: [{ yAxis: lp }]
+        },
+        data: []
+      }
+    ]
+  }
+}
+
+function renderCharts() {
+  if (!hasData.value) return
+  nextTick(() => {
+    if (histRef.value && !histChart) {
+      histChart = echarts.init(histRef.value)
+    }
+    if (screeRef.value && !screeChart) {
+      screeChart = echarts.init(screeRef.value)
+    }
+    histChart?.setOption(buildHistOption(), true)
+    screeChart?.setOption(buildScreeOption(), true)
+  })
+}
+
+watch(() => props.data, renderCharts, { deep: true })
+
+onMounted(() => {
+  renderCharts()
+  resizeObserver = new ResizeObserver(() => {
+    histChart?.resize()
+    screeChart?.resize()
+  })
+  if (histRef.value) resizeObserver.observe(histRef.value)
+  if (screeRef.value) resizeObserver.observe(screeRef.value)
+})
+
+onUnmounted(() => {
+  resizeObserver?.disconnect()
+  histChart?.dispose()
+  screeChart?.dispose()
+})
+</script>
+
+<style scoped>
+.mp-card {
+  background: rgba(36, 46, 66, 0.6);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.card-title {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #e0e0e0;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.empty-hint {
+  color: #666;
+  font-size: 12px;
+  text-align: center;
+  padding: 20px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #888;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.stat-value.good { color: #00c853; }
+.stat-value.warning { color: #ff9800; }
+.stat-value.danger { color: #ef232a; }
+
+.stat-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: #888;
+}
+
+.stat-dim {
+  font-size: 13px;
+  font-weight: 400;
+  color: #888;
+}
+
+.charts-row {
+  display: flex;
+  gap: 12px;
+}
+
+.chart-half {
+  flex: 1;
+  min-width: 0;
+}
+
+.chart-container {
+  width: 100%;
+  height: 260px;
+}
+</style>

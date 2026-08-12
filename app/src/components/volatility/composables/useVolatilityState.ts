@@ -93,16 +93,29 @@ export interface VolatilityMultiResult {
   condition_number: number
   is_positive_definite: boolean
   annual_volatility: number[]
+  num_observations: number
+  // Marchenko-Pastur 谱指标
+  spectrum_indicators: SpectrumIndicatorData | null
   // 多资产预测外推
   multi_forecast: MultiForecast | null
   // 多标的时间序列分析
   time_series_analysis: TimeSeriesAnalysis | null
 }
 
+export interface SpectrumIndicatorData {
+  dates: string[]
+  m_plus: number[]
+  m_minus: number[]
+  n_effective: number[]
+  lambda_plus: number
+  lambda_minus: number
+  original_n: number
+  window_size: number
+}
+
 export interface TimeSeriesAnalysis {
   lead_lag: LeadLagPair[]
   granger_causality: GrangerPair[]
-  cointegration: CointegrationPair[]
 }
 
 export interface LeadLagPair {
@@ -120,17 +133,6 @@ export interface GrangerPair {
   p_value: number
   is_significant: boolean
   optimal_lag: number
-}
-
-export interface CointegrationPair {
-  symbol_x: string
-  symbol_y: string
-  beta: number
-  alpha: number
-  adf_statistic: number
-  p_value: number
-  is_cointegrated: boolean
-  half_life: number
 }
 
 export interface MultiForecast {
