@@ -210,12 +210,8 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
     for (auto& item : _callables) {
         auto& symbol = item.first;
         // 构建该 symbol 的输入参数（从连接信息解析的映射）
-        // callable 期望 "price" 作为收盘价 key，_resolvedInputs 中为 "close"
         Map<String, context_t> args;
         for (auto& [dataName, contextKey] : _resolvedInputs) {
-            // 将上游解析到的 context key 中的 symbol 前缀替换为当前 symbol
-            // contextKey 格式: "sz.000001.close"，symbol 格式: "sz.000001"
-            // 跳过 symbol 自身的点（exchange.code），从第2个点开始分割字段名
             String symbolKey = contextKey;
             auto firstDot = contextKey.find('.');
             if (firstDot != String::npos) {
@@ -236,8 +232,11 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         }
 
         auto callable = item.second;
-        // 调用计算
+        INFO("[FunctionNode:{}] Process: calling {} with {} args for symbol {}",
+             _id, _label, args.size(), symbol);
         auto result = (*callable)(args);
+        INFO("[FunctionNode:{}] Process: callable returned, writing output '{}.{}'",
+             _id, symbol, _label);
 
         // 写入输出
         String output_key = symbol + "." + _label;

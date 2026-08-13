@@ -28,31 +28,32 @@ NodeProcessResult StackNode::Process(const String& strategy, DataContext& contex
 }
 
 void StackNode::Stack(DataContext& context) {
-    Eigen::MatrixXd mat(_orders.size(), _window);
-    int i = 0;
+    int rows = static_cast<int>(_orders.size());
+    Vector<double> flat;
+    flat.reserve(rows * _window);
     for (auto& name: _orders) {
         auto& data = context.get(name);
         Vector<double>& arr = std::get<Vector<double>>(data);
         if (arr.size() < _window)
             return;
-
-        mat.row(i++) = Eigen::Map<Eigen::RowVectorXd>(arr.data() + arr.size() - _window - 1, _window);
+        flat.insert(flat.end(), arr.end() - _window, arr.end());
     }
-    context.set(_outname, mat);
+    context.set(_outname, flat);
 }
 
 void StackNode::HStack(DataContext& context) {
-    auto size = _orders.size() *_window;
+    auto size = _orders.size() * _window;
     Vector<double> temp(size);
+    size_t offset = 0;
     for (auto& name: _orders) {
         auto& data = context.get(name);
         Vector<double>& arr = std::get<Vector<double>>(data);
         if (arr.size() < _window)
             return;
-        std::copy(arr.begin(), arr.end(), temp.begin());
+        std::copy(arr.end() - _window, arr.end(), temp.begin() + offset);
+        offset += _window;
     }
-    Eigen::MatrixXd mat(1, size);
-    context.set(_outname, mat);
+    context.set(_outname, temp);
 }
 
 const nlohmann::json StackNode::getParams() {

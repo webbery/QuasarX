@@ -207,7 +207,7 @@ BacktestContext* DataContext::getBacktestContext() {
  * 
  * 使用 std::visit 访问 variant 的实际类型，返回对应的类型名称字符串。
  * 支持的类型：bool, String, uint64_t, double, Vector<float>, Vector<double>,
- *            Vector<uint64_t>, List<symbol_t>, Eigen::MatrixXd
+ *            Vector<uint64_t>, List<symbol_t>
  */
 String get_context_type_name(const context_t& ctx) {
     return std::visit([](const auto& v) -> String {
@@ -228,8 +228,6 @@ String get_context_type_name(const context_t& ctx) {
             return "vector<uint64>";
         } else if constexpr (std::is_same_v<T, List<symbol_t>>) {
             return "list<symbol_t>";
-        } else if constexpr (std::is_same_v<T, Eigen::MatrixXd>) {
-            return "matrix";
         } else {
             return "unknown";
         }
@@ -265,8 +263,6 @@ String format_context_info(const context_t& ctx) {
             return fmt::format("vector<uint64>[{}]", v.size());
         } else if constexpr (std::is_same_v<T, List<symbol_t>>) {
             return fmt::format("list<symbol_t>[{}]", v.size());
-        } else if constexpr (std::is_same_v<T, Eigen::MatrixXd>) {
-            return fmt::format("matrix[{} x {}]", v.rows(), v.cols());
         } else {
             return "unknown";
         }
