@@ -118,16 +118,16 @@ void FunctionNode::UpdateLabel(const String& label) {
 
 bool FunctionNode::Init(const nlohmann::json& config) {
     // 1. 从输入节点获取所有输出要素
-    DEBUG_INFO("[FunctionNode:{}] Init: _ins size = {}", _id, _ins.size());
+    INFO("[FunctionNode:{}] Init start, _ins size = {}", _id, _ins.size());
     for (auto& item: _ins) {
         auto input_names = item.second->out_elements();
-        DEBUG_INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements",
+        INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements",
              _id, item.first, input_names.size());
         _params.merge(input_names);
     }
 
     _label = (String)config["label"];
-    DEBUG_INFO("[FunctionNode:{}] Init: label='{}', _params size = {}",
+    INFO("[FunctionNode:{}] Init: label='{}', _params size = {}",
          _id, _label, _params.size());
 
     // 2. 获取方法名
@@ -137,6 +137,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
             "[FunctionNode:{}] Init: missing params.method.value in config", _id));
     }
     String methodName = config["params"]["method"]["value"];
+    INFO("[FunctionNode:{}] Init: methodName='{}'", _id, methodName);
 
     // 2.5 从上游 input 节点提取数据频率，将 range 换算为 bar 数
     DataFrequencyType dataFreq = DataFrequencyType::Day;
@@ -151,37 +152,35 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         String rangeStr = (String)config["params"]["range"]["value"];
         TimeValue tv = ParseTimeValue(rangeStr);
         windowBars = TimeValueToBars(tv, dataFreq);
-        DEBUG_INFO("[FunctionNode:{}] Init: range='{}', dataFreq={}, windowBars={}",
+        INFO("[FunctionNode:{}] Init: range='{}', dataFreq={}, windowBars={}",
              _id, rangeStr, static_cast<int>(dataFreq), windowBars);
     }
     auto callableConfig = config;
     callableConfig["_windowBars"] = windowBars;
 
     // 3. 从上游 QuoteInputNode 提取 symbol 集合（BFS 遍历）
-    //    旧实现: 从 _params key 字符串按 '.' 拆分取最后一段之前的部分作为 symbol。
-    //    旧实现的 bug: 上游 key 格式为 {symbol}.{label}.{field}（3 段，如 EMDNode）
-    //    时会错误地把 "sz.000423.emd" 解析为 symbol，导致 _callables key 错位
-    //    和 output_key 与上游 key 冲突。
-    //    新实现: 用基类的 discoverUpstreamSymbols() 从所有上游 QuoteInputNode
-    //    收集真正的 symbol 集合，绕过字符串格式假设。
     Set<String> symbolSet;
+    INFO("[FunctionNode:{}] Init: calling discoverUpstreamSymbols...", _id);
     for (auto sym : discoverUpstreamSymbols()) {
         symbolSet.insert(get_symbol(sym));
     }
-    DEBUG_INFO("[FunctionNode:{}] Init: discoverUpstreamSymbols → {} symbols",
-         _id, symbolSet.size());
+    INFO("[FunctionNode:{}] Init: {} symbols discovered", _id, symbolSet.size());
 
     // 4. 为每个 symbol 创建独立的 callable 实例
+    INFO("[FunctionNode:{}] Init: looking up intrinsic_functions...", _id);
     auto factoryIt = intrinsic_functions().find(methodName);
     if (factoryIt == intrinsic_functions().end()) {
         String info = fmt::format("function {} not implement.", methodName);
         throw std::runtime_error(info.c_str());
     }
+    INFO("[FunctionNode:{}] Init: factory found, creating callables...", _id);
     auto& factory = factoryIt->second;
 
     for (auto& symbol : symbolSet) {
+        INFO("[FunctionNode:{}] Init: creating callable for symbol '{}'", _id, symbol);
         _callables[symbol] = factory(callableConfig);
     }
+    INFO("[FunctionNode:{}] Init: callables created", _id);
 
     // 5. 构建输出要素
     for (auto& symbol : symbolSet) {
