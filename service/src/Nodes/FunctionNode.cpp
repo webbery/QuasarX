@@ -42,11 +42,15 @@ namespace {
         return std::max(1, totalMinutes / MinutesPerBar(freq));
     }
 
-    using CallableFactory = std::function<ICallable*(const nlohmann::json&)>;
+    using CallableFactory = ICallable* (*)(const nlohmann::json&);
 
-    Map<String, CallableFactory>& intrinsic_functions() {
-        static Map<String, CallableFactory> instance{
-        {"MA", [] (const nlohmann::json& config) {
+    struct IntrinsicEntry {
+        const char* name;
+        CallableFactory factory;
+    };
+
+    static const IntrinsicEntry intrinsic_table[] = {
+        {"MA", [] (const nlohmann::json& config) -> ICallable* {
             return new MA(config.value("_windowBars", 15));
         }},
         {"MinMax", [] (const nlohmann::json& config) -> ICallable* {
@@ -80,14 +84,13 @@ namespace {
             return new VPCorr(config.value("_windowBars", 15));
         }},
     };
-    return instance;
-    }
+    constexpr size_t intrinsic_count = sizeof(intrinsic_table) / sizeof(intrinsic_table[0]);
 }
 
 List<String> GetAllFunctionNames() {
     List<String> names;
-    for (auto& item: intrinsic_functions()) {
-        names.push_back(item.first);
+    for (size_t i = 0; i < intrinsic_count; i++) {
+        names.push_back(intrinsic_table[i].name);
     }
     return names;
 }
@@ -168,13 +171,18 @@ bool FunctionNode::Init(const nlohmann::json& config) {
 
     // 4. 为每个 symbol 创建独立的 callable 实例
     INFO("[FunctionNode:{}] Init: looking up intrinsic_functions...", _id);
-    auto factoryIt = intrinsic_functions().find(methodName);
-    if (factoryIt == intrinsic_functions().end()) {
+    CallableFactory factory = nullptr;
+    for (size_t i = 0; i < intrinsic_count; i++) {
+        if (methodName == intrinsic_table[i].name) {
+            factory = intrinsic_table[i].factory;
+            break;
+        }
+    }
+    if (!factory) {
         String info = fmt::format("function {} not implement.", methodName);
         throw std::runtime_error(info.c_str());
     }
     INFO("[FunctionNode:{}] Init: factory found, creating callables...", _id);
-    auto& factory = factoryIt->second;
 
     for (auto& symbol : symbolSet) {
         INFO("[FunctionNode:{}] Init: creating callable for symbol '{}'", _id, symbol);
@@ -271,9 +279,8 @@ Map<String, ArgType> FunctionNode::out_elements() {
 
 const nlohmann::json FunctionNode::getParams() {
     nlohmann::json params;
-    for (auto& item: intrinsic_functions()) {
-        auto key = item.first;
-        params[key] = {{"args", "type"}};
+    for (size_t i = 0; i < intrinsic_count; i++) {
+        params[intrinsic_table[i].name] = {{"args", "type"}};
     }
     return params;
 }
