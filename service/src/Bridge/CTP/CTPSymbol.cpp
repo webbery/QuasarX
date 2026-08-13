@@ -2,7 +2,8 @@
 #include "Util/string_algorithm.h"
 
 namespace {
-    static Map<String, char> object_code{
+    static Map<String, char>& object_code() {
+        static Map<String, char> m{
         {"ap", 1}, {"al", 2},
         {"cf", 3}, {"cj", 4}, {"cy", 5},
         {"fg", 6}, {"ho", 7}, {"ic", 8},
@@ -33,8 +34,11 @@ namespace {
         {"wr", 80}, {"sn", 81}, {"sc", 82},
         {"ps", 83}, {"lg", 84}
     };
+        return m;
+    }
 
-    static Map<String, ExchangeName> exchange_map{
+    static Map<String, ExchangeName>& exchange_map() {
+        static Map<String, ExchangeName> m{
         {"ap", MT_Zhengzhou}, {"al", MT_ShanghaiFuture},
         {"cf", MT_Zhengzhou}, {"cj", MT_Zhengzhou}, {"cy", MT_Zhengzhou},
         {"fg", MT_Zhengzhou}, {"ho", MT_Zhongjin}, {"ic", MT_Zhongjin},
@@ -65,6 +69,8 @@ namespace {
         {"sn", MT_ShanghaiFuture}, {"sc", MT_ShanghaiEng}, 
         {"ps", MT_Guangzhou}, {"lg", MT_Dalian}
     };
+        return m;
+    }
 }
 CTPSymbol::CTPSymbol(const String& symbol):_symbol(symbol) {
 
@@ -101,7 +107,7 @@ CTPSymbol::operator symbol_t() const {
     if (!last_token.empty()) {
         tokens.emplace_back(std::move(last_token));
     }
-    t._opt = object_code[tokens.front()];
+    t._opt = object_code()[tokens.front()];
     if (t._opt == 0) {
         WARN("Object {} is new item", tokens.front());
     }
@@ -131,7 +137,7 @@ CTPSymbol::operator symbol_t() const {
     default:
         break;
     }
-    t._exchange = exchange_map[tokens.front()];
+    t._exchange = exchange_map()[tokens.front()];
 
     return t;
 }
@@ -141,7 +147,7 @@ String CTPObjectName(int type) {
     static Map<int, String> reverse_map;
     if (!initial) {
         initial = true;
-        for (auto& item: object_code) {
+        for (auto& item: object_code()) {
             reverse_map[item.second] = item.first;
         }
     }
@@ -149,5 +155,5 @@ String CTPObjectName(int type) {
 }
 
 ExchangeName GetExchangeName(const String& object) {
-    return exchange_map[object];
+    return exchange_map()[object];
 }

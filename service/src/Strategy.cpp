@@ -36,39 +36,45 @@
 #include "Nodes/BreakoutNode.h"
 
 namespace {
-    Map<String, StrategyNodeType> node_type_map{
-        {"input", StrategyNodeType::Input},
-        {"lstm", StrategyNodeType::LSTM},
-        {"function", StrategyNodeType::Function},
-        {"feature", StrategyNodeType::Feature},
-        {"signal", StrategyNodeType::Signal},
-        {"debug", StrategyNodeType::Debug},
-        {"execution", StrategyNodeType::Execution},
-        {"portfolio", StrategyNodeType::Portfolio},
-        {"test", StrategyNodeType::Test},
-        {"spread", StrategyNodeType::Spread},
-        {"protection", StrategyNodeType::Protection},
-        {"emd", StrategyNodeType::EMD},
-        {"hmm", StrategyNodeType::HMM},
-        {"resample", StrategyNodeType::Resample},
-        {"formula", StrategyNodeType::Formula},
-        {"cusum", StrategyNodeType::CUSUM},
-        {"factor_combine", StrategyNodeType::FactorCombine},
-        {"xgboost", StrategyNodeType::XGBoost},
-        {"breakout", StrategyNodeType::Breakout},
-    };
+    Map<String, StrategyNodeType>& node_type_map() {
+        static Map<String, StrategyNodeType> m{
+            {"input", StrategyNodeType::Input},
+            {"lstm", StrategyNodeType::LSTM},
+            {"function", StrategyNodeType::Function},
+            {"feature", StrategyNodeType::Feature},
+            {"signal", StrategyNodeType::Signal},
+            {"debug", StrategyNodeType::Debug},
+            {"execution", StrategyNodeType::Execution},
+            {"portfolio", StrategyNodeType::Portfolio},
+            {"test", StrategyNodeType::Test},
+            {"spread", StrategyNodeType::Spread},
+            {"protection", StrategyNodeType::Protection},
+            {"emd", StrategyNodeType::EMD},
+            {"hmm", StrategyNodeType::HMM},
+            {"resample", StrategyNodeType::Resample},
+            {"formula", StrategyNodeType::Formula},
+            {"cusum", StrategyNodeType::CUSUM},
+            {"factor_combine", StrategyNodeType::FactorCombine},
+            {"xgboost", StrategyNodeType::XGBoost},
+            {"breakout", StrategyNodeType::Breakout},
+        };
+        return m;
+    }
 
-    Map<String, StatisticIndicator> statistics{
-        {"sharp", StatisticIndicator::Sharp},
-        {"annual_sharp", StatisticIndicator::AnualSharp},
-        {"VAR", StatisticIndicator::VaR},
-        {"ES", StatisticIndicator::ES},
-        {"winRate", StatisticIndicator::WinRate},
-        {"annualReturn", StatisticIndicator::AnualReturn},
-        {"totalReturn", StatisticIndicator::TotalReturn},
-        {"maxDrawdown", StatisticIndicator::MaxDrawDown},
-        {"CalmarRatio", StatisticIndicator::Calmar}
-    };
+    Map<String, StatisticIndicator>& statistics() {
+        static Map<String, StatisticIndicator> m{
+            {"sharp", StatisticIndicator::Sharp},
+            {"annual_sharp", StatisticIndicator::AnualSharp},
+            {"VAR", StatisticIndicator::VaR},
+            {"ES", StatisticIndicator::ES},
+            {"winRate", StatisticIndicator::WinRate},
+            {"annualReturn", StatisticIndicator::AnualReturn},
+            {"totalReturn", StatisticIndicator::TotalReturn},
+            {"maxDrawdown", StatisticIndicator::MaxDrawDown},
+            {"CalmarRatio", StatisticIndicator::Calmar}
+        };
+        return m;
+    }
 }
 
 QNode* generate_input_node(const String& id, Server* server) {
@@ -89,7 +95,7 @@ QNode* generate_signal_node(const String& strategyName, const String& id, Server
 
     auto brokerSystem = server->GetBrokerSubSystem();
     brokerSystem->CleanAllIndicators(strategyName);
-    for (auto& item: statistics) {
+    for (auto& item: statistics()) {
         brokerSystem->RegistIndicator(strategyName, item.second);
     }
     return node;
@@ -119,7 +125,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
     for (auto& node: nodes) {
         String node_type = node["data"]["nodeType"];
         QNode* nodeInstance = nullptr;
-        auto type = node_type_map[node_type];
+        auto type = node_type_map()[node_type];
         switch (type) {
         case StrategyNodeType::Input: 
             nodeInstance = generate_node<QuoteInputNode>(node["id"], server);

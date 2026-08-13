@@ -159,7 +159,7 @@ jobs:
           git checkout 12.0.0
           cd -
           mkdir service/build && cd service/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON
           cmake --build . --config Release -j$(nproc)
 
       # 显示缓存统计（验证加速效果）

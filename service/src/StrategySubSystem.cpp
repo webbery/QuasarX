@@ -14,10 +14,13 @@
 
 namespace {
     // timeHorizon 映射：统一转换为秒（用于计算 warmup epoch 数）
-    static const Map<String, int> timeHorizonSeconds{
-        {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600},
-        {"1d", 86400}, {"3d", 259200}, {"5d", 432000},
-    };
+    static const Map<String, int>& timeHorizonSeconds() {
+        static const Map<String, int> m{
+            {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600},
+            {"1d", 86400}, {"3d", 259200}, {"5d", 432000},
+        };
+        return m;
+    }
 
     // 从策略配置推断预热期 epoch 数
     int InferWarmupEpochsFromConfig(const nlohmann::json& config) {
@@ -36,11 +39,11 @@ namespace {
             }
         }
 
-        if (inputFreq.empty() || !timeHorizonSeconds.count(inputFreq)) {
+        if (inputFreq.empty() || !timeHorizonSeconds().count(inputFreq)) {
             return maxWarmup;
         }
 
-        int freqSeconds = timeHorizonSeconds.at(inputFreq);
+        int freqSeconds = timeHorizonSeconds().at(inputFreq);
 
         // 2. 遍历 Function 节点，计算最大 warmup
         for (auto& node : config["nodes"]) {
@@ -50,8 +53,8 @@ namespace {
             auto& params = node["data"]["params"];
             String range = params["range"]["value"];
 
-            if (timeHorizonSeconds.count(range)) {
-                int rangeSeconds = timeHorizonSeconds.at(range);
+            if (timeHorizonSeconds().count(range)) {
+                int rangeSeconds = timeHorizonSeconds().at(range);
                 // 计算需要的 epoch 数（向上取整）
                 int epochs = (rangeSeconds + freqSeconds - 1) / freqSeconds;
                 maxWarmup = std::max(maxWarmup, epochs);

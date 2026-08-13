@@ -572,7 +572,10 @@ void SetCurrentThreadName(const char* name) {
 }
 
 namespace {
-  const Map<String, char> exchange_map{{"SZ", MT_Shenzhen}, {"SH", MT_Shanghai}, {"BJ", MT_Beijing}};
+  const Map<String, char>& exchange_map() {
+    static const Map<String, char> m{{"SZ", MT_Shenzhen}, {"SH", MT_Shanghai}, {"BJ", MT_Beijing}};
+    return m;
+  }
 }
 
 symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t) {
@@ -619,12 +622,12 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     }
     if (tokens.size() > 1) {
       auto excName = to_upper(tokens.front());
-      id._exchange = exchange_map.at(excName);
+      id._exchange = exchange_map().at(excName);
     } else {
       id._exchange = Server::GetExchange(strSymbol);
     }
   } else {
-    id._exchange = exchange_map.at(exchange);
+    id._exchange = exchange_map().at(exchange);
     id._type = t;
   }
   id._symbol = code;

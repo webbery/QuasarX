@@ -11,20 +11,29 @@
 #define SHORT_ID_OFFSET 4
 
 namespace {
-    const Map<char, String> ID2Symbol{
-        // szse
-        {1, "159901"}, {2, "159915"}, {3, "159919"}, {4, "159922"},
-        // sh
-        {5, "510050"}, {6, "510300"}, {7, "510500"}, {8, "588000"}, {9, "588080"},
-    };
-    const Map<String, char> name2ID{
-        {"深证100ETF", 1}, {"创业板ETF", 2}, {"沪深300ETF", 3}, {"中证500ETF", 4},
-        {"50ETF", 5}, {"300ETF", 6}, {"500ETF", 7}, {"科创50", 8}, {"科创板50", 9},
-    };
-    const Map<char, ExchangeName> ID2Exchange{
-        {1, ExchangeName::MT_Shenzhen}, {2, ExchangeName::MT_Shenzhen}, {3, ExchangeName::MT_Shenzhen},{4, ExchangeName::MT_Shenzhen},
-        {5, ExchangeName::MT_Shanghai}, {6, ExchangeName::MT_Shanghai}, {7, ExchangeName::MT_Shanghai}, {8, ExchangeName::MT_Shanghai}, {9, ExchangeName::MT_Shanghai},
-    };
+    const Map<char, String>& ID2Symbol() {
+        static const Map<char, String> m{
+            // szse
+            {1, "159901"}, {2, "159915"}, {3, "159919"}, {4, "159922"},
+            // sh
+            {5, "510050"}, {6, "510300"}, {7, "510500"}, {8, "588000"}, {9, "588080"},
+        };
+        return m;
+    }
+    const Map<String, char>& name2ID() {
+        static const Map<String, char> m{
+            {"深证100ETF", 1}, {"创业板ETF", 2}, {"沪深300ETF", 3}, {"中证500ETF", 4},
+            {"50ETF", 5}, {"300ETF", 6}, {"500ETF", 7}, {"科创50", 8}, {"科创板50", 9},
+        };
+        return m;
+    }
+    const Map<char, ExchangeName>& ID2Exchange() {
+        static const Map<char, ExchangeName> m{
+            {1, ExchangeName::MT_Shenzhen}, {2, ExchangeName::MT_Shenzhen}, {3, ExchangeName::MT_Shenzhen},{4, ExchangeName::MT_Shenzhen},
+            {5, ExchangeName::MT_Shanghai}, {6, ExchangeName::MT_Shanghai}, {7, ExchangeName::MT_Shanghai}, {8, ExchangeName::MT_Shanghai}, {9, ExchangeName::MT_Shanghai},
+        };
+        return m;
+    }
 
     // Meyers singleton: 延迟初始化，避免静态构造阶段 boost::concurrent_flat_map 崩溃
     using EtfCodeMap = boost::concurrent_flat_map<uint32_t, String>;
@@ -113,12 +122,12 @@ ETFOptionSymbol::operator symbol_t() const
 uint64_t ETFOptionSymbol::GetOptionInfo(const String& name, const String& token, char& month, int& price) {
     Vector<String> tokens;
     split(name, tokens, token.c_str());
-    auto itr = name2ID.find(tokens.front());
-    if (itr == name2ID.end())
+    auto itr = name2ID().find(tokens.front());
+    if (itr == name2ID().end())
         return 0;
 
     uint64_t id = itr->second;
-    _symbol._exchange = ID2Exchange.at(id);
+    _symbol._exchange = ID2Exchange().at(id);
 
     Vector<String> info;
     auto back = tokens.back().substr(2);
@@ -144,7 +153,7 @@ String ETFOptionSymbol::name()
     String n;
     uint64_t idx, id;
     GetCode(idx, id);
-    n += ID2Symbol.at(id);
+    n += ID2Symbol().at(id);
     switch (_symbol._type) {
         case contract_type::call:
             n += "C";
