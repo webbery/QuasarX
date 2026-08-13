@@ -448,7 +448,9 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     if (!end_time.empty())
         sql += fmt::format(" AND datetime <= '{}'", end_time);
 
-    sql += fmt::format(" ORDER BY datetime ASC LIMIT {}", limit);
+    sql += " ORDER BY datetime ASC";
+    if (limit > 0)
+        sql += fmt::format(" LIMIT {}", limit);
 
     duckdb_result res;
     if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {

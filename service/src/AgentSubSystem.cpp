@@ -571,26 +571,36 @@ void FlowSubsystem::ComputeBacktestMetrics(
             const auto& assetValues = btContext->getAssetValues();
             int T = static_cast<int>(assetDates.size());
 
-            std::vector<std::vector<double>> assetReturns(nAssets);
-            for (int j = 0; j < nAssets; j++) {
-                auto it = symbols.begin();
-                std::advance(it, j);
-                symbol_t sym = *it;
-                assetReturns[j].reserve(T - 1);
+            INFO("[ComputeBacktestMetrics] Covariance: nAssets={}, T={}, assetValues.size()={}, assetSnapshotCount={}",
+                 nAssets, T, assetValues.size(), btContext->assetSnapshotCount());
 
-                for (int i = 1; i < T; i++) {
-                    double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
-                    double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
-                    if (prevVal > 0.0) {
-                        assetReturns[j].push_back((currVal - prevVal) / prevVal);
-                    } else {
-                        assetReturns[j].push_back(0.0);
+            if (T < 2 || assetValues.size() < static_cast<size_t>(T)) {
+                WARN("[ComputeBacktestMetrics] Skipping covariance: insufficient data (T={}, assetValues.size()={})",
+                     T, assetValues.size());
+            } else {
+                std::vector<std::vector<double>> assetReturns(nAssets);
+                for (int j = 0; j < nAssets; j++) {
+                    auto it = symbols.begin();
+                    std::advance(it, j);
+                    symbol_t sym = *it;
+                    assetReturns[j].reserve(T - 1);
+
+                    for (int i = 1; i < T; i++) {
+                        double prevVal = assetValues[i - 1].count(sym) ? assetValues[i - 1].at(sym) : 0.0;
+                        double currVal = assetValues[i].count(sym) ? assetValues[i].at(sym) : 0.0;
+                        if (prevVal > 0.0) {
+                            assetReturns[j].push_back((currVal - prevVal) / prevVal);
+                        } else {
+                            assetReturns[j].push_back(0.0);
+                        }
                     }
                 }
-            }
 
-            // 计算协方差和质量评估
-            auto cov = compute_covariance(assetReturns);
+                INFO("[ComputeBacktestMetrics] Covariance: assetReturns[0].size()={}, computing...",
+                     assetReturns[0].size());
+
+                // 计算协方差和质量评估
+                auto cov = compute_covariance(assetReturns);
             if (cov.n_assets > 1) {
                 auto quality = evaluate_covariance_quality(cov);
                 flow._collections[StatisticIndicator::CovConditionNumber] = static_cast<float>(quality.conditionNumber);
@@ -600,6 +610,7 @@ void FlowSubsystem::ComputeBacktestMetrics(
                 flow._collections[StatisticIndicator::CovObservations] = static_cast<float>(cov.n_observations);
                 flow._collections[StatisticIndicator::CovNAzets] = static_cast<float>(cov.n_assets);
                 flow._collections[StatisticIndicator::CovNearCollinear] = static_cast<float>(cov.nearCollinearPairs);
+            }
             }
         }
     }
@@ -1316,15 +1327,24 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
                 if (success) {
                     // ManualTiming 邮件通知
+                    bool foundManual = false;
                     for (auto& node : flow._graph) {
                         if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
+                            INFO("[StartDaily] ExecuteNode found, execType={}", static_cast<int>(execNode->GetExecType()));
                             if (execNode->GetExecType() == ExecuteType::Manual) {
+                                foundManual = true;
                                 if (auto* manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming())) {
+                                    INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
                                     manualTiming->SendSummaryEmail(strategy);
+                                } else {
+                                    WARN("[StartDaily] ExecuteNode is Manual but timing is not ManualTiming");
                                 }
                                 break;
                             }
                         }
+                    }
+                    if (!foundManual) {
+                        INFO("[StartDaily] No Manual ExecuteNode found in strategy {}", strategy);
                     }
 
                     // 提取信号

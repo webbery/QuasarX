@@ -31,10 +31,7 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
 }
 
 void ManualTiming::SendSummaryEmail(const String& strategy) {
-    if (_decisions.empty()) {
-        INFO("[Manual] No decisions to notify for strategy {}", strategy);
-        return;
-    }
+    INFO("[Manual] SendSummaryEmail called for strategy {}, decisions count: {}", strategy, _decisions.size());
 
     auto* broker = _server->GetBrokerSubSystem();
 

@@ -13,7 +13,7 @@
 CovarianceResult compute_covariance(const std::vector<std::vector<double>>& returns) {
     CovarianceResult result;
 
-    if (returns.empty() || returns[0].empty()) {
+    if (returns.empty()) {
         return result;
     }
 
