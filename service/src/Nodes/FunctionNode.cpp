@@ -121,16 +121,16 @@ void FunctionNode::UpdateLabel(const String& label) {
 
 bool FunctionNode::Init(const nlohmann::json& config) {
     // 1. 从输入节点获取所有输出要素
-    INFO("[FunctionNode:{}] Init start, _ins size = {}", _id, _ins.size());
+    DEBUG_INFO("[FunctionNode:{}] Init: _ins size = {}", _id, _ins.size());
     for (auto& item: _ins) {
         auto input_names = item.second->out_elements();
-        INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements",
+        DEBUG_INFO("[FunctionNode:{}] Init: input node '{}' provided {} elements",
              _id, item.first, input_names.size());
         _params.merge(input_names);
     }
 
     _label = (String)config["label"];
-    INFO("[FunctionNode:{}] Init: label='{}', _params size = {}",
+    DEBUG_INFO("[FunctionNode:{}] Init: label='{}', _params size = {}",
          _id, _label, _params.size());
 
     // 2. 获取方法名
@@ -140,7 +140,6 @@ bool FunctionNode::Init(const nlohmann::json& config) {
             "[FunctionNode:{}] Init: missing params.method.value in config", _id));
     }
     String methodName = config["params"]["method"]["value"];
-    INFO("[FunctionNode:{}] Init: methodName='{}'", _id, methodName);
 
     // 2.5 从上游 input 节点提取数据频率，将 range 换算为 bar 数
     DataFrequencyType dataFreq = DataFrequencyType::Day;
@@ -155,7 +154,7 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         String rangeStr = (String)config["params"]["range"]["value"];
         TimeValue tv = ParseTimeValue(rangeStr);
         windowBars = TimeValueToBars(tv, dataFreq);
-        INFO("[FunctionNode:{}] Init: range='{}', dataFreq={}, windowBars={}",
+        DEBUG_INFO("[FunctionNode:{}] Init: range='{}', dataFreq={}, windowBars={}",
              _id, rangeStr, static_cast<int>(dataFreq), windowBars);
     }
     auto callableConfig = config;
@@ -163,14 +162,13 @@ bool FunctionNode::Init(const nlohmann::json& config) {
 
     // 3. 从上游 QuoteInputNode 提取 symbol 集合（BFS 遍历）
     Set<String> symbolSet;
-    INFO("[FunctionNode:{}] Init: calling discoverUpstreamSymbols...", _id);
     for (auto sym : discoverUpstreamSymbols()) {
         symbolSet.insert(get_symbol(sym));
     }
-    INFO("[FunctionNode:{}] Init: {} symbols discovered", _id, symbolSet.size());
+    DEBUG_INFO("[FunctionNode:{}] Init: discoverUpstreamSymbols → {} symbols",
+         _id, symbolSet.size());
 
     // 4. 为每个 symbol 创建独立的 callable 实例
-    INFO("[FunctionNode:{}] Init: looking up intrinsic_functions...", _id);
     CallableFactory factory = nullptr;
     for (size_t i = 0; i < intrinsic_count; i++) {
         if (methodName == intrinsic_table[i].name) {
@@ -182,13 +180,10 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         String info = fmt::format("function {} not implement.", methodName);
         throw std::runtime_error(info.c_str());
     }
-    INFO("[FunctionNode:{}] Init: factory found, creating callables...", _id);
 
     for (auto& symbol : symbolSet) {
-        INFO("[FunctionNode:{}] Init: creating callable for symbol '{}'", _id, symbol);
         _callables[symbol] = factory(callableConfig);
     }
-    INFO("[FunctionNode:{}] Init: callables created", _id);
 
     // 5. 构建输出要素
     for (auto& symbol : symbolSet) {

@@ -897,10 +897,10 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
         else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
         else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
-        
-        // INFO("[Strategy] Epoch {}, executing node: {} (type: {})", context.GetEpoch(), node->id(), nodeType);
+
+        INFO("[RunGraph] Epoch {}, node {} ({})", context.GetEpoch(), node->id(), nodeType);
         auto result = node->Process(strategy, context);
-        // INFO("[Strategy] Node {} returned result: {}", node->id(), (int)result);
+        INFO("[RunGraph] Epoch {}, node {} returned {}", context.GetEpoch(), node->id(), (int)result);
         
         switch (result) {
             case NodeProcessResult::Success:
