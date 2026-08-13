@@ -11,9 +11,10 @@ class FormulaParser;
 namespace statement {
     extern String grammar;
 
-    extern Map<String, std::function<bool (const context_t& , const context_t& )>> comparationMap;
-    extern Map<char, std::function<context_t(const context_t& , const context_t&)>> arithmeticMap;
-    extern Map<String, context_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , DataContext&)> evalMap;
+    Map<String, std::function<bool (const context_t& , const context_t& )>>& comparationMap();
+    Map<char, std::function<context_t(const context_t& , const context_t&)>>& arithmeticMap();
+    using EvalPtr = context_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , DataContext&);
+    Map<String, EvalPtr>& evalMap();
 
     bool check_bool(const context_t& feature);
 

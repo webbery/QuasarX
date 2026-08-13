@@ -60,7 +60,7 @@ context_t FormulaParser::evalComparison(const symbol_t& symbol, const peg::Ast& 
     auto left = eval(symbol, *ast.nodes[0], context);
     auto right = eval(symbol, *ast.nodes[2], context);
     String op(ast.nodes[1]->token);
-    auto result = statement::comparationMap[op](left, right);
+    auto result = statement::comparationMap()[op](left, right);
     return result;
 }
 
@@ -263,11 +263,11 @@ context_t FormulaParser::evalNotPrefix(const symbol_t& symbol, const peg::Ast& a
 }
 
 context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    if (statement::evalMap.count(ast.name) == 0) {
+    if (statement::evalMap().count(ast.name) == 0) {
         INFO("ast node `{}` not found", ast.name);
         return false;
     }
-    return (this->*(statement::evalMap[ast.name]))(symbol, ast, context);
+    return (this->*(statement::evalMap()[ast.name]))(symbol, ast, context);
 }
 
 // 辅助：从 context_t 提取 double 标量
@@ -451,7 +451,7 @@ context_t FormulaParser::evalArithmetic(const symbol_t& symbol, const peg::Ast& 
     for (size_t i = 1; i < ast.nodes.size(); i += 2) {
         char op = ast.nodes[i]->token[0];
         auto operand = evalNode(symbol, *ast.nodes[i + 1], context);
-        result = statement::arithmeticMap[op](result, operand);
+        result = statement::arithmeticMap()[op](result, operand);
     }
 
     return result;

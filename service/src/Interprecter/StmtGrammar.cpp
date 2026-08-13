@@ -71,7 +71,8 @@ String grammar = R"(
         %whitespace     <- [ \t]*
     )";
 
-Map<String, std::function<bool (const context_t& , const context_t& )>> comparationMap{
+Map<String, std::function<bool (const context_t& , const context_t& )>>& comparationMap() {
+    static Map<String, std::function<bool (const context_t& , const context_t& )>> m{
     {">", [](const context_t& left, const context_t& right) {
         bool val = false;
         std::visit([right, &val](auto&& l){
@@ -170,8 +171,11 @@ Map<String, std::function<bool (const context_t& , const context_t& )>> comparat
         return val;
     }},
 };
+    return m;
+}
 
-Map<char, std::function<context_t(const context_t& , const context_t&)>> arithmeticMap{
+Map<char, std::function<context_t(const context_t& , const context_t&)>>& arithmeticMap() {
+    static Map<char, std::function<context_t(const context_t& , const context_t&)>> m{
     {'+', [](const context_t& left, const context_t& right) {
         context_t result;
         std::visit([right, &result](auto&& l){
@@ -230,10 +234,11 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>> arithme
         return result;
     }},
 };
+    return m;
+}
 
-using EvalPtr = context_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , DataContext&);
-
-Map<String, EvalPtr> evalMap{
+Map<String, EvalPtr>& evalMap() {
+    static Map<String, EvalPtr> m{
     {"Number", &FormulaParser::evalNumber},
     {"BoolLiteral", &FormulaParser::evalBoolLiteral},
     {"Identifier", &FormulaParser::evalIdentifier},
@@ -252,6 +257,8 @@ Map<String, EvalPtr> evalMap{
     {"Expression", &FormulaParser::evalExpression},
     {"ExpressionStmt", &FormulaParser::evalStatement}
 };
+    return m;
+}
 
 bool check_bool(const context_t& feature) {
     bool result = false;

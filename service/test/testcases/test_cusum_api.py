@@ -34,6 +34,20 @@ from typing import Dict, List, Optional, Tuple
 BASE_URL = "https://localhost:19107/v0"
 VERIFY_SSL = False
 
+
+def _to_api_symbols(symbols: List[str]) -> List[str]:
+    """内部格式 → API 格式: sz.900007 → 900007.SZ"""
+    result = []
+    for s in symbols:
+        if '.' in s:
+            parts = s.split('.', 1)
+            exc_map = {'sz': 'SZ', 'sh': 'SH', 'bj': 'BJ'}
+            exc = exc_map.get(parts[0].lower(), parts[0].upper())
+            result.append(f"{parts[1]}.{exc}")
+        else:
+            result.append(s)
+    return result
+
 # 测试数据目录（与 test_backtest_metrics.py 共享）
 SERVICE_ROOT = Path(__file__).parent.parent.parent
 SERVICE_DATA_DIR = SERVICE_ROOT / "build" / "data"
@@ -570,7 +584,7 @@ class TestCUSUMMeanShift:
         resp = requests.post(
             f"{BASE_URL}/analysis/cusum",
             json={
-                "symbols": symbols,
+                "symbols": _to_api_symbols(symbols),
                 "modes": modes,
                 "start": start,
                 "end": end,
@@ -582,7 +596,8 @@ class TestCUSUMMeanShift:
             verify=VERIFY_SSL,
             timeout=60
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise RuntimeError(f"CUSUM API {resp.status_code}: {resp.text}")
         return resp.json()
 
     def test_cpp_python_s_pos_s_neg_alignment(self, auth_token):
@@ -823,7 +838,7 @@ class TestCUSUMParameterSensitivity:
         resp = requests.post(
             f"{BASE_URL}/analysis/cusum",
             json={
-                "symbols": symbols,
+                "symbols": _to_api_symbols(symbols),
                 "modes": ["mean"],
                 "start": start,
                 "end": end,
@@ -1146,7 +1161,7 @@ class TestCUSUMCalibration:
         """调用校准 API"""
         resp = requests.post(f"{BASE_URL}/v0/analysis/cusum", json={
             "action": "calibrate",
-            "symbols": symbols,
+            "symbols": _to_api_symbols(symbols),
             "start": start,
             "end": end,
             "detectable_shift_sigma": detectable_shift,
@@ -1364,7 +1379,7 @@ class TestCUSUMCalibration:
 
         resp = requests.post(f"{BASE_URL}/v0/analysis/cusum", json={
             "action": "calibrate",
-            "symbols": [symbol],
+            "symbols": _to_api_symbols([symbol]),
             "start": "2024-01-02",
             "end": "2024-12-31",
             "freq": "1d",

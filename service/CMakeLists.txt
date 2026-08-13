@@ -141,7 +141,7 @@ add_compile_definitions(_DEBUG)
 add_compile_definitions(SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG)
 add_compile_options(-g -O0)
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-add_compile_options(-march=native -O3)
+add_compile_options(-mtune=generic -O3)
 # -g1 最小调试信息（函数名+行号），供 .debug 符号文件 addr2line 崩溃栈解析；
 # 相比 -g 省去类型/局部变量 DWARF，显著降低链接时间
 add_compile_options(-g1 -fno-omit-frame-pointer)
