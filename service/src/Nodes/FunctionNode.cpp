@@ -182,7 +182,13 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     }
 
     for (auto& symbol : symbolSet) {
-        _callables[symbol] = factory(callableConfig);
+        auto* callable = factory(callableConfig);
+        if (!callable) {
+            throw std::runtime_error(fmt::format(
+                "[FunctionNode:{}] method '{}' factory returned nullptr for symbol '{}'",
+                _id, methodName, symbol));
+        }
+        _callables[symbol] = callable;
     }
 
     // 5. 构建输出要素
@@ -206,6 +212,14 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         return NodeProcessResult::Error;
     }
 
+    // 防御性检查：确保所有 callable 非空
+    for (auto& [sym, ptr] : _callables) {
+        if (!ptr) {
+            ERROR("[FunctionNode:{}] nullptr callable for symbol '{}'", _id, sym);
+            return NodeProcessResult::Error;
+        }
+    }
+
     // 对每个 symbol 独立计算
     for (auto& item : _callables) {
         auto& symbol = item.first;
@@ -223,6 +237,9 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             if (context.exist(symbolKey)) {
                 String slot = (dataName == "close") ? "price" : dataName;
                 args[slot] = context.get(symbolKey);
+            }
+            else {
+                INFO("[FunctionNode:{}] key {} not exist.", _id, symbolKey);
             }
         }
 
