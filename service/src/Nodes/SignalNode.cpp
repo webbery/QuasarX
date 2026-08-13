@@ -22,10 +22,14 @@ bool SignalNode::Init(const nlohmann::json& config) {
     _buyExpression = (String)buySignal;
     _sellExpression = (String)sellSignal;
 
+    INFO("[SignalNode:{}] Init: buy='{}', sell='{}'", _id, _buyExpression, _sellExpression);
+
     // 收集可用变量列表及其类型（从输入节点）
     Map<String, ArgType> availableVars;
+    INFO("[SignalNode:{}] Init: collecting availableVars from {} inputs", _id, _ins.size());
     for (auto& item: _ins) {
         auto names = item.second->out_elements();
+        INFO("[SignalNode:{}] Init: input handle '{}' has {} out_elements", _id, item.first, names.size());
         for (auto& info: names) {
             // info.first 是完整 key 如 "bj.920108.ma_short"
             // info.second 是 ArgType
@@ -33,10 +37,14 @@ bool SignalNode::Init(const nlohmann::json& config) {
         }
     }
 
+    INFO("[SignalNode:{}] Init: collected {} availableVars", _id, availableVars.size());
+
     // 解析并验证买入公式
+    INFO("[SignalNode:{}] Init: creating FormulaParser for buy signal", _id);
     if (!_buyParser) {
         _buyParser = new FormulaParser(_server);
     }
+    INFO("[SignalNode:{}] Init: parsing buy signal", _id);
     if (!_buyParser->parse(buySignal, TradeAction::BUY)) {
         WARN("parse buy express fail.");
         delete _buyParser;
@@ -44,6 +52,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error("Failed to parse buy signal expression");
     }
     // 新增：类型验证
+    INFO("[SignalNode:{}] Init: validating buy signal", _id);
     if (!_buyParser->validate(availableVars)) {
         std::string error = "Buy signal expression type validation failed: " +
                            _buyParser->getValidationError();
@@ -54,9 +63,11 @@ bool SignalNode::Init(const nlohmann::json& config) {
     }
 
     // 解析并验证卖出公式
+    INFO("[SignalNode:{}] Init: creating FormulaParser for sell signal", _id);
     if (!_sellParser) {
         _sellParser = new FormulaParser(_server);
     }
+    INFO("[SignalNode:{}] Init: parsing sell signal", _id);
     if (!_sellParser->parse(sellSignal, TradeAction::SELL)) {
         WARN("parse sell express fail.");
         delete _sellParser;
@@ -64,6 +75,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error("Failed to parse sell signal expression");
     }
     // 新增：类型验证
+    INFO("[SignalNode:{}] Init: validating sell signal", _id);
     if (!_sellParser->validate(availableVars)) {
         std::string error = "Sell signal expression type validation failed: " +
                            _sellParser->getValidationError();
