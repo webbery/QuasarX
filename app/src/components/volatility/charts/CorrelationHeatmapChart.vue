@@ -1,5 +1,5 @@
 <template>
-  <div ref="chartRef" style="width: 100%; height: 100%" @contextmenu.prevent="onContextMenu"></div>
+  <div ref="chartRef" style="width: 100%; min-height: 350px" @contextmenu.prevent="onContextMenu"></div>
 </template>
 
 <script setup lang="ts">

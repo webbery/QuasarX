@@ -107,10 +107,9 @@ const sortedData = computed(() => {
 
 <style scoped>
 .granger-table {
-  height: 100%;
+  min-height: 300px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
 .chart-title {

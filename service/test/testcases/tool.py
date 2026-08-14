@@ -40,10 +40,15 @@ SERVICE_ROOT = find_service_root()
 def _resolve_data_dir() -> Path:
     """定位服务运行时的数据根目录（db_path 解析后的绝对路径）
 
-    服务运行目录有两种布局：
-    - 本地: service/build/ (build/ 下有 QuantService 二进制)
-    - CI:   repo root/     (QuantService 在 SERVICE_ROOT 下)
+    服务运行目录有三种布局：
+    - CI:   SERVICE_ROOT 本身有 QuantService 二进制 → 数据在 SERVICE_ROOT/data
+    - 本地: service/build/ 下有 QuantService 二进制 → 数据在 service/build/data
+    - 兜底: SERVICE_ROOT/data
     """
+    # CI：二进制在 SERVICE_ROOT（repo root），服务从 repo root 启动
+    if (SERVICE_ROOT / "QuantService").exists():
+        return SERVICE_ROOT / "data"
+    # 本地开发：二进制在 service/build/
     build_dir = SERVICE_ROOT / "build"
     if (build_dir / "QuantService").exists():
         return build_dir / "data"

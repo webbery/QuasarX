@@ -479,7 +479,7 @@ jobs:
 
       - name: Stop service (graceful shutdown test)
         id: stop_service
-        if: always()
+        if: success()
         run: |
           SERVICE_PID=${{ steps.start_service.outputs.pid }}
           echo "Sending graceful shutdown request to service (PID $SERVICE_PID)..."

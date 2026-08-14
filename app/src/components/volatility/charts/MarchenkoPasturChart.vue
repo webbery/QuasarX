@@ -179,12 +179,14 @@ function buildHistOption() {
     backgroundColor: 'transparent',
     title: { text: '经验谱 vs MP 理论分布', left: 'center', top: 4, textStyle: { color: '#ccc', fontSize: 12 } },
     tooltip: { trigger: 'axis' },
-    grid: { left: 50, right: 20, top: 40, bottom: 35 },
+    grid: { left: 50, right: 20, top: 40, bottom: 30, containLabel: true },
     xAxis: {
-      type: 'category',
-      data: binCenters.map(v => v.toFixed(3)),
-      axisLabel: { color: '#999', fontSize: 10, interval: Math.floor(nBins / 6) },
-      axisLine: { lineStyle: { color: '#444' } }
+      type: 'value',
+      name: '特征值',
+      nameTextStyle: { color: '#999', fontSize: 10 },
+      axisLabel: { color: '#999', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#444' } },
+      splitLine: { show: false }
     },
     yAxis: {
       type: 'value',
@@ -197,22 +199,17 @@ function buildHistOption() {
       {
         name: '经验密度',
         type: 'bar',
-        data: density,
+        data: binCenters.map((cx, i) => [cx, density[i]]),
         itemStyle: { color: 'rgba(41, 98, 255, 0.6)' },
-        barWidth: '90%'
+        barMaxWidth: 20,
       },
       {
         name: 'MP 理论 PDF',
         type: 'line',
-        data: mpY.map((y, i) => {
-          // 将 mpX 映射到 bin index
-          const binIdx = (mpX[i] - minVal) / binWidth - 0.5
-          return [binIdx, y] as [number, number]
-        }),
+        data: mpX.map((x, i) => [x, mpY[i]]),
         smooth: true,
         symbol: 'none',
         lineStyle: { color: '#ff9800', width: 2 },
-        // 用 xAxis index 模式不好对齐，改用自定义
       },
       // λ₊ 标线
       {
@@ -223,7 +220,7 @@ function buildHistOption() {
           symbol: 'none',
           lineStyle: { color: '#ef232a', type: 'dashed', width: 1.5 },
           label: { formatter: 'λ₊={c}', color: '#ef232a', fontSize: 10 },
-          data: [{ xAxis: ((lp - minVal) / binWidth - 0.5).toFixed(1) }]
+          data: [{ xAxis: lp }]
         },
         data: []
       }
@@ -233,11 +230,11 @@ function buildHistOption() {
 
 function buildScreeOption() {
   if (!hasData.value) return {}
-  const evals = props.data!.eigenvalues
+  const evals = props.data!.eigenvalues.filter(v => v > 0)
   const lp = lambdaPlus.value
-  const N = evals.length
+  const count = evals.length
 
-  const signalData = evals.map((v, i) => ({
+  const signalData = evals.map((v) => ({
     value: v,
     itemStyle: { color: v > lp ? '#ef232a' : '#2962ff' }
   }))
@@ -253,11 +250,11 @@ function buildScreeOption() {
         return `λ<sub>${p.dataIndex + 1}</sub> = ${p.value.toFixed(6)}<br/>${isSignal ? '🔴 信号' : '🔵 噪声'}`
       }
     },
-    grid: { left: 55, right: 20, top: 40, bottom: 35 },
+    grid: { left: 55, right: 20, top: 40, bottom: 30, containLabel: true },
     xAxis: {
       type: 'category',
       data: evals.map((_, i) => `${i + 1}`),
-      axisLabel: { color: '#999', fontSize: 10, interval: Math.floor(N / 8) },
+      axisLabel: { color: '#999', fontSize: 10, interval: Math.floor(count / 8) },
       axisLine: { lineStyle: { color: '#444' } },
       name: '序号',
       nameTextStyle: { color: '#999', fontSize: 10 }
@@ -292,7 +289,14 @@ function buildScreeOption() {
   }
 }
 
-function renderCharts() {
+function disposeCharts() {
+  histChart?.dispose()
+  screeChart?.dispose()
+  histChart = null
+  screeChart = null
+}
+
+function initAndRender() {
   if (!hasData.value) return
   nextTick(() => {
     if (histRef.value && !histChart) {
@@ -303,25 +307,35 @@ function renderCharts() {
     }
     histChart?.setOption(buildHistOption(), true)
     screeChart?.setOption(buildScreeOption(), true)
+
+    // v-if 重建 DOM 后重新 observe 新元素
+    if (resizeObserver) {
+      resizeObserver.disconnect()
+      if (histRef.value) resizeObserver.observe(histRef.value)
+      if (screeRef.value) resizeObserver.observe(screeRef.value)
+    }
   })
 }
 
-watch(() => props.data, renderCharts, { deep: true })
+watch(() => props.data, (newData, oldData) => {
+  // data 从有→无时清理，无→有时重建
+  const had = oldData && oldData.eigenvalues && oldData.eigenvalues.length >= 3
+  const has = newData && newData.eigenvalues && newData.eigenvalues.length >= 3
+  if (had && !has) disposeCharts()
+  initAndRender()
+}, { deep: true })
 
 onMounted(() => {
-  renderCharts()
   resizeObserver = new ResizeObserver(() => {
     histChart?.resize()
     screeChart?.resize()
   })
-  if (histRef.value) resizeObserver.observe(histRef.value)
-  if (screeRef.value) resizeObserver.observe(screeRef.value)
+  initAndRender()
 })
 
 onUnmounted(() => {
   resizeObserver?.disconnect()
-  histChart?.dispose()
-  screeChart?.dispose()
+  disposeCharts()
 })
 </script>
 
@@ -408,6 +422,6 @@ onUnmounted(() => {
 
 .chart-container {
   width: 100%;
-  height: 260px;
+  height: 360px;
 }
 </style>

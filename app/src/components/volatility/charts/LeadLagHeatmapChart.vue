@@ -104,7 +104,7 @@ watch(() => props.data, buildChart, { deep: true })
 
 <style scoped>
 .lead-lag-heatmap {
-  height: 100%;
+  min-height: 350px;
   display: flex;
   flex-direction: column;
 }

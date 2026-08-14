@@ -249,11 +249,11 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         }
 
         auto callable = item.second;
-        INFO("[FunctionNode:{}] Process: calling {} with {} args for symbol {}",
-             _id, _label, args.size(), symbol);
+        //INFO("[FunctionNode:{}] Process: calling {} with {} args for symbol {}",
+        //     _id, _label, args.size(), symbol);
         auto result = (*callable)(args);
-        INFO("[FunctionNode:{}] Process: callable returned, writing output '{}.{}'",
-             _id, symbol, _label);
+        //INFO("[FunctionNode:{}] Process: callable returned, writing output '{}.{}'",
+        //     _id, symbol, _label);
 
         // 写入输出
         String output_key = symbol + "." + _label;
