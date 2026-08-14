@@ -21,82 +21,84 @@ else()
     message(STATUS "OpenMP not found — CEEMDAN will run single-threaded")
 endif()
 
-# ── SIMD 指令集自动检测 ──
-# 检测编译器对 AVX-512 / AVX2+FMA / AVX2 的支持，设置编译标志和宏定义
+# ── SIMD 指令集按需编译（默认关闭）──
+# 默认 none：不设置任何 SIMD 编译标志和宏，使用标量回退，二进制兼容所有 x86-64 CPU
+# 只有显式选择后才打开对应编译宏：
+#   cmake .. -DSIMD_LEVEL=SSE2     # 128-bit
+#   cmake .. -DSIMD_LEVEL=AVX2     # 256-bit
+#   cmake .. -DSIMD_LEVEL=AVX512   # 512-bit（需 CPU 支持）
+# 注意：SIMD 宏和编译标志都必须 per-file（见下方 SIMD_SOURCE_FILES），不能全局设置，
+# 全局 __AVX512F__/__AVX2__ 会导致 Eigen 等库在非 SIMD 文件中生成 AVX 代码
+# 而没有对应的 /arch 标志 → 寄存器状态不保存 → 崩溃
 include(CheckCXXCompilerFlag)
 
-set(SIMD_LEVEL "none")
+set(SIMD_LEVEL "none" CACHE STRING "SIMD instruction set (none/SSE2/AVX2/AVX512), default off")
+set_property(CACHE SIMD_LEVEL PROPERTY STRINGS none SSE2 AVX2 AVX512)
+
+set(SIMD_COMPILE_FLAG "")
+set(SIMD_DEFINES "")
 
 if(MSVC)
-    # MSVC: /arch:AVX512 定义 __AVX512F__; /arch:AVX2 定义 __AVX2__
-    # 注意：SIMD 宏和编译标志都必须 per-file，不能全局设置
-    # 全局 __AVX512F__/__AVX2__ 会导致 Eigen 等库在非 SIMD 文件中生成 AVX 代码
-    # 而没有对应的 /arch 标志 → 寄存器状态不保存 → 崩溃
-    #
-    # 重要：check_cxx_compiler_flag 只检测编译器是否接受标志，不检测 CPU 是否支持
-    # MSVC 的 /arch:AVX512 在任何编译器版本都接受，但 CPU 可能不支持（如 Ryzen 5000）
-    # 因此 MSVC 默认最高到 AVX2，AVX-512 需要用户显式开启：
-    #   cmake .. -DENABLE_AVX512=ON  （仅在有 AVX-512 的 CPU 上使用）
-    check_cxx_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
-
-    option(ENABLE_AVX512 "Enable AVX-512 (requires CPU support: Intel Xeon/Ice Lake+)" OFF)
-
-    if(ENABLE_AVX512)
+    if(SIMD_LEVEL STREQUAL "AVX512")
         check_cxx_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512)
         if(COMPILER_SUPPORTS_AVX512)
             set(SIMD_COMPILE_FLAG "/arch:AVX512")
             set(SIMD_DEFINES "__AVX512F__;__AVX2__;__SSE2__;__FMA__")
-            set(SIMD_LEVEL "AVX-512 (512-bit, 8-wide double)")
             message(STATUS "SIMD: AVX-512 enabled (per-file, user opted in)")
         else()
+            message(FATAL_ERROR "SIMD_LEVEL=AVX512 requested but compiler does not support /arch:AVX512")
+        endif()
+    elseif(SIMD_LEVEL STREQUAL "AVX2")
+        check_cxx_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
+        if(COMPILER_SUPPORTS_AVX2)
             set(SIMD_COMPILE_FLAG "/arch:AVX2")
             set(SIMD_DEFINES "__AVX2__;__SSE2__;__FMA__")
-            set(SIMD_LEVEL "AVX2 (256-bit, 4-wide double) [AVX-512 requested but compiler unsupported]")
-            message(STATUS "SIMD: AVX2 fallback (AVX-512 not supported by compiler)")
+            message(STATUS "SIMD: AVX2 enabled (per-file, user opted in)")
+        else()
+            message(FATAL_ERROR "SIMD_LEVEL=AVX2 requested but compiler does not support /arch:AVX2")
         endif()
-    elseif(COMPILER_SUPPORTS_AVX2)
-        set(SIMD_COMPILE_FLAG "/arch:AVX2")
-        set(SIMD_DEFINES "__AVX2__;__SSE2__;__FMA__")
-        set(SIMD_LEVEL "AVX2 (256-bit, 4-wide double)")
-        message(STATUS "SIMD: AVX2 detected (per-file)")
-    else()
-        set(SIMD_COMPILE_FLAG "")
+    elseif(SIMD_LEVEL STREQUAL "SSE2")
+        set(SIMD_COMPILE_FLAG "/arch:SSE2")
         set(SIMD_DEFINES "__SSE2__")
-        set(SIMD_LEVEL "SSE2 (128-bit, 2-wide double)")
-        message(STATUS "SIMD: SSE2 only")
+        message(STATUS "SIMD: SSE2 enabled (per-file, user opted in)")
+    else()
+        message(STATUS "SIMD: DISABLED (scalar fallback)")
     endif()
 else()
-    # GCC/Clang: 逐级检测 -mavx512f / -mavx2 / -mfma
-    check_cxx_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512)
-    check_cxx_compiler_flag("-mavx2"   COMPILER_SUPPORTS_AVX2)
-    check_cxx_compiler_flag("-mfma"    COMPILER_SUPPORTS_FMA)
-
-    if(COMPILER_SUPPORTS_AVX512)
-        set(SIMD_COMPILE_FLAG "-mavx512f;-mavx512dq;-mavx512bw")
-        set(SIMD_DEFINES "__AVX512F__;__AVX2__;__SSE2__")
-        set(SIMD_LEVEL "AVX-512 (512-bit, 8-wide double)")
-        message(STATUS "SIMD: AVX-512 detected (per-file)")
-        if(COMPILER_SUPPORTS_FMA)
-            list(APPEND SIMD_COMPILE_FLAG "-mfma")
-            set(SIMD_DEFINES "${SIMD_DEFINES};__FMA__")
+    if(SIMD_LEVEL STREQUAL "AVX512")
+        check_cxx_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512)
+        if(COMPILER_SUPPORTS_AVX512)
+            set(SIMD_COMPILE_FLAG "-mavx512f;-mavx512dq;-mavx512bw")
+            set(SIMD_DEFINES "__AVX512F__;__AVX2__;__SSE2__")
+            check_cxx_compiler_flag("-mfma" COMPILER_SUPPORTS_FMA)
+            if(COMPILER_SUPPORTS_FMA)
+                list(APPEND SIMD_COMPILE_FLAG "-mfma")
+                list(APPEND SIMD_DEFINES "__FMA__")
+            endif()
+            message(STATUS "SIMD: AVX-512 enabled (per-file, user opted in)")
+        else()
+            message(FATAL_ERROR "SIMD_LEVEL=AVX512 requested but compiler does not support -mavx512f")
         endif()
-    elseif(COMPILER_SUPPORTS_AVX2)
-        # AVX2：不定义 __AVX2__ 宏（避免非 AVX2 CPU 的 CI 机器 SIGILL）
-        # SIMD 函数通过 __attribute__((target("avx2,fma"))) 编译出 AVX2 代码，
-        # 但 #if defined(__AVX2__) 的代码路径不会被激活 → 回退 SSE2
-        # 这是最安全的方案：二进制在任何 x86-64 CPU 上都能运行
-        set(SIMD_COMPILE_FLAG "")
+    elseif(SIMD_LEVEL STREQUAL "AVX2")
+        check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+        if(COMPILER_SUPPORTS_AVX2)
+            set(SIMD_COMPILE_FLAG "-mavx2")
+            set(SIMD_DEFINES "__AVX2__;__SSE2__")
+            check_cxx_compiler_flag("-mfma" COMPILER_SUPPORTS_FMA)
+            if(COMPILER_SUPPORTS_FMA)
+                list(APPEND SIMD_COMPILE_FLAG "-mfma")
+                list(APPEND SIMD_DEFINES "__FMA__")
+            endif()
+            message(STATUS "SIMD: AVX2 enabled (per-file, user opted in)")
+        else()
+            message(FATAL_ERROR "SIMD_LEVEL=AVX2 requested but compiler does not support -mavx2")
+        endif()
+    elseif(SIMD_LEVEL STREQUAL "SSE2")
+        set(SIMD_COMPILE_FLAG "-msse2")
         set(SIMD_DEFINES "__SSE2__")
-        set(SIMD_LEVEL "SSE2 (AVX2 target attr available but not activated)")
-        message(STATUS "SIMD: SSE2 active (AVX2 per-function attr compiled but dormant)")
-        if(COMPILER_SUPPORTS_FMA)
-            message(STATUS "SIMD: FMA per-function target attr available")
-        endif()
+        message(STATUS "SIMD: SSE2 enabled (per-file, user opted in)")
     else()
-        set(SIMD_COMPILE_FLAG "")
-        set(SIMD_DEFINES "__SSE2__")
-        set(SIMD_LEVEL "SSE2 (128-bit, 2-wide double)")
-        message(STATUS "SIMD: SSE2 only")
+        message(STATUS "SIMD: DISABLED (scalar fallback)")
     endif()
 endif()
 

@@ -35,7 +35,7 @@ jobs:
             xgboost/build
             /usr/local/include/xgboost
             /usr/local/lib/libxgboost.*
-          key: ${{ runner.os }}-xgboost-v1.7.5
+          key: ${{ runner.os }}-xgboost-v3.3.0
           restore-keys: |
             ${{ runner.os }}-xgboost-
 
@@ -76,7 +76,7 @@ jobs:
       - name: Build xgboost (if cache miss)
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
         run: |
-          git clone --recursive https://github.com/dmlc/xgboost
+          git clone --branch v3.3.0 --depth 1 --recursive https://github.com/dmlc/xgboost
           cd xgboost
           mkdir build && cd build
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
@@ -159,7 +159,7 @@ jobs:
           git checkout 12.0.0
           cd -
           mkdir service/build && cd service/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON -DSIMD_LEVEL=none
           cmake --build . --config Release -j$(nproc)
 
       # 显示缓存统计（验证加速效果）
@@ -273,7 +273,7 @@ jobs:
         run: |
           pip install pytest requests pyyaml \
             numpy pandas scipy matplotlib \
-            xgboost PyEMD empyrical-reloaded
+            xgboost==3.3.0 PyEMD empyrical-reloaded
 
       - name: Create TLS certificates
         run: |
