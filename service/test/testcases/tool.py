@@ -35,8 +35,24 @@ def find_service_root() -> Path:
     raise RuntimeError(f"Cannot find service root from {Path(__file__).resolve()}")
 
 SERVICE_ROOT = find_service_root()
-DEBUG_DIR = SERVICE_ROOT / "build" / "data" / "data" / "debug"
-CSV_DATA_DIR = SERVICE_ROOT / "build" / "data" / "A_hfq"
+
+
+def _resolve_data_dir() -> Path:
+    """定位服务运行时的数据根目录（db_path 解析后的绝对路径）
+
+    服务运行目录有两种布局：
+    - 本地: service/build/ (build/ 下有 QuantService 二进制)
+    - CI:   repo root/     (QuantService 在 SERVICE_ROOT 下)
+    """
+    build_dir = SERVICE_ROOT / "build"
+    if (build_dir / "QuantService").exists():
+        return build_dir / "data"
+    return SERVICE_ROOT / "data"
+
+
+_DATA_DIR = _resolve_data_dir()
+DEBUG_DIR = _DATA_DIR / "data" / "debug"
+CSV_DATA_DIR = _DATA_DIR / "A_hfq"
 
 # --------------------------
 # Debug CSV 读取

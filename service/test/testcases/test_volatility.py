@@ -52,7 +52,9 @@ BASE_URL = "https://localhost:19107/v0"
 VERIFY_SSL = False
 
 # 测试数据目录
-SERVICE_DATA_DIR = Path(__file__).parent.parent.parent / "build" / "data"
+_service_root = Path(__file__).parent.parent.parent
+_build_dir = _service_root / "build"
+SERVICE_DATA_DIR = (_build_dir / "data") if (_build_dir / "QuantService").exists() else (_service_root / "data")
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
 

@@ -263,7 +263,7 @@ jobs:
         run: |
           chmod +x QuantService
 
-      - name: Install runtime dependencies (system libs)
+      - name: Install runtime dependencies (system lib)
         run: |
           sudo apt-get update
           sudo apt-get install -y libpapi-dev libarmadillo-dev libmlpack-dev libssl-dev curl gdb
@@ -272,7 +272,7 @@ jobs:
       - name: Install test dependencies (Python)
         run: |
           pip install pytest requests pyyaml \
-            numpy pandas scipy matplotlib \
+            numpy pandas scipy matplotlib statsmodels \
             xgboost==3.3.0 PyEMD empyrical-reloaded
 
       - name: Create TLS certificates

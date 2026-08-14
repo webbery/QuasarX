@@ -20,7 +20,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 SERVICE_ROOT = Path(__file__).parent.parent.parent.parent
-SERVICE_DATA_DIR = SERVICE_ROOT / "build" / "data"
+
+# 服务运行目录有两种布局：
+# - 本地: service/build/ (SERVICE_ROOT = service/, build/ 下有 QuantService)
+# - CI:   repo root/     (SERVICE_ROOT = repo root, build/ 下无 QuantService)
+_build_dir = SERVICE_ROOT / "build"
+_is_local_build = (_build_dir / "QuantService").exists()
+SERVICE_DATA_DIR = (_build_dir / "data") if _is_local_build else (SERVICE_ROOT / "data")
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
 HFQ_DIR.mkdir(parents=True, exist_ok=True)

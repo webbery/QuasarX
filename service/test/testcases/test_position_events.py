@@ -21,8 +21,10 @@ from pathlib import Path
 from tool import check_response, BASE_URL
 
 
-# 服务从 service/build/ 运行，数据目录相对于此
-SERVER_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "build" / "data"
+# 服务数据目录：本地从 service/build/ 运行，CI 从 repo root 运行
+_service_root = Path(__file__).resolve().parent.parent.parent
+_build_dir = _service_root / "build"
+SERVER_DATA_DIR = (_build_dir / "data") if (_build_dir / "QuantService").exists() else (_service_root / "data")
 
 
 # ═══════════════════════════════════════════════════════════
