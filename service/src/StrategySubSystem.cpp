@@ -303,6 +303,8 @@ void StrategySubSystem::EnsureDailyReady() {
     // 内联 InitDailyExecution 逻辑（避免嵌套锁）
     _dailyStrategySymbols.clear();
     for (auto& name : _strategies) {
+        // 只注册日终策略（含 Manual ExecuteNode），非日终策略不参与日终执行
+        if (!_agentSystem->HasManualExecuteNode(name)) continue;
         auto pools = GetPools(name);
         Set<String> symbols;
         for (auto sym : pools) {
@@ -326,8 +328,9 @@ void StrategySubSystem::InitDailyExecution() {
 
     _dailyStrategySymbols.clear();
 
-    // 从所有已加载策略中提取依赖标的
+    // 从所有已加载策略中提取依赖标的（只注册日终策略，含 Manual ExecuteNode）
     for (auto& name : _strategies) {
+        if (!_agentSystem->HasManualExecuteNode(name)) continue;
         auto pools = GetPools(name);
         Set<String> symbols;
         for (auto sym : pools) {

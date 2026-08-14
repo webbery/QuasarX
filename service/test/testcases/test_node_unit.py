@@ -24,6 +24,7 @@ import urllib3
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from tool import DEBUG_DIR, CSV_DATA_DIR, read_debug_csv
 
 urllib3.disable_warnings()
 
@@ -33,17 +34,6 @@ VERIFY_SSL = False
 # 路径
 TEST_DIR = Path(__file__).parent / "node_test_data"
 SUMMARY_FILE = TEST_DIR / "test_data_summary.json"
-# 从 __file__ 向上查找 service/ 目录（包含 CMakeLists.txt），不依赖 parent 层数
-def _find_service_root() -> Path:
-    current = Path(__file__).resolve().parent
-    for _ in range(10):
-        if (current / "CMakeLists.txt").exists():
-            return current
-        current = current.parent
-    raise RuntimeError(f"Cannot find service root (no CMakeLists.txt found from {Path(__file__).resolve()})")
-SERVICE_ROOT = _find_service_root()
-DEBUG_DIR = SERVICE_ROOT / "build" / "data" / "data" / "debug"
-CSV_DATA_DIR = SERVICE_ROOT / "build" / "data" / "A_hfq"
 
 # 回测配置
 DEBUG_COLUMN_SUFFIX = "STD(15)"  # 窗口 15 的 STD 列名后缀
@@ -101,24 +91,6 @@ def _run_backtest(strategy_path: Path, headers: dict) -> dict:
     return r.json()
 
 
-def _read_debug_csv(strategy_id: str, label: str) -> pd.DataFrame:
-    """读取 DebugNode 生成的 CSV (DataFrame CSV2 格式)
-
-    格式:
-      Line 1: INDEX:200:<uint>,datetime:200:<long>,col_name:200:<double>  (类型+列名)
-      Lines 2+: 实际数据 (无 header)
-    """
-    csv_path = DEBUG_DIR / strategy_id / f"{label}.csv"
-    assert csv_path.exists(), f"Debug CSV not found: {csv_path}"
-    # 第一行: 解析列名 (col_name:200:<type>)
-    with open(csv_path) as f:
-        first_line = f.readline().strip()
-    columns = [col.split(":")[0] for col in first_line.split(",")]
-    # 读数据
-    df = pd.read_csv(csv_path, skiprows=1, header=None, names=columns)
-    return df
-
-
 def _extract_node_series(df: pd.DataFrame, symbol: str, node_label: str) -> pd.Series:
     """从 DebugNode CSV 中提取指定节点的时间序列"""
     # 列名格式: {symbol}.{node_label}  e.g. "sz.800001.STD(15)"
@@ -148,7 +120,7 @@ class TestSTDNode:
         _run_backtest(strategy_path, headers)
 
         # 2. 读取 DebugNode CSV
-        df = _read_debug_csv(strategy_id, f"debug_std_{WINDOW}")
+        df = read_debug_csv(strategy_id, f"debug_std_{WINDOW}")
         actual = _extract_node_series(df, symbol, f"STD({WINDOW})")
 
         # 3. Python 黄金标准
@@ -175,7 +147,7 @@ class TestSTDNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, f"debug_std_{WINDOW}")
+        df = read_debug_csv(strategy_id, f"debug_std_{WINDOW}")
         actual = _extract_node_series(df, symbol, f"STD({WINDOW})")
 
         # 前 WINDOW-1 个值应该是 NaN
@@ -205,7 +177,7 @@ class TestMANode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, f"debug_ma_{WINDOW}")
+        df = read_debug_csv(strategy_id, f"debug_ma_{WINDOW}")
         actual = _extract_node_series(df, symbol, f"MA({WINDOW})")
 
         closes = _load_close_prices(symbol)
@@ -243,7 +215,7 @@ class TestReturnNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_return_1")
+        df = read_debug_csv(strategy_id, "debug_return_1")
         actual = _extract_node_series(df, symbol, "Return(1)")
 
         closes = _load_close_prices(symbol)
@@ -280,7 +252,7 @@ class TestZScoreNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, f"debug_zscore_{WINDOW}")
+        df = read_debug_csv(strategy_id, f"debug_zscore_{WINDOW}")
         actual = _extract_node_series(df, symbol, f"ZScore({WINDOW})")
 
         closes = _load_close_prices(symbol)
@@ -319,7 +291,7 @@ class TestR2Node:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, f"debug_r2_{WINDOW}")
+        df = read_debug_csv(strategy_id, f"debug_r2_{WINDOW}")
         actual = _extract_node_series(df, symbol, f"R2({WINDOW})")
 
         closes = _load_close_prices(symbol)
@@ -380,7 +352,7 @@ class TestVPCorrNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, f"debug_vpcorr_{WINDOW}")
+        df = read_debug_csv(strategy_id, f"debug_vpcorr_{WINDOW}")
         actual = _extract_node_series(df, symbol, f"VPCorr({WINDOW})")
 
         closes = _load_close_prices(symbol)
@@ -435,7 +407,7 @@ class TestFormulaNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_add")
+        df = read_debug_csv(strategy_id, "debug_formula_add")
         actual = _extract_node_series(df, symbol, "formula_add")
 
         # Python: ma5[t] + std5[t]
@@ -466,7 +438,7 @@ class TestFormulaNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_prec")
+        df = read_debug_csv(strategy_id, "debug_formula_prec")
         actual = _extract_node_series(df, symbol, "formula_prec")
 
         # Python: ma5 * 2 + std5  (* 优先级高于 +)
@@ -494,7 +466,7 @@ class TestFormulaNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_comp")
+        df = read_debug_csv(strategy_id, "debug_formula_comp")
         actual = _extract_node_series(df, symbol, "formula_comp")
 
         # Python: (ma5 + ma15) / 2
@@ -530,7 +502,7 @@ class TestFormulaClose:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_close")
+        df = read_debug_csv(strategy_id, "debug_formula_close")
         actual = _extract_node_series(df, symbol, "formula_close")
 
         closes = _load_close_prices(symbol)
@@ -559,7 +531,7 @@ class TestFormulaEnvelope:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_env")
+        df = read_debug_csv(strategy_id, "debug_formula_env")
         actual = _extract_node_series(df, symbol, "formula_env")
 
         closes = _load_close_prices(symbol)
@@ -589,7 +561,7 @@ class TestFormulaTimeIndex:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_t1")
+        df = read_debug_csv(strategy_id, "debug_formula_t1")
         actual = _extract_node_series(df, symbol, "formula_t1")
 
         closes = _load_close_prices(symbol)
@@ -625,7 +597,7 @@ class TestFormulaCompare:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_cmp")
+        df = read_debug_csv(strategy_id, "debug_formula_cmp")
         actual = _extract_node_series(df, symbol, "formula_cmp")
 
         closes = _load_close_prices(symbol)
@@ -657,7 +629,7 @@ class TestFormulaMultiNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_formula_multi")
+        df = read_debug_csv(strategy_id, "debug_formula_multi")
         actual = _extract_node_series(df, symbol, "formula_multi")
 
         closes = _load_close_prices(symbol)
@@ -698,7 +670,7 @@ class TestCUSUMNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_cusum_1")
+        df = read_debug_csv(strategy_id, "debug_cusum_1")
 
         # 读取 CUSUM 输出 (per-symbol key: {symbol}.cusum_signal.s_pos)
         spos_col = f"{symbol}.cusum_signal.s_pos"
@@ -763,7 +735,7 @@ class TestEMDNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_emd_5")
+        df = read_debug_csv(strategy_id, "debug_emd_5")
 
         # 验证有 5 个 IMF 列
         imf_cols = [c for c in df.columns if "nimf_" in c]
@@ -783,7 +755,7 @@ class TestEMDNode:
         symbol = summary["datasets"][dataset_id]["symbol"]
 
         _run_backtest(strategy_path, headers)
-        df = _read_debug_csv(strategy_id, "debug_emd_5")
+        df = read_debug_csv(strategy_id, "debug_emd_5")
 
         imf_cols = [c for c in df.columns if "nimf_" in c]
         for idx, col in enumerate(imf_cols):

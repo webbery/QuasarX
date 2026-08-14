@@ -23,6 +23,7 @@ import pytest
 import urllib3
 import requests
 from pathlib import Path
+from tool import DEBUG_DIR, CSV_DATA_DIR
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -368,10 +369,6 @@ E2E_PROB_COLS = [
 ]
 E2E_PRED_COL = f"{E2E_SYMBOL}.xgb_prediction"
 
-# DebugNode CSV 路径（服务 build 目录）
-_SERVICE_ROOT = Path(__file__).parent.parent.parent
-_E2E_DEBUG_DIR = _SERVICE_ROOT / "build" / "data" / "data" / "debug"
-
 
 def _build_e2e_strategy(name=E2E_DEPLOY_NAME, xgb_label=E2E_XGB_LABEL):
     """构建端到端回测策略：Input → MA/STD/Return → XGBoost + DebugNode"""
@@ -453,7 +450,7 @@ def _cleanup_e2e_strategy(auth_token):
 def _read_e2e_debug_csv() -> "pd.DataFrame":
     """读取 E2E 测试 DebugNode 输出的 CSV"""
     import pandas as pd
-    csv_path = _E2E_DEBUG_DIR / E2E_DEPLOY_NAME / "debug_xgb.csv"
+    csv_path = DEBUG_DIR / E2E_DEPLOY_NAME / "debug_xgb.csv"
     assert csv_path.exists(), f"Debug CSV not found: {csv_path}"
     return pd.read_csv(csv_path)
 
@@ -610,8 +607,7 @@ class TestXGBoostE2E:
         df = _read_e2e_debug_csv()
 
         # ---- 3a: 验证 MA(5) 特征计算正确（pandas 独立重算） ----
-        csv_data_dir = _SERVICE_ROOT / "build" / "data" / "A_hfq"
-        close_df = pd.read_csv(csv_data_dir / f"{E2E_SYMBOL}.csv")
+        close_df = pd.read_csv(CSV_DATA_DIR / f"{E2E_SYMBOL}.csv")
         close_prices = close_df["close"].values.astype(float)
         py_ma5 = pd.Series(close_prices).rolling(5).mean().values  # 前4个 NaN
 

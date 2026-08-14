@@ -824,6 +824,17 @@ List<String> FlowSubsystem::GetFlowNames() const {
     return names;
 }
 
+bool FlowSubsystem::HasManualExecuteNode(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) return false;
+    for (auto* node : it->second._graph) {
+        if (auto* exec = dynamic_cast<ExecuteNode*>(node)) {
+            if (exec->GetExecType() == ExecuteType::Manual) return true;
+        }
+    }
+    return false;
+}
+
 uint64_t FlowSubsystem::GetEpochCount(const String& strategy) const {
     auto it = _flows.find(strategy);
     if (it == _flows.end()) return 0;
@@ -1277,10 +1288,24 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
 
-                uint64_t epoch = 0;
+                // 日终策略优化：只跑 warmup + extraBars，不需要全量历史
+                int warmup = 0;
+                if (auto* strategySys = _handle->GetStrategySystem()) {
+                    warmup = strategySys->GetWarmupEpochs(strategy);
+                }
+                constexpr size_t extraBars = 5;
+                size_t startBar = (maxBars > static_cast<size_t>(warmup) + extraBars)
+                                  ? (maxBars - warmup - extraBars)
+                                  : 0;
+                if (startBar > 0) {
+                    INFO("[StartDaily] Skipping first {} bars, starting from bar {} (warmup={}, maxBars={})",
+                         startBar, startBar, warmup, maxBars);
+                }
+
+                uint64_t epoch = startBar;
                 bool success = true;
 
-                for (size_t i = 0; i < maxBars && !Server::IsExit(); ++i) {
+                for (size_t i = startBar; i < maxBars && !Server::IsExit(); ++i) {
                     context.SetEpoch(++epoch);
 
                     // 为每个 symbol 构建 QuoteInfo 写入 context
@@ -1325,26 +1350,22 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     }
                 }
 
-                if (success) {
-                    // ManualTiming 邮件通知
-                    bool foundManual = false;
-                    for (auto& node : flow._graph) {
-                        if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
-                            INFO("[StartDaily] ExecuteNode found, execType={}", static_cast<int>(execNode->GetExecType()));
-                            if (execNode->GetExecType() == ExecuteType::Manual) {
-                                foundManual = true;
-                                if (auto* manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming())) {
-                                    INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                                    manualTiming->SendSummaryEmail(strategy);
-                                } else {
-                                    WARN("[StartDaily] ExecuteNode is Manual but timing is not ManualTiming");
-                                }
-                                break;
-                            }
+                // 查找 ManualTiming（无论成功失败都需要）
+                ManualTiming* manualTiming = nullptr;
+                for (auto& node : flow._graph) {
+                    if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
+                        if (execNode->GetExecType() == ExecuteType::Manual) {
+                            manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming());
+                            break;
                         }
                     }
-                    if (!foundManual) {
-                        INFO("[StartDaily] No Manual ExecuteNode found in strategy {}", strategy);
+                }
+
+                if (success) {
+                    // 成功 → 发送决策摘要邮件
+                    if (manualTiming) {
+                        INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
+                        manualTiming->SendSummaryEmail(strategy);
                     }
 
                     // 提取信号
@@ -1372,12 +1393,26 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                 } else {
                     result["status"] = "error";
                     result["error"] = "graph execution failed";
+                    // 失败 → 发送错误邮件
+                    if (_handle) {
+                        String body = "[日终策略执行失败]\n\n";
+                        body += "策略: " + strategy + "\n";
+                        body += "错误: graph execution failed\n";
+                        _handle->SendEmail(body);
+                    }
                 }
                 for (auto node : flow._graph) node->Done(strategy);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Live mode exception: {}", e.what());
                 result["status"] = "error";
                 result["error"] = e.what();
+                // 异常 → 发送错误邮件
+                if (_handle) {
+                    String body = "[日终策略执行异常]\n\n";
+                    body += "策略: " + strategy + "\n";
+                    body += "异常: " + String(e.what()) + "\n";
+                    _handle->SendEmail(body);
+                }
             }
         }
 

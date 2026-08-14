@@ -63,6 +63,12 @@ public:
     Set<String> GetRequiredSources(const String& strategy) const;
 
     /**
+     * @brief 检查策略图中是否存在 Manual 类型的 ExecuteNode（日终决策型策略）
+     * @return true 表示该策略是日终策略（含 ExecuteType::Manual 的 ExecuteNode）
+     */
+    bool HasManualExecuteNode(const String& strategy) const;
+
+    /**
      * @brief 检查策略是否正在运行
      */
     bool IsRunning(const String& strategy) const;

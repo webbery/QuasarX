@@ -1,6 +1,6 @@
 import requests
 import sys
-from tool import check_response, BASE_URL, VERIFY_SSL
+from tool import check_response, BASE_URL, VERIFY_SSL, DEBUG_DIR
 import pytest
 import json
 import os
@@ -302,9 +302,9 @@ class TestStrategy:
 
         # 验证 DebugNode 输出文件存在（证明 context 中有 quote 数据，策略图成功执行）
         # DebugNode 输出路径: {database_path}/data/debug/{strategy}/{label}.csv
-        debug_dir = f'../../build/data/data/debug/{name}'
+        debug_dir = DEBUG_DIR / name
         time.sleep(3)  # 等待文件写入
-        assert os.path.exists(debug_dir), f"Debug 输出目录不存在: {debug_dir}"
+        assert debug_dir.exists(), f"Debug 输出目录不存在: {debug_dir}"
         csv_files = [f for f in os.listdir(debug_dir) if f.endswith('.csv')]
         assert len(csv_files) > 0, f"Debug 输出目录中无 CSV 文件: {debug_dir}"
 

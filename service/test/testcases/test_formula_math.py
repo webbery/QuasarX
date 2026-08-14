@@ -28,6 +28,7 @@ import urllib3
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from tool import DEBUG_DIR, CSV_DATA_DIR, read_debug_csv
 
 urllib3.disable_warnings()
 
@@ -35,9 +36,6 @@ BASE_URL = "https://localhost:19107/v0"
 VERIFY_SSL = False
 
 TEST_DIR = Path(__file__).parent / "node_test_data"
-SERVICE_ROOT = Path(__file__).parent.parent.parent
-DEBUG_DIR = SERVICE_ROOT / "build" / "data" / "data" / "debug"
-CSV_DATA_DIR = SERVICE_ROOT / "build" / "data" / "A_hfq"
 
 SYMBOL = "sz.800001"
 TOLERANCE = 1e-5
@@ -223,16 +221,6 @@ def _run_backtest(strategy: dict, headers: dict) -> dict:
     return r.json()
 
 
-def _read_debug_csv(strategy_id: str, label: str) -> pd.DataFrame:
-    csv_path = DEBUG_DIR / strategy_id / f"{label}.csv"
-    assert csv_path.exists(), f"Debug CSV not found: {csv_path}"
-    with open(csv_path) as f:
-        first_line = f.readline().strip()
-    columns = [col.split(":")[0] for col in first_line.split(",")]
-    df = pd.read_csv(csv_path, skiprows=1, header=None, names=columns)
-    return df
-
-
 def _get_ma5_series() -> pd.Series:
     """Python 黄金标准: MA(5)"""
     closes = _load_close_prices()
@@ -280,7 +268,7 @@ class TestFormulaMath:
         strategy = _build_strategy("abs(ma5[t])", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -293,7 +281,7 @@ class TestFormulaMath:
         strategy = _build_strategy("exp(ma5[t] / 100)", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -306,7 +294,7 @@ class TestFormulaMath:
         strategy = _build_strategy("log(ma5[t])", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -319,7 +307,7 @@ class TestFormulaMath:
         strategy = _build_strategy("sqrt(ma5[t])", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -332,7 +320,7 @@ class TestFormulaMath:
         strategy = _build_strategy("sigmoid(ma5[t] - 100)", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -345,7 +333,7 @@ class TestFormulaMath:
         strategy = _build_strategy("min(ma5[t], 105)", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -358,7 +346,7 @@ class TestFormulaMath:
         strategy = _build_strategy("max(ma5[t], 95)", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -371,7 +359,7 @@ class TestFormulaMath:
         strategy = _build_two_input_strategy("min(ma5[t], ma15[t])", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -385,7 +373,7 @@ class TestFormulaMath:
         strategy = _build_two_input_strategy("max(ma5[t], ma15[t])", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -403,7 +391,7 @@ class TestFormulaMathComposite:
         strategy = _build_strategy("min(abs(ma5[t] - 100) * 5, 1)", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -419,7 +407,7 @@ class TestFormulaMathComposite:
         strategy = _build_two_input_strategy(expr, sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -436,7 +424,7 @@ class TestFormulaMathComposite:
         strategy = _build_strategy("sqrt(abs(ma5[t] - 100))", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
@@ -449,7 +437,7 @@ class TestFormulaMathComposite:
         strategy = _build_strategy("exp(-abs(ma5[t] - 100) / 10)", sid)
         _run_backtest(strategy, headers)
 
-        df = _read_debug_csv(sid, "debug_math")
+        df = read_debug_csv(sid, "debug_math")
         actual = pd.to_numeric(df[f"{SYMBOL}.math_func"], errors="coerce")
 
         ma5 = _get_ma5_series().values
