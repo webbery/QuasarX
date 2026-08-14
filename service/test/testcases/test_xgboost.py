@@ -18,6 +18,7 @@ XGBoost 训练与分析 API 测试
 
 import json
 import time
+import tempfile
 import pytest
 import urllib3
 import requests
@@ -347,6 +348,321 @@ class TestXGBoostShap:
         assert resp.status_code == 200
         sh = resp.json()
         assert sh["n_samples"] > 0
+
+
+# ============== 端到端：训练 → 下载 → 部署 → 回测推理 ==============
+
+E2E_DEPLOY_NAME = "test_xgb_e2e"
+E2E_XGB_LABEL = "XGBoost"
+E2E_SYMBOL = "sz.800001"
+# DebugNode CSV 中的特征列名（FunctionNode 输出 key = symbol.label）
+E2E_FEATURE_COLS = [
+    f"{E2E_SYMBOL}.MA(5)",
+    f"{E2E_SYMBOL}.STD(5)",
+    f"{E2E_SYMBOL}.Return(1)",
+]
+E2E_PROB_COLS = [
+    f"{E2E_SYMBOL}.xgb_probs_0",
+    f"{E2E_SYMBOL}.xgb_probs_1",
+    f"{E2E_SYMBOL}.xgb_probs_2",
+]
+E2E_PRED_COL = f"{E2E_SYMBOL}.xgb_prediction"
+
+# DebugNode CSV 路径（服务 build 目录）
+_SERVICE_ROOT = Path(__file__).parent.parent.parent
+_E2E_DEBUG_DIR = _SERVICE_ROOT / "build" / "data" / "data" / "debug"
+
+
+def _build_e2e_strategy(name=E2E_DEPLOY_NAME, xgb_label=E2E_XGB_LABEL):
+    """构建端到端回测策略：Input → MA/STD/Return → XGBoost + DebugNode"""
+    model_file = f"production/{name}-{xgb_label}.json"
+    return {
+        "id": name, "name": name, "version": 1, "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "行情数据", "nodeType": "input",
+                      "params": {"code": {"value": [E2E_SYMBOL], "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"},
+                                 "open": {"value": "open", "type": "text"},
+                                 "high": {"value": "high", "type": "text"},
+                                 "low": {"value": "low", "type": "text"},
+                                 "volume": {"value": "volume", "type": "text"}}}},
+            {"id": "2", "type": "custom", "position": {"x": 200, "y": -80},
+             "data": {"label": "MA(5)", "nodeType": "function",
+                      "params": {"method": {"value": "MA", "type": "select"},
+                                 "range": {"value": "5d", "type": "text"}}}},
+            {"id": "3", "type": "custom", "position": {"x": 200, "y": 0},
+             "data": {"label": "STD(5)", "nodeType": "function",
+                      "params": {"method": {"value": "STD", "type": "select"},
+                                 "range": {"value": "5d", "type": "text"}}}},
+            {"id": "4", "type": "custom", "position": {"x": 200, "y": 80},
+             "data": {"label": "Return(1)", "nodeType": "function",
+                      "params": {"method": {"value": "Return", "type": "select"},
+                                 "range": {"value": "1d", "type": "text"}}}},
+            {"id": "5", "type": "custom", "position": {"x": 400, "y": 0},
+             "data": {"label": xgb_label, "nodeType": "xgboost",
+                      "params": {"modelFile": {"value": model_file, "type": "text"},
+                                 "features": {"value": "", "type": "text"},
+                                 "objective": {"value": "multi:softprob", "type": "select"},
+                                 "num_class": {"value": 3, "type": "number"}}}},
+            # DebugNode：捕获特征 + XGBoost 输出，供 Python 对比验证
+            {"id": "6", "type": "custom", "position": {"x": 600, "y": 0},
+             "data": {"label": "debug_xgb", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
+        ],
+        "edges": [
+            {"id": "e1->2", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e1->3", "source": "1", "target": "3",
+             "sourceHandle": "1-close", "targetHandle": "3", "type": "default"},
+            {"id": "e1->4", "source": "1", "target": "4",
+             "sourceHandle": "1-close", "targetHandle": "4", "type": "default"},
+            {"id": "e2->5", "source": "2", "target": "5",
+             "sourceHandle": "2", "targetHandle": "5", "type": "default"},
+            {"id": "e3->5", "source": "3", "target": "5",
+             "sourceHandle": "3", "targetHandle": "5", "type": "default"},
+            {"id": "e4->5", "source": "4", "target": "5",
+             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
+            # DebugNode 连接所有上游输出
+            {"id": "e2->6", "source": "2", "target": "6",
+             "sourceHandle": "2", "targetHandle": "6", "type": "default"},
+            {"id": "e3->6", "source": "3", "target": "6",
+             "sourceHandle": "3", "targetHandle": "6", "type": "default"},
+            {"id": "e4->6", "source": "4", "target": "6",
+             "sourceHandle": "4", "targetHandle": "6", "type": "default"},
+            {"id": "e5->6", "source": "5", "target": "6",
+             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
+        ],
+    }
+
+
+def _cleanup_e2e_strategy(auth_token):
+    """停止并删除 E2E 测试策略"""
+    try:
+        requests.post(f"{BASE_URL}/strategy",
+                      json={"mode": 2, "name": E2E_DEPLOY_NAME},
+                      headers=_headers(auth_token), verify=VERIFY_SSL, timeout=5)
+        requests.delete(f"{BASE_URL}/strategy",
+                        json={"name": E2E_DEPLOY_NAME},
+                        headers=_headers(auth_token), verify=VERIFY_SSL, timeout=5)
+    except Exception:
+        pass
+
+
+def _read_e2e_debug_csv() -> "pd.DataFrame":
+    """读取 E2E 测试 DebugNode 输出的 CSV"""
+    import pandas as pd
+    csv_path = _E2E_DEBUG_DIR / E2E_DEPLOY_NAME / "debug_xgb.csv"
+    assert csv_path.exists(), f"Debug CSV not found: {csv_path}"
+    return pd.read_csv(csv_path)
+
+
+def _xgb_predict_python(model_path: str, feature_df: "pd.DataFrame"):
+    """用 Python xgboost 加载同一模型推理，返回概率矩阵"""
+    import xgboost as xgb
+    bst = xgb.Booster()
+    bst.load_model(model_path)
+    dm = xgb.DMatrix(feature_df)
+    return bst.predict(dm)
+
+
+class TestXGBoostE2E:
+    """端到端：训练 → 下载模型 → 部署策略(绑定模型) → 回测推理
+
+    三层验证：
+      Level 1 — 回测指标（features）为有限数值
+      Level 2 — XGBoost 输出非全零、概率和 ≈ 1
+      Level 3 — Python xgboost 加载同模型推理，与 C++ 逐值对比
+
+    必须在 TestXGBoostDelete 之前执行（依赖内存中的模型缓存）。
+    """
+
+    @pytest.fixture(scope="class")
+    def _deployed(self, auth_token, trained_model):
+        """download + deploy + 保存模型临时文件（class 共享）"""
+        # 下载训练产物
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": str(trained_model["model_id"])},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=30,
+        )
+        assert resp.status_code == 200, f"download 失败: {resp.text}"
+        dl = resp.json()
+        assert len(dl["model_json"]) > 0
+
+        # 保存模型到临时文件（Python xgboost 加载用）
+        model_tmp = tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w")
+        model_tmp.write(dl["model_json"])
+        model_tmp.close()
+
+        # 构建策略 + multipart deploy
+        strategy = _build_e2e_strategy()
+        files = {
+            "script": ("script.json", json.dumps(strategy).encode(), "application/json"),
+            f"model_{E2E_XGB_LABEL}": (
+                f"{E2E_XGB_LABEL}.json", dl["model_json"].encode(), "application/json"),
+        }
+        if dl.get("meta_json"):
+            files[f"model_{E2E_XGB_LABEL}_meta"] = (
+                f"{E2E_XGB_LABEL}.meta.json",
+                dl["meta_json"].encode(), "application/json")
+
+        resp = requests.post(
+            f"{BASE_URL}/strategy", files=files,
+            data={"name": E2E_DEPLOY_NAME},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=60,
+        )
+        assert resp.status_code == 200, f"deploy 失败: {resp.status_code} {resp.text}"
+
+        yield {"strategy": strategy, "download": dl, "model_path": model_tmp.name}
+
+        # 清理
+        _cleanup_e2e_strategy(auth_token)
+        try:
+            Path(model_tmp.name).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # ---------- Level 1: 回测不崩溃 + DebugNode 有输出 ----------
+
+    def test_backtest_with_deployed_model(self, auth_token, _deployed):
+        """回测加载 production 模型推理不崩溃，DebugNode 产出 CSV"""
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(_deployed["strategy"]), "validate": False},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.text}"
+
+        # 无 Signal/Execution 时响应可能为 null，这是正常的
+        # 核心验证：DebugNode CSV 存在且有数据（说明 XGBoostNode 推理执行了）
+        df = _read_e2e_debug_csv()
+        assert len(df) > 0, "Debug CSV 为空，回测可能未执行"
+
+        # 概率列存在且有非 NaN 行
+        for col in E2E_PROB_COLS:
+            assert col in df.columns, f"CSV 缺少列 {col}，实际列: {list(df.columns)}"
+        probs = df[E2E_PROB_COLS].astype(float)
+        valid_rows = probs.notna().any(axis=1)
+        assert valid_rows.sum() > 0, "概率列全为 NaN，XGBoost 可能未推理"
+
+    # ---------- Level 2: XGBoost 输出 ----------
+
+    def test_xgboost_output_valid(self, auth_token, _deployed):
+        """DebugNode CSV 中 XGBoost 输出：非全零、概率和 ≈ 1"""
+        import numpy as np
+
+        # 先跑回测（触发 DebugNode 写 CSV）
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(_deployed["strategy"]), "validate": False},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.text}"
+
+        df = _read_e2e_debug_csv()
+
+        # 概率列存在
+        for col in E2E_PROB_COLS + [E2E_PRED_COL]:
+            assert col in df.columns, f"CSV 缺少列 {col}，实际列: {list(df.columns)}"
+
+        # 取有效行（非 NaN）
+        probs = df[E2E_PROB_COLS].astype(float)
+        valid_mask = probs.notna().all(axis=1)
+        valid_probs = probs[valid_mask]
+        assert len(valid_probs) > 0, "所有概率行都是 NaN，XGBoost 可能未推理"
+
+        # 非全零
+        assert (valid_probs.values != 0).any(), "概率全为 0，模型可能未正确加载"
+
+        # 每行概率和 ≈ 1（multi:softprob 输出）
+        row_sums = valid_probs.sum(axis=1)
+        np.testing.assert_allclose(row_sums.values, 1.0, atol=1e-5,
+                                   err_msg="概率行和不等于 1")
+
+    # ---------- Level 3: Python 黄金标准对比 ----------
+
+    def test_cpp_vs_python_prediction(self, auth_token, _deployed):
+        """C++ XGBoostNode 推理结果与 Python xgboost 逐值一致"""
+        import numpy as np
+        import pandas as pd
+
+        # 先跑回测
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(_deployed["strategy"]), "validate": False},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.text}"
+
+        df = _read_e2e_debug_csv()
+
+        # ---- 3a: 验证 MA(5) 特征计算正确（pandas 独立重算） ----
+        csv_data_dir = _SERVICE_ROOT / "build" / "data" / "A_hfq"
+        close_df = pd.read_csv(csv_data_dir / f"{E2E_SYMBOL}.csv")
+        close_prices = close_df["close"].values.astype(float)
+        py_ma5 = pd.Series(close_prices).rolling(5).mean().values  # 前4个 NaN
+
+        cpp_ma5 = df[f"{E2E_SYMBOL}.MA(5)"].astype(float).values
+        n = min(len(cpp_ma5), len(py_ma5))
+        # 跳过前 4 个 NaN（窗口期）
+        start = 4
+        np.testing.assert_allclose(
+            cpp_ma5[start:n], py_ma5[start:n], atol=1e-6,
+            err_msg="C++ MA(5) 与 pandas rolling.mean 不一致")
+
+        # ---- 3b: 验证 XGBoost 推理正确（Python xgboost 独立推理） ----
+        import xgboost as xgb
+        feat_df = df[E2E_FEATURE_COLS].astype(float)
+        valid_mask = feat_df.notna().all(axis=1)
+        valid_features = feat_df[valid_mask]
+        assert len(valid_features) > 0, "无有效特征行"
+
+        # 从模型读取实际特征顺序（模型知道自己训练时的特征名和顺序）
+        bst = xgb.Booster()
+        bst.load_model(_deployed["model_path"])
+        prefix = E2E_SYMBOL + "."
+
+        if bst.feature_names:
+            # 模型有 feature_names（短名），将 CSV 全名映射到短名后按模型顺序重排
+            full_to_short = {col: col[len(prefix):] for col in E2E_FEATURE_COLS}
+            short_to_full = {v: k for k, v in full_to_short.items()}
+            ordered_full = [short_to_full[name] for name in bst.feature_names]
+            valid_features = valid_features[ordered_full]
+            valid_features.columns = bst.feature_names
+        else:
+            # 模型无 feature_names，按 CSV 列顺序去前缀
+            valid_features.columns = [col[len(prefix):] for col in E2E_FEATURE_COLS]
+
+        # Python 推理
+        py_probs = _xgb_predict_python(_deployed["model_path"], valid_features)
+
+        # C++ 结果
+        cpp_probs = df[E2E_PROB_COLS].astype(float)[valid_mask.values].values
+        cpp_preds = df[E2E_PRED_COL].astype(float)[valid_mask.values].values
+
+        # 概率对比（容差 1e-4）
+        np.testing.assert_allclose(
+            cpp_probs, py_probs, atol=1e-4,
+            err_msg="C++ vs Python 概率不一致")
+
+        # 预测类别对比
+        py_preds = np.argmax(py_probs, axis=1)
+        np.testing.assert_array_equal(
+            cpp_preds, py_preds,
+            err_msg="C++ vs Python 预测类别不一致")
 
 
 # ============== Delete 测试（放最后，会清除内存缓存） ==============

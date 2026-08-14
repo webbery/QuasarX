@@ -4,6 +4,8 @@
 #include "boost/algorithm/string.hpp"
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 
 XGBoostNode::XGBoostNode(Server* server) : _server(server) {}
@@ -39,16 +41,27 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
         if (p.contains("num_class")) _num_class = (int)p["num_class"]["value"];
         if (p.contains("features")) {
             String feat_str = (String)p["features"]["value"];
-            boost::algorithm::split(_feature_keys, feat_str, boost::is_any_of(","));
-            for (auto& k : _feature_keys) boost::algorithm::trim(k);
+            if (!feat_str.empty()) {
+                boost::algorithm::split(_feature_keys, feat_str, boost::is_any_of(","));
+                for (auto& k : _feature_keys) boost::algorithm::trim(k);
+            }
         }
     }
 
     if (_feature_keys.empty()) {
-        for (auto& item : _ins) {
-            auto out_names = item.second->out_elements();
-            for (auto& kv : out_names) {
-                _feature_keys.push_back(kv.first);
+        // 按上游节点 id 排序遍历，保证特征顺序稳定（与训练侧一致）
+        Set<uint32_t> visited;
+        Vector<std::pair<uint32_t, QNode*>> sortedIns;
+        for (auto& [handle, nodePtr] : _ins) {
+            if (nodePtr && visited.insert(nodePtr->id()).second) {
+                sortedIns.push_back({nodePtr->id(), nodePtr});
+            }
+        }
+        std::sort(sortedIns.begin(), sortedIns.end());
+        for (auto& [id, nodePtr] : sortedIns) {
+            auto out_names = nodePtr->out_elements();
+            for (auto& [kv, _] : out_names) {
+                _feature_keys.push_back(kv);
             }
         }
     }
@@ -64,6 +77,15 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
         return false;
     }
 
+    // modelFile 存逻辑路径（如 production/xxx.json），实际文件在 {dbPath}/models/ 下
+    String resolvedPath = _model_file;
+    if (_server) {
+        String fullPath = _server->GetConfig().GetDatabasePath() + "/models/" + _model_file;
+        if (std::filesystem::exists(fullPath)) {
+            resolvedPath = fullPath;
+        }
+    }
+
     // 创建 Booster 并加载模型
     int ret = XGBoosterCreate(nullptr, 0, &_booster);
     if (ret != 0) {
@@ -71,12 +93,40 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
         return false;
     }
 
-    ret = XGBoosterLoadModel(_booster, _model_file.c_str());
+    ret = XGBoosterLoadModel(_booster, resolvedPath.c_str());
     if (ret != 0) {
-        WARN("[XGBoost] Failed to load model '{}' for node {}: {}",
-             _model_file, _label, XGBGetLastError());
+        WARN("[XGBoost] Failed to load model '{}' (resolved: '{}') for node {}: {}",
+             _model_file, resolvedPath, _label, XGBGetLastError());
         cleanup();
         return false;
+    }
+
+    // 从 meta.json 读取训练时的特征顺序，保证推理与训练一致
+    // meta 与模型同目录：xxx.json → xxx.meta.json
+    if (_feature_keys.empty()) {
+        String metaPath = resolvedPath;
+        auto dotPos = metaPath.rfind('.');
+        if (dotPos != String::npos)
+            metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+        if (std::filesystem::exists(metaPath)) {
+            try {
+                std::ifstream ifs(metaPath);
+                nlohmann::json meta;
+                ifs >> meta;
+                if (meta.contains("features") && meta["features"].is_array()) {
+                    for (auto& f : meta["features"]) {
+                        String fullName = f.get<String>();
+                        // 提取短名：sz.800001.MA(5) → MA(5)
+                        auto dp = fullName.rfind('.');
+                        _feature_keys.push_back(dp != String::npos ? fullName.substr(dp + 1) : fullName);
+                    }
+                    INFO("[XGBoost:{}] Loaded {} feature names from meta '{}'", _id, _feature_keys.size(), metaPath);
+                }
+            } catch (const std::exception& e) {
+                WARN("[XGBoost:{}] Failed to read meta '{}': {}", _id, metaPath, e.what());
+                _feature_keys.clear();
+            }
+        }
     }
 
     // ── 从连接图发现 symbol 并解析特征 ──
@@ -138,6 +188,7 @@ void XGBoostNode::buildOutputs(const String& symbolPrefix) {
     case XGBObjective::MultiSoftmax:
         for (int i = 0; i < _num_class; i++)
             _outputs[symbolPrefix + "xgb_probs_" + std::to_string(i)] = ArgType::Double_TimeSeries;
+        _outputs[symbolPrefix + "xgb_prediction"] = ArgType::Double_TimeSeries;
         break;
     case XGBObjective::RegSquaredError:
         _outputs[symbolPrefix + "xgb_prediction"] = ArgType::Double_TimeSeries;
@@ -174,6 +225,16 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
             }
         }
         if (!ok) continue;
+        // 临时调试日志：打印每 epoch 收集到的原始特征值（诊断 C++ vs Python 概率不一致）
+        {
+            String featDbg;
+            for (int d = 0; d < _n_features; d++) {
+                if (d > 0) featDbg += ",";
+                featDbg += std::to_string(features[d]);
+            }
+            INFO("[XGBoost:{}] epoch {} raw feat=[{}] valid={}/{}",
+                 _id, context.GetEpoch(), symbol, featDbg, validCount, _n_features);
+        }
         // 有效 feature 不足时跳过推理（早期 epoch 滚动窗口未填满：
         // EMD 120d + ZScore 20d → 前 119 根 K 线 EMD 派生 features 全 NaN），
         // 避免 XGBoost 收到大量 NaN + 少量 finite 走 default branch 输出均匀分布
@@ -182,6 +243,31 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         if (validCount < minValid) {
             DEBUG_INFO("[XGBoost:{}] skip predict for {}: only {}/{} features valid (need >={}, insufficient warmup)",
                        _id, symbol, validCount, _n_features, minValid);
+            // 写 NaN 占位：保持输出序列与特征序列等长同序（DebugNode 按行索引 dump，
+            // 若此处不写入，probs 序列会比特征序列短，导致 CSV 行错位）
+            String prefix = symbol + ".";
+            auto appendNan = [&context](const String& key) {
+                if (context.exist(key)) {
+                    context.add(key, std::numeric_limits<double>::quiet_NaN());
+                } else {
+                    context.set(key, Vector<double>{std::numeric_limits<double>::quiet_NaN()});
+                }
+            };
+            switch (_objective) {
+            case XGBObjective::BinaryLogistic:
+                appendNan(prefix + "xgb_probs_0");
+                appendNan(prefix + "xgb_probs_1");
+                break;
+            case XGBObjective::MultiSoftprob:
+            case XGBObjective::MultiSoftmax:
+                for (int i = 0; i < _num_class; i++)
+                    appendNan(prefix + "xgb_probs_" + std::to_string(i));
+                appendNan(prefix + "xgb_prediction");
+                break;
+            case XGBObjective::RegSquaredError:
+                appendNan(prefix + "xgb_prediction");
+                break;
+            }
             continue;
         }
 
@@ -260,6 +346,19 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                     context.add(key, val);
                 } else {
                     context.set(key, Vector<double>{val});
+                }
+            }
+            // argmax → xgb_prediction
+            {
+                int best = 0;
+                for (int i = 1; i < _num_class && i < static_cast<int>(total); i++) {
+                    if (out_result[i] > out_result[best]) best = i;
+                }
+                String predKey = prefix + "xgb_prediction";
+                if (context.exist(predKey)) {
+                    context.add(predKey, static_cast<double>(best));
+                } else {
+                    context.set(predKey, Vector<double>{static_cast<double>(best)});
                 }
             }
 #ifdef _DEBUG

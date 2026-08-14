@@ -5,6 +5,21 @@
 #include <mutex>
 #include <string>
 
+// 统一 DuckDB 打开方式：限制 max_memory 防止每个实例预留 ~80% 系统 RAM 的虚拟地址空间
+// 默认 80% × 16GB ≈ 12.8GB/实例，4 个实例 VmSize 达 50GB，导致 fork() ENOMEM
+inline bool DuckDBOpenWithLimits(const std::string& path, duckdb_database* out_db,
+                                 int max_memory_mb = 256, int threads = 2) {
+    duckdb_config cfg = nullptr;
+    if (duckdb_create_config(&cfg) != DuckDBSuccess) {
+        return duckdb_open(path.c_str(), out_db) == DuckDBSuccess;
+    }
+    duckdb_set_config(cfg, "max_memory", (std::to_string(max_memory_mb) + "MB").c_str());
+    duckdb_set_config(cfg, "threads", std::to_string(threads).c_str());
+    duckdb_state st = duckdb_open_ext(path.c_str(), out_db, cfg, nullptr);
+    duckdb_destroy_config(&cfg);
+    return st == DuckDBSuccess;
+}
+
 // CRTP 模板基类：统一 DuckDB 单例管理
 // 派生类需实现 ensureTables()，通过 friend class DuckDBBaseT<Derived> 访问
 template <typename Derived>
@@ -19,7 +34,7 @@ public:
         std::filesystem::create_directories(db_dir);
         std::string db_path = db_dir + "/" + db_filename;
 
-        if (duckdb_open_ext(db_path.c_str(), &db_, nullptr, nullptr) != DuckDBSuccess) {
+        if (!DuckDBOpenWithLimits(db_path, &db_)) {
             return false;
         }
         if (duckdb_connect(db_, &conn_) != DuckDBSuccess) {
@@ -28,7 +43,6 @@ public:
             return false;
         }
 
-        exec_unsafe("PRAGMA threads=2");
         static_cast<Derived*>(this)->ensureTables();
 
         initialized_ = true;
@@ -84,7 +98,8 @@ public:
     class ScopedConnection {
     public:
         explicit ScopedConnection(const std::string& db_path) {
-            if (duckdb_open(db_path.c_str(), &db_) == DuckDBSuccess) {
+            DuckDBOpenWithLimits(db_path, &db_);
+            if (db_) {
                 duckdb_connect(db_, &conn_);
             }
         }

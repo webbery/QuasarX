@@ -55,22 +55,36 @@ String makeTempPath(const String& prefix, const String& ext) {
     return (fs::temp_directory_path() / filename).string();
 }
 
-bool writeCsv(const String& path, const Map<String, Vector<double>>& data, const Vector<String>& dates) {
+bool writeCsv(const String& path, const Map<String, Vector<double>>& data, const Vector<String>& dates,
+              const Vector<String>* order = nullptr) {
     std::ofstream ofs(path);
     if (!ofs.is_open()) return false;
+    // 列顺序：指定 order 时（如 XGBoostNode 推理侧特征顺序）优先，剩余列（如 label 列）保持原顺序
+    Vector<String> cols;
+    if (order) {
+        for (auto& k : *order) {
+            if (data.count(k)) cols.push_back(k);
+        }
+        for (auto& [k, _] : data) {
+            if (std::find(cols.begin(), cols.end(), k) == cols.end()) cols.push_back(k);
+        }
+    } else {
+        for (auto& [k, _] : data) cols.push_back(k);
+    }
     // 写表头：date 列 + 数据列
     bool hasDates = !dates.empty();
     if (hasDates) ofs << "date,";
     bool first = true;
-    for (auto& [k, _] : data) {
+    for (auto& k : cols) {
         if (!first) ofs << ",";
         ofs << k;
         first = false;
     }
     ofs << "\n";
     size_t rows = 0;
-    for (auto& [_, v] : data) {
-        if (!v.empty()) { rows = v.size(); break; }
+    for (auto& k : cols) {
+        auto itr = data.find(k);
+        if (itr != data.end() && !itr->second.empty()) { rows = itr->second.size(); break; }
     }
     for (size_t i = 0; i < rows; ++i) {
         first = true;
@@ -78,8 +92,9 @@ bool writeCsv(const String& path, const Map<String, Vector<double>>& data, const
             ofs << (i < dates.size() ? dates[i] : "");
             ofs << ",";
         }
-        for (auto& [k, v] : data) {
+        for (auto& k : cols) {
             if (!first) ofs << ",";
+            const auto& v = data.at(k);
             double val = (i < v.size()) ? v[i] : 0.0;
             if (val != val) ofs << "";
             else ofs << val;
@@ -288,9 +303,22 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     }
                 }
             }
+            // 只从 XGBoostNode 的直接上游收集特征名，按节点 id 排序（与推理侧一致）
             for (auto n : state->_upstreamSubgraph) {
-                auto elements = n->out_elements();
-                for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+                if (auto* xgb = dynamic_cast<XGBoostNode*>(n)) {
+                    Set<uint32_t> visited;
+                    Vector<std::pair<uint32_t, QNode*>> sortedIns;
+                    for (auto& [handle, nodePtr] : xgb->ins()) {
+                        if (nodePtr && visited.insert(nodePtr->id()).second)
+                            sortedIns.push_back({nodePtr->id(), nodePtr});
+                    }
+                    std::sort(sortedIns.begin(), sortedIns.end());
+                    for (auto& [id, nodePtr] : sortedIns) {
+                        auto elements = nodePtr->out_elements();
+                        for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+                    }
+                    break;
+                }
             }
         } catch (const std::exception& e) {
             cleanupGraph();
@@ -370,11 +398,32 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             sendSSE("error", {{"step","collect_data"},{"msg", String("label.source '") + labelSource + "' not found. Available: " + avail}});
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
         }
+        // 过滤 collected：只保留 XGBoostNode 直接上游的特征列（与 _featureNames 一致）
+        // _featureNames 是短名（如 MA(5)），collected keys 是全名（如 sz.800001.MA(5)）
+        if (!state->_featureNames.empty()) {
+            Map<String, Vector<double>> filtered;
+            for (auto& [k, v] : collected) {
+                for (auto& feat : state->_featureNames) {
+                    if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
+                        filtered[k] = v;
+                        break;
+                    }
+                }
+            }
+            // 保留 label 列（不在 feature 中但训练需要）
+            if (!labelSource.empty() && collected.count(labelSource) && !filtered.count(labelSource)) {
+                filtered[labelSource] = collected[labelSource];
+            }
+            INFO("[MLTrain] Filtered collected: {} -> {} columns (featureNames={})",
+                 collected.size(), filtered.size(), state->_featureNames.size());
+            collected = std::move(filtered);
+        }
         sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});
 
         // 写 CSV（仅在新收集数据时）
+        // 列顺序按 XGBoostNode 推理侧特征顺序（_featureNames，节点 id 排序），保证训练与推理特征顺序一致
         state->_csvPath = makeTempPath("xgb_data", "csv");
-        writeCsv(state->_csvPath, collected, collectedDates);
+        writeCsv(state->_csvPath, collected, collectedDates, &state->_featureNames);
         INFO("[MLTrain] 训练数据 CSV: {}", state->_csvPath);
 
         } // end else (no csv_path)
@@ -716,9 +765,22 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
                     }
                 }
             }
+            // 只从 XGBoostNode 的直接上游收集特征名，按节点 id 排序（与推理侧一致）
             for (auto n : state->_upstreamSubgraph) {
-                auto elements = n->out_elements();
-                for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+                if (auto* xgb = dynamic_cast<XGBoostNode*>(n)) {
+                    Set<uint32_t> visited;
+                    Vector<std::pair<uint32_t, QNode*>> sortedIns;
+                    for (auto& [handle, nodePtr] : xgb->ins()) {
+                        if (nodePtr && visited.insert(nodePtr->id()).second)
+                            sortedIns.push_back({nodePtr->id(), nodePtr});
+                    }
+                    std::sort(sortedIns.begin(), sortedIns.end());
+                    for (auto& [id, nodePtr] : sortedIns) {
+                        auto elements = nodePtr->out_elements();
+                        for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+                    }
+                    break;
+                }
             }
         } catch (const std::exception& e) {
             cleanupGraph();
@@ -772,6 +834,20 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
             sendSSE("error", {{"step","collect_data"},{"msg","数据收集失败"}});
             session->finish({{"error","数据收集失败"}}, true); return;
         }
+        // 过滤 collected：只保留 XGBoostNode 直接上游的特征列
+        if (!state->_featureNames.empty()) {
+            Map<String, Vector<double>> filtered;
+            for (auto& [k, v] : collected) {
+                for (auto& feat : state->_featureNames) {
+                    if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
+                        filtered[k] = v;
+                        break;
+                    }
+                }
+            }
+            INFO("[MLCollect] Filtered collected: {} -> {} columns", collected.size(), filtered.size());
+            collected = std::move(filtered);
+        }
         sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});
 
         // ============== 5. 计算特征统计 + 写 CSV ==============
@@ -779,7 +855,7 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
         auto featureStats = computeFeatureStats(collected, collectedDates);
 
         state->_csvPath = makeTempPath("xgb_data", "csv");
-        writeCsv(state->_csvPath, collected, collectedDates);
+        writeCsv(state->_csvPath, collected, collectedDates, &state->_featureNames);
         INFO("[MLCollect] CSV: {}", state->_csvPath);
 
         featureStats["csv_path"] = state->_csvPath;

@@ -980,7 +980,7 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
 
     duckdb_database quote_db = nullptr;
     duckdb_connection quote_conn = nullptr;
-    if (duckdb_open("data/quote/quote.db", &quote_db) != DuckDBSuccess) {
+    if (!DuckDBOpenWithLimits("data/quote/quote.db", &quote_db)) {
         SPDLOG_ERROR("[FinanceDB] Failed to open quote.db");
         return -1;
     }

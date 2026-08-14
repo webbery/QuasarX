@@ -157,9 +157,14 @@ bool DuckDBLogger::init(const String& db_path) {
         std::filesystem::create_directories(p.parent_path(), ec);
     }
 
-    // 直接打开数据库（不设置配置选项，使用默认值）
+    // 使用受限配置打开数据库（避免默认 80% RAM 的虚拟地址预留）
     char* open_error = nullptr;
-    duckdb_state state = duckdb_open_ext(db_path.c_str(), &db_, nullptr, &open_error);
+    duckdb_config cfg = nullptr;
+    duckdb_create_config(&cfg);
+    duckdb_set_config(cfg, "max_memory", "256MB");
+    duckdb_set_config(cfg, "threads", "2");
+    duckdb_state state = duckdb_open_ext(db_path.c_str(), &db_, cfg, &open_error);
+    duckdb_destroy_config(&cfg);
 
     if (state != DuckDBSuccess) {
         SPDLOG_ERROR("[DuckDBLogger] Failed to open database: {}", open_error ? open_error : "unknown");

@@ -215,7 +215,7 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
     // 防御性检查：确保所有 callable 非空
     for (auto& [sym, ptr] : _callables) {
         if (!ptr) {
-            ERROR("[FunctionNode:{}] nullptr callable for symbol '{}'", _id, sym);
+            FATAL("[FunctionNode:{}] nullptr callable for symbol '{}'", _id, sym);
             return NodeProcessResult::Error;
         }
     }
