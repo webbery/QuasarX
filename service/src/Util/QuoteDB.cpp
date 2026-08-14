@@ -433,6 +433,8 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     // 检查表是否存在（quote.db 刚创建时表尚未建立）
     auto tables = listTables();
     if (std::find(tables.begin(), tables.end(), table) == tables.end()) {
+        SPDLOG_WARN("[QuoteDB] query: table '{}' not found in main schema (available tables: {})",
+                     table, tables.empty() ? "<none>" : fmt::format("{}", fmt::join(tables, ", ")));
         return result;
     }
 
@@ -462,6 +464,10 @@ std::vector<QuoteBar> QuoteDB::query(const std::string& table,
     }
 
     idx_t row_count = duckdb_row_count(&res);
+    if (row_count == 0) {
+        SPDLOG_WARN("[QuoteDB] query: table '{}' exists but returned 0 rows for symbol='{}' (encoded={})",
+                     table, symbol, sym_encoded);
+    }
     for (idx_t i = 0; i < row_count; i++) {
         QuoteBar bar;
         bar.symbol   = symbol;

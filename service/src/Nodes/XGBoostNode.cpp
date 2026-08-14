@@ -279,11 +279,10 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         }
 
         // 创建 DMatrix (1 row × n_features)
-        // missing=INFINITY: 让 XGBoost 把 inf/NaN 都识别为 missing（兼容 FormulaNode
-        // 除零产生的 inf 和滚动窗口未填满产生的 NaN）
+        // missing=NaN: 与 Python xgboost 默认行为一致，NaN/inf 都走 default branch
         DMatrixHandle dmat = nullptr;
         int ret = XGDMatrixCreateFromMat(features.data(), 1, _n_features,
-                                          std::numeric_limits<float>::infinity(), &dmat);
+                                          std::numeric_limits<float>::quiet_NaN(), &dmat);
         if (ret != 0) {
             WARN("[XGBoost:{}] Failed to create DMatrix: {}", _id, XGBGetLastError());
             continue;

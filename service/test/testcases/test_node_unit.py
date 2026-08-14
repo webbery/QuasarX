@@ -33,9 +33,15 @@ VERIFY_SSL = False
 # 路径
 TEST_DIR = Path(__file__).parent / "node_test_data"
 SUMMARY_FILE = TEST_DIR / "test_data_summary.json"
-# 使用绝对路径，避免依赖运行目录
-# __file__ 在 service/test/testcases/，需要三层 parent 到 service/
-SERVICE_ROOT = Path(__file__).parent.parent.parent
+# 从 __file__ 向上查找 service/ 目录（包含 CMakeLists.txt），不依赖 parent 层数
+def _find_service_root() -> Path:
+    current = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (current / "CMakeLists.txt").exists():
+            return current
+        current = current.parent
+    raise RuntimeError(f"Cannot find service root (no CMakeLists.txt found from {Path(__file__).resolve()})")
+SERVICE_ROOT = _find_service_root()
 DEBUG_DIR = SERVICE_ROOT / "build" / "data" / "data" / "debug"
 CSV_DATA_DIR = SERVICE_ROOT / "build" / "data" / "A_hfq"
 

@@ -646,8 +646,8 @@ class TestXGBoostE2E:
             # 模型无 feature_names，按 CSV 列顺序去前缀
             valid_features.columns = [col[len(prefix):] for col in E2E_FEATURE_COLS]
 
-        # Python 推理
-        py_probs = _xgb_predict_python(_deployed["model_path"], valid_features)
+        # Python 推理（用 float32 与 C++ 精度一致，避免 float64→float32 转换差异）
+        py_probs = _xgb_predict_python(_deployed["model_path"], valid_features.astype('float32'))
 
         # C++ 结果
         cpp_probs = df[E2E_PROB_COLS].astype(float)[valid_mask.values].values

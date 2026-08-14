@@ -2,6 +2,8 @@
 #include "server.h"
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <variant>
 #include "Util/string_algorithm.h"
 
@@ -80,7 +82,15 @@ void DebugNode::Done(const String& strategy) {
         for (size_t i = 0; i < ts.size(); ++i) {
             ofs << ToString(ts[i], "%Y-%m-%d %H:%M:%S");
             for (auto& [name, col] : columns) {
-                ofs << "," << (i < col.size() ? std::to_string(col[i]) : "");
+                if (i < col.size()) {
+                    // 全精度输出（std::to_string 默认 6 位小数会丢失精度，
+                    // 导致 XGBoost 特征经树分裂边界时与 Python 推理不一致）
+                    std::ostringstream oss;
+                    oss << std::setprecision(17) << col[i];
+                    ofs << "," << oss.str();
+                } else {
+                    ofs << ",";
+                }
             }
             ofs << "\n";
         }
