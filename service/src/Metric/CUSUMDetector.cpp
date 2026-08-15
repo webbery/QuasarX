@@ -30,6 +30,9 @@ CUSUMStepResult CUSUMDetector::update(double new_return) {
     _s_pos = std::max(0.0, _s_pos + drift - k);
     _s_neg = std::max(0.0, _s_neg - drift - k);
 
+    // 在变点检测/重置之前记录峰值漂移（重置后 _s_pos/_s_neg 归零会丢失峰值）
+    _max_drift = std::max(_max_drift, std::abs(_s_pos - _s_neg));
+
     double h = compute_threshold();
     bool change_point = (std::max(_s_pos, _s_neg) > h);
 
@@ -40,8 +43,6 @@ CUSUMStepResult CUSUMDetector::update(double new_return) {
         _s_pos = 0.0;
         _s_neg = 0.0;
     }
-
-    _max_drift = std::max(_max_drift, std::abs(_s_pos - _s_neg));
 
     _last_result = {
         change_point,

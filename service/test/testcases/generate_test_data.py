@@ -14,6 +14,7 @@ import os
 import csv
 import json
 import shutil
+import sys
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,13 +23,9 @@ from pathlib import Path
 # 配置
 # ============================================================
 
-# 输出到服务数据目录（service/build/data/）
-# __file__ = test/testcases/generate_test_data.py
-# .parent.parent = test/  ← 错误
-# .parent.parent.parent = service/  ← 正确
-SERVICE_ROOT = Path(__file__).parent.parent.parent
-SERVICE_BUILD_DIR = SERVICE_ROOT / "build"
-SERVICE_DATA_DIR = SERVICE_BUILD_DIR / "data"
+# 路径统一从 tool.py 解析
+sys.path.insert(0, str(Path(__file__).parent))
+from tool import _DATA_DIR as SERVICE_DATA_DIR
 
 # 股票数据路径（T1 日线模式）
 # 后复权数据（用于指标计算）
@@ -624,7 +621,7 @@ def main():
             "name": "高波动率",
             "symbol": "sz.900005",
             "generator": generate_high_volatility,
-            "kwargs": {"days": 60}
+            "kwargs": {"days": 180}
         },
         "steady_trend": {
             "name": "稳定趋势",

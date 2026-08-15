@@ -8,19 +8,20 @@ from pathlib import Path
 # --------------------------
 
 def find_service_root() -> Path:
-    """查找 service/ 目录
-    
+    """查找服务根目录
+
     支持多种环境（按优先级尝试）：
-    1. CI 有构建产物: 查找 build/QuantService
-    2. 本地有源码: 查找 CMakeLists.txt
-    3. 通用标记: 查找 config.template.json
-    4. CI 只有数据: 查找 data/ 目录
+    1. 本地有构建: 查找 build/QuantService → 返回 service/
+    2. CI 二进制在 repo root: 查找 QuantService → 返回 repo root
+    3. 本地有源码: 查找 CMakeLists.txt → 返回 service/
+    4. 通用标记: 查找 config.template.json
+    5. CI 只有数据: 查找 data/ 目录
     """
     markers = [
         ("build/QuantService", False),  # (相对路径, 是否为目录)
+        ("QuantService", False),
         ("CMakeLists.txt", False),
         ("config.template.json", False),
-        ("QuantService", False),  # (相对路径, 是否为目录)
         ("data", True),
     ]
     
@@ -41,13 +42,17 @@ def _resolve_data_dir() -> Path:
     """定位服务运行时的数据根目录（db_path 解析后的绝对路径）
 
     服务运行目录有三种布局：
-    - CI:   SERVICE_ROOT 本身有 QuantService 二进制 → 数据在 SERVICE_ROOT/data
+    - CI (find_service_root 找到 repo root): 二进制在 SERVICE_ROOT → 数据在 SERVICE_ROOT/data
+    - CI (find_service_root 找到 service/): 二进制在 SERVICE_ROOT 的上一级 → 数据在 parent/data
     - 本地: service/build/ 下有 QuantService 二进制 → 数据在 service/build/data
     - 兜底: SERVICE_ROOT/data
     """
-    # CI：二进制在 SERVICE_ROOT（repo root），服务从 repo root 启动
+    # 二进制在 SERVICE_ROOT
     if (SERVICE_ROOT / "QuantService").exists():
         return SERVICE_ROOT / "data"
+    # 二进制在 SERVICE_ROOT 的上一级（CI 布局：find_service_root 找到 service/，但二进制在 repo root）
+    if (SERVICE_ROOT.parent / "QuantService").exists():
+        return SERVICE_ROOT.parent / "data"
     # 本地开发：二进制在 service/build/
     build_dir = SERVICE_ROOT / "build"
     if (build_dir / "QuantService").exists():
