@@ -873,11 +873,11 @@ const onHandleStartStrategy = async () => {
  * 导出当前策略
  */
 const onHandleExportStrategy = async () => {
-  if (!selectedStrategyId.value) {
+  if (!currentStrategyId.value) {
     message.warning('请先选择一个策略')
     return
   }
-  await exportStrategy(selectedStrategyId.value, strategies.value, versions.value, historyStore)
+  await exportStrategy(currentStrategyId.value, strategies.value, versions.value, historyStore)
 }
 
 /**

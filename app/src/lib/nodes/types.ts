@@ -82,6 +82,7 @@ export interface NodeRegistryEntry {
 export interface NodeParamConfig {
   value: any
   type: ParamType
+  label?: string
   options?: any[]
   visible?: boolean
   placeholder?: string

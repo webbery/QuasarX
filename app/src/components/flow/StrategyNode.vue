@@ -51,7 +51,7 @@
                 v-show="paramConfig.visible !== false"
                 :class="{ 'data-field-param': isDataFieldParam(key) }"
             >
-                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ key }}</div>
+                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ paramConfig.label || key }}</div>
                 <div class="param-control">
                     <!-- 配置选择器 -->
                     <ConfigSelectParam
@@ -372,14 +372,17 @@ const isDataFieldParam = (key: string) => {
     return ['close', 'open', 'high', 'low', 'volume'].includes(key)
 }
 
-// Label 参数对应的 Handle ID 映射（key 是中文 label）
+// Label 参数对应的 Handle ID 映射（支持英文 key 和中文 label 兼容旧数据）
 const getLabelHandleId = (key: string) => {
     const handleMap: Record<string, string> = {
         // EMD 输出（多输出统一 field-* 格式）
+        'numIMFs': 'field-IMF',
         'IMF 数量': 'field-IMF',
+        'energyVelocityLabel': 'field-energy_velocity',
         '能量变化率': 'field-energy_velocity',
+        'volumeRegimeLabel': 'field-volume_regime',
         '成交量体制': 'field-volume_regime',
-        // Breakout 输入（多输入统一 input-* 格式）
+        // Breakout 输入（多输入统一 input-* 格式，key 本身就是中文）
         '当前价格': 'input-value',
         '上轨': 'input-upper',
         '下轨': 'input-lower',
@@ -387,7 +390,7 @@ const getLabelHandleId = (key: string) => {
     return handleMap[key] || undefined
 }
 
-// Breakout 输入 handle 在左侧
+// Breakout 输入 handle 在左侧（key 本身就是中文）
 const getLabelHandlePosition = (key: string): 'left' | 'right' => {
     if (['当前价格', '上轨', '下轨'].includes(key)) return 'left'
     return 'right'

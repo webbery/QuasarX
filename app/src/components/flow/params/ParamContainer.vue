@@ -12,7 +12,7 @@
         { 'data-field-param': isDataFieldParam(key) }
       ]"
     >
-      <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ key }}</div>
+      <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ paramConfig.label || key }}</div>
       <div class="param-control">
         <!-- 根据参数类型渲染不同控件 -->
         <component

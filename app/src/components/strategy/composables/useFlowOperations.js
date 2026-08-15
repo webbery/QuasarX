@@ -425,14 +425,14 @@ export function useFlowOperations(state) {
     const hasEnergyVelocity = connectedHandles.has('field-energy_velocity')
     const hasVolumeRegime = connectedHandles.has('field-volume_regime')
 
-    // 只有值变化时才更新（key 是中文 label）
-    const currentEV = node.data.params?.['能量变化率']?.value === '能量变化率'
-    const currentVR = node.data.params?.['成交量体制']?.value === '成交量体制'
+    // 只有值变化时才更新（支持英文 key 和中文 label 兼容旧数据）
+    const currentEV = (node.data.params?.['energyVelocityLabel']?.value || node.data.params?.['能量变化率']?.value) === '能量变化率'
+    const currentVR = (node.data.params?.['volumeRegimeLabel']?.value || node.data.params?.['成交量体制']?.value) === '成交量体制'
 
     if (currentEV !== hasEnergyVelocity || currentVR !== hasVolumeRegime) {
       updateNodeData(nodeId, {
-        '能量变化率': { value: hasEnergyVelocity ? '能量变化率' : '' },
-        '成交量体制': { value: hasVolumeRegime ? '成交量体制' : '' }
+        'energyVelocityLabel': { value: hasEnergyVelocity ? '能量变化率' : '' },
+        'volumeRegimeLabel': { value: hasVolumeRegime ? '成交量体制' : '' }
       })
     }
   }
@@ -544,9 +544,9 @@ export function useFlowOperations(state) {
         return true
 
       const slotName = targetHandle.replace('input-', '')
-      // params key 是中文 label（如 "方法"），不是英文 schema.key（如 "method"）
+      // 优先英文 key（factory.ts 新格式），兜底中文 label（旧数据兼容）
       const targetParams = targetNode.data?.params || {}
-      const method = targetParams['方法']?.value || targetParams.method?.value
+      const method = targetParams['method']?.value || targetParams['方法']?.value
         || Object.values(targetParams).find((c) => c && c.type === 'select' && Array.isArray(c.options) && c.options.some((o) => o && o.value === 'VPCorr'))?.value
         || 'MA'
 

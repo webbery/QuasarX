@@ -46,6 +46,7 @@ function createParamConfig(schema: ParamSchema, suppliedValue: unknown, hasSuppl
       ? suppliedConfig ? suppliedConfig.value : suppliedValue
       : schema.default),
     type: schema.type,
+    label: schema.label,
     ...(schema.options && { options: cloneValue(schema.options) }),
     visible: suppliedConfig?.visible ?? schema.visible ?? true,
     ...(schema.placeholder && { placeholder: schema.placeholder }),
@@ -95,7 +96,7 @@ export function createStrategyNode(options: CreateStrategyNodeOptions): Strategy
     const suppliedKey = labelExists ? schema.label : keyExists ? schema.key : undefined
 
     if (suppliedKey) consumedKeys.add(suppliedKey)
-    params[schema.label] = createParamConfig(
+    params[schema.key] = createParamConfig(
       schema,
       suppliedKey ? suppliedParams[suppliedKey] : undefined,
       suppliedKey !== undefined,

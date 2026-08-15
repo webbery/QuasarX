@@ -90,15 +90,15 @@ const shouldShowOutput = computed(() => {
 
 const emdImfCount = computed(() => {
   if (props.nodeType !== 'emd') return 0
-  const numParam = props.params?.['IMF 数量'] || props.params?.['numIMFs']
+  const numParam = props.params?.['numIMFs'] || props.params?.['IMF 数量']
   return numParam?.value || 5
 })
 
 const functionMethod = computed(() => {
   if (props.nodeType !== 'function' || !props.params) return 'MA'
-  // params key 是中文 label（如 "方法"），不是英文 schema.key（如 "method"）
+  // 优先英文 key（factory.ts 新格式），兜底中文 label（旧数据兼容）
   const params = props.params
-  return params['方法']?.value || params.method?.value
+  return params['method']?.value || params['方法']?.value
     || Object.values(params).find((c: any) => c?.type === 'select' && Array.isArray(c.options))?.value
     || 'MA'
 })

@@ -901,17 +901,17 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             }
         }
         
-        String nodeType = "unknown";
-        if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "QuoteInputNode";
-        else if (dynamic_cast<FunctionNode*>(node)) nodeType = "FunctionNode";
-        else if (dynamic_cast<SignalNode*>(node)) nodeType = "SignalNode";
-        else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
-        else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
-        else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
+        // String nodeType = "unknown";
+        // if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "QuoteInputNode";
+        // else if (dynamic_cast<FunctionNode*>(node)) nodeType = "FunctionNode";
+        // else if (dynamic_cast<SignalNode*>(node)) nodeType = "SignalNode";
+        // else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
+        // else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
+        // else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
 
-        INFO("[RunGraph] Epoch {}, node {} ({})", context.GetEpoch(), node->id(), nodeType);
+        // INFO("[RunGraph] Epoch {}, node {} ({})", context.GetEpoch(), node->id(), nodeType);
         auto result = node->Process(strategy, context);
-        INFO("[RunGraph] Epoch {}, node {} returned {}", context.GetEpoch(), node->id(), (int)result);
+        // INFO("[RunGraph] Epoch {}, node {} returned {}", context.GetEpoch(), node->id(), (int)result);
         
         switch (result) {
             case NodeProcessResult::Success:

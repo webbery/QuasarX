@@ -388,13 +388,14 @@ export function useFlowSaveLoad(state, operations) {
             backtestEndDate = finalFlowData.backtest.end
             console.info(`[loadVersionFromHistory] 提取回测周期（根级）：${backtestStartDate} - ${backtestEndDate}`)
           }
-          // 兼容旧版本：从节点的"回测周期"参数读取（如果根级未配置）
+          // 兼容旧版本：从节点的参数读取（如果根级未配置）
           if (!backtestStartDate || !backtestEndDate) {
             const nodeWithRange = finalFlowData.nodes.find((n) =>
-              n.data?.params?.['回测周期']?.value
+              n.data?.params?.['range']?.value || n.data?.params?.['回测周期']?.value
             )
             if (nodeWithRange) {
-              const rangeDate = nodeWithRange.data.params['回测周期'].value
+              const p = nodeWithRange.data.params
+              const rangeDate = (p['range']?.value || p['回测周期']?.value)
               if (rangeDate && rangeDate.length === 2) {
                 backtestStartDate = rangeDate[0]
                 backtestEndDate = rangeDate[1]
@@ -405,10 +406,11 @@ export function useFlowSaveLoad(state, operations) {
 
           // 从输入节点（如 QuoteNode）提取标的代码
           const inputNode = finalFlowData.nodes.find((n) =>
-            n.data?.params?.['代码']?.value
+            n.data?.params?.['code']?.value || n.data?.params?.['代码']?.value
           )
           if (inputNode) {
-            const codes = inputNode.data.params['代码'].value
+            const p = inputNode.data.params
+            const codes = (p['code']?.value || p['代码']?.value)
             const symbols = Array.isArray(codes) ? codes : codes.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
             if (symbols.length > 0) {
               backtestSymbol = symbols.join(',')  // 传递所有标的代码，逗号分隔

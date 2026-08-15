@@ -52,7 +52,7 @@ const imfPanelNumImfs = computed(() => {
   if (!props.clickedEdge) return 5
 
   const sourceNode = props.flowNodes.find(n => n.id === props.clickedEdge.source)
-  const param = sourceNode?.data?.params?.['IMF 数量'] ?? sourceNode?.data?.params?.numIMFs
+  const param = sourceNode?.data?.params?.['numIMFs'] ?? sourceNode?.data?.params?.['IMF 数量']
   const numIMFs = param?.value ?? param ?? 5
   const count = Number(numIMFs)
   return Number.isInteger(count) && count > 0 ? Math.min(count, 20) : 5

@@ -289,6 +289,15 @@ async function onStrategyChange() {
     // TrainPanel.vue 的 watch 在 script 变化时会用新策略的首位 code 自动重新填充
     state.config.labelSource = ''
     script.value = JSON.stringify(graphData)
+    // 从策略的回测配置初始化日期范围（优先 backtest 字段，兜底"全部数据"）
+    if (graphData.backtest?.start && graphData.backtest?.end) {
+      dateRange.value = [graphData.backtest.start, graphData.backtest.end]
+      setQuickRange('')
+    } else {
+      // 未配置回测时间 → 使用数据全范围（传空字符串让后端自行判断）
+      dateRange.value = ['', '']
+      setQuickRange('')
+    }
     // 检测是否包含任何 ML 节点（当前仅 XGBoost）
     hasMLNode.value = graphData.nodes?.some((n: any) => {
       const t = n?.data?.nodeType

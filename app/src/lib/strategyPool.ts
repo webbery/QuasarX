@@ -79,7 +79,7 @@ function extractFromInputNode(
   securities: Map<string, Security>
 ): void {
   // 检查是否有"代码"参数
-  const codeParam = params['代码'] || params['code']
+  const codeParam = params['code'] || params['代码']
   if (codeParam && codeParam.value) {
     let codes = Array.isArray(codeParam.value)
       ? codeParam.value

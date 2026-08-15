@@ -42,11 +42,11 @@ bool EMDNode::Init(const nlohmann::json& config) {
         throw std::runtime_error("EMD windowSize must be 0 (global) or >= 30, got: " + std::to_string(_windowSize));
     }
 
-    // 衍生特征开关（由前端 JSON 控制，key 为中文 label）
-    _computeEnergyVelocity = config["params"].contains("能量变化率") &&
-                             !config["params"]["能量变化率"]["value"].get<String>().empty();
-    _computeVolumeRegime = config["params"].contains("成交量体制") &&
-                           !config["params"]["成交量体制"]["value"].get<String>().empty();
+    // 衍生特征开关（由前端 JSON 控制）
+    _computeEnergyVelocity = config["params"].contains("energyVelocityLabel") &&
+                             !config["params"]["energyVelocityLabel"]["value"].get<String>().empty();
+    _computeVolumeRegime = config["params"].contains("volumeRegimeLabel") &&
+                           !config["params"]["volumeRegimeLabel"]["value"].get<String>().empty();
 
     // CEEMDAN 专属参数
     if (_method == EMDMethod::CEEMDAN) {
