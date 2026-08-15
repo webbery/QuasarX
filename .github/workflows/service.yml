@@ -560,8 +560,8 @@ jobs:
           cd test
 
           # 生成测试数据
-          python testcases/generate_test_data.py 2>/dev/null
-          python testcases/node_test_data/generate_node_data.py 2>/dev/null
+          python testcases/generate_test_data.py
+          python testcases/node_test_data/generate_node_data.py
 
           # 运行测试（--maxfail=1 让 pytest 在首个失败时停止，节省 CI 时间）
           python run_tests.py --mode stock_hist_sim --no-service --maxfail 1

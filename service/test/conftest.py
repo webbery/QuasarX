@@ -44,8 +44,15 @@ def upload_test_data(auth_api, is_backtest):
 
     import re
 
-    data_dir = Path(__file__).parent.parent / "build" / "data"
-    script_dir = Path(__file__).parent.parent / "test" / "script"
+    # 解析数据目录：CI 二进制在 repo root → data/；本地在 service/build/ → build/data/
+    _service_root = Path(__file__).parent.parent
+    if (_service_root / "QuantService").exists():
+        data_dir = _service_root / "data"
+    elif (_service_root / "build" / "QuantService").exists():
+        data_dir = _service_root / "build" / "data"
+    else:
+        data_dir = _service_root / "data"
+    script_dir = _service_root / "test" / "script"
     token = auth_api.token
     headers = {"Authorization": token}
 
