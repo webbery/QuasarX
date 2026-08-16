@@ -48,10 +48,10 @@ def _to_api_symbols(symbols: List[str]) -> List[str]:
             result.append(s)
     return result
 
-# 测试数据目录（与 test_backtest_metrics.py 共享）
-SERVICE_ROOT = Path(__file__).parent.parent.parent
-_build_dir = SERVICE_ROOT / "build"
-SERVICE_DATA_DIR = (_build_dir / "data") if (_build_dir / "QuantService").exists() else (SERVICE_ROOT / "data")
+# 测试数据目录（与 generate_test_data.py 共享，路径统一从 tool.py 解析）
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+from tool import _DATA_DIR as SERVICE_DATA_DIR
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"      # 后复权数据（指标计算用）
 METRIC_TEST_DIR = Path(__file__).parent / "metric_test_data"
 TEST_CASES_SUMMARY = METRIC_TEST_DIR / "test_cases_summary.json"

@@ -157,9 +157,9 @@ def today_str() -> str:
 
 def order_with_decision_id(
     token: str, symbol: str, decision_id: int,
-    quantity: int, price: float, direct: int = 0
-) -> dict:
-    """POST /v0/trade/order 关联 decisionId"""
+    quantity: int, price: float, direct: int = 0,
+) -> requests.Response:
+    """POST /v0/trade/order 关联 decisionId，返回原始 Response"""
     headers = {"Authorization": token}
     body = {
         "symbol": symbol,
@@ -171,14 +171,13 @@ def order_with_decision_id(
         "timeType": 0,
         "decisionId": decision_id,
     }
-    resp = requests.post(
+    return requests.post(
         f"{BASE_URL}/trade/order",
         json=body,
         headers=headers,
         verify=False,
         timeout=10,
     )
-    return check_response(resp) or {}
 
 
 def cleanup_strategy(token: str, name: str):
@@ -289,12 +288,12 @@ class TestOrderWithDecisionId:
     def test_order_invalid_decision_id(self, auth_token):
         """不存在的 decisionId：返回错误（不抛 500）"""
         # decisionId = 999999 几乎肯定不存在
-        result = order_with_decision_id(
+        resp = order_with_decision_id(
             auth_token, TEST_SYMBOL, decision_id=999999,
             quantity=TEST_QUANTITY, price=10.0, direct=0,
         )
-        # 可能返回 id=-1 或 error 字段，不应崩溃
-        assert result is not None
+        # 不应崩溃，且不应是 500
+        assert resp.status_code != 500, f"服务器内部错误: {resp.text}"
 
     def test_order_without_decision_id(self, auth_token):
         """不传 decisionId：向后兼容，行为不变"""
@@ -405,12 +404,12 @@ class TestDecisionLifecycle:
             pytest.skip("未产生决策，跳过执行测试")
 
         # 下单关联 decisionId（回测模式 → SimulateFill）
-        order_result = order_with_decision_id(
+        resp = order_with_decision_id(
             auth_token, TEST_SYMBOL, decision["id"],
             quantity=decision["quantity"], price=decision["price"],
             direct=0 if decision["action"] in ["open_long", "close_short"] else 1,
         )
-        assert order_result is not None
+        assert resp.status_code == 200, f"下单失败: {resp.text}"
 
         # 验证决策状态更新
         time.sleep(1)
@@ -434,8 +433,9 @@ class TestDecisionLifecycle:
 
         decision = executed[0]
         # 重复下单不应崩溃（业务上应被前端阻止，但 C++ 端需要健壮）
-        order_with_decision_id(
+        resp = order_with_decision_id(
             auth_token, TEST_SYMBOL, decision["id"],
             quantity=decision["executedQuantity"], price=decision["executedPrice"],
             direct=0 if decision["action"] in ["open_long", "close_short"] else 1,
         )
+        assert resp.status_code != 500, f"服务器内部错误: {resp.text}"
