@@ -1135,7 +1135,7 @@ class TestCUSUMCalibration:
     def _import_synthetic_data(self, symbol, prices):
         """导入合成价格数据到 DuckDB"""
         lines = _prices_to_csv_lines(prices)
-        resp = requests.post(f"{BASE_URL}/v0/quote/data", json={
+        resp = requests.post(f"{BASE_URL}/quote/data", json={
             "action": "import",
             "table": "stock_1d",
             "symbol": symbol,
@@ -1150,7 +1150,7 @@ class TestCUSUMCalibration:
         """清理导入的合成数据"""
         for symbol in self._imported:
             try:
-                requests.delete(f"{BASE_URL}/v0/quote/data", params={
+                requests.delete(f"{BASE_URL}/quote/data", params={
                     "table": "stock_1d",
                     "symbol": symbol,
                 }, headers=self.headers, verify=VERIFY_SSL)
@@ -1160,7 +1160,7 @@ class TestCUSUMCalibration:
     def _calibrate_via_api(self, symbols, start="2024-01-02", end="2024-12-31",
                            detectable_shift=0.5, target_arl0=500):
         """调用校准 API"""
-        resp = requests.post(f"{BASE_URL}/v0/analysis/cusum", json={
+        resp = requests.post(f"{BASE_URL}/analysis/cusum", json={
             "action": "calibrate",
             "symbols": _to_api_symbols(symbols),
             "start": start,
@@ -1378,7 +1378,7 @@ class TestCUSUMCalibration:
         prices = _generate_synthetic_prices(n=5, seed=99)
         self._import_synthetic_data(symbol, prices)
 
-        resp = requests.post(f"{BASE_URL}/v0/analysis/cusum", json={
+        resp = requests.post(f"{BASE_URL}/analysis/cusum", json={
             "action": "calibrate",
             "symbols": _to_api_symbols([symbol]),
             "start": "2024-01-02",

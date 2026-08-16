@@ -238,13 +238,27 @@ export function useMLData() {
     }
   }
 
+  /** 按文件路径删除磁盘上的模型 */
+  async function deleteModelFile(modelPath: string): Promise<boolean> {
+    try {
+      await axios.post('/v0/ml', { action: 'delete_file', model_path: modelPath })
+      return true
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || '删除失败'
+      ElMessage.error(`模型删除失败: ${msg}`)
+      return false
+    }
+  }
+
   /** 列出实验/生产模型 */
-  async function listModels(): Promise<{
+  async function listModels(strategyId?: string): Promise<{
     experiments: Array<{ path: string; filename: string; meta: any }>
     production: { path: string; filename: string; meta: any } | null
   } | null> {
     try {
-      const resp = await axios.get('/v0/ml', { params: { action: 'list' } })
+      const params: Record<string, string> = { action: 'list' }
+      if (strategyId) params.strategy_id = strategyId
+      const resp = await axios.get('/v0/ml', { params })
       return resp.data
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '模型列表获取失败'
@@ -273,11 +287,9 @@ export function useMLData() {
     try {
       // 提取纯数字代码: "600000.SH" → "600000"
       const code = symbol.includes('.') ? symbol.split('.')[0] : symbol
-      const startTs = Math.floor(new Date(startDate).getTime() / 1000)
-      const endTs = Math.floor(new Date(endDate).getTime() / 1000)
 
       const resp = await axios.get('/v0/stocks/history', {
-        params: { id: code, type: frequency, start: startTs, end: endTs, right: 1 },
+        params: { id: code, type: frequency, start: startDate, end: endDate, right: 1 },
       })
       const raw: any[] = resp.data
       if (!Array.isArray(raw) || raw.length === 0) {
@@ -367,8 +379,6 @@ export function useMLData() {
     onProgress?: (current: number, total: number, symbol: string) => void,
   ): Promise<BatchLabelStat[]> {
     const results: BatchLabelStat[] = []
-    const startTs = Math.floor(new Date(startDate).getTime() / 1000)
-    const endTs = Math.floor(new Date(endDate).getTime() / 1000)
 
     for (let idx = 0; idx < symbols.length; idx++) {
       const symbol = symbols[idx]
@@ -382,7 +392,7 @@ export function useMLData() {
         } else {
           const code = symbol.includes('.') ? symbol.split('.')[0] : symbol
           const resp = await axios.get('/v0/stocks/history', {
-            params: { id: code, type: frequency, start: startTs, end: endTs, right: 1 },
+            params: { id: code, type: frequency, start: startDate, end: endDate, right: 1 },
           })
           const raw: any[] = resp.data
           if (!Array.isArray(raw) || raw.length === 0) continue
@@ -435,5 +445,5 @@ export function useMLData() {
     return results
   }
 
-  return { train, collect, shap, deleteModel, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis }
+  return { train, collect, shap, deleteModel, deleteModelFile, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis }
 }

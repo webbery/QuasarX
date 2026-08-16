@@ -198,6 +198,10 @@
         <div v-show="activeTab === 'result'">
           <ResultPanel :state="state" :selected-strategy-id="selectedStrategyId" />
         </div>
+
+        <div v-show="activeTab === 'models'">
+          <ModelManagePanel :state="state" :script="script" :selected-strategy-id="selectedStrategyId" :active-tab="activeTab" />
+        </div>
       </div>
     </template>
   </div>
@@ -210,6 +214,7 @@ import { useMLData } from './composables/useMLData'
 import FeatureAnalysisPanel from './panels/FeatureAnalysisPanel.vue'
 import TrainPanel from './panels/TrainPanel.vue'
 import ResultPanel from './panels/ResultPanel.vue'
+import ModelManagePanel from './panels/ModelManagePanel.vue'
 import LabelAnalysisChart from './charts/LabelAnalysisChart.vue'
 import AnalysisControlBar from '@/components/shared/AnalysisControlBar.vue'
 import { useStrategySecurities } from '@/components/shared/composables/useStrategySecurities'
@@ -220,6 +225,7 @@ const STEPS = [
   { key: 'label', label: '标签分析', icon: '🏷' },
   { key: 'train', label: '训练分析', icon: '⚡' },
   { key: 'result', label: '结果分析', icon: '📊' },
+  { key: 'models', label: '模型管理', icon: '📦' },
 ] as const
 
 const activeTab = ref('feature')

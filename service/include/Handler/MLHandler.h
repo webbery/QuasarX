@@ -110,7 +110,7 @@ private:
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleTrainStatus(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);
-    void handleList(httplib::Response& res);
+    void handleList(const httplib::Request& req, httplib::Response& res);
     void handleDelete(uint64_t modelId, httplib::Response& res);
 
     Map<uint64_t, CachedMLModel> _cache;

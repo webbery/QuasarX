@@ -43,6 +43,13 @@ public:
             return false;
         }
 
+        // 恢复上次非正常关闭时未 checkpoint 的 WAL 数据
+        {
+            duckdb_result r;
+            duckdb_query(conn_, "PRAGMA wal_checkpoint(RESTART)", &r);
+            duckdb_destroy_result(&r);
+        }
+
         static_cast<Derived*>(this)->ensureTables();
 
         initialized_ = true;

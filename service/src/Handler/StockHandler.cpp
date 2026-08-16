@@ -70,15 +70,24 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
   String id = req.get_param_value("id");
   String type = req.get_param_value("type");
   String start = req.get_param_value("start");
-  auto start_t = FromTick(start);
   String end = req.get_param_value("end");
-  auto end_t = FromTick(end);
   String right = req.get_param_value("right");
+
+  // 支持两种格式：日期字符串 "YYYY-MM-DD" 或 Unix 时间戳
+  String start_date, end_date;
+  if (start.empty() || start.find('-') != String::npos) {
+    start_date = start;  // 已经是日期字符串或空
+  } else {
+    start_date = ToString(FromTick(start), "%Y-%m-%d");
+  }
+  if (end.empty() || end.find('-') != String::npos) {
+    end_date = end;
+  } else {
+    end_date = ToString(FromTick(end), "%Y-%m-%d");
+  }
 
   // 转换为 LoadHistoryDataWithFreq 参数
   symbol_t sym = to_symbol(toInternalSymbol(id));
-  String start_date = ToString(start_t, "%Y-%m-%d");
-  String end_date = ToString(end_t, "%Y-%m-%d");
   BarFreq freq = type.empty() ? BarFreq::Day : parseBarFreq(type);
   AdjType adj = (right == "1") ? AdjType::HFQ : AdjType::None;
 

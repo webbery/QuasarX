@@ -414,6 +414,17 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             if (!labelSource.empty() && collected.count(labelSource) && !filtered.count(labelSource)) {
                 filtered[labelSource] = collected[labelSource];
             }
+            // matrix 模式：保留每个标的的 close 列（Python 脚本用于计算 per-symbol 标签）
+            if (labelShape == "matrix") {
+                for (auto& [k, v] : collected) {
+                    if (!filtered.count(k)) {
+                        // 匹配 {symbol}.close / {symbol}close 模式
+                        if (k.size() > 6 && (k.substr(k.size() - 6) == ".close" || k.substr(k.size() - 5) == "close")) {
+                            filtered[k] = v;
+                        }
+                    }
+                }
+            }
             INFO("[MLTrain] Filtered collected: {} -> {} columns (featureNames={})",
                  collected.size(), filtered.size(), state->_featureNames.size());
             collected = std::move(filtered);
@@ -441,8 +452,10 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             "--vol-k", std::to_string(volK), "--objective", objective,
             "--num-class", std::to_string(numClass), "--model-output", state->_modelPath,
             "--params", xgbParams.dump(), "--test-ratio", std::to_string(testRatio),
-            "--start-date", startDate, "--end-date", endDate, "--frequency", frequency,
+            "--frequency", frequency,
         };
+        if (!startDate.empty()) args.insert(args.end(), {"--start-date", startDate});
+        if (!endDate.empty()) args.insert(args.end(), {"--end-date", endDate});
         PythonRunner runner;
         INFO("[MLTrain] Starting Python training: interpreter='{}', script='{}', data='{}'", interpreter, "tools/xgboost_train.py", state->_csvPath);
         if (!runner.start("tools/xgboost_train.py", args, interpreter)) {
@@ -550,6 +563,18 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 trainResult["model_id"] = modelId;
                 trainResult["model_type"] = modelTypeToString(modelType);
                 if (auto* m = getModel(modelId)) m->_modelPath = persistPath;
+                // 回写 model_id 到 meta.json（注册前写入的 meta 没有 model_id）
+                {
+                    String metaPath = expDir + "/" + persistName + ".meta.json";
+                    if (std::filesystem::exists(metaPath)) {
+                        try {
+                            auto m = nlohmann::json::parse(std::ifstream(metaPath));
+                            m["model_id"] = modelId;
+                            std::ofstream ofs(metaPath);
+                            if (ofs.is_open()) ofs << m.dump(2);
+                        } catch (...) {}
+                    }
+                }
             }
             trainResult.erase("X_test");
             trainResult["model_path"] = persistPath;
@@ -707,13 +732,14 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
     auto labelCfg = params.value("label", nlohmann::json::object());
     auto dateRangeCfg = params.value("date_range", nlohmann::json::object());
     String labelSource = labelCfg.value("source", "");
+    String labelShape = labelCfg.value("shape", "matrix");
     String startDate = dateRangeCfg.value("start", "");
     String endDate = dateRangeCfg.value("end", "");
     String frequency = dateRangeCfg.value("frequency", "1d");
     String strategyName = params.value("strategy_name", String("default"));
 
     std::thread collectThread([session, params, script, labelCfg, dateRangeCfg,
-        labelSource, startDate, endDate, frequency, strategyName, this]() mutable {
+        labelSource, labelShape, startDate, endDate, frequency, strategyName, this]() mutable {
 
         auto state = std::make_shared<TrainState>();
         auto sendSSE = [session](const String& type, const nlohmann::json& data) {
@@ -842,6 +868,16 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
                     if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
                         filtered[k] = v;
                         break;
+                    }
+                }
+            }
+            // matrix 模式：保留每个标的的 close 列（Python 脚本用于计算 per-symbol 标签）
+            if (labelShape == "matrix") {
+                for (auto& [k, v] : collected) {
+                    if (!filtered.count(k)) {
+                        if (k.size() > 6 && (k.substr(k.size() - 6) == ".close" || k.substr(k.size() - 5) == "close")) {
+                            filtered[k] = v;
+                        }
                     }
                 }
             }
@@ -1147,15 +1183,15 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
     res.set_content(resp.dump(), "application/json");
 }
 
-void MLHandler::handleList(httplib::Response& res) {
+void MLHandler::handleList(const httplib::Request& req, httplib::Response& res) {
     String dbPath = _server->GetConfig().GetDatabasePath();
     String expDir = dbPath + "/models/experiments";
     String prodDir = dbPath + "/models/production";
+    String filterStrategy = req.get_param_value("strategy_id");
 
     nlohmann::json experiments = nlohmann::json::array();
 
     if (std::filesystem::exists(expDir) && std::filesystem::is_directory(expDir)) {
-        // 收集所有 .json（非 .meta.json）文件
         Vector<std::filesystem::path> modelFiles;
         for (auto& entry : std::filesystem::directory_iterator(expDir)) {
             String fname = entry.path().filename().string();
@@ -1164,7 +1200,6 @@ void MLHandler::handleList(httplib::Response& res) {
                 modelFiles.push_back(entry.path());
             }
         }
-        // 按文件名降序（最新在前）
         std::sort(modelFiles.begin(), modelFiles.end(), std::greater<>());
 
         for (auto& fp : modelFiles) {
@@ -1172,6 +1207,7 @@ void MLHandler::handleList(httplib::Response& res) {
             item["path"] = fp.string();
             item["filename"] = fp.filename().string();
 
+            nlohmann::json meta;
             String metaPath = fp.string();
             auto dotPos = metaPath.rfind('.');
             if (dotPos != String::npos) {
@@ -1181,12 +1217,16 @@ void MLHandler::handleList(httplib::Response& res) {
                 std::ifstream ifs(metaPath);
                 if (ifs.is_open()) {
                     try {
-                        item["meta"] = nlohmann::json::parse(ifs);
+                        meta = nlohmann::json::parse(ifs);
+                        item["meta"] = meta;
                     } catch (...) {
                         item["meta"] = nullptr;
                     }
                 }
             }
+
+            if (!filterStrategy.empty() && meta.value("strategy_id", "") != filterStrategy)
+                continue;
             experiments.push_back(item);
         }
     }
@@ -1201,6 +1241,7 @@ void MLHandler::handleList(httplib::Response& res) {
                 item["path"] = entry.path().string();
                 item["filename"] = fname;
 
+                nlohmann::json meta;
                 String metaPath = entry.path().string();
                 auto dotPos = metaPath.rfind('.');
                 if (dotPos != String::npos) {
@@ -1210,12 +1251,16 @@ void MLHandler::handleList(httplib::Response& res) {
                     std::ifstream ifs(metaPath);
                     if (ifs.is_open()) {
                         try {
-                            item["meta"] = nlohmann::json::parse(ifs);
+                            meta = nlohmann::json::parse(ifs);
+                            item["meta"] = meta;
                         } catch (...) {
                             item["meta"] = nullptr;
                         }
                     }
                 }
+
+                if (!filterStrategy.empty() && meta.value("strategy_id", "") != filterStrategy)
+                    continue;
                 production = item;
                 break;
             }
@@ -1230,12 +1275,29 @@ void MLHandler::handleList(httplib::Response& res) {
 }
 
 void MLHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
-    if (deleteModel(modelId)) {
-        res.set_content(R"({"message":"deleted"})", "application/json");
-    } else {
-        res.status = 404;
-        res.set_content(R"({"message":"model not found"})", "application/json");
+    String modelPath;
+    {
+        std::lock_guard<std::mutex> lock(_mtx);
+        auto itr = _cache.find(modelId);
+        if (itr != _cache.end()) {
+            modelPath = itr->second._modelPath;
+            itr->second.clear();
+            _cache.erase(itr);
+        }
     }
+    // 同时删除磁盘文件（模型 + meta）
+    if (!modelPath.empty() && std::filesystem::exists(modelPath)) {
+        std::remove(modelPath.c_str());
+        String metaPath = modelPath;
+        auto dotPos = metaPath.rfind('.');
+        if (dotPos != String::npos) {
+            metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+        }
+        if (std::filesystem::exists(metaPath)) {
+            std::remove(metaPath.c_str());
+        }
+    }
+    res.set_content(R"({"message":"deleted"})", "application/json");
 }
 
 void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
@@ -1255,10 +1317,62 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
         handleCollect(params, res);
     } else if (action == "shap") {
         handleShap(params, res);
+    } else if (action == "delete") {
+        uint64_t modelId = 0;
+        try { modelId = params.at("model_id").get<uint64_t>(); }
+        catch (...) {
+            res.status = 400;
+            res.set_content(R"({"message":"invalid model_id"})", "application/json");
+            return;
+        }
+        handleDelete(modelId, res);
+    } else if (action == "delete_file") {
+        String modelPath = params.value("model_path", "");
+        if (modelPath.empty()) {
+            res.status = 400;
+            res.set_content(R"({"message":"missing model_path"})", "application/json");
+            return;
+        }
+        // 安全检查：路径必须在 experiments 或 production 目录下
+        String dbPath = _server->GetConfig().GetDatabasePath();
+        String expDir = dbPath + "/models/experiments";
+        String prodDir = dbPath + "/models/production";
+        if (modelPath.find(expDir) != 0 && modelPath.find(prodDir) != 0) {
+            res.status = 403;
+            res.set_content(R"({"message":"path not in model directories"})", "application/json");
+            return;
+        }
+        bool deleted = false;
+        if (std::filesystem::exists(modelPath)) {
+            std::remove(modelPath.c_str());
+            deleted = true;
+        }
+        String metaPath = modelPath;
+        auto dotPos = metaPath.rfind('.');
+        if (dotPos != String::npos) {
+            metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+        }
+        if (std::filesystem::exists(metaPath)) {
+            std::remove(metaPath.c_str());
+            deleted = true;
+        }
+        // 同时清理内存缓存
+        if (deleted) {
+            std::lock_guard<std::mutex> lock(_mtx);
+            for (auto it = _cache.begin(); it != _cache.end(); ) {
+                if (it->second._modelPath == modelPath) {
+                    it->second.clear();
+                    it = _cache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        res.set_content(deleted ? R"({"message":"deleted"})" : R"({"message":"not found"})", "application/json");
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|collect|shap)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|collect|shap|delete)\"}",
             "application/json");
         return;
     }
@@ -1267,7 +1381,7 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
 void MLHandler::get(const httplib::Request& req, httplib::Response& res) {
     String action = req.get_param_value("action");
     if (action == "list") {
-        handleList(res);
+        handleList(req, res);
     } else if (action == "train") {
         handleTrainProgress(req, res);
     } else if (action == "train_status") {

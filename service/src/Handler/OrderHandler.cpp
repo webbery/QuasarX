@@ -97,7 +97,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     int direct = params["direct"];
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
-    double prices = params["price"];
+    double prices = params["prices"];
     int decisionId = params.value("decisionId", -1);
 
     auto broker = _server->GetBrokerSubSystem();

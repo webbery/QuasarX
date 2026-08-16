@@ -2,7 +2,7 @@
 <template>
   <div class="file-input">
     <div class="file-path-display">
-      <span class="path-text">{{ value || '未选择文件' }}</span>
+      <span class="path-text" :title="value || ''">{{ displayName }}</span>
       <button
         class="file-select-btn"
         @click="$emit('selectFile', paramKey)"
@@ -17,7 +17,9 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+
+const props = defineProps<{
   paramKey: string
   paramConfig: any
   value: any
@@ -26,6 +28,16 @@ defineProps<{
 defineEmits<{
   selectFile: [paramKey: string]
 }>()
+
+const displayName = computed(() => {
+  const v = props.value
+  if (!v) return '未选择文件'
+  // 提取文件名：production/CTA_v13-default.json → CTA_v13-default.json
+  const str = typeof v === 'object' ? v.value || '' : String(v)
+  if (!str) return '未选择文件'
+  const idx = str.lastIndexOf('/')
+  return idx >= 0 ? str.slice(idx + 1) : str
+})
 </script>
 
 <style scoped>

@@ -121,8 +121,8 @@ bool PythonRunner::start(const std::string& script,
     // -u: 强制 stdout/stderr 无缓冲，防止管道模式下进程退出时输出丢失
     std::string cmdline = interpreter + " -u " + script;
     for (auto& a : args) {
-        // 含引号/花括号/空格的参数需要用引号包裹并转义内部双引号（如 JSON）
-        bool needQuote = a.find_first_of(" \"{}[]") != std::string::npos;
+        // 空字符串或含引号/花括号/空格的参数需要用引号包裹并转义内部双引号（如 JSON）
+        bool needQuote = a.empty() || a.find_first_of(" \"{}[]") != std::string::npos;
         if (needQuote) {
             std::string escaped = "\"";
             for (char c : a) {
