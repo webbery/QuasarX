@@ -115,7 +115,7 @@ public:
      * 
      * @param symbol 标的代码（如 "sz.000001"）
      */
-    void MarkSymbolReady(const String& symbol);
+    void MarkSymbolReady(const String& symbol, const String& simDate = "");
 
     /**
      * @brief 强制执行所有未执行的策略（超时兜底）
@@ -131,7 +131,7 @@ public:
 
 private:
     // 执行单个日级策略并保存决策
-    void ExecuteDailyStrategy(const String& strategy);
+    void ExecuteDailyStrategy(const String& strategy, const String& simDate = "");
 
     void recordDailyPositions(const String& strategy,
         const std::vector<DailyDecisionJson::Decision>& decisions,

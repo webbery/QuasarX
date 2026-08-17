@@ -1,5 +1,6 @@
 #pragma once
 #include "MarketTiming.h"
+#include "json.hpp"
 
 class Server;
 enum class TradeAction: char;
@@ -26,8 +27,8 @@ public:
     virtual bool processSignal(const String& strategy, const TradeSignal& signal,
                                const DataContext& context) override;
 
-    // 发送汇总邮件（含 SSE），清空累积器
-    void SendSummaryEmail(const String& strategy);
+    // 发送汇总邮件（含 SSE），返回非 HOLD 决策数组（action=BUY/SELL，兼容 DailyDecisionJson::parseAction），清空累积器
+    nlohmann::json SendSummaryEmail(const String& strategy);
 
 private:
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策

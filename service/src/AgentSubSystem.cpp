@@ -55,6 +55,12 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
 void FlowSubsystem::ClearFlow(const String& strategy) {
     auto it = _flows.find(strategy);
     if (it != _flows.end()) {
+        // 等待日级执行线程结束，避免 delete 节点时线程仍在使用（ExecuteNode/ManualTiming 悬空）
+        if (it->second._dailyWorker) {
+            if (it->second._dailyWorker->joinable()) it->second._dailyWorker->join();
+            delete it->second._dailyWorker;
+            it->second._dailyWorker = nullptr;
+        }
         for (auto node: it->second._graph) {
             delete node;
         }
@@ -91,6 +97,13 @@ void FlowSubsystem::Stop(const String& strategy) {
     }
     flow._worker = nullptr;
 
+    // 等待日级执行线程结束（StartDaily 线程可能在 SendSummaryEmail/回调期间访问 flow 内对象）
+    if (flow._dailyWorker) {
+        if (flow._dailyWorker->joinable()) flow._dailyWorker->join();
+        delete flow._dailyWorker;
+        flow._dailyWorker = nullptr;
+    }
+
     // 停止该策略启动的 Exchange（通过引用计数保证多策略安全）
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (exchangeMgr) {
@@ -107,6 +120,11 @@ void FlowSubsystem::Release() {
             item.second._running = false;
             if (item.second._worker->joinable()) item.second._worker->join();
             delete item.second._worker;
+        }
+        if (item.second._dailyWorker) {
+            if (item.second._dailyWorker->joinable()) item.second._dailyWorker->join();
+            delete item.second._dailyWorker;
+            item.second._dailyWorker = nullptr;
         }
         for (auto node: item.second._graph) {
             delete node;
@@ -1126,8 +1144,20 @@ bool FlowSubsystem::RunTrainingCollect(
 
 void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symbols,
                                 std::function<void(nlohmann::json)> onComplete) {
-    // 异步执行，不阻塞调用线程
-    std::thread([this, strategy, symbols, onComplete = std::move(onComplete)]() {
+    // 异步执行，不阻塞调用线程；线程句柄保存到 flow，Stop/ClearFlow 时 join，
+    // 避免线程执行期间 flow 内对象（ExecuteNode/ManualTiming）被并发释放导致悬空崩溃
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) {
+        WARN("[StartDaily] Strategy not found: {}", strategy);
+        return;
+    }
+    auto& flow = it->second;
+    if (flow._dailyWorker) {
+        if (flow._dailyWorker->joinable()) flow._dailyWorker->join();
+        delete flow._dailyWorker;
+        flow._dailyWorker = nullptr;
+    }
+    flow._dailyWorker = new std::thread([this, strategy, symbols, onComplete = std::move(onComplete)]() {
         SetCurrentThreadName(("Daily_" + strategy).c_str());
         INFO("[StartDaily] === Started for strategy '{}', {} symbols ===", strategy, symbols.size());
 
@@ -1211,22 +1241,24 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                 }
 
                 if (success) {
-                    // 提取信号
-                    const auto& signals = context.getAllSignals();
-                    nlohmann::json::array_t decisions;
-                    for (const auto& [sym, signal] : signals) {
-                        if (!signal) continue;
-                        nlohmann::json decision;
-                        decision["symbol"] = get_symbol(sym);
-                        switch (signal->GetAction()) {
-                            case TradeAction::BUY: decision["action"] = "BUY"; break;
-                            case TradeAction::SELL: decision["action"] = "SELL"; break;
-                            default: decision["action"] = "HOLD"; break;
+                    // 查找 ManualTiming 并发送决策摘要（与实盘路径对齐）
+                    ManualTiming* manualTiming = nullptr;
+                    for (auto& node : flow._graph) {
+                        if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
+                            if (execNode->GetExecType() == ExecuteType::Manual) {
+                                manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming());
+                                break;
+                            }
                         }
-                        decision["quantity"] = signal->GetQuantity();
-                        decision["price"] = signal->GetPrice();
-                        decision["flag"] = signal->GetFlag();
-                        decisions.push_back(decision);
+                    }
+
+                    // 决策由 ManualTiming 累积（SignalNode 信号在 ExecuteNode 阶段已被 ConsumeSignals 消费）
+                    nlohmann::json decisions = nlohmann::json::array();
+                    if (manualTiming) {
+                        INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
+                        decisions = manualTiming->SendSummaryEmail(strategy);
+                    } else {
+                        WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
                     }
                     result["decisions"] = decisions;
                     result["status"] = "completed";
@@ -1245,7 +1277,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             simExchange->destroyBacktestContext(runId);
 
         } else {
-            // ── 实盘路径：QuoteDB 数据回放 ──
+        // ── 实盘路径：QuoteDB 数据回放 ──
             // 从 QuoteDB 加载所有 symbol 的历史日线
             auto& quoteDB = QuoteDB::instance();
             if (!quoteDB.isInitialized()) {
@@ -1380,30 +1412,13 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                 INFO("[StartDaily] success={}, manualTiming={}", success, manualTiming != nullptr);
 
                 if (success) {
-                    // 成功 → 发送决策摘要邮件
+                    // 成功 → 发送决策摘要邮件，返回决策数组（信号在 ExecuteNode 阶段已被 ConsumeSignals 消费）
+                    nlohmann::json decisions = nlohmann::json::array();
                     if (manualTiming) {
                         INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                        manualTiming->SendSummaryEmail(strategy);
+                        decisions = manualTiming->SendSummaryEmail(strategy);
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
-                    }
-
-                    // 提取信号
-                    const auto& signals = context.getAllSignals();
-                    nlohmann::json::array_t decisions;
-                    for (const auto& [sym, signal] : signals) {
-                        if (!signal) continue;
-                        nlohmann::json decision;
-                        decision["symbol"] = get_symbol(sym);
-                        switch (signal->GetAction()) {
-                            case TradeAction::BUY: decision["action"] = "BUY"; break;
-                            case TradeAction::SELL: decision["action"] = "SELL"; break;
-                            default: decision["action"] = "HOLD"; break;
-                        }
-                        decision["quantity"] = signal->GetQuantity();
-                        decision["price"] = signal->GetPrice();
-                        decision["flag"] = signal->GetFlag();
-                        decisions.push_back(decision);
                     }
                     result["decisions"] = decisions;
                     result["status"] = "completed";
@@ -1442,5 +1457,5 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
         // 回调通知
         if (onComplete) onComplete(result);
-    }).detach();
+    });
 }

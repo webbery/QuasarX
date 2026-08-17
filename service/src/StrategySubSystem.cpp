@@ -236,6 +236,12 @@ void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& histor
 void StrategySubSystem::DeleteStrategy(const String& name) {
     _strategies.erase(name);
     _strategyWarmupEpochs.erase(name);
+    // 清理日级执行状态，避免同一进程内重新加载策略时残留已执行标记
+    {
+        std::lock_guard<std::mutex> lock(_dailyMtx);
+        _dailyStrategySymbols.erase(name);
+        _dailyExecutedStrategies.erase(name);
+    }
 }
 
 void StrategySubSystem::InitStrategy(const String& strategy, const List<QNode*>& flow) {
@@ -371,8 +377,8 @@ void StrategySubSystem::ResetDaily() {
     INFO("[DailyExecution] Reset daily state");
 }
 
-void StrategySubSystem::MarkSymbolReady(const String& symbol) {
-    std::lock_guard<std::mutex> lock(_dailyMtx);
+void StrategySubSystem::MarkSymbolReady(const String& symbol, const String& simDate) {
+    std::unique_lock<std::mutex> lock(_dailyMtx);
 
     if (!_dailyInitialized) {
         WARN("[DailyExecution] MarkSymbolReady: not initialized, ignoring {}", symbol);
@@ -391,6 +397,8 @@ void StrategySubSystem::MarkSymbolReady(const String& symbol) {
         INFO("[DailyExecution]   registered strategy '{}': symbols=[{}], already_executed={}", strat, symList, executed);
     }
 
+    Vector<std::pair<String, String>> strategiesToRun;
+
     // 检查是否有策略的所有依赖已就绪
     for (auto& [strategy, symbols] : _dailyStrategySymbols) {
         if (_dailyExecutedStrategies.count(strategy)) continue;
@@ -408,18 +416,27 @@ void StrategySubSystem::MarkSymbolReady(const String& symbol) {
             INFO("[DailyExecution] All symbols ready for strategy '{}', executing", strategy);
             _dailyExecutedStrategies.insert(strategy);
 
-            // StartDaily 内部异步执行，这里直接调用即可
-            ExecuteDailyStrategy(strategy);
+            // 收集需要执行的策略，在锁外异步启动（StartDaily 是重量级同步操作）
+            strategiesToRun.push_back({strategy, simDate});
+        }
+    }
+
+    if (!strategiesToRun.empty()) {
+        lock.unlock();  // 先释放锁，再 detach 线程
+        for (auto& [strat, date] : strategiesToRun) {
+            std::thread([this, strat, date]() {
+                ExecuteDailyStrategy(strat, date);
+            }).detach();
         }
     }
 }
 
-void StrategySubSystem::ExecuteDailyStrategy(const String& strategy) {
+void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const String& simDate) {
     INFO("[DailyExecution] Executing strategy: {}", strategy);
 
     auto pools = GetPools(strategy);
     String dataDir = _handle->GetConfig().GetDatabasePath();
-    String today = ToString(Now(), "%Y-%m-%d");
+    String today = simDate.empty() ? ToString(Now(), "%Y-%m-%d") : simDate;
 
     // 异步执行，回调中保存决策
     _agentSystem->StartDaily(strategy, pools,

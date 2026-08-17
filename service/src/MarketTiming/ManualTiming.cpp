@@ -30,7 +30,7 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
     return true;
 }
 
-void ManualTiming::SendSummaryEmail(const String& strategy) {
+nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
     INFO("[Manual] SendSummaryEmail called for strategy {}, decisions count: {}", strategy, _decisions.size());
 
     auto* broker = _server->GetBrokerSubSystem();
@@ -39,6 +39,9 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
     nlohmann::json ssePayload;
     ssePayload["strategy"] = strategy;
     ssePayload["decisions"] = nlohmann::json::array();
+
+    // 返回给调用方的决策数组（供日终 report / 持仓快照使用，action 兼容 DailyDecisionJson::parseAction）
+    nlohmann::json decisionsResult = nlohmann::json::array();
 
     // 分类统计
     Vector<const DecisionSnapshot*> buys, sells, holds;
@@ -62,6 +65,14 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
             decision["price"] = d._price;
             decision["epoch"] = d._epoch;
             ssePayload["decisions"].push_back(decision);
+
+            nlohmann::json reportDecision;
+            reportDecision["symbol"] = get_symbol(d._symbol);
+            reportDecision["action"] = (d._action == TradeAction::BUY) ? "BUY" : "SELL";
+            reportDecision["quantity"] = d._quantity;
+            reportDecision["price"] = d._price;
+            reportDecision["flag"] = d._flag;
+            decisionsResult.push_back(reportDecision);
         }
     }
 
@@ -111,4 +122,6 @@ void ManualTiming::SendSummaryEmail(const String& strategy) {
 
     // 清空累积器
     _decisions.clear();
+
+    return decisionsResult;
 }

@@ -314,9 +314,18 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     }
                     std::sort(sortedIns.begin(), sortedIns.end());
                     for (auto& [id, nodePtr] : sortedIns) {
+                        String nodeLabel = fmt::format("node#{}", nodePtr->id());
                         auto elements = nodePtr->out_elements();
-                        for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+                        Vector<String> elemKeys;
+                        for (auto& [k, _] : elements) {
+                            state->_featureNames.push_back(k);
+                            elemKeys.push_back(k);
+                        }
+                        INFO("[MLTrain] XGBoost upstream {} contributes {} keys: [{}]",
+                             nodeLabel, elemKeys.size(), fmt::join(elemKeys, ", "));
                     }
+                    INFO("[MLTrain] Total _featureNames collected: {} entries: [{}]",
+                         state->_featureNames.size(), fmt::join(state->_featureNames, ", "));
                     break;
                 }
             }
@@ -402,13 +411,17 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         // _featureNames 是短名（如 MA(5)），collected keys 是全名（如 sz.800001.MA(5)）
         if (!state->_featureNames.empty()) {
             Map<String, Vector<double>> filtered;
+            Vector<String> droppedKeys;
             for (auto& [k, v] : collected) {
+                bool matched = false;
                 for (auto& feat : state->_featureNames) {
                     if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
                         filtered[k] = v;
+                        matched = true;
                         break;
                     }
                 }
+                if (!matched) droppedKeys.push_back(k);
             }
             // 保留 label 列（不在 feature 中但训练需要）
             if (!labelSource.empty() && collected.count(labelSource) && !filtered.count(labelSource)) {
@@ -425,8 +438,15 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     }
                 }
             }
-            INFO("[MLTrain] Filtered collected: {} -> {} columns (featureNames={})",
-                 collected.size(), filtered.size(), state->_featureNames.size());
+            INFO("[MLTrain] Filter: collected {} columns, kept {}, dropped {}: [{}]",
+                 collected.size(), filtered.size(), droppedKeys.size(),
+                 fmt::join(droppedKeys, ", "));
+            {
+                Vector<String> ks;
+                ks.reserve(filtered.size());
+                for (auto& [k, _] : filtered) ks.push_back(k);
+                INFO("[MLTrain] Filter: filtered columns (will be in CSV): [{}]", fmt::join(ks, ", "));
+            }
             collected = std::move(filtered);
         }
         sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});
@@ -802,9 +822,18 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
                     }
                     std::sort(sortedIns.begin(), sortedIns.end());
                     for (auto& [id, nodePtr] : sortedIns) {
+                        String nodeLabel = fmt::format("node#{}", nodePtr->id());
                         auto elements = nodePtr->out_elements();
-                        for (auto& [k, _] : elements) state->_featureNames.push_back(k);
+                        Vector<String> elemKeys;
+                        for (auto& [k, _] : elements) {
+                            state->_featureNames.push_back(k);
+                            elemKeys.push_back(k);
+                        }
+                        INFO("[MLTrain] XGBoost upstream {} contributes {} keys: [{}]",
+                             nodeLabel, elemKeys.size(), fmt::join(elemKeys, ", "));
                     }
+                    INFO("[MLTrain] Total _featureNames collected: {} entries: [{}]",
+                         state->_featureNames.size(), fmt::join(state->_featureNames, ", "));
                     break;
                 }
             }
@@ -863,13 +892,17 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
         // 过滤 collected：只保留 XGBoostNode 直接上游的特征列
         if (!state->_featureNames.empty()) {
             Map<String, Vector<double>> filtered;
+            Vector<String> droppedKeys;
             for (auto& [k, v] : collected) {
+                bool matched = false;
                 for (auto& feat : state->_featureNames) {
                     if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
                         filtered[k] = v;
+                        matched = true;
                         break;
                     }
                 }
+                if (!matched) droppedKeys.push_back(k);
             }
             // matrix 模式：保留每个标的的 close 列（Python 脚本用于计算 per-symbol 标签）
             if (labelShape == "matrix") {
@@ -881,7 +914,15 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
                     }
                 }
             }
-            INFO("[MLCollect] Filtered collected: {} -> {} columns", collected.size(), filtered.size());
+            INFO("[MLCollect] Filter: collected {} columns, kept {}, dropped {}: [{}]",
+                 collected.size(), filtered.size(), droppedKeys.size(),
+                 fmt::join(droppedKeys, ", "));
+            {
+                Vector<String> ks;
+                ks.reserve(filtered.size());
+                for (auto& [k, _] : filtered) ks.push_back(k);
+                INFO("[MLCollect] Filter: filtered columns (will be in CSV): [{}]", fmt::join(ks, ", "));
+            }
             collected = std::move(filtered);
         }
         sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});

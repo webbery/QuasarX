@@ -358,17 +358,17 @@ class TestDecisionLifecycle:
 
         assert found, "推送 bar 后未产生决策"
 
-        # 验证决策字段
+        # 验证决策字段（只检查未执行的决策，排除跨测试残留的已执行决策）
         test_decisions = [
-            d for d in decisions if d.get("strategy") == STRATEGY_NAME
+            d for d in decisions
+            if d.get("strategy") == STRATEGY_NAME and not d["executed"]
         ]
-        assert test_decisions, f"未找到策略 {STRATEGY_NAME} 的决策"
+        assert test_decisions, f"未找到策略 {STRATEGY_NAME} 的未执行决策"
         for d in test_decisions:
             assert d["symbol"] == TEST_SYMBOL
             assert d["action"] in [
                 "open_long", "close_long", "open_short", "close_short"
             ]
-            assert d["executed"] is False
             assert d["executedQuantity"] == 0
 
     def test_executed_decision_status_update(self, auth_token, loaded_strategy):
@@ -471,7 +471,7 @@ class TestStrategyPerformance:
         assert resp.status_code == 400
 
     def test_performance_after_daily_execution(self, auth_token, loaded_strategy):
-        """推送 bar 产生决策后，绩效接口应返回有效指标"""
+        """推送 2 个不同日期的 bar，绩效接口应返回有效指标"""
         try:
             bar = get_latest_bar(auth_token, TEST_SYMBOL)
         except ValueError as e:
@@ -482,15 +482,25 @@ class TestStrategyPerformance:
             bar["high"] = max(bar["open"], bar["high"])
             bar["low"] = min(bar["open"], bar["low"])
 
-        result = simulate_bar(auth_token, bar)
+        # Day 1
+        bar1 = dict(bar, datetime="2025-01-15 00:00:00")
+        result = simulate_bar(auth_token, bar1)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
-        # 等待决策写入 + 持仓记录
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
-            if decisions:
+            if get_decisions(auth_token, date=today_str()):
+                break
+            time.sleep(0.5)
+
+        # Day 2（不同日期 → 不同 daily_positions 记录）
+        bar2 = dict(bar, datetime="2025-01-16 00:00:00")
+        simulate_bar(auth_token, bar2)
+
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if get_decisions(auth_token, date=today_str()):
                 break
             time.sleep(0.5)
 

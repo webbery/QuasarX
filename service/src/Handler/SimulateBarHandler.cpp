@@ -68,7 +68,14 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
         if (strategySys) {
             INFO("[SimulateBar] Calling EnsureDailyReady + MarkSymbolReady for {}", symbol);
             strategySys->EnsureDailyReady();
-            strategySys->MarkSymbolReady(symbol);
+            // 从 bar datetime 提取日期，日期变化时 ResetDaily 使策略可重新执行
+            String simDate = bar.datetime.substr(0, 10);
+            time_t simTs = FromStr(simDate, "%Y-%m-%d");
+            if (simTs != _lastSimDate) {
+                strategySys->ResetDaily();
+                _lastSimDate = simTs;
+            }
+            strategySys->MarkSymbolReady(symbol, simDate);
         } else {
             WARN("[SimulateBar] StrategySubSystem is null!");
         }

@@ -1200,10 +1200,22 @@ Vector<DecisionRecord> BrokerSubSystem::GetDecisions(const String& date) {
     // 优先从 DuckDB 查询（支持历史日期）
     auto records = DecisionDB::instance().queryByDate(date);
 
-    // 如果是查当日，用内存数据覆盖（可能有更新的 executed 状态）
+    // 仅当查询当日且 DuckDB 无数据时，才 fallback 到内存
     if (records.empty()) {
-        std::lock_guard<std::mutex> lock(_decisionMtx);
-        return _todayDecisions;
+        time_t now = time(nullptr);
+        struct tm tm_val;
+#ifdef _WIN32
+        localtime_s(&tm_val, &now);
+#else
+        localtime_r(&now, &tm_val);
+#endif
+        char buf[16];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
+        if (date == buf) {
+            std::lock_guard<std::mutex> lock(_decisionMtx);
+            return _todayDecisions;
+        }
+        return {};
     }
 
     // 合并：内存中已执行的决策更新 DuckDB 结果

@@ -23,5 +23,8 @@ public:
     ~SimulateBarHandler() override;
 
     void post(const httplib::Request& req, httplib::Response& res) override;
+
+private:
+    time_t _lastSimDate = 0;  // 上次仿真日期，变化时触发 ResetDaily
 };
 #endif

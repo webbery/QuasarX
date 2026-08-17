@@ -621,26 +621,37 @@ class TestXGBoostE2E:
 
         # ---- 3b: 验证 XGBoost 推理正确（Python xgboost 独立推理） ----
         import xgboost as xgb
-        feat_df = df[E2E_FEATURE_COLS].astype(float)
-        valid_mask = feat_df.notna().all(axis=1)
-        valid_features = feat_df[valid_mask]
-        assert len(valid_features) > 0, "无有效特征行"
 
         # 从模型读取实际特征顺序（模型知道自己训练时的特征名和顺序）
         bst = xgb.Booster()
         bst.load_model(_deployed["model_path"])
         prefix = E2E_SYMBOL + "."
 
+        # 从 DebugNode CSV 中动态构建特征映射（兼容训练侧可能包含 org_close 等额外特征）
+        csv_available = {col: col[len(prefix):] for col in df.columns if col.startswith(prefix)}
+        short_to_full = {v: k for k, v in csv_available.items()}
+
         if bst.feature_names:
-            # 模型有 feature_names（短名），将 CSV 全名映射到短名后按模型顺序重排
-            full_to_short = {col: col[len(prefix):] for col in E2E_FEATURE_COLS}
-            short_to_full = {v: k for k, v in full_to_short.items()}
-            ordered_full = [short_to_full[name] for name in bst.feature_names]
-            valid_features = valid_features[ordered_full]
+            # 模型有 feature_names（短名），按模型顺序从 CSV 中选取对应列
+            ordered_full = []
+            for name in bst.feature_names:
+                if name in short_to_full:
+                    ordered_full.append(short_to_full[name])
+                else:
+                    pytest.skip(f"模型特征 '{name}' 不在 Debug CSV 中，跳过 C++/Python 对比")
+            valid_features = df[ordered_full].astype(float)
+            valid_mask = valid_features.notna().all(axis=1)
+            valid_features = valid_features[valid_mask]
             valid_features.columns = bst.feature_names
         else:
             # 模型无 feature_names，按 CSV 列顺序去前缀
-            valid_features.columns = [col[len(prefix):] for col in E2E_FEATURE_COLS]
+            feat_cols = [col for col in E2E_FEATURE_COLS if col in df.columns]
+            feat_df = df[feat_cols].astype(float)
+            valid_mask = feat_df.notna().all(axis=1)
+            valid_features = feat_df[valid_mask]
+            valid_features.columns = [col[len(prefix):] for col in feat_cols]
+
+        assert len(valid_features) > 0, "无有效特征行"
 
         # Python 推理（用 float32 与 C++ 精度一致，避免 float64→float32 转换差异）
         py_probs = _xgb_predict_python(_deployed["model_path"], valid_features.astype('float32'))

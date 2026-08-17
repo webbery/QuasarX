@@ -237,6 +237,8 @@ private:
     struct StrategyFlowInfo {
         std::atomic_bool _running = false;
         std::thread* _worker = nullptr;
+        // 日级执行线程（StartDaily，detach 线程的句柄），Stop/ClearFlow 时 join 避免悬空访问
+        std::thread* _dailyWorker = nullptr;
 
         // 策略级别的影子模式标志（默认 false，跟随全局模式）
         bool isShadowMode = false;
