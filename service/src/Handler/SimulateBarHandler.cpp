@@ -66,8 +66,11 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
         // ── 3. 触发策略管道 ──
         auto* strategySys = _server->GetStrategySystem();
         if (strategySys) {
+            INFO("[SimulateBar] Calling EnsureDailyReady + MarkSymbolReady for {}", symbol);
             strategySys->EnsureDailyReady();
             strategySys->MarkSymbolReady(symbol);
+        } else {
+            WARN("[SimulateBar] StrategySubSystem is null!");
         }
 
         // ── 返回 ──

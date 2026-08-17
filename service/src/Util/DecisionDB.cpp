@@ -28,6 +28,18 @@ void DecisionDB::ensureTables() {
     )");
     exec_unsafe("CREATE INDEX IF NOT EXISTS idx_decisions_date ON decisions(timestamp)");
     exec_unsafe("CREATE INDEX IF NOT EXISTS idx_decisions_id ON decisions(id)");
+
+    exec_unsafe(R"(
+        CREATE TABLE IF NOT EXISTS daily_positions (
+            strategy    VARCHAR NOT NULL,
+            symbol      BIGINT NOT NULL,
+            date        BIGINT NOT NULL,
+            position    BIGINT NOT NULL DEFAULT 0,
+            close_price DOUBLE NOT NULL DEFAULT 0,
+            UNIQUE(strategy, symbol, date)
+        )
+    )");
+    exec_unsafe("CREATE INDEX IF NOT EXISTS idx_dp_strategy ON daily_positions(strategy, date)");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -153,4 +165,69 @@ bool DecisionDB::markExecuted(int id, int64_t exec_qty, double exec_price) {
         exec_qty, exec_price, id
     );
     return exec(sql);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  日终持仓快照
+// ═══════════════════════════════════════════════════════════
+
+void DecisionDB::insertDailyPosition(const DailyPositionRecord& record) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return;
+
+    int64_t sym_encoded = encodeSymbol(record.symbol);
+    int64_t date_ts = static_cast<int64_t>(record.date);
+
+    // UPSERT：同日同标的覆盖
+    std::string sql = fmt::format(
+        "INSERT INTO daily_positions (strategy, symbol, date, position, close_price) "
+        "VALUES ('{}', {}, {}, {}, {:.6f}) "
+        "ON CONFLICT (strategy, symbol, date) DO UPDATE SET position = {}, close_price = {:.6f}",
+        record.strategy, sym_encoded, date_ts, record.position, record.close_price,
+        record.position, record.close_price
+    );
+
+    if (!exec(sql)) {
+        WARN("[DecisionDB] insertDailyPosition failed: strategy={}, symbol={}, date={}",
+             record.strategy, get_symbol(record.symbol), date_ts);
+    }
+}
+
+std::vector<DailyPositionRecord> DecisionDB::queryDailyPositions(
+    const std::string& strategy, time_t startDate, time_t endDate) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    std::vector<DailyPositionRecord> results;
+    if (!isInitialized()) return results;
+
+    std::string sql = fmt::format(
+        "SELECT strategy, symbol, date, position, close_price FROM daily_positions "
+        "WHERE strategy = '{}'", strategy);
+
+    if (startDate > 0)
+        sql += fmt::format(" AND date >= {}", static_cast<int64_t>(startDate));
+    if (endDate > 0)
+        sql += fmt::format(" AND date <= {}", static_cast<int64_t>(endDate));
+
+    sql += " ORDER BY date ASC, symbol ASC";
+
+    query(sql, [&](duckdb_result& result) -> bool {
+        int64_t row_count = duckdb_row_count(&result);
+        for (int64_t i = 0; i < row_count; ++i) {
+            DailyPositionRecord rec;
+            const char* strat = duckdb_value_varchar(&result, 0, i);
+            if (strat) {
+                rec.strategy = strat;
+                duckdb_free((void*)strat);
+            }
+            int64_t sym_encoded = duckdb_value_int64(&result, 1, i);
+            rec.symbol = decodeSymbol(sym_encoded);
+            rec.date = static_cast<time_t>(duckdb_value_int64(&result, 2, i));
+            rec.position = duckdb_value_int64(&result, 3, i);
+            rec.close_price = duckdb_value_double(&result, 4, i);
+            results.push_back(rec);
+        }
+        return true;
+    });
+
+    return results;
 }

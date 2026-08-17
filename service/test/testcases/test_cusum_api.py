@@ -1004,7 +1004,7 @@ class CUSUMCalibratorRef:
 
         lambda_ = detectable_shift_sigma / 2.0
         H = self._find_h_for_arl0(target_arl0, lambda_, mc_simulations=mc_simulations)
-        actual_arl0 = self._simulate_arl0(H, lambda_, mc_simulations=mc_simulations)
+        actual_arl0 = self._simulate_arl0(H, lambda_, simulations=mc_simulations)
 
         min_obs, bs_sizes, bs_cvs = self._bootstrap_min_obs(
             returns, cv_threshold=0.15, bootstrap_iters=bootstrap_iters)
@@ -1047,7 +1047,7 @@ class CUSUMCalibratorRef:
         h_low, h_high = 0.1, 12.0
         for _ in range(25):
             h_mid = (h_low + h_high) / 2.0
-            arl = self._simulate_arl0(h_mid, lambda_, mc_simulations)
+            arl = self._simulate_arl0(h_mid, lambda_, simulations=mc_simulations)
             if abs(arl - target_arl0) / target_arl0 < tol:
                 return h_mid
             if arl < target_arl0:
@@ -1175,9 +1175,10 @@ class TestCUSUMCalibration:
         return resp.json()
 
     def _get_cal_for_symbol(self, result, symbol):
-        """从校准结果中提取指定标的的数据"""
+        """从校准结果中提取指定标的的数据（内部格式 → API 格式匹配）"""
+        api_symbol = _to_api_symbols([symbol])[0]
         for cal in result.get("calibrations", []):
-            if cal["symbol"] == symbol:
+            if cal["symbol"] == api_symbol:
                 return cal
         return None
 
@@ -1320,9 +1321,10 @@ class TestCUSUMCalibration:
             sigmas[cal["symbol"]] = cal["sigma"]
 
         # high_vol (σ≈0.05) 应 > normal (σ≈0.02) > low_vol (σ≈0.008)
-        high_vol_sigma = sigmas.get("sz.800011", 0)
-        normal_sigma = sigmas.get("sz.800010", 0)
-        low_vol_sigma = sigmas.get("sz.800012", 0)
+        # API 返回 API 格式（如 800011.SZ），需用 _to_api_symbols 转换
+        high_vol_sigma = sigmas.get(_to_api_symbols(["sz.800011"])[0], 0)
+        normal_sigma = sigmas.get(_to_api_symbols(["sz.800010"])[0], 0)
+        low_vol_sigma = sigmas.get(_to_api_symbols(["sz.800012"])[0], 0)
         assert high_vol_sigma > normal_sigma > low_vol_sigma, \
             f"σ 排序错误: high={high_vol_sigma:.4f}, normal={normal_sigma:.4f}, low={low_vol_sigma:.4f}"
 

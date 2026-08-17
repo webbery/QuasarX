@@ -146,12 +146,16 @@ double DataContext::getAvailableCapital() const
         return _capital;
     }
 
+    // 策略配置了资金（日终模式）→ 直接使用
+    if (_capital > 0) return _capital;
+
     // 实盘模式：使用活跃的股票交易 Exchange
     auto* exchange = exchangeMgr.GetActiveStockExchange();
     if (exchange) {
-        return exchange->GetAvailableFunds(0);
+        double funds = exchange->GetAvailableFunds(0);
+        if (funds > 0) return funds;
     }
-    return _capital;
+    return 0;
 }
 
 void DataContext::SetQuote(symbol_t symbol, const QuoteInfo& quote) {

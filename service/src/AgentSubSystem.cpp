@@ -68,6 +68,11 @@ void FlowSubsystem::SetShadowMode(const String& strategy) {
     INFO("[FlowSubsystem] Strategy '{}' configured as Shadow mode", strategy);
 }
 
+void FlowSubsystem::SetStrategyCapital(const String& strategy, double capital) {
+    _flows[strategy]._capital = capital;
+    INFO("[FlowSubsystem] Strategy '{}' capital set to {:.0f}", strategy, capital);
+}
+
 void FlowSubsystem::Start() {
     auto strategySys = _handle->GetStrategySystem();
     for (auto& item : _flows) {
@@ -1124,6 +1129,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
     // 异步执行，不阻塞调用线程
     std::thread([this, strategy, symbols, onComplete = std::move(onComplete)]() {
         SetCurrentThreadName(("Daily_" + strategy).c_str());
+        INFO("[StartDaily] === Started for strategy '{}', {} symbols ===", strategy, symbols.size());
 
         nlohmann::json result;
         result["strategy"] = strategy;
@@ -1260,6 +1266,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             for (auto sym : symbolVec) {
                 String symStr = get_symbol(sym);
                 auto bars = quoteDB.query("stock_1d", symStr, "", "", 0);
+                INFO("[StartDaily] Loaded {} bars for symbol {}", bars.size(), symStr);
                 if (bars.empty()) {
                     WARN("[StartDaily] No historical data for {}", symStr);
                 }
@@ -1284,6 +1291,13 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
             INFO("[StartDaily] Live mode: {} bars max across {} symbols for {}",
                  maxBars, symbolVec.size(), strategy);
+
+            INFO("[StartDaily] flow._capital={}, getAvailableCapital={}", 
+                 flow._capital, context.getAvailableCapital());
+            if (flow._capital > 0 && context.getAvailableCapital() <= 0) {
+                context.setCapital(flow._capital);
+                INFO("[StartDaily] Set capital={} from strategy config", flow._capital);
+            }
 
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
@@ -1348,12 +1362,14 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         success = false;
                         break;
                     }
+                    INFO("[StartDaily] RunGraph ok at epoch {}, bar {}/{}", epoch, i, maxBars);
                 }
 
                 // 查找 ManualTiming（无论成功失败都需要）
                 ManualTiming* manualTiming = nullptr;
                 for (auto& node : flow._graph) {
                     if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
+                        INFO("[StartDaily] Found ExecuteNode: execType={}", static_cast<int>(execNode->GetExecType()));
                         if (execNode->GetExecType() == ExecuteType::Manual) {
                             manualTiming = dynamic_cast<ManualTiming*>(execNode->GetTiming());
                             break;
@@ -1361,11 +1377,15 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     }
                 }
 
+                INFO("[StartDaily] success={}, manualTiming={}", success, manualTiming != nullptr);
+
                 if (success) {
                     // 成功 → 发送决策摘要邮件
                     if (manualTiming) {
                         INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
                         manualTiming->SendSummaryEmail(strategy);
+                    } else {
+                        WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
                     }
 
                     // 提取信号

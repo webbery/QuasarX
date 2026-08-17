@@ -1276,14 +1276,21 @@ void MLHandler::handleList(const httplib::Request& req, httplib::Response& res) 
 
 void MLHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
     String modelPath;
+    bool found = false;
     {
         std::lock_guard<std::mutex> lock(_mtx);
         auto itr = _cache.find(modelId);
         if (itr != _cache.end()) {
+            found = true;
             modelPath = itr->second._modelPath;
             itr->second.clear();
             _cache.erase(itr);
         }
+    }
+    if (!found) {
+        res.status = 404;
+        res.set_content(R"({"message":"model not found"})", "application/json");
+        return;
     }
     // 同时删除磁盘文件（模型 + meta）
     if (!modelPath.empty() && std::filesystem::exists(modelPath)) {

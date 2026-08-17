@@ -52,6 +52,8 @@ public:
      */
     void SetShadowMode(const String& strategy);
 
+    void SetStrategyCapital(const String& strategy, double capital);
+
     /**
      * @brief 启动实盘策略（K-bar 聚合驱动）
      */
@@ -241,6 +243,8 @@ private:
 
         Map<StatisticIndicator, std::variant<float, List<float>>> _collections;
         List<QNode*> _graph;
+        // 策略配置资金（从策略 JSON "capital" 字段读取，供 StartDaily 实盘路径使用）
+        double _capital = 0;
         // 择时模块
         ITimingStrategy* _timing = nullptr;
 

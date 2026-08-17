@@ -439,3 +439,84 @@ class TestDecisionLifecycle:
             direct=0 if decision["action"] in ["open_long", "close_short"] else 1,
         )
         assert resp.status_code != 500, f"服务器内部错误: {resp.text}"
+
+
+# ==================== 测试类 4：策略绩效 API ====================
+
+@pytest.mark.usefixtures("auth_token")
+class TestStrategyPerformance:
+    """GET /v0/strategy/performance 日终策略绩效指标"""
+
+    def test_performance_no_data(self, auth_token):
+        """无持仓数据时返回 trading_days=0"""
+        resp = requests.get(
+            f"{BASE_URL}/strategy/performance",
+            params={"name": "nonexistent_strategy"},
+            headers={"Authorization": auth_token},
+            verify=False,
+            timeout=10,
+        )
+        assert resp.ok, f"HTTP {resp.status_code}"
+        data = resp.json()
+        assert data["trading_days"] == 0
+
+    def test_performance_missing_name(self, auth_token):
+        """缺少 name 参数返回 400"""
+        resp = requests.get(
+            f"{BASE_URL}/strategy/performance",
+            headers={"Authorization": auth_token},
+            verify=False,
+            timeout=10,
+        )
+        assert resp.status_code == 400
+
+    def test_performance_after_daily_execution(self, auth_token, loaded_strategy):
+        """推送 bar 产生决策后，绩效接口应返回有效指标"""
+        try:
+            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        except ValueError as e:
+            pytest.skip(f"无测试数据: {e}")
+
+        if not bar["close"] > bar["open"]:
+            bar["open"] = bar["close"] * 0.99
+            bar["high"] = max(bar["open"], bar["high"])
+            bar["low"] = min(bar["open"], bar["low"])
+
+        result = simulate_bar(auth_token, bar)
+        if "status" in result and result.get("status") == "error":
+            pytest.skip(f"simulate/bar 不可用: {result}")
+
+        # 等待决策写入 + 持仓记录
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            decisions = get_decisions(auth_token, date=today_str())
+            if decisions:
+                break
+            time.sleep(0.5)
+
+        resp = requests.get(
+            f"{BASE_URL}/strategy/performance",
+            params={"name": STRATEGY_NAME},
+            headers={"Authorization": auth_token},
+            verify=False,
+            timeout=10,
+        )
+        assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
+        data = resp.json()
+
+        assert data["strategy"] == STRATEGY_NAME
+        assert data["trading_days"] >= 1
+        assert "initial_capital" in data
+        assert "final_value" in data
+
+        metrics = data["metrics"]
+        for key in ["total_return", "annual_return", "annual_volatility",
+                     "sharpe_ratio", "max_drawdown", "win_rate", "calmar_ratio"]:
+            assert key in metrics, f"缺少指标: {key}"
+
+        # max_drawdown 应为非负数
+        assert metrics["max_drawdown"] >= 0, \
+            f"max_drawdown 应为非负: {metrics['max_drawdown']}"
+        # win_rate 在 [0, 1] 范围
+        assert 0 <= metrics["win_rate"] <= 1, \
+            f"win_rate 超出 [0,1]: {metrics['win_rate']}"

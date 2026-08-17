@@ -395,6 +395,12 @@ bool QuoteDB::upsertBar(const std::string& table, const QuoteBar& bar) {
 
     int64_t sym_encoded = encodeSymbol(bar.symbol);
 
+    // adj_* 为 0 时用原始价格填充（确保复权价格始终有效）
+    double adj_open  = bar.adj_open  > 0 ? bar.adj_open  : bar.open;
+    double adj_close = bar.adj_close > 0 ? bar.adj_close : bar.close;
+    double adj_high  = bar.adj_high  > 0 ? bar.adj_high  : bar.high;
+    double adj_low   = bar.adj_low   > 0 ? bar.adj_low   : bar.low;
+
     std::string sql = fmt::format(
         "INSERT INTO {} (symbol, datetime, open, close, high, low, volume, turnover, ext, "
         "adj_open, adj_close, adj_high, adj_low) "
@@ -408,7 +414,7 @@ bool QuoteDB::upsertBar(const std::string& table, const QuoteBar& bar) {
         table, sym_encoded, bar.datetime,
         bar.open, bar.close, bar.high, bar.low,
         bar.volume, bar.turnover, (int)bar.ext,
-        bar.adj_open, bar.adj_close, bar.adj_high, bar.adj_low);
+        adj_open, adj_close, adj_high, adj_low);
 
     if (!exec(sql)) {
         SPDLOG_ERROR("[QuoteDB] upsertBar failed for {} at {}", bar.symbol, bar.datetime);

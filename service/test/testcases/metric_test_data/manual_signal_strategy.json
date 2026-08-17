@@ -2,6 +2,7 @@
   "id": "test_manual_signal",
   "name": "测试Manual决策策略",
   "version": 1,
+  "capital": 500000,
   "description": "ManualTiming 测试策略：close>open 时买入 100 股，不直接下单",
   "nodes": [
     {
@@ -62,7 +63,7 @@
             "type": "text"
           },
           "buy": {
-            "value": "close > open",
+            "value": "close[t] > open[t]",
             "type": "text"
           },
           "sell": {
@@ -74,6 +75,20 @@
     },
     {
       "id": "3",
+      "type": "custom",
+      "data": {
+        "label": "投资组合",
+        "nodeType": "portfolio",
+        "params": {
+          "positionRatio": {
+            "value": 1.0,
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "4",
       "type": "custom",
       "data": {
         "label": "手动下单",
@@ -123,6 +138,13 @@
       "id": "2->3",
       "source": "2",
       "target": "3",
+      "sourceHandle": "output",
+      "targetHandle": "input"
+    },
+    {
+      "id": "3->4",
+      "source": "3",
+      "target": "4",
       "sourceHandle": "output",
       "targetHandle": "input"
     }

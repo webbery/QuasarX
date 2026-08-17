@@ -11,6 +11,7 @@
 #include "PortfolioSubsystem.h"
 #include "Util/string_algorithm.h"
 #include "Util/DailyDecision.h"
+#include "Util/DecisionDB.h"
 
 namespace {
     // timeHorizon 映射：统一转换为秒（用于计算 warmup epoch 数）
@@ -282,6 +283,11 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
         INFO("[StrategySubSystem] Strategy '{}' shadow mode enabled", to_utf8(strategyName));
     }
 
+    // 保存策略配置资金（供 StartDaily 实盘路径使用）
+    if (script.contains("capital") && script["capital"].is_number()) {
+        _agentSystem->SetStrategyCapital(strategyName, script["capital"].get<double>());
+    }
+
     // 推断并保存预热期 epoch 数
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;
@@ -298,12 +304,20 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
 
 void StrategySubSystem::EnsureDailyReady() {
     std::lock_guard<std::mutex> lock(_dailyMtx);
-    if (_dailyInitialized) return;
 
-    // 内联 InitDailyExecution 逻辑（避免嵌套锁）
-    _dailyStrategySymbols.clear();
+    if (!_dailyInitialized) {
+        _dailyInitialized = true;
+        // 内联 ResetDaily 逻辑
+        _dailyReadySymbols.clear();
+        _dailyExecutedStrategies.clear();
+        _dailyErrors.clear();
+    }
+
+    // 增量注册：扫描 _strategies 中尚未注册的策略
+    INFO("[DailyExecution] EnsureDailyReady: _strategies.size()={}, _dailyStrategySymbols.size()={}",
+         _strategies.size(), _dailyStrategySymbols.size());
     for (auto& name : _strategies) {
-        // 只注册日终策略（含 Manual ExecuteNode），非日终策略不参与日终执行
+        if (_dailyStrategySymbols.count(name)) continue;  // 已注册
         if (!_agentSystem->HasManualExecuteNode(name)) continue;
         auto pools = GetPools(name);
         Set<String> symbols;
@@ -312,15 +326,11 @@ void StrategySubSystem::EnsureDailyReady() {
         }
         if (!symbols.empty()) {
             _dailyStrategySymbols[name] = symbols;
+            String symList;
+            for (auto& s : symbols) { if (!symList.empty()) symList += ","; symList += s; }
+            INFO("[DailyExecution] Registered strategy '{}': [{}]", name, symList);
         }
     }
-    _dailyInitialized = true;
-    INFO("[DailyExecution] EnsureDailyReady: initialized {} strategies", _dailyStrategySymbols.size());
-
-    // 内联 ResetDaily 逻辑
-    _dailyReadySymbols.clear();
-    _dailyExecutedStrategies.clear();
-    _dailyErrors.clear();
 }
 
 void StrategySubSystem::InitDailyExecution() {
@@ -364,11 +374,22 @@ void StrategySubSystem::ResetDaily() {
 void StrategySubSystem::MarkSymbolReady(const String& symbol) {
     std::lock_guard<std::mutex> lock(_dailyMtx);
 
-    if (!_dailyInitialized) return;
+    if (!_dailyInitialized) {
+        WARN("[DailyExecution] MarkSymbolReady: not initialized, ignoring {}", symbol);
+        return;
+    }
 
     _dailyReadySymbols.insert(symbol);
     INFO("[DailyExecution] Symbol ready: {} ({}/{} ready symbols)",
          symbol, _dailyReadySymbols.size(), _dailyStrategySymbols.size());
+
+    // 诊断：打印所有已注册策略及其 symbol 列表
+    for (auto& [strat, syms] : _dailyStrategySymbols) {
+        String symList;
+        for (auto& s : syms) { if (!symList.empty()) symList += ","; symList += s; }
+        bool executed = _dailyExecutedStrategies.count(strat) > 0;
+        INFO("[DailyExecution]   registered strategy '{}': symbols=[{}], already_executed={}", strat, symList, executed);
+    }
 
     // 检查是否有策略的所有依赖已就绪
     for (auto& [strategy, symbols] : _dailyStrategySymbols) {
@@ -378,6 +399,7 @@ void StrategySubSystem::MarkSymbolReady(const String& symbol) {
         for (auto& sym : symbols) {
             if (!_dailyReadySymbols.count(sym)) {
                 allReady = false;
+                INFO("[DailyExecution]   strategy '{}': symbol '{}' not ready yet", strategy, sym);
                 break;
             }
         }
@@ -402,6 +424,10 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy) {
     // 异步执行，回调中保存决策
     _agentSystem->StartDaily(strategy, pools,
         [this, strategy, dataDir, today](nlohmann::json decisions) {
+            INFO("[DailyExecution] Callback for '{}': status={}, keys={}",
+                 strategy, decisions.value("status", "unknown"),
+                 decisions.dump().size() > 200 ? decisions.dump().substr(0, 200) : decisions.dump());
+
             DailyDecisionJson::Report report;
             report.strategy = strategy;
             report.executed_at = ToString(Now(), "%Y-%m-%d %H:%M:%S");
@@ -422,6 +448,10 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy) {
             DailyDecisionJson::saveReport(dataDir, today, report);
             INFO("[DailyExecution] Strategy {} completed: {} decisions saved",
                  strategy, report.decisions.size());
+
+            // 记录持仓快照到 DuckDB
+            time_t todayTs = FromStr(today, "%Y-%m-%d");
+            recordDailyPositions(strategy, report.decisions, todayTs);
 
             // 收集错误 + 检查是否全部完成，统一发送通知
             std::lock_guard<std::mutex> lock(_dailyMtx);
@@ -491,4 +521,37 @@ nlohmann::json StrategySubSystem::GetDailyStatus() const {
     }
 
     return status;
+}
+
+void StrategySubSystem::recordDailyPositions(
+    const String& strategy,
+    const std::vector<DailyDecisionJson::Decision>& decisions,
+    time_t date) {
+
+    auto& positions = _strategyPositions[strategy];
+
+    for (const auto& d : decisions) {
+        symbol_t sym = to_symbol(d.symbol);
+
+        // 更新持仓
+        if (d.action == DailyDecisionJson::Action::BUY) {
+            positions[sym] += d.quantity;
+        } else if (d.action == DailyDecisionJson::Action::SELL ||
+                   d.action == DailyDecisionJson::Action::CLOSE) {
+            positions[sym] = 0;
+        }
+        // HOLD: 持仓不变
+
+        // 写入 DuckDB 快照
+        DailyPositionRecord rec;
+        rec.strategy = strategy;
+        rec.symbol = sym;
+        rec.date = date;
+        rec.position = positions[sym];
+        rec.close_price = d.target_price;
+        DecisionDB::instance().insertDailyPosition(rec);
+    }
+
+    INFO("[DailyExecution] Recorded {} position(s) for strategy '{}' on {}",
+         decisions.size(), strategy, ToString(date, "%Y-%m-%d"));
 }

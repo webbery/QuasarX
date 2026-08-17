@@ -133,8 +133,9 @@ private:
     // 执行单个日级策略并保存决策
     void ExecuteDailyStrategy(const String& strategy);
 
-private:
-    // AgentStrategyInfo ParseJsonScript(const String& content);
+    void recordDailyPositions(const String& strategy,
+        const std::vector<DailyDecisionJson::Decision>& decisions,
+        time_t date);
 
 private:
     FlowSubsystem* _agentSystem;
@@ -152,6 +153,9 @@ private:
     Vector<String> _dailyErrors;                      // 日终执行失败信息
     bool _dailyInitialized = false;
     mutable std::mutex _dailyMtx;
+
+    // ── 日终持仓追踪（策略名 → (symbol → 当前持仓股数)） ──
+    Map<String, Map<symbol_t, int64_t>> _strategyPositions;
 
     Server* _handle;
 };
