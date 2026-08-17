@@ -51,7 +51,7 @@
                 v-show="paramConfig.visible !== false"
                 :class="{ 'data-field-param': isDataFieldParam(key) }"
             >
-                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ paramConfig.label || key }}</div>
+                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type) && !isBoundModel(key)">{{ paramConfig.label || key }}</div>
                 <div class="param-control">
                     <!-- 配置选择器 -->
                     <ConfigSelectParam
@@ -159,13 +159,20 @@
                     />
 
                     <!-- 文件选择 -->
-                    <FileParam
-                        v-else-if="paramConfig.type === 'file'"
-                        :param-key="key"
-                        :param-config="paramConfig"
-                        :value="paramConfig.value"
-                        @select-file="selectFile"
-                    />
+                    <template v-else-if="paramConfig.type === 'file'">
+                        <!-- XGBoost 已绑定模型：直接显示模型名 -->
+                        <div v-if="isBoundModel(key)" class="bound-model-display">
+                            <i class="fas fa-brain bound-model-icon"></i>
+                            <span class="bound-model-name">{{ boundModelName(key) }}</span>
+                        </div>
+                        <FileParam
+                            v-else
+                            :param-key="key"
+                            :param-config="paramConfig"
+                            :value="paramConfig.value"
+                            @select-file="selectFile"
+                        />
+                    </template>
 
                     <!-- 下载按钮 -->
                     <DownloadParam
@@ -288,6 +295,22 @@ const nodeClass = computed(() => `node-type-${nodeType.value}`)
 const headerClass = computed(() => `header-type-${nodeType.value}`)
 const iconClass = computed(() => `icon-type-${nodeType.value}`)
 const iconType = computed(() => getNodeIcon(nodeType.value))
+
+// XGBoost 节点已绑定模型时，直接显示模型名而非文件选择器
+function isBoundModel(paramKey: string | number): boolean {
+    if (nodeType.value !== 'xgboost') return false
+    if (String(paramKey) !== 'modelFile') return false
+    const v = props.node.data.params?.modelFile?.value
+    return typeof v === 'string' && v.length > 0
+}
+
+function boundModelName(_paramKey: string | number): string {
+    const v = props.node.data.params?.modelFile?.value || ''
+    const idx = v.lastIndexOf('/')
+    const filename = idx >= 0 ? v.slice(idx + 1) : v
+    // 去掉 .json 后缀
+    return filename.replace(/\.json$/i, '')
+}
 
 // 指标节点的多输入槽位
 function getFunctionInputSlots() {
@@ -589,6 +612,31 @@ const handleClickOutside = (event: MouseEvent) => {
     font-weight: 500;
     user-select: none;
     white-space: nowrap;
+}
+.bound-model-display {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(136, 14, 79, 0.15);
+    border: 1px solid rgba(173, 20, 87, 0.35);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    color: #e0a4c0;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+.bound-model-icon {
+    font-size: 0.65rem;
+    color: #ad1457;
+    flex-shrink: 0;
+}
+.bound-model-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .label-input-handle {
     left: 0 !important;

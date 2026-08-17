@@ -1,4 +1,5 @@
 #include "Handler/BackTestHandler.h"
+#include "Util/MultipartHelper.h"
 #include "AgentSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/ETFHistorySimulation.h"
@@ -25,32 +26,64 @@ BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 }
 
 void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) {
-    // 1. 解析请求参数
-    nlohmann::json params;
-    try {
-        params = nlohmann::json::parse(req.body);
-    } catch (const nlohmann::json::parse_error& e) {
-        res.status = 400;
-        res.set_content(R"({"message": "Invalid JSON format"})", "application/json");
-        return;
-    }
-
-    String strScript = params.value("script", "");
-    if (strScript.empty()) {
-        res.status = 400;
-        res.set_content(R"({"message": "Script is empty"})", "application/json");
-        return;
-    }
-
-    // 2. 解析策略脚本
+    // 1. 解析请求参数（支持 JSON 和 multipart 两种格式）
     nlohmann::json script;
-    try {
-        script = nlohmann::json::parse(strScript);
-    } catch (const nlohmann::json::parse_error& e) {
-        res.status = 400;
-        String msg = R"({"message": "Script parse error: )" + String(e.what()) + R"("})";
-        res.set_content(msg.c_str(), "application/json");
-        return;
+    bool useValidate = true;
+    bool isMultipart = req.is_multipart_form_data();
+    if (isMultipart) {
+        String mpName;
+        String errMsg;
+        if (!ParseMultipartScript(req, script, mpName, errMsg)) {
+            res.status = 400;
+            nlohmann::json err;
+            err["message"] = errMsg;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        // 上传模型文件到 production 目录
+        String strategyNameForModel = script.value("id", "unknown");
+        String modelErrMsg;
+        if (!ValidateXGBoostModelPaths(script, strategyNameForModel, modelErrMsg)) {
+            res.status = 400;
+            nlohmann::json err;
+            err["message"] = modelErrMsg;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        String dbPath = _server->GetConfig().GetDatabasePath();
+        if (!WriteMultipartModelFiles(req, strategyNameForModel, dbPath, modelErrMsg)) {
+            res.status = 500;
+            nlohmann::json err;
+            err["message"] = modelErrMsg;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+    } else {
+        nlohmann::json params;
+        try {
+            params = nlohmann::json::parse(req.body);
+        } catch (const nlohmann::json::parse_error& e) {
+            res.status = 400;
+            res.set_content(R"({"message": "Invalid JSON format"})", "application/json");
+            return;
+        }
+
+        String strScript = params.value("script", "");
+        if (strScript.empty()) {
+            res.status = 400;
+            res.set_content(R"({"message": "Script is empty"})", "application/json");
+            return;
+        }
+
+        try {
+            script = nlohmann::json::parse(strScript);
+        } catch (const nlohmann::json::parse_error& e) {
+            res.status = 400;
+            String msg = R"({"message": "Script parse error: )" + String(e.what()) + R"("})";
+            res.set_content(msg.c_str(), "application/json");
+            return;
+        }
+        useValidate = params.value("validate", true);
     }
 
     String strategyName = script.value("id", "unknown");
@@ -114,7 +147,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 
     // 2.5 验证策略图的完整性（回测前必须验证）
-    bool useValidate = params.value("validate", true);
     if (useValidate) {
         auto [validateSuccess, validateErrorMsg] = _server->ValidateStrategyConfig(script);
         if (!validateSuccess) {

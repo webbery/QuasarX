@@ -3,6 +3,11 @@ import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
 import { useHistoryStore } from '@/stores/history'
 import { storeToRefs } from 'pinia'
 
+let ipcRenderer
+try {
+  ipcRenderer = require('electron').ipcRenderer
+} catch { /* 非 Electron 环境 */ }
+
 // 策略脚本版本号，与后端 MIN_STRATEGY_VERSION 保持一致
 const STRATEGY_SCRIPT_VERSION = 1
 
@@ -62,7 +67,46 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
     graph = normalizeCodeParams(graph)
 
     try {
-      const response = await axios.post('/v0/backtest', { script: graph })
+      // 检测 XGBoost 节点是否有绑定模型，有则走 multipart 上传
+      let response
+      const parsed = JSON.parse(graph)
+      const xgbNodes = (parsed.nodes || []).filter(n => n?.data?.nodeType === 'xgboost')
+      const needsModel = xgbNodes.some(n => {
+        const mf = n.data?.params?.modelFile?.value || n.data?.params?.modelFile || ''
+        return typeof mf === 'string' && mf.length > 0
+      })
+
+      if (needsModel && ipcRenderer) {
+        const form = new FormData()
+        form.append('script', graph)
+        for (const n of xgbNodes) {
+          const mf = n.data?.params?.modelFile?.value || ''
+          if (!mf) continue
+          const label = n.data?.label || ''
+          if (!label) continue
+          // 从 production/{strategyName}-{label}.json 提取策略名
+          const match = mf.match(/^production\/(.+)-(.+)\.json$/)
+          if (!match) continue
+          const strategyNameForModel = match[1]
+          const readRes = await ipcRenderer.invoke('model-read-for-deploy', {
+            strategyName: strategyNameForModel,
+            label,
+          })
+          if (!readRes?.success) {
+            message.error(`模型文件读取失败: ${readRes?.error || label}，请先在模型管理中绑定模型`)
+            return
+          }
+          form.append(`model_${label}`, new Blob([new Uint8Array(readRes.modelBytes)], { type: 'application/json' }), `${label}.json`)
+          if (readRes.metaBytes && readRes.metaBytes.length > 0) {
+            form.append(`model_${label}_meta`, new Blob([new Uint8Array(readRes.metaBytes)], { type: 'application/json' }), `${label}.meta.json`)
+          }
+        }
+        response = await axios.post('/v0/backtest', form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+      } else {
+        response = await axios.post('/v0/backtest', { script: graph })
+      }
 
       const result = response.data
 

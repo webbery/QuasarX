@@ -326,6 +326,7 @@ class TestOrderWithDecisionId:
 class TestDecisionLifecycle:
     """ManualTiming 决策端到端测试"""
 
+    @pytest.mark.skip(reason="simulate/bar 端点仅 Debug 构建可用，CI Release 下无法产生决策")
     def test_manual_timing_creates_decision(self, auth_token, loaded_strategy):
         """推送 bar → ManualTiming 累积 → SendSummaryEmail → 决策入库"""
         # 推送一个 bar（close > open 触发买入信号）

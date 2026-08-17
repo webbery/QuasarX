@@ -247,10 +247,15 @@ class TestStrategy:
             if len(script) < 2:
                 return
 
-            kwargs['json'] = {
-                "script": json.dumps(script, ensure_ascii=False)
+            script_json = json.dumps(script, ensure_ascii=False)
+            headers = {'Authorization': auth_token} if auth_token else {}
+            files = {
+                "script": ("script.json", script_json.encode("utf-8"), "application/json"),
             }
-            response = requests.post(f"{BASE_URL}/backtest", **kwargs)
+            response = requests.post(
+                f"{BASE_URL}/backtest", files=files,
+                headers=headers, verify=VERIFY_SSL, timeout=600,
+            )
             data = check_response(response)
             assert isinstance(data, object)
             if item_name in no_reply:

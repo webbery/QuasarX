@@ -346,6 +346,27 @@ async function onBind(m: ModelItem) {
     strategyStore.persistStrategies()
     refreshBoundLabels()
   })
+  // 同步更新最新版本 flowData，使 Strategy Chart 加载时能读到 modelFile
+  if (ok && props.selectedStrategyId) {
+    const id = props.selectedStrategyId
+    const versions = strategyStore.getVersionsByStrategy(id)
+    if (versions.length > 0) {
+      const sorted = [...versions].sort((a, b) =>
+        new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+      )
+      const latest = sorted[0]
+      const flowData = await strategyStore.loadVersionFlowData(latest.id)
+      if (flowData?.nodes) {
+        for (const n of flowData.nodes) {
+          if (n?.data?.nodeType === 'xgboost' && n.data.label === nodeLabel.value) {
+            if (!n.data.params) n.data.params = {}
+            n.data.params.modelFile = { value: `production/${currentStrategyName.value}-${nodeLabel.value}.json`, type: 'file' }
+          }
+        }
+        await strategyStore.saveVersionFlowData(latest.id, flowData)
+      }
+    }
+  }
 }
 
 async function onDelete(m: ModelItem) {
