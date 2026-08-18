@@ -107,6 +107,9 @@ export interface SpectrumIndicatorData {
   m_plus: number[]
   m_minus: number[]
   n_effective: number[]
+  signal_var_ratio: number[]
+  lambda_max: number[]
+  lambda_max_ratio: number[]
   lambda_plus: number
   lambda_minus: number
   original_n: number

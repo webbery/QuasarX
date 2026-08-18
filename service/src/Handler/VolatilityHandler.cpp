@@ -370,8 +370,10 @@ VolatilityMultiResult VolatilityHandler::computeMulti(
                               result.is_positive_definite);
 
     // === Marchenko-Pastur 谱指标滚动窗口分析 ===
-    if (!dates.empty() && ret_matrix.cols() == static_cast<int>(dates.size())) {
-        Vector<String> dates_vec(dates.begin(), dates.end());
+    // 取 dates 的最后 min_len 个日期与 ret_matrix 对齐（收益率比价格少 1，且多标的对齐到最小长度）
+    if (!dates.empty() && min_len <= dates.size()) {
+        size_t date_offset = dates.size() - min_len;
+        Vector<String> dates_vec(dates.begin() + date_offset, dates.end());
         result.spectrum_indicators = finance::computeSpectrumIndicators(
             ret_matrix, dates_vec, spectrum_window);
     }
@@ -745,6 +747,9 @@ void VolatilityHandler::get(const httplib::Request& req, httplib::Response& res)
             si["m_plus"] = spec.m_plus;
             si["m_minus"] = spec.m_minus;
             si["n_effective"] = spec.n_effective;
+            si["signal_var_ratio"] = spec.signal_var_ratio;
+            si["lambda_max"] = spec.lambda_max;
+            si["lambda_max_ratio"] = spec.lambda_max_ratio;
             si["lambda_plus"] = spec.lambda_plus;
             si["lambda_minus"] = spec.lambda_minus;
             si["original_n"] = spec.original_n;

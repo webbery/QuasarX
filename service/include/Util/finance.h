@@ -321,6 +321,9 @@ struct SpectrumIndicatorResult {
     Vector<int> m_plus;                // m+ 时间序列
     Vector<int> m_minus;               // m- 时间序列
     Vector<int> n_effective;           // 有效标的数时间序列
+    Vector<double> signal_var_ratio;   // 信号方差占比时间序列 (0~1)
+    Vector<double> lambda_max;         // 最大特征值时间序列
+    Vector<double> lambda_max_ratio;   // λ_max/λ₊ 倍数时间序列
     double lambda_plus = 0;            // MP 上界 (由 Q=T/N 决定，窗口固定则不变)
     double lambda_minus = 0;           // MP 下界
     int original_n = 0;                // 原始标的数

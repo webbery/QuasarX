@@ -175,11 +175,38 @@ function buildHistOption() {
     mpY.push(mpPDF(x, q))
   }
 
+  // 按区域着色柱状图
+  const barData = binCenters.map((cx, i) => {
+    const color = cx > lp ? 'rgba(239, 35, 42, 0.7)' :   // 信号区（红色）
+                  cx < lm ? 'rgba(255, 152, 0, 0.7)' :   // 同步化区（橙色）
+                  'rgba(41, 98, 255, 0.6)'                // 噪声区（蓝色）
+    return {
+      value: [cx, density[i]],
+      itemStyle: { color }
+    }
+  })
+
   return {
     backgroundColor: 'transparent',
     title: { text: '经验谱 vs MP 理论分布', left: 'center', top: 4, textStyle: { color: '#ccc', fontSize: 12 } },
-    tooltip: { trigger: 'axis' },
-    grid: { left: 50, right: 20, top: 40, bottom: 30, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = params[0]
+        if (!p) return ''
+        const x = p.value[0]
+        const region = x > lp ? '🔴 信号区' : x < lm ? '🟠 同步化区' : '🔵 噪声区'
+        return `λ = ${x.toFixed(4)}<br/>密度 = ${p.value[1].toFixed(4)}<br/>${region}`
+      }
+    },
+    legend: {
+      data: ['信号区 (>λ₊)', '噪声区 (λ₋~λ₊)', '同步化区 (<λ₋)', 'MP 理论 PDF'],
+      top: 24,
+      textStyle: { color: '#ccc', fontSize: 10 },
+      itemWidth: 12,
+      itemHeight: 8
+    },
+    grid: { left: 50, right: 20, top: 50, bottom: 30, containLabel: true },
     xAxis: {
       type: 'value',
       name: '特征值',
@@ -199,8 +226,7 @@ function buildHistOption() {
       {
         name: '经验密度',
         type: 'bar',
-        data: binCenters.map((cx, i) => [cx, density[i]]),
-        itemStyle: { color: 'rgba(41, 98, 255, 0.6)' },
+        data: barData,
         barMaxWidth: 20,
       },
       {
@@ -211,7 +237,7 @@ function buildHistOption() {
         symbol: 'none',
         lineStyle: { color: '#ff9800', width: 2 },
       },
-      // λ₊ 标线
+      // λ 标线
       {
         name: 'λ₊',
         type: 'line',
@@ -223,6 +249,19 @@ function buildHistOption() {
           data: [{ xAxis: lp }]
         },
         data: []
+      },
+      // λ₋ 标线
+      {
+        name: 'λ',
+        type: 'line',
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color: '#ff9800', type: 'dashed', width: 1.5 },
+          label: { formatter: 'λ₋={c}', color: '#ff9800', fontSize: 10 },
+          data: [{ xAxis: lm }]
+        },
+        data: []
       }
     ]
   }
@@ -232,25 +271,49 @@ function buildScreeOption() {
   if (!hasData.value) return {}
   const evals = props.data!.eigenvalues.filter(v => v > 0)
   const lp = lambdaPlus.value
+  const lm = lambdaMinus.value
   const count = evals.length
 
-  const signalData = evals.map((v) => ({
+  // 三色柱状图
+  const barData = evals.map((v) => ({
     value: v,
-    itemStyle: { color: v > lp ? '#ef232a' : '#2962ff' }
+    itemStyle: {
+      color: v > lp ? '#ef232a' :   // 信号区（红色）
+             v < lm ? '#ff9800' :   // 同步化区（橙色）
+             '#2962ff'              // 噪声区（蓝色）
+    }
   }))
+
+  // 累积方差占比
+  const totalVar = evals.reduce((s, v) => s + v, 0)
+  let cumSum = 0
+  const cumVarRatio = evals.map(v => {
+    cumSum += v
+    return totalVar > 0 ? (cumSum / totalVar) * 100 : 0
+  })
 
   return {
     backgroundColor: 'transparent',
     title: { text: 'Scree Plot (特征值降序)', left: 'center', top: 4, textStyle: { color: '#ccc', fontSize: 12 } },
     tooltip: {
       trigger: 'axis',
+      axisPointer: { type: 'cross' },
       formatter: (params: any) => {
-        const p = params[0]
-        const isSignal = p.value > lp
-        return `λ<sub>${p.dataIndex + 1}</sub> = ${p.value.toFixed(6)}<br/>${isSignal ? '🔴 信号' : '🔵 噪声'}`
+        const idx = params[0]?.dataIndex ?? 0
+        const v = evals[idx] ?? 0
+        const region = v > lp ? '🔴 信号' : v < lm ? '🟠 同步化' : '🔵 噪声'
+        const cumRatio = cumVarRatio[idx]?.toFixed(1) ?? '0.0'
+        return `λ<sub>${idx + 1}</sub> = ${v.toFixed(6)}<br/>${region}<br/>累积方差占比：${cumRatio}%`
       }
     },
-    grid: { left: 55, right: 20, top: 40, bottom: 30, containLabel: true },
+    legend: {
+      data: ['特征值', '累积方差占比'],
+      top: 24,
+      textStyle: { color: '#ccc', fontSize: 10 },
+      itemWidth: 12,
+      itemHeight: 8
+    },
+    grid: { left: 55, right: 50, top: 50, bottom: 30, containLabel: true },
     xAxis: {
       type: 'category',
       data: evals.map((_, i) => `${i + 1}`),
@@ -259,19 +322,50 @@ function buildScreeOption() {
       name: '序号',
       nameTextStyle: { color: '#999', fontSize: 10 }
     },
-    yAxis: {
-      type: 'log',
-      name: 'λ (log)',
-      nameTextStyle: { color: '#999', fontSize: 10 },
-      axisLabel: { color: '#999', fontSize: 10 },
-      splitLine: { lineStyle: { color: '#333' } },
-      min: (value: any) => Math.max(value.min * 0.5, 1e-10)
-    },
+    yAxis: [
+      {
+        type: 'log',
+        name: 'λ (log)',
+        nameTextStyle: { color: '#999', fontSize: 10 },
+        axisLabel: { color: '#999', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#333' } },
+        min: (value: any) => Math.max(value.min * 0.5, 1e-10)
+      },
+      {
+        type: 'value',
+        name: '累积方差 (%)',
+        nameTextStyle: { color: '#999', fontSize: 10 },
+        axisLabel: { color: '#999', fontSize: 10 },
+        splitLine: { show: false },
+        min: 0,
+        max: 100
+      }
+    ],
     series: [
       {
+        name: '特征值',
         type: 'bar',
-        data: signalData,
+        yAxisIndex: 0,
+        data: barData,
         barWidth: '60%'
+      },
+      {
+        name: '累积方差占比',
+        type: 'line',
+        yAxisIndex: 1,
+        data: cumVarRatio,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#00c853', width: 2 },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(0, 200, 83, 0.2)' },
+              { offset: 1, color: 'rgba(0, 200, 83, 0.02)' }
+            ]
+          }
+        }
       },
       {
         name: 'λ₊',
@@ -280,8 +374,20 @@ function buildScreeOption() {
           silent: true,
           symbol: 'none',
           lineStyle: { color: '#ef232a', type: 'dashed', width: 1.5 },
-          label: { formatter: 'λ₊', color: '#ef232a', fontSize: 10, position: 'end' },
+          label: { formatter: 'λ', color: '#ef232a', fontSize: 10, position: 'end' },
           data: [{ yAxis: lp }]
+        },
+        data: []
+      },
+      {
+        name: 'λ',
+        type: 'line',
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color: '#ff9800', type: 'dashed', width: 1.5 },
+          label: { formatter: 'λ', color: '#ff9800', fontSize: 10, position: 'end' },
+          data: [{ yAxis: lm }]
         },
         data: []
       }

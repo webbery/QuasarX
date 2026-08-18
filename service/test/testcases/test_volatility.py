@@ -1121,6 +1121,9 @@ def compute_spectrum_golden(
     m_plus_list = []
     m_minus_list = []
     n_eff_list = []
+    signal_var_list = []
+    lambda_max_list = []
+    lambda_max_ratio_list = []
     all_labels = []
 
     for w_start in range(T - window_size + 1):
@@ -1153,9 +1156,16 @@ def compute_spectrum_golden(
 
         m_p = int(np.sum(eigenvalues > lp))
         m_m = int(np.sum(eigenvalues < lm))
+        total_var = np.sum(eigenvalues)
+        signal_var = np.sum(eigenvalues[eigenvalues > lp])
+        lam_max = eigenvalues[0]
+
         m_plus_list.append(m_p)
         m_minus_list.append(m_m)
         n_eff_list.append(effective_n)
+        signal_var_list.append(signal_var / total_var if total_var > 0 else 0)
+        lambda_max_list.append(lam_max)
+        lambda_max_ratio_list.append(lam_max / lp if lp > 0 else 0)
 
     return {
         "m_plus": m_plus_list,
@@ -1163,6 +1173,9 @@ def compute_spectrum_golden(
         "lambda_plus": lp,
         "lambda_minus": lm,
         "n_effective": n_eff_list,
+        "signal_var_ratio": signal_var_list,
+        "lambda_max": lambda_max_list,
+        "lambda_max_ratio": lambda_max_ratio_list,
         "original_n": n,
         "window_size": window_size,
         "cluster_labels": all_labels,
@@ -1191,7 +1204,7 @@ class TestSpectrumIndicators:
         return matrix, valid_symbols
 
     def _call_api(self, symbols: List[str], auth_token: str,
-                  spectrum_window: int = 60) -> Dict:
+                  spectrum_window: int = 20) -> Dict:
         """调用波动率 API 并返回 spectrum_indicators"""
         api_symbols = ','.join(to_api_symbol(s) for s in symbols)
         _, dates = load_csv_prices(symbols[0])
@@ -1238,7 +1251,7 @@ class TestSpectrumIndicators:
         """n < window 时 m⁺/m⁻ 应与 numpy 黄金标准精确一致"""
         symbols = ["sz.900001", "sz.900002", "sz.900003"]
         ret_matrix, valid_syms = self._load_returns_matrix(symbols)
-        window_size = 60
+        window_size = 20
 
         if ret_matrix.shape[1] < window_size:
             pytest.skip(f"数据不足: {ret_matrix.shape[1]} < {window_size}")
@@ -1246,7 +1259,7 @@ class TestSpectrumIndicators:
             pytest.skip(f"标的数 {ret_matrix.shape[0]} >= 窗口 {window_size}，会触发聚类")
 
         golden = compute_spectrum_golden(ret_matrix, window_size)
-        si = self._call_api(symbols, auth_token)
+        si = self._call_api(symbols, auth_token, spectrum_window=window_size)
         if not si:
             pytest.skip("无 spectrum_indicators")
 
@@ -1259,6 +1272,12 @@ class TestSpectrumIndicators:
                 f"m⁺[{api_idx}]: API={si['m_plus'][api_idx]}, golden={golden['m_plus'][g_idx]}"
             assert si["m_minus"][api_idx] == golden["m_minus"][g_idx], \
                 f"m⁻[{api_idx}]: API={si['m_minus'][api_idx]}, golden={golden['m_minus'][g_idx]}"
+            assert abs(si["signal_var_ratio"][api_idx] - golden["signal_var_ratio"][g_idx]) < 1e-10, \
+                f"signal_var_ratio[{api_idx}]: API={si['signal_var_ratio'][api_idx]}, golden={golden['signal_var_ratio'][g_idx]}"
+            assert abs(si["lambda_max"][api_idx] - golden["lambda_max"][g_idx]) < 1e-10, \
+                f"lambda_max[{api_idx}]: API={si['lambda_max'][api_idx]}, golden={golden['lambda_max'][g_idx]}"
+            assert abs(si["lambda_max_ratio"][api_idx] - golden["lambda_max_ratio"][g_idx]) < 1e-10, \
+                f"lambda_max_ratio[{api_idx}]: API={si['lambda_max_ratio'][api_idx]}, golden={golden['lambda_max_ratio'][g_idx]}"
 
     def test_no_clustering_n_effective(self, auth_token):
         """n < window 时 n_effective 应等于 n"""
@@ -1313,6 +1332,7 @@ class TestSpectrumIndicators:
             pytest.skip("无 spectrum_indicators")
 
         # 对比最后 10 个窗口
+        # 聚类场景：m⁺/m⁻ 整数精确匹配，浮点指标放宽容差（簇分配可能因浮点精度略有不同）
         n_compare = min(10, len(si["m_plus"]), len(golden["m_plus"]))
         for i in range(n_compare):
             api_idx = len(si["m_plus"]) - n_compare + i
@@ -1321,6 +1341,12 @@ class TestSpectrumIndicators:
                 f"m⁺[{api_idx}]: API={si['m_plus'][api_idx]}, golden={golden['m_plus'][g_idx]}"
             assert si["m_minus"][api_idx] == golden["m_minus"][g_idx], \
                 f"m⁻[{api_idx}]: API={si['m_minus'][api_idx]}, golden={golden['m_minus'][g_idx]}"
+            assert abs(si["signal_var_ratio"][api_idx] - golden["signal_var_ratio"][g_idx]) < 0.1, \
+                f"signal_var_ratio[{api_idx}]: API={si['signal_var_ratio'][api_idx]}, golden={golden['signal_var_ratio'][g_idx]}"
+            assert abs(si["lambda_max"][api_idx] - golden["lambda_max"][g_idx]) < 0.5, \
+                f"lambda_max[{api_idx}]: API={si['lambda_max'][api_idx]}, golden={golden['lambda_max'][g_idx]}"
+            assert abs(si["lambda_max_ratio"][api_idx] - golden["lambda_max_ratio"][g_idx]) < 0.5, \
+                f"lambda_max_ratio[{api_idx}]: API={si['lambda_max_ratio'][api_idx]}, golden={golden['lambda_max_ratio'][g_idx]}"
 
     # --- 4. 结构/长度 ---
 
@@ -1367,6 +1393,50 @@ class TestSpectrumIndicators:
         for i, (mp, mm, k) in enumerate(zip(si["m_plus"], si["m_minus"], si["n_effective"])):
             assert mp <= k, f"m⁺[{i}]={mp} > k={k}"
             assert mm <= k, f"m⁻[{i}]={mm} > k={k}"
+
+    # --- 4b. 新增字段验证 ---
+
+    def test_signal_var_ratio_range(self, auth_token):
+        """signal_var_ratio 应在 [0, 1] 范围内"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        for v in si.get("signal_var_ratio", []):
+            assert 0 <= v <= 1, f"signal_var_ratio 超出范围：{v}"
+
+    def test_lambda_max_positive(self, auth_token):
+        """lambda_max 应 > 0"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        for v in si.get("lambda_max", []):
+            assert v > 0, f"lambda_max 应 > 0: {v}"
+
+    def test_lambda_max_ratio_positive(self, auth_token):
+        """lambda_max_ratio 应 > 0"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        for v in si.get("lambda_max_ratio", []):
+            assert v > 0, f"lambda_max_ratio 应 > 0: {v}"
+
+    def test_rolling_length_new_fields(self, auth_token):
+        """新字段长度应与 m_plus 一致"""
+        symbols = ["sz.900001", "sz.900002", "sz.900003"]
+        si = self._call_api(symbols, auth_token)
+        if not si:
+            pytest.skip("无 spectrum_indicators")
+
+        expected_len = len(si["m_plus"])
+        assert len(si.get("signal_var_ratio", [])) == expected_len
+        assert len(si.get("lambda_max", [])) == expected_len
+        assert len(si.get("lambda_max_ratio", [])) == expected_len
 
     # --- 5. 边界情况 ---
 

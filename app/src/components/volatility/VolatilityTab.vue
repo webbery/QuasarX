@@ -156,6 +156,13 @@
             </div>
           </div>
 
+          <!-- 滚动 RMT 分析 -->
+          <div v-if="state.result?.multi?.spectrum_indicators" class="chart-grid">
+            <div class="chart-card full">
+              <RollingRMTChart :data="state.result.multi.spectrum_indicators" />
+            </div>
+          </div>
+
           <!-- 多资产预测外推 -->
           <div v-if="state.result?.multi?.multi_forecast?.horizon" class="chart-grid">
             <div class="chart-card half">
@@ -200,6 +207,7 @@ import CovarianceEigenChart from './charts/CovarianceEigenChart.vue'
 import CovarianceForecastChart from './charts/CovarianceForecastChart.vue'
 import MarchenkoPasturChart from './charts/MarchenkoPasturChart.vue'
 import SpectrumIndicatorChart from './charts/SpectrumIndicatorChart.vue'
+import RollingRMTChart from './charts/RollingRMTChart.vue'
 
 const { state, QUICK_RANGES, removeSymbol, setQuickRange } = useVolatilityState()
 const { fetchVolatility } = useVolatilityData()

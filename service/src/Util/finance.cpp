@@ -1935,14 +1935,22 @@ SpectrumIndicatorResult computeSpectrumIndicators(
 
         // 计算 m+ 和 m-
         int m_plus = 0, m_minus = 0;
+        double total_var = 0, signal_var = 0;
         for (double ev : sorted_evals) {
-            if (ev > result.lambda_plus) ++m_plus;
+            total_var += ev;
+            if (ev > result.lambda_plus) {
+                ++m_plus;
+                signal_var += ev;
+            }
             if (ev < result.lambda_minus) ++m_minus;
         }
 
         result.m_plus.push_back(m_plus);
         result.m_minus.push_back(m_minus);
         result.n_effective.push_back(effective_n);
+        result.signal_var_ratio.push_back(total_var > 0 ? signal_var / total_var : 0);
+        result.lambda_max.push_back(sorted_evals[0]);
+        result.lambda_max_ratio.push_back(result.lambda_plus > 0 ? sorted_evals[0] / result.lambda_plus : 0);
         result.dates.push_back(dates[w_end - 1]);  // 窗口结束日期
     }
 
