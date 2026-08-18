@@ -196,7 +196,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         if (!nodeInstance) {
             continue;
         }
-        nodeConfigMap[nodeInstance->id()] = std::move(node["data"]);
+        nodeConfigMap[nodeInstance->id()] = node["data"];
         nodeMap[nodeInstance->id()] = nodeInstance;
         graph.push_back(nodeInstance);
     }

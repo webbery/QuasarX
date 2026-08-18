@@ -21,7 +21,7 @@ context_t MA::operator()(const Map<String, context_t>& args) {
             value = std::nan("nan");
         }
     }, args.begin()->second);
-    if (_count < _buffer.size()) {
+    if (_count < (int32_t)_buffer.size()) {
         _buffer[_count] = value;
         _sumAcc.add(value);
         ++_count;
@@ -32,7 +32,7 @@ context_t MA::operator()(const Map<String, context_t>& args) {
     _sumAcc.add(value);
     _nextIndex = (_nextIndex + 1) % _buffer.size();
     // 定期从 buffer 重算完整和，重置 Kahan compensation 漂移
-    if (++_stepsSinceRecompute >= _buffer.size()) {
+    if (++_stepsSinceRecompute >= (int32_t)_buffer.size()) {
         recomputeSum();
         _stepsSinceRecompute = 0;
     }
@@ -46,7 +46,7 @@ double MA::average() {
 
 void MA::recomputeSum() {
     _sumAcc.reset();
-    for (size_t i = 0; i < _count; ++i)
+    for (int32_t i = 0; i < _count; ++i)
         _sumAcc.add(_buffer[i]);
 }
 
@@ -83,7 +83,7 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         }
     }, args.begin()->second);
 
-    if (_count < static_cast<size_t>(_window)) {
+    if (_count < _window) {
         _buffer[_count] = value;
         _sumAcc.add(value);
         _sumSqAcc.add(value * value);
@@ -99,7 +99,7 @@ context_t STD::operator()(const Map<String, context_t>& args) {
 
         _nextIndex = (_nextIndex + 1) % _window;
         // 定期从 buffer 重算，重置 Kahan compensation 漂移
-        if (++_stepsSinceRecompute >= static_cast<size_t>(_window)) {
+        if (++_stepsSinceRecompute >= _window) {
             _sumAcc.reset();
             _sumSqAcc.reset();
             for (int32_t i = 0; i < _window; ++i) {
@@ -110,7 +110,7 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         }
     }
 
-    if (_count < static_cast<size_t>(_window)) {
+    if (_count < _window) {
         return std::nan("nan");
     }
 
@@ -141,7 +141,7 @@ Return::Return(int32_t count): _cnts(count){
  */
 context_t Return::operator()(const Map<String, context_t>& args) {
     auto& vec = std::get<Vector<double>>(args.begin()->second);
-    size_t n = vec.size();
+    int32_t n = vec.size();
     if (n <= _cnts) {
         return std::nan("nan");
     }
@@ -255,7 +255,7 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
 
         _nextIndex = (_nextIndex + 1) % _window;
         // 定期从 buffer 重算，重置 Kahan compensation 漂移
-        if (++_stepsSinceRecompute >= static_cast<size_t>(_window)) {
+        if (++_stepsSinceRecompute >= _window) {
             _sumAcc.reset();
             _sumSqAcc.reset();
             for (int32_t i = 0; i < _window; ++i) {
@@ -352,7 +352,7 @@ context_t VPCorr::operator()(const Map<String, context_t>& args) {
     _prevVolume = volume;
 
     // 更新环形缓冲
-    if (_count < static_cast<size_t>(_window)) {
+    if (_count < _window) {
         _retBuf[_count] = ret;
         _volBuf[_count] = volChg;
         ++_count;
@@ -363,7 +363,7 @@ context_t VPCorr::operator()(const Map<String, context_t>& args) {
     }
 
     // 数据不足窗口时返回 NaN
-    if (_count < static_cast<size_t>(_window)) {
+    if (_count < _window) {
         return std::nan("nan");
     }
 
@@ -451,7 +451,7 @@ context_t ATR::operator()(const Map<String, context_t>& args) {
     _prevClose = close;
 
     // 更新环形缓冲
-    if (_count < static_cast<size_t>(_period)) {
+    if (_count < _period) {
         _trBuffer[_count] = tr;
         _sumAcc.add(tr);
         ++_count;
@@ -464,7 +464,7 @@ context_t ATR::operator()(const Map<String, context_t>& args) {
     }
 
     // 数据不足窗口时返回 NaN
-    if (_count < static_cast<size_t>(_period)) {
+    if (_count < _period) {
         return std::nan("nan");
     }
 

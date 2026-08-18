@@ -12,11 +12,11 @@ private:
     double average();
     void recomputeSum();
 private:
-    std::vector<double> _buffer;
-    size_t _count;
-    size_t _nextIndex;
+    int32_t _count;
+    int32_t _nextIndex;
+    int32_t _stepsSinceRecompute; // 定期重算计数器，防止滑动窗口 compensation 漂移
     KahanAccumulator _sumAcc;  // Kahan 补偿求和，降低累积误差
-    size_t _stepsSinceRecompute; // 定期重算计数器，防止滑动窗口 compensation 漂移
+    std::vector<double> _buffer;
 };
 
 class EMA: public ICallable {
@@ -46,12 +46,12 @@ public:
 
 private:
     int32_t _window;
-    std::vector<double> _buffer;
-    size_t _count;
-    size_t _nextIndex;
+    int32_t _count;
+    int32_t _nextIndex;
+    int32_t _stepsSinceRecompute; // 定期重算计数器
     KahanAccumulator _sumAcc;    // Kahan 补偿求和
     KahanAccumulator _sumSqAcc;  // Kahan 补偿平方和
-    size_t _stepsSinceRecompute; // 定期重算计数器
+    std::vector<double> _buffer;
 };
 
 /**
@@ -95,12 +95,12 @@ public:
 
 private:
     int32_t _window;
-    std::vector<double> _buffer;  // 滑动窗口缓冲区
-    size_t _count;                 // 当前已填充数量
-    size_t _nextIndex;             // 下一个写入位置
+    int32_t _count;                 // 当前已填充数量
+    int32_t _nextIndex;             // 下一个写入位置
+    int32_t _stepsSinceRecompute;   // 定期重算计数器
     KahanAccumulator _sumAcc;      // Kahan 补偿求和
     KahanAccumulator _sumSqAcc;    // Kahan 补偿平方和
-    size_t _stepsSinceRecompute;   // 定期重算计数器
+    std::vector<double> _buffer;  // 滑动窗口缓冲区
 };
 
 /**
@@ -123,12 +123,12 @@ public:
 
 private:
     int32_t _period;
-    std::vector<double> _trBuffer;
-    size_t _count;
-    size_t _nextIndex;
+    int32_t _count;
+    int32_t _nextIndex;
+    bool _hasPrev;
     KahanAccumulator _sumAcc;  // Kahan 补偿求和
     double _prevClose;
-    bool _hasPrev;
+    std::vector<double> _trBuffer;
 };
 
 class Garch: public ICallable {
@@ -160,12 +160,12 @@ public:
     virtual context_t operator()(const Map<String, context_t>& args);
 
 private:
+    bool _hasPrev;
     int32_t _window;
-    std::vector<double> _retBuf;   // 收益率环形缓冲
-    std::vector<double> _volBuf;   // 成交量变化环形缓冲
-    size_t _count;
-    size_t _nextIndex;
+    int32_t _count;
+    int32_t _nextIndex;
     double _prevClose;
     double _prevVolume;
-    bool _hasPrev;
+    std::vector<double> _retBuf;   // 收益率环形缓冲
+    std::vector<double> _volBuf;   // 成交量变化环形缓冲
 };

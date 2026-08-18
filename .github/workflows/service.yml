@@ -562,7 +562,15 @@ jobs:
           # 生成测试数据
           python testcases/generate_test_data.py
           python testcases/node_test_data/generate_node_data.py
+          python testcases/ai_test_data/generate_xgb_trivial.py
 
+          # 说明：当前 CI 构建为 Release 模式（cmake -DCMAKE_BUILD_TYPE=Release），
+          # `_DEBUG` 宏未定义 → `/strategy/simulate/bar` 路由和 SimulateBarHandler 未注册。
+          # test_decision.py 中调用 simulate_bar() 的用例在 Release 下会被 pytest.skip
+          # （simulate_bar 工具函数返回 {"status": "error", "error": "HTTP 404: ..."}，
+          #  调用方的 skip 判断会触发），这是预期行为。
+          # 若需在 CI 验证 ManualTiming 决策 / 日终绩效指标，需改用 Debug 构建或为
+          # test_decision.py 注入测试数据（绕过 simulate/bar 端点）。
           # 运行测试（--maxfail=1 让 pytest 在首个失败时停止，节省 CI 时间）
           python run_tests.py --mode stock_hist_sim --no-service --maxfail 1
           TEST_EXIT_CODE=$?

@@ -11,7 +11,8 @@ enum class ExecuteType : char {
     Breakout,       // 突破入场
     LA,             // LiquidityAdaptive 流动性自适应
     MOC,
-    Manual,               // 决策型（默认）：策略只产意图，不实际下单
+    Manual,               // 决策型：策略只产意图，不实际下单
+    Shadow,               // 影子模式（未配置 type 时的默认值）
 };
 
 class ExecuteNode: public QNode {
@@ -33,5 +34,5 @@ private:
 private:
     Server* _server;
     ITimingStrategy* _timing = nullptr;
-    ExecuteType _execType = ExecuteType::Manual;
+    ExecuteType _execType = ExecuteType::Shadow;
 };

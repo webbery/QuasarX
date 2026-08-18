@@ -1,5 +1,6 @@
 import requests
 import sys
+from pathlib import Path
 from tool import check_response, BASE_URL, VERIFY_SSL, DEBUG_DIR
 import pytest
 import json
@@ -456,3 +457,135 @@ class TestStrategyMultipartDeploy:
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=60)
         assert resp.status_code == 200, f"plain deploy failed: {resp.status_code} {resp.text}"
         TestStrategy().cleanup_strategy(auth_token, plain_name)
+
+
+# ============== XGBoost 业务层测试 ==============
+
+class TestXGBoostStrategyBusiness:
+    """XGBoost 策略业务层测试（区别于 test_xgboost.py 的节点层 E2E）
+
+    目标：验证 multipart deploy + 回测 + 业务结果（metrics）的端到端业务链路。
+    避免与 test_xgboost.py::TestXGBoostE2E 重复（后者关心 XGBoostNode 推理正确性）。
+
+    模型来源：ai_test_data/generate_xgb_trivial.py 一次性生成的 1-树 binary 模型。
+    策略 JSON：ai_test_data/xgb_trivial_strategy.json（input → MA(5) → XGBoost → Signal → Portfolio → Execution + DebugNode）。
+    """
+
+    DEPLOY_NAME = "test_xgb_business"
+    XGB_LABEL = "XGBoost"
+    SYMBOL = "sz.800001"
+    # ai_test_data/ 目录
+    DATA_DIR = Path(__file__).parent / "ai_test_data"
+
+    @pytest.fixture(scope="class")
+    def deployed(self, auth_token):
+        """multipart deploy trivial 模型 + 策略，测试结束自动清理"""
+        strategy_path = self.DATA_DIR / "xgb_trivial_strategy.json"
+        strategy = json.loads(strategy_path.read_text())
+        # 同步 deploy name（策略 JSON 中的 modelFile 必须与 deploy name 一致）
+        strategy["id"] = self.DEPLOY_NAME
+        strategy["name"] = self.DEPLOY_NAME
+        model_file = f"production/{self.DEPLOY_NAME}-{self.XGB_LABEL}.json"
+
+        # meta 用 TestStrategyMultipartDeploy 的 helper（格式符合 XGBoostHandler 校验）
+        meta_bytes = TestStrategyMultipartDeploy()._meta_bytes()
+        # model 用 generate_xgb_trivial.py 生成的真实 1-树模型
+        trivial_model = json.loads(
+            (self.DATA_DIR / "xgb_trivial_model.json").read_text())
+
+        files = {
+            "script": ("script.json", json.dumps(strategy).encode("utf-8"), "application/json"),
+            f"model_{self.XGB_LABEL}": (
+                f"{self.XGB_LABEL}.json",
+                json.dumps(trivial_model).encode("utf-8"),
+                "application/json"),
+            f"model_{self.XGB_LABEL}_meta": (
+                f"{self.XGB_LABEL}.meta.json", meta_bytes, "application/json"),
+        }
+        headers = {"Authorization": auth_token}
+        resp = requests.post(
+            f"{BASE_URL}/strategy", files=files, data={"name": self.DEPLOY_NAME},
+            headers=headers, verify=VERIFY_SSL, timeout=60,
+        )
+        assert resp.status_code == 200, f"deploy 失败: {resp.status_code} {resp.text}"
+
+        yield {"strategy": strategy, "model_file": model_file}
+
+        # 清理
+        TestStrategy().cleanup_strategy(auth_token, self.DEPLOY_NAME)
+
+    @pytest.mark.timeout(120)
+    def test_xgb_strategy_backtest_runs(self, auth_token, deployed):
+        """部署 XGBoost 策略 + 跑回测 + summary 字段完整且数值合理
+
+        验证业务层（区别于 test_xgboost.py L1 节点层）：
+        - HTTP 200
+        - summary 包含 sharp/max_drawdown/total_return
+        - sharp 有限（非 NaN/inf）
+        - max_drawdown >= 0
+        - total_return 有限
+        - indicator_count > 0（flow._collections 应至少有 R2/sharp 等指标）
+        """
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(deployed["strategy"]), "validate": False},
+            headers={"Authorization": auth_token},
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.status_code} {resp.text}"
+
+        data = resp.json()
+        summary = data.get("summary", {})
+        assert summary, f"summary 为空或缺失, 响应: {list(data.keys())}"
+
+        # 字段完整性
+        required = ["sharp", "max_drawdown", "total_return"]
+        for key in required:
+            assert key in summary, f"summary 缺少 {key}, 实际: {list(summary.keys())}"
+
+        # 数值有限性
+        import math
+        for key in ["sharp", "total_return"]:
+            v = summary[key]
+            assert isinstance(v, (int, float)), f"{key} 不是数值: {v}"
+            assert math.isfinite(v), f"{key} 非有限: {v}"
+
+        # max_drawdown 非负
+        assert summary["max_drawdown"] >= 0, f"max_drawdown 应非负: {summary['max_drawdown']}"
+
+        # 至少有一个 flow indicator（R2/sharp 等）
+        assert summary.get("indicator_count", 0) > 0, \
+            f"indicator_count 应 > 0, 实际: {summary.get('indicator_count')}"
+
+    @pytest.mark.timeout(120)
+    def test_xgb_strategy_debug_node_has_probs(self, auth_token, deployed):
+        """DebugNode CSV 中 XGBoost 输出概率范围 [0, 1]"""
+        import pandas as pd
+
+        # 跑回测（触发 DebugNode Done() 写 CSV）
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(deployed["strategy"]), "validate": False},
+            headers={"Authorization": auth_token},
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.text}"
+
+        # DebugNode 输出路径: {database_path}/data/debug/{strategy}/{label}.csv
+        csv_path = DEBUG_DIR / self.DEPLOY_NAME / "xgb_debug.csv"
+        assert csv_path.exists(), f"Debug CSV 不存在: {csv_path}"
+
+        df = pd.read_csv(csv_path)
+        # XGBoostNode 输出：{symbol}.xgb_probs_0
+        prob_col = f"{self.SYMBOL}.xgb_probs_0"
+        assert prob_col in df.columns, f"CSV 缺少 {prob_col}, 实际列: {list(df.columns)}"
+
+        probs = df[prob_col].astype(float)
+        valid = probs.dropna()
+        assert len(valid) > 0, f"{prob_col} 全为 NaN，XGBoost 可能未推理"
+
+        # binary:logistic 输出范围 [0, 1]
+        assert (valid >= 0).all() and (valid <= 1).all(), \
+            f"概率超出 [0, 1]: min={valid.min()}, max={valid.max()}"

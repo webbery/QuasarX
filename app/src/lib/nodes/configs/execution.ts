@@ -30,7 +30,8 @@ export const executionNode: NodeRegistryEntry = {
     { key: 'slippageAlpha', label: '冲击幂次', type: 'number', default: 0.5, min: 0.1, max: 1.0, step: 0.1, visible: false },
     { key: 'type', label: '执行类型', type: 'select', default: 0, options: [
       { label: '立即执行 (市价单)', value: 0 },
-      { label: '立即执行 (限价单)', value: 1 }
+      { label: '立即执行 (限价单)', value: 1 },
+      { label: '决策型 (日终邮件)', value: 7 }
     ]},
   ],
   example: { commission: 0.0003, stampDuty: 0.001, slippageModel: 0, slippage: 0, type: 0 }

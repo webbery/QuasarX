@@ -41,15 +41,15 @@ ExecuteNode::~ExecuteNode() {
 }
 
 bool ExecuteNode::Init(const nlohmann::json& config) {
-    ExecuteType type = ExecuteType::Manual;
+    ExecuteType type = ExecuteType::Shadow;
     if (config.contains("params") && config["params"].contains("type")
         && config["params"]["type"].contains("value")) {
         int raw = config["params"]["type"]["value"].get<int>();
-        int maxVal = static_cast<int>(ExecuteType::Manual);
+        int maxVal = static_cast<int>(ExecuteType::Shadow);
         if (raw >= 0 && raw <= maxVal) {
             type = static_cast<ExecuteType>(raw);
         } else {
-            WARN("[ExecuteNode] Invalid ExecuteType value: {}, fallback to Manual", raw);
+            WARN("[ExecuteNode] Invalid ExecuteType value: {}, fallback to Shadow", raw);
         }
     }
     _execType = type;
@@ -255,42 +255,17 @@ void ExecuteNode::Prepare(const String& strategy, DataContext& context)
 
 ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)
 {
-    // 检查是否为影子模式
-    if (_server->GetRunningMode() == RuningType::Shadow) {
-        // 影子模式：创建基础 Timing 策略并包装为 ShadowTiming
-        ShadowConfig config;
-        config.slippageRate = 0.001;  // 默认滑点 0.1%
-        config.initialCapital = BACKTEST_INITIAL_CAPITAL;  // 默认初始资金 50 万
-
-        // 创建基础策略（用于获取信号类型）
-        ITimingStrategy* baseTiming = nullptr;
-        switch (type)
-        {
-        case ExecuteType::ImmediatlyLimit:
-            baseTiming = new ImmediateTiming(_server, true);
-            break;
-        case ExecuteType::ImmediatlyMarket:
-            baseTiming = new ImmediateTiming(_server, false);
-            break;
-        default:
-            baseTiming = new ImmediateTiming(_server, false);
-            break;
-        }
-
-        // 包装为影子模式（不使用 baseTiming，直接由 ShadowTiming 处理）
-        delete baseTiming;  // 不需要包装，ShadowTiming 自己处理
-        return new ShadowTiming(_server, config);
-    }
-
-    // 决策型（默认）：策略只产意图，不实际下单
-    if (type == ExecuteType::Manual) {
-        return new ManualTiming(_server);
-    }
-
-    // 实际下单（前端 ExecutionNode 下拉框可选配置）
-    // TODO: 完整支持 VWAP/TWAP/Breakout/LA/MOC
     switch (type)
     {
+    case ExecuteType::Manual:
+        return new ManualTiming(_server);
+    case ExecuteType::Shadow:
+    {
+        ShadowConfig config;
+        config.slippageRate = 0.001;
+        config.initialCapital = BACKTEST_INITIAL_CAPITAL;
+        return new ShadowTiming(_server, config);
+    }
     case ExecuteType::ImmediatlyLimit:
         return new ImmediateTiming(_server, true);
     case ExecuteType::ImmediatlyMarket:

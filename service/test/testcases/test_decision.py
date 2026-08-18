@@ -123,7 +123,11 @@ def get_latest_bar(token: str, symbol: str, date: str = None) -> dict:
 
 
 def simulate_bar(token: str, bar: dict) -> dict:
-    """POST /v0/strategy/simulate/bar（仅 Debug 构建可用）"""
+    """POST /v0/strategy/simulate/bar（仅 Debug 构建可用）
+
+    失败时返回 {"status": "error", "error": ...}，调用方应据此 pytest.skip。
+    Release 构建下路由未注册（HTTP 404），同样走 error 分支。
+    """
     headers = {"Authorization": token}
     resp = requests.post(
         f"{BASE_URL}/strategy/simulate/bar",
@@ -132,7 +136,12 @@ def simulate_bar(token: str, bar: dict) -> dict:
         verify=False,
         timeout=30,
     )
-    return resp.json() if resp.ok else {}
+    if resp.ok:
+        return resp.json()
+    return {
+        "status": "error",
+        "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
+    }
 
 
 def get_decisions(token: str, date: str = None) -> list:

@@ -27,9 +27,9 @@ public:
     SpreadNode();
     virtual ~SpreadNode();
 
-    virtual bool Init(const nlohmann::json& config);
+    virtual bool Init(const nlohmann::json& config) override;
     virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
-    virtual Map<String, ArgType> out_elements();
+    virtual Map<String, ArgType> out_elements() override;
 
 private:
     // 计算简单价差
@@ -44,15 +44,14 @@ private:
 private:
     SpreadMethod _method;              // 计算方法
     int32_t _window;             // 滚动回归窗口大小
-    double _fixedBeta;           // 固定β值（非滚动模式）
+    int32_t _count;                       // 当前数据点计数
+    int32_t _nextIndex;                   // 循环缓冲区索引
     bool _dynamicBeta;           // 是否动态计算β
+    double _fixedBeta;           // 固定β值（非滚动模式）
     
     // 滚动回归缓冲区
-    std::vector<double> _priceABuffer;  // Price_A历史数据
-    std::vector<double> _priceBBuffer;  // Price_B历史数据
-    size_t _count;                       // 当前数据点计数
-    size_t _nextIndex;                   // 循环缓冲区索引
-    
+    Vector<double> _priceABuffer;  // Price_A历史数据
+    Vector<double> _priceBBuffer;  // Price_B历史数据
     // 输出键名
     String _spreadOutputKey;
     String _betaOutputKey;
