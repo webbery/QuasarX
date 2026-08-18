@@ -51,7 +51,7 @@
                 v-show="paramConfig.visible !== false"
                 :class="{ 'data-field-param': isDataFieldParam(key) }"
             >
-                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type) && !isBoundModel(key)">{{ paramConfig.label || key }}</div>
+                <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ paramConfig.label || key }}</div>
                 <div class="param-control">
                     <!-- 配置选择器 -->
                     <ConfigSelectParam
@@ -158,20 +158,15 @@
                         @select-directory="selectDirectory"
                     />
 
-                    <!-- 文件选择 -->
+                    <!-- 文件选择（XGBoost 模型绑定显示） -->
                     <template v-else-if="paramConfig.type === 'file'">
-                        <!-- XGBoost 已绑定模型：直接显示模型名 -->
-                        <div v-if="isBoundModel(key)" class="bound-model-display">
-                            <i class="fas fa-brain bound-model-icon"></i>
-                            <span class="bound-model-name">{{ boundModelName(key) }}</span>
+                        <div class="bound-model-display" :class="{ 'unbound': !isBoundModel(key) }">
+                            <template v-if="isBoundModel(key)">
+                                <i class="fas fa-brain bound-model-icon"></i>
+                                <span class="bound-model-name">{{ boundModelName(key) }}</span>
+                            </template>
+                            <span v-else class="bound-model-placeholder">未绑定</span>
                         </div>
-                        <FileParam
-                            v-else
-                            :param-key="key"
-                            :param-config="paramConfig"
-                            :value="paramConfig.value"
-                            @select-file="selectFile"
-                        />
                     </template>
 
                     <!-- 下载按钮 -->
@@ -245,7 +240,6 @@ import DateParam from './params/DateParam.vue'
 import DateRangeParam from './params/DateRangeParam.vue'
 import TextareaParam from './params/TextareaParam.vue'
 import DirectoryParam from './params/DirectoryParam.vue'
-import FileParam from './params/FileParam.vue'
 import ConfigSelectParam from './params/ConfigSelectParam.vue'
 import DownloadParam from './params/DownloadParam.vue'
 import ButtonParam from './params/ButtonParam.vue'
@@ -494,10 +488,6 @@ const selectDirectory = async (paramKey: string) => {
     // TODO: 实现目录选择
 }
 
-const selectFile = async (paramKey: string) => {
-    // TODO: 实现文件选择
-}
-
 const handleParamButtonClick = (paramKey: string) => {
     if (paramKey === 'visualize') {
         emit('visualize-debug', props.node.id)
@@ -627,7 +617,17 @@ const handleClickOutside = (event: MouseEvent) => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 100%;
+    flex: 1;
+    min-width: 0;
+}
+.bound-model-display.unbound {
+    background: rgba(128, 128, 128, 0.1);
+    border-color: rgba(128, 128, 128, 0.25);
+    color: var(--text-tertiary, #718096);
+    font-style: italic;
+}
+.bound-model-placeholder {
+    font-size: 0.7rem;
 }
 .bound-model-icon {
     font-size: 0.65rem;

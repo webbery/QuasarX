@@ -1,8 +1,19 @@
 #include "Util/MultipartHelper.h"
 #include "Util/datetime.h"
+#include "Util/string_algorithm.h"
 #include "httplib.h"
 #include <filesystem>
 #include <fstream>
+
+namespace {
+std::filesystem::path utf8Path(const String& utf8) {
+#ifdef _WIN32
+    return std::filesystem::path(utf8_to_utf16(utf8));
+#else
+    return std::filesystem::path(utf8);
+#endif
+}
+}
 
 bool ParseMultipartScript(const httplib::Request& req, nlohmann::json& scriptJson, String& name, String& errMsg) {
     if (!req.has_file("script")) {
@@ -43,7 +54,7 @@ bool ValidateXGBoostModelPaths(const nlohmann::json& scriptJson, const String& s
 }
 
 bool WriteMultipartModelFiles(const httplib::Request& req, const String& strategyName, const String& dbPath, String& errMsg) {
-    std::filesystem::path prodDir = std::filesystem::path(dbPath) / "models" / "production";
+    std::filesystem::path prodDir = utf8Path(dbPath) / "models" / "production";
     try {
         std::filesystem::create_directories(prodDir);
     } catch (const std::filesystem::filesystem_error& e) {
@@ -60,8 +71,8 @@ bool WriteMultipartModelFiles(const httplib::Request& req, const String& strateg
 
         String modelFileName = strategyName + "-" + labelPart + ".json";
         String metaFileName = strategyName + "-" + labelPart + ".meta.json";
-        std::filesystem::path modelOut = prodDir / modelFileName;
-        std::filesystem::path metaOut = prodDir / metaFileName;
+        std::filesystem::path modelOut = prodDir / utf8Path(modelFileName);
+        std::filesystem::path metaOut = prodDir / utf8Path(metaFileName);
         try {
             std::ofstream mofs(modelOut, std::ios::out | std::ios::trunc | std::ios::binary);
             mofs << file.second.content;
@@ -73,8 +84,8 @@ bool WriteMultipartModelFiles(const httplib::Request& req, const String& strateg
                 mefs << req.get_file_value(metaPartName).content;
                 mefs.close();
             }
-            INFO("[MultipartHelper] Saved model: {} (meta: {})", modelOut.string(),
-                 std::filesystem::exists(metaOut) ? metaOut.string() : "<none>");
+            INFO("[MultipartHelper] Saved model: {} (meta: {})", modelFileName,
+                 std::filesystem::exists(metaOut) ? metaFileName : "<none>");
         } catch (const std::exception& e) {
             errMsg = String("Failed to save model '") + modelFileName + "': " + e.what();
             return false;

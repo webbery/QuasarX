@@ -41,7 +41,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             return;
         }
         // 上传模型文件到 production 目录
-        String strategyNameForModel = script.value("id", "unknown");
+        String strategyNameForModel = script.value("name", "unknown");
         String modelErrMsg;
         if (!ValidateXGBoostModelPaths(script, strategyNameForModel, modelErrMsg)) {
             res.status = 400;

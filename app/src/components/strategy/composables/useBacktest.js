@@ -317,6 +317,7 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
    * 处理回测错误
    */
   const handleBacktestError = (error, addInfoMessage, message) => {
+    const serverMessage = error.response?.data?.message || ''
     const exceptionWhat = error.response?.headers?.['exception_what'] ||
                            error.response?.headers?.['EXCEPTION_WHAT'] ||
                            error.response?.headers?.['Exception-What'] ||
@@ -326,13 +327,15 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
     const status = error.response?.status
     let userMessage = '回测失败'
     if (status === 400) {
-      userMessage = '策略脚本格式错误，请检查节点配置'
+      userMessage = serverMessage
+        ? `策略脚本错误：${serverMessage}`
+        : '策略脚本格式错误，请检查节点配置'
     } else if (status === 404) {
       userMessage = '策略文件未找到'
     } else if (status === 500) {
-      userMessage = `服务器错误：${exceptionWhat}`
+      userMessage = `服务器错误：${serverMessage || exceptionWhat}`
     } else {
-      userMessage = `错误：${exceptionWhat}`
+      userMessage = `错误：${serverMessage || exceptionWhat}`
     }
 
     message.error(userMessage)

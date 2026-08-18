@@ -11,11 +11,11 @@ export const xgboostNode: NodeRegistryEntry = {
   nodeType: 'xgboost',
   category: 'ml',
   icon: 'fas fa-brain',
-  description: '使用 XGBoost 模型进行预测。需要上传预训练好的模型文件。',
+  description: '使用 XGBoost 模型进行预测。通过训练面板绑定模型。',
   inputs: ['features'],
   outputs: ['prediction'],
   params: [
-    { key: 'modelFile', label: '上传模型', type: 'file', default: '' },
+    { key: 'modelFile', label: '绑定模型', type: 'file', default: '' },
     { key: 'features', label: '特征列表', type: 'textarea', default: '', placeholder: 'close,ma_5,rsi_14', description: '逗号分隔的特征名，对应上游节点输出' },
     {
       key: 'objective',

@@ -2,7 +2,7 @@
 #include "std_header.h"
 #include "json.hpp"
 
-namespace httplib { class Request; }
+namespace httplib { struct Request; }
 
 // multipart 请求中提取 script JSON 和 name
 bool ParseMultipartScript(const httplib::Request& req, nlohmann::json& scriptJson, String& name, String& errMsg);
