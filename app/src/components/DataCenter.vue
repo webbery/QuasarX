@@ -141,6 +141,12 @@
                             <option value="ETF">ETF</option>
                         </select>
                     </div>
+                    <button class="btn btn-primary btn-sm" @click="onUpdateToLatest"
+                            :disabled="isUpdatingLatest || quoteDataList.length === 0 || !isLoggedIn"
+                            title="对当前过滤结果全量下载增量数据到最新日期">
+                        <i class="fas fa-cloud-download-alt"></i>
+                        {{ isUpdatingLatest ? '更新中...' : '更新到最新' }}
+                    </button>
                 </div>
 
                 <!-- 数据表格 -->
@@ -401,6 +407,13 @@
                     <label>查询标的</label>
                     <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="dividendQueryCode" />
                 </div>
+                <button class="btn btn-primary btn-sm" style="align-self: flex-end;"
+                        @click="onUpdateDividendLatest"
+                        :disabled="isUpdatingDividend || dividendResults.length === 0 || !isLoggedIn"
+                        title="对当前查询结果中的标的下载最新分红数据">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    {{ isUpdatingDividend ? '更新中...' : '更新到最新' }}
+                </button>
             </div>
 
             <div class="button-row">
@@ -525,6 +538,21 @@ const loadingQuoteData = ref(false)
 const deletingQuote = ref(false)
 const deletingSymbol = ref(false)
 const updatingSymbol = ref(false)
+const isUpdatingLatest = ref(false)
+
+// 跟踪"更新到最新"任务的 SSE done 事件（等所有组完成后再刷新列表）
+const expectedDones = ref(0)
+const completedDones = ref(0)
+const onUpdateLatestDone = (msg: any) => {
+    if (msg.data.status !== 'done') return
+    completedDones.value++
+    if (completedDones.value >= expectedDones.value) {
+        sseService.off('quote_download', onUpdateLatestDone)
+        addQuoteLog(`✓ 全部组下载完成，刷新列表`, 'done')
+        loadQuoteData()
+        isUpdatingLatest.value = false
+    }
+}
 
 // 批量更新分组类型
 interface SymbolInfo {
@@ -583,6 +611,21 @@ const dividendLoaded = ref(false)
 const dividendDownloading = ref(false)
 const dividendDeleting = ref(false)
 const dividendCount = ref(0)
+const isUpdatingDividend = ref(false)
+
+// SSE 完成事件 handler（模块级 const 保证 on/off 同引用）
+const onDividendUpdateDone = (msg: any) => {
+    if (msg.data.status !== 'completed' && msg.data.status !== 'aborted') return
+    sseService.off('dividend_download', onDividendUpdateDone)
+    if (msg.data.status === 'completed') {
+        dividendStatus.value = `更新完成：导入 ${msg.data.imported_rows || 0} 行`
+    } else {
+        dividendStatus.value = `更新失败: ${msg.data.reason || '未知错误'}`
+    }
+    onLoadDividendData()
+    isUpdatingDividend.value = false
+}
+
 const dividendActionTypeName: Record<string, string> = {
     0: '未知', 1: '分红', 2: '送股', 3: '转增',
     4: '送转', 5: '分红送转', 6: '配股', 7: '混合'
@@ -1173,6 +1216,135 @@ const onBatchUpdateSymbols = async () => {
     updatingSymbol.value = false
 }
 
+// 更新当前过滤结果全量到最新（按 table+startDate 分组批量下载，跳过已是今天）
+const onUpdateToLatest = async () => {
+    if (isUpdatingLatest.value || !isLoggedIn.value) return
+    if (flatSymbols.value.length === 0) return
+
+    isUpdatingLatest.value = true
+    quoteLogs.value = []
+    quoteStatus.value = ''
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    // 今天的日期（YYYY-MM-DD）
+    const todayStr = new Date().toISOString().split('T')[0]
+
+    // === 第 1 步：构建标的信息映射，过滤已是最新日期的标的 ===
+    const symbolInfos: SymbolInfo[] = []
+    let skippedCount = 0
+    const skippedSymbols: string[] = []
+
+    for (const item of flatSymbols.value) {
+        const endTime = item.end_time || ''
+        const datePart = endTime.split(' ')[0]
+
+        if (datePart && datePart >= todayStr) {
+            skippedCount++
+            skippedSymbols.push(item.symbol)
+            continue
+        }
+
+        let startDate = ''
+        if (datePart) {
+            const nextDay = new Date(datePart)
+            nextDay.setDate(nextDay.getDate() + 1)
+            startDate = nextDay.toISOString().split('T')[0]
+        }
+
+        symbolInfos.push({ table: item.table, symbol: item.symbol, endTime, startDate })
+    }
+
+    if (skippedCount > 0) {
+        addQuoteLog(`⏭ 跳过 ${skippedCount} 只已是最新数据的标的`)
+    }
+
+    if (symbolInfos.length === 0) {
+        addQuoteLog(`✓ 所有 ${skippedCount} 只标的已是最新数据，无需更新`, 'done')
+        quoteStatus.value = `所有标的已是最新数据`
+        isUpdatingLatest.value = false
+        return
+    }
+
+    // === 第 2 步：按 (table, startDate) 分组 ===
+    const groupMap = new Map<string, SymbolInfo[]>()
+    for (const info of symbolInfos) {
+        const groupKey = `${info.table}|${info.startDate}`
+        const group = groupMap.get(groupKey)
+        if (group) {
+            group.push(info)
+        } else {
+            groupMap.set(groupKey, [info])
+        }
+    }
+
+    // === 第 3 步：订阅 SSE done 事件，初始化计数器 ===
+    expectedDones.value = 0
+    completedDones.value = 0
+    sseService.on('quote_download', onUpdateLatestDone)
+
+    // === 第 4 步：逐组发送批量请求（失败跳过，继续下一组） ===
+    const freqMap: Record<string, string> = {
+        '1d': 'daily', 'daily': 'daily', '日线': 'daily',
+        '5m': '5m', '5分钟': '5m',
+        '15m': '15m', '15分钟': '15m',
+        '30m': '30m', '30分钟': '30m',
+        '60m': '60m', '1h': '60m', '60分钟': '60m', '1小时': '60m',
+    }
+
+    let groupIdx = 0
+    const totalGroups = groupMap.size
+    let successCount = 0
+    let failCount = 0
+
+    for (const [groupKey, group] of groupMap) {
+        groupIdx++
+        const [table, startDate] = groupKey.split('|')
+        const symbols = group.map(s => s.symbol)
+
+        const rawFreq = table.includes('_') ? table.split('_').slice(1).join('_') : '5m'
+        const freq = freqMap[rawFreq] || rawFreq
+
+        const normalizedSymbols = symbols.map(s =>
+            s.replace(/^([a-z]+)\.(\d+)$/, '$2.$1').toUpperCase()
+        )
+
+        addQuoteLog(`📥 [${groupIdx}/${totalGroups}] ${table} start=${startDate} (${symbols.length} 个标的)`)
+
+        const params = {
+            symbols: normalizedSymbols.join(','),
+            freq,
+            ...(startDate && { start: startDate }),
+        }
+
+        try {
+            await axios.post(`https://${server}/v0/quote`, params, {
+                headers: { 'Authorization': token || '' }
+            })
+            successCount += symbols.length
+            expectedDones.value++  // POST 成功 = 期望收到 1 个 done 事件
+        } catch (err: any) {
+            failCount += symbols.length
+            addQuoteLog(`❌ 组 [${groupKey}] 请求失败: ${err.message}`, 'error')
+            // 失败跳过，不会触发 done 事件
+        }
+    }
+
+    // 如果所有 POST 都失败，立刻清理
+    if (expectedDones.value === 0) {
+        sseService.off('quote_download', onUpdateLatestDone)
+        addQuoteLog(`✗ 所有组请求失败：${failCount}`, 'error')
+        quoteStatus.value = `更新失败：${failCount} 只标的`
+        await loadQuoteData()
+        isUpdatingLatest.value = false
+        return
+    }
+
+    // 否则等待 SSE done 事件（handler 会在全部完成后自动刷新并取消订阅）
+    quoteStatus.value = `更新中：已发送 ${totalGroups} 组请求，等待完成...`
+}
+
 // 批量下载选中标的的 CSV
 const onBatchDownloadCSV = async () => {
     if (selectedSymbols.value.size === 0) return
@@ -1565,6 +1737,40 @@ const onDeleteAllDividend = async () => {
         dividendStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     } finally {
         dividendDeleting.value = false
+    }
+}
+
+// 更新当前查询结果中的标的分红数据到最新
+const onUpdateDividendLatest = async () => {
+    if (isUpdatingDividend.value || !isLoggedIn.value) return
+    if (dividendResults.value.length === 0) return
+
+    // 从查询结果中提取去重 symbol
+    const uniqueSymbols = new Set<string>()
+    for (const item of dividendResults.value) {
+        const sym = item.symbol || item.code
+        if (sym) uniqueSymbols.add(sym)
+    }
+    if (uniqueSymbols.size === 0) return
+
+    isUpdatingDividend.value = true
+    dividendStatus.value = `正在为 ${uniqueSymbols.size} 个标的下载最新分红数据...`
+
+    // 订阅 SSE completed/aborted 事件
+    sseService.on('dividend_download', onDividendUpdateDone)
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    const symbolsStr = Array.from(uniqueSymbols).join(',')
+
+    try {
+        await axios.post(`https://${server}/v0/dividend`, {
+            symbols: symbolsStr
+        }, { headers: { 'Authorization': token || '' } })
+    } catch (err: any) {
+        sseService.off('dividend_download', onDividendUpdateDone)
+        dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
+        isUpdatingDividend.value = false
     }
 }
 

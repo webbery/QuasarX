@@ -429,8 +429,11 @@ const loadVersion = (version: any) => {
   gap: 12px;
   padding: 8px 12px;
   background-color: var(--darker-bg);
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
   color: var(--text);
+  transition: background-color 0.2s, border-color 0.2s;
 }
 
 .version-item:hover {
@@ -438,7 +441,7 @@ const loadVersion = (version: any) => {
 }
 
 .version-item.selected {
-  background-color: rgba(41, 98, 255, 0.2);
+  background-color: rgba(41, 98, 255, 0.15);
   border-color: var(--primary);
 }
 
