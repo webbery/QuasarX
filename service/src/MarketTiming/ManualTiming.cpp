@@ -4,6 +4,7 @@
 #include "server.h"
 #include "Util/string_algorithm.h"
 #include "BrokerSubSystem.h"
+#include "Bridge/CapitalPool.h"
 #include "Decision.h"
 
 bool ManualTiming::processSignal(const String& strategy, const TradeSignal& signal,
@@ -83,25 +84,90 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
     auto msg = format_sse("manual_decision", sseData);
     nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
 
-    // 构建邮件正文（含 BUY / SELL / HOLD 三部分）
-    String body = "Strategy: " + strategy + "\n";
+    // ==== 计算决策金额 + 资金信息 ====
+    // 组内总金额（同 action 求和）
+    double totalBuyValue  = 0.0;
+    double totalSellValue = 0.0;
+    for (auto* d : buys)  totalBuyValue  += d->_quantity * d->_price;
+    for (auto* d : sells) totalSellValue += d->_quantity * d->_price;
+    double netValue = totalBuyValue - totalSellValue;
+
+    // 策略分配资金（CapitalPool 可选 — 未注册时回退为 0，不显示资金占比）
+    double strategyCap = 0.0;
+    double strategyAvailable = 0.0;
+    auto* pool = _server->GetBrokerSubSystem()->GetCapitalPool();
+    if (pool && pool->hasStrategy(strategy)) {
+        auto info = pool->get(strategy);
+        strategyCap       = info.allocated;
+        strategyAvailable = info.available;
+    }
+
+    // 单决策值格式化辅助（带 ¥ + 千位分隔）
+    auto fmtMoney = [](double v) {
+        return fmt::format("{:.2f}", v);
+    };
+
+    // 组内占比 + 资金占比 格式化助手
+    // 同组占比："26.7% of BUY total"
+    // 资金占比："5.4% of capital"（strategyCap == 0 时只显示同组占比）
+    auto fmtRatio = [&](double val, double groupTotal) {
+        double grpPct = (groupTotal > 0.0) ? (val / groupTotal * 100.0) : 0.0;
+        if (strategyCap > 0.0) {
+            double capPct = val / strategyCap * 100.0;
+            return fmt::format("({:.1f}% of group, {:.1f}% of capital)", grpPct, capPct);
+        }
+        return fmt::format("({:.1f}% of group)", grpPct);
+    };
+
+    // ==== 构建邮件正文 ====
+    String body;
+    body += "Strategy: " + strategy + "\n";
     body += fmt::format("Total: {} (BUY={}, SELL={}, HOLD={})\n\n",
                         _decisions.size(), buys.size(), sells.size(), holds.size());
 
+    // 资金概况（仅在 CapitalPool 注册了该策略时显示）
+    if (strategyCap > 0.0) {
+        body += fmt::format("Strategy Capital: ¥{}  (Available: ¥{})\n",
+                            fmtMoney(strategyCap), fmtMoney(strategyAvailable));
+    }
+
+    // 决策金额汇总（始终显示）
+    body += fmt::format(
+        "Decision Value:\n"
+        "  BUY  total: ¥{}  ({:.1f}% of capital)\n"
+        "  SELL total: ¥{}  ({:.1f}% of capital)\n"
+        "  Net:        {}{}{:.2f}  ({:+.1f}% of capital)\n\n",
+        fmtMoney(totalBuyValue),
+        (strategyCap > 0.0 ? totalBuyValue / strategyCap * 100.0 : 0.0),
+        fmtMoney(totalSellValue),
+        (strategyCap > 0.0 ? totalSellValue / strategyCap * 100.0 : 0.0),
+        (netValue >= 0 ? "+" : "-"), "¥", std::abs(netValue),
+        (strategyCap > 0.0 ? netValue / strategyCap * 100.0 : 0.0));
+
     if (!buys.empty()) {
         body += "=== BUY ===\n";
-        for (auto* d : buys) {
-            body += fmt::format("  BUY {} qty={} price={:.2f} epoch={}\n",
-                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
+        for (size_t i = 0; i < buys.size(); ++i) {
+            auto* d = buys[i];
+            double val = d->_quantity * d->_price;
+            body += fmt::format("  [{}/{}] {} qty={} @ ¥{:.2f} = ¥{} {} epoch={}\n",
+                               i + 1, buys.size(),
+                               get_symbol(d->_symbol), d->_quantity, d->_price,
+                               fmtMoney(val), fmtRatio(val, totalBuyValue),
+                               d->_epoch);
         }
         body += "\n";
     }
 
     if (!sells.empty()) {
         body += "=== SELL ===\n";
-        for (auto* d : sells) {
-            body += fmt::format("  SELL {} qty={} price={:.2f} epoch={}\n",
-                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
+        for (size_t i = 0; i < sells.size(); ++i) {
+            auto* d = sells[i];
+            double val = d->_quantity * d->_price;
+            body += fmt::format("  [{}/{}] {} qty={} @ ¥{:.2f} = ¥{} {} epoch={}\n",
+                               i + 1, sells.size(),
+                               get_symbol(d->_symbol), d->_quantity, d->_price,
+                               fmtMoney(val), fmtRatio(val, totalSellValue),
+                               d->_epoch);
         }
         body += "\n";
     }

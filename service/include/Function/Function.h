@@ -138,6 +138,31 @@ public:
 };
 
 /**
+ * 滚动窗口中位数: window 内元素的中位数
+ *
+ * 用法: FunctionNode(method=Median, range=20d)
+ *
+ * 输出: 窗口内排序后的中位数；偶数窗口时取平均两个中位值
+ * 数据不足时: NaN
+ *
+ * 实现: 滑动窗口 + nth_element 选 kth 元素，O(N) per push
+ */
+class Median : public ICallable {
+public:
+    /**
+     * @param window 滚动窗口大小（bars 数）
+     */
+    Median(int32_t window);
+    virtual context_t operator()(const Map<String, context_t>& args);
+
+private:
+    int32_t _window;
+    int32_t _count;       // 当前已填充数量
+    int32_t _nextIndex;   // 下一个写入位置（环形缓冲）
+    std::vector<double> _buffer;  // 滑动窗口缓冲区
+};
+
+/**
  * 量价相关性: rolling_corr(log_return, volume_change, window)
  *
  * 输入:

@@ -149,6 +149,120 @@ class TestSTDNode:
 
 
 # ============================================================
+# L1: Median 节点测试 (2026-08-20 新增)
+# ============================================================
+
+class TestMedianNode:
+    """Median(15) 节点：滚动窗口中位数
+
+    Python 黄金标准: pd.Series.rolling(15).median()
+    Median 行为:
+      - 奇数窗口 (k=2n+1): sorted[k/2]
+      - 偶数窗口 (k=2n):   (sorted[k/2-1] + sorted[k/2]) / 2
+    与 np.median 一致。
+    """
+
+    @pytest.mark.parametrize("dataset_id", ["sine", "step", "reversal", "deterministic", "anomaly"])
+    def test_median_vs_pandas(self, headers, summary, dataset_id):
+        """5 个数据集 × Median(15)"""
+        strategy_id = f"test_{dataset_id}_median_{WINDOW}"
+        strategy_path = TEST_DIR / f"{dataset_id}_median_{WINDOW}.json"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(strategy_path, headers)
+        df = read_debug_csv(strategy_id, f"debug_median_{WINDOW}")
+        actual = _extract_node_series(df, symbol, f"Median({WINDOW})")
+
+        closes = _load_close_prices(symbol)
+        expected = pd.Series(closes).rolling(WINDOW).median()
+
+        n = min(len(actual), len(expected))
+        actual_valid = actual.iloc[:n].dropna().reset_index(drop=True)
+        expected_valid = expected.iloc[:n].dropna().reset_index(drop=True)
+        assert len(actual_valid) == len(expected_valid), \
+            f"Valid count mismatch: C++={len(actual_valid)}, Python={len(expected_valid)}"
+
+        diff = np.abs(actual_valid.values - expected_valid.values)
+        max_diff = np.max(diff)
+        assert max_diff < TOLERANCE, \
+            f"[{dataset_id}] max diff {max_diff:.2e} exceeds tolerance {TOLERANCE}"
+
+    @pytest.mark.parametrize("dataset_id", ["sine", "step", "reversal", "deterministic"])
+    def test_median_odd_window(self, headers, summary, dataset_id):
+        """Median(5) — 奇数窗口"""
+        strategy_id = f"test_{dataset_id}_median_5"
+        strategy_path = TEST_DIR / f"{dataset_id}_median_5.json"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(strategy_path, headers)
+        df = read_debug_csv(strategy_id, "debug_median_5")
+        actual = _extract_node_series(df, symbol, "Median(5)")
+
+        closes = _load_close_prices(symbol)
+        expected = pd.Series(closes).rolling(5).median()
+
+        n = min(len(actual), len(expected))
+        actual_valid = actual.iloc[:n].dropna().reset_index(drop=True)
+        expected_valid = expected.iloc[:n].dropna().reset_index(drop=True)
+        assert len(actual_valid) == len(expected_valid), \
+            f"Valid count mismatch: C++={len(actual_valid)}, Python={len(expected_valid)}"
+
+        diff = np.abs(actual_valid.values - expected_valid.values)
+        max_diff = np.max(diff)
+        assert max_diff < TOLERANCE, \
+            f"[{dataset_id}] Median(5) max diff {max_diff:.2e} exceeds tolerance"
+
+    def test_median_nan_position(self, headers, summary):
+        """Median 预热期返回 NaN（前 WINDOW-1 个值）"""
+        dataset_id = "sine"
+        strategy_id = f"test_{dataset_id}_median_{WINDOW}"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(TEST_DIR / f"{dataset_id}_median_{WINDOW}.json", headers)
+        df = read_debug_csv(strategy_id, f"debug_median_{WINDOW}")
+        actual = _extract_node_series(df, symbol, f"Median({WINDOW})")
+
+        for i in range(WINDOW - 1):
+            assert pd.isna(actual.iloc[i]), \
+                f"Expected NaN at bar {i}, got {actual.iloc[i]}"
+        assert not pd.isna(actual.iloc[WINDOW - 1]), \
+            f"Expected valid value at bar {WINDOW-1}, got NaN"
+
+    def test_median_deterministic_exact(self, headers, summary):
+        """deterministic 数据集：手算已知值校验 Median(5)
+
+        deterministic 数据集前 10 个 bar: 100, 100, 100, 100, 100, 101, 102, 103, ...
+        第 5 个 bar 的 Median(5) 应该是 sorted([100,100,100,100,100])[2] = 100
+        第 6 个 bar 的 Median(5) 应该是 sorted([100,100,100,100,101])[2] = 100
+        第 8 个 bar 的 Median(5) 应该是 sorted([100,101,102,103,104])[2] = 102
+        """
+        strategy_id = f"test_deterministic_median_5"
+        strategy_path = TEST_DIR / "deterministic_median_5.json"
+        symbol = "sz.800004"
+
+        _run_backtest(strategy_path, headers)
+        df = read_debug_csv(strategy_id, "debug_median_5")
+        actual = _extract_node_series(df, symbol, "Median(5)")
+
+        # deterministic 序列第 8 个 bar (index 7) Median(5) 应该是 102
+        # 第 8 个 bar (0-indexed=7) 是 window [bar 3, 4, 5, 6, 7] = [100,100,101,102,103]
+        # median of [100,100,101,102,103] = 101 (sorted[2])
+        # 但 reads 标记为 close_at_bar_7 = 103, prev 5 includes [99, 100, 100, 100, 100, 101, 102, 103]
+        # 改用 bar 9 (0-indexed=8): window [100,101,102,103,104], sorted=[100,101,102,103,104], median=102
+        closes = _load_close_prices(symbol)
+        s = pd.Series(closes)
+        expected = s.rolling(5).median()
+
+        # 验证 bar 8 (0-indexed) 的 Median(5) 等于 sorted window 中值
+        assert abs(actual.iloc[8] - expected.iloc[8]) < TOLERANCE, \
+            f"Median(5) at bar 8: actual={actual.iloc[8]}, expected={expected.iloc[8]}"
+
+        # 验证 bar 100 (序列中部) 的 Median(5) 与 pd.rolling().median() 一致
+        sample_bar = 100
+        assert abs(actual.iloc[sample_bar] - expected.iloc[sample_bar]) < TOLERANCE
+
+
+# ============================================================
 # L1: MA 节点测试
 # ============================================================
 

@@ -264,6 +264,12 @@ def r2_strategy(symbol, window, dataset_id):
                                 "R2", f"{window}d", f"debug_r2_{window}")
 
 
+def median_strategy(symbol, window, dataset_id):
+    """Median 测试策略: Input(close) → FunctionNode(Median) → Debug"""
+    return single_node_strategy(symbol, dataset_id, f"median_{window}",
+                                "Median", f"{window}d", f"debug_median_{window}")
+
+
 def vpcorr_strategy(symbol, window, dataset_id):
     """VPCorr 测试策略: Input(close+volume) → FunctionNode(VPCorr) → Debug
 
@@ -559,6 +565,9 @@ def main():
         (zscore_strategy, [15], "ZScore(15)"),
         (r2_strategy, [5], "R2(5)"),
         (r2_strategy, [15], "R2(15)"),
+        # Median 节点 (滚动中位数) — 2026-08-20 新增
+        (median_strategy, [5], "Median(5)"),
+        (median_strategy, [15], "Median(15)"),
         # VPCorr 节点 (量价相关性)
         (vpcorr_strategy, [5], "VPCorr(5)"),
         (vpcorr_strategy, [15], "VPCorr(15)"),

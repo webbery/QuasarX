@@ -3,6 +3,10 @@
     <VueFlow
       :nodes="nodes"
       :edges="edges"
+      :min-zoom="0.1"
+      :max-zoom="4"
+      :translate-extent="translateExtent"
+      :node-extent="nodeExtent"
       @pane-ready="handlePaneReady"
       @drop="handleDrop"
       @dragover="handleDragOver"
@@ -13,6 +17,7 @@
       @selection-drag-stop="handleSelectionDragStop"
       @selection-context-menu="handleSelectionContextMenu"
       @pane-click="handlePaneClick"
+      @pane-context-menu="handlePaneContextMenu"
       @connect="handleConnect"
       @edges-delete="handleEdgesDelete"
       :is-valid-connection="isValidConnection"
@@ -48,13 +53,31 @@
           @edge-click="handleEdgeClickFromCustom"
         />
       </template>
+
+      <Controls
+        :show-zoom="true"
+        :show-fit-view="true"
+        :show-interactive="true"
+      />
+
+      <MiniMap
+        pannable
+        zoomable
+        :node-color="miniMapNodeColor"
+        :mask-color="'rgba(15, 23, 42, 0.7)'"
+        :node-stroke-color="'#334155'"
+        :node-border-radius="4"
+        position="bottom-right"
+      />
     </VueFlow>
   </div>
 </template>
 
 <script setup>
 import { VueFlow } from '@vue-flow/core'
-import { watch } from 'vue'
+import { Controls } from '@vue-flow/controls'
+import { MiniMap } from '@vue-flow/minimap'
+import { ref, watch } from 'vue'
 import FlowNode from './flow/FlowNode.vue'
 import FlowConnectLine from './flow/FlowConnectLine.vue'
 
@@ -84,6 +107,7 @@ const emit = defineEmits([
   'selection-drag-stop',
   'selection-context-menu',
   'pane-click',
+  'pane-context-menu',
   'connect',
   'edges-delete',
   'node-click',
@@ -92,8 +116,43 @@ const emit = defineEmits([
   'emd-edge-selected'
 ])
 
-const handlePaneReady = (vueFlowInstance) => {
-  emit('pane-ready', vueFlowInstance)
+// 画布平移范围：扩大到 ±100000 给用户足够空间布局节点
+const translateExtent = ref([[-100000, -100000], [100000, 100000]])
+// 节点拖动范围：与 translateExtent 一致
+const nodeExtent = ref([[-100000, -100000], [100000, 100000]])
+
+// Vue Flow 实例引用（用于 fitView 等）
+const vueFlowInstance = ref(null)
+
+// 节点类型配色（鸟瞰图按节点类型着色）
+const NODE_COLOR_MAP = {
+  input: '#3b82f6',
+  quote: '#3b82f6',
+  function: '#10b981',
+  lstm: '#a855f7',
+  boost: '#a855f7',
+  xgboost: '#a855f7',
+  narx: '#a855f7',
+  feature: '#f59e0b',
+  signal: '#ef4444',
+  execution: '#dc2626',
+  portfolio: '#0ea5e9',
+  protection: '#f97316',
+  spread: '#8b5cf6',
+  debug: '#64748b',
+  test: '#64748b',
+  script: '#06b6d4',
+  default: '#64748b'
+}
+
+const miniMapNodeColor = (node) => {
+  const nodeType = node?.data?.nodeType || 'default'
+  return NODE_COLOR_MAP[nodeType] || NODE_COLOR_MAP.default
+}
+
+const handlePaneReady = (instance) => {
+  vueFlowInstance.value = instance
+  emit('pane-ready', instance)
 }
 
 const handleDrop = (event) => {
@@ -156,6 +215,16 @@ const handlePaneClick = (event) => {
   emit('pane-click', event)
 }
 
+const handlePaneContextMenu = (event) => {
+  // event.event 是原生 MouseEvent，包含 clientX/clientY
+  const native = event?.event
+  if (native) {
+    event.clientX = native.clientX
+    event.clientY = native.clientY
+  }
+  emit('pane-context-menu', event)
+}
+
 const handleConnect = (connection) => {
   emit('connect', connection)
 }
@@ -182,10 +251,12 @@ watch(() => props.edges, (newEdges) => {
   console.log('[FlowCanvas] Edges changed, count:', newEdges?.length, 'edges:', newEdges?.map(e => ({ id: e.id, selected: e.selected })))
 }, { deep: true, immediate: true })
 
-// 暴露 fitView 方法供父组件调用
-const fitView = (options) => {
-  // 需要通过 VueFlow 实例调用
-  // 这里由父组件通过 ref 访问
+// 暴露 fitView 方法供父组件调用（右键菜单"适配视图"使用）
+const fitView = (options = {}) => {
+  if (vueFlowInstance.value?.fitView) {
+    return vueFlowInstance.value.fitView(options)
+  }
+  return null
 }
 
 defineExpose({

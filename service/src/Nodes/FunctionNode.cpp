@@ -83,6 +83,9 @@ namespace {
         {"VPCorr", [] (const nlohmann::json& config) -> ICallable* {
             return new VPCorr(config.value("_windowBars", 15));
         }},
+        {"Median", [] (const nlohmann::json& config) -> ICallable* {
+            return new Median(config.value("_windowBars", 20));
+        }},
     };
     constexpr size_t intrinsic_count = sizeof(intrinsic_table) / sizeof(intrinsic_table[0]);
 }

@@ -312,6 +312,66 @@ VPCorr::VPCorr(int32_t window)
     _volBuf.resize(window, 0.0);
 }
 
+// ── Median 实现 ───────────────────────────────────────────────
+//
+// 滑动窗口中位数：与 np.median 行为一致
+//   - 奇数窗口 (k=2n+1): 中位数 = sorted[k/2]
+//   - 偶数窗口 (k=2n):   中位数 = (sorted[k/2 - 1] + sorted[k/2]) / 2
+//
+// 实现: 每次 push 调用一次 nth_element 把窗口中位数所在位置放好；
+//       总复杂度 O(N) per call（n=window, 通常 20-100）
+//
+// 与 STD/ZScore 类似区分窗口填满前返回 NaN，避免污染交叉信号。
+Median::Median(int32_t window)
+    : _window(window), _count(0), _nextIndex(0)
+{
+    _buffer.resize(window, 0.0);
+}
+
+context_t Median::operator()(const Map<String, context_t>& args) {
+    double value;
+    std::visit([&value] (auto&& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, double>) {
+            value = v;
+        }
+        else if constexpr (std::is_same_v<T, Vector<double>>) {
+            value = v.empty() ? 0.0 : v.back();
+        } else {
+            value = std::nan("nan");
+        }
+    }, args.begin()->second);
+
+    // 窗口未满时仅追加，满了再覆盖最旧值（环形缓冲）
+    if (_count < _window) {
+        _buffer[_count] = value;
+        ++_count;
+    } else {
+        _buffer[_nextIndex] = value;
+        _nextIndex = (_nextIndex + 1) % _window;
+    }
+
+    // 数据不足窗口时返回 NaN（与其他函数行为一致）
+    if (_count < _window) {
+        return std::nan("nan");
+    }
+
+    // nth_element 找中位数位置: 偶数窗口需要两个中位值
+    std::vector<double> tmp(_buffer.begin(), _buffer.begin() + _count);
+    if (tmp.size() % 2 == 1) {
+        size_t mid = tmp.size() / 2;
+        std::nth_element(tmp.begin(), tmp.begin() + mid, tmp.end());
+        return tmp[mid];
+    } else {
+        size_t mid_hi = tmp.size() / 2;
+        std::nth_element(tmp.begin(), tmp.begin() + mid_hi, tmp.end());
+        double hi = tmp[mid_hi];
+        std::nth_element(tmp.begin(), tmp.begin() + mid_hi - 1, tmp.end());
+        double lo = tmp[mid_hi - 1];
+        return (lo + hi) / 2.0;
+    }
+}
+
 context_t VPCorr::operator()(const Map<String, context_t>& args) {
     // 按槽位名提取（与 FunctionNode::methodSlotMap 的契约）
     // methodSlotMap 定义: {"price": "close", "volume": "volume"}

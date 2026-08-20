@@ -1,6 +1,7 @@
 #include "Interprecter/Stmt.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
+#include "Algorithms/RollingTopK.h"
 #include "peglib.h"
 #include "server.h"
 #include <cstdint>
@@ -271,11 +272,21 @@ context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, D
 }
 
 // 辅助：从 context_t 提取 double 标量
+// 注意：PEG 解析字面量 `1` 时可能返回 size_t / uint64_t 而非 double，
+// 早期只支持 uint64_t 导致 args[1] = "1" 被 ctxToDouble 默认为 0，
+// 进而 count 等 intrinsic 的 sign 参数错误。
+// 现扩展支持全部 context_t 可能类型，包括 String(数字字符串) 防御。
 static double ctxToDouble(const context_t& v) {
-    if (auto* p = std::get_if<double>(&v)) return *p;
-    if (auto* p = std::get_if<bool>(&v)) return *p ? 1.0 : 0.0;
-    if (auto* p = std::get_if<uint64_t>(&v)) return static_cast<double>(*p);
-    if (auto* p = std::get_if<Vector<double>>(&v)) return p->empty() ? 0.0 : p->back();
+    if (auto* p = std::get_if<double>(&v))     return *p;
+    if (auto* p = std::get_if<bool>(&v))       return *p ? 1.0 : 0.0;
+    if (auto* p = std::get_if<uint64_t>(&v))   return static_cast<double>(*p);
+    if (auto* p = std::get_if<Vector<float>>(&v))     return p->empty() ? 0.0 : static_cast<double>(p->back());
+    if (auto* p = std::get_if<Vector<double>>(&v))    return p->empty() ? 0.0 : p->back();
+    if (auto* p = std::get_if<Vector<uint64_t>>(&v))  return p->empty() ? 0.0 : static_cast<double>(p->back());
+    if (auto* p = std::get_if<String>(&v)) {
+        // 数字字符串：解析返回，解析失败 0.0
+        try { return std::stod(*p); } catch (...) { return 0.0; }
+    }
     return 0.0;
 }
 
@@ -322,6 +333,99 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
         
         // 一元函数
         if (args.size() == 1) {
+            if (funcName == "argmax") {
+                auto arg = evalNode(symbol, *args[0], context);
+                // Vector<double>: 返回最大值索引 (0-based)
+                if (auto* vec = std::get_if<Vector<double>>(&arg)) {
+                    if (vec->empty()) return -1.0;
+                    size_t best_idx = 0;
+                    double best_val = (*vec)[0];
+                    for (size_t i = 1; i < vec->size(); ++i) {
+                        if ((*vec)[i] > best_val) {
+                            best_val = (*vec)[i];
+                            best_idx = i;
+                        }
+                    }
+                    return static_cast<double>(best_idx);
+                }
+                // 单个 double: 唯一索引即 0
+                return 0.0;
+            }
+            if (funcName == "rolling_topk") {
+                // 签名: rolling_topk(values, k)  → Vector<double> (top-K values, desc)
+                auto arg = evalNode(symbol, *args[0], context);
+                int k = static_cast<int>(ctxToDouble(evalNode(symbol, *args[1], context)));
+                if (auto* vec = std::get_if<Vector<double>>(&arg)) {
+                    Eigen::VectorXd eig(vec->size());
+                    for (size_t i = 0; i < vec->size(); ++i) eig(i) = (*vec)[i];
+                    auto result = Alg::rolling_topk(eig, k, /*desc=*/true);
+                    Vector<double> out(result._values.size());
+                    for (Eigen::Index i = 0; i < result._values.size(); ++i) {
+                        out[i] = result._values(i);
+                    }
+                    return out;
+                }
+                // 单个 double + k: 返回 K 个该值
+                double v = ctxToDouble(arg);
+                Vector<double> out(std::max(0, k), v);
+                return out;
+            }
+            if (funcName == "rolling_topk_idx") {
+                // 签名: rolling_topk_idx(values, k) → Vector<double> (top-K 索引, 按值降序排列)
+                auto arg = evalNode(symbol, *args[0], context);
+                int k = static_cast<int>(ctxToDouble(evalNode(symbol, *args[1], context)));
+                if (auto* vec = std::get_if<Vector<double>>(&arg)) {
+                    Eigen::VectorXd eig(vec->size());
+                    for (size_t i = 0; i < vec->size(); ++i) eig(i) = (*vec)[i];
+                    auto result = Alg::rolling_topk(eig, k, /*desc=*/true);
+                    Vector<double> out(result._indices.size());
+                    for (Eigen::Index i = 0; i < result._indices.size(); ++i) {
+                        out[i] = static_cast<double>(result._indices(i));
+                    }
+                    return out;
+                }
+                // 单个 double + k: 返回 [0, 1, ..., K-1]
+                Vector<double> out(std::max(0, k));
+                for (int i = 0; i < k; ++i) out[i] = i;
+                return out;
+            }
+            if (funcName == "count") {
+                // 签名: count(vec, sign) → double
+                //   sign > 0:  统计 v > 0  的元素数 (positiveCount)
+                //   sign < 0:  统计 v < 0  的元素数 (negativeCount)
+                //   sign == 0: 统计 v == 0 的元素数 (zeroCount)
+                //
+                // 语义来源: v14 consistency_threshold 用 pos_count / neg_count / size
+                //         dominant_ratio = max(pos, neg) / (pos + neg)
+                //
+                // 命名遵循 naming_reflects_semantics.md：positiveCount 仅含 v > 0，
+                // negativeCount 仅含 v < 0，零既不属于正也不属于负。
+                auto arg0 = evalNode(symbol, *args[0], context);
+                double sign = (args.size() >= 2)
+                              ? ctxToDouble(evalNode(symbol, *args[1], context))
+                              : 1.0;
+
+                if (auto* vec = std::get_if<Vector<double>>(&arg0)) {
+                    size_t positiveCount = 0, negativeCount = 0, zeroCount = 0;
+                    for (double v : *vec) {
+                        if (v > 0)       ++positiveCount;
+                        else if (v < 0)  ++negativeCount;
+                        else             ++zeroCount;
+                    }
+                    if (sign > 0)  return static_cast<double>(positiveCount);
+                    if (sign < 0)  return static_cast<double>(negativeCount);
+                    return static_cast<double>(zeroCount);
+                }
+                if (auto* d = std::get_if<double>(&arg0)) {
+                    // 单 double：仅一个元素，按 sign 判断是否匹配
+                    double v = *d;
+                    bool match = (sign > 0  && v > 0)
+                              || (sign < 0  && v < 0)
+                              || (sign == 0 && v == 0);
+                    return match ? 1.0 : 0.0;
+                }
+                return 0.0;
+            }
             if (funcName == "abs") {
                 auto arg = evalNode(symbol, *args[0], context);
                 return applyUnaryMath(arg, std::abs);
@@ -346,6 +450,23 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
         
         // 二元函数
         if (args.size() == 2) {
+            if (funcName == "argmax") {
+                // 2 个标量: 返回较大者所在位置 (0 或 1)
+                // NaN 语义: 匹配 numpy np.argmax([a, b])（与 N-arg 同算法）
+                //   - cur > best_val:                      cur 胜，update
+                //   - cur=NaN, best=finiite:                NaN 传染 best，update
+                //   - 其他（含 tie / best 已是 NaN 等）:    不动
+                // numpy 一旦 NaN 传染，后续 finite 即使更大也无法胜出
+                double best_val = ctxToDouble(evalNode(symbol, *args[0], context));
+                size_t best_idx = 0;
+                double cur = ctxToDouble(evalNode(symbol, *args[1], context));
+                if (cur > best_val) {
+                    return 1.0;
+                } else if (std::isnan(cur) && !std::isnan(best_val)) {
+                    return 1.0;
+                }
+                return static_cast<double>(best_idx);
+            }
             if (funcName == "min") {
                 auto a = evalNode(symbol, *args[0], context);
                 auto b = evalNode(symbol, *args[1], context);
@@ -385,6 +506,28 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
                 }
                 return std::max(ctxToDouble(a), ctxToDouble(b));
             }
+        }
+
+        // N-arg argmax (3+ 标量): argmax(p0, p1, p2)
+        // NaN 语义: 与 2-arg 一致，匹配 numpy np.argmax
+        //   - cur > best_val:                      cur 胜，update
+        //   - cur=NaN, best=finiite:                NaN 传染 best，update
+        //   - 其他（含 tie / best 已是 NaN 等）:    不动
+        if (args.size() >= 3 && funcName == "argmax") {
+            double best_val = ctxToDouble(evalNode(symbol, *args[0], context));
+            size_t best_idx = 0;
+            for (size_t i = 1; i < args.size(); ++i) {
+                double cur = ctxToDouble(evalNode(symbol, *args[i], context));
+                if (cur > best_val) {
+                    best_val = cur;
+                    best_idx = i;
+                } else if (std::isnan(cur) && !std::isnan(best_val)) {
+                    // NaN 传染: 当前是 NaN，之前是 finite
+                    best_val = cur;  // 现在 best_val 是 NaN
+                    best_idx = i;
+                }
+            }
+            return static_cast<double>(best_idx);
         }
     }
 

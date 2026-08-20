@@ -251,6 +251,7 @@ if(SIMD_COMPILE_FLAG)
         src/Algorithms/EMD_SIMD.cpp
         src/Algorithms/EMD.cpp
         src/Algorithms/CEEMDAN.cpp
+        src/Algorithms/RollingTopK.cpp    # rolling top-K extraction
         src/Nodes/EMDNode.cpp
         # ── Eigen 密集矩阵运算 ──
         src/Nodes/FunctionNode.cpp       # R2 (线性回归)

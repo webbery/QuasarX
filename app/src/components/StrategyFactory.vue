@@ -31,6 +31,7 @@
           @selection-drag-stop="onSelectionDragStop"
           @selection-context-menu="onSelectionContextMenu"
           @pane-click="onPaneClick"
+          @pane-context-menu="onPaneContextMenu"
           @connect="onConnect"
           @edges-delete="onEdgesDelete"
           @node-click="onNodeClick"
@@ -46,6 +47,16 @@
           @delete-nodes="deleteSelectedNodes"
           @duplicate-nodes="duplicateSelectedNodes"
           @clear-selection="clearSelection"
+        />
+
+        <PaneContextMenu
+          :visible="paneContextMenu.visible"
+          :x="paneContextMenu.x"
+          :y="paneContextMenu.y"
+          @fit-view="handlePaneFitView"
+          @auto-layout="handleAutoLayout"
+          @clear-canvas="handleClearCanvas"
+          @clear-and-new="handleClearAndNew"
         />
       </div>
     </div>
@@ -66,6 +77,7 @@ import InfoPanel from './strategy/InfoPanel.vue'
 import FlowCanvas from './FlowCanvas.vue'
 import FlowTabHeader from './FlowTabHeader.vue'
 import FlowContextMenu from './FlowContextMenu.vue'
+import PaneContextMenu from './PaneContextMenu.vue'
 import PromptDialog from './PromptDialog.vue'
 import DateRangeParam from './flow/params/DateRangeParam.vue'
 import { message } from '@/tool'
@@ -74,6 +86,7 @@ import { useFlowState } from '@/components/strategy/composables/useFlowState'
 import { useFlowOperations } from '@/components/strategy/composables/useFlowOperations'
 import { useFlowSaveLoad } from '@/components/strategy/composables/useFlowSaveLoad'
 import { useBacktest } from '@/components/strategy/composables/useBacktest'
+import { useFlowLayout } from '@/components/strategy/composables/useFlowLayout'
 import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
 
 const emit = defineEmits(['load-version', 'emd-edge-selected', 'flow-nodes-updated'])
@@ -101,12 +114,22 @@ const {
   hasUnsavedChanges, nodeIdCounter, activeTab
 } = state
 
+// 自动布局（dagre 风格水平方向）
+const flowLayout = useFlowLayout()
+
 // 右键菜单状态
 const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
   targetNode: null
+})
+
+// 画布空白处右键菜单状态
+const paneContextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0
 })
 
 // 绑定到 state
@@ -275,6 +298,94 @@ const onKeyDown = (event) => {
 // 关闭右键菜单
 const closeContextMenu = () => {
   contextMenu.value.visible = false
+  paneContextMenu.value.visible = false
+}
+
+// 画布空白处右键菜单 - 显示菜单
+const onPaneContextMenu = (event) => {
+  const native = event?.event
+  paneContextMenu.value.x = native?.clientX ?? event?.clientX ?? 0
+  paneContextMenu.value.y = native?.clientY ?? event?.clientY ?? 0
+  paneContextMenu.value.visible = true
+  contextMenu.value.visible = false
+}
+
+// 适配视图（鸟瞰图点击后的回退入口）
+const handlePaneFitView = () => {
+  paneContextMenu.value.visible = false
+  flowCanvasRef.value?.fitView?.({ padding: 0.1, duration: 300 })
+}
+
+// 水平展开布局（dagre 风格：拓扑分层 + 层内排序 + X/Y 坐标分配）
+const handleAutoLayout = () => {
+  paneContextMenu.value.visible = false
+  const nodes = getNodes.value
+  const edges = getEdges.value
+  if (nodes.length === 0) {
+    message.info('画布为空，无需布局')
+    return
+  }
+  const { positions } = flowLayout.layout(nodes, edges)
+  if (!positions || positions.size === 0) return
+
+  // 应用新位置到每个节点
+  for (const [id, pos] of positions) {
+    updateNode(id, { position: pos })
+  }
+
+  // 等 Vue Flow 应用完位置再 fitView（确保 fitView 拿到最新尺寸）
+  nextTick(() => {
+    flowCanvasRef.value?.fitView?.({
+      padding: 0.15,
+      duration: 400,
+      minZoom: 0.25
+    })
+  })
+
+  message.success('布局已应用')
+}
+
+// 清空画布（仅清空，不弹新建）
+const handleClearCanvas = async () => {
+  paneContextMenu.value.visible = false
+  const nodeCount = getNodes.value.length
+  if (nodeCount === 0) {
+    message.info('画布已为空')
+    return
+  }
+  const ok = await promptDialogRef.value?.confirm({
+    title: '清空画布',
+    message: `当前画布有 ${nodeCount} 个节点，确定清空吗？未保存的更改将丢失。`
+  })
+  if (!ok) return
+  emit('emd-edge-selected', null)
+  removeNodes(getNodes.value.map(n => n.id))
+  removeEdges(getEdges.value.map(e => e.id))
+  currentStrategyId.value = null
+  currentVersionId.value = null
+  hasUnsavedChanges.value = false
+  message.success('画布已清空')
+}
+
+// 清空并新建策略：先弹确认框，再调用 saveFlow 走"新建策略"流程
+const handleClearAndNew = async () => {
+  paneContextMenu.value.visible = false
+  const nodeCount = getNodes.value.length
+  if (nodeCount > 0) {
+    const ok = await promptDialogRef.value?.confirm({
+      title: '清空并新建策略',
+      message: `当前画布有 ${nodeCount} 个节点，新建策略将清空当前画布，未保存的更改将丢失。是否继续？`
+    })
+    if (!ok) return
+  }
+  emit('emd-edge-selected', null)
+  removeNodes(getNodes.value.map(n => n.id))
+  removeEdges(getEdges.value.map(e => e.id))
+  currentStrategyId.value = null
+  currentVersionId.value = null
+  hasUnsavedChanges.value = false
+  // 走 saveFlow：画布为空 → 弹命名对话框 → 新建策略并保存为版本
+  await handleSaveFlow()
 }
 
 // 事件处理包装函数
