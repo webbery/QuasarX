@@ -56,15 +56,15 @@ bool CUSUMNode::Init(const nlohmann::json& config) {
 
     // 注册 per-symbol 输出: {symbol}.signalLabel.field
     for (auto& symStr : _assetSymbols) {
-        _outputs[symStr + "." + _signalLabel + ".signal"] = ArgType::Double_TimeSeries;
-        _outputs[symStr + "." + _signalLabel + ".drift"] = ArgType::Double_TimeSeries;
-        _outputs[symStr + "." + _signalLabel + ".s_pos"] = ArgType::Double_TimeSeries;
-        _outputs[symStr + "." + _signalLabel + ".s_neg"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _label + ".signal"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _label + ".drift"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _label + ".s_pos"] = ArgType::Double_TimeSeries;
+        _outputs[symStr + "." + _label + ".s_neg"] = ArgType::Double_TimeSeries;
     }
 
     if (_mode == CUSUMMode::Asset || _mode == CUSUMMode::Consensus) {
-        _outputs[_signalLabel + ".asset_results"] = ArgType::Double_TimeSeries;
-        _outputs[_signalLabel + ".consensus_count"] = ArgType::Integer_Scalar;
+        _outputs[_label + ".asset_results"] = ArgType::Double_TimeSeries;
+        _outputs[_label + ".consensus_count"] = ArgType::Integer_Scalar;
     }
 
     String mode_name;
@@ -136,7 +136,7 @@ NodeProcessResult CUSUMNode::ProcessSingleAsset(const String& strategy, DataCont
         }
 
         // 写入 per-symbol 输出（时间序列）
-        String prefix = sym + "." + _signalLabel + ".";
+        String prefix = sym + "." + _label + ".";
 
         // 首次 set 创建 Vector<double>，后续 add 追加
         if (!context.exist(prefix + "signal")) {
@@ -214,14 +214,14 @@ NodeProcessResult CUSUMNode::ProcessMultiAsset(const String& strategy, DataConte
     bool global_triggered = (consensus_count >= _consensusThreshold);
     double global_signal = global_triggered ? 1.0 : 0.0;
 
-    context.set<double>(_signalLabel + ".signal", global_signal);
-    context.set<bool>(_signalLabel + ".triggered", global_triggered);
-    context.set<double>(_signalLabel + ".s_pos", 0.0);
-    context.set<double>(_signalLabel + ".s_neg", 0.0);
-    context.set<double>(_signalLabel + ".drift", 0.0);
-    context.set<uint64_t>(_signalLabel + ".change_points", (uint64_t)consensus_count);
-    context.set<String>(_signalLabel + ".asset_results", asset_results.dump());
-    context.set<uint64_t>(_signalLabel + ".consensus_count", (uint64_t)consensus_count);
+    context.set<double>(_label + ".signal", global_signal);
+    context.set<bool>(_label + ".triggered", global_triggered);
+    context.set<double>(_label + ".s_pos", 0.0);
+    context.set<double>(_label + ".s_neg", 0.0);
+    context.set<double>(_label + ".drift", 0.0);
+    context.set<uint64_t>(_label + ".change_points", (uint64_t)consensus_count);
+    context.set<String>(_label + ".asset_results", asset_results.dump());
+    context.set<uint64_t>(_label + ".consensus_count", (uint64_t)consensus_count);
 
     return NodeProcessResult::Success;
 }

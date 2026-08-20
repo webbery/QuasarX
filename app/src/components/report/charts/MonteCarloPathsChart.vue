@@ -174,7 +174,7 @@ function buildChartOption() {
         const shown = params.slice(0, 5)
         shown.forEach((item: any) => {
           const value = typeof item.value === 'number' ? item.value.toFixed(2) : item.value
-          const pd = item.series._pathDetail
+          const pd = item.series?._pathDetail
           if (pd) {
             result += `<div style="margin-top: 4px; border-top: 1px solid #2a3449; padding-top: 4px;">`
             result += `<div>${item.marker} <b>${item.seriesName}</b>: <span style="color: ${item.color}; font-weight: bold;">${value}%</span></div>`
