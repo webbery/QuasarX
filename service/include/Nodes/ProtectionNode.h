@@ -1,5 +1,6 @@
 #pragma once
 #include "StrategyNode.h"
+#include "RiskContext.h"
 
 /**
  * @brief 风控保护节点
@@ -16,6 +17,15 @@
  */
 class ProtectionNode : public QNode {
 public:
+    struct ProtectionEvent {
+        int bar_index = 0;
+        time_t datetime = 0;
+        symbol_t symbol;
+        RiskTriggerType type = RiskTriggerType::None;
+        double entry_price = 0.0;
+        double current_price = 0.0;
+    };
+
     RegistClassName(ProtectionNode);
     static const nlohmann::json getParams();
 
@@ -25,6 +35,8 @@ public:
     virtual bool Init(const nlohmann::json& config) override;
     virtual NodeProcessResult Process(const String& strategy, DataContext& context) override;
     virtual Map<String, ArgType> out_elements();
+
+    const Vector<ProtectionEvent>& GetProtectionEvents() const { return _events; }
 
 private:
     struct Guard {
@@ -46,6 +58,9 @@ private:
         int    entry_bar = 0;         // 入场 Bar 索引
     };
     Map<symbol_t, EntryInfo> _entry_info;
+
+    // 风控触发事件记录（供回测 summary 和复盘使用）
+    Vector<ProtectionEvent> _events;
 
     // 从 Server 同步持仓，更新 _entry_info
     void syncPositions(const String& strategy, DataContext& context);

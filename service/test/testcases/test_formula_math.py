@@ -45,18 +45,7 @@ TOLERANCE = 1e-5
 # Fixtures
 # ============================================================
 
-@pytest.fixture(scope="session")
-def auth_token():
-    r = requests.post(f"{BASE_URL}/user/login",
-                      json={"name": "admin", "pwd": "admin"},
-                      verify=VERIFY_SSL)
-    return r.json().get("tk", "")
-
-
-@pytest.fixture
-def headers(auth_token):
-    return {"Authorization": auth_token} if auth_token else {}
-
+# auth_token / headers fixtures 由 conftest.py 提供
 
 # ============================================================
 # 辅助函数

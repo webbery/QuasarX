@@ -1,7 +1,12 @@
 
 
 import json
+import pytest
+import requests
+import urllib3
 from pathlib import Path
+
+urllib3.disable_warnings()
 
 # --------------------------
 # 路径常量
@@ -135,6 +140,45 @@ def check_response(response, expected_status=200):
             return response.json()
 
     return None
+
+
+# --------------------------
+# 回测 helper
+# --------------------------
+
+METRIC_DATA_DIR = Path(__file__).parent / "metric_test_data"
+
+
+def load_strategy(name: str) -> str:
+    """从 metric_test_data/ 加载策略 JSON 文件内容"""
+    path = METRIC_DATA_DIR / name
+    if not path.exists():
+        return json.dumps({"status": "error", "error": f"策略文件不存在: {path}"})
+    with open(path) as f:
+        return f.read()
+
+
+def run_backtest(strategy_str: str, headers: dict, validate: bool = True) -> dict:
+    """提交回测并返回结果。失败返回 {"status": "error", "error": "..."}
+
+    Args:
+        strategy_str: 策略 JSON 字符串
+        headers: 请求头（含 Authorization）
+        validate: 是否校验策略图（节点测试传 False 跳过校验）
+    """
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": strategy_str, "validate": validate},
+            headers=headers,
+            verify=VERIFY_SSL,
+            timeout=300,
+        )
+        if resp.status_code != 200:
+            return {"status": "error", "error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+        return resp.json()
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 

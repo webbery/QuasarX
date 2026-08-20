@@ -41,31 +41,7 @@ VERIFY_SSL = False
 # Fixture
 # ============================================================
 
-@pytest.fixture(scope="session")
-def auth_token():
-    """获取 JWT token"""
-    try:
-        resp = requests.post(
-            f"{BASE_URL}/user/login",
-            json={"name": "admin", "pwd": "admin"},
-            verify=VERIFY_SSL
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("tk", "")
-    except Exception:
-        pass
-    return ""
-
-
-@pytest.fixture
-def headers(auth_token):
-    """带认证的请求头"""
-    h = {}
-    if auth_token:
-        h["Authorization"] = auth_token
-    return h
-
+# auth_token / headers fixtures 由 conftest.py 提供
 
 # ============================================================
 # 测试：查询 API

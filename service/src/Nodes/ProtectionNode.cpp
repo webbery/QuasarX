@@ -181,6 +181,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     int current_bar = context.GetEpoch();
     RiskTriggerType triggered = RiskTriggerType::None;
     symbol_t triggered_symbol;
+    double triggered_price = 0.0;
 
     for (const auto& [symbol, info] : _entry_info) {
         if (info.avg_price <= 0) continue;
@@ -202,6 +203,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (current_price <= sl_price) {
                 triggered = RiskTriggerType::StopLoss;
                 triggered_symbol = symbol;
+                triggered_price = current_price;
                 break;
             }
         }
@@ -212,6 +214,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (current_price >= tp_price) {
                 triggered = RiskTriggerType::TakeProfit;
                 triggered_symbol = symbol;
+                triggered_price = current_price;
                 break;
             }
         }
@@ -223,6 +226,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (current_price <= ts_price) {
                 triggered = RiskTriggerType::TrailingStop;
                 triggered_symbol = symbol;
+                triggered_price = current_price;
                 break;
             }
         }
@@ -233,6 +237,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (held_bars >= _time.max_bars) {
                 triggered = RiskTriggerType::TimeStop;
                 triggered_symbol = symbol;
+                triggered_price = current_price;
                 break;
             }
         }
@@ -248,16 +253,24 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         rc->triggered = true;
         rc->trigger_type = triggered;
         rc->action = RiskAction::Close;
+
+        ProtectionEvent evt;
+        evt.bar_index = current_bar;
+        evt.datetime = context.Current();
+        evt.symbol = triggered_symbol;
+        evt.type = triggered;
+        evt.entry_price = _entry_info[triggered_symbol].avg_price;
+        evt.current_price = triggered_price;
+        _events.push_back(evt);
+
         if (_server->GetRunningMode() != RuningType::Backtest) {
             STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
                  get_symbol(triggered_symbol), to_string(triggered),
-                 _entry_info[triggered_symbol].avg_price,
-                 context.get<Vector<double>>(get_symbol(triggered_symbol) + ".close").back());
+                 evt.entry_price, evt.current_price);
         } else {
             INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
                  get_symbol(triggered_symbol), to_string(triggered),
-                 _entry_info[triggered_symbol].avg_price,
-                 context.get<Vector<double>>(get_symbol(triggered_symbol) + ".close").back());
+                 evt.entry_price, evt.current_price);
         }
     }
 

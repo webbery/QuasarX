@@ -5,6 +5,7 @@
 #include "KBarBuilder.h"
 #include "Nodes/FunctionNode.h"
 #include "Nodes/PortfolioNode.h"
+#include "Nodes/ProtectionNode.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/DebugNode.h"
 #include "StrategyNode.h"
@@ -897,6 +898,19 @@ FlowSubsystem::BacktestDailyReturns FlowSubsystem::GetBacktestDailyReturns(const
         return {};
     }
     return { it->second._returnDates, it->second._dailyReturns };
+}
+
+Vector<ProtectionNode::ProtectionEvent> FlowSubsystem::GetProtectionEvents(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) {
+        return {};
+    }
+    for (auto* node : it->second._graph) {
+        if (auto* prot = dynamic_cast<ProtectionNode*>(node)) {
+            return prot->GetProtectionEvents();
+        }
+    }
+    return {};
 }
 
 FlowSubsystem::BacktestMcPaths FlowSubsystem::GetBacktestMcPaths(const String& strategy) const {

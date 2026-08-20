@@ -65,6 +65,10 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
     if (rc && rc->triggered && rc->action == RiskAction::Close) {
         if (_server->GetRunningMode() != RuningType::Backtest) {
             STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
+            // 实盘模式：发送风控触发邮件
+            String emailContent = std::format("[风控] {} 触发紧急平仓 (trigger={})",
+                strategy, to_string(rc->trigger_type));
+            _server->SendEmail(emailContent);
         } else {
             INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
         }

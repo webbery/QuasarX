@@ -286,6 +286,12 @@ def auth_token(auth_api):
     return auth_api.token
 
 
+@pytest.fixture
+def headers(auth_token):
+    """带认证的请求头"""
+    return {"Authorization": auth_token} if auth_token else {}
+
+
 @pytest.fixture(scope="session")
 def is_backtest(auth_api):
     """判断当前是否为回测模式"""

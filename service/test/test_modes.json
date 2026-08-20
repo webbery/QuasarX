@@ -22,7 +22,8 @@
         "test_formula_math",
         "test_position_events",
         "test_xgboost",
-        "test_decision"
+        "test_decision",
+        "test_protection_node"
       ]
     },
     "tickflow": {

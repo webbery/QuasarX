@@ -398,6 +398,26 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
 
+    // === 10b. 收集 ProtectionNode 风控触发事件 ===
+    {
+        auto protEvents = flowSubsystem->GetProtectionEvents(strategyName);
+        if (!protEvents.empty()) {
+            nlohmann::json eventsArray = nlohmann::json::array();
+            for (const auto& evt : protEvents) {
+                nlohmann::json item;
+                item["bar"] = evt.bar_index;
+                item["datetime"] = evt.datetime;
+                item["symbol"] = get_symbol(evt.symbol);
+                item["type"] = to_string(evt.type);
+                item["entry_price"] = evt.entry_price;
+                item["current_price"] = evt.current_price;
+                eventsArray.emplace_back(std::move(item));
+            }
+            results["protection_events"] = std::move(eventsArray);
+            INFO("[Backtest] Protection events collected: {}", protEvents.size());
+        }
+    }
+
     // === 11. 收集蒙特卡洛模拟路径数据（供前端可视化）===
     {
         auto mcPaths = flowSubsystem->GetBacktestMcPaths(strategyName);

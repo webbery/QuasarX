@@ -2,6 +2,7 @@
 #include "KBarBuilder.h"
 #include "MarketTiming.h"
 #include "StrategyNode.h"
+#include "Nodes/ProtectionNode.h"
 #include "std_header.h"
 #include "Strategy.h"
 #include "Util/datetime.h"
@@ -166,6 +167,11 @@ public:
         const String& endDate = String()
     );
     BacktestDailyReturns GetBacktestDailyReturns(const String& strategy) const;
+
+    /**
+     * @brief 获取 ProtectionNode 的风控触发事件记录（回测结束后供 summary 使用）
+     */
+    Vector<ProtectionNode::ProtectionEvent> GetProtectionEvents(const String& strategy) const;
 
     /**
      * @brief 蒙特卡洛模拟路径数据（供前端可视化）
