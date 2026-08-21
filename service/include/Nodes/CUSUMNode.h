@@ -55,7 +55,6 @@ private:
     String _label;
     CUSUMMode _mode = CUSUMMode::ChangePoint;
     CUSUMConfig _config;
-    String _signalLabel = "cusum_signal";
     int _cooldownDays = 0;
     int _consensusThreshold = 2;
 

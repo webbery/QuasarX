@@ -198,6 +198,10 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
             return vec.back();
         }
     }
+    // 标量 passthrough：数组展开后返回的 double 再经过 [t] 时会到这里
+    else if (std::holds_alternative<double>(base)) {
+        return std::get<double>(base);
+    }
 
     String var_name = std::get<String>(base);
     auto name = get_symbol(symbol);

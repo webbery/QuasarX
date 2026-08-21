@@ -176,24 +176,36 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
     }
 
     // ── 从连接图发现 symbol 并解析特征 ──
-    // 收集所有上游 out_elements 的 key，构建 短名→全名 和 全名→全名 双重映射
-    Map<String, String> allOutKeys;
-    for (auto& [nodeId, nodePtr] : _ins) {
-        for (auto& [key, type] : nodePtr->out_elements()) {
-            allOutKeys[key] = key;  // 全名: "sz.800001.norm_ret" → itself
-            auto dotPos = key.rfind('.');
-            if (dotPos != String::npos) {
-                String field = key.substr(dotPos + 1);
-                allOutKeys[field] = key;  // 短名: "norm_ret" → "sz.800001.norm_ret"
-            }
-        }
-    }
-
     // BFS 上游找到所有可达的 QuoteInputNode 的 symbol
     auto symbolSet = discoverUpstreamSymbols();
     if (symbolSet.empty()) {
         WARN("[XGBoost:{}] Cannot discover symbol from upstream connections", _id);
         return false;
+    }
+
+    // 构建 symbol 字符串集合，用于从 out_elements key 中提取短名
+    Set<String> symbolStrs;
+    for (auto& sym : symbolSet) {
+        symbolStrs.insert(get_symbol(sym));
+    }
+
+    // 收集所有上游 out_elements 的 key，构建 短名→全名 和 全名→全名 双重映射
+    Map<String, String> allOutKeys;
+    for (auto& [nodeId, nodePtr] : _ins) {
+        for (auto& [key, type] : nodePtr->out_elements()) {
+            allOutKeys[key] = key;  // 全名: "sz.800001.norm_ret" → itself
+            // 从 key 中去掉 symbol 前缀得到短名
+            // "sh.600000.cusum.drift" → "cusum.drift"
+            // "sh.600000.close"       → "close"
+            for (auto& sym : symbolStrs) {
+                String prefix = sym + ".";
+                if (key.size() > prefix.size() && key.compare(0, prefix.size(), prefix) == 0) {
+                    String field = key.substr(prefix.size());
+                    allOutKeys[field] = key;
+                    break;
+                }
+            }
+        }
     }
 
     // 为每个 symbol 解析特征 → context key
@@ -267,6 +279,7 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                 }
                 if (std::isfinite(features[d])) ++validCount;
             } catch (...) {
+                WARN("[XGBoost] Read feature {} fail.", resolvedKeys[d]);
                 ok = false; break;
             }
         }

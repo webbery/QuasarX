@@ -76,17 +76,20 @@ Map<String, String> QNode::resolveInputConnections() {
                 }
             } else {
                 // sourceHandle 仅为节点 ID，无明确数据名
-                // 如果上游只有一个输出，直接使用
-                if (outs.size() == 1) {
-                    auto& [key, type] = *outs.begin();
-                    String fieldName;
+                // 从上游输出 key 中提取字段名（格式: "symbol.fieldName"）
+                // FunctionNode 等节点有多个输出（每个 symbol 一个），但字段名相同
+                Map<String, String> fieldToContext;
+                for (auto& [key, type] : outs) {
                     auto dotPos = key.rfind('.');
                     if (dotPos != String::npos) {
-                        fieldName = key.substr(dotPos + 1);
+                        String fieldName = key.substr(dotPos + 1);
+                        if (fieldToContext.find(fieldName) == fieldToContext.end()) {
+                            fieldToContext[fieldName] = key;
+                        }
                     }
-                    if (!fieldName.empty()) {
-                        dataToContext[fieldName] = key;
-                    }
+                }
+                for (auto& [fn, ck] : fieldToContext) {
+                    dataToContext[fn] = ck;
                 }
             }
         }
