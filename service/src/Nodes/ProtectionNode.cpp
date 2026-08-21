@@ -101,12 +101,19 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             auto run_id = context.getBacktestRunId();
             auto btCtx = histExchange->getBacktestContext(run_id);
             if (btCtx) {
+                INFO("[ProtectionNode] syncPositions: run_id={}, epoch={}", run_id, context.GetEpoch());
                 for (const auto& sym : btCtx->getSymbols()) {
-                    if (btCtx->getPosition(sym) != 0) {
+                    int64_t pos = btCtx->getPosition(sym);
+                    INFO("[ProtectionNode]   symbol={} position={}", get_symbol(sym), pos);
+                    if (pos != 0) {
                         current_symbols.insert(sym);
                     }
                 }
+            } else {
+                INFO("[ProtectionNode] syncPositions: btCtx is null for run_id={}", run_id);
             }
+        } else {
+            INFO("[ProtectionNode] syncPositions: histExchange is null");
         }
     } else {
         auto& ap = _server->GetPosition("");
@@ -174,7 +181,10 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     // 从 Server 同步持仓
     syncPositions(strategy, context);
 
+    INFO("[ProtectionNode] Process: epoch={}, _entry_info.size={}", context.GetEpoch(), _entry_info.size());
+
     if (_entry_info.empty()) {
+        INFO("[ProtectionNode] _entry_info is empty, returning early");
         return NodeProcessResult::Success;
     }
 
@@ -200,7 +210,10 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         // 1. 检查止损: current < entry * (1 - percent)
         if (_sl.enabled) {
             double sl_price = info.avg_price * (1.0 - _sl.percent);
+            INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}", 
+                 get_symbol(symbol), info.avg_price, current_price, sl_price, _sl.enabled);
             if (current_price <= sl_price) {
+                INFO("[ProtectionNode] StopLoss TRIGGERED!");
                 triggered = RiskTriggerType::StopLoss;
                 triggered_symbol = symbol;
                 triggered_price = current_price;

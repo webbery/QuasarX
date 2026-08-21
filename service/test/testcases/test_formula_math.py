@@ -632,18 +632,16 @@ class TestCount:
 
         # 始终为 1（与 bar 无关，确定性 scalar）
         n = min(len(actual), 200)
-        valid = ~actual.isna()[:n]
-        diff_sum = 0.0
+        max_diff = 0.0
         n_valid = 0
         for i in range(n):
-            if not valid.iloc[i] if hasattr(valid, 'iloc') else valid[i]:
+            if pd.isna(actual.iloc[i]):
                 continue
-            diff_sum += abs(actual.iloc[i] - 1.0)
+            diff = abs(actual.iloc[i] - 1.0)
+            if diff > max_diff:
+                max_diff = diff
             n_valid += 1
         assert n_valid > 0, "no valid samples"
-        max_diff = max(abs(actual.iloc[i] - 1.0)
-                       for i in range(n)
-                       if (not valid.iloc[i] if hasattr(valid, 'iloc') else valid[i]))
         assert max_diff < TOLERANCE, \
             f"count_scalar_pos (count(0.5, 1) 应当常返 1) max diff {max_diff:.2e}"
 

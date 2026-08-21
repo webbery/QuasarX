@@ -71,104 +71,83 @@ String grammar = R"(
         %whitespace     <- [ \t]*
     )";
 
+// 辅助：统一将 context_t 转为 double（支持 double/uint64_t/bool/String 等）
+// PEG 解析整数字面量（如 0, 1）可能返回 uint64_t，比较结果返回 bool
+// 文件级函数，供 comparationMap 和 arithmeticMap 共用
+static double ctxToDoubleArith(const context_t& v) {
+    if (auto* p = std::get_if<double>(&v))     return *p;
+    if (auto* p = std::get_if<bool>(&v))       return *p ? 1.0 : 0.0;
+    if (auto* p = std::get_if<uint64_t>(&v))   return static_cast<double>(*p);
+    if (auto* p = std::get_if<Vector<double>>(&v)) return p->empty() ? 0.0 : p->back();
+    if (auto* p = std::get_if<String>(&v)) {
+        try { return std::stod(*p); } catch (...) { return 0.0; }
+    }
+    return 0.0;
+}
+
 Map<String, std::function<bool (const context_t& , const context_t& )>>& comparationMap() {
     static Map<String, std::function<bool (const context_t& , const context_t& )>> m{
     {">", [](const context_t& left, const context_t& right) {
-        bool val = false;
-        std::visit([right, &val](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                val = l > std::get<double>(right);
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '>' operator. "
-                               "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] > 0'. "
-                               "This error should have been caught during validation.");
-            } else {
-                THROW_EXCEPTION("Runtime type error: Comparison '>' not supported for type: {}",
-                               typeid(T).name());
-            }
-        }, left);
-        return val;
+        auto l = std::get_if<double>(&left);
+        if (l) return *l > ctxToDoubleArith(right);
+        auto lv = std::get_if<Vector<double>>(&left);
+        if (lv) {
+            THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '>' operator. "
+                           "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] > 0'. "
+                           "This error should have been caught during validation.");
+        }
+        THROW_EXCEPTION("Runtime type error: Comparison '>' not supported for type index: {}", left.index());
     }},
     {"<", [](const context_t& left, const context_t& right) {
-        bool val = false;
-        std::visit([right, &val](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                val = l < std::get<double>(right);
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '<' operator. "
-                               "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] < 0'.");
-            } else {
-                THROW_EXCEPTION("Runtime type error: Comparison '<' not supported for type: {}",
-                               typeid(T).name());
-            }
-        }, left);
-        return val;
+        auto l = std::get_if<double>(&left);
+        if (l) return *l < ctxToDoubleArith(right);
+        auto lv = std::get_if<Vector<double>>(&left);
+        if (lv) {
+            THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '<' operator. "
+                           "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] < 0'.");
+        }
+        THROW_EXCEPTION("Runtime type error: Comparison '<' not supported for type index: {}", left.index());
     }},
     {"==", [](const context_t& left, const context_t& right) {
-        bool val = false;
-        std::visit([right, &val](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                val = (l == std::get<double>(right));
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '==' operator. "
-                               "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] == 0'.");
-            } else {
-                THROW_EXCEPTION("Runtime type error: Comparison '==' not supported for type: {}",
-                               typeid(T).name());
-            }
-        }, left);
-        return val;
+        auto l = std::get_if<double>(&left);
+        if (l) return *l == ctxToDoubleArith(right);
+        auto lv = std::get_if<Vector<double>>(&left);
+        if (lv) {
+            THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '==' operator. "
+                           "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] == 0'.");
+        }
+        // 支持 bool/uint64_t 等非 double 标量类型的比较
+        return ctxToDoubleArith(left) == ctxToDoubleArith(right);
     }},
     {"!=", [](const context_t& left, const context_t& right) {
-        bool val = false;
-        std::visit([right, &val](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                val = (l != std::get<double>(right));
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '!=' operator. "
-                               "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] != 0'.");
-            } else {
-                THROW_EXCEPTION("Runtime type error: Comparison '!=' not supported for type: {}",
-                               typeid(T).name());
-            }
-        }, left);
-        return val;
+        auto l = std::get_if<double>(&left);
+        if (l) return *l != ctxToDoubleArith(right);
+        auto lv = std::get_if<Vector<double>>(&left);
+        if (lv) {
+            THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '!=' operator. "
+                           "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] != 0'.");
+        }
+        return ctxToDoubleArith(left) != ctxToDoubleArith(right);
     }},
     {">=", [](const context_t& left, const context_t& right) {
-        bool val = false;
-        std::visit([right, &val](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                val = (l >= std::get<double>(right));
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '>=' operator. "
-                               "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] >= 0'.");
-            } else {
-                THROW_EXCEPTION("Runtime type error: Comparison '>=' not supported for type: {}",
-                               typeid(T).name());
-            }
-        }, left);
-        return val;
+        auto l = std::get_if<double>(&left);
+        if (l) return *l >= ctxToDoubleArith(right);
+        auto lv = std::get_if<Vector<double>>(&left);
+        if (lv) {
+            THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '>=' operator. "
+                           "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] >= 0'.");
+        }
+        return ctxToDoubleArith(left) >= ctxToDoubleArith(right);
     }},
     {"<=", [](const context_t& left, const context_t& right) {
-        bool val = false;
-        std::visit([right, &val](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                val = (l <= std::get<double>(right));
-            } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '<=' operator. "
-                               "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] <= 0'.");
-            } else {
-                THROW_EXCEPTION("Runtime type error: Comparison '<=' not supported for type: {}",
-                               typeid(T).name());
-            }
-        }, left);
-        return val;
+        auto l = std::get_if<double>(&left);
+        if (l) return *l <= ctxToDoubleArith(right);
+        auto lv = std::get_if<Vector<double>>(&left);
+        if (lv) {
+            THROW_EXCEPTION("Runtime type error: 'Vector<double>' cannot be used with '<=' operator. "
+                           "Use [t] or [t-N] to access specific value, e.g., 'MA_5[t] <= 0'.");
+        }
+        return ctxToDoubleArith(left) <= ctxToDoubleArith(right);
     }},
 };
     return m;
@@ -177,61 +156,22 @@ Map<String, std::function<bool (const context_t& , const context_t& )>>& compara
 Map<char, std::function<context_t(const context_t& , const context_t&)>>& arithmeticMap() {
     static Map<char, std::function<context_t(const context_t& , const context_t&)>> m{
     {'+', [](const context_t& left, const context_t& right) {
-        context_t result;
-        std::visit([right, &result](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                result = (l + std::get<double>(right));
-            } else {
-                INFO("not support operation `+` for type {}", typeid(T).name());
-            }
-        }, left);
-        return result;
+        return ctxToDoubleArith(left) + ctxToDoubleArith(right);
     }},
     {'-', [](const context_t& left, const context_t& right) {
-        context_t result;
-        std::visit([right, &result](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                result = (l - std::get<double>(right));
-            } else {
-                INFO("not support operation `-` for type {}", typeid(T).name());
-            }
-        }, left);
-        return result;
+        return ctxToDoubleArith(left) - ctxToDoubleArith(right);
     }},
     {'*', [](const context_t& left, const context_t& right) {
-        context_t result;
-        std::visit([right, &result](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                result = (l * std::get<double>(right));
-            } else {
-                INFO("not support operation `*` for type {}", typeid(T).name());
-            }
-        }, left);
-        return result;
+        return ctxToDoubleArith(left) * ctxToDoubleArith(right);
     }},
     {'/', [](const context_t& left, const context_t& right) {
-        context_t result;
-        std::visit([right, &result](auto&& l){
-            using T = std::decay_t<decltype(l)>;
-            if constexpr (std::is_same_v<T, double>) {
-                auto r = std::get<double>(right);
-                // 修复: r 接近 0 时旧实现返回 0.0，污染下游特征（如 pvs_ma），
-                // 让 XGBoost 收到错误值并产生误导预测。改为返回 NaN，
-                // 让 XGBoost 当 missing 处理 + XGBoostNode.allInvalid 触发 skip
-                if (std::abs(r) < 1e-10 || std::isnan(r)) {
-                    WARN("Division by zero / NaN detected for symbol: {}", r);
-                    result = std::nan("nan");
-                } else { [[likely]]
-                    result = (l / r);
-                }
-            } else {
-                INFO("not support operation `/` for type {}", typeid(T).name());
-            }
-        }, left);
-        return result;
+        double r = ctxToDoubleArith(right);
+        if (std::abs(r) < 1e-10 || std::isnan(r)) {
+            WARN("Division by zero / NaN detected for symbol: {}", r);
+            return std::nan("nan");
+        } else { [[likely]]
+            return ctxToDoubleArith(left) / r;
+        }
     }},
 };
     return m;

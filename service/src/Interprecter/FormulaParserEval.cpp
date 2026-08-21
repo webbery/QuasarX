@@ -420,15 +420,13 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
                     if (sign < 0)  return static_cast<double>(negativeCount);
                     return static_cast<double>(zeroCount);
                 }
-                if (auto* d = std::get_if<double>(&arg0)) {
-                    // 单 double：仅一个元素，按 sign 判断是否匹配
-                    double v = *d;
-                    bool match = (sign > 0  && v > 0)
-                              || (sign < 0  && v < 0)
-                              || (sign == 0 && v == 0);
-                    return match ? 1.0 : 0.0;
-                }
-                return 0.0;
+                // 标量情况：使用 ctxToDouble 统一转换（支持 double/uint64_t/bool 等）
+                // PEG 解析整数字面量（如 0, 1）可能返回 uint64_t 而非 double
+                double v = ctxToDouble(arg0);
+                bool match = (sign > 0  && v > 0)
+                          || (sign < 0  && v < 0)
+                          || (sign == 0 && v == 0);
+                return match ? 1.0 : 0.0;
             }
             if (funcName == "abs") {
                 auto arg = evalNode(symbol, *args[0], context);
@@ -461,9 +459,11 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
                 //   - cur=NaN, best=finiite:                NaN 传染 best，update
                 //   - 其他（含 tie / best 已是 NaN 等）:    不动
                 // numpy 一旦 NaN 传染，后续 finite 即使更大也无法胜出
-                double best_val = ctxToDouble(evalNode(symbol, *args[0], context));
+                auto raw0 = evalNode(symbol, *args[0], context);
+                auto raw1 = evalNode(symbol, *args[1], context);
+                double best_val = ctxToDouble(raw0);
                 size_t best_idx = 0;
-                double cur = ctxToDouble(evalNode(symbol, *args[1], context));
+                double cur = ctxToDouble(raw1);
                 if (cur > best_val) {
                     return 1.0;
                 } else if (std::isnan(cur) && !std::isnan(best_val)) {
@@ -510,6 +510,32 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
                 }
                 return std::max(ctxToDouble(a), ctxToDouble(b));
             }
+            if (funcName == "count") {
+                // 签名: count(vec_or_scalar, sign) → double
+                //   sign > 0:  统计/判断 v > 0
+                //   sign < 0:  统计/判断 v < 0
+                //   sign == 0: 统计/判断 v == 0
+                auto arg0 = evalNode(symbol, *args[0], context);
+                double sign = ctxToDouble(evalNode(symbol, *args[1], context));
+
+                if (auto* vec = std::get_if<Vector<double>>(&arg0)) {
+                    size_t positiveCount = 0, negativeCount = 0, zeroCount = 0;
+                    for (double v : *vec) {
+                        if (v > 0)       ++positiveCount;
+                        else if (v < 0)  ++negativeCount;
+                        else             ++zeroCount;
+                    }
+                    if (sign > 0)  return static_cast<double>(positiveCount);
+                    if (sign < 0)  return static_cast<double>(negativeCount);
+                    return static_cast<double>(zeroCount);
+                }
+                // 标量情况：使用 ctxToDouble 统一转换（支持 double/uint64_t/bool 等）
+                double v = ctxToDouble(arg0);
+                bool match = (sign > 0  && v > 0)
+                          || (sign < 0  && v < 0)
+                          || (sign == 0 && v == 0);
+                return match ? 1.0 : 0.0;
+            }
         }
 
         // N-arg argmax (3+ 标量): argmax(p0, p1, p2)
@@ -550,35 +576,6 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
     // 其他函数调用处理（如 MA 等）
     if (funcName == "MA" && ast.nodes.size() >= 3) {
         // 获取参数：MA(close, 5)
-    }
-    else if (funcName == INTRINSIC_TOPK) {
-        if (ast.nodes.size() < 2) {
-            WARN("topk function requires two arguments");
-            return false;
-        }
-        auto& args = ast.nodes[1];
-        if (args->name != "Arguments" || args->nodes.size() != 2) {
-            WARN("topk function requires exactly two arguments");
-            return false;
-        }
-        auto& firstArg = args->nodes[0];
-        context_t scoreExprValue = evalNode(symbol, *firstArg, context);
-        auto& secondArg = args->nodes[1];
-        context_t secondValue = evalNode(symbol, *secondArg, context);
-        String varName;
-        if (std::holds_alternative<String>(scoreExprValue)) {
-            varName = std::get<String>(scoreExprValue);
-        } else {
-            WARN("First argument of topk should be a variable name");
-            return false;
-        }
-        int k = 0;
-        if (std::holds_alternative<double>(secondValue)) {
-            k = static_cast<int>(std::get<double>(secondValue));
-        } else {
-            WARN("Second argument of topk should be a number");
-            return false;
-        }
     }
     return 0.;
 }

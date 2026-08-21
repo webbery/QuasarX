@@ -362,14 +362,13 @@ def cusum_node(nid, mode="changepoint", min_obs=10):
         "id": nid, "type": "custom",
         "position": {"x": 0, "y": 0},
         "data": {
-            "label": "CUSUM", "nodeType": "cusum",
+            "label": "cusum_signal", "nodeType": "cusum",
             "params": {
                 "mode": {"value": mode, "type": "select"},
                 "lambda": {"value": 0.5, "type": "number"},
                 "threshold_multiplier": {"value": 4.0, "type": "number"},
                 "min_obs": {"value": min_obs, "type": "number"},
-                "cooldown": {"value": 0, "type": "number"},
-                "signal_label": {"value": "cusum", "type": "text"}
+                "cooldown": {"value": 0, "type": "number"}
             }
         }
     }

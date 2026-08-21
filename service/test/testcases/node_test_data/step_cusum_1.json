@@ -87,7 +87,7 @@
         "y": 0
       },
       "data": {
-        "label": "CUSUM",
+        "label": "cusum_signal",
         "nodeType": "cusum",
         "params": {
           "mode": {
@@ -109,10 +109,6 @@
           "cooldown": {
             "value": 0,
             "type": "number"
-          },
-          "signal_label": {
-            "value": "cusum",
-            "type": "text"
           }
         }
       }

@@ -72,6 +72,16 @@
       "symbol": "sz.800001",
       "node": "R2(15)"
     },
+    "sine_median_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Median(5)"
+    },
+    "sine_median_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "Median(15)"
+    },
     "sine_vpcorr_5": {
       "dataset": "sine",
       "symbol": "sz.800001",
@@ -181,6 +191,16 @@
       "dataset": "step",
       "symbol": "sz.800002",
       "node": "R2(15)"
+    },
+    "step_median_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Median(5)"
+    },
+    "step_median_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "Median(15)"
     },
     "step_vpcorr_5": {
       "dataset": "step",
@@ -292,6 +312,16 @@
       "symbol": "sz.800003",
       "node": "R2(15)"
     },
+    "reversal_median_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Median(5)"
+    },
+    "reversal_median_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "Median(15)"
+    },
     "reversal_vpcorr_5": {
       "dataset": "reversal",
       "symbol": "sz.800003",
@@ -402,6 +432,16 @@
       "symbol": "sz.800004",
       "node": "R2(15)"
     },
+    "deterministic_median_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Median(5)"
+    },
+    "deterministic_median_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "Median(15)"
+    },
     "deterministic_vpcorr_5": {
       "dataset": "deterministic",
       "symbol": "sz.800004",
@@ -511,6 +551,16 @@
       "dataset": "anomaly",
       "symbol": "sz.800005",
       "node": "R2(15)"
+    },
+    "anomaly_median_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Median(5)"
+    },
+    "anomaly_median_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "Median(15)"
     },
     "anomaly_vpcorr_5": {
       "dataset": "anomaly",

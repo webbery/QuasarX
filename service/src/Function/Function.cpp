@@ -25,6 +25,10 @@ context_t MA::operator()(const Map<String, context_t>& args) {
         _buffer[_count] = value;
         _sumAcc.add(value);
         ++_count;
+        // 数据不足时返回 NaN（与 Python rolling().mean() 对齐）
+        if (_count < (int32_t)_buffer.size()) {
+            return std::nan("nan");
+        }
         return average();
     }
     _sumAcc.sub(_buffer[_nextIndex]);
