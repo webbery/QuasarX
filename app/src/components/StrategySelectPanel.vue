@@ -141,7 +141,7 @@
           <colgroup>
             <col style="width: 180px;" />
             <col style="width: 120px;" />
-            <col style="width: 70px;" />
+            <col style="width: 100px;" />
             <col />
             <col style="width: 60px;" />
           </colgroup>
@@ -957,6 +957,7 @@ onUnmounted(() => {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .level-badge.info {
   background: rgba(96, 165, 250, 0.15);

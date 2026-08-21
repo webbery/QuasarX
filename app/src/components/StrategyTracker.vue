@@ -17,7 +17,7 @@
         <div class="tabs">
             <button
                 :class="{ active: activeTab === 'realtime' }"
-                @click="activeTab = 'realtime'; viewingLogs = false"
+                @click="activeTab = 'realtime'"
             >
                 <i class="fas fa-bolt"></i> 实时监控
             </button>
@@ -29,13 +29,13 @@
             </button>
             <button
                 :class="{ active: activeTab === 'signals' }"
-                @click="activeTab = 'signals'; viewingLogs = false"
+                @click="activeTab = 'signals'"
             >
                 <i class="fas fa-satellite-dish"></i> 信号监控
             </button>
             <button
                 :class="{ active: activeTab === 'orderdesk' }"
-                @click="activeTab = 'orderdesk'; viewingLogs = false"
+                @click="activeTab = 'orderdesk'"
             >
                 <i class="fas fa-clipboard-list"></i> 下单管理
             </button>
@@ -187,6 +187,12 @@ const selectedStrategy = ref('')
 // 日志查看视图切换
 const viewingLogs = ref(false)
 const viewLogStrategy = ref('')
+
+// 切换 Tab 时统一重置日志视图状态
+watch(activeTab, () => {
+  viewingLogs.value = false
+  viewLogStrategy.value = ''
+})
 
 // 复用 App.vue 共享的策略状态（10s 轮询）
 const serverStrategies = inject('serverStrategies', ref([]))

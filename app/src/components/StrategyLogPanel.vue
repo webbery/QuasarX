@@ -78,7 +78,7 @@
             <tr>
               <th style="width: 180px;">时间</th>
               <th style="width: 120px;">策略</th>
-              <th style="width: 70px;">级别</th>
+              <th style="width: 100px;">级别</th>
               <th>消息</th>
               <th style="width: 60px;">详情</th>
             </tr>
@@ -539,6 +539,7 @@ onUnmounted(() => {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .level-badge.info {
   background: rgba(96, 165, 250, 0.15);
