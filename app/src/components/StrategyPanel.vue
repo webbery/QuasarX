@@ -100,6 +100,7 @@ import { useHistoryStore } from '@/stores/history'
 import PromptDialog from './PromptDialog.vue'
 import { message } from '@/tool'
 import { storeToRefs } from 'pinia'
+import { ipcRenderer } from 'electron'
 
 // ---------- Pinia Store ----------
 const store = useHistoryStore()
@@ -275,7 +276,10 @@ const handleMenuItemClick = async (action: string) => {
       message: `确定要删除策略 "${contextMenu.data.name}" 及其所有历史版本吗？`
     })
     if (confirmed) {
+      const strategyName = contextMenu.data.name
       await removeStrategy(contextMenu.data.id)
+      // 清理本地模型文件
+      await ipcRenderer.invoke('model-delete-strategy', strategyName)
       emit('delete-strategy', contextMenu.data.id)
     }
   } else if (action === 'editRemark') {

@@ -96,6 +96,9 @@ bool SignalNode::Init(const nlohmann::json& config) {
 
 NodeProcessResult SignalNode::Process(const String& strategy, DataContext& context)
 {
+    INFO("[SignalNode:{}] Process ENTER, pools={}, buy='{}', sell='{}'",
+         _id, _pools.size(), _buyExpression, _sellExpression);
+
     Set<String> args;
     for (auto& item: _ins) {
         auto names = item.second->out_elements();
@@ -104,8 +107,8 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         }
     }
 
-    // INFO("[SignalNode:{}] Processing, pools={}, args={}", 
-    //      _id, _pools.size(), boost::algorithm::join(args, ", "));
+    INFO("[SignalNode:{}] input args ({}): {}",
+         _id, args.size(), boost::algorithm::join(args, ", "));
 
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);

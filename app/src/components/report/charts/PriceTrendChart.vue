@@ -23,6 +23,8 @@ import { useECharts } from '../composables/useECharts'
 
 interface Props {
   prices: Record<string, [string, number][]>
+  /** 完整标的列表（用于下拉框，不依赖已加载的价格数据） */
+  symbols?: string[]
   buySignals: any[]
   sellSignals: any[]
   rawBuySignals?: any[]   // [symbol, timestamp, quantity, price][]
@@ -34,10 +36,15 @@ interface Emits {
   (e: 'symbolChange', symbol: string): void
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  symbols: () => [],
+})
 const emit = defineEmits<Emits>()
 
-const priceSymbols = computed(() => Object.keys(props.prices))
+// 下拉框选项：优先使用传入的完整标的列表，回退到已加载价格的 keys
+const priceSymbols = computed(() =>
+  props.symbols.length > 0 ? props.symbols : Object.keys(props.prices)
+)
 
 // Resolve localSymbol: use selectedSymbol if it exists in prices, otherwise default to first key
 const localSymbol = ref('')

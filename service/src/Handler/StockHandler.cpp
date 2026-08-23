@@ -73,49 +73,64 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
   String end = req.get_param_value("end");
   String right = req.get_param_value("right");
 
-  // 支持两种格式：日期字符串 "YYYY-MM-DD" 或 Unix 时间戳
-  String start_date, end_date;
-  if (start.empty() || start.find('-') != String::npos) {
-    start_date = start;  // 已经是日期字符串或空
-  } else {
-    start_date = ToString(FromTick(start), "%Y-%m-%d");
+  try {
+    // 支持两种格式：日期字符串 "YYYY-MM-DD" 或 Unix 时间戳
+    String start_date, end_date;
+    if (start.empty() || start.find('-') != String::npos) {
+      start_date = start;  // 已经是日期字符串或空
+    } else {
+      start_date = ToString(FromTick(start), "%Y-%m-%d");
+    }
+    if (end.empty() || end.find('-') != String::npos) {
+      end_date = end;
+    } else {
+      end_date = ToString(FromTick(end), "%Y-%m-%d");
+    }
+
+    if (id.empty()) {
+      WARN("[StockHistory] Empty symbol id, returning 400");
+      res.status = 400;
+      return;
+    }
+
+    // 转换为 LoadHistoryDataWithFreq 参数
+    symbol_t sym = to_symbol(toInternalSymbol(id));
+    BarFreq freq = type.empty() ? BarFreq::Day : parseBarFreq(type);
+    AdjType adj = (right == "1") ? AdjType::HFQ : AdjType::None;
+
+    Vector<String> dates;
+    auto data = LoadHistoryDataWithFreq(sym,
+        {"open", "close", "high", "low", "volume", "turnover"},
+        start_date, end_date, freq, adj, &dates);
+
+    if (dates.empty()) {
+      WARN("[StockHistory] No data for {} ({}, {}-{})", id, type, start_date, end_date);
+      res.status = 400;
+      return;
+    }
+
+    nlohmann::json result = nlohmann::json::array();
+    for (size_t i = 0; i < dates.size(); ++i) {
+      nlohmann::json row;
+      row["datetime"] = FromStr(dates[i]);
+      row["open"]    = (i < data["open"].size())    ? data["open"][i]    : 0.0;
+      row["close"]   = (i < data["close"].size())   ? data["close"][i]   : 0.0;
+      row["high"]    = (i < data["high"].size())     ? data["high"][i]    : 0.0;
+      row["low"]     = (i < data["low"].size())      ? data["low"][i]     : 0.0;
+      row["volume"]  = (i < data["volume"].size())   ? data["volume"][i]  : 0.0;
+      row["turnover"] = (i < data["turnover"].size()) ? data["turnover"][i] : 0.0;
+      result.emplace_back(std::move(row));
+    }
+
+    res.status = 200;
+    res.set_content(result.dump(), "application/json");
+  } catch (const std::exception& e) {
+    WARN("[StockHistory] Exception for id={}: {}", id, e.what());
+    res.status = 500;
+    nlohmann::json err;
+    err["error"] = e.what();
+    res.set_content(err.dump(), "application/json");
   }
-  if (end.empty() || end.find('-') != String::npos) {
-    end_date = end;
-  } else {
-    end_date = ToString(FromTick(end), "%Y-%m-%d");
-  }
-
-  // 转换为 LoadHistoryDataWithFreq 参数
-  symbol_t sym = to_symbol(toInternalSymbol(id));
-  BarFreq freq = type.empty() ? BarFreq::Day : parseBarFreq(type);
-  AdjType adj = (right == "1") ? AdjType::HFQ : AdjType::None;
-
-  Vector<String> dates;
-  auto data = LoadHistoryDataWithFreq(sym,
-      {"open", "close", "high", "low", "volume", "turnover"},
-      start_date, end_date, freq, adj, &dates);
-
-  if (dates.empty()) {
-    res.status = 400;
-    return;
-  }
-
-  nlohmann::json result = nlohmann::json::array();
-  for (size_t i = 0; i < dates.size(); ++i) {
-    nlohmann::json row;
-    row["datetime"] = FromStr(dates[i]);
-    row["open"]    = (i < data["open"].size())    ? data["open"][i]    : 0.0;
-    row["close"]   = (i < data["close"].size())   ? data["close"][i]   : 0.0;
-    row["high"]    = (i < data["high"].size())     ? data["high"][i]    : 0.0;
-    row["low"]     = (i < data["low"].size())      ? data["low"][i]     : 0.0;
-    row["volume"]  = (i < data["volume"].size())   ? data["volume"][i]  : 0.0;
-    row["turnover"] = (i < data["turnover"].size()) ? data["turnover"][i] : 0.0;
-    result.emplace_back(std::move(row));
-  }
-
-  res.status = 200;
-  res.set_content(result.dump(), "application/json");
 }
 
 StockDetailHandler::StockDetailHandler(Server* server)

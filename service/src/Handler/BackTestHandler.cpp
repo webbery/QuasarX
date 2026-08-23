@@ -266,9 +266,17 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     pushRunning = false;
     pushThread.join();
 
+    // 检查回测过程中是否有节点错误
+    String lastError = flowSubsystem->GetLastError(strategyName);
+    if (!lastError.empty()) {
+        SendSSE(sse_sock, "backtest_error", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"error", lastError}});
+        WARN("[Backtest] Node error: {}", lastError);
+    }
+
     // 确保最终进度推送
     if (lastProgress < 1.0) {
-        SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.700000"}, {"message", "回测执行完成"}});
+        String msg = lastError.empty() ? "回测执行完成" : "回测执行出错: " + lastError;
+        SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.700000"}, {"message", msg}});
     }
     exchangeMgr->StopRequiredExchanges(requiredSources);
     INFO("[Backtest][RSS] after StopExchanges: {:.1f} MB", getProcessRSS());
@@ -277,6 +285,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 6. 收集结果
     nlohmann::json results;
     auto& features = results["features"];
+    features = nlohmann::json::object();  // 确保 features 始终为 object（无交易时也为 {}，而非 null）
     auto brokerSystem = _server->GetBrokerSubSystem();
     auto indicators = strategySys->GetIndicators(strategyName);
 

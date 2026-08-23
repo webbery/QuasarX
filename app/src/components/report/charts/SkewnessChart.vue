@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, toRaw, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useECharts, createBaseChartOption } from '../composables/useECharts'
 import { generateNormalDistribution } from '@/lib/statistics'
@@ -329,6 +329,12 @@ watch(
 
 onMounted(() => {
   initWorker()
+  // 初始渲染：无价格数据时显示理论正态分布曲线
+  nextTick(() => {
+    if (!calculatedStats.value) {
+      updateChart(buildChartOption(), true)
+    }
+  })
   console.info('[SkewnessChart] 组件已挂载')
 })
 

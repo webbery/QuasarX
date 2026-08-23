@@ -121,12 +121,12 @@ const orderedItems = computed<OrderedItem[]>(() => {
 
   // 按 layout 顺序遍历
   for (const item of layout.value) {
-    // 统一检查 chartVisibility（所有图表使用同一套可见性控制）
-    const isVisible = chartVisibility.value[item.id]
-    if (!isVisible) continue
-
     const def = CHART_REGISTRY.find(c => c.id === item.id)
     if (!def) continue
+
+    // 统一检查 chartVisibility（回退到 CHART_REGISTRY 的 defaultVisible）
+    const isVisible = chartVisibility.value[item.id] ?? def.defaultVisible
+    if (!isVisible) continue
 
     const comp = chartComponentMap[item.id]
     if (!comp) continue
@@ -138,6 +138,7 @@ const orderedItems = computed<OrderedItem[]>(() => {
     } else if (item.id === 'priceTrend') {
       props = {
         prices: dataState.symbolPrices.value,
+        symbols: selectedSymbol.value,
         'buy-signals': dataState.buySignals.value,
         'sell-signals': dataState.sellSignals.value,
         'raw-buy-signals': dataState.rawBuySignals.value,

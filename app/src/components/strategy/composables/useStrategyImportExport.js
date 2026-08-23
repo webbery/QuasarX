@@ -1,6 +1,7 @@
 import { message } from '@/tool'
 import { createStrategyNode } from '@/lib/nodes'
 import { functionInputSlots, getFunctionInputHandleId, getSlotInputHandleId } from '@/lib/nodes/configs/function'
+import { ipcRenderer } from 'electron'
 
 /**
  * 导出文件格式标识
@@ -223,6 +224,20 @@ function convertBackendToFrontend(data) {
 }
 
 /**
+ * 从 modelFile 路径提取原策略名和 label
+ * 格式: production/{strategyName}-{label}.json
+ * @param {string} modelFile
+ * @returns {{ origStrategy: string, label: string } | null}
+ */
+function extractModelFileInfo(modelFile) {
+  if (!modelFile || !modelFile.startsWith('production/')) return null
+  const basename = modelFile.replace('production/', '').replace(/\.json$/, '')
+  const lastDash = basename.lastIndexOf('-')
+  if (lastDash <= 0) return null
+  return { origStrategy: basename.slice(0, lastDash), label: basename.slice(lastDash + 1) }
+}
+
+/**
  * 处理导入数据（核心逻辑）
  * @param {Object} data - 已解析的 JSON 数据
  * @param {Object} historyStore - history store 实例
@@ -249,13 +264,19 @@ async function processImportData(data, historyStore) {
 
     versionData.flowData = {
       ...versionData.flowData,
-      nodes: versionData.flowData.nodes.map(node => createStrategyNode({
-        id: node.id,
-        nodeType: node.data?.nodeType,
-        position: node.position,
-        label: node.data?.label,
-        params: node.data?.params,
-      }))
+      nodes: versionData.flowData.nodes.map(node => {
+        const created = createStrategyNode({
+          id: node.id,
+          nodeType: node.data?.nodeType,
+          position: node.position,
+          label: node.data?.label,
+          params: node.data?.params,
+        })
+        if (created.data?.nodeType === 'xgboost') {
+          console.info(`[importStrategy] createStrategyNode 后 XGBoost[${created.id}] modelFile:`, JSON.stringify(created.data.params?.modelFile))
+        }
+        return created
+      })
     }
   }
 
@@ -267,6 +288,71 @@ async function processImportData(data, historyStore) {
     console.info(`[importStrategy] 策略名冲突，自动重命名为：${strategyName}`)
   }
 
+  // 校验 XGBoost 节点模型文件是否存在，不存在则清空绑定
+  console.info(`[importStrategy] 开始校验 XGBoost 模型绑定, strategyName=${strategyName}, versions=${data.versions.length}`)
+  for (const versionData of data.versions) {
+    if (!versionData.flowData?.nodes) continue
+    for (const node of versionData.flowData.nodes) {
+      if (node.data?.nodeType !== 'xgboost') continue
+      const modelFile = node.data.params?.modelFile?.value || ''
+      console.info(`[importStrategy] XGBoost[${node.id}] 校验前 modelFile="${modelFile}"`)
+      if (!modelFile) {
+        console.info(`[importStrategy] XGBoost[${node.id}] modelFile 为空，跳过`)
+        continue
+      }
+
+      const info = extractModelFileInfo(modelFile)
+      console.info(`[importStrategy] XGBoost[${node.id}] extractModelFileInfo:`, JSON.stringify(info))
+      if (!info) {
+        node.data.params.modelFile.value = ''
+        console.info(`[importStrategy] XGBoost[${node.id}] modelFile 格式不合法，已清空`)
+        continue
+      }
+
+      // 1. 检查新策略名下是否已有模型
+      let checkRes
+      try {
+        checkRes = await ipcRenderer.invoke('model-check-exists', {
+          strategyName, label: info.label
+        })
+        console.info(`[importStrategy] XGBoost[${node.id}] model-check-exists 结果:`, JSON.stringify(checkRes))
+      } catch (err) {
+        console.error(`[importStrategy] XGBoost[${node.id}] model-check-exists IPC 调用失败:`, err.message)
+        checkRes = null
+      }
+      if (checkRes?.exists) {
+        node.data.params.modelFile.value = `production/${strategyName}-${info.label}.json`
+        console.info(`[importStrategy] XGBoost[${node.id}] 模型已存在，更新为: ${node.data.params.modelFile.value}`)
+        continue
+      }
+
+      // 2. 新策略名没有 → 尝试从原策略名复制
+      if (info.origStrategy && info.origStrategy !== strategyName) {
+        let copyRes
+        try {
+          copyRes = await ipcRenderer.invoke('model-copy-between', {
+            fromStrategy: info.origStrategy,
+            toStrategy: strategyName,
+            label: info.label
+          })
+          console.info(`[importStrategy] XGBoost[${node.id}] model-copy-between 结果:`, JSON.stringify(copyRes))
+        } catch (err) {
+          console.error(`[importStrategy] XGBoost[${node.id}] model-copy-between IPC 调用失败:`, err.message)
+          copyRes = null
+        }
+        if (copyRes?.success) {
+          node.data.params.modelFile.value = `production/${strategyName}-${info.label}.json`
+          console.info(`[importStrategy] XGBoost[${node.id}] 模型已从原策略复制，更新为: ${node.data.params.modelFile.value}`)
+          continue
+        }
+      }
+
+      // 3. 都不存在 → 清空绑定
+      node.data.params.modelFile.value = ''
+      console.info(`[importStrategy] XGBoost[${node.id}] 模型不存在，已清空绑定 → modelFile=""`)
+    }
+  }
+
   // 创建策略
   const newStrategyId = await historyStore.addStrategy(strategyName)
 
@@ -274,6 +360,16 @@ async function processImportData(data, historyStore) {
   let importedCount = 0
   for (const versionData of data.versions) {
     try {
+      // 保存前最终确认 XGBoost modelFile 状态
+      if (versionData.flowData?.nodes) {
+        for (const node of versionData.flowData.nodes) {
+          if (node.data?.nodeType === 'xgboost') {
+            const mf = node.data.params?.modelFile?.value || ''
+            console.info(`[importStrategy] 保存前最终检查 XGBoost[${node.id}] modelFile="${mf}"`)
+          }
+        }
+      }
+
       // 创建版本
       const newVersionId = await historyStore.addVersion(
         newStrategyId,

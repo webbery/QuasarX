@@ -272,7 +272,14 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
     for (auto* node: sorted_nodes) {
         auto itr = nodeConfigMap.find(node->id());
         if (itr != nodeConfigMap.end()) {
-            node->Init(itr->second);
+            if (!node->Init(itr->second)) {
+                String label = itr->second.value("label", "unknown");
+                String nodeType = itr->second.value("nodeType", "unknown");
+                String errMsg = fmt::format("Node '{}' (id={}, type={}) initialization failed",
+                                            label, node->id(), nodeType);
+                FATAL("[InitStrategy] {}", errMsg);
+                throw std::runtime_error(errMsg);
+            }
         }
     }
 

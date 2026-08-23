@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 // import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
 import axios from 'axios';
 import https from 'https';
-import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
+import { cpSync, mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync, statSync, copyFileSync, rmSync } from 'fs';
 import { createHash } from 'crypto';
 import { DuckDBInstance, DuckDBConnection, DuckDBAppender } from '@duckdb/node-api';
 import { initVectorDB, storeChunks, deleteChunks, vectorSearch, clearAll, getStats, getPages, shutdownVectorDB, preloadModel, initIntentTable, storeIntents, patchIntents, searchIntents, storeSummary, updateSummaryStatus, getSummaryStatus, deleteSummaryOnly, updateTags, storeChunkSummaries, getChunkSummariesByDocId, getChunksByDocId } from './vectorDB';
@@ -414,6 +414,61 @@ ipcMain.handle('model-list-bindings', async (_, strategyName: string) => {
     } catch (error: any) {
         console.error('[model-list-bindings] 错误:', error);
         return { success: false, error: error.message, labels: [] };
+    }
+});
+
+// 检查模型文件是否存在
+ipcMain.handle('model-check-exists', async (_, args: { strategyName: string; label: string }) => {
+    try {
+        const dir = join(app.getPath('userData'), 'models', args.strategyName);
+        const modelPath = join(dir, `${args.label}.json`);
+        if (!existsSync(modelPath)) {
+            return { success: true, exists: false };
+        }
+        const stat = statSync(modelPath);
+        return { success: true, exists: true, size: stat.size, mtime: stat.mtime.toISOString(), path: modelPath };
+    } catch (error: any) {
+        console.error('[model-check-exists] 错误:', error);
+        return { success: false, exists: false, error: error.message };
+    }
+});
+
+// 在策略间复制模型文件（导入时原策略有模型、新策略名不同时使用）
+ipcMain.handle('model-copy-between', async (_, args: {
+    fromStrategy: string; toStrategy: string; label: string
+}) => {
+    try {
+        const fromDir = join(app.getPath('userData'), 'models', args.fromStrategy);
+        const toDir = join(app.getPath('userData'), 'models', args.toStrategy);
+        const modelFile = `${args.label}.json`;
+        const metaFile = `${args.label}.meta.json`;
+        if (!existsSync(join(fromDir, modelFile))) {
+            return { success: false, error: '源模型不存在' };
+        }
+        mkdirSync(toDir, { recursive: true });
+        copyFileSync(join(fromDir, modelFile), join(toDir, modelFile));
+        if (existsSync(join(fromDir, metaFile))) {
+            copyFileSync(join(fromDir, metaFile), join(toDir, metaFile));
+        }
+        return { success: true };
+    } catch (error: any) {
+        console.error('[model-copy-between] 错误:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 删除策略时清理对应的本地模型目录 appData/models/{strategyName}/
+ipcMain.handle('model-delete-strategy', async (_, strategyName: string) => {
+    try {
+        const dir = join(app.getPath('userData'), 'models', strategyName);
+        if (existsSync(dir)) {
+            rmSync(dir, { recursive: true, force: true });
+            console.info(`[model-delete-strategy] 已删除模型目录: ${dir}`);
+        }
+        return { success: true };
+    } catch (error: any) {
+        console.error('[model-delete-strategy] 错误:', error);
+        return { success: false, error: error.message };
     }
 });
 

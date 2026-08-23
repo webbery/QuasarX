@@ -255,7 +255,14 @@ void XGBoostNode::buildOutputs(const String& symbolPrefix) {
 }
 
 NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& context) {
-    if (!_loaded) return NodeProcessResult::Skip;
+    if (!_loaded) {
+        if (_consecutiveSkipCount == 0) {
+            WARN("[XGBoost:{}] Model not loaded, skipping inference. modelFile='{}'",
+                 _id, _model_file);
+        }
+        ++_consecutiveSkipCount;
+        return NodeProcessResult::Skip;
+    }
 
     bool anySuccess = false;
 
@@ -264,36 +271,31 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         Vector<float> features(_n_features);
         bool ok = true;
         int validCount = 0;  // 统计有效 feature 数量（finite）
+        String failedFeature;
         for (int d = 0; d < _n_features; d++) {
             try {
                 // 兼容时间序列(Vector<double>)和标量(double)两种特征：
                 // 时间序列取当前时刻值(vec.back())，标量直接用当前值
                 const auto& value = context.get(resolvedKeys[d]);
                 if (auto* vec = std::get_if<Vector<double>>(&value)) {
-                    if (vec->empty()) { ok = false; break; }
+                    if (vec->empty()) { ok = false; failedFeature = resolvedKeys[d] + "(empty_vec)"; break; }
                     features[d] = static_cast<float>(vec->back());
                 } else if (auto* scalar = std::get_if<double>(&value)) {
                     features[d] = static_cast<float>(*scalar);
                 } else {
-                    ok = false; break;
+                    ok = false; failedFeature = resolvedKeys[d] + "(bad_variant)"; break;
                 }
                 if (std::isfinite(features[d])) ++validCount;
             } catch (...) {
-                WARN("[XGBoost] Read feature {} fail.", resolvedKeys[d]);
-                ok = false; break;
+                DEBUG_INFO("[XGBoost] Read feature {} fail.", resolvedKeys[d]);
+                ok = false; failedFeature = resolvedKeys[d] + "(exception)"; break;
             }
+        }
+        if (!ok) {
+            _lastSkipReason = fmt::format("symbol={} failed at '{}' (valid={}/{})",
+                                          symbol, failedFeature, validCount, _n_features);
         }
         if (!ok) continue;
-        // 临时调试日志：打印每 epoch 收集到的原始特征值（诊断 C++ vs Python 概率不一致）
-        {
-            String featDbg;
-            for (int d = 0; d < _n_features; d++) {
-                if (d > 0) featDbg += ",";
-                featDbg += std::to_string(features[d]);
-            }
-            INFO("[XGBoost:{}] epoch {} raw feat=[{}] valid={}/{}",
-                 _id, context.GetEpoch(), symbol, featDbg, validCount, _n_features);
-        }
         // 有效 feature 不足时跳过推理（早期 epoch 滚动窗口未填满：
         // EMD 120d + ZScore 20d → 前 119 根 K 线 EMD 派生 features 全 NaN），
         // 避免 XGBoost 收到大量 NaN + 少量 finite 走 default branch 输出均匀分布
@@ -445,7 +447,26 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
         anySuccess = true;
     }
 
-    return anySuccess ? NodeProcessResult::Success : NodeProcessResult::Skip;
+    if (anySuccess) {
+        _consecutiveSkipCount = 0;
+        return NodeProcessResult::Success;
+    }
+
+    ++_consecutiveSkipCount;
+    // 预热期内允许 Skip（特征窗口尚未填满），超过阈值后视为持续性故障
+    const int maxSkipEpochs = 60;
+    if (_consecutiveSkipCount > maxSkipEpochs) {
+        FATAL("[XGBoost:{}] All symbols failed feature collection for {} consecutive epochs (limit={}). "
+              "Last reason: {}. Check upstream node data availability.",
+              _id, _consecutiveSkipCount, maxSkipEpochs, _lastSkipReason);
+        return NodeProcessResult::Error;
+    }
+
+    if (_consecutiveSkipCount <= 3 || _consecutiveSkipCount % 20 == 0) {
+        WARN("[XGBoost:{}] All symbols failed feature collection ({}/{} epochs), reason: {}",
+             _id, _consecutiveSkipCount, maxSkipEpochs, _lastSkipReason);
+    }
+    return NodeProcessResult::Skip;
 }
 
 Map<String, ArgType> XGBoostNode::out_elements() {

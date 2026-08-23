@@ -54,20 +54,13 @@
         />
       </template>
 
-      <Controls
-        :show-zoom="true"
-        :show-fit-view="true"
-        :show-interactive="true"
-      />
-
       <MiniMap
-        pannable
-        zoomable
         :node-color="miniMapNodeColor"
         :mask-color="'rgba(15, 23, 42, 0.7)'"
         :node-stroke-color="'#334155'"
         :node-border-radius="4"
-        position="bottom-right"
+        :bg-color="'rgba(15, 23, 42, 0.5)'"
+        position="top-right"
       />
     </VueFlow>
   </div>
@@ -75,7 +68,6 @@
 
 <script setup>
 import { VueFlow } from '@vue-flow/core'
-import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { ref, watch } from 'vue'
 import FlowNode from './flow/FlowNode.vue'
