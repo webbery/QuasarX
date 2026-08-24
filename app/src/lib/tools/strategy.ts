@@ -213,6 +213,11 @@ async function deleteStrategy(id: string): Promise<string> {
   if (!strategy) return `未找到策略图 "${id}"`
 
   await historyStore.removeStrategy(id)
+  // 清理本地模型文件
+  try {
+    const { ipcRenderer } = await import('electron')
+    await ipcRenderer.invoke('model-delete-strategy', strategy.name)
+  } catch { /* IPC 不可用时静默跳过 */ }
   return `策略图 "${strategy.name}" (${id}) 及其所有版本已删除`
 }
 

@@ -174,8 +174,10 @@ export function useChartData(
 
       // 更新策略性能日期
       updateStrategyPerformanceDates(prices)
-    } catch (error) {
-      console.error('[useChartData] 获取价格数据失败:', error)
+    } catch (error: any) {
+      const status = error?.response?.status
+      const detail = error?.response?.data?.error || error?.response?.statusText || error?.message
+      console.error(`[useChartData] 获取价格数据失败 (symbol=${symbol}, status=${status}): ${detail}`)
     }
   }
 

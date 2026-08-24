@@ -65,6 +65,10 @@ private:
     // 按 symbol 解析的实际 context key（symbol → [contextKey per feature]）
     Map<String, Vector<String>> _resolved_features;
 
+    // 连续 Skip 计数（用于区分预热期临时 Skip 和持续性故障）
+    int _consecutiveSkipCount = 0;
+    String _lastSkipReason;
+
     static XGBObjective parseObjective(const String& s);
     void buildOutputs(const String& symbolPrefix);
     void cleanup();

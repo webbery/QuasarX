@@ -47,6 +47,7 @@ bool FormulaNode::Init(const nlohmann::json& config) {
 
 NodeProcessResult FormulaNode::Process(const String& strategy, DataContext& context) {
     if (!_parser || _symbols.empty()) {
+        WARN("[FormulaNode:{}] Process Skip: parser={}, symbols={}", _id, (bool)_parser, _symbols.size());
         return NodeProcessResult::Skip;
     }
 

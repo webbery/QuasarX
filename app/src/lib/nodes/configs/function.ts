@@ -17,6 +17,7 @@ export const functionInputSlots: Record<string, Array<{ slot: string; field: str
   'R2':      [{ slot: 'price',   field: 'close',  label: '价格序列' }],
   'ZScore':  [{ slot: 'price',   field: 'close',  label: '价格序列' }],
   'Return':  [{ slot: 'price',   field: 'close',  label: '价格序列' }],
+  'Median':  [{ slot: 'price',   field: 'close',  label: '价格序列' }],
   'VPCorr':  [
     { slot: 'price',  field: 'close',  label: '收盘价' },
     { slot: 'volume', field: 'volume', label: '成交量' },
@@ -68,7 +69,7 @@ export const basicIndexNode: NodeRegistryEntry = {
   nodeType: 'function',
   category: 'process',
   icon: 'fas fa-calculator',
-  description: '计算技术指标：移动平均(MA)、标准差(STD)、收益率(Return)、拟合优度(R2)、标准化(ZScore)、量价相关性(VPCorr)、平均真实波幅(ATR)。',
+  description: '计算技术指标：移动平均(MA)、标准差(STD)、收益率(Return)、拟合优度(R2)、标准化(ZScore)、中位数(Median)、量价相关性(VPCorr)、平均真实波幅(ATR)。',
   inputs: ['timeseries'],
   outputs: ['indicator'],
   params: [
@@ -78,6 +79,7 @@ export const basicIndexNode: NodeRegistryEntry = {
       { label: 'Return (收益率)', value: 'Return' },
       { label: 'R2 (拟合优度)', value: 'R2' },
       { label: 'ZScore (标准化)', value: 'ZScore' },
+      { label: 'Median (中位数)', value: 'Median' },
       { label: 'VPCorr (量价相关性)', value: 'VPCorr' },
       { label: 'ATR (平均真实波幅)', value: 'ATR' }
     ]},

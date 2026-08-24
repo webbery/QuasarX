@@ -197,6 +197,12 @@ public:
 
     BacktestMcPaths GetBacktestMcPaths(const String& strategy) const;
 
+    String GetLastError(const String& strategy) const {
+        auto it = _flows.find(strategy);
+        if (it == _flows.end()) return "";
+        return it->second._lastError;
+    }
+
     /**
      * @brief 日级策略执行（收盘后调用，异步模式）
      * 
@@ -273,6 +279,9 @@ private:
         uint64_t _epochCount = 0;       // 总执行周期数
         time_t _lastHeartbeat = 0;      // 最后一次心跳的时间戳
         time_t _lastEvoke = 0;          // 最后一次成功执行的时间戳
+
+        // 最近一次节点执行错误信息（RunGraph 中节点返回 Error 时设置）
+        mutable String _lastError;
     };
 
     Map<String, StrategyFlowInfo> _flows; 

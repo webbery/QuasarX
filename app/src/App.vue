@@ -362,13 +362,23 @@ const reportChartVisibility = ref({})
 
 /**
  * 从 localStorage 加载报表配置
+ * 合并 CHART_REGISTRY 默认值，确保新增图表也能正确显示
  */
 function loadReportConfig() {
   try {
+    // 先从 CHART_REGISTRY 构建默认值
+    const defaults = {}
+    for (const chart of CHART_REGISTRY) {
+      defaults[chart.id] = chart.defaultVisible
+    }
     const stored = localStorage.getItem('quasarx_report_config')
     if (stored) {
       const parsed = JSON.parse(stored)
-      reportChartVisibility.value = parsed.chartVisibility || {}
+      const stored_visibility = parsed.chartVisibility || {}
+      // 默认值 + 已保存值（已保存的覆盖默认值）
+      reportChartVisibility.value = { ...defaults, ...stored_visibility }
+    } else {
+      reportChartVisibility.value = defaults
     }
   } catch (e) {
     console.warn('[App] 加载报表配置失败', e)

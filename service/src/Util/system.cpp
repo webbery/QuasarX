@@ -983,15 +983,22 @@ std::string toInternalSymbol(const std::string& symbol) {
     auto dot = symbol.find('.');
     if (dot == std::string::npos) {
         // 纯数字代码，根据前缀推断交易所
+        if (symbol.empty()) return symbol;
         if (symbol[0] == '6' || symbol[0] == '5') return "sh." + symbol;
         return "sz." + symbol;
     }
-    std::string code = symbol.substr(0, dot);
-    std::string market = symbol.substr(dot + 1);
-    // 转小写
-    std::transform(market.begin(), market.end(), market.begin(), ::tolower);
-    if (market == "sh" || market == "sse") return "sh." + code;
-    if (market == "sz" || market == "szse") return "sz." + code;
-    if (market == "bj") return "bj." + code;
-    return market + "." + code;
+    std::string first = symbol.substr(0, dot);
+    std::string second = symbol.substr(dot + 1);
+    // 先检查 dot 前是否已经是市场前缀（内部格式 sh.600111 / sz.000001）
+    std::string firstLower = first;
+    std::transform(firstLower.begin(), firstLower.end(), firstLower.begin(), ::tolower);
+    if (firstLower == "sh" || firstLower == "sz" || firstLower == "bj") {
+        return firstLower + "." + second;
+    }
+    // 外部格式：代码.市场（600111.SH / 000001.SZSE）
+    std::transform(second.begin(), second.end(), second.begin(), ::tolower);
+    if (second == "sh" || second == "sse") return "sh." + first;
+    if (second == "sz" || second == "szse") return "sz." + first;
+    if (second == "bj") return "bj." + first;
+    return second + "." + first;
 }

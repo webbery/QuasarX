@@ -50,6 +50,7 @@ FlowSubsystem::~FlowSubsystem() {
 bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_flow) {
     bool status = true;
     _flows[strategy]._graph = topo_flow;
+    _flows[strategy]._lastError.clear();
     return status;
 }
 
@@ -929,37 +930,42 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
 
     // 根据策略图生成信号
     for (auto node: flow._graph) {
+        String nodeType = "unknown";
+        if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "QuoteInputNode";
+        else if (dynamic_cast<SignalNode*>(node)) nodeType = "SignalNode";
+        else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
+        else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
+        else if (dynamic_cast<FunctionNode*>(node)) nodeType = "FunctionNode";
+        else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
+        else nodeType = typeid(*node).name();
+
         // 跳过预热期的信号、执行和投资组合节点
         if (inWarmup) {
             if (dynamic_cast<SignalNode*>(node) ||
                 dynamic_cast<ExecuteNode*>(node) ||
                 dynamic_cast<PortfolioNode*>(node)) {
+                INFO("[RunGraph] Epoch {} warmup: skip {} (id={}, type={})",
+                     context.GetEpoch(), node->id(), node->id(), nodeType);
                 continue;
             }
         }
-        
-        // String nodeType = "unknown";
-        // if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "QuoteInputNode";
-        // else if (dynamic_cast<FunctionNode*>(node)) nodeType = "FunctionNode";
-        // else if (dynamic_cast<SignalNode*>(node)) nodeType = "SignalNode";
-        // else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "PortfolioNode";
-        // else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "ExecuteNode";
-        // else if (dynamic_cast<DebugNode*>(node)) nodeType = "DebugNode";
 
-        // INFO("[RunGraph] Epoch {}, node {} ({})", context.GetEpoch(), node->id(), nodeType);
+        INFO("[RunGraph] Epoch {} calling Process: id={}, type={}", context.GetEpoch(), node->id(), nodeType);
         auto result = node->Process(strategy, context);
-        // INFO("[RunGraph] Epoch {}, node {} returned {}", context.GetEpoch(), node->id(), (int)result);
-        
+        INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", context.GetEpoch(), node->id(), nodeType, (int)result);
+
         switch (result) {
             case NodeProcessResult::Success:
                 // 继续下一个节点
                 break;
-                
+
             case NodeProcessResult::Skip:
                 // 时间不对齐等场景，跳过本轮
                 shouldSkipEpoch = true;
+                WARN("[RunGraph] Epoch {} node id={} ({}) returned Skip → epoch skipped, remaining nodes NOT executed",
+                     context.GetEpoch(), node->id(), nodeType);
                 break;
-                
+
             case NodeProcessResult::Finished:
                 // 回测模式下，QuoteInputNode 数据正常结束
                 if (_handle->GetRunningMode() == RuningType::Backtest) {
@@ -972,16 +978,20 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
                 // 其他情况视为错误
                 INFO("{} process finished unexpectedly", node->id());
                 return false;
-                
-            case NodeProcessResult::Error:
-                INFO("{} process failed with error", node->id());
+
+            case NodeProcessResult::Error: {
+                String errMsg = fmt::format("Node id={} ({}) failed at epoch {}",
+                                            node->id(), nodeType, context.GetEpoch());
+                FATAL("[RunGraph] {}", errMsg);
+                flow._lastError = errMsg;
                 return false;
+            }
         }
-        
+
         // 如果标记为跳过，提前终止后续节点执行
         if (shouldSkipEpoch) break;
     }
-    
+
     if (shouldSkipEpoch) {
         return true;  // 返回 true 继续运行，但不执行风控
     }
@@ -1280,7 +1290,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     INFO("[StartDaily] Strategy {} completed: {} epochs, {} decisions", strategy, epoch, decisions.size());
                 } else {
                     result["status"] = "error";
-                    result["error"] = "graph execution failed";
+                    result["error"] = flow._lastError.empty() ? "graph execution failed" : flow._lastError.c_str();
                 }
                 for (auto node : flow._graph) node->Done(strategy);
             } catch (const std::exception& e) {
@@ -1440,13 +1450,14 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     INFO("[StartDaily] Live mode: {} completed {} epochs, {} decisions",
                          strategy, epoch, decisions.size());
                 } else {
+                    String errDetail = flow._lastError.empty() ? "graph execution failed" : String(flow._lastError);
                     result["status"] = "error";
-                    result["error"] = "graph execution failed";
+                    result["error"] = errDetail.c_str();
                     // 失败 → 发送错误邮件
                     if (_handle) {
                         String body = "[日终策略执行失败]\n\n";
                         body += "策略: " + strategy + "\n";
-                        body += "错误: graph execution failed\n";
+                        body += "错误: " + errDetail + "\n";
                         _handle->SendEmail(body);
                     }
                 }

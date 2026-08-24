@@ -280,7 +280,7 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
     const summary = result.summary || {}
     const buyCount = summary.buy_count || (result.buy?.length || 0)
     const sellCount = summary.sell_count || (result.sell?.length || 0)
-    const sharp = result.features['sharp']
+    const sharp = result.features?.['sharp'] ?? 'N/A'
 
     addInfoMessage(`回测完成：${buyCount}笔买入，${sellCount}笔卖出，夏普率${sharp}`, 'success')
   }
