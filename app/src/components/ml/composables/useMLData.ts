@@ -214,10 +214,13 @@ export function useMLData() {
     }
   }
 
-  /** 计算 SHAP 值 */
-  async function shap(modelId: number): Promise<ShapResult | null> {
+  /** 计算 SHAP 值（可选日期过滤） */
+  async function shap(modelId: number, startDate?: string, endDate?: string): Promise<ShapResult | null> {
     try {
-      const resp = await axios.post('/v0/ml', { action: 'shap', model_id: modelId })
+      const body: Record<string, any> = { action: 'shap', model_id: modelId }
+      if (startDate) body.start_date = startDate
+      if (endDate) body.end_date = endDate
+      const resp = await axios.post('/v0/ml', body)
       return resp.data as ShapResult
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'SHAP 计算失败'

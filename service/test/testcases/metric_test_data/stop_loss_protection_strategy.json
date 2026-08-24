@@ -1,0 +1,91 @@
+{
+  "id": "test_stop_loss_protection",
+  "name": "风控测试_止损",
+  "version": 1,
+  "description": "买入持有 + 5%止损保护（用于 ProtectionNode 验证）",
+  "backtest": {
+    "start": "2023-01-01",
+    "end": "2023-04-01"
+  },
+  "nodes": [
+    {
+      "id": "1",
+      "type": "custom",
+      "data": {
+        "label": "行情数据",
+        "nodeType": "input",
+        "params": {
+          "source": { "value": "股票", "type": "select" },
+          "code": { "value": ["sz.900002"], "type": "text" },
+          "freq": { "value": "1d", "type": "select" },
+          "close": { "value": "close", "type": "text" },
+          "open": { "value": "open", "type": "text" },
+          "high": { "value": "high", "type": "text" },
+          "low": { "value": "low", "type": "text" },
+          "volume": { "value": "volume", "type": "text" }
+        }
+      }
+    },
+    {
+      "id": "2",
+      "type": "custom",
+      "data": {
+        "label": "买入信号",
+        "nodeType": "signal",
+        "params": {
+          "code": { "value": ["sz.900002"], "type": "text" },
+          "buy": { "value": "true", "type": "text" },
+          "sell": { "value": "false", "type": "text" }
+        }
+      }
+    },
+    {
+      "id": "3",
+      "type": "custom",
+      "data": {
+        "label": "投资组合",
+        "nodeType": "portfolio",
+        "params": {
+          "positionRatio": { "value": 1.0, "type": "number" }
+        }
+      }
+    },
+    {
+      "id": "5",
+      "type": "custom",
+      "data": {
+        "label": "风控保护",
+        "nodeType": "protection",
+        "params": {
+          "stop_loss": { "enabled": true, "percent": 0.05 },
+          "take_profit": { "enabled": false, "percent": 0.0 },
+          "trailing_stop": { "enabled": false, "percent": 0.0 },
+          "time_stop": { "enabled": false, "max_bars": 0 }
+        }
+      }
+    },
+    {
+      "id": "4",
+      "type": "custom",
+      "data": {
+        "label": "交易执行",
+        "nodeType": "execution",
+        "params": {
+          "commission": { "value": 0.0, "type": "number" },
+          "stampDuty": { "value": 0.0, "type": "number" },
+          "minFee": { "value": 0, "type": "number" },
+          "slippageModel": { "value": 0, "type": "number" },
+          "slippage": { "value": 0.0, "type": "number" },
+          "type": { "value": 1, "type": "select" },
+          "contract": { "value": 0, "type": "select" }
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "1->2", "source": "1", "target": "2", "sourceHandle": "1", "targetHandle": "2" },
+    { "id": "2->3", "source": "2", "target": "3", "sourceHandle": "2", "targetHandle": "3" },
+    { "id": "3->5", "source": "3", "target": "5", "sourceHandle": "3", "targetHandle": "5" },
+    { "id": "5->4", "source": "5", "target": "4", "sourceHandle": "5", "targetHandle": "4" }
+  ]
+}

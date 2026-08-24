@@ -61,6 +61,7 @@
 #include "Handler/PredictionHandler.h"
 #include "Handler/FutureHandler.h"
 #include "Handler/OptionHandler.h"
+#include "Handler/OptionDataHandler.h"
 #include "Handler/IndexHandler.h"
 #include "Handler/BackTestHandler.h"
 #include "Handler/CapacityHandler.h"
@@ -142,6 +143,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_ALL_OPTION      "/option/simple"
 #define API_OPTION_HISTORY  "/option/history"
 #define API_OPTION_DETAIL   "/option/detail"
+#define API_OPTION_DATA     "/option/data"
 #define API_STOCK_DETAIL    "/stocks/detail"
 #define API_STOCK_HISTORY   "/stocks/history"
 #define API_ALL_STOCK       "/stocks/simple"
@@ -401,6 +403,9 @@ void Server::Regist() {
     REGIST_POST(API_DIVIDEND);
     REGIST_GET(API_DIVIDEND);
     REGIST_DEL(API_DIVIDEND);
+    REGIST_POST(API_OPTION_DATA);
+    REGIST_GET(API_OPTION_DATA);
+    REGIST_DEL(API_OPTION_DATA);
     REGIST_POST(API_ML);
     REGIST_GET(API_ML);
     REGIST_DEL(API_ML);
@@ -1301,6 +1306,7 @@ void Server::InitHandlers() {
     RegistHandler(API_FINANCE, FinanceHandler);
     RegistHandler(API_FINANCE_DATA, FinanceDataHandler);
     RegistHandler(API_DIVIDEND, DividendHandler);
+    RegistHandler(API_OPTION_DATA, OptionDataHandler);
     RegistHandler(API_ML, MLHandler);
 
 #ifdef _DEBUG

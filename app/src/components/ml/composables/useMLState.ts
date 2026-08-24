@@ -57,6 +57,7 @@ export interface ShapResult {
   shap: number[][]
   base_value: number[]
   n_samples: number
+  dates: string[]
 }
 
 export interface LabelAnalysisResult {

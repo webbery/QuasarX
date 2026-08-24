@@ -318,12 +318,14 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
 void StrategySubSystem::EnsureDailyReady() {
     std::lock_guard<std::mutex> lock(_dailyMtx);
 
-    if (!_dailyInitialized) {
-        _dailyInitialized = true;
-        // 内联 ResetDaily 逻辑
+    String today = ToString(Now(), "%Y-%m-%d");
+    if (today != _lastDailyDate) {
         _dailyReadySymbols.clear();
         _dailyExecutedStrategies.clear();
         _dailyErrors.clear();
+        _lastDailyDate = today;
+        _dailyInitialized = true;
+        INFO("[DailyExecution] New trading day: {}, state reset", today);
     }
 
     // 增量注册：扫描 _strategies 中尚未注册的策略

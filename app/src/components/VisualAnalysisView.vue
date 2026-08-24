@@ -4,7 +4,7 @@
     <div class="main-tabs">
       <div class="tabs-header">
         <button
-          v-for="tab in tabs"
+          v-for="tab in visibleTabs"
           :key="tab.name"
           :class="['tab-item', { active: activeTab === tab.name }]"
           @click="activeTab = tab.name"
@@ -244,6 +244,7 @@
 import { ref, onMounted, onUnmounted, watch, computed, inject } from 'vue'
 import * as echarts from 'echarts'
 import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
+import { useAnalysisPanelConfig } from '@/composables/useAnalysisPanelConfig'
 import VolatilityTab from './volatility/VolatilityTab.vue'
 import SignalTab from './signal/SignalTab.vue'
 import PCATab from './pca/PCATab.vue'
@@ -257,7 +258,7 @@ import NonlinearTab from './nonlinear/NonlinearTab.vue'
 const unit = 100000000 // 单位:亿
 
 // Tab 配置
-const tabs = [
+const allTabs = [
   { label: '波动率分析', name: 'volatility' },
   { label: '信号分析', name: 'signal' },
   { label: 'PCA 主成分', name: 'pca' },
@@ -270,6 +271,17 @@ const tabs = [
   { label: '资金流向', name: 'flow' },
   { label: '策略数据', name: 'strategyData' }
 ]
+
+const { panels } = useAnalysisPanelConfig()
+const visibleTabs = computed(() =>
+  allTabs.filter(t => panels.value.find(p => p.id === t.name)?.enabled)
+)
+
+watch(visibleTabs, (tabs) => {
+  if (tabs.length > 0 && !tabs.find(t => t.name === activeTab.value)) {
+    activeTab.value = tabs[0].name
+  }
+})
 
 // === 策略数据 Tab 状态 ===
 const availableDebugNodes = ref([])
@@ -932,7 +944,9 @@ const downloadCSV = () => {
 // 从右侧面板切换 Tab
 const onSwitchAnalysisTab = (e) => {
   const tab = e.detail?.tab
-  if (tab) activeTab.value = tab
+  if (tab && visibleTabs.value.find(t => t.name === tab)) {
+    activeTab.value = tab
+  }
 }
 
 // 生命周期

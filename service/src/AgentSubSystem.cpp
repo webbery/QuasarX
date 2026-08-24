@@ -950,9 +950,8 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             }
         }
 
-        INFO("[RunGraph] Epoch {} calling Process: id={}, type={}", context.GetEpoch(), node->id(), nodeType);
         auto result = node->Process(strategy, context);
-        INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", context.GetEpoch(), node->id(), nodeType, (int)result);
+        DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", context.GetEpoch(), node->id(), nodeType, (int)result);
 
         switch (result) {
             case NodeProcessResult::Success:

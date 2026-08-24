@@ -152,6 +152,7 @@ private:
     Set<String> _dailyExecutedStrategies;             // 已执行策略
     Vector<String> _dailyErrors;                      // 日终执行失败信息
     bool _dailyInitialized = false;
+    String _lastDailyDate;                          // 上次初始化日期，用于跨天重置
     mutable std::mutex _dailyMtx;
 
     // ── 日终持仓追踪（策略名 → (symbol → 当前持仓股数)） ──

@@ -18,6 +18,7 @@
 #include <sstream>
 #include <random>
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <limits>
 #include <filesystem>
@@ -573,6 +574,13 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     }
                 }
             }
+            // X_test_dates: 与 X_test 行对齐的日期字符串
+            Vector<String> xTestDates;
+            if (trainResult.contains("X_test_dates") && trainResult["X_test_dates"].is_array()) {
+                for (const auto& d : trainResult["X_test_dates"]) {
+                    xTestDates.push_back(d.get<String>());
+                }
+            }
             uint64_t modelId = 0;
             if (booster) {
                 Vector<String> actualFeatures;
@@ -582,7 +590,10 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 modelId = registerModel(modelType, booster, actualFeatures, Xtest);
                 trainResult["model_id"] = modelId;
                 trainResult["model_type"] = modelTypeToString(modelType);
-                if (auto* m = getModel(modelId)) m->_modelPath = persistPath;
+                if (auto* m = getModel(modelId)) {
+                    m->_modelPath = persistPath;
+                    m->_x_test_dates = std::move(xTestDates);
+                }
                 // 回写 model_id 到 meta.json（注册前写入的 meta 没有 model_id）
                 {
                     String metaPath = expDir + "/" + persistName + ".meta.json";
@@ -597,6 +608,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 }
             }
             trainResult.erase("X_test");
+            trainResult.erase("X_test_dates");
             trainResult["model_path"] = persistPath;
             // 保留 CSV 供调试分析（临时目录由系统定期清理）
             std::remove(state->_modelPath.c_str());
@@ -608,6 +620,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             WARN("[MLTrain] 模型持久化/加载异常: {}", e.what());
             sendSSE("error", {{"step","train_model"},{"msg", String("模型持久化失败: ") + e.what()}});
             trainResult.erase("X_test");
+            trainResult.erase("X_test_dates");
             sendSSE("result", trainResult);
             session->finish(trainResult);
         }
@@ -1079,13 +1092,44 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
     }
 
     size_t n_features = model->_features.size();
-    size_t n_samples = static_cast<size_t>(model->_x_test.rows());
+    size_t n_total = static_cast<size_t>(model->_x_test.rows());
+
+    // 解析可选的日期过滤参数
+    String startDate, endDate;
+    if (params.contains("start_date")) startDate = params["start_date"].get<String>();
+    if (params.contains("end_date")) endDate = params["end_date"].get<String>();
+
+    // 构建行索引过滤（日期范围）
+    std::vector<size_t> rowIndices;
+    const auto& dates = model->_x_test_dates;
+    bool hasDateFilter = !startDate.empty() || !endDate.empty();
+    bool hasDates = dates.size() == n_total;
+
+    if (hasDateFilter && hasDates) {
+        for (size_t i = 0; i < n_total; ++i) {
+            const auto& d = dates[i];
+            if (!startDate.empty() && d < startDate) continue;
+            if (!endDate.empty() && d > endDate) continue;
+            rowIndices.push_back(i);
+        }
+    } else {
+        rowIndices.resize(n_total);
+        std::iota(rowIndices.begin(), rowIndices.end(), 0);
+    }
+
+    size_t n_samples = rowIndices.size();
+    if (n_samples == 0) {
+        res.status = 400;
+        res.set_content(R"({"message":"no samples in date range"})", "application/json");
+        return;
+    }
 
     std::vector<float> flat(n_samples * n_features);
-    for (size_t i = 0; i < n_samples; ++i) {
+    for (size_t k = 0; k < n_samples; ++k) {
+        size_t i = rowIndices[k];
         for (size_t j = 0; j < n_features; ++j) {
             double v = (j < static_cast<size_t>(model->_x_test.cols())) ? model->_x_test(i, j) : 0.0;
-            flat[i * n_features + j] = static_cast<float>(v);
+            flat[k * n_features + j] = static_cast<float>(v);
         }
     }
 
@@ -1214,12 +1258,21 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
     nlohmann::json featuresArr = nlohmann::json::array();
     for (auto& f : model->_features) featuresArr.push_back(f);
 
+    // 返回过滤后的日期数组
+    nlohmann::json datesArr = nlohmann::json::array();
+    if (hasDates) {
+        for (size_t k = 0; k < n_samples; ++k) {
+            datesArr.push_back(model->_x_test_dates[rowIndices[k]]);
+        }
+    }
+
     nlohmann::json resp = {
         {"model_id", modelId},
         {"features", featuresArr},
         {"shap", shapList},
         {"base_value", baseList},
         {"n_samples", n_samples},
+        {"dates", datesArr},
     };
     res.set_content(resp.dump(), "application/json");
 }

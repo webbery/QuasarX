@@ -310,6 +310,24 @@ def main():
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]
 
+    # 提取 X_test 对应的日期（用于 SHAP 时间热力图）
+    test_dates = []
+    if hasattr(df, 'index') and hasattr(df.index, 'strftime'):
+        try:
+            # vector 模式：valid_mask 已定义，按过滤后的日期取 test 部分
+            valid_dates = df.index[valid_mask]
+            test_dates = valid_dates[split:].strftime('%Y-%m-%d').tolist()
+        except NameError:
+            # matrix 模式：多标的 stacking，日期按样本数均分
+            all_dates = df.index.strftime('%Y-%m-%d').tolist()
+            n_symbols = len(X) // len(all_dates) if len(all_dates) > 0 else 0
+            if n_symbols > 0:
+                test_rows = len(X_test)
+                # 最后一个 symbol 的 test 部分
+                test_dates = (all_dates * n_symbols)[split:split + test_rows]
+            elif len(all_dates) >= len(X):
+                test_dates = all_dates[split:]
+
     emit({"type": "progress", "phase": "split", "n_train": len(X_train), "n_test": len(X_test), "n_features": X.shape[1]})
 
     is_classification = args.label_type == "classification"
@@ -500,6 +518,7 @@ def main():
         "eval_metrics": eval_metrics,
         "predictions": predictions,
         "X_test": xtest_json,
+        "X_test_dates": test_dates,
     })
 
 

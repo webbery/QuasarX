@@ -7,6 +7,7 @@
 #include "nng/protocol/pipeline0/pull.h"
 #include "nng/protocol/pipeline0/push.h"
 #include "Bridge/ETFOptionSymbol.h"
+#include "Bridge/OptionSymbolMacros.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -619,6 +620,12 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     break;
     case ContractType::Index: id._type = contract_type::index; break;
     default: break;
+    }
+    // ── CFFEX 股指期权格式检测 (IO/HO/MO + YYMM + C/P + strike) ──
+    // 若 _markets 未注册 (不在 option_market.csv 中), 按字符串格式兜底解析
+    if (id._type == contract_type::stock && parse_cffex_option(id, strSymbol)) {
+        // parse_cffex_option 已填充 _type/_year/_month/_price/_exchange
+        // 继续走下面的 exchange 赋值逻辑
     }
     if (tokens.size() > 1) {
       auto excName = to_upper(tokens.front());

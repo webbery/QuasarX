@@ -8,10 +8,10 @@
         v-for="item in panels"
         :key="item.id"
         class="panel-item"
-        @click="onPanelClick(item)"
+        @click="switchTab(item.id)"
       >
         <label class="panel-checkbox" @click.stop>
-          <input type="checkbox" v-model="item.enabled" />
+          <input type="checkbox" :checked="item.enabled" @change="toggle(item.id)" />
           <span class="checkmark"></span>
         </label>
         <span class="panel-label">{{ item.label }}</span>
@@ -25,11 +25,8 @@ import { useAnalysisPanelConfig } from '@/composables/useAnalysisPanelConfig'
 
 const { panels, toggle } = useAnalysisPanelConfig()
 
-function onPanelClick(item: { id: string; enabled: boolean }) {
-  if (!item.enabled) {
-    toggle(item.id)
-  }
-  window.dispatchEvent(new CustomEvent('switch-analysis-tab', { detail: { tab: item.id } }))
+function switchTab(id: string) {
+  window.dispatchEvent(new CustomEvent('switch-analysis-tab', { detail: { tab: id } }))
 }
 </script>
 

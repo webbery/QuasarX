@@ -154,6 +154,9 @@ const orderedItems = computed<OrderedItem[]>(() => {
         'benchmark-name': benchmarkName.value,
         'selected-benchmark': selectedBenchmark.value,
         'is-estimated': strategyReturnsEstimated.value,
+        'raw-buy-signals': dataState.rawBuySignals.value,
+        'raw-sell-signals': dataState.rawSellSignals.value,
+        'selected-symbol': selectedSymbol.value[0] || '',
         onBenchmarkChange: onBenchmarkChange,
         onRefreshBenchmark: refreshBenchmark,
       }

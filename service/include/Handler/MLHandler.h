@@ -33,6 +33,7 @@ struct CachedMLModel {
     BoosterHandle _booster = nullptr;
     Vector<String> _features;
     Eigen::MatrixXd _x_test;  // 行=样本, 列=特征
+    Vector<String> _x_test_dates;  // 与 _x_test 行对齐的日期 (YYYY-MM-DD)
     String _modelPath;        // 实验文件路径，用于下载 / bind
 
     ~CachedMLModel() { clear(); }
@@ -43,6 +44,7 @@ struct CachedMLModel {
             _booster = nullptr;
         }
         _features.clear();
+        _x_test_dates.clear();
         _modelPath.clear();
     }
 };

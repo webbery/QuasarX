@@ -35,6 +35,9 @@ interface Props {
   benchmarkName: string
   selectedBenchmark: string
   isEstimated?: boolean
+  rawBuySignals?: any[]   // [symbol, timestamp, quantity, price][]
+  rawSellSignals?: any[]  // [symbol, timestamp, quantity, price][]
+  selectedSymbol?: string
 }
 
 interface Emits {
@@ -165,18 +168,93 @@ const cumulativeReturns = computed(() => {
 })
 
 /**
+ * 计算持仓区间（从买卖信号配对），用于 markArea 背景色
+ */
+const holdingPeriods = computed(() => {
+  const symbol = props.selectedSymbol
+  const buys = props.rawBuySignals || []
+  const sells = props.rawSellSignals || []
+  if (!symbol || buys.length === 0) return []
+
+  const symbolBuys = buys.filter(s => s[0] === symbol).map(s => s[1])
+  const symbolSells = sells.filter(s => s[0] === symbol).map(s => s[1])
+  symbolBuys.sort((a, b) => a - b)
+  symbolSells.sort((a, b) => a - b)
+
+  const dates = xAxisDates.value
+  if (dates.length === 0) return []
+
+  const lastDate = dates[dates.length - 1]
+
+  const periods: Array<[string, string]> = []
+  let sellIdx = 0
+
+  for (const buyTs of symbolBuys) {
+    const buyDate = tsToDateStr(buyTs)
+
+    let sellDate = lastDate
+    while (sellIdx < symbolSells.length && symbolSells[sellIdx] <= buyTs) {
+      sellIdx++
+    }
+    if (sellIdx < symbolSells.length) {
+      sellDate = tsToDateStr(symbolSells[sellIdx])
+      sellIdx++
+    }
+
+    periods.push([buyDate, sellDate])
+  }
+
+  return periods
+})
+
+function tsToDateStr(ts: number): string {
+  const d = new Date(ts * 1000)
+  const Y = d.getFullYear()
+  const M = String(d.getMonth() + 1).padStart(2, '0')
+  const D = String(d.getDate()).padStart(2, '0')
+  return `${Y}-${M}-${D}`
+}
+
+/**
+ * 计算回撤序列：drawdown[t] = cumulative[t] - running_max[t]
+ */
+const drawdown = computed(() => {
+  const cum = cumulativeReturns.value
+  if (cum.length === 0) return []
+
+  const result: number[] = []
+  let peak = cum[0]
+
+  for (const val of cum) {
+    if (val > peak) peak = val
+    result.push(Number((val - peak).toFixed(2)))
+  }
+  return result
+})
+
+/**
  * 构建 ECharts 配置
  */
 function buildChartOption() {
   const hasBenchmark = props.benchmarkData.length > 0
   const dates = xAxisDates.value
-  const dailyReturns = alignedDailyReturns.value
   const cumReturns = cumulativeReturns.value
+  const dd = drawdown.value
+
+  const periods = holdingPeriods.value
+  const markAreaData = periods.map(([start, end]) => [
+    { xAxis: start },
+    { xAxis: end }
+  ])
+
+  const hasDrawdown = dd.length > 0 && dd.some(v => v < 0)
 
   const series: any[] = [
     {
       name: '累计收益',
       type: 'line',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
       data: cumReturns,
       smooth: true,
       lineStyle: { width: 3, color: '#2962ff' },
@@ -185,7 +263,12 @@ function buildChartOption() {
           { offset: 0, color: 'rgba(41, 98, 255, 0.3)' },
           { offset: 1, color: 'rgba(41, 98, 255, 0.05)' }
         ])
-      }
+      },
+      markArea: markAreaData.length > 0 ? {
+        silent: true,
+        data: markAreaData,
+        itemStyle: { color: 'rgba(0, 200, 83, 0.08)' }
+      } : undefined
     }
   ]
 
@@ -193,10 +276,46 @@ function buildChartOption() {
     series.push({
       name: props.benchmarkName || '基准',
       type: 'line',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
       data: benchmarkCumulativeReturns.value,
       smooth: true,
       lineStyle: { width: 2, color: '#ff9800', type: 'dashed' }
     })
+  }
+
+  if (hasDrawdown) {
+    series.push({
+      name: '回撤',
+      type: 'line',
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+      data: dd,
+      smooth: true,
+      lineStyle: { width: 1.5, color: '#ef5350' },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: 'rgba(239, 83, 80, 0.25)' },
+          { offset: 1, color: 'rgba(239, 83, 80, 0.02)' }
+        ])
+      },
+      markArea: markAreaData.length > 0 ? {
+        silent: true,
+        data: markAreaData,
+        itemStyle: { color: 'rgba(0, 200, 83, 0.06)' }
+      } : undefined
+    })
+  }
+
+  const axisLabelFormatter = (value: string) => {
+    if (!value) return value
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+    const date = new Date(value)
+    if (isNaN(date.getTime())) return value
+    const Y = date.getFullYear()
+    const M = String(date.getMonth() + 1).padStart(2, '0')
+    const D = String(date.getDate()).padStart(2, '0')
+    return `${Y}-${M}-${D}`
   }
 
   return createBaseChartOption({
@@ -210,53 +329,82 @@ function buildChartOption() {
         let result = `<div style="margin: 0 0 5px 0; font-weight: bold;">${params[0].axisValue}</div>`
         params.forEach((item: any) => {
           const value = typeof item.value === 'number' ? item.value.toFixed(2) : item.value
-          const color = item.seriesName === '累计收益' ? '#2962ff' : '#ff9800'
+          let color = '#2962ff'
+          if (item.seriesName === '回撤') color = '#ef5350'
+          else if (item.seriesName !== '累计收益') color = '#ff9800'
           result += `<div>${item.marker} ${item.seriesName}: <span style="color: ${color}; font-weight: bold;">${value}%</span></div>`
         })
         return result
       }
     },
     legend: {
-      data: hasBenchmark ? ['累计收益', props.benchmarkName] : ['累计收益'],
+      data: hasBenchmark ? ['累计收益', props.benchmarkName, '回撤'] : ['累计收益', '回撤'],
       textStyle: { color: '#e0e0e0' },
       top: 10
     },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      containLabel: true
-    },
-    xAxis: {
-      type: 'category',
-      data: dates,
-      axisLine: { lineStyle: { color: '#6E7079' } },
-      axisLabel: {
-        color: '#a0aec0',
-        formatter: (value: string) => {
-          if (!value) return value
-          // 已经是 YYYY-MM-DD 格式，直接返回
-          if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
-          const date = new Date(value)
-          if (isNaN(date.getTime())) return value
-          const Y = date.getFullYear()
-          const M = String(date.getMonth() + 1).padStart(2, '0')
-          const D = String(date.getDate()).padStart(2, '0')
-          return `${Y}-${M}-${D}`
-        }
-      }
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: {
-        formatter: '{value}%',
-        color: '#a0aec0'
-      },
-      axisLine: { lineStyle: { color: '#6E7079' } },
-      splitLine: {
-        lineStyle: { color: '#2a3449', type: 'dashed' }
-      }
-    },
+    grid: hasDrawdown
+      ? [
+          { left: '3%', right: '4%', top: '12%', height: '52%' },
+          { left: '3%', right: '4%', top: '72%', height: '20%' }
+        ]
+      : { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: hasDrawdown
+      ? [
+          {
+            type: 'category',
+            data: dates,
+            gridIndex: 0,
+            axisLine: { lineStyle: { color: '#6E7079' } },
+            axisLabel: { show: false },
+            splitLine: { show: false }
+          },
+          {
+            type: 'category',
+            data: dates,
+            gridIndex: 1,
+            axisLine: { lineStyle: { color: '#6E7079' } },
+            axisLabel: { color: '#a0aec0', formatter: axisLabelFormatter },
+            splitLine: { show: false }
+          }
+        ]
+      : {
+          type: 'category',
+          data: dates,
+          axisLine: { lineStyle: { color: '#6E7079' } },
+          axisLabel: { color: '#a0aec0', formatter: axisLabelFormatter }
+        },
+    yAxis: hasDrawdown
+      ? [
+          {
+            type: 'value',
+            gridIndex: 0,
+            axisLabel: { formatter: '{value}%', color: '#a0aec0' },
+            axisLine: { lineStyle: { color: '#6E7079' } },
+            splitLine: { lineStyle: { color: '#2a3449', type: 'dashed' } }
+          },
+          {
+            type: 'value',
+            gridIndex: 1,
+            axisLabel: { formatter: '{value}%', color: '#a0aec0' },
+            axisLine: { lineStyle: { color: '#6E7079' } },
+            splitLine: { lineStyle: { color: '#2a3449', type: 'dashed' } }
+          }
+        ]
+      : {
+          type: 'value',
+          axisLabel: { formatter: '{value}%', color: '#a0aec0' },
+          axisLine: { lineStyle: { color: '#6E7079' } },
+          splitLine: { lineStyle: { color: '#2a3449', type: 'dashed' } }
+        },
+    dataZoom: hasDrawdown
+      ? [
+          { type: 'inside', xAxisIndex: [0, 1], filterMode: 'filter', zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
+          { type: 'slider', xAxisIndex: [0, 1], bottom: '2%', height: 18, borderColor: '#2a3449', fillerColor: 'rgba(41, 98, 255, 0.2)', handleStyle: { color: '#2962ff' }, textStyle: { color: '#a0aec0' } }
+        ]
+      : [
+          { type: 'inside', xAxisIndex: 0, filterMode: 'filter', zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
+          { type: 'slider', xAxisIndex: 0, bottom: '3%', height: 20, borderColor: '#2a3449', fillerColor: 'rgba(41, 98, 255, 0.2)', handleStyle: { color: '#2962ff' }, textStyle: { color: '#a0aec0' } }
+        ],
     series
   })
 }
@@ -275,7 +423,7 @@ function handleRefresh() {
 
 // 监听数据变化，更新图表
 watch(
-  [() => props.dates, () => props.dailyReturns, () => props.benchmarkData, () => props.benchmarkName, xAxisDates, cumulativeReturns],
+  [() => props.dates, () => props.dailyReturns, () => props.benchmarkData, () => props.benchmarkName, xAxisDates, cumulativeReturns, holdingPeriods, drawdown],
   () => {
     updateChart(buildChartOption(), true)
   },
@@ -435,15 +583,15 @@ onMounted(() => {
 }
 
 .chart-container {
-  height: 300px;
-  min-height: 300px;
+  height: 420px;
+  min-height: 420px;
   width: 100%;
   flex-shrink: 0;
 }
 
 .chart-card.full-width .chart-container {
-  height: 300px;
-  min-height: 300px;
+  height: 420px;
+  min-height: 420px;
 }
 
 @media (max-width: 768px) {
@@ -452,7 +600,7 @@ onMounted(() => {
   }
 
   .chart-container {
-    height: 250px;
+    height: 350px;
   }
 
   .chart-controls {
