@@ -51,6 +51,51 @@
     <div class="section-label" v-if="symbolAgg.length > 0">By Symbol</div>
     <div class="chart-container chart-container--short" ref="symbolChartRef"></div>
 
+    <!-- 标的明细列表：可按列排序，代码旁小图标一键复制 -->
+    <div class="section-label" v-if="symbolDetails.length > 0">Symbol Detail · click column to sort</div>
+    <div class="symbol-list" v-if="symbolDetails.length > 0">
+      <div class="symbol-list-header">
+        <span class="cell-code cell-sortable" @click="setSort('symbol')">
+          标的代码 <span class="sort-ind">{{ sortKey === 'symbol' ? (sortDir === 'desc' ? '▼' : '▲') : '' }}</span>
+        </span>
+        <span class="cell-num cell-sortable" @click="setSort('count')">
+          笔数 <span class="sort-ind">{{ sortKey === 'count' ? (sortDir === 'desc' ? '▼' : '▲') : '' }}</span>
+        </span>
+        <span class="cell-num cell-sortable" @click="setSort('winRate')">
+          胜率 <span class="sort-ind">{{ sortKey === 'winRate' ? (sortDir === 'desc' ? '▼' : '▲') : '' }}</span>
+        </span>
+        <span class="cell-num cell-sortable" @click="setSort('realized')">
+          已实现 <span class="sort-ind">{{ sortKey === 'realized' ? (sortDir === 'desc' ? '▼' : '▲') : '' }}</span>
+        </span>
+        <span class="cell-num cell-sortable" @click="setSort('unrealized')">
+          未实现 <span class="sort-ind">{{ sortKey === 'unrealized' ? (sortDir === 'desc' ? '▼' : '▲') : '' }}</span>
+        </span>
+        <span class="cell-num cell-sortable cell-sort-active" @click="setSort('total')">
+          总收益 <span class="sort-ind">{{ sortKey === 'total' ? (sortDir === 'desc' ? '▼' : '▲') : '' }}</span>
+        </span>
+      </div>
+      <div v-for="s in sortedSymbolDetails" :key="s.symbol" class="symbol-list-row">
+        <span class="cell-code">
+          <span class="symbol-code-text" :title="s.symbol">{{ s.symbol }}</span>
+          <button
+            class="btn-copy"
+            :class="{ 'btn-copy--ok': copiedSymbol === s.symbol }"
+            @click="copyCode(s.symbol)"
+            :title="`复制代码 ${s.symbol}`"
+          >
+            <i class="copy-glyph">{{ copiedSymbol === s.symbol ? '✓' : '⧉' }}</i>
+          </button>
+        </span>
+        <span class="cell-num">{{ s.count }}</span>
+        <span class="cell-num" :class="s.winRate >= 50 ? 'profit' : 'loss'">{{ s.winRate.toFixed(1) }}%</span>
+        <span class="cell-num" :class="s.realized >= 0 ? 'profit' : 'loss'">{{ formatMoney(s.realized) }}</span>
+        <span class="cell-num" :class="s.unrealized === 0 ? 'cell-zero' : (s.unrealized >= 0 ? 'profit' : 'loss')">
+          {{ s.hasOpen ? formatMoney(s.unrealized) : '—' }}
+        </span>
+        <span class="cell-num" :class="s.total >= 0 ? 'profit' : 'loss'">{{ formatMoney(s.total) }}</span>
+      </div>
+    </div>
+
     <div v-if="trades.length === 0 && openPositions.length === 0" class="empty-state">
       <span class="empty-icon">📊</span>
       <span>No completed round-trip trades to display</span>
@@ -245,6 +290,81 @@ const symbolAgg = computed(() => {
     .map(([symbol, v]) => ({ symbol, ...v, winRate: v.count > 0 ? (v.wins / v.count) * 100 : 0 }))
     .sort((a, b) => b.total - a.total)
 })
+
+// --- 按标的明细：合并已实现 + 未实现 ---
+interface SymbolDetail {
+  symbol: string
+  count: number
+  wins: number
+  winRate: number
+  realized: number
+  unrealized: number
+  hasOpen: boolean
+  total: number
+}
+
+const symbolDetails = computed<SymbolDetail[]>(() => {
+  const openMap: Record<string, number> = {}
+  for (const p of openPositions.value) openMap[p.symbol] = p.unrealizedPnL
+  return symbolAgg.value.map(s => {
+    const unrealized = openMap[s.symbol] ?? 0
+    return {
+      symbol: s.symbol,
+      count: s.count,
+      wins: s.wins,
+      winRate: s.winRate,
+      realized: s.total,
+      unrealized,
+      hasOpen: symbol in openMap,
+      total: s.total + unrealized,
+    }
+  })
+})
+
+// --- 列表排序状态 ---
+type SortKey = 'symbol' | 'count' | 'winRate' | 'realized' | 'unrealized' | 'total'
+const sortKey = ref<SortKey>('total')
+const sortDir = ref<'asc' | 'desc'>('desc')
+
+function setSort(key: SortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortKey.value = key
+    // 数字列默认降序（看大头）；文本列默认升序（字母序）
+    sortDir.value = key === 'symbol' ? 'asc' : 'desc'
+  }
+}
+
+const sortedSymbolDetails = computed<SymbolDetail[]>(() => {
+  const k = sortKey.value
+  const dir = sortDir.value === 'desc' ? -1 : 1
+  return [...symbolDetails.value].sort((a, b) => {
+    const av = (a as any)[k]
+    const bv = (b as any)[k]
+    if (typeof av === 'string' && typeof bv === 'string') {
+      return av.localeCompare(bv) * dir
+    }
+    return (Number(av) - Number(bv)) * dir
+  })
+})
+
+// --- 复制标的代码到剪贴板 ---
+const copiedSymbol = ref<string | null>(null)
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+function copyCode(symbol: string) {
+  if (copyTimer) clearTimeout(copyTimer)
+  navigator.clipboard.writeText(symbol).then(() => {
+    copiedSymbol.value = symbol
+    copyTimer = setTimeout(() => { copiedSymbol.value = null }, 900)
+  }).catch(() => {
+    copiedSymbol.value = symbol + '×'
+    copyTimer = setTimeout(() => { copiedSymbol.value = null }, 1200)
+  })
+}
+
+onUnmounted(() => { if (copyTimer) clearTimeout(copyTimer) })
 
 // --- 工具函数 ---
 function formatMoney(val: number): string {
@@ -639,4 +759,106 @@ onMounted(() => renderAll())
 }
 
 .empty-icon { font-size: 36px; opacity: 0.5; }
+
+/* === 标的明细列表 === */
+.symbol-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border, #2a3449);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.symbol-list-header,
+.symbol-list-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.6fr) 60px 70px 90px 90px 100px;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+}
+
+.symbol-list-header {
+  background: rgba(41, 98, 255, 0.08);
+  border-bottom: 1px solid var(--border, #2a3449);
+  color: #a0aec0;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+}
+
+.symbol-list-row {
+  border-bottom: 1px solid rgba(42, 52, 73, 0.4);
+  color: #e0e0e0;
+  transition: background 0.15s ease;
+}
+.symbol-list-row:last-child { border-bottom: none; }
+.symbol-list-row:hover { background: rgba(41, 98, 255, 0.06); }
+
+.cell-code {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.symbol-code-text {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #e0e0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.cell-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+.cell-zero { color: #6b7280; }
+
+.cell-sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+.cell-sortable:hover { color: #e0e0e0; }
+.cell-sort-active { color: #2962ff; }
+.sort-ind { font-size: 9px; margin-left: 2px; opacity: 0.8; }
+
+.btn-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border, #2a3449);
+  border-radius: 4px;
+  background: rgba(41, 98, 255, 0.08);
+  color: #a0aec0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.btn-copy:hover {
+  background: rgba(41, 98, 255, 0.22);
+  color: #2962ff;
+  border-color: #2962ff;
+}
+.btn-copy:active { transform: scale(0.92); }
+.btn-copy--ok {
+  background: rgba(0, 200, 83, 0.18);
+  border-color: #00c853;
+  color: #00c853;
+}
+.copy-glyph {
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+}
 </style>

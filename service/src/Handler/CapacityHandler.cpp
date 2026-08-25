@@ -108,11 +108,18 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     if (strategySys->HasStrategy(strategyName)) {
         strategySys->DeleteStrategy(strategyName);
     }
+    StrategyInitResult initResult;
     try {
-        strategySys->InitStrategy(strategyName, script);
+        initResult = strategySys->InitStrategy(strategyName, script);
     } catch (const std::exception& e) {
         res.status = 500;
         String msg = String(R"({"message":"Init failed: )") + e.what() + R"("})";
+        res.set_content(msg, "application/json");
+        return;
+    }
+    if (!initResult._success) {
+        res.status = 500;
+        String msg = String(R"({"message":"Init failed: )") + initResult._errorMessage + R"("})";
         res.set_content(msg, "application/json");
         return;
     }

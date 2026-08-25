@@ -292,6 +292,8 @@ import KnowledgeBaseView from './components/knowledge/KnowledgeBaseView.vue';
 // AI 聊天框
 import ChatBox from './components/ChatBox.vue'
 import { useChatStore } from './stores/chatStore'
+// 策略部署（multipart + XGBoost 模型上传）
+import { useStrategyDeploy } from './components/ml/composables/useStrategyDeploy'
 
 const chatStore = useChatStore()
 
@@ -773,7 +775,7 @@ const { strategies, versions } = storeToRefs(historyStore)
 
 // === 服务端策略状态 ===
 const serverStrategies = ref([])  // [{name, running}, ...]
-const isDeploying = ref(false)
+const { deploying: isDeploying, deployStrategy } = useStrategyDeploy()
 const isStopping = ref(false)
 const isStarting = ref(false)
 let _strategyTimer = null
@@ -824,28 +826,18 @@ const fetchServerStrategies = async () => {
   }
 }
 
-/** 部署策略 */
+/** 部署策略（multipart + XGBoost 模型上传） */
 const onHandleDeploy = async () => {
   if (!currentStrategyName.value || !dynamicComponentRef.value?.getStrategyGraph) {
     message.warning('请先选择一个策略')
     return
   }
-  isDeploying.value = true
-  try {
-    const graph = dynamicComponentRef.value.getStrategyGraph()
-    const res = await axios.post('/v0/strategy', {
-      mode: 0,
-      name: currentStrategyName.value,
-      script: graph
-    })
-    if (res.data.message === 'success') {
-      message.success(`策略 "${currentStrategyName.value}" 已部署`)
-      await fetchServerStrategies()
-    }
-  } catch (e) {
-    message.error('部署失败: ' + (e.response?.data?.message || e.message))
-  } finally {
-    isDeploying.value = false
+  const graph = dynamicComponentRef.value.getStrategyGraph()
+  if (!graph) return
+  const res = await deployStrategy(currentStrategyName.value, graph)
+  if (res.success) {
+    message.success(`策略 "${currentStrategyName.value}" 已部署${res.running ? '（已运行）' : ''}`)
+    await fetchServerStrategies()
   }
 }
 

@@ -47,23 +47,6 @@ namespace {
         }
     }
 
-    // 计算几何平均数
-    double geometric_mean(const std::vector<double>& returns) {
-        if (returns.empty()) return 1.0;
-
-        double product = 1.0;
-        int count = 0;
-        for (double ret : returns) {
-            if (ret > -1.0) {  // 收益率不能小于-100%
-                product *= (1.0 + ret);
-                count++;
-            }
-        }
-
-        if (count == 0) return 1.0;
-        return std::pow(product, 1.0 / count) - 1.0;
-    }
-
     // 计算滚动年化收益率
     double rolling_annualized_return(const std::vector<double>& daily_returns,
                                      int window_days,

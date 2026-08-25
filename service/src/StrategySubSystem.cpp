@@ -186,9 +186,15 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
     std::ifstream ifs;
     String path(SCRIPTS_DIR);
     ifs.open(path + "/" + strategyName);
-    if (!ifs)
+    if (!ifs) {
+        StrategyInitResult result;
+        result._errorMessage = "Failed to open strategy file";
+        std::lock_guard<std::mutex> lock(_failureMtx);
+        _failedStrategies[strategyName] = result;
         return false;
+    }
 
+    StrategyInitResult result;
     try {
         nlohmann::json script;
         ifs >> script;
@@ -197,6 +203,9 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
         if (!script.contains("version") || !script["version"].is_number()) {
             WARN("[StrategySubSystem] Strategy '{}' rejected: missing 'version' field", strategyName);
             ifs.close();
+            result._errorMessage = "missing 'version' field";
+            std::lock_guard<std::mutex> lock(_failureMtx);
+            _failedStrategies[strategyName] = result;
             return false;
         }
 
@@ -205,15 +214,31 @@ bool StrategySubSystem::InstallStrategy(const String& strategyName) {
             WARN("[StrategySubSystem] Strategy '{}' rejected: version {} is below minimum required ({})",
                  strategyName, version, MIN_STRATEGY_VERSION);
             ifs.close();
+            result._errorMessage = fmt::format("version {} is below minimum required ({})",
+                                               version, MIN_STRATEGY_VERSION);
+            std::lock_guard<std::mutex> lock(_failureMtx);
+            _failedStrategies[strategyName] = result;
             return false;
         }
 
-        InitStrategy(strategyName, script);
-    } catch (const nlohmann::json::parse_error& e) {
         ifs.close();
+        result = InitStrategy(strategyName, script);
+    } catch (const std::exception& e) {
+        ifs.close();
+        WARN("[InstallStrategy] Unexpected exception for '{}': {}", strategyName, e.what());
+        result._errorMessage = fmt::format("Unexpected exception: {}", e.what());
+    } catch (...) {
+        ifs.close();
+        WARN("[InstallStrategy] Unknown exception for '{}'", strategyName);
+        result._errorMessage = "Unknown exception during strategy install";
+    }
+
+    if (!result._success) {
+        std::lock_guard<std::mutex> lock(_failureMtx);
+        _failedStrategies[strategyName] = result;
         return false;
     }
-    ifs.close();
+
     return true;
 }
 
@@ -247,18 +272,22 @@ void StrategySubSystem::DeleteStrategy(const String& name) {
 void StrategySubSystem::InitStrategy(const String& strategy, const List<QNode*>& flow) {
     _agentSystem->LoadFlow(strategy, flow);
 }
- 
-void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann::json& script) {
+
+StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann::json& script) {
+    StrategyInitResult result;
+
     // 版本检查
     if (!script.contains("version") || !script["version"].is_number()) {
+        result._errorMessage = "missing 'version' field";
         WARN("[StrategySubSystem] Strategy '{}' rejected: missing 'version' field", to_utf8(strategyName));
-        return;
+        return result;
     }
     int version = script["version"].get<int>();
     if (version < MIN_STRATEGY_VERSION) {
+        result._errorMessage = fmt::format("version {} is below minimum required ({})", version, MIN_STRATEGY_VERSION);
         WARN("[StrategySubSystem] Strategy '{}' rejected: version {} is below minimum required ({})",
              strategyName, version, MIN_STRATEGY_VERSION);
-        return;
+        return result;
     }
 
     // 解析策略图，同时收集滑点配置和节点配置
@@ -277,8 +306,17 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
                 String nodeType = itr->second.value("nodeType", "unknown");
                 String errMsg = fmt::format("Node '{}' (id={}, type={}) initialization failed",
                                             label, node->id(), nodeType);
-                FATAL("[InitStrategy] {}", errMsg);
-                throw std::runtime_error(errMsg);
+                WARN("[InitStrategy] {}", errMsg);
+                // 清理未接管的节点，避免内存泄漏
+                // TODO: 后续可考虑对已成功 Init 的节点调用清理接口
+                for (auto* n : sorted_nodes) {
+                    delete n;
+                }
+                result._errorMessage = errMsg;
+                result._failedNodeLabel = label;
+                result._failedNodeType = nodeType;
+                result._failedNodeId = node->id();
+                return result;
             }
         }
     }
@@ -307,8 +345,39 @@ void StrategySubSystem::InitStrategy(const String& strategyName, const nlohmann:
 
     _strategies.insert(strategyName);
 
+    // 成功加载：清除之前的失败记录
+    ClearStrategyFailure(strategyName);
+
     INFO("[StrategySubSystem] Strategy '{}'(version {}) initialized: warmup={} epochs, nodes={}",
         to_utf8(strategyName), version, warmup, sorted_nodes.size());
+
+    result._success = true;
+    return result;
+}
+
+// ── 失败策略记录访问接口 ──
+
+List<StrategyInitResult> StrategySubSystem::GetFailedStrategies() const {
+    std::lock_guard<std::mutex> lock(_failureMtx);
+    List<StrategyInitResult> result;
+    for (auto& kv : _failedStrategies) {
+        result.push_back(kv.second);
+    }
+    return result;
+}
+
+std::optional<String> StrategySubSystem::GetStrategyFailureReason(const String& name) const {
+    std::lock_guard<std::mutex> lock(_failureMtx);
+    auto it = _failedStrategies.find(name);
+    if (it == _failedStrategies.end()) {
+        return std::nullopt;
+    }
+    return std::optional<String>(it->second._errorMessage);
+}
+
+void StrategySubSystem::ClearStrategyFailure(const String& name) {
+    std::lock_guard<std::mutex> lock(_failureMtx);
+    _failedStrategies.erase(name);
 }
 
 // ═══════════════════════════════════════════════════════════

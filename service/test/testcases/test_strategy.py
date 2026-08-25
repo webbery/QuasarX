@@ -403,10 +403,8 @@ class TestStrategyMultipartDeploy:
         }
 
     def _model_bytes(self):
-        return json.dumps({
-            "model_type": "xgboost", "objective": "binary:logistic",
-            "num_class": 2, "version": 1, "trees": [], "learner_model_param": {},
-        }).encode("utf-8")
+        model_path = Path(__file__).parent / "ai_test_data" / "xgb_trivial_model.json"
+        return model_path.read_bytes()
 
     def _meta_bytes(self):
         return json.dumps({

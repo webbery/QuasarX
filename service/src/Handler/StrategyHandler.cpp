@@ -44,7 +44,7 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
     auto broker = _server->GetBrokerSubSystem();
     auto capitalPool = broker ? broker->GetCapitalPool() : nullptr;
 
-    nlohmann::json result = nlohmann::json::array();
+    nlohmann::json strategies = nlohmann::json::array();
     if (flow) {
         auto names = flow->GetFlowNames();
         for (auto& name : names) {
@@ -67,9 +67,29 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
                 item["allocatedCapital"] = 0.0;
             }
 
-            result.push_back(item);
+            strategies.push_back(item);
         }
     }
+
+    // 加载失败的策略列表（含原因），供前端展示
+    nlohmann::json failed = nlohmann::json::array();
+    if (strategySys) {
+        auto failedResults = strategySys->GetFailedStrategies();
+        for (auto& fr : failedResults) {
+            nlohmann::json item;
+            item["error"] = to_utf8(fr._errorMessage.c_str());
+            nlohmann::json failedNode;
+            failedNode["id"] = fr._failedNodeId;
+            failedNode["label"] = to_utf8(fr._failedNodeLabel.c_str());
+            failedNode["type"] = to_utf8(fr._failedNodeType.c_str());
+            item["failed_node"] = failedNode;
+            failed.push_back(item);
+        }
+    }
+
+    nlohmann::json result;
+    result["strategies"] = strategies;
+    result["failed"] = failed;
 
     res.status = 200;
     res.set_content(result.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), "application/json");
@@ -271,14 +291,44 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
 
     // 运行
     auto strategySys = _server->GetStrategySystem();
+    StrategyInitResult initResult;
     try {
-        strategySys->InitStrategy(name, scriptJson);
-        strategySys->Run(name);
+        initResult = strategySys->InitStrategy(name, scriptJson);
     } catch (const std::exception& e) {
-        WARN("[StrategyHandler] InitStrategy/Run failed for '{}': {}", name, e.what());
+        // 兜底：防御性 catch，应保证不触发
+        WARN("[StrategyHandler] Unexpected exception in InitStrategy for '{}': {}", name, e.what());
         res.status = 500;
         nlohmann::json err;
-        err["message"] = "Strategy init/run failed";
+        err["message"] = "Strategy init failed (unexpected exception)";
+        err["error"] = e.what();
+        err["name"] = name;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    if (!initResult._success) {
+        WARN("[StrategyHandler] InitStrategy failed for '{}': {}", name, initResult._errorMessage);
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Strategy init failed";
+        err["error"] = initResult._errorMessage;
+        err["name"] = name;
+        nlohmann::json failedNode;
+        failedNode["id"] = initResult._failedNodeId;
+        failedNode["label"] = initResult._failedNodeLabel;
+        failedNode["type"] = initResult._failedNodeType;
+        err["failed_node"] = failedNode;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    try {
+        strategySys->Run(name);
+    } catch (const std::exception& e) {
+        WARN("[StrategyHandler] Run failed for '{}': {}", name, e.what());
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Strategy run failed";
         err["error"] = e.what();
         err["name"] = name;
         res.set_content(err.dump(), "application/json");
@@ -312,7 +362,35 @@ void StrategyHandler::load(const nlohmann::json& param, httplib::Response& res) 
     String name = param.value("name", "");
     nlohmann::json scriptJson = param.value("script", nlohmann::json());
     auto strategySys = _server->GetStrategySystem();
-    strategySys->InitStrategy(name, scriptJson);
+    StrategyInitResult initResult;
+    try {
+        initResult = strategySys->InitStrategy(name, scriptJson);
+    } catch (const std::exception& e) {
+        WARN("[StrategyHandler] Unexpected exception in InitStrategy (load) for '{}': {}", name, e.what());
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Strategy init failed (unexpected exception)";
+        err["error"] = e.what();
+        err["name"] = name;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
+
+    if (!initResult._success) {
+        WARN("[StrategyHandler] Load InitStrategy failed for '{}': {}", name, initResult._errorMessage);
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "Strategy init failed";
+        err["error"] = initResult._errorMessage;
+        err["name"] = name;
+        nlohmann::json failedNode;
+        failedNode["id"] = initResult._failedNodeId;
+        failedNode["label"] = initResult._failedNodeLabel;
+        failedNode["type"] = initResult._failedNodeType;
+        err["failed_node"] = failedNode;
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
 
     res.status = 200;
     nlohmann::json result;

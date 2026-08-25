@@ -180,13 +180,21 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         strategySys->DeleteStrategy(strategyName);
     }
 
+    StrategyInitResult initResult;
     try {
-        strategySys->InitStrategy(strategyName, script);
+        initResult = strategySys->InitStrategy(strategyName, script);
     } catch (const std::exception& e) {
         res.status = 500;
         String msg = R"({"message": "Failed to initialize strategy: )" + String(e.what()) + R"("})";
         res.set_content(msg.c_str(), "application/json");
         WARN("{}", msg);
+        return;
+    }
+    if (!initResult._success) {
+        String msg = R"({"message": "Failed to initialize strategy: )" + initResult._errorMessage + R"("})";
+        res.status = 500;
+        res.set_content(msg.c_str(), "application/json");
+        WARN("[Backtest] InitStrategy failed for '{}': {}", strategyName, initResult._errorMessage);
         return;
     }
     INFO("[Backtest][RSS] after InitStrategy: {:.1f} MB", getProcessRSS());

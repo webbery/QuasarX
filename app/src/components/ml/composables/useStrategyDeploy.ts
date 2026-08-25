@@ -36,8 +36,9 @@ export function useStrategyDeploy() {
     }
 
     // 1. 预检：收集所有 XGBoostNode 的 modelFile 引用
+    // 注意：StrategyFactory.getStrategyGraph() 返回的 nodes 是顶层字段，不是 graph.nodes
     const xgbNodes: Array<{ id: string; label: string; modelFile: string }> = []
-    const nodes = strategyJson?.graph?.nodes
+    const nodes = strategyJson?.nodes ?? strategyJson?.graph?.nodes
     if (Array.isArray(nodes)) {
       for (const n of nodes) {
         if (n?.data?.nodeType === 'xgboost') {
@@ -112,11 +113,10 @@ export function useStrategyDeploy() {
         },
       })
 
-      if (resp.data?.running === false && resp.data?.message) {
-        ElMessage.success(`策略「${strategyName}」部署成功`)
-      } else {
-        ElMessage.success(`策略「${strategyName}」部署成功${resp.data?.running ? '（已运行）' : ''}`)
+      if (!resp.data?.message) {
+        ElMessage.warning(`部署响应缺少 message 字段: ${JSON.stringify(resp.data).slice(0, 200)}`)
       }
+      ElMessage.success(`策略「${strategyName}」部署成功${resp.data?.running ? '（已运行）' : ''}`)
       return { success: true, message: resp.data?.message, running: resp.data?.running }
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || '部署失败'

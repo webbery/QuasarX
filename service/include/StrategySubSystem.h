@@ -5,6 +5,7 @@
 #include "Util/DailyDecision.h"
 #include "StrategyNode.h"
 #include <mutex>
+#include <optional>
 
 #define SCRIPTS_DIR     "scripts"
 
@@ -20,6 +21,22 @@ enum class StrategyType: char;
 enum class StatisticIndicator: char;
 
 /**
+ * @brief 策略初始化结果（替代抛出异常）
+ *
+ * 失败时不抛异常，避免单个策略加载失败导致服务崩溃。
+ * 调用方根据 _success 判断；失败时 _errorMessage 可直接透传给前端。
+ */
+struct StrategyInitResult {
+    bool _success = false;
+    String _errorMessage;     // 用户可读错误
+    String _failedNodeLabel;  // 失败节点 label（如 "CTA_v16"）
+    String _failedNodeType;   // 失败节点类型（如 "xgboost"）
+    uint32_t _failedNodeId = 0;  // 失败节点 ID（0 表示无具体失败节点，如 JSON 解析失败）
+
+    static StrategyInitResult ok() { return StrategyInitResult{true, "", "", "", 0}; }
+};
+
+/**
  * @brief 策略系统,从配置脚本中加载并构建策略,启动特征服务线程和预测线程.
  *        配置脚本中的定义的特征会注册到特征服务线程中, 并通过消息机制将
  *        原始数据转为特征发送给预测线程,预测线程对未来做涨跌预测,并将结果
@@ -31,7 +48,7 @@ public:
     ~StrategySubSystem();
 
     void Init();
-    void InitStrategy(const String& strategy, const nlohmann::json& script);
+    StrategyInitResult InitStrategy(const String& strategy, const nlohmann::json& script);
     void InitStrategy(const String& strategy, const List<QNode*>& flow);
 
     void Release();
@@ -129,6 +146,21 @@ public:
      */
     nlohmann::json GetDailyStatus() const;
 
+    /**
+     * @brief 获取所有加载失败的策略及其原因（供 /strategy/list 暴露给前端）
+     */
+    List<StrategyInitResult> GetFailedStrategies() const;
+
+    /**
+     * @brief 获取指定策略的失败原因
+     */
+    std::optional<String> GetStrategyFailureReason(const String& name) const;
+
+    /**
+     * @brief 清除指定策略的失败记录（重试成功后调用）
+     */
+    void ClearStrategyFailure(const String& name);
+
 private:
     // 执行单个日级策略并保存决策
     void ExecuteDailyStrategy(const String& strategy, const String& simDate = "");
@@ -145,6 +177,10 @@ private:
 
     // 策略预热期配置（strategy -> warmup epochs）
     Map<String, int> _strategyWarmupEpochs;
+
+    // 策略加载失败记录（name → 失败原因）
+    mutable std::mutex _failureMtx;
+    Map<String, StrategyInitResult> _failedStrategies;
 
     // ── 日级执行状态 ──
     Map<String, Set<String>> _dailyStrategySymbols;  // 策略→依赖标的
