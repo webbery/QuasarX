@@ -5,13 +5,13 @@
       <button
         v-for="m in resolvedModes"
         :key="m.value"
-        :class="['mode-btn', { active: mode === m.value }]"
+        :class="['mode-btn', { active: resolvedMode === m.value }]"
         @click="$emit('update:mode', m.value)"
       >{{ m.label }}</button>
     </div>
 
     <!-- 策略模式：使用 StrategySelector 组件 -->
-    <template v-if="mode === 'strategy'">
+    <template v-if="resolvedMode === 'strategy'">
       <StrategySelector
         :selected-strategy-id="resolvedSelectedStrategyId"
         :strategy-options="resolvedStrategyOptions"
@@ -24,7 +24,7 @@
     </template>
 
     <!-- 宏观模式：国家 + 指标级联选择 -->
-    <template v-else-if="mode === 'macro'">
+    <template v-else-if="resolvedMode === 'macro'">
       <div class="macro-selector">
         <label>国家:</label>
         <select
@@ -107,7 +107,7 @@ interface Mode {
 }
 
 const props = defineProps<{
-  mode: string
+  mode?: string
   modes?: Mode[]
   showModeToggle?: boolean
   selectedStrategyId?: string
@@ -190,6 +190,7 @@ const defaultFrequencyOptions: FrequencyOption[] = [
   { value: '1M', label: '月线' },
 ]
 
+const resolvedMode = computed(() => props.mode ?? 'strategy')
 const resolvedModes = computed(() => props.modes ?? defaultModes)
 const resolvedShowModeToggle = computed(() => props.showModeToggle ?? true)
 const resolvedQuickRanges = computed(() => props.quickRanges ?? defaultQuickRanges)

@@ -35,6 +35,68 @@
 
 #define CMD_RESULT_BUF_SIZE 2048
 
+// Crash notification: pointer to the Server instance so signal handlers can
+// invoke Server::SendEmail. Populated in main() after Server is constructed.
+static Server* g_server = nullptr;
+static time_t  g_start_time = 0;
+// True only after Server::Init() returns successfully, so signal handlers
+// don't dereference a partially-constructed _config during early crashes.
+static bool   g_server_ready = false;
+
+// Build a brief crash notification email body and dispatch via Server::SendEmail.
+// Captures: host, pid, time, version, uptime, crash kind, top frames.
+// Not strictly async-signal-safe (uses std::string) but accepted as best-effort
+// given that Server::SendEmail itself wraps RunCommand/system().
+static void notifyCrashByEmail(const char* crash_kind, void** /*addrs*/, int frame_count, char** strings) {
+    if (!g_server || !g_server_ready) return;
+
+    char hostname[256] = "unknown";
+    gethostname(hostname, sizeof(hostname) - 1);
+    hostname[sizeof(hostname) - 1] = '\0';
+
+    time_t now = time(nullptr);
+    char timebuf[32] = {};
+    ctime_r(&now, timebuf);
+    char* nl = strchr(timebuf, '\n');
+    if (nl) *nl = '\0';
+
+    long uptime = (g_start_time > 0) ? (long)(now - g_start_time) : -1;
+
+    String body;
+    body.reserve(2048);
+    body += "[QuantService CRASH] ";
+    body += crash_kind;
+    body += " on host=";
+    body += hostname;
+    body += " pid=";
+    body += std::to_string(getpid());
+    body += " at ";
+    body += timebuf;
+    body += "\n\nType: ";
+    body += crash_kind;
+    body += "\nVersion: ";
+    body += QS_VERSION;
+    body += "\n";
+    if (uptime >= 0) {
+        body += "Uptime: ";
+        body += std::to_string(uptime / 3600); body += "h ";
+        body += std::to_string((uptime % 3600) / 60); body += "m ";
+        body += std::to_string(uptime % 60); body += "s\n";
+    }
+    body += "\nTop frames:\n";
+    int top = (frame_count < 10) ? frame_count : 10;
+    for (int i = 0; i < top; i++) {
+        body += "  [";
+        body += std::to_string(i);
+        body += "] ";
+        body += (strings && strings[i]) ? strings[i] : "?";
+        body += "\n";
+    }
+    body += "\nFull resolved stack trace on stderr / logs/monthly_log.txt\n";
+
+    g_server->SendEmail(body);
+}
+
 #ifdef WIN32
 LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
     fprintf(stderr, "\n========== Windows Unhandled Exception ==========\n");
@@ -51,6 +113,13 @@ LONG CALLBACK unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) {
         fprintf(stderr, "[CRASH HANDLER] Log buffer flushed.\n");
     } catch (...) {
         fprintf(stderr, "[CRASH HANDLER] Failed to flush logs (exception caught).\n");
+    }
+
+    // 崩溃通知邮件
+    {
+        char kind[64];
+        snprintf(kind, sizeof(kind), "EXCEPTION 0x%08X", exception_info->ExceptionRecord->ExceptionCode);
+        notifyCrashByEmail(kind, nullptr, 0, nullptr);
     }
 
     // 注意：崩溃场景不调用 DuckDB shutdown()（涉及 mutex/join，非 async-signal-safe）
@@ -311,6 +380,13 @@ void print_stacktrace(int signo) {
         const char err_msg[] = "Failed to get backtrace_symbols\n";
         write(STDERR_FILENO, err_msg, sizeof(err_msg) - 1);
         _exit(EXIT_FAILURE);
+    }
+
+    // 崩溃通知邮件（在堆栈打印前优先发出）
+    {
+        char kind[64];
+        snprintf(kind, sizeof(kind), "%s (%d)", signal_name ? signal_name : "Unknown", signo);
+        notifyCrashByEmail(kind, array, size, strings);
     }
 
     // 打印原始堆栈信息（async-signal-safe）
@@ -586,10 +662,15 @@ void on_terminate() {
     // Windows 堆栈打印（需要 DbgHelp，留给 unhandled_exception_filter 处理）
     fprintf(stderr, "Check crash dump for full analysis.\n");
     fprintf(stderr, "=========================================\n\n");
+    // 崩溃通知邮件
+    notifyCrashByEmail("std::terminate", nullptr, 0, nullptr);
 #else
     void* array[64];
     int size = backtrace(array, 64);
     char** strings = backtrace_symbols(array, size);
+
+    // 崩溃通知邮件（在堆栈打印前优先发出）
+    notifyCrashByEmail("std::terminate", array, size, strings);
 
     if (strings) {
         const char stack_header[] = "\nStack trace:\n";
@@ -666,6 +747,8 @@ int main(int argc, char* argv[])
     }
 
     Server server;
+    g_server = &server;
+    g_start_time = time(nullptr);
     // 加载配置
     if (argc == 2) {
         // 服务模式: xxx.config
@@ -677,7 +760,8 @@ int main(int argc, char* argv[])
           return -1;
         }
     }
-    
+    g_server_ready = true;
+
     server.Run();
 
     // 优雅关闭所有 DuckDB 实例（CHECKPOINT + disconnect + close）

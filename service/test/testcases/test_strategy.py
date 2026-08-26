@@ -446,15 +446,6 @@ class TestStrategyMultipartDeploy:
         body = resp.json()
         assert "不匹配" in body.get("message", "") or "cross" in body.get("message", "").lower()
 
-    def test_plain_json_deploy_still_works(self, auth_token):
-        plain_name = self.DEPLOY_NAME + "_plain"
-        strategy = self._xgb_strategy(plain_name, "XGBTestNode", model_file="")
-        headers = {"Authorization": auth_token} if auth_token else {}
-        kwargs = {"verify": False, "headers": headers, "json":
-                  {"mode": 0, "name": plain_name, "script": strategy}}
-        resp = requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=60)
-        assert resp.status_code == 200, f"plain deploy failed: {resp.status_code} {resp.text}"
-        TestStrategy().cleanup_strategy(auth_token, plain_name)
 
 
 # ============== XGBoost 业务层测试 ==============

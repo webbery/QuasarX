@@ -1,6 +1,48 @@
 import { ref, computed } from 'vue'
 import axios from 'axios'
 
+// ─── 时间范围预设 (与波动率面板一致) ───
+
+function formatDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+const QUICK_RANGES: [string, () => [string, string]][] = [
+  ['近1月', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setMonth(start.getMonth() - 1)
+    return [formatDate(start), formatDate(end)]
+  }],
+  ['近3月', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setMonth(start.getMonth() - 3)
+    return [formatDate(start), formatDate(end)]
+  }],
+  ['近6月', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setMonth(start.getMonth() - 6)
+    return [formatDate(start), formatDate(end)]
+  }],
+  ['近1年', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setFullYear(start.getFullYear() - 1)
+    return [formatDate(start), formatDate(end)]
+  }],
+  ['近3年', () => {
+    const end = new Date()
+    const start = new Date()
+    start.setFullYear(start.getFullYear() - 3)
+    return [formatDate(start), formatDate(end)]
+  }],
+]
+
 // ─── 类型定义 ───
 
 export interface ADFResult {
@@ -93,8 +135,8 @@ export interface CointegrationResponse {
 
 export function useCointegrationState() {
   const symbols = ref<string[]>([])
-  const startDate = ref('')
-  const endDate = ref('')
+  const dateRange = ref<[string, string] | null>(null)
+  const quickRange = ref('近1年')
   const maxLag = ref(10)
   const loading = ref(false)
   const error = ref('')
@@ -104,6 +146,24 @@ export function useCointegrationState() {
   const hasMultivariateGranger = computed(() =>
     !!result.value?.granger?.multivariate?.length
   )
+
+  function setQuickRange(range: string) {
+    quickRange.value = range
+    const found = QUICK_RANGES.find(([label]) => label === range)
+    if (found) {
+      dateRange.value = found[1]()
+    }
+  }
+
+  function updateDateRange(value: string, type: 'start' | 'end') {
+    if (!dateRange.value) return
+    dateRange.value = type === 'start'
+      ? [value, dateRange.value[1]]
+      : [dateRange.value[0], value]
+  }
+
+  // 初始化默认时间范围
+  setQuickRange('近1年')
 
   async function analyze() {
     if (symbols.value.length < 2) {
@@ -119,8 +179,10 @@ export function useCointegrationState() {
         symbols: symbols.value.join(','),
         max_lag: String(maxLag.value),
       }
-      if (startDate.value) params.start_date = startDate.value
-      if (endDate.value) params.end_date = endDate.value
+      if (dateRange.value) {
+        if (dateRange.value[0]) params.start_date = dateRange.value[0]
+        if (dateRange.value[1]) params.end_date = dateRange.value[1]
+      }
 
       const { data } = await axios.get('/v0/analysis/cointegration', { params })
       result.value = data
@@ -137,9 +199,12 @@ export function useCointegrationState() {
   }
 
   return {
+    QUICK_RANGES,
     symbols,
-    startDate,
-    endDate,
+    dateRange,
+    quickRange,
+    setQuickRange,
+    updateDateRange,
     maxLag,
     loading,
     error,

@@ -215,6 +215,19 @@ def cleanup_strategy(token: str, name: str):
 
 # ==================== Fixture ====================
 
+@pytest.fixture(scope="module", autouse=True)
+def reclaim_capital(auth_token):
+    """回收先前测试残留的 CapitalPool 资金，确保日终策略有足够资金分配"""
+    headers = {"Authorization": auth_token}
+    requests.post(
+        f"{BASE_URL}/strategy",
+        json={"action": "reclaim_all"},
+        headers=headers,
+        verify=False,
+        timeout=10,
+    )
+
+
 @pytest.fixture
 def decision_token(auth_token):
     """返回带 token 的辅助函数包"""

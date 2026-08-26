@@ -206,7 +206,7 @@ private:
     String _validationError;  // 存储验证错误信息
 
 private:
-    void topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context);
+    // void topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context);
 
     // ========== 新增：基于图的截面函数处理 ==========
 

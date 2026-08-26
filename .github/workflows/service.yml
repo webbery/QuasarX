@@ -1,5 +1,10 @@
 name: Build Service
-on: [push] # 触发事件
+on: 
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -664,3 +669,12 @@ jobs:
             tickflow.json
           compression-level: 5
           retention-days: 3
+# ========== 发布到 GitHub Releases ==========
+  release:
+    name: Create Release
+    needs: [test]
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4

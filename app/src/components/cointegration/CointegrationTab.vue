@@ -1,20 +1,37 @@
 <template>
   <div class="cointegration-tab">
-    <!-- 配置区 -->
-    <div class="config-section">
-      <div class="config-row">
-        <label>标的 (逗号分隔)</label>
-        <input v-model="symbolsInput" placeholder="sz.000001,sz.000002,sz.000003" class="symbols-input" />
-      </div>
-      <div class="config-row">
-        <label>最大滞后</label>
-        <input v-model.number="state.maxLag.value" type="number" min="1" max="40" class="num-input" />
-        <button class="analyze-btn" @click="onAnalyze" :disabled="state.loading.value">
-          {{ state.loading.value ? '分析中...' : '分析' }}
-        </button>
-      </div>
-      <div v-if="state.error.value" class="error-msg">{{ state.error.value }}</div>
-    </div>
+    <!-- 控制栏 (与波动率面板一致) -->
+    <AnalysisControlBar
+      v-model:selectedStrategyId="selectedStrategyId"
+      v-model:quickRange="state.quickRange.value"
+      :strategy-options="strategyOptions"
+      :available-securities="availableSecurities"
+      :checked-symbols="checkedSymbols"
+      :quick-ranges="QUICK_RANGES"
+      :loading="loading"
+      :can-analyze="canAnalyze"
+      :show-mode-toggle="false"
+      @update:quickRange="setQuickRange"
+      @update-date-range="updateDateRange"
+      @toggle-symbol="toggleSymbol"
+      @run-analysis="onAnalyze"
+    >
+      <template #extra-controls>
+        <div class="max-lag-selector">
+          <label>最大滞后:</label>
+          <input
+            v-model.number="state.maxLag.value"
+            type="number"
+            min="1"
+            max="40"
+            class="num-input"
+          />
+        </div>
+      </template>
+    </AnalysisControlBar>
+
+    <!-- 错误信息 -->
+    <div v-if="state.error.value" class="error-msg">{{ state.error.value }}</div>
 
     <!-- 结果区 -->
     <div v-if="state.result.value" class="results-section">
@@ -50,6 +67,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useCointegrationState } from './composables/useCointegrationState'
+import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
+import AnalysisControlBar from '../shared/AnalysisControlBar.vue'
 import UnitRootTable from './charts/UnitRootTable.vue'
 import PairwiseEGTable from './charts/PairwiseEGTable.vue'
 import ResidualChart from './charts/ResidualChart.vue'
@@ -58,7 +77,24 @@ import JohansenTable from './charts/JohansenTable.vue'
 import GrangerTable from './charts/GrangerTable.vue'
 
 const state = useCointegrationState()
-const symbolsInput = ref('')
+const { QUICK_RANGES, setQuickRange, updateDateRange } = state
+const {
+  strategyOptions,
+  selectedStrategyId,
+  availableSecurities,
+  checkedSymbols,
+  loading: securitiesLoading,
+  toggleSymbol,
+} = useStrategySecurities({ defaultCheckAll: false })
+
+const loading = computed(() => securitiesLoading.value || state.loading.value)
+
+// 至少选 2 个标的才可分析（与波动率面板行为对齐：勾选非空即可）
+const canAnalyze = computed(() => {
+  if (loading.value) return false
+  return checkedSymbols.value.size >= 2
+})
+
 const selectedEGIndex = ref(-1)
 
 const selectedEG = computed(() => {
@@ -67,7 +103,7 @@ const selectedEG = computed(() => {
 })
 
 function onAnalyze() {
-  state.symbols.value = symbolsInput.value.split(',').map(s => s.trim()).filter(Boolean)
+  state.symbols.value = Array.from(checkedSymbols.value)
   selectedEGIndex.value = -1
   state.analyze()
 }
@@ -79,77 +115,62 @@ function onSelectEG(idx: number) {
 
 <style scoped>
 .cointegration-tab {
-  padding: 12px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
+  background: #1a2236;
+  color: #e0e0e0;
 }
 
-.config-section {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: #111;
-  border-radius: 6px;
-}
-
-.config-row {
+.max-lag-selector {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
 }
 
-.config-row label {
+.max-lag-selector label {
   font-size: 12px;
-  color: #aaa;
-  min-width: 60px;
-}
-
-.symbols-input {
-  flex: 1;
-  background: #1a1a2e;
-  border: 1px solid #333;
-  border-radius: 4px;
-  padding: 6px 10px;
-  color: #ddd;
-  font-size: 13px;
+  color: #999;
+  white-space: nowrap;
 }
 
 .num-input {
   width: 60px;
-  background: #1a1a2e;
-  border: 1px solid #333;
+  background: rgba(26, 34, 54, 0.8);
+  border: 1px solid rgba(74, 85, 104, 0.3);
   border-radius: 4px;
-  padding: 6px 10px;
-  color: #ddd;
-  font-size: 13px;
+  padding: 4px 8px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
   text-align: center;
 }
 
-.analyze-btn {
-  padding: 6px 16px;
-  background: #2979ff;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-}
-.analyze-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.num-input:focus {
+  border-color: rgba(41, 98, 255, 0.5);
 }
 
 .error-msg {
   color: #f44336;
   font-size: 12px;
-  margin-top: 4px;
+  padding: 8px 16px;
+  background: rgba(244, 67, 54, 0.08);
+  border-bottom: 1px solid rgba(244, 67, 54, 0.2);
+}
+
+.results-section {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  min-height: 0;
 }
 
 .result-block {
   margin-bottom: 20px;
   padding: 12px;
-  background: #111;
-  border-radius: 6px;
+  background: rgba(26, 34, 54, 0.5);
+  border: 1px solid rgba(74, 85, 104, 0.2);
+  border-radius: 8px;
 }
 
 .charts-row {

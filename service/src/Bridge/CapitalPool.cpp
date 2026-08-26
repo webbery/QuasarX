@@ -65,6 +65,11 @@ double CapitalPool::reclaim(const String& strategy) {
     return reclaimed;
 }
 
+void CapitalPool::reclaimAll() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _strategies.clear();
+}
+
 void CapitalPool::deactivate(const String& strategy) {
     std::lock_guard<std::mutex> lock(_mutex);
     

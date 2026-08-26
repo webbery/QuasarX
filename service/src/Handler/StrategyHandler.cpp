@@ -130,6 +130,22 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    // 回收所有策略资金（测试隔离 / 管理接口）
+    if (params.contains("action") && params["action"] == "reclaim_all") {
+        auto* broker = _server->GetBrokerSubSystem();
+        if (broker && broker->GetCapitalPool()) {
+            broker->GetCapitalPool()->reclaimAll();
+            nlohmann::json result;
+            result["message"] = "all capital reclaimed";
+            res.status = 200;
+            res.set_content(result.dump(), "application/json");
+        } else {
+            res.status = 500;
+            res.set_content(R"({"error": "capital pool not available"})", "application/json");
+        }
+        return;
+    }
+
     int mode = params.value("mode", 0);
     if (mode == 2) {// 暂停
         String name = params.value("name", "");

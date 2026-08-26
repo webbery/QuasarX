@@ -267,6 +267,19 @@ void StrategySubSystem::DeleteStrategy(const String& name) {
         _dailyStrategySymbols.erase(name);
         _dailyExecutedStrategies.erase(name);
     }
+    // 回收策略资金
+    if (_handle) {
+        auto* broker = _handle->GetBrokerSubSystem();
+        if (broker) {
+            auto* pool = broker->GetCapitalPool();
+            if (pool) {
+                double reclaimed = pool->reclaim(name);
+                if (reclaimed > 0) {
+                    INFO("[StrategySubSystem] Reclaimed {:.0f} capital from deleted strategy '{}'", reclaimed, name);
+                }
+            }
+        }
+    }
 }
 
 void StrategySubSystem::InitStrategy(const String& strategy, const List<QNode*>& flow) {
@@ -547,6 +560,20 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
             // 记录持仓快照到 DuckDB
             time_t todayTs = FromStr(today, "%Y-%m-%d");
             recordDailyPositions(strategy, report.decisions, todayTs);
+
+            // 回收日终执行分配的临时资金（createBacktestContext 分配的 CapitalPool 额度）
+            if (_handle) {
+                auto* broker = _handle->GetBrokerSubSystem();
+                if (broker) {
+                    auto* pool = broker->GetCapitalPool();
+                    if (pool) {
+                        double reclaimed = pool->reclaim(strategy);
+                        if (reclaimed > 0) {
+                            INFO("[DailyExecution] Reclaimed {:.0f} capital from strategy '{}'", reclaimed, strategy);
+                        }
+                    }
+                }
+            }
 
             // 收集错误 + 检查是否全部完成，统一发送通知
             std::lock_guard<std::mutex> lock(_dailyMtx);

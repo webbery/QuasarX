@@ -32,6 +32,9 @@ public:
     // 返回实际回收的可用资金
     double reclaim(const String& strategy);
 
+    // 回收所有策略资金（测试隔离 / 服务重置时使用）
+    void reclaimAll();
+
     // 标记策略为非活跃（暂停时调用，不回收资金）
     void deactivate(const String& strategy);
 

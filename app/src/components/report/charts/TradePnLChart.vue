@@ -315,7 +315,7 @@ const symbolDetails = computed<SymbolDetail[]>(() => {
       winRate: s.winRate,
       realized: s.total,
       unrealized,
-      hasOpen: symbol in openMap,
+      hasOpen: s.symbol in openMap,
       total: s.total + unrealized,
     }
   })

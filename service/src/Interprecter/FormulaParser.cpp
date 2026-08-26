@@ -437,42 +437,42 @@ String FormulaParser::genPrimaryPlaceHolder(const peg::Ast& ats) {
     return code;
 }
 
-void FormulaParser::topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context) {
-    auto& args = funcAst.nodes[1];
+// void FormulaParser::topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context) {
+//     auto& args = funcAst.nodes[1];
 
-    if (args->nodes.size() != 2) {
-        WARN("topk requires 2 arguments");
-        return;
-    }
+//     if (args->nodes.size() != 2) {
+//         WARN("topk requires 2 arguments");
+//         return;
+//     }
 
-    auto& scoreExprAst = args->nodes[0];
-    auto& kExprAst = args->nodes[1];
+//     auto& scoreExprAst = args->nodes[0];
+//     auto& kExprAst = args->nodes[1];
 
-    context_t kValue = evalNode(symbol_t{}, *kExprAst, context);
-    int k = 10;
-    if (std::holds_alternative<double>(kValue)) {
-        k = static_cast<int>(std::get<double>(kValue));
-    }
+//     context_t kValue = evalNode(symbol_t{}, *kExprAst, context);
+//     int k = 10;
+//     if (std::holds_alternative<double>(kValue)) {
+//         k = static_cast<int>(std::get<double>(kValue));
+//     }
 
-    Vector<std::pair<symbol_t, double>> scores;
-    for (auto symbol : allSymbols) {
-        // 暂未实现
-    }
+//     Vector<std::pair<symbol_t, double>> scores;
+//     for (auto symbol : allSymbols) {
+//         // 暂未实现
+//     }
 
-    std::sort(scores.begin(), scores.end(),
-        [](const auto& a, const auto& b) {
-            return a.second > b.second;
-        });
+//     std::sort(scores.begin(), scores.end(),
+//         [](const auto& a, const auto& b) {
+//             return a.second > b.second;
+//         });
 
-    Set<symbol_t> topKSymbols;
-    for (int i = 0; i < std::min(k, static_cast<int>(scores.size())); ++i) {
-        topKSymbols.insert(scores[i].first);
-    }
+//     Set<symbol_t> topKSymbols;
+//     for (int i = 0; i < std::min(k, static_cast<int>(scores.size())); ++i) {
+//         topKSymbols.insert(scores[i].first);
+//     }
 
-    for (auto symbol : allSymbols) {
-        result.stockResults[symbol] = (topKSymbols.count(symbol) > 0);
-    }
-}
+//     for (auto symbol : allSymbols) {
+//         result.stockResults[symbol] = (topKSymbols.count(symbol) > 0);
+//     }
+// }
 
 List<Pair<symbol_t, TradeAction>> FormulaParser::envoke(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context) {
     List<Pair<symbol_t, TradeAction>> decisions;
