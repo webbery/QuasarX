@@ -282,6 +282,7 @@ import PortfolioPanel from "./components/PortfolioPanel.vue";
 import RiskView from "./components/risk/RiskView.vue";
 import StrategyRiskDetail from "./components/risk/StrategyRiskDetail.vue";
 import sseService from "./ts/SSEService";
+import { ElMessage } from 'element-plus';
 import Store from 'electron-store';
 // 报表配置面板
 import AnalysisRightPanel from './components/AnalysisRightPanel.vue';
@@ -531,12 +532,27 @@ const onLoginSucess = () => {
   initServerEvent();
 }
 
+const onScheduleError = (msg) => {
+  const d = msg.data
+  const task = d.task || '未知任务'
+  const message = d.message || '执行失败'
+  const output = d.output || ''
+  let detail = message
+  if (output) {
+    const lines = output.split(/\r?\n/).filter(l => l.trim()).slice(-3)
+    if (lines.length) detail += '\n' + lines.join('\n')
+  }
+  ElMessage.error({ message: `[定时任务] ${task}: ${detail}`, duration: 10000, showClose: true })
+}
+
 const initServerEvent = () => {
   sseService.on('system_status', onSystemStatus)
+  sseService.on('schedule_error', onScheduleError)
 }
 
 const uninitServerEvent = () => {
   sseService.off('system_status', onSystemStatus)
+  sseService.off('schedule_error', onScheduleError)
 }
 
 // 从策略面板加载版本
@@ -820,7 +836,17 @@ const totalCount = computed(() =>
 const fetchServerStrategies = async () => {
   try {
     const res = await axios.get('/v0/strategy')
-    serverStrategies.value = Array.isArray(res.data) ? res.data : (res.data.strategies || [])
+    const data = res.data
+    const strategies = Array.isArray(data) ? data : (data.strategies || [])
+    const failed = Array.isArray(data.failed) ? data.failed : []
+    // 将失败策略合并到列表，标记 failed=true，避免与正常策略重复
+    const normalNames = new Set(strategies.map(s => s.name))
+    for (const f of failed) {
+      if (f.name && !normalNames.has(f.name)) {
+        strategies.push({ name: f.name, running: false, failed: true, error: f.error, failed_node: f.failed_node })
+      }
+    }
+    serverStrategies.value = strategies
   } catch (e) {
     console.warn('获取策略状态失败', e)
   }

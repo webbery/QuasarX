@@ -405,86 +405,122 @@
                 <i class="fas fa-coins"></i> 分红除权数据管理
             </div>
 
-            <div class="input-row">
-                <div class="input-group">
-                    <label>查询日期</label>
-                    <input type="date" v-model="dividendQueryDate" />
+            <!-- 第一行：左操作 + 右状态 -->
+            <div class="dividend-top">
+                <div class="dividend-actions">
+                    <!-- 查询 -->
+                    <div class="action-card">
+                        <div class="card-label"><i class="fas fa-search"></i> 查询</div>
+                        <div class="input-group">
+                            <label>日期</label>
+                            <input type="date" v-model="dividendQueryDate" />
+                        </div>
+                        <div class="input-group">
+                            <label>标的</label>
+                            <input type="text" placeholder="如 600519.SH（留空全部）" v-model="dividendQueryCode" />
+                        </div>
+                        <div class="action-btn-row">
+                            <button class="btn btn-sm" @click="onLoadDividendData" :disabled="dividendLoading">
+                                <i class="fas fa-search"></i> 查询
+                            </button>
+                            <button class="btn btn-primary btn-sm"
+                                    @click="onUpdateDividendLatest"
+                                    :disabled="isUpdatingDividend || dividendResults.length === 0 || !isLoggedIn"
+                                    title="对当前查询结果中的标的下载最新分红数据">
+                                <i class="fas fa-cloud-download-alt"></i>
+                                {{ isUpdatingDividend ? '更新中...' : '更新到最新' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 从策略下载 -->
+                    <div class="action-card">
+                        <div class="card-label"><i class="fas fa-download"></i> 从策略下载</div>
+                        <div class="input-group">
+                            <label>策略</label>
+                            <select v-model="dividendStrategy" class="strategy-select">
+                                <option value="">全部策略</option>
+                                <option v-for="s in historyStore.strategies" :key="s.id" :value="s.name">
+                                    {{ s.name }}
+                                </option>
+                            </select>
+                        </div>
+                        <div class="action-btn-row">
+                            <button class="btn btn-primary btn-sm" @click="onDownloadDividend" :disabled="dividendDownloading">
+                                <i class="fas fa-download"></i>
+                                {{ dividendDownloading ? '下载中...' : '下载' }}
+                            </button>
+                            <button class="btn-danger btn-sm" @click="onDeleteAllDividend" :disabled="dividendDeleting">
+                                <i class="fas fa-trash"></i> 清空所有
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 按标的下载 -->
+                    <div class="action-card">
+                        <div class="card-label"><i class="fas fa-crosshairs"></i> 按标的下载</div>
+                        <div class="input-group">
+                            <label>标的代码</label>
+                            <input type="text" placeholder="多个用逗号分隔，如 600519.SH,000858.SZ" v-model="dividendDownloadSymbols" />
+                        </div>
+                        <button class="btn btn-primary btn-sm" @click="onDownloadDividendBySymbol" :disabled="dividendDownloading || !dividendDownloadSymbols.trim()">
+                            <i class="fas fa-download"></i>
+                            {{ dividendDownloading ? '下载中...' : '下载' }}
+                        </button>
+                    </div>
                 </div>
-                <div class="input-group">
-                    <label>查询标的</label>
-                    <input type="text" placeholder="如 600519.SH（留空列出全部）" v-model="dividendQueryCode" />
+
+                <!-- 右列：状态信息 -->
+                <div class="dividend-status-panel">
+                    <div v-if="dividendStatus" class="status-text" :class="{ 'status-error': dividendStatus.includes('失败') }">
+                        {{ dividendStatus }}
+                    </div>
+                    <div v-if="!dividendStatus" class="status-placeholder">
+                        <i class="fas fa-info-circle"></i> 执行操作后此处显示状态
+                    </div>
+                    <div v-if="dividendStrategy && dividendSymbolCount > 0" class="status-summary">
+                        <span>策略「{{ dividendStrategy }}」标的池: <strong>{{ dividendSymbolCount }}</strong> 个</span>
+                    </div>
+                    <div v-else-if="dividendCount > 0" class="status-summary">
+                        <span>共 <strong>{{ dividendCount }}</strong> 条记录</span>
+                    </div>
                 </div>
-                <button class="btn btn-primary btn-sm" style="align-self: flex-end;"
-                        @click="onUpdateDividendLatest"
-                        :disabled="isUpdatingDividend || dividendResults.length === 0 || !isLoggedIn"
-                        title="对当前查询结果中的标的下载最新分红数据">
-                    <i class="fas fa-cloud-download-alt"></i>
-                    {{ isUpdatingDividend ? '更新中...' : '更新到最新' }}
-                </button>
             </div>
 
-            <div class="button-row">
-                <button class="btn" @click="onLoadDividendData" :disabled="dividendLoading">
-                    <i class="fas fa-search"></i> 查询
-                </button>
-                <button class="btn btn-primary" @click="onDownloadDividend" :disabled="dividendDownloading">
-                    <i class="fas fa-download"></i>
-                    {{ dividendDownloading ? '下载中...' : '从策略更新' }}
-                </button>
-                <button class="btn-danger btn-sm" @click="onDeleteAllDividend" :disabled="dividendDeleting">
-                    <i class="fas fa-trash"></i> 清空所有
-                </button>
-            </div>
-
-            <div class="input-row" style="margin-top: 8px;">
-                <div class="input-group" style="flex: 1;">
-                    <label>按标的下载</label>
-                    <input type="text" placeholder="输入标的代码，多个用逗号分隔，如 600519.SH,000858.SZ" v-model="dividendDownloadSymbols" />
+            <!-- 第二行：数据表格 -->
+            <div class="dividend-table-area">
+                <div v-if="dividendResults.length > 0" class="quote-data-table">
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead class="sticky-header">
+                                <tr>
+                                    <th>标的代码</th>
+                                    <th>除权除息日</th>
+                                    <th>登记日</th>
+                                    <th>类型</th>
+                                    <th>送股(10股)</th>
+                                    <th>转增(10股)</th>
+                                    <th>派息(10股)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(item, idx) in dividendResults" :key="idx">
+                                    <td class="symbol-code">{{ item.symbol || item.code || '-' }}</td>
+                                    <td>{{ item.ex_dividend_date || '-' }}</td>
+                                    <td>{{ item.record_date || '-' }}</td>
+                                    <td>{{ dividendActionTypeName[item.action_type] || item.action_type }}</td>
+                                    <td>{{ item.bonus_per_10 || 0 }}</td>
+                                    <td>{{ item.transfer_per_10 || 0 }}</td>
+                                    <td>{{ item.cash_per_10 || 0 }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <button class="btn btn-primary" style="align-self: flex-end;" @click="onDownloadDividendBySymbol" :disabled="dividendDownloading || !dividendDownloadSymbols.trim()">
-                    <i class="fas fa-download"></i>
-                    {{ dividendDownloading ? '下载中...' : '下载指定标的' }}
-                </button>
-            </div>
 
-            <div v-if="dividendStatus" class="status-text" :class="{ 'status-error': dividendStatus.includes('失败') }">
-                {{ dividendStatus }}
-            </div>
-
-            <div v-if="dividendResults.length > 0" class="quote-data-table">
-                <div class="table-scroll">
-                    <table class="data-table">
-                        <thead class="sticky-header">
-                            <tr>
-                                <th>标的代码</th>
-                                <th>除权除息日</th>
-                                <th>登记日</th>
-                                <th>类型</th>
-                                <th>送股(10股)</th>
-                                <th>转增(10股)</th>
-                                <th>派息(10股)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="(item, idx) in dividendResults" :key="idx">
-                                <td class="symbol-code">{{ item.symbol || item.code || '-' }}</td>
-                                <td>{{ item.ex_dividend_date || '-' }}</td>
-                                <td>{{ item.record_date || '-' }}</td>
-                                <td>{{ dividendActionTypeName[item.action_type] || item.action_type }}</td>
-                                <td>{{ item.bonus_per_10 || 0 }}</td>
-                                <td>{{ item.transfer_per_10 || 0 }}</td>
-                                <td>{{ item.cash_per_10 || 0 }}</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div v-if="dividendResults.length === 0 && !dividendLoading && dividendLoaded" class="empty-text">
+                    <i class="fas fa-info-circle"></i> 暂无分红数据
                 </div>
-                <div v-if="dividendCount > 0" class="pagination-center" style="padding: 8px;">
-                    <span class="page-info">共 {{ dividendCount }} 条记录</span>
-                </div>
-            </div>
-
-            <div v-if="dividendResults.length === 0 && !dividendLoading && dividendLoaded" class="empty-text">
-                <i class="fas fa-info-circle"></i> 暂无分红数据
             </div>
         </div>
 
@@ -525,9 +561,8 @@
                         <label>结束日期</label>
                         <input type="date" v-model="optionEndDate" />
                     </div>
-                </div>
-                <div class="button-row">
-                    <button class="btn btn-primary" @click="onOptionDownload"
+                    <button class="btn btn-primary" style="align-self: flex-end;"
+                            @click="onOptionDownload"
                             :disabled="optionDownloading || !isLoggedIn || optionSelectedProducts.length === 0">
                         <i class="fas fa-download"></i>
                         {{ optionDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
@@ -653,6 +688,8 @@ import { ipcRenderer } from 'electron'
 import axios from 'axios'
 import sseService from '@/ts/SSEService'
 import PromptDialog from './PromptDialog.vue'
+import { useHistoryStore } from '@/stores/history'
+import { extractSecuritiesFromFlowData } from '@/lib/strategyPool'
 
 // 声明接收父组件传递的事件（避免 Vue fragment 警告）
 defineEmits(['load-version', 'strategy-click'])
@@ -763,6 +800,42 @@ const sortKey = ref('')
 const sortOrder = ref('asc') // 'asc' or 'desc'
 
 // ── 分红除权数据状态 ──
+const historyStore = useHistoryStore()
+const dividendStrategy = ref('')  // 空字符串 = 全部策略
+const dividendStrategySymbols = ref('')  // 选中策略的标的列表（逗号分隔）
+const dividendSymbolCount = computed(() => {
+    if (!dividendStrategySymbols.value) return 0
+    return dividendStrategySymbols.value.split(',').filter(s => s.trim()).length
+})
+
+// 选择策略后从本地流程图提取标的池
+watch(dividendStrategy, async (name) => {
+    if (!name) {
+        dividendStrategySymbols.value = ''
+        return
+    }
+    const strategy = historyStore.strategies.find(s => s.name === name)
+    if (!strategy) {
+        dividendStrategySymbols.value = ''
+        return
+    }
+    // 取最新版本的 flowData
+    const versions = historyStore.getVersionsByStrategy(strategy.id)
+    if (versions.length === 0) {
+        dividendStrategySymbols.value = ''
+        return
+    }
+    const sorted = [...versions].sort((a, b) =>
+        new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+    )
+    const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
+    if (flowData) {
+        const securities = extractSecuritiesFromFlowData(flowData as any)
+        dividendStrategySymbols.value = securities.map(s => s.code).join(',')
+    } else {
+        dividendStrategySymbols.value = ''
+    }
+})
 const dividendQueryDate = ref('')
 const dividendQueryCode = ref('')
 const dividendDownloadSymbols = ref('')
@@ -776,15 +849,16 @@ const dividendCount = ref(0)
 const isUpdatingDividend = ref(false)
 
 // SSE 完成事件 handler（模块级 const 保证 on/off 同引用）
-const onDividendUpdateDone = (msg: any) => {
+const onDividendDownloadDone = (msg: any) => {
     if (msg.data.status !== 'completed' && msg.data.status !== 'aborted') return
-    sseService.off('dividend_download', onDividendUpdateDone)
+    sseService.off('dividend_download', onDividendDownloadDone)
     if (msg.data.status === 'completed') {
-        dividendStatus.value = `更新完成：导入 ${msg.data.imported_rows || 0} 行`
+        dividendStatus.value = `下载完成：导入 ${msg.data.imported_rows || 0} 行`
     } else {
-        dividendStatus.value = `更新失败: ${msg.data.reason || '未知错误'}`
+        dividendStatus.value = `下载失败: ${msg.data.reason || '未知错误'}`
     }
     onLoadDividendData()
+    dividendDownloading.value = false
     isUpdatingDividend.value = false
 }
 
@@ -1935,19 +2009,30 @@ const onLoadDividendData = async () => {
 
 const onDownloadDividend = async () => {
     dividendDownloading.value = true
-    dividendStatus.value = '正在从活跃策略收集标的并下载分红数据...'
+    const strategyLabel = dividendStrategy.value || '全部策略'
+    dividendStatus.value = `正在从「${strategyLabel}」收集标的并下载分红数据...`
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
+
+    // 订阅 SSE 完成事件
+    sseService.on('dividend_download', onDividendDownloadDone)
+
     try {
-        const resp = await axios.post(`https://${server}/v0/dividend`, {
-            from_strategies: true
-        }, { headers: { 'Authorization': token || '' } })
+        const body: any = {}
+        if (dividendStrategy.value && dividendStrategySymbols.value) {
+            body.symbols = dividendStrategySymbols.value
+        } else if (dividendStrategy.value) {
+            body.strategy_name = dividendStrategy.value
+        } else {
+            body.from_strategies = true
+        }
+        const resp = await axios.post(`https://${server}/v0/dividend`, body, {
+            headers: { 'Authorization': token || '' }
+        })
         dividendStatus.value = `已启动下载: ${resp.data.symbol_count} 个标的，后台执行中...`
-        // 10秒后自动刷新查询结果
-        setTimeout(onLoadDividendData, 10000)
     } catch (err: any) {
+        sseService.off('dividend_download', onDividendDownloadDone)
         dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
-    } finally {
         dividendDownloading.value = false
     }
 }
@@ -1959,15 +2044,17 @@ const onDownloadDividendBySymbol = async () => {
     dividendStatus.value = `正在下载指定标的分红数据: ${syms}`
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
+
+    sseService.on('dividend_download', onDividendDownloadDone)
+
     try {
         const resp = await axios.post(`https://${server}/v0/dividend`, {
             symbols: syms
         }, { headers: { 'Authorization': token || '' } })
         dividendStatus.value = `已启动下载: ${resp.data.symbol_count} 个标的，后台执行中...`
-        setTimeout(onLoadDividendData, 10000)
     } catch (err: any) {
+        sseService.off('dividend_download', onDividendDownloadDone)
         dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
-    } finally {
         dividendDownloading.value = false
     }
 }
@@ -2012,7 +2099,7 @@ const onUpdateDividendLatest = async () => {
     dividendStatus.value = `正在为 ${uniqueSymbols.size} 个标的下载最新分红数据...`
 
     // 订阅 SSE completed/aborted 事件
-    sseService.on('dividend_download', onDividendUpdateDone)
+    sseService.on('dividend_download', onDividendDownloadDone)
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -2023,7 +2110,7 @@ const onUpdateDividendLatest = async () => {
             symbols: symbolsStr
         }, { headers: { 'Authorization': token || '' } })
     } catch (err: any) {
-        sseService.off('dividend_download', onDividendUpdateDone)
+        sseService.off('dividend_download', onDividendDownloadDone)
         dividendStatus.value = `启动失败: ${err.response?.data?.message || err.message}`
         isUpdatingDividend.value = false
     }
@@ -2286,6 +2373,124 @@ const onOptionDeleteAll = async () => {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+/* ── 分红除权两行布局 ── */
+.dividend-top {
+    display: flex;
+    gap: 16px;
+}
+
+.dividend-actions {
+    width: 260px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.dividend-status-panel {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid rgba(74, 85, 104, 0.2);
+    border-radius: 6px;
+    padding: 12px 16px;
+    background: rgba(15, 20, 35, 0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.status-placeholder {
+    color: #475569;
+    font-size: 13px;
+}
+
+.status-summary {
+    color: #94a3b8;
+    font-size: 13px;
+    margin-top: auto;
+}
+
+.status-summary strong {
+    color: #60a5fa;
+}
+
+.dividend-table-area {
+    flex: 1;
+    min-height: 200px;
+    overflow: auto;
+}
+
+.action-card {
+    border: 1px solid rgba(74, 85, 104, 0.2);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: rgba(15, 20, 35, 0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.card-label {
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.action-btn-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.strategy-select {
+    width: 100%;
+    padding: 4px 8px;
+    background: rgba(26, 34, 54, 0.8);
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-size: 13px;
+}
+
+.dividend-actions .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dividend-actions .input-group label {
+    font-size: 11px;
+    color: #64748b;
+}
+
+.dividend-actions .input-group input {
+    width: 100%;
+}
+
+.dividend-actions::-webkit-scrollbar,
+.dividend-table-area::-webkit-scrollbar {
+    width: 6px;
+}
+
+.dividend-actions::-webkit-scrollbar-track,
+.dividend-table-area::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.dividend-actions::-webkit-scrollbar-thumb,
+.dividend-table-area::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.dividend-actions::-webkit-scrollbar-thumb:hover,
+.dividend-table-area::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
 }
 
 /* ── 管理区 ── */
@@ -2857,21 +3062,26 @@ select option {
 .checkbox-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 6px 10px;
     align-items: center;
-    padding: 6px 0;
+    padding: 2px 0;
 }
 .checkbox-item {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     cursor: pointer;
     font-size: 13px;
     color: var(--text-primary, #ddd);
     white-space: nowrap;
+    line-height: 1;
 }
 .checkbox-item input[type="checkbox"] {
     margin: 0;
+    padding: 0;
+    width: 14px;
+    height: 14px;
+    vertical-align: middle;
     cursor: pointer;
 }
 </style>

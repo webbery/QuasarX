@@ -595,6 +595,8 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
         return -1;
     }
 
+    SPDLOG_INFO("[FinanceDB] Parsing {}: {} columns, c_symbol={}, c_ex_div={}", csv_path, csv_headers.size(), c_symbol, c_ex_div);
+
     // ── 解析数据行 ──
     struct DivRow {
         int64_t symbol;
@@ -613,6 +615,7 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
     };
     Vector<DivRow> rows;
     rows.reserve(64);
+    int total_lines = 0, skipped_empty_sym = 0, skipped_empty_date = 0;
 
     auto safeDouble = [](const String& s) -> double {
         if (s.empty()) return 0.0;
@@ -631,6 +634,7 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
     while (std::getline(ifs, line)) {
         if (line.empty()) continue;
         if (!line.empty() && line.back() == '\r') line.pop_back();
+        total_lines++;
 
         std::istringstream ss(line);
         String tok;
@@ -639,7 +643,7 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
 
         DivRow r{};
         String sym_str = getField(cols, c_symbol);
-        if (sym_str.empty()) continue;
+        if (sym_str.empty()) { skipped_empty_sym++; continue; }
         r.symbol = encodeSymbol(sym_str);
 
         r.announce_date   = getField(cols, c_announce);
@@ -655,10 +659,13 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
         r.ex_div_price    = getField(cols, c_ex_price);
         r.action_type     = safeInt(getField(cols, c_action));
 
-        if (r.ex_dividend_date.empty()) continue;
+        if (r.ex_dividend_date.empty()) { skipped_empty_date++; continue; }
         rows.push_back(std::move(r));
     }
     ifs.close();
+
+    SPDLOG_INFO("[FinanceDB] {}: {} data lines, {} valid, {} skipped(empty symbol), {} skipped(empty ex_div_date)",
+                csv_path, total_lines, rows.size(), skipped_empty_sym, skipped_empty_date);
 
     if (rows.empty()) {
         SPDLOG_WARN("[FinanceDB] No valid rows in {}", csv_path);
@@ -738,18 +745,21 @@ int FinanceDB::importAllDividends(const String& dividend_dir) {
     }
 
     int total = 0;
+    int file_count = 0;
     for (auto& entry : std::filesystem::directory_iterator(dividend_dir)) {
         if (!entry.is_regular_file()) continue;
         auto filename = entry.path().filename().string();
         // 匹配 {symbol}_dividend.csv
         if (filename.size() > 13 &&
             filename.substr(filename.size() - 13) == "_dividend.csv") {
+            file_count++;
+            SPDLOG_INFO("[FinanceDB] Importing dividend file [{}/{}]: {}", file_count, 0, filename);
             int n = importDividendCsv(entry.path().string());
             if (n > 0) total += n;
         }
     }
 
-    SPDLOG_INFO("[FinanceDB] Imported {} total dividend rows from {}", total, dividend_dir);
+    SPDLOG_INFO("[FinanceDB] Scanned {}: {} dividend CSV files found, {} total rows imported", dividend_dir, file_count, total);
     return total;
 }
 

@@ -56,7 +56,11 @@ static void notifyCrashByEmail(const char* crash_kind, void** /*addrs*/, int fra
 
     time_t now = time(nullptr);
     char timebuf[32] = {};
+#ifdef WIN32
+    ctime_s(timebuf, sizeof(timebuf), &now);
+#else
     ctime_r(&now, timebuf);
+#endif
     char* nl = strchr(timebuf, '\n');
     if (nl) *nl = '\0';
 

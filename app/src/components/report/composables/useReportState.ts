@@ -140,7 +140,8 @@ export function useReportState(): UseReportStateReturn {
   const layout = ref<ChartLayoutItem[]>(migrateLayout(loadLayoutFromStorage()) ?? defaultLayout())
 
   /**
-   * 迁移布局：为旧布局自动添加新增的图表（如 monteCarloPaths、metricsTable）
+   * 迁移布局：为旧布局自动添加新增的图表（如 monteCarloPaths、metricsTable、tradePnL）
+   * 迁移后自动持久化，避免每次加载重复迁移
    */
   function migrateLayout(oldLayout: ChartLayoutItem[] | null): ChartLayoutItem[] | null {
     if (!oldLayout) return null
@@ -148,13 +149,18 @@ export function useReportState(): UseReportStateReturn {
     try {
       const existingIds = new Set(oldLayout.map(item => item.id))
       const migrated = [...oldLayout]
+      let changed = false
 
-      // 检查是否有新注册的图表需要添加
       for (const chart of CHART_REGISTRY) {
         if (!existingIds.has(chart.id)) {
           console.info(`[useReportState] 布局迁移：添加新图表 ${chart.id}`)
           migrated.push({ id: chart.id, visible: chart.defaultVisible })
+          changed = true
         }
+      }
+
+      if (changed) {
+        localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(migrated))
       }
 
       return migrated

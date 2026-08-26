@@ -1139,7 +1139,22 @@ void Server::Schedules(time_t t) {
     if (!daily_once && ltm->tm_hour == time.first && ltm->tm_min == time.second) { // 20:00(default) run once
         daily_once = true;
         LOG("run once script");
-        RunCommand("cd ../tools && python daily.py");
+        nng_socket sseSock = GetSocket();
+
+        // daily.py
+        {
+            String output;
+            bool ok = RunCommand("cd ../tools && python daily.py", output);
+            if (!ok) {
+                String msg = "daily.py 执行失败";
+                WARN("[Schedules] {}", msg);
+                SendSSE(sseSock, "schedule_error", {
+                    {"task", "daily.py"},
+                    {"message", msg},
+                    {"output", output}
+                });
+            }
+        }
 
         // 更新分红除权数据：从活跃策略收集标的 → 下载 → 导入 DuckDB
         if (_strategySystem) {
@@ -1157,10 +1172,32 @@ void Server::Schedules(time_t t) {
                      allSymbols.size(), names.size());
                 String cmd = "cd ../tools && python fetch_dividend_data.py \""
                            + symbolsStr + "\" --download --data-dir data";
-                RunCommand(cmd);
-                // 导入 CSV 到 finance.db
+                String output;
+                bool ok = RunCommand(cmd, output);
+                // 导入 CSV 到 finance.db（无论下载是否成功，尝试导入已有文件）
                 String dbPath = _config->GetDatabasePath();
-                FinanceDB::instance().importAllDividends(dbPath + "/dividend");
+                int imported = FinanceDB::instance().importAllDividends(dbPath + "/dividend");
+
+                if (!ok) {
+                    String msg = fmt::format("fetch_dividend_data.py 执行失败，导入 {} 行", imported);
+                    WARN("[Schedules] {}", msg);
+                    SendSSE(sseSock, "schedule_error", {
+                        {"task", "fetch_dividend_data.py"},
+                        {"message", msg},
+                        {"symbols", symbolsStr},
+                        {"imported_rows", std::to_string(imported)},
+                        {"output", output}
+                    });
+                } else if (imported == 0) {
+                    String msg = fmt::format("分红数据下载成功但未导入任何记录（{} 个标的）", allSymbols.size());
+                    WARN("[Schedules] {}", msg);
+                    SendSSE(sseSock, "schedule_error", {
+                        {"task", "fetch_dividend_data.py"},
+                        {"message", msg},
+                        {"symbols", symbolsStr},
+                        {"imported_rows", "0"}
+                    });
+                }
             }
         }
 
@@ -1168,7 +1205,17 @@ void Server::Schedules(time_t t) {
             // every week 6 run once
             //RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
             // 每周末更新一次
-            RunCommand("cd ../tools && python run_task.py 3");
+            String output;
+            bool ok = RunCommand("cd ../tools && python run_task.py 3", output);
+            if (!ok) {
+                String msg = "run_task.py 3 执行失败";
+                WARN("[Schedules] {}", msg);
+                SendSSE(sseSock, "schedule_error", {
+                    {"task", "run_task.py"},
+                    {"message", msg},
+                    {"output", output}
+                });
+            }
             ReloadMarketData(_config->GetDatabasePath());
         }
 

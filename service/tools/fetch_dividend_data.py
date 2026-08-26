@@ -79,7 +79,7 @@ def to_code_exchange(symbol: str) -> str:
         return sym.upper()
     exchange_map = {"sh": "SH", "sse": "SH", "sz": "SZ", "szse": "SZ", "bj": "BJ"}
     exchange = exchange_map.get(left.lower(), right)
-    return f"{parts[0]}.{exchange}"
+    return f"{parts[1]}.{exchange}"
 
 
 # ============================================================
@@ -90,11 +90,14 @@ def query_dividend(bs_code: str, year: int) -> pd.DataFrame:
     """
     查询某标的某年的分红除权数据
 
-    BaoStock 返回字段:
-      code, companyCode, code_name, reportDate, year,
-      dividend(除权除息日), dividend_type, record_date(股权登记日),
-      ex_dividend_price, bonus_amount(送股), transfer_amount(转增),
-      divi_cash(派息), allot_amount(配股), allot_price(配股价)
+    BaoStock 返回字段 (query_dividend_data):
+      code, dividPreNoticeDate(预公告日), dividAgmPumDate(股东大会),
+      dividPlanAnnounceDate(方案公告日), dividPlanDate(方案日),
+      dividRegistDate(股权登记日), dividOperateDate(除权除息日),
+      dividPayDate(派息日), dividStockMarketDate(红股上市日),
+      dividCashPsBeforeTax(每股税前派息), dividCashPsAfterTax(每股税后派息),
+      dividStocksPs(每股送股), dividCashStock(派息描述),
+      dividReserveToStockPs(每股转增)
     """
     try:
         rs = bs.query_dividend_data(bs_code, year)
@@ -146,24 +149,18 @@ def check_ex_dividend(symbols: list, check_date: str) -> list:
                 continue
 
             # 过滤: 除权除息日 == check_date
-            if 'dividend' not in df.columns:
+            if 'dividOperateDate' not in df.columns:
                 continue
 
-            # dividend 字段格式可能是 YYYY-MM-DD 或 YYYYMMDD
             for _, row in df.iterrows():
-                ex_date = str(row.get('dividend', '')).strip()
-                # 标准化日期格式
-                if len(ex_date) == 8 and ex_date.isdigit():
-                    ex_date = f"{ex_date[:4]}-{ex_date[4:6]}-{ex_date[6:8]}"
+                ex_date = normalize_date(str(row.get('dividOperateDate', '')).strip())
 
                 if ex_date == target_date:
-                    # 解析数据
-                    bonus = float(row.get('bonus_amount', 0) or 0)       # 送股 (每10股)
-                    transfer = float(row.get('transfer_amount', 0) or 0)  # 转增 (每10股)
-                    cash = float(row.get('divi_cash', 0) or 0)           # 派息 (每10股)
-                    record_date = str(row.get('record_date', '')).strip()
-                    if len(record_date) == 8 and record_date.isdigit():
-                        record_date = f"{record_date[:4]}-{record_date[4:6]}-{record_date[6:8]}"
+                    # BaoStock 返回每股数据，×10 转为每10股
+                    bonus = float(row.get('dividStocksPs', 0) or 0) * 10        # 送股 (每10股)
+                    transfer = float(row.get('dividReserveToStockPs', 0) or 0) * 10  # 转增 (每10股)
+                    cash = float(row.get('dividCashPsBeforeTax', 0) or 0) * 10  # 派息 (每10股)
+                    record_date = normalize_date(str(row.get('dividRegistDate', '')).strip())
 
                     # 判断类型
                     actions = []
@@ -255,6 +252,12 @@ def download_dividend_csv(symbols: list, data_dir: str, years: list = None):
     dividend_dir = os.path.join(data_dir, "dividend")
     os.makedirs(dividend_dir, exist_ok=True)
 
+    # 清理旧的 dividend CSV，避免残留文件被导入
+    for old_file in os.listdir(dividend_dir):
+        if old_file.endswith("_dividend.csv"):
+            os.remove(os.path.join(dividend_dir, old_file))
+    print(f"已清理 {dividend_dir} 中的旧文件")
+
     for symbol in symbols:
         bs_code = convert_to_baostock_code(symbol)
         display_code = to_code_exchange(bs_code)
@@ -275,13 +278,17 @@ def download_dividend_csv(symbols: list, data_dir: str, years: list = None):
         seen_dates = set()
         unique_rows = []
         for year, row in all_rows:
-            ex_date = normalize_date(row.get('dividend', ''))
+            ex_date = normalize_date(row.get('dividOperateDate', ''))
             if ex_date and ex_date not in seen_dates:
                 seen_dates.add(ex_date)
                 unique_rows.append((year, row))
 
+        if not unique_rows:
+            print(f"  [{display_code}] 有 {len(all_rows)} 条记录但无有效除权除息日，跳过")
+            continue
+
         # 按除权除息日排序
-        unique_rows.sort(key=lambda r: r[1].get('dividend', ''))
+        unique_rows.sort(key=lambda r: r[1].get('dividOperateDate', ''))
 
         # 写入 CSV (DuckDB 兼容格式)
         csv_path = os.path.join(dividend_dir, f"{display_code}_dividend.csv")
@@ -290,16 +297,17 @@ def download_dividend_csv(symbols: list, data_dir: str, years: list = None):
                     "implement_date,bonus_per_10,transfer_per_10,cash_per_10,"
                     "allot_per_10,allot_price,ex_div_price,action_type\n")
             for year, row in unique_rows:
-                bonus = float(row.get('bonus_amount', 0) or 0)
-                transfer = float(row.get('transfer_amount', 0) or 0)
-                cash = float(row.get('divi_cash', 0) or 0)
-                allot = float(row.get('allot_amount', 0) or 0)
-                allot_price = float(row.get('allot_price', 0) or 0)
-                ex_div_price = row.get('ex_dividend_price', '') or ''
-                announce = normalize_date(row.get('reportDate', ''))
-                record = normalize_date(row.get('record_date', ''))
-                ex_div = normalize_date(row.get('dividend', ''))
-                # implement_date: BaoStock 无直接字段，用除权除息日近似
+                # BaoStock 返回每股数据，×10 转为每10股
+                bonus = float(row.get('dividStocksPs', 0) or 0) * 10
+                transfer = float(row.get('dividReserveToStockPs', 0) or 0) * 10
+                cash = float(row.get('dividCashPsBeforeTax', 0) or 0) * 10
+                allot = 0.0
+                allot_price = 0.0
+                ex_div_price = ''
+                announce = normalize_date(row.get('dividPlanAnnounceDate', ''))
+                record = normalize_date(row.get('dividRegistDate', ''))
+                ex_div = normalize_date(row.get('dividOperateDate', ''))
+                # implement_date: 用除权除息日近似
                 implement = ex_div
                 action_type = compute_action_type(bonus, transfer, cash, allot)
 

@@ -77,6 +77,19 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
     String symbols;
     if (params.contains("symbols") && !params["symbols"].get<String>().empty()) {
         symbols = params["symbols"].get<String>();
+    } else if (params.contains("strategy_name") && !params["strategy_name"].get<String>().empty()) {
+        // 从指定策略收集标的
+        auto* strategySystem = _server->GetStrategySystem();
+        if (strategySystem) {
+            auto name = params["strategy_name"].get<String>();
+            auto pools = strategySystem->GetPools(name);
+            std::set<String> symSet;
+            for (auto sym : pools) {
+                symSet.insert(get_symbol(sym));
+            }
+            symbols = boost::algorithm::join(
+                Vector<String>(symSet.begin(), symSet.end()), ",");
+        }
     } else if (params.value("from_strategies", true)) {
         // 从活跃策略收集标的
         auto* strategySystem = _server->GetStrategySystem();
@@ -118,6 +131,8 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
                         + " --data-dir " + data_dir;
         if (!years.empty()) cmd += " --years " + years;
 
+        INFO("[DividendHandler] Running: {}", cmd);
+
         SendSSE(sse_sock, "dividend_download", {
             {"status", "started"},
             {"symbol_count", std::to_string(std::count(symbols.begin(), symbols.end(), ',') + 1)}
@@ -125,6 +140,8 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         String output;
         bool ok = RunCommand(cmd, output);
+
+        INFO("[DividendHandler] RunCommand returned ok={}, output={}", ok, output);
 
         SendSSE(sse_sock, "dividend_download", {
             {"status", ok ? "downloaded" : "download_failed"},

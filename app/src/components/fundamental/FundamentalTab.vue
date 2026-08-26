@@ -99,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useFundamentalState } from './composables/useFundamentalState'
 import { useFundamentalData } from './composables/useFundamentalData'
 import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
@@ -113,9 +113,11 @@ import CorrelationScatterChart from './charts/CorrelationScatterChart.vue'
 
 const { state, QUICK_RANGES, setQuickRange } = useFundamentalState()
 const { loading, fetchFundamental } = useFundamentalData()
-const { strategyOptions, availableSecurities, checkedSymbols, toggleSymbol } = useStrategySecurities()
+const { strategyOptions, selectedStrategyId, availableSecurities, checkedSymbols, loadSecuritiesForStrategy, toggleSymbol } = useStrategySecurities()
 
-const selectedStrategyId = ref('')
+watch(selectedStrategyId, (newId) => {
+  if (newId) loadSecuritiesForStrategy(newId)
+})
 
 // 图表可见性配置
 const chartItems = reactive([

@@ -374,7 +374,9 @@ List<StrategyInitResult> StrategySubSystem::GetFailedStrategies() const {
     std::lock_guard<std::mutex> lock(_failureMtx);
     List<StrategyInitResult> result;
     for (auto& kv : _failedStrategies) {
-        result.push_back(kv.second);
+        auto item = kv.second;
+        item._name = kv.first;
+        result.push_back(std::move(item));
     }
     return result;
 }

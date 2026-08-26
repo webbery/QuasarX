@@ -32,8 +32,9 @@ struct StrategyInitResult {
     String _failedNodeLabel;  // 失败节点 label（如 "CTA_v16"）
     String _failedNodeType;   // 失败节点类型（如 "xgboost"）
     uint32_t _failedNodeId = 0;  // 失败节点 ID（0 表示无具体失败节点，如 JSON 解析失败）
+    String _name;             // 策略名（失败时由存储方填入）
 
-    static StrategyInitResult ok() { return StrategyInitResult{true, "", "", "", 0}; }
+    static StrategyInitResult ok() { return StrategyInitResult{true, "", "", "", 0, ""}; }
 };
 
 /**

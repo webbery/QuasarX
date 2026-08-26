@@ -78,6 +78,16 @@ export const CHART_REGISTRY: ChartDefinition[] = [
     defaultOrder: 4,
     span: 'full',
     component: () => import('../charts/MonteCarloPathsChart.vue')
+  },
+  {
+    id: 'tradePnL',
+    label: 'Trade P&L Attribution',
+    icon: '💰',
+    description: '交易盈亏归因：逐笔盈亏柱状图 + 累计曲线 + 按标的聚合',
+    defaultVisible: true,
+    defaultOrder: 5,
+    span: 'full',
+    component: () => import('../charts/TradePnLChart.vue')
   }
   // TODO: 迁移完成后续图表后在此添加
   // - PositionChanges

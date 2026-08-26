@@ -74,10 +74,8 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
     }
 
     if (_model_file.empty()) {
-        WARN("[XGBoost] No model file specified for node {}", _label);
-        return false;
-    }
-
+        WARN("[XGBoost] No model file specified for node {}, skipping model load", _label);
+    } else {
     // modelFile 存逻辑路径（如 production/xxx.json），实际文件在 {dbPath}/models/ 下
     String resolvedPath;
     if (_server) {
@@ -174,6 +172,7 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
             }
         }
     }
+    } // else: model_file not empty
 
     // ── 从连接图发现 symbol 并解析特征 ──
     // BFS 上游找到所有可达的 QuoteInputNode 的 symbol
@@ -229,10 +228,11 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
         buildOutputs(symbol + ".");
     }
 
-    INFO("[XGBoost:{}] Loaded '{}', {} symbols, {} features",
-         _id, _model_file, symbolSet.size(), _n_features);
+    INFO("[XGBoost:{}] {} '{}', {} symbols, {} features",
+         _id, _model_file.empty() ? "Initialized (no model)" : "Loaded",
+         _model_file, symbolSet.size(), _n_features);
 
-    _loaded = true;
+    _loaded = !_model_file.empty();
     return true;
 }
 

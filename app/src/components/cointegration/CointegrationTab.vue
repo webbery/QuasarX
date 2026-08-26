@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useCointegrationState } from './composables/useCointegrationState'
 import { useStrategySecurities } from '../shared/composables/useStrategySecurities'
 import AnalysisControlBar from '../shared/AnalysisControlBar.vue'
@@ -84,8 +84,13 @@ const {
   availableSecurities,
   checkedSymbols,
   loading: securitiesLoading,
+  loadSecuritiesForStrategy,
   toggleSymbol,
 } = useStrategySecurities({ defaultCheckAll: false })
+
+watch(selectedStrategyId, (newId) => {
+  if (newId) loadSecuritiesForStrategy(newId)
+})
 
 const loading = computed(() => securitiesLoading.value || state.loading.value)
 

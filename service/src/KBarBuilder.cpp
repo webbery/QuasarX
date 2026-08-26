@@ -109,8 +109,8 @@ void KBarBuilder::OnTick(const QuoteInfo& tick) {
     auto& state = getOrCreate(tick._symbol);
     time_t tickBarStart = calcBarStart(tick._time);
 
-    INFO("[KBarBuilder:{}] OnTick: symbol={}, tickTime={}, tickBarStart={}, state.barEnd={}, _lastBarStart={}",
-                   (int)_freq, get_symbol(tick._symbol), tick._time, tickBarStart, state.barEnd, _lastBarStart);
+    // INFO("[KBarBuilder:{}] OnTick: symbol={}, tickTime={}, tickBarStart={}, state.barEnd={}, _lastBarStart={}",
+    //                (int)_freq, get_symbol(tick._symbol), tick._time, tickBarStart, state.barEnd, _lastBarStart);
 
     // 第一次 tick 或进入新 bar
     if (!_initialized || tickBarStart >= state.barEnd) {

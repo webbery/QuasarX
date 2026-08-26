@@ -77,6 +77,7 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
         auto failedResults = strategySys->GetFailedStrategies();
         for (auto& fr : failedResults) {
             nlohmann::json item;
+            item["name"] = to_utf8(fr._name.c_str());
             item["error"] = to_utf8(fr._errorMessage.c_str());
             nlohmann::json failedNode;
             failedNode["id"] = fr._failedNodeId;

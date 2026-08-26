@@ -7,7 +7,8 @@
                 <option value="">-- 选择策略 --</option>
                 <option v-for="s in strategyList" :key="s.name" :value="s.name">
                     {{ s.name }}
-                    <span v-if="s.running" style="color: #4ade80;">● 运行中</span>
+                    <span v-if="s.failed" style="color: #f87171;">✕ 加载失败</span>
+                    <span v-else-if="s.running" style="color: #4ade80;">● 运行中</span>
                     <span v-else style="color: #f87171;">○ 已停止</span>
                 </option>
             </select>
@@ -65,11 +66,15 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="s in strategyList" :key="s.name">
+                            <tr v-for="s in strategyList" :key="s.name" :class="{ 'strategy-failed': s.failed }">
                                 <td>
-                                    <span class="status-dot" :class="{ running: s.running }"></span>
+                                    <span v-if="s.failed" class="status-dot failed" :title="s.error">✕</span>
+                                    <span v-else class="status-dot" :class="{ running: s.running }"></span>
                                 </td>
-                                <td class="strategy-name" :title="s.name">{{ s.name }}</td>
+                                <td class="strategy-name" :title="s.failed ? s.error : s.name">
+                                    {{ s.name }}
+                                    <span v-if="s.failed" class="failed-tag">加载失败</span>
+                                </td>
                                 <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
                                 <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
                                 <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
@@ -83,22 +88,24 @@
                                 </td>
                                 <td>
                                     <div class="action-buttons">
-                                        <button
-                                            v-if="s.running"
-                                            class="btn btn-stop"
-                                            @click="stopStrategy(s.name)"
-                                            :disabled="isOperating(s.name)"
-                                        >
-                                            <i class="fas fa-stop"></i> 停止
-                                        </button>
-                                        <button
-                                            v-else
-                                            class="btn btn-start"
-                                            @click="startStrategy(s.name)"
-                                            :disabled="isOperating(s.name)"
-                                        >
-                                            <i class="fas fa-play"></i> 启动
-                                        </button>
+                                        <template v-if="!s.failed">
+                                            <button
+                                                v-if="s.running"
+                                                class="btn btn-stop"
+                                                @click="stopStrategy(s.name)"
+                                                :disabled="isOperating(s.name)"
+                                            >
+                                                <i class="fas fa-stop"></i> 停止
+                                            </button>
+                                            <button
+                                                v-else
+                                                class="btn btn-start"
+                                                @click="startStrategy(s.name)"
+                                                :disabled="isOperating(s.name)"
+                                            >
+                                                <i class="fas fa-play"></i> 启动
+                                            </button>
+                                        </template>
                                         <button
                                             class="btn btn-log"
                                             @click="viewLogs(s.name)"
@@ -482,6 +489,38 @@ onUnmounted(() => {
 .status-dot.running {
     background: #4ade80;
     box-shadow: 0 0 6px rgba(74, 222, 128, 0.4);
+}
+
+.status-dot.failed {
+    background: #ef4444;
+    color: #ef4444;
+    font-size: 10px;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    font-weight: bold;
+}
+
+/* 失败标签 */
+.failed-tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #f87171;
+    vertical-align: middle;
+}
+
+/* 失败策略行 */
+.strategy-failed td {
+    opacity: 0.75;
+}
+
+.strategy-failed:hover td {
+    opacity: 1;
 }
 
 /* 策略名称 */
