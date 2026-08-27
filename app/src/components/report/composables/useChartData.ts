@@ -362,7 +362,11 @@ export function useChartData(
       formatSignals(backtestResult.buy || []),
       formatSignals(backtestResult.sell || []),
       backtestResult.buy || [],   // 原始数据
-      backtestResult.sell || []   // 原始数据
+      backtestResult.sell || [],  // 原始数据
+      // 恢复后端收益率数据（与 fresh backtest 路径对齐）
+      (backtestResult.dailyReturns && backtestResult.dailyDates)
+        ? { returns: backtestResult.dailyReturns, dates: backtestResult.dailyDates }
+        : undefined
     )
 
     // 3. 提取标的代码和日期范围

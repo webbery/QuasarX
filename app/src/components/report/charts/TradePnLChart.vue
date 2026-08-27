@@ -306,9 +306,14 @@ interface SymbolDetail {
 const symbolDetails = computed<SymbolDetail[]>(() => {
   const openMap: Record<string, number> = {}
   for (const p of openPositions.value) openMap[p.symbol] = p.unrealizedPnL
-  return symbolAgg.value.map(s => {
+
+  const seen = new Set<string>()
+  const result: SymbolDetail[] = []
+
+  for (const s of symbolAgg.value) {
+    seen.add(s.symbol)
     const unrealized = openMap[s.symbol] ?? 0
-    return {
+    result.push({
       symbol: s.symbol,
       count: s.count,
       wins: s.wins,
@@ -317,8 +322,24 @@ const symbolDetails = computed<SymbolDetail[]>(() => {
       unrealized,
       hasOpen: s.symbol in openMap,
       total: s.total + unrealized,
-    }
-  })
+    })
+  }
+
+  for (const [symbol, unrealized] of Object.entries(openMap)) {
+    if (seen.has(symbol)) continue
+    result.push({
+      symbol,
+      count: 0,
+      wins: 0,
+      winRate: 0,
+      realized: 0,
+      unrealized,
+      hasOpen: true,
+      total: unrealized,
+    })
+  }
+
+  return result
 })
 
 // --- 列表排序状态 ---

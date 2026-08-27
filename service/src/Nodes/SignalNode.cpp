@@ -107,8 +107,8 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         }
     }
 
-    INFO("[SignalNode:{}] input args ({}): {}",
-         _id, args.size(), boost::algorithm::join(args, ", "));
+    // INFO("[SignalNode:{}] input args ({}): {}",
+    //      _id, args.size(), boost::algorithm::join(args, ", "));
 
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
@@ -136,11 +136,11 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     if (!_allowShort) {
         for (auto it = sells.begin(); it != sells.end(); ++it) {
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                if (_server->GetRunningMode() != RuningType::Backtest) {
-                    STRATEGY_IMPORTANT(strategy, "[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
-                } else {
-                    IMPORTANT("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
-                }
+                // if (_server->GetRunningMode() != RuningType::Backtest) {
+                //     STRATEGY_IMPORTANT(strategy, "[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                // } else {
+                //     IMPORTANT("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
+                // }
                 it->second = TradeAction::HOLD;
             }
         }

@@ -244,11 +244,10 @@ watch(activeTab, async (newTab) => {
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 300))
 
-    const signalNode = getNodes.value.find(node => node.data.nodeType === 'signal')
+    const quoteNode = getNodes.value.find(node => node.data.nodeType === 'input' || node.data.nodeType === 'quote')
     const executionNode = getNodes.value.find(node => node.data.nodeType === 'execution')
-    if (signalNode && executionNode) {
-      // 兼容中文和英文键名
-      const codes = signalNode.data.params['code']?.value || signalNode.data.params['代码']?.value
+    if (quoteNode && executionNode) {
+      const codes = quoteNode.data.params['code']?.value || quoteNode.data.params['代码']?.value
       const rangeDate = executionNode.data.params['range']?.value || executionNode.data.params['回测周期']?.value
 
       if (codes && rangeDate && rangeDate.length === 2) {

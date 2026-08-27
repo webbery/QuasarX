@@ -678,17 +678,16 @@ bool HistorySimulationBase::stepForward(BacktestContext* context) {
                 continue;
             }
 
-            auto itr = _csvs.find(symbol);
-            if (itr == _csvs.end()) continue;
+            // 使用原始价格估值（与 cash 扣减同一价格体系，消除 ratio 漂移导致的虚假收益）
+            auto org_itr = _org_csvs.find(symbol);
+            if (org_itr == _org_csvs.end() || org_itr->second.empty()) continue;
 
-            const auto& data = itr->second;
-            if (data.empty()) continue;
+            const auto& data = org_itr->second;
             auto curIndex = context->getCurIndex(symbol);
             uint32_t priceIndex = (curIndex > 0) ? curIndex - 1 : 0;
             if (priceIndex < data.size()) {
-                double hfqClose = data._close[priceIndex];
-                double ratio = context->getCurrentAdjRatio(symbol);
-                double assetValue = position * hfqClose / ratio;
+                double origClose = data._close[priceIndex];
+                double assetValue = position * origClose;
                 assetValues[symbol] = assetValue;
                 totalMarketValue += assetValue;
             }
