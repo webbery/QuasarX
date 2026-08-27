@@ -770,6 +770,13 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
             }
         } catch (const std::invalid_argument& e) {
             STRATEGY_WARN(strategy, "invalid argument error: {}", e.what());
+        } catch (const std::out_of_range& e) {
+            // EMDNode / DataContext 在 partial bar epoch 上访问缺失 key 触发
+            // 线程走下方 cleanup 路径优雅退出，不让 std::terminate 触发崩溃邮件
+            STRATEGY_WARN(strategy, "[Realtime] out_of_range (partial data this epoch): {}", e.what());
+        } catch (const std::exception& e) {
+            // 兜底：捕获所有节点异常防止 std::terminate；线程走 cleanup 路径退出
+            STRATEGY_ERROR(strategy, "[Realtime] unexpected exception: {}", e.what());
         }
 
         nng_close(recvSock);

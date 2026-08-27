@@ -108,6 +108,7 @@ public:
 
 private:
     void handleTrain(const nlohmann::json& params, httplib::Response& res);
+    void handleOptimize(const nlohmann::json& params, httplib::Response& res);
     void handleCollect(const nlohmann::json& params, httplib::Response& res);
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleTrainStatus(const httplib::Request& req, httplib::Response& res);

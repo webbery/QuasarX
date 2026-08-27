@@ -281,9 +281,18 @@ const { train } = useMLData()
 const config = props.state.config
 
 const liveLearningCurve = ref<LearningCurvePoint[]>([])
+// 独立缓存：SSE log 推过来的实时 loss 点全量保留,
+// 不受 trainResult.data?.learning_curve 是否完整的影响。
+// 切到 [结果分析] Tab 再切回时,作为 fallback 兜底显示 loss 曲线。
+const cachedLearningCurve = ref<LearningCurvePoint[]>([])
 const chartData = computed(() => {
-  if (props.state.trainResult.loading) return liveLearningCurve.value
-  return props.state.trainResult.data?.learning_curve || []
+  if (props.state.trainResult.data?.learning_curve?.length) {
+    return props.state.trainResult.data.learning_curve
+  }
+  if (cachedLearningCurve.value.length) {
+    return cachedLearningCurve.value
+  }
+  return liveLearningCurve.value
 })
 
 const regHint = computed(() => {
@@ -366,6 +375,7 @@ async function onTrain() {
   props.state.trainResult.steps = []
   props.state.trainResult.logs = []
   liveLearningCurve.value = []
+  cachedLearningCurve.value = []
 
   const stepStartTimes: Record<string, number> = {}
 
@@ -440,11 +450,13 @@ async function onTrain() {
         try {
           const logData = JSON.parse(data.line)
           if (logData.phase === 'training' && logData.iteration != null && logData.train_loss != null) {
-            liveLearningCurve.value.push({
+            const point: LearningCurvePoint = {
               iteration: logData.iteration,
               train_loss: logData.train_loss,
               eval_loss: logData.eval_loss ?? logData.train_loss,
-            })
+            }
+            liveLearningCurve.value.push(point)
+            cachedLearningCurve.value.push(point)
           }
         } catch { /* not JSON or not training progress */ }
       } else if (type === 'error') {
@@ -457,7 +469,13 @@ async function onTrain() {
       }
     }, props.state.featureReport.data?.csv_path, extractXgbNodeLabel(props.script))
     props.state.trainResult.data = result
-    if (result) emit('trained')
+    if (result) {
+      // SSE result 包里 learning_curve 可能不完整, 用 SSE log 累积的实时点补齐
+      if (!Array.isArray(result.learning_curve) || result.learning_curve.length === 0) {
+        result.learning_curve = [...cachedLearningCurve.value]
+      }
+      emit('trained')
+    }
   } finally {
     props.state.trainResult.loading = false
   }

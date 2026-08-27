@@ -76,6 +76,7 @@ enum class StrategyNodeType {
     CUSUM,      // CUSUM 累积和变点检测节点
     FactorCombine,  // 多因子合成节点
     Breakout,   // 包络突破状态机节点
+    CacheFeature,   // 缓存特征节点（快速回测模式）
 };
 
 struct AgentStrategyInfo;

@@ -1,5 +1,6 @@
 #include "StrategyNode.h"
 #include "Nodes/QuoteNode.h"
+#include "Nodes/CacheFeatureNode.h"
 
 Set<symbol_t> QNode::discoverUpstreamSymbols() {
     Set<symbol_t> symbols;
@@ -19,6 +20,10 @@ Set<symbol_t> QNode::discoverUpstreamSymbols() {
 
         if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(current)) {
             for (const auto& sym : quoteNode->GetSymbols()) {
+                symbols.insert(sym);
+            }
+        } else if (auto* cacheNode = dynamic_cast<CacheFeatureNode*>(current)) {
+            for (const auto& sym : cacheNode->GetSymbols()) {
                 symbols.insert(sym);
             }
         }

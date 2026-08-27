@@ -34,6 +34,7 @@
 #include "Nodes/FactorCombineNode.h"
 #include "Nodes/XGBoostNode.h"
 #include "Nodes/BreakoutNode.h"
+#include "Nodes/CacheFeatureNode.h"
 
 namespace {
     Map<String, StrategyNodeType>& node_type_map() {
@@ -57,6 +58,7 @@ namespace {
             {"factor_combine", StrategyNodeType::FactorCombine},
             {"xgboost", StrategyNodeType::XGBoost},
             {"breakout", StrategyNodeType::Breakout},
+            {"cache_feature", StrategyNodeType::CacheFeature},
         };
         return m;
     }
@@ -188,6 +190,9 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Breakout:
             nodeInstance = generate_node<BreakoutNode>(node["id"], server);
+            break;
+        case StrategyNodeType::CacheFeature:
+            nodeInstance = generate_node<CacheFeatureNode>(node["id"]);
             break;
         default:
             WARN("Unknown node type: {}", node_type);

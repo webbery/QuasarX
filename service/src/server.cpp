@@ -4,6 +4,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <thread>
 #include "Bridge/exchange.h"
 #include "Bridge/SIM/ETFHistorySimulation.h"
 #include "BrokerSubSystem.h"
@@ -283,6 +284,20 @@ bool Server::Init(const char* config) {
 void Server::Run() {
     Regist();
     auto port = _config->GetPort();
+
+    // 覆盖 httplib 默认 ThreadPool 线程数: 总硬件并发的一半
+    // (避免与回测/CPU 任务抢资源, 最小 2 线程兜底)
+    {
+        unsigned int hw = std::thread::hardware_concurrency();
+        if (hw == 0) hw = 8;
+        unsigned int half = hw / 2;
+        if (half < 2) half = 2;
+        _svr.new_task_queue = [half]() -> httplib::TaskQueue* {
+            return new httplib::ThreadPool(half);
+        };
+        INFO("httplib ThreadPool: {} workers (hw={} / 2)", half, hw);
+    }
+
     INFO("Start in port {}", port);
     if (!_svr.listen("0.0.0.0", port)) {
         INFO("listen fail: {}", port);

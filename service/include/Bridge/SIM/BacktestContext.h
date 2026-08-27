@@ -106,7 +106,10 @@ public:
 
     // 涉及的所有标的
     void addSymbol(symbol_t symbol);
-    const Set<symbol_t>& getSymbols() const { return _symbols; }
+    Set<symbol_t> getSymbols() const {
+        std::lock_guard<std::mutex> lock(_symbolsMtx);
+        return _symbols;  // 返回副本，避免并发修改导致迭代器损坏
+    }
 
     // === 每日收益率记录（SoA 布局，零锁，单线程调用）===
     // 预分配容量，避免反复 realloc

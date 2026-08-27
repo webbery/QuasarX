@@ -39,6 +39,13 @@ StrategyHandler::~StrategyHandler() {
 
 void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
 {
+    // 响应结构对应 restapi.yaml 中的 StrategyListResponse schema：
+    //   {
+    //     "strategies": [StrategyStatus, ...],   // 已成功初始化的策略
+    //     "failed":     [StrategyInitFailure, ...] // 初始化失败的策略（含失败节点信息）
+    //   }
+    // 保留 failed 字段供前端展示，避免节点初始化失败被服务端静默吞掉
+    // （典型场景：xgboost 模型文件缺失、节点参数不合法等）
     auto strategySys = _server->GetStrategySystem();
     auto flow = strategySys->GetFlowSubsystem();
     auto broker = _server->GetBrokerSubSystem();

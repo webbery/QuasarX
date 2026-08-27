@@ -588,6 +588,84 @@ jobs:
 
           exit $TEST_EXIT_CODE
 
+      # === 阶段 2.6: TickFlow 实时行情测试（tickflow 模式）===
+      # 用 tickflow.json 重启服务（已由 Generate configs 步骤用 TICKFLOW_API_KEY 填充 passwd），
+      # 跑 test_modes.json 的 tickflow tests（test_strategy/test_strategy_log/test_sectorquote/
+      # test_tick_record/test_data/test_shibor）。test_strategy 中依赖 tickflow 行情的用例
+      #（test_tickflow_*）通过 conftest 的 is_backtest fixture 跳过回测模式，仅在 tickflow 下执行。
+      # - name: Run tickflow tests
+      #   id: test_tickflow
+      #   timeout-minutes: 15
+      #   run: |
+      #     # 严格模式：命令失败立即退出，捕获未定义变量和 pipeline 失败
+      #     set -euo pipefail
+
+      #     # 注册清理 trap：脚本退出时强制 kill 服务，避免残留进程 hang 后续 stage
+      #     TICKFLOW_PID=""
+      #     cleanup() {
+      #       echo "=== Cleanup: stopping tickflow service (PID=${TICKFLOW_PID:-unknown}) ==="
+      #       if [ -n "${TICKFLOW_PID:-}" ] && kill -0 "$TICKFLOW_PID" 2>/dev/null; then
+      #         echo "Tickflow service still alive, RSS memory:"
+      #         ps -o pid,rss,vsz,%mem,comm -p "$TICKFLOW_PID" 2>/dev/null || true
+      #       else
+      #         echo "Tickflow service already dead (PID=${TICKFLOW_PID:-unknown})"
+      #         sudo dmesg -T 2>/dev/null | grep -i "oom\|killed process" | tail -5 || true
+      #       fi
+      #       curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+      #       sleep 1
+      #       [ -n "${TICKFLOW_PID:-}" ] && kill -9 "$TICKFLOW_PID" 2>/dev/null || true
+      #       echo "=== Cleanup done ==="
+      #     }
+      #     trap cleanup EXIT
+
+      #     # 验证 tickflow.json 与 TICKFLOW_API_KEY 已注入（模板生成步骤为 required=True）
+      #     if [ ! -f tickflow.json ]; then
+      #       echo "ERROR: tickflow.json not found — Generate configs 步骤可能失败"
+      #       exit 1
+      #     fi
+      #     TF_PASSWD=$(python3 -c "import json; c=json.load(open('tickflow.json')); print((c.get('exchange') or [{}])[0].get('passwd',''))")
+      #     if [ -z "$TF_PASSWD" ]; then
+      #       echo "ERROR: tickflow.json exchange.passwd 为空（缺少 TICKFLOW_API_KEY）"
+      #       cat tickflow.json
+      #       exit 1
+      #     fi
+      #     echo "tickflow.json exchange.passwd 已配置（长度: ${#TF_PASSWD}）"
+
+      #     nohup ./QuantService tickflow.json > service_tickflow.log 2>&1 &
+      #     TICKFLOW_PID=$!
+      #     echo "Tickflow service PID: $TICKFLOW_PID"
+
+      #     # 等待服务就绪（最多 30s；tickflow 行情源初始化通常更快，但留出余量）
+      #     for i in $(seq 1 30); do
+      #       if curl -sk https://localhost:${{ env.SERVER_PORT }}/v0/server/status >/dev/null 2>&1; then
+      #         echo "Tickflow service ready after ${i}s"
+      #         break
+      #       fi
+      #       if [ "$i" -eq 30 ]; then
+      #         echo "Tickflow service failed to start within 30s"
+      #         cat service_tickflow.log || true
+      #         exit 1
+      #       fi
+      #       sleep 1
+      #     done
+
+      #     cd test
+
+      #     # tickflow 模式下 is_backtest fixture 为 False → conftest.upload_test_data 自动跳过
+      #     # 生成通用测试数据（如果 stock_hist_sim 阶段没跑过；与该阶段幂等）
+      #     python testcases/generate_test_data.py 2>/dev/null || true
+
+      #     # 运行 tickflow 模式测试（--maxfail=1 fail-fast）
+      #     python run_tests.py --mode tickflow --no-service --maxfail 1
+      #     TICKFLOW_EXIT_CODE=$?
+      #     cd ..
+
+      #     echo "=== tickflow.json content ==="
+      #     cat tickflow.json
+      #     echo "=============================="
+
+      #     exit $TICKFLOW_EXIT_CODE
+
       # === 阶段 2.5: 失败时诊断 OOM / 内存 ===
       - name: Diagnose OOM and memory (on failure)
         if: failure()
@@ -652,6 +730,7 @@ jobs:
           path: |
             service_lifecycle.log
             service_test.log
+            service_tickflow.log
             config.json
             stock_hist_sim.json
             tickflow.json

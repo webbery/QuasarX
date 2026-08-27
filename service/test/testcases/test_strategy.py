@@ -22,10 +22,19 @@ class TestStrategy:
             return json.load(file)
 
     def get_all_strategies(self, auth_token):
-        """获取所有策略列表"""
+        """获取所有策略列表（已解包 response.strategies）
+
+        GET /strategy 返回 wrapper dict {"strategies": [...], "failed": [...]}，
+        见 restapi.yaml 的 StrategyListResponse schema。
+        本方法返回 strategies 数组，方便 verify_strategy_list_format / find_strategy
+        等调用方按 list 处理；如需 failed 信息请直接调 GET /strategy 自行解包。
+        """
         kwargs = self._auth_kwargs(auth_token)
         response = requests.get(f"{BASE_URL}/strategy", **kwargs)
-        return check_response(response)
+        data = check_response(response)
+        if isinstance(data, dict) and "strategies" in data:
+            return data["strategies"]
+        return data
 
     def find_strategy(self, status_list, name):
         """在状态列表中查找策略"""
@@ -83,7 +92,14 @@ class TestStrategy:
         kwargs = self._auth_kwargs(auth_token)
 
         def verify_strategy_list_format(strategies, expected_running=None, expect_epoch_count_increase=None):
-            """验证策略列表格式：每项必须有 name、running、epochCount、lastHeartbeat 字段"""
+            """验证策略列表格式：每项必须有 name、running、epochCount、lastHeartbeat 字段
+
+            兼容两种输入形态：
+            - list[StrategyStatus]：直接断言
+            - dict（StrategyListResponse wrapper）：解包 strategies 字段
+            """
+            if isinstance(strategies, dict) and "strategies" in strategies:
+                strategies = strategies["strategies"]
             assert isinstance(strategies, list)
             target = None
             for item in strategies:

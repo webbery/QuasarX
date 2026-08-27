@@ -704,7 +704,10 @@ paths:
   /strategy:
     get:
       summary: 获取所有策略列表
-      description: 获取所有策略的名称和运行状态
+      description: |
+        获取所有策略的运行状态。返回结构包含两个数组：
+        - `strategies`：已成功初始化并处于运行/停止状态的策略
+        - `failed`：初始化失败的策略（含具体失败节点信息），供前端展示
       tags:
         - Strategy
       responses:
@@ -713,9 +716,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/StrategyStatus"
+                $ref: "#/components/schemas/StrategyListResponse"
     post:
       summary: 部署/运行/停止指定的某个策略
       description: 根据 mode 参数执行不同操作：0-部署并运行策略，1-运行已部署的策略，2-停止运行中的策略
@@ -767,8 +768,11 @@ paths:
   /backtest:
     post:
       summary: 对某个策略做回测
-      description: 对某个策略做回测
-      tags: 
+      description: |
+        对某个策略做回测。支持两种模式：
+        - **正常模式**：完整执行策略图（特征计算 → 模型推理 → 信号 → 执行）
+        - **快速模式**：跳过特征计算节点，从缓存加载特征（用于 Optuna 超参优化加速）
+      tags:
         - Backtest
       requestBody:
         description: 参数
@@ -782,6 +786,24 @@ paths:
                   type: string
                   description: 策略图的json
                   example: ""
+                validate:
+                  type: boolean
+                  description: 是否验证策略图完整性（快速回测时可设为 false）
+                  default: true
+                feature_cache:
+                  type: string
+                  description: |
+                    快速回测模式：预计算的特征缓存 CSV 文件路径。
+                    提供后，策略图中 XGBoost 上游的特征节点（EMD/CUSUM/Function/Formula/Breakout/HMM）
+                    会被自动替换为 CacheFeatureNode，从该 CSV 加载特征数据。
+                    CSV 格式与 /v0/ml collect 产出的 CSV 一致（首列 date，后续列为完整 context key）。
+                  example: "/tmp/xgb_data_12345_abcdef.csv"
+                model_path:
+                  type: string
+                  description: |
+                    快速回测模式：预训练的 XGBoost 模型逻辑路径（相对于 {dbPath}/models/）。
+                    提供后会覆盖策略图中 XGBoost 节点的 modelFile 参数。
+                  example: "experiments/test_xgb_train_20260827_190316.json"
       responses:
         '200':
           description: success
@@ -2141,6 +2163,17 @@ paths:
           4. 返回学习曲线、特征重要性、评估指标、预测结果等 JSON
           5. 模型句柄保留在内存供 SHAP 计算
 
+        - action=optimize：Optuna 自动优化 + 快速回测评估
+          1. 前端先调 action=collect 拿到 csv_path 作为 feature_cache 传入
+          2. 后端后台线程启动 xgboost_optimize.py
+          3. 每个 Optuna trial：训练模型 → 保存到 experiments/ → 调 /v0/backtest
+             （feature_cache + model_path 快速模式）→ 解析 summary[optimize_metric]
+          4. SSE 流式推送 trial/value/result 事件
+          5. 通过 GET /v0/ml?action=train_status&session_id=... 读取最终 best_params
+
+        - action=collect：收集特征数据
+          与 train 共享上游子图执行逻辑，但只收集不训练，返回 csv_path
+
         - action=shap：计算 SHAP 值
           使用 XGBoost C API 在 C++ 端直接计算（XGBOOST_OUTPUT_CONTRIBUTION），
           不依赖 Python shap 库，不持久化到数据库。
@@ -2160,6 +2193,7 @@ paths:
                 - $ref: "#/components/schemas/XGBoostTrainRequest"
                 - $ref: "#/components/schemas/XGBoostShapRequest"
                 - $ref: "#/components/schemas/XGBoostDeleteRequest"
+                - $ref: "#/components/schemas/XGBoostOptimizeRequest"
             examples:
               train:
                 summary: 训练模型
@@ -2179,6 +2213,23 @@ paths:
                     max_depth: 6
                     n_estimators: 200
                     early_stopping_rounds: 20
+              optimize:
+                summary: Optuna 自动优化（快速回测评估）
+                value:
+                  action: optimize
+                  feature_cache: /tmp/xgb_data_xxx.csv
+                  fast_backtest_strategy: '{"id":"cta_v13","nodes":[...],"edges":[...]}'
+                  label:
+                    shape: matrix
+                    period: 5
+                    type: classification
+                    vol_k: 0.5
+                  n_trials: 20
+                  optimize_metric: sharpe
+                  param_domains: '{"learning_rate":{"min":0.005,"max":0.3,"log":true}}'
+                  objective: multi:softprob
+                  num_class: 3
+                  test_ratio: 0.2
               shap:
                 summary: 计算 SHAP 值
                 value:
@@ -2194,6 +2245,7 @@ paths:
           description: |
             操作结果。
             train 返回训练指标 + predictions + feature_importance + learning_curve + model_id
+            optimize 立即返回 session_id（运行中），最终结果通过 train_status 获取
             shap 返回 shap 矩阵 + features + base_value
             delete 简单返回 message
           content:
@@ -2201,6 +2253,7 @@ paths:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/XGBoostTrainResponse"
+                  - $ref: "#/components/schemas/XGBoostOptimizeSubmitResponse"
                   - $ref: "#/components/schemas/XGBoostShapResponse"
                   - $ref: "#/components/schemas/XGBoostDeleteResponse"
         '400':
@@ -2964,6 +3017,52 @@ components:
           type: number
           description: 分配给策略的总资金（= availableCapital + usedCapital）
           example: 100000.0
+        lastEvoke:
+          type: integer
+          description: 最后一次被触发调用 Process 的时间戳（Unix 毫秒），0 表示尚未被触发
+          example: 1718371200000
+
+    StrategyInitFailure:
+      type: object
+      description: 策略初始化失败记录
+      properties:
+        error:
+          type: string
+          description: 失败原因
+          example: "Node 'CTA_v16' (id=22, type=xgboost) initialization failed"
+        failed_node:
+          type: object
+          description: 失败的节点信息
+          properties:
+            id:
+              type: integer
+              description: 节点 ID（对应策略图 JSON 中节点的 id 字段）
+              example: 22
+            label:
+              type: string
+              description: 节点 label
+              example: CTA_v16
+            type:
+              type: string
+              description: 节点类型（如 xgboost / function / signal 等）
+              example: xgboost
+          required: [id, label, type]
+
+    StrategyListResponse:
+      type: object
+      description: 策略列表响应（含运行中策略与初始化失败策略）
+      required: [strategies, failed]
+      properties:
+        strategies:
+          type: array
+          description: 已成功初始化的策略列表
+          items:
+            $ref: "#/components/schemas/StrategyStatus"
+        failed:
+          type: array
+          description: 初始化失败的策略列表
+          items:
+            $ref: "#/components/schemas/StrategyInitFailure"
 
     StrategyResponse:
       type: object
@@ -4043,6 +4142,86 @@ components:
         model_id:
           type: integer
 
+    XGBoostOptimizeRequest:
+      type: object
+      required: [action, feature_cache, fast_backtest_strategy]
+      description: |
+        Optuna 超参数自动优化 + 快速回测评估。
+
+        工作流：
+          1. 前端先调 POST /v0/ml?action=collect 拿到 csv_path
+          2. POST /v0/ml?action=optimize 把 csv_path 作为 feature_cache 传入
+          3. 后端启动后台线程跑 xgboost_optimize.py，每个 trial：
+             a. Python xgboost 训练 → 保存到 experiments/optimize_fast_{ts}/
+             b. POST http://localhost:19107/v0/backtest (feature_cache + model_path)
+             c. 解析 summary[optimize_metric] 作为 Optuna objective
+          4. SSE 流式推送 trial/value/result 事件
+          5. GET /v0/ml?action=train_status&session_id=... 读最终结果
+
+        optimize_metric 字段映射（Python 侧）：
+          sharpe        → summary["sharp"]
+          total_return  → summary["total_return"]
+          annual_return → summary["annual_return"]
+          max_drawdown  → summary["max_drawdown"]（负数，越大越好）
+          win_rate      → summary["win_rate"]
+          calmar_ratio  → summary["calmar_ratio"]
+      properties:
+        action:
+          type: string
+          enum: [optimize]
+        feature_cache:
+          type: string
+          description: 特征缓存 CSV 路径（POST /v0/ml?action=collect 产出）
+          example: /tmp/xgb_data_xxx.csv
+        fast_backtest_strategy:
+          type: string
+          description: 回测策略 JSON（含 XGBoost 节点，modelFile 会被脚本动态改写）
+        label:
+          type: object
+          description: 标签配置
+          properties:
+            source: { type: string, example: "sz.800001.close" }
+            period: { type: integer, default: 5 }
+            type: { type: string, enum: [classification, regression], default: classification }
+            shape: { type: string, enum: [vector, matrix], default: matrix }
+            vol_k: { type: number, default: 0.5 }
+        n_trials:
+          type: integer
+          default: 20
+          description: Optuna 试验次数
+        optimize_metric:
+          type: string
+          enum: [sharpe, total_return, annual_return, max_drawdown, win_rate, calmar_ratio]
+          default: sharpe
+        param_domains:
+          type: string
+          description: 参数搜索域 JSON 字符串
+          example: '{"learning_rate":{"min":0.005,"max":0.3,"log":true}}'
+        objective:
+          type: string
+          default: multi:softprob
+        num_class:
+          type: integer
+          default: 3
+        test_ratio:
+          type: number
+          default: 0.2
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        frequency:
+          type: string
+          default: 1d
+        auth_token:
+          type: string
+          description: 透传给 Python 脚本（访问 /v0/backtest 时用）
+        py_env:
+          type: string
+          description: Python 解释器环境名（可选）
+
     XGBoostTrainResponse:
       type: object
       properties:
@@ -4105,6 +4284,73 @@ components:
       type: object
       properties:
         message: { type: string, example: "deleted" }
+
+    XGBoostOptimizeSubmitResponse:
+      type: object
+      description: action=optimize 提交后立即返回的响应（session_id 用于后续 SSE/poll）
+      properties:
+        session_id:
+          type: string
+          example: xgb_opt_1234567890
+        status:
+          type: string
+          enum: [running]
+        n_trials:
+          type: integer
+        optimize_metric:
+          type: string
+
+    XGBoostOptimizeResult:
+      type: object
+      description: |
+        action=optimize 完成后的最终结果（通过 GET /v0/ml?action=train_status 获取）。
+        与 xgboost_optimize.py 的 {"type":"result"} 输出对齐。
+      properties:
+        best_params:
+          type: object
+          additionalProperties: true
+          description: 最优超参
+        best_value:
+          type: number
+          description: 最优 optimize_metric 值
+        best_trial_number:
+          type: integer
+        best_model:
+          type: string
+          description: 最优模型路径（experiments/optimize_fast_{ts}/best.json）
+        n_trials:
+          type: integer
+        n_completed:
+          type: integer
+        trials:
+          type: array
+          items:
+            type: object
+            properties:
+              number: { type: integer }
+              value: { type: number }
+              best: { type: number }
+              params:
+                type: object
+                additionalProperties: true
+              duration_ms: { type: integer }
+              status: { type: string, enum: [ok, failed] }
+              summary:
+                type: object
+                additionalProperties: true
+        importance:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              importance: { type: number }
+        optimization_duration_ms:
+          type: integer
+        metric:
+          type: string
+        output_dir:
+          type: string
 
     # ── 分红除权数据 schemas ──
 

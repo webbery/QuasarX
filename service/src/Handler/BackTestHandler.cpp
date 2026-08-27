@@ -21,6 +21,137 @@
 #include "nng/nng.h"
 #include "AgentSubSystem.h"
 
+namespace {
+
+// 特征计算节点类型集合（快速模式下会被 CacheFeatureNode 替换）
+const Set<String> FEATURE_NODE_TYPES = {
+    "emd", "cusum", "function", "formula", "breakout", "hmm"
+};
+
+// 快速回测模式：重写策略图 JSON
+// 1. 找到 XGBoost 节点
+// 2. 收集其所有上游特征节点（通过 edges 遍历）
+// 3. 从 nodes/edges 中剔除特征节点（保留 QuoteInputNode）
+// 4. 插入 CacheFeatureNode，连接到 XGBoost
+// 5. 如有 modelPath，覆盖 XGBoost 的 modelFile 参数
+void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, const String& modelPath) {
+    if (!script.contains("nodes") || !script.contains("edges")) {
+        WARN("[RewriteForFastMode] script missing nodes/edges, skipping");
+        return;
+    }
+
+    auto& nodes = script["nodes"];
+    auto& edges = script["edges"];
+
+    // 1. 找 XGBoost 节点 ID
+    String xgbNodeId;
+    for (auto& node : nodes) {
+        String nodeType = node.contains("data") ? node["data"].value("nodeType", "") : "";
+        if (nodeType == "xgboost") {
+            xgbNodeId = node["id"].get<std::string>();
+            break;
+        }
+    }
+    if (xgbNodeId.empty()) {
+        WARN("[RewriteForFastMode] no XGBoost node found, skipping");
+        return;
+    }
+
+    // 2. 通过 edges 找 XGBoost 的所有上游节点 ID
+    Set<String> upstreamIds;
+    for (auto& edge : edges) {
+        String target = edge.value("target", "");
+        if (target == xgbNodeId) {
+            upstreamIds.insert(edge.value("source", ""));
+        }
+    }
+
+    // 3. 标记要删除的节点（只删特征节点，保留 input 节点）
+    Set<String> nodesToRemove;
+    for (auto& node : nodes) {
+        String nodeId = node["id"].get<std::string>();
+        String nodeType = node.contains("data") ? node["data"].value("nodeType", "") : "";
+        if (upstreamIds.count(nodeId) && FEATURE_NODE_TYPES.count(nodeType)) {
+            nodesToRemove.insert(nodeId);
+        }
+    }
+    // 递归向上：特征节点的上游如果也是特征节点，也要删除
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& edge : edges) {
+            String target = edge.value("target", "");
+            String source = edge.value("source", "");
+            if (nodesToRemove.count(target)) {
+                for (auto& n : nodes) {
+                    String nid = n["id"].get<std::string>();
+                    if (nid == source) {
+                        String nt = n.contains("data") ? n["data"].value("nodeType", "") : "";
+                        if (FEATURE_NODE_TYPES.count(nt) && !nodesToRemove.count(source)) {
+                            nodesToRemove.insert(source);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. 删除特征节点
+    auto newNodesEnd = std::remove_if(nodes.begin(), nodes.end(), [&](const nlohmann::json& n) {
+        return nodesToRemove.count(n["id"].get<std::string>());
+    });
+    nodes.erase(newNodesEnd, nodes.end());
+
+    // 5. 删除涉及被删节点的边
+    auto newEdgesEnd = std::remove_if(edges.begin(), edges.end(), [&](const nlohmann::json& e) {
+        return nodesToRemove.count(e.value("source", "")) || nodesToRemove.count(e.value("target", ""));
+    });
+    edges.erase(newEdgesEnd, edges.end());
+
+    // 6. 插入 CacheFeatureNode
+    String cacheNodeId = "9999";
+    nlohmann::json cacheNode = {
+        {"id", cacheNodeId},
+        {"type", "custom"},
+        {"position", {{"x", 0}, {"y", 0}}},
+        {"data", {
+            {"nodeType", "cache_feature"},
+            {"label", "缓存特征"},
+            {"params", {
+                {"cache_path", {{"value", cachePath}}}
+            }}
+        }}
+    };
+    nodes.push_back(cacheNode);
+
+    // 7. 插入边：CacheFeatureNode → XGBoostNode
+    nlohmann::json cacheEdge = {
+        {"id", "e" + cacheNodeId + "->" + xgbNodeId},
+        {"source", cacheNodeId},
+        {"target", xgbNodeId},
+        {"sourceHandle", "output"},
+        {"targetHandle", "input"}
+    };
+    edges.push_back(cacheEdge);
+
+    // 8. 覆盖 XGBoost 的 modelFile（如果提供了 modelPath）
+    // modelPath 应为逻辑路径（如 experiments/xxx.json），XGBoostNode 内部拼接 {dbPath}/models/ 前缀
+    if (!modelPath.empty()) {
+        for (auto& node : nodes) {
+            if (node["id"].get<std::string>() == xgbNodeId) {
+                node["data"]["params"]["modelFile"]["value"] = modelPath;
+                break;
+            }
+        }
+    }
+
+    INFO("[RewriteForFastMode] removed {} feature nodes, inserted CacheFeatureNode -> XGBoost({})",
+         nodesToRemove.size(), xgbNodeId);
+}
+
+} // anonymous namespace
+
 BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 
 }
@@ -28,6 +159,7 @@ BackTestHandler::BackTestHandler(Server* server):HttpHandler(server) {
 void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) {
     // 1. 解析请求参数（支持 JSON 和 multipart 两种格式）
     nlohmann::json script;
+    nlohmann::json params;
     bool useValidate = true;
     bool isMultipart = req.is_multipart_form_data();
     if (isMultipart) {
@@ -59,7 +191,6 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             return;
         }
     } else {
-        nlohmann::json params;
         try {
             params = nlohmann::json::parse(req.body);
         } catch (const nlohmann::json::parse_error& e) {
@@ -84,6 +215,18 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             return;
         }
         useValidate = params.value("validate", true);
+    }
+
+    // === 快速回测模式：检测 feature_cache 字段 ===
+    {
+        // JSON 模式从 params 读取；multipart 模式从 script 顶层字段读取
+        String featureCache = isMultipart ? script.value("feature_cache", "") : params.value("feature_cache", "");
+        String modelPath = isMultipart ? script.value("model_path", "") : params.value("model_path", "");
+
+        if (!featureCache.empty()) {
+            INFO("[Backtest] Fast mode: feature_cache='{}', model_path='{}'", featureCache, modelPath);
+            RewriteScriptForFastMode(script, featureCache, modelPath);
+        }
     }
 
     String strategyName = script.value("id", "unknown");

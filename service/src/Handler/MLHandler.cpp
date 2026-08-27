@@ -156,6 +156,184 @@ struct TrainState {
     String _csvPath, _modelPath;
 };
 
+void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& res) {
+    // 幂等检查：与 train 共用 s_activeSession
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && !s_activeSession->_done) {
+            nlohmann::json resp;
+            resp["session_id"] = s_activeSession->_sessionId;
+            resp["status"] = "running";
+            res.set_content(resp.dump(), "application/json");
+            return;
+        }
+    }
+
+    // 解析请求：feature_cache + fast_backtest_strategy 为必填
+    String featureCache = params.value("feature_cache", "");
+    String strFastStrategy = params.value("fast_backtest_strategy", "");
+    if (featureCache.empty() || strFastStrategy.empty()) {
+        res.status = 400;
+        res.set_content(R"({"message":"missing 'feature_cache' or 'fast_backtest_strategy'"})", "application/json");
+        return;
+    }
+
+    nlohmann::json fastStrategy;
+    try { fastStrategy = nlohmann::json::parse(strFastStrategy); }
+    catch (...) {
+        res.status = 400;
+        res.set_content(R"({"message":"invalid 'fast_backtest_strategy' JSON"})", "application/json");
+        return;
+    }
+
+    nlohmann::json labelCfg = params.value("label", nlohmann::json::object());
+    String labelSource = labelCfg.value("source", "");
+    int labelPeriod = labelCfg.value("period", 5);
+    String labelType = labelCfg.value("type", "classification");
+    String labelShape = labelCfg.value("shape", "matrix");
+    double volK = labelCfg.value("vol_k", 0.5);
+    String objective = params.value("objective", "multi:softprob");
+    int numClass = params.value("num_class", 3);
+    double testRatio = params.value("test_ratio", 0.2);
+
+    int nTrials = params.value("n_trials", 20);
+    String paramDomains = params.value("param_domains", "{}");
+    String optimizeMetric = params.value("optimize_metric", "sharpe");
+    String startDate = params.value("start_date", "");
+    String endDate = params.value("end_date", "");
+    String frequency = params.value("frequency", "1d");
+
+    auto session = std::make_shared<TrainSession>();
+    session->_sessionId = fmt::format("xgb_opt_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        s_activeSession = session;
+    }
+
+    auto sendSSE = [session](const String& type, const nlohmann::json& data) {
+        session->pushEvent(type, data);
+    };
+
+    // 后台线程：调 xgboost_optimize.py（前端先调 collect 拿到 csv_path 作为 feature_cache 传入）
+    std::thread([this, params, fastStrategy, session, sendSSE, labelSource, labelPeriod,
+                 labelType, labelShape, volK, objective, numClass, testRatio, nTrials,
+                 paramDomains, optimizeMetric, startDate, endDate, frequency, featureCache]() {
+        String strategyPath;
+        try {
+            strategyPath = makeTempPath("xgb_opt_strategy", "json");
+            std::ofstream sfs(strategyPath);
+            sfs << fastStrategy.dump();
+            sfs.close();
+
+            auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
+            auto interpreter = pyEnv.resolve(params.value("py_env", ""));
+
+            // base-url 用 localhost 直连（同进程）；auth_token 透传
+            String baseUrl = "http://localhost:19107";
+            String authToken = params.value("auth_token", "");
+
+            std::vector<std::string> args = {
+                "--data", featureCache,
+                "--feature-cache", featureCache,
+                "--fast-backtest-strategy", strategyPath,
+                "--base-url", baseUrl,
+                "--label-source", labelSource,
+                "--label-period", std::to_string(labelPeriod),
+                "--label-type", labelType,
+                "--label-shape", labelShape,
+                "--vol-k", std::to_string(volK),
+                "--objective", objective,
+                "--num-class", std::to_string(numClass),
+                "--test-ratio", std::to_string(testRatio),
+                "--n-trials", std::to_string(nTrials),
+                "--optimize-metric", optimizeMetric,
+                "--param-domains", paramDomains,
+                "--frequency", frequency,
+            };
+            if (!startDate.empty()) args.insert(args.end(), {"--start-date", startDate});
+            if (!endDate.empty()) args.insert(args.end(), {"--end-date", endDate});
+            if (!authToken.empty()) args.insert(args.end(), {"--auth-token", authToken});
+
+            sendSSE("step", {{"step","optimize"},{"status","start"},
+                              {"script","tools/xgboost_optimize.py"},{"n_trials",nTrials},
+                              {"metric",optimizeMetric}});
+
+            PythonRunner runner;
+            INFO("[MLOptimize] Starting Python: interpreter='{}', n_trials={}", interpreter, nTrials);
+            if (!runner.start("tools/xgboost_optimize.py", args, interpreter)) {
+                sendSSE("error", {{"step","optimize"},{"msg","failed to start xgboost_optimize.py"}});
+                std::lock_guard<std::mutex> lk(session->_mtx);
+                session->_hasError = true;
+                session->_result = {{"error","failed to start optimization script"}};
+                session->_done = true;
+                std::remove(strategyPath.c_str());
+                return;
+            }
+
+            String resultLine, stderrLines;
+            PythonOutput out;
+            while (runner.readLine(out, 60000)) {
+                if (out.type == PythonOutput::DONE) break;
+                if (out.type == PythonOutput::STDOUT) {
+                    if (out.line.find("\"type\":\"result\"") != std::string::npos) {
+                        resultLine = out.line;
+                    } else if (out.line.find("\"type\":\"error\"") != std::string::npos) {
+                        sendSSE("warning", {{"line", out.line}});
+                        if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
+                    } else {
+                        try {
+                            auto j = nlohmann::json::parse(out.line);
+                            String t = j.value("type", "info");
+                            j.erase("type");
+                            sendSSE(t, j);
+                        } catch (...) {
+                            sendSSE("log", {{"line", out.line}});
+                        }
+                    }
+                } else if (out.type == PythonOutput::STDERR) {
+                    sendSSE("warning", {{"line", out.line}});
+                    if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
+                }
+            }
+
+            std::lock_guard<std::mutex> lk(session->_mtx);
+            if (resultLine.empty()) {
+                String msg = stderrLines.empty() ? "optimize script 未输出 result" : stderrLines.substr(0, 500);
+                while (!msg.empty() && msg.back() == '\n') msg.pop_back();
+                session->_hasError = true;
+                session->_result = {{"error", String("优化失败: ") + msg}};
+            } else {
+                try { session->_result = nlohmann::json::parse(resultLine); }
+                catch (...) {
+                    session->_hasError = true;
+                    session->_result = {{"error","优化结果解析失败"}};
+                }
+            }
+            session->_done = true;
+            std::remove(strategyPath.c_str());
+        } catch (const std::exception& e) {
+            std::lock_guard<std::mutex> lk(session->_mtx);
+            session->_hasError = true;
+            session->_result = {{"error", String("unhandled exception: ") + e.what()}};
+            session->_done = true;
+            if (!strategyPath.empty()) std::remove(strategyPath.c_str());
+        } catch (...) {
+            std::lock_guard<std::mutex> lk(session->_mtx);
+            session->_hasError = true;
+            session->_result = {{"error","unknown exception during optimization"}};
+            session->_done = true;
+            if (!strategyPath.empty()) std::remove(strategyPath.c_str());
+        }
+    }).detach();
+
+    nlohmann::json resp;
+    resp["session_id"] = session->_sessionId;
+    resp["status"] = "running";
+    resp["n_trials"] = nTrials;
+    resp["optimize_metric"] = optimizeMetric;
+    res.set_content(resp.dump(), "application/json");
+}
+
 void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
     // ============== 幂等检查：如果已有活跃训练，返回其 session_id ==============
     {
@@ -1414,6 +1592,8 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     String action = params.value("action", "");
     if (action == "train") {
         handleTrain(params, res);
+    } else if (action == "optimize") {
+        handleOptimize(params, res);
     } else if (action == "collect") {
         handleCollect(params, res);
     } else if (action == "shap") {
@@ -1473,7 +1653,7 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|collect|shap|delete)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|shap|delete)\"}",
             "application/json");
         return;
     }

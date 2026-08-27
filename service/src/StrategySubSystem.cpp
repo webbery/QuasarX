@@ -479,16 +479,16 @@ void StrategySubSystem::MarkSymbolReady(const String& symbol, const String& simD
     }
 
     _dailyReadySymbols.insert(symbol);
-    INFO("[DailyExecution] Symbol ready: {} ({}/{} ready symbols)",
-         symbol, _dailyReadySymbols.size(), _dailyStrategySymbols.size());
+    // INFO("[DailyExecution] Symbol ready: {} ({}/{} ready symbols)",
+    //      symbol, _dailyReadySymbols.size(), _dailyStrategySymbols.size());
 
     // 诊断：打印所有已注册策略及其 symbol 列表
-    for (auto& [strat, syms] : _dailyStrategySymbols) {
-        String symList;
-        for (auto& s : syms) { if (!symList.empty()) symList += ","; symList += s; }
-        bool executed = _dailyExecutedStrategies.count(strat) > 0;
-        INFO("[DailyExecution]   registered strategy '{}': symbols=[{}], already_executed={}", strat, symList, executed);
-    }
+    // for (auto& [strat, syms] : _dailyStrategySymbols) {
+    //     String symList;
+    //     for (auto& s : syms) { if (!symList.empty()) symList += ","; symList += s; }
+    //     bool executed = _dailyExecutedStrategies.count(strat) > 0;
+    //     INFO("[DailyExecution]   registered strategy '{}': symbols=[{}], already_executed={}", strat, symList, executed);
+    // }
 
     Vector<std::pair<String, String>> strategiesToRun;
 

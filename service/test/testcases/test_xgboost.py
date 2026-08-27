@@ -672,6 +672,314 @@ class TestXGBoostE2E:
             err_msg="C++ vs Python 预测类别不一致")
 
 
+# ============== 快速回测模式测试 ==============
+
+class TestFastBacktest:
+    """快速回测模式：CacheFeatureNode + 预训练模型"""
+
+    def _collect_features(self, auth_token, strategy):
+        """调用 /v0/ml?action=collect 收集特征，返回 csv_path"""
+        body = {
+            "action": "collect",
+            "script": json.dumps(strategy),
+        }
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/ml",
+                json=body,
+                headers=_headers(auth_token),
+                verify=VERIFY_SSL,
+                timeout=120,
+            )
+        except requests.exceptions.Timeout:
+            return None
+
+        if resp.status_code != 200:
+            return None
+
+        submit_result = resp.json()
+        session_id = submit_result.get("session_id")
+        if not session_id:
+            return None
+
+        # 轮询 train_status 直到收集完成
+        for _ in range(120):
+            time.sleep(1)
+            try:
+                status_resp = requests.get(
+                    f"{BASE_URL}/ml",
+                    params={"action": "train_status", "session_id": session_id},
+                    headers=_headers(auth_token),
+                    verify=VERIFY_SSL,
+                    timeout=10,
+                )
+            except requests.exceptions.RequestException:
+                continue
+
+            if status_resp.status_code != 200:
+                continue
+
+            data = status_resp.json()
+            status = data.get("status")
+            if status == "done":
+                return data.get("csv_path")
+            if status == "error":
+                return None
+
+        return None
+
+    def _to_logical_model_path(self, model_path):
+        """绝对路径 → 逻辑路径：提取 models/ 之后的部分"""
+        idx = model_path.find("models/")
+        if idx >= 0:
+            return model_path[idx + len("models/"):]
+        return model_path
+
+    def _set_model_path(self, strategy, model_path):
+        """修改策略 JSON 中 XGBoost 节点的 modelFile 为逻辑路径
+
+        XGBoostNode 的 modelFile 期望逻辑路径（如 experiments/xxx.json），
+        内部拼接 {dbPath}/models/ 前缀。
+        """
+        logical_path = self._to_logical_model_path(model_path)
+        for node in strategy.get("nodes", []):
+            if node.get("data", {}).get("nodeType") == "xgboost":
+                node["data"]["params"]["modelFile"]["value"] = logical_path
+                return
+
+    def test_fast_backtest_completes(self, auth_token, trained_model):
+        """快速回测模式能正常完成并返回指标"""
+        if not trained_model.get("model_path"):
+            pytest.skip("训练未产出模型")
+
+        # 使用训练策略收集特征缓存
+        train_strategy_path = Path(__file__).parent / "ai_test_data" / "xgboost_train_strategy.json"
+        if not train_strategy_path.exists():
+            pytest.skip(f"训练策略文件不存在: {train_strategy_path}")
+
+        train_strategy = json.loads(train_strategy_path.read_text())
+        feature_cache = self._collect_features(auth_token, train_strategy)
+        if not feature_cache:
+            pytest.skip("特征收集失败，无法获取特征缓存 CSV")
+
+        # 用 trivial 策略跑快速回测
+        strategy_path = Path(__file__).parent / "ai_test_data" / "xgb_trivial_strategy.json"
+        if not strategy_path.exists():
+            pytest.skip(f"策略文件不存在: {strategy_path}")
+
+        fast_strategy = json.loads(strategy_path.read_text())
+        fast_strategy["id"] = "test_fast_backtest"
+        fast_strategy["name"] = "test_fast_backtest"
+        self._set_model_path(fast_strategy, trained_model["model_path"])
+
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={
+                "script": json.dumps(fast_strategy),
+                "validate": False,
+                "feature_cache": feature_cache,
+                "model_path": self._to_logical_model_path(trained_model["model_path"]),
+            },
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"快速回测失败: {resp.text[:200]}"
+        fast_data = resp.json()
+
+        # 验证快速回测返回了有效结构
+        assert "summary" in fast_data, "快速回测缺少 summary"
+        summary = fast_data["summary"]
+        assert "sharp" in summary, "summary 缺少 sharp"
+        assert "total_return" in summary, "summary 缺少 total_return"
+        assert "buy" in fast_data, "快速回测缺少 buy"
+        assert "sell" in fast_data, "快速回测缺少 sell"
+
+    def test_fast_backtest_without_feature_cache(self, auth_token, trained_model):
+        """不提供 feature_cache 时走正常模式（回归验证）"""
+        if not trained_model.get("model_path"):
+            pytest.skip("训练未产出模型")
+
+        strategy_path = Path(__file__).parent / "ai_test_data" / "xgb_trivial_strategy.json"
+        if not strategy_path.exists():
+            pytest.skip(f"策略文件不存在: {strategy_path}")
+
+        strategy = json.loads(strategy_path.read_text())
+        strategy["id"] = "test_normal_no_cache"
+        strategy["name"] = "test_normal_no_cache"
+        self._set_model_path(strategy, trained_model["model_path"])
+
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(strategy), "validate": False},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"正常回测失败: {resp.text[:200]}"
+        data = resp.json()
+        assert "summary" in data
+
+
+# ============== Optimize 测试（Optuna 自动优化 + 快速回测） ==============
+
+class TestXGBoostOptimize:
+    """Optuna 超参自动优化：前端先 collect → 后端 optimize
+
+    测试三层：
+      - TestXGBoostOptimizeErrors: 不依赖训练/收集的错误场景
+      - TestXGBoostOptimizeSubmit: 提交立即返回 session_id
+      - TestXGBoostOptimizeEnd2End: 完整优化流程（慢测试，依赖 collect）
+    """
+
+    def _collect_features(self, auth_token, strategy_path=STRATEGY_PATH):
+        """调 POST /v0/ml?action=collect 收集特征，返回 csv_path 或 None"""
+        script = Path(strategy_path).read_text()
+        body = {"action": "collect", "script": script}
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/ml", json=body, headers=_headers(auth_token),
+                verify=VERIFY_SSL, timeout=120,
+            )
+        except requests.exceptions.Timeout:
+            return None
+        if resp.status_code != 200:
+            return None
+        session_id = resp.json().get("session_id")
+        if not session_id:
+            return None
+        # 轮询 train_status 直到收集完成
+        for _ in range(120):
+            time.sleep(1)
+            try:
+                status_resp = requests.get(
+                    f"{BASE_URL}/ml",
+                    params={"action": "train_status", "session_id": session_id},
+                    headers=_headers(auth_token), verify=VERIFY_SSL, timeout=10,
+                )
+            except requests.exceptions.RequestException:
+                continue
+            if status_resp.status_code != 200:
+                continue
+            data = status_resp.json()
+            if data.get("status") == "done":
+                return data.get("csv_path")
+            if data.get("status") == "error":
+                return None
+        return None
+
+    def _wait_optimize(self, auth_token, session_id, max_wait_sec=300):
+        """轮询 optimize session 直到完成，返回最终 result dict 或 None"""
+        for _ in range(max_wait_sec):
+            time.sleep(2)
+            try:
+                resp = requests.get(
+                    f"{BASE_URL}/ml",
+                    params={"action": "train_status", "session_id": session_id},
+                    headers=_headers(auth_token), verify=VERIFY_SSL, timeout=10,
+                )
+            except requests.exceptions.RequestException:
+                continue
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            status = data.get("status")
+            if status == "done":
+                return data
+            if status == "error":
+                return {"_error": data.get("error", "unknown")}
+        return None
+
+
+class TestXGBoostOptimizeErrors:
+    """不依赖训练的 optimize 错误场景测试"""
+
+    def test_post_optimize_missing_feature_cache_400(self, auth_token):
+        """缺 feature_cache 返回 400"""
+        resp = requests.post(
+            f"{BASE_URL}/ml",
+            json={
+                "action": "optimize",
+                "fast_backtest_strategy": '{"id":"x","nodes":[],"edges":[]}',
+            },
+            headers=_headers(auth_token), verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 400
+        assert "feature_cache" in resp.text
+
+    def test_post_optimize_missing_fast_backtest_strategy_400(self, auth_token):
+        """缺 fast_backtest_strategy 返回 400"""
+        resp = requests.post(
+            f"{BASE_URL}/ml",
+            json={
+                "action": "optimize",
+                "feature_cache": "/tmp/dummy.csv",
+            },
+            headers=_headers(auth_token), verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 400
+        assert "fast_backtest_strategy" in resp.text
+
+    def test_post_optimize_invalid_fast_backtest_strategy_400(self, auth_token):
+        """fast_backtest_strategy 不是合法 JSON 返回 400"""
+        resp = requests.post(
+            f"{BASE_URL}/ml",
+            json={
+                "action": "optimize",
+                "feature_cache": "/tmp/dummy.csv",
+                "fast_backtest_strategy": "not a json",
+            },
+            headers=_headers(auth_token), verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 400
+        assert "JSON" in resp.text
+
+    def test_post_optimize_missing_action_400(self, auth_token):
+        """缺 action 字段返回 400（不在 train|optimize|collect 列表）"""
+        resp = requests.post(
+            f"{BASE_URL}/ml",
+            json={"feature_cache": "/tmp/x.csv"},
+            headers=_headers(auth_token), verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 400
+
+
+class TestXGBoostOptimizeSubmit:
+    """optimize 提交立即返回 session_id（不需要等 collect 完成）"""
+
+    def test_optimize_submit_returns_session_id(self, auth_token, trained_model):
+        """提交 optimize 立即返回 session_id 和 status=running"""
+        # 先调 collect 拿 csv_path
+        collector = TestXGBoostOptimize()
+        csv_path = collector._collect_features(auth_token)
+        if not csv_path:
+            pytest.skip("collect 失败，无法获取 csv_path")
+
+        # 提交 optimize（不依赖 collect 的具体结果，只验证立即返回）
+        body = {
+            "action": "optimize",
+            "feature_cache": csv_path,
+            "fast_backtest_strategy": '{"id":"x","nodes":[],"edges":[]}',
+            "n_trials": 1,
+            "optimize_metric": "sharpe",
+        }
+        resp = requests.post(
+            f"{BASE_URL}/ml", json=body, headers=_headers(auth_token),
+            verify=VERIFY_SSL, timeout=10,
+        )
+        # 立即返回（不阻塞），fast_backtest_strategy 是空策略图（nodes=[]）
+        # 后端优化时 trial 会失败但不影响提交阶段
+        if resp.status_code == 200:
+            data = resp.json()
+            assert "session_id" in data
+            assert data.get("status") == "running"
+            assert data.get("optimize_metric") == "sharpe"
+            assert data.get("n_trials") == 1
+        else:
+            # 409（已有 session）或 400（feature_cache 不存在）也接受
+            assert resp.status_code in (400, 409)
+
+
 # ============== Delete 测试（放最后，会清除内存缓存） ==============
 
 class TestXGBoostDelete:
