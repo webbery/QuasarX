@@ -672,66 +672,74 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
         return 0;
     }
 
-    // ── 构建批量 INSERT ──
-    String sql;
-    sql.reserve(rows.size() * 320 + 512);
-    sql +=
+    // ── 分块批量 INSERT（500 行/块，避免大批量 upsert 触发 DuckDB ART 索引 bug）──
+    static constexpr size_t CHUNK_SIZE = 500;
+
+    auto tsVal = [](const String& s) -> String {
+        return s.empty() ? "NULL" : fmt::format("'{}'", s);
+    };
+
+    auto formatRow = [&](const DivRow& r) -> String {
+        String s;
+        s.reserve(320);
+        s += fmt::format("({},", r.symbol);
+        s += fmt::format("{},'{}',{},{},{},",
+                         tsVal(r.announce_date), r.report_year,
+                         tsVal(r.ex_dividend_date),
+                         tsVal(r.record_date), tsVal(r.implement_date));
+        s += fmt::format("{},{},{},{},{},",
+                         r.bonus_per_10, r.transfer_per_10, r.cash_per_10,
+                         r.allot_per_10, r.allot_price);
+        s += r.ex_div_price.empty() ? "NULL," : fmt::format("{}," , r.ex_div_price);
+        s += fmt::format("{})", r.action_type);
+        return s;
+    };
+
+    static const String CONFLICT_CLAUSE =
+        " ON CONFLICT(symbol, ex_dividend_date) DO UPDATE SET "
+        "announce_date=excluded.announce_date, report_year=excluded.report_year, "
+        "record_date=excluded.record_date, implement_date=excluded.implement_date, "
+        "bonus_per_10=excluded.bonus_per_10, transfer_per_10=excluded.transfer_per_10, "
+        "cash_per_10=excluded.cash_per_10, allot_per_10=excluded.allot_per_10, "
+        "allot_price=excluded.allot_price, ex_div_price=excluded.ex_div_price, "
+        "action_type=excluded.action_type";
+
+    static const String INSERT_PREFIX =
         "INSERT INTO dividend (symbol, announce_date, report_year, ex_dividend_date, "
         "record_date, implement_date, bonus_per_10, transfer_per_10, cash_per_10, "
         "allot_per_10, allot_price, ex_div_price, action_type) VALUES ";
 
-    for (size_t i = 0; i < rows.size(); i++) {
-        const auto& r = rows[i];
-        if (i > 0) sql += ", ";
+    int imported = 0;
+    for (size_t chunk_start = 0; chunk_start < rows.size(); chunk_start += CHUNK_SIZE) {
+        size_t chunk_end = std::min(chunk_start + CHUNK_SIZE, rows.size());
 
-        sql += fmt::format("({},", r.symbol);
+        String sql;
+        sql.reserve((chunk_end - chunk_start) * 320 + 512);
+        sql += INSERT_PREFIX;
+        for (size_t i = chunk_start; i < chunk_end; i++) {
+            if (i > chunk_start) sql += ", ";
+            sql += formatRow(rows[i]);
+        }
+        sql += CONFLICT_CLAUSE;
 
-        // 可空 TIMESTAMP 字段
-        auto tsVal = [](const String& s) -> String {
-            return s.empty() ? "NULL" : fmt::format("'{}'", s);
-        };
-        sql += fmt::format("{},'{}',{},{},{},",
-                           tsVal(r.announce_date), r.report_year,
-                           tsVal(r.ex_dividend_date),
-                           tsVal(r.record_date), tsVal(r.implement_date));
-
-        // DOUBLE 字段
-        sql += fmt::format("{},{},{},{},{},",
-                           r.bonus_per_10, r.transfer_per_10, r.cash_per_10,
-                           r.allot_per_10, r.allot_price);
-
-        // ex_div_price (可空)
-        sql += r.ex_div_price.empty() ? "NULL," : fmt::format("{}," , r.ex_div_price);
-
-        // action_type
-        sql += fmt::format("{})", r.action_type);
-    }
-
-    sql += " ON CONFLICT(symbol, ex_dividend_date) DO UPDATE SET "
-           "announce_date=excluded.announce_date, report_year=excluded.report_year, "
-           "record_date=excluded.record_date, implement_date=excluded.implement_date, "
-           "bonus_per_10=excluded.bonus_per_10, transfer_per_10=excluded.transfer_per_10, "
-           "cash_per_10=excluded.cash_per_10, allot_per_10=excluded.allot_per_10, "
-           "allot_price=excluded.allot_price, ex_div_price=excluded.ex_div_price, "
-           "action_type=excluded.action_type";
-
-    // ── 执行 ──
-    exec("BEGIN TRANSACTION");
-    duckdb_result result;
-    duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
-    if (state != DuckDBSuccess) {
-        const char* err = duckdb_result_error(&result);
-        SPDLOG_ERROR("[FinanceDB] dividend insert failed ({}): {}", csv_path, err ? err : "unknown");
+        exec("BEGIN TRANSACTION");
+        duckdb_result result;
+        duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
+        if (state != DuckDBSuccess) {
+            const char* err = duckdb_result_error(&result);
+            SPDLOG_ERROR("[FinanceDB] dividend insert chunk [{}/{}] failed ({}): {}",
+                         chunk_start, chunk_end, csv_path, err ? err : "unknown");
+            duckdb_destroy_result(&result);
+            exec("ROLLBACK");
+            return -1;
+        }
         duckdb_destroy_result(&result);
-        exec("ROLLBACK");
-        return -1;
+        exec("COMMIT");
+        imported += static_cast<int>(chunk_end - chunk_start);
     }
-    duckdb_destroy_result(&result);
-    exec("COMMIT");
 
-    int count = static_cast<int>(rows.size());
-    SPDLOG_INFO("[FinanceDB] Imported {} rows into dividend from {}", count, csv_path);
-    return count;
+    SPDLOG_INFO("[FinanceDB] Imported {} rows into dividend from {}", imported, csv_path);
+    return imported;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -753,7 +761,7 @@ int FinanceDB::importAllDividends(const String& dividend_dir) {
         if (filename.size() > 13 &&
             filename.substr(filename.size() - 13) == "_dividend.csv") {
             file_count++;
-            SPDLOG_INFO("[FinanceDB] Importing dividend file [{}/{}]: {}", file_count, 0, filename);
+            SPDLOG_INFO("[FinanceDB] Importing dividend file #{}: {}", file_count, filename);
             int n = importDividendCsv(entry.path().string());
             if (n > 0) total += n;
         }
