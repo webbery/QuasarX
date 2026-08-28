@@ -19,11 +19,18 @@
             <i :class="isDeploying ? 'fa-spinner fa-spin' : 'fa-cloud-upload-alt'"></i>
             {{ isDeploying ? '部署中...' : '部署' }}
           </button>
-          <button v-else-if="isRunningOnServer" class="btn btn-danger" @click="onHandleStopStrategy" :disabled="isStopping">
-            <i class="fas fa-stop"></i> 停止
-          </button>
-          <button v-else-if="isStoppedOnServer" class="btn btn-success" @click="onHandleStartStrategy" :disabled="isStarting">
-            <i class="fas fa-play"></i> 启动
+          <template v-else-if="isRunningOnServer">
+            <button class="btn btn-danger" @click="onHandleStopStrategy" :disabled="isStopping">
+              <i class="fas fa-stop"></i> 停止
+            </button>
+            <button class="btn" @click="onHandleDeploy" :disabled="isDeploying">
+              <i :class="isDeploying ? 'fa-spinner fa-spin' : 'fa-cloud-upload-alt'"></i>
+              {{ isDeploying ? '部署中...' : '重新部署' }}
+            </button>
+          </template>
+          <button v-else-if="isStoppedOnServer" class="btn" @click="onHandleDeploy" :disabled="isDeploying">
+            <i :class="isDeploying ? 'fa-spinner fa-spin' : 'fa-cloud-upload-alt'"></i>
+            {{ isDeploying ? '部署中...' : '部署' }}
           </button>
         </template>
         <button v-if="is_strategy" class="control-btn" @click="onHandleExportStrategy" title="导出当前策略">
@@ -282,7 +289,7 @@ import PortfolioPanel from "./components/PortfolioPanel.vue";
 import RiskView from "./components/risk/RiskView.vue";
 import StrategyRiskDetail from "./components/risk/StrategyRiskDetail.vue";
 import sseService from "./ts/SSEService";
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import Store from 'electron-store';
 // 报表配置面板
 import AnalysisRightPanel from './components/AnalysisRightPanel.vue';
@@ -762,6 +769,10 @@ const onStatusChange = (status, info) => {
   if (status) {
     runningMode.value = info
     showLogin.value = false
+    // 切换服务器后，如果在策略工厂界面且有选中策略，立即刷新策略运行状态
+    if (is_strategy.value && currentStrategyName.value) {
+      fetchServerStrategies()
+    }
   }
 }
 
@@ -793,7 +804,6 @@ const { strategies, versions } = storeToRefs(historyStore)
 const serverStrategies = ref([])  // [{name, running}, ...]
 const { deploying: isDeploying, deployStrategy } = useStrategyDeploy()
 const isStopping = ref(false)
-const isStarting = ref(false)
 let _strategyTimer = null
 
 /** 当前画布策略名（从 IndexedDB 获取） */
@@ -860,11 +870,29 @@ const onHandleDeploy = async () => {
   }
   const graph = dynamicComponentRef.value.getStrategyGraph()
   if (!graph) return
-  const res = await deployStrategy(currentStrategyName.value, graph)
-  if (res.success) {
-    message.success(`策略 "${currentStrategyName.value}" 已部署${res.running ? '（已运行）' : ''}`)
-    await fetchServerStrategies()
+
+  const doDeploy = async (force = false) => {
+    const res = await deployStrategy(currentStrategyName.value, graph, { force })
+    if (res.conflict) {
+      try {
+        await ElMessageBox.confirm(
+          `策略「${currentStrategyName.value}」正在运行中，重新部署将先停止当前策略再部署新版本，是否继续？`,
+          '策略运行中',
+          { confirmButtonText: '重新部署', cancelButtonText: '取消', type: 'warning' }
+        )
+        await doDeploy(true)
+      } catch {
+        // 用户取消
+      }
+      return
+    }
+    if (res.success) {
+      message.success(`策略 "${currentStrategyName.value}" 已部署${res.running ? '（已运行）' : ''}`)
+      await fetchServerStrategies()
+    }
   }
+
+  await doDeploy()
 }
 
 /** 停止策略 */
@@ -879,21 +907,6 @@ const onHandleStopStrategy = async () => {
     message.error('停止失败: ' + e.message)
   } finally {
     isStopping.value = false
-  }
-}
-
-/** 启动策略 */
-const onHandleStartStrategy = async () => {
-  if (!currentStrategyName.value) return
-  isStarting.value = true
-  try {
-    await axios.post('/v0/strategy', { mode: 1, name: currentStrategyName.value })
-    message.success(`策略 "${currentStrategyName.value}" 已启动`)
-    await fetchServerStrategies()
-  } catch (e) {
-    message.error('启动失败: ' + e.message)
-  } finally {
-    isStarting.value = false
   }
 }
 

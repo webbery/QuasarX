@@ -28,7 +28,8 @@ export function useStrategyDeploy() {
   async function deployStrategy(
     strategyName: string,
     strategyJson: any,
-  ): Promise<{ success: boolean; message?: string; running?: boolean }> {
+    options?: { force?: boolean },
+  ): Promise<{ success: boolean; message?: string; running?: boolean; conflict?: boolean }> {
     lastError.value = null
     if (!strategyName) {
       ElMessage.error('部署失败：策略名不能为空')
@@ -81,6 +82,9 @@ export function useStrategyDeploy() {
       const form = new FormData()
       form.append('script', JSON.stringify(strategyJson))
       form.append('name', strategyName)
+      if (options?.force) {
+        form.append('force', 'true')
+      }
 
       // 每个 XGBoostNode 都要附 model_{label} 和 model_{label}_meta parts
       for (const xn of xgbNodes) {
@@ -119,7 +123,12 @@ export function useStrategyDeploy() {
       ElMessage.success(`策略「${strategyName}」部署成功${resp.data?.running ? '（已运行）' : ''}`)
       return { success: true, message: resp.data?.message, running: resp.data?.running }
     } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || '部署失败'
+      const status = err.response?.status
+      const data = err.response?.data
+      if (status === 409 && data?.running) {
+        return { success: false, conflict: true, message: data?.message, running: true }
+      }
+      const msg = data?.message || err.message || '部署失败'
       lastError.value = msg
       ElMessage.error(`部署失败: ${msg}`)
       return { success: false, message: msg }

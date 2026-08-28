@@ -107,6 +107,7 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
     // multipart/form-data（含 model_* 文件 part）走单独解析路径
     bool isMultipart = req.is_multipart_form_data();
     nlohmann::json params;
+    bool forceDeploy = false;
     if (isMultipart) {
         nlohmann::json scriptJson;
         String mpName;
@@ -122,8 +123,12 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         if (!mpName.empty()) {
             params["name"] = mpName;
         }
+        if (req.has_file("force")) {
+            forceDeploy = req.get_file_value("force").content == "true";
+        }
     } else {
         params = nlohmann::json::parse(req.body);
+        forceDeploy = params.value("force", false);
     }
 
     // 检查是否是验证请求
@@ -164,10 +169,10 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         run(name, res);
     } else {
         // 部署并运行；multipart 时把 req 一起传给 deploy（用于读 model_* parts）
-        INFO("[StrategyHandler] params type={}, is_object={}, keys={}", 
+        INFO("[StrategyHandler] params type={}, is_object={}, keys={}",
              params.type_name(), params.is_object(), params.dump());
-        if (isMultipart) deploy(params, req, res);
-        else deploy(params, res);
+        if (isMultipart) deploy(params, req, res, forceDeploy);
+        else deploy(params, res, forceDeploy);
     }
 }
 
@@ -195,15 +200,15 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
     res.set_content(result.dump(), "application/json");
 }
 
-void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res) {
-    deployImpl(param, nullptr, res);
+void StrategyHandler::deploy(const nlohmann::json& param, httplib::Response& res, bool force) {
+    deployImpl(param, nullptr, res, force);
 }
 
-void StrategyHandler::deploy(const nlohmann::json& param, const httplib::Request& req, httplib::Response& res) {
-    deployImpl(param, &req, res);
+void StrategyHandler::deploy(const nlohmann::json& param, const httplib::Request& req, httplib::Response& res, bool force) {
+    deployImpl(param, &req, res, force);
 }
 
-void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Request* reqPtr, httplib::Response& res) {
+void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Request* reqPtr, httplib::Response& res, bool force) {
     INFO("[StrategyHandler] deployImpl: param type={}, is_object={}", param.type_name(), param.is_object());
     if (!param.is_object()) {
         WARN("[StrategyHandler] deployImpl: param is not an object, type={}", param.type_name());
@@ -217,7 +222,25 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
     nlohmann::json scriptJson = param.value("script", nlohmann::json());
     String scripts = scriptJson.dump();
     String name = param.value("name", "");
-    INFO("[StrategyHandler] deployImpl: name='{}', script size={}", name, scripts.size());
+    INFO("[StrategyHandler] deployImpl: name='{}', script size={}, force={}", name, scripts.size(), force);
+
+    // 检查同名策略是否正在运行
+    auto strategySys = _server->GetStrategySystem();
+    auto flow = strategySys->GetFlowSubsystem();
+    if (flow && flow->IsRunning(name)) {
+        if (!force) {
+            WARN("[StrategyHandler] Strategy '{}' is running, deploy rejected (force=false)", name);
+            res.status = 409;
+            nlohmann::json err;
+            err["message"] = "策略正在运行中，请先停止或确认重新部署";
+            err["name"] = name;
+            err["running"] = true;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        INFO("[StrategyHandler] Strategy '{}' is running, force deploy → stopping first", name);
+        strategySys->Stop(name);
+    }
 
     // 使用 std::filesystem::path 正确拼接路径（跨平台）
     std::filesystem::path scripts_dir(SCRIPTS_DIR);
@@ -314,7 +337,6 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
     }
 
     // 运行
-    auto strategySys = _server->GetStrategySystem();
     StrategyInitResult initResult;
     try {
         initResult = strategySys->InitStrategy(name, scriptJson);

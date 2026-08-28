@@ -10,6 +10,9 @@ on:
   #   branches:
   #     - master
 
+permissions:
+  contents: write
+
 # 取消正在运行的旧工作流
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

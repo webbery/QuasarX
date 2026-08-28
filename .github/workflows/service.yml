@@ -778,8 +778,7 @@ jobs:
           mkdir -p "${RELEASE_DIR}"
 
           # 主二进制 + 配置模板
-          cp build-artifact/QuantService "${RELEASE_DIR}/"
-          cp build-artifact/config.template.json "${RELEASE_DIR}/"
+          cp build/QuantService "${RELEASE_DIR}/"
 
           # 运行时 so 库
           mkdir -p "${RELEASE_DIR}/lib"
@@ -787,7 +786,7 @@ jobs:
           cp runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
 
           # 工具脚本
-          cp -r build-artifact/tools "${RELEASE_DIR}/" 2>/dev/null || true
+          cp -r tools "${RELEASE_DIR}/" 2>/dev/null || true
 
           # 生成版本信息
           echo "${TAG_NAME}" > "${RELEASE_DIR}/VERSION"

@@ -24,9 +24,9 @@ private:
 
   void train(const nlohmann::json& param, httplib::Response& res);
 
-  void deploy(const nlohmann::json& param, httplib::Response& res);
-  void deploy(const nlohmann::json& param, const httplib::Request& req, httplib::Response& res);
-  void deployImpl(const nlohmann::json& param, const httplib::Request* reqPtr, httplib::Response& res);
+  void deploy(const nlohmann::json& param, httplib::Response& res, bool force = false);
+  void deploy(const nlohmann::json& param, const httplib::Request& req, httplib::Response& res, bool force = false);
+  void deployImpl(const nlohmann::json& param, const httplib::Request* reqPtr, httplib::Response& res, bool force = false);
 
   void load(const nlohmann::json& param, httplib::Response& res);
 
