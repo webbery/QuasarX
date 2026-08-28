@@ -177,10 +177,20 @@ def load_and_prepare_data(args):
         X = df.loc[valid, feature_cols].values
         y = raw_label[valid].values
 
-    split = int(len(X) * (1 - args.test_ratio))
-    emit({"type": "info", "phase": "split",
-          "n_train": split, "n_test": len(X) - split, "n_features": X.shape[1]})
-    return X[:split], y[:split], X[split:], y[split:], feature_cols
+    n = len(X)
+    use_val = args.val_ratio > 0 and n >= 1000
+    if use_val:
+        train_end = int(n * (1 - args.val_ratio - args.test_ratio))
+        val_end = int(n * (1 - args.test_ratio))
+        n_val = val_end - train_end
+        emit({"type": "info", "phase": "split",
+              "n_train": train_end, "n_val": n_val, "n_test": n - val_end, "n_features": X.shape[1]})
+        return X[:train_end], y[:train_end], X[train_end:val_end], y[train_end:val_end], X[val_end:], y[val_end:], feature_cols
+    else:
+        split = int(n * (1 - args.test_ratio))
+        emit({"type": "info", "phase": "split",
+              "n_train": split, "n_val": 0, "n_test": n - split, "n_features": X.shape[1]})
+        return X[:split], y[:split], None, None, X[split:], y[split:], feature_cols
 
 
 def compute_label(s, period, label_type, vol_k):
@@ -200,8 +210,8 @@ def compute_label(s, period, label_type, vol_k):
     return label, future
 
 
-def train_xgb(X_train, y_train, X_test, y_test, params, args, feature_cols):
-    """训练 XGBoost 模型，返回 booster + 训练集得分（早停触发时使用）"""
+def train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feature_cols):
+    """训练 XGBoost 模型，返回 booster"""
     xgb_params = {
         "objective": args.objective,
         "verbosity": 0,
@@ -212,9 +222,11 @@ def train_xgb(X_train, y_train, X_test, y_test, params, args, feature_cols):
         xgb_params["num_class"] = args.num_class
 
     dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_cols)
+    dval = xgb.DMatrix(X_val, label=y_val, feature_names=feature_cols) if X_val is not None else None
     dtest = xgb.DMatrix(X_test, label=y_test, feature_names=feature_cols) if len(X_test) > 0 else None
 
-    evals = [(dtrain, "train")] + ([(dtest, "eval")] if dtest is not None else [])
+    eval_set = dval if dval is not None else dtest
+    evals = [(dtrain, "train")] + ([(eval_set, "eval")] if eval_set is not None else [])
     booster = xgb.train(
         xgb_params, dtrain,
         num_boost_round=params.get("n_estimators", 200),
@@ -290,6 +302,7 @@ def main():
     parser.add_argument("--objective", default="multi:softprob")
     parser.add_argument("--num-class", type=int, default=3)
     parser.add_argument("--test-ratio", type=float, default=0.2)
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="验证集比例（数据量 < 1000 时退化为 0）")
     parser.add_argument("--param-domains", default="{}")
     parser.add_argument("--n-trials", type=int, default=50)
     parser.add_argument("--optimize-metric", default="sharpe",
@@ -327,7 +340,7 @@ def main():
     summary_field = METRIC_TO_SUMMARY[metric]
 
     # ── 加载训练数据 ──
-    X_train, y_train, X_test, y_test, feature_cols = load_and_prepare_data(args)
+    X_train, y_train, X_val, y_val, X_test, y_test, feature_cols = load_and_prepare_data(args)
     if len(X_train) == 0:
         emit({"type": "error", "message": "训练集为空"})
         sys.exit(1)
@@ -365,7 +378,7 @@ def main():
         params = suggest_params(trial, domains)
 
         # 训练
-        booster = train_xgb(X_train, y_train, X_test, y_test, params, args, feature_cols)
+        booster = train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feature_cols)
 
         # 保存模型
         trial_model_path = save_model_and_get_path(booster, feature_cols, args, trial.number)

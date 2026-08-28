@@ -94,6 +94,7 @@ def main():
     parser.add_argument("--model-output", required=True, help="模型保存路径")
     parser.add_argument("--params", default="{}", help="XGBoost 超参数 JSON")
     parser.add_argument("--test-ratio", type=float, default=0.2)
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="验证集比例（默认 0.15，设为 0 或数据量 < 1000 时退化为两段划分）")
     parser.add_argument("--start-date", default="", help="训练数据开始日期 (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="", help="训练数据结束日期 (YYYY-MM-DD)")
     parser.add_argument("--frequency", default="1d", help="数据频率 (1d/1w/1M)")
@@ -306,29 +307,45 @@ def main():
             sys.exit(1)
 
     # ========== 两条路径在此汇合：X, y, feature_cols 已就绪 ==========
-    split = int(len(X) * (1 - args.test_ratio))
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
+    n = len(X)
+    use_val = args.val_ratio > 0 and n >= 1000
+    if use_val:
+        train_end = int(n * (1 - args.val_ratio - args.test_ratio))
+        val_end = int(n * (1 - args.test_ratio))
+        X_train, X_val, X_test = X[:train_end], X[train_end:val_end], X[val_end:]
+        y_train, y_val, y_test = y[:train_end], y[train_end:val_end], y[val_end:]
+    else:
+        X_val, y_val = None, None
+        split = int(n * (1 - args.test_ratio))
+        X_train, X_test = X[:split], X[split:]
+        y_train, y_test = y[:split], y[split:]
 
     # 提取 X_test 对应的日期（用于 SHAP 时间热力图）
     test_dates = []
     if hasattr(df, 'index') and hasattr(df.index, 'strftime'):
         try:
-            # vector 模式：valid_mask 已定义，按过滤后的日期取 test 部分
             valid_dates = df.index[valid_mask]
-            test_dates = valid_dates[split:].strftime('%Y-%m-%d').tolist()
+            if use_val:
+                test_dates = valid_dates[val_end:].strftime('%Y-%m-%d').tolist()
+            else:
+                test_dates = valid_dates[split:].strftime('%Y-%m-%d').tolist()
         except NameError:
-            # matrix 模式：多标的 stacking，日期按样本数均分
             all_dates = df.index.strftime('%Y-%m-%d').tolist()
             n_symbols = len(X) // len(all_dates) if len(all_dates) > 0 else 0
             if n_symbols > 0:
                 test_rows = len(X_test)
-                # 最后一个 symbol 的 test 部分
-                test_dates = (all_dates * n_symbols)[split:split + test_rows]
+                if use_val:
+                    test_dates = (all_dates * n_symbols)[val_end:val_end + test_rows]
+                else:
+                    test_dates = (all_dates * n_symbols)[split:split + test_rows]
             elif len(all_dates) >= len(X):
-                test_dates = all_dates[split:]
+                if use_val:
+                    test_dates = all_dates[val_end:]
+                else:
+                    test_dates = all_dates[split:]
 
-    emit({"type": "progress", "phase": "split", "n_train": len(X_train), "n_test": len(X_test), "n_features": X.shape[1]})
+    n_val = len(X_val) if X_val is not None else 0
+    emit({"type": "progress", "phase": "split", "n_train": len(X_train), "n_val": n_val, "n_test": len(X_test), "n_features": X.shape[1]})
 
     is_classification = args.label_type == "classification"
 
@@ -384,6 +401,7 @@ def main():
 
     dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_cols)
     dtest = xgb.DMatrix(X_test, label=y_test, feature_names=feature_cols)
+    dval = xgb.DMatrix(X_val, label=y_val, feature_names=feature_cols) if X_val is not None else None
 
     progress_state = {"it": 0}
     last_emit = [time.time()]
@@ -413,11 +431,12 @@ def main():
             })
             return False
 
+    eval_set = [(dtrain, "train"), (dval if dval is not None else dtest, "eval")]
     booster = xgb.train(
         default_params,
         dtrain,
         num_boost_round=n_estimators,
-        evals=[(dtrain, "train"), (dtest, "eval")],
+        evals=eval_set,
         early_stopping_rounds=esr if len(X_test) > 0 else None,
         verbose_eval=False,
         callbacks=[ProgressCallback()],
@@ -510,6 +529,7 @@ def main():
         "model_path": args.model_output,
         "best_iteration": int(best_iteration),
         "n_train": len(X_train),
+        "n_val": n_val,
         "n_test": len(X_test),
         "n_features": len(feature_cols),
         "features": feature_cols,

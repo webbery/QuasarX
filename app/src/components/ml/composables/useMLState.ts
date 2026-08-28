@@ -242,7 +242,8 @@ export function useMLState() {
     volK: 0.5,               // 自适应阈值系数：threshold = volK × σ × √N
     objective: 'multi:softprob',
     numClass: 3,
-    testRatio: 0.2,
+    valRatio: 0.15,
+    testRatio: 0.15,
     learningRate: 0.1,
     maxDepth: 6,
     nEstimators: 200,
@@ -256,6 +257,71 @@ export function useMLState() {
     minChildWeight: 1,       // 叶节点最小样本权重
     scalePosWeight: 1.0,     // 正样本权重（类别不平衡时使用）
   })
+
+  // 参数优化状态
+  interface OptimizeTrial {
+    number: number
+    value: number | null
+    best: number | null
+    params: Record<string, number>
+    duration_ms: number
+    status: 'ok' | 'failed'
+    error?: string
+    summary?: Record<string, number>
+  }
+
+  interface OptimizeResult {
+    best_params: Record<string, number>
+    best_value: number
+    best_trial_number: number
+    best_model: string | null
+    n_trials: number
+    n_completed: number
+    trials: OptimizeTrial[]
+    importance: { name: string; importance: number }[]
+    optimization_duration_ms: number
+    metric: string
+    output_dir: string
+  }
+
+  const optimizeResult = ref<OptimizeResult | null>(null)
+  const optimizeRunning = ref(false)
+  const optimizeTrials = ref<OptimizeTrial[]>([])
+  const optimizeProgress = ref('')
+
+  const DEFAULT_PARAM_DOMAINS: Record<string, { min: number; max: number; step?: number; log?: boolean; enabled: boolean }> = {
+    learning_rate:    { min: 0.005, max: 0.3,  log: true,     enabled: true },
+    max_depth:        { min: 3,     max: 10,                  enabled: true },
+    n_estimators:     { min: 50,    max: 500,  step: 50,      enabled: true },
+    subsample:        { min: 0.5,   max: 1.0,                 enabled: true },
+    colsample_bytree: { min: 0.5,   max: 1.0,                 enabled: true },
+    gamma:            { min: 0,     max: 5,                   enabled: true },
+    min_child_weight: { min: 1,     max: 20,                  enabled: true },
+    reg_alpha:        { min: 0,     max: 10,                  enabled: true },
+    reg_lambda:       { min: 0,     max: 10,                  enabled: true },
+  }
+  const paramDomains = reactive(JSON.parse(JSON.stringify(DEFAULT_PARAM_DOMAINS)))
+  const optimizeMetric = ref('sharpe')
+  const nTrials = ref(50)
+
+  function resetOptimize() {
+    optimizeResult.value = null
+    optimizeRunning.value = false
+    optimizeTrials.value = []
+    optimizeProgress.value = ''
+  }
+
+  function applyBestParams() {
+    if (!optimizeResult.value) return
+    const bp = optimizeResult.value.best_params
+    if (bp.learning_rate != null) config.learningRate = bp.learning_rate
+    if (bp.max_depth != null) config.maxDepth = bp.max_depth
+    if (bp.n_estimators != null) config.nEstimators = bp.n_estimators
+    if (bp.subsample != null) config.subsample = bp.subsample
+    if (bp.colsample_bytree != null) config.colsampleBytree = bp.colsample_bytree
+    if (bp.gamma != null) config.gamma = bp.gamma
+    if (bp.min_child_weight != null) config.minChildWeight = bp.min_child_weight
+  }
 
   function setFrequency(f: string) {
     frequency.value = f
@@ -295,6 +361,7 @@ export function useMLState() {
     batchAnalysis.results = []
     batchAnalysis.loading = false
     batchAnalysis.progress = ''
+    resetOptimize()
   }
 
   /** 从缓存的价格数据重新计算标签（滑块拖动时调用，无需网络请求） */
@@ -388,5 +455,15 @@ export function useMLState() {
     reset,
     isClassification,
     syncObjective,
+    optimizeResult,
+    optimizeRunning,
+    optimizeTrials,
+    optimizeProgress,
+    paramDomains,
+    optimizeMetric,
+    nTrials,
+    DEFAULT_PARAM_DOMAINS,
+    resetOptimize,
+    applyBestParams,
   }
 }

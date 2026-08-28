@@ -754,6 +754,57 @@ jobs:
     needs: [test]
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Download runtime libs
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-libs
+          path: runtime-libs
+
+      - name: Package release tarball
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          RELEASE_DIR="QuantService-${TAG_NAME}"
+          mkdir -p "${RELEASE_DIR}"
+
+          # 主二进制 + 配置模板
+          cp build-artifact/QuantService "${RELEASE_DIR}/"
+          cp build-artifact/config.template.json "${RELEASE_DIR}/"
+
+          # 运行时 so 库
+          mkdir -p "${RELEASE_DIR}/lib"
+          cp runtime-libs/usr/local/lib/lib*.so* "${RELEASE_DIR}/lib/" 2>/dev/null || true
+          cp runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
+
+          # 工具脚本
+          cp -r build-artifact/tools "${RELEASE_DIR}/" 2>/dev/null || true
+
+          # 生成版本信息
+          echo "${TAG_NAME}" > "${RELEASE_DIR}/VERSION"
+          echo "Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "${RELEASE_DIR}/VERSION"
+          echo "Commit: ${GITHUB_SHA}" >> "${RELEASE_DIR}/VERSION"
+
+          # 打包
+          tar -czf "QuantService-${TAG_NAME}.tar.gz" "${RELEASE_DIR}"
+          echo "=== Package contents ==="
+          tar -tzf "QuantService-${TAG_NAME}.tar.gz" | head -30
+          echo "========================"
+          ls -lh "QuantService-${TAG_NAME}.tar.gz"
+
+      # - name: Create GitHub Release
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: QuantService-*.tar.gz
+      #     generate_release_notes: true
+      #     draft: false
+      #     prerelease: ${{ contains(github.ref_name, '-') }}

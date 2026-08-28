@@ -58,6 +58,133 @@
       </div>
     </div>
 
+    <!-- 参数优化 -->
+    <div class="optimize-section">
+      <div class="optimize-header" @click="showOptimize = !showOptimize">
+        <div>
+          <span class="section-eyebrow">OPTUNA TPE</span>
+          <h3 class="section-title">参数优化</h3>
+        </div>
+        <span class="collapse-arrow" :class="{ open: showOptimize }">▶</span>
+      </div>
+
+      <div v-if="showOptimize" class="optimize-body">
+        <!-- 配置行 -->
+        <div class="optimize-config">
+          <div class="config-item">
+            <label>优化指标</label>
+            <select v-model="optimizeMetric" class="select-input">
+              <option v-for="m in METRIC_OPTIONS" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </select>
+          </div>
+          <div class="config-item">
+            <label>试验次数</label>
+            <input type="number" v-model.number="nTrials" min="5" max="500" step="5" class="select-input" />
+          </div>
+          <div class="config-item optimize-actions">
+            <button class="btn btn-primary" :disabled="optimizeRunning || !state.featureReport.data" @click="onOptimize()">
+              <i v-if="optimizeRunning" class="fas fa-spinner fa-spin"></i>
+              {{ optimizeRunning ? '优化中…' : '开始优化' }}
+            </button>
+            <button class="btn btn-ghost" :disabled="optimizeRunning" @click="resetDomains()">重置默认域</button>
+          </div>
+        </div>
+
+        <!-- 参数搜索域表格 -->
+        <div class="domain-table">
+          <div class="domain-row domain-header">
+            <span class="domain-col domain-enable">启用</span>
+            <span class="domain-col domain-name">参数</span>
+            <span class="domain-col domain-min">最小值</span>
+            <span class="domain-col domain-max">最大值</span>
+            <span class="domain-col domain-step">步长</span>
+            <span class="domain-col domain-log">Log</span>
+          </div>
+          <div v-for="(d, key) in paramDomains" :key="key" class="domain-row">
+            <span class="domain-col domain-enable">
+              <input type="checkbox" v-model="d.enabled" />
+            </span>
+            <span class="domain-col domain-name">{{ PARAM_LABELS[key] || key }}</span>
+            <span class="domain-col domain-min">
+              <input type="number" v-model.number="d.min" :step="d.step || (d.log ? 0.005 : 0.1)" class="domain-input" />
+            </span>
+            <span class="domain-col domain-max">
+              <input type="number" v-model.number="d.max" :step="d.step || (d.log ? 0.005 : 0.1)" class="domain-input" />
+            </span>
+            <span class="domain-col domain-step">
+              <input v-if="d.step != null" type="number" v-model.number="d.step" min="1" class="domain-input" />
+              <span v-else class="domain-na">—</span>
+            </span>
+            <span class="domain-col domain-log">
+              <input v-if="d.log != null" type="checkbox" v-model="d.log" />
+              <span v-else class="domain-na">—</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 进度 -->
+        <div v-if="optimizeRunning || optimizeTrials.length > 0" class="optimize-progress">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: (optimizeTrials.length / nTrials * 100) + '%' }"></div>
+          </div>
+          <span class="progress-text">{{ optimizeProgress }}</span>
+        </div>
+
+        <!-- 结果 -->
+        <div v-if="optimizeResult" class="optimize-result">
+          <div class="result-header">
+            <div class="result-summary">
+              <span class="result-badge">最佳 {{ optimizeResult.metric }}</span>
+              <span class="result-value">{{ optimizeResult.best_value.toFixed(4) }}</span>
+              <span class="result-trial">trial #{{ optimizeResult.best_trial_number }}</span>
+              <span class="result-duration">{{ (optimizeResult.optimization_duration_ms / 1000).toFixed(1) }}s</span>
+            </div>
+            <button class="btn btn-accent" @click="state.applyBestParams()">
+              <i class="fas fa-arrow-down"></i>应用最佳参数
+            </button>
+          </div>
+
+          <div class="result-charts">
+            <div class="chart-box">
+              <h4>优化历史</h4>
+              <OptimizationHistoryChart :trials="optimizeResult.trials" :metric="optimizeResult.metric" :height="220" />
+            </div>
+            <div class="chart-box" v-if="optimizeResult.importance?.length">
+              <h4>参数重要性</h4>
+              <ParameterImportanceChart :importance="optimizeResult.importance" :height="220" />
+            </div>
+          </div>
+
+          <!-- Trial 对比表 -->
+          <details class="trials-detail">
+            <summary>全部 {{ optimizeResult.trials.length }} 次试验</summary>
+            <div class="trials-table-wrap">
+              <table class="trials-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>{{ optimizeResult.metric }}</th>
+                    <th v-for="(d, key) in optimizeResult.best_params" :key="key">{{ PARAM_LABELS[key] || key }}</th>
+                    <th>耗时</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="t in sortedTrials" :key="t.number" :class="{ 'best-row': t.number === optimizeResult.best_trial_number, 'failed-row': t.status === 'failed' }">
+                    <td>{{ t.number }}</td>
+                    <td>{{ t.value != null ? t.value.toFixed(4) : '—' }}</td>
+                    <td v-for="(v, key) in optimizeResult.best_params" :key="key">
+                      {{ t.params[key] != null ? (typeof t.params[key] === 'number' && t.params[key] % 1 !== 0 ? t.params[key].toFixed(4) : t.params[key]) : '—' }}
+                    </td>
+                    <td>{{ (t.duration_ms / 1000).toFixed(1) }}s</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+
     <!-- 基础参数 -->
     <div class="config-section">
       <div class="section-heading">
@@ -138,7 +265,25 @@
           <input type="number" v-model.number="config.earlyStoppingRounds" min="1" max="100" class="select-input" />
         </div>
         <div class="config-item">
-          <label>测试集比例</label>
+          <label>
+            训练集比例
+            <span class="tip-icon" title="自动推导：1 - 验证集比例 - 测试集比例。数据量 ≥ 1000 行时三段划分，否则验证集归零退化为两段">?</span>
+          </label>
+          <input :value="trainRatioDisplay" disabled class="select-input readonly-input" />
+          <span class="config-hint">{{ trainRatioHint }}</span>
+        </div>
+        <div class="config-item">
+          <label>
+            验证集比例
+            <span class="tip-icon" title="用于早停（early stopping），不参与最终评估。设为 0 则退化为两段划分">?</span>
+          </label>
+          <input type="number" v-model.number="config.valRatio" step="0.05" min="0" max="0.5" class="select-input" />
+        </div>
+        <div class="config-item">
+          <label>
+            测试集比例
+            <span class="tip-icon" title="最终评估集，不参与训练过程">?</span>
+          </label>
           <input type="number" v-model.number="config.testRatio" step="0.05" min="0.05" max="0.5" class="select-input" />
         </div>
       </div>
@@ -221,8 +366,8 @@
         <span class="result-value">{{ state.trainResult.data.model_type || 'xgboost' }}</span>
       </div>
       <div class="result-stat">
-        <span class="result-label">训练 / 测试</span>
-        <span class="result-value">{{ state.trainResult.data.n_train }} / {{ state.trainResult.data.n_test }}</span>
+        <span class="result-label">{{ state.trainResult.data.n_val > 0 ? '训练 / 验证 / 测试' : '训练 / 测试' }}</span>
+        <span class="result-value">{{ state.trainResult.data.n_train }}{{ state.trainResult.data.n_val > 0 ? ` / ${state.trainResult.data.n_val}` : '' }} / {{ state.trainResult.data.n_test }}</span>
       </div>
       <div class="result-stat">
         <span class="result-label">特征数</span>
@@ -264,8 +409,11 @@ import { LABEL_TYPES, LABEL_SHAPES, REG_MODES } from '../composables/useMLState'
 import type { TrainStep, TrainLog, LearningCurvePoint } from '../composables/useMLState'
 import { useMLData } from '../composables/useMLData'
 import LearningCurveChart from '../charts/LearningCurveChart.vue'
+import OptimizationHistoryChart from '../charts/OptimizationHistoryChart.vue'
+import ParameterImportanceChart from '../charts/ParameterImportanceChart.vue'
 
 const showAdvanced = ref(false)
+const showOptimize = ref(false)
 
 const props = defineProps<{
   state: any
@@ -276,9 +424,45 @@ const emit = defineEmits<{
   (e: 'trained'): void
 }>()
 
-const { train } = useMLData()
+const { train, optimize } = useMLData()
 
 const config = props.state.config
+
+// 优化相关状态（从 state 解构）
+const optimizeResult = computed(() => props.state.optimizeResult)
+const optimizeRunning = computed(() => props.state.optimizeRunning)
+const optimizeTrials = computed(() => props.state.optimizeTrials)
+const optimizeProgress = computed(() => props.state.optimizeProgress)
+const paramDomains = computed(() => props.state.paramDomains)
+const optimizeMetric = computed({
+  get: () => props.state.optimizeMetric,
+  set: (v: string) => { props.state.optimizeMetric = v },
+})
+const nTrials = computed({
+  get: () => props.state.nTrials,
+  set: (v: number) => { props.state.nTrials = v },
+})
+
+const METRIC_OPTIONS = [
+  { value: 'sharpe', label: 'Sharpe Ratio' },
+  { value: 'total_return', label: 'Total Return' },
+  { value: 'annual_return', label: 'Annual Return' },
+  { value: 'max_drawdown', label: 'Max Drawdown' },
+  { value: 'win_rate', label: 'Win Rate' },
+  { value: 'calmar_ratio', label: 'Calmar Ratio' },
+]
+
+const PARAM_LABELS: Record<string, string> = {
+  learning_rate: '学习率',
+  max_depth: '最大深度',
+  n_estimators: '迭代次数',
+  subsample: '行采样',
+  colsample_bytree: '列采样',
+  gamma: '最小增益',
+  min_child_weight: '叶节点权重',
+  reg_alpha: 'L1 正则',
+  reg_lambda: 'L2 正则',
+}
 
 const liveLearningCurve = ref<LearningCurvePoint[]>([])
 // 独立缓存：SSE log 推过来的实时 loss 点全量保留,
@@ -295,11 +479,28 @@ const chartData = computed(() => {
   return liveLearningCurve.value
 })
 
+const trainRatioDisplay = computed(() => {
+  const r = Math.max(0, 1 - config.valRatio - config.testRatio)
+  return r.toFixed(2)
+})
+const trainRatioHint = computed(() => {
+  const total = config.valRatio + config.testRatio
+  if (total >= 1) return '⚠ 验证+测试 ≥ 1'
+  return '1 - val - test'
+})
+
 const regHint = computed(() => {
   if (config.regMode === 'none') return '不施加正则化'
   if (config.regMode === 'l1') return `reg_alpha = ${config.regValue}`
   if (config.regMode === 'l2') return `reg_lambda = ${config.regValue}`
   return `reg_alpha = ${config.regValue}, reg_lambda = ${config.regValue}`
+})
+
+const sortedTrials = computed(() => {
+  if (!optimizeResult.value?.trials) return []
+  return [...optimizeResult.value.trials]
+    .filter(t => t.status === 'ok' && t.value != null)
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
 })
 
 const labelShapeDesc = computed(() => {
@@ -394,6 +595,7 @@ async function onTrain() {
       objective: config.objective,
       numClass: config.numClass,
       testRatio: config.testRatio,
+      valRatio: config.valRatio,
       learningRate: config.learningRate,
       maxDepth: config.maxDepth,
       nEstimators: config.nEstimators,
@@ -478,6 +680,62 @@ async function onTrain() {
     }
   } finally {
     props.state.trainResult.loading = false
+  }
+}
+
+async function onOptimize() {
+  if (!props.state.featureReport.data) return
+  props.state.optimizeRunning = true
+  props.state.optimizeTrials = []
+  props.state.optimizeResult = null
+  props.state.optimizeProgress = '启动优化...'
+
+  try {
+    const result = await optimize(props.script, {
+      labelSource: config.labelSource,
+      labelPeriod: config.labelPeriod,
+      labelType: config.labelType,
+      labelShape: config.labelShape,
+      volK: config.volK,
+      objective: config.objective,
+      numClass: config.numClass,
+      testRatio: config.testRatio,
+      valRatio: config.valRatio,
+      startDate: props.state.dateRange.value?.[0] || '',
+      endDate: props.state.dateRange.value?.[1] || '',
+      frequency: props.state.frequency.value || '1d',
+      csvPath: props.state.featureReport.data?.csv_path,
+      optimizeMetric: props.state.optimizeMetric,
+      nTrials: props.state.nTrials,
+      paramDomains: props.state.paramDomains,
+    }, (type: string, data: any) => {
+      if (type === 'trial') {
+        props.state.optimizeTrials.push(data)
+        const okCount = props.state.optimizeTrials.filter((t: any) => t.status === 'ok').length
+        const bestVal = data.best != null ? data.best.toFixed(4) : '—'
+        props.state.optimizeProgress = `${props.state.optimizeTrials.length} / ${props.state.nTrials} trials  best: ${bestVal}`
+      } else if (type === 'info') {
+        if (data.phase === 'split') {
+          props.state.optimizeProgress = `数据准备完成 (${data.n_train}/${data.n_val || 0}/${data.n_test})，开始搜索...`
+        }
+      } else if (type === 'log') {
+        // 可选：记录日志
+      }
+    })
+
+    if (result) {
+      props.state.optimizeResult = result
+      props.state.optimizeProgress = `优化完成 — 最佳 ${props.state.optimizeMetric}: ${result.best_value.toFixed(4)} (trial #${result.best_trial_number})`
+    }
+  } finally {
+    props.state.optimizeRunning = false
+  }
+}
+
+function resetDomains() {
+  const defaults = props.state.DEFAULT_PARAM_DOMAINS
+  for (const k of Object.keys(defaults)) {
+    Object.assign(props.state.paramDomains[k], defaults[k])
   }
 }
 </script>
@@ -785,4 +1043,234 @@ async function onTrain() {
   color: #64748b;
 }
 .empty-icon { font-size: 48px; margin-bottom: 12px; }
+
+/* ── 参数优化 ── */
+.optimize-section {
+  margin-bottom: 20px;
+  border: 1px solid #2a2a3e;
+  border-radius: 10px;
+  background: #12121e;
+  overflow: hidden;
+}
+.optimize-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  cursor: pointer;
+  user-select: none;
+}
+.optimize-header:hover { background: #1a1a2e; }
+.collapse-arrow {
+  font-size: 11px;
+  color: #666;
+  transition: transform 0.2s;
+}
+.collapse-arrow.open { transform: rotate(90deg); }
+
+.optimize-body { padding: 0 18px 18px; }
+
+.optimize-config {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.optimize-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.btn-accent {
+  background: linear-gradient(135deg, #f5a623, #e08d1a);
+  color: #1a1a2e;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-accent:hover { filter: brightness(1.1); }
+.btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-ghost {
+  background: transparent;
+  color: #888;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-ghost:hover { border-color: #555; color: #ccc; }
+.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 参数域表格 */
+.domain-table {
+  border: 1px solid #222;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.domain-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid #1a1a2e;
+}
+.domain-row:last-child { border-bottom: none; }
+.domain-header {
+  background: #1a1a2e;
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.domain-col { padding: 2px 6px; }
+.domain-enable { width: 40px; text-align: center; }
+.domain-name { flex: 1; font-size: 13px; color: #ccc; }
+.domain-min, .domain-max { width: 100px; }
+.domain-step { width: 80px; }
+.domain-log { width: 50px; text-align: center; }
+.domain-input {
+  width: 100%;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+.domain-input:focus { border-color: #5b8def; outline: none; }
+.domain-na { color: #555; font-size: 12px; }
+
+/* 进度条 */
+.optimize-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #1a1a2e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5b8def, #8b5cf6);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.progress-text {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+/* 结果区域 */
+.optimize-result {
+  border-top: 1px solid #2a2a3e;
+  padding-top: 16px;
+}
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.result-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.result-badge {
+  font-size: 12px;
+  color: #f5a623;
+  font-weight: 600;
+}
+.result-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #e2e8f0;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+.result-trial {
+  font-size: 12px;
+  color: #888;
+}
+.result-duration {
+  font-size: 12px;
+  color: #666;
+}
+
+.result-charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.chart-box {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 12px;
+}
+.chart-box h4 {
+  font-size: 12px;
+  color: #888;
+  margin: 0 0 8px 0;
+  font-weight: 500;
+}
+
+/* Trial 对比表 */
+.trials-detail {
+  margin-top: 12px;
+}
+.trials-detail summary {
+  font-size: 13px;
+  color: #888;
+  cursor: pointer;
+  padding: 8px 0;
+}
+.trials-detail summary:hover { color: #ccc; }
+.trials-table-wrap {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid #222;
+  border-radius: 6px;
+}
+.trials-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.trials-table th {
+  background: #1a1a2e;
+  color: #888;
+  font-weight: 500;
+  padding: 6px 10px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.trials-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid #1a1a2e;
+  color: #ccc;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+.trials-table .best-row { background: rgba(245, 166, 35, 0.1); }
+.trials-table .best-row td { color: #f5a623; }
+.trials-table .failed-row td { color: #666; text-decoration: line-through; }
 </style>

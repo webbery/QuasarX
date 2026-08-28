@@ -76,72 +76,72 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
     if (_model_file.empty()) {
         WARN("[XGBoost] No model file specified for node {}, skipping model load", _label);
     } else {
-    // modelFile 存逻辑路径（如 production/xxx.json），实际文件在 {dbPath}/models/ 下
-    String resolvedPath;
-    if (_server) {
-        String fullPath = _server->GetConfig().GetDatabasePath() + "/models/" + _model_file;
+        // modelFile 存逻辑路径（如 production/xxx.json），实际文件在 {dbPath}/models/ 下
+        String resolvedPath;
+        if (_server) {
+            String fullPath = _server->GetConfig().GetDatabasePath() + "/models/" + _model_file;
 #ifdef _WIN32
-        // Windows: UTF-8 → UTF-16 才能正确访问中文路径
-        std::wstring wFullPath = utf8_to_utf16(fullPath);
-        if (std::filesystem::exists(wFullPath)) {
-            resolvedPath = fullPath;
+            // Windows: UTF-8 → UTF-16 才能正确访问中文路径
+            std::wstring wFullPath = utf8_to_utf16(fullPath);
+            if (std::filesystem::exists(wFullPath)) {
+                resolvedPath = fullPath;
+            }
+#else
+            if (std::filesystem::exists(fullPath)) {
+                resolvedPath = fullPath;
+            }
+#endif
+        }
+
+        if (resolvedPath.empty()) {
+            WARN("[XGBoost] Model file not found for node '{}': looked for '{}{}'",
+                _label,
+                _server ? (_server->GetConfig().GetDatabasePath() + "/models/") : "",
+                _model_file);
+            return false;
+        }
+
+        // 创建 Booster 并加载模型
+        int ret = XGBoosterCreate(nullptr, 0, &_booster);
+        if (ret != 0) {
+            WARN("[XGBoost] Failed to create booster for node {}", _label);
+            return false;
+        }
+
+#ifdef _WIN32
+        // Windows: 先读入内存再通过 buffer 加载，规避 XGBoost C API 的中文路径问题
+        {
+            std::wstring wResolved = utf8_to_utf16(resolvedPath);
+            std::ifstream ifs(wResolved, std::ios::binary | std::ios::ate);
+            if (!ifs.is_open()) {
+                WARN("[XGBoost] Cannot open model file '{}' for node {}", resolvedPath, _label);
+                cleanup();
+                return false;
+            }
+            auto size = ifs.tellg();
+            ifs.seekg(0, std::ios::beg);
+            Vector<char> buf(size);
+            ifs.read(buf.data(), size);
+            ifs.close();
+            ret = XGBoosterLoadModelFromBuffer(_booster, buf.data(), buf.size());
         }
 #else
-        if (std::filesystem::exists(fullPath)) {
-            resolvedPath = fullPath;
-        }
+        ret = XGBoosterLoadModel(_booster, resolvedPath.c_str());
 #endif
-    }
-
-    if (resolvedPath.empty()) {
-        WARN("[XGBoost] Model file not found for node '{}': looked for '{}{}'",
-             _label,
-             _server ? (_server->GetConfig().GetDatabasePath() + "/models/") : "",
-             _model_file);
-        return false;
-    }
-
-    // 创建 Booster 并加载模型
-    int ret = XGBoosterCreate(nullptr, 0, &_booster);
-    if (ret != 0) {
-        WARN("[XGBoost] Failed to create booster for node {}", _label);
-        return false;
-    }
-
-#ifdef _WIN32
-    // Windows: 先读入内存再通过 buffer 加载，规避 XGBoost C API 的中文路径问题
-    {
-        std::wstring wResolved = utf8_to_utf16(resolvedPath);
-        std::ifstream ifs(wResolved, std::ios::binary | std::ios::ate);
-        if (!ifs.is_open()) {
-            WARN("[XGBoost] Cannot open model file '{}' for node {}", resolvedPath, _label);
+        if (ret != 0) {
+            WARN("[XGBoost] Failed to load model '{}' for node {}: {}",
+                resolvedPath, _label, XGBGetLastError());
             cleanup();
             return false;
         }
-        auto size = ifs.tellg();
-        ifs.seekg(0, std::ios::beg);
-        Vector<char> buf(size);
-        ifs.read(buf.data(), size);
-        ifs.close();
-        ret = XGBoosterLoadModelFromBuffer(_booster, buf.data(), buf.size());
-    }
-#else
-    ret = XGBoosterLoadModel(_booster, resolvedPath.c_str());
-#endif
-    if (ret != 0) {
-        WARN("[XGBoost] Failed to load model '{}' for node {}: {}",
-             resolvedPath, _label, XGBGetLastError());
-        cleanup();
-        return false;
-    }
 
-    // 从 meta.json 读取训练时的特征顺序，保证推理与训练一致
-    // meta 与模型同目录：xxx.json → xxx.meta.json
-    if (_feature_keys.empty()) {
-        String metaPath = resolvedPath;
-        auto dotPos = metaPath.rfind('.');
-        if (dotPos != String::npos)
-            metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+        // 从 meta.json 读取训练时的特征顺序，保证推理与训练一致
+        // meta 与模型同目录：xxx.json → xxx.meta.json
+        if (_feature_keys.empty()) {
+            String metaPath = resolvedPath;
+            auto dotPos = metaPath.rfind('.');
+            if (dotPos != String::npos)
+                metaPath = metaPath.substr(0, dotPos) + ".meta.json";
 #ifdef _WIN32
         std::wstring wMetaPath = utf8_to_utf16(metaPath);
         bool metaExists = std::filesystem::exists(wMetaPath);
@@ -155,23 +155,23 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
 #else
                 std::ifstream ifs(metaPath);
 #endif
-                nlohmann::json meta;
-                ifs >> meta;
-                if (meta.contains("features") && meta["features"].is_array()) {
-                    for (auto& f : meta["features"]) {
-                        String fullName = f.get<String>();
-                        // 提取短名：sz.800001.MA(5) → MA(5)
-                        auto dp = fullName.rfind('.');
-                        _feature_keys.push_back(dp != String::npos ? fullName.substr(dp + 1) : fullName);
+                    nlohmann::json meta;
+                    ifs >> meta;
+                    if (meta.contains("features") && meta["features"].is_array()) {
+                        for (auto& f : meta["features"]) {
+                            String fullName = f.get<String>();
+                            // 提取短名：sz.800001.MA(5) → MA(5)
+                            auto dp = fullName.rfind('.');
+                            _feature_keys.push_back(dp != String::npos ? fullName.substr(dp + 1) : fullName);
+                        }
+                        INFO("[XGBoost:{}] Loaded {} feature names from meta '{}'", _id, _feature_keys.size(), metaPath);
                     }
-                    INFO("[XGBoost:{}] Loaded {} feature names from meta '{}'", _id, _feature_keys.size(), metaPath);
+                } catch (const std::exception& e) {
+                    WARN("[XGBoost:{}] Failed to read meta '{}': {}", _id, metaPath, e.what());
+                    _feature_keys.clear();
                 }
-            } catch (const std::exception& e) {
-                WARN("[XGBoost:{}] Failed to read meta '{}': {}", _id, metaPath, e.what());
-                _feature_keys.clear();
             }
         }
-    }
     } // else: model_file not empty
 
     // ── 从连接图发现 symbol 并解析特征 ──

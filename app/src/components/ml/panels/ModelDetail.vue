@@ -8,9 +8,10 @@
           <div class="kv"><span class="k">模型类型</span><span class="v">{{ meta?.model_type || 'xgboost' }}</span></div>
           <div class="kv"><span class="k">目标函数</span><span class="v">{{ meta?.objective || '—' }}</span></div>
           <div class="kv"><span class="k">分类数</span><span class="v">{{ meta?.num_class ?? '—' }}</span></div>
+          <div class="kv"><span class="k">验证比例</span><span class="v">{{ meta?.val_ratio ?? '—' }}</span></div>
           <div class="kv"><span class="k">测试比例</span><span class="v">{{ meta?.test_ratio ?? '—' }}</span></div>
           <div class="kv"><span class="k">特征数</span><span class="v">{{ meta?.n_features ?? '—' }}</span></div>
-          <div class="kv"><span class="k">训练/测试</span><span class="v">{{ meta?.n_train ?? '—' }} / {{ meta?.n_test ?? '—' }}</span></div>
+          <div class="kv"><span class="k">{{ (meta?.n_val ?? 0) > 0 ? '训练/验证/测试' : '训练/测试' }}</span><span class="v">{{ meta?.n_train ?? '—' }}{{ (meta?.n_val ?? 0) > 0 ? ` / ${meta.n_val}` : '' }} / {{ meta?.n_test ?? '—' }}</span></div>
         </div>
       </div>
 

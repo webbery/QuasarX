@@ -25,6 +25,7 @@ export function useMLData() {
       objective: string
       numClass: number
       testRatio: number
+      valRatio: number
       learningRate: number
       maxDepth: number
       nEstimators: number
@@ -63,6 +64,7 @@ export function useMLData() {
         objective: config.objective,
         num_class: config.numClass,
         test_ratio: config.testRatio,
+        val_ratio: config.valRatio,
         params: {
           learning_rate: config.learningRate,
           max_depth: config.maxDepth,
@@ -448,5 +450,117 @@ export function useMLData() {
     return results
   }
 
-  return { train, collect, shap, deleteModel, deleteModelFile, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis }
+  /**
+   * 参数优化（Optuna TPE 搜索）
+   */
+  async function optimize(
+    script: string,
+    config: {
+      labelSource: string
+      labelPeriod: number
+      labelType: string
+      labelShape: string
+      volK: number
+      objective: string
+      numClass: number
+      testRatio: number
+      valRatio: number
+      startDate: string
+      endDate: string
+      frequency: string
+      csvPath?: string
+      optimizeMetric: string
+      nTrials: number
+      paramDomains: Record<string, { min: number; max: number; step?: number; log?: boolean; enabled: boolean }>
+    },
+    onEvent?: (type: string, data: any) => void,
+  ): Promise<any | null> {
+    try {
+      // 构建 param_domains：只包含 enabled 的参数
+      const domains: Record<string, any> = {}
+      for (const [k, v] of Object.entries(config.paramDomains)) {
+        if (!v.enabled) continue
+        const d: any = { min: v.min, max: v.max }
+        if (v.step != null) d.step = v.step
+        if (v.log) d.log = true
+        domains[k] = d
+      }
+
+      const body: any = {
+        action: 'optimize',
+        script: normalizeCodeParams(convertLabelsToKeys(script)),
+        label: {
+          source: config.labelSource,
+          period: config.labelPeriod,
+          type: config.labelType,
+          shape: config.labelShape,
+          vol_k: config.volK,
+        },
+        date_range: {
+          start: config.startDate,
+          end: config.endDate,
+          frequency: config.frequency,
+        },
+        objective: config.objective,
+        num_class: config.numClass,
+        test_ratio: config.testRatio,
+        val_ratio: config.valRatio,
+        optimize_metric: config.optimizeMetric,
+        n_trials: config.nTrials,
+        param_domains: JSON.stringify(domains),
+      }
+      if (config.csvPath) body.feature_cache = config.csvPath
+      const plainBody = JSON.parse(JSON.stringify(body))
+      const server = localStorage.getItem('remote') || 'localhost:19107'
+      const token = localStorage.getItem('token') || ''
+
+      const postResp = await axios.post('/v0/ml', plainBody)
+      const sessionId = postResp.data?.session_id
+      if (!sessionId) {
+        ElMessage.error('参数优化启动失败：未返回 session_id')
+        return null
+      }
+
+      let result: any = null
+      await fetchEventSource(
+        `https://${server}/v0/ml?action=train&session_id=${sessionId}`,
+        {
+          method: 'GET',
+          headers: { 'Authorization': token },
+          openWhenHidden: true,
+          onopen: async (response) => {
+            if (response.ok) return
+            const text = await response.text()
+            throw new Error(text || `HTTP ${response.status}`)
+          },
+          onmessage: (event) => {
+            if (!event.data) return
+            try {
+              const data = JSON.parse(event.data)
+              onEvent?.(event.event || 'message', data)
+              if (event.event === 'result') {
+                result = data
+              } else if (event.event === 'error') {
+                ElMessage.error(`优化失败: ${data.msg || data.message || '未知错误'}`)
+              }
+            } catch { /* skip malformed */ }
+          },
+          onclose: () => {},
+          onerror: (err) => {
+            if (result) return
+            throw err
+          },
+        }
+      )
+
+      return result
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || '参数优化失败'
+      ElMessage.error(`ML 优化失败: ${msg}`)
+      console.error('[ML] optimize error:', err)
+      return null
+    }
+  }
+
+  return { train, collect, shap, deleteModel, deleteModelFile, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis, optimize }
 }

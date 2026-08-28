@@ -49,6 +49,8 @@ def trained_model(auth_token):
     """
     训练一个简单策略，返回 {model_id, model_path, n_features, n_train, n_test}。
     如果训练失败（缺数据/缺 Python 环境），整个 module 的测试 skip。
+
+    注意：未指定 label.shape，默认为 "matrix"。单标的场景下 matrix/vector 等效。
     """
     script = _load_strategy()
     body = {
@@ -59,6 +61,7 @@ def trained_model(auth_token):
             "period": 5,
             "type": "classification",
             "vol_k": 0.5,
+            # shape 未指定，默认 "matrix"（单标的场景下与 vector 等效）
         },
         "objective": "multi:softprob",
         "num_class": 3,
@@ -308,6 +311,171 @@ class TestXGBoostTrain:
         assert trained_model["n_features"] > 0
         assert trained_model["n_train"] > 0
         assert trained_model["n_test"] > 0
+
+
+# ============== Matrix/Vector 模式测试 ==============
+
+def _train_with_shape(auth_token, shape: str):
+    """辅助函数：用指定 shape 训练模型，返回训练结果"""
+    script = _load_strategy()
+    body = {
+        "action": "train",
+        "script": script,
+        "label": {
+            "source": "sz.800001.close",
+            "period": 5,
+            "type": "classification",
+            "vol_k": 0.5,
+            "shape": shape,
+        },
+        "objective": "multi:softprob",
+        "num_class": 3,
+        "test_ratio": 0.2,
+        "params": {
+            "learning_rate": 0.1,
+            "max_depth": 3,
+            "n_estimators": 20,
+        },
+    }
+    resp = requests.post(
+        f"{BASE_URL}/ml",
+        json=body,
+        headers=_headers(auth_token),
+        verify=VERIFY_SSL,
+        timeout=120,
+    )
+    if resp.status_code != 200:
+        pytest.skip(f"训练失败: {resp.text[:200]}")
+
+    submit_result = resp.json()
+    session_id = submit_result.get("session_id")
+    if not session_id:
+        pytest.skip(f"训练响应缺少 session_id: {submit_result}")
+
+    # 轮询 train_status 直到训练完成（最多 120s）
+    for _ in range(120):
+        time.sleep(1)
+        try:
+            status_resp = requests.get(
+                f"{BASE_URL}/ml",
+                params={"action": "train_status", "session_id": session_id},
+                headers=_headers(auth_token),
+                verify=VERIFY_SSL,
+                timeout=10,
+            )
+        except requests.exceptions.RequestException:
+            continue
+
+        if status_resp.status_code != 200:
+            continue
+
+        data = status_resp.json()
+        status = data.get("status")
+        if status == "done":
+            return data
+        if status == "error":
+            pytest.skip(f"训练失败: {data.get('error', 'unknown')}")
+
+    pytest.skip("训练超时（120s 内未完成）")
+
+
+class TestXGBoostLabelShape:
+    """Matrix/Vector 模式训练测试"""
+
+    def test_vector_mode_training(self, auth_token):
+        """Vector 模式训练：单标签源，org_close 不应进入模型特征"""
+        result = _train_with_shape(auth_token, "vector")
+        assert "model_id" in result
+        assert "n_features" in result
+
+        # 下载模型检查 feature_names
+        model_id = result["model_id"]
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": str(model_id)},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=30,
+        )
+        assert resp.status_code == 200
+        dl = resp.json()
+        assert "model_json" in dl
+
+        # 解析模型 JSON 检查 feature_names
+        import json as _json
+        model_data = _json.loads(dl["model_json"])
+        # XGBoost JSON 格式：feature_names 在 model 顶层或 learner 下
+        feature_names = model_data.get("feature_names", [])
+        if not feature_names and "learner" in model_data:
+            feature_names = model_data["learner"].get("feature_names", [])
+
+        # 验证 org_close 不在特征中
+        assert "org_close" not in feature_names, \
+            f"org_close 不应在模型特征中，实际特征: {feature_names}"
+        # 验证 close 也不在特征中（vector 模式下 close 是标签源，不是特征）
+        assert "close" not in feature_names, \
+            f"close 不应在模型特征中（是标签源），实际特征: {feature_names}"
+
+    def test_matrix_mode_training(self, auth_token):
+        """Matrix 模式训练：多标签矩阵，org_close 不应进入模型特征"""
+        result = _train_with_shape(auth_token, "matrix")
+        assert "model_id" in result
+        assert "n_features" in result
+
+        # 下载模型检查 feature_names
+        model_id = result["model_id"]
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": str(model_id)},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=30,
+        )
+        assert resp.status_code == 200
+        dl = resp.json()
+        assert "model_json" in dl
+
+        # 解析模型 JSON 检查 feature_names
+        import json as _json
+        model_data = _json.loads(dl["model_json"])
+        feature_names = model_data.get("feature_names", [])
+        if not feature_names and "learner" in model_data:
+            feature_names = model_data["learner"].get("feature_names", [])
+
+        # 验证 org_close 不在特征中（matrix 模式过滤器 bug 修复验证）
+        assert "org_close" not in feature_names, \
+            f"org_close 不应在模型特征中（matrix 模式过滤器 bug），实际特征: {feature_names}"
+        # matrix 模式下 close 也不应是特征（用于计算标签，不是特征）
+        assert "close" not in feature_names, \
+            f"close 不应在模型特征中（用于标签计算），实际特征: {feature_names}"
+
+    def test_matrix_mode_filter_excludes_org_close(self, auth_token):
+        """验证 matrix 模式过滤器只匹配 .close，不匹配 org_close"""
+        # 这个测试通过训练日志间接验证：如果 org_close 被加入 CSV，
+        # Python 会把它当特征训练，模型 feature_names 会包含它
+        result = _train_with_shape(auth_token, "matrix")
+
+        # 下载并检查模型
+        model_id = result["model_id"]
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": str(model_id)},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=30,
+        )
+        assert resp.status_code == 200
+
+        import json as _json
+        model_data = _json.loads(resp.json()["model_json"])
+        feature_names = model_data.get("feature_names", [])
+        if not feature_names and "learner" in model_data:
+            feature_names = model_data["learner"].get("feature_names", [])
+
+        # 核心断言：org_close 绝对不应该出现
+        for feat in feature_names:
+            assert "org_close" not in feat, \
+                f"特征 '{feat}' 包含 org_close，过滤器 bug 未修复"
 
 
 # ============== SHAP 测试 ==============
@@ -670,6 +838,193 @@ class TestXGBoostE2E:
         np.testing.assert_array_equal(
             cpp_preds, py_preds,
             err_msg="C++ vs Python 预测类别不一致")
+
+
+# ============== E2E 测试：Vector/Matrix 模式参数化 ==============
+
+class TestXGBoostE2EModes:
+    """端到端测试：验证 vector/matrix 两种模式下 C++ vs Python 推理一致性
+
+    验证项：
+      1. 概率一致性：C++ probs ≈ Python probs (atol=1e-4)
+      2. 分类标签一致性：C++ prediction == Python argmax(probs)
+      3. 标签分布合理性：至少 2 种分类出现
+
+    注：MA(5) 特征计算正确性已在 TestXGBoostE2E 中验证，此处不重复。
+    """
+
+    def _deploy_and_verify(self, auth_token, mode: str):
+        """辅助方法：训练 + 部署 + 验证（非 fixture，直接调用）"""
+        # 训练
+        result = _train_with_shape(auth_token, mode)
+        model_id = result["model_id"]
+
+        # 下载模型
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": str(model_id)},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=30,
+        )
+        assert resp.status_code == 200, f"download 失败: {resp.text}"
+        dl = resp.json()
+
+        # 保存模型到临时文件
+        model_tmp = tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w")
+        model_tmp.write(dl["model_json"])
+        model_tmp.close()
+
+        try:
+            # 构建策略
+            strategy_name = f"{E2E_DEPLOY_NAME}_{mode}"
+            strategy = _build_e2e_strategy(name=strategy_name)
+
+            # 部署
+            files = {
+                "script": ("script.json", json.dumps(strategy).encode(), "application/json"),
+                f"model_{E2E_XGB_LABEL}": (
+                    f"{E2E_XGB_LABEL}.json", dl["model_json"].encode(), "application/json"),
+            }
+            if dl.get("meta_json"):
+                files[f"model_{E2E_XGB_LABEL}_meta"] = (
+                    f"{E2E_XGB_LABEL}.meta.json",
+                    dl["meta_json"].encode(), "application/json")
+
+            resp = requests.post(
+                f"{BASE_URL}/strategy", files=files,
+                data={"name": strategy_name},
+                headers=_headers(auth_token),
+                verify=VERIFY_SSL,
+                timeout=60,
+            )
+            assert resp.status_code == 200, f"deploy 失败: {resp.text}"
+
+            # 执行验证
+            self._run_e2e_verification(auth_token, {
+                "strategy": strategy,
+                "strategy_name": strategy_name,
+                "download": dl,
+                "model_path": model_tmp.name,
+                "mode": mode,
+            })
+        finally:
+            # 清理
+            strategy_name = f"{E2E_DEPLOY_NAME}_{mode}"
+            try:
+                requests.post(f"{BASE_URL}/strategy",
+                              json={"mode": 2, "name": strategy_name},
+                              headers=_headers(auth_token), verify=VERIFY_SSL, timeout=5)
+                requests.delete(f"{BASE_URL}/strategy",
+                                json={"name": strategy_name},
+                                headers=_headers(auth_token), verify=VERIFY_SSL, timeout=5)
+            except Exception:
+                pass
+            try:
+                Path(model_tmp.name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _run_e2e_verification(self, auth_token, deployed):
+        """核心验证逻辑：C++ vs Python 概率 + 分类标签一致性"""
+        import numpy as np
+        import pandas as pd
+        import xgboost as xgb
+
+        strategy = deployed["strategy"]
+        strategy_name = deployed["strategy_name"]
+        model_path = deployed["model_path"]
+        mode = deployed["mode"]
+
+        # 跑回测
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(strategy), "validate": False},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+            timeout=120,
+        )
+        assert resp.status_code == 200, f"回测失败: {resp.text}"
+
+        # 读取 DebugNode CSV
+        csv_path = DEBUG_DIR / strategy_name / "debug_xgb.csv"
+        assert csv_path.exists(), f"Debug CSV not found: {csv_path}"
+        df = pd.read_csv(csv_path)
+        assert len(df) > 0, f"[{mode}] Debug CSV 为空"
+
+        # ---- 验证 1: Python 独立推理 ----
+        bst = xgb.Booster()
+        bst.load_model(model_path)
+        prefix = E2E_SYMBOL + "."
+
+        # 构建 Debug CSV 中的特征列集合
+        csv_feature_cols = [col for col in df.columns if col.startswith(prefix)]
+        
+        # 构建短名到全名的映射
+        csv_available = {col: col[len(prefix):] for col in csv_feature_cols}
+        short_to_full = {v: k for k, v in csv_available.items()}
+
+        if bst.feature_names:
+            ordered_full = []
+            for name in bst.feature_names:
+                # 优先检查：模型特征名是否直接是 CSV 列名（全名）
+                if name in csv_feature_cols:
+                    ordered_full.append(name)
+                # 其次检查：模型特征名是否是短名，需要映射到全名
+                elif name in short_to_full:
+                    ordered_full.append(short_to_full[name])
+                else:
+                    pytest.skip(f"[{mode}] 模型特征 '{name}' 不在 Debug CSV 中")
+            valid_features = df[ordered_full].astype(float)
+            valid_mask = valid_features.notna().all(axis=1)
+            valid_features = valid_features[valid_mask]
+            # 重命名列以匹配模型期望的特征名
+            valid_features.columns = bst.feature_names
+        else:
+            feat_cols = [col for col in E2E_FEATURE_COLS if col in df.columns]
+            feat_df = df[feat_cols].astype(float)
+            valid_mask = feat_df.notna().all(axis=1)
+            valid_features = feat_df[valid_mask]
+            valid_features.columns = [col[len(prefix):] for col in feat_cols]
+
+        assert len(valid_features) > 0, f"[{mode}] 无有效特征行"
+
+        # Python 推理
+        py_probs = _xgb_predict_python(model_path, valid_features.astype('float32'))
+
+        # C++ 结果
+        cpp_probs = df[E2E_PROB_COLS].astype(float)[valid_mask.values].values
+        cpp_preds = df[E2E_PRED_COL].astype(float)[valid_mask.values].values
+
+        # ---- 验证 2: 概率一致性 ----
+        np.testing.assert_allclose(
+            cpp_probs, py_probs, atol=1e-4,
+            err_msg=f"[{mode}] C++ vs Python 概率不一致")
+
+        # ---- 验证 3: 分类标签一致性 ----
+        py_preds = np.argmax(py_probs, axis=1)
+        np.testing.assert_array_equal(
+            cpp_preds, py_preds,
+            err_msg=f"[{mode}] C++ vs Python 预测类别不一致")
+
+        # ---- 验证 4: 标签分布合理性 ----
+        # 检查三种分类都有出现（不是只预测同一类）
+        unique_labels = np.unique(py_preds)
+        assert len(unique_labels) >= 2, \
+            f"[{mode}] Python 预测只有一类 {unique_labels}，模型可能有问题"
+
+    # ---------- Vector 模式测试 ----------
+
+    def test_vector_mode_e2e(self, auth_token):
+        """Vector 模式端到端验证：概率 + 分类标签一致性"""
+        self._deploy_and_verify(auth_token, "vector")
+
+    # ---------- Matrix 模式测试 ----------
+
+    def test_matrix_mode_e2e(self, auth_token):
+        """Matrix 模式端到端验证：概率 + 分类标签一致性"""
+        self._deploy_and_verify(auth_token, "matrix")
 
 
 # ============== 快速回测模式测试 ==============

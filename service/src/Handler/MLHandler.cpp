@@ -106,6 +106,51 @@ bool writeCsv(const String& path, const Map<String, Vector<double>>& data, const
     return true;
 }
 
+// 过滤收集的数据：只保留特征列 + label source (train) + matrix 模式 close 列
+// 返回 {filtered, droppedKeys}
+std::pair<Map<String, Vector<double>>, Vector<String>>
+filterCollectedData(const Map<String, Vector<double>>& collected,
+                    const Vector<String>& featureNames,
+                    const String& labelSource,
+                    const String& labelShape) {
+    Map<String, Vector<double>> filtered;
+    Vector<String> droppedKeys;
+
+    // 1. 按特征名过滤（_featureNames 是短名如 MA(5)，collected keys 是全名如 sz.800001.MA(5)）
+    for (auto& [k, v] : collected) {
+        bool matched = false;
+        for (auto& feat : featureNames) {
+            if (k == feat || (k.size() > feat.size() &&
+                k.substr(k.size() - feat.size()) == feat &&
+                k[k.size() - feat.size() - 1] == '.')) {
+                filtered[k] = v;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) droppedKeys.push_back(k);
+    }
+
+    // 2. 保留 label 列（train 路径需要，collect 路径 labelSource 为空）
+    if (!labelSource.empty() && collected.count(labelSource) && !filtered.count(labelSource)) {
+        filtered[labelSource] = collected.at(labelSource);
+    }
+
+    // 3. matrix 模式：保留每个标的的 close 列（Python 脚本用于计算 per-symbol 标签）
+    if (labelShape == "matrix") {
+        for (auto& [k, v] : collected) {
+            if (!filtered.count(k)) {
+                // 只匹配 {symbol}.close，排除 org_close/high/low 等
+                if (k.size() > 6 && k.substr(k.size() - 6) == ".close") {
+                    filtered[k] = v;
+                }
+            }
+        }
+    }
+
+    return {std::move(filtered), std::move(droppedKeys)};
+}
+
 Set<String> sourcesFromNodes(const List<QNode*>& nodes) {
     Set<String> sources;
     for (auto node : nodes) {
@@ -195,6 +240,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
     String objective = params.value("objective", "multi:softprob");
     int numClass = params.value("num_class", 3);
     double testRatio = params.value("test_ratio", 0.2);
+    double valRatio = params.value("val_ratio", 0.15);
 
     int nTrials = params.value("n_trials", 20);
     String paramDomains = params.value("param_domains", "{}");
@@ -216,7 +262,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
 
     // 后台线程：调 xgboost_optimize.py（前端先调 collect 拿到 csv_path 作为 feature_cache 传入）
     std::thread([this, params, fastStrategy, session, sendSSE, labelSource, labelPeriod,
-                 labelType, labelShape, volK, objective, numClass, testRatio, nTrials,
+                 labelType, labelShape, volK, objective, numClass, testRatio, valRatio, nTrials,
                  paramDomains, optimizeMetric, startDate, endDate, frequency, featureCache]() {
         String strategyPath;
         try {
@@ -245,6 +291,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
                 "--objective", objective,
                 "--num-class", std::to_string(numClass),
                 "--test-ratio", std::to_string(testRatio),
+                "--val-ratio", std::to_string(valRatio),
                 "--n-trials", std::to_string(nTrials),
                 "--optimize-metric", optimizeMetric,
                 "--param-domains", paramDomains,
@@ -369,6 +416,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     nlohmann::json xgbParams = params.value("params", nlohmann::json::object());
     nlohmann::json dateRangeCfg = params.value("date_range", nlohmann::json::object());
     double testRatio = params.value("test_ratio", 0.2);
+    double valRatio = params.value("val_ratio", 0.15);
 
     String labelSource = labelCfg.value("source", "");
     int labelPeriod = labelCfg.value("period", 5);
@@ -420,7 +468,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
 
     // 后台训练线程：执行所有训练阶段，通过 sendSSE 推送进度
     std::thread trainThread([state, session, sendSSE, params, this,
-        script, labelCfg, xgbParams, dateRangeCfg, testRatio,
+        script, labelCfg, xgbParams, dateRangeCfg, testRatio, valRatio,
         labelSource, labelPeriod, labelType, labelShape, volK, objective, numClass,
         startDate, endDate, frequency, strategyName, modelType]() mutable {
 
@@ -587,36 +635,8 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
         }
         // 过滤 collected：只保留 XGBoostNode 直接上游的特征列（与 _featureNames 一致）
-        // _featureNames 是短名（如 MA(5)），collected keys 是全名（如 sz.800001.MA(5)）
         if (!state->_featureNames.empty()) {
-            Map<String, Vector<double>> filtered;
-            Vector<String> droppedKeys;
-            for (auto& [k, v] : collected) {
-                bool matched = false;
-                for (auto& feat : state->_featureNames) {
-                    if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
-                        filtered[k] = v;
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched) droppedKeys.push_back(k);
-            }
-            // 保留 label 列（不在 feature 中但训练需要）
-            if (!labelSource.empty() && collected.count(labelSource) && !filtered.count(labelSource)) {
-                filtered[labelSource] = collected[labelSource];
-            }
-            // matrix 模式：保留每个标的的 close 列（Python 脚本用于计算 per-symbol 标签）
-            if (labelShape == "matrix") {
-                for (auto& [k, v] : collected) {
-                    if (!filtered.count(k)) {
-                        // 匹配 {symbol}.close / {symbol}close 模式
-                        if (k.size() > 6 && (k.substr(k.size() - 6) == ".close" || k.substr(k.size() - 5) == "close")) {
-                            filtered[k] = v;
-                        }
-                    }
-                }
-            }
+            auto [filtered, droppedKeys] = filterCollectedData(collected, state->_featureNames, labelSource, labelShape);
             INFO("[MLTrain] Filter: collected {} columns, kept {}, dropped {}: [{}]",
                  collected.size(), filtered.size(), droppedKeys.size(),
                  fmt::join(droppedKeys, ", "));
@@ -651,6 +671,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             "--vol-k", std::to_string(volK), "--objective", objective,
             "--num-class", std::to_string(numClass), "--model-output", state->_modelPath,
             "--params", xgbParams.dump(), "--test-ratio", std::to_string(testRatio),
+            "--val-ratio", std::to_string(valRatio),
             "--frequency", frequency,
         };
         if (!startDate.empty()) args.insert(args.end(), {"--start-date", startDate});
@@ -720,11 +741,12 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 meta["source"] = "experiment";
                 meta["model_type"] = modelTypeToString(modelType);
                 meta["label"] = labelCfg; meta["objective"] = objective;
-                meta["num_class"] = numClass; meta["test_ratio"] = testRatio;
+                meta["num_class"] = numClass; meta["test_ratio"] = testRatio; meta["val_ratio"] = valRatio;
                 meta["params"] = xgbParams; meta["date_range"] = dateRangeCfg;
                 meta["features"] = state->_featureNames;
                 if (trainResult.contains("eval_metrics")) meta["eval_metrics"] = trainResult["eval_metrics"];
                 if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
+                if (trainResult.contains("n_val")) meta["n_val"] = trainResult["n_val"];
                 if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
                 meta["n_features"] = state->_featureNames.size();
                 std::ofstream ofs(expDir + "/" + persistName + ".meta.json");
@@ -1082,29 +1104,7 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
         }
         // 过滤 collected：只保留 XGBoostNode 直接上游的特征列
         if (!state->_featureNames.empty()) {
-            Map<String, Vector<double>> filtered;
-            Vector<String> droppedKeys;
-            for (auto& [k, v] : collected) {
-                bool matched = false;
-                for (auto& feat : state->_featureNames) {
-                    if (k == feat || (k.size() > feat.size() && k.substr(k.size() - feat.size()) == feat && k[k.size() - feat.size() - 1] == '.')) {
-                        filtered[k] = v;
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched) droppedKeys.push_back(k);
-            }
-            // matrix 模式：保留每个标的的 close 列（Python 脚本用于计算 per-symbol 标签）
-            if (labelShape == "matrix") {
-                for (auto& [k, v] : collected) {
-                    if (!filtered.count(k)) {
-                        if (k.size() > 6 && (k.substr(k.size() - 6) == ".close" || k.substr(k.size() - 5) == "close")) {
-                            filtered[k] = v;
-                        }
-                    }
-                }
-            }
+            auto [filtered, droppedKeys] = filterCollectedData(collected, state->_featureNames, "", labelShape);
             INFO("[MLCollect] Filter: collected {} columns, kept {}, dropped {}: [{}]",
                  collected.size(), filtered.size(), droppedKeys.size(),
                  fmt::join(droppedKeys, ", "));
