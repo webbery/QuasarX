@@ -180,6 +180,82 @@ CachedMLModel* MLHandler::getModel(uint64_t id) {
     return itr == _cache.end() ? nullptr : &itr->second;
 }
 
+void MLHandler::collectXGBoostFeatures(
+    const List<QNode*>& upstreamSubgraph,
+    Vector<String>& outFeatureNames)
+{
+    XGBoostNode* xgb = nullptr;
+    for (auto n : upstreamSubgraph) {
+        if (auto* x = dynamic_cast<XGBoostNode*>(n)) { xgb = x; break; }
+    }
+    if (!xgb) {
+        WARN("[MLTrain] XGBoostNode not found in upstream subgraph");
+        return;
+    }
+
+    // 按上游节点 id 排序，保证特征顺序稳定（与推理侧一致）
+    Set<uint32_t> visited;
+    Vector<std::pair<uint32_t, QNode*>> sortedIns;
+    for (auto& [handle, nodePtr] : xgb->ins()) {
+        if (nodePtr && visited.insert(nodePtr->id()).second)
+            sortedIns.push_back({nodePtr->id(), nodePtr});
+    }
+    std::sort(sortedIns.begin(), sortedIns.end());
+
+    const auto& featureKeys = xgb->featureKeys();
+
+    if (featureKeys.empty()) {
+        // features 参数未指定 → 收集全部上游输出（兼容旧行为）
+        for (auto& [id, nodePtr] : sortedIns) {
+            auto elements = nodePtr->out_elements();
+            Vector<String> elemKeys;
+            for (auto& [k, _] : elements) {
+                outFeatureNames.push_back(k);
+                elemKeys.push_back(k);
+            }
+            INFO("[MLTrain] XGBoost upstream node#{} contributes {} keys: [{}]",
+                 id, elemKeys.size(), fmt::join(elemKeys, ", "));
+        }
+    } else {
+        // features 参数已指定 → 只收集匹配的特征（训练与推理对齐）
+        Set<String> featSet(featureKeys.begin(), featureKeys.end());
+
+        // 从上游 QuoteInputNode 收集 symbol 字符串，用于从全名提取短名
+        Set<String> symbolStrs;
+        for (auto n : upstreamSubgraph) {
+            if (auto* qi = dynamic_cast<QuoteInputNode*>(n)) {
+                for (auto s : qi->GetSymbols())
+                    symbolStrs.insert(get_symbol(s));
+            }
+        }
+
+        for (auto& [id, nodePtr] : sortedIns) {
+            auto elements = nodePtr->out_elements();
+            Vector<String> matched;
+            for (auto& [fullKey, _] : elements) {
+                // 从全名提取短名：sh.600176.emd.nimf_0 → emd.nimf_0
+                String shortName = fullKey;
+                for (auto& sym : symbolStrs) {
+                    String prefix = sym + ".";
+                    if (fullKey.size() > prefix.size() &&
+                        fullKey.compare(0, prefix.size(), prefix) == 0) {
+                        shortName = fullKey.substr(prefix.size());
+                        break;
+                    }
+                }
+                if (featSet.count(shortName)) {
+                    outFeatureNames.push_back(fullKey);
+                    matched.push_back(shortName);
+                }
+            }
+            INFO("[MLTrain] XGBoost upstream node#{} matched {}/{} keys: [{}]",
+                 id, matched.size(), elements.size(), fmt::join(matched, ", "));
+        }
+    }
+    INFO("[MLTrain] Total features collected: {} entries: [{}]",
+         outFeatureNames.size(), fmt::join(outFeatureNames, ", "));
+}
+
 bool MLHandler::deleteModel(uint64_t id) {
     std::lock_guard<std::mutex> lock(_mtx);
     auto itr = _cache.find(id);
@@ -530,32 +606,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                     }
                 }
             }
-            // 只从 XGBoostNode 的直接上游收集特征名，按节点 id 排序（与推理侧一致）
-            for (auto n : state->_upstreamSubgraph) {
-                if (auto* xgb = dynamic_cast<XGBoostNode*>(n)) {
-                    Set<uint32_t> visited;
-                    Vector<std::pair<uint32_t, QNode*>> sortedIns;
-                    for (auto& [handle, nodePtr] : xgb->ins()) {
-                        if (nodePtr && visited.insert(nodePtr->id()).second)
-                            sortedIns.push_back({nodePtr->id(), nodePtr});
-                    }
-                    std::sort(sortedIns.begin(), sortedIns.end());
-                    for (auto& [id, nodePtr] : sortedIns) {
-                        String nodeLabel = fmt::format("node#{}", nodePtr->id());
-                        auto elements = nodePtr->out_elements();
-                        Vector<String> elemKeys;
-                        for (auto& [k, _] : elements) {
-                            state->_featureNames.push_back(k);
-                            elemKeys.push_back(k);
-                        }
-                        INFO("[MLTrain] XGBoost upstream {} contributes {} keys: [{}]",
-                             nodeLabel, elemKeys.size(), fmt::join(elemKeys, ", "));
-                    }
-                    INFO("[MLTrain] Total _featureNames collected: {} entries: [{}]",
-                         state->_featureNames.size(), fmt::join(state->_featureNames, ", "));
-                    break;
-                }
-            }
+            collectXGBoostFeatures(state->_upstreamSubgraph, state->_featureNames);
         } catch (const std::exception& e) {
             cleanupGraph();
             sendSSE("error", {{"step","init_nodes"},{"msg", String("node init failed: ") + e.what()}});
@@ -1024,32 +1075,7 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
                     }
                 }
             }
-            // 只从 XGBoostNode 的直接上游收集特征名，按节点 id 排序（与推理侧一致）
-            for (auto n : state->_upstreamSubgraph) {
-                if (auto* xgb = dynamic_cast<XGBoostNode*>(n)) {
-                    Set<uint32_t> visited;
-                    Vector<std::pair<uint32_t, QNode*>> sortedIns;
-                    for (auto& [handle, nodePtr] : xgb->ins()) {
-                        if (nodePtr && visited.insert(nodePtr->id()).second)
-                            sortedIns.push_back({nodePtr->id(), nodePtr});
-                    }
-                    std::sort(sortedIns.begin(), sortedIns.end());
-                    for (auto& [id, nodePtr] : sortedIns) {
-                        String nodeLabel = fmt::format("node#{}", nodePtr->id());
-                        auto elements = nodePtr->out_elements();
-                        Vector<String> elemKeys;
-                        for (auto& [k, _] : elements) {
-                            state->_featureNames.push_back(k);
-                            elemKeys.push_back(k);
-                        }
-                        INFO("[MLTrain] XGBoost upstream {} contributes {} keys: [{}]",
-                             nodeLabel, elemKeys.size(), fmt::join(elemKeys, ", "));
-                    }
-                    INFO("[MLTrain] Total _featureNames collected: {} entries: [{}]",
-                         state->_featureNames.size(), fmt::join(state->_featureNames, ", "));
-                    break;
-                }
-            }
+            collectXGBoostFeatures(state->_upstreamSubgraph, state->_featureNames);
         } catch (const std::exception& e) {
             cleanupGraph();
             sendSSE("error", {{"step","init_nodes"},{"msg", String("node init failed: ") + e.what()}});
@@ -1108,12 +1134,12 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
             INFO("[MLCollect] Filter: collected {} columns, kept {}, dropped {}: [{}]",
                  collected.size(), filtered.size(), droppedKeys.size(),
                  fmt::join(droppedKeys, ", "));
-            {
-                Vector<String> ks;
-                ks.reserve(filtered.size());
-                for (auto& [k, _] : filtered) ks.push_back(k);
-                INFO("[MLCollect] Filter: filtered columns (will be in CSV): [{}]", fmt::join(ks, ", "));
-            }
+            // {
+            //     Vector<String> ks;
+            //     ks.reserve(filtered.size());
+            //     for (auto& [k, _] : filtered) ks.push_back(k);
+            //     INFO("[MLCollect] Filter: filtered columns (will be in CSV): [{}]", fmt::join(ks, ", "));
+            // }
             collected = std::move(filtered);
         }
         sendSSE("step", {{"step","collect_data"},{"status","done"},{"bars",(int)collectedDates.size()},{"features",(int)collected.size()}});

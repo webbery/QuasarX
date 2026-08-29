@@ -218,7 +218,14 @@ watch(() => getEdges.value, () => {
 const onVisualizeDebug = (debugNodeId) => {
   // 收集当前流程图中所有 DebugNode
   const debugNodes = getNodes.value.filter(n => n.data?.nodeType === 'debug')
-  
+
+  console.log('[StrategyFactory] visualize-strategy 事件发出:', {
+    debugNodeId,
+    debugNodesCount: debugNodes.length,
+    debugNodeIds: debugNodes.map(n => ({ id: n.id, label: n.data?.label })),
+    strategyId: currentStrategyId.value,
+  })
+
   // 发送事件到 App.vue
   window.dispatchEvent(new CustomEvent('visualize-strategy', {
     detail: {

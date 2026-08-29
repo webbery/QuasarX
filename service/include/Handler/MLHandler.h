@@ -8,6 +8,8 @@
 #include <queue>
 #include <functional>
 
+class QNode;
+
 enum class ModelType : uint8_t {
     XGBoost = 0,
     NARX,
@@ -115,6 +117,13 @@ private:
     void handleShap(const nlohmann::json& params, httplib::Response& res);
     void handleList(const httplib::Request& req, httplib::Response& res);
     void handleDelete(uint64_t modelId, httplib::Response& res);
+
+    // 从 XGBoostNode 上游收集特征名（若 XGBoostNode 指定了 features 则按其过滤）
+    static void collectXGBoostFeatures(
+        const List<QNode*>& upstreamSubgraph,
+        Vector<String>& outFeatureNames);
+
+private:
 
     Map<uint64_t, CachedMLModel> _cache;
     std::atomic<uint64_t> _nextId{1};

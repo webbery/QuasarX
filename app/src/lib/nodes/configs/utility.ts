@@ -15,6 +15,11 @@ export const debugNode: NodeRegistryEntry = {
   inputs: ['timeseries'],
   outputs: ['timeseries'],
   params: [
+    { key: 'suffix', label: '输出格式', type: 'select', default: 'csv',
+      options: [
+        { label: 'CSV', value: 'csv' },
+      ],
+      description: '导出文件格式' },
     { key: 'outputFields', label: '导出字段', type: 'multiselect', default: [],
       options: [],
       description: '勾选需要导出的数据字段，来源于上游节点输出' },

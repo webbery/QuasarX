@@ -247,16 +247,19 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         }
 
         if (args.empty()) {
-            DEBUG_INFO("[FunctionNode:{}] No input data for symbol {}", _id, symbol);
+            // warmup 期输入 key 尚不存在，写 NaN 占位保持输出长度同步
+            String output_key = symbol + "." + _label;
+            double nan = std::numeric_limits<double>::quiet_NaN();
+            if (context.exist(output_key)) {
+                context.add(output_key, nan);
+            } else {
+                context.set(output_key, Vector<double>{nan});
+            }
             continue;
         }
 
         auto callable = item.second;
-        //INFO("[FunctionNode:{}] Process: calling {} with {} args for symbol {}",
-        //     _id, _label, args.size(), symbol);
         auto result = (*callable)(args);
-        //INFO("[FunctionNode:{}] Process: callable returned, writing output '{}.{}'",
-        //     _id, symbol, _label);
 
         // 写入输出
         String output_key = symbol + "." + _label;
@@ -272,7 +275,15 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
                     context.set(output_key, ts);
                 }
             } else if constexpr (std::is_same_v<T, Vector<double>>) {
-                if (context.exist(output_key)) {
+                if (val.empty()) {
+                    // callable 返回空向量（窗口不足），写 NaN 占位
+                    double nan = std::numeric_limits<double>::quiet_NaN();
+                    if (context.exist(output_key)) {
+                        context.add(output_key, nan);
+                    } else {
+                        context.set(output_key, Vector<double>{nan});
+                    }
+                } else if (context.exist(output_key)) {
                     auto& existing = context.get<Vector<double>>(output_key);
                     for (auto v : val) existing.push_back(v);
                 } else {

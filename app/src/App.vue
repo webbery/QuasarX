@@ -685,7 +685,9 @@ const onVisualizeDebug = (debugNodeId) => {
  */
 const onVisualizeStrategy = (event) => {
   const { debugNodeId, debugNodes, nodes, edges, strategyId, versionId } = event.detail
-  
+
+  console.log('[App] visualize-strategy 事件:', { strategyId, versionId, debugNodeId, debugNodesCount: debugNodes?.length })
+
   // 保存当前策略编辑状态
   strategyEditorState.value = {
     nodes,
@@ -704,6 +706,7 @@ const onVisualizeStrategy = (event) => {
       debugNodes,
       nodes,
       edges,
+      strategyId,
     }
   }))
   

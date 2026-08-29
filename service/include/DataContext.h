@@ -10,6 +10,12 @@ struct TradeReport;
 class Server;
 using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
 
+// 数据warmup期间的填充方式
+enum class WarmupFillType: char {
+    Skip,
+    FillNan,    // 默认填充NAN
+};
+
 // 交易操作类型
 enum class TradeAction: char {
     HOLD,

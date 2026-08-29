@@ -1,3 +1,4 @@
+#include "std_header.h"
 #include "Nodes/EMDNode.h"
 #include "Algorithms/EMD.h"
 #include "Algorithms/CEEMDAN.h"
@@ -5,12 +6,11 @@
 #include "server.h"
 #include "Util/log.h"
 #include "boost/algorithm/string.hpp"
-#include "std_header.h"
 
 EMDNode::EMDNode(Server* server)
     : _server(server), _method(EMDMethod::EMD), _numIMFs(5), _ensembles(50), _noiseStd(0.2),
       _alpha(2000.0), _tau(0.0), _tol(1e-6), _windowSize(0),
-      _computeEnergyVelocity(false), _computeVolumeRegime(false) {}
+      _computeEnergyVelocity(false), _computeVolumeRegime(false), _fillmode(WarmupFillType::FillNan) {}
 
 bool EMDNode::Init(const nlohmann::json& config) {
     _rollingIMFs.clear();
@@ -309,9 +309,39 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
 
         const int minLen = _windowSize > 0 ? _windowSize : 10;
         if (n < minLen) {
-            DEBUG_INFO("EMDNode input {} too short ({} points), need at least {}",
-                 inputKey, n, minLen);
-            return NodeProcessResult::Skip;
+            // warmup 期：输出 NaN 占位，保持向量长度与输入同步。
+            // 下游节点（FunctionNode/XGBoostNode）可读到 key，
+            // 由 XGBoostNode 的 80% 有效性规则决定是否跳过推理。
+            String prefix;
+            for (auto& p : _symbolPrefixes) {
+                if (inputKey.size() > p.size() &&
+                    inputKey.compare(0, p.size(), p) == 0) {
+                    prefix = p;
+                    break;
+                }
+            }
+            if (!prefix.empty()) {
+                double nan = std::numeric_limits<double>::quiet_NaN();
+                for (int i = 0; i < _numIMFs; ++i) {
+                    String outKey = prefix + _label + ".nimf_" + std::to_string(i);
+                    if (context.exist(outKey)) {
+                        context.add(outKey, nan);
+                    } else {
+                        context.set(outKey, Vector<double>(1, nan));
+                    }
+                }
+                if (_computeEnergyVelocity) {
+                    String k = prefix + _label + ".energy_velocity";
+                    if (context.exist(k)) context.add(k, nan);
+                    else context.set(k, Vector<double>(1, nan));
+                }
+                if (_computeVolumeRegime) {
+                    String k = prefix + _label + ".volume_regime";
+                    if (context.exist(k)) context.add(k, nan);
+                    else context.set(k, Vector<double>(1, nan));
+                }
+            }
+            continue;
         }
 
         // 从 inputKey 匹配出正确的 symbol prefix

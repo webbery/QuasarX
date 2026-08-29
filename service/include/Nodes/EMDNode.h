@@ -1,6 +1,5 @@
 #pragma once
 #include "StrategyNode.h"
-#include "std_header.h"
 
 /**
  * EMD 经验模态分解节点（信号处理）
@@ -46,7 +45,11 @@ private:
 
     Server* _server;
     String _label;
-    EMDMethod _method;             // 算法类型
+    EMDMethod _method:3;             // 算法类型
+    WarmupFillType _fillmode:2;
+    bool _rollingInitialized: 1 = false;
+    bool _computeEnergyVelocity: 1;   // 是否计算 energy_velocity
+    bool _computeVolumeRegime: 1;     // 是否计算 volume_regime
     int _numIMFs;                  // IMF 分量数量
     int _ensembles;                // CEEMDAN 集合数
     double _noiseStd;              // CEEMDAN 噪声强度
@@ -54,8 +57,6 @@ private:
     double _tau;                   // VMD 对偶步长
     double _tol;                   // VMD 收敛阈值
     int _windowSize;               // 滚动窗口大小（0 = 全序列一次分解）
-    bool _computeEnergyVelocity;   // 是否计算 energy_velocity
-    bool _computeVolumeRegime;     // 是否计算 volume_regime
     String _volumeContextKey;      // 从实际连接解析出的 volume 输入 context key（如 "sz.002825.volume"）
     Set<String> _symbolPrefixes;   // 来自 discoverUpstreamSymbols() 的 symbol 列表（带 "." 后缀，如 "sz.002825."），用于 Process 中从 inputKey 匹配出正确 prefix
     Map<String, ArgType> _params;  // 输入参数（来自上游节点的输出）
@@ -64,5 +65,4 @@ private:
     // 滚动模式持久状态：避免每个 epoch 重复计算全部历史
     // key = inputKey, value = 累积的 IMF 输出向量
     Map<String, Vector<Vector<double>>> _rollingIMFs;
-    bool _rollingInitialized = false;
 };

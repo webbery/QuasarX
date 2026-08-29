@@ -329,6 +329,9 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                 appendNan(prefix + "xgb_prediction");
                 break;
             }
+            // 预热期 NaN 占位是预期行为，已正确写入输出 → 视为成功
+            // 避免 _consecutiveSkipCount 累加导致误报 Error 终止 TrainingCollect
+            anySuccess = true;
             continue;
         }
 

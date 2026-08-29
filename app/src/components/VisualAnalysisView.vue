@@ -162,75 +162,84 @@
 
         <!-- 策略数据 Tab（新增） -->
         <div v-show="activeTab === 'strategyData'" class="tab-content strategy-data-tab">
-          <!-- DebugNode 选择器 -->
-          <div class="debug-node-selector">
-            <label>选择调试节点：</label>
-            <select v-model="selectedDebugNodeId" @change="onDebugNodeChange">
-              <option v-for="node in availableDebugNodes" :key="node.id" :value="node.id">
-                {{ node.data?.label || '调试' }} (ID: {{ node.id }})
-              </option>
-              <option v-if="availableDebugNodes.length === 0" disabled>无调试节点</option>
-            </select>
-          </div>
-
-          <!-- 字段选择器 -->
-          <div class="data-fields-selector">
-            <h4>选择查看的数据字段</h4>
-            <div class="field-checkboxes">
-              <label v-for="field in currentDebugFields" :key="field" class="field-checkbox">
-                <input type="checkbox" v-model="selectedFields" :value="field" />
-                <span>{{ field }}</span>
-              </label>
-              <div v-if="currentDebugFields.length === 0" class="no-fields-hint">
-                连接上游节点后自动显示可用字段
-              </div>
+          <!-- DebugNode 选择器 + 操作按钮 -->
+          <div class="debug-toolbar">
+            <div class="debug-node-selector">
+              <label>调试节点：</label>
+              <select v-model="selectedDebugNodeId" @change="onDebugNodeChange">
+                <option v-for="node in availableDebugNodes" :key="node.id" :value="node.id">
+                  {{ node.data?.label || '调试' }} (ID: {{ node.id }})
+                </option>
+                <option v-if="availableDebugNodes.length === 0" disabled>无调试节点</option>
+              </select>
+            </div>
+            <div class="toolbar-actions">
+              <button class="btn btn-sm btn-primary" @click="downloadCSV" :disabled="strategyData.length === 0">
+                <i class="fas fa-download"></i> 下载 CSV
+              </button>
+              <button class="btn btn-sm btn-secondary" @click="returnToStrategyEditor">
+                <i class="fas fa-arrow-left"></i> 返回
+              </button>
             </div>
           </div>
 
-          <!-- 数据表格 -->
-          <div class="data-table-wrapper" v-if="selectedFields.length > 0 && strategyData.length > 0">
-            <h4>数据预览（前 100 行）</h4>
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th class="time-col">时间</th>
-                  <th v-for="field in selectedFields" :key="field" class="data-col">{{ field }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, idx) in strategyData.slice(0, 100)" :key="idx">
-                  <td class="time-col">{{ row.time }}</td>
-                  <td v-for="field in selectedFields" :key="field" class="data-col">
-                    {{ typeof row[field] === 'number' ? row[field].toFixed(4) : (row[field] ?? '-') }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <template v-if="strategyData.length > 0">
+            <!-- 数据行选择 -->
+            <div class="row-selector">
+              <label>数据行：</label>
+              <select v-model.number="selectedRowIndex">
+                <option :value="-1">最新 ({{ currentRowDatetime }})</option>
+                <option v-for="(row, idx) in strategyData" :key="idx" :value="idx">
+                  {{ row.datetime || idx }}
+                </option>
+              </select>
+              <span class="row-info">{{ strategyData.length }} 行 × {{ csvHeaders.length - 1 }} 列 | 已勾选 {{ checkedCells.size }} 项</span>
+            </div>
 
-          <!-- 图表展示 -->
-          <div class="data-charts" v-if="selectedFields.length > 0">
-            <h4>数据趋势图</h4>
-            <div class="chart-grid">
-              <div v-for="field in selectedFields.slice(0, 6)" :key="field" class="chart-container">
-                <h5>{{ field }}</h5>
-                <div :ref="el => setChartRef(field, el)" class="chart"></div>
+            <!-- 勾选表格：标的(行) × 特征(列) -->
+            <div class="pivot-table-wrapper">
+              <table class="pivot-table">
+                <thead>
+                  <tr>
+                    <th class="sym-col">标的</th>
+                    <th v-for="feat in availableFeatures" :key="feat" class="feat-col">{{ feat }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="sym in availableSymbols" :key="sym">
+                    <td class="sym-col">
+                      <input type="checkbox" class="row-check" :checked="isRowAllChecked(sym)" @click.stop="toggleRow(sym)" title="全选/取消该行" />
+                      {{ sym }}
+                    </td>
+                    <td v-for="feat in availableFeatures" :key="feat"
+                        class="feat-col cell"
+                        :class="{ checked: isCellChecked(sym, feat), nan: getCellValue(selectedRowIndex, sym, feat) === 'NaN' }"
+                        @click="toggleCell(sym, feat)">
+                      <input type="checkbox" :checked="isCellChecked(sym, feat)" tabindex="-1" />
+                      <span class="cell-val">{{ getCellValue(selectedRowIndex, sym, feat) }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 图表区域 -->
+            <div class="charts-section" v-if="checkedCells.size > 0">
+              <h4>📊 时间序列 ({{ checkedCells.size }} 项)</h4>
+              <div class="chart-grid">
+                <div v-for="key in [...checkedCells]" :key="key" class="chart-card">
+                  <div class="chart-card-header">
+                    <span>{{ key }}</span>
+                    <button class="chart-close" @click="toggleCell(parseColumn(key).symbol, parseColumn(key).feature)">✕</button>
+                  </div>
+                  <div :id="'chart-' + key.replace(/\./g, '_')" class="chart-canvas"></div>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
 
-          <!-- 操作按钮 -->
-          <div class="action-buttons">
-            <button
-              class="btn btn-primary"
-              @click="downloadCSV"
-              :disabled="selectedFields.length === 0 || strategyData.length === 0"
-            >
-              <i class="fas fa-download"></i> 下载 CSV
-            </button>
-            <button class="btn btn-secondary" @click="returnToStrategyEditor">
-              <i class="fas fa-arrow-left"></i> 返回策略编辑
-            </button>
+          <div v-else class="no-data-hint">
+            <p>暂无数据。请先运行回测，然后点击 DebugNode 的"可视化"按钮。</p>
           </div>
         </div>
       </div>
@@ -241,8 +250,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, computed, inject } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed, inject, nextTick } from 'vue'
 import * as echarts from 'echarts'
+import axios from 'axios'
 import { fetchSectorFlow, calculateTotalFlow } from '@/lib/sectorApi'
 import { useAnalysisPanelConfig } from '@/composables/useAnalysisPanelConfig'
 import VolatilityTab from './volatility/VolatilityTab.vue'
@@ -287,9 +297,116 @@ watch(visibleTabs, (tabs) => {
 const availableDebugNodes = ref([])
 const selectedDebugNodeId = ref('')
 const currentDebugFields = ref([])
+const currentStrategyName = ref('')
 const selectedFields = ref([])
 const strategyData = ref([])
-const chartRefs = ref({})
+const csvHeaders = ref([])
+const availableSymbols = ref([])
+const availableFeatures = ref([])
+const checkedCells = ref(new Set())  // "symbol.feature" 格式的已勾选单元格
+const chartInstances = ref({})       // 图表实例缓存
+const selectedRowIndex = ref(-1)     // 选中行索引，-1 表示最后一行
+
+// 解析 CSV 列名 → { symbol, feature }
+// 格式: "sh.600111.norm_ret" → symbol="sh.600111", feature="norm_ret"
+const parseColumn = (col) => {
+  const firstDot = col.indexOf('.')
+  if (firstDot < 0) return null
+  const secondDot = col.indexOf('.', firstDot + 1)
+  if (secondDot < 0) return null
+  return { symbol: col.substring(0, secondDot), feature: col.substring(secondDot + 1) }
+}
+
+// 勾选/取消单元格
+const toggleCell = (sym, feat) => {
+  const key = `${sym}.${feat}`
+  if (checkedCells.value.has(key)) {
+    checkedCells.value.delete(key)
+  } else {
+    checkedCells.value.add(key)
+  }
+  // 触发响应式更新
+  checkedCells.value = new Set(checkedCells.value)
+  // 延迟渲染图表
+  nextTick(() => renderCheckedCharts())
+}
+
+const isCellChecked = (sym, feat) => checkedCells.value.has(`${sym}.${feat}`)
+
+const isRowAllChecked = (sym) => availableFeatures.value.length > 0 && availableFeatures.value.every(f => isCellChecked(sym, f))
+
+// 当前显示行的 datetime
+const currentRowDatetime = computed(() => {
+  const idx = selectedRowIndex.value >= 0 ? selectedRowIndex.value : strategyData.value.length - 1
+  const row = strategyData.value[idx]
+  return row?.datetime ?? '-'
+})
+
+// 获取指定行指定标的指定特征的值
+const getCellValue = (rowIdx, symbol, feature) => {
+  const row = rowIdx >= 0 ? strategyData.value[rowIdx] : strategyData.value[strategyData.value.length - 1]
+  if (!row) return '-'
+  const key = `${symbol}.${feature}`
+  const v = row[key]
+  if (v === undefined || v === null || v === '') return '-'
+  if (typeof v === 'number') {
+    if (!isFinite(v)) return 'NaN'
+    return v.toFixed(4)
+  }
+  return String(v)
+}
+
+// 全选/取消全选一行
+const toggleRow = (sym) => {
+  const allChecked = availableFeatures.value.every(f => isCellChecked(sym, f))
+  if (allChecked) {
+    availableFeatures.value.forEach(f => checkedCells.value.delete(`${sym}.${f}`))
+  } else {
+    availableFeatures.value.forEach(f => checkedCells.value.add(`${sym}.${f}`))
+  }
+  checkedCells.value = new Set(checkedCells.value)
+  nextTick(() => renderCheckedCharts())
+}
+
+// 获取某列的时间序列数据
+const getColumnTimeSeries = (sym, feat) => {
+  const key = `${sym}.${feat}`
+  return strategyData.value.map(row => ({
+    time: row.datetime || row.time || '',
+    value: row[key],
+  }))
+}
+
+// 渲染已勾选的图表
+const renderCheckedCharts = () => {
+  // 销毁旧实例
+  Object.values(chartInstances.value).forEach(inst => inst?.dispose?.())
+  chartInstances.value = {}
+
+  const checked = [...checkedCells.value]
+  checked.forEach(key => {
+    try {
+      const el = document.getElementById(`chart-${key.replace(/\./g, '_')}`)
+      if (!el) return
+      const parsed = parseColumn(key)
+      if (!parsed) return
+      const data = getColumnTimeSeries(parsed.symbol, parsed.feature)
+      const chart = echarts.init(el)
+      chartInstances.value[key] = chart
+      chart.setOption({
+        animation: false,
+        grid: { top: 25, right: 10, bottom: 25, left: 50 },
+        title: { text: `${parsed.symbol}.${parsed.feature}`, textStyle: { fontSize: 11, color: '#ccc' }, left: 4, top: 2 },
+        tooltip: { trigger: 'axis', confine: true },
+        xAxis: { type: 'category', data: data.map(d => d.time), axisLabel: { fontSize: 9, color: '#888', rotate: 30 }, axisLine: { lineStyle: { color: '#444' } } },
+        yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 9, color: '#888' }, splitLine: { lineStyle: { color: '#333' } } },
+        series: [{ type: 'line', data: data.map(d => d.value), showSymbol: false, lineStyle: { width: 1.2, color: '#409eff' }, areaStyle: { color: 'rgba(64,158,255,0.08)' } }],
+      })
+    } catch (e) {
+      console.warn('[VisualAnalysis] 图表渲染失败:', key, e)
+    }
+  })
+}
 
 // Tab 切换
 const activeTab = ref('volatility')
@@ -812,6 +929,8 @@ const handleResize = () => {
   flowChartInstance && flowChartInstance.resize()
   heatmapChartInstance && heatmapChartInstance.resize()
   clusterChartInstance && clusterChartInstance.resize()
+  // 策略数据图表
+  Object.values(chartInstances.value).forEach(inst => inst?.resize?.())
 }
 
 // 刷新数据
@@ -852,23 +971,125 @@ const returnToStrategyEditor = inject('returnToStrategyEditor', () => {
  * 监听 load-strategy-data 事件（从 App.vue 触发）
  */
 const onLoadStrategyData = (event) => {
-  const { debugNodes, debugNodeId, nodes, edges } = event.detail
-  
+  const { debugNodes, debugNodeId, nodes, edges, strategyId } = event.detail
+
+  console.log('[VisualAnalysis] load-strategy-data 事件收到:', {
+    debugNodesCount: debugNodes?.length,
+    debugNodeId,
+    nodesCount: nodes?.length,
+    edgesCount: edges?.length,
+    debugNodeIds: debugNodes?.map(n => n.id),
+    strategyId,
+  })
+
   // 保存调试节点列表
   availableDebugNodes.value = debugNodes || []
-  
+
+  // 保存 strategyId 用于后续 CSV 加载
+  currentStrategyName.value = strategyId || ''
+
   // 设置默认选中的调试节点
   if (debugNodeId && debugNodes?.length > 0) {
     selectedDebugNodeId.value = debugNodeId
   } else if (debugNodes?.length > 0) {
     selectedDebugNodeId.value = debugNodes[0].id
   }
-  
+
+  console.log('[VisualAnalysis] 选中 DebugNode ID:', selectedDebugNodeId.value, 'strategy:', currentStrategyName.value)
+
   // 从节点中提取可用字段（从调试节点的 outputFields 参数获取）
   updateCurrentDebugFields(nodes, edges)
-  
+
+  // 尝试从后端加载 CSV 数据
+  loadDebugCSVData()
+
   // 切换到策略数据 Tab
   activeTab.value = 'strategyData'
+}
+
+/**
+ * 从后端加载 DebugNode 导出的 CSV 数据
+ */
+const loadDebugCSVData = async () => {
+  const nodeId = selectedDebugNodeId.value
+  if (!nodeId) {
+    console.warn('[VisualAnalysis] loadDebugCSVData: 无选中节点')
+    return
+  }
+
+  // 从 availableDebugNodes 找到当前节点
+  const debugNode = availableDebugNodes.value.find(n => n.id === nodeId)
+  const label = debugNode?.data?.label || ''
+  const suffix = debugNode?.data?.params?.suffix?.value || 'csv'
+
+  // strategyName 需要从节点关联的策略获取（事件未传递，暂用节点 label 推断）
+  // 后端路径: {dbPath}/data/debug/{strategy}/{label}.csv
+  console.log('[VisualAnalysis] loadDebugCSVData:', { nodeId, label, suffix, debugNodeParams: debugNode?.data?.params })
+
+  if (!label) {
+    console.warn('[VisualAnalysis] loadDebugCSVData: DebugNode 无 label，无法加载 CSV')
+    return
+  }
+
+  try {
+    // 后端 API: GET /v0/strategy/node?strategy={strategy}&label={label.csv}
+    // currentStrategyId 存的是去掉 "strategy_" 前缀的 ID，需要补回
+    const rawId = currentStrategyName.value
+    const strategy = rawId.startsWith('strategy_') ? rawId : `strategy_${rawId}`
+    const fileLabel = label + '.' + suffix
+
+    console.log('[VisualAnalysis] CSV fetch params:', { strategy, fileLabel })
+    const response = await axios.get('/v0/strategy/node', {
+      params: { strategy, label: fileLabel },
+      responseType: 'text',
+      transformResponse: [(data) => data], // 禁止 axios自动JSON解析
+    })
+
+    console.log('[VisualAnalysis] CSV fetch response:', { status: response.status })
+
+    const csvText = response.data
+    const lines = csvText.trim().split('\n')
+
+    if (lines.length < 2) {
+      console.warn('[VisualAnalysis] CSV 数据为空或只有表头')
+      strategyData.value = []
+      return
+    }
+
+    const headers = lines[0].split(',')
+    const rows = []
+    for (let i = 1; i < Math.min(lines.length, 1001); i++) {
+      const values = lines[i].split(',')
+      const row = {}
+      for (let j = 0; j < headers.length; j++) {
+        const v = values[j]
+        row[headers[j]] = v !== '' && !isNaN(Number(v)) ? Number(v) : v
+      }
+      rows.push(row)
+    }
+
+    strategyData.value = rows
+    csvHeaders.value = headers
+    console.log(`[VisualAnalysis] CSV 加载成功: ${rows.length} 行, ${headers.length} 列`)
+
+    // 从 CSV 列名提取标的和特征（用 parseColumn 按第二个 . 分割）
+    const syms = new Set()
+    const feats = new Set()
+    for (const h of headers) {
+      const p = parseColumn(h)
+      if (p) { syms.add(p.symbol); feats.add(p.feature) }
+    }
+    availableSymbols.value = [...syms].sort()
+    availableFeatures.value = [...feats].sort()
+    console.log('[VisualAnalysis] 标的:', availableSymbols.value.length, '特征:', availableFeatures.value.length)
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      console.error(`[VisualAnalysis] CSV 加载失败: HTTP ${err.response?.status}`, err.response?.data)
+    } else {
+      console.error('[VisualAnalysis] CSV 加载异常:', err)
+    }
+    strategyData.value = []
+  }
 }
 
 /**
@@ -876,27 +1097,49 @@ const onLoadStrategyData = (event) => {
  */
 const updateCurrentDebugFields = (nodes, edges) => {
   const debugNode = nodes?.find(n => n.id === selectedDebugNodeId.value)
+
+  console.log('[VisualAnalysis] updateCurrentDebugFields:', {
+    foundNode: !!debugNode,
+    nodeId: selectedDebugNodeId.value,
+    hasParams: !!debugNode?.data?.params,
+    hasOutputFields: !!debugNode?.data?.params?.outputFields,
+    outputFieldsOptions: debugNode?.data?.params?.outputFields?.options?.length ?? 'N/A',
+    allParamKeys: debugNode?.data?.params ? Object.keys(debugNode.data.params) : [],
+  })
+
   if (!debugNode?.data?.params?.outputFields) {
+    console.warn('[VisualAnalysis] outputFields 不存在，字段列表为空。节点 params:', debugNode?.data?.params)
     currentDebugFields.value = []
     return
   }
-  
+
   // 从 outputFields.options 获取可用字段
   const options = debugNode.data.params.outputFields.options || []
   currentDebugFields.value = options.map(o => o.value || o)
-  
+
   // 默认全选
   selectedFields.value = [...currentDebugFields.value]
+
+  console.log('[VisualAnalysis] 字段已更新:', currentDebugFields.value.length, '个', currentDebugFields.value.slice(0, 5))
 }
 
 /**
  * 调试节点切换
  */
 const onDebugNodeChange = () => {
-  // 重新加载当前调试节点的字段
-  // TODO: 当有真实数据时，需要重新获取数据
+  console.log('[VisualAnalysis] 切换 DebugNode 到:', selectedDebugNodeId.value)
   selectedFields.value = []
   strategyData.value = []
+  csvHeaders.value = []
+  availableSymbols.value = []
+  availableFeatures.value = []
+  checkedCells.value = new Set()
+  selectedRowIndex.value = -1
+  // 销毁图表
+  Object.values(chartInstances.value).forEach(inst => inst?.dispose?.())
+  chartInstances.value = {}
+  // 重新加载 CSV 数据
+  loadDebugCSVData()
 }
 
 /**
@@ -912,23 +1155,23 @@ const setChartRef = (field, el) => {
  * 下载 CSV
  */
 const downloadCSV = () => {
-  if (selectedFields.value.length === 0 || strategyData.value.length === 0) {
+  if (csvHeaders.value.length === 0 || strategyData.value.length === 0) {
     message.warning('没有可下载的数据')
     return
   }
-  
-  // 构建 CSV 内容
-  const headers = ['时间', ...selectedFields.value]
-  const csvRows = [headers.join(',')]
-  
+
+  // 直接用原始 CSV 数据
+  const csvRows = [csvHeaders.value.join(',')]
   for (const row of strategyData.value) {
-    const values = [row.time, ...selectedFields.value.map(f => {
-      const val = row[f]
-      return typeof val === 'number' ? val.toFixed(4) : (val ?? '')
-    })]
+    const values = csvHeaders.value.map(h => {
+      const val = row[h]
+      if (val === undefined || val === null) return ''
+      if (typeof val === 'number') return isFinite(val) ? val : ''
+      return val
+    })
     csvRows.push(values.join(','))
   }
-  
+
   const csvContent = csvRows.join('\n')
   const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -1449,6 +1692,168 @@ onUnmounted(() => {
   font-style: italic;
   font-size: 0.85rem;
 }
+
+/* 顶部工具栏 */
+.debug-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.toolbar-actions {
+  display: flex;
+  gap: 6px;
+}
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.btn-sm.btn-primary { background: rgba(64,158,255,0.2); color: var(--primary, #409eff); border-color: var(--primary, #409eff); }
+.btn-sm.btn-secondary { background: rgba(255,255,255,0.05); color: var(--text-secondary); }
+.btn-sm:hover { opacity: 0.85; }
+.btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 行选择器 */
+.row-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+.row-selector label { color: var(--text); font-size: 0.85rem; white-space: nowrap; }
+.row-selector select {
+  background: var(--bg-secondary, #2a2a3e);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.82rem;
+  max-width: 260px;
+}
+.row-info { color: var(--text-secondary); font-size: 0.78rem; }
+
+/* 勾选透视表 */
+.pivot-table-wrapper {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: auto;
+  max-height: 520px;
+  margin: 8px 0;
+}
+.pivot-table {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.pivot-table th,
+.pivot-table td {
+  padding: 3px 6px;
+  border: 1px solid rgba(255,255,255,0.06);
+  text-align: center;
+}
+.pivot-table thead th {
+  background: rgba(64, 158, 255, 0.1);
+  color: var(--text);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.pivot-table .sym-col {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--bg-primary, #1e1e2e);
+  font-weight: 500;
+  color: var(--primary, #409eff);
+  text-align: left;
+  min-width: 110px;
+  max-width: 110px;
+}
+.pivot-table thead .sym-col { z-index: 4; }
+.row-check { margin-right: 4px; cursor: pointer; }
+
+/* 单元格 */
+.pivot-table .cell {
+  cursor: pointer;
+  transition: background 0.1s;
+  min-width: 72px;
+}
+.pivot-table .cell:hover { background: rgba(64,158,255,0.1); }
+.pivot-table .cell.checked { background: rgba(64,158,255,0.18); }
+.pivot-table .cell.nan { opacity: 0.35; }
+.cell input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.cell-val {
+  margin-left: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+.cell.checked .cell-val { color: var(--primary, #409eff); font-weight: 600; }
+
+/* 图表区域 */
+.charts-section {
+  margin-top: 16px;
+}
+.charts-section h4 {
+  margin: 0 0 10px 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+.chart-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.chart-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background: rgba(64,158,255,0.08);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.chart-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0 2px;
+  line-height: 1;
+}
+.chart-close:hover { color: #ff4d4f; }
+.chart-canvas {
+  width: 100%;
+  height: 180px;
+}
+
+/* 无数据提示 */
+.no-data-hint {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+}
+.no-data-hint p { margin: 0; font-size: 0.95rem; }
 
 .data-table-wrapper {
   background: rgba(0, 0, 0, 0.2);

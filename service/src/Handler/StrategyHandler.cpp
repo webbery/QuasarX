@@ -187,9 +187,20 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
     }
     String name = params.value("name", "");
     auto strategySys = _server->GetStrategySystem();
-    strategySys->Stop(name);
-    strategySys->UninstallStrategy(name);
-    strategySys->ReleaseStrategy(name);
+    try {
+        strategySys->Stop(name);
+        strategySys->UninstallStrategy(name);
+        strategySys->ReleaseStrategy(name);
+        strategySys->ClearStrategyFailure(name);
+    } catch (const std::exception& e) {
+        WARN("[StrategyHandler] Exception during delete '{}': {}", name, e.what());
+        res.status = 500;
+        nlohmann::json err;
+        err["message"] = "delete strategy failed";
+        err["error"] = e.what();
+        res.set_content(err.dump(), "application/json");
+        return;
+    }
 
     String erase_file(SCRIPTS_DIR);
     erase_file += "/" + name;
@@ -562,11 +573,14 @@ void StrategyNodeHandler::get(const httplib::Request& req, httplib::Response& re
     auto& cfg = _server->GetConfig();
     auto path = cfg.GetDatabasePath();
     path += "/data/debug/" + strategy + "/" + label;
+    INFO("[StrategyNodeHandler] GET debug CSV: strategy='{}', label='{}', path='{}'", strategy, label, path);
     if (!std::filesystem::exists(path)) {
+        WARN("[StrategyNodeHandler] File not found: {}", path);
         res.status = 404;
         res.set_content("{message: 'data not exist'}", "application/json");
         return;
     }
+    INFO("[StrategyNodeHandler] Serving file: {} ({} bytes)", path, std::filesystem::file_size(path));
     std::ifstream* file = new std::ifstream(path, std::ios::binary);
     res.set_chunked_content_provider(
         "application/octet-stream", // Content-Type

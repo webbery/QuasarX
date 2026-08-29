@@ -44,6 +44,8 @@ public:
     virtual Map<String, ArgType> out_elements() override;
     virtual void UpdateLabel(const String& label) override;
 
+    const Vector<String>& featureKeys() const { return _feature_keys; }
+
 private:
     Server* _server;
     String _label;

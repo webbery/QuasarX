@@ -91,7 +91,9 @@ void FlowSubsystem::Start() {
 }
 
 void FlowSubsystem::Stop(const String& strategy) {
-    auto& flow = _flows.at(strategy);
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) return;
+    auto& flow = it->second;
     flow._running = false;
     if (flow._worker) {
         if (flow._worker->joinable()) flow._worker->join();

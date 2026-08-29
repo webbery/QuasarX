@@ -13,7 +13,12 @@ DebugNode::DebugNode(Server* server)
 }
 
 bool DebugNode::Init(const nlohmann::json& config) {
-    _suffix = to_lower((String)config["params"]["suffix"]["value"]);
+    if (config.contains("params") && config["params"].contains("suffix")
+        && config["params"]["suffix"].contains("value")) {
+        _suffix = to_lower((String)config["params"]["suffix"]["value"]);
+    } else {
+        _suffix = "csv";
+    }
     _label = (String)config["label"];
     // 读取输入节点的输出
     for (auto node: _ins) {
@@ -70,6 +75,7 @@ void DebugNode::Done(const String& strategy) {
     if (_suffix == "csv" && !ts.empty()) {
         String save_path = dir + "/" + _label + ".csv";
         std::filesystem::create_directories(dir);
+        INFO("[DebugNode] Writing CSV: path='{}', rows={}, cols={}", save_path, ts.size(), columns.size());
 
         std::ofstream ofs(save_path);
         // header
@@ -94,6 +100,9 @@ void DebugNode::Done(const String& strategy) {
             }
             ofs << "\n";
         }
+        INFO("[DebugNode] CSV written successfully: {}", save_path);
+    } else {
+        WARN("[DebugNode] CSV NOT written: suffix='{}', ts.empty()={}", _suffix, ts.empty());
     }
 }
 
