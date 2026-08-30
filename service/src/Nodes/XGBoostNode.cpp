@@ -135,7 +135,31 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
             return false;
         }
 
-        // 从 meta.json 读取训练时的特征顺序，保证推理与训练一致
+        // 从模型读取训练时的特征顺序（权威来源），保证推理与训练一致
+        // 模型 feature_names 是训练时 DMatrix 传入的顺序，优先级最高
+        {
+            bst_ulong model_n_feat = 0;
+            const char** model_feat_names = nullptr;
+            int ret_feat = XGBoosterGetStrFeatureInfo(_booster, "feature_name",
+                                                       &model_n_feat, &model_feat_names);
+            if (ret_feat == 0 && model_n_feat > 0 && model_feat_names) {
+                Vector<String> model_features;
+                for (bst_ulong i = 0; i < model_n_feat; i++) {
+                    if (model_feat_names[i])
+                        model_features.push_back(model_feat_names[i]);
+                }
+                if (model_features.size() == static_cast<size_t>(_n_features)) {
+                    INFO("[XGBoost:{}] Using model feature_names ({} features), overriding params.features order",
+                         _id, model_n_feat);
+                    _feature_keys = std::move(model_features);
+                } else {
+                    WARN("[XGBoost:{}] Model has {} features but node config has {} features, "
+                         "keeping params.features order", _id, model_n_feat, _n_features);
+                }
+            }
+        }
+
+        // meta.json 作为第二回退（仅当模型无 feature_names 且 params.features 为空时）
         // meta 与模型同目录：xxx.json → xxx.meta.json
         if (_feature_keys.empty()) {
             String metaPath = resolvedPath;

@@ -117,7 +117,16 @@ filterCollectedData(const Map<String, Vector<double>>& collected,
     Vector<String> droppedKeys;
 
     // 1. 按特征名过滤（_featureNames 是短名如 MA(5)，collected keys 是全名如 sz.800001.MA(5)）
+    //    排除 org_* 原始价列（QuoteInputNode 为每个价格字段同时输出调整后和原始值，
+    //    org_close 不应作为模型特征；后缀匹配 "close" 会误匹配 "org_close"）
     for (auto& [k, v] : collected) {
+        // 检查是否为 org_ 原始价列（如 sz.800001.org_close）
+        auto lastDot = k.rfind('.');
+        if (lastDot != String::npos && lastDot >= 4 &&
+            k.compare(lastDot - 3, 4, "org_") == 0) {
+            droppedKeys.push_back(k);
+            continue;
+        }
         bool matched = false;
         for (auto& feat : featureNames) {
             if (k == feat || (k.size() > feat.size() &&
@@ -272,6 +281,7 @@ struct TrainState {
     List<QNode*> _fullGraph;
     Set<QNode*> _upstreamSet;
     List<QNode*> _upstreamSubgraph;
+    List<QNode*> _collectGraph;  // _upstreamSubgraph 排除 XGBoostNode，用于 TrainingCollect 执行
     Vector<String> _featureNames;
     String _tmpStrategyName;
     String _csvPath, _modelPath;
@@ -1111,8 +1121,15 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
         auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
         Map<String, Vector<double>> collected;
         Vector<String> collectedDates;
+        // 特征收集只需跑 XGBoostNode 的上游节点，不跑推理
+        List<QNode*> collectGraph;
+        for (auto n : state->_upstreamSubgraph) {
+            if (!dynamic_cast<XGBoostNode*>(n)) {
+                collectGraph.push_back(n);
+            }
+        }
         bool collectOk = flowSubsystem->RunTrainingCollect(
-            state->_tmpStrategyName, state->_upstreamSubgraph, requiredSources,
+            state->_tmpStrategyName, collectGraph, requiredSources,
             symbols, 100000.0, collected, collectedDates,
             [sendSSE](uint64_t epoch, uint64_t totalBars) {
                 sendSSE("progress", {
