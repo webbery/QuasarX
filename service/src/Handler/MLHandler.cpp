@@ -120,10 +120,10 @@ filterCollectedData(const Map<String, Vector<double>>& collected,
     //    排除 org_* 原始价列（QuoteInputNode 为每个价格字段同时输出调整后和原始值，
     //    org_close 不应作为模型特征；后缀匹配 "close" 会误匹配 "org_close"）
     for (auto& [k, v] : collected) {
-        // 检查是否为 org_ 原始价列（如 sz.800001.org_close）
+        // 检查最后一个 . 之后是否以 org 开头（如 sz.800001.org_close/org_open/org_high/org_low）
         auto lastDot = k.rfind('.');
-        if (lastDot != String::npos && lastDot >= 4 &&
-            k.compare(lastDot - 3, 4, "org_") == 0) {
+        if (lastDot != String::npos && lastDot + 4 <= k.size() &&
+            k.compare(lastDot + 1, 3, "org") == 0) {
             droppedKeys.push_back(k);
             continue;
         }
@@ -227,9 +227,9 @@ void MLHandler::collectXGBoostFeatures(
         }
     } else {
         // features 参数已指定 → 只收集匹配的特征（训练与推理对齐）
-        Set<String> featSet(featureKeys.begin(), featureKeys.end());
-
-        // 从上游 QuoteInputNode 收集 symbol 字符串，用于从全名提取短名
+        // 从上游 QuoteInputNode 收集 symbol 字符串，把 featSet 内每个 key 剥前缀成 shortName，
+        // 与循环里 out_elements 的 shortName 在同一比较空间匹配（XGBoostNode Init 阶段
+        // _feature_keys 可能已是带前缀的 fullKey，必须先归一化）
         Set<String> symbolStrs;
         for (auto n : upstreamSubgraph) {
             if (auto* qi = dynamic_cast<QuoteInputNode*>(n)) {
@@ -237,21 +237,25 @@ void MLHandler::collectXGBoostFeatures(
                     symbolStrs.insert(get_symbol(s));
             }
         }
+        auto stripPrefix = [&symbolStrs](const String& k) -> String {
+            for (auto& sym : symbolStrs) {
+                String prefix = sym + ".";
+                if (k.size() > prefix.size() &&
+                    k.compare(0, prefix.size(), prefix) == 0) {
+                    return k.substr(prefix.size());
+                }
+            }
+            return k;
+        };
+        Set<String> featSet;
+        for (auto& k : featureKeys) featSet.insert(stripPrefix(k));
 
         for (auto& [id, nodePtr] : sortedIns) {
             auto elements = nodePtr->out_elements();
             Vector<String> matched;
             for (auto& [fullKey, _] : elements) {
                 // 从全名提取短名：sh.600176.emd.nimf_0 → emd.nimf_0
-                String shortName = fullKey;
-                for (auto& sym : symbolStrs) {
-                    String prefix = sym + ".";
-                    if (fullKey.size() > prefix.size() &&
-                        fullKey.compare(0, prefix.size(), prefix) == 0) {
-                        shortName = fullKey.substr(prefix.size());
-                        break;
-                    }
-                }
+                String shortName = stripPrefix(fullKey);
                 if (featSet.count(shortName)) {
                     outFeatureNames.push_back(fullKey);
                     matched.push_back(shortName);
