@@ -869,6 +869,17 @@ bool FlowSubsystem::HasManualExecuteNode(const String& strategy) const {
     return false;
 }
 
+ExecuteType FlowSubsystem::GetExecType(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it == _flows.end()) return ExecuteType::Shadow;
+    for (auto* node : it->second._graph) {
+        if (auto* exec = dynamic_cast<ExecuteNode*>(node)) {
+            return exec->GetExecType();
+        }
+    }
+    return ExecuteType::Shadow;
+}
+
 uint64_t FlowSubsystem::GetEpochCount(const String& strategy) const {
     auto it = _flows.find(strategy);
     if (it == _flows.end()) return 0;

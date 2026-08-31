@@ -23,6 +23,7 @@
 #include "Nodes/DebugNode.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"
+#include "Nodes/ExecuteNode.h"
 
 StrategyHandler::StrategyHandler(Server* server)
 : _close(true), _main(nullptr),HttpHandler(server) {
@@ -61,6 +62,20 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
             item["epochCount"] = (int64_t)flow->GetEpochCount(name);
             item["lastHeartbeat"] = (int64_t)flow->GetLastHeartbeat(name);
             item["lastEvoke"] = (int64_t)flow->GetLastEvoke(name);
+
+            // 执行模式：manual=日终决策型, live=盘中实盘, shadow=影子模式
+            switch (flow->GetExecType(name)) {
+                case ExecuteType::Manual:
+                    item["executionMode"] = "manual";
+                    break;
+                case ExecuteType::ImmediatlyMarket:
+                case ExecuteType::ImmediatlyLimit:
+                    item["executionMode"] = "live";
+                    break;
+                default:
+                    item["executionMode"] = "shadow";
+                    break;
+            }
 
             // 补充策略资金信息
             if (capitalPool) {

@@ -6,7 +6,7 @@
             <select v-model="selectedStrategy">
                 <option value="">-- 选择策略 --</option>
                 <option v-for="s in strategyList" :key="s.name" :value="s.name">
-                    {{ s.name }}
+                    {{ s.name }} [{{ formatMode(s) }}]
                     <span v-if="s.failed" style="color: #f87171;">✕ 加载失败</span>
                     <span v-else-if="s.running" style="color: #4ade80;">● 运行中</span>
                     <span v-else style="color: #f87171;">○ 已停止</span>
@@ -74,6 +74,9 @@
                                 <td class="strategy-name" :title="s.failed ? s.error : s.name">
                                     {{ s.name }}
                                     <span v-if="s.failed" class="failed-tag">加载失败</span>
+                                    <span v-else-if="s.executionMode === 'manual'" class="mode-tag mode-daily" title="日终策略：每日收盘后计算决策，需手动下单">日终</span>
+                                    <span v-else-if="s.executionMode === 'live'" class="mode-tag mode-live" title="盘中实盘策略：信号触发即时下单">实时</span>
+                                    <span v-else-if="s.executionMode === 'shadow'" class="mode-tag mode-shadow" title="影子模式：记录信号但不实际下单">影子</span>
                                 </td>
                                 <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
                                 <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
@@ -245,6 +248,17 @@ const formatHeartbeat = (lastHeartbeat) => {
 const formatCapital = (value) => {
     if (value === undefined || value === null || value === 0) return '--'
     return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/** 格式化执行模式（下拉框简写） */
+const formatMode = (s) => {
+    if (s.failed) return '加载失败'
+    switch (s.executionMode) {
+        case 'manual': return '日终'
+        case 'live':   return '实时'
+        case 'shadow': return '影子'
+        default:       return '未知'
+    }
 }
 
 /** 停止策略 */
@@ -512,6 +526,34 @@ onUnmounted(() => {
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: #f87171;
     vertical-align: middle;
+}
+
+/* 执行模式标签 */
+.mode-tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+.mode-daily {
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+}
+
+.mode-live {
+    background: rgba(96, 165, 250, 0.15);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    color: #60a5fa;
+}
+
+.mode-shadow {
+    background: rgba(148, 163, 184, 0.15);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    color: #94a3b8;
 }
 
 /* 失败策略行 */

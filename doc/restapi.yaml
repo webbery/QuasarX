@@ -3021,6 +3021,11 @@ components:
           type: integer
           description: 最后一次被触发调用 Process 的时间戳（Unix 毫秒），0 表示尚未被触发
           example: 1718371200000
+        executionMode:
+          type: string
+          enum: [manual, live, shadow]
+          description: 执行模式。manual=日终决策型（ManualTiming）；live=盘中实盘（ImmediateTiming）；shadow=影子模式
+          example: manual
 
     StrategyInitFailure:
       type: object

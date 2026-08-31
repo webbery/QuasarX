@@ -3,6 +3,7 @@
 #include "MarketTiming.h"
 #include "StrategyNode.h"
 #include "Nodes/ProtectionNode.h"
+#include "Nodes/ExecuteNode.h"
 #include "std_header.h"
 #include "Strategy.h"
 #include "Util/datetime.h"
@@ -70,6 +71,12 @@ public:
      * @return true 表示该策略是日终策略（含 ExecuteType::Manual 的 ExecuteNode）
      */
     bool HasManualExecuteNode(const String& strategy) const;
+
+    /**
+     * @brief 获取策略图首个 ExecuteNode 的执行类型
+     * @return ExecuteType 枚举值；若策略无 ExecuteNode，返回 ExecuteType::Shadow 作为默认值
+     */
+    ExecuteType GetExecType(const String& strategy) const;
 
     /**
      * @brief 检查策略是否正在运行
