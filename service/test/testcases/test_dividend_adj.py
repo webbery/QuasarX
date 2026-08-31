@@ -21,7 +21,7 @@ import math
 import requests
 import pytest
 from pathlib import Path
-from tool import check_response, BASE_URL
+from tool import check_response, BASE_URL, _DATA_DIR as SERVER_DATA_DIR
 
 
 # ── Python 黄金标准实现 ──
@@ -137,7 +137,7 @@ class TestDividendAdjCalculation:
     def _write_dividend_csv(auth_token):
         """写入分红 CSV 文件到服务数据目录"""
         # 服务运行目录下的 data/dividend/
-        dividend_dir = Path("data/dividend")
+        dividend_dir = SERVER_DATA_DIR / "dividend"
         dividend_dir.mkdir(parents=True, exist_ok=True)
         csv_path = dividend_dir / f"{TEST_SYMBOL}_dividend.csv"
         
@@ -151,7 +151,7 @@ class TestDividendAdjCalculation:
     @staticmethod
     def _cleanup_dividend_csv():
         """清理分红 CSV 文件"""
-        csv_path = Path("data/dividend") / f"{TEST_SYMBOL}_dividend.csv"
+        csv_path = SERVER_DATA_DIR / "dividend" / f"{TEST_SYMBOL}_dividend.csv"
         if csv_path.exists():
             csv_path.unlink()
 

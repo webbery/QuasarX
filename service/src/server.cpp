@@ -1171,8 +1171,9 @@ void Server::Schedules(time_t t) {
             }
         }
 
-        // 更新分红除权数据：从活跃策略收集标的 → 下载 → 导入 DuckDB
-        if (_strategySystem) {
+        // 更新分红除权数据（每周日 20:00 触发）：分红数据是历史事实，
+        //    公告后基本不变，避免每日全量 upsert 触发 DuckDB ART 索引崩溃
+        if (ltm->tm_wday == 0 && _strategySystem) {
             Set<String> allSymbols;
             auto names = _strategySystem->GetStrategyNames();
             for (auto& name : names) {
@@ -1183,7 +1184,7 @@ void Server::Schedules(time_t t) {
             }
             if (!allSymbols.empty()) {
                 String symbolsStr = boost::algorithm::join(allSymbols, ",");
-                INFO("[Schedules] Updating dividends for {} symbols from {} strategies",
+                INFO("[Schedules] Sunday dividend update: {} symbols from {} strategies",
                      allSymbols.size(), names.size());
                 String cmd = "cd ../tools && python fetch_dividend_data.py \""
                            + symbolsStr + "\" --download --data-dir data";

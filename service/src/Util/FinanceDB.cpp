@@ -2,6 +2,7 @@
 #include "Util/QuoteDB.h"
 #include "Util/system.h"
 #include "Util/log.h"
+#include "Util/datetime.h"
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -672,73 +673,152 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
         return 0;
     }
 
-    // ── 分块批量 INSERT（500 行/块，避免大批量 upsert 触发 DuckDB ART 索引 bug）──
-    static constexpr size_t CHUNK_SIZE = 500;
-
-    auto tsVal = [](const String& s) -> String {
-        return s.empty() ? "NULL" : fmt::format("'{}'", s);
-    };
-
-    auto formatRow = [&](const DivRow& r) -> String {
-        String s;
-        s.reserve(320);
-        s += fmt::format("({},", r.symbol);
-        s += fmt::format("{},'{}',{},{},{},",
-                         tsVal(r.announce_date), r.report_year,
-                         tsVal(r.ex_dividend_date),
-                         tsVal(r.record_date), tsVal(r.implement_date));
-        s += fmt::format("{},{},{},{},{},",
-                         r.bonus_per_10, r.transfer_per_10, r.cash_per_10,
-                         r.allot_per_10, r.allot_price);
-        s += r.ex_div_price.empty() ? "NULL," : fmt::format("{}," , r.ex_div_price);
-        s += fmt::format("{})", r.action_type);
-        return s;
-    };
-
-    static const String CONFLICT_CLAUSE =
-        " ON CONFLICT(symbol, ex_dividend_date) DO UPDATE SET "
-        "announce_date=excluded.announce_date, report_year=excluded.report_year, "
-        "record_date=excluded.record_date, implement_date=excluded.implement_date, "
-        "bonus_per_10=excluded.bonus_per_10, transfer_per_10=excluded.transfer_per_10, "
-        "cash_per_10=excluded.cash_per_10, allot_per_10=excluded.allot_per_10, "
-        "allot_price=excluded.allot_price, ex_div_price=excluded.ex_div_price, "
-        "action_type=excluded.action_type";
-
-    static const String INSERT_PREFIX =
-        "INSERT INTO dividend (symbol, announce_date, report_year, ex_dividend_date, "
-        "record_date, implement_date, bonus_per_10, transfer_per_10, cash_per_10, "
-        "allot_per_10, allot_price, ex_div_price, action_type) VALUES ";
-
-    int imported = 0;
-    for (size_t chunk_start = 0; chunk_start < rows.size(); chunk_start += CHUNK_SIZE) {
-        size_t chunk_end = std::min(chunk_start + CHUNK_SIZE, rows.size());
-
-        String sql;
-        sql.reserve((chunk_end - chunk_start) * 320 + 512);
-        sql += INSERT_PREFIX;
-        for (size_t i = chunk_start; i < chunk_end; i++) {
-            if (i > chunk_start) sql += ", ";
-            sql += formatRow(rows[i]);
-        }
-        sql += CONFLICT_CLAUSE;
-
-        exec("BEGIN TRANSACTION");
-        duckdb_result result;
-        duckdb_state state = duckdb_query(conn(), sql.c_str(), &result);
-        if (state != DuckDBSuccess) {
-            const char* err = duckdb_result_error(&result);
-            SPDLOG_ERROR("[FinanceDB] dividend insert chunk [{}/{}] failed ({}): {}",
-                         chunk_start, chunk_end, csv_path, err ? err : "unknown");
-            duckdb_destroy_result(&result);
-            exec("ROLLBACK");
-            return -1;
-        }
-        duckdb_destroy_result(&result);
-        exec("COMMIT");
-        imported += static_cast<int>(chunk_end - chunk_start);
+    // ── 两阶段 upsert：先 SELECT 找已有键，再预编译 UPDATE/INSERT 逐行处理 ──
+    //    不使用 ON CONFLICT：触发 DuckDB ART 索引 bug（参见 QuoteDB::importCsv）
+    int64_t sym_encoded = rows[0].symbol;
+    String min_ex = rows[0].ex_dividend_date;
+    String max_ex = rows[0].ex_dividend_date;
+    for (const auto& r : rows) {
+        if (r.ex_dividend_date < min_ex) min_ex = r.ex_dividend_date;
+        if (r.ex_dividend_date > max_ex) max_ex = r.ex_dividend_date;
     }
 
-    SPDLOG_INFO("[FinanceDB] Imported {} rows into dividend from {}", imported, csv_path);
+    exec_unsafe("BEGIN TRANSACTION");
+
+    UnorderedSet<std::string> existing;
+    {
+        duckdb_result sel;
+        std::string sql = fmt::format(
+            "SELECT CAST(ex_dividend_date AS VARCHAR) FROM dividend "
+            "WHERE symbol = {} AND ex_dividend_date BETWEEN '{}' AND '{}'",
+            sym_encoded, min_ex, max_ex);
+        if (duckdb_query(conn(), sql.c_str(), &sel) != DuckDBSuccess) {
+            const char* err = duckdb_result_error(&sel);
+            SPDLOG_ERROR("[FinanceDB] select existing ex_date failed: {}", err ? err : "unknown");
+            duckdb_destroy_result(&sel);
+            exec_unsafe("ROLLBACK");
+            return -1;
+        }
+        idx_t n = duckdb_row_count(&sel);
+        for (idx_t i = 0; i < n; ++i) {
+            char* s = duckdb_value_varchar(&sel, 0, i);
+            if (s) {
+                existing.insert(s);
+                duckdb_free(s);
+            }
+        }
+        duckdb_destroy_result(&sel);
+    }
+
+    duckdb_prepared_statement upd = nullptr;
+    if (duckdb_prepare(conn(),
+        "UPDATE dividend SET "
+        "announce_date=?, report_year=?, record_date=?, implement_date=?, "
+        "bonus_per_10=?, transfer_per_10=?, cash_per_10=?, "
+        "allot_per_10=?, allot_price=?, ex_div_price=?, action_type=? "
+        "WHERE symbol=? AND ex_dividend_date=?",
+        &upd) != DuckDBSuccess) {
+        const char* err = upd ? duckdb_prepare_error(upd) : "unknown";
+        SPDLOG_ERROR("[FinanceDB] prepare dividend UPDATE failed: {}", err ? err : "unknown");
+        if (upd) duckdb_destroy_prepare(&upd);
+        exec_unsafe("ROLLBACK");
+        return -1;
+    }
+
+    duckdb_prepared_statement ins = nullptr;
+    if (duckdb_prepare(conn(),
+        "INSERT INTO dividend (symbol, announce_date, report_year, "
+        "ex_dividend_date, record_date, implement_date, bonus_per_10, "
+        "transfer_per_10, cash_per_10, allot_per_10, allot_price, "
+        "ex_div_price, action_type) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        &ins) != DuckDBSuccess) {
+        const char* err = ins ? duckdb_prepare_error(ins) : "unknown";
+        SPDLOG_ERROR("[FinanceDB] prepare dividend INSERT failed: {}", err ? err : "unknown");
+        if (ins) duckdb_destroy_prepare(&ins);
+        duckdb_destroy_prepare(&upd);
+        exec_unsafe("ROLLBACK");
+        return -1;
+    }
+
+    auto bindDate = [&](duckdb_prepared_statement s, idx_t idx, const String& d) -> duckdb_state {
+        if (d.empty()) return duckdb_bind_null(s, idx);
+        return duckdb_bind_timestamp(s, idx, duckdb_timestamp{FromNaiveTimestamp(d)});
+    };
+    auto bindOptDouble = [&](duckdb_prepared_statement s, idx_t idx, const String& d) -> duckdb_state {
+        if (d.empty()) return duckdb_bind_null(s, idx);
+        try { return duckdb_bind_double(s, idx, std::stod(d)); }
+        catch (...) { return duckdb_bind_null(s, idx); }
+    };
+
+    int updated = 0, inserted = 0;
+    for (const auto& r : rows) {
+        bool is_update = existing.count(r.ex_dividend_date) > 0;
+        duckdb_prepared_statement stmt = is_update ? upd : ins;
+        duckdb_state st = DuckDBSuccess;
+
+        if (is_update) {
+            if (st == DuckDBSuccess) st = bindDate(stmt, 1, r.announce_date);
+            if (st == DuckDBSuccess) st = duckdb_bind_varchar(stmt, 2, r.report_year.c_str());
+            if (st == DuckDBSuccess) st = bindDate(stmt, 3, r.record_date);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 4, r.implement_date);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 5, r.bonus_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 6, r.transfer_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 7, r.cash_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 8, r.allot_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 9, r.allot_price);
+            if (st == DuckDBSuccess) st = bindOptDouble(stmt, 10, r.ex_div_price);
+            if (st == DuckDBSuccess) st = duckdb_bind_int8(stmt, 11, r.action_type);
+            if (st == DuckDBSuccess) st = duckdb_bind_int64(stmt, 12, sym_encoded);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 13, r.ex_dividend_date);
+        } else {
+            if (st == DuckDBSuccess) st = duckdb_bind_int64(stmt, 1, sym_encoded);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 2, r.announce_date);
+            if (st == DuckDBSuccess) st = duckdb_bind_varchar(stmt, 3, r.report_year.c_str());
+            if (st == DuckDBSuccess) st = bindDate(stmt, 4, r.ex_dividend_date);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 5, r.record_date);
+            if (st == DuckDBSuccess) st = bindDate(stmt, 6, r.implement_date);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 7, r.bonus_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 8, r.transfer_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 9, r.cash_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 10, r.allot_per_10);
+            if (st == DuckDBSuccess) st = duckdb_bind_double(stmt, 11, r.allot_price);
+            if (st == DuckDBSuccess) st = bindOptDouble(stmt, 12, r.ex_div_price);
+            if (st == DuckDBSuccess) st = duckdb_bind_int8(stmt, 13, r.action_type);
+        }
+
+        if (st != DuckDBSuccess) {
+            SPDLOG_ERROR("[FinanceDB] dividend bind failed at ex_date={}", r.ex_dividend_date);
+            duckdb_destroy_prepare(&upd);
+            duckdb_destroy_prepare(&ins);
+            exec_unsafe("ROLLBACK");
+            return -1;
+        }
+
+        duckdb_result res;
+        st = duckdb_execute_prepared(stmt, &res);
+        duckdb_destroy_result(&res);
+
+        if (st != DuckDBSuccess) {
+            SPDLOG_ERROR("[FinanceDB] dividend execute_prepared failed at ex_date={}", r.ex_dividend_date);
+            duckdb_destroy_prepare(&upd);
+            duckdb_destroy_prepare(&ins);
+            exec_unsafe("ROLLBACK");
+            return -1;
+        }
+
+        if (is_update) ++updated;
+        else ++inserted;
+    }
+
+    duckdb_destroy_prepare(&upd);
+    duckdb_destroy_prepare(&ins);
+
+    exec_unsafe("COMMIT");
+
+    int imported = updated + inserted;
+    SPDLOG_INFO("[FinanceDB] Imported {} rows from {} ({} updated, {} inserted)",
+                imported, csv_path, updated, inserted);
     return imported;
 }
 

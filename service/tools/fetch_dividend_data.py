@@ -238,84 +238,109 @@ def normalize_date(val: str) -> str:
 
 def download_dividend_csv(symbols: list, data_dir: str, years: list = None):
     """
-    下载分红数据并保存为 DuckDB 兼容 CSV 格式
+    增量下载分红数据并保存为 DuckDB 兼容 CSV 格式
 
     输出: {data_dir}/dividend/{symbol}_dividend.csv
     列: symbol, announce_date, report_year, ex_dividend_date, record_date,
         implement_date, bonus_per_10, transfer_per_10, cash_per_10,
         allot_per_10, allot_price, ex_div_price, action_type
-    """
-    if years is None:
-        current_year = date.today().year
-        years = list(range(current_year - 5, current_year + 1))
 
+    增量策略：保留现有 CSV，按 (year, ex_dividend_date) 去重追加，
+    避免每日全量下载和重复 upsert 触发 DuckDB ART 索引崩溃。
+    """
     dividend_dir = os.path.join(data_dir, "dividend")
     os.makedirs(dividend_dir, exist_ok=True)
 
-    # 清理旧的 dividend CSV，避免残留文件被导入
-    for old_file in os.listdir(dividend_dir):
-        if old_file.endswith("_dividend.csv"):
-            os.remove(os.path.join(dividend_dir, old_file))
-    print(f"已清理 {dividend_dir} 中的旧文件")
+    HEADER = ("symbol,announce_date,report_year,ex_dividend_date,record_date,"
+              "implement_date,bonus_per_10,transfer_per_10,cash_per_10,"
+              "allot_per_10,allot_price,ex_div_price,action_type\n")
+
+    def load_existing(csv_path):
+        existing_rows = []
+        existing_keys = set()
+        if not os.path.exists(csv_path):
+            return existing_rows, existing_keys
+        with open(csv_path, "r", encoding="utf-8") as f:
+            header = f.readline()
+            if not header.startswith("symbol,"):
+                return [], set()
+            for line in f:
+                line = line.rstrip("\r\n")
+                if not line:
+                    continue
+                parts = line.split(",", 4)
+                if len(parts) < 4:
+                    continue
+                key = (parts[2], parts[3])  # (report_year, ex_dividend_date)
+                if key in existing_keys:
+                    continue
+                existing_keys.add(key)
+                existing_rows.append(line)
+        return existing_rows, existing_keys
+
+    def format_csv_line(display_code, year, row):
+        bonus = float(row.get('dividStocksPs', 0) or 0) * 10
+        transfer = float(row.get('dividReserveToStockPs', 0) or 0) * 10
+        cash = float(row.get('dividCashPsBeforeTax', 0) or 0) * 10
+        announce = normalize_date(row.get('dividPlanAnnounceDate', ''))
+        record = normalize_date(row.get('dividRegistDate', ''))
+        ex_div = normalize_date(row.get('dividOperateDate', ''))
+        implement = ex_div
+        action_type = compute_action_type(bonus, transfer, cash, 0.0)
+        return (f"{display_code},{announce},{year},{ex_div},{record},"
+                f"{implement},{bonus},{transfer},{cash},"
+                f"0.0,0.0,,{action_type}\n")
 
     for symbol in symbols:
         bs_code = convert_to_baostock_code(symbol)
         display_code = to_code_exchange(bs_code)
+        csv_path = os.path.join(dividend_dir, f"{display_code}_dividend.csv")
 
-        all_rows = []
-        for year in years:
+        existing_rows, existing_keys = load_existing(csv_path)
+
+        # 按已有数据的最大年份决定查询范围（不重复下载历史）
+        if years is None:
+            current_year = date.today().year
+            if existing_keys:
+                max_year = max(int(y) for y, _ in existing_keys)
+                # 查 max_year（含跨年实施）和 current_year（当年公告）
+                years_to_query = sorted({max_year, current_year})
+            else:
+                # 首次下载：取 5 年窗口
+                years_to_query = list(range(current_year - 5, current_year + 1))
+
+        new_rows = []
+        for year in years_to_query:
             df = query_dividend(bs_code, year)
             if df.empty:
                 continue
             for _, row in df.iterrows():
-                all_rows.append((year, row))
+                ex_date = normalize_date(row.get('dividOperateDate', ''))
+                if not ex_date:
+                    continue
+                key = (str(year), ex_date)
+                if key in existing_keys:
+                    continue
+                existing_keys.add(key)
+                new_rows.append((year, row))
 
-        if not all_rows:
-            print(f"  [{display_code}] 无分红数据")
+        if not new_rows:
+            if existing_rows:
+                print(f"  [{display_code}] 已是最新 ({len(existing_rows)} 条)")
+            else:
+                print(f"  [{display_code}] 无分红数据")
             continue
 
-        # 去重 (同一除权日可能因查两年而重复)
-        seen_dates = set()
-        unique_rows = []
-        for year, row in all_rows:
-            ex_date = normalize_date(row.get('dividOperateDate', ''))
-            if ex_date and ex_date not in seen_dates:
-                seen_dates.add(ex_date)
-                unique_rows.append((year, row))
+        new_rows.sort(key=lambda r: normalize_date(r[1].get('dividOperateDate', '')))
 
-        if not unique_rows:
-            print(f"  [{display_code}] 有 {len(all_rows)} 条记录但无有效除权除息日，跳过")
-            continue
-
-        # 按除权除息日排序
-        unique_rows.sort(key=lambda r: r[1].get('dividOperateDate', ''))
-
-        # 写入 CSV (DuckDB 兼容格式)
-        csv_path = os.path.join(dividend_dir, f"{display_code}_dividend.csv")
         with open(csv_path, "w", encoding="utf-8") as f:
-            f.write("symbol,announce_date,report_year,ex_dividend_date,record_date,"
-                    "implement_date,bonus_per_10,transfer_per_10,cash_per_10,"
-                    "allot_per_10,allot_price,ex_div_price,action_type\n")
-            for year, row in unique_rows:
-                # BaoStock 返回每股数据，×10 转为每10股
-                bonus = float(row.get('dividStocksPs', 0) or 0) * 10
-                transfer = float(row.get('dividReserveToStockPs', 0) or 0) * 10
-                cash = float(row.get('dividCashPsBeforeTax', 0) or 0) * 10
-                allot = 0.0
-                allot_price = 0.0
-                ex_div_price = ''
-                announce = normalize_date(row.get('dividPlanAnnounceDate', ''))
-                record = normalize_date(row.get('dividRegistDate', ''))
-                ex_div = normalize_date(row.get('dividOperateDate', ''))
-                # implement_date: 用除权除息日近似
-                implement = ex_div
-                action_type = compute_action_type(bonus, transfer, cash, allot)
+            f.write(HEADER)
+            for line in existing_rows:
+                f.write(line + "\n")
+            for year, row in new_rows:
+                f.write(format_csv_line(display_code, year, row))
 
-                f.write(f"{display_code},{announce},{year},{ex_div},{record},"
-                        f"{implement},{bonus},{transfer},{cash},"
-                        f"{allot},{allot_price},{ex_div_price},{action_type}\n")
-
-        print(f"  [{display_code}] 分红数据: {csv_path} ({len(unique_rows)} 条)")
+        print(f"  [{display_code}] +{len(new_rows)} 条 ({csv_path}, 共 {len(existing_rows)+len(new_rows)} 条)")
 
 
 # ============================================================
