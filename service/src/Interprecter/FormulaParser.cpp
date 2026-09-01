@@ -253,6 +253,10 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
                 context_t val = evalNode(symbol, *node.exprAst, context);
                 if (std::holds_alternative<double>(val)) {
                     score = std::get<double>(val);
+                } else if (std::holds_alternative<Vector<double>>(val)) {
+                    // evalIdentifier 从 context 返回时间序列时，取最新值作为截面评分
+                    auto& vec = std::get<Vector<double>>(val);
+                    score = vec.empty() ? 0.0 : vec.back();
                 }
             }
             break;

@@ -3,7 +3,7 @@
   <div class="input-with-unit">
     <select
       :value="value"
-      @change="$emit('update', ($event.target as HTMLSelectElement).value)"
+      @change="onChange($event)"
       class="param-input param-select"
     >
       <option
@@ -19,13 +19,13 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   paramKey: string
   paramConfig: any
   value: any
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   update: [value: any]
 }>()
 
@@ -35,6 +35,21 @@ function getOptionValue(option: any) {
 
 function getOptionLabel(option: any) {
   return typeof option === 'object' && option !== null ? option.label : option
+}
+
+function onChange(event: Event) {
+  const raw = (event.target as HTMLSelectElement).value
+  const options = props.paramConfig?.options
+  if (Array.isArray(options)) {
+    for (const opt of options) {
+      const optVal = getOptionValue(opt)
+      if (typeof optVal === 'number' && String(optVal) === raw) {
+        emit('update', optVal)
+        return
+      }
+    }
+  }
+  emit('update', raw)
 }
 </script>
 

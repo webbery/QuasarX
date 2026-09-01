@@ -1117,3 +1117,164 @@ class TestFormulaXGBoostChain:
             # 非零验证
             assert not np.allclose(actual, 0.0), \
                 f"[{symbol}] raw_strength 全为 0, 链式计算可能未生效"
+
+
+# ============================================================
+# TOPK 截面函数 — Vector<double> 上下文解析测试
+# ============================================================
+
+TOPK_VECTOR_STRATEGY_ID = "test_topk_vector_context"
+TOPK_VECTOR_SYMBOLS = ["sz.800001", "sz.800002"]
+
+
+def _build_topk_vector_strategy() -> dict:
+    """构造策略: Input(2标的) → MA(5) → FormulaNode(topk) → DebugNode
+
+    验证 TOPK 截面函数能正确读取 context 中的 Vector<double> 时间序列。
+
+    Bug 场景: computeNode(TOPK) 调用 evalNode 获取变量值，
+    evalIdentifier 从 context 返回 Vector<double>（时间序列），
+    但 computeNode 只处理 double，Vector 时 score 默认为 0.0，
+    导致 TOPK 无法区分标的，始终按 pool 顺序选择。
+
+    测试原理:
+    - sz.800001 和 sz.800002 价格水平不同 → MA(5) 不同
+    - topk(ma5, 1) 应选出 MA 更大的标的
+    - 如果 bug 存在: 所有 score=0 → partial_sort 按 pool 顺序 → 永远选 sz.800001
+    - 如果修复: 正确选 MA 更大的标的
+    """
+    return {
+        "id": TOPK_VECTOR_STRATEGY_ID,
+        "name": TOPK_VECTOR_STRATEGY_ID,
+        "version": 1,
+        "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "行情数据", "nodeType": "input",
+                      "params": {"code": {"value": TOPK_VECTOR_SYMBOLS, "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"},
+                                 "open": {"value": "open", "type": "text"},
+                                 "high": {"value": "high", "type": "text"},
+                                 "low": {"value": "low", "type": "text"},
+                                 "volume": {"value": "volume", "type": "text"}}}},
+            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
+             "data": {"label": "ma5", "nodeType": "function",
+                      "params": {"method": {"value": "MA", "type": "select"},
+                                 "range": {"value": "5d", "type": "text"}}}},
+            # topk_result: 1.0 = 被 topk 选中, 0.0 = 未选中
+            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
+             "data": {"label": "topk_result", "nodeType": "formula",
+                      "params": {"expression": {"value": "topk(ma5, 1)", "type": "text"}}}},
+            {"id": "4", "type": "custom", "position": {"x": 600, "y": 0},
+             "data": {"label": "debug_topk", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
+        ],
+        "edges": [
+            {"id": "e1->2", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e2->3", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            {"id": "e3->4", "source": "3", "target": "4",
+             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
+            {"id": "e2->4", "source": "2", "target": "4",
+             "sourceHandle": "2", "targetHandle": "4", "type": "default"},
+        ],
+    }
+
+
+@pytest.fixture(scope="function")
+def _deploy_topk_vector(headers, request):
+    """部署 TOPK Vector 测试策略"""
+    strategy = _build_topk_vector_strategy()
+    strategy_name = strategy["id"]
+
+    files = {
+        "script": ("script.json", json.dumps(strategy).encode(), "application/json"),
+    }
+    resp = requests.post(
+        f"{BASE_URL}/strategy", files=files,
+        data={"name": strategy_name},
+        headers=headers, verify=VERIFY_SSL, timeout=60)
+    assert resp.status_code == 200, f"deploy 失败: {resp.text}"
+
+    yield {"strategy": strategy, "strategy_name": strategy_name}
+
+    try:
+        requests.post(f"{BASE_URL}/strategy",
+                      json={"mode": 2, "name": strategy_name},
+                      headers=headers, verify=VERIFY_SSL, timeout=5)
+        requests.delete(f"{BASE_URL}/strategy",
+                        json={"name": strategy_name},
+                        headers=headers, verify=VERIFY_SSL, timeout=5)
+    except Exception:
+        pass
+
+
+class TestTopkVectorContext:
+    """TOPK 截面函数 Vector<double> 上下文解析测试
+
+    验证 computeNode(TOPK) 能正确处理 evalNode 返回的 Vector<double>。
+
+    Bug: computeNode 只处理 double 类型，Vector<double> 时 score 默认 0.0，
+    导致 TOPK 无法区分标的，始终按 pool 顺序选择第一个。
+
+    测试原理:
+    - 2 个标的价格水平不同 → MA(5) 不同
+    - topk(ma5, 1) 应选出 MA 更大的标的
+    - Bug 存在时: 所有 score=0 → 永远选 pool 第一个 (sz.800001)
+    """
+
+    @pytest.mark.parametrize(
+        "_deploy_topk_vector",
+        [_build_topk_vector_strategy()],
+        indirect=True)
+    def test_topk_selects_by_value_not_pool_order(self, headers, _deploy_topk_vector):
+        """TOPK 应按值选择标的，而非按 pool 顺序"""
+        strategy_name = _deploy_topk_vector["strategy_name"]
+        strategy = _deploy_topk_vector["strategy"]
+        _run_backtest(strategy, headers)
+
+        df = read_debug_csv(strategy_name, "debug_topk")
+        assert len(df) > 0, "Debug CSV 为空"
+
+        sym1, sym2 = TOPK_VECTOR_SYMBOLS
+        ma1_col = f"{sym1}.ma5"
+        ma2_col = f"{sym2}.ma5"
+        result_col = f"{sym1}.topk_result"
+
+        for col in [ma1_col, ma2_col, result_col]:
+            assert col in df.columns, f"缺少列 {col}, 实际列: {list(df.columns)}"
+
+        ma1 = pd.to_numeric(df[ma1_col], errors="coerce").values
+        ma2 = pd.to_numeric(df[ma2_col], errors="coerce").values
+        topk_sym1 = pd.to_numeric(df[result_col], errors="coerce").values
+
+        valid = np.isfinite(ma1) & np.isfinite(ma2) & np.isfinite(topk_sym1)
+        n_valid = int(np.sum(valid))
+        assert n_valid > 0, "无有效数据行"
+
+        # 核心验证: TOPK 选中的标的应该是 MA 更大的那个
+        # 如果 bug 存在 (score=0 for Vector), topk 永远选 pool 第一个 (sym1)
+        # 即使 sym2 的 MA 更大
+        wrong_selections = 0
+        total_with_diff = 0
+        for i in range(len(valid)):
+            if not valid[i]:
+                continue
+            if abs(ma1[i] - ma2[i]) < 1e-6:
+                continue  # MA 相等时跳过
+            total_with_diff += 1
+            sym1_selected = topk_sym1[i] > 0.5
+            if ma1[i] > ma2[i]:
+                if not sym1_selected:
+                    wrong_selections += 1
+            else:
+                if sym1_selected:
+                    wrong_selections += 1
+
+        assert total_with_diff > 0, "两个标的 MA 始终相同，无法验证 TOPK 选择逻辑"
+        assert wrong_selections == 0, (
+            f"TOPK 选择错误: {wrong_selections}/{total_with_diff} 个 bar "
+            f"未选中 MA 更大的标的。可能原因: computeNode(TOPK) 未处理 Vector<double>，"
+            f"所有 score=0，按 pool 顺序选择")

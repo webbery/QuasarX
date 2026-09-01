@@ -70,6 +70,21 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
       // 检测 XGBoost 节点是否有绑定模型，有则走 multipart 上传
       let response
       const parsed = JSON.parse(graph)
+
+      // [DEBUG] 打印所有节点的 params value 类型，定位 string/number 不匹配
+      for (const n of (parsed.nodes || [])) {
+        const params = n.data?.params
+        if (!params) continue
+        for (const [k, v] of Object.entries(params)) {
+          if (v && typeof v === 'object' && 'value' in v) {
+            const t = typeof v.value
+            if (t === 'string' && !isNaN(v.value) && v.value !== '') {
+              console.warn(`[useBacktest] 节点 "${n.data.label}" (${n.data.nodeType}) 参数 "${k}" 值为字符串 "${v.value}"，后端可能期望 number`)
+            }
+          }
+        }
+      }
+
       const xgbNodes = (parsed.nodes || []).filter(n => n?.data?.nodeType === 'xgboost')
       const needsModel = xgbNodes.some(n => {
         const mf = n.data?.params?.modelFile?.value || n.data?.params?.modelFile || ''
