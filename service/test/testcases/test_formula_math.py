@@ -815,3 +815,305 @@ class TestConsistencyRatio:
             expected[i] = max(pos, neg) / denom
 
         _compare_series(actual, expected, label="dominant_ratio", tol=1e-5)
+
+
+# ============================================================
+# XGBoost 矩阵输出 + Formula 列读取测试
+# ============================================================
+
+TRIVIAL_MODEL_PATH = Path(__file__).parent / "ai_test_data" / "xgb_trivial_model.json"
+TRIVIAL_META_PATH = Path(__file__).parent / "ai_test_data" / "xgb_trivial_meta.json"
+MATRIX_STRATEGY_ID = "test_formula_xgb_matrix"
+MATRIX_SYMBOLS = ["sz.800001", "sz.800002"]
+
+
+def _build_xgb_matrix_strategy() -> dict:
+    """构造策略: Input(2标的) → MA(5) → XGBoost(binary) → Formula(col0-col1) → DebugNode
+
+    XGBoost binary:logistic 每标的输出 2 列概率 (N×2 矩阵),
+    Formula 用 xgb_probs[0] - xgb_probs[1] 读取两列相减 → N×1 向量.
+    """
+    return {
+        "id": MATRIX_STRATEGY_ID,
+        "name": MATRIX_STRATEGY_ID,
+        "version": 1,
+        "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "行情数据", "nodeType": "input",
+                      "params": {"code": {"value": MATRIX_SYMBOLS, "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"},
+                                 "open": {"value": "open", "type": "text"},
+                                 "high": {"value": "high", "type": "text"},
+                                 "low": {"value": "low", "type": "text"},
+                                 "volume": {"value": "volume", "type": "text"}}}},
+            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
+             "data": {"label": "MA(5)", "nodeType": "function",
+                      "params": {"method": {"value": "MA", "type": "select"},
+                                 "range": {"value": "5d", "type": "text"}}}},
+            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
+             "data": {"label": "XGBoost", "nodeType": "xgboost",
+                      "params": {"modelFile": {"value": "production/test_formula_xgb_matrix-XGBoost.json", "type": "text"},
+                                 "features": {"value": "MA(5)", "type": "text"},
+                                 "objective": {"value": "binary:logistic", "type": "select"},
+                                 "num_class": {"value": 2, "type": "number"}}}},
+            {"id": "4", "type": "custom", "position": {"x": 600, "y": 0},
+             "data": {"label": "math_func", "nodeType": "formula",
+                      "params": {"expression": {"value": "xgb_probs[0] - xgb_probs[1]", "type": "text"}}}},
+            {"id": "5", "type": "custom", "position": {"x": 800, "y": 0},
+             "data": {"label": "debug_xgb_matrix", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
+        ],
+        "edges": [
+            {"id": "e1->2", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e2->3", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            {"id": "e3->4", "source": "3", "target": "4",
+             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
+            {"id": "e4->5", "source": "4", "target": "5",
+             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
+            {"id": "e3->5", "source": "3", "target": "5",
+             "sourceHandle": "3", "targetHandle": "5", "type": "default"},
+        ],
+    }
+
+
+@pytest.fixture(scope="function")
+def _deploy_xgb_matrix(headers, request):
+    """部署 trivial XGBoost 模型 + 策略（策略由参数提供）"""
+    if not TRIVIAL_MODEL_PATH.exists():
+        pytest.skip(f"trivial 模型不存在: {TRIVIAL_MODEL_PATH}")
+
+    model_json = TRIVIAL_MODEL_PATH.read_text()
+    strategy = request.param
+    strategy_name = strategy["id"]
+
+    files = {
+        "script": ("script.json", json.dumps(strategy).encode(), "application/json"),
+        "model_XGBoost": ("XGBoost.json", model_json.encode(), "application/json"),
+    }
+    if TRIVIAL_META_PATH.exists():
+        files["model_XGBoost_meta"] = (
+            "XGBoost.meta.json",
+            TRIVIAL_META_PATH.read_text().encode(),
+            "application/json")
+
+    resp = requests.post(
+        f"{BASE_URL}/strategy", files=files,
+        data={"name": strategy_name},
+        headers=headers, verify=VERIFY_SSL, timeout=60)
+    assert resp.status_code == 200, f"deploy 失败: {resp.text}"
+
+    yield {"strategy": strategy, "strategy_name": strategy_name}
+
+    # 清理
+    try:
+        requests.post(f"{BASE_URL}/strategy",
+                      json={"mode": 2, "name": strategy_name},
+                      headers=headers, verify=VERIFY_SSL, timeout=5)
+        requests.delete(f"{BASE_URL}/strategy",
+                        json={"name": strategy_name},
+                        headers=headers, verify=VERIFY_SSL, timeout=5)
+    except Exception:
+        pass
+
+
+class TestFormulaXGBoostMatrix:
+    """XGBoost 矩阵输出 + Formula 列读取测试
+
+    验证场景:
+    - XGBoostNode (binary:logistic) 对 2 个标的各输出 2 列概率 (N×2 矩阵)
+    - Formula 用 xgb_probs[0] / xgb_probs[1] 读取第 0/1 列
+    - 相减得到 N×1 向量
+    - 验证: shape (每个标的 N 行 1 列) + 值正确性 (diff == col0 - col1)
+    """
+
+    @pytest.mark.parametrize(
+        "_deploy_xgb_matrix",
+        [_build_xgb_matrix_strategy()],
+        indirect=True)
+    def test_matrix_column_subtraction(self, headers, _deploy_xgb_matrix):
+        """XGBoost 输出 N×2 矩阵, Formula 读取两列相减 → N×1 向量"""
+        strategy = _deploy_xgb_matrix["strategy"]
+        strategy_name = _deploy_xgb_matrix["strategy_name"]
+        _run_backtest(strategy, headers)
+
+        df = read_debug_csv(strategy_name, "debug_xgb_matrix")
+        assert len(df) > 0, "Debug CSV 为空"
+
+        for symbol in MATRIX_SYMBOLS:
+            prob0_col = f"{symbol}.xgb_probs_0"
+            prob1_col = f"{symbol}.xgb_probs_1"
+            result_col = f"{symbol}.math_func"
+
+            # 列存在性
+            for col in [prob0_col, prob1_col, result_col]:
+                assert col in df.columns, f"缺少列 {col}, 实际列: {list(df.columns)}"
+
+            p0 = pd.to_numeric(df[prob0_col], errors="coerce").values
+            p1 = pd.to_numeric(df[prob1_col], errors="coerce").values
+            result = pd.to_numeric(df[result_col], errors="coerce").values
+
+            # 有效行: 三个值都 finite (跳过 NaN warmup)
+            valid = np.isfinite(p0) & np.isfinite(p1) & np.isfinite(result)
+            n_valid = int(np.sum(valid))
+            assert n_valid > 0, f"{symbol}: 无有效数据行 (概率全 NaN?)"
+
+            # 值正确性: result == p0 - p1
+            expected_diff = p0[valid] - p1[valid]
+            actual_diff = result[valid]
+
+            # 非零验证: 结果不能全为 0 (否则断言 trivially pass)
+            assert not np.allclose(actual_diff, 0.0), \
+                f"[{symbol}] 结果全为 0, 未真正验证列相减逻辑"
+
+            max_err = float(np.max(np.abs(actual_diff - expected_diff)))
+            assert max_err < TOLERANCE, \
+                f"[{symbol}] 列相减误差 {max_err:.2e} 超过容差 {TOLERANCE}"
+
+            # Shape 验证: 结果向量长度 = 概率列长度 (每 bar 一个值 → N×1)
+            assert len(result) == len(p0), \
+                f"[{symbol}] 结果长度 {len(result)} != 概率列长度 {len(p0)}"
+            assert n_valid == int(np.sum(np.isfinite(p0) & np.isfinite(p1))), \
+                f"[{symbol}] 有效结果数 {n_valid} != 有效输入行数"
+
+
+# ============================================================
+# 链式 FormulaNode 拓扑测试 (CTA_v16 raw_strength 模式)
+# ============================================================
+
+CHAIN_STRATEGY_ID = "test_formula_xgb_chain"
+
+
+def _build_xgb_chain_strategy() -> dict:
+    """构造链式 FormulaNode 策略 (模拟 CTA_v16 raw_strength 拓扑):
+
+    Input(2标的) → MA(5) → XGBoost(binary) → raw_strength → DebugNode
+                        ↘ factor(formula) ↗
+
+    - factor = ma5[t] / 100 (随 bar 变化)
+    - raw_strength = (xgb_probs[0] - xgb_probs[1]) * factor
+    - raw_strength 同时读取 XGBoost 输出和另一个 FormulaNode 输出
+
+    验证 FormulaNode 能正确解析来自不同类型上游节点（XGBoost + Formula）的变量.
+    """
+    return {
+        "id": CHAIN_STRATEGY_ID,
+        "name": CHAIN_STRATEGY_ID,
+        "version": 1,
+        "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "行情数据", "nodeType": "input",
+                      "params": {"code": {"value": MATRIX_SYMBOLS, "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"},
+                                 "open": {"value": "open", "type": "text"},
+                                 "high": {"value": "high", "type": "text"},
+                                 "low": {"value": "low", "type": "text"},
+                                 "volume": {"value": "volume", "type": "text"}}}},
+            # label 必须与下游公式引用名一致: FunctionNode 输出 key = {symbol}.{label},
+            # FormulaNode 公式 "ma5[t]" 查找 {symbol}.ma5, 所以 label 不能是 "MA(5)"
+            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
+             "data": {"label": "ma5", "nodeType": "function",
+                      "params": {"method": {"value": "MA", "type": "select"},
+                                 "range": {"value": "5d", "type": "text"}}}},
+            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
+             "data": {"label": "XGBoost", "nodeType": "xgboost",
+                      "params": {"modelFile": {"value": "production/test_formula_xgb_chain-XGBoost.json", "type": "text"},
+                                 "features": {"value": "ma5", "type": "text"},
+                                 "objective": {"value": "binary:logistic", "type": "select"},
+                                 "num_class": {"value": 2, "type": "number"}}}},
+            # factor: 中间 FormulaNode, 输出随 bar 变化
+            {"id": "4", "type": "custom", "position": {"x": 400, "y": 200},
+             "data": {"label": "factor", "nodeType": "formula",
+                      "params": {"expression": {"value": "ma5[t] / 100", "type": "text"}}}},
+            # raw_strength: 同时读 XGBoost 和 factor (链式 FormulaNode)
+            {"id": "5", "type": "custom", "position": {"x": 600, "y": 0},
+             "data": {"label": "raw_strength", "nodeType": "formula",
+                      "params": {"expression": {"value": "(xgb_probs[0] - xgb_probs[1]) * factor[t]", "type": "text"}}}},
+            {"id": "6", "type": "custom", "position": {"x": 800, "y": 0},
+             "data": {"label": "debug_chain", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
+        ],
+        "edges": [
+            {"id": "e1->2", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e2->3", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            # MA(5) → factor (factor 读 ma5[t])
+            {"id": "e2->4", "source": "2", "target": "4",
+             "sourceHandle": "2", "targetHandle": "4", "type": "default"},
+            # XGBoost → raw_strength (读 xgb_probs[0], xgb_probs[1])
+            {"id": "e3->5", "source": "3", "target": "5",
+             "sourceHandle": "3", "targetHandle": "5", "type": "default"},
+            # factor → raw_strength (读 factor[t]) — 链式 FormulaNode
+            {"id": "e4->5", "source": "4", "target": "5",
+             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
+            # DebugNode 连接所有计算节点
+            {"id": "e3->6", "source": "3", "target": "6",
+             "sourceHandle": "3", "targetHandle": "6", "type": "default"},
+            {"id": "e4->6", "source": "4", "target": "6",
+             "sourceHandle": "4", "targetHandle": "6", "type": "default"},
+            {"id": "e5->6", "source": "5", "target": "6",
+             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
+        ],
+    }
+
+
+class TestFormulaXGBoostChain:
+    """链式 FormulaNode 拓扑测试 — 模拟 CTA_v16 raw_strength 模式
+
+    验证 FormulaNode 能同时读取 XGBoost 输出和另一个 FormulaNode 输出,
+    确保变量解析、执行顺序、多上游类型混合正确.
+    """
+
+    @pytest.mark.parametrize(
+        "_deploy_xgb_matrix",
+        [_build_xgb_chain_strategy()],
+        indirect=True)
+    def test_chained_formula_with_xgboost(self, headers, _deploy_xgb_matrix):
+        """Formula(XGBoost + Formula) 链式拓扑: raw_strength = (p0-p1) * factor"""
+        strategy = _deploy_xgb_matrix["strategy"]
+        strategy_name = _deploy_xgb_matrix["strategy_name"]
+        _run_backtest(strategy, headers)
+
+        df = read_debug_csv(strategy_name, "debug_chain")
+        assert len(df) > 0, "Debug CSV 为空"
+
+        for symbol in MATRIX_SYMBOLS:
+            p0_col = f"{symbol}.xgb_probs_0"
+            p1_col = f"{symbol}.xgb_probs_1"
+            factor_col = f"{symbol}.factor"
+            result_col = f"{symbol}.raw_strength"
+
+            # 列存在性
+            for col in [p0_col, p1_col, factor_col, result_col]:
+                assert col in df.columns, f"缺少列 {col}, 实际列: {list(df.columns)}"
+
+            p0 = pd.to_numeric(df[p0_col], errors="coerce").values
+            p1 = pd.to_numeric(df[p1_col], errors="coerce").values
+            factor = pd.to_numeric(df[factor_col], errors="coerce").values
+            result = pd.to_numeric(df[result_col], errors="coerce").values
+
+            # 有效行
+            valid = np.isfinite(p0) & np.isfinite(p1) & np.isfinite(factor) & np.isfinite(result)
+            n_valid = int(np.sum(valid))
+            assert n_valid > 0, f"{symbol}: 无有效数据行"
+
+            # factor 必须随 bar 变化 (MA(5)/100 不同 bar 值不同)
+            assert not np.allclose(factor[valid], factor[valid][0]), \
+                f"[{symbol}] factor 全为常数, 未验证链式计算"
+
+            # 值正确性: raw_strength == (p0 - p1) * factor
+            expected = (p0[valid] - p1[valid]) * factor[valid]
+            actual = result[valid]
+            max_err = float(np.max(np.abs(actual - expected)))
+            assert max_err < TOLERANCE, \
+                f"[{symbol}] 链式计算误差 {max_err:.2e} 超过容差 {TOLERANCE}"
+
+            # 非零验证
+            assert not np.allclose(actual, 0.0), \
+                f"[{symbol}] raw_strength 全为 0, 链式计算可能未生效"

@@ -4,7 +4,9 @@
 
 XGBoostNode Init 时 features="" 会从上游 out_elements() 自动推断特征，
 模型训练时使用的特征名必须与上游 FunctionNode label 对齐。这里训练 1 棵
-binary:logistic 树，特征列名 = "MA(5)"，与策略中 MA(5) FunctionNode 输出对齐。
+binary:logistic 树，特征列名 = "ma5"，与策略中 FunctionNode label 对齐。
+注意: label 不能是 "MA(5)" (带括号), 否则下游 FormulaNode 公式引用时
+PEG 解析器会把 "MA(5)" 当作 FunctionCall 导致解析失败。
 
 输出 3 个文件到 ai_test_data/（与 xgboost_train_strategy.json 同目录）：
 - xgb_trivial_model.json    — XGBoost 模型
@@ -29,7 +31,7 @@ STRATEGY_NAME = "test_xgb_business"
 XGB_LABEL = "XGBoost"
 SYMBOL = "sz.800001"
 MODEL_PATH = f"production/{STRATEGY_NAME}-{XGB_LABEL}.json"
-FEATURE_NAME = "MA(5)"
+FEATURE_NAME = "ma5"
 
 
 def train_model() -> xgb.Booster:
@@ -81,7 +83,7 @@ def write_strategy(path: Path) -> None:
                                  "low": {"value": "low", "type": "text"},
                                  "volume": {"value": "volume", "type": "text"}}}},
             {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-             "data": {"label": "MA(5)", "nodeType": "function",
+             "data": {"label": "ma5", "nodeType": "function",
                       "params": {"method": {"value": "MA", "type": "select"},
                                  "range": {"value": "5d", "type": "text"}}}},
             {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
