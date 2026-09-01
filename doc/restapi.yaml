@@ -813,6 +813,40 @@ paths:
                 $ref: "#/components/schemas/BacktestResponse"
         '404':
           description: fail
+  /capacity:
+    post:
+      summary: 策略容量扫描（两阶段：基准回测 + 快速重放）
+      description: |
+        通过 SQUARE-ROOT 冲击模型对策略做不同资金量的快速重放：
+        - Phase 1 跑零冲击基准回测，提取交易日志
+        - Phase 2 对每个资金量按 method 算市占率 → 平方根冲击定价 → 重算指标
+        容量定义为 Sharpe 相对基准衰减 20% / 50% 对应的资金量。
+
+        **method 字段决定市占率分母**（2026-09 新增）：
+        - `turnover_market_share`（默认）：participation = 订单成交额 / ADTV。跨价格带策略更稳定。
+        - `volume_market_share`：participation = 订单股数 / ADV。保持旧实现行为。
+      tags:
+        - Backtest
+      requestBody:
+        description: 容量扫描参数
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapacityRequest"
+      responses:
+        '200':
+          description: success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityResponse"
+        '400':
+          description: 参数错误（缺 strategy / JSON 解析失败）
+        '404':
+          description: 策略文件不存在
+        '500':
+          description: 回测失败或市场数据加载失败
   /strategy/nodes:
     get:
       summary: 获取所有策略节点参数等信息
@@ -3461,6 +3495,141 @@ components:
         reconstruction_error:
           type: number
           description: 重建误差（RMS 值，衡量 IMF+残差 还原原始信号的精度）
+
+    CapacityRequest:
+      type: object
+      description: 容量扫描请求（POST /v0/capacity）
+      required:
+        - strategy
+      properties:
+        strategy:
+          type: string
+          description: 策略名（scripts/ 目录下的 JSON 文件名）
+          example: cta_v13
+        method:
+          type: string
+          description: |
+            市占率计算方法（2026-09 新增）
+              - turnover_market_share (默认): participation = 订单成交额 / ADTV
+              - volume_market_share: participation = 订单股数 / ADV (旧实现行为)
+          enum:
+            - turnover_market_share
+            - volume_market_share
+          default: turnover_market_share
+        capital_range:
+          type: object
+          description: 资金量扫描范围（对数均匀生成 steps 个点）
+          properties:
+            min:
+              type: number
+              description: 扫描最小资金量（元）
+              default: 100000
+            max:
+              type: number
+              description: 扫描最大资金量（元）
+              default: 10000000
+            steps:
+              type: integer
+              description: 扫描点数（对数均匀）
+              default: 20
+        impact_model:
+          type: object
+          description: 平方根冲击模型参数
+          properties:
+            eta:
+              type: number
+              description: 冲击系数（A 股经验值 0.5-1.5，默认 1.0）
+              default: 1.0
+            adv_window:
+              type: integer
+              description: ADV 滚动窗口（交易日数）
+              default: 20
+        constraints:
+          type: object
+          description: 容量约束（参考线，不做硬截断）
+          properties:
+            max_participation_rate:
+              type: number
+              description: 单笔订单参考参与率上限（默认 5%）
+              default: 0.05
+        closing_liquidity_ratio:
+          type: number
+          description: |
+            收盘流动性比例（盘后固定价格交易窗口占全天 ADV 的比例）。
+            日终策略推荐 0.05；<=0 表示用全天 ADV（日内模式）。
+          default: 0.0
+
+    CapacityResponse:
+      type: object
+      description: 容量扫描响应
+      properties:
+        strategy:
+          type: string
+        method:
+          type: string
+          description: 实际使用的 method（默认 turnover_market_share）
+        method_description:
+          type: string
+          description: method 的人类可读说明
+        closing_liquidity_ratio:
+          type: number
+        baseline:
+          type: object
+          description: 基准（零冲击）的指标
+          properties:
+            sharpe:
+              type: number
+            total_return:
+              type: number
+            max_drawdown:
+              type: number
+            win_rate:
+              type: number
+            n_trades:
+              type: integer
+        capacity_curve:
+          type: array
+          description: 每个资金量点的指标（对数均匀）
+          items:
+            type: object
+            properties:
+              capital:
+                type: number
+              sharpe:
+                type: number
+              total_return:
+                type: number
+              max_drawdown:
+                type: number
+              win_rate:
+                type: number
+              avg_participation:
+                type: number
+              max_participation:
+                type: number
+              avg_slippage_bps:
+                type: number
+              orders_above_limit:
+                type: integer
+              sharpe_decay:
+                type: number
+                description: 相对基准 Sharpe 的衰减率（0-1）
+        summary:
+          type: object
+          description: 容量摘要
+          properties:
+            capacity_20pct:
+              type: number
+              description: Sharpe 衰减 20% 对应的资金量（保守容量）
+            capacity_50pct:
+              type: number
+              description: Sharpe 衰减 50% 对应的资金量（激进容量）
+            bottleneck_symbol:
+              type: string
+              description: 瓶颈标的（按 method 对应 ADV 池，最小均值者）
+            bottleneck_adv:
+              type: number
+              description: 瓶颈标的的均值 ADV（按 method 对应，单位股数或元）
 
     Error:
       type: object

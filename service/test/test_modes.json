@@ -23,7 +23,8 @@
         "test_position_events",
         "test_xgboost",
         "test_decision",
-        "test_protection_node"
+        "test_protection_node",
+        "test_capacity_scan"
       ]
     },
     "tickflow": {

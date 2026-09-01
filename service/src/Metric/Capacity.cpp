@@ -9,12 +9,12 @@
 
 Vector<CapacityPoint> Capacity::scan(
     const Vector<CapacityTrade>& trades,
-    const Map<symbol_t, Vector<double>>& adv_data,
-    const Map<symbol_t, Vector<double>>& vol_data,
+    const Map<symbol_t, SymbolLiquidity>& market_data,
     double base_capital,
     double min_capital,
     double max_capital,
     int steps,
+    CapacityMethod method,
     double eta,
     double max_participation,
     double closing_liquidity_ratio)
@@ -28,9 +28,10 @@ Vector<CapacityPoint> Capacity::scan(
     for (const auto& t : trades) {
         total_days = std::max(total_days, t.day_index + 1);
     }
-    // 也从 adv_data 推断
-    for (const auto& [sym, adv] : adv_data) {
-        total_days = std::max(total_days, adv.size());
+    // 也从 market_data 推断
+    for (const auto& [sym, liq] : market_data) {
+        total_days = std::max(total_days, liq.volume_adv.size());
+        total_days = std::max(total_days, liq.turnover_adv.size());
     }
 
     // 对数均匀生成资金量序列
@@ -50,8 +51,8 @@ Vector<CapacityPoint> Capacity::scan(
         int orders_above = 0;
 
         auto daily_returns = replayWithImpact(
-            trades, adv_data, vol_data,
-            base_capital, capital, eta, total_days,
+            trades, market_data,
+            base_capital, capital, method, eta, total_days,
             max_participation, closing_liquidity_ratio,
             avg_part, max_part, avg_slippage_bps, orders_above
         );
@@ -82,10 +83,10 @@ Vector<CapacityPoint> Capacity::scan(
 
 Vector<double> Capacity::replayWithImpact(
     const Vector<CapacityTrade>& trades,
-    const Map<symbol_t, Vector<double>>& adv_data,
-    const Map<symbol_t, Vector<double>>& vol_data,
+    const Map<symbol_t, SymbolLiquidity>& market_data,
     double base_capital,
     double target_capital,
+    CapacityMethod method,
     double eta,
     size_t total_days,
     double max_participation,
@@ -115,8 +116,9 @@ Vector<double> Capacity::replayWithImpact(
         std::sort(sym_trades.begin(), sym_trades.end(),
             [](const auto* a, const auto* b) { return a->day_index < b->day_index; });
 
-        const auto& adv_series = adv_data.count(symbol) ? adv_data.at(symbol) : Vector<double>{};
-        const auto& vol_series = vol_data.count(symbol) ? vol_data.at(symbol) : Vector<double>{};
+        const SymbolLiquidity liq = market_data.count(symbol)
+            ? market_data.at(symbol)
+            : SymbolLiquidity{};
 
         // 配对买卖
         bool in_position = false;
@@ -129,13 +131,16 @@ Vector<double> Capacity::replayWithImpact(
             adjusted_shares = (adjusted_shares / 100) * 100;
             if (adjusted_shares <= 0) continue;
 
-            // 查当日 ADV 和波动率
+            // 查当日 ADV 和波动率（按 method 选 volume_adv 或 turnover_adv）
             double adv = 0, sigma = 0;
+            const Vector<double>& adv_series = (method == CapacityMethod::TURNOVER_MARKET_SHARE)
+                ? liq.turnover_adv
+                : liq.volume_adv;
             if (trade->day_index < adv_series.size()) {
                 adv = adv_series[trade->day_index];
             }
-            if (trade->day_index < vol_series.size()) {
-                sigma = vol_series[trade->day_index];
+            if (trade->day_index < liq.volatility.size()) {
+                sigma = liq.volatility[trade->day_index];
             }
 
             // 日终策略：流动性池 = ADV × closing_liquidity_ratio
@@ -144,7 +149,18 @@ Vector<double> Capacity::replayWithImpact(
                 liquidity = adv * closing_liquidity_ratio;
             }
 
-            double participation = (liquidity > 0) ? static_cast<double>(adjusted_shares) / liquidity : 0;
+            // 按 method 计算市占率
+            double participation = 0;
+            if (liquidity > 0) {
+                if (method == CapacityMethod::TURNOVER_MARKET_SHARE) {
+                    // 分子：订单成交额 = 调整后股数 × 成交价
+                    double order_turnover = static_cast<double>(adjusted_shares) * trade->price;
+                    participation = order_turnover / liquidity;
+                } else {
+                    // 分子：调整后股数
+                    participation = static_cast<double>(adjusted_shares) / liquidity;
+                }
+            }
             double slippage = computeSlippage(sigma, participation, eta);
 
             sum_part += participation;
@@ -247,8 +263,9 @@ void Capacity::computeMetrics(const Vector<double>& daily_returns, CapacityPoint
 
 CapacitySummary Capacity::computeSummary(
     const Vector<CapacityPoint>& curve,
-    const Map<symbol_t, Vector<double>>& adv_data,
-    double baseline_sharpe)
+    const Map<symbol_t, SymbolLiquidity>& market_data,
+    double baseline_sharpe,
+    CapacityMethod method)
 {
     CapacitySummary summary;
 
@@ -269,12 +286,14 @@ CapacitySummary Capacity::computeSummary(
         }
     }
 
-    // 找瓶颈标的（ADV 最小的标的）
+    // 找瓶颈标的（按 method 选 volume_adv 或 turnover_adv，均值最小者）
+    const bool use_turnover = (method == CapacityMethod::TURNOVER_MARKET_SHARE);
     double min_adv = 1e18;
-    for (const auto& [sym, adv] : adv_data) {
+    for (const auto& [sym, liq] : market_data) {
+        const Vector<double>& series = use_turnover ? liq.turnover_adv : liq.volume_adv;
         double avg_adv = 0;
         int count = 0;
-        for (double v : adv) {
+        for (double v : series) {
             if (v > 0) { avg_adv += v; count++; }
         }
         if (count > 0) avg_adv /= count;
@@ -293,38 +312,43 @@ CapacitySummary Capacity::computeSummary(
 bool Capacity::loadMarketData(
     const Vector<symbol_t>& symbols,
     int adv_window,
-    Map<symbol_t, Vector<double>>& out_adv,
-    Map<symbol_t, Vector<double>>& out_vol)
+    Map<symbol_t, SymbolLiquidity>& out_data)
 {
     for (const auto& sym : symbols) {
         String sym_str = get_symbol(sym);
 
-        // 加载 volume 和 close
-        auto data = LoadHistoryData(sym_str, {"close", "volume"});
-        if (data.empty() || !data.count("close") || !data.count("volume")) {
-            WARN("[Capacity] Failed to load data for {}", sym_str);
+        // 同时加载 close / volume / turnover，支撑两种 method
+        auto data = LoadHistoryData(sym_str, {"close", "volume", "turnover"});
+        if (data.empty() || !data.count("close") || !data.count("volume") || !data.count("turnover")) {
+            WARN("[Capacity] Failed to load data for {} (close/volume/turnover)", sym_str);
             return false;
         }
 
-        const auto& close = data.at("close");
-        const auto& volume = data.at("volume");
+        const auto& close    = data.at("close");
+        const auto& volume   = data.at("volume");
+        const auto& turnover = data.at("turnover");
         size_t n = close.size();
 
-        // 计算 ADV（rolling mean of volume）
-        Vector<double> adv(n, 0);
+        SymbolLiquidity liq;
+        liq.volume_adv.assign(n, 0.0);
+        liq.turnover_adv.assign(n, 0.0);
+        liq.volatility.assign(n, 0.0);
+
+        // 计算两组 ADV（rolling mean）
         for (size_t i = 0; i < n; ++i) {
             size_t start = (i >= static_cast<size_t>(adv_window)) ? i - adv_window + 1 : 0;
-            double sum = 0;
+            double sum_vol = 0, sum_to = 0;
             int count = 0;
             for (size_t j = start; j <= i; ++j) {
-                sum += volume[j];
+                sum_vol += volume[j];
+                sum_to  += turnover[j];
                 count++;
             }
-            adv[i] = (count > 0) ? sum / count : 0;
+            liq.volume_adv[i]   = (count > 0) ? sum_vol / count : 0;
+            liq.turnover_adv[i] = (count > 0) ? sum_to  / count : 0;
         }
 
-        // 计算日波动率（rolling std of daily returns）
-        Vector<double> vol(n, 0);
+        // 计算日波动率（rolling std of daily returns，年化）
         for (size_t i = 1; i < n; ++i) {
             size_t start = (i >= static_cast<size_t>(adv_window)) ? i - adv_window + 1 : 1;
             double sum = 0, sum2 = 0;
@@ -338,12 +362,11 @@ bool Capacity::loadMarketData(
             if (count > 1) {
                 double mean = sum / count;
                 double var = sum2 / count - mean * mean;
-                vol[i] = std::sqrt(std::max(var, 0.0)) * std::sqrt(252.0);
+                liq.volatility[i] = std::sqrt(std::max(var, 0.0)) * std::sqrt(252.0);
             }
         }
 
-        out_adv[sym] = std::move(adv);
-        out_vol[sym] = std::move(vol);
+        out_data[sym] = std::move(liq);
     }
 
     return true;

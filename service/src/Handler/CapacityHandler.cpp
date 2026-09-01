@@ -54,6 +54,14 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 日终策略：收盘流动性比例（默认 0 = 用全天 ADV，即日内模式）
     double closing_liquidity_ratio = params.value("closing_liquidity_ratio", 0.0);
 
+    // 容量计算方法（默认 turnover_market_share）
+    //   turnover_market_share: 市占率 = 订单成交额 / ADTV（默认，跨价格带更稳定）
+    //   volume_market_share:   市占率 = 订单股数 / ADV（保持旧实现行为）
+    String method_str = params.value("method", "turnover_market_share");
+    CapacityMethod method = (method_str == "volume_market_share")
+        ? CapacityMethod::VOLUME_MARKET_SHARE
+        : CapacityMethod::TURNOVER_MARKET_SHARE;
+
     // ── 2. 加载策略 JSON ─────────────────────────────────────
 
     String scripts_dir = "scripts";
@@ -204,9 +212,9 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     // ── 5. 加载市场数据 + 对齐 day_index ─────────────────────
 
     Vector<symbol_t> sym_vec(symbols.begin(), symbols.end());
-    Map<symbol_t, Vector<double>> adv_data, vol_data;
+    Map<symbol_t, SymbolLiquidity> market_data;
 
-    if (!Capacity::loadMarketData(sym_vec, adv_window, adv_data, vol_data)) {
+    if (!Capacity::loadMarketData(sym_vec, adv_window, market_data)) {
         strategySys->ReleaseStrategy(strategyName);
         res.status = 500;
         res.set_content(R"({"message":"Failed to load market data"})", "application/json");
@@ -243,9 +251,9 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     Capacity scanner;
     auto curve = scanner.scan(
-        trades, adv_data, vol_data,
+        trades, market_data,
         initialCapital, min_capital, max_capital, steps,
-        eta, max_participation, closing_liquidity_ratio
+        method, eta, max_participation, closing_liquidity_ratio
     );
 
     // 基准指标（第一个点）
@@ -279,7 +287,7 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     // 摘要
     double baseline_sharpe = curve.empty() ? 0 : curve[0].sharpe;
-    auto summary = Capacity::computeSummary(curve, adv_data, baseline_sharpe);
+    auto summary = Capacity::computeSummary(curve, market_data, baseline_sharpe, method);
 
     nlohmann::json summary_json;
     summary_json["capacity_20pct"] = summary.capacity_20pct;
@@ -291,6 +299,10 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     nlohmann::json result;
     result["strategy"] = strategyName;
+    result["method"] = method_str;
+    result["method_description"] = (method == CapacityMethod::TURNOVER_MARKET_SHARE)
+        ? "市占率 = 订单成交额 / 日均成交额(ADTV)"
+        : "市占率 = 订单股数 / 日均成交量(ADV)";
     result["baseline"] = baseline;
     result["capacity_curve"] = curve_json;
     result["summary"] = summary_json;
