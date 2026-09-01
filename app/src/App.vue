@@ -198,6 +198,12 @@
       <div v-else-if="is_visual_analysis">
         <AnalysisRightPanel />
       </div>
+      <div v-else-if="is_datacenter" style="height: 100%">
+        <DataCenterSymbolDetail
+          :symbol="selectedDataCenterSymbol"
+          :freq="selectedDataCenterFreq"
+        />
+      </div>
     </aside>
 
     <!-- 页脚 -->
@@ -302,6 +308,8 @@ import ChatBox from './components/ChatBox.vue'
 import { useChatStore } from './stores/chatStore'
 // 策略部署（multipart + XGBoost 模型上传）
 import { useStrategyDeploy } from './components/ml/composables/useStrategyDeploy'
+// 数据中心右侧详情面板
+import DataCenterSymbolDetail from './components/datacenter/DataCenterSymbolDetail.vue'
 
 const chatStore = useChatStore()
 
@@ -480,6 +488,10 @@ let useOperaion = ref(0)
 // 持仓证券的信息
 const selectedSecurity = ref(null)
 const highlightTradePanel = ref(false)    // 高亮交易面板
+
+// 数据中心选中标的（右侧详情面板显示）
+const selectedDataCenterSymbol = ref(null)
+const selectedDataCenterFreq = ref('1d')
 // 投资组合相关
 const currentStrategyId = ref('')  // 当前策略图 ID
 const currentPortfolioConfig = ref(null)  // 当前选中的组合配置
@@ -636,6 +648,9 @@ onMounted(() => {
 
   // 监听策略可视化调试事件（从 FlowComponents 触发）
   window.addEventListener('visualize-strategy', onVisualizeStrategy)
+
+  // 监听数据中心选中标的（从 DataCenter 表格点击触发）
+  window.addEventListener('datacenter-symbol-selected', onDataCenterSymbolSelected)
 })
 
 onUnmounted(() => {
@@ -643,6 +658,7 @@ onUnmounted(() => {
   window.removeEventListener('loginSuccess', onLoginSucess)
   window.removeEventListener('open-portfolio-manager', onHandlePortfolioMananger)
   window.removeEventListener('visualize-strategy', onVisualizeStrategy)
+  window.removeEventListener('datacenter-symbol-selected', onDataCenterSymbolSelected)
   uninitServerEvent()
   if (_strategyTimer) {
     clearInterval(_strategyTimer)
@@ -685,7 +701,6 @@ const onVisualizeDebug = (debugNodeId) => {
  */
 const onVisualizeStrategy = (event) => {
   const { debugNodeId, debugNodes, nodes, edges, strategyId, versionId } = event.detail
-
   console.log('[App] visualize-strategy 事件:', { strategyId, versionId, debugNodeId, debugNodesCount: debugNodes?.length })
 
   // 保存当前策略编辑状态
@@ -711,6 +726,16 @@ const onVisualizeStrategy = (event) => {
   }))
   
   message.success('已切换到可视化分析面板')
+}
+
+/**
+ * 数据中心选中标的：更新右侧面板 props
+ */
+const onDataCenterSymbolSelected = (event) => {
+  const { symbol, freq } = event.detail || {}
+  if (!symbol) return
+  selectedDataCenterSymbol.value = symbol
+  if (freq) selectedDataCenterFreq.value = freq
 }
 
 /**

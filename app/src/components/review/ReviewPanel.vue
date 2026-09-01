@@ -69,7 +69,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useHistoryStore, type BacktestResult } from '@/stores/history'
 import BasicMetricsTab from './tabs/BasicMetricsTab.vue'
 import AttributionTab from './tabs/AttributionTab.vue'
 import SensitivityTab from './tabs/SensitivityTab.vue'
@@ -83,13 +84,13 @@ const props = defineProps<Props>()
 
 // === Tab 定义 ===
 const tabs = [
+  { key: 'trades', label: '交易明细', icon: 'fas fa-list' },
   { key: 'metrics', label: '基础指标', icon: 'fas fa-chart-bar' },
   { key: 'attribution', label: '归因分析', icon: 'fas fa-layer-group' },
   { key: 'sensitivity', label: '敏感性分析', icon: 'fas fa-sliders-h' },
-  { key: 'trades', label: '交易明细', icon: 'fas fa-list' },
 ]
 
-const activeTab = ref('metrics')
+const activeTab = ref('trades')
 const hasData = ref(false)
 
 // === 回测信息 ===
@@ -220,199 +221,152 @@ function clearData() {
   hasData.value = false
 }
 
-function generateDateRange(startDate: string, endDate: string): string[] {
-  const dates: string[] = []
-  let current = new Date(startDate)
-  const end = new Date(endDate)
-
-  while (current <= end) {
-    const day = current.getDay()
-    if (day !== 0 && day !== 6) {
-      dates.push(current.toISOString().split('T')[0])
-    }
-    current.setDate(current.getDate() + 1)
-  }
-
-  return dates
+function formatUnixDate(timestamp: number): string {
+  const d = new Date(timestamp * 1000)
+  const Y = d.getFullYear() + '-'
+  const M = (d.getMonth() + 1 < 10 ? '0' + (d.getMonth() + 1) : d.getMonth() + 1) + '-'
+  const D = d.getDate() < 10 ? '0' + d.getDate() : '' + d.getDate()
+  return Y + M + D
 }
 
-function generateMockTrades(count: number): TradeRecord[] {
-  const trades: TradeRecord[] = []
-  const symbols = ['600000.SH', '000001.SZ', '600519.SH', '000858.SZ', '601318.SH']
-  let date = new Date('2023-01-01')
-
-  for (let i = 0; i < count; i++) {
-    const symbol = symbols[i % symbols.length]
-    const direction = i % 2 === 0 ? 'buy' : 'sell'
-    const price = 10 + Math.random() * 50
-    const quantity = Math.floor(100 + Math.random() * 900)
-    const amount = price * quantity
-    const commission = amount * 0.0003
-
-    trades.push({
-      id: `trade-${i}`,
-      symbol,
-      direction,
-      price: parseFloat(price.toFixed(2)),
-      quantity,
-      amount: parseFloat(amount.toFixed(2)),
-      commission: parseFloat(commission.toFixed(2)),
-      timestamp: date.toISOString().split('T')[0],
-      pnl: direction === 'sell' ? (Math.random() - 0.4) * amount * 0.1 : undefined,
-    })
-
-    date.setDate(date.getDate() + Math.floor(Math.random() * 5) + 1)
-  }
-
-  return trades
-}
-
-function generateMockHoldingPeriods(count: number): HoldingPeriod[] {
-  const periods: HoldingPeriod[] = []
-  const symbols = ['600000.SH', '000001.SZ', '600519.SH', '000858.SZ', '601318.SH']
-  let buyDate = new Date('2023-01-01')
-
-  for (let i = 0; i < count; i++) {
-    const symbol = symbols[i % symbols.length]
-    const buyPrice = 10 + Math.random() * 50
-    const sellPrice = buyPrice * (1 + (Math.random() - 0.4) * 0.2)
-    const holdingDays = Math.floor(5 + Math.random() * 60)
-    const pnl = (sellPrice - buyPrice) * 100
-    const pnlPercent = (sellPrice - buyPrice) / buyPrice * 100
-
-    const sellDate = new Date(buyDate)
-    sellDate.setDate(sellDate.getDate() + holdingDays)
-
-    periods.push({
-      symbol,
-      buyDate: buyDate.toISOString().split('T')[0],
-      sellDate: sellDate.toISOString().split('T')[0],
-      buyPrice: parseFloat(buyPrice.toFixed(2)),
-      sellPrice: parseFloat(sellPrice.toFixed(2)),
-      holdingDays,
-      pnl: parseFloat(pnl.toFixed(2)),
-      pnlPercent: parseFloat(pnlPercent.toFixed(2)),
-    })
-
-    buyDate = sellDate
-  }
-
-  return periods
-}
-
-function loadMockData() {
-  backtestInfo.value = {
-    startDate: '2023-01-01',
-    endDate: '2024-12-31',
+function extractBacktestInfo(result: BacktestResult): BacktestInfo {
+  const ts = result.dailyDates && result.dailyDates.length > 0 ? result.dailyDates : null
+  const allSignalTs = [
+    ...(result.buy || []).map(s => s[1]),
+    ...(result.sell || []).map(s => s[1]),
+  ]
+  const startTs = ts ? ts[0] : (allSignalTs.length > 0 ? Math.min(...allSignalTs) : null)
+  const endTs = ts ? ts[ts.length - 1] : (allSignalTs.length > 0 ? Math.max(...allSignalTs) : null)
+  return {
+    startDate: startTs ? formatUnixDate(startTs) : '-',
+    endDate: endTs ? formatUnixDate(endTs) : '-',
     initialCapital: 1000000,
   }
+}
 
-  metricsData.value = {
-    total_return: 0.3542,
-    annual_return: 0.1623,
-    max_drawdown: 0.1245,
-    volatility: 0.1834,
-    sharp: 0.82,
-    calmar_ratio: 1.30,
-    win_rate: 0.58,
-    num_trades: 156,
-    VAR: 0.0234,
-    ES: 0.0312,
+function extractDailyReturns(result: BacktestResult): [string, number][] {
+  if (!result.dailyReturns || !result.dailyDates) return []
+  return result.dailyDates.map((ts, i) => [formatUnixDate(ts), result.dailyReturns![i]])
+}
+
+function extractNavCurve(result: BacktestResult): [string, number][] {
+  const ts = result.chartData?.performance?.timestamps
+  const vals = result.chartData?.performance?.values?.[0]
+  if (!ts || !vals) return []
+  return ts.map((t, i) => [formatUnixDate(t), vals[i]])
+}
+
+function extractBenchmarkCurve(result: BacktestResult): [string, number][] {
+  const ts = result.chartData?.performance?.timestamps
+  const vals = result.chartData?.performance?.values?.[1]
+  if (!ts || !vals) return []
+  return ts.map((t, i) => [formatUnixDate(t), vals[i]])
+}
+
+function extractDrawdownCurve(result: BacktestResult): [string, number][] {
+  const ts = result.chartData?.drawdown?.timestamps
+  const vals = result.chartData?.drawdown?.values?.[0]
+  if (!ts || !vals) return []
+  return ts.map((t, i) => [formatUnixDate(t), -vals[i]])
+}
+
+function extractTradesAndHoldings(result: BacktestResult): {
+  trades: TradeRecord[]
+  holdings: HoldingPeriod[]
+} {
+  const trades: TradeRecord[] = []
+  const holdings: HoldingPeriod[] = []
+  type Sig = { dir: 'buy' | 'sell'; sym: string; ts: number; qty: number; price: number }
+  const buyQueues = new Map<string, Array<{ ts: number; qty: number; price: number }>>()
+  const signals: Sig[] = [
+    ...(result.buy || []).map(s => ({ dir: 'buy' as const, sym: s[0], ts: s[1], qty: s[2], price: s[3] })),
+    ...(result.sell || []).map(s => ({ dir: 'sell' as const, sym: s[0], ts: s[1], qty: s[2], price: s[3] })),
+  ].sort((a, b) => a.ts - b.ts)
+
+  let id = 0
+  for (const sig of signals) {
+    const trade: TradeRecord = {
+      id: `t${id++}`,
+      symbol: sig.sym,
+      direction: sig.dir,
+      price: sig.price,
+      quantity: sig.qty,
+      amount: sig.price * sig.qty,
+      commission: 0,
+      timestamp: formatUnixDate(sig.ts),
+    }
+
+    if (sig.dir === 'buy') {
+      if (!buyQueues.has(sig.sym)) buyQueues.set(sig.sym, [])
+      buyQueues.get(sig.sym)!.push({ ts: sig.ts, qty: sig.qty, price: sig.price })
+    } else {
+      const queue = buyQueues.get(sig.sym)
+      if (queue && queue.length > 0) {
+        let remainingQty = sig.qty
+        let sellPnl = 0
+        let matchedQty = 0
+        while (remainingQty > 0 && queue.length > 0) {
+          const front = queue[0]
+          const matchQty = Math.min(front.qty, remainingQty)
+          const pnl = (sig.price - front.price) * matchQty
+          holdings.push({
+            symbol: sig.sym,
+            buyDate: formatUnixDate(front.ts),
+            sellDate: formatUnixDate(sig.ts),
+            buyPrice: front.price,
+            sellPrice: sig.price,
+            holdingDays: Math.max(1, Math.round((sig.ts - front.ts) / 86400)),
+            pnl: parseFloat(pnl.toFixed(2)),
+            pnlPercent: parseFloat(((sig.price / front.price - 1) * 100).toFixed(2)),
+          })
+          sellPnl += pnl
+          matchedQty += matchQty
+          front.qty -= matchQty
+          remainingQty -= matchQty
+          if (front.qty === 0) queue.shift()
+        }
+        if (matchedQty > 0) {
+          trade.pnl = parseFloat(sellPnl.toFixed(2))
+        }
+      }
+    }
+
+    trades.push(trade)
   }
 
-  const dates = generateDateRange('2023-01-01', '2024-12-31')
-  dailyReturns.value = dates.map(d => [d, (Math.random() - 0.48) * 0.03])
-
-  let nav = 1.0
-  navCurve.value = dates.map(d => {
-    const ret = (Math.random() - 0.48) * 0.03
-    nav *= (1 + ret)
-    return [d, nav]
-  })
-
-  let bench = 1.0
-  benchmarkCurve.value = dates.map(d => {
-    const ret = (Math.random() - 0.50) * 0.025
-    bench *= (1 + ret)
-    return [d, bench]
-  })
-
-  let peak = 1.0
-  drawdownCurve.value = navCurve.value.map(([d, navVal]) => {
-    if (navVal > peak) peak = navVal
-    const dd = (peak - navVal) / peak
-    return [d, -dd]
-  })
-
-  attributionData.value = {
-    totalReturn: 0.3542,
-    selectionEffect: 0.12,
-    allocationEffect: 0.08,
-    interactionEffect: 0.03,
-    sectorBreakdown: [
-      { name: '金融', weight: 0.25, return: 0.18, contribution: 0.045 },
-      { name: '科技', weight: 0.30, return: 0.25, contribution: 0.075 },
-      { name: '消费', weight: 0.20, return: 0.12, contribution: 0.024 },
-      { name: '医药', weight: 0.15, return: 0.08, contribution: 0.012 },
-      { name: '其他', weight: 0.10, return: 0.15, contribution: 0.015 },
-    ],
-  }
-
-  periodReturns.value = [
-    { period: '2023 Q1', strategyReturn: 0.085, benchmarkReturn: 0.062, excessReturn: 0.023 },
-    { period: '2023 Q2', strategyReturn: 0.042, benchmarkReturn: 0.038, excessReturn: 0.004 },
-    { period: '2023 Q3', strategyReturn: -0.035, benchmarkReturn: -0.042, excessReturn: 0.007 },
-    { period: '2023 Q4', strategyReturn: 0.068, benchmarkReturn: 0.055, excessReturn: 0.013 },
-    { period: '2024 Q1', strategyReturn: 0.092, benchmarkReturn: 0.071, excessReturn: 0.021 },
-    { period: '2024 Q2', strategyReturn: 0.055, benchmarkReturn: 0.048, excessReturn: 0.007 },
-    { period: '2024 Q3', strategyReturn: 0.038, benchmarkReturn: 0.032, excessReturn: 0.006 },
-    { period: '2024 Q4', strategyReturn: 0.072, benchmarkReturn: 0.058, excessReturn: 0.014 },
-  ]
-
-  styleExposure.value = [
-    { factor: '市值', exposure: 0.15, contribution: 0.023 },
-    { factor: '估值', exposure: -0.08, contribution: -0.012 },
-    { factor: '动量', exposure: 0.22, contribution: 0.034 },
-    { factor: '波动率', exposure: -0.12, contribution: -0.018 },
-    { factor: '流动性', exposure: 0.05, contribution: 0.008 },
-  ]
-
-  paramSensitivity.value = [
-    {
-      paramName: '均线周期',
-      values: [5, 10, 15, 20, 25, 30],
-      returns: [0.28, 0.35, 0.32, 0.29, 0.25, 0.22],
-      sharpeRatios: [0.75, 0.82, 0.78, 0.73, 0.68, 0.62],
-      maxDrawdowns: [0.14, 0.12, 0.13, 0.15, 0.17, 0.19],
-    },
-  ]
-
-  costSensitivity.value = [
-    { commissionRate: 0.0001, slippageRate: 0.001, totalReturn: 0.38, sharpeRatio: 0.88, numTrades: 156 },
-    { commissionRate: 0.0003, slippageRate: 0.002, totalReturn: 0.35, sharpeRatio: 0.82, numTrades: 156 },
-    { commissionRate: 0.0005, slippageRate: 0.003, totalReturn: 0.32, sharpeRatio: 0.76, numTrades: 156 },
-    { commissionRate: 0.001, slippageRate: 0.005, totalReturn: 0.28, sharpeRatio: 0.68, numTrades: 156 },
-    { commissionRate: 0.002, slippageRate: 0.01, totalReturn: 0.22, sharpeRatio: 0.55, numTrades: 156 },
-  ]
-
-  periodSensitivity.value = [
-    { period: '全样本', startDate: '2023-01-01', endDate: '2024-12-31', totalReturn: 0.3542, sharpeRatio: 0.82, maxDrawdown: 0.1245 },
-    { period: '2023', startDate: '2023-01-01', endDate: '2023-12-31', totalReturn: 0.158, sharpeRatio: 0.75, maxDrawdown: 0.098 },
-    { period: '2024', startDate: '2024-01-01', endDate: '2024-12-31', totalReturn: 0.168, sharpeRatio: 0.88, maxDrawdown: 0.085 },
-    { period: '2023H1', startDate: '2023-01-01', endDate: '2023-06-30', totalReturn: 0.092, sharpeRatio: 0.72, maxDrawdown: 0.065 },
-    { period: '2023H2', startDate: '2023-07-01', endDate: '2023-12-31', totalReturn: 0.058, sharpeRatio: 0.68, maxDrawdown: 0.072 },
-  ]
-
-  tradeRecords.value = generateMockTrades(50)
-  holdingPeriods.value = generateMockHoldingPeriods(25)
-
-  hasData.value = true
+  return { trades, holdings }
 }
 
 // === 对外暴露方法 ===
 
-function loadData() {
-  loadMockData()
+async function loadData() {
+  clearData()
+  if (!props.strategyId) return
+
+  const historyStore = useHistoryStore()
+  const version = historyStore.getLatestVersion(props.strategyId)
+  if (!version) {
+    console.info(`[ReviewPanel] 策略 ${props.strategyId} 暂无版本`)
+    return
+  }
+
+  const result = await historyStore.loadBacktestResult(version.id)
+  if (!result) {
+    console.info(`[ReviewPanel] 版本 ${version.id} 暂无回测结果`)
+    return
+  }
+
+  backtestInfo.value = extractBacktestInfo(result)
+  metricsData.value = result.features || {}
+  dailyReturns.value = extractDailyReturns(result)
+  navCurve.value = extractNavCurve(result)
+  benchmarkCurve.value = extractBenchmarkCurve(result)
+  drawdownCurve.value = extractDrawdownCurve(result)
+  const { trades, holdings } = extractTradesAndHoldings(result)
+  tradeRecords.value = trades
+  holdingPeriods.value = holdings
+
+  hasData.value = true
 }
 
 function reset() {

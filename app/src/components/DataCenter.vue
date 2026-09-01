@@ -43,50 +43,119 @@
                     <i class="fas chevron-icon" :class="downloadExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
                 </div>
                 <div v-show="downloadExpanded" class="download-body">
-                    <!-- K线下载 -->
-                    <div class="download-card">
-                        <div class="card-title"><i class="fas fa-chart-line"></i> K线数据</div>
-                        <div class="input-row">
+                    <!-- 统一下载入口：按标的 / 按策略 / 批量选中 -->
+                    <div class="download-cards-grid">
+                        <!-- 按标的下载 -->
+                        <div class="download-card">
+                            <div class="card-title"><i class="fas fa-crosshairs"></i> 按标的下载</div>
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label>频率</label>
+                                    <select v-model="quoteFreq" class="quote-select">
+                                        <option value="daily">日线</option>
+                                        <option value="5m">5分钟</option>
+                                        <option value="15m">15分钟</option>
+                                        <option value="30m">30分钟</option>
+                                        <option value="60m">60分钟</option>
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label>开始日期</label>
+                                    <input type="date" v-model="quoteStartDate" />
+                                </div>
+                                <div class="input-group">
+                                    <label>结束日期</label>
+                                    <input type="date" v-model="quoteEndDate" />
+                                </div>
+                            </div>
                             <div class="input-group">
-                                <label>频率</label>
-                                <select v-model="quoteFreq" class="quote-select">
-                                    <option value="daily">日线</option>
-                                    <option value="5m">5分钟</option>
-                                    <option value="15m">15分钟</option>
-                                    <option value="30m">30分钟</option>
-                                    <option value="60m">60分钟</option>
+                                <label>标的代码 (逗号分隔)</label>
+                                <input type="text" placeholder="510300.SH, 510500.SH" v-model="quoteSymbols">
+                            </div>
+                            <div class="button-row">
+                                <button class="btn btn-primary" @click="onHandleQuoteDownload" :disabled="quoteDownloading || !isLoggedIn">
+                                    <i class="fas fa-download"></i>
+                                    {{ quoteDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 按策略下载 -->
+                        <div class="download-card">
+                            <div class="card-title"><i class="fas fa-project-diagram"></i> 按策略下载</div>
+                            <div class="input-group">
+                                <label>策略</label>
+                                <select v-model="quoteStrategy" class="quote-select">
+                                    <option value="">选择策略…</option>
+                                    <option v-for="s in historyStore.strategies" :key="s.id" :value="s.name">
+                                        {{ s.name }}
+                                    </option>
                                 </select>
                             </div>
-                            <div class="input-group">
-                                <label>开始日期</label>
-                                <input type="date" v-model="quoteStartDate" />
+                            <div v-if="quoteStrategy" class="pool-summary">
+                                标的池: <strong>{{ quoteStrategySymbolCount }}</strong> 个
                             </div>
-                            <div class="input-group">
-                                <label>结束日期</label>
-                                <input type="date" v-model="quoteEndDate" />
-                            </div>
-                        </div>
-                        <div class="input-group">
-                            <label>标的代码 (逗号分隔)</label>
-                            <input type="text" placeholder="510300.SH, 510500.SH" v-model="quoteSymbols">
-                        </div>
-                        <div class="button-row">
-                            <button class="btn btn-primary" @click="onHandleQuoteDownload" :disabled="quoteDownloading || !isLoggedIn">
-                                <i class="fas fa-download"></i>
-                                {{ quoteDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
-                            </button>
-                            <span v-if="!isLoggedIn" class="login-hint">💡 需要先登录</span>
-                        </div>
-                        <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
-                            {{ quoteStatus }}
-                        </div>
-                        <div v-if="quoteLogs.length" class="quote-log-box">
-                            <div class="quote-log-title">下载日志</div>
-                            <div class="quote-log-content" ref="quoteLogRef">
-                                <div v-for="(log, i) in quoteLogs" :key="i" class="quote-log-line"
-                                     :class="{ 'log-error': log.type === 'error', 'log-success': log.type === 'done' }">
-                                    <span class="log-time">{{ log.time }}</span> {{ log.text }}
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label>频率</label>
+                                    <select v-model="quoteStrategyFreq" class="quote-select">
+                                        <option value="daily">日线</option>
+                                        <option value="5m">5分钟</option>
+                                        <option value="15m">15分钟</option>
+                                        <option value="30m">30分钟</option>
+                                        <option value="60m">60分钟</option>
+                                    </select>
                                 </div>
+                                <div class="input-group">
+                                    <label>开始日期</label>
+                                    <input type="date" v-model="quoteStrategyStartDate" />
+                                </div>
+                                <div class="input-group">
+                                    <label>结束日期</label>
+                                    <input type="date" v-model="quoteStrategyEndDate" />
+                                </div>
+                            </div>
+                            <div class="button-row">
+                                <button class="btn btn-primary" @click="onDownloadQuoteByStrategy"
+                                        :disabled="quoteStrategyDownloading || !isLoggedIn || !quoteStrategy">
+                                    <i class="fas fa-download"></i>
+                                    {{ quoteStrategyDownloading ? '下载中...' : '下载策略标的池' }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 批量下载选中（增量到最新） -->
+                        <div class="download-card">
+                            <div class="card-title"><i class="fas fa-tasks"></i> 批量下载选中</div>
+                            <div class="pool-summary">
+                                已选 <strong>{{ selectedSymbols.size }}</strong> 只标的
+                                <span v-if="selectedSymbols.size === 0" class="hint">（在下方表格勾选）</span>
+                            </div>
+                            <div class="input-group">
+                                <label>起始日期 (可选)</label>
+                                <input type="date" v-model="quoteBatchStartDate" placeholder="留空按各标的 end_time+1" />
+                                <small class="field-hint">留空则按各标的已有 end_time 增量下载到最新</small>
+                            </div>
+                            <div class="button-row">
+                                <button class="btn btn-primary" @click="onBatchDownloadSelected"
+                                        :disabled="updatingSymbol || !isLoggedIn || selectedSymbols.size === 0">
+                                    <i class="fas fa-cloud-download-alt"></i>
+                                    {{ updatingSymbol ? '下载中...' : '批量下载到最新' }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 共享状态 + 日志 -->
+                    <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
+                        {{ quoteStatus }}
+                    </div>
+                    <div v-if="quoteLogs.length" class="quote-log-box">
+                        <div class="quote-log-title">下载日志</div>
+                        <div class="quote-log-content" ref="quoteLogRef">
+                            <div v-for="(log, i) in quoteLogs" :key="i" class="quote-log-line"
+                                 :class="{ 'log-error': log.type === 'error', 'log-success': log.type === 'done' }">
+                                <span class="log-time">{{ log.time }}</span> {{ log.text }}
                             </div>
                         </div>
                     </div>
@@ -186,13 +255,18 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="(item, idx) in pagedSymbols" :key="`${item.table}-${item.symbol}`">
+                                <tr v-for="(item, idx) in pagedSymbols" :key="`${item.table}-${item.symbol}`"
+                                    :class="{ 'row-selected': selectedDetailKey === itemKey(item) }">
                                     <td class="col-checkbox">
                                         <input type="checkbox" :checked="isSelected(item)" @change="toggleSelect(item)">
                                     </td>
                                     <td class="asset-type">{{ item.assetType }}</td>
-                                    <td class="freq">{{ item.freq }}</td>
-                                    <td class="symbol-code">{{ item.symbol }}</td>
+                                    <td class="freq" :class="{ 'freq-daily': item.rawFreq === '1d' || item.rawFreq === 'daily' }">
+                                        <i class="fas fa-clock freq-icon"></i>{{ item.freq }}
+                                    </td>
+                                    <td class="symbol-code clickable" @click="onSymbolRowClick(item)" :title="`点击查看 ${item.symbol} 详情`">
+                                        {{ item.symbol }}
+                                    </td>
                                     <td class="time-range">{{ item.start_time || '-' }}</td>
                                     <td class="time-range">{{ item.end_time || '-' }}</td>
                                     <td class="symbol-count">{{ item.count.toLocaleString() }}</td>
@@ -331,12 +405,15 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="item in pagedFinanceItems" :key="`${item.category}-${item.symbol}`">
+                            <tr v-for="item in pagedFinanceItems" :key="`${item.category}-${item.symbol}`"
+                                :class="{ 'row-selected': selectedDetailKey === `finance|${item.category}|${item.symbol}` }">
                                 <td class="col-checkbox">
                                     <input type="checkbox" :checked="isFinanceSelected(item)" @change="toggleFinanceSelect(item)" />
                                 </td>
                                 <td>{{ categoryNameMap[item.category] || item.category }}</td>
-                                <td class="symbol-code">{{ item.symbol }}</td>
+                                <td class="symbol-code clickable" @click="onFinanceRowClick(item)" :title="`点击查看 ${item.symbol} 详情`">
+                                    {{ item.symbol }}
+                                </td>
                                 <td class="actions">
                                     <button class="btn-info btn-xs" @click="onViewFinanceDetail(item)">详情</button>
                                     <button class="btn-danger btn-xs" @click="onDeleteFinanceSymbol(item)">删除</button>
@@ -731,6 +808,28 @@ const quoteStatus = ref('')
 const quoteLogs = ref<any[]>([])
 const quoteLogRef = ref<HTMLElement | null>(null)
 
+// 按策略下载行情（与 dividend tab 同样思路：取最新版本 flowData → 提取 symbols）
+const quoteStrategy = ref('')
+const quoteStrategySymbols = ref('')
+const quoteStrategyFreq = ref('1d')
+const quoteStrategyStartDate = ref('')
+const quoteStrategyEndDate = ref('')
+const quoteStrategyDownloading = ref(false)
+const quoteStrategySymbolCount = computed(() => {
+    if (!quoteStrategySymbols.value) return 0
+    return quoteStrategySymbols.value.split(',').filter(s => s.trim()).length
+})
+
+// 批量下载选中：可选起始日期（留空按各标的 end_time+1）
+const quoteBatchStartDate = ref('')
+
+// 按代码补全交易所后缀：纯数字 6 位 + 'SH' (默认)；可由 caller 覆盖
+function toApiSymbol(code: string): string {
+    const c = code.trim()
+    if (c.includes('.')) return c.toUpperCase()
+    return `${c}.SH`
+}
+
 // 服务端数据列表状态
 const quoteDataList = ref<any[]>([])
 const loadingQuoteData = ref(false)
@@ -836,6 +935,35 @@ watch(dividendStrategy, async (name) => {
         dividendStrategySymbols.value = ''
     }
 })
+
+// 行情「按策略下载」：选策略后从本地流程图提取标的池
+watch(quoteStrategy, async (name) => {
+    if (!name) {
+        quoteStrategySymbols.value = ''
+        return
+    }
+    const strategy = historyStore.strategies.find(s => s.name === name)
+    if (!strategy) {
+        quoteStrategySymbols.value = ''
+        return
+    }
+    const versions = historyStore.getVersionsByStrategy(strategy.id)
+    if (versions.length === 0) {
+        quoteStrategySymbols.value = ''
+        return
+    }
+    const sorted = [...versions].sort((a, b) =>
+        new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+    )
+    const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
+    if (flowData) {
+        const securities = extractSecuritiesFromFlowData(flowData as any)
+        quoteStrategySymbols.value = securities.map(s => toApiSymbol(s.code)).join(',')
+    } else {
+        quoteStrategySymbols.value = ''
+    }
+})
+
 const dividendQueryDate = ref('')
 const dividendQueryCode = ref('')
 const dividendDownloadSymbols = ref('')
@@ -987,7 +1115,7 @@ const allFlatSymbols = computed(() => {
         const freq = freqMap[rawFreq] || rawFreq
 
         for (const sym of table.symbols) {
-            result.push({ table: table.table, assetType, freq, ...sym })
+            result.push({ table: table.table, assetType, freq, rawFreq, ...sym })
         }
     }
     return result
@@ -1052,6 +1180,28 @@ const isAllSelected = computed(() => {
 })
 
 const itemKey = (item: any) => `${item.table}|${item.symbol}`
+
+// ── 右侧详情面板：选中标的 ──
+const selectedDetailKey = ref<string | null>(null)
+
+const onSymbolRowClick = (item: any) => {
+    const key = itemKey(item)
+    // 切换选中：点击同一行再次切换（不实现，用户要求无需清除）
+    selectedDetailKey.value = key
+    // 把 table 名解析为 freq 名（兼容 stock_5m 等），rawFreq 已挂上 item
+    const rawFreq = item.rawFreq || '1d'
+    window.dispatchEvent(new CustomEvent('datacenter-symbol-selected', {
+        detail: { symbol: item.symbol, freq: rawFreq }
+    }))
+}
+
+const onFinanceRowClick = (item: any) => {
+    // 基本面无 freq 概念，默认 1d
+    selectedDetailKey.value = `finance|${item.category}|${item.symbol}`
+    window.dispatchEvent(new CustomEvent('datacenter-symbol-selected', {
+        detail: { symbol: item.symbol, freq: '1d' }
+    }))
+}
 
 const isSelected = (item: any) => selectedSymbols.value.has(itemKey(item))
 
@@ -1228,6 +1378,62 @@ const onHandleQuoteDownload = async () => {
         quoteDownloading.value = false
         quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
         addQuoteLog(`请求失败: ${err.message}`, 'error')
+    }
+}
+
+// 行情「批量下载选中」：复用 onBatchUpdateSymbols 的按 table+end_time 分组逻辑
+const onBatchDownloadSelected = async () => {
+    if (!isLoggedIn.value) {
+        quoteStatus.value = '请先登录'
+        return
+    }
+    if (selectedSymbols.value.size === 0) {
+        quoteStatus.value = '请先在下方表格勾选标的'
+        return
+    }
+    // 当前实现 = 增量到最新（每标的按 end_time+1 开始）
+    // quoteBatchStartDate 作为预留：未来如需强制从某日开始重下可启用
+    addQuoteLog(`开始批量下载选中: ${selectedSymbols.value.size} 只标的`)
+    await onBatchUpdateSymbols()
+}
+
+// 行情「按策略下载」：取策略标的池 → POST /v0/quote
+const onDownloadQuoteByStrategy = async () => {
+    if (!isLoggedIn.value) {
+        quoteStatus.value = '请先登录'
+        return
+    }
+    if (!quoteStrategy.value) {
+        quoteStatus.value = '请先选择策略'
+        return
+    }
+    if (!quoteStrategySymbols.value) {
+        quoteStatus.value = '所选策略没有可用标的'
+        return
+    }
+
+    quoteStrategyDownloading.value = true
+    quoteStatus.value = `正在从策略「${quoteStrategy.value}」下载 ${quoteStrategySymbolCount.value} 个标的...`
+    quoteLogs.value = []
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        await axios.post(`https://${server}/v0/quote`, {
+            symbols: quoteStrategySymbols.value,
+            freq: quoteStrategyFreq.value,
+            start: quoteStrategyStartDate.value || undefined,
+            end: quoteStrategyEndDate.value || undefined,
+        }, {
+            headers: { 'Authorization': token || '' }
+        })
+        addQuoteLog(`✓ 已提交下载请求：${quoteStrategySymbolCount.value} 个标的 (${quoteStrategyFreq.value})`)
+    } catch (err: any) {
+        quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
+        addQuoteLog(`请求失败: ${err.message}`, 'error')
+    } finally {
+        quoteStrategyDownloading.value = false
     }
 }
 
@@ -2355,15 +2561,43 @@ const onOptionDeleteAll = async () => {
 }
 .download-body {
     display: flex;
+    flex-direction: column;
     gap: 12px;
     padding: 12px;
 }
+.download-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
 .download-card {
-    flex: 1;
     border: 1px solid rgba(74, 85, 104, 0.2);
     border-radius: 4px;
     padding: 10px 12px;
     background: rgba(15, 20, 35, 0.3);
+}
+.pool-summary {
+    font-size: 12px;
+    color: #b0b0b0;
+    padding: 6px 8px;
+    background: rgba(74, 158, 255, 0.08);
+    border-radius: 3px;
+    margin-bottom: 8px;
+}
+.pool-summary strong {
+    color: #4a9eff;
+    font-size: 14px;
+}
+.pool-summary .hint {
+    color: #888;
+    margin-left: 4px;
+    font-size: 11px;
+}
+.field-hint {
+    display: block;
+    color: #888;
+    font-size: 10px;
+    margin-top: 3px;
 }
 .card-title {
     color: #e0e0e0;
@@ -2433,12 +2667,13 @@ const onOptionDeleteAll = async () => {
 }
 
 .card-label {
-    color: #94a3b8;
+    color: #e0e0e0;
     font-size: 12px;
     font-weight: 600;
     display: flex;
     align-items: center;
     gap: 6px;
+    margin-bottom: 4px;
 }
 
 .action-btn-row {
@@ -2834,6 +3069,16 @@ select option {
     text-align: center;
     white-space: nowrap;
 }
+.freq-icon {
+    margin-right: 4px;
+    opacity: 0.6;
+    font-size: 10px;
+}
+.freq-daily {
+    background: rgba(74, 222, 128, 0.12);
+    color: #4ade80;
+    border-radius: 3px;
+}
 .table-name {
     font-family: 'Courier New', monospace;
     color: #2962ff;
@@ -2844,6 +3089,24 @@ select option {
     font-family: 'Courier New', monospace;
     color: #60a5fa;
     font-weight: 600;
+}
+.symbol-code.clickable {
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+.symbol-code.clickable:hover {
+    color: #93c5fd;
+    background: rgba(96, 165, 250, 0.12);
+    text-decoration: underline;
+}
+.row-selected {
+    background: rgba(74, 158, 255, 0.18) !important;
+}
+.row-selected .symbol-code.clickable {
+    color: #93c5fd;
+    background: rgba(96, 165, 250, 0.22);
 }
 .time-range {
     color: #999;
