@@ -503,6 +503,22 @@ bool FinanceDB::deleteSymbol(const String& table, const String& symbol) {
     return ok;
 }
 
+bool FinanceDB::deleteDividendEvent(const String& symbol, const String& ex_date) {
+    int64_t sym_encoded = encodeSymbol(symbol);
+    // ex_date 入参可能是 "YYYY-MM-DD" 或含时分秒；用 CAST + LIKE 前缀匹配
+    String sql = fmt::format(
+        "DELETE FROM dividend WHERE symbol = {} AND CAST(ex_dividend_date AS VARCHAR) LIKE '{}%'",
+        sym_encoded, ex_date);
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    bool ok = exec(sql);
+    if (ok) {
+        SPDLOG_INFO("[FinanceDB] Deleted dividend event {} for {}", ex_date, symbol);
+    } else {
+        SPDLOG_ERROR("[FinanceDB] Failed to delete dividend event {} for {}", ex_date, symbol);
+    }
+    return ok;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  dividend 表 — 建表
 // ═══════════════════════════════════════════════════════════

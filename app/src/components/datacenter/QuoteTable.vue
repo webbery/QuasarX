@@ -16,6 +16,7 @@
           <th class="num">最低</th>
           <th class="num">收盘</th>
           <th class="num">成交量</th>
+          <th v-if="deletable" class="col-action">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -26,13 +27,32 @@
           <td class="num">{{ formatPrice(b.low) }}</td>
           <td class="num">{{ formatPrice(b.close) }}</td>
           <td class="num">{{ formatVolume(b.volume) }}</td>
+          <td v-if="deletable" class="col-action">
+            <button class="row-del-btn" @click="onRowDelete(b)" title="删除该行 K 线">
+              <i class="fas fa-trash"></i>
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>
     <div v-if="bars.length > pageSize" class="pagination-row">
-      <button class="pg-btn" :disabled="page === 1" @click="page--">‹</button>
+      <button class="pg-btn" :disabled="page === 1" @click="page = 1" title="首页">«</button>
+      <button class="pg-btn" :disabled="page === 1" @click="page--" title="上一页">‹</button>
       <span class="pg-info">{{ page }} / {{ totalPages }}</span>
-      <button class="pg-btn" :disabled="page === totalPages" @click="page++">›</button>
+      <button class="pg-btn" :disabled="page === totalPages" @click="page++" title="下一页">›</button>
+      <button class="pg-btn" :disabled="page === totalPages" @click="page = totalPages" title="末页">»</button>
+      <span class="pg-jump">
+        跳转
+        <input
+          type="number"
+          :min="1"
+          :max="totalPages"
+          v-model.number="jumpPage"
+          @keyup.enter="onJump"
+          @blur="onJump"
+        />
+        页
+      </span>
     </div>
   </div>
 </template>
@@ -45,20 +65,40 @@ const props = defineProps<{
   bars: HistoryBar[]
   freqLabel: string
   isDaily: boolean
+  deletable?: boolean
+  onDelete?: (bar: HistoryBar) => void
 }>()
 
 const page = ref(1)
 const pageSize = 50
+const jumpPage = ref(1)
 
 // 倒序展示：最新数据在最上面
 const reversed = computed(() => [...props.bars].reverse())
-const totalPages = computed(() => Math.ceil(reversed.value.length / pageSize))
+const totalPages = computed(() => Math.max(1, Math.ceil(reversed.value.length / pageSize)))
 const pagedBars = computed(() => {
   const start = (page.value - 1) * pageSize
   return reversed.value.slice(start, start + pageSize)
 })
 
-watch(() => props.bars.length, () => { page.value = 1 })
+watch(() => props.bars.length, () => { page.value = 1; jumpPage.value = 1 })
+watch(totalPages, (n) => { if (page.value > n) page.value = n })
+
+function onJump() {
+  let target = Number(jumpPage.value)
+  if (!isFinite(target) || target < 1) target = 1
+  if (target > totalPages.value) target = totalPages.value
+  page.value = target
+  jumpPage.value = target
+}
+
+defineExpose({ page, totalPages, jumpToPage: (p: number) => { jumpPage.value = p; onJump() } })
+
+function onRowDelete(bar: HistoryBar) {
+  if (!props.onDelete) return
+  if (!confirm(`确定删除 ${bar.datetime} 的 K 线？此操作不可恢复！`)) return
+  props.onDelete(bar)
+}
 
 function formatTime(dt: string): string {
   if (!dt) return '—'
@@ -164,10 +204,61 @@ function formatVolume(v: number): string {
   color: var(--text-secondary, #b0b0b0);
 }
 
+.pg-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #b0b0b0);
+  margin-left: 6px;
+}
+
+.pg-jump input {
+  width: 50px;
+  padding: 2px 4px;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border, #333);
+  color: var(--text-primary, #e0e0e0);
+  border-radius: 3px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.pg-jump input:focus {
+  outline: none;
+  border-color: var(--primary, #4a9eff);
+}
+
+.pg-jump input::-webkit-inner-spin-button,
+.pg-jump input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .empty-tip.small {
   padding: 16px;
   text-align: center;
   color: var(--text-secondary, #888);
-  font-size: 12px;
+}
+
+.col-action {
+  width: 60px;
+  text-align: center;
+}
+
+.row-del-btn {
+  background: transparent;
+  border: 1px solid rgba(245, 108, 108, 0.3);
+  color: #f56c6c;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.15s;
+}
+
+.row-del-btn:hover {
+  background: rgba(245, 108, 108, 0.15);
+  border-color: #f56c6c;
 }
 </style>

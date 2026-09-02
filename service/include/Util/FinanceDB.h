@@ -31,6 +31,9 @@ public:
 
     bool deleteSymbol(const String& table, const String& symbol);
 
+    /// 删除某次分红事件（按 symbol + ex_dividend_date 唯一定位）
+    bool deleteDividendEvent(const String& symbol, const String& ex_date);
+
     int importDividendCsv(const String& csv_path);
 
     int importAllDividends(const String& dividend_dir);

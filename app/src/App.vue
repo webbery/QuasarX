@@ -202,6 +202,7 @@
         <DataCenterSymbolDetail
           :symbol="selectedDataCenterSymbol"
           :freq="selectedDataCenterFreq"
+          :table="selectedDataCenterTable"
         />
       </div>
     </aside>
@@ -492,6 +493,7 @@ const highlightTradePanel = ref(false)    // 高亮交易面板
 // 数据中心选中标的（右侧详情面板显示）
 const selectedDataCenterSymbol = ref(null)
 const selectedDataCenterFreq = ref('1d')
+const selectedDataCenterTable = ref(null)
 // 投资组合相关
 const currentStrategyId = ref('')  // 当前策略图 ID
 const currentPortfolioConfig = ref(null)  // 当前选中的组合配置
@@ -732,10 +734,11 @@ const onVisualizeStrategy = (event) => {
  * 数据中心选中标的：更新右侧面板 props
  */
 const onDataCenterSymbolSelected = (event) => {
-  const { symbol, freq } = event.detail || {}
+  const { symbol, freq, table } = event.detail || {}
   if (!symbol) return
   selectedDataCenterSymbol.value = symbol
   if (freq) selectedDataCenterFreq.value = freq
+  if (table) selectedDataCenterTable.value = table
 }
 
 /**

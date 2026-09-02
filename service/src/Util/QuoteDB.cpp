@@ -557,6 +557,23 @@ bool QuoteDB::deleteSymbol(const std::string& table, const std::string& symbol) 
     return ok;
 }
 
+bool QuoteDB::deleteBar(const std::string& table, const std::string& symbol, const std::string& datetime) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    int64_t sym_encoded = encodeSymbol(symbol);
+    // datetime 入参可能是 "YYYY-MM-DD" 或 "YYYY-MM-DD HH:MM:SS"；datetime 列通常为 TIMESTAMP
+    // 用 prefix 匹配保证秒级以下精度差异也能命中
+    std::string sql = fmt::format(
+        "DELETE FROM {} WHERE symbol = {} AND CAST(datetime AS VARCHAR) LIKE '{}%'",
+        table, sym_encoded, datetime);
+    bool ok = exec(sql);
+    if (!ok) {
+        SPDLOG_ERROR("[QuoteDB] Failed to delete bar {}@{} from {}", datetime, symbol, table);
+    } else {
+        SPDLOG_INFO("[QuoteDB] Deleted bar {}@{} from {}", datetime, symbol, table);
+    }
+    return ok;
+}
+
 std::vector<QuoteDB::SymbolTimeRange> QuoteDB::getSymbolTimeRanges(const std::string& table) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     std::vector<SymbolTimeRange> result;

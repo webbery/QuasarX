@@ -243,6 +243,56 @@ class TestStrategy:
         except requests.exceptions.RequestException:
             pytest.fail("停止不存在策略时服务无响应")
 
+    @pytest.mark.timeout(30)
+    def test_list_strategies_with_pools(self, auth_token, is_backtest):
+        """GET /strategy?include=pools 应在每个策略项返回 symbols 数组
+
+        验证 StrategyHandler::get 的 ?include=pools query 解析逻辑：
+        - 默认 GET 不应带 symbols 字段（避免无关请求拖大响应体）
+        - include=pools 时每条 strategies[].symbols 是字符串数组
+        - 数组内容应包含该策略 QuoteInputNode 配置的 code（来自 ma_graph_strategy.json 的 sz.900005）
+        """
+        pools_name = 'test_pools_query'
+        self.cleanup_strategy(auth_token, pools_name)
+
+        script_path = './script/ma_graph_strategy.json'
+        script = self.load_script(script_path)
+        kwargs = self._auth_kwargs(auth_token)
+
+        # 1. 部署一个简单策略（ma_graph_strategy.json 内含 code: ["sz.900005"]）
+        kwargs['json'] = {'mode': 0, 'name': pools_name, 'script': script}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
+        data = check_response(resp)
+        assert data['running'] is True, "部署后策略应处于运行状态"
+
+        try:
+            # 2. 默认 GET：不应包含 symbols 字段
+            resp = requests.get(f"{BASE_URL}/strategy", **kwargs)
+            strategies = check_response(resp)
+            if isinstance(strategies, dict) and "strategies" in strategies:
+                strategies = strategies["strategies"]
+            target = self.find_strategy(strategies, pools_name)
+            assert target is not None, "部署的策略应出现在列表中"
+            assert 'symbols' not in target, \
+                "默认 GET /strategy 不应返回 symbols 字段（仅 include=pools 时）"
+
+            # 3. include=pools：每条 strategies[].symbols 应为字符串数组
+            resp = requests.get(f"{BASE_URL}/strategy?include=pools", **kwargs)
+            strategies = check_response(resp)
+            if isinstance(strategies, dict) and "strategies" in strategies:
+                strategies = strategies["strategies"]
+            target = self.find_strategy(strategies, pools_name)
+            assert target is not None, "include=pools 列表应包含部署的策略"
+            assert 'symbols' in target, "include=pools 时应附加 symbols 字段"
+            assert isinstance(target['symbols'], list), "symbols 应为数组"
+            assert all(isinstance(s, str) for s in target['symbols']), \
+                "symbols 数组元素应为字符串"
+            # ma_graph_strategy.json 的 QuoteInputNode code 是 ["sz.900005"]
+            assert 'sz.900005' in target['symbols'], \
+                f"symbols 应包含 QuoteInputNode 配置的 code，实际为 {target['symbols']}"
+        finally:
+            self.cleanup_strategy(auth_token, pools_name)
+
     @pytest.mark.timeout(600)
     def test_run_all_script(self, auth_token, is_backtest):
         """批量回测所有策略脚本，验证回测结果"""

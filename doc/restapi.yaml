@@ -708,8 +708,19 @@ paths:
         获取所有策略的运行状态。返回结构包含两个数组：
         - `strategies`：已成功初始化并处于运行/停止状态的策略
         - `failed`：初始化失败的策略（含具体失败节点信息），供前端展示
+        可选 query `include=pools` 在每条 `strategies[]` 项中额外返回 `symbols` 字段，
+        即该策略所有 QuoteInputNode 配置的标的代码集合（如 `['sz.000001', 'sh.600000']`），
+        仅在调用方需要按策略批量下载行情数据时使用。
       tags:
         - Strategy
+      parameters:
+        - in: query
+          name: include
+          required: false
+          schema:
+            type: string
+            enum: [pools]
+          description: 附加字段开关。`pools` 时为每个策略附加 `symbols` 标的池数组。
       responses:
         '200':
           description: success
@@ -1773,6 +1784,14 @@ paths:
           schema:
             type: string
           description: 标的代码（留空删除整表）
+        - in: query
+          name: date
+          schema:
+            type: string
+          description: |
+            单根 K 线日期/时刻（YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS）。
+            与 table+symbol 同时提供时，精确删除该根 K 线。
+            与 table+symbol 中任一缺失时按原逻辑处理（删除整表/全部表）。
       responses:
         '200':
           description: 删除结果
@@ -2158,6 +2177,7 @@ paths:
         删除分红除权数据：
         - 无参数：删除整张 dividend 表
         - code=XXXXXX.SH：仅删除该标的的分红记录
+        - code=XXXXXX.SH&ex_date=YYYY-MM-DD：仅删除该标的的某次分红事件
       tags:
         - Dividend
       parameters:
@@ -2167,6 +2187,14 @@ paths:
             type: string
           description: 标的代码（留空删除整表）
           example: 600519.SH
+        - in: query
+          name: ex_date
+          schema:
+            type: string
+          description: |
+            除权除息日（YYYY-MM-DD）。
+            与 code 同时提供时，精确删除该次分红事件（按 UNIQUE(symbol, ex_dividend_date)）。
+          example: 2024-06-15
       responses:
         '200':
           description: 删除结果
@@ -3060,6 +3088,14 @@ components:
           enum: [manual, live, shadow]
           description: 执行模式。manual=日终决策型（ManualTiming）；live=盘中实盘（ImmediateTiming）；shadow=影子模式
           example: manual
+        symbols:
+          type: array
+          description: |
+            该策略的标的池（QuoteInputNode 收集的所有 symbol 字符串），
+            仅当 query 参数 `include=pools` 时返回。
+          items:
+            type: string
+          example: ["sz.000001", "sh.600000"]
 
     StrategyInitFailure:
       type: object
@@ -4680,3 +4716,6 @@ components:
         code:
           type: string
           description: 被删除的标的代码（删除标的时返回）
+        ex_date:
+          type: string
+          description: 被删除的除权除息日（删除单次分红事件时返回）

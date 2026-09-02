@@ -52,6 +52,10 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
     auto broker = _server->GetBrokerSubSystem();
     auto capitalPool = broker ? broker->GetCapitalPool() : nullptr;
 
+    // ?include=pools 时附加 symbols 数组（从 QuoteInputNode 提取的标的池）
+    // 复用现有 GetPools()，避免前端为获取标的池而缓存/回传完整 scriptJson
+    bool includePools = req.get_param_value("include") == "pools";
+
     nlohmann::json strategies = nlohmann::json::array();
     if (flow) {
         auto names = flow->GetFlowNames();
@@ -87,6 +91,21 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
                 item["availableCapital"] = 0.0;
                 item["usedCapital"] = 0.0;
                 item["allocatedCapital"] = 0.0;
+            }
+
+            // 按需附加 symbols 数组（?include=pools 时）：从 QuoteInputNode 提取
+            // 单策略 GetPools 失败不影响其他策略的列表返回
+            if (includePools) {
+                nlohmann::json syms = nlohmann::json::array();
+                try {
+                    auto pools = flow->GetPools(name);
+                    for (auto s : pools) {
+                        syms.push_back(to_utf8(get_symbol(s).c_str()));
+                    }
+                } catch (...) {
+                    // 保持 syms 为空数组
+                }
+                item["symbols"] = std::move(syms);
             }
 
             strategies.push_back(item);

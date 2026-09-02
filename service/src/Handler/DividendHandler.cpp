@@ -240,6 +240,8 @@ void DividendHandler::del(const httplib::Request& req, httplib::Response& res) {
     }
 
     auto code = req.get_param_value("code");
+    auto ex_date = req.get_param_value("ex_date");
+
     if (code.empty()) {
         // 删除整张表
         if (financeDB.dropTable("dividend")) {
@@ -249,6 +251,21 @@ void DividendHandler::del(const httplib::Request& req, httplib::Response& res) {
         } else {
             res.status = 500;
             res.set_content(R"({"message":"Failed to drop table"})", "application/json");
+        }
+        return;
+    }
+
+    if (!ex_date.empty()) {
+        // 删除单次分红事件（按 symbol + ex_dividend_date 唯一定位）
+        if (financeDB.deleteDividendEvent(code, ex_date)) {
+            nlohmann::json resp;
+            resp["status"] = "deleted";
+            resp["code"] = code;
+            resp["ex_date"] = ex_date;
+            res.set_content(resp.dump(), "application/json");
+        } else {
+            res.status = 500;
+            res.set_content(R"({"message":"Failed to delete dividend event"})", "application/json");
         }
         return;
     }

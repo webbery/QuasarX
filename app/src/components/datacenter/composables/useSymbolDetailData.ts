@@ -287,6 +287,66 @@ export function useSymbolDetailData() {
     return out
   })
 
+  /**
+   * 删除单根 K 线（精确到日期/时刻）。
+   * table 形如 'stock_1d' / 'etf_5m'；datetime 与后端列表返回的 datetime 同精度。
+   * 同时从本地缓存 + 当前展示数组中移除该行。
+   */
+  async function deleteKLine(right: 0 | 1, datetime: string, table: string) {
+    if (!currentSymbol || !table) return false
+    const symbol = currentSymbol
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+      const resp = await axios.delete(`/v0/quote`, {
+        params: { table, symbol, date: datetime },
+        headers: { 'Authorization': token || '' },
+        baseURL: server ? `https://${server}` : undefined,
+      })
+      // 命中即从缓存与当前数组移除
+      const removeFrom = (arr: HistoryBar[]) => arr.filter(b => b.datetime !== datetime)
+      const rawKey = historyKey(symbol, freq.value, 0)
+      const hfqKey = historyKey(symbol, freq.value, 1)
+      cache.historyRaw.set(rawKey, removeFrom(cache.historyRaw.get(rawKey) || []))
+      cache.historyHfq.set(hfqKey, removeFrom(cache.historyHfq.get(hfqKey) || []))
+      if (right === 0) historyRaw.value = removeFrom(historyRaw.value)
+      else historyHfq.value = removeFrom(historyHfq.value)
+      ElMessage.success(`已删除 K 线 ${datetime}`)
+      return true
+    } catch (e: any) {
+      const msg = e.response?.data?.message || e.response?.data?.error || e.message
+      ElMessage.error(`删除 K 线失败: ${msg}`)
+      return false
+    }
+  }
+
+  /**
+   * 删除单次分红事件（按 ex_dividend_date）。
+   * 同时从本地缓存 + 当前展示数组中移除该行。
+   */
+  async function deleteDividendEvent(ex_date: string) {
+    if (!currentSymbol) return false
+    const symbol = currentSymbol
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    try {
+      const resp = await axios.delete(`/v0/dividend`, {
+        params: { code: symbol, ex_date },
+        headers: { 'Authorization': token || '' },
+        baseURL: server ? `https://${server}` : undefined,
+      })
+      const removeFrom = (arr: DividendRow[]) => arr.filter(r => r.ex_dividend_date !== ex_date)
+      cache.dividends.set(divKey(symbol), removeFrom(cache.dividends.get(divKey(symbol)) || []))
+      dividends.value = removeFrom(dividends.value)
+      ElMessage.success(`已删除分红事件 ${ex_date}`)
+      return true
+    } catch (e: any) {
+      const msg = e.response?.data?.message || e.response?.data?.error || e.message
+      ElMessage.error(`删除分红事件失败: ${msg}`)
+      return false
+    }
+  }
+
   return {
     // state
     loading,
@@ -300,6 +360,8 @@ export function useSymbolDetailData() {
     // actions
     setSymbol,
     switchTab,
+    deleteKLine,
+    deleteDividendEvent,
     // derived
     adjFactorSeries,
     latestAdjFactor,

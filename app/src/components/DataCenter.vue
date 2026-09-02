@@ -82,14 +82,28 @@
 
                         <!-- 按策略下载 -->
                         <div class="download-card">
-                            <div class="card-title"><i class="fas fa-project-diagram"></i> 按策略下载</div>
+                            <div class="card-title">
+                                <i class="fas fa-project-diagram"></i> 按策略下载
+                                <span class="remote-status-dot"
+                                      :class="{ online: remoteReachable, offline: !remoteReachable }"
+                                      :title="remoteReachable
+ ? `service 在线 · ${remoteStrategies.length} 个远程策略`
+                                        : 'service 未连接或超时'"></span>
+                            </div>
                             <div class="input-group">
                                 <label>策略</label>
                                 <select v-model="quoteStrategy" class="quote-select">
                                     <option value="">选择策略…</option>
-                                    <option v-for="s in historyStore.strategies" :key="s.id" :value="s.name">
-                                        {{ s.name }}
-                                    </option>
+                                    <optgroup label="本地缓存">
+                                        <option v-for="s in historyStore.strategies" :key="`local:${s.id}`" :value="s.name">
+                                            {{ s.name }}
+                                        </option>
+                                    </optgroup>
+                                    <optgroup v-if="remoteFetched" label="远程运行">
+                                        <option v-for="s in remoteStrategies" :key="`remote:${s.name}`" :value="s.name">
+                                            {{ s.name }}{{ s.running ? ' ●运行' : '' }}{{ s.failed ? ' ✕失败' : '' }}
+                                        </option>
+                                    </optgroup>
                                 </select>
                             </div>
                             <div v-if="quoteStrategy" class="pool-summary">
@@ -645,6 +659,34 @@
                         {{ optionDownloading ? '下载中...' : (!isLoggedIn ? '请先登录' : '开始下载') }}
                     </button>
                 </div>
+
+                <!-- 按策略下载（期权合约场景几乎用不到） -->
+                <div class="sub-section-divider"></div>
+                <div class="card-subtitle"><i class="fas fa-project-diagram"></i> 按策略下载</div>
+                <div class="input-row">
+                    <div class="input-group" style="flex: 2;">
+                        <label>策略</label>
+                        <select v-model="optionStrategy" class="quote-select">
+                            <option value="">选择策略…</option>
+                            <option v-for="s in historyStore.strategies" :key="s.id" :value="s.name">
+                                {{ s.name }}
+                            </option>
+                        </select>
+                    </div>
+                    <button class="btn" style="align-self: flex-end;"
+                            @click="onOptionDownloadByStrategy"
+                            :disabled="!isLoggedIn || !optionStrategy">
+                        <i class="fas fa-search"></i>
+                        查询策略标的池
+                    </button>
+                </div>
+                <div v-if="optionStrategy && optionStrategySecurities.length === 0" class="status-hint">
+                    <i class="fas fa-info-circle"></i> 策略「{{ optionStrategy }}」未配置任何 QuoteInputNode 标的
+                </div>
+                <div v-else-if="optionStrategySecurities.length > 0" class="status-hint">
+                    <i class="fas fa-info-circle"></i> 该策略含 {{ optionStrategySecurities.length }} 个股票/ETF 标的（期权合约需按上方交易所+品种下载）
+                </div>
+
                 <div v-if="optionStatus" class="status-text"
                      :class="{ 'status-error': optionStatus.includes('失败') }">
                     {{ optionStatus }}
@@ -900,6 +942,60 @@ const sortOrder = ref('asc') // 'asc' or 'desc'
 
 // ── 分红除权数据状态 ──
 const historyStore = useHistoryStore()
+
+// ── 远程 service 策略列表（按策略下载卡片用）──
+// service 离线时静默失败，不影响本地策略使用
+interface RemoteStrategy {
+    name: string
+    running: boolean
+    failed: boolean
+    symbols: string[] | null  // null = 未拉过；[] = 拉过但无 QuoteInputNode
+}
+const remoteStrategies = ref<RemoteStrategy[]>([])
+const remoteFetched = ref(false)   // 至少拉过一次，避免空白闪烁
+const remoteReachable = ref(false) // 用于圆点显示
+const remoteLoading = ref(false)   // 防止并发刷新
+
+const fetchRemoteStrategies = async (includePools: boolean) => {
+    if (!isLoggedIn.value) { remoteFetched.value = true; return }
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+    remoteLoading.value = true
+    try {
+        const url = includePools
+            ? `https://${server}/v0/strategy?include=pools`
+            : `https://${server}/v0/strategy`
+        const r = await axios.get(url, {
+            headers: { 'Authorization': token || '' },
+            timeout: 3000,
+        })
+        const data = r.data
+        const ok = Array.isArray(data) ? data : (data.strategies || [])
+        const fail = Array.isArray(data.failed) ? data.failed : []
+        const seen = new Set(ok.map((s: any) => s.name))
+        const list: RemoteStrategy[] = ok.map((s: any) => ({
+            name: s.name,
+            running: !!s.running,
+            failed: false,
+            symbols: Array.isArray(s.symbols) ? s.symbols : null,
+        }))
+        for (const f of fail) {
+            if (f.name && !seen.has(f.name)) {
+                list.push({ name: f.name, running: false, failed: true, symbols: null })
+            }
+        }
+        remoteStrategies.value = list
+        remoteReachable.value = true
+    } catch (e: any) {
+        console.debug('[DataCenter] remote strategies unreachable:', e?.message)
+        remoteReachable.value = false
+        remoteStrategies.value = []
+    } finally {
+        remoteLoading.value = false
+        remoteFetched.value = true
+    }
+}
+
 const dividendStrategy = ref('')  // 空字符串 = 全部策略
 const dividendStrategySymbols = ref('')  // 选中策略的标的列表（逗号分隔）
 const dividendSymbolCount = computed(() => {
@@ -942,25 +1038,43 @@ watch(quoteStrategy, async (name) => {
         quoteStrategySymbols.value = ''
         return
     }
-    const strategy = historyStore.strategies.find(s => s.name === name)
-    if (!strategy) {
-        quoteStrategySymbols.value = ''
+    // 1) 本地策略优先：从 IndexedDB 最新版本 flowData 提取标的池
+    const local = historyStore.strategies.find(s => s.name === name)
+    if (local) {
+        const versions = historyStore.getVersionsByStrategy(local.id)
+        if (versions.length === 0) {
+            quoteStrategySymbols.value = ''
+            return
+        }
+        const sorted = [...versions].sort((a, b) =>
+            new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+        )
+        const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
+        if (flowData) {
+            const securities = extractSecuritiesFromFlowData(flowData as any)
+            quoteStrategySymbols.value = securities.map(s => toApiSymbol(s.code)).join(',')
+        } else {
+            quoteStrategySymbols.value = ''
+        }
         return
     }
-    const versions = historyStore.getVersionsByStrategy(strategy.id)
-    if (versions.length === 0) {
-        quoteStrategySymbols.value = ''
-        return
-    }
-    const sorted = [...versions].sort((a, b) =>
-        new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
-    )
-    const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
-    if (flowData) {
-        const securities = extractSecuritiesFromFlowData(flowData as any)
-        quoteStrategySymbols.value = securities.map(s => toApiSymbol(s.code)).join(',')
-    } else {
-        quoteStrategySymbols.value = ''
+    // 2) 远程策略：直接用 service 返回的 symbols 数组
+    const remote = remoteStrategies.value.find(s => s.name === name)
+    if (remote) {
+        if (remote.failed) {
+            quoteStrategySymbols.value = ''
+            quoteStatus.value = `远程策略「${name}」初始化失败，无可用标的池`
+            return
+        }
+        if (remote.symbols === null) {
+            // 卡片未展开过或上次拉取失败，按需补一次
+            await fetchRemoteStrategies(true)
+            const reloaded = remoteStrategies.value.find(s => s.name === name)
+            if (reloaded) remote.symbols = reloaded.symbols ?? []
+        }
+        quoteStrategySymbols.value = (remote.symbols ?? [])
+            .map(s => toApiSymbol(s))
+            .join(',')
     }
 })
 
@@ -1000,6 +1114,10 @@ const optionExchange = ref<'CFFEX' | 'SSE' | 'SZSE'>('CFFEX')
 const optionStartDate = ref('')
 const optionEndDate = ref('')
 const optionSelectedProducts = ref<string[]>([])
+
+// 「按策略下载」期权（策略几乎不使用期权合约，提取为空时给用户明确提示）
+const optionStrategy = ref('')
+const optionStrategySecurities = ref<Array<{ code: string; name: string }>>([])
 const optionDownloading = ref(false)
 const optionStatus = ref('')
 const optionLogs = ref<{ time: string; text: string; type: string }[]>([])
@@ -1039,6 +1157,23 @@ const optionProductsForExchange = computed(() =>
 // 切换交易所时清空已选品种
 watch(optionExchange, () => {
     optionSelectedProducts.value = []
+})
+
+// 期权「按策略下载」：选策略后从最新版本 flowData 提取 securities
+watch(optionStrategy, async (name) => {
+    optionStrategySecurities.value = []
+    if (!name) return
+    const strategy = historyStore.strategies.find(s => s.name === name)
+    if (!strategy) return
+    const versions = historyStore.getVersionsByStrategy(strategy.id)
+    if (versions.length === 0) return
+    const sorted = [...versions].sort((a, b) =>
+        new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+    )
+    const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
+    if (flowData) {
+        optionStrategySecurities.value = extractSecuritiesFromFlowData(flowData as any)
+    }
 })
 
 const optionTotalPages = computed(() =>
@@ -1191,7 +1326,7 @@ const onSymbolRowClick = (item: any) => {
     // 把 table 名解析为 freq 名（兼容 stock_5m 等），rawFreq 已挂上 item
     const rawFreq = item.rawFreq || '1d'
     window.dispatchEvent(new CustomEvent('datacenter-symbol-selected', {
-        detail: { symbol: item.symbol, freq: rawFreq }
+        detail: { symbol: item.symbol, freq: rawFreq, table: item.table }
     }))
 }
 
@@ -1296,6 +1431,28 @@ onMounted(() => {
     if (isLoggedIn.value) {
         loadQuoteData()
         onLoadFinanceData()
+    }
+
+    // 首次挂载拉一次远程策略清单（不含 pools，按需再补）
+    fetchRemoteStrategies(false)
+})
+
+// 切换 service（重新登录后 localStorage.remote 变化）→ 重拉
+watch(() => localStorage.getItem('remote'), () => {
+    fetchRemoteStrategies(false)
+})
+
+// 本地保存策略后 → service 端可能也部署了同名策略，重拉以保持一致
+watch(() => historyStore.strategies.length, () => {
+    fetchRemoteStrategies(false)
+})
+
+// 远程组卡片展开时按需补齐 pools（仅当有策略还没拉过 symbols）
+watch(downloadExpanded, async (v) => {
+    if (!v) return
+    const needPools = remoteStrategies.value.some(s => s.symbols === null && !s.failed)
+    if (needPools && !remoteLoading.value) {
+        await fetchRemoteStrategies(true)
     }
 })
 
@@ -2409,6 +2566,27 @@ const onOptionDownload = async () => {
     }
 }
 
+// 期权「按策略下载」：策略通常不使用期权合约，提取不到时给明确提示
+const onOptionDownloadByStrategy = async () => {
+    if (!isLoggedIn.value) {
+        optionStatus.value = '请先登录'
+        return
+    }
+    if (!optionStrategy.value) {
+        optionStatus.value = '请先选择策略'
+        return
+    }
+    const securities = optionStrategySecurities.value
+    if (securities.length === 0) {
+        optionStatus.value = `策略「${optionStrategy.value}」未使用期权合约，请使用上方的交易所+品种下载入口`
+        addOptionLog(`✗ 策略「${optionStrategy.value}」未使用期权合约`, 'error')
+        return
+    }
+    // 预留：未来若策略支持期权合约，此处按 securities 关联品种 + 调用后端接口
+    optionStatus.value = `策略「${optionStrategy.value}」包含 ${securities.length} 个标的（${securities.map(s => s.code).join(',')}）。期权合约与股票代码维度不同，请改用交易所+品种下载`
+    addOptionLog(`ℹ 策略「${optionStrategy.value}」含 ${securities.length} 个股票/ETF 标的，期权合约需按交易所品种下载`)
+}
+
 const onLoadOptionContracts = async () => {
     loadingOptionContracts.value = true
     optionPage.value = 1
@@ -2607,6 +2785,48 @@ const onOptionDeleteAll = async () => {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+.remote-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: 4px;
+    flex-shrink: 0;
+}
+.remote-status-dot.online {
+    background: #67c23a;
+}
+.remote-status-dot.offline {
+    background: #909399;
+}
+.card-subtitle {
+    color: #b0b0b0;
+    font-size: 11px;
+    font-weight: 500;
+    margin: 4px 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.sub-section-divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, rgba(74, 85, 104, 0.3), transparent);
+    margin: 12px 0 8px;
+}
+.status-hint {
+    font-size: 11px;
+    color: #94a3b8;
+    padding: 4px 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.status-hint i {
+    color: #4a9eff;
+    font-size: 10px;
 }
 
 /* ── 分红除权两行布局 ── */

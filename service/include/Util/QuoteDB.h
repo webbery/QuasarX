@@ -42,6 +42,9 @@ public:
 
     bool deleteSymbol(const std::string& table, const std::string& symbol);
 
+    /// 删除单根 K 线（精确到日期/时刻），datetime 格式 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS
+    bool deleteBar(const std::string& table, const std::string& symbol, const std::string& datetime);
+
     struct SymbolTimeRange {
         symbol_t symbol;
         std::string start_time;

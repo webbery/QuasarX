@@ -348,8 +348,19 @@ void QuoteDownloadHandler::del(const httplib::Request& req, httplib::Response& r
 
     auto table = req.get_param_value("table");
     auto symbol = req.get_param_value("symbol");
+    auto date = req.get_param_value("date");
 
-    if (!table.empty() && !symbol.empty()) {
+    if (!table.empty() && !symbol.empty() && !date.empty()) {
+        // 删除指定表指定标的某根 K 线（精确到日期/时刻）
+        if (quoteDB.deleteBar(table, symbol, date)) {
+            nlohmann::json resp;
+            resp["message"] = fmt::format("Deleted bar {} for {} from {}", date, symbol, table);
+            res.set_content(resp.dump(), "application/json");
+        } else {
+            res.status = 500;
+            res.set_content(R"({"message":"Failed to delete bar"})", "application/json");
+        }
+    } else if (!table.empty() && !symbol.empty()) {
         // 删除指定表中的指定标的
         if (quoteDB.deleteSymbol(table, symbol)) {
             nlohmann::json resp;

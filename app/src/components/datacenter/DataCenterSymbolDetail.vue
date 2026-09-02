@@ -48,6 +48,8 @@
             :bars="historyRaw"
             :freq-label="freqLabel"
             :is-daily="isDaily"
+            :deletable="true"
+            :on-delete="onDeleteRawBar"
           />
         </div>
 
@@ -71,6 +73,8 @@
             :bars="historyHfq"
             :freq-label="freqLabel + '·后复权'"
             :is-daily="isDaily"
+            :deletable="true"
+            :on-delete="onDeleteHfqBar"
           />
         </div>
 
@@ -103,6 +107,7 @@
                 <th class="num">送股</th>
                 <th class="num">转增</th>
                 <th>公告日</th>
+                <th class="col-action">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -112,6 +117,11 @@
                 <td class="num">{{ r.bonus_per_10.toFixed(2) }}</td>
                 <td class="num">{{ r.transfer_per_10.toFixed(2) }}</td>
                 <td>{{ r.announce_date || '—' }}</td>
+                <td class="col-action">
+                  <button class="row-del-btn" @click="onDeleteDividend(r)" title="删除该次分红">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -169,6 +179,7 @@ import {
 const props = defineProps<{
   symbol: string | null
   freq: string
+  table?: string | null
 }>()
 
 const {
@@ -181,10 +192,39 @@ const {
   finance,
   setSymbol,
   switchTab,
+  deleteKLine,
+  deleteDividendEvent,
   adjFactorSeries,
   latestAdjFactor,
   dividendSummary,
 } = useSymbolDetailData()
+
+const tableName = computed(() => props.table || (props.symbol ? inferTable(props.symbol, props.freq) : ''))
+
+function inferTable(symbol: string, freq: string): string {
+  // 推断表名：600xxx/688xxx/9xxxxx/003xxx/300xxx → stock；5xxxxx/15xxxxx/18xxxxx → etf
+  const id = symbol.split('.')[0] || ''
+  let asset = 'stock'
+  if (id.startsWith('5') || id.startsWith('1')) asset = 'etf'
+  const f = freq === '1d' || freq === 'daily' ? '1d' : freq
+  return `${asset}_${f}`
+}
+
+async function onDeleteRawBar(bar: { datetime: string }) {
+  if (!props.symbol || !tableName.value) return
+  await deleteKLine(0, bar.datetime, tableName.value)
+}
+
+async function onDeleteHfqBar(bar: { datetime: string }) {
+  if (!props.symbol || !tableName.value) return
+  await deleteKLine(1, bar.datetime, tableName.value)
+}
+
+async function onDeleteDividend(row: { ex_dividend_date: string }) {
+  if (!props.symbol) return
+  if (!confirm(`确定删除 ${row.ex_dividend_date} 的分红事件？此操作不可恢复！`)) return
+  await deleteDividendEvent(row.ex_dividend_date)
+}
 
 const tabs: { id: DetailTab; label: string; icon: string }[] = [
   { id: 'quote',    label: '未复权', icon: 'fas fa-chart-line' },
@@ -441,6 +481,27 @@ function formatNum(v: any): string {
   min-height: 200px;
   color: var(--text-secondary, #888);
   gap: 8px;
+}
+
+.col-action {
+  width: 60px;
+  text-align: center;
+}
+
+.row-del-btn {
+  background: transparent;
+  border: 1px solid rgba(245, 108, 108, 0.3);
+  color: #f56c6c;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.15s;
+}
+
+.row-del-btn:hover {
+  background: rgba(245, 108, 108, 0.15);
+  border-color: #f56c6c;
 }
 
 .empty-tip.small {
