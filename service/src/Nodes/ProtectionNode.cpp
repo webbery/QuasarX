@@ -1,17 +1,19 @@
 #include "Nodes/ProtectionNode.h"
+#include "Interprecter/Stmt.h"
 #include "DataContext.h"
-#include "RiskContext.h"
 #include "BrokerSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
 #include "Util/log.h"
+#include "Util/string_algorithm.h"
 #include "server.h"
 
 ProtectionNode::ProtectionNode(Server* server) : _server(server) {
 }
 
 ProtectionNode::~ProtectionNode() {
+    if (_formulaParser) delete _formulaParser;
 }
 
 bool ProtectionNode::Init(const nlohmann::json& config) {
@@ -21,6 +23,8 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
     // 1. 前端中文扁平格式: "止损开关": { "value": true }, "止损比例": { "value": 0.05 }
     // 2. 后端导出英文格式: "stop_loss_enabled": { "value": true }, "stop_loss_percent": 0.05
     // 3. 嵌套格式: "stop_loss": { "enabled": true, "percent": 0.05 }
+
+    String formulaExpr;
 
     if (params.contains("止损开关")) {
         // 前端中文格式
@@ -32,6 +36,12 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         _ts.percent = params["追踪止损比例"]["value"];
         _time.enabled = params["时间止损开关"]["value"];
         _time.max_bars = params["最大持仓Bar数"]["value"];
+        if (params.contains("公式止损开关")) {
+            _formula.enabled = params["公式止损开关"]["value"];
+        }
+        if (params.contains("公式止损表达式")) {
+            formulaExpr = params["公式止损表达式"]["value"].get<String>();
+        }
     } else if (params.contains("stop_loss_enabled")) {
         // 后端导出英文扁平格式
         _sl.enabled = params["stop_loss_enabled"]["value"];
@@ -42,6 +52,12 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         _ts.percent = params["trailing_stop_percent"]["value"];
         _time.enabled = params["time_stop_enabled"]["value"];
         _time.max_bars = params["max_bars"]["value"];
+        if (params.contains("formula_stop_enabled")) {
+            _formula.enabled = params["formula_stop_enabled"]["value"];
+        }
+        if (params.contains("formula_stop_expression")) {
+            formulaExpr = params["formula_stop_expression"]["value"].get<String>();
+        }
     } else if (params.contains("stop_loss")) {
         // 嵌套格式（直接 JSON 配置）
         _sl.enabled = params["stop_loss"]["enabled"];
@@ -52,6 +68,43 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         _ts.percent = params["trailing_stop"]["percent"];
         _time.enabled = params["time_stop"]["enabled"];
         _time.max_bars = params["time_stop"]["max_bars"];
+        if (params.contains("formula_stop")) {
+            _formula.enabled = params["formula_stop"]["enabled"];
+            formulaExpr = params["formula_stop"].value("expression", "");
+        }
+    }
+
+    // 初始化公式止损
+    if (_formula.enabled && !formulaExpr.empty()) {
+        _formulaParser = new FormulaParser(_server);
+        if (!_formulaParser->parse(formulaExpr)) {
+            WARN("[ProtectionNode] failed to parse formula expression: {}", formulaExpr);
+            delete _formulaParser;
+            _formulaParser = nullptr;
+            _formula.enabled = false;
+            return false;
+        }
+
+        // 从上游输入收集 symbols 和 variant names
+        for (auto& item : _ins) {
+            auto outs = item.second->out_elements();
+            for (auto& [key, type] : outs) {
+                Vector<String> tokens;
+                split(key, tokens, ".");
+                if (tokens.size() >= 2) {
+                    symbol_t sym = to_symbol(tokens[0] + "." + tokens[1]);
+                    if (std::find(_formulaSymbols.begin(), _formulaSymbols.end(), sym) == _formulaSymbols.end()) {
+                        _formulaSymbols.push_back(sym);
+                    }
+                }
+                if (!tokens.empty()) {
+                    _formulaVariants.insert(tokens.back());
+                }
+            }
+        }
+
+        INFO("[ProtectionNode] Formula stop enabled: expr='{}' symbols={} variants={}",
+             formulaExpr, _formulaSymbols.size(), _formulaVariants.size());
     }
 
     return true;
@@ -193,6 +246,12 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     symbol_t triggered_symbol;
     double triggered_price = 0.0;
 
+    // 公式止损：一次性计算所有标的
+    Map<symbol_t, double> formulaResults;
+    if (_formula.enabled && _formulaParser && !_formulaSymbols.empty()) {
+        formulaResults = _formulaParser->computeNumeric(_formulaSymbols, _formulaVariants, context);
+    }
+
     for (const auto& [symbol, info] : _entry_info) {
         if (info.avg_price <= 0) continue;
 
@@ -255,6 +314,17 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             }
         }
 
+        // 5. 检查公式止损: 表达式结果非零即触发
+        if (_formula.enabled && triggered == RiskTriggerType::None) {
+            auto it = formulaResults.find(symbol);
+            if (it != formulaResults.end() && it->second != 0.0) {
+                triggered = RiskTriggerType::FormulaStop;
+                triggered_symbol = symbol;
+                triggered_price = current_price;
+                break;
+            }
+        }
+
         // 更新最高价
         auto& entry = _entry_info[symbol];
         if (current_price > entry.highest_price) {
@@ -291,7 +361,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
 }
 
 const nlohmann::json ProtectionNode::getParams() {
-    return {"stop_loss", "take_profit", "trailing_stop", "time_stop"};
+    return {"stop_loss", "take_profit", "trailing_stop", "time_stop", "formula_stop"};
 }
 
 Map<String, ArgType> ProtectionNode::out_elements() {

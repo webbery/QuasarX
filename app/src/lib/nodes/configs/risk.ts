@@ -23,12 +23,15 @@ export const protectionNode: NodeRegistryEntry = {
     { key: 'trailing_stop_percent', label: '追踪止损比例', type: 'number', default: 0.03, min: 0.01, max: 0.3, step: 0.01, unit: '%' },
     { key: 'time_stop_enabled', label: '时间止损开关', type: 'boolean', default: false },
     { key: 'max_bars', label: '最大持仓Bar数', type: 'number', default: 20, min: 1, max: 1000, step: 1, unit: '根' },
+    { key: 'formula_stop_enabled', label: '公式止损开关', type: 'boolean', default: false },
+    { key: 'formula_stop_expression', label: '公式止损表达式', type: 'textarea', default: '', placeholder: 'close < MA(close, 20)', description: '表达式返回非零值时触发止损，可引用上游节点输出变量' },
   ],
   example: {
     stop_loss_enabled: true, stop_loss_percent: 0.05,
     take_profit_enabled: false,
     trailing_stop_enabled: false,
-    time_stop_enabled: false
+    time_stop_enabled: false,
+    formula_stop_enabled: false, formula_stop_expression: ''
   }
 }
 

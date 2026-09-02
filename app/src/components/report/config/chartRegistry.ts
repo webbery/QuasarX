@@ -88,6 +88,16 @@ export const CHART_REGISTRY: ChartDefinition[] = [
     defaultOrder: 5,
     span: 'full',
     component: () => import('../charts/TradePnLChart.vue')
+  },
+  {
+    id: 'protectionEvents',
+    label: 'Protection Events',
+    icon: '🛡️',
+    description: '风控保护事件（止损/止盈/追踪/时间/公式触发记录）',
+    defaultVisible: true,
+    defaultOrder: 6,
+    span: 'full',
+    component: () => import('../charts/ProtectionEventsChart.vue')
   }
   // TODO: 迁移完成后续图表后在此添加
   // - PositionChanges

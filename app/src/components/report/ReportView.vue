@@ -51,6 +51,7 @@ import PerformanceChart from './charts/PerformanceChart.vue'
 import SkewnessChart from './charts/SkewnessChart.vue'
 import MonteCarloPathsChart from './charts/MonteCarloPathsChart.vue'
 import TradePnLChart from './charts/TradePnLChart.vue'
+import ProtectionEventsChart from './charts/ProtectionEventsChart.vue'
 import LegacyCharts from './LegacyCharts.vue'
 import { CHART_REGISTRY } from './config/chartRegistry'
 
@@ -87,7 +88,9 @@ const {
   updateBenchmark,
   loadBenchmark,
   refreshBenchmark,
-  loadBacktestResultFromVersion
+  loadBacktestResultFromVersion,
+  protectionEvents,
+  updateProtectionEvents,
 } = dataState
 
 // === 本地状态 ===
@@ -109,6 +112,7 @@ const chartComponentMap: Record<string, ChartComponent> = {
   metricsTable: MetricsTable,
   monteCarloPaths: MonteCarloPathsChart,
   tradePnL: TradePnLChart,
+  protectionEvents: ProtectionEventsChart,
 }
 
 interface OrderedItem {
@@ -182,6 +186,10 @@ const orderedItems = computed<OrderedItem[]>(() => {
       props = {
         rawBuySignals: dataState.rawBuySignals.value,
         rawSellSignals: dataState.rawSellSignals.value,
+      }
+    } else if (item.id === 'protectionEvents') {
+      props = {
+        events: protectionEvents.value,
       }
     }
 
@@ -326,6 +334,7 @@ defineExpose({
   updateMetrics,
   updateBenchmark,
   updateMcPaths: dataState.updateMcPaths,
+  updateProtectionEvents,
   loadBacktestResultFromVersion,
   resetTableZoom: () => {
     console.info('[ReportView] resetTableZoom 已调用')

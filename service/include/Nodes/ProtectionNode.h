@@ -2,6 +2,8 @@
 #include "StrategyNode.h"
 #include "RiskContext.h"
 
+class FormulaParser;
+
 /**
  * @brief 风控保护节点
  *
@@ -46,10 +48,11 @@ private:
     };
 
     Server* _server;
-    Guard _sl;   // 止损
-    Guard _tp;   // 止盈
-    Guard _ts;   // 追踪止损
-    Guard _time; // 时间止损
+    Guard _sl;      // 止损
+    Guard _tp;      // 止盈
+    Guard _ts;      // 追踪止损
+    Guard _time;    // 时间止损
+    Guard _formula; // 公式止损
 
     // 记录每个标的入场信息（节点自己维护）
     struct EntryInfo {
@@ -61,6 +64,11 @@ private:
 
     // 风控触发事件记录（供回测 summary 和复盘使用）
     Vector<ProtectionEvent> _events;
+
+    // 公式止损
+    FormulaParser* _formulaParser = nullptr;
+    Vector<symbol_t> _formulaSymbols;
+    Set<String> _formulaVariants;
 
     // 从 Server 同步持仓，更新 _entry_info
     void syncPositions(const String& strategy, DataContext& context);

@@ -27,6 +27,8 @@ export interface BacktestResult {
   dailyDates?: number[]       // 每日对应的 Unix 时间戳（秒）
   // 蒙特卡洛模拟路径数据（用于策略归因分析）
   mcPaths?: McPathsData
+  // 风控保护事件（止损/止盈/追踪/时间/公式触发记录）
+  protectionEvents?: ProtectionEvent[]
   // 完整图表数据（供 Agent 和 ReportView 共享使用）
   chartData?: {
     price: TimeSeries | null
@@ -61,6 +63,18 @@ export interface McPathsData {
   median: McPathDetail    // 中位数路径
   p10: McPathDetail       // P10 路径
   p90: McPathDetail       // P90 路径
+}
+
+/**
+ * 风控保护事件（ProtectionNode 触发记录）
+ */
+export interface ProtectionEvent {
+  bar: number
+  datetime: number
+  symbol: string
+  type: string            // stop_loss / take_profit / trailing_stop / time_stop / formula_stop
+  entry_price: number
+  current_price: number
 }
 
 export interface Version {

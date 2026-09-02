@@ -257,6 +257,10 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
           sellSignals,
           dailyReturnsData
         )
+        // 传递风控事件
+        if (reportViewRef.value.updateProtectionEvents) {
+          reportViewRef.value.updateProtectionEvents(result.protection_events || [])
+        }
       } else {
         console.warn('ReportView 组件未找到 updateTradeSignals 方法')
       }
@@ -280,6 +284,7 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
         mcPaths: result.mc_paths || undefined,
         dailyReturns: result.daily_returns || undefined,
         dailyDates: result.daily_dates || undefined,
+        protectionEvents: result.protection_events || undefined,
       }
       historyStore.saveBacktestResult(versionId, backtestResult)
       console.info(`回测结果已保存到版本 ${versionId}`)

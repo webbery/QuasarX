@@ -10,7 +10,7 @@ import {
   KlineData,
   clearExpiredCache,
 } from '@/lib/tickflow'
-import { useHistoryStore, type BacktestResult, type McPathsData } from '@/stores/history'
+import { useHistoryStore, type BacktestResult, type McPathsData, type ProtectionEvent } from '@/stores/history'
 import type { UseReportStateReturn } from './useReportState'
 
 export interface UseChartDataReturn {
@@ -29,6 +29,8 @@ export interface UseChartDataReturn {
   benchmarkMetrics: Ref<BenchmarkMetrics | null>
   /** 蒙特卡洛模拟路径数据 */
   mcPaths: Ref<McPathsData | null>
+  /** 风控保护事件 */
+  protectionEvents: Ref<ProtectionEvent[]>
   /** 加载状态 */
   loading: Ref<boolean>
   /** 策略收益曲线是否为估算（无真实信号时的线性插值） */
@@ -49,6 +51,8 @@ export interface UseChartDataReturn {
   updateMetrics: (features: Record<string, number>) => void
   /** 更新蒙特卡洛路径数据 */
   updateMcPaths: (paths: McPathsData) => void
+  /** 更新风控保护事件 */
+  updateProtectionEvents: (events: ProtectionEvent[]) => void
   /** 更新基准数据 */
   updateBenchmark: (data: { symbol: string; name: string; startDate: Date; endDate: Date }) => void
   /** 加载基准数据 */
@@ -92,6 +96,7 @@ export function useChartData(
   const rawSellSignals = ref<any[]>([])
   const benchmarkMetrics = ref<BenchmarkMetrics | null>(null)
   const mcPaths = ref<McPathsData | null>(null)
+  const protectionEvents = ref<ProtectionEvent[]>([])
   const loading = ref(false)
   const strategyReturnsEstimated = ref(false)
 
@@ -276,6 +281,16 @@ export function useChartData(
   }
 
   /**
+   * 更新风控保护事件（外部调用）
+   */
+  function updateProtectionEvents(events: ProtectionEvent[]) {
+    protectionEvents.value = events || []
+    if (events?.length) {
+      console.info(`[useChartData] 风控事件已更新: ${events.length} 条`)
+    }
+  }
+
+  /**
    * 更新基准数据（外部调用）
    */
   function updateBenchmark(data: { symbol: string; name: string; startDate: Date; endDate: Date }) {
@@ -368,6 +383,9 @@ export function useChartData(
         ? { returns: backtestResult.dailyReturns, dates: backtestResult.dailyDates }
         : undefined
     )
+
+    // 2b. 恢复风控事件
+    updateProtectionEvents(backtestResult.protectionEvents || [])
 
     // 3. 提取标的代码和日期范围
     const allSignals = [...(backtestResult.buy || []), ...(backtestResult.sell || [])]
@@ -519,6 +537,7 @@ export function useChartData(
     rawSellSignals,
     benchmarkMetrics,
     mcPaths,
+    protectionEvents,
     loading,
     strategyReturnsEstimated,
     // 数据获取方法
@@ -529,6 +548,7 @@ export function useChartData(
     updateTradeSignals,
     updateMetrics,
     updateMcPaths,
+    updateProtectionEvents,
     updateBenchmark,
     loadBenchmark,
     refreshBenchmark,
