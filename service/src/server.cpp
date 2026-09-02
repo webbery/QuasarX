@@ -1156,19 +1156,9 @@ void Server::Schedules(time_t t) {
         LOG("run once script");
         nng_socket sseSock = GetSocket();
 
-        // daily.py
-        {
-            String output;
-            bool ok = RunCommand("cd ../tools && python daily.py", output);
-            if (!ok) {
-                String msg = "daily.py 执行失败";
-                WARN("[Schedules] {}", msg);
-                SendSSE(sseSock, "schedule_error", {
-                    {"task", "daily.py"},
-                    {"message", msg},
-                    {"output", output}
-                });
-            }
+        // 增量下载所有活跃策略的不复权/后复权行情（复用 QuoteDownloadHandler 逻辑）
+        if (_strategySystem) {
+            updateActiveStrategiesQuote();
         }
 
         // 更新分红除权数据（每周日 20:00 触发）：分红数据是历史事实，
@@ -1242,6 +1232,170 @@ void Server::Schedules(time_t t) {
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {
     return _exchangeMgr->GetExchangeByType(type);
+}
+
+const char* DataFrequencyTypeToString(DataFrequencyType f) {
+    switch (f) {
+        case DataFrequencyType::Day:    return "daily";
+        case DataFrequencyType::Min1:   return "1m";
+        case DataFrequencyType::Min5:   return "5m";
+        case DataFrequencyType::Min15:  return "15m";
+        case DataFrequencyType::Min30:  return "30m";
+        case DataFrequencyType::Min60:  return "60m";
+        case DataFrequencyType::Second: return "1s";
+    }
+    return "daily";
+}
+
+DataFrequencyType DataFrequencyTypeFromString(const char* s) {
+    if (!s) return DataFrequencyType::Day;
+    String str = s;
+    if (str == "1d" || str == "daily") return DataFrequencyType::Day;
+    if (str == "1m") return DataFrequencyType::Min1;
+    if (str == "5m") return DataFrequencyType::Min5;
+    if (str == "15m") return DataFrequencyType::Min15;
+    if (str == "30m") return DataFrequencyType::Min30;
+    if (str == "60m") return DataFrequencyType::Min60;
+    if (str == "1s") return DataFrequencyType::Second;
+    return DataFrequencyType::Day;
+}
+
+namespace {
+// 20:00 调度支持的下载频率集合（baostock 数据源覆盖范围）
+const std::vector<DataFrequencyType> kScheduleFreqs = {
+    DataFrequencyType::Day,
+    DataFrequencyType::Min5,
+    DataFrequencyType::Min15,
+    DataFrequencyType::Min30,
+    DataFrequencyType::Min60,
+};
+
+// 字符串日期 YYYY-MM-DD
+String dateString(time_t t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    return String(buf);
+}
+
+// 取 YYYY-MM-DD 部分（end_time 形如 "2026-09-02 15:00:00"）
+String dateOnly(const String& dt) {
+    auto pos = dt.find(' ');
+    return (pos == String::npos) ? dt : dt.substr(0, pos);
+}
+}  // namespace
+
+void Server::updateActiveStrategiesQuote() {
+    auto now = Now();
+    String today = dateString(now);
+
+    // 1. 收集所有活跃策略的标的池（按 asset_type 分桶）
+    if (!_strategySystem) {
+        WARN("[Schedules] updateActiveStrategiesQuote: strategySystem is null");
+        return;
+    }
+    auto names = _strategySystem->GetStrategyNames();
+    if (names.empty()) {
+        INFO("[Schedules] updateActiveStrategiesQuote: no active strategies");
+        return;
+    }
+
+    std::map<std::string, std::set<std::string>> buckets;   // asset_type → internal-symbols
+    for (auto& name : names) {
+        try {
+            auto pools = _strategySystem->GetPools(name);
+            for (auto sym : pools) {
+                String internal = get_symbol(sym);
+                const char* asset = is_etf(sym) ? "etf" : "stock";
+                buckets[asset].insert(internal);
+            }
+        } catch (...) {
+            WARN("[Schedules] updateActiveStrategiesQuote: GetPools({}) failed", name);
+        }
+    }
+
+    // 2. 确保 QuoteDB 已初始化
+    auto dbPath = _config->GetDatabasePath();
+    String quoteDir = dbPath + "/quote";
+    auto& quoteDB = QuoteDB::instance();
+    if (!quoteDB.isInitialized()) {
+        if (!quoteDB.init(quoteDir, "quote.db")) {
+            WARN("[Schedules] updateActiveStrategiesQuote: QuoteDB init failed");
+            return;
+        }
+    }
+
+    // 3. 对每个 (asset_type, freq) 表 → 增量下载
+    int totalGroups = 0, skippedEmpty = 0;
+    nng_socket sseSock = GetSocket();
+    for (auto& [assetType, symbols] : buckets) {
+        for (auto freq : kScheduleFreqs) {
+            const char* freqStr = DataFrequencyTypeToString(freq);
+            String table = QuoteDB::tableName(assetType, freqStr);
+            auto ranges = quoteDB.getSymbolTimeRanges(table);
+
+            // 已有 end_time → 复用为起点；未在表里的 symbol → 走全量
+            std::map<String, std::vector<std::string>> groups;   // end_date → symbols
+            std::vector<std::string> fullReload;                 // 不在表里 → 走 max-history
+            for (auto& sym : symbols) {
+                auto it = std::find_if(ranges.begin(), ranges.end(),
+                    [&](const QuoteDB::SymbolTimeRange& r) {
+                        return get_symbol(r.symbol) == sym;
+                    });
+                if (it == ranges.end()) {
+                    fullReload.push_back(sym);
+                } else {
+                    String endDate = dateOnly(it->end_time);
+                    if (endDate >= today) continue;  // 已最新
+                    groups[endDate].push_back(sym);
+                }
+            }
+
+            // 表里没数据的 symbol 合并到 end_time=1970 组（走全量）
+            if (!fullReload.empty()) {
+                groups["1970-01-01"].insert(groups["1970-01-01"].end(),
+                                            fullReload.begin(), fullReload.end());
+            }
+
+            if (groups.empty()) {
+                ++skippedEmpty;
+                continue;
+            }
+
+            for (auto& [endDate, syms] : groups) {
+                // 拼接 symbols 为外部格式 600000.SH
+                String symsJoined;
+                for (auto& s : syms) {
+                    if (!symsJoined.empty()) symsJoined += ",";
+                    symsJoined += s;
+                }
+
+                String start = endDate;  // YYYY-MM-DD 或 1970-01-01
+                INFO("[Schedules] updateActiveStrategiesQuote: {}/{} start={} symbols={}",
+                     assetType, freqStr, start, syms.size());
+
+                std::vector<QuoteDownloadHandler::DownloadGroup> dgroups;
+                QuoteDownloadHandler::DownloadGroup g;
+                g.asset_type = assetType;
+                g.symbols_str = symsJoined;
+                g.symbols = std::vector<std::string>(syms.begin(), syms.end());
+                dgroups.push_back(std::move(g));
+
+                QuoteDownloadHandler::runDownloadJob(sseSock, dgroups, freqStr,
+                                                    start, today, "", quoteDir);
+                ++totalGroups;
+            }
+        }
+    }
+
+    INFO("[Schedules] updateActiveStrategiesQuote: {} groups dispatched, {} (asset,freq) skipped",
+         totalGroups, skippedEmpty);
 }
 
 int Server::GetMaxPrepareCount() {

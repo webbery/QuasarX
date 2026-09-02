@@ -78,8 +78,16 @@ enum class DataFrequencyType {
   Day,
   Min1,
   Min5,
+  Min15,
+  Min30,
+  Min60,
   Second,
 };
+
+// 与 baostock / QuoteDB 的 freq 字符串互转
+const char* DataFrequencyTypeToString(DataFrequencyType f);
+// 返回 Day 表示无法识别（兜底）
+DataFrequencyType DataFrequencyTypeFromString(const char* s);
 
 enum class StockAdjustType {
   None,
@@ -211,6 +219,17 @@ private:
     void Timer();
 
     void Schedules(time_t t);
+
+    /**
+     * @brief 20:00 调度：增量下载所有活跃策略涉及的不复权/后复权行情
+     *
+     * 遍历已加载策略的标的池，按 (asset_type, freq) 拆表，
+     * 对每只标的查询 QuoteDB 当前 end_time，按 (freq, end_time) 分组，
+     * 复用 QuoteDownloadHandler::runDownloadJob 拉取增量数据。
+     *
+     * 单 symbol 失败由下载脚本内部跳过；组级失败跳过整组。
+     */
+    void updateActiveStrategiesQuote();
 
     void TimerWorker(nng_socket sock);
 

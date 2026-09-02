@@ -87,12 +87,6 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
         else                            stock_syms.push_back(bs_sym);
     }
 
-    struct DownloadGroup {
-        std::string asset_type;
-        std::string symbols_str;
-        std::vector<std::string> symbols;
-    };
-
     std::vector<DownloadGroup> groups;
     if (!etf_syms.empty()) {
         std::string joined;
@@ -111,12 +105,39 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
         return;
     }
 
-    // 后台线程执行下载 + 导入（按组）
-    std::thread([sse_sock, groups, quote_dir, freq, start, end, interpreter]() {
+    // 复用核心下载逻辑（异步）
+    runDownloadJob(sse_sock, groups, freq, start, end, env_name, quote_dir);
+
+    // 立即返回（返回所有分组的信息）
+    nlohmann::json resp;
+    resp["status"] = "started";
+    nlohmann::json groups_json = nlohmann::json::array();
+    for (auto& g : groups) {
+        nlohmann::json g_info;
+        g_info["asset_type"] = g.asset_type;
+        g_info["table"] = QuoteDB::tableName(g.asset_type, freq);
+        g_info["symbols"] = g.symbols_str;
+        groups_json.push_back(g_info);
+    }
+    resp["groups"] = groups_json;
+    res.set_content(resp.dump(), "application/json");
+}
+
+void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
+                                          std::vector<DownloadGroup> groups,
+                                          const std::string& freq,
+                                          const std::string& start,
+                                          const std::string& end,
+                                          const std::string& env_name,
+                                          const std::string& quote_dir) {
+    (void)env_name;  // 调度场景固定使用系统默认 python
+    std::string interpreter = "python";
+
+    std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter]() {
         for (auto& group : groups) {
             const auto& asset_type = group.asset_type;
             const auto& symbols_str = group.symbols_str;
-            auto sym_list = splitSymbols(symbols_str);
+            auto sym_list = group.symbols;
 
             // 构建命令（脚本内部已同时下载 HFQ + 不复权）
             std::string cmd = interpreter + " tools/download_etf_bs.py "
@@ -130,7 +151,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
             std::string hfq_dir = asset_type + "_hfq/" + freq;
             std::string org_dir = asset_type + "_org/" + freq;
 
-            SendSSE(sse_sock, "quote_download", {
+            SendSSE(sseSock, "quote_download", {
                 {"status", "started"}, {"asset_type", asset_type},
                 {"symbols", symbols_str}, {"total", std::to_string(sym_list.size())}
             });
@@ -152,7 +173,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
 
                     if (status == "done") {
                         downloaded++;
-                        SendSSE(sse_sock, "quote_download", {
+                        SendSSE(sseSock, "quote_download", {
                             {"status", "symbol_downloaded"},
                             {"asset_type", asset_type},
                             {"symbol", sym},
@@ -162,7 +183,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
                         });
                     } else if (status == "failed") {
                         failed++;
-                        SendSSE(sse_sock, "quote_download", {
+                        SendSSE(sseSock, "quote_download", {
                             {"status", "symbol_failed"},
                             {"asset_type", asset_type},
                             {"symbol", sym},
@@ -172,7 +193,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
                 }
             }
 
-            SendSSE(sse_sock, "quote_download", {
+            SendSSE(sseSock, "quote_download", {
                 {"status", ok ? "downloaded" : "download_failed"},
                 {"downloaded", std::to_string(downloaded)},
                 {"failed", std::to_string(failed)},
@@ -181,7 +202,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
             // 检查 QuoteDB 是否仍有效（服务可能在退出）
             auto& quoteDB = QuoteDB::instance();
             if (!ok || !quoteDB.isInitialized()) {
-                SendSSE(sse_sock, "quote_download", {
+                SendSSE(sseSock, "quote_download", {
                     {"status", "aborted"},
                     {"reason", ok ? "QuoteDB shutting down" : "download failed"}
                 });
@@ -222,7 +243,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
                 int rows = quoteDB.importCsv(org_path, hfq_path, table, toInternalSymbol(sym));
                 if (rows > 0) {
                     total_rows += rows;
-                    SendSSE(sse_sock, "quote_download", {
+                    SendSSE(sseSock, "quote_download", {
                         {"status", "importing"},
                         {"table", table},
                         {"symbol", sym},
@@ -233,7 +254,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
                 fs::remove(hfq_path);
             }
 
-            SendSSE(sse_sock, "quote_download", {
+            SendSSE(sseSock, "quote_download", {
                 {"status", "done"},
                 {"asset_type", asset_type},
                 {"table", table},
@@ -242,20 +263,6 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
             });
         }
     }).detach();
-
-    // 立即返回（返回所有分组的信息）
-    nlohmann::json resp;
-    resp["status"] = "started";
-    nlohmann::json groups_json = nlohmann::json::array();
-    for (auto& g : groups) {
-        nlohmann::json g_info;
-        g_info["asset_type"] = g.asset_type;
-        g_info["table"] = QuoteDB::tableName(g.asset_type, freq);
-        g_info["symbols"] = g.symbols_str;
-        groups_json.push_back(g_info);
-    }
-    resp["groups"] = groups_json;
-    res.set_content(resp.dump(), "application/json");
 }
 
 void QuoteDownloadHandler::get(const httplib::Request& req, httplib::Response& res) {
