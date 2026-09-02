@@ -612,9 +612,10 @@ Map<symbol_t, double> FormulaParser::computeNumeric(const Vector<symbol_t>& symb
         return results;
     }
 
-    // 预处理截面函数（复用现有逻辑）
+    // 预处理截面函数：先构建截面图，再执行（与 envokeMixedCase 一致）
     if (hasCrossSectionFunctions(*_ast)) {
-        precomputeCrossSectionFunctions(symbols, context);
+        buildCrossSectionGraph(*_ast);
+        computeCrossSectionGraph(symbols, context);
     }
 
     // 逐 symbol 计算数值

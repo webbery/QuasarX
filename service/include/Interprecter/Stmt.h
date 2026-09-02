@@ -32,13 +32,6 @@ namespace peg{
     class parser;
 }
 
-// 截面函数结果（保留向后兼容）
-struct CrossSectionResult {
-    String funcName;
-    std::shared_ptr<peg::Ast> funcAst;
-    Map<symbol_t, bool> stockResults;
-};
-
 // 截面函数类型
 enum class CrossSectionFuncType {
     TOPK,           // topk(expr, k) - 选前 k 名
@@ -87,11 +80,6 @@ struct CrossSectionGraph {
 
     // 判断是否为空
     bool empty() const { return nodes.empty(); }
-};
-
-struct cross_function_t {
-    String _name;
-    Map<char, context_t> _args;
 };
 
 struct symbol_t;
@@ -170,17 +158,7 @@ private:
     // 处理截面函数混合的情况
     List<Pair<symbol_t, TradeAction>> envokeMixedCase(const Vector<symbol_t>& symbols, const Set<String>& variantNames, DataContext& context);
 
-    // 提取表达式中的所有截面函数
-    void extractCrossSectionFunctions(const peg::Ast& ast);
-
-    // 计算截面函数，结果保存到 context 中
-    void precomputeCrossSectionFunctions(const Vector<symbol_t>& symbols, DataContext& context);
-
-    context_t evaluateForSymbolWithCrossSectionResults(const symbol_t& symbol, const peg::Ast& ast, DataContext& context,
-        const Map<String, std::shared_ptr<CrossSectionResult>>& crossSectionResults);
-
 private:
-    String genPrimaryPlaceHolder(const peg::Ast& ats);
 
     // ========== 新增：静态类型检查 ==========
 
@@ -206,8 +184,6 @@ private:
     String _validationError;  // 存储验证错误信息
 
 private:
-    // void topk(const Vector<symbol_t>& allSymbols, const peg::Ast& funcAst, CrossSectionResult& result, DataContext& context);
-
     // ========== 新增：基于图的截面函数处理 ==========
 
     // 从 AST 构建图
@@ -234,9 +210,6 @@ private:
 
     // 截面函数图
     CrossSectionGraph _csGraph;
-
-    // 原有结构（保留兼容）
-    Map<String, cross_function_t> _CSFunctions;
 
     std::unordered_map<String, intrinsic_function> _functions;
 };
