@@ -308,6 +308,205 @@ paths:
                       type: string
                       description: 期权代码
 
+  /option/pricing:
+    post:
+      summary: 期权定价
+      description: 使用 BSM / Monte Carlo / Binomial Tree 对期权合约定价
+      tags:
+        - Options
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strike, is_call]
+              properties:
+                method:
+                  type: string
+                  enum: [black_scholes, monte_carlo, binomial]
+                  default: black_scholes
+                spot:
+                  type: number
+                  description: 标的价格
+                strike:
+                  type: number
+                  description: 行权价
+                expiry:
+                  type: string
+                  description: 到期日 YYYY-MM-DD
+                T:
+                  type: number
+                  description: 到期时间(年)，与 expiry 二选一
+                volatility:
+                  type: number
+                  description: 隐含波动率
+                risk_free_rate:
+                  type: number
+                  default: 0.015
+                dividend_yield:
+                  type: number
+                  default: 0
+                is_call:
+                  type: boolean
+                is_american:
+                  type: boolean
+                  default: false
+                n_paths:
+                  type: integer
+                  description: MC 模拟路径数
+                  default: 100000
+                n_steps:
+                  type: integer
+                  description: MC/Tree 步数
+                  default: 252
+      responses:
+        '200':
+          description: 定价结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  price:
+                    type: number
+                  intrinsic_value:
+                    type: number
+                  time_value:
+                    type: number
+                  moneyness:
+                    type: string
+                    enum: [ITM, ATM, OTM]
+                  greeks:
+                    type: object
+                    properties:
+                      delta: { type: number }
+                      gamma: { type: number }
+                      theta: { type: number }
+                      vega: { type: number }
+                      rho: { type: number }
+                  payoff_curve:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        spot: { type: number }
+                        payoff_at_expiry: { type: number }
+                        payoff_now: { type: number }
+                  mc_std_error:
+                    type: number
+                    description: 仅 monte_carlo 方法
+                  early_exercise_premium:
+                    type: number
+                    description: 仅 binomial 方法
+
+  /option/pricing_multi:
+    post:
+      summary: 多合约批量定价
+      description: 同时定价多个合约，用于对比分析
+      tags:
+        - Options
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contracts, spot]
+              properties:
+                method:
+                  type: string
+                  enum: [black_scholes, monte_carlo, binomial]
+                spot:
+                  type: number
+                volatility:
+                  type: number
+                risk_free_rate:
+                  type: number
+                contracts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      strike: { type: number }
+                      is_call: { type: boolean }
+                      expiry: { type: string }
+                      T: { type: number }
+                      volatility: { type: number }
+                      is_american: { type: boolean }
+      responses:
+        '200':
+          description: 每个合约的定价结果数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    strike: { type: number }
+                    is_call: { type: boolean }
+                    price: { type: number }
+                    greeks:
+                      type: object
+                      properties:
+                        delta: { type: number }
+                        gamma: { type: number }
+                        theta: { type: number }
+                        vega: { type: number }
+                        rho: { type: number }
+
+  /option/iv_surface:
+    get:
+      summary: IV 曲面数据
+      description: 返回隐含波动率曲面（原始数据点 + 插值网格）
+      tags:
+        - Options
+      parameters:
+        - in: query
+          name: exchange
+          required: true
+          schema:
+            type: string
+            enum: [CFFEX, SSE, SZSE]
+        - in: query
+          name: product
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: IV 曲面
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  raw_points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        strike: { type: number }
+                        expiry_days: { type: integer }
+                        iv: { type: number }
+                        contract_name: { type: string }
+                        call_put: { type: string }
+                  strikes:
+                    type: array
+                    items: { type: number }
+                  expiry_days:
+                    type: array
+                    items: { type: integer }
+                  surface:
+                    type: array
+                    description: 二维数组 [expiry_idx][strike_idx]
+                    items:
+                      type: array
+                      items: { type: number }
+                  count:
+                    type: integer
+
   /index/quote:
     get:
       summary: get index info
@@ -942,71 +1141,6 @@ paths:
                   symbols:
                     type: string
                     example: 111000,000001
-  /predict/operation:
-    put:
-      summary: set prediction
-      description: 设置预测的操作,即接下来某个时间内应该执行的操作
-      tags: 
-        - Predict
-      requestBody:
-        description: 预测参数
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PredictionOperationRequest"
-      responses:
-        '200':
-          description: success
-    get:
-      summary: get prediction
-      description: 获取预设置的操作
-      tags: 
-        - Predict
-      parameters:
-        - in: query
-          name: symbol
-          schema:
-            type: string
-          description: symbol
-        - in: query
-          name: exchange
-          schema:
-            type: string
-          description: exchange
-      responses:
-        '200':
-          description: success
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PredictionItem"
-    delete:
-      summary: delete prediction
-      description: 删除预设置的操作
-      tags: 
-        - Predict
-      parameters:
-        - in: query
-          name: symbol
-          schema:
-            type: string
-            description: symbol
-        - in: query
-          name: index
-          schema:
-            type: integer
-            description: index of query prediction
-        - in: query
-          name: exchange
-          schema:
-            type: integer
-            description: 0-simulate, 1-xtp, 2-ctp
-      responses:
-        '200':
-          description: success
   /future/simple:
     get:
       summary: all future info
@@ -3266,47 +3400,8 @@ components:
               type: number
         expected:
           type: number
-          description: expection of all path 
-    
-    PredictionOperationRequest:
-      type: object
-      properties:
-        symbol:
-          type: string
-          description: symbol
-          example: 000001
-        datetime:
-          type: string
-          description: YYYY-MM-DD
-        operation:
-          type: integer
-          description: 0-keep, 1-buy, 2-sell
-        exchange:
-          type: integer
-          description: 0-simulate, 1-xtp, 2-ctp
-    
-    PredictionItem:
-      type: object
-      properties:
-        symbol:
-          type: string
-          description: symbol
-          example: 000001
-        predictions:
-          type: array
-          description: operations
-          items:
-            $ref: "#/components/schemas/PredictionDetail"
-    
-    PredictionDetail:
-      type: object
-      properties:
-        datetime:
-          type: string
-          description: time
-        operator:
-          type: integer
-    
+          description: expection of all path
+
     SimulateRequest:
       type: object
       properties:

@@ -10,7 +10,6 @@
 #include "BrokerSubSystem.h"
 #include "ExchangeManager.h"
 #include "Handler/PositionHandler.h"
-#include "Handler/PredictionHandler.h"
 #include "Handler/RiskHandler.h"
 #include "RiskSubSystem.h"
 #include "Handler/ServerEventHandler.h"
@@ -59,10 +58,10 @@
 #include "Handler/BrokerHandler.h"
 #include "Handler/RiskHandler.h"
 #include "Handler/PortfolioHandler.h"
-#include "Handler/PredictionHandler.h"
 #include "Handler/FutureHandler.h"
 #include "Handler/OptionHandler.h"
 #include "Handler/OptionDataHandler.h"
+#include "Handler/OptionPricingHandler.h"
 #include "Handler/IndexHandler.h"
 #include "Handler/BackTestHandler.h"
 #include "Handler/CapacityHandler.h"
@@ -145,6 +144,9 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_OPTION_HISTORY  "/option/history"
 #define API_OPTION_DETAIL   "/option/detail"
 #define API_OPTION_DATA     "/option/data"
+#define API_OPTION_PRICING  "/option/pricing"
+#define API_OPTION_PRICING_MULTI "/option/pricing_multi"
+#define API_OPTION_IV_SURFACE    "/option/iv_surface"
 #define API_STOCK_DETAIL    "/stocks/detail"
 #define API_STOCK_HISTORY   "/stocks/history"
 #define API_ALL_STOCK       "/stocks/simple"
@@ -164,7 +166,6 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_INDEX           "/index/quote"
 #define API_MONTECARLO      "/predict/montecarlo"
 #define API_FINITE_DIFF     "/predict/finite_diff"
-#define API_PREDICT_OPR     "/predict/operation"
 #define API_DATA_SYNC       "/data/sync"
 #define API_USER_LOGIN      "/user/login"
 #define API_USER_FUNDS      "/user/funds"
@@ -365,10 +366,6 @@ void Server::Regist() {
 
     REGIST_POST(API_EXHANGE);
 
-    REGIST_PUT(API_PREDICT_OPR);
-    REGIST_GET(API_PREDICT_OPR);
-    REGIST_DEL(API_PREDICT_OPR);
-
     REGIST_POST(API_RECORD);
     REGIST_DEL(API_RECORD);
 
@@ -421,6 +418,9 @@ void Server::Regist() {
     REGIST_POST(API_OPTION_DATA);
     REGIST_GET(API_OPTION_DATA);
     REGIST_DEL(API_OPTION_DATA);
+    REGIST_POST(API_OPTION_PRICING);
+    REGIST_POST(API_OPTION_PRICING_MULTI);
+    REGIST_GET(API_OPTION_IV_SURFACE);
     REGIST_POST(API_ML);
     REGIST_GET(API_ML);
     REGIST_DEL(API_ML);
@@ -1474,7 +1474,6 @@ void Server::InitHandlers() {
     RegistHandler(API_STOCK_DETAIL, StockDetailHandler);
     RegistHandler(API_STOCK_HISTORY, StockHistoryHandler);
     RegistHandler(API_PORTFOLIO, PortfolioHandler);
-    RegistHandler(API_MONTECARLO, MonteCarloHandler);
     RegistHandler(API_ALL_FUTURE, FutureHandler);
     RegistHandler(API_ALL_OPTION, OptionHandler);
     RegistHandler(API_OPTION_HISTORY, OptionHistoryHandler);
@@ -1487,7 +1486,6 @@ void Server::InitHandlers() {
     RegistHandler(API_CAPACITY, CapacityHandler);
     RegistHandler(API_RISK_STATUS, RiskStatusHandler);
     RegistHandler(API_RISK_RESET, RiskStatusHandler);
-    RegistHandler(API_PREDICT_OPR, PredictionHandler);
     RegistHandler(API_TRADE_ORDER, OrderHandler);
     RegistHandler(API_TRADE_HISTORY, HistoryTradeHandler);
     RegistHandler(API_TRADE_DECISIONS, DecisionHandler);
@@ -1524,6 +1522,9 @@ void Server::InitHandlers() {
     RegistHandler(API_FINANCE_DATA, FinanceDataHandler);
     RegistHandler(API_DIVIDEND, DividendHandler);
     RegistHandler(API_OPTION_DATA, OptionDataHandler);
+    RegistHandler(API_OPTION_PRICING, OptionPricingHandler);
+    RegistHandler(API_OPTION_PRICING_MULTI, OptionPricingHandler);
+    RegistHandler(API_OPTION_IV_SURFACE, OptionPricingHandler);
     RegistHandler(API_ML, MLHandler);
 
 #ifdef _DEBUG

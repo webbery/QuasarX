@@ -89,7 +89,9 @@
 
       <div class="nav-section">
         <div class="nav-title">分析</div>
-        <div class="nav-item">
+        <div class="nav-item" :class="{ active: is_derivative }"
+          @click="onHandleDerivativePricing"
+        >
           <i class="fas fa-flask"></i>
           <span>衍生品定价</span>
         </div>
@@ -304,6 +306,8 @@ import ReportConfigPanel from './components/report/ReportConfigPanel.vue';
 import { CHART_REGISTRY } from './components/report/config/chartRegistry';
 // 知识库
 import KnowledgeBaseView from './components/knowledge/KnowledgeBaseView.vue';
+// 衍生品定价
+import DerivativePricingView from './components/derivative/DerivativePricingView.vue';
 // AI 聊天框
 import ChatBox from './components/ChatBox.vue'
 import { useChatStore } from './stores/chatStore'
@@ -330,6 +334,7 @@ const VIEWS = {
   PORTFOLIO_VIEW: 'portfolio',
   KNOWLEDGE_BASE: 'knowledge_base',
   STRATEGY_TRACKER: 'strategy_tracker',
+  DERIVATIVE_PRICING: 'derivative_pricing',
 };
 const store = new Store()
 
@@ -475,6 +480,8 @@ let activeComponent = computed(() => {
     return KnowledgeBaseView;
   if (currentView.value === VIEWS.STRATEGY_TRACKER)
     return StrategyTracker;
+  if (currentView.value === VIEWS.DERIVATIVE_PRICING)
+    return DerivativePricingView;
   return AccountView;
 });
 
@@ -510,6 +517,7 @@ let is_risk = computed(() => currentView.value === VIEWS.RISK_VIEW || currentVie
 let is_portfolio = computed(() => currentView.value === VIEWS.PORTFOLIO_VIEW);
 let is_knowledgebase = computed(() => currentView.value === VIEWS.KNOWLEDGE_BASE);
 let is_strategy_tracker = computed(() => currentView.value === VIEWS.STRATEGY_TRACKER);
+let is_derivative = computed(() => currentView.value === VIEWS.DERIVATIVE_PRICING);
 
 /** 是否为回测模式（回测模式下不显示部署/启动/停止按钮） */
 const isBacktestMode = computed(() => runningMode.value.includes('回测'));
@@ -784,6 +792,10 @@ const onHandlePosition = () => {
 
 const onHandleStrategyTracker = () => {
   currentView.value = VIEWS.STRATEGY_TRACKER;
+}
+
+const onHandleDerivativePricing = () => {
+  currentView.value = VIEWS.DERIVATIVE_PRICING;
 }
 
 const onDecisionNavigate = () => {
