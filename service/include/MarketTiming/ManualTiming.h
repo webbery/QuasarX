@@ -13,6 +13,7 @@ struct DecisionSnapshot {
     double _price = 0.0;
     int _flag = 0;
     int _epoch = -1;
+    bool _signalEvaluated = false;  // true=SignalNode 评估产生的；false=ExecuteNode 默认补 HOLD
 };
 
 /**

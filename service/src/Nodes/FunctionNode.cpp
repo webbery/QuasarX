@@ -29,17 +29,13 @@ namespace {
         }
     }
 
-    // 将 TimeValue 按数据频率换算为 bar 数
+    // 将 TimeValue 按数据频率换算为 bar 数（复用 Util/datetime 中的 TimeStringToMinutes）
     int TimeValueToBars(const TimeValue& tv, DataFrequencyType freq) {
-        int totalMinutes;
-        switch (tv.unit) {
-            case 's': totalMinutes = 1; break;             // 不足 1 bar 按 1 bar
-            case 'm': totalMinutes = tv.value; break;
-            case 'h': totalMinutes = tv.value * 60; break;
-            case 'd': totalMinutes = tv.value * 240; break; // 1 交易日 = 240 分钟
-            default:  return tv.value;                      // 无单位 → 裸数字即 bar 数
-        }
-        return std::max(1, totalMinutes / MinutesPerBar(freq));
+        String rangeStr = std::to_string(tv.value);
+        if (tv.unit != '\0') rangeStr.push_back(tv.unit);
+        int rangeMinutes = TimeStringToMinutes(rangeStr);
+        if (rangeMinutes <= 0) return 1;  // 解析失败兜底为 1 bar
+        return std::max(1, rangeMinutes / MinutesPerBar(freq));
     }
 
     using CallableFactory = ICallable* (*)(const nlohmann::json&);

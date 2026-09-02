@@ -27,6 +27,21 @@ struct TimeValue {
 };
 TimeValue ParseTimeValue(const std::string& str);
 
+/**
+ * 将任意 "Ns/Nm/Nh/Nd" 时间字符串换算为秒数（壁钟：1d = 86400s）。
+ * 解析失败返回 -1。
+ * 例: "5d" → 432000, "1h" → 3600, "30s" → 30, "20d" → 1728000。
+ */
+int TimeStringToSeconds(const std::string& str);
+
+/**
+ * 将任意 "Ns/Nm/Nh/Nd" 时间字符串换算为分钟数（交易日：1d = 240 min）。
+ * 解析失败返回 -1。与 TimeStringToSeconds 区别在于 1d 的换算基准
+ * （交易日 4 小时 vs 壁钟 24 小时），与 FunctionNode::TimeValueToBars 保持一致。
+ * 例: "5d" → 1200, "1h" → 60, "30s" → 1, "20d" → 4800。
+ */
+int TimeStringToMinutes(const std::string& str);
+
 float Hour(const String& time);
 
 bool IsInTimeRange(time_t tick, char start_hour, char end_hour, char start_min, char end_min);

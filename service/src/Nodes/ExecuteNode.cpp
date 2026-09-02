@@ -241,6 +241,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 if (_server->GetRunningMode() == RuningType::Backtest) {
                     signal->SetBacktestTime(context.Current());
                 }
+                signal->SetDefaultHold(true);  // 标记为默认补 HOLD，便于 ManualTiming 区分
                 context.AddSignal(signal);
             }
         }

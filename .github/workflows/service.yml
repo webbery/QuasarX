@@ -144,8 +144,8 @@ jobs:
           sudo make install
 
           cd ..
-          git clone --recursive https://github.com/TA-Lib/ta-lib
-          cd ta-lib
+          git clone --recursive https://github.com/stevengj/nlopt
+          cd nlopt
           mkdir build && cd build
           cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
@@ -204,7 +204,7 @@ jobs:
             /usr/local/lib/libxgboost.*
             /usr/local/lib/libduckdb.so*
             /usr/local/lib/libnng.so*
-            /usr/local/lib/libta_lib.*
+            /usr/local/lib/libnlopt.so*
             service/third_party/libs/unix/libfastsptraderapi.so
             service/third_party/libs/unix/libfasttraderapi.so
             service/third_party/libs/unix/libsptraderapi.so

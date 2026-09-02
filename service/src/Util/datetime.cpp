@@ -95,6 +95,36 @@ TimeValue ParseTimeValue(const std::string& str) {
     return {val, unit};
 }
 
+int TimeStringToSeconds(const std::string& str) {
+    try {
+        TimeValue tv = ParseTimeValue(str);
+        switch (tv.unit) {
+            case 's': return std::max(1, tv.value);
+            case 'm': return tv.value * 60;
+            case 'h': return tv.value * 3600;
+            case 'd': return tv.value * 86400;  // 壁钟日历 1 天
+            default:  return tv.value;            // 无单位即秒
+        }
+    } catch (const std::exception&) {
+        return -1;  // 解析失败（格式异常/非正数）→ 跳过
+    }
+}
+
+int TimeStringToMinutes(const std::string& str) {
+    try {
+        TimeValue tv = ParseTimeValue(str);
+        switch (tv.unit) {
+            case 's': return 1;                    // 不足 1 分钟按 1 分钟
+            case 'm': return tv.value;
+            case 'h': return tv.value * 60;
+            case 'd': return tv.value * 240;       // 1 交易日 = 240 分钟
+            default:  return tv.value;              // 无单位即分钟数
+        }
+    } catch (const std::exception&) {
+        return -1;
+    }
+}
+
 // std::chrono::time_point<std::chrono::system_clock> FromLocalTime(time_t t) {
 //     std::tm local_tm = *std::localtime(&t);
 //     return std::chrono::system_clock::from_time_t(std::mktime(&local_tm));

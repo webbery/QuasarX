@@ -12,18 +12,10 @@
 #include "Util/string_algorithm.h"
 #include "Util/DailyDecision.h"
 #include "Util/DecisionDB.h"
+#include "Util/datetime.h"
 
 namespace {
-    // timeHorizon 映射：统一转换为秒（用于计算 warmup epoch 数）
-    static const Map<String, int>& timeHorizonSeconds() {
-        static const Map<String, int> m{
-            {"6s", 6}, {"30s", 30}, {"1m", 60}, {"5m", 300}, {"1h", 3600},
-            {"1d", 86400}, {"3d", 259200}, {"5d", 432000},
-        };
-        return m;
-    }
-
-    // 从策略配置推断预热期 epoch 数
+    // 从策略配置推断预热期 epoch 数（支持任意 Nx 格式：20d/60d/120d/250d 等）
     int InferWarmupEpochsFromConfig(const nlohmann::json& config) {
         int maxWarmup = 0;
 
@@ -40,11 +32,8 @@ namespace {
             }
         }
 
-        if (inputFreq.empty() || !timeHorizonSeconds().count(inputFreq)) {
-            return maxWarmup;
-        }
-
-        int freqSeconds = timeHorizonSeconds().at(inputFreq);
+        int freqSeconds = TimeStringToSeconds(inputFreq);
+        if (freqSeconds <= 0) return maxWarmup;
 
         // 2. 遍历 Function 节点，计算最大 warmup
         for (auto& node : config["nodes"]) {
@@ -54,12 +43,12 @@ namespace {
             auto& params = node["data"]["params"];
             String range = params["range"]["value"];
 
-            if (timeHorizonSeconds().count(range)) {
-                int rangeSeconds = timeHorizonSeconds().at(range);
-                // 计算需要的 epoch 数（向上取整）
-                int epochs = (rangeSeconds + freqSeconds - 1) / freqSeconds;
-                maxWarmup = std::max(maxWarmup, epochs);
-            }
+            int rangeSeconds = TimeStringToSeconds(range);
+            if (rangeSeconds <= 0) continue;  // 解析失败/格式异常 → 跳过
+
+            // 计算需要的 epoch 数（向上取整）
+            int epochs = (rangeSeconds + freqSeconds - 1) / freqSeconds;
+            maxWarmup = std::max(maxWarmup, epochs);
         }
 
         return maxWarmup;

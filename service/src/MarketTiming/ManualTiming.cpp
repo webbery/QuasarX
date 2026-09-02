@@ -19,6 +19,7 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
     snap._price = signal.GetPrice();
     snap._flag = (action == TradeAction::SELL) ? 1 : 0;
     snap._epoch = context.GetEpoch();
+    snap._signalEvaluated = !signal.IsDefaultHold();
     _decisions[signal.GetSymbol()] = snap;
 
     // 日志
@@ -44,12 +45,16 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
     // 返回给调用方的决策数组（供日终 report / 持仓快照使用，action 兼容 DailyDecisionJson::parseAction）
     nlohmann::json decisionsResult = nlohmann::json::array();
 
-    // 分类统计
-    Vector<const DecisionSnapshot*> buys, sells, holds;
+    // 分类统计（HOLD 区分"评估产生"与"默认补"）
+    Vector<const DecisionSnapshot*> buys, sells, holds, evalHolds, defaultHolds;
     for (const auto& [sym, d] : _decisions) {
         if (d._action == TradeAction::BUY) buys.push_back(&d);
         else if (d._action == TradeAction::SELL) sells.push_back(&d);
-        else holds.push_back(&d);
+        else {
+            holds.push_back(&d);
+            if (d._signalEvaluated) evalHolds.push_back(&d);
+            else defaultHolds.push_back(&d);
+        }
 
         // 写入决策存储（内存 + DuckDB）—— 仅 BUY/SELL
         if (d._action != TradeAction::HOLD) {
@@ -122,8 +127,19 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
     // ==== 构建邮件正文 ====
     String body;
     body += "Strategy: " + strategy + "\n";
-    body += fmt::format("Total: {} (BUY={}, SELL={}, HOLD={})\n\n",
-                        _decisions.size(), buys.size(), sells.size(), holds.size());
+    body += fmt::format("Total: {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}])\n\n",
+                        _decisions.size(), buys.size(), sells.size(),
+                        holds.size(), evalHolds.size(), defaultHolds.size());
+
+    // 警告：所有 HOLD 都是默认补的 → 上游 SignalNode 可能未评估
+    if (!buys.empty() || !sells.empty()) {
+        // 有真实 BUY/SELL，不需要警告
+    } else if (!defaultHolds.empty() && evalHolds.empty()) {
+        body += "⚠ All HOLD decisions are default holds (SignalNode produced no signals).\n"
+                "  Likely cause: upstream warmup not ready (e.g. MA20 needs >=20 bars) or feature data insufficient.\n\n";
+    } else if (!evalHolds.empty() && defaultHolds.empty()) {
+        body += "✓ All HOLD decisions are evaluated (SignalNode ran, no BUY/SELL crossover today).\n\n";
+    }
 
     // 资金概况（仅在 CapitalPool 注册了该策略时显示）
     if (strategyCap > 0.0) {
@@ -172,10 +188,23 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
         body += "\n";
     }
 
-    if (!holds.empty()) {
-        body += "=== HOLD ===\n";
-        for (auto* d : holds) {
-            body += fmt::format("  HOLD {} qty={} price={:.2f} epoch={}\n",
+    if (!evalHolds.empty()) {
+        body += "=== HOLD (evaluated) ===\n";
+        for (size_t i = 0; i < evalHolds.size(); ++i) {
+            auto* d = evalHolds[i];
+            body += fmt::format("  [{}/{}] HOLD {} qty={} price={:.2f} epoch={}\n",
+                               i + 1, evalHolds.size(),
+                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
+        }
+        body += "\n";
+    }
+
+    if (!defaultHolds.empty()) {
+        body += "=== HOLD (default, no SignalNode eval) ===\n";
+        for (size_t i = 0; i < defaultHolds.size(); ++i) {
+            auto* d = defaultHolds[i];
+            body += fmt::format("  [{}/{}] HOLD {} qty={} price={:.2f} epoch={}\n",
+                               i + 1, defaultHolds.size(),
                                get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
         }
         body += "\n";
@@ -183,8 +212,9 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
 
     _server->SendEmail(body);
 
-    INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={})",
-         strategy, buys.size(), sells.size(), holds.size());
+    INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}])",
+         strategy, buys.size(), sells.size(), holds.size(),
+         evalHolds.size(), defaultHolds.size());
 
     // 清空累积器
     _decisions.clear();

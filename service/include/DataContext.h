@@ -61,12 +61,17 @@ public:
     time_t GetBacktestTime() const { return _backtestTime; }
     void SetBacktestTime(time_t t) { _backtestTime = t; }
 
+    // 来源标识：区分 SignalNode 评估产生的信号 vs ExecuteNode 默认补的 HOLD
+    void SetDefaultHold(bool v = true) { _isDefaultHold = v; }
+    bool IsDefaultHold() const { return _isDefaultHold; }
+
 private:
     symbol_t _symbol;
     TradeAction _action;
     int _quantity = 0;           // 数量
     double _price = 0.0;         // 建议价格
     bool _executed: 1 = false;   // 是否已执行
+    bool _isDefaultHold: 1 = false; // 是否 ExecuteNode 默认补的 HOLD（非 SignalNode 评估产生）
     std::chrono::system_clock::time_point _create_time;
     time_t _backtestTime = 0;    // 回测时间 (信号触发时的 Bar 时间)
 };
