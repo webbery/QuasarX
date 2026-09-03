@@ -194,8 +194,6 @@ function openGlobalConfig() {
   height: 100%;
   overflow-y: auto;
   background: var(--dark-bg);
-  scrollbar-width: thin;
-  scrollbar-color: var(--primary) transparent;
 }
 
 .strategy-list-section {

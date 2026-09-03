@@ -287,16 +287,6 @@ async function runAnalysis() {
   padding: 12px;
 }
 
-.nonlinear-tab::-webkit-scrollbar { width: 6px; }
-.nonlinear-tab::-webkit-scrollbar-track { background: transparent; }
-.nonlinear-tab::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-.nonlinear-tab::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
 .results {
   display: flex;
   flex-direction: column;

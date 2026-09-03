@@ -37,7 +37,7 @@
           <span v-else class="muted">—</span>
         </div>
         <div class="col-time">
-          <span v-if="prodMeta(m)?.created_at" class="time">{{ formatTime(prodMeta(m)!.created_at) }}</span>
+          <span v-if="prodMeta(m)?.created_at" class="time">{{ formatTime(prodMeta(m)?.created_at) }}</span>
           <span v-else class="muted">未发布</span>
         </div>
         <div class="col-features">

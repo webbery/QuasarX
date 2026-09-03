@@ -164,25 +164,6 @@ onUnmounted(() => {
   z-index: 1000;
   min-width: 200px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-}
-
-.multiselect-dropdown-content::-webkit-scrollbar {
-  width: 6px;
-}
-
-.multiselect-dropdown-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.multiselect-dropdown-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-
-.multiselect-dropdown-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
 }
 
 .multiselect-checkbox {

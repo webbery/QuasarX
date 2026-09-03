@@ -351,25 +351,6 @@ defineExpose({
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--primary, #2962ff) transparent;
-}
-
-.report-container::-webkit-scrollbar {
-  width: 8px;
-}
-
-.report-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.report-container::-webkit-scrollbar-thumb {
-  background: var(--primary, #2962ff);
-  border-radius: 4px;
-}
-
-.report-container::-webkit-scrollbar-thumb:hover {
-  background: var(--primary-dark, #1e4fd9);
 }
 
 /* === 图表网格 === */

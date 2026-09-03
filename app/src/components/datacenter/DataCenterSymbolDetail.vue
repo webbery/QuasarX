@@ -4,7 +4,7 @@
     <div class="detail-header">
       <div class="header-info">
         <div class="symbol-code">{{ symbol || '—' }}</div>
-        <div class="symbol-name">{{ symbolName || symbol ? '加载中…' : '' }}</div>
+        <div class="symbol-name">{{ symbolName || (symbol ? '加载中…' : '') }}</div>
       </div>
       <div class="header-meta">
         <span class="freq-badge" :class="{ 'freq-daily': isDaily }">

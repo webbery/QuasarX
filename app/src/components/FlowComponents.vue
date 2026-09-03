@@ -264,26 +264,7 @@ const paramNames = (node) => {
     height: calc(100vh - 100px);
     max-height: calc(100vh - 100px);
 
-    scrollbar-width: thin;
-    scrollbar-color: var(--primary) transparent;
     padding: 8px;
-}
-
-.components-panel::-webkit-scrollbar {
-    width: 6px;
-}
-
-.components-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.components-panel::-webkit-scrollbar-thumb {
-    background-color: var(--primary);
-    border-radius: 3px;
-}
-
-.components-panel::-webkit-scrollbar-thumb:hover {
-    background-color: var(--primary-dark);
 }
 
 /* ───── 1a 搜索框 ───── */

@@ -525,25 +525,6 @@ async function runAnalysis() {
   overflow: auto;
   padding: 16px;
   min-height: 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-}
-
-.results::-webkit-scrollbar {
-  width: 6px;
-}
-
-.results::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.results::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-
-.results::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
 }
 
 .section {

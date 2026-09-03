@@ -2699,19 +2699,6 @@ const onOptionDeleteAll = async () => {
     overflow-y: auto;
     padding: 12px 4px 12px 0;
 }
-.tab-content::-webkit-scrollbar {
-    width: 6px;
-}
-.tab-content::-webkit-scrollbar-track {
-    background: rgba(15, 20, 35, 0.5);
-}
-.tab-content::-webkit-scrollbar-thumb {
-    background: rgba(74, 85, 104, 0.5);
-    border-radius: 3px;
-}
-.tab-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(74, 85, 104, 0.8);
-}
 
 /* ── 下载区 ── */
 .download-section {
@@ -2927,27 +2914,6 @@ const onOptionDeleteAll = async () => {
     width: 100%;
 }
 
-.dividend-actions::-webkit-scrollbar,
-.dividend-table-area::-webkit-scrollbar {
-    width: 6px;
-}
-
-.dividend-actions::-webkit-scrollbar-track,
-.dividend-table-area::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.dividend-actions::-webkit-scrollbar-thumb,
-.dividend-table-area::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-}
-
-.dividend-actions::-webkit-scrollbar-thumb:hover,
-.dividend-table-area::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
-}
-
 /* ── 管理区 ── */
 .manage-section {
     margin-top: 4px;
@@ -3127,19 +3093,6 @@ select option {
 .table-scroll {
     max-height: 420px;
     overflow-y: auto;
-}
-.table-scroll::-webkit-scrollbar {
-    width: 6px;
-}
-.table-scroll::-webkit-scrollbar-track {
-    background: rgba(15, 20, 35, 0.5);
-}
-.table-scroll::-webkit-scrollbar-thumb {
-    background: rgba(74, 85, 104, 0.5);
-    border-radius: 3px;
-}
-.table-scroll::-webkit-scrollbar-thumb:hover {
-    background: rgba(74, 85, 104, 0.8);
 }
 .btn-warning {
     padding: 4px 12px;
@@ -3401,19 +3354,6 @@ select option {
     background: rgba(15, 20, 35, 0.5);
     font-family: 'Courier New', monospace;
     font-size: 11px;
-}
-.quote-log-content::-webkit-scrollbar {
-    width: 6px;
-}
-.quote-log-content::-webkit-scrollbar-track {
-    background: rgba(15, 20, 35, 0.5);
-}
-.quote-log-content::-webkit-scrollbar-thumb {
-    background: rgba(74, 85, 104, 0.5);
-    border-radius: 3px;
-}
-.quote-log-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(74, 85, 104, 0.8);
 }
 .quote-log-line {
     color: #999;

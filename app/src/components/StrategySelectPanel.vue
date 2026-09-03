@@ -685,33 +685,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* ── 统一滚动条（thin 风格） ── */
-.log-table-wrapper::-webkit-scrollbar,
-.log-table::-webkit-scrollbar,
-.json-block::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.log-table-wrapper::-webkit-scrollbar-track,
-.log-table::-webkit-scrollbar-track,
-.json-block::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.log-table-wrapper::-webkit-scrollbar-thumb,
-.log-table::-webkit-scrollbar-thumb,
-.json-block::-webkit-scrollbar-thumb {
-  background: rgba(100, 116, 139, 0.4);
-  border-radius: 3px;
-}
-
-.log-table-wrapper::-webkit-scrollbar-thumb:hover,
-.log-table::-webkit-scrollbar-thumb:hover,
-.json-block::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.6);
-}
-
 /* 表格 tbody 滚动 */
 .log-table tbody {
   overflow-y: auto;

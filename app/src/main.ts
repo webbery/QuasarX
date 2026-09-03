@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import './styles/main.scss'
 import 'element-plus/dist/index.css'
 import '@fortawesome/fontawesome-free/css/all.min.css'
 import "@vue-flow/core/dist/style.css";

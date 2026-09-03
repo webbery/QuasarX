@@ -220,22 +220,7 @@ defineExpose({
   overflow-y: auto;
   padding: 8px;
   font-size: 12px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--primary) transparent;
   background: transparent;
-}
-
-.info-panel-content::-webkit-scrollbar {
-  width: 6px;
-}
-
-.info-panel-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.info-panel-content::-webkit-scrollbar-thumb {
-  background-color: var(--primary);
-  border-radius: 3px;
 }
 
 .info-message {

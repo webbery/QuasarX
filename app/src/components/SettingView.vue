@@ -680,26 +680,6 @@ onMounted(async () => {
     padding-right: 8px;
 }
 
-/* 自定义滚动条样式 */
-.settings-wrapper::-webkit-scrollbar {
-    width: 8px;
-}
-
-.settings-wrapper::-webkit-scrollbar-track {
-    background: var(--darker-bg);
-    border-radius: 4px;
-}
-
-.settings-wrapper::-webkit-scrollbar-thumb {
-    background: rgba(41, 98, 255, 0.3);
-    border-radius: 4px;
-    transition: background 0.2s;
-}
-
-.settings-wrapper::-webkit-scrollbar-thumb:hover {
-    background: rgba(41, 98, 255, 0.5);
-}
-
 .expand-all {
     text-align: right;
     margin-bottom: 15px;

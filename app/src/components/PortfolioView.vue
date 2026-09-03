@@ -903,30 +903,6 @@ watch(currentStrategyId, (newId) => {
 
 .config-panel, .result-panel {
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--primary, #2962ff) transparent;
-}
-
-.config-panel::-webkit-scrollbar,
-.result-panel::-webkit-scrollbar {
-  width: 6px;
-}
-
-.config-panel::-webkit-scrollbar-track,
-.result-panel::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.config-panel::-webkit-scrollbar-thumb,
-.result-panel::-webkit-scrollbar-thumb {
-  background-color: var(--primary, #2962ff);
-  border-radius: 3px;
-}
-
-.config-panel::-webkit-scrollbar-thumb:hover,
-.result-panel::-webkit-scrollbar-thumb:hover {
-  background-color: var(--primary, #2962ff);
-  opacity: 0.8;
 }
 
 /* 证券池和优化模型：两列同行布局 */
@@ -1103,8 +1079,6 @@ watch(currentStrategyId, (newId) => {
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid var(--border, #333);
-    scrollbar-width: thin;
-    scrollbar-color: var(--primary, #2962ff) transparent;
 
     .pool-codes {
       display: flex;
@@ -1112,8 +1086,6 @@ watch(currentStrategyId, (newId) => {
       gap: 8px;
       max-height: 300px;
       overflow-y: auto;
-      scrollbar-width: thin;
-      scrollbar-color: var(--primary, #2962ff) transparent;
 
       .pool-code-tag {
         display: inline-flex;
@@ -1132,28 +1104,6 @@ watch(currentStrategyId, (newId) => {
         padding: 8px 0;
       }
     }
-  }
-
-  .pool-description-content::-webkit-scrollbar,
-  .pool-codes::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .pool-description-content::-webkit-scrollbar-track,
-  .pool-codes::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .pool-description-content::-webkit-scrollbar-thumb,
-  .pool-codes::-webkit-scrollbar-thumb {
-    background-color: var(--primary, #2962ff);
-    border-radius: 3px;
-  }
-
-  .pool-description-content::-webkit-scrollbar-thumb:hover,
-  .pool-codes::-webkit-scrollbar-thumb:hover {
-    background-color: var(--primary, #2962ff);
-    opacity: 0.8;
   }
 
   .pool-brief {

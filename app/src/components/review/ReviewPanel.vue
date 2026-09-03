@@ -468,23 +468,6 @@ onMounted(() => {
   min-height: 0;
 }
 
-.tab-content::-webkit-scrollbar {
-  width: 8px;
-}
-
-.tab-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.tab-content::-webkit-scrollbar-thumb {
-  background: var(--primary, #2962ff);
-  border-radius: 4px;
-}
-
-.tab-content::-webkit-scrollbar-thumb:hover {
-  background: var(--primary-dark, #1e4fd9);
-}
-
 /* === 空状态 === */
 
 .empty-state {

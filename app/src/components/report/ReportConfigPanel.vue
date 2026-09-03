@@ -268,22 +268,4 @@ function confirmReset() {
   font-size: 14px;
   color: var(--text, #e0e0e0);
 }
-
-/* 滚动条样式 */
-.config-content::-webkit-scrollbar {
-  width: 6px;
-}
-
-.config-content::-webkit-scrollbar-track {
-  background: rgba(42, 52, 77, 0.3);
-}
-
-.config-content::-webkit-scrollbar-thumb {
-  background: rgba(41, 98, 255, 0.5);
-  border-radius: 3px;
-}
-
-.config-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(41, 98, 255, 0.7);
-}
 </style>

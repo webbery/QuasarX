@@ -572,9 +572,6 @@ function renderMarkdown(t: string) { return md.render(t) }
   color: #d1d5db; word-wrap: break-word; white-space: pre-wrap;
   max-height: 120px; overflow-y: auto; padding: 4px 0;
 }
-.timeline-text::-webkit-scrollbar { width: 4px }
-.timeline-text::-webkit-scrollbar-track { background: transparent }
-.timeline-text::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 2px }
 .timeline-time { font-size: 10px; color: #6b7280; margin-top: 4px }
 
 /* 输入区 */
@@ -586,12 +583,8 @@ function renderMarkdown(t: string) { return md.render(t) }
   flex: 1; padding: 10px 14px; background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: #e5e7eb;
   font-size: 13px; line-height: 1.5; resize: none; outline: none; min-height: 72px;
-  max-height: 180px; font-family: inherit; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  max-height: 180px; font-family: inherit;
 }
-.input-area textarea::-webkit-scrollbar { width: 6px }
-.input-area textarea::-webkit-scrollbar-track { background: transparent }
-.input-area textarea::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px }
-.input-area textarea::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2) }
 .input-area textarea:focus { border-color: #3b82f6 }
 .input-area textarea:disabled { opacity: 0.5 }
 .send-btn {
@@ -601,8 +594,4 @@ function renderMarkdown(t: string) { return md.render(t) }
 .send-btn:hover:not(:disabled) { transform: scale(1.1) }
 .send-btn:disabled { opacity: 0.5; cursor: not-allowed }
 
-.message-list::-webkit-scrollbar, .agent-timeline::-webkit-scrollbar { width: 4px }
-.message-list::-webkit-scrollbar-track, .agent-timeline::-webkit-scrollbar-track { background: transparent }
-.message-list::-webkit-scrollbar-thumb, .agent-timeline::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 2px }
-.message-list::-webkit-scrollbar-thumb:hover, .agent-timeline::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2) }
 </style>
