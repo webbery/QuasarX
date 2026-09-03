@@ -31,8 +31,8 @@ static std::pair<int, int> parseExpiryFromName(const String& contract_name, cons
 static int daysToExpiry(int expiry_year, int expiry_month, int trade_year, int trade_month, int trade_day) {
     // 简化: 到期日取第三个周五的近似（月度期权）= 月份第 15~21 天
     // 用月中 17 日近似
-    auto trade = sys_days{year{trade_year} / month{trade_month} / day{trade_day}};
-    auto expiry = sys_days{year{expiry_year} / month{expiry_month} / day{17}};
+    auto trade = sys_days{year_month_day{year{trade_year}, month{static_cast<unsigned>(trade_month)}, day{static_cast<unsigned>(trade_day)}}};
+    auto expiry = sys_days{year_month_day{year{expiry_year}, month{static_cast<unsigned>(expiry_month)}, day{17u}}};
     long days = (expiry - trade).count();
     return static_cast<int>(std::max(days, 1L));
 }
@@ -95,9 +95,9 @@ void OptionPricingHandler::post(const httplib::Request& req, httplib::Response& 
                     // 简单解析 YYYY-MM-DD
                     int ey, em, ed;
                     if (sscanf(expiry_str.c_str(), "%d-%d-%d", &ey, &em, &ed) == 3) {
-                        auto exp_tp = sys_days{year{ey} / month{em} / day{ed}};
+                        auto exp_tp = sys_days{year_month_day{year{ey}, month{static_cast<unsigned>(em)}, day{static_cast<unsigned>(ed)}}};
                         auto today = floor<days>(system_clock::now());
-                        T = std::max((exp_tp - today).count(), 1L) / 365.0;
+                        T = std::max<long long>((exp_tp - today).count(), 1LL) / 365.0;
                     }
                 }
                 bool is_american = c.value("is_american", false);
@@ -120,9 +120,9 @@ void OptionPricingHandler::post(const httplib::Request& req, httplib::Response& 
             if (T <= 0 && !expiry_str.empty()) {
                 int ey, em, ed;
                 if (sscanf(expiry_str.c_str(), "%d-%d-%d", &ey, &em, &ed) == 3) {
-                    auto exp_tp = sys_days{year{ey} / month{em} / day{ed}};
+                    auto exp_tp = sys_days{year_month_day{year{ey}, month{static_cast<unsigned>(em)}, day{static_cast<unsigned>(ed)}}};
                     auto today = floor<days>(system_clock::now());
-                    T = std::max((exp_tp - today).count(), 1L) / 365.0;
+                    T = std::max<long long>((exp_tp - today).count(), 1LL) / 365.0;
                 }
             }
 
