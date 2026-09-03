@@ -1338,10 +1338,17 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             Map<symbol_t, Vector<QuoteBar>> allBars;
             size_t maxBars = 0;
 
+            // 日终策略窗口化：只回溯最近 kDailyLookback 根日线即可覆盖
+            // 最长节点窗口（CTA_v16 EMD windowSize=120），同时避免全量历史回放开销。
+            constexpr size_t kDailyLookback = 160;
             for (auto sym : symbolVec) {
                 String symStr = get_symbol(sym);
                 auto bars = quoteDB.query("stock_1d", symStr, "", "", 0);
-                INFO("[StartDaily] Loaded {} bars for symbol {}", bars.size(), symStr);
+                if (bars.size() > kDailyLookback) {
+                    bars.erase(bars.begin(), bars.end() - kDailyLookback);
+                }
+                INFO("[StartDaily] Loaded {} bars (window {}) for symbol {}",
+                     bars.size(), kDailyLookback, symStr);
                 if (bars.empty()) {
                     WARN("[StartDaily] No historical data for {}", symStr);
                 }
@@ -1377,19 +1384,11 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
 
-                // 日终策略优化：只跑 warmup + extraBars，不需要全量历史
-                int warmup = 0;
-                if (auto* strategySys = _handle->GetStrategySystem()) {
-                    warmup = strategySys->GetWarmupEpochs(strategy);
-                }
-                constexpr size_t extraBars = 5;
-                size_t startBar = (maxBars > static_cast<size_t>(warmup) + extraBars)
-                                  ? (maxBars - warmup - extraBars)
-                                  : 0;
-                if (startBar > 0) {
-                    INFO("[StartDaily] Skipping first {} bars, starting from bar {} (warmup={}, maxBars={})",
-                         startBar, startBar, warmup, maxBars);
-                }
+                // 日终策略优化：数据已窗口化（最近 kDailyLookback 根），
+                // 从窗口第 0 根完整回放以累积节点内部状态（EMD/CUSUM/MA 逐 bar 填充），
+                // 保证最新一根 bar 各窗口指标已 warmup。不再按 warmup 跳跃起跑——
+                // warmup 推断只覆盖 function 节点，会漏掉 EMD 等窗口型节点导致状态空。
+                size_t startBar = 0;
 
                 uint64_t epoch = startBar;
                 bool success = true;
