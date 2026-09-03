@@ -101,5 +101,52 @@ export function useModelBinding() {
     return `production/${strategyName}-${label}.json`
   }
 
-  return { binding, lastError, bindModel, getBindings, productionFileName }
+  /**
+   * 修改磁盘上 .meta.json 的白名单字段（version / display_name / description）。
+   * 不动模型 .json 文件本身，避免破坏 XGBoostNode.modelFile 路径引用。
+   * 路径必须在 {dbPath}/models/experiments/ 或 {dbPath}/models/production/ 下。
+   *
+   * 用于：
+   *  - StrategyTracker 中点击"编辑元数据"修改 production meta
+   *  - 未来 ML 训练表单给训练产物打语义版本号
+   *
+   * @param modelPath 逻辑路径（如 production/CTA_v16-CTA_v16.json）或绝对路径
+   * @param fields    白名单字段 {version?, display_name?, description?}
+   * @returns true 表示后端写入成功
+   */
+  async function updateModelMeta(
+    modelPath: string,
+    fields: { version?: string; display_name?: string; description?: string },
+  ): Promise<boolean> {
+    if (!modelPath) {
+      ElMessage.error('updateModelMeta 失败：缺少 modelPath')
+      return false
+    }
+    const whitelist: Record<string, string> = {}
+    if (fields.version !== undefined) whitelist.version = fields.version
+    if (fields.display_name !== undefined) whitelist.display_name = fields.display_name
+    if (fields.description !== undefined) whitelist.description = fields.description
+    if (Object.keys(whitelist).length === 0) {
+      ElMessage.error('updateModelMeta 失败：fields 至少包含一个白名单字段')
+      return false
+    }
+    try {
+      const resp = await axios.post('/v0/ml', {
+        action: 'update_meta',
+        model_path: modelPath,
+        fields: whitelist,
+      })
+      if (resp.data?.status !== 'ok') {
+        throw new Error(resp.data?.message ?? 'invalid response')
+      }
+      ElMessage.success('模型元数据已更新')
+      return true
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || 'update_meta 失败'
+      ElMessage.error(`更新失败: ${msg}`)
+      return false
+    }
+  }
+
+  return { binding, lastError, bindModel, getBindings, productionFileName, updateModelMeta }
 }

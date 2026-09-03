@@ -2,6 +2,8 @@
 #include <nng/nng.h>
 #include <nng/protocol/pubsub0/sub.h>
 #include <thread>
+#include <chrono>
+#include <unordered_map>
 #include "HttpHandler.h"
 #include "json.hpp"
 
@@ -30,7 +32,22 @@ private:
 
   void load(const nlohmann::json& param, httplib::Response& res);
 
+  // POST /v0/strategy {action:"batch_models", names:[...]} →
+  //   对每个 strategyName 返回其所有 XGBoostNode 绑定的模型信息
+  //   （production + 最新 experiments + is_latest），10s TTL 缓存
+  void batchModels(const nlohmann::json& params, httplib::Response& res);
+
   void connect_strategy_service(const String& name, httplib::DataSink& sink);
+
+  // 缓存项：value 为已序列化好的 JSON 字符串 + 写入时间，避免每次 deep copy
+  struct ModelsCacheEntry {
+      std::string _json;
+      std::chrono::steady_clock::time_point _cachedAt;
+  };
+  // batch_models 缓存（key = strategyName），TTL 10s
+  std::unordered_map<String, ModelsCacheEntry> _modelsCache;
+  std::mutex _modelsCacheMtx;
+  static constexpr std::chrono::seconds kModelsCacheTtl{10};
 private:
     //std::map<std::string, StrategyPlugin*> _strategies;
     Server* _handle;

@@ -193,6 +193,12 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
+    // 批量拉取策略关联的模型信息（生产 + 实验 + 元数据 + 是否最新）
+    if (params.contains("action") && params["action"] == "batch_models") {
+        batchModels(params, res);
+        return;
+    }
+
     int mode = params.value("mode", 0);
     if (mode == 2) {// 暂停
         String name = params.value("name", "");
@@ -554,6 +560,192 @@ void StrategyHandler::validate(const nlohmann::json& param, httplib::Response& r
         res.status = 500;
         res.set_content(result.dump(), "application/json");
     }
+}
+
+namespace {
+// 读取 .meta.json（不存在/解析失败返回 nullptr）
+nlohmann::json readMetaJson(const String& metaPath) {
+    if (!std::filesystem::exists(metaPath)) return nullptr;
+    std::ifstream ifs(metaPath);
+    if (!ifs.is_open()) return nullptr;
+    try { return nlohmann::json::parse(ifs); }
+    catch (...) { return nullptr; }
+}
+
+// 单个策略的模型清单：读 scripts/{name} 策略 JSON，找 xgboost 节点，对每个 modelFile
+// 查 production meta + 扫 experiments/ 找最新一份 + 算 is_latest
+nlohmann::json computeStrategyModels(const String& strategyName, const String& dbPath) {
+    nlohmann::json out;
+    out["strategy"] = strategyName;
+    out["models"] = nlohmann::json::array();
+
+    // 读策略文件 scripts/{strategyName}
+    String scriptPath = String(SCRIPTS_DIR) + "/" + strategyName;
+    if (!std::filesystem::exists(scriptPath)) {
+        out["error"] = "strategy file not found";
+        return out;
+    }
+    std::ifstream ifs(scriptPath);
+    if (!ifs.is_open()) {
+        out["error"] = "failed to open strategy file";
+        return out;
+    }
+    nlohmann::json scriptJson;
+    try { scriptJson = nlohmann::json::parse(ifs); }
+    catch (...) {
+        out["error"] = "strategy file invalid JSON";
+        return out;
+    }
+    if (!scriptJson.contains("graph") || !scriptJson["graph"].contains("nodes")) {
+        // 兼容早期策略 JSON 结构（nodes 在顶层）
+        if (!scriptJson.contains("nodes")) {
+            out["error"] = "no nodes in strategy";
+            return out;
+        }
+    }
+    const nlohmann::json& nodes = scriptJson.contains("graph") && scriptJson["graph"].contains("nodes")
+        ? scriptJson["graph"]["nodes"]
+        : scriptJson["nodes"];
+
+    String expDir = dbPath + "/models/experiments";
+    String prodDir = dbPath + "/models/production";
+
+    for (const auto& node : nodes) {
+        if (!node.contains("data")) continue;
+        const auto& data = node["data"];
+        if (data.value("nodeType", "") != "xgboost") continue;
+
+        String nodeId = node.value("id", "");
+        String label = data.value("label", "");
+        String modelFile;
+        if (data.contains("params") && data["params"].contains("modelFile")) {
+            const auto& mf = data["params"]["modelFile"];
+            modelFile = mf.is_string() ? mf.get<String>() : mf.value("value", "");
+        }
+        if (modelFile.empty()) continue;
+
+        nlohmann::json item;
+        item["node_id"] = nodeId;
+        item["label"] = label;
+        item["model_file"] = modelFile;
+
+        // production meta（可能不存在）
+        String prodMetaPath = dbPath + "/models/" + modelFile;
+        // 补 .meta.json
+        String prodMetaFile = prodMetaPath;
+        if (prodMetaFile.size() > 5 && prodMetaFile.substr(prodMetaFile.size() - 5) == ".json") {
+            prodMetaFile = prodMetaFile.substr(0, prodMetaFile.size() - 5) + ".meta.json";
+        } else {
+            prodMetaFile += ".meta.json";
+        }
+        nlohmann::json prodMeta = readMetaJson(prodMetaFile);
+        if (!prodMeta.is_null()) {
+            item["production"] = {
+                {"path", prodMetaPath},
+                {"meta", prodMeta},
+            };
+        } else {
+            item["production"] = nullptr;
+        }
+
+        // 扫 experiments/ 找 strategy_id 匹配且 created_at 最新的
+        String latestExpPath;
+        nlohmann::json latestExpMeta;
+        if (std::filesystem::exists(expDir) && std::filesystem::is_directory(expDir)) {
+            for (auto& entry : std::filesystem::directory_iterator(expDir)) {
+                String fname = entry.path().filename().string();
+                if (fname.size() <= 5 || fname.substr(fname.size() - 5) != ".json") continue;
+                if (fname.find(".meta.json") != String::npos) continue;
+                String metaPath = entry.path().string();
+                auto dotPos = metaPath.rfind('.');
+                if (dotPos != String::npos) {
+                    metaPath = metaPath.substr(0, dotPos) + ".meta.json";
+                } else {
+                    metaPath += ".meta.json";
+                }
+                nlohmann::json m = readMetaJson(metaPath);
+                if (m.is_null()) continue;
+                if (m.value("strategy_id", "") != strategyName) continue;
+                String createdAt = m.value("created_at", "");
+                String currentLatest = latestExpMeta.is_null() ? "" : latestExpMeta.value("created_at", "");
+                if (latestExpMeta.is_null() || createdAt > currentLatest) {
+                    latestExpMeta = m;
+                    latestExpPath = entry.path().string();
+                }
+            }
+        }
+        if (!latestExpMeta.is_null()) {
+            item["latest_experiment"] = {
+                {"path", latestExpPath},
+                {"meta", latestExpMeta},
+            };
+        } else {
+            item["latest_experiment"] = nullptr;
+        }
+
+        // is_latest: production.created_at >= latest experiment.created_at
+        bool isLatest = false;
+        if (!prodMeta.is_null() && !latestExpMeta.is_null()) {
+            String prodAt = prodMeta.value("created_at", "");
+            String expAt = latestExpMeta.value("created_at", "");
+            isLatest = (prodAt >= expAt);
+        } else if (!prodMeta.is_null()) {
+            isLatest = true;  // 没有实验 = 当前 production 必然最新
+        }
+        item["is_latest"] = isLatest;
+
+        out["models"].push_back(item);
+    }
+
+    return out;
+}
+}  // namespace
+
+// POST /v0/strategy {action:"batch_models", names:["strat1","strat2"]}
+// 批量返回每个策略关联的所有 XGBoost 模型信息（生产 + 最新实验 + 元数据 + 是否最新）
+// 10s TTL 缓存避免每次策略列表刷新都触发重扫
+void StrategyHandler::batchModels(const nlohmann::json& params, httplib::Response& res) {
+    if (!params.contains("names") || !params["names"].is_array()) {
+        res.status = 400;
+        res.set_content(R"msg({"message":"missing names (array)"})msg", "application/json");
+        return;
+    }
+    String dbPath = _server->GetConfig().GetDatabasePath();
+    auto now = std::chrono::steady_clock::now();
+
+    // 解析 names 为 String 列表
+    Vector<String> names;
+    for (const auto& n : params["names"]) {
+        names.push_back(n.get<String>());
+    }
+
+    // 收集结果：缓存命中直接用，否则重算
+    nlohmann::json results = nlohmann::json::object();
+    {
+        std::lock_guard<std::mutex> lk(_modelsCacheMtx);
+        for (const auto& name : names) {
+            auto it = _modelsCache.find(name);
+            if (it != _modelsCache.end() &&
+                (now - it->second._cachedAt) < kModelsCacheTtl) {
+                try {
+                    results[name] = nlohmann::json::parse(it->second._json);
+                    continue;
+                } catch (...) {
+                    // 损坏的缓存 → 重算
+                }
+            }
+            // 缓存未命中，重算并写入缓存
+            nlohmann::json computed = computeStrategyModels(name, dbPath);
+            _modelsCache[name] = ModelsCacheEntry{
+                computed.dump(),
+                now,
+            };
+            results[name] = std::move(computed);
+        }
+    }
+
+    res.status = 200;
+    res.set_content(results.dump(), "application/json");
 }
 
 void StrategyHandler::train(const nlohmann::json& params, httplib::Response& res) {

@@ -52,10 +52,23 @@
                     <span>请先在策略工厂中创建策略</span>
                 </div>
                 <div v-else class="strategy-table">
+                    <div class="table-toolbar">
+                        <button
+                            class="btn btn-refresh"
+                            @click="refreshModels"
+                            :disabled="modelsLoading"
+                            title="刷新策略关联的模型清单"
+                        >
+                            <i :class="modelsLoading ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i>
+                            刷新模型
+                        </button>
+                        <span class="toolbar-hint">点击 ▸ 展开策略关联的 XGBoost 模型详情</span>
+                    </div>
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 60px;">状态</th>
+                                <th style="width: 32px;"></th>
+                                <th style="width: 50px;">状态</th>
                                 <th>策略名称</th>
                                 <th style="width: 120px;">分配资金</th>
                                 <th style="width: 120px;">持仓市值</th>
@@ -66,65 +79,87 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="s in strategyList" :key="s.name" :class="{ 'strategy-failed': s.failed }">
-                                <td>
-                                    <span v-if="s.failed" class="status-dot failed" :title="s.error">✕</span>
-                                    <span v-else class="status-dot" :class="{ running: s.running }"></span>
-                                </td>
-                                <td class="strategy-name" :title="s.failed ? s.error : s.name">
-                                    {{ s.name }}
-                                    <span v-if="s.failed" class="failed-tag">加载失败</span>
-                                    <span v-else-if="s.executionMode === 'manual'" class="mode-tag mode-daily" title="日终策略：每日收盘后计算决策，需手动下单">日终</span>
-                                    <span v-else-if="s.executionMode === 'live'" class="mode-tag mode-live" title="盘中实盘策略：信号触发即时下单">实时</span>
-                                    <span v-else-if="s.executionMode === 'shadow'" class="mode-tag mode-shadow" title="影子模式：记录信号但不实际下单">影子</span>
-                                </td>
-                                <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
-                                <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
-                                <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
-                                <td>
-                                    <span v-if="s.lastEvoke" class="heartbeat">{{ formatHeartbeat(s.lastEvoke) }}</span>
-                                    <span v-else class="heartbeat unknown">--</span>
-                                </td>
-                                <td>
-                                    <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
-                                    <span v-else class="heartbeat unknown">--</span>
-                                </td>
-                                <td>
-                                    <div class="action-buttons">
-                                        <template v-if="!s.failed">
+                            <template v-for="s in strategyList" :key="s.name">
+                                <tr :class="{ 'strategy-failed': s.failed }">
+                                    <td>
+                                        <button
+                                            class="expand-toggle"
+                                            :class="{ expanded: expandedRows.has(s.name) }"
+                                            :disabled="s.failed"
+                                            @click="toggleExpand(s.name)"
+                                            :title="expandedRows.has(s.name) ? '收起' : '展开模型清单'"
+                                        >
+                                            <i class="fas fa-chevron-right"></i>
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <span v-if="s.failed" class="status-dot failed" :title="s.error">✕</span>
+                                        <span v-else class="status-dot" :class="{ running: s.running }"></span>
+                                    </td>
+                                    <td class="strategy-name" :title="s.failed ? s.error : s.name">
+                                        {{ s.name }}
+                                        <span v-if="s.failed" class="failed-tag">加载失败</span>
+                                        <span v-else-if="s.executionMode === 'manual'" class="mode-tag mode-daily" title="日终策略：每日收盘后计算决策，需手动下单">日终</span>
+                                        <span v-else-if="s.executionMode === 'live'" class="mode-tag mode-live" title="盘中实盘策略：信号触发即时下单">实时</span>
+                                        <span v-else-if="s.executionMode === 'shadow'" class="mode-tag mode-shadow" title="影子模式：记录信号但不实际下单">影子</span>
+                                    </td>
+                                    <td class="capital-cell">{{ formatCapital(s.allocatedCapital) }}</td>
+                                    <td class="capital-cell">{{ formatCapital(s.usedCapital) }}</td>
+                                    <td class="epoch-count">{{ s.epochCount ?? 0 }}</td>
+                                    <td>
+                                        <span v-if="s.lastEvoke" class="heartbeat">{{ formatHeartbeat(s.lastEvoke) }}</span>
+                                        <span v-else class="heartbeat unknown">--</span>
+                                    </td>
+                                    <td>
+                                        <span v-if="s.lastHeartbeat" class="heartbeat">{{ formatHeartbeat(s.lastHeartbeat) }}</span>
+                                        <span v-else class="heartbeat unknown">--</span>
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <template v-if="!s.failed">
+                                                <button
+                                                    v-if="s.running"
+                                                    class="btn btn-stop"
+                                                    @click="stopStrategy(s.name)"
+                                                    :disabled="isOperating(s.name)"
+                                                >
+                                                    <i class="fas fa-stop"></i> 停止
+                                                </button>
+                                                <button
+                                                    v-else
+                                                    class="btn btn-start"
+                                                    @click="startStrategy(s.name)"
+                                                    :disabled="isOperating(s.name)"
+                                                >
+                                                    <i class="fas fa-play"></i> 启动
+                                                </button>
+                                            </template>
                                             <button
-                                                v-if="s.running"
-                                                class="btn btn-stop"
-                                                @click="stopStrategy(s.name)"
-                                                :disabled="isOperating(s.name)"
+                                                class="btn btn-log"
+                                                @click="viewLogs(s.name)"
                                             >
-                                                <i class="fas fa-stop"></i> 停止
+                                                <i class="fas fa-file-alt"></i> 日志
                                             </button>
                                             <button
-                                                v-else
-                                                class="btn btn-start"
-                                                @click="startStrategy(s.name)"
+                                                class="btn btn-delete"
+                                                @click="deleteStrategy(s.name)"
                                                 :disabled="isOperating(s.name)"
                                             >
-                                                <i class="fas fa-play"></i> 启动
+                                                <i class="fas fa-trash"></i>
                                             </button>
-                                        </template>
-                                        <button
-                                            class="btn btn-log"
-                                            @click="viewLogs(s.name)"
-                                        >
-                                            <i class="fas fa-file-alt"></i> 日志
-                                        </button>
-                                        <button
-                                            class="btn btn-delete"
-                                            @click="deleteStrategy(s.name)"
-                                            :disabled="isOperating(s.name)"
-                                        >
-                                            <i class="fas fa-trash"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="expandedRows.has(s.name)" class="expand-row">
+                                    <td colspan="9">
+                                        <StrategyModelsPanel
+                                            :strategy-name="s.name"
+                                            :models="strategyModelsData.get(s.name)"
+                                            :loading="modelsLoading"
+                                        />
+                                    </td>
+                                </tr>
+                            </template>
                         </tbody>
                     </table>
                 </div>
@@ -190,6 +225,8 @@ import ReviewPanel from './review/ReviewPanel.vue'
 import SignalMonitor from './SignalMonitor.vue'
 import OrderDesk from './orderdesk/OrderDesk.vue'
 import StrategySelectPanel from './StrategySelectPanel.vue'
+import StrategyModelsPanel from './strategy/StrategyModelsPanel.vue'
+import { useStrategyModels } from './strategy/composables/useStrategyModels'
 
 const activeTab = ref('realtime')
 const selectedStrategy = ref('')
@@ -211,6 +248,49 @@ const fetchServerStrategies = inject('fetchServerStrategies', () => {})
 const strategyNames = computed(() => serverStrategies.value.map(s => s.name))
 
 const strategyList = serverStrategies
+
+// ── 模型清单展开状态 ──
+const expandedRows = ref(new Set())
+const toggleExpand = (name) => {
+  if (expandedRows.value.has(name)) {
+    expandedRows.value.delete(name)
+  } else {
+    expandedRows.value.add(name)
+    // 首次展开触发加载（即使上次拉取已超时）
+    if (strategyList.value.length > 0) {
+      fetchModelsForCurrent()
+    }
+  }
+  // 触发响应式
+  expandedRows.value = new Set(expandedRows.value)
+}
+
+const {
+  data: strategyModelsData,
+  loading: modelsLoading,
+  refresh: refreshStrategyModels,
+} = useStrategyModels()
+
+async function fetchModelsForCurrent() {
+  const names = serverStrategyNames.value
+  if (names.length === 0) return
+  await refreshStrategyModels(names)
+}
+
+async function refreshModels() {
+  await fetchModelsForCurrent()
+}
+
+const serverStrategyNames = computed(() =>
+  serverStrategies.value.map((s) => s.name)
+)
+
+// 策略列表变化（部署/删除）时强制刷新模型清单缓存
+watch(serverStrategyNames, (names) => {
+  if (names.length > 0 && expandedRows.value.size > 0) {
+    refreshStrategyModels(names)
+  }
+})
 
 // ReviewPanel 引用
 const reviewPanelRef = ref(null)
@@ -326,6 +406,8 @@ onMounted(async () => {
     await fetchServerStrategies()
     // 监听通知弹框的 tab 切换事件
     window.addEventListener('switch-tracker-tab', onSwitchTab)
+    // 监听模型元数据修改事件（由 StrategyModelsPanel 触发）→ 强制刷新缓存
+    window.addEventListener('strategy-models-changed', onModelsChanged)
 })
 
 const onSwitchTab = (e) => {
@@ -334,8 +416,15 @@ const onSwitchTab = (e) => {
     }
 }
 
+const onModelsChanged = () => {
+    if (expandedRows.value.size > 0) {
+        fetchModelsForCurrent()
+    }
+}
+
 onUnmounted(() => {
     window.removeEventListener('switch-tracker-tab', onSwitchTab)
+    window.removeEventListener('strategy-models-changed', onModelsChanged)
 })
 </script>
 
@@ -563,6 +652,74 @@ onUnmounted(() => {
 
 .strategy-failed:hover td {
     opacity: 1;
+}
+
+/* ── 模型清单展开 ── */
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(74, 158, 255, 0.15);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.toolbar-hint {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.btn-refresh {
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  color: #60a5fa;
+  padding: 4px 12px;
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background: rgba(96, 165, 250, 0.3);
+}
+
+.expand-toggle {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: transform 0.15s, color 0.15s;
+  padding: 0;
+}
+
+.expand-toggle:hover:not(:disabled) {
+  color: #e2e8f0;
+}
+
+.expand-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.expand-toggle.expanded {
+  transform: rotate(90deg);
+  color: #60a5fa;
+}
+
+.expand-row td {
+  padding: 12px 24px 16px 48px;
+  background: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid rgba(74, 158, 255, 0.15);
+}
+
+.expand-row > td {
+  /* colspan=9 时只有这一个 cell */
+  border-right: none;
 }
 
 /* 策略名称 */

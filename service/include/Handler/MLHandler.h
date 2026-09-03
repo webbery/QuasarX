@@ -117,6 +117,7 @@ private:
     void handleShap(const nlohmann::json& params, httplib::Response& res);
     void handleList(const httplib::Request& req, httplib::Response& res);
     void handleDelete(uint64_t modelId, httplib::Response& res);
+    void handleUpdateMeta(const nlohmann::json& params, httplib::Response& res);
 
     // 从 XGBoostNode 上游收集特征名（若 XGBoostNode 指定了 features 则按其过滤）
     static void collectXGBoostFeatures(

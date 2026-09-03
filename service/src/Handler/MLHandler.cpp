@@ -814,6 +814,11 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 if (trainResult.contains("n_val")) meta["n_val"] = trainResult["n_val"];
                 if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
                 meta["n_features"] = state->_featureNames.size();
+                // 可选：训练时由前端传入的语义版本号 + 友好名称（缺省时由 publish/update_meta 补）
+                String userVersion = params.value("version", String());
+                String userDisplayName = params.value("display_name", String());
+                if (!userVersion.empty()) meta["version"] = userVersion;
+                if (!userDisplayName.empty()) meta["display_name"] = userDisplayName;
                 std::ofstream ofs(expDir + "/" + persistName + ".meta.json");
                 if (ofs.is_open()) ofs << meta.dump(2);
             }
@@ -1626,6 +1631,91 @@ void MLHandler::handleDelete(uint64_t modelId, httplib::Response& res) {
     res.set_content(R"({"message":"deleted"})", "application/json");
 }
 
+// 修改磁盘上 .meta.json 的白名单字段（version/display_name/description）。
+// 仅允许修改路径必须在 experiments/ 或 production/ 目录下的 .meta.json。
+// 不动模型文件本身，不重命名，避免破坏 XGBoostNode.modelFile 路径引用。
+void MLHandler::handleUpdateMeta(const nlohmann::json& params, httplib::Response& res) {
+    String modelPath = params.value("model_path", "");
+    if (modelPath.empty()) {
+        res.status = 400;
+        res.set_content(R"({"message":"missing model_path"})", "application/json");
+        return;
+    }
+
+    // 路径必须在 experiments 或 production 目录下
+    String dbPath = _server->GetConfig().GetDatabasePath();
+    String expDir = dbPath + "/models/experiments";
+    String prodDir = dbPath + "/models/production";
+    String absModelPath = modelPath;
+    if (!std::filesystem::path(absModelPath).is_absolute()) {
+        absModelPath = dbPath + "/models/" + modelPath;
+    }
+    if (absModelPath.find(expDir) != 0 && absModelPath.find(prodDir) != 0) {
+        res.status = 403;
+        res.set_content(R"({"message":"path not in model directories"})", "application/json");
+        return;
+    }
+
+    // 定位 .meta.json 路径（去掉末尾 .json）
+    String metaPath = absModelPath;
+    if (metaPath.size() > 5 && metaPath.substr(metaPath.size() - 5) == ".json") {
+        metaPath = metaPath.substr(0, metaPath.size() - 5) + ".meta.json";
+    } else {
+        metaPath += ".meta.json";
+    }
+
+    nlohmann::json meta;
+    if (std::filesystem::exists(metaPath)) {
+        std::ifstream ifs(metaPath);
+        if (!ifs.is_open()) {
+            res.status = 500;
+            res.set_content(R"({"message":"failed to read meta.json"})", "application/json");
+            return;
+        }
+        try {
+            meta = nlohmann::json::parse(ifs);
+        } catch (...) {
+            res.status = 400;
+            res.set_content(R"({"message":"meta.json invalid"})", "application/json");
+            return;
+        }
+    }
+
+    // 白名单：仅允许 version / display_name / description
+    static const std::set<String> allowedFields = {"version", "display_name", "description"};
+    if (!params.contains("fields") || !params["fields"].is_object()) {
+        res.status = 400;
+        res.set_content(R"msg({"message":"missing fields (object)"})msg", "application/json");
+        return;
+    }
+    int updated = 0;
+    for (auto& [k, v] : params["fields"].items()) {
+        if (allowedFields.count(k) == 0) continue;
+        meta[k] = v;
+        ++updated;
+    }
+    if (updated == 0) {
+        res.status = 400;
+        res.set_content(R"msg({"message":"no whitelisted fields in payload (allowed: version, display_name, description)"})msg", "application/json");
+        return;
+    }
+    meta["updated_at"] = ToString(Now(), "%Y-%m-%dT%H:%M:%S");
+
+    std::ofstream ofs(metaPath);
+    if (!ofs.is_open()) {
+        res.status = 500;
+        res.set_content(R"({"message":"failed to write meta.json"})", "application/json");
+        return;
+    }
+    ofs << meta.dump(2);
+
+    nlohmann::json resp;
+    resp["status"] = "ok";
+    resp["path"] = metaPath;
+    resp["meta"] = meta;
+    res.set_content(resp.dump(), "application/json");
+}
+
 void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
     try {
@@ -1654,6 +1744,8 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
             return;
         }
         handleDelete(modelId, res);
+    } else if (action == "update_meta") {
+        handleUpdateMeta(params, res);
     } else if (action == "delete_file") {
         String modelPath = params.value("model_path", "");
         if (modelPath.empty()) {
@@ -1700,7 +1792,7 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|shap|delete)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|shap|delete|update_meta)\"}",
             "application/json");
         return;
     }

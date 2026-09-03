@@ -928,8 +928,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/StrategyListResponse"
     post:
-      summary: 部署/运行/停止指定的某个策略
-      description: 根据 mode 参数执行不同操作：0-部署并运行策略，1-运行已部署的策略，2-停止运行中的策略
+      summary: 部署/运行/停止指定的某个策略 / 批量查询模型绑定
+      description: |
+        根据 mode 参数执行不同操作：0-部署并运行策略，1-运行已部署的策略，2-停止运行中的策略。
+        也支持通过 `action` 字段触发内置动作：
+        - `validate` / `load` / `reclaim_all`：见 schema
+        - `batch_models`：批量返回每个策略关联的所有 XGBoost 模型信息（production + 最新 experiment + is_latest）。
+          请求体为 `{names: ["strat1","strat2"]}`，10s 服务端缓存，避免每次策略列表刷新都重扫磁盘。
+          前端 StrategyTracker 展开策略行时调用，对应 `StrategyBatchModelsResponse`。
       tags:
         - Strategy
       requestBody:
@@ -2375,6 +2381,10 @@ paths:
           不依赖 Python shap 库，不持久化到数据库。
 
         - action=delete：释放内存中的模型
+        - action=delete_file：按路径删除磁盘文件（仅限 experiments/ 与 production/）
+        - action=update_meta：修改 .meta.json 白名单字段（version / display_name / description）。
+          用于在 ML 绑定界面（useModelBinding）训练后给实验/生产模型打语义版本号和友好名称。
+          不动模型文件本身，避免破坏 XGBoostNode.modelFile 路径引用。
 
         训练结果（学习曲线/特征重要性/评估指标/预测）不存数据库，
         训练完成后通过单次 JSON 响应返回前端，前端 useXGBoostState 缓存。
@@ -2389,6 +2399,7 @@ paths:
                 - $ref: "#/components/schemas/XGBoostTrainRequest"
                 - $ref: "#/components/schemas/XGBoostShapRequest"
                 - $ref: "#/components/schemas/XGBoostDeleteRequest"
+                - $ref: "#/components/schemas/XGBoostUpdateMetaRequest"
                 - $ref: "#/components/schemas/XGBoostOptimizeRequest"
             examples:
               train:
@@ -3289,6 +3300,60 @@ components:
           type: boolean
           description: 策略当前运行状态
           example: true
+
+    StrategyBatchModelsResponse:
+      type: object
+      description: |
+        `POST /v0/strategy {action:"batch_models", names:[...]}` 响应。
+        每个策略名作为 key，value 描述该策略所有 XGBoostNode 绑定的模型清单。
+      additionalProperties:
+        type: object
+        properties:
+          strategy:
+            type: string
+            description: 策略名
+          error:
+            type: string
+            description: 当策略文件缺失或解析失败时填充，正常情况下不存在
+          models:
+            type: array
+            description: 该策略关联的所有 XGBoost 模型（每个 xgboost 节点一个）
+            items:
+              type: object
+              properties:
+                node_id:
+                  type: string
+                  description: XGBoost 节点 id
+                label:
+                  type: string
+                  description: XGBoost 节点 label（用于文件名后缀）
+                model_file:
+                  type: string
+                  description: 策略 JSON 中 modelFile 字段值（如 production/CTA_v16-CTA_v16.json）
+                production:
+                  type: object
+                  nullable: true
+                  description: 当前生产模型信息（路径 + 完整 meta.json）
+                  properties:
+                    path:
+                      type: string
+                    meta:
+                      type: object
+                      description: .meta.json 全部内容（含 version/display_name/created_at/features/n_train/n_test 等）
+                latest_experiment:
+                  type: object
+                  nullable: true
+                  description: 该 strategy_id 关联的最新一次训练产物（路径 + 完整 meta.json）
+                  properties:
+                    path:
+                      type: string
+                    meta:
+                      type: object
+                is_latest:
+                  type: boolean
+                  description: |
+                    true 表示当前 production 模型不落后于最新实验（已发布或没有更新实验）；
+                    false 表示最新实验比 production 新，提示需要重新发布
 
     StrategyRequest:
       type: object
@@ -4446,6 +4511,54 @@ components:
           enum: [delete]
         model_id:
           type: integer
+
+    XGBoostUpdateMetaRequest:
+      type: object
+      required: [action, model_path, fields]
+      description: |
+        修改磁盘上 .meta.json 的白名单字段。仅允许 version / display_name / description，
+        其他字段会被忽略。不动模型 .json 文件本身，避免破坏 XGBoostNode.modelFile 引用。
+        路径校验：model_path 必须在 `{dbPath}/models/experiments/` 或 `{dbPath}/models/production/` 下，
+        否则返回 403。
+      properties:
+        action:
+          type: string
+          enum: [update_meta]
+        model_path:
+          type: string
+          description: |
+            模型文件路径，可传绝对路径或相对 `{dbPath}/models/` 的逻辑路径
+            （如 `production/CTA_v16-CTA_v16.json` 或 `experiments/test_20260815.json`）
+          example: production/CTA_v16-CTA_v16.json
+        fields:
+          type: object
+          description: 要修改的字段（仅白名单生效），其他字段被忽略
+          properties:
+            version:
+              type: string
+              description: 语义版本号（如 v17 / v3.0.1）
+              example: v17
+            display_name:
+              type: string
+              description: 模型友好名称（默认等于 strategyName-xgbLabel）
+              example: CTA_v16_baseline
+            description:
+              type: string
+              description: 模型用途/特性描述
+
+    XGBoostUpdateMetaResponse:
+      type: object
+      description: 修改 meta 后的响应
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        path:
+          type: string
+          description: 实际写入的 .meta.json 绝对路径
+        meta:
+          type: object
+          description: 修改后的完整 meta.json 内容（含自动写入的 updated_at）
 
     XGBoostOptimizeRequest:
       type: object
