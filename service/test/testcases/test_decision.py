@@ -13,6 +13,7 @@
 """
 
 import json
+import csv
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from tool import check_response, BASE_URL
+from tool import check_response, BASE_URL, _DATA_DIR as SERVER_DATA_DIR
 
 # ==================== 配置 ====================
 
@@ -553,3 +554,230 @@ class TestStrategyPerformance:
         # win_rate 在 [0, 1] 范围
         assert 0 <= metrics["win_rate"] <= 1, \
             f"win_rate 超出 [0,1]: {metrics['win_rate']}"
+
+
+# ─────────────────────────────────────────────────────────────────
+# 日终执行 + 分红/复权计算的集成测试
+#
+# 流程：import stock_1d → import dividend → recalc → 验证 adj_close
+#       → simulate_bar 触发日终管线 → 验证决策正确写入
+#
+# 数据写入路径：
+#   1. POST /v0/quote/data action=import  → 写入 stock_1d (原始 OHLCV)
+#   2. POST /v0/dividend action=import    → 写入 finance.db dividend 表
+#   3. POST /v0/dividend action=recalc    → 调用 FinanceDB::recalcSymbolAdjPrices
+#                                          → 写入 stock_1d.adj_* 列
+#   4. GET  /v0/quote                     → 读回 adj_close（API 验证 C++ 写入）
+#   5. POST /v0/strategy/simulate/bar     → 触发日终管线 + ManualTiming
+#   6. GET  /v0/strategy/performance      → 验证 daily_positions + 指标计算
+# ─────────────────────────────────────────────────────────────────
+
+# 用于 integration 测试的独立 symbol（避免与其他测试冲突）
+INTEG_SYMBOL = "sh.999996"
+
+# 与 TestBaostockFormulaRegression 中的格式一致
+INTEG_DIVIDEND_HEADER = [
+    "symbol", "announce_date", "report_year", "ex_dividend_date",
+    "record_date", "implement_date", "bonus_per_10", "transfer_per_10",
+    "cash_per_10", "allot_per_10", "allot_price", "ex_div_price", "action_type"
+]
+
+# 10送3, prev_close=10.00 → baostock factor = 1.30, adj_close for bar0 = 13.00
+INTEG_STOCK_LINES = [
+    "datetime,open,close,high,low,volume,turnover",
+    "2024-07-01 00:00:00,9.90,10.00,10.10,9.80,100000,1000000",
+    "2024-07-02 00:00:00,9.95,10.00,10.10,9.85,100000,1000000",  # 除权日
+]
+
+INTEG_DIVIDEND_ROW = [
+    INTEG_SYMBOL, "2024-06-30", "2023", "2024-07-02",
+    "2024-07-01", "2024-07-02",
+    "3", "0",   # bonus=3, transfer=0 → 10送3
+    "0", "0", "0",
+    "0",        # ex_div_price=0 → 公式反推
+    "1",
+]
+
+INTEG_BAOSTOCK_FACTOR = 1.30
+
+
+def _write_integ_dividend_csv():
+    """写入 integration 测试用的分红 CSV 到服务数据目录"""
+    dividend_dir = SERVER_DATA_DIR / "dividend"
+    dividend_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = dividend_dir / f"{INTEG_SYMBOL}_dividend.csv"
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(INTEG_DIVIDEND_HEADER)
+        writer.writerow(INTEG_DIVIDEND_ROW)
+    return csv_path
+
+
+def _cleanup_integ_data(token: str):
+    """清理 INTEG_SYMBOL 的 stock + dividend 数据"""
+    headers = {"Authorization": token}
+    requests.delete(f"{BASE_URL}/dividend",
+                    params={"code": INTEG_SYMBOL}, headers=headers,
+                    verify=False, timeout=10)
+    requests.delete(f"{BASE_URL}/quote",
+                    params={"table": "stock_1d", "symbol": INTEG_SYMBOL},
+                    headers=headers, verify=False, timeout=10)
+    csv_path = SERVER_DATA_DIR / "dividend" / f"{INTEG_SYMBOL}_dividend.csv"
+    if csv_path.exists():
+        csv_path.unlink()
+
+
+class TestDailyExecutionWithDividend:
+    """日终执行 + 分红/复权计算的集成测试
+
+    验证流程：
+      1. import stock_1d (2 bars)
+      2. import dividend CSV (10送3)
+      3. recalcSymbolAdjPrices (C++) → 写 adj_* 到 stock_1d
+      4. GET /v0/quote 验证 adj_close = baostock factor × org_close
+      5. simulate_bar 触发日终执行 → GET /v0/strategy/performance 验证
+    """
+
+    @pytest.mark.timeout(30)
+    def test_recalc_writes_adj_close_via_api(self, auth_token):
+        """Fix 1 集成: recalc 后 GET /quote 返回正确的 adj_close"""
+        kwargs = {"headers": {"Authorization": auth_token}, "verify": False, "timeout": 10}
+
+        try:
+            # 1. 导入股票
+            kwargs["json"] = {
+                "action": "import",
+                "table": "stock_1d",
+                "symbol": INTEG_SYMBOL,
+                "adj": "none",
+                "data": INTEG_STOCK_LINES,
+            }
+            response = requests.post(f"{BASE_URL}/quote/data", **kwargs)
+            check_response(response)
+
+            # 2. 写入 + 导入分红
+            _write_integ_dividend_csv()
+            kwargs["json"] = {
+                "action": "import",
+                "dividend_dir": str(SERVER_DATA_DIR / "dividend"),
+            }
+            response = requests.post(f"{BASE_URL}/dividend", **kwargs)
+            check_response(response)
+
+            # 3. 触发 recalc
+            kwargs["json"] = {"action": "recalc", "code": INTEG_SYMBOL}
+            response = requests.post(f"{BASE_URL}/dividend", **kwargs)
+            check_response(response)
+
+            # 4. 通过 API 验证 adj_close
+            params = {"table": "stock_1d", "symbol": INTEG_SYMBOL}
+            response = requests.get(f"{BASE_URL}/quote", params=params, **kwargs)
+            data = check_response(response)
+            assert data["count"] == 2, f"期望 2 根 bar, 实际 {data['count']}"
+
+            bars = sorted(data["data"], key=lambda b: b["datetime"])
+            bar0 = bars[0]  # 事件前
+            expected_adj = bar0["close"] * INTEG_BAOSTOCK_FACTOR
+            assert abs(bar0["adj_close"] - expected_adj) < 1e-4, \
+                f"adj_close={bar0['adj_close']}, expected={expected_adj}"
+
+        finally:
+            _cleanup_integ_data(auth_token)
+
+    @pytest.mark.timeout(60)
+    def test_dividend_csv_persisted_to_finance_db(self, auth_token):
+        """验证 dividend 行通过 API 正确写入并可查询"""
+        kwargs = {"headers": {"Authorization": auth_token}, "verify": False, "timeout": 10}
+
+        try:
+            _write_integ_dividend_csv()
+            kwargs["json"] = {
+                "action": "import",
+                "dividend_dir": str(SERVER_DATA_DIR / "dividend"),
+            }
+            response = requests.post(f"{BASE_URL}/dividend", **kwargs)
+            check_response(response)
+
+            # 通过 API 查询 dividend
+            response = requests.get(
+                f"{BASE_URL}/dividend",
+                params={"code": INTEG_SYMBOL},
+                **kwargs,
+            )
+            data = check_response(response)
+            assert data["count"] >= 1
+            row = data["data"][0]
+            assert row["bonus_per_10"] == 3.0, f"bonus_per_10={row['bonus_per_10']}"
+            assert row["cash_per_10"] == 0.0
+            assert row["transfer_per_10"] == 0.0
+
+        finally:
+            _cleanup_integ_data(auth_token)
+
+    @pytest.mark.timeout(60)
+    def test_daily_execution_succeeds_after_dividend_recalc(
+        self, auth_token, loaded_strategy
+    ):
+        """集成测试：dividend + recalc 后，simulate_bar 触发日终管线，performance 端点返回有效指标
+
+        验证：当 stock_1d 包含分红 + adj_* 计算结果时，日终管线 (ManualTiming → SendSummaryEmail
+        → daily_positions 写入) 不被 dividend 流程破坏。
+        """
+        kwargs = {"headers": {"Authorization": auth_token}, "verify": False, "timeout": 10}
+
+        try:
+            # 1. 导入股票 + 分红 + recalc
+            kwargs["json"] = {
+                "action": "import",
+                "table": "stock_1d",
+                "symbol": INTEG_SYMBOL,
+                "adj": "none",
+                "data": INTEG_STOCK_LINES,
+            }
+            requests.post(f"{BASE_URL}/quote/data", **kwargs)
+
+            _write_integ_dividend_csv()
+            kwargs["json"] = {
+                "action": "import",
+                "dividend_dir": str(SERVER_DATA_DIR / "dividend"),
+            }
+            requests.post(f"{BASE_URL}/dividend", **kwargs)
+
+            kwargs["json"] = {"action": "recalc", "code": INTEG_SYMBOL}
+            requests.post(f"{BASE_URL}/dividend", **kwargs)
+
+            # 2. 触发日终管线：simulate_bar 推送一根 bar
+            try:
+                bar = get_latest_bar(auth_token, INTEG_SYMBOL,
+                                     date="2024-07-02 00:00:00")
+            except ValueError as e:
+                pytest.skip(f"无测试数据: {e}")
+
+            result = simulate_bar(auth_token, bar)
+            if "status" in result and result.get("status") == "error":
+                pytest.skip(f"simulate/bar 不可用: {result}")
+
+            # 3. 等 ManualTiming 决策完成
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if get_decisions(auth_token, date=today_str()):
+                    break
+                time.sleep(0.5)
+
+            # 4. 验证 daily_positions + 绩效指标
+            resp = requests.get(
+                f"{BASE_URL}/strategy/performance",
+                params={"name": STRATEGY_NAME},
+                **kwargs,
+            )
+            assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
+            perf_data = resp.json()
+
+            assert perf_data["strategy"] == STRATEGY_NAME
+            assert "metrics" in perf_data
+            for key in ["total_return", "sharpe_ratio", "max_drawdown"]:
+                assert key in perf_data["metrics"], \
+                    f"dividend recalc 后绩效缺少指标: {key}"
+
+        finally:
+            _cleanup_integ_data(auth_token)

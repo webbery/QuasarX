@@ -1057,8 +1057,8 @@ void Server::TimerWorker(nng_socket sock) {
     for (auto& item : ap._positions) {
         nlohmann::json position;
         position["id"] = get_symbol(item._symbol);
-        position["price"] = std::to_string(item._price);
-        position["curPrice"] = std::to_string(item._curPrice);
+        position["price"] = fmt::format("{:.4f}", item._price);
+        position["curPrice"] = fmt::format("{:.4f}", item._curPrice);
         position["name"] = to_utf8(item._name);
         position["quantity"] = std::to_string(item._holds);
         position["valid_quantity"] = std::to_string(item._validHolds);

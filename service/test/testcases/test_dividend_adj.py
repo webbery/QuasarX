@@ -377,3 +377,231 @@ class TestDividendAdjFactorCalc:
         # bar at 2024-07-01: no events after → cumulative = 1.0
         cum3 = calc_cumulative_adj_factor('2024-07-01', events)
         assert cum3 == 1.0
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestBaostockFormulaRegression:
+    """Fix 1 回归测试：验证 calcEventAdjFactor 改用 baostock 公式
+
+    每个 case 用独立 symbol (sh.999991~sh.999995)，单独 setup + cleanup。
+    关键回归断言：10送3 的预期 factor=1.30，旧公式给出 0.769 → 必然失败以暴露公式回退。
+    """
+
+    @staticmethod
+    def _kwargs(auth_token):
+        kwargs = {'verify': False}
+        if auth_token and len(auth_token) > 10:
+            kwargs['headers'] = {'Authorization': auth_token}
+        return kwargs
+
+    @staticmethod
+    def _write_dividend_csv(dividend_dir, symbol, row):
+        """写入单条分红事件 CSV"""
+        dividend_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = dividend_dir / f"{symbol}_dividend.csv"
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(DIVIDEND_CSV_HEADER)
+            writer.writerow(row)
+        return str(dividend_dir)
+
+    def _cleanup(self, auth_token, symbol):
+        """清理该 symbol 的 stock + dividend 数据"""
+        kwargs = self._kwargs(auth_token)
+        requests.delete(f"{BASE_URL}/dividend",
+                        params={'code': symbol}, **kwargs)
+        requests.delete(f"{BASE_URL}/quote",
+                        params={'table': TEST_TABLE, 'symbol': symbol}, **kwargs)
+        csv_path = SERVER_DATA_DIR / "dividend" / f"{symbol}_dividend.csv"
+        if csv_path.exists():
+            csv_path.unlink()
+
+    def _verify_baostock_factor(self, auth_token, symbol, stock_lines,
+                                dividend_row, expected_factor, tolerance=1e-4):
+        """通用流程：import stock → import dividend → recalc → 验证事件前 bar 的 adj_close"""
+        kwargs = self._kwargs(auth_token)
+        dividend_dir = SERVER_DATA_DIR / "dividend"
+
+        # 1. 导入股票
+        kwargs['json'] = {
+            'action': 'import',
+            'table': TEST_TABLE,
+            'symbol': symbol,
+            'adj': 'none',
+            'data': stock_lines,
+        }
+        response = requests.post(f"{BASE_URL}/quote/data", **kwargs)
+        check_response(response)
+
+        # 2. 写入 + 导入分红
+        self._write_dividend_csv(dividend_dir, symbol, dividend_row)
+        kwargs['json'] = {
+            'action': 'import',
+            'dividend_dir': str(dividend_dir),
+        }
+        response = requests.post(f"{BASE_URL}/dividend", **kwargs)
+        check_response(response)
+
+        # 3. 触发 recalc
+        kwargs['json'] = {'action': 'recalc', 'code': symbol}
+        response = requests.post(f"{BASE_URL}/dividend", **kwargs)
+        check_response(response)
+
+        # 4. 验证事件前 bar 的 adj_close = org_close × baostock_factor
+        params = {'table': TEST_TABLE, 'symbol': symbol}
+        response = requests.get(f"{BASE_URL}/quote", params=params, **kwargs)
+        data = check_response(response)
+        bars = sorted(data['data'], key=lambda b: b['datetime'])
+
+        # 第一根 bar 早于 ex_div_date，应累计因子
+        pre_event_bar = bars[0]
+        org_close = pre_event_bar['close']
+        actual_adj_close = pre_event_bar['adj_close']
+        expected_adj_close = org_close * expected_factor
+
+        # 清理
+        self._cleanup(auth_token, symbol)
+
+        return org_close, actual_adj_close, expected_adj_close
+
+    @pytest.mark.timeout(30)
+    def test_pure_bonus_10sang3(self, auth_token):
+        """10送3 (仅送股, 无现金/转增), prev_close=10.00
+        baostock: divisor = 1 + 0.3 = 1.3
+                  ex_ref = (10 - 0) / 1.3 ≈ 7.6923
+                  factor = 10 / 7.6923 = 1.30
+        旧公式 (1 - cash_ratio + stock_ratio) = 1.3 看似巧合，但 ex_ref=13 → factor=0.769 → 测试必失败
+        """
+        symbol = 'sh.999991'
+        stock_lines = [
+            "datetime,open,close,high,low,volume,turnover",
+            "2024-02-01 00:00:00,9.90,10.00,10.10,9.80,100000,1000000",
+            "2024-02-02 00:00:00,9.95,10.00,10.10,9.85,100000,1000000",  # 除权日
+        ]
+        dividend_row = [
+            symbol, "2024-01-30", "2023", "2024-02-02",
+            "2024-02-01", "2024-02-02",
+            "3", "0",   # bonus=3, transfer=0
+            "0", "0", "0",  # cash=0, allot=0,0
+            "0",        # ex_div_price=0 → 公式反推
+            "1",
+        ]
+        org, actual, expected = self._verify_baostock_factor(
+            auth_token, symbol, stock_lines, dividend_row, 1.3)
+        assert abs(actual - expected) < 1e-4, \
+            f"pure bonus 10送3: org={org}, actual={actual}, expected={expected}"
+
+    @pytest.mark.timeout(30)
+    def test_pure_transfer_10zhuan5(self, auth_token):
+        """10转5 (仅转增, 无送股/现金), prev_close=20.00
+        baostock: divisor = 1 + 0.5 = 1.5
+                  ex_ref = (20 - 0) / 1.5 = 13.3333
+                  factor = 20 / 13.3333 = 1.50
+        """
+        symbol = 'sh.999992'
+        stock_lines = [
+            "datetime,open,close,high,low,volume,turnover",
+            "2024-03-01 00:00:00,19.80,20.00,20.20,19.70,100000,2000000",
+            "2024-03-04 00:00:00,19.85,20.00,20.20,19.75,100000,2000000",
+        ]
+        dividend_row = [
+            symbol, "2024-02-28", "2023", "2024-03-04",
+            "2024-03-01", "2024-03-04",
+            "0", "5",   # bonus=0, transfer=5
+            "0", "0", "0",
+            "0",
+            "1",
+        ]
+        org, actual, expected = self._verify_baostock_factor(
+            auth_token, symbol, stock_lines, dividend_row, 1.5)
+        assert abs(actual - expected) < 1e-4, \
+            f"pure transfer 10转5: org={org}, actual={actual}, expected={expected}"
+
+    @pytest.mark.timeout(30)
+    def test_mixed_cash_and_bonus(self, auth_token):
+        """10派2送3 (现金+送股混合), prev_close=15.00
+        baostock: cash_per_share = 0.2, stock_per_share = 0.3
+                  divisor = 1 + 0.3 = 1.3
+                  ex_ref = (15 - 0.2) / 1.3 = 14.8/1.3 ≈ 11.3846
+                  factor = 15 / 11.3846 ≈ 1.3176
+        旧公式 (1 - cash_ratio + stock_ratio) = (1 + 0.3) = 1.3 → ex_ref=19.5
+        → factor=15/19.5≈0.769 → 测试必失败
+        """
+        symbol = 'sh.999993'
+        stock_lines = [
+            "datetime,open,close,high,low,volume,turnover",
+            "2024-04-01 00:00:00,14.80,15.00,15.20,14.70,100000,1500000",
+            "2024-04-02 00:00:00,14.85,15.00,15.20,14.75,100000,1500000",
+        ]
+        dividend_row = [
+            symbol, "2024-03-30", "2023", "2024-04-02",
+            "2024-04-01", "2024-04-02",
+            "3", "0",   # bonus=3
+            "2.0", "0", "0",  # cash=2元/10股
+            "0",
+            "1",
+        ]
+        expected_factor = 15.0 / ((15.0 - 0.2) / 1.3)
+        org, actual, expected = self._verify_baostock_factor(
+            auth_token, symbol, stock_lines, dividend_row, expected_factor)
+        assert abs(actual - expected) < 1e-4, \
+            f"mixed 10派2送3: org={org}, actual={actual}, expected={expected}"
+
+    @pytest.mark.timeout(30)
+    def test_pure_cash_10pai2(self, auth_token):
+        """10派2 (仅现金, 无送股/转增), prev_close=15.00
+        baostock: divisor = 1 + 0 = 1.0
+                  ex_ref = (15 - 0.2) / 1.0 = 14.8
+                  factor = 15 / 14.8 ≈ 1.01351
+        旧公式: (1 - 0.2/15) = 0.9867 → factor=1/0.9867≈1.0135（巧合一致）
+        → 此 case 旧/新公式值接近，验证纯派息未破坏
+        """
+        symbol = 'sh.999994'
+        stock_lines = [
+            "datetime,open,close,high,low,volume,turnover",
+            "2024-05-01 00:00:00,14.80,15.00,15.20,14.70,100000,1500000",
+            "2024-05-06 00:00:00,14.85,15.00,15.20,14.75,100000,1500000",
+        ]
+        dividend_row = [
+            symbol, "2024-04-28", "2023", "2024-05-06",
+            "2024-05-01", "2024-05-06",
+            "0", "0",
+            "2.0", "0", "0",
+            "0",
+            "1",
+        ]
+        expected_factor = 15.0 / 14.8
+        org, actual, expected = self._verify_baostock_factor(
+            auth_token, symbol, stock_lines, dividend_row, expected_factor)
+        assert abs(actual - expected) < 1e-4, \
+            f"pure cash 10派2: org={org}, actual={actual}, expected={expected}"
+
+    @pytest.mark.timeout(30)
+    def test_allot_10pei3_price5(self, auth_token):
+        """10配3 配股价 5元 (仅配股, 无送转/现金), prev_close=20.00
+        baostock: allot_per_share = 0.3, stock_per_share = 0
+                  divisor = 1 + 0 + 0.3 = 1.3
+                  ex_ref = (20 - 0 + 0.3 × 5) / 1.3 = (20 + 1.5) / 1.3 ≈ 16.538
+                  factor = 20 / 16.538 ≈ 1.2093
+        旧公式无 allot 项（allot_per_10=0 时分子无变化）→ 退化为纯 cash=0 公式
+        → ex_ref = 20, factor = 1.0 → 测试必失败（adj_close=20 而非 24.18）
+        """
+        symbol = 'sh.999995'
+        stock_lines = [
+            "datetime,open,close,high,low,volume,turnover",
+            "2024-06-01 00:00:00,19.80,20.00,20.20,19.70,100000,2000000",
+            "2024-06-03 00:00:00,19.85,20.00,20.20,19.75,100000,2000000",
+        ]
+        dividend_row = [
+            symbol, "2024-05-30", "2023", "2024-06-03",
+            "2024-06-01", "2024-06-03",
+            "0", "0",   # bonus=0, transfer=0
+            "0", "3", "5.0",  # cash=0, allot=3/10, price=5.0
+            "0",
+            "1",
+        ]
+        expected_factor = 20.0 / ((20.0 - 0.0 + 0.3 * 5.0) / 1.3)
+        org, actual, expected = self._verify_baostock_factor(
+            auth_token, symbol, stock_lines, dividend_row, expected_factor)
+        assert abs(actual - expected) < 1e-4, \
+            f"allot 10配3@5: org={org}, actual={actual}, expected={expected}"

@@ -236,7 +236,7 @@ String to_sse_string(symbol_t symbol, const TradeReport& report) {
     auto name = get_symbol(symbol);
     info["symbol"] = name;
     info["status"] = std::to_string((int)report._status); 
-    info["price"] = std::to_string(report._price);
+    info["price"] = fmt::format("{:.4f}", report._price);
     info["direct"] = std::to_string(report._side);
     info["quantity"] = std::to_string(report._quantity);
     info["sysID"] = report._sysID;

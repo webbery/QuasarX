@@ -1,5 +1,6 @@
 #include "Handler/QuoteDownloadHandler.h"
 #include "Util/QuoteDB.h"
+#include "Util/FinanceDB.h"
 #include "Util/PythonRunner.h"
 #include "Util/system.h"
 #include "Util/data.h"
@@ -8,6 +9,7 @@
 #include <thread>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -250,6 +252,12 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                         {"rows", std::to_string(rows)}
                     });
                 }
+
+                // 股票除权校验：下载的 HFQ vs 重算结果，取下载值
+                if (rows > 0 && table == "stock_1d") {
+                    validateAndReconcileAdj(sseSock, table, sym);
+                }
+
                 fs::remove(org_path);
                 fs::remove(hfq_path);
             }
@@ -263,6 +271,87 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
             });
         }
     }).detach();
+}
+
+void QuoteDownloadHandler::validateAndReconcileAdj(nng_socket sseSock,
+                                                   const std::string& table,
+                                                   const std::string& symbol) {
+    auto& quoteDB = QuoteDB::instance();
+    auto& financeDB = FinanceDB::instance();
+    if (!quoteDB.isInitialized() || !financeDB.isInitialized()) return;
+
+    constexpr double REL_TOLERANCE = 0.01;  // 1% 相对差异阈值
+
+    // 1. 读取下载的 adj_close（importCsv 已写入）
+    auto downloadedBars = quoteDB.query(table, symbol, "", "", 1);
+    if (downloadedBars.empty()) return;
+    const auto& downloaded = downloadedBars.back();
+
+    bool downloadedValid = downloaded.adj_close > 0 && std::isfinite(downloaded.adj_close);
+
+    // 2. 重算（基于 dividend 表，baostock 公式）
+    symbol_t internalSym = to_symbol(toInternalSymbol(symbol));
+    int64_t encodedSym = QuoteDB::encodeSymbol(toInternalSymbol(symbol));
+    financeDB.recalcSymbolAdjPrices(get_symbol(internalSym));
+
+    // 3. 读取重算后的 adj_close
+    auto recalcBars = quoteDB.query(table, symbol, "", "", 1);
+    if (recalcBars.empty()) return;
+    const auto& recalc = recalcBars.back();
+    bool recalcValid = recalc.adj_close > 0 && std::isfinite(recalc.adj_close);
+
+    // 4. 验证：下载值正常 → 优先使用
+    if (downloadedValid) {
+        if (recalcValid) {
+            double maxVal = std::max(downloaded.adj_close, recalc.adj_close);
+            double relDiff = std::abs(downloaded.adj_close - recalc.adj_close) / maxVal;
+            if (relDiff > REL_TOLERANCE) {
+                WARN("[Schedule] Adj mismatch for {}: downloaded={:.4f} recalc={:.4f} "
+                     "(rel diff={:.4f}), using downloaded",
+                     symbol, downloaded.adj_close, recalc.adj_close, relDiff);
+                SendSSE(sseSock, "adj_reconcile", {
+                    {"symbol", symbol},
+                    {"downloaded", fmt::format("{:.6f}", downloaded.adj_close)},
+                    {"recalc", fmt::format("{:.6f}", recalc.adj_close)},
+                    {"rel_diff", fmt::format("{:.6f}", relDiff)},
+                    {"action", "use_downloaded"}
+                });
+                restoreDownloadedAdj(table, encodedSym, downloaded);
+            }
+        } else {
+            WARN("[Schedule] Recalc adj invalid for {}, keeping downloaded adj_close={:.4f}",
+                 symbol, downloaded.adj_close);
+            SendSSE(sseSock, "adj_reconcile", {
+                {"symbol", symbol},
+                {"downloaded", fmt::format("{:.6f}", downloaded.adj_close)},
+                {"recalc", "0"},
+                {"action", "use_downloaded"}
+            });
+            restoreDownloadedAdj(table, encodedSym, downloaded);
+        }
+    } else if (recalcValid) {
+        INFO("[Schedule] Downloaded adj invalid for {}, keeping recalc adj_close={:.4f}",
+             symbol, recalc.adj_close);
+        SendSSE(sseSock, "adj_reconcile", {
+            {"symbol", symbol},
+            {"downloaded", "0"},
+            {"recalc", fmt::format("{:.6f}", recalc.adj_close)},
+            {"action", "use_recalc"}
+        });
+    }
+}
+
+void QuoteDownloadHandler::restoreDownloadedAdj(const std::string& table,
+                                                int64_t encoded_symbol,
+                                                const QuoteBar& downloaded) {
+    auto& quoteDB = QuoteDB::instance();
+    QuoteDB::AdjPriceUpdate u;
+    u.datetime = downloaded.datetime;
+    u.adj_open = downloaded.adj_open;
+    u.adj_high = downloaded.adj_high;
+    u.adj_low = downloaded.adj_low;
+    u.adj_close = downloaded.adj_close;
+    quoteDB.updateAdjPrices(table, encoded_symbol, {u});
 }
 
 void QuoteDownloadHandler::get(const httplib::Request& req, httplib::Response& res) {

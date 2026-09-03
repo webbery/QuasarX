@@ -50,6 +50,8 @@ public:
         double cash_per_10 = 0;
         double bonus_per_10 = 0;
         double transfer_per_10 = 0;
+        double allot_per_10 = 0;
+        double allot_price = 0;
         double ex_div_price = 0;
         int action_type = 0;
 

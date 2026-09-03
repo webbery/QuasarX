@@ -1010,6 +1010,8 @@ nlohmann::json FinanceDB::DividendEvent::toJson() const {
         {"cash_per_10", cash_per_10},
         {"bonus_per_10", bonus_per_10},
         {"transfer_per_10", transfer_per_10},
+        {"allot_per_10", allot_per_10},
+        {"allot_price", allot_price},
         {"ex_div_price", ex_div_price},
         {"action_type", action_type},
     };
@@ -1020,12 +1022,19 @@ double FinanceDB::calcEventAdjFactor(double prev_close, const DividendEvent& eve
 
     double ex_ref_price = event.ex_div_price;
 
-    // ex_div_price 缺失时反推
-    //   ex_ref_price ≈ prev_close * (1 - cash_per_10/10/prev_close + (bonus+transfer)/10)
+    // ex_div_price 缺失时按 baostock 公式反推
+    //   ex_ref_price = (P − cash_per_share + allot_per_share × allot_price)
+    //                / (1 + stock_per_share + allot_per_share)
+    //   其中 stock_per_share = (bonus + transfer) / 10
+    //   factor = P / ex_ref_price
     if (ex_ref_price <= 0) {
-        double cash_ratio  = event.cash_per_10 / 10.0 / prev_close;
-        double stock_ratio = (event.bonus_per_10 + event.transfer_per_10) / 10.0;
-        ex_ref_price = prev_close * (1.0 - cash_ratio + stock_ratio);
+        double cash_per_share  = event.cash_per_10 / 10.0;
+        double stock_per_share = (event.bonus_per_10 + event.transfer_per_10) / 10.0;
+        double allot_per_share = event.allot_per_10 / 10.0;
+        double divisor = 1.0 + stock_per_share + allot_per_share;
+        if (divisor <= 0) return 1.0;
+        ex_ref_price = (prev_close - cash_per_share + allot_per_share * event.allot_price)
+                     / divisor;
     }
 
     if (ex_ref_price <= 0) return 1.0;
@@ -1040,7 +1049,7 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
 
     String sql = fmt::format(
         "SELECT epoch(ex_dividend_date), cash_per_10, bonus_per_10, "
-        "transfer_per_10, ex_div_price, action_type "
+        "transfer_per_10, allot_per_10, allot_price, ex_div_price, action_type "
         "FROM dividend WHERE symbol = {} ORDER BY ex_dividend_date ASC", sym);
 
     SPDLOG_INFO("[FinanceDB] getDividendEvents: symbol='{}' encoded={}", symbol, sym);
@@ -1064,9 +1073,11 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
         e.cash_per_10    = duckdb_value_double(&res, 1, i);
         e.bonus_per_10   = duckdb_value_double(&res, 2, i);
         e.transfer_per_10= duckdb_value_double(&res, 3, i);
-        e.action_type    = duckdb_value_int8(&res, 5, i);
-        if (!duckdb_value_is_null(&res, 4, i))
-            e.ex_div_price = duckdb_value_double(&res, 4, i);
+        e.allot_per_10   = duckdb_value_double(&res, 4, i);
+        e.allot_price    = duckdb_value_double(&res, 5, i);
+        e.action_type    = duckdb_value_int8(&res, 7, i);
+        if (!duckdb_value_is_null(&res, 6, i))
+            e.ex_div_price = duckdb_value_double(&res, 6, i);
         result.push_back(std::move(e));
     }
     duckdb_destroy_result(&res);
@@ -1089,59 +1100,59 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
 
     int64_t sym = encodeSymbol(symbol);
 
-    // 2. 打开独立连接直接访问 quote.db（不用 ATTACH/DETACH，避免状态泄漏）
+    // 2. 通过 QuoteDB 自身连接读取 stock_1d 数据
+    //    不用独立连接：DuckDB MVCC 导致独立连接看不到 QuoteDB 主连接刚提交的数据
     std::lock_guard<std::recursive_mutex> lock(mtx());
 
-    duckdb_database quote_db = nullptr;
-    duckdb_connection quote_conn = nullptr;
-    if (!DuckDBOpenWithLimits("data/quote/quote.db", &quote_db)) {
-        SPDLOG_ERROR("[FinanceDB] Failed to open quote.db");
-        return -1;
-    }
-    if (duckdb_connect(quote_db, &quote_conn) != DuckDBSuccess) {
-        SPDLOG_ERROR("[FinanceDB] Failed to connect to quote.db");
-        duckdb_close(&quote_db);
-        return -1;
-    }
-    SPDLOG_INFO("[FinanceDB] recalc: opened quote.db OK, sym_encoded={}", sym);
+    struct RawBar {
+        time_t datetime;
+        double open, close, high, low;
+    };
+    Vector<RawBar> raw_bars;
 
-    // RAII 守卫：保证函数退出时一定关闭连接
-    struct QuoteConnGuard {
-        duckdb_connection* conn;
-        duckdb_database* db;
-        ~QuoteConnGuard() {
-            if (conn && *conn) duckdb_disconnect(conn);
-            if (db && *db) duckdb_close(db);
+    {
+        String read_sql = fmt::format(
+            "SELECT epoch(datetime), open, close, high, low "
+            "FROM stock_1d WHERE symbol = {} ORDER BY datetime ASC", sym);
+
+        auto& qdb = QuoteDB::instance();
+        std::lock_guard<std::recursive_mutex> qlock(qdb.mtx());
+        duckdb_result res;
+        if (duckdb_query(qdb.conn(), read_sql.c_str(), &res) != DuckDBSuccess) {
+            SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: read failed: {}",
+                         duckdb_result_error(&res));
+            duckdb_destroy_result(&res);
+            return -1;
         }
-    } connGuard{&quote_conn, &quote_db};
 
-    // 3. 读取 stock_1d 中该标的的所有 bar (按日期升序)
-    String read_sql = fmt::format(
-        "SELECT epoch(datetime), open, close, high, low "
-        "FROM stock_1d WHERE symbol = {} ORDER BY datetime ASC", sym);
+        idx_t n = duckdb_row_count(&res);
+        SPDLOG_INFO("[FinanceDB] recalc: SELECT returned {} rows, sym_encoded={}", n, sym);
+        if (n == 0) {
+            duckdb_destroy_result(&res);
+            return 0;
+        }
 
-    duckdb_result res;
-    if (duckdb_query(quote_conn, read_sql.c_str(), &res) != DuckDBSuccess) {
-        SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: read failed for {}",
-                     duckdb_result_error(&res));
+        raw_bars.reserve(n);
+        for (idx_t i = 0; i < n; i++) {
+            RawBar b;
+            b.datetime = static_cast<time_t>(duckdb_value_int64(&res, 0, i));
+            b.open  = duckdb_value_double(&res, 1, i);
+            b.close = duckdb_value_double(&res, 2, i);
+            b.high  = duckdb_value_double(&res, 3, i);
+            b.low   = duckdb_value_double(&res, 4, i);
+            raw_bars.push_back(b);
+        }
         duckdb_destroy_result(&res);
-        return -1;
     }
 
-    idx_t n = duckdb_row_count(&res);
-    SPDLOG_INFO("[FinanceDB] recalc: SELECT returned {} rows", n);
-    if (n == 0) {
-        duckdb_destroy_result(&res);
-        return 0;
-    }
+    idx_t n = raw_bars.size();
 
-    // 4. 对每个事件，找到 ex_date 之前最近一根 bar 的 close 作为 prev_close
+    // 3. 对每个事件，找到 ex_date 之前最近一根 bar 的 close 作为 prev_close
     Vector<double> prev_closes(events.size(), 0.0);
     for (size_t i = 0; i < events.size(); i++) {
         for (idx_t j = 0; j < n; j++) {
-            time_t bar_t = static_cast<time_t>(duckdb_value_int64(&res, 0, j));
-            if (bar_t < events[i].ex_dividend_date) {
-                prev_closes[i] = duckdb_value_double(&res, 2, j);  // close
+            if (raw_bars[j].datetime < events[i].ex_dividend_date) {
+                prev_closes[i] = raw_bars[j].close;
             } else {
                 break;
             }
@@ -1150,7 +1161,7 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
                      i, static_cast<int64_t>(events[i].ex_dividend_date), prev_closes[i]);
     }
 
-    // 5. 为每根 bar 计算累乘因子
+    // 4. 为每根 bar 计算累乘因子
     struct BarData {
         time_t datetime;
         double open, close, high, low;
@@ -1161,11 +1172,11 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
 
     for (idx_t i = 0; i < n; i++) {
         BarData b;
-        b.datetime = static_cast<time_t>(duckdb_value_int64(&res, 0, i));
-        b.open  = duckdb_value_double(&res, 1, i);
-        b.close = duckdb_value_double(&res, 2, i);
-        b.high  = duckdb_value_double(&res, 3, i);
-        b.low   = duckdb_value_double(&res, 4, i);
+        b.datetime = raw_bars[i].datetime;
+        b.open  = raw_bars[i].open;
+        b.close = raw_bars[i].close;
+        b.high  = raw_bars[i].high;
+        b.low   = raw_bars[i].low;
         b.adj_factor = 1.0;
 
         for (size_t e = 0; e < events.size(); e++) {
@@ -1175,7 +1186,6 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
         }
         bars.push_back(b);
     }
-    duckdb_destroy_result(&res);
 
     if (!bars.empty()) {
         SPDLOG_INFO("[FinanceDB] recalc: bar[0] dt={} open={} adj_factor={:.6f}",
