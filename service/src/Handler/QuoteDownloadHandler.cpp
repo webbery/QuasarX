@@ -62,6 +62,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     auto start = params.value("start", std::string(""));
     auto end = params.value("end", std::string(""));
     auto env_name = params.value("env", std::string(""));
+    bool overwrite = params.value("overwrite", false);
     auto db_path = _server->GetConfig().GetDatabasePath();
     auto quote_dir = db_path + "/quote";
 
@@ -108,7 +109,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     }
 
     // 复用核心下载逻辑（异步）
-    runDownloadJob(sse_sock, groups, freq, start, end, env_name, quote_dir);
+    runDownloadJob(sse_sock, groups, freq, start, end, env_name, quote_dir, overwrite);
 
     // 立即返回（返回所有分组的信息）
     nlohmann::json resp;
@@ -131,11 +132,12 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                                           const std::string& start,
                                           const std::string& end,
                                           const std::string& env_name,
-                                          const std::string& quote_dir) {
+                                          const std::string& quote_dir,
+                                          bool overwrite) {
     (void)env_name;  // 调度场景固定使用系统默认 python
     std::string interpreter = "python";
 
-    std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter]() {
+    std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter, overwrite]() {
         for (auto& group : groups) {
             const auto& asset_type = group.asset_type;
             const auto& symbols_str = group.symbols_str;
@@ -242,7 +244,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                 std::string org_path = org_files.count(sym) ? org_files[sym] : hfq_files[sym];
                 std::string hfq_path = hfq_files.count(sym) ? hfq_files[sym] : org_files[sym];
 
-                int rows = quoteDB.importCsv(org_path, hfq_path, table, toInternalSymbol(sym));
+                int rows = quoteDB.importCsv(org_path, hfq_path, table, toInternalSymbol(sym), overwrite);
                 if (rows > 0) {
                     total_rows += rows;
                     SendSSE(sseSock, "quote_download", {

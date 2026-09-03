@@ -2,6 +2,7 @@ import { ref, computed, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { getGlobalStorage } from '@/ts/globalStorage'
+import { parseBackendDatetime } from '@/ts/dateUtils'
 
 export type DetailTab = 'quote' | 'hfq' | 'dividend' | 'finance'
 
@@ -133,9 +134,7 @@ export function useSymbolDetailData() {
     })
     const raw = Array.isArray(resp.data) ? resp.data : (resp.data?.data || [])
     const bars: HistoryBar[] = raw.map((b: any) => ({
-      datetime: typeof b.datetime === 'number'
-        ? new Date(b.datetime * 1000).toISOString().slice(0, 16).replace('T', ' ')
-        : String(b.datetime),
+      datetime: parseBackendDatetime(b.datetime),
       open: Number(b.open) || 0,
       close: Number(b.close) || 0,
       high: Number(b.high) || 0,

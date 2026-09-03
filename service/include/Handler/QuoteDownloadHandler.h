@@ -35,7 +35,8 @@ public:
                                const std::string& start,
                                const std::string& end,
                                const std::string& env_name,
-                               const std::string& quote_dir);
+                               const std::string& quote_dir,
+                               bool overwrite = false);
 
     /**
      * @brief 股票除权校验：对比下载 HFQ 与本地重算，差异>1% 则用下载值

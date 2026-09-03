@@ -1157,8 +1157,9 @@ void Server::Schedules(time_t t) {
         nng_socket sseSock = GetSocket();
 
         // 增量下载所有活跃策略的不复权/后复权行情（复用 QuoteDownloadHandler 逻辑）
+        // overwrite=true: 强制覆盖，确保 baostock 完整数据替换盘中 TickFlow 写入的临时数据
         if (_strategySystem) {
-            updateActiveStrategiesQuote();
+            updateActiveStrategiesQuote(true);
         }
 
         // 更新分红除权数据（每周日 20:00 触发）：分红数据是历史事实，
@@ -1291,7 +1292,7 @@ String dateOnly(const String& dt) {
 }
 }  // namespace
 
-void Server::updateActiveStrategiesQuote() {
+void Server::updateActiveStrategiesQuote(bool overwrite) {
     auto now = Now();
     String today = dateString(now);
 
@@ -1341,6 +1342,7 @@ void Server::updateActiveStrategiesQuote() {
             auto ranges = quoteDB.getSymbolTimeRanges(table);
 
             // 已有 end_time → 复用为起点；未在表里的 symbol → 走全量
+            // overwrite=true: 跳过"已最新"检查，所有标的走全量下载 + 覆盖导入
             std::map<String, std::vector<std::string>> groups;   // end_date → symbols
             std::vector<std::string> fullReload;                 // 不在表里 → 走 max-history
             for (auto& sym : symbols) {
@@ -1349,6 +1351,9 @@ void Server::updateActiveStrategiesQuote() {
                         return get_symbol(r.symbol) == sym;
                     });
                 if (it == ranges.end()) {
+                    fullReload.push_back(sym);
+                } else if (overwrite) {
+                    // 覆盖模式：无视 endDate，强制全量重下载
                     fullReload.push_back(sym);
                 } else {
                     String endDate = dateOnly(it->end_time);
@@ -1388,7 +1393,7 @@ void Server::updateActiveStrategiesQuote() {
                 dgroups.push_back(std::move(g));
 
                 QuoteDownloadHandler::runDownloadJob(sseSock, dgroups, freqStr,
-                                                    start, today, "", quoteDir);
+                                                    start, today, "", quoteDir, overwrite);
                 ++totalGroups;
             }
         }

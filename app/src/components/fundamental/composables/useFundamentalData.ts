@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { FundamentalData, AlignedData, FinanceRow, PriceBar } from './useFundamentalState'
+import { parseBackendDate } from '@/ts/dateUtils'
 
 export function useFundamentalData() {
   const loading = ref(false)
@@ -86,9 +87,7 @@ function toFinanceCode(symbol: string): string {
 function parsePriceData(raw: any): PriceBar[] {
   if (!Array.isArray(raw)) return []
   return raw.map((item: any) => ({
-    datetime: typeof item.datetime === 'number'
-      ? new Date(item.datetime * 1000).toISOString().slice(0, 10)
-      : String(item.datetime).slice(0, 10),
+    datetime: parseBackendDate(item.datetime),
     open: Number(item.open) || 0,
     close: Number(item.close) || 0,
     high: Number(item.high) || 0,

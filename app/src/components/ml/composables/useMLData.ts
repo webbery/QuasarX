@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useMLState'
 import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
+import { parseBackendDate } from '@/ts/dateUtils'
 
 export function useMLData() {
   /**
@@ -305,9 +306,7 @@ export function useMLData() {
       const dates: string[] = []
       const prices: number[] = []
       for (const item of raw) {
-        const dt = typeof item.datetime === 'number'
-          ? new Date(item.datetime * 1000).toISOString().slice(0, 10)
-          : String(item.datetime).slice(0, 10)
+        const dt = parseBackendDate(item.datetime)
         dates.push(dt)
         prices.push(Number(item[field]) || 0)
       }
