@@ -14,8 +14,8 @@
 
 QuasarX 是一款自研量化交易软件（开发中），采用前后端分离架构：
 
-- **QuasarX Client**: Electron 桌面应用，提供策略编辑、交易监控、数据可视化等功能
-- **QuantService**: C++ 后端服务，采用数据/事件驱动架构，支持多种券商接口
+- **QuasarX Client**: Electron 桌面应用，提供策略编辑、交易监控、数据可视化、智能助手等功能
+- **QuantService**: C++ 后端服务，采用数据/事件驱动架构，支持多种券商接口，DuckDB 统一数据存储
 
 客户端通过 **REST API** 或 **SSE (Server-Sent Events)** 与服务端实时通信。
 
@@ -24,18 +24,22 @@ QuasarX 是一款自研量化交易软件（开发中），采用前后端分离
 ## 核心特性
 
 ### Client
-- 📊 策略流程图可视化编辑（基于 Vue Flow）
+- 📊 策略流程图可视化编辑（基于 Vue Flow，节点注册中心架构）
 - 📈 实时行情监控与数据可视化（ECharts / Plotly）
-- 🤖 机器学习策略支持（XGBoost / LSTM / NARX）
+- 🤖 机器学习策略支持（XGBoost / ONNX 通用推理）
+- 💬 LangGraph 多 Agent 智能助手（Supervisor 路由 + 4 专用 Agent + 11 内置 Tool）
+- 📚 RAG 知识库（LanceDB 向量检索 + 段落分块 + LLM 摘要）
 - 💼 投资组合管理与风险控制
+- 🗄️ 数据中心（DuckDB 本地行情管理，支持增量/全量下载）
 - 🔌 Element Plus UI 组件库
 
 ### Service
 - ⚡ 低延迟交易执行引擎
 - 📉 支持 CTP / 中泰 XTP / 华鑫等券商 SDK
-- 🧠 策略节点图执行引擎
+- 🧠 策略节点图执行引擎（20+ 节点类型）
 - 🛡️ 风险管理与止损插件
-- 📊 特征工程与数据分析（DataFrame 库）
+- 📊 特征工程与数据分析
+- 🗄️ DuckDB 统一数据存储（QuoteDB 行情管理）
 - 🔐 JWT 认证与 OpenSSL 加密
 
 ## 技术栈
@@ -45,10 +49,11 @@ QuasarX 是一款自研量化交易软件（开发中），采用前后端分离
 | Electron 32.x | C++23 |
 | Vue 3.5 + TypeScript | CMake 3.20+ |
 | Vite 5.x | Boost / XGBoost |
-| Element Plus | NNG (nanomsg) |
-| Pinia | OpenSSL |
-| Vue Flow | DataFrame (hosseinmoein) |
+| Element Plus | DuckDB |
+| Pinia | NNG (nanomsg) |
+| Vue Flow | OpenSSL |
 | ECharts / Plotly | spdlog / fmt |
+| LanceDB / LangGraph | ONNX Runtime |
 
 ## 快速开始
 
@@ -120,6 +125,10 @@ pytest ../test/testcases/test_order.py::TestOrder::test_stock_order_buy -v
 │  │ 策略编辑器   │ │ 交易监控    │ │ 数据可视化          │   │
 │  │ (Vue Flow)  │ │ (ECharts)   │ │ (Plotly)            │   │
 │  └─────────────┘ └─────────────┘ └─────────────────────┘   │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐   │
+│  │ 智能助手    │ │ 数据中心    │ │ 知识库              │   │
+│  │ (LangGraph) │ │ (DuckDB)    │ │ (LanceDB RAG)       │   │
+│  └─────────────┘ └─────────────┘ └─────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                               │
               ┌───────────────┴───────────────┐
@@ -136,6 +145,9 @@ pytest ../test/testcases/test_order.py::TestOrder::test_stock_order_buy -v
 │  │ Portfolio   │ │ Agent       │ │ Feature             │   │
 │  │ Subsystem   │ │ SubSystem   │ │ Subsystem           │   │
 │  └─────────────┘ └─────────────┘ └─────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐     │
+│  │ DuckDB (QuoteDB / NodeIO / Backtest)               │     │
+│  └─────────────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -146,12 +158,24 @@ pytest ../test/testcases/test_order.py::TestOrder::test_stock_order_buy -v
 | 节点类型 | 说明 |
 |----------|------|
 | `Input` / `Quote` | 市场数据输入 |
-| `Function` | 技术指标计算 (GARCH 等) |
-| `LSTM` / `BOOST` / `NARX` | 机器学习模型推理 |
+| `Function` | 技术指标计算 (MA/STD/GARCH/RSI/VWAP 等) |
+| `XGBoost` | XGBoost 机器学习模型推理 |
+| `OnnxInference` | ONNX 通用模型推理（替代旧版 LSTM/NARX 节点） |
 | `Feature` | 特征工程节点 |
-| `Signal` | 交易信号生成 |
+| `Signal` | 交易信号生成（支持公式表达式语法） |
 | `Execution` | 订单执行 |
 | `Portfolio` | 投资组合管理 |
+| `Protection` | 风控止损 |
+| `Formula` | 自定义公式节点 |
+| `FactorCombine` | 因子合成 |
+| `EMD` | 经验模态分解 |
+| `HMM` | 隐马尔可夫模型（市场状态识别） |
+| `CUSUM` | 累积和控制图（变点检测） |
+| `Breakout` | 突破信号 |
+| `Spread` | 价差分析 |
+| `Resample` | 频率重采样 |
+| `CacheFeature` | 特征缓存 |
+| `Debug` | 调试输出 |
 | `Script` | 脚本节点 |
 
 策略图 JSON Schema 详见 [doc/flow.md](doc/flow.md)
@@ -166,12 +190,13 @@ SignalNode 用于根据策略指标生成交易信号（买入/卖出），支�
 {
   "nodeType": "signal",
   "params": {
-    "code": ["sz.000001", "sz.002825"],
     "buy": "topk(ReturnRate[t], 2)",
     "sell": "bottomk(ReturnRate[t], 2)"
   }
 }
 ```
+
+> **注意**：SignalNode 自动从上游节点发现标的池，无需手动指定 `code` 参数。
 
 #### 公式语法
 
@@ -332,7 +357,7 @@ EOL             <- ';' [ \t\r\n]* / !.
   - `1` = 买入信号
   - `-1` = 卖出信号
   - `0` = 持有/无信号
-- **多股票池**：`code` 参数定义策略操作的股票范围，截面函数会在该范围内排序
+- **多股票池**：SignalNode 自动从上游节点发现标的池，截面函数在该范围内排序
 
 #### 注意事项
 
@@ -343,11 +368,28 @@ EOL             <- ';' [ \t\r\n]* / !.
 ### 数据流
 
 ```
-市场数据 → QuoteNode → 特征计算
-       → ML 模型 (XGBoost/LSTM) → 预测
-       → 策略节点 → 交易信号
-       → 执行节点 → 券商 API → 交易所
+市场数据 → QuoteNode → 特征计算 / 因子合成
+       → ML 模型 (XGBoost / ONNX) → 预测
+       → SignalNode → 交易信号
+       → PortfolioNode → 仓位管理
+       → ExecutionNode → 券商 API → 交易所
 ```
+
+### 智能助手（LangGraph 多 Agent 架构）
+
+Chat 功能使用 LangGraph 多 Agent Supervisor 架构，LLM 自主路由决策 + Tool Calling：
+
+```
+用户输入 → Supervisor（路由决策）
+              ├─ "chat"      → ChatAgent（通用对话 + Tool Calling）
+              ├─ "strategy"  → StrategyAgent（策略创建）
+              ├─ "risk"      → RiskAgent（风险分析）
+              └─ "portfolio" → PortfolioAgent（投资组合）
+```
+
+- **11 个内置 Tool**：quote, account, position, datetime, platform, knowledge, webSearch, strategy, backtest, mutation, calculator
+- **多轮对话**：IndexedDB checkpointer 持久化会话状态
+- **RAG 知识库**：LanceDB 向量检索 + 段落分块 + LLM 摘要
 
 ## REST API
 
@@ -360,9 +402,11 @@ API 文档位于 [doc/restapi.yaml](doc/restapi.yaml) (OpenAPI 3.0)
 | `/stocks/*` | 股票数据查询 |
 | `/future/*` | 期货数据 |
 | `/option/*` | 期权数据 |
+| `/quote` | 行情下载与导入（DuckDB QuoteDB） |
 | `/trade/order` | 订单管理 |
 | `/trade/position` | 持仓查询 |
 | `/backtest/*` | 回测服务 |
+| `/strategy/*` | 策略管理 |
 
 ## 配置
 
@@ -395,17 +439,23 @@ API 文档位于 [doc/restapi.yaml](doc/restapi.yaml) (OpenAPI 3.0)
 ```
 QuasarX/
 ├── app/                     # Electron 客户端
-│   ├── electron/            # Electron 主进程
+│   ├── electron/            # Electron 主进程（VectorDB、IPC）
 │   ├── src/                 # Vue 源码
-│   │   ├── components/      # Vue 组件
+│   │   ├── components/      # Vue 组件（DataCenter、FlowCanvas、ChatBox、ML 面板等）
 │   │   ├── stores/          # Pinia 状态管理
 │   │   ├── lib/             # 工具库
-│   │   └── ts/              # TypeScript 模块
+│   │   │   ├── agent/       # LangGraph 多 Agent 架构（Supervisor + 4 Agent）
+│   │   │   ├── nodes/       # 节点注册中心（configs/、factory.ts）
+│   │   │   └── tools/       # Tool 统一注册（11 个内置 Tool）
+│   │   └── ts/              # TypeScript 模块（SSE、i18n、RAG）
 │   └── package.json
 ├── service/                 # C++ 服务端
 │   ├── src/                 # 源代码
+│   │   ├── Handler/         # HTTP 请求处理器（40+ Handler）
+│   │   ├── Nodes/           # 策略节点实现（20+ Node）
+│   │   └── Util/            # 工具类（QuoteDB、datetime 等）
 │   ├── include/             # 头文件
-│   ├── third_party/         # 第三方库
+│   ├── third_party/         # 券商 SDK
 │   ├── test/                # pytest 测试
 │   └── CMakeLists.txt
 ├── doc/                     # 文档
@@ -418,9 +468,14 @@ QuasarX/
 
 详见 [QWEN.md](QWEN.md)
 
-## 未来目标
+## 开发进度
 
-1. 使用DuckDB统一底层数据读写保存功能
+- [x] DuckDB 统一底层数据读写（QuoteDB、NodeIO、Backtest）
+- [x] LangGraph 多 Agent 智能助手
+- [x] ONNX 通用推理节点（替代 LSTM/NARX）
+- [x] 节点注册中心架构
+- [ ] 更多券商接口适配
+- [ ] 实盘交易验证
 
 ## 注意事项
 

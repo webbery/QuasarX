@@ -1156,10 +1156,9 @@ void Server::Schedules(time_t t) {
         LOG("run once script");
         nng_socket sseSock = GetSocket();
 
-        // 增量下载所有活跃策略的不复权/后复权行情（复用 QuoteDownloadHandler 逻辑）
-        // overwrite=true: 强制覆盖，确保 baostock 完整数据替换盘中 TickFlow 写入的临时数据
+        // 增量更新活跃策略行情（upsert：key 匹配则更新，范围外数据保留）
         if (_strategySystem) {
-            updateActiveStrategiesQuote(true);
+            updateActiveStrategiesQuote(false);
         }
 
         // 更新分红除权数据（每周日 20:00 触发）：分红数据是历史事实，

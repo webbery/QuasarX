@@ -74,7 +74,12 @@ bool OnnxInferenceNode::Init(const nlohmann::json& config) {
             _numThreads > 0 ? _numThreads : std::max((int)std::thread::hardware_concurrency() / 2, 1));
         _sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
 
+#ifdef _WIN32
+        auto widePath = utf8_to_utf16(resolvedPath);
+        _session = std::make_unique<Ort::Session>(_env, widePath.c_str(), _sessionOptions);
+#else
         _session = std::make_unique<Ort::Session>(_env, resolvedPath.c_str(), _sessionOptions);
+#endif
 
         // 读取 input shape
         size_t numInputs = _session->GetInputCount();

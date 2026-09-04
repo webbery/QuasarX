@@ -130,10 +130,6 @@
                                 </div>
                             </div>
                             <div class="button-row">
-                                <label class="checkbox-label" title="勾选后删除该标的所有历史数据再全量写入，确保数据完整覆盖">
-                                    <input type="checkbox" v-model="quoteStrategyOverwrite" />
-                                    <span>覆盖已有数据</span>
-                                </label>
                                 <button class="btn btn-primary" @click="onDownloadQuoteByStrategy"
                                         :disabled="quoteStrategyDownloading || !isLoggedIn || !quoteStrategy">
                                     <i class="fas fa-download"></i>
@@ -164,9 +160,28 @@
                         </div>
                     </div>
 
-                    <!-- 共享状态 + 日志 -->
+                    <!-- 共享状态 + 进度 + 日志 -->
                     <div v-if="quoteStatus" class="status-text" :class="{ 'status-error': quoteStatus.includes('失败') }">
                         {{ quoteStatus }}
+                    </div>
+                    <!-- 下载进度条 -->
+                    <div v-if="quoteProgress.total > 0 && quoteProgress.phase" class="quote-progress">
+                        <div class="quote-progress-header">
+                            <span class="quote-progress-label">
+                                <template v-if="quoteProgress.phase === 'downloading'">
+                                    <i class="fas fa-cloud-download-alt"></i> 下载中
+                                </template>
+                                <template v-else-if="quoteProgress.phase === 'importing'">
+                                    <i class="fas fa-file-import"></i> 导入中
+                                </template>
+                            </span>
+                            <span class="quote-progress-count">{{ quoteProgress.downloaded }} / {{ quoteProgress.total }} 标的</span>
+                        </div>
+                        <div class="quote-progress-bar">
+                            <div class="quote-progress-fill"
+                                 :style="{ width: quoteProgress.total ? (quoteProgress.downloaded / quoteProgress.total * 100) + '%' : '0%' }">
+                            </div>
+                        </div>
                     </div>
                     <div v-if="quoteLogs.length" class="quote-log-box">
                         <div class="quote-log-title">下载日志</div>
@@ -806,7 +821,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { ipcRenderer } from 'electron'
 import axios from 'axios'
 import sseService from '@/ts/SSEService'
@@ -853,6 +868,7 @@ const quoteDownloading = ref(false)
 const quoteStatus = ref('')
 const quoteLogs = ref<any[]>([])
 const quoteLogRef = ref<HTMLElement | null>(null)
+const quoteProgress = reactive({ downloaded: 0, total: 0, phase: '' as '' | 'downloading' | 'importing' })
 
 // 按策略下载行情（与 dividend tab 同样思路：取最新版本 flowData → 提取 symbols）
 const quoteStrategy = ref('')
@@ -861,7 +877,6 @@ const quoteStrategyFreq = ref('1d')
 const quoteStrategyStartDate = ref('')
 const quoteStrategyEndDate = ref('')
 const quoteStrategyDownloading = ref(false)
-const quoteStrategyOverwrite = ref(false)
 const quoteStrategySymbolCount = computed(() => {
     if (!quoteStrategySymbols.value) return 0
     return quoteStrategySymbols.value.split(',').filter(s => s.trim()).length
@@ -1386,23 +1401,24 @@ const addQuoteLog = (text: string, type: string = 'info') => {
 }
 
 const onQuoteDownloadEvent = (msg: any) => {
-    console.log('[QuoteDownload] 收到 SSE 事件, msg:', msg)
     const d = msg.data
-    console.log('[QuoteDownload] msg.data:', d)
-    console.log('[QuoteDownload] status 字段值:', d.status)
-    console.log('[QuoteDownload] 当前 quoteLogs 数量:', quoteLogs.value.length)
     switch (d.status) {
         case 'started':
+            quoteProgress.total += Number(d.total) || 0
+            quoteProgress.phase = 'downloading'
             addQuoteLog(`📥 开始下载: ${d.total} 只标的 (${d.asset_type})`)
             break
         case 'symbol_downloaded':
+            quoteProgress.downloaded++
             addQuoteLog(`✅ ${d.symbol}: ${d.rows} 行 (${d.downloaded}/${d.total})`, 'success')
             break
         case 'symbol_failed':
+            quoteProgress.downloaded++
             addQuoteLog(`❌ ${d.symbol}: 下载失败 (${d.error})`, 'error')
             break
         case 'downloaded':
             addQuoteLog(`📥 下载完成: ${d.downloaded} 成功，${d.failed} 失败，开始导入...`)
+            quoteProgress.phase = 'importing'
             break
         case 'download_failed':
             addQuoteLog('脚本执行失败', 'error')
@@ -1416,6 +1432,8 @@ const onQuoteDownloadEvent = (msg: any) => {
             break
         case 'done':
             quoteDownloading.value = false
+            quoteStrategyDownloading.value = false
+            quoteProgress.phase = ''
             if (d.success === 'true') {
                 addQuoteLog(`✅ 完成: 共导入 ${d.total_rows} 行 → ${d.table}`, 'done')
                 quoteStatus.value = `下载完成，${d.total_rows} 行已导入 ${d.table}`
@@ -1522,6 +1540,7 @@ const onHandleQuoteDownload = async () => {
     quoteDownloading.value = true
     quoteStatus.value = ''
     quoteLogs.value = []
+    quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -1577,6 +1596,7 @@ const onDownloadQuoteByStrategy = async () => {
     quoteStrategyDownloading.value = true
     quoteStatus.value = `正在从策略「${quoteStrategy.value}」下载 ${quoteStrategySymbolCount.value} 个标的...`
     quoteLogs.value = []
+    quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -1587,16 +1607,14 @@ const onDownloadQuoteByStrategy = async () => {
             freq: quoteStrategyFreq.value,
             start: quoteStrategyStartDate.value || undefined,
             end: quoteStrategyEndDate.value || undefined,
-            overwrite: quoteStrategyOverwrite.value || undefined,
         }, {
             headers: { 'Authorization': token || '' }
         })
         addQuoteLog(`✓ 已提交下载请求：${quoteStrategySymbolCount.value} 个标的 (${quoteStrategyFreq.value})`)
     } catch (err: any) {
+        quoteStrategyDownloading.value = false
         quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
         addQuoteLog(`请求失败: ${err.message}`, 'error')
-    } finally {
-        quoteStrategyDownloading.value = false
     }
 }
 
@@ -1922,6 +1940,7 @@ const onUpdateToLatest = async () => {
     isUpdatingLatest.value = true
     quoteLogs.value = []
     quoteStatus.value = ''
+    quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -3066,6 +3085,45 @@ select option {
 }
 .status-text.status-error {
     color: #f87171;
+}
+
+/* ── 下载进度条 ── */
+.quote-progress {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+}
+.quote-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.quote-progress-label {
+    font-size: 12px;
+    color: #60a5fa;
+}
+.quote-progress-label .fas {
+    margin-right: 4px;
+}
+.quote-progress-count {
+    font-size: 12px;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+}
+.quote-progress-bar {
+    height: 4px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.quote-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 2px;
+    transition: width 0.3s ease;
 }
 
 /* ── 分区标题 ── */

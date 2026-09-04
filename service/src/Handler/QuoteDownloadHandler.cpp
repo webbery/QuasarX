@@ -6,12 +6,14 @@
 #include "Util/data.h"
 #include "server.h"
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <sstream>
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
+#include <chrono>
 
 namespace fs = std::filesystem;
 
@@ -139,137 +141,179 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
 
     std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter, overwrite]() {
         for (auto& group : groups) {
+            auto t_group_start = std::chrono::steady_clock::now();
             const auto& asset_type = group.asset_type;
-            const auto& symbols_str = group.symbols_str;
             auto sym_list = group.symbols;
-
-            // 构建命令（脚本内部已同时下载 HFQ + 不复权）
-            std::string cmd = interpreter + " tools/download_etf_bs.py "
-                            + symbols_str + " " + quote_dir
-                            + " --freq " + freq
-                            + " --asset-type " + asset_type;
-            if (!start.empty()) cmd += " --start " + start;
-            if (!end.empty())   cmd += " --end " + end;
 
             std::string table = QuoteDB::tableName(asset_type, freq);
             std::string hfq_dir = asset_type + "_hfq/" + freq;
             std::string org_dir = asset_type + "_org/" + freq;
 
+            INFO("[QuoteDownload] === {} group start: {} symbols, freq={}, start={}, end={} ===",
+                 asset_type, sym_list.size(), freq, start.empty() ? "max" : start, end.empty() ? "today" : end);
+
             SendSSE(sseSock, "quote_download", {
                 {"status", "started"}, {"asset_type", asset_type},
-                {"symbols", symbols_str}, {"total", std::to_string(sym_list.size())}
+                {"symbols", group.symbols_str}, {"total", std::to_string(sym_list.size())}
             });
 
-            // 执行下载脚本，逐行解析进度
-            String output;
-            bool ok = RunCommand(cmd, output);
-
-            // 解析标的级进度
+            // 串行逐个标的下载 + 导入（实时推送进度）
             int downloaded = 0;
             int failed = 0;
-            std::istringstream iss(output);
-            std::string line;
-            while (std::getline(iss, line)) {
-                nlohmann::json progress;
-                if (parseProgressLine(line, progress)) {
-                    std::string sym = progress.value("symbol", "");
-                    std::string status = progress.value("status", "");
+            int total_rows = 0;
+            auto& quoteDB = QuoteDB::instance();
 
-                    if (status == "done") {
-                        downloaded++;
-                        SendSSE(sseSock, "quote_download", {
-                            {"status", "symbol_downloaded"},
-                            {"asset_type", asset_type},
-                            {"symbol", sym},
-                            {"rows", std::to_string(progress.value("rows", 0))},
-                            {"downloaded", std::to_string(downloaded)},
-                            {"total", std::to_string(sym_list.size())},
-                        });
-                    } else if (status == "failed") {
-                        failed++;
-                        SendSSE(sseSock, "quote_download", {
-                            {"status", "symbol_failed"},
-                            {"asset_type", asset_type},
-                            {"symbol", sym},
-                            {"error", progress.value("error", "unknown")},
-                        });
+            for (size_t i = 0; i < sym_list.size(); i++) {
+                const auto& sym = sym_list[i];
+
+                // 构建单标的下载命令
+                std::string cmd = interpreter + " tools/download_etf_bs.py "
+                                + sym + " " + quote_dir
+                                + " --freq " + freq
+                                + " --asset-type " + asset_type;
+                if (!start.empty()) cmd += " --start " + start;
+                if (!end.empty())   cmd += " --end " + end;
+
+                auto t_sym_start = std::chrono::steady_clock::now();
+                INFO("[QuoteDownload] [{}/{}] Downloading {} ...", i + 1, sym_list.size(), sym);
+
+                String output;
+                bool ok = RunCommand(cmd, output);
+                auto t_sym_end = std::chrono::steady_clock::now();
+                auto sym_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_sym_end - t_sym_start).count();
+
+                if (!ok) {
+                    failed++;
+                    INFO("[QuoteDownload] [{}/{}] {} FAILED in {} ms", i + 1, sym_list.size(), sym, sym_ms);
+                    SendSSE(sseSock, "quote_download", {
+                        {"status", "symbol_failed"},
+                        {"asset_type", asset_type},
+                        {"symbol", sym},
+                        {"error", "download script failed"},
+                        {"downloaded", std::to_string(downloaded + failed)},
+                        {"total", std::to_string(sym_list.size())},
+                    });
+                    continue;
+                }
+
+                // 从脚本输出中提取行数（匹配 "[OK] ... (N 条)" 格式）
+                int rows = 0;
+                {
+                    std::istringstream iss(output);
+                    std::string line;
+                    while (std::getline(iss, line)) {
+                        // 匹配 "([0-9]+) 条" 提取行数
+                        auto pos = line.find("条)");
+                        if (pos != std::string::npos) {
+                            auto paren = line.rfind('(', pos);
+                            if (paren != std::string::npos) {
+                                try {
+                                    rows = std::stoi(line.substr(paren + 1, pos - paren - 1));
+                                } catch (...) {}
+                            }
+                        }
                     }
                 }
-            }
 
-            SendSSE(sseSock, "quote_download", {
-                {"status", ok ? "downloaded" : "download_failed"},
-                {"downloaded", std::to_string(downloaded)},
-                {"failed", std::to_string(failed)},
-            });
+                downloaded++;
 
-            // 检查 QuoteDB 是否仍有效（服务可能在退出）
-            auto& quoteDB = QuoteDB::instance();
-            if (!ok || !quoteDB.isInitialized()) {
+                // Python 脚本保存文件名用 CODE.EXCHANGE 格式（如 600111.SH.csv）
+                // sym 是 baostock 格式（如 sh.600111），需要转换
+                std::string csv_name = sym;
+                {
+                    auto dot = sym.find('.');
+                    if (dot != std::string::npos && dot <= 3) {
+                        std::string market = sym.substr(0, dot);
+                        std::string code = sym.substr(dot + 1);
+                        std::transform(market.begin(), market.end(), market.begin(), ::toupper);
+                        csv_name = code + "." + market;
+                    }
+                }
+
+                std::string org_path = quote_dir + "/" + org_dir + "/" + csv_name + ".csv";
+                std::string hfq_path = quote_dir + "/" + hfq_dir + "/" + csv_name + ".csv";
+
+                // 从 CSV 文件获取行数（比解析脚本输出更可靠）
+                if (fs::exists(org_path) || fs::exists(hfq_path)) {
+                    std::string count_path = fs::exists(org_path) ? org_path : hfq_path;
+                    std::ifstream ifs(count_path);
+                    if (ifs.is_open()) {
+                        int csv_rows = 0;
+                        std::string line;
+                        bool header_skipped = false;
+                        while (std::getline(ifs, line)) {
+                            if (line.empty()) continue;
+                            if (!header_skipped) {
+                                header_skipped = true;
+                                continue;  // 跳过表头
+                            }
+                            csv_rows++;
+                        }
+                        rows = csv_rows;
+                    }
+                }
+
+                INFO("[QuoteDownload] [{}/{}] {} done: {} rows in {} ms", i + 1, sym_list.size(), sym, rows, sym_ms);
                 SendSSE(sseSock, "quote_download", {
-                    {"status", "aborted"},
-                    {"reason", ok ? "QuoteDB shutting down" : "download failed"}
+                    {"status", "symbol_downloaded"},
+                    {"asset_type", asset_type},
+                    {"symbol", sym},
+                    {"rows", std::to_string(rows)},
+                    {"downloaded", std::to_string(downloaded + failed)},
+                    {"total", std::to_string(sym_list.size())},
                 });
-                continue;
-            }
 
-            // 扫描 CSV 并导入 DuckDB（org + hfq 合并，插入并替换）
-            int total_rows = 0;
-
-            // 收集 hfq / org 两份目录的文件（symbol → path）
-            std::map<std::string, std::string> hfq_files, org_files;
-            std::string hfq_path_full = quote_dir + "/" + hfq_dir;
-            std::string org_path_full = quote_dir + "/" + org_dir;
-
-            if (fs::exists(hfq_path_full)) {
-                for (auto& entry : fs::directory_iterator(hfq_path_full)) {
-                    if (entry.path().extension() != ".csv") continue;
-                    hfq_files[entry.path().stem().string()] = entry.path().string();
-                }
-            }
-            if (fs::exists(org_path_full)) {
-                for (auto& entry : fs::directory_iterator(org_path_full)) {
-                    if (entry.path().extension() != ".csv") continue;
-                    org_files[entry.path().stem().string()] = entry.path().string();
-                }
-            }
-
-            // symbol 并集，成对导入
-            std::set<std::string> all_symbols;
-            for (auto& [s, p] : hfq_files) all_symbols.insert(s);
-            for (auto& [s, p] : org_files) all_symbols.insert(s);
-
-            for (auto& sym : all_symbols) {
-                // 只有一份时，另一份用相同路径（原始列 = 复权列，简化处理）
-                std::string org_path = org_files.count(sym) ? org_files[sym] : hfq_files[sym];
-                std::string hfq_path = hfq_files.count(sym) ? hfq_files[sym] : org_files[sym];
-
-                int rows = quoteDB.importCsv(org_path, hfq_path, table, toInternalSymbol(sym), overwrite);
-                if (rows > 0) {
-                    total_rows += rows;
-                    SendSSE(sseSock, "quote_download", {
-                        {"status", "importing"},
-                        {"table", table},
-                        {"symbol", sym},
-                        {"rows", std::to_string(rows)}
-                    });
+                // 立即下载后导入
+                if (!quoteDB.isInitialized()) {
+                    INFO("[QuoteDownload] QuoteDB not initialized, skipping import for {}", sym);
+                    continue;
                 }
 
-                // 股票除权校验：下载的 HFQ vs 重算结果，取下载值
-                if (rows > 0 && table == "stock_1d") {
-                    validateAndReconcileAdj(sseSock, table, sym);
-                }
+                if (fs::exists(org_path) || fs::exists(hfq_path)) {
+                    std::string org_p = fs::exists(org_path) ? org_path : hfq_path;
+                    std::string hfq_p = fs::exists(hfq_path) ? hfq_path : org_path;
 
-                fs::remove(org_path);
-                fs::remove(hfq_path);
+                    auto t_import_start = std::chrono::steady_clock::now();
+                    int imported = quoteDB.importCsv(org_p, hfq_p, table, toInternalSymbol(sym), overwrite);
+                    auto t_import_end = std::chrono::steady_clock::now();
+                    auto import_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_import_end - t_import_start).count();
+                    INFO("[QuoteDownload] importCsv {} done: {} rows in {} ms", sym, imported, import_ms);
+
+                    if (imported > 0) {
+                        total_rows += imported;
+                        SendSSE(sseSock, "quote_download", {
+                            {"status", "importing"},
+                            {"table", table},
+                            {"symbol", sym},
+                            {"rows", std::to_string(imported)}
+                        });
+                    }
+
+                    // 股票除权校验
+                    if (imported > 0 && table == "stock_1d") {
+                        auto t_adj_start = std::chrono::steady_clock::now();
+                        validateAndReconcileAdj(sseSock, table, sym);
+                        auto t_adj_end = std::chrono::steady_clock::now();
+                        auto adj_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_adj_end - t_adj_start).count();
+                        INFO("[QuoteDownload] validateAndReconcileAdj {} done in {} ms", sym, adj_ms);
+                    }
+
+                    fs::remove(org_p);
+                    fs::remove(hfq_p);
+                }
             }
+
+            auto t_group_end = std::chrono::steady_clock::now();
+            auto group_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_group_end - t_group_start).count();
+            INFO("[QuoteDownload] === {} group done: {} symbols ({} ok, {} failed), {} rows, total {} ms ===",
+                 asset_type, sym_list.size(), downloaded, failed, total_rows, group_ms);
 
             SendSSE(sseSock, "quote_download", {
                 {"status", "done"},
                 {"asset_type", asset_type},
                 {"table", table},
                 {"total_rows", std::to_string(total_rows)},
-                {"success", ok ? "true" : "false"}
+                {"success", failed == 0 ? "true" : "false"}
             });
         }
     }).detach();
@@ -283,21 +327,21 @@ void QuoteDownloadHandler::validateAndReconcileAdj(nng_socket sseSock,
     if (!quoteDB.isInitialized() || !financeDB.isInitialized()) return;
 
     constexpr double REL_TOLERANCE = 0.01;  // 1% 相对差异阈值
-
+    auto sym = toInternalSymbol(symbol);
     // 1. 读取下载的 adj_close（importCsv 已写入）
-    auto downloadedBars = quoteDB.query(table, symbol, "", "", 1);
+    auto downloadedBars = quoteDB.query(table, sym, "", "", 1);
     if (downloadedBars.empty()) return;
     const auto& downloaded = downloadedBars.back();
 
     bool downloadedValid = downloaded.adj_close > 0 && std::isfinite(downloaded.adj_close);
 
     // 2. 重算（基于 dividend 表，baostock 公式）
-    symbol_t internalSym = to_symbol(toInternalSymbol(symbol));
-    int64_t encodedSym = QuoteDB::encodeSymbol(toInternalSymbol(symbol));
+    symbol_t internalSym = to_symbol(sym);
+    int64_t encodedSym = QuoteDB::encodeSymbol(sym);
     financeDB.recalcSymbolAdjPrices(get_symbol(internalSym));
 
     // 3. 读取重算后的 adj_close
-    auto recalcBars = quoteDB.query(table, symbol, "", "", 1);
+    auto recalcBars = quoteDB.query(table, sym, "", "", 1);
     if (recalcBars.empty()) return;
     const auto& recalc = recalcBars.back();
     bool recalcValid = recalc.adj_close > 0 && std::isfinite(recalc.adj_close);
