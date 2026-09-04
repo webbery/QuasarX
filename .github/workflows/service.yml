@@ -205,6 +205,7 @@ jobs:
             /usr/local/lib/libduckdb.so*
             /usr/local/lib/libnng.so*
             /usr/local/lib/libnlopt.so*
+            /usr/local/lib/libonnxruntime*
             service/third_party/libs/unix/libfastsptraderapi.so
             service/third_party/libs/unix/libfasttraderapi.so
             service/third_party/libs/unix/libsptraderapi.so
@@ -215,7 +216,6 @@ jobs:
             service/third_party/libs/unix/libxmdapi.so
             service/third_party/libs/unix/libxtpquoteapi.so
             service/third_party/libs/unix/libxtptraderapi.so
-            service/third_party/libs/unix/libonnxruntime.so
           compression-level: 0
           retention-days: 1
 
@@ -259,6 +259,8 @@ jobs:
         run: |
           # 将 artifact 中的 so 安装到 /usr/local/lib
           sudo cp -f runtime-libs/usr/local/lib/lib*.so /usr/local/lib/ 2>/dev/null || true
+          # ONNX Runtime: SONAME 化的版本化文件需单独拷贝并保留符号链接（lib*.so glob 不匹配 lib*.so.1.X.Y）
+          sudo cp -Pf runtime-libs/usr/local/lib/libonnxruntime* /usr/local/lib/ 2>/dev/null || true
           # third_party/libs/unix 下的券商/交易 SDK
           sudo cp -f runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so /usr/local/lib/ 2>/dev/null || true
           sudo ls /usr/local/lib
