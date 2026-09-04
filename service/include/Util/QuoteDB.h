@@ -20,11 +20,14 @@ public:
 
     // 一次性导入不复权(org) + 后复权(hfq)两份 CSV，合并后删除原数据再批量列式插入（插入并替换）
     // 两份 CSV 可为同一文件（此时原始列与 adj 列同值）
+    // overwrite=true: 先删除该标的所有历史数据再全量插入（强制覆盖）
+    // overwrite=false: 增量模式，按 (symbol,datetime) 做 UPDATE/INSERT
     // 返回导入行数，失败返回 -1
     int importCsv(const std::string& org_csv_path,
                   const std::string& hfq_csv_path,
                   const std::string& table,
-                  const std::string& symbol_str);
+                  const std::string& symbol_str,
+                  bool overwrite = false);
 
     bool upsertBar(const std::string& table, const QuoteBar& bar);
 

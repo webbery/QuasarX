@@ -229,7 +229,7 @@ private:
      *
      * 单 symbol 失败由下载脚本内部跳过；组级失败跳过整组。
      */
-    void updateActiveStrategiesQuote();
+    void updateActiveStrategiesQuote(bool overwrite = false);
 
     void TimerWorker(nng_socket sock);
 

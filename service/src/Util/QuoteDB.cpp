@@ -88,7 +88,8 @@ void QuoteDB::ensureTable(const std::string& table) {
 int QuoteDB::importCsv(const std::string& org_csv_path,
                        const std::string& hfq_csv_path,
                        const std::string& table,
-                       const std::string& symbol_str) {
+                       const std::string& symbol_str,
+                       bool overwrite) {
     auto t_start = std::chrono::high_resolution_clock::now();
 
     std::lock_guard<std::recursive_mutex> lock(mtx());
@@ -217,6 +218,22 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
     if (merged.empty()) {
         SPDLOG_WARN("[QuoteDB] merged empty for {} ({}), skip", table, symbol_str);
         return 0;
+    }
+
+    // 覆盖模式：在事务外先 DELETE 该标的所有数据 + CHECKPOINT，
+    // 确保 ART 索引完整刷新，避免 DELETE 与 Appender 在同一事务中交织
+    // 触发 DuckDB ART 索引损坏（BoundIndex::Delete 错误路径格式化 chunk 时卡死）
+    if (overwrite) {
+        std::string del_sql = fmt::format(
+            "DELETE FROM {} WHERE symbol = {}", table, sym_encoded);
+        if (!exec_unsafe(del_sql)) {
+            SPDLOG_ERROR("[QuoteDB] overwrite: delete existing data failed for {} ({})",
+                         symbol_str, table);
+            return -1;
+        }
+        exec_unsafe("CHECKPOINT");
+        SPDLOG_INFO("[QuoteDB] overwrite: deleted existing data for {} from {}, proceeding with full insert",
+                    symbol_str, table);
     }
 
     exec_unsafe("BEGIN TRANSACTION");

@@ -130,6 +130,10 @@
                                 </div>
                             </div>
                             <div class="button-row">
+                                <label class="checkbox-label" title="勾选后删除该标的所有历史数据再全量写入，确保数据完整覆盖">
+                                    <input type="checkbox" v-model="quoteStrategyOverwrite" />
+                                    <span>覆盖已有数据</span>
+                                </label>
                                 <button class="btn btn-primary" @click="onDownloadQuoteByStrategy"
                                         :disabled="quoteStrategyDownloading || !isLoggedIn || !quoteStrategy">
                                     <i class="fas fa-download"></i>
@@ -857,6 +861,7 @@ const quoteStrategyFreq = ref('1d')
 const quoteStrategyStartDate = ref('')
 const quoteStrategyEndDate = ref('')
 const quoteStrategyDownloading = ref(false)
+const quoteStrategyOverwrite = ref(false)
 const quoteStrategySymbolCount = computed(() => {
     if (!quoteStrategySymbols.value) return 0
     return quoteStrategySymbols.value.split(',').filter(s => s.trim()).length
@@ -1582,6 +1587,7 @@ const onDownloadQuoteByStrategy = async () => {
             freq: quoteStrategyFreq.value,
             start: quoteStrategyStartDate.value || undefined,
             end: quoteStrategyEndDate.value || undefined,
+            overwrite: quoteStrategyOverwrite.value || undefined,
         }, {
             headers: { 'Authorization': token || '' }
         })
@@ -3017,6 +3023,21 @@ select option {
     align-items: center;
     gap: 8px;
     margin-top: 8px;
+}
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #aaa;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-left: auto;
+    user-select: none;
+}
+.checkbox-label input[type="checkbox"] {
+    accent-color: #4a9eff;
+    cursor: pointer;
 }
 
 /* ── 标签 & 状态 ── */

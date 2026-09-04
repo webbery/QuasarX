@@ -1,5 +1,6 @@
 #include "Derivative/OptionPricer.h"
 #include <cmath>
+#include <numbers>
 #include <random>
 #include <algorithm>
 #include <numeric>
@@ -8,7 +9,7 @@
 namespace {
 
 inline double normPDF(double x) {
-    return std::exp(-0.5 * x * x) / std::sqrt(2.0 * M_PI);
+    return std::exp(-0.5 * x * x) / std::sqrt(2.0 * std::numbers::pi);
 }
 
 inline double normCDF(double x) {
