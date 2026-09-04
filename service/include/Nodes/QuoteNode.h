@@ -12,9 +12,9 @@ public:
 
     QuoteInputNode(Server* server);
 
-    bool Init(const nlohmann::json& config);
+    bool Init(const nlohmann::json& config) override;
 
-    virtual void Prepare(const String& strategy, DataContext& context);
+    virtual void Prepare(const String& strategy, DataContext& context) override;
     /**
     * @brief 处理行情数据，实现多标的时间对齐
     *
@@ -41,12 +41,12 @@ public:
 
     void EraseSymbol(symbol_t symbol) { _symbols.erase(symbol); }
 
-    Map<String, ArgType> out_elements();
+    Map<String, ArgType> out_elements() override;
 
     /**
      * @brief 获取数据源类型（"股票"/"ETF"）
      */
-    const String& GetSource() const { return _source; }
+    const Set<contract_type>& GetSource() const { return _sources; }
 
     /**
      * @brief 获取当前节点已注册的 symbol 列表
@@ -77,6 +77,6 @@ private:
     std::unique_ptr<IQuoteFillStrategy> _fillStrategy;  // 填充策略
     Map<symbol_t, QuoteInfo> _curQuotes;   // 当前轮次各 symbol 的 quote
     Map<symbol_t, QuoteInfo> _lastQuotes;  // 每个 symbol 上一次写入的 quote
-    String _source = "股票";                // 数据源类型
+    Set<contract_type> _sources;                // 数据源类型
     DataFrequencyType _freq = DataFrequencyType::Day;  // 频率设置
 };

@@ -1,7 +1,6 @@
 #pragma once
 #include "DataContext.h"
 #include "json.hpp"
-// #include "onnxruntime/onnxruntime_cxx_api.h"
 
 #define RegistClassName(clsName) static String className() { return #clsName; }
 
@@ -115,21 +114,3 @@ protected:
     Edges _ins;
 };
 
-#if 0
-class ArtificialIntelligenceNode: public QNode {
-public:
-
-protected:
-    String ConvertServerModelPath(const String& uploadPath);
-
-    std::vector<std::vector<int64_t>> InitInput();
-
-    std::vector<std::vector<int64_t>> InitOutput();
-protected:
-    Vector<const char*> _modelInputs;
-    Vector<const char*> _modelOutputs;
-
-    Ort::Session* _session = nullptr;
-    static Ort::Env _env;
-};
-#endif

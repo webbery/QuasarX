@@ -8,6 +8,18 @@
 #include <shared_mutex>
 #include <memory>
 
+struct OHLCVData {
+    Vector<time_t> _datetime;
+    Vector<double> _open;
+    Vector<double> _close;
+    Vector<double> _high;
+    Vector<double> _low;
+    Vector<int64_t> _volume;
+
+    size_t size() const { return _datetime.size(); }
+    bool empty() const { return _datetime.empty(); }
+};
+
 /**
  * @brief 历史数据回测基类
  *

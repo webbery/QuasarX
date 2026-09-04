@@ -189,28 +189,20 @@ if (USE_CUDA)
     set(TensorRT_INCLUDE_DIRS "${TensorRT_DIR}/include")
     set(TensorRT_LIBRARIES_DIR "${TensorRT_DIR}/lib")
 else (USE_CUDA)
-    # find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime/core/session/onnxruntime_c_api.h
-    #     PATHS /usr/local/include
-    #     NO_DEFAULT_PATH
-    # )
-
-    # find_library(ONNXRUNTIME_LIBRARY onnxruntime
-    #     PATHS /usr/local/lib
-    #     NO_DEFAULT_PATH
-    # )
-
-    # if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
-    #     message("-- Found ONNX Runtime: ${ONNXRUNTIME_LIBRARY}")
-    #     include_directories(${ONNXRUNTIME_INCLUDE_DIR})
-    #     set(ONNXRUNTIME_LIBRARIES ${ONNXRUNTIME_LIBRARY})
-    # else()
-    #     find_package(onnxruntime REQUIRED PATHS /usr/local/lib/cmake/onnxruntime)
-    #     set(onnxruntime_ROOT ${onnxruntime_DIR}/../../..)
-    #     include_directories(${onnxruntime_ROOT}/include)
-    #     link_directories(${onnxruntime_ROOT}/lib/)
-    #     set(ONNXRUNTIME_LIBRARIES onnxruntime)
-    #     # message(FATAL_ERROR "ONNX Runtime not found. Please install it first.")
-    # endif()
+    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime/onnxruntime_cxx_api.h
+        PATHS /usr/local/include
+        NO_DEFAULT_PATH
+    )
+    find_library(ONNXRUNTIME_LIBRARY onnxruntime
+        PATHS /usr/local/lib
+        NO_DEFAULT_PATH
+    )
+    if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+        message("-- Found ONNX Runtime: ${ONNXRUNTIME_LIBRARY}")
+        include_directories(${ONNXRUNTIME_INCLUDE_DIR})
+    else()
+        message(FATAL_ERROR "ONNX Runtime not found. Please install it first.")
+    endif()
 endif (USE_CUDA)
 
 include_directories(include third_party/include ${CUDA_INCLUDE_DIRS} ${TensorRT_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
@@ -321,6 +313,9 @@ set(FMT_TEST OFF)
 set(FMT_DOC OFF) 
 add_subdirectory(third_party/fmt)
 target_link_libraries(${PROJECT_NAME} fmt::fmt xgboost)
+if(NOT USE_CUDA AND ONNXRUNTIME_LIBRARY)
+    target_link_libraries(${PROJECT_NAME} ${ONNXRUNTIME_LIBRARY})
+endif()
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
 endif()

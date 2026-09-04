@@ -124,7 +124,7 @@ const NODE_COLOR_MAP = {
   lstm: '#a855f7',
   boost: '#a855f7',
   xgboost: '#a855f7',
-  narx: '#a855f7',
+  onnx_inference: '#a855f7',
   feature: '#f59e0b',
   signal: '#ef4444',
   execution: '#dc2626',

@@ -1,4 +1,5 @@
 #include "Bridge/CTP/CTPSymbol.h"
+#include "Bridge/OptionSymbolMacros.h"
 #include "Util/string_algorithm.h"
 
 namespace {
@@ -114,10 +115,12 @@ CTPSymbol::operator symbol_t() const {
     if (tokens.size() > 2) {
         String type = tokens[2];
         if (type == "c") {
-            t._type = contract_type::call;
+            t._type = contract_type::option;
+            SET_SYMBOL_OPT_DIRECTION(t, 1); // call
         }
         else if (type == "p") {
-            t._type = contract_type::put;
+            t._type = contract_type::option;
+            SET_SYMBOL_OPT_DIRECTION(t, 0); // put
         }
     }
     else {
@@ -128,8 +131,7 @@ CTPSymbol::operator symbol_t() const {
     case contract_type::future:
         t._symbol = atol(tokens[1].c_str());
         break;
-    case contract_type::put: // put
-    case contract_type::call: // call
+    case contract_type::option:
         t._year = atoi(tokens[1].substr(0, tokens[1].size() - 2).c_str());
         t._month = atoi(tokens[1].substr(tokens[1].size() - 2, 2).c_str());
         t._price = atoi(tokens[3].c_str())/100;

@@ -12,6 +12,7 @@
 #include "nng/protocol/pubsub0/pub.h"
 #include "server.h"
 #include "Util/string_algorithm.h"
+#include "std_header.h"
 
 ExchangeManager::ExchangeManager(Server* server)
     : _server(server), _quotePubSock{0} {
@@ -610,7 +611,7 @@ bool ExchangeManager::StopExchange(const String& name) {
     return true;
 }
 
-Set<String> ExchangeManager::ResolveExchangeNames(const Set<String>& requiredSources) {
+Set<String> ExchangeManager::ResolveExchangeNames(const Set<contract_type>& requiredSources) {
     Set<String> names;
 
     for (auto& [exName, exch] : _exchanges) {
@@ -618,16 +619,23 @@ Set<String> ExchangeManager::ResolveExchangeNames(const Set<String>& requiredSou
         String apiName = exch->Name();
 
         for (auto& source : requiredSources) {
-            if (source == "股票") {
+            switch (source) {
+            case contract_type::stock:
                 // 根据运行模式决定：回测用历史数据，实盘用真实数据
                 if (apiName == HX_API || apiName == TICKFLOW_QUOTE_API) {
                     needStart = true;
                 }
-            }
-            else if (source == "ETF") {
+            break;
+            case contract_type::exchange_traded_fund:
                 if (apiName == ETF_HISTORY_SIM || apiName == STOCK_REAL_SIM) {
                     needStart = true;
                 }
+            break;
+            case contract_type::option:
+                needStart = true;
+                break;
+            default:
+            break;
             }
         }
 
@@ -639,7 +647,7 @@ Set<String> ExchangeManager::ResolveExchangeNames(const Set<String>& requiredSou
     return names;
 }
 
-bool ExchangeManager::StartRequiredExchanges(const Set<String>& requiredSources) {
+bool ExchangeManager::StartRequiredExchanges(const Set<contract_type>& requiredSources) {
     auto names = ResolveExchangeNames(requiredSources);
     bool anySuccess = false;
 
@@ -651,7 +659,7 @@ bool ExchangeManager::StartRequiredExchanges(const Set<String>& requiredSources)
     return anySuccess;
 }
 
-void ExchangeManager::StopRequiredExchanges(const Set<String>& requiredSources) {
+void ExchangeManager::StopRequiredExchanges(const Set<contract_type>& requiredSources) {
     auto names = ResolveExchangeNames(requiredSources);
     for (auto& name : names) {
         StopExchange(name);
@@ -676,7 +684,7 @@ void ExchangeManager::StopAllExchanges() {
 //  策略级行情订阅（引用计数保护）
 // ═══════════════════════════════════════════════════════════
 
-void ExchangeManager::SubscribeSymbols(const String& strategy, const Set<String>& sources, const Set<symbol_t>& symbols) {
+void ExchangeManager::SubscribeSymbols(const String& strategy, const Set<contract_type>& sources, const Set<symbol_t>& symbols) {
     // symbol_t → String
     Set<String> symStrings;
     for (auto& sym : symbols) {
@@ -710,7 +718,7 @@ void ExchangeManager::SubscribeSymbols(const String& strategy, const Set<String>
     }
 }
 
-void ExchangeManager::UnsubscribeSymbols(const String& strategy, const Set<String>& sources) {
+void ExchangeManager::UnsubscribeSymbols(const String& strategy, const Set<contract_type>& sources) {
     Set<String> symStrings;
     auto exchangeNames = ResolveExchangeNames(sources);
 
@@ -745,7 +753,7 @@ void ExchangeManager::UnsubscribeSymbols(const String& strategy, const Set<Strin
 }
 
 // 保留旧方法以兼容（内部委托给新方法）
-bool ExchangeManager::LoginExchanges(const Set<String>& requiredSources) {
+bool ExchangeManager::LoginExchanges(const Set<contract_type>& requiredSources) {
     return StartRequiredExchanges(requiredSources);
 }
 
@@ -886,21 +894,23 @@ void ExchangeManager::SetBacktestTimeRange(time_t start, time_t end) {
     }
 }
 
-void ExchangeManager::ConfigureSlippageModels(const Set<String>& sources, const nlohmann::json& slippageConfig) {
+void ExchangeManager::ConfigureSlippageModels(const Set<contract_type>& sources, const nlohmann::json& slippageConfig) {
     auto model = SlippageFactory::create(slippageConfig);
 
     for (const auto& source : sources) {
         ExchangeType targetType = ExchangeType::EX_Unknow;
-        if (source == "股票") {
+        switch (source) {
+        case contract_type::stock:
             targetType = ExchangeType::EX_STOCK_HIST_SIM;
-        } else if (source == "ETF") {
+        break;
+        case contract_type::exchange_traded_fund:
             targetType = ExchangeType::EX_ETF_HIST_SIM;
-        } else if (source == "期货") {
-            // 期货回测引擎（如果有的话）
-            continue;
-        } else {
-            WARN("[Slippage] Unknown source type: {}", source);
-            continue;
+        break;
+        case contract_type::option:
+        break;
+        default:
+            WARN("[Slippage] Unknown source type: {}", (int)source);
+        break;
         }
 
         auto itr = _typeExchanges.find(targetType);
@@ -908,12 +918,12 @@ void ExchangeManager::ConfigureSlippageModels(const Set<String>& sources, const 
             auto* histSim = dynamic_cast<HistorySimulationBase*>(itr->second);
             if (histSim) {
                 histSim->SetSlippageModel(SlippageFactory::create(slippageConfig));
-                INFO("[Slippage] Configured slippage model for source '{}'", source);
+                INFO("[Slippage] Configured slippage model for source '{}'", (int)source);
             } else {
-                WARN("[Slippage] Exchange for source '{}' is not a HistorySimulationBase", source);
+                WARN("[Slippage] Exchange for source '{}' is not a HistorySimulationBase", (int)source);
             }
         } else {
-            WARN("[Slippage] No exchange registered for source '{}'", source);
+            WARN("[Slippage] No exchange registered for source '{}'", (int)source);
         }
     }
 }

@@ -265,21 +265,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 
     // 收集策略图中所有需要的数据源
-    Set<String> requiredSources;
-    if (script.contains("nodes")) {
-        for (auto& node : script["nodes"]) {
-            if (node.contains("data") && node["data"].contains("nodeType") &&
-                node["data"]["nodeType"] == "input" &&
-                node["data"].contains("params") &&
-                node["data"]["params"].contains("source")) {
-                String source = node["data"]["params"]["source"]["value"];
-                requiredSources.insert(source);
-            }
-        }
-    }
-    if (requiredSources.empty()) {
-        requiredSources.insert("股票");  // 默认股票
-    }
+    Set<contract_type> requiredSources = collectRequiredSources(script);
 
     // 使用 ExchangeManager 统一协调
     auto exchangeMgr = _server->GetExchangeManager();

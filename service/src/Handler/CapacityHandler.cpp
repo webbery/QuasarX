@@ -133,18 +133,7 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 
     // 收集数据源
-    Set<String> requiredSources;
-    if (script.contains("nodes")) {
-        for (auto& node : script["nodes"]) {
-            if (node.contains("data") && node["data"].contains("nodeType") &&
-                node["data"]["nodeType"] == "input" &&
-                node["data"].contains("params") &&
-                node["data"]["params"].contains("source")) {
-                requiredSources.insert(node["data"]["params"]["source"]["value"].get<String>());
-            }
-        }
-    }
-    if (requiredSources.empty()) requiredSources.insert("股票");
+    Set<contract_type> requiredSources = collectRequiredSources(script);
 
     exchangeMgr->StartRequiredExchanges(requiredSources);
 

@@ -1,5 +1,6 @@
 #include "std_header.h"
 #include "Bridge/ETFOptionSymbol.h"
+#include "Bridge/OptionSymbolMacros.h"
 #include <boost/unordered/concurrent_flat_map.hpp>
 #include <cstdint>
 #include <cstring>
@@ -68,26 +69,28 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
         code_etf_map().emplace(code, idx);
         etf_code_map().emplace(idx, code);
     }
-    contract_type t = contract_type::call;
+    contract_type t = contract_type::option;
+    uint8_t direction = 1; // 默认 call
     char month;
     int price;
     uint64_t id = 0;
     if (name.find("沽") != std::string::npos) {
-        t = contract_type::put;
+        direction = 0; // put
         id = GetOptionInfo(name, "沽", month, price);
     }
     else if (name.find("购") != std::string::npos) {
-        t = contract_type::call;
+        direction = 1; // call
         id = GetOptionInfo(name, "购", month, price);
     }
     else {
         WARN("parse {} fail.", name);
         return;
     }
-    
+
     _symbol._month = month;
     _symbol._price = price;
     _symbol._type = t;
+    SET_SYMBOL_OPT_DIRECTION(_symbol, direction);
     SetCode(idx, id);
     try {
         auto& info = Server::GetSecurity(code);
@@ -155,11 +158,8 @@ String ETFOptionSymbol::name()
     GetCode(idx, id);
     n += ID2Symbol().at(id);
     switch (_symbol._type) {
-        case contract_type::call:
-            n += "C";
-            break;
-        case contract_type::put:
-            n += "P";
+        case contract_type::option:
+            n += GET_SYMBOL_OPT_DIRECTION(_symbol) ? "C" : "P";
             break;
         default:
             WARN("unknow option type.");

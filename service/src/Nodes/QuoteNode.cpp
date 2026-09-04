@@ -131,14 +131,25 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 
     // 回测模式专属逻辑
     if (_server->GetRunningMode() == RuningType::Backtest) {
-        _source = "股票";
+        // 解析数据源（前端 multiselect 传数组）
+        _sources.insert(contract_type::stock); // 默认股票
         if (config["params"].contains("source")) {
-            _source = (String)config["params"]["source"]["value"];
+            _sources.clear();
+            auto& srcVal = config["params"]["source"]["value"];
+            for (auto& s : srcVal) {
+                String type = (String)s;
+                if (type == "股票") _sources.insert(contract_type::stock);
+                else if (type == "ETF") _sources.insert(contract_type::exchange_traded_fund);
+                else if (type == "期权") _sources.insert(contract_type::option);
+                else if (type == "期货") _sources.insert(contract_type::future);
+            }
         }
+        if (_sources.empty()) _sources.insert(contract_type::stock);
 
         auto* exchangeMgr = _server->GetExchangeManager();
 
-        if (_source == "ETF" && exchangeMgr) {
+        // 按 source 类型初始化对应 Exchange
+        if (_sources.count(contract_type::exchange_traded_fund) && exchangeMgr) {
             exchangeMgr->EnsureExchangeByType(ExchangeType::EX_ETF_HIST_SIM);
 
             auto* etfExchange = dynamic_cast<HistorySimulationBase*>(
@@ -148,7 +159,8 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
                 auto* etfHist = dynamic_cast<ETFHistorySimulation*>(etfExchange);
                 if (etfHist) etfHist->UseFreq(freqStr);
             }
-        } else {
+        }
+        if (_sources.count(contract_type::stock) && exchangeMgr) {
             exchangeMgr->EnsureExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
 
             auto* exchange = dynamic_cast<HistorySimulationBase*>(
@@ -188,10 +200,14 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 
 void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
     // 根据数据源注册 Exchange 类型，供 PortfolioNode/ExecuteNode 后续使用
-    if (_source == "ETF") {
+    if (_sources.count(contract_type::exchange_traded_fund)) {
         context.addExchangeType(ExchangeType::EX_ETF_HIST_SIM);
-    } else {
+    }
+    if (_sources.count(contract_type::stock)) {
         context.addExchangeType(ExchangeType::EX_STOCK_HIST_SIM);
+    }
+    if (_sources.count(contract_type::option)) {
+        // TODO: 期权回测引擎 EX_OPTION_HIST_SIM
     }
 }
 

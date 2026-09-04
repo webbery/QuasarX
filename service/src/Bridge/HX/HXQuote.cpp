@@ -125,7 +125,7 @@ void HXQuateSpi::OnRtnSPMarketData(TORALEV1API::CTORATstpMarketDataField* pMarke
     String strName(to_utf8(pMarketDataField->SecurityName));
     auto strExchange = pMarketDataField->ExchangeID;
 
-    contract_type t = contract_type::call;
+    contract_type t = contract_type::option;
     // 
     symbol_t symb = ETFOptionSymbol(strCode, strName);
 

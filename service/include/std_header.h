@@ -107,8 +107,7 @@ using Boolean = Expected<bool, int>;
 enum class contract_type: char {
     stock = 0,
     future = 1,
-    put = 2,
-    call = 3,
+    option = 2,               // 期权（put/call 合并，方向由 _reserved bit 1 决定）
     fund = 4,
     index = 5,
     exchange_traded_fund = 6,  // 场内ETF
@@ -116,13 +115,18 @@ enum class contract_type: char {
 
 struct alignas(4) symbol_t {
     /**
-    * 0 - stock, 1-future, 2- put option, 3- call option 4- fund 5- index 6- BTC, 7-ETF
+    * 0 - stock, 1-future, 2-option, 4-fund, 5-index, 6-ETF
+    * option 的 put/call 方向: _reserved bit 1 (0=put, 1=call)
      */
     contract_type _type : 8;
     char _exchange:8;
     unsigned short _opt : 16;
     union {
         struct { // option info
+            // _reserved (12 bits) 位分配:
+            //   bit 0 = scale     (0=ETF期权 strike单位0.01, 1=股指期权 strike单位10)
+            //   bit 1 = direction (0=put, 1=call)
+            //   bit 2-11 = 未使用
             uint32_t _reserved : 12;
             uint32_t _year : 6;
             uint32_t _month : 4;
@@ -134,15 +138,3 @@ struct alignas(4) symbol_t {
 
 using run_id_t = uint32_t;
 using context_t = std::variant<bool, String, uint64_t, Vector<float>, List<symbol_t>, double, Vector<double>, Vector<uint64_t>>;
-
-struct OHLCVData {
-    Vector<time_t> _datetime;
-    Vector<double> _open;
-    Vector<double> _close;
-    Vector<double> _high;
-    Vector<double> _low;
-    Vector<int64_t> _volume;
-
-    size_t size() const { return _datetime.size(); }
-    bool empty() const { return _datetime.empty(); }
-};

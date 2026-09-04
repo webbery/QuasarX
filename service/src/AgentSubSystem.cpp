@@ -16,6 +16,7 @@
 #include "StrategySubSystem.h"
 #include "json.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
+#include "std_header.h"
 #include "yas/serialize.hpp"
 #include "BrokerSubSystem.h"
 #include "Nodes/SignalNode.h"
@@ -111,7 +112,7 @@ void FlowSubsystem::Stop(const String& strategy) {
     // 停止该策略启动的 Exchange（通过引用计数保证多策略安全）
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (exchangeMgr) {
-        Set<String> requiredSources = GetRequiredSources(strategy);
+        Set<contract_type> requiredSources = GetRequiredSources(strategy);
         // 先移除行情订阅，再停止 Exchange
         exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
         exchangeMgr->StopRequiredExchanges(requiredSources);
@@ -367,7 +368,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
         }
 
         // 停止该策略启动的 Exchange（通过引用计数保证多策略安全）
-        Set<String> requiredSources = GetRequiredSources(strategy);
+        Set<contract_type> requiredSources = GetRequiredSources(strategy);
         exchangeMgr->StopRequiredExchanges(requiredSources);
 
         flow._running = false;
@@ -670,7 +671,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     // 启动需要的 Exchange
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (exchangeMgr) {
-        Set<String> requiredSources = GetRequiredSources(strategy);
+        Set<contract_type> requiredSources = GetRequiredSources(strategy);
         exchangeMgr->StartRequiredExchanges(requiredSources);
         // 将策略标的注入 Exchange（策略驱动行情订阅）
         exchangeMgr->SubscribeSymbols(strategy, requiredSources, symbols);
@@ -787,7 +788,7 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
         // 停止该策略启动的 Exchange
         auto* exchMgr = _handle->GetExchangeManager();
         if (exchMgr) {
-            Set<String> requiredSources = GetRequiredSources(strategy);
+            Set<contract_type> requiredSources = GetRequiredSources(strategy);
             exchMgr->StopRequiredExchanges(requiredSources);
         }
 
@@ -801,11 +802,11 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
     return 0;  // 实盘无 runId
 }
 
-Set<String> FlowSubsystem::GetRequiredSources(const String& strategy) const {
-    Set<String> sources;
+Set<contract_type> FlowSubsystem::GetRequiredSources(const String& strategy) const {
+    Set<contract_type> sources;
     auto itr = _flows.find(strategy);
     if (itr == _flows.end()) {
-        sources.insert("股票");  // 默认
+        sources.insert(contract_type::stock);  // 默认
         return sources;
     }
 
@@ -813,12 +814,13 @@ Set<String> FlowSubsystem::GetRequiredSources(const String& strategy) const {
     for (auto* node : flow._graph) {
         auto* quoteNode = dynamic_cast<QuoteInputNode*>(node);
         if (quoteNode) {
-            sources.insert(quoteNode->GetSource());
+            auto& s = quoteNode->GetSource();
+            sources.insert(s.begin(), s.end());
         }
     }
 
     if (sources.empty()) {
-        sources.insert("股票");  // 默认
+        sources.insert(contract_type::stock);  // 默认
     }
     return sources;
 }
@@ -1071,7 +1073,7 @@ const Map<StatisticIndicator, std::variant<float, List<float>>>& FlowSubsystem::
 bool FlowSubsystem::RunTrainingCollect(
     const String& strategy,
     const List<QNode*>& upstreamGraph,
-    const Set<String>& requiredSources,
+    const Set<contract_type>& requiredSources,
     const Set<symbol_t>& symbols,
     double initialCapital,
     Map<String, Vector<double>>& outCollected,
@@ -1237,7 +1239,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
         }
 
         // 启动所需的 Exchange
-        Set<String> requiredSources = GetRequiredSources(strategy);
+        Set<contract_type> requiredSources = GetRequiredSources(strategy);
         exchangeMgr->StartRequiredExchanges(requiredSources);
         exchangeMgr->SubscribeSymbols(strategy, requiredSources, symbols);
 

@@ -1,10 +1,71 @@
 openapi: "3.0.3"
 info:
   title: QuasarX API
-  description: QuasarX Rest API接口
+  description: |
+    QuasarX Rest API接口
+
+    ## 权限模型
+
+    API 按权限分为三个级别，通过 JWT Bearer Token 认证：
+
+    | 权限级别 | 说明 | 覆盖范围 |
+    |----------|------|----------|
+    | **public** | 只读金融信息获取 | 行情/财务/分析/回测等查询接口，无需 Token |
+    | **trader** | 交易执行与数据管理 | 下单/撤单/策略控制/风控配置/数据管理/ML训练，需 JWT Token |
+    | **admin** | 用户与账户管理 | 用户切换/账户增删，需 JWT Token + admin 角色 |
+
+    未标注 `security` 的接口为 public（无需认证）。
   version: "0.0.1"
 servers:
   - url: http://localhost:19107/v0
+
+tags:
+  # ═══ 金融信息获取（public，无需认证） ═══
+  - name: Stocks
+    description: 股票数据查询（public）
+  - name: Options
+    description: 期权数据与定价（public）
+  - name: Index
+    description: 指数数据（public）
+  - name: Future
+    description: 期货数据（public）
+  - name: Feature
+    description: 特征数据（public）
+  - name: Quote
+    description: 行情数据管理（GET=public，POST/DELETE=trader）
+  - name: Finance
+    description: 财务数据管理（GET=public，POST/DELETE=trader）
+  - name: Dividend
+    description: 分红除权数据（GET=public，POST/DELETE=trader）
+  - name: Analysis
+    description: 分析功能（public）
+  - name: Backtest
+    description: 回测与容量（public）
+  - name: XGBoost
+    description: 机器学习（collect/shap/train_status=public，train/optimize/delete=trader）
+  - name: Predict
+    description: 价格预测（public）
+  - name: Strategy
+    description: 策略管理（GET=public，POST/DELETE=trader）
+  - name: Risk
+    description: 风控管理（GET 查询=public，POST/DELETE 配置=trader）
+  # ═══ 交易执行（trader，需 JWT Token） ═══
+  - name: Order
+    description: 订单交易（trader）
+  - name: Portfolio
+    description: 投资组合（trader）
+  - name: Position
+    description: 持仓信息（public）
+  - name: Simulate
+    description: 交易所仿真（trader）
+  # ═══ 用户权限（admin，需 JWT Token + admin 角色） ═══
+  - name: User
+    description: 用户与账户管理（登录/登出/资金查询=public，账户增删改=admin）
+  - name: Server
+    description: 服务器事件（public）
+  - name: Data
+    description: 数据同步（trader）
+
 paths:
   /stocks/simple:
     get:
@@ -117,6 +178,8 @@ paths:
                     description: 每秒撤单最大次数
     put:
       summary: 股票下单参数设置
+      security:
+        - BearerAuth: []
       description: 股票下单参数设置
       tags: 
         - Stocks
@@ -529,6 +592,8 @@ paths:
   /simulate:
     post:
       summary: simulate a exchange
+      security:
+        - BearerAuth: []
       description: 交易所仿真
       tags: 
         - Simulate
@@ -545,6 +610,8 @@ paths:
   /risk/stoploss:
     post:
       summary: stoploss
+      security:
+        - BearerAuth: []
       description: 止损设置
       tags: 
         - Risk
@@ -564,6 +631,8 @@ paths:
                 $ref: "#/components/schemas/StopLossResponse"
     delete:
       summary: stoploss
+      security:
+        - BearerAuth: []
       description: 删除设置的止损
       tags: 
         - Risk
@@ -593,6 +662,8 @@ paths:
   /risk/var:
     post:
       summary: run strategy for VaR
+      security:
+        - BearerAuth: []
       description: 计算策略的VaR
       tags:
         - Risk
@@ -680,6 +751,8 @@ paths:
                 $ref: "#/components/schemas/CapitalRiskConfig"
     post:
       summary: set capital risk config
+      security:
+        - BearerAuth: []
       description: 设置总资金止损配置
       tags:
         - Risk
@@ -718,6 +791,8 @@ paths:
                 $ref: "#/components/schemas/DailyRiskConfig"
     post:
       summary: set daily loss risk config
+      security:
+        - BearerAuth: []
       description: 设置单日亏损限额配置
       tags:
         - Risk
@@ -744,6 +819,8 @@ paths:
   /risk/closeall:
     post:
       summary: close all positions
+      security:
+        - BearerAuth: []
       description: 手动触发全部平仓（资金风控触发时使用）
       tags:
         - Risk
@@ -830,6 +907,8 @@ paths:
   /portfolio:
     put:
       summary: portfolio
+      security:
+        - BearerAuth: []
       description: 创建一个投资组合PH
       tags: 
         - Portfolio
@@ -929,6 +1008,8 @@ paths:
                 $ref: "#/components/schemas/StrategyListResponse"
     post:
       summary: 部署/运行/停止指定的某个策略 / 批量查询模型绑定
+      security:
+        - BearerAuth: []
       description: |
         根据 mode 参数执行不同操作：0-部署并运行策略，1-运行已部署的策略，2-停止运行中的策略。
         也支持通过 `action` 字段触发内置动作：
@@ -954,6 +1035,8 @@ paths:
                 $ref: "#/components/schemas/StrategyResponse"
     delete:
       summary: 删除指定的某个策略
+      security:
+        - BearerAuth: []
       description: 停止并删除指定的策略及其脚本文件
       tags:
         - Strategy
@@ -1101,6 +1184,8 @@ paths:
               schema:
     put:
       summary: 策略节点上的上传功能，如上传模型
+      security:
+        - BearerAuth: []
       description: 策略节点上的上传功能，如上传模型
       tags: 
         - Strategy
@@ -1196,6 +1281,8 @@ paths:
   /data/sync:
     get:
       summary: sync data
+      security:
+        - BearerAuth: []
       description: 同步服务保存的数据，同步完成后清空当前服务保存的数据
       tags: 
         - Data
@@ -1256,6 +1343,8 @@ paths:
   /user/switch:
     post:
       summary: 切换当前用户
+      security:
+        - BearerAuth: []  # requires admin role
       description: 切换当前用户
       tags:
         - User
@@ -1299,6 +1388,8 @@ paths:
   /user/account:
     post:
       summary: switch account
+      security:
+        - BearerAuth: []  # requires admin role
       description: 切换账户/备用账户
       tags:
         - User
@@ -1323,6 +1414,8 @@ paths:
                 type: object
     put:
       summary: add account
+      security:
+        - BearerAuth: []  # requires admin role
       description: 添加账户/备用账户
       tags:
         - User
@@ -1335,6 +1428,8 @@ paths:
                 type: object
     delete:
       summary: delete account
+      security:
+        - BearerAuth: []  # requires admin role
       description: 删除账户/备用账户
       tags:
         - User
@@ -1348,6 +1443,8 @@ paths:
   /trade/order:
     post:
       summary: 下单
+      security:
+        - BearerAuth: []
       description: 下单
       tags: 
         - Order
@@ -1396,6 +1493,8 @@ paths:
                   $ref: "#/components/schemas/TradeOrderItem"
     delete:
       summary: 撤单请求
+      security:
+        - BearerAuth: []
       description: 股票/期权撤单
       tags: 
         - Order
@@ -1420,6 +1519,8 @@ paths:
           description: success
     put:
       summary: 暂停报单/一键撤单设置
+      security:
+        - BearerAuth: []
       description: 暂停报单/一键撤单设置
       tags: 
         - Order
@@ -1880,6 +1981,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     post:
       summary: 触发行情数据下载与导入
+      security:
+        - BearerAuth: []
       description: |
         后台异步下载行情数据并导入 DuckDB，通过 SSE 推送进度事件。
         自动按标的类型（ETF/Stock）分组下载，同时下载后复权和不复权数据。
@@ -1906,6 +2009,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     delete:
       summary: 删除行情数据
+      security:
+        - BearerAuth: []
       description: |
         按条件删除行情数据：
         - table + symbol：删除指定表中指定标的数据
@@ -1949,6 +2054,8 @@ paths:
   /quote/data:
     post:
       summary: 导入/导出行情数据
+      security:
+        - BearerAuth: []
       description: |
         直接操作行情数据库：
         - action=import：将 CSV 行数据导入指定表
@@ -1985,6 +2092,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     delete:
       summary: 清理行情数据
+      security:
+        - BearerAuth: []
       description: 清理指定表或标的的行情数据（支持 drop table / delete symbol）
       tags:
         - Quote
@@ -2090,6 +2199,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     post:
       summary: 触发财务数据下载与导入
+      security:
+        - BearerAuth: []
       description: 后台异步下载财务数据并导入 DuckDB，通过 SSE 推送进度事件
       tags:
         - Finance
@@ -2114,6 +2225,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     delete:
       summary: 删除财务数据
+      security:
+        - BearerAuth: []
       description: |
         删除指定标的的财务数据：
         - 提供 category + code：删除该类别下该标的数据
@@ -2151,6 +2264,8 @@ paths:
   /finance/data:
     post:
       summary: 导入/导出财务数据
+      security:
+        - BearerAuth: []
       description: |
         直接操作财务数据库：
         - action=import：将 CSV 行数据导入指定类别表
@@ -2187,6 +2302,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     delete:
       summary: 清理财务数据
+      security:
+        - BearerAuth: []
       description: 清理指定类别或标的的财务数据（支持 drop table / delete symbol）
       tags:
         - Finance
@@ -2281,6 +2398,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     post:
       summary: 触发分红数据下载与导入
+      security:
+        - BearerAuth: []
       description: |
         后台异步从 BaoStock 下载分红数据，保存 CSV 到 data/dividend/，
         然后扫描该目录导入到 finance.db 的 dividend 表。
@@ -2313,6 +2432,8 @@ paths:
                 $ref: "#/components/schemas/Error"
     delete:
       summary: 删除分红数据
+      security:
+        - BearerAuth: []
       description: |
         删除分红除权数据：
         - 无参数：删除整张 dividend 表
@@ -2483,6 +2604,21 @@ paths:
                 $ref: "#/components/schemas/Error"
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT Token 认证。通过 POST /v0/user/login 获取 token，
+        请求头携带 `Authorization: Bearer <token>`。
+
+        **权限级别**：
+        - public 接口：无需 Token
+        - trader 接口：需有效 Token
+        - admin 接口：需有效 Token + admin 角色
+
+        后端 middleware 根据端点权限级别校验 Token 和角色。
   schemas:
     # 基础数据类型
     StockItem:

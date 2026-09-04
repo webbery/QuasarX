@@ -146,8 +146,7 @@ std::string StrategyRiskHandler::GetStrategyType(const std::string& strategyName
             case contract_type::future:
                 futureCount++;
                 break;
-            case contract_type::put:
-            case contract_type::call:
+            case contract_type::option:
                 optionCount++;
                 break;
             default:

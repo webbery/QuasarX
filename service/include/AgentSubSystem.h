@@ -64,7 +64,7 @@ public:
     /**
      * @brief 从策略图中获取需要的数据源集合
      */
-    Set<String> GetRequiredSources(const String& strategy) const;
+    Set<contract_type> GetRequiredSources(const String& strategy) const;
 
     /**
      * @brief 检查策略图中是否存在 Manual 类型的 ExecuteNode（日终决策型策略）
@@ -164,7 +164,7 @@ public:
     bool RunTrainingCollect(
         const String& strategy,
         const List<QNode*>& upstreamGraph,
-        const Set<String>& requiredSources,
+        const Set<contract_type>& requiredSources,
         const Set<symbol_t>& symbols,
         double initialCapital,
         Map<String, Vector<double>>& outCollected,

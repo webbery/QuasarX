@@ -61,7 +61,7 @@ function validateStrategyGraph(data: any): { valid: boolean; errors: string[]; s
     const nodeTypes = data.nodes.map((n: any) => n.data?.nodeType)
     if (!nodeTypes.includes("input")) {
       errors.push("缺少必需节点类型: input (数据输入)")
-      suggestions.push('添加: { id: "1", type: "custom", data: { label: "数据输入", nodeType: "input", params: { source: "股票", code: ["sz.000001"], freq: "1d" } }, position: { x: 100, y: 200 } }')
+      suggestions.push('添加: { id: "1", type: "custom", data: { label: "数据输入", nodeType: "input", params: { source: ["股票"], code: ["sz.000001"], freq: "1d" } }, position: { x: 100, y: 200 } }')
     }
     if (!nodeTypes.includes("signal")) {
       errors.push("缺少必需节点类型: signal (信号生成)")
@@ -692,7 +692,7 @@ function getFlowConstraints(): string {
 
 | nodeType | data.label | 必填参数 | 示例 |
 |----------|------------|----------|------|
-| \`input\` | "数据输入" | source, code, freq | \`{ source: "股票", code: ["sz.000001"], freq: "1d" }\` |
+| \`input\` | "数据输入" | source, code, freq | \`{ source: ["股票"], code: ["sz.000001"], freq: "1d" }\` |
 | \`signal\` | "交易信号生成" | buy, sell | \`{ buy: "close[t] > MA_5[t]", sell: "close[t] < MA_5[t]" }\` |
 | \`portfolio\` | "投资组合" | positionRatio | \`{ positionRatio: 1.0 }\` |
 | \`execution\` | "执行交易" | commission, stampDuty | \`{ commission: 0.0003, stampDuty: 0.001 }\` |
@@ -736,7 +736,7 @@ function getFlowConstraints(): string {
     {
       "id": "1",
       "type": "custom",
-      "data": { "label": "数据输入", "nodeType": "input", "params": { "source": "股票", "code": ["sz.000001"], "freq": "1d" } },
+      "data": { "label": "数据输入", "nodeType": "input", "params": { "source": ["股票"], "code": ["sz.000001"], "freq": "1d" } },
       "position": { "x": 100, "y": 200 }
     },
     {

@@ -19,7 +19,7 @@
 #include "StrategySubSystem.h"
 #include <boost/hana.hpp>
 #include "Nodes/FunctionNode.h"
-#include "Nodes/NeuralNetworkNode.h"
+#include "Nodes/OnnxInferenceNode.h"
 #include "Nodes/DebugNode.h"
 #include "Nodes/QuoteNode.h"
 #include "Nodes/SignalNode.h"

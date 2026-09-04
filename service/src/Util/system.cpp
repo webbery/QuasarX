@@ -610,12 +610,8 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     case ContractType::Option: {
         // Option 需要通过 Server::GetContractType 返回的第二个参数判断 call/put
         auto optCt = Server::GetContractType(strSymbol);
-        if (optCt.second) {
-            id._type = contract_type::call;
-        }
-        else {
-            id._type = contract_type::put;
-        }
+        id._type = contract_type::option;
+        SET_SYMBOL_OPT_DIRECTION(id, optCt.second ? 1 : 0);
     }
     break;
     case ContractType::Index: id._type = contract_type::index; break;
@@ -668,8 +664,8 @@ String get_symbol(const symbol_t& symbol) {
   if (symbol._type == contract_type::future) {
     return CTPObjectName(symbol._opt) + std::to_string(symbol._symbol);
   }
-  else if (symbol._type == contract_type::put || symbol._type == contract_type::call) {
-    char CP = (symbol._type == contract_type::put? 'P':'C');
+  else if (symbol._type == contract_type::option) {
+    char CP = (GET_SYMBOL_OPT_DIRECTION(symbol) ? 'C' : 'P');
     if (symbol._exchange == MT_Shenzhen || symbol._exchange == MT_Shanghai || symbol._exchange == MT_Beijing) {
         ETFOptionSymbol etfOpt(symbol);
         return etfOpt.name();
@@ -679,7 +675,7 @@ String get_symbol(const symbol_t& symbol) {
       return CTPObjectName(symbol._opt) + buff + CP + std::to_string(symbol._price * 100);
     }
   }
-  else if (symbol._type != contract_type::put || symbol._type != contract_type::call) {
+  else {
 #define CHINA_STOCK_SIZE 7
     String head;
     if (symbol._exchange == MT_Shenzhen) {
@@ -727,7 +723,7 @@ bool is_etf_option(symbol_t symbol) {
 }
 
 bool is_option(symbol_t sym) {
-  return sym._type == contract_type::call || sym._type == contract_type::put;
+  return sym._type == contract_type::option;
 }
 bool is_fund(symbol_t sym) {
   return sym._type == contract_type::fund;

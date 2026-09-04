@@ -258,8 +258,7 @@ nlohmann::json order2json(const Order& item)
     case contract_type::future:
         kind = 2;
         break;
-    case contract_type::put:
-    case contract_type::call:
+    case contract_type::option:
         kind = 1;
         break;
     case contract_type::stock:

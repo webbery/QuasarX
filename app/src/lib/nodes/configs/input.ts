@@ -11,13 +11,13 @@ export const dataSourceNode: NodeRegistryEntry = {
   nodeType: 'input',
   category: 'input',
   icon: 'fas fa-database',
-  description: '从外部获取行情数据，作为策略的基础输入。支持股票、期货，可配置 OHLCV 字段映射和缺失值处理。',
+  description: '从外部获取行情数据，作为策略的基础输入。支持股票、期货、期权，可配置 OHLCV 字段映射和缺失值处理。',
   inputs: [],
   outputs: ['ohlcv'],
   hasInput: false,
   hasOutput: true,
   params: [
-    { key: 'source', label: '来源', type: 'select', default: '股票', options: ['股票', '期货'] },
+    { key: 'source', label: '来源', type: 'multiselect', default: ['股票'], options: ['股票', '期货', '期权'] },
     { key: 'code', label: '代码', type: 'text', default: ['sz.000001'] },
     { key: 'close', label: 'close', type: 'text', default: 'close' },
     { key: 'open', label: 'open', type: 'text', default: 'open' },
@@ -33,7 +33,7 @@ export const dataSourceNode: NodeRegistryEntry = {
     ]},
   ],
   example: {
-    source: '股票',
+    source: ['股票'],
     code: ['sz.000001'],
     freq: '1d',
     missingHandle: 'skip'

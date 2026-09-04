@@ -36,7 +36,6 @@ class IStopLoss;
 class StopLossHandler;
 class BrokerSubSystem;
 class RiskSubSystem;
-class StockHistorySimulation;
 
 typedef enum {
 	SEND_REQ, // Sending REQ request
@@ -305,5 +304,4 @@ private:
     Map<String, AccountPosition> _account_positions;
 
     Map<ExchangeName, Set<time_range>> _working_times;
-    Set<StockHistorySimulation*> _simulations;
 };

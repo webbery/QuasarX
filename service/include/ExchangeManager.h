@@ -77,14 +77,14 @@ public:
      * 内部根据配置判断使用历史数据还是真实数据
      * @param requiredSources 数据源集合，如 {"股票"} 或 {"股票", "ETF"}
      */
-    bool StartRequiredExchanges(const Set<String>& requiredSources);
+    bool StartRequiredExchanges(const Set<contract_type>& requiredSources);
 
     /**
      * @brief 停止与指定数据源相关的 Exchange（引用计数减一）
      *
      * 与 StartRequiredExchanges 对称，只停止该策略启动的 Exchange
      */
-    void StopRequiredExchanges(const Set<String>& requiredSources);
+    void StopRequiredExchanges(const Set<contract_type>& requiredSources);
 
     /**
      * @brief 停止所有已启动的 Exchange（引用计数归零）
@@ -102,14 +102,14 @@ public:
      * @param sources 数据源集合 {"股票"/"ETF"}
      * @param symbols 策略的 symbol_t 集合
      */
-    void SubscribeSymbols(const String& strategy, const Set<String>& sources, const Set<symbol_t>& symbols);
+    void SubscribeSymbols(const String& strategy, const Set<contract_type>& sources, const Set<symbol_t>& symbols);
 
     /**
      * @brief 策略停止时调用：移除该策略的标的订阅
      *
      * 只有当 symbol 不再被任何策略使用时才调用 Exchange::RemoveSymbols
      */
-    void UnsubscribeSymbols(const String& strategy, const Set<String>& sources);
+    void UnsubscribeSymbols(const String& strategy, const Set<contract_type>& sources);
 
     // ========== 查询接口 ==========
 
@@ -238,7 +238,7 @@ public:
      * @brief 对需要的 Exchange 调用 Login
      * @param requiredSources 需要的数据源集合 {"股票", "ETF"}
      */
-    bool LoginExchanges(const Set<String>& requiredSources);
+    bool LoginExchanges(const Set<contract_type>& requiredSources);
 
     /**
      * @brief 对所有历史回测 Exchange 调用 Logout
@@ -288,7 +288,7 @@ public:
      * @param sources 数据源集合，如 {"股票"} 或 {"ETF"}
      * @param slippageConfig 滑点模型 JSON 配置（由 SlippageFactory::create 解析的格式）
      */
-    void ConfigureSlippageModels(const Set<String>& sources, const nlohmann::json& slippageConfig);
+    void ConfigureSlippageModels(const Set<contract_type>& sources, const nlohmann::json& slippageConfig);
 
     order_id AddOrder(run_id_t run_id, const symbol_t& symbol, OrderContext* order);
 
@@ -306,7 +306,7 @@ private:
     /**
      * @brief 根据配置和 source 参数，确定应启动的 Exchange 名称
      */
-    Set<String> ResolveExchangeNames(const Set<String>& requiredSources);
+    Set<String> ResolveExchangeNames(const Set<contract_type>& requiredSources);
 
     void quoteDispatchLoop();
 private:

@@ -61,9 +61,8 @@ enum class StrategyNodeType {
     Portfolio,  // 投资组合节点（含仓位管理）
     Feature,
     Script,
-    LSTM,
+    OnnxInference,
     XGBoost,
-    NARX,
     Debug,
     Stack,
     Test,
@@ -86,7 +85,7 @@ struct AgentStrategyInfo;
  * @brief 滑点配置结构（从 ExecuteNode 提取）
  */
 struct SlippageConfigInfo {
-    Set<String> sources;          // 策略使用的数据源集合
+    Set<contract_type> sources;          // 策略使用的数据源集合
     nlohmann::json modelConfig;   // 滑点模型 JSON 配置
 };
 
@@ -107,6 +106,13 @@ List<QNode*> parse_strategy_script_v2(
     SlippageConfigInfo* outSlippageConfig = nullptr,
     std::map<uint32_t, nlohmann::json>* outNodeConfigMap = nullptr
 );
+
+/**
+ * @brief 从策略图 JSON 中收集所有 QuoteInputNode 的数据源类型
+ * @param content 策略图 JSON（含 nodes 数组）
+ * @return 去重后的 contract_type 集合，默认含 stock
+ */
+Set<contract_type> collectRequiredSources(const nlohmann::json& content);
 // 对输入的有向图节点作topo排序，返回排序后的节点
 List<QNode*> topo_sort(const List<QNode*>& graph);
 

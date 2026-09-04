@@ -307,7 +307,7 @@ async function onStrategyChange() {
     // 检测是否包含任何 ML 节点（当前仅 XGBoost）
     hasMLNode.value = graphData.nodes?.some((n: any) => {
       const t = n?.data?.nodeType
-      return t === 'xgboost' || t === 'ml' || t === 'narx'
+      return t === 'xgboost' || t === 'ml' || t === 'onnx_inference'
     }) ?? false
   } catch (e) {
     console.error('[MLTab] 加载策略失败:', e)

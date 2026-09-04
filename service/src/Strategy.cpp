@@ -18,7 +18,7 @@
 #include "Nodes/QuoteNode.h"
 #include "Nodes/FunctionNode.h"
 #include "Nodes/SignalNode.h"
-#include "Nodes/NeuralNetworkNode.h"
+#include "Nodes/OnnxInferenceNode.h"
 #include "Nodes/DebugNode.h"
 #include "Nodes/ScriptNode.h"
 #include "Nodes/StackNode.h"
@@ -35,12 +35,13 @@
 #include "Nodes/XGBoostNode.h"
 #include "Nodes/BreakoutNode.h"
 #include "Nodes/CacheFeatureNode.h"
+#include "std_header.h"
 
 namespace {
     Map<String, StrategyNodeType>& node_type_map() {
         static Map<String, StrategyNodeType> m{
             {"input", StrategyNodeType::Input},
-            {"lstm", StrategyNodeType::LSTM},
+            {"onnx_inference", StrategyNodeType::OnnxInference},
             {"function", StrategyNodeType::Function},
             {"feature", StrategyNodeType::Feature},
             {"signal", StrategyNodeType::Signal},
@@ -134,8 +135,8 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
             break;
         case StrategyNodeType::Feature:
             break;
-        case StrategyNodeType::LSTM:
-            // nodeInstance = generate_node<LSTMNode>(node["id"]);
+        case StrategyNodeType::OnnxInference:
+            nodeInstance = generate_node<OnnxInferenceNode>(node["id"], server);
             break;
         case StrategyNodeType::Function:
             nodeInstance = generate_node<FunctionNode>(node["id"], server);
@@ -256,7 +257,6 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
 
     // 收集滑点配置（从 ExecuteNode 中提取）
     if (outSlippageConfig) {
-        Set<String> sources;
         nlohmann::json slippageConfig;
         bool hasSlippageConfig = false;
 
@@ -286,9 +286,11 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
         }
 
         // 收集所有 QuoteInputNode 的 source
+        Set<contract_type> sources;
         for (auto& [id, node] : nodeMap) {
             if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
-                sources.insert(quoteNode->GetSource());
+                auto& s = quoteNode->GetSource();
+                sources.insert(s.begin(), s.end());
             }
         }
 
@@ -306,6 +308,37 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
     }
 
     return graph;
+}
+
+static contract_type sourceStringToType(const String& type) {
+    if (type == "股票") return contract_type::stock;
+    if (type == "ETF") return contract_type::exchange_traded_fund;
+    if (type == "期权") return contract_type::option;
+    if (type == "期货") return contract_type::future;
+    return contract_type::stock;
+}
+
+Set<contract_type> collectRequiredSources(const nlohmann::json& content) {
+    Set<contract_type> sources;
+    if (!content.contains("nodes")) {
+        sources.insert(contract_type::stock);
+        return sources;
+    }
+    for (auto& node : content["nodes"]) {
+        if (!node.contains("data") || !node["data"].contains("nodeType") ||
+            node["data"]["nodeType"] != "input" ||
+            !node["data"].contains("params") ||
+            !node["data"]["params"].contains("source"))
+            continue;
+        auto& srcVal = node["data"]["params"]["source"]["value"];
+        for (auto& s : srcVal) {
+            sources.insert(sourceStringToType((String)s));
+        }
+    }
+    if (sources.empty()) {
+        sources.insert(contract_type::stock);
+    }
+    return sources;
 }
 
 List<QNode*> topo_sort(const List<QNode*>& graph) {

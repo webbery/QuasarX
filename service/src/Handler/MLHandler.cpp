@@ -160,14 +160,15 @@ filterCollectedData(const Map<String, Vector<double>>& collected,
     return {std::move(filtered), std::move(droppedKeys)};
 }
 
-Set<String> sourcesFromNodes(const List<QNode*>& nodes) {
-    Set<String> sources;
+Set<contract_type> sourcesFromNodes(const List<QNode*>& nodes) {
+    Set<contract_type> sources;
     for (auto node : nodes) {
-        if (dynamic_cast<QuoteInputNode*>(node)) {
-            sources.insert("股票");  // 默认股票源
+        if (auto* qn = dynamic_cast<QuoteInputNode*>(node)) {
+            auto& s = qn->GetSource();
+            sources.insert(s.begin(), s.end());
         }
     }
-    if (sources.empty()) sources.insert("股票");
+    if (sources.empty()) sources.insert(contract_type::stock);
     return sources;
 }
 
@@ -636,7 +637,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             sendSSE("error", {{"step","start_exchange"},{"msg","ExchangeManager unavailable"}});
             session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
         }
-        Set<String> requiredSources = sourcesFromNodes(state->_upstreamSubgraph);
+        Set<contract_type> requiredSources = sourcesFromNodes(state->_upstreamSubgraph);
         exchangeMgr->StartRequiredExchanges(requiredSources);
         Set<symbol_t> symbols;
         for (auto n : state->_upstreamSubgraph) {
@@ -659,7 +660,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             INFO("[MLTrain]   symbol: {}", s);
         }
         for (auto& src : requiredSources) {
-            INFO("[MLTrain]   source: {}", src);
+            INFO("[MLTrain]   source: {}", (int)src);
         }
         auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
         Map<String, Vector<double>> collected;
@@ -1110,7 +1111,7 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
             sendSSE("error", {{"step","start_exchange"},{"msg","ExchangeManager unavailable"}});
             session->finish({{"error","ExchangeManager unavailable"}}, true); return;
         }
-        Set<String> requiredSources = sourcesFromNodes(state->_upstreamSubgraph);
+        Set<contract_type> requiredSources = sourcesFromNodes(state->_upstreamSubgraph);
         exchangeMgr->StartRequiredExchanges(requiredSources);
         Set<symbol_t> symbols;
         for (auto n : state->_upstreamSubgraph) {

@@ -16,8 +16,10 @@
 // 方案:
 //   不改动 symbol_t 位域布局, 用 _reserved 的 bit 0 做 scale 标志
 //   ┌──────────────────────────────────────────────────────┐
-//   │ bit 11..1   │  bit 0  │   _year    │ _month │  _price │
-//   │  (保留)     │  scale  │    6b      │  4b    │   10b   │
+//   │ bit 11..2  │  bit 1   │  bit 0  │   _year    │ _month │  _price │
+//   │  (保留)    │ direction│  scale  │    6b      │  4b    │   10b   │
+//   │            │ 0=put    │ 0=ETF   │            │        │         │
+//   │            │ 1=call   │ 1=Index │            │        │         │
 //   └──────────────────────────────────────────────────────┘
 //
 //   scale = 0 → _price × OPT_STRIKE_UNIT_ETF    (0.01 元/单位, 范围 0~1023 元, 精度 0.01)
@@ -39,6 +41,7 @@
 
 // ── _reserved 中使用的 bit 位置 ──
 #define OPT_SCALE_BIT     0   // bit 0 of _reserved (LSB)
+#define OPT_DIRECTION_BIT 1   // bit 1 of _reserved (0=put, 1=call)
 
 // ── strike 单位 (单位 × _price = 实际 strike) ──
 // ETF mode:    _price × OPT_STRIKE_UNIT_ETF    = strike (元), 精度 0.01
@@ -60,6 +63,18 @@
         (sym)._reserved = static_cast<uint32_t>(                        \
             ((sym)._reserved & ~(1u << OPT_SCALE_BIT))                   \
             | ((static_cast<uint32_t>(val) & 0x1u) << OPT_SCALE_BIT));  \
+    } while (0)
+
+// ── direction 读 (bit 1: 0=put, 1=call) ──
+#define GET_SYMBOL_OPT_DIRECTION(sym) \
+    (static_cast<uint8_t>(((sym)._reserved >> OPT_DIRECTION_BIT) & 0x1u))
+
+// ── direction 写 (保持其他位不变) ──
+#define SET_SYMBOL_OPT_DIRECTION(sym, val)                              \
+    do {                                                                \
+        (sym)._reserved = static_cast<uint32_t>(                        \
+            ((sym)._reserved & ~(1u << OPT_DIRECTION_BIT))               \
+            | ((static_cast<uint32_t>(val) & 0x1u) << OPT_DIRECTION_BIT)); \
     } while (0)
 
 // ── 便利: 解码 strike (按 scale 自动选单位) ──
@@ -119,8 +134,9 @@ inline bool parse_cffex_option(symbol_t& sym, const String& code) {
     try {
         sym._year  = static_cast<uint32_t>(std::stoi(code.substr(2, 2))) & 0x3F;   // 6 bits
         sym._month = static_cast<uint32_t>(std::stoi(code.substr(4, 2))) & 0x0F;   // 4 bits
-        sym._type  = (code[7] == 'C') ? contract_type::call : contract_type::put;
+        sym._type  = contract_type::option;
         sym._exchange = static_cast<char>(2);  // 2 = CFFEX (约定, 与 Server 内部一致)
+        SET_SYMBOL_OPT_DIRECTION(sym, (code[7] == 'C') ? 1 : 0);
         double strike = std::stod(code.substr(9));
         return encode_option_strike(sym, strike, OPT_SCALE_INDEX);
     } catch (...) {
