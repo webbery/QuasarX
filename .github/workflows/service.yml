@@ -117,20 +117,21 @@ jobs:
         with:
           path: |
             onnxruntime/build
-            /usr/local/include/onnxruntime
-            /usr/local/lib/libonnxruntime*
-          key: ${{ runner.os }}-onnxruntime-v1.29.0
-          restore-keys: |
-            ${{ runner.os }}-onnxruntime-
+            onnxruntime-install
+          key: ${{ runner.os }}-onnxruntime-v1.29.0-r2
 
       - name: Build ONNX-runtime (if cache miss)
         if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
         run: |
-          git clone --recursive https://github.com/microsoft/onnxruntime
+          git clone --recursive --branch v1.29.0 --depth 1 https://github.com/microsoft/onnxruntime
           cd onnxruntime
-          git checkout v1.29.0
-          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --parallel --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=/usr/local
-          cd build/Linux/Release && sudo make install
+          ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --parallel --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=${{ github.workspace }}/onnxruntime-install
+          cd build/Linux/Release && make install
+
+      - name: Install ONNX-runtime to system
+        run: |
+          sudo cp -r onnxruntime-install/include/onnxruntime /usr/local/include/
+          sudo cp -P onnxruntime-install/lib/libonnxruntime* /usr/local/lib/
           sudo ldconfig
 
       - name: build third_party

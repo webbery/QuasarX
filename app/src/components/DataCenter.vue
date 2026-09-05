@@ -777,10 +777,12 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="c in pagedOptionContracts" :key="c.symbol_id">
+                                <tr v-for="c in pagedOptionContracts" :key="c.symbol_id"
+                                    :class="{ 'row-selected': selectedOptionContract?.symbol_id === c.symbol_id }">
                                     <td>{{ c.exchange }}</td>
                                     <td>{{ c.product }}</td>
-                                    <td class="symbol-code">{{ c.contract_name }}</td>
+                                    <td class="symbol-code clickable" @click="onOptionContractClick(c)"
+                                        :title="`点击查看 ${c.contract_name} 日线数据`">{{ c.contract_name }}</td>
                                     <td>{{ c.call_put || '-' }}</td>
                                     <td>{{ c.strike_price ? c.strike_price.toFixed(2) : '-' }}</td>
                                     <td>{{ c.underlying || '-' }}</td>
@@ -811,6 +813,10 @@
                         <button class="page-btn" :disabled="optionPage === optionTotalPages" @click="optionPage = optionTotalPages">
                             <i class="fas fa-angle-double-right"></i>
                         </button>
+                        <span class="page-jump">
+                            跳至 <input type="number" class="page-jump-input" min="1" :max="optionTotalPages"
+                                  v-model.number="optionJumpPage" @keyup.enter="onOptionJumpPage"> 页
+                        </span>
                     </div>
                 </div>
             </div>
@@ -1150,6 +1156,8 @@ const optionFilterExchange = ref('')
 const optionFilterProduct = ref('')
 const optionPage = ref(1)
 const optionPageSize = ref(20)
+const optionJumpPage = ref<number>(1)
+const selectedOptionContract = ref<any>(null)
 
 const optionProductsByExchange: Record<string, { value: string; label: string }[]> = {
     CFFEX: [
@@ -1236,6 +1244,8 @@ const onOptionDownloadDone = (msg: any) => {
         addOptionLog(`  [OK] ${d.exchange} ${d.product}: ${d.rows} 行`, 'success')
     } else if (d.status === 'product_failed') {
         addOptionLog(`  [WARN] ${d.exchange} ${d.product} 下载失败, 已跳过`, 'error')
+    } else if (d.status === 'script_log') {
+        addOptionLog(`  ${d.line}`)
     } else if (d.status === 'downloading') {
         addOptionLog(`→ 拉取 ${d.exchange} ${d.product}...`)
     } else if (d.status === 'started') {
@@ -2647,10 +2657,34 @@ const onOptionDeleteContract = async (contract: any) => {
             params: { contract: String(contract.symbol_id) },
             headers: { 'Authorization': token || '' }
         })
+        // 如果删除的是当前选中的合约，清除详情
+        if (selectedOptionContract.value?.symbol_id === contract.symbol_id) {
+            selectedOptionContract.value = null
+            window.dispatchEvent(new CustomEvent('datacenter-option-cleared'))
+        }
         await onLoadOptionContracts()
     } catch (err: any) {
         optionStatus.value = `删除失败: ${err.response?.data?.message || err.message}`
     }
+}
+
+const onOptionJumpPage = () => {
+    const p = Math.max(1, Math.min(optionJumpPage.value, optionTotalPages.value))
+    optionPage.value = p
+    optionJumpPage.value = p
+}
+
+const onOptionContractClick = (contract: any) => {
+    selectedOptionContract.value = contract
+    window.dispatchEvent(new CustomEvent('datacenter-option-contract-selected', {
+        detail: {
+            contract_code: contract.contract_code,
+            contract_name: contract.contract_name,
+            exchange: contract.exchange,
+            product: contract.product,
+            symbol_id: contract.symbol_id,
+        }
+    }))
 }
 
 const onOptionDeleteAll = async () => {
@@ -3498,6 +3532,28 @@ select option {
     min-width: 200px;
     text-align: center;
     margin: 0 4px;
+}
+.page-jump {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #999;
+    font-size: 11px;
+    margin-left: 8px;
+}
+.page-jump-input {
+    width: 48px;
+    padding: 2px 4px;
+    border: 1px solid rgba(74, 85, 104, 0.3);
+    border-radius: 3px;
+    background: rgba(26, 34, 54, 0.8);
+    color: #e0e0e0;
+    font-size: 11px;
+    text-align: center;
+    outline: none;
+}
+.page-jump-input:focus {
+    border-color: #4a9eff;
 }
 .page-size-select {
     padding: 2px 4px;

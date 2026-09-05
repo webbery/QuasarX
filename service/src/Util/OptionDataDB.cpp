@@ -465,6 +465,77 @@ nlohmann::json OptionDataDB::queryByContract(const String& contract_code,
     return result;
 }
 
+nlohmann::json OptionDataDB::queryBySymbolId(int64_t symbol_id,
+                                             const String& start_date,
+                                             const String& end_date,
+                                             int limit) {
+    nlohmann::json result;
+    if (!isInitialized()) {
+        result["error"] = "OptionDataDB not initialized";
+        return result;
+    }
+
+    String sql =
+        "SELECT trade_date, symbol_id, exchange, product, underlying, contract_name, "
+        "call_put, strike_price, open, high, low, close, settlement, prev_settlement, "
+        "volume, turnover, open_interest, exercise_volume, "
+        "delta, gamma, vega, theta, implied_volatility "
+        "FROM option_daily WHERE symbol_id = " + std::to_string(symbol_id);
+
+    if (!start_date.empty()) {
+        sql += " AND trade_date >= '" + start_date + "'";
+    }
+    if (!end_date.empty()) {
+        sql += " AND trade_date <= '" + end_date + "'";
+    }
+    sql += " ORDER BY trade_date ASC LIMIT " + std::to_string(limit);
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return result;
+    }
+
+    idx_t row_count = duckdb_row_count(&res);
+    result["symbol_id"] = symbol_id;
+    result["count"] = static_cast<int>(row_count);
+
+    nlohmann::json::array_t data;
+    for (idx_t i = 0; i < row_count; i++) {
+        nlohmann::json row;
+        row["trade_date"]         = duckdb_value_varchar(&res, 0,  i);
+        row["symbol_id"]          = duckdb_value_int64(&res, 1,  i);
+        row["exchange"]           = duckdb_value_varchar(&res, 2,  i);
+        row["product"]            = duckdb_value_varchar(&res, 3,  i);
+        row["underlying"]         = duckdb_value_varchar(&res, 4,  i);
+        row["contract_name"]      = duckdb_value_varchar(&res, 5,  i);
+        row["call_put"]           = duckdb_value_varchar(&res, 6,  i);
+        row["strike_price"]       = duckdb_value_double(&res, 7,  i);
+        row["open"]               = duckdb_value_double(&res, 8,  i);
+        row["high"]               = duckdb_value_double(&res, 9,  i);
+        row["low"]                = duckdb_value_double(&res, 10, i);
+        row["close"]              = duckdb_value_double(&res, 11, i);
+        row["settlement"]         = duckdb_value_double(&res, 12, i);
+        row["prev_settlement"]    = duckdb_value_double(&res, 13, i);
+        row["volume"]             = duckdb_value_int64(&res, 14, i);
+        row["turnover"]           = duckdb_value_double(&res, 15, i);
+        row["open_interest"]      = duckdb_value_int64(&res, 16, i);
+        row["exercise_volume"]    = duckdb_value_int64(&res, 17, i);
+        row["delta"]              = duckdb_value_double(&res, 18, i);
+        row["gamma"]              = duckdb_value_double(&res, 19, i);
+        row["vega"]               = duckdb_value_double(&res, 20, i);
+        row["theta"]              = duckdb_value_double(&res, 21, i);
+        row["implied_volatility"] = duckdb_value_double(&res, 22, i);
+        data.push_back(std::move(row));
+    }
+    result["data"] = std::move(data);
+    duckdb_destroy_result(&res);
+    return result;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  查询：列出合约概要
 // ═══════════════════════════════════════════════════════════

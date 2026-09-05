@@ -34,6 +34,12 @@ public:
                                    const String& end_date = "",
                                    int limit = 500);
 
+    // 按 symbol_id 直接查询历史日终数据 (前端列表已有 symbol_id, 无需再编码)
+    nlohmann::json queryBySymbolId(int64_t symbol_id,
+                                   const String& start_date = "",
+                                   const String& end_date = "",
+                                   int limit = 500);
+
     // 列出已下载合约概要
     // 返回: [{symbol_id, exchange, product, contract_name, call_put,
     //         strike_price, start_date, end_date, count}, ...]

@@ -7,6 +7,8 @@
 #include <thread>
 #include <set>
 #include <algorithm>
+#include <chrono>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -139,18 +141,42 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
             if (!start_date.empty()) cmd += " --start " + start_date;
             if (!end_date.empty())   cmd += " --end "   + end_date;
 
+            INFO("[OptionDataHandler] 开始下载 {} {} cmd: {}", exchange, prod, cmd);
             SendSSE(sse_sock, "option_data_download", {
                 {"status", "downloading"},
                 {"exchange", exchange},
-                {"product", prod},
-                {"command", cmd}
+                {"product", prod}
             });
 
+            auto t0 = std::chrono::steady_clock::now();
             String output;
             bool ok = RunCommand(cmd, output);
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - t0).count();
+
+            INFO("[OptionDataHandler] {} {} 脚本结束 ok={} 耗时 {}s, output:\n{}",
+                 exchange, prod, ok, elapsed, output);
+
+            // 将脚本输出逐行转发到前端
+            {
+                std::istringstream ss(output);
+                std::string line;
+                while (std::getline(ss, line)) {
+                    if (line.empty()) continue;
+                    if (line.back() == '\r') line.pop_back();
+                    if (line.empty()) continue;
+                    SendSSE(sse_sock, "option_data_download", {
+                        {"status", "script_log"},
+                        {"exchange", exchange},
+                        {"product", prod},
+                        {"line", line}
+                    });
+                }
+            }
 
             if (!ok) {
-                WARN("[OptionDataHandler] {} {} download failed: {}", exchange, prod, output);
+                WARN("[OptionDataHandler] {} {} download failed (耗时 {}s): {}",
+                     exchange, prod, elapsed, output);
                 fail_products++;
                 SendSSE(sse_sock, "option_data_download", {
                     {"status", "product_failed"},
@@ -162,11 +188,11 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
             }
             success_products++;
 
-            // 扫描该品种目录下所有 CSV 并 import
+            // 扫描该品种目录下所有 CSV 并 import (递归: Python 脚本按 {YYYY-MM}/{product}/ 分层保存)
             int imported_for_prod = 0;
             String prod_csv_dir = csv_dir + "/" + prod;
             if (fs::exists(prod_csv_dir)) {
-                for (auto& entry : fs::directory_iterator(prod_csv_dir)) {
+                for (auto& entry : fs::recursive_directory_iterator(prod_csv_dir)) {
                     if (!entry.is_regular_file()) continue;
                     auto ext = entry.path().extension().string();
                     if (ext != ".csv") continue;
@@ -180,9 +206,9 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
                     fs::remove(entry.path());
                 }
             }
-            // 尝试清理空的品种子目录
+            // 清理品种子目录 (递归导入后剩余的空月份目录)
             std::error_code ec;
-            fs::remove(prod_csv_dir, ec);
+            fs::remove_all(prod_csv_dir, ec);
 
             SendSSE(sse_sock, "option_data_download", {
                 {"status", "imported"},
@@ -215,7 +241,8 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
 //  GET /v0/option/data
 //
 //  参数:
-//    contract=XXX                → 该合约历史日线
+//    contract=XXX                → 该合约历史日线 (按合约字符串查询)
+//    symbol_id=123               → 该合约历史日线 (按 symbol_id 直接查询)
 //    exchange=CFFEX & product=IO → 该品种合约概要
 //    exchange=CFFEX              → 该交易所合约概要
 //    无参数                      → 全部合约概要
@@ -232,15 +259,24 @@ void OptionDataHandler::get(const httplib::Request& req, httplib::Response& res)
         }
     }
 
-    auto contract  = req.get_param_value("contract");
-    auto exchange  = req.get_param_value("exchange");
-    auto product   = req.get_param_value("product");
-    auto start_dt  = req.get_param_value("start");
-    auto end_dt    = req.get_param_value("end");
-    auto limit_str = req.get_param_value("limit");
+    auto contract   = req.get_param_value("contract");
+    auto symbol_id_str = req.get_param_value("symbol_id");
+    auto exchange   = req.get_param_value("exchange");
+    auto product    = req.get_param_value("product");
+    auto start_dt   = req.get_param_value("start");
+    auto end_dt     = req.get_param_value("end");
+    auto limit_str  = req.get_param_value("limit");
     int limit = limit_str.empty() ? 500 : std::atoi(limit_str.c_str());
 
-    // 按合约查历史
+    // 按 symbol_id 直接查历史 (前端列表已有 symbol_id)
+    if (!symbol_id_str.empty()) {
+        int64_t sid = std::stoll(symbol_id_str);
+        auto result = optDB.queryBySymbolId(sid, start_dt, end_dt, limit);
+        res.set_content(result.dump(), "application/json");
+        return;
+    }
+
+    // 按合约字符串查历史
     if (!contract.empty()) {
         auto result = optDB.queryByContract(contract, start_dt, end_dt, limit);
         res.set_content(result.dump(), "application/json");

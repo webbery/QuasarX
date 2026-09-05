@@ -201,7 +201,18 @@
         <AnalysisRightPanel />
       </div>
       <div v-else-if="is_datacenter" style="height: 100%">
+        <OptionContractDetail
+          v-if="selectedOptionContract"
+          :contract-code="selectedOptionContract.contract_code"
+          :contract-name="selectedOptionContract.contract_name"
+          :exchange="selectedOptionContract.exchange"
+          :product="selectedOptionContract.product"
+          :symbol-id="selectedOptionContract.symbol_id"
+          :call-put="selectedOptionContract.call_put"
+          :strike-price="selectedOptionContract.strike_price"
+        />
         <DataCenterSymbolDetail
+          v-else
           :symbol="selectedDataCenterSymbol"
           :freq="selectedDataCenterFreq"
           :table="selectedDataCenterTable"
@@ -315,6 +326,7 @@ import { useChatStore } from './stores/chatStore'
 import { useStrategyDeploy } from './components/ml/composables/useStrategyDeploy'
 // 数据中心右侧详情面板
 import DataCenterSymbolDetail from './components/datacenter/DataCenterSymbolDetail.vue'
+import OptionContractDetail from './components/datacenter/OptionContractDetail.vue'
 
 const chatStore = useChatStore()
 
@@ -499,6 +511,7 @@ const highlightTradePanel = ref(false)    // 高亮交易面板
 
 // 数据中心选中标的（右侧详情面板显示）
 const selectedDataCenterSymbol = ref(null)
+const selectedOptionContract = ref(null)
 const selectedDataCenterFreq = ref('1d')
 const selectedDataCenterTable = ref(null)
 // 投资组合相关
@@ -661,6 +674,9 @@ onMounted(() => {
 
   // 监听数据中心选中标的（从 DataCenter 表格点击触发）
   window.addEventListener('datacenter-symbol-selected', onDataCenterSymbolSelected)
+  // 监听数据中心选中期权合约
+  window.addEventListener('datacenter-option-contract-selected', onDataCenterOptionSelected)
+  window.addEventListener('datacenter-option-cleared', onDataCenterOptionCleared)
 })
 
 onUnmounted(() => {
@@ -669,6 +685,8 @@ onUnmounted(() => {
   window.removeEventListener('open-portfolio-manager', onHandlePortfolioMananger)
   window.removeEventListener('visualize-strategy', onVisualizeStrategy)
   window.removeEventListener('datacenter-symbol-selected', onDataCenterSymbolSelected)
+  window.removeEventListener('datacenter-option-contract-selected', onDataCenterOptionSelected)
+  window.removeEventListener('datacenter-option-cleared', onDataCenterOptionCleared)
   uninitServerEvent()
   if (_strategyTimer) {
     clearInterval(_strategyTimer)
@@ -745,8 +763,20 @@ const onDataCenterSymbolSelected = (event) => {
   const { symbol, freq, table } = event.detail || {}
   if (!symbol) return
   selectedDataCenterSymbol.value = symbol
+  selectedOptionContract.value = null  // 切换时清除期权选中
   if (freq) selectedDataCenterFreq.value = freq
   if (table) selectedDataCenterTable.value = table
+}
+
+const onDataCenterOptionSelected = (event) => {
+  const { contract_code, contract_name, exchange, product, symbol_id, call_put, strike_price } = event.detail || {}
+  if (!contract_code) return
+  selectedOptionContract.value = { contract_code, contract_name, exchange, product, symbol_id, call_put, strike_price }
+  selectedDataCenterSymbol.value = null  // 切换时清除股票选中
+}
+
+const onDataCenterOptionCleared = () => {
+  selectedOptionContract.value = null
 }
 
 /**

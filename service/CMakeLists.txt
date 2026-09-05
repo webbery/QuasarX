@@ -147,7 +147,7 @@ add_compile_options(-mtune=generic -O3)
 # -g1 最小调试信息（函数名+行号），供 .debug 符号文件 addr2line 崩溃栈解析；
 # 相比 -g 省去类型/局部变量 DWARF，显著降低链接时间
 add_compile_options(-g1 -fno-omit-frame-pointer)
-add_compile_options(-Wl,-rpath=.)
+# rpath 在 add_executable 之后通过 set_target_properties 设置 ($ORIGIN)
 endif()
 add_compile_definitions(JWT_DISABLE_PICOJSON)
 
