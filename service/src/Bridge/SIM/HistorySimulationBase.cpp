@@ -833,7 +833,7 @@ bool HistorySimulationBase::GetAllStockSymbols(List<SymbolInfo>& symbols) {
 
     if (!std::filesystem::exists(csv_path)) {
         WARN("{} not exist, running script to generate", csv_path);
-        String cmd = "python " + _org_path + "/../tools/run_task.py 1";
+        String cmd = std::string(PYTHON_CMD) + " " + _org_path + "/../tools/run_task.py 1";
         if (!RunCommand(cmd)) {
             FATAL("Failed to run script to generate symbol_market.csv");
             return false;
@@ -874,7 +874,7 @@ bool HistorySimulationBase::GetAllFundSymbols(List<SymbolInfo>& symbols) {
 
     if (!std::filesystem::exists(csv_path)) {
         WARN("{} not exist, running script to generate", csv_path);
-        String cmd = "python " + _org_path + "/../tools/run_task.py 2";
+        String cmd = std::string(PYTHON_CMD) + " " + _org_path + "/../tools/run_task.py 2";
         if (!RunCommand(cmd)) {
             FATAL("Failed to run script to generate fund_market.csv");
             return false;
@@ -998,7 +998,7 @@ bool HistorySimulationBase::GetAllOptionSymbols(List<SymbolInfo>& symbols) {
 
     if (!std::filesystem::exists(csv_path)) {
         WARN("{} not exist, running script to generate", csv_path);
-        String cmd = "python " + _org_path + "/../tools/run_task.py 3";
+        String cmd = std::string(PYTHON_CMD) + " " + _org_path + "/../tools/run_task.py 3";
         if (!RunCommand(cmd)) {
             FATAL("Failed to run script to generate option_market.csv");
             return false;

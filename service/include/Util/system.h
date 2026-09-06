@@ -45,6 +45,12 @@ constexpr std::size_t flags = yas::mem|yas::binary;
 std::string GetIP();
 String GetMacAddr();
 
+#ifdef _WIN32
+constexpr const char* PYTHON_CMD = "python";
+#else
+constexpr const char* PYTHON_CMD = "python3";
+#endif
+
 bool RunCommand(const std::string& cmd);
 bool RunCommand(const std::string& cmd, String& output);
 

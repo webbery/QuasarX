@@ -1176,7 +1176,7 @@ void Server::Schedules(time_t t) {
                 String symbolsStr = boost::algorithm::join(allSymbols, ",");
                 INFO("[Schedules] Sunday dividend update: {} symbols from {} strategies",
                      allSymbols.size(), names.size());
-                String cmd = "cd ../tools && python fetch_dividend_data.py \""
+                String cmd = "cd ../tools && " + std::string(PYTHON_CMD) + " fetch_dividend_data.py \""
                            + symbolsStr + "\" --download --data-dir data";
                 String output;
                 bool ok = RunCommand(cmd, output);
@@ -1212,7 +1212,7 @@ void Server::Schedules(time_t t) {
             //RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
             // 每周末更新一次
             String output;
-            bool ok = RunCommand("cd ../tools && python run_task.py 3", output);
+            bool ok = RunCommand("cd ../tools && " + std::string(PYTHON_CMD) + " run_task.py 3", output);
             if (!ok) {
                 String msg = "run_task.py 3 执行失败";
                 WARN("[Schedules] {}", msg);
@@ -1687,7 +1687,7 @@ bool Server::SendEmail(const String& content) {
     String scriptFile("tools/mail.py");
     if (!std::filesystem::exists(scriptFile))
         return false;
-    String prefix = "python " + scriptFile +" ";
+    String prefix = std::string(PYTHON_CMD) + std::string(" ") + scriptFile +" ";
     prefix += sender + " " + pwd;
 
     String cmd = prefix + " " + _config->GetWarningAddr() + " \"" + content + "\"";

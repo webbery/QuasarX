@@ -137,7 +137,7 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                                           const std::string& quote_dir,
                                           bool overwrite) {
     (void)env_name;  // 调度场景固定使用系统默认 python
-    std::string interpreter = "python";
+    std::string interpreter = PYTHON_CMD;
 
     std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter, overwrite]() {
         for (auto& group : groups) {
