@@ -43,6 +43,9 @@ static time_t  g_start_time = 0;
 // don't dereference a partially-constructed _config during early crashes.
 static bool   g_server_ready = false;
 
+// addr2line 解析后的堆栈（供邮件使用）
+static std::string g_resolved_trace;
+
 // Build a brief crash notification email body and dispatch via Server::SendEmail.
 // Captures: host, pid, time, version, uptime, crash kind, top frames.
 // Not strictly async-signal-safe (uses std::string) but accepted as best-effort
@@ -96,7 +99,13 @@ static void notifyCrashByEmail(const char* crash_kind, void** /*addrs*/, int fra
         body += (strings && strings[i]) ? strings[i] : "?";
         body += "\n";
     }
-    body += "\nFull resolved stack trace on stderr / logs/monthly_log.txt\n";
+
+    if (!g_resolved_trace.empty()) {
+        body += "\nResolved stack trace:\n";
+        body += g_resolved_trace;
+    } else {
+        body += "\nFull resolved stack trace on stderr / logs/monthly_log.txt\n";
+    }
 
     g_server->SendEmail(body);
 }
@@ -207,6 +216,7 @@ static uintptr_t get_exe_base_address() {
 }
 
 static void resolve_addresses(void** addrs, int count) {
+    g_resolved_trace.clear();
     uintptr_t base = get_exe_base_address();
     if (base == 0) {
         const char warn[] = "[addr2line] Failed to get base address, skipping\n";
@@ -214,21 +224,44 @@ static void resolve_addresses(void** addrs, int count) {
         return;
     }
 
-    // 构建 addr2line 命令行参数
-    std::vector<const char*> args;
-    args.push_back("addr2line");
-    args.push_back("-e");
-
     // 获取当前可执行文件路径
     char exe_path[4096];
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
     if (len > 0) {
         exe_path[len] = '\0';
-        args.push_back(exe_path);
     } else {
-        args.push_back("./QuantService");
+        snprintf(exe_path, sizeof(exe_path), "./QuantService");
     }
 
+    // 查找带 debug info 的文件（strip 后的二进制本身没有符号）
+    // 优先顺序: <exe>.debug → <dir>/.debug/<basename>.debug → <exe> 本身
+    char debug_path[4096];
+    const char* symbol_file = exe_path;  // 默认用可执行文件本身
+
+    snprintf(debug_path, sizeof(debug_path), "%s.debug", exe_path);
+    if (access(debug_path, R_OK) == 0) {
+        symbol_file = debug_path;
+    } else {
+        // 尝试 .debug/<basename>.debug 子目录（debuginfod 约定）
+        char dir_path[4096];
+        char base_name[256];
+        snprintf(dir_path, sizeof(dir_path), "%s", exe_path);
+        char* last_slash = strrchr(dir_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            snprintf(base_name, sizeof(base_name), "%s.debug", last_slash + 1);
+            snprintf(debug_path, sizeof(debug_path), "%s/.debug/%s", dir_path, base_name);
+            if (access(debug_path, R_OK) == 0) {
+                symbol_file = debug_path;
+            }
+        }
+    }
+
+    // 构建 addr2line 命令行参数
+    std::vector<const char*> args;
+    args.push_back("addr2line");
+    args.push_back("-e");
+    args.push_back(symbol_file);
     args.push_back("-f");
     args.push_back("-s");  // 只显示文件名基名
 
@@ -319,6 +352,7 @@ static void resolve_addresses(void** addrs, int count) {
         char line[512];
         int len = snprintf(line, sizeof(line), "  [%02d] %s  [%s]\n", frame, short_name.c_str(), location.c_str());
         write(STDERR_FILENO, line, len);
+        g_resolved_trace.append(line, len);
         frame++;
     }
 
@@ -386,7 +420,10 @@ void print_stacktrace(int signo) {
         _exit(EXIT_FAILURE);
     }
 
-    // 崩溃通知邮件（在堆栈打印前优先发出）
+    // 先调用 addr2line 解析（结果存入 g_resolved_trace，供邮件使用）
+    resolve_addresses(array, size);
+
+    // 崩溃通知邮件（包含解析后的堆栈）
     {
         char kind[64];
         snprintf(kind, sizeof(kind), "%s (%d)", signal_name ? signal_name : "Unknown", signo);
@@ -451,11 +488,6 @@ void print_stacktrace(int signo) {
             write(STDERR_FILENO, line, len);
         }
     }
-
-    // 调用 addr2line 解析为可读堆栈（函数名 + 源码位置）
-    const char resolved_header[] = "\nResolved stack trace (via addr2line):\n";
-    write(STDERR_FILENO, resolved_header, sizeof(resolved_header) - 1);
-    resolve_addresses(array, size);
 
     const char footer[] = "\n";
     write(STDERR_FILENO, footer, sizeof(footer) - 1);
@@ -673,7 +705,10 @@ void on_terminate() {
     int size = backtrace(array, 64);
     char** strings = backtrace_symbols(array, size);
 
-    // 崩溃通知邮件（在堆栈打印前优先发出）
+    // 先解析堆栈（结果存入 g_resolved_trace，供邮件使用）
+    resolve_addresses(array, size);
+
+    // 崩溃通知邮件（包含解析后的堆栈）
     notifyCrashByEmail("std::terminate", array, size, strings);
 
     if (strings) {
@@ -686,11 +721,6 @@ void on_terminate() {
         }
         free(strings);
     }
-
-    // 调用 addr2line 解析为可读堆栈（函数名 + 源码位置）
-    const char resolved_header[] = "\nResolved stack trace (via addr2line):\n";
-    write(STDERR_FILENO, resolved_header, sizeof(resolved_header) - 1);
-    resolve_addresses(array, size);
 
     const char footer[] = "\nCheck core dump for full GDB analysis.\n"
                           "=========================================\n\n";

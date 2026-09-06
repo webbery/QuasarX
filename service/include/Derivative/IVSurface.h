@@ -30,6 +30,11 @@ private:
     int findSegment(double x) const;
 };
 
+// 从期权市场价格反算隐含波动率 (Newton-Raphson + Black-Scholes)
+// price: 期权市场价格 (close), S: 标的价格, K: 行权价, T: 年化到期时间, r: 无风险利率
+// 返回 0.0 表示反算失败
+double computeIVFromPrice(double price, double S, double K, double T, double r, bool is_call);
+
 // IV 曲面: (strike, expiry_days) → implied_volatility
 // 数据来源: OptionDataDB option_daily 表
 class IVSurface {

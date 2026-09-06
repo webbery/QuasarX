@@ -439,6 +439,7 @@ void DuckDBLogger::worker_loop() {
         auto now = std::chrono::steady_clock::now();
         if (now - last_flush > std::chrono::seconds(3)) {
             last_flush = now;
+            std::lock_guard<std::mutex> lock(conn_mtx_);
             exec("CHECKPOINT");
         }
     }
@@ -449,6 +450,7 @@ void DuckDBLogger::worker_loop() {
 // ──────────────────────────────────────────────────────────────────────
 
 void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     if (!exec("BEGIN TRANSACTION")) {
         return;
     }
@@ -507,6 +509,7 @@ void DuckDBLogger::batch_insert(const std::vector<StrategyLogEntry>& entries) {
 }
 
 void DuckDBLogger::batch_insert_node_io(const std::vector<NodeIOEntry>& entries) {
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     if (!exec("BEGIN TRANSACTION")) {
         return;
     }
@@ -600,6 +603,7 @@ duckdb_value make_int64_list(const std::vector<int64_t>& values) {
 // ──────────────────────────────────────────────────────────────────────
 
 void DuckDBLogger::batch_insert_ticks(const std::vector<TickDataEntry>& entries) {
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     if (!exec("BEGIN TRANSACTION")) {
         return;
     }
@@ -708,6 +712,7 @@ std::vector<StrategyLogEntry> DuckDBLogger::query_strategy_logs(
         return {};
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::vector<StrategyLogEntry> results;
 
     std::string sql = "SELECT id, timestamp, strategy_name, level, message, context FROM strategy_logs WHERE 1=1";
@@ -793,6 +798,7 @@ int DuckDBLogger::count_strategy_logs(
         return 0;
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::string sql = "SELECT COUNT(*) FROM strategy_logs WHERE 1=1";
     std::vector<duckdb_value> params;
 
@@ -852,6 +858,7 @@ DuckDBLogger::StrategyStats DuckDBLogger::get_strategy_stats(
         return stats;
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::string where_clause = "WHERE 1=1";
     std::vector<duckdb_value> params;
 
@@ -947,6 +954,7 @@ void DuckDBLogger::cleanup_old_logs(int retention_days) {
         return;
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     auto cutoff_date = ToString(Now() - retention_days * 86400);
     duckdb_value v = make_varchar(cutoff_date);
     exec_params("DELETE FROM strategy_logs WHERE timestamp < ?", {v});
@@ -978,8 +986,40 @@ DuckDBLogger::DeleteResult DuckDBLogger::delete_strategy_logs(
         return result;
     }
 
-    // 先查询将要删除的数量
-    int count = count_strategy_logs(strategy_name, "", level, start_time, end_time);
+    std::lock_guard<std::mutex> lock(conn_mtx_);
+
+    // 先查询将要删除的数量（内联，避免调用 count_strategy_logs 导致死锁）
+    int count = 0;
+    {
+        std::string count_sql = "SELECT COUNT(*) FROM strategy_logs WHERE 1=1";
+        std::vector<duckdb_value> count_params;
+        if (!strategy_name.empty()) {
+            count_sql += " AND strategy_name = ?";
+            count_params.push_back(make_varchar(strategy_name));
+        }
+        if (!level.empty()) {
+            count_sql += " AND level = ?";
+            count_params.push_back(make_varchar(level));
+        }
+        if (!start_time.empty()) {
+            count_sql += " AND timestamp >= ?";
+            count_params.push_back(make_varchar(start_time));
+        }
+        if (!end_time.empty()) {
+            count_sql += " AND timestamp <= ?";
+            count_params.push_back(make_varchar(end_time));
+        }
+        duckdb_result count_res;
+        if (query_params(count_sql, count_params, count_res)) {
+            idx_t rc = duckdb_row_count(&count_res);
+            if (rc > 0) {
+                auto* data = (int32_t*)duckdb_column_data(&count_res, 0);
+                if (data) count = *data;
+            }
+            duckdb_destroy_result(&count_res);
+        }
+        for (auto& v : count_params) duckdb_destroy_value(&v);
+    }
 
     // 构建 DELETE SQL
     std::string sql = "DELETE FROM strategy_logs WHERE 1=1";
@@ -1037,6 +1077,7 @@ std::vector<NodeIOEntry> DuckDBLogger::query_node_io_logs(
         return {};
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::vector<NodeIOEntry> results;
 
     std::string sql = "SELECT id, timestamp, strategy_name, epoch, node_type, node_id, input, output, metadata FROM node_io_logs WHERE 1=1";
@@ -1122,6 +1163,7 @@ int DuckDBLogger::count_node_io_logs(
         return 0;
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::string sql = "SELECT COUNT(*) FROM node_io_logs WHERE 1=1";
     std::vector<duckdb_value> params;
 
@@ -1174,8 +1216,28 @@ int64_t DuckDBLogger::delete_node_io_logs_before(const std::string& timestamp) {
         return 0;
     }
 
-    // 先查询删除前的数量
-    int before_count = count_node_io_logs("", "", 0, 0, "", timestamp);
+    std::lock_guard<std::mutex> lock(conn_mtx_);
+
+    // 先查询删除前的数量（内联，避免调用 count_node_io_logs 导致死锁）
+    int before_count = 0;
+    {
+        std::string count_sql = "SELECT COUNT(*) FROM node_io_logs WHERE 1=1";
+        std::vector<duckdb_value> count_params;
+        if (!timestamp.empty()) {
+            count_sql += " AND timestamp <= ?";
+            count_params.push_back(make_varchar(timestamp));
+        }
+        duckdb_result count_res;
+        if (query_params(count_sql, count_params, count_res)) {
+            idx_t rc = duckdb_row_count(&count_res);
+            if (rc > 0) {
+                auto* data = (int32_t*)duckdb_column_data(&count_res, 0);
+                if (data) before_count = *data;
+            }
+            duckdb_destroy_result(&count_res);
+        }
+        for (auto& v : count_params) duckdb_destroy_value(&v);
+    }
 
     duckdb_value v = make_varchar(timestamp);
     exec_params("DELETE FROM node_io_logs WHERE timestamp < ?", {v});
@@ -1204,6 +1266,7 @@ void DuckDBLogger::shutdown() {
     }
 
     if (conn_) {
+        std::lock_guard<std::mutex> lock(conn_mtx_);
         exec("CHECKPOINT");
         duckdb_disconnect(&conn_);
         conn_ = nullptr;
@@ -1231,6 +1294,7 @@ std::vector<TickDataEntry> DuckDBLogger::query_ticks(
         return {};
     }
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::vector<TickDataEntry> results;
 
     std::string sql = "SELECT id, timestamp, symbol, open, close, high, low, volume, turnover, "
@@ -1312,6 +1376,7 @@ std::vector<TickDataEntry> DuckDBLogger::query_ticks(
 int64_t DuckDBLogger::delete_tick_data_before(int64_t timestamp_epoch) {
     if (!initialized_) return -1;
 
+    std::lock_guard<std::mutex> lock(conn_mtx_);
     std::string sql = "DELETE FROM tick_data WHERE timestamp < ?";
     duckdb_value v = make_varchar(ToString(static_cast<time_t>(timestamp_epoch)));
     bool success = exec_params(sql, {v});

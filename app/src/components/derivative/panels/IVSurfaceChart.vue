@@ -3,7 +3,7 @@
     <div class="toolbar">
       <div class="form-row">
         <label>交易所</label>
-        <select v-model="exchange" @change="loadSurface">
+        <select v-model="exchange">
           <option value="CFFEX">CFFEX</option>
           <option value="SSE">SSE</option>
           <option value="SZSE">SZSE</option>
@@ -12,12 +12,7 @@
       <div class="form-row">
         <label>标的</label>
         <select v-model="product" @change="loadSurface">
-          <option value="50ETF">50ETF</option>
-          <option value="300ETF">300ETF</option>
-          <option value="500ETF">500ETF</option>
-          <option value="IO">IO</option>
-          <option value="HO">HO</option>
-          <option value="MO">MO</option>
+          <option v-for="p in productOptions" :key="p.value" :value="p.value">{{ p.label }}</option>
         </select>
       </div>
       <button class="btn-toggle" @click="viewMode = viewMode === '3d' ? '2d' : '3d'">
@@ -31,10 +26,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'
 import { getIVSurface, type IVSurfaceResult } from '../composables/useOptionPricing'
+
+const PRODUCT_MAP: Record<string, Array<{ value: string; label: string }>> = {
+  CFFEX: [
+    { value: 'IO', label: 'IO (沪深300)' },
+    { value: 'HO', label: 'HO (上证50)' },
+    { value: 'MO', label: 'MO (中证1000)' },
+  ],
+  SSE: [
+    { value: '50ETF', label: '50ETF (510050)' },
+    { value: '300ETF', label: '300ETF (510300)' },
+    { value: '500ETF', label: '500ETF (510500)' },
+    { value: 'STAR50ETF', label: '科创50ETF (588000)' },
+  ],
+  SZSE: [
+    { value: '159919', label: '沪深300 (159919)' },
+    { value: '159915', label: '创业板 (159915)' },
+    { value: '159922', label: '中证500 (159922)' },
+    { value: '159901', label: '深证100 (159901)' },
+  ],
+}
 
 const props = defineProps<{ exchange: string; product: string }>()
 
@@ -46,6 +61,16 @@ const error = ref('')
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 let surfaceData: IVSurfaceResult | null = null
+
+const productOptions = computed(() => PRODUCT_MAP[exchange.value] || [])
+
+watch(exchange, () => {
+  const opts = PRODUCT_MAP[exchange.value]
+  if (opts && opts.length > 0) {
+    product.value = opts[0].value
+    loadSurface()
+  }
+})
 
 async function loadSurface() {
   loading.value = true

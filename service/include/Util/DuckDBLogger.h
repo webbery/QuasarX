@@ -341,6 +341,9 @@ private:
     std::atomic<bool> initialized_{false};
     std::thread worker_thread_;
 
+    // conn_ 互斥锁：worker 写入线程与 HTTP 查询线程共享同一 connection
+    std::mutex conn_mtx_;
+
     // per-table ID counters (独立 atomic，无锁分配)
     std::atomic<uint64_t> next_strategy_log_id_{1};
     std::atomic<uint64_t> next_node_io_id_{1};

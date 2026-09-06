@@ -23,7 +23,8 @@
         </div>
         <div class="contract-list">
           <div v-for="c in filteredContracts" :key="c.symbol_id"
-            class="contract-item" :class="{ selected: isSelected(c) }"
+            class="contract-item"
+            :class="{ selected: isSelected(c), active: activeContract?.symbol_id === c.symbol_id }"
             @click="toggleContract(c)">
             <span class="contract-name">{{ c.contract_name }}</span>
             <span class="contract-strike">{{ c.strike_price }}</span>
@@ -39,7 +40,12 @@
 
       <!-- 参数配置 -->
       <div class="section">
-        <div class="section-title">定价参数</div>
+        <div class="section-title">
+          定价参数
+          <span v-if="activeContract" class="active-contract-tag">
+            {{ activeContract.contract_name }}
+          </span>
+        </div>
         <div class="form-row">
           <label>标的价格 S</label>
           <input type="number" v-model.number="params.spot" step="0.001" />
@@ -176,6 +182,7 @@ const chartTabs = [
 const filters = ref({ exchange: '', product: '' })
 const contracts = ref<ContractInfo[]>([])
 const selectedContracts = ref<ContractInfo[]>([])
+const activeContract = ref<ContractInfo | null>(null)
 const result = ref<PricingResult | null>(null)
 const multiResults = ref<PricingResult[]>([])
 const calculating = ref(false)
@@ -212,30 +219,35 @@ function isSelected(c: ContractInfo) {
   return selectedContracts.value.some(s => s.symbol_id === c.symbol_id)
 }
 
+function fillParamsFromContract(c: ContractInfo) {
+  activeContract.value = c
+  params.value.strike = c.strike_price
+  params.value.is_call = c.call_put === '认购'
+  const m = c.contract_name.match(/(\d{2})(\d{2})/)
+  if (m) {
+    const year = 2000 + parseInt(m[1])
+    const month = parseInt(m[2])
+    params.value.expiry = `${year}-${String(month).padStart(2, '0')}-17`
+  }
+}
+
 function toggleContract(c: ContractInfo) {
   const idx = selectedContracts.value.findIndex(s => s.symbol_id === c.symbol_id)
   if (idx >= 0) {
     selectedContracts.value.splice(idx, 1)
+    if (activeContract.value?.symbol_id === c.symbol_id) {
+      activeContract.value = selectedContracts.value[0] ?? null
+    }
   } else {
     selectedContracts.value.push(c)
   }
-  // 用第一个选中合约填充参数
-  if (selectedContracts.value.length > 0) {
-    const first = selectedContracts.value[0]
-    params.value.strike = first.strike_price
-    params.value.is_call = first.call_put === '认购'
-    // 从合约名解析到期日
-    const m = first.contract_name.match(/(\d{2})(\d{2})/)
-    if (m) {
-      const year = 2000 + parseInt(m[1])
-      const month = parseInt(m[2])
-      params.value.expiry = `${year}-${String(month).padStart(2, '0')}-17`
-    }
-  }
+  fillParamsFromContract(c)
 }
 
 async function onFilterChange() {
   contracts.value = await listOptionContracts(filters.value.exchange || undefined, filters.value.product || undefined)
+  activeContract.value = null
+  selectedContracts.value = []
 }
 
 async function calculate() {
@@ -309,6 +321,24 @@ onMounted(async () => {
   margin-bottom: 8px;
   padding-bottom: 4px;
   border-bottom: 1px solid rgba(74, 85, 104, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.active-contract-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: #2962ff;
+  background: rgba(41, 98, 255, 0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: none;
+  letter-spacing: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .form-row {
@@ -369,6 +399,12 @@ onMounted(async () => {
 .contract-item.selected {
   background: rgba(41, 98, 255, 0.2);
   border-left: 2px solid #2962ff;
+}
+
+.contract-item.active {
+  background: rgba(41, 98, 255, 0.3);
+  border-left: 3px solid #2962ff;
+  font-weight: 500;
 }
 
 .contract-name {

@@ -1464,6 +1464,7 @@ onMounted(() => {
     if (isLoggedIn.value) {
         loadQuoteData()
         onLoadFinanceData()
+        onLoadOptionContracts()
     }
 
     // 首次挂载拉一次远程策略清单（不含 pools，按需再补）

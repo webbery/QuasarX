@@ -1,8 +1,56 @@
 #include "Derivative/IVSurface.h"
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <set>
 #include <stdexcept>
+
+// ═══════════════════════════════════════════════════════════════════
+//  computeIVFromPrice — Newton-Raphson 反算隐含波动率
+// ═══════════════════════════════════════════════════════════════════
+
+static double bsNormCDF(double x) {
+    return 0.5 * std::erfc(-x / std::sqrt(2.0));
+}
+
+static double bsPrice(double S, double K, double T, double r, double sigma, bool is_call) {
+    if (T <= 0 || sigma <= 0 || S <= 0) return 0.0;
+    double sqrtT = std::sqrt(T);
+    double d1 = (std::log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    double d2 = d1 - sigma * sqrtT;
+    if (is_call)
+        return S * bsNormCDF(d1) - K * std::exp(-r * T) * bsNormCDF(d2);
+    else
+        return K * std::exp(-r * T) * bsNormCDF(-d2) - S * bsNormCDF(-d1);
+}
+
+static double bsVega(double S, double K, double T, double r, double sigma) {
+    if (T <= 0 || sigma <= 0 || S <= 0) return 0.0;
+    double sqrtT = std::sqrt(T);
+    double d1 = (std::log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    double nd1 = std::exp(-0.5 * d1 * d1) / std::sqrt(2.0 * std::numbers::pi);
+    return S * nd1 * sqrtT;
+}
+
+double computeIVFromPrice(double price, double S, double K, double T, double r, bool is_call) {
+    if (price <= 0 || S <= 0 || K <= 0 || T <= 0) return 0.0;
+
+    double intrinsic = is_call ? std::max(S - K, 0.0) : std::max(K - S, 0.0);
+    if (price < intrinsic - 1e-8) return 0.0;
+
+    double sigma = 0.3;
+    for (int i = 0; i < 100; ++i) {
+        double theo = bsPrice(S, K, T, r, sigma, is_call);
+        double vega = bsVega(S, K, T, r, sigma);
+        if (vega < 1e-12) break;
+        double diff = theo - price;
+        if (std::abs(diff) < 1e-8) return sigma;
+        sigma -= diff / vega;
+        if (sigma <= 0) sigma = 0.01;
+        if (sigma > 10.0) sigma = 10.0;
+    }
+    return sigma;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // CubicSpline — 自然三次样条（double x 坐标）

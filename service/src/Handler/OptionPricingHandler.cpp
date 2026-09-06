@@ -2,6 +2,7 @@
 #include "Derivative/OptionPricer.h"
 #include "Derivative/IVSurface.h"
 #include "Util/OptionDataDB.h"
+#include "Util/QuoteDB.h"
 #include "Util/system.h"
 #include <chrono>
 #include <regex>
@@ -164,17 +165,37 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             return;
         }
 
-        // 查询该产品最新日期的所有合约
+        // 查询该产品最新日期的所有合约 (包含 close 用于反算 IV)
         String sql = fmt::format(
             "SELECT contract_name, call_put, strike_price, implied_volatility, "
-            "       trade_date, underlying "
+            "       trade_date, underlying, close "
             "FROM option_daily "
             "WHERE exchange = '{}' AND product = '{}' "
             "  AND trade_date = (SELECT MAX(trade_date) FROM option_daily "
             "                    WHERE exchange = '{}' AND product = '{}') "
-            "  AND implied_volatility > 0 "
             "ORDER BY contract_name",
             exchange, product, exchange, product);
+
+        // 获取标的现货价格 (用于从 close 反算 IV)
+        String underlying_code;
+        double spot_price = 0.0;
+        {
+            String spot_sql = fmt::format(
+                "SELECT DISTINCT underlying FROM option_daily "
+                "WHERE exchange = '{}' AND product = '{}' AND underlying IS NOT NULL "
+                "AND underlying != '' LIMIT 1",
+                exchange, product);
+            db.query(spot_sql, [&](duckdb_result& result) -> bool {
+                if (duckdb_row_count(&result) > 0)
+                    underlying_code = duckdb_value_varchar(&result, 0, 0);
+                return true;
+            });
+        }
+        if (!underlying_code.empty()) {
+            String prefix = (exchange == "SSE") ? "sh." : "sz.";
+            String quote_table = QuoteDB::tableName("stock", "daily");
+            spot_price = QuoteDB::instance().getLatestClose(quote_table, prefix + underlying_code);
+        }
 
         // 构建 IV 数据点
         Vector<IVSurface::IVPoint> points;
@@ -187,6 +208,8 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
         int tm = (unsigned)today_ymd.month();
         int td = (unsigned)today_ymd.day();
 
+        double risk_free_rate = 0.015;
+
         bool ok = db.query(sql, [&](duckdb_result& result) -> bool {
             idx_t row_count = duckdb_row_count(&result);
             for (idx_t i = 0; i < row_count; ++i) {
@@ -194,8 +217,21 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
                 String call_put = duckdb_value_varchar(&result, 1, i);
                 double strike = duckdb_value_double(&result, 2, i);
                 double iv = duckdb_value_double(&result, 3, i);
+                double close_price = duckdb_value_double(&result, 6, i);
 
-                if (strike <= 0 || iv <= 0) continue;
+                if (strike <= 0) continue;
+
+                // IV 缺失时从 close 价格反算
+                if (iv <= 0 && close_price > 0 && spot_price > 0) {
+                    auto [ey, em] = parseExpiryFromName(contract_name, product);
+                    if (ey == 0) continue;
+                    int expiry_days = daysToExpiry(ey, em, ty, tm, td);
+                    double T = std::max(expiry_days, 1) / 365.0;
+                    bool is_call = (call_put == "认购");
+                    iv = computeIVFromPrice(close_price, spot_price, strike, T, risk_free_rate, is_call);
+                }
+
+                if (iv <= 0) continue;
 
                 auto [ey, em] = parseExpiryFromName(contract_name, product);
                 if (ey == 0) continue;

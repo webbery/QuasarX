@@ -388,6 +388,10 @@ int QuoteDB::importCsv(const std::string& org_csv_path,
 
     exec_unsafe("COMMIT");
 
+    // 强制刷写 appender 的 buffered replay 到 ART 索引，
+    // 避免后续查询触发 ApplyBufferedReplays 时索引不一致导致 segfault
+    exec_unsafe("PRAGMA wal_checkpoint(RESTART)");
+
     auto t_commit = std::chrono::high_resolution_clock::now();
     auto commit_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_commit - t_begin).count();
     SPDLOG_INFO("[QuoteDB] Transaction: {} updated + {} inserted in {}ms (BEGIN to COMMIT)", updated, inserted, commit_ms);
