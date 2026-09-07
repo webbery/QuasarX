@@ -14,6 +14,15 @@
             :value="backtestRange"
             @update="updateBacktestRange"
           />
+          <label class="config-label" style="margin-left: 8px;">本金</label>
+          <input
+            v-model.number="strategyCapital"
+            type="number"
+            class="capital-input"
+            min="10000"
+            step="100000"
+            placeholder="初始资金"
+          />
         </div>
 
         <FlowCanvas
@@ -147,8 +156,14 @@ const {
   updateNodeData, onConnect, setEdgeImfIndex, isValidConnection
 } = operations
 
-// 初始化 saveLoad
-const saveLoad = useFlowSaveLoad(state, operations)
+// 回测时间范围配置（根级别，不配置则使用数据文件全范围）
+const backtestRange = ref(['2020-01-01', '2025-12-31'])
+
+// 策略本金配置
+const strategyCapital = ref(1000000)
+
+// 初始化 saveLoad（传入 strategyCapital 供版本保存/加载使用）
+const saveLoad = useFlowSaveLoad(state, operations, strategyCapital)
 const {
   saveFlow, saveAsNewVersion, createNewVersion,
   loadVersionFromHistory, validateFlow, ensureVersionId,
@@ -165,11 +180,8 @@ watch(currentStrategyId, (newId) => {
   }
 })
 
-// 回测时间范围配置（根级别，不配置则使用数据文件全范围）
-const backtestRange = ref(['2020-01-01', '2025-12-31'])
-
-// 初始化 backtest（传入 backtestRange 引用）
-const backtest = useBacktest(state, saveLoad, backtestRange)
+// 初始化 backtest（传入 backtestRange 引用和 strategyCapital 引用）
+const backtest = useBacktest(state, saveLoad, backtestRange, strategyCapital)
 const { runBacktest } = backtest
 
 // Refs
@@ -186,6 +198,7 @@ const updateBacktestRange = (range) => {
 provide('selectedNodes', selectedNodes)
 provide('selectedEdges', selectedEdges)
 provide('backtestRange', backtestRange)
+provide('strategyCapital', strategyCapital)
 provide('portfolioConfigs', computed(() => portfolioStore.portfolioConfigs))
 
 watch(getNodes, (newNodes) => {
@@ -482,6 +495,7 @@ const getStrategyGraph = () => {
     id: `strategy_${currentStrategyId.value}`,
     name: strategyName,
     description: '用户自定义策略',
+    capital: strategyCapital.value || undefined,
     backtest: backtestRange.value ? {
       start: backtestRange.value[0],
       end: backtestRange.value[1]
@@ -526,6 +540,21 @@ defineExpose({
   color: var(--text-secondary);
   white-space: nowrap;
   margin: 0;
+}
+
+.backtest-config-bar .capital-input {
+  width: 120px;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.backtest-config-bar .capital-input:focus {
+  border-color: var(--primary);
 }
 
 .main-container {

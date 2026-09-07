@@ -15,7 +15,7 @@ const STRATEGY_SCRIPT_VERSION = 1
  * 回测执行与结果处理 composable
  * 处理回测执行、结果解析、图表更新等
  */
-export function useBacktest(state, saveLoad, backtestRangeRef = null) {
+export function useBacktest(state, saveLoad, backtestRangeRef = null, strategyCapitalRef = null) {
   const {
     getNodes,
     getEdges,
@@ -53,6 +53,7 @@ export function useBacktest(state, saveLoad, backtestRangeRef = null) {
       id: currentStrategyId.value ? `strategy_${currentStrategyId.value}` : `temp_${Date.now()}`,
       name: strategyName,
       description: '用户自定义策略',
+      capital: strategyCapitalRef?.value || undefined,
       backtest: backtestRangeRef ? {
         start: backtestRangeRef.value[0],
         end: backtestRangeRef.value[1]

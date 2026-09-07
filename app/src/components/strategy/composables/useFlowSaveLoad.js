@@ -11,7 +11,7 @@ const STRATEGY_SCRIPT_VERSION = 1
  * 流程图保存/加载 composable
  * 处理策略和版本的保存、加载、创建等操作
  */
-export function useFlowSaveLoad(state, operations) {
+export function useFlowSaveLoad(state, operations, strategyCapitalRef = null) {
   const {
     getNodes,
     getEdges,
@@ -69,7 +69,8 @@ export function useFlowSaveLoad(state, operations) {
 
     const flowData = {
       nodes: getNodes.value,
-      edges: getEdges.value
+      edges: getEdges.value,
+      capital: strategyCapitalRef?.value || undefined
     }
 
     try {
@@ -321,6 +322,12 @@ export function useFlowSaveLoad(state, operations) {
 
       const loadedNodes = finalFlowData.nodes || []
       const loadedEdges = finalFlowData.edges || []
+
+      // 恢复本金配置
+      if (strategyCapitalRef && typeof finalFlowData.capital === 'number' && finalFlowData.capital > 0) {
+        strategyCapitalRef.value = finalFlowData.capital
+        console.info(`[loadVersionFromHistory] 恢复本金配置：${finalFlowData.capital}`)
+      }
 
       // 添加节点
       if (loadedNodes.length > 0) {

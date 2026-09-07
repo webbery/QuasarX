@@ -339,7 +339,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     INFO("[Backtest] GetPools returned {} symbols", symbols.size()); fflush(stdout);
 
     // 使用 ExchangeManager 创建多 Exchange 回测上下文
-    double initialCapital = BACKTEST_INITIAL_CAPITAL;
+    double initialCapital = strategyCapital > 0 ? strategyCapital : BACKTEST_INITIAL_CAPITAL;
     INFO("[Backtest] CreateMultiContext (capital={:.0f})...", initialCapital); fflush(stdout);
     run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital);
     INFO("[Backtest] CreateMultiContext done, runId={}", runId); fflush(stdout);
