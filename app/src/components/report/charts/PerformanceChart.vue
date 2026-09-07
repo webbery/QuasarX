@@ -57,51 +57,46 @@ const { chartRef, initChart, updateChart } = useECharts(true)
 // === 数据计算 ===
 
 /**
- * 从基准数据生成 x 轴日期标签
- * 优先使用基准数据的时间戳，确保所有数据点都能显示
+ * x 轴日期标签 — 始终使用策略日期（props.dates）
+ * 策略日收益率是权威数据源，基准数据对齐到策略日期轴
  */
 const xAxisDates = computed(() => {
-  if (props.benchmarkData.length > 0) {
-    return props.benchmarkData.map((d: any) => {
-      const ms = d.time
-      const date = new Date(ms > 9999999999 ? ms : ms * 1000)
-      const Y = date.getFullYear()
-      const M = String(date.getMonth() + 1).padStart(2, '0')
-      const D = String(date.getDate()).padStart(2, '0')
-      return `${Y}-${M}-${D}`
-    })
-  }
   return props.dates
 })
 
 /**
- * 计算基准日收益率
- */
-const benchmarkDailyReturns = computed(() => {
-  if (props.benchmarkData.length === 0) return []
-
-  const returns: number[] = [0] // 第一天收益率为 0
-  for (let i = 1; i < props.benchmarkData.length; i++) {
-    const prevClose = props.benchmarkData[i - 1].close
-    const currClose = props.benchmarkData[i].close
-    const dailyReturn = ((currClose - prevClose) / prevClose) * 100
-    returns.push(Number(dailyReturn.toFixed(4)))
-  }
-  return returns
-})
-
-/**
- * 计算基准累计收益曲线（从日收益率连乘）
+ * 计算基准累计收益曲线，按日期对齐到策略的 x 轴
+ * 基准非交易日无数据，对应位置为 null（ECharts 自动跳过）
  */
 const benchmarkCumulativeReturns = computed(() => {
-  const returns = benchmarkDailyReturns.value
-  if (returns.length === 0) return []
+  if (props.benchmarkData.length === 0) return []
 
-  const result: number[] = []
+  // 构建基准日收益率
+  const benchReturns = new Map<string, number>()
+  let prevClose = 0
+  for (const d of props.benchmarkData) {
+    const ms = d.time
+    const date = new Date(ms > 9999999999 ? ms : ms * 1000)
+    const Y = date.getFullYear()
+    const M = String(date.getMonth() + 1).padStart(2, '0')
+    const D = String(date.getDate()).padStart(2, '0')
+    const dateStr = `${Y}-${M}-${D}`
+    if (prevClose > 0) {
+      benchReturns.set(dateStr, ((d.close - prevClose) / prevClose) * 100)
+    }
+    prevClose = d.close
+  }
+
+  // 按策略日期轴对齐，连乘计算累计收益
+  const dates = xAxisDates.value
+  const result: (number | null)[] = []
   let cumulative = 1
 
-  for (const dailyReturn of returns) {
-    cumulative *= (1 + dailyReturn / 100)
+  for (const date of dates) {
+    const r = benchReturns.get(date)
+    if (r !== undefined) {
+      cumulative *= (1 + r / 100)
+    }
     result.push(Number(((cumulative - 1) * 100).toFixed(2)))
   }
 
@@ -109,51 +104,10 @@ const benchmarkCumulativeReturns = computed(() => {
 })
 
 /**
- * 将日收益率对齐到基准日期轴
- * 当日收益率点数与基准不一致时，使用前向填充或截断
- */
-const alignedDailyReturns = computed(() => {
-  const benchLen = benchmarkCumulativeReturns.value.length
-  const dailyReturns = props.dailyReturns ?? []
-  const stratLen = dailyReturns.length
-
-  if (benchLen === 0) return dailyReturns
-  if (benchLen === stratLen) return dailyReturns
-
-  // 日收益率点数少于基准：前向填充到基准长度
-  if (stratLen < benchLen && stratLen > 0) {
-    const result: number[] = []
-    const ratio = stratLen / benchLen
-    let lastValue = dailyReturns[0]
-
-    for (let i = 0; i < benchLen; i++) {
-      // 计算当前基准点对应的策略索引
-      const srcIdx = Math.floor(i * ratio)
-
-      if (srcIdx < stratLen) {
-        // 有对应的日收益率数据，更新 lastValue
-        lastValue = dailyReturns[srcIdx]
-      }
-      // 否则继续使用 lastValue（前向填充）
-
-      result.push(lastValue)
-    }
-    return result
-  }
-
-  // 日收益率点数多于基准：截断
-  if (stratLen > benchLen) {
-    return dailyReturns.slice(0, benchLen)
-  }
-
-  return dailyReturns
-})
-
-/**
- * 计算累计收益率（从日收益率连乘）
+ * 计算累计收益率（从原始日收益率连乘，不做任何对齐/截断）
  */
 const cumulativeReturns = computed(() => {
-  const returns = alignedDailyReturns.value
+  const returns = props.dailyReturns ?? []
   if (returns.length === 0) return []
 
   const result: number[] = []

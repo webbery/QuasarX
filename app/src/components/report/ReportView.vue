@@ -256,7 +256,9 @@ function reorderItems(fromIndex: number, toIndex: number) {
 
 function onSymbolChange(newSymbol: string) {
   if (newSymbol && selectedSymbol.value.length > 0) {
-    selectedSymbol.value[0] = newSymbol
+    // 将选中标的移到首位，同时去重避免下拉菜单出现重复项
+    const rest = selectedSymbol.value.filter(s => s !== newSymbol)
+    selectedSymbol.value = [newSymbol, ...rest]
     const prices = dataState.symbolPrices.value
     if (!prices[newSymbol]) {
       const firstKey = Object.keys(prices)[0]

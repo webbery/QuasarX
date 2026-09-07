@@ -15,14 +15,17 @@
             @update="updateBacktestRange"
           />
           <label class="config-label" style="margin-left: 8px;">本金</label>
-          <input
-            v-model.number="strategyCapital"
-            type="number"
-            class="capital-input"
-            min="10000"
-            step="100000"
-            placeholder="初始资金"
-          />
+          <span class="capital-input-wrapper">
+            <span class="capital-prefix">¥</span>
+            <input
+              v-model.number="strategyCapital"
+              type="number"
+              class="capital-input"
+              min="10000"
+              step="100000"
+              placeholder="初始资金"
+            />
+          </span>
         </div>
 
         <FlowCanvas
@@ -542,19 +545,36 @@ defineExpose({
   margin: 0;
 }
 
-.backtest-config-bar .capital-input {
-  width: 120px;
-  padding: 4px 8px;
-  font-size: 13px;
+.backtest-config-bar .capital-input-wrapper {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--input-bg);
-  color: var(--text-primary);
-  outline: none;
+  transition: border-color 0.2s;
 }
 
-.backtest-config-bar .capital-input:focus {
+.backtest-config-bar .capital-input-wrapper:focus-within {
   border-color: var(--primary);
+}
+
+.backtest-config-bar .capital-prefix {
+  padding: 0 6px 0 8px;
+  font-size: 13px;
+  color: var(--text-secondary, #8899aa);
+  user-select: none;
+  line-height: 1;
+}
+
+.backtest-config-bar .capital-input {
+  width: 110px;
+  padding: 4px 8px 4px 0;
+  font-size: 13px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+  border-radius: 0;
 }
 
 .main-container {

@@ -177,8 +177,10 @@ export function useChartData(
         loadBenchmark(firstDate, lastDate)
       }
 
-      // 更新策略性能日期
-      updateStrategyPerformanceDates(prices)
+      // 更新策略性能日期（仅在后端未提供日收益率时）
+      if (reportState.strategyDailyReturns.value.length === 0) {
+        updateStrategyPerformanceDates(prices)
+      }
     } catch (error: any) {
       const status = error?.response?.status
       const detail = error?.response?.data?.error || error?.response?.statusText || error?.message
@@ -503,7 +505,11 @@ export function useChartData(
   watch(symbolPrices, (newPrices) => {
     const keys = Object.keys(newPrices)
     if (keys.length > 0 && newPrices[keys[0]].length > 0) {
-      updateStrategyPerformanceDates(newPrices[keys[0]])
+      // 仅在后端未提供日收益率时才从价格数据生成日期
+      // 后端 daily_dates 与 dailyReturns 一一对应，不能被价格数据覆盖
+      if (reportState.strategyDailyReturns.value.length === 0) {
+        updateStrategyPerformanceDates(newPrices[keys[0]])
+      }
 
       // 如果选择了基准，加载基准数据
       if (reportState.selectedBenchmark.value) {
@@ -516,11 +522,11 @@ export function useChartData(
     }
   }, { deep: true })
 
-  // 监听回测日期范围变化，更新日期标签
+  // 监听回测日期范围变化，更新日期标签（仅在后端未提供日收益率时）
   watch(
     [reportState.backtestStartDate, reportState.backtestEndDate],
     ([start, end]) => {
-      if (start && end) {
+      if (start && end && reportState.strategyDailyReturns.value.length === 0) {
         console.info('[useChartData] 回测日期范围已更新:', formatDateTime(start), 'to', formatDateTime(end))
         updateStrategyPerformanceDates()
       }

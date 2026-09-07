@@ -34,7 +34,7 @@ public:
                                const std::string& freq,
                                const std::string& start,
                                const std::string& end,
-                               const std::string& env_name,
+                               const std::string& interpreter,
                                const std::string& quote_dir,
                                bool overwrite = false);
 

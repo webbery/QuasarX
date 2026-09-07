@@ -61,6 +61,10 @@ const { chartRef, initChart, updateChart } = useECharts(true)
 
 function handleSymbolChange() {
   emit('symbolChange', localSymbol.value)
+  const chartData = props.prices[localSymbol.value]
+  if (chartData && chartData.length > 0) {
+    updateChart(getPriceOption(chartData, props.sellSignals, props.buySignals, props.rawSellSignals, props.rawBuySignals, localSymbol.value), true)
+  }
 }
 
 function getPriceOption(chartData: any[], sellSignals: any[], buySignals: any[], rawSell?: any[], rawBuy?: any[], targetSymbol?: string) {

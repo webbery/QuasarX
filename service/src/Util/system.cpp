@@ -339,8 +339,9 @@ bool RunCommand(const std::string& cmd, String& output) {
         }
 
         close(pipefd[0]);
-        waitpid(pid, nullptr, 0); // 等待子进程结束
-        return true;
+        int status = 0;
+        waitpid(pid, &status, 0); // 等待子进程结束
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
     }
 #endif
   return true;

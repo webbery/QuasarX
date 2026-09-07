@@ -47,6 +47,7 @@
 #include "Handler/PythonRunnerHandler.h"
 #include "Handler/MLHandler.h"
 #include "Handler/QuoteDownloadHandler.h"
+#include "Util/PythonRunner.h"
 #include "Handler/QuoteDataHandler.h"
 #include "Handler/FinanceHandler.h"
 #include "Handler/FinanceDataHandler.h"
@@ -1334,6 +1335,8 @@ void Server::updateActiveStrategiesQuote(bool overwrite) {
     // 3. 对每个 (asset_type, freq) 表 → 增量下载
     int totalGroups = 0, skippedEmpty = 0;
     nng_socket sseSock = GetSocket();
+    auto pyEnv = PythonEnv::fromConfig(_config->GetRawConfig());
+    std::string interpreter = pyEnv.resolve("");
     for (auto& [assetType, symbols] : buckets) {
         for (auto freq : kScheduleFreqs) {
             const char* freqStr = DataFrequencyTypeToString(freq);
@@ -1392,7 +1395,7 @@ void Server::updateActiveStrategiesQuote(bool overwrite) {
                 dgroups.push_back(std::move(g));
 
                 QuoteDownloadHandler::runDownloadJob(sseSock, dgroups, freqStr,
-                                                    start, today, "", quoteDir, overwrite);
+                                                    start, today, interpreter, quoteDir, overwrite);
                 ++totalGroups;
             }
         }

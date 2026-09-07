@@ -111,7 +111,7 @@ void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& 
     }
 
     // 复用核心下载逻辑（异步）
-    runDownloadJob(sse_sock, groups, freq, start, end, env_name, quote_dir, overwrite);
+    runDownloadJob(sse_sock, groups, freq, start, end, interpreter, quote_dir, overwrite);
 
     // 立即返回（返回所有分组的信息）
     nlohmann::json resp;
@@ -133,12 +133,9 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
                                           const std::string& freq,
                                           const std::string& start,
                                           const std::string& end,
-                                          const std::string& env_name,
+                                          const std::string& interpreter,
                                           const std::string& quote_dir,
                                           bool overwrite) {
-    (void)env_name;  // 调度场景固定使用系统默认 python
-    std::string interpreter = PYTHON_CMD;
-
     std::thread([sseSock, groups, quote_dir, freq, start, end, interpreter, overwrite]() {
         for (auto& group : groups) {
             auto t_group_start = std::chrono::steady_clock::now();
@@ -184,12 +181,15 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
 
                 if (!ok) {
                     failed++;
-                    INFO("[QuoteDownload] [{}/{}] {} FAILED in {} ms", i + 1, sym_list.size(), sym, sym_ms);
+                    WARN("[QuoteDownload] [{}/{}] {} FAILED in {} ms, output: {}",
+                         i + 1, sym_list.size(), sym, sym_ms, output);
+                    std::string err_msg = output.empty() ? "download script failed"
+                                        : output.substr(0, std::min(output.size(), (size_t)500));
                     SendSSE(sseSock, "quote_download", {
                         {"status", "symbol_failed"},
                         {"asset_type", asset_type},
                         {"symbol", sym},
-                        {"error", "download script failed"},
+                        {"error", err_msg},
                         {"downloaded", std::to_string(downloaded + failed)},
                         {"total", std::to_string(sym_list.size())},
                     });
