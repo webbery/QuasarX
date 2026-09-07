@@ -906,6 +906,14 @@ const deletingSymbol = ref(false)
 const updatingSymbol = ref(false)
 const isUpdatingLatest = ref(false)
 
+// 标记当前 /v0/quote POST 由哪个按钮发起的（让 onQuoteDownloadEvent 只重置对应按钮的标志位）
+type QuoteDownloadScenario = 'idle' | 'single' | 'strategy' | 'updateLatest'
+const activeDownloadScenario = ref<QuoteDownloadScenario>('idle')
+
+// "更新到最新"任务的 SSE done 等待超时（兜底，避免某个组 done 丢失导致按钮永久卡住）
+const UPDATE_LATEST_TIMEOUT_MS = 30 * 60 * 1000
+const updateLatestTimer = ref<number | null>(null)
+
 // 跟踪"更新到最新"任务的 SSE done 事件（等所有组完成后再刷新列表）
 const expectedDones = ref(0)
 const completedDones = ref(0)
@@ -913,11 +921,28 @@ const onUpdateLatestDone = (msg: any) => {
     if (msg.data.status !== 'done') return
     completedDones.value++
     if (completedDones.value >= expectedDones.value) {
+        if (updateLatestTimer.value !== null) {
+            clearTimeout(updateLatestTimer.value)
+            updateLatestTimer.value = null
+        }
         sseService.off('quote_download', onUpdateLatestDone)
+        activeDownloadScenario.value = 'idle'
         addQuoteLog(`✓ 全部组下载完成，刷新列表`, 'done')
         loadQuoteData()
         isUpdatingLatest.value = false
     }
+}
+
+// "更新到最新"超时兜底：done 计数卡住时强制结束任务
+const onUpdateLatestTimeout = () => {
+    if (!isUpdatingLatest.value) return
+    sseService.off('quote_download', onUpdateLatestDone)
+    addQuoteLog(`⚠ 更新超时（${Math.round(UPDATE_LATEST_TIMEOUT_MS / 60000)} 分钟）：已完成 ${completedDones.value}/${expectedDones.value} 组，剩余组视为失败`, 'error')
+    quoteStatus.value = `更新超时：${completedDones.value}/${expectedDones.value} 组完成`
+    loadQuoteData()
+    isUpdatingLatest.value = false
+    activeDownloadScenario.value = 'idle'
+    updateLatestTimer.value = null
 }
 
 // 批量更新分组类型
@@ -1441,15 +1466,26 @@ const onQuoteDownloadEvent = (msg: any) => {
             addQuoteLog(`导入 ${d.table}: ${d.symbol} (${d.rows} 行)`, 'success')
             break
         case 'done':
-            quoteDownloading.value = false
-            quoteStrategyDownloading.value = false
-            quoteProgress.phase = ''
+            // 仅当本 SSE 事件来自当前激活场景时，才重置对应按钮的标志位
+            // （避免「更新到最新」运行中，单/策略按钮被错误关闭）
+            if (activeDownloadScenario.value === 'single') {
+                quoteDownloading.value = false
+                quoteProgress.phase = ''
+            } else if (activeDownloadScenario.value === 'strategy') {
+                quoteStrategyDownloading.value = false
+                quoteProgress.phase = ''
+            }
+            // 'updateLatest' / 'idle' 不在这里重置标志位（各自有专门的 done 处理）
             if (d.success === 'true') {
                 addQuoteLog(`✅ 完成: 共导入 ${d.total_rows} 行 → ${d.table}`, 'done')
-                quoteStatus.value = `下载完成，${d.total_rows} 行已导入 ${d.table}`
+                if (activeDownloadScenario.value === 'single' || activeDownloadScenario.value === 'strategy') {
+                    quoteStatus.value = `下载完成，${d.total_rows} 行已导入 ${d.table}`
+                }
             } else {
-                addQuoteLog('下载失败', 'error')
-                quoteStatus.value = '下载失败'
+                addQuoteLog(`❌ ${d.table} 下载失败`, 'error')
+                if (activeDownloadScenario.value === 'single' || activeDownloadScenario.value === 'strategy') {
+                    quoteStatus.value = '下载失败'
+                }
             }
             break
     }
@@ -1494,6 +1530,11 @@ onUnmounted(() => {
     // 组件真正销毁时才移除 handler
     ipcRenderer.removeListener('tick-download-progress', onTickProgress)
     sseService.off('quote_download', onQuoteDownloadEvent)
+    sseService.off('quote_download', onUpdateLatestDone)
+    if (updateLatestTimer.value !== null) {
+        clearTimeout(updateLatestTimer.value)
+        updateLatestTimer.value = null
+    }
 })
 
 // KeepAlive 缓存期间不需要重复注册
@@ -1549,6 +1590,7 @@ const onHandleQuoteDownload = async () => {
     }
 
     quoteDownloading.value = true
+    activeDownloadScenario.value = 'single'
     quoteStatus.value = ''
     quoteLogs.value = []
     quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
@@ -1568,6 +1610,7 @@ const onHandleQuoteDownload = async () => {
         // POST 立即返回，进度通过 SSE 推送
     } catch (err: any) {
         quoteDownloading.value = false
+        activeDownloadScenario.value = 'idle'
         quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
         addQuoteLog(`请求失败: ${err.message}`, 'error')
     }
@@ -1605,6 +1648,7 @@ const onDownloadQuoteByStrategy = async () => {
     }
 
     quoteStrategyDownloading.value = true
+    activeDownloadScenario.value = 'strategy'
     quoteStatus.value = `正在从策略「${quoteStrategy.value}」下载 ${quoteStrategySymbolCount.value} 个标的...`
     quoteLogs.value = []
     quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
@@ -1624,6 +1668,7 @@ const onDownloadQuoteByStrategy = async () => {
         addQuoteLog(`✓ 已提交下载请求：${quoteStrategySymbolCount.value} 个标的 (${quoteStrategyFreq.value})`)
     } catch (err: any) {
         quoteStrategyDownloading.value = false
+        activeDownloadScenario.value = 'idle'
         quoteStatus.value = `请求失败: ${err.response?.data?.message || err.message}`
         addQuoteLog(`请求失败: ${err.message}`, 'error')
     }
@@ -1949,6 +1994,7 @@ const onUpdateToLatest = async () => {
     if (flatSymbols.value.length === 0) return
 
     isUpdatingLatest.value = true
+    activeDownloadScenario.value = 'updateLatest'
     quoteLogs.value = []
     quoteStatus.value = ''
     quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
@@ -1992,6 +2038,7 @@ const onUpdateToLatest = async () => {
         addQuoteLog(`✓ 所有 ${skippedCount} 只标的已是最新数据，无需更新`, 'done')
         quoteStatus.value = `所有标的已是最新数据`
         isUpdatingLatest.value = false
+        activeDownloadScenario.value = 'idle'
         return
     }
 
@@ -2007,10 +2054,14 @@ const onUpdateToLatest = async () => {
         }
     }
 
-    // === 第 3 步：订阅 SSE done 事件，初始化计数器 ===
+    // === 第 3 步：订阅 SSE done 事件，初始化计数器 + 启动超时兜底 ===
     expectedDones.value = 0
     completedDones.value = 0
     sseService.on('quote_download', onUpdateLatestDone)
+    if (updateLatestTimer.value !== null) {
+        clearTimeout(updateLatestTimer.value)
+    }
+    updateLatestTimer.value = window.setTimeout(onUpdateLatestTimeout, UPDATE_LATEST_TIMEOUT_MS)
 
     // === 第 4 步：逐组发送批量请求（失败跳过，继续下一组） ===
     const freqMap: Record<string, string> = {
@@ -2061,11 +2112,16 @@ const onUpdateToLatest = async () => {
 
     // 如果所有 POST 都失败，立刻清理
     if (expectedDones.value === 0) {
+        if (updateLatestTimer.value !== null) {
+            clearTimeout(updateLatestTimer.value)
+            updateLatestTimer.value = null
+        }
         sseService.off('quote_download', onUpdateLatestDone)
         addQuoteLog(`✗ 所有组请求失败：${failCount}`, 'error')
         quoteStatus.value = `更新失败：${failCount} 只标的`
         await loadQuoteData()
         isUpdatingLatest.value = false
+        activeDownloadScenario.value = 'idle'
         return
     }
 

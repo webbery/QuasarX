@@ -1,6 +1,7 @@
 #pragma once
 #include "std_header.h"
-#include <nlohmann/json.hpp>
+#include "Derivative/OptionPricer.h"
+#include "json.hpp"
 
 // 期权合约异常报价过滤器
 // 用于 IV 曲面构建前剔除流动性差、价差异常、moneyness 极端、parity 违反的合约
@@ -15,7 +16,7 @@
 
 struct OptionContractView {
     String contract_name;
-    String call_put;          // "认购" / "认沽"
+    OptionType opt_type = OptionType::Unknown;
     double strike;
     double close;             // 收盘价
     double settlement;        // 结算价 (可为 0)

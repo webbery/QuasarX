@@ -59,6 +59,18 @@ export interface IVSurfaceResult {
   expiry_days: number[]
   surface: number[][]
   count: number
+  filter_stats?: FilterStats
+}
+
+export interface FilterStats {
+  total_contracts: number
+  filtered_count: number
+  removed_by_layer: Record<string, number>
+  removed_contracts: Array<{
+    contract_name: string
+    layer: string
+    reason: string
+  }>
 }
 
 export interface ContractInfo {

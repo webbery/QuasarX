@@ -5,6 +5,27 @@
 #include <algorithm>
 #include <numeric>
 
+// 期权类型枚举
+enum class OptionType : uint8_t {
+    Call,       // 认购
+    Put,        // 认沽
+    Unknown     // 未知
+};
+
+inline OptionType toOptionType(const String& s) {
+    if (s == "认购") return OptionType::Call;
+    if (s == "认沽") return OptionType::Put;
+    return OptionType::Unknown;
+}
+
+inline String fromOptionType(OptionType t) {
+    switch (t) {
+        case OptionType::Call: return "认购";
+        case OptionType::Put:  return "认沽";
+        default: return "";
+    }
+}
+
 // 期权定价引擎: Black-Scholes / Monte Carlo / Binomial Tree
 // 欧式 + 美式，支持分红
 

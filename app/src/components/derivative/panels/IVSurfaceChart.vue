@@ -18,6 +18,25 @@
       <button class="btn-toggle" @click="viewMode = viewMode === '3d' ? '2d' : '3d'">
         {{ viewMode === '3d' ? '切换 2D' : '切换 3D' }}
       </button>
+      <div v-if="filterStats" class="filter-badge" @click="showFilterDetail = !showFilterDetail">
+        <span class="filter-count">{{ filterStats.filtered_count }}/{{ filterStats.total_contracts }}</span>
+        <span class="filter-label">合约</span>
+        <span class="filter-arrow" :class="{ expanded: showFilterDetail }">▼</span>
+      </div>
+    </div>
+    <div v-if="showFilterDetail && filterStats" class="filter-detail">
+      <div class="filter-summary">
+        <span v-for="(count, layer) in filterStats.removed_by_layer" :key="layer" class="layer-stat">
+          {{ layer }}: <strong>{{ count }}</strong>
+        </span>
+      </div>
+      <div v-if="filterStats.removed_contracts.length > 0" class="removed-list">
+        <div v-for="item in filterStats.removed_contracts" :key="item.contract_name" class="removed-item">
+          <span class="removed-name">{{ item.contract_name }}</span>
+          <span class="removed-layer">{{ item.layer }}</span>
+          <span class="removed-reason">{{ item.reason }}</span>
+        </div>
+      </div>
     </div>
     <div v-if="loading" class="loading-hint">加载 IV 数据中...</div>
     <div v-else-if="error" class="error-hint">{{ error }}</div>
@@ -29,7 +48,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'
-import { getIVSurface, type IVSurfaceResult } from '../composables/useOptionPricing'
+import { getIVSurface, type IVSurfaceResult, type FilterStats } from '../composables/useOptionPricing'
 
 const PRODUCT_MAP: Record<string, Array<{ value: string; label: string }>> = {
   CFFEX: [
@@ -59,6 +78,8 @@ const viewMode = ref<'3d' | '2d'>('3d')
 const loading = ref(false)
 const error = ref('')
 const chartRef = ref<HTMLElement>()
+const showFilterDetail = ref(false)
+const filterStats = ref<FilterStats | null>(null)
 let chart: echarts.ECharts | null = null
 let surfaceData: IVSurfaceResult | null = null
 
@@ -75,15 +96,19 @@ watch(exchange, () => {
 async function loadSurface() {
   loading.value = true
   error.value = ''
+  showFilterDetail.value = false
   try {
     surfaceData = await getIVSurface(exchange.value, product.value)
     if (!surfaceData || surfaceData.count === 0) {
       error.value = '无 IV 数据，请先在数据中心下载期权数据'
+      filterStats.value = null
     } else {
+      filterStats.value = surfaceData.filter_stats || null
       render()
     }
   } catch (e: any) {
     error.value = e.response?.data?.error || '加载失败'
+    filterStats.value = null
   } finally {
     loading.value = false
   }
@@ -247,6 +272,36 @@ watch(viewMode, render)
   color: #2962ff; font-size: 12px; cursor: pointer;
 }
 .btn-toggle:hover { background: rgba(41, 98, 255, 0.3); }
+.filter-badge {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 10px; background: rgba(76, 175, 80, 0.15);
+  border: 1px solid rgba(76, 175, 80, 0.4); border-radius: 4px;
+  color: #66bb6a; font-size: 12px; cursor: pointer;
+  margin-left: auto;
+}
+.filter-badge:hover { background: rgba(76, 175, 80, 0.25); }
+.filter-count { font-weight: 600; }
+.filter-label { color: #8899bb; }
+.filter-arrow { font-size: 10px; transition: transform 0.2s; }
+.filter-arrow.expanded { transform: rotate(180deg); }
+.filter-detail {
+  background: rgba(26, 34, 54, 0.6);
+  border: 1px solid rgba(74, 85, 104, 0.3);
+  border-radius: 4px; padding: 8px 12px;
+  margin-bottom: 8px; font-size: 12px;
+  max-height: 200px; overflow-y: auto;
+}
+.filter-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.layer-stat { color: #8899bb; }
+.layer-stat strong { color: #ef5350; }
+.removed-list { border-top: 1px solid rgba(74, 85, 104, 0.3); padding-top: 8px; }
+.removed-item {
+  display: flex; gap: 8px; padding: 2px 0;
+  font-family: monospace; font-size: 11px;
+}
+.removed-name { color: #e0e0e0; min-width: 120px; }
+.removed-layer { color: #ffa726; min-width: 30px; }
+.removed-reason { color: #8899bb; }
 .loading-hint, .error-hint {
   flex: 1; display: flex; align-items: center; justify-content: center;
   font-size: 13px;

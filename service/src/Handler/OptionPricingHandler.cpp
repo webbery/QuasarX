@@ -1,6 +1,7 @@
 #include "Handler/OptionPricingHandler.h"
 #include "Derivative/OptionPricer.h"
 #include "Derivative/IVSurface.h"
+#include "Derivative/OptionContractFilter.h"
 #include "Util/OptionDataDB.h"
 #include "Util/QuoteDB.h"
 #include "Util/system.h"
@@ -165,10 +166,11 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             return;
         }
 
-        // 查询该产品最新日期的所有合约 (包含 close 用于反算 IV)
+        // 查询该产品最新日期的所有合约 (扩展字段用于异常报价过滤)
         String sql = fmt::format(
             "SELECT contract_name, call_put, strike_price, implied_volatility, "
-            "       trade_date, underlying, close "
+            "       trade_date, underlying, close, settlement, open, high, low, "
+            "       volume, turnover, open_interest "
             "FROM option_daily "
             "WHERE exchange = '{}' AND product = '{}' "
             "  AND trade_date = (SELECT MAX(trade_date) FROM option_daily "
@@ -197,10 +199,6 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             spot_price = QuoteDB::instance().getLatestClose(quote_table, prefix + underlying_code);
         }
 
-        // 构建 IV 数据点
-        Vector<IVSurface::IVPoint> points;
-        nlohmann::json raw_points = nlohmann::json::array();
-
         // 获取今天日期用于计算到期天数
         auto today = floor<days>(system_clock::now());
         auto today_ymd = year_month_day{today};
@@ -210,39 +208,47 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
 
         double risk_free_rate = 0.015;
 
+        // 构建 OptionContractView 列表 (用于过滤器)
+        Vector<OptionContractView> contracts;
+
         bool ok = db.query(sql, [&](duckdb_result& result) -> bool {
             idx_t row_count = duckdb_row_count(&result);
             for (idx_t i = 0; i < row_count; ++i) {
-                String contract_name = duckdb_value_varchar(&result, 0, i);
-                String call_put = duckdb_value_varchar(&result, 1, i);
-                double strike = duckdb_value_double(&result, 2, i);
-                double iv = duckdb_value_double(&result, 3, i);
-                double close_price = duckdb_value_double(&result, 6, i);
+                OptionContractView c;
+                c.contract_name = duckdb_value_varchar(&result, 0, i);
+                c.opt_type = toOptionType(duckdb_value_varchar(&result, 1, i));
+                c.strike = duckdb_value_double(&result, 2, i);
+                c.iv = duckdb_value_double(&result, 3, i);
+                c.close = duckdb_value_double(&result, 6, i);
+                c.settlement = duckdb_value_double(&result, 7, i);
+                c.open = duckdb_value_double(&result, 8, i);
+                c.high = duckdb_value_double(&result, 9, i);
+                c.low = duckdb_value_double(&result, 10, i);
+                c.volume = duckdb_value_int64(&result, 11, i);
+                c.turnover = duckdb_value_int64(&result, 12, i);
+                c.open_interest = duckdb_value_int64(&result, 13, i);
+                c.spot = spot_price;
+                c.risk_free_rate = risk_free_rate;
 
-                if (strike <= 0) continue;
+                if (c.strike <= 0) continue;
 
                 // IV 缺失时从 close 价格反算
-                if (iv <= 0 && close_price > 0 && spot_price > 0) {
-                    auto [ey, em] = parseExpiryFromName(contract_name, product);
+                if (c.iv <= 0 && c.close > 0 && spot_price > 0) {
+                    auto [ey, em] = parseExpiryFromName(c.contract_name, product);
                     if (ey == 0) continue;
                     int expiry_days = daysToExpiry(ey, em, ty, tm, td);
                     double T = std::max(expiry_days, 1) / 365.0;
-                    bool is_call = (call_put == "认购");
-                    iv = computeIVFromPrice(close_price, spot_price, strike, T, risk_free_rate, is_call);
+                    bool is_call = (c.opt_type == OptionType::Call);
+                    c.iv = computeIVFromPrice(c.close, spot_price, c.strike, T, risk_free_rate, is_call);
                 }
 
-                if (iv <= 0) continue;
+                if (c.iv <= 0) continue;
 
-                auto [ey, em] = parseExpiryFromName(contract_name, product);
+                auto [ey, em] = parseExpiryFromName(c.contract_name, product);
                 if (ey == 0) continue;
 
-                int expiry_days = daysToExpiry(ey, em, ty, tm, td);
-                points.push_back({strike, expiry_days, iv});
-                raw_points.push_back({
-                    {"strike", strike}, {"expiry_days", expiry_days},
-                    {"iv", iv}, {"contract_name", contract_name},
-                    {"call_put", call_put}
-                });
+                c.expiry_days = daysToExpiry(ey, em, ty, tm, td);
+                contracts.push_back(std::move(c));
             }
             return true;
         });
@@ -255,11 +261,28 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             return;
         }
 
-        // 构建 IV 曲面
+        // 应用异常报价过滤器
+        FilterConfig filter_cfg;
+        filter_cfg.is_index_option = (exchange == "CFFEX");
+        OptionContractFilter filter(filter_cfg);
+        auto filter_result = filter.apply(std::move(contracts));
+
+        // 构建 IV 曲面 (使用过滤后的合约)
+        Vector<IVSurface::IVPoint> points;
+        nlohmann::json raw_points = nlohmann::json::array();
+        for (auto& c : filter_result.kept) {
+            points.push_back({c.strike, c.expiry_days, c.iv, c.opt_type});
+            raw_points.push_back({
+                {"strike", c.strike}, {"expiry_days", c.expiry_days},
+                {"iv", c.iv}, {"contract_name", c.contract_name},
+                {"call_put", fromOptionType(c.opt_type)}
+            });
+        }
+
         IVSurface surface;
         surface.build(points);
 
-        // 生成网格
+        // 生成网格 (call/put 分离)
         Vector<double> strikes;
         Vector<int> expiry_list;
         {
@@ -273,19 +296,37 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             expiry_list.assign(e_set.begin(), e_set.end());
         }
 
-        auto grid = surface.generateSurface(strikes, expiry_list);
+        auto [call_surface, put_surface] = surface.generateSurface(strikes, expiry_list);
 
         nlohmann::json response;
         response["raw_points"] = std::move(raw_points);
         response["strikes"] = strikes;
         response["expiry_days"] = expiry_list;
-        // grid: [expiry_idx][strike_idx]
+
+        // 曲面数据: 优先使用 call_surface (向后兼容),新增 call_surface/put_surface
         nlohmann::json grid_json = nlohmann::json::array();
-        for (size_t i = 0; i < grid.size(); ++i) {
-            grid_json.push_back(grid[i]);
+        for (size_t i = 0; i < call_surface.size(); ++i) {
+            grid_json.push_back(call_surface[i]);
         }
         response["surface"] = std::move(grid_json);
+
+        // 新增: call/put 分离曲面
+        nlohmann::json call_grid = nlohmann::json::array();
+        for (size_t i = 0; i < call_surface.size(); ++i) {
+            call_grid.push_back(call_surface[i]);
+        }
+        response["call_surface"] = std::move(call_grid);
+
+        if (!put_surface.empty() && !put_surface[0].empty()) {
+            nlohmann::json put_grid = nlohmann::json::array();
+            for (size_t i = 0; i < put_surface.size(); ++i) {
+                put_grid.push_back(put_surface[i]);
+            }
+            response["put_surface"] = std::move(put_grid);
+        }
+
         response["count"] = (int)points.size();
+        response["filter_stats"] = filter_result.stats.toJson();
 
         res.set_content(response.dump(), "application/json");
     } catch (const std::exception& e) {

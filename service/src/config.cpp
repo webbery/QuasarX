@@ -288,11 +288,6 @@ void ServerConfig::AddStockAccount(const std::string& name, const std::string& p
     accounts.emplace_back(std::move(acc));
 }
 
-nlohmann::json& ServerConfig::GetStockLimits()
-{
-    return _config["limit"]["stock"];
-}
-
 std::string ServerConfig::GetLLMKey() {
     return _config["server"]["llmkey"];
 }

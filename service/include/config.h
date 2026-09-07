@@ -63,8 +63,6 @@ public:
   void DeleteStockAccount(const std::string& name);
   void AddStockAccount(const std::string& name, const std::string& pwd);
 
-  nlohmann::json& GetStockLimits();
-
   std::string GetLLMKey();
   
   std::string GetProductID();

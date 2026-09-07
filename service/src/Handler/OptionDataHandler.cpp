@@ -58,6 +58,42 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
         return;
     }
 
+    // 测试用：直接导入本地 CSV（绕过 Python 下载脚本）
+    // body: {"action":"import_csv", "csv_path":"/abs/path/to/file.csv"}
+    if (params.value("action", std::string("")) == "import_csv") {
+        auto csv_path = params.value("csv_path", std::string(""));
+        if (csv_path.empty()) {
+            res.status = 400;
+            res.set_content(R"({"message":"csv_path required"})", "application/json");
+            return;
+        }
+        if (!fs::exists(csv_path)) {
+            res.status = 404;
+            res.set_content(
+                fmt::format(R"({{"message":"csv_path not found: {}"}})", csv_path),
+                "application/json");
+            return;
+        }
+
+        auto& optDB = OptionDataDB::instance();
+        if (!optDB.isInitialized()) {
+            auto db_path = _server->GetConfig().GetDatabasePath();
+            if (!optDB.init(db_path + "/option", "option.db")) {
+                res.status = 500;
+                res.set_content(R"({"message":"OptionDataDB init failed"})", "application/json");
+                return;
+            }
+        }
+
+        int n = optDB.importCsv(csv_path);
+        nlohmann::json resp;
+        resp["status"] = n > 0 ? "imported" : "no_rows";
+        resp["csv_path"] = csv_path;
+        resp["rows"] = n;
+        res.set_content(resp.dump(), "application/json");
+        return;
+    }
+
     auto exchange = params.value("exchange", std::string(""));
     if (!isValidExchange(exchange)) {
         res.status = 400;

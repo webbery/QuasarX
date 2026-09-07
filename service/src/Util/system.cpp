@@ -8,6 +8,7 @@
 #include "nng/protocol/pipeline0/push.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/OptionSymbolMacros.h"
+#include "std_header.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -594,7 +595,10 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     else if (code >= 560000 && code <= 569999) ct = ContractType::ETF;     // 上交所ETF: 560-569
     else if (code >= 588000 && code <= 589000) ct = ContractType::ETF;     // 科创ETF: 588/589
     else if (code >= 159000 && code <= 159999) ct = ContractType::ETF;     // 深交所ETF: 159
-    else {
+    else if (strSymbol.size() == 8) {   // ETF期权
+        ct = ContractType::EureanOption;
+
+    } else {
       auto fallback = Server::GetContractType(strSymbol);
       ct = fallback.first;
     }
@@ -607,9 +611,12 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
         ETFOptionSymbol option(symbol, name);
         return option;
     }
-    case ContractType::Option: {
+    case ContractType::Option: case ContractType::EureanOption: {
         // Option 需要通过 Server::GetContractType 返回的第二个参数判断 call/put
         auto optCt = Server::GetContractType(strSymbol);
+        auto name = Server::GetName(symbol);
+        ETFOptionSymbol option(symbol, name);
+        id = option;
         id._type = contract_type::option;
         SET_SYMBOL_OPT_DIRECTION(id, optCt.second ? 1 : 0);
     }
@@ -627,7 +634,11 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
       auto excName = to_upper(tokens.front());
       id._exchange = exchange_map().at(excName);
     } else {
-      id._exchange = Server::GetExchange(strSymbol);
+        if (id._type == contract_type::option) {
+            
+        } else {
+            id._exchange = Server::GetExchange(strSymbol);
+        }
     }
   } else {
     id._exchange = exchange_map().at(exchange);

@@ -102,9 +102,9 @@ bool OptionContractFilter::passL1(const OptionContractView& c, String& reason) c
         return false;
     }
     // 深度价内: close < intrinsic - 1e-8
-    bool is_call = (c.call_put == "认购");
-    double intrinsic = is_call ? std::max(c.spot - c.strike, 0.0)
-                               : std::max(c.strike - c.spot, 0.0);
+    double intrinsic = (c.opt_type == OptionType::Call)
+        ? std::max(c.spot - c.strike, 0.0)
+        : std::max(c.strike - c.spot, 0.0);
     if (c.close < intrinsic - 1e-8) {
         reason = fmt::format("close={:.4f}<intrinsic={:.4f}", c.close, intrinsic);
         return false;
@@ -193,8 +193,8 @@ void OptionContractFilter::applyL5(Vector<OptionContractView>& contracts, Filter
         // 找 call 和 put
         int call_idx = -1, put_idx = -1;
         for (size_t idx : indices) {
-            if (contracts[idx].call_put == "认购") call_idx = static_cast<int>(idx);
-            else if (contracts[idx].call_put == "认沽") put_idx = static_cast<int>(idx);
+            if (contracts[idx].opt_type == OptionType::Call) call_idx = static_cast<int>(idx);
+            else if (contracts[idx].opt_type == OptionType::Put) put_idx = static_cast<int>(idx);
         }
 
         if (call_idx < 0 || put_idx < 0) continue;  // 单边合约跳过

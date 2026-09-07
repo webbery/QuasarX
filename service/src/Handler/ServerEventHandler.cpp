@@ -54,7 +54,6 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
     }
     res.set_chunked_content_provider("text/event-stream",
         [&](size_t offset, httplib::DataSink& sink) {
-        auto id = std::this_thread::get_id();
         // 当客户端首次连接时，将其添加到分发器
         thread_local nng_socket sock{ 0 };
         if (sock.id == 0) {
