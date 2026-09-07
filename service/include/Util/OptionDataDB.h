@@ -29,7 +29,10 @@ public:
 
     // 查询某合约的历史日终数据
     // contract_code: 既支持原始字符串 "IO2401-C-3800", 也支持 hex 形式的 symbol_t
+    // contract_name: 可选, 8 位 ETF 期权合约必须提供 (如 "50ETF购2409月02600"),
+    //               用于从 name 前缀反推交易所以正确编码 symbol_id
     nlohmann::json queryByContract(const String& contract_code,
+                                   const String& contract_name = "",
                                    const String& start_date = "",
                                    const String& end_date = "",
                                    int limit = 500);

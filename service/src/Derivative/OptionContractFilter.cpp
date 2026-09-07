@@ -101,13 +101,17 @@ bool OptionContractFilter::passL1(const OptionContractView& c, String& reason) c
         reason = fmt::format("iv={}>{:.1f}", c.iv, _cfg.iv_max);
         return false;
     }
-    // 深度价内: close < intrinsic - 1e-8
-    double intrinsic = (c.opt_type == OptionType::Call)
-        ? std::max(c.spot - c.strike, 0.0)
-        : std::max(c.strike - c.spot, 0.0);
-    if (c.close < intrinsic - 1e-8) {
-        reason = fmt::format("close={:.4f}<intrinsic={:.4f}", c.close, intrinsic);
-        return false;
+    // 深度价内: close < intrinsic - 1e-8 (仅当 spot>0 时检查;
+    // spot<=0 时上游 IV surface handler 未取到标的行情, intrinsic 退化为 strike/0,
+    // 强行计算会误杀 PUT, 应跳过此检查把责任放回给上游)
+    if (c.spot > 0) {
+        double intrinsic = (c.opt_type == OptionType::Call)
+            ? std::max(c.spot - c.strike, 0.0)
+            : std::max(c.strike - c.spot, 0.0);
+        if (c.close < intrinsic - 1e-8) {
+            reason = fmt::format("close={:.4f}<intrinsic={:.4f}", c.close, intrinsic);
+            return false;
+        }
     }
     return true;
 }

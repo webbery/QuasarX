@@ -199,14 +199,13 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             spot_price = QuoteDB::instance().getLatestClose(quote_table, prefix + underlying_code);
         }
 
-        // 获取今天日期用于计算到期天数
-        auto today = floor<days>(system_clock::now());
-        auto today_ymd = year_month_day{today};
-        int ty = (int)today_ymd.year();
-        int tm = (unsigned)today_ymd.month();
-        int td = (unsigned)today_ymd.day();
-
         double risk_free_rate = 0.015;
+
+        // 解析 TIMESTAMP 字符串 (形如 "2024-06-28 00:00:00") 为三元组
+        auto parseYMD = [](const char* s, int& y, int& m, int& d) -> bool {
+            if (!s) return false;
+            return sscanf(s, "%d-%d-%d", &y, &m, &d) == 3;
+        };
 
         // 构建 OptionContractView 列表 (用于过滤器)
         Vector<OptionContractView> contracts;
@@ -232,11 +231,18 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
 
                 if (c.strike <= 0) continue;
 
+                // trade_date (idx 4) 作为 today 基准 — IV 曲面是历史快照,
+                // 应反映 trade_date 那个时点, 不应用 wall clock
+                int ty = 0, tm = 0, td = 0;
+                if (!parseYMD(duckdb_value_varchar(&result, 4, i), ty, tm, td)) continue;
+
+                auto [ey, em] = parseExpiryFromName(c.contract_name, product);
+                if (ey == 0) continue;
+
+                int expiry_days = daysToExpiry(ey, em, ty, tm, td);
+
                 // IV 缺失时从 close 价格反算
                 if (c.iv <= 0 && c.close > 0 && spot_price > 0) {
-                    auto [ey, em] = parseExpiryFromName(c.contract_name, product);
-                    if (ey == 0) continue;
-                    int expiry_days = daysToExpiry(ey, em, ty, tm, td);
                     double T = std::max(expiry_days, 1) / 365.0;
                     bool is_call = (c.opt_type == OptionType::Call);
                     c.iv = computeIVFromPrice(c.close, spot_price, c.strike, T, risk_free_rate, is_call);
@@ -244,10 +250,7 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
 
                 if (c.iv <= 0) continue;
 
-                auto [ey, em] = parseExpiryFromName(c.contract_name, product);
-                if (ey == 0) continue;
-
-                c.expiry_days = daysToExpiry(ey, em, ty, tm, td);
+                c.expiry_days = expiry_days;
                 contracts.push_back(std::move(c));
             }
             return true;

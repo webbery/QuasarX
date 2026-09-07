@@ -151,6 +151,38 @@ void ETFOptionSymbol::GetCode(uint64_t& idx, uint64_t& id)
     idx = (_symbol._opt >> SHORT_ID_OFFSET);
 }
 
+String ETFOptionSymbol::inferExchangeFromName(const String& contract_name)
+{
+    if (contract_name.empty()) return "";
+
+    // 复用私有 name2ID / ID2Exchange 静态映射
+    const Map<String, char>& n2i = name2ID();
+    auto itr = n2i.end();
+    for (const auto& kv : n2i) {
+        const String& key = kv.first;
+        // contract_name 前缀必须以 key 开头, 且紧跟 "购"/"沽" 字才算命中
+        // 防止 "50ETF" 误命中 "500ETF" 之类的短前缀
+        if (contract_name.size() >= key.size() &&
+            contract_name.compare(0, key.size(), key) == 0) {
+            size_t next = key.size();
+            if (next < contract_name.size() &&
+                (contract_name[next] == '\xe8\xb4\xad' ||  // 购 UTF-8
+                 contract_name[next] == '\xe6\xb2\xbd')) {  // 沽 UTF-8
+                itr = n2i.find(key);
+                break;
+            }
+        }
+    }
+    if (itr == n2i.end()) return "";
+
+    ExchangeName ex = ID2Exchange().at(itr->second);
+    switch (ex) {
+        case ExchangeName::MT_Shanghai: return "SSE";
+        case ExchangeName::MT_Shenzhen: return "SZSE";
+        default: return "";
+    }
+}
+
 String ETFOptionSymbol::name()
 {
     String n;

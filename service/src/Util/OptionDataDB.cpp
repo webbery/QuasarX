@@ -73,12 +73,17 @@ symbol_t OptionDataDB::encodeContract(const String& exchange,
                                        const String& contract_code,
                                        const String& contract_name,
                                        double strike) {
-    (void)contract_name;  // to_symbol 内部处理
     (void)strike;         // to_symbol 内部从 contract_code 解析
 
     // ── SSE/SZSE ETF 期权: 8 位数字 (如 "10003187") ──
     // ETFOptionSymbol 内部通过 Server::GetSecurity 获取到期日等
-    if ((exchange == "SSE" || exchange == "SZSE") && contract_code.size() == 8) {
+    // 若 exchange 为空但 contract_name 非空, 从 name 前缀反推交易所
+    String effective_exchange = exchange;
+    if (effective_exchange.empty() && contract_code.size() == 8 && !contract_name.empty()) {
+        effective_exchange = ETFOptionSymbol::inferExchangeFromName(contract_name);
+    }
+
+    if ((effective_exchange == "SSE" || effective_exchange == "SZSE") && contract_code.size() == 8) {
         try {
             ETFOptionSymbol etf_opt(contract_code, contract_name);
             symbol_t sym = static_cast<symbol_t>(etf_opt);
@@ -381,6 +386,7 @@ int OptionDataDB::importCsv(const String& csv_path) {
 // ═══════════════════════════════════════════════════════════
 
 nlohmann::json OptionDataDB::queryByContract(const String& contract_code,
+                                             const String& contract_name,
                                              const String& start_date,
                                              const String& end_date,
                                              int limit) {
@@ -400,8 +406,8 @@ nlohmann::json OptionDataDB::queryByContract(const String& contract_code,
         code = contract_code;
     }
 
-    // 编码为 symbol_id
-    int64_t symbol_id = encodeContractId(exchange, code);
+    // 编码为 symbol_id (传入 contract_name, 8 位 ETF 期权需要它来反推交易所)
+    int64_t symbol_id = encodeContractId(exchange, code, contract_name, 0.0);
 
     String sql =
         "SELECT trade_date, symbol_id, exchange, product, underlying, contract_name, "

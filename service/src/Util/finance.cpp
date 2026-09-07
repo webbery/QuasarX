@@ -8,6 +8,7 @@
 #include <numbers>
 #include <numeric>
 #include <algorithm>
+#include <chrono>
 
 namespace finance {
 
@@ -1955,6 +1956,104 @@ SpectrumIndicatorResult computeSpectrumIndicators(
     }
 
     return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// A 股期权行权日规则
+// ──────────────────────────────────────────────────────────────────────
+
+OptionExerciseRule exerciseRuleForExchange(const String& exchange) {
+    if (exchange == "CFFEX") return OptionExerciseRule::ThirdFriday;
+    // SSE / SZSE ETF 期权
+    return OptionExerciseRule::FourthWednesday;
+}
+
+namespace {
+
+// 用 C++20 chrono calendar 直接构造 (year, month) 中第 n 个 weekday
+std::chrono::sys_days nthWeekdayOfMonth(int year, int month, unsigned n,
+                                          std::chrono::weekday target) {
+    using namespace std::chrono;
+    return sys_days{year_month_weekday{
+        std::chrono::year{year},
+        std::chrono::month{static_cast<unsigned>(month)},
+        weekday_indexed{target, n}
+    }};
+}
+
+// 把 sys_days 格式化为 "YYYY-MM-DD"
+String sysDaysToYMD(std::chrono::sys_days sd) {
+    using namespace std::chrono;
+    auto ymd = year_month_day{sd};
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                  (int)ymd.year(),
+                  (unsigned)ymd.month(),
+                  (unsigned)ymd.day());
+    return String(buf);
+}
+
+// 行权日顺延：跳过周末 + holidays 中列出的日期
+// 限制: 最多顺延 30 天, 防止 holidays 输入错误导致死循环
+std::chrono::sys_days adjustExerciseDay(std::chrono::sys_days base,
+                                          const Vector<String>& holidays) {
+    using namespace std::chrono;
+    auto cur = base;
+    bool has_holidays = !holidays.empty();
+    for (int i = 0; i < 30; ++i) {
+        auto wd = year_month_weekday{year_month_day{cur}}.weekday();
+        bool weekend = (wd == Saturday || wd == Sunday);
+        bool holiday = false;
+        if (has_holidays) {
+            String d = sysDaysToYMD(cur);
+            holiday = std::find(holidays.begin(), holidays.end(), d) != holidays.end();
+        }
+        if (!weekend && !holiday) break;
+        cur += days{1};
+    }
+    return cur;
+}
+
+}  // namespace
+
+ExerciseDate computeExerciseDate(int year, int month, OptionExerciseRule rule,
+                                 const Vector<String>& holidays) {
+    using namespace std::chrono;
+    weekday target;
+    unsigned n = 0;
+    switch (rule) {
+        case OptionExerciseRule::ThirdFriday:     target = Friday;    n = 3; break;
+        case OptionExerciseRule::FourthWednesday: target = Wednesday; n = 4; break;
+    }
+    auto base = nthWeekdayOfMonth(year, month, n, target);
+    auto adjusted = adjustExerciseDay(base, holidays);
+
+    ExerciseDate out;
+    auto ymd = year_month_day{adjusted};
+    out.year  = (int)ymd.year();
+    out.month = (unsigned)ymd.month();
+    out.day   = (unsigned)ymd.day();
+    return out;
+}
+
+int daysToExercise(int trade_year, int trade_month, int trade_day,
+                   int expiry_year, int expiry_month,
+                   OptionExerciseRule rule,
+                   const Vector<String>& holidays) {
+    using namespace std::chrono;
+    ExerciseDate ex = computeExerciseDate(expiry_year, expiry_month, rule, holidays);
+    auto trade_sd = sys_days{year_month_day{
+        year{trade_year},
+        month{static_cast<unsigned>(trade_month)},
+        day{static_cast<unsigned>(trade_day)}
+    }};
+    auto exp_sd = sys_days{year_month_day{
+        year{ex.year},
+        month{static_cast<unsigned>(ex.month)},
+        day{static_cast<unsigned>(ex.day)}
+    }};
+    long days = (exp_sd - trade_sd).count();
+    return static_cast<int>(std::max(days, 1L));
 }
 
 }

@@ -118,6 +118,9 @@ jobs:
           path: |
             onnxruntime-install
           key: ${{ runner.os }}-onnxruntime-v1.29.0-r2
+          restore-keys: |
+            ${{ runner.os }}-onnxruntime-v1.29.0-
+            ${{ runner.os }}-onnxruntime-
 
       - name: Build ONNX-runtime (if cache miss)
         if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
@@ -126,12 +129,23 @@ jobs:
           cd onnxruntime
           ./build.sh --config Release --build_shared_lib --compile_no_warning_as_error --parallel --skip_tests --cmake_extra_defines CMAKE_INSTALL_PREFIX=${{ github.workspace }}/onnxruntime-install
           cd build/Linux/Release && make install
+          # 验证安装产物存在
+          ls -la ${{ github.workspace }}/onnxruntime-install/lib/
+          ls -la ${{ github.workspace }}/onnxruntime-install/include/onnxruntime/
 
       - name: Install ONNX-runtime to system
         run: |
+          # 验证缓存/构建产物存在
+          if [ ! -d "onnxruntime-install/lib" ] || [ -z "$(ls onnxruntime-install/lib/libonnxruntime* 2>/dev/null)" ]; then
+            echo "ERROR: onnxruntime-install/lib is empty or missing — build or cache restore failed"
+            ls -laR onnxruntime-install/ 2>/dev/null || echo "Directory does not exist"
+            exit 1
+          fi
           sudo cp -r onnxruntime-install/include/onnxruntime /usr/local/include/
           sudo cp -P onnxruntime-install/lib/libonnxruntime* /usr/local/lib/
           sudo ldconfig
+          echo "ONNX Runtime installed to system:"
+          ls -la /usr/local/lib/libonnxruntime*
 
       - name: build third_party
         run: |

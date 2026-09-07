@@ -10,6 +10,10 @@ public:
 
     String name();
 
+    // 从 contract_name 前缀反推交易所: "50ETF购2409月02600" → "SSE",
+    // "沪深300ETF沽2409月03500" → "SZSE". 解析失败返回空串.
+    static String inferExchangeFromName(const String& contract_name);
+
 private:
     uint64_t GetOptionInfo(const String& name, const String& token, char& month, int& price);
 

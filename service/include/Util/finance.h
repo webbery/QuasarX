@@ -347,4 +347,42 @@ SpectrumIndicatorResult computeSpectrumIndicators(
     int window_size,
     int max_clusters = 10);
 
+// ──────────────────────────────────────────────────────────────────────
+// A 股期权行权日规则
+//   - CFFEX 股指期权 (IO/HO/MO):   到期月第三个周五
+//   - SSE/SZSE ETF 期权 (50ETF/300ETF/500ETF):  到期月第四个周三
+//
+// 行权日遇周末/节假日顺延到下一交易日。
+// holidays 入参默认空表示只处理周末 (→ 周一)；非空时同时排除传入的日期。
+// 节假日由调用方提供 (一般来自交易日历/holidays.csv)，避免接口内置过期数据。
+// ──────────────────────────────────────────────────────────────────────
+
+enum class OptionExerciseRule {
+    ThirdFriday,      // CFFEX 股指期权
+    FourthWednesday,  // 上交所/深交所 ETF 期权
+};
+
+struct ExerciseDate {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+};
+
+/// 根据交易所代码返回对应的行权日规则
+/// 识别: CFFEX → ThirdFriday; SSE/SZSE → FourthWednesday
+OptionExerciseRule exerciseRuleForExchange(const String& exchange);
+
+/// 计算 (year, month) 对应到期月的行权日
+/// @param holidays  节假日列表 (格式 "YYYY-MM-DD")，行权日落在这些日期上也顺延；
+///                  默认空时只处理周末 (周六→周一, 周日→周一)
+ExerciseDate computeExerciseDate(int year, int month, OptionExerciseRule rule,
+                                 const Vector<String>& holidays = {});
+
+/// 给定 trade_date (year/month/day) 和 expiry 年月, 返回到行权日的天数
+/// 返回值 clamp 到 ≥1 (历史 trade_date 视作 1, 与现有 daysToExpiry 行为一致)
+int daysToExercise(int trade_year, int trade_month, int trade_day,
+                   int expiry_year, int expiry_month,
+                   OptionExerciseRule rule,
+                   const Vector<String>& holidays = {});
+
 }

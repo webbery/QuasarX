@@ -296,6 +296,7 @@ void OptionDataHandler::get(const httplib::Request& req, httplib::Response& res)
     }
 
     auto contract   = req.get_param_value("contract");
+    auto name       = req.get_param_value("name");
     auto symbol_id_str = req.get_param_value("symbol_id");
     auto exchange   = req.get_param_value("exchange");
     auto product    = req.get_param_value("product");
@@ -312,9 +313,9 @@ void OptionDataHandler::get(const httplib::Request& req, httplib::Response& res)
         return;
     }
 
-    // 按合约字符串查历史
+    // 按合约字符串查历史 (name 可选, 8 位 ETF 期权必须提供以反推交易所)
     if (!contract.empty()) {
-        auto result = optDB.queryByContract(contract, start_dt, end_dt, limit);
+        auto result = optDB.queryByContract(contract, name, start_dt, end_dt, limit);
         res.set_content(result.dump(), "application/json");
         return;
     }
