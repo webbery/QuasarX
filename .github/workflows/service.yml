@@ -37,35 +37,52 @@ jobs:
         id: cache-xgboost
         with:
           path: |
-            xgboost/build
-            /usr/local/include/xgboost
-            /usr/local/lib/libxgboost.*
+            deps-cache/xgboost/install
           key: ${{ runner.os }}-xgboost-v3.3.0
           restore-keys: |
             ${{ runner.os }}-xgboost-
+
+      - name: Install xgboost from cache
+        if: steps.cache-xgboost.outputs.cache-hit == 'true'
+        run: |
+          sudo cp -r deps-cache/xgboost/install/include/xgboost /usr/local/include/
+          sudo cp -P deps-cache/xgboost/install/lib/libxgboost* /usr/local/lib/
+          sudo ldconfig
 
       - name: Cache Boost build
         uses: actions/cache@v4
         id: cache-boost
         with:
           path: |
-            /usr/local/include/boost
-            /usr/local/lib/libboost*
+            deps-cache/boost/include
+            deps-cache/boost/lib
           key: ${{ runner.os }}-boost-v1.89.0
           restore-keys: |
             ${{ runner.os }}-boost
+
+      - name: Install boost from cache
+        if: steps.cache-boost.outputs.cache-hit == 'true'
+        run: |
+          sudo cp -r deps-cache/boost/include/boost /usr/local/include/
+          sudo cp -P deps-cache/boost/lib/libboost* /usr/local/lib/
+          sudo ldconfig
 
       - name: Cache DuckDB build
         uses: actions/cache@v4
         id: cache-duckdb
         with:
           path: |
-            duckdb/build
-            /usr/local/lib/libduckdb*
-            /usr/local/include/duckdb*
+            deps-cache/duckdb/install
           key: ${{ runner.os }}-duckdb-v1.5.4
           restore-keys: |
             ${{ runner.os }}-duckdb-
+
+      - name: Install duckdb from cache
+        if: steps.cache-duckdb.outputs.cache-hit == 'true'
+        run: |
+          sudo cp -P deps-cache/duckdb/install/lib/libduckdb* /usr/local/lib/
+          sudo cp -r deps-cache/duckdb/install/include/duckdb* /usr/local/include/
+          sudo ldconfig
 
       - name: Install dependencies
         if: steps.cache-xgboost.outputs.cache-hit != 'true'
@@ -84,9 +101,12 @@ jobs:
           git clone --branch v3.3.0 --depth 1 --recursive https://github.com/dmlc/xgboost
           cd xgboost
           mkdir build && cd build
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release ..
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/deps-cache/xgboost/install ..
           make -j$(nproc)
-          sudo make install
+          make install
+          sudo cp -r ${{ github.workspace }}/deps-cache/xgboost/install/include/xgboost /usr/local/include/
+          sudo cp -P ${{ github.workspace }}/deps-cache/xgboost/install/lib/libxgboost* /usr/local/lib/
+          sudo ldconfig
 
       - name: Build boost (if cache miss)
         if: steps.cache-boost.outputs.cache-hit != 'true'
@@ -94,10 +114,10 @@ jobs:
           wget https://archives.boost.io/release/1.89.0/source/boost_1_89_0.tar.gz
           tar -xzf boost_1_89_0.tar.gz
           cd boost_1_89_0
-          ./bootstrap.sh --prefix=stage
+          ./bootstrap.sh --prefix=${{ github.workspace }}/deps-cache/boost
           ./b2 install
-          sudo cp -r stage/include /usr/local
-          sudo cp -r stage/lib /usr/local
+          sudo cp -r ${{ github.workspace }}/deps-cache/boost/include/boost /usr/local/include/
+          sudo cp -P ${{ github.workspace }}/deps-cache/boost/lib/libboost* /usr/local/lib/
           sudo ldconfig
 
       - name: Build DuckDB (if cache miss)
@@ -106,9 +126,11 @@ jobs:
           git clone --depth 1 --branch v1.5.4 https://github.com/duckdb/duckdb
           cd duckdb
           mkdir build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_UNIT_TESTS=OFF ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_UNIT_TESTS=OFF -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/deps-cache/duckdb/install ..
           make -j$(nproc)
-          sudo make install
+          make install
+          sudo cp -P ${{ github.workspace }}/deps-cache/duckdb/install/lib/libduckdb* /usr/local/lib/
+          sudo cp -r ${{ github.workspace }}/deps-cache/duckdb/install/include/duckdb* /usr/local/include/
           sudo ldconfig
 
       - name: Cache ONNX-runtime build
