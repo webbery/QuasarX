@@ -48,6 +48,7 @@ String HolidayCalendar::defaultCacheDir(const String& databasePath) {
 }
 
 void HolidayCalendar::loadFromCache(const String& cacheDir) {
+    _cacheDir = cacheDir;
     std::error_code ec;
     fs::create_directories(cacheDir, ec);
     if (ec) {
@@ -126,6 +127,12 @@ bool HolidayCalendar::fetchAndCache(int year) {
         _meta.lastUpdate = std::time(nullptr);
         _meta.onlineSuccess = true;
         _meta.cachedYears = static_cast<int>(_holidays.size());
+    }
+
+    if (!_cacheDir.empty()) {
+        if (!writeCacheFile(_cacheDir, year)) {
+            WARN("[HolidayCalendar] Fetched year {} but failed to write cache", year);
+        }
     }
 
     INFO("[HolidayCalendar] Fetched year {} ({} holidays) from {}",

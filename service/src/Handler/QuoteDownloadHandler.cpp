@@ -338,7 +338,8 @@ void QuoteDownloadHandler::validateAndReconcileAdj(nng_socket sseSock,
     // 2. 重算（基于 dividend 表，baostock 公式）
     symbol_t internalSym = to_symbol(sym);
     int64_t encodedSym = QuoteDB::encodeSymbol(sym);
-    financeDB.recalcSymbolAdjPrices(get_symbol(internalSym));
+    auto events = financeDB.getDividendEvents(get_symbol(internalSym));
+    financeDB.recalcSymbolAdjPrices(get_symbol(internalSym), events);
 
     // 3. 读取重算后的 adj_close
     auto recalcBars = quoteDB.query(table, sym, "", "", 1);

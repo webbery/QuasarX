@@ -179,17 +179,36 @@ void TickFlowBridge::RemoveSymbols(const Set<String>& symbols) {
 // 从 stock_1d 最新 bar 查 adj_close/close 作为后复权因子，更新缓存
 void TickFlowBridge::refreshAdjFactor(symbol_t sym) {
     auto& quoteDB = QuoteDB::instance();
-    if (!quoteDB.isInitialized() || is_null(sym)) return;
+    if (!quoteDB.isInitialized() || is_null(sym)) {
+        WARN("[TickFlow] refreshAdjFactor: skipped (QuoteDB init={}, sym null={})",
+             quoteDB.isInitialized(), is_null(sym));
+        return;
+    }
 
     // query 为 ASC 排序，取最后一条即最新 bar
     auto bars = quoteDB.query("stock_1d", get_symbol(sym), "", "", 5000);
-    if (bars.empty()) return;
+    if (bars.empty()) {
+        WARN("[TickFlow] refreshAdjFactor: stock_1d has NO bars for {}, factor stays at previous value",
+             get_symbol(sym));
+        return;
+    }
 
     const auto& last = bars.back();
+    INFO("[TickFlow] refreshAdjFactor: {} latest bar: date={}, close={:.4f}, adj_close={:.4f}, "
+         "open={:.4f}, adj_open={:.4f}, total_bars={}",
+         get_symbol(sym), last.datetime, last.close, last.adj_close,
+         last.open, last.adj_open, bars.size());
+
     if (last.close > 0 && last.adj_close > 0) {
         double factor = last.adj_close / last.close;
         std::lock_guard<std::mutex> lock(_adjFactorMtx);
+        double old_factor = _adjFactorCache.count(sym) ? _adjFactorCache[sym] : -1.0;
         _adjFactorCache[sym] = factor;
+        INFO("[TickFlow] refreshAdjFactor: {} factor={:.6f} (was {:.6f}, delta={:.6f})",
+             get_symbol(sym), factor, old_factor, factor - old_factor);
+    } else {
+        WARN("[TickFlow] refreshAdjFactor: {} close={} or adj_close={} <= 0, factor NOT updated",
+             get_symbol(sym), last.close, last.adj_close);
     }
 }
 
@@ -522,7 +541,13 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     std::tm* ltm = localtime(&now);
     if (ltm->tm_hour < 15) return;
 
-    // 构建 QuoteBar
+    auto& quoteDB = QuoteDB::instance();
+    if (!quoteDB.isInitialized()) {
+        WARN("[TickFlow] QuoteDB not initialized, cannot write close data");
+        return;
+    }
+
+    // 构建 QuoteBar（仅原始价格，adj_* 留 0）
     QuoteBar bar;
     bar.symbol = get_symbol(quote._symbol);
     bar.datetime = ToString(now, "%Y-%m-%d 00:00:00");  // 日线用当天日期
@@ -534,27 +559,40 @@ void TickFlowBridge::WriteCloseDataToStock1d(const QuoteInfo& quote) {
     bar.turnover = quote._turnover;
     bar.ext = (quote._volume == 0) ? 0x01 : 0;  // 停牌标记
 
-    // 写入 stock_1d
-    auto& quoteDB = QuoteDB::instance();
-    if (!quoteDB.isInitialized()) {
-        WARN("[TickFlow] QuoteDB not initialized, cannot write close data");
-        return;
-    }
-
-    if (!quoteDB.upsertBar("stock_1d", bar)) {
-        WARN("[TickFlow] Failed to write close data for {}", bar.symbol);
-        return;
-    }
-
-    INFO("[TickFlow] Close data written to stock_1d: {} at {}", bar.symbol, bar.datetime);
-
-    // 计算该标的的后复权价格
+    // ── 判断复权策略：有分红数据则精算，否则从历史 adj/close 比值取因子 ──
     auto& financeDB = FinanceDB::instance();
+    Vector<FinanceDB::DividendEvent> events;
     if (financeDB.isInitialized()) {
-        financeDB.recalcSymbolAdjPrices(bar.symbol);
+        events = financeDB.getDividendEvents(bar.symbol);
     }
 
-    // 重算完成后刷新复权因子缓存（次日盘中 QuoteInfo._adj_close 用新因子）
+    if (!events.empty()) {
+        // 路径 A：有分红事件 → 先写入 raw bar，再精算全部历史 adj_*
+        if (!quoteDB.upsertBar("stock_1d", bar)) {
+            WARN("[TickFlow] Failed to write close data for {}", bar.symbol);
+            return;
+        }
+        int recalcResult = financeDB.recalcSymbolAdjPrices(bar.symbol, events);
+        INFO("[TickFlow] WriteCloseData: {} | path=dividend-recalc | bars_updated={}",
+             bar.symbol, recalcResult);
+    } else {
+        // 路径 B：无分红事件 → 用缓存因子（来自历史 CSV adj/close 比值）填充 adj_*
+        double factor = getAdjFactor(quote._symbol);
+        bar.adj_open  = bar.open  * factor;
+        bar.adj_close = bar.close * factor;
+        bar.adj_high  = bar.high  * factor;
+        bar.adj_low   = bar.low   * factor;
+
+        if (!quoteDB.upsertBar("stock_1d", bar)) {
+            WARN("[TickFlow] Failed to write close data for {}", bar.symbol);
+            return;
+        }
+        INFO("[TickFlow] WriteCloseData: {} | path=cache-factor | factor={:.6f} "
+             "close={:.4f} adj_close={:.4f}",
+             bar.symbol, factor, bar.close, bar.adj_close);
+    }
+
+    // 刷新复权因子缓存（次日盘中 QuoteInfo._adj_close 用新因子）
     refreshAdjFactor(quote._symbol);
 
     // 通知策略子系统：该标的数据已就绪
@@ -698,6 +736,16 @@ void TickFlowBridge::ParseResponse(const String& response) {
             quote._adj_close = quote._close * factor;
             quote._adj_high  = quote._high  * factor;
             quote._adj_low   = quote._low   * factor;
+
+            // 诊断日志：当 factor ≈ 1.0 时输出警告，便于排查复权因子未生效
+            if (std::abs(factor - 1.0) < 1e-9) {
+                WARN("[TickFlow] ParseResponse: {} factor=1.0 (adj=raw). "
+                     "close={:.4f} adj_close={:.4f} | cache may be stale or recalc failed",
+                     get_symbol(quote._symbol), quote._close, quote._adj_close);
+            } else {
+                DEBUG_INFO("[TickFlow] ParseResponse: {} factor={:.6f} close={:.4f} -> adj_close={:.4f}",
+                           get_symbol(quote._symbol), factor, quote._close, quote._adj_close);
+            }
 
             _quotes.insert({quote._symbol, quote});
 

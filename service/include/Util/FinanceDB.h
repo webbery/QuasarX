@@ -44,6 +44,8 @@ public:
                                          const String& start_date = "",
                                          const String& end_date = "");
 
+    nlohmann::json queryAllDividends(int limit, int offset);
+
     struct DividendEvent {
         String symbol;
         time_t ex_dividend_date = 0;
@@ -62,7 +64,7 @@ public:
 
     Vector<DividendEvent> getDividendEvents(const String& symbol);
 
-    int recalcSymbolAdjPrices(const String& symbol);
+    int recalcSymbolAdjPrices(const String& symbol, const Vector<DividendEvent>& events);
 
     nlohmann::json recalcAllAdjPrices();
 

@@ -614,7 +614,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="(item, idx) in dividendResults" :key="idx">
+                                <tr v-for="(item, idx) in pagedDividendResults" :key="idx">
                                     <td class="symbol-code">{{ item.symbol || item.code || '-' }}</td>
                                     <td>{{ item.ex_dividend_date || '-' }}</td>
                                     <td>{{ item.record_date || '-' }}</td>
@@ -626,6 +626,36 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+
+                <!-- 分页 -->
+                <div class="pagination-center" v-if="dividendResults.length > 0">
+                    <button class="page-btn" @click="onLoadDividendData" :disabled="dividendLoading" title="刷新数据">
+                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': dividendLoading }"></i>
+                    </button>
+                    <button class="page-btn" :disabled="dividendPage === 1" @click="dividendPage = 1">
+                        <i class="fas fa-angle-double-left"></i>
+                    </button>
+                    <button class="page-btn" :disabled="dividendPage === 1" @click="dividendPage--">
+                        <i class="fas fa-angle-left"></i>
+                    </button>
+                    <span class="page-info">第 {{ dividendPage }} / {{ dividendTotalPages }} 页 (共 {{ dividendResults.length }} 条)</span>
+                    <button class="page-btn" :disabled="dividendPage === dividendTotalPages" @click="dividendPage++">
+                        <i class="fas fa-angle-right"></i>
+                    </button>
+                    <button class="page-btn" :disabled="dividendPage === dividendTotalPages" @click="dividendPage = dividendTotalPages">
+                        <i class="fas fa-angle-double-right"></i>
+                    </button>
+                    <select class="page-size-select" v-model.number="dividendPageSize" @change="dividendPage = 1">
+                        <option :value="10">10 条/页</option>
+                        <option :value="20">20 条/页</option>
+                        <option :value="50">50 条/页</option>
+                        <option :value="100">100 条/页</option>
+                    </select>
+                    <span class="page-jump">
+                        跳至 <input type="number" class="page-jump-input" min="1" :max="dividendTotalPages"
+                              v-model.number="dividendJumpPage" @keyup.enter="onDividendJumpPage"> 页
+                    </span>
                 </div>
 
                 <div v-if="dividendResults.length === 0 && !dividendLoading && dividendLoaded" class="empty-text">
@@ -1140,6 +1170,21 @@ const dividendDownloading = ref(false)
 const dividendDeleting = ref(false)
 const dividendCount = ref(0)
 const isUpdatingDividend = ref(false)
+
+// 分红分页
+const dividendPage = ref(1)
+const dividendPageSize = ref(20)
+const dividendJumpPage = ref(1)
+
+const dividendTotalPages = computed(() => Math.max(1, Math.ceil(dividendResults.value.length / dividendPageSize.value)))
+const pagedDividendResults = computed(() => {
+    const start = (dividendPage.value - 1) * dividendPageSize.value
+    return dividendResults.value.slice(start, start + dividendPageSize.value)
+})
+const onDividendJumpPage = () => {
+    dividendPage.value = Math.max(1, Math.min(dividendJumpPage.value, dividendTotalPages.value))
+    dividendJumpPage.value = dividendPage.value
+}
 
 // SSE 完成事件 handler（模块级 const 保证 on/off 同引用）
 const onDividendDownloadDone = (msg: any) => {
@@ -2428,6 +2473,13 @@ const onDeleteAllFinance = async () => {
 
 // ── 分红除权数据方法 ──
 
+// 切换到分红 tab 时自动加载
+watch(activeTab, (tab) => {
+    if (tab === 'dividend' && !dividendLoaded.value && isLoggedIn.value) {
+        onLoadDividendData()
+    }
+})
+
 const onLoadDividendData = async () => {
     if (!isLoggedIn.value) return
     dividendLoading.value = true
@@ -2441,18 +2493,16 @@ const onLoadDividendData = async () => {
         const resp = await axios.get(`https://${server}/v0/dividend`, {
             params, headers: { 'Authorization': token || '' }
         })
-        if (params.date) {
-            dividendResults.value = resp.data.data || []
-        } else if (params.code) {
+        if (params.date || params.code) {
             dividendResults.value = resp.data.data || []
         } else {
-            // 无参数：返回所有标的列表
-            dividendResults.value = []
-            dividendStatus.value = `共 ${resp.data.count} 个标的已导入分红数据，输入日期或代码查询详情`
+            // 无参数：返回全部记录（前端分页）
+            dividendResults.value = resp.data.data || []
         }
         dividendCount.value = dividendResults.value.length
+        dividendPage.value = 1
         if (dividendResults.value.length > 0) {
-            dividendStatus.value = `查询完成，共 ${dividendCount.value} 条记录`
+            dividendStatus.value = `共 ${dividendCount.value} 条记录`
         }
     } catch (err: any) {
         dividendStatus.value = `查询失败: ${err.response?.data?.message || err.message}`

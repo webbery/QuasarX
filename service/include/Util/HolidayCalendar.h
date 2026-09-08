@@ -82,4 +82,5 @@ private:
     mutable std::shared_mutex _mtx;
     Map<int, Set<String>> _holidays;
     Meta _meta;
+    String _cacheDir;
 };

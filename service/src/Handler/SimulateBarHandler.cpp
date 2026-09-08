@@ -60,7 +60,8 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
         // ── 2. 后复权计算 ──
         auto& financeDB = FinanceDB::instance();
         if (financeDB.isInitialized()) {
-            financeDB.recalcSymbolAdjPrices(symbol);
+            auto events = financeDB.getDividendEvents(symbol);
+            financeDB.recalcSymbolAdjPrices(symbol, events);
         }
 
         // ── 3. 触发策略管道 ──

@@ -44,7 +44,8 @@ void DividendHandler::post(const httplib::Request& req, httplib::Response& res) 
             resp = financeDB.recalcAllAdjPrices();
         } else {
             // 重算单个标的
-            int n = financeDB.recalcSymbolAdjPrices(code);
+            auto events = financeDB.getDividendEvents(code);
+            int n = financeDB.recalcSymbolAdjPrices(code, events);
             resp["code"] = code;
             resp["bars"] = n;
             resp["status"] = n >= 0 ? "completed" : "error";
@@ -216,12 +217,9 @@ void DividendHandler::get(const httplib::Request& req, httplib::Response& res) {
         return;
     }
 
-    // 无参数：列出所有有分红数据的标的
-    nlohmann::json resp;
-    auto symbols = financeDB.listSymbols("dividend");
-    resp["count"] = static_cast<int>(symbols.size());
-    resp["symbols"] = symbols;
-    res.set_content(resp.dump(), "application/json");
+    // 无参数：返回全部记录（前端分页）
+    auto result = financeDB.queryAllDividends(10000, 0);
+    res.set_content(result.dump(), "application/json");
 }
 
 // ═══════════════════════════════════════════════════════════

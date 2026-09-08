@@ -258,7 +258,7 @@ int FinanceDB::importCsv(const String& csv_path, const String& category) {
         Row r;
         // symbol
         if (col_code >= 0 && col_code < static_cast<int>(cols.size())) {
-            r.symbol = encodeSymbol(cols[col_code]);
+            r.symbol = encodeSymbol(toInternalSymbol(cols[col_code]));
         } else {
             continue;
         }
@@ -661,7 +661,9 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
         DivRow r{};
         String sym_str = getField(cols, c_symbol);
         if (sym_str.empty()) { skipped_empty_sym++; continue; }
-        r.symbol = encodeSymbol(sym_str);
+        // CSV 中的 symbol 可能是外部格式（600111.SH）或纯数字（600111），
+        // 必须先转为内部格式（sh.600111）再编码，否则与 QuoteDB/recalcSymbolAdjPrices 的编码不一致
+        r.symbol = encodeSymbol(toInternalSymbol(sym_str));
 
         r.announce_date   = getField(cols, c_announce);
         r.report_year     = getField(cols, c_year);
@@ -688,6 +690,10 @@ int FinanceDB::importDividendCsv(const String& csv_path) {
         SPDLOG_WARN("[FinanceDB] No valid rows in {}", csv_path);
         return 0;
     }
+
+    // 诊断：输出首行的 symbol 编码，用于验证 toInternalSymbol 转换是否正确
+    SPDLOG_INFO("[FinanceDB] dividend import: first row symbol encoded={}, decoded='{}'",
+                rows[0].symbol, QuoteDB::decodeSymbol(rows[0].symbol));
 
     // ── 两阶段 upsert：先 SELECT 找已有键，再预编译 UPDATE/INSERT 逐行处理 ──
     //    不使用 ON CONFLICT：触发 DuckDB ART 索引 bug（参见 QuoteDB::importCsv）
@@ -999,6 +1005,84 @@ nlohmann::json FinanceDB::queryDividendBySymbol(const String& symbol,
 }
 
 // ═══════════════════════════════════════════════════════════
+//  dividend 表 — 查询全部记录（前端分页用）
+// ═══════════════════════════════════════════════════════════
+
+nlohmann::json FinanceDB::queryAllDividends(int limit, int offset) {
+    nlohmann::json result;
+
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+
+    // 先查总数
+    String count_sql = "SELECT COUNT(*) FROM dividend";
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    duckdb_result cnt_res;
+    if (duckdb_query(conn(), count_sql.c_str(), &cnt_res) != DuckDBSuccess) {
+        duckdb_destroy_result(&cnt_res);
+        result["error"] = "Count query failed";
+        return result;
+    }
+    int total = 0;
+    if (duckdb_row_count(&cnt_res) > 0) {
+        total = duckdb_value_int32(&cnt_res, 0, 0);
+    }
+    duckdb_destroy_result(&cnt_res);
+
+    result["total"] = total;
+    if (total == 0) {
+        result["data"] = nlohmann::json::array();
+        return result;
+    }
+
+    String sql = fmt::format(
+        "SELECT symbol, CAST(announce_date AS VARCHAR), report_year, "
+        "CAST(ex_dividend_date AS VARCHAR), CAST(record_date AS VARCHAR), "
+        "CAST(implement_date AS VARCHAR), "
+        "bonus_per_10, transfer_per_10, cash_per_10, "
+        "allot_per_10, allot_price, ex_div_price, action_type "
+        "FROM dividend ORDER BY ex_dividend_date DESC, symbol "
+        "LIMIT {} OFFSET {}", limit, offset);
+
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return result;
+    }
+
+    idx_t row_count = duckdb_row_count(&res);
+    nlohmann::json::array_t data;
+    for (idx_t i = 0; i < row_count; i++) {
+        nlohmann::json row;
+        row["symbol"] = decodeSymbol(duckdb_value_int64(&res, 0, i));
+        row["announce_date"] = duckdb_value_varchar(&res, 1, i);
+        row["report_year"] = duckdb_value_varchar(&res, 2, i);
+        row["ex_dividend_date"] = duckdb_value_varchar(&res, 3, i);
+        row["record_date"] = duckdb_value_varchar(&res, 4, i);
+        row["implement_date"] = duckdb_value_varchar(&res, 5, i);
+        row["bonus_per_10"] = duckdb_value_double(&res, 6, i);
+        row["transfer_per_10"] = duckdb_value_double(&res, 7, i);
+        row["cash_per_10"] = duckdb_value_double(&res, 8, i);
+        row["allot_per_10"] = duckdb_value_double(&res, 9, i);
+        row["allot_price"] = duckdb_value_double(&res, 10, i);
+        if (!duckdb_value_is_null(&res, 11, i))
+            row["ex_div_price"] = duckdb_value_double(&res, 11, i);
+        else
+            row["ex_div_price"] = nullptr;
+        row["action_type"] = duckdb_value_int8(&res, 12, i);
+        data.push_back(std::move(row));
+    }
+
+    result["data"] = std::move(data);
+    duckdb_destroy_result(&res);
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  dividend 表驱动的后复权价格计算
 //  算法: BaoStock 涨跌幅复权法
 // ═══════════════════════════════════════════════════════════
@@ -1065,6 +1149,11 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
 
     idx_t rows = duckdb_row_count(&res);
     SPDLOG_INFO("[FinanceDB] getDividendEvents: rows={}", rows);
+    if (rows == 0) {
+        SPDLOG_WARN("[FinanceDB] getDividendEvents: NO dividend events found for symbol='{}' encoded={}. "
+                     "Check if dividend CSV was imported with correct symbol format (internal: sh.600111).",
+                     symbol, sym);
+    }
     result.reserve(rows);
     for (idx_t i = 0; i < rows; i++) {
         DividendEvent e;
@@ -1084,15 +1173,14 @@ Vector<FinanceDB::DividendEvent> FinanceDB::getDividendEvents(const String& symb
     return result;
 }
 
-int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
+int FinanceDB::recalcSymbolAdjPrices(const String& symbol, const Vector<DividendEvent>& events) {
 
     if (!isInitialized()) {
         SPDLOG_ERROR("[FinanceDB] recalcSymbolAdjPrices: not initialized");
         return -1;
     }
 
-    // 1. 取该标的的所有分红事件
-    auto events = getDividendEvents(symbol);
+    // 1. 检查分红事件（由调用方传入，避免重复查询）
     if (events.empty()) {
         SPDLOG_WARN("[FinanceDB] No dividend events for {}, adj_* unchanged", symbol);
         return 0;
@@ -1214,10 +1302,25 @@ int FinanceDB::recalcSymbolAdjPrices(const String& symbol) {
         updates.push_back(std::move(u));
     }
 
+    // 诊断：输出前 3 条 update 的 datetime，用于对比 stock_1d 中实际存储的 datetime 格式
+    // 如果 gmtime 产出的 UTC 时间与 stock_1d 中 localtime 写入的时间不一致，UPDATE 将匹配不到行
+    for (size_t i = 0; i < std::min(updates.size(), size_t(3)); ++i) {
+        SPDLOG_INFO("[FinanceDB] recalc: update[{}] datetime='{}' adj_close={:.4f} "
+                     "(epoch={})",
+                     i, updates[i].datetime, updates[i].adj_close,
+                     static_cast<int64_t>(bars[i].datetime));
+    }
+
     int updated = QuoteDB::instance().updateAdjPrices("stock_1d", sym, updates);
 
-    SPDLOG_INFO("[FinanceDB] Recalculated adj prices for {}: {} bars, {} events",
-                symbol, updated, events.size());
+    SPDLOG_INFO("[FinanceDB] Recalculated adj prices for {}: {} bars, {} events, {} updated",
+                symbol, bars.size(), events.size(), updated);
+    if (updated == 0 && !bars.empty()) {
+        SPDLOG_WARN("[FinanceDB] recalc: WARNING! 0 rows updated for {}! "
+                     "Possible datetime mismatch between gmtime (UTC) and stock_1d storage (localtime). "
+                     "First update datetime='{}', first bar epoch={}",
+                     symbol, updates.front().datetime, static_cast<int64_t>(bars.front().datetime));
+    }
     return updated;
 }
 
@@ -1234,7 +1337,8 @@ nlohmann::json FinanceDB::recalcAllAdjPrices() {
     nlohmann::json::array_t errors;
 
     for (auto& sym : symbols) {
-        int n = recalcSymbolAdjPrices(sym);
+        auto events = getDividendEvents(sym);
+        int n = recalcSymbolAdjPrices(sym, events);
         if (n < 0) errors.push_back(sym);
         else total_bars += n;
     }
