@@ -214,6 +214,25 @@
                     </span>
                 </div>
             </div>
+
+            <!-- 期权输出字段分组（source='期权' 时渲染） -->
+            <template v-for="group in visibleOptionGroups" :key="'og-' + group.key">
+                <div class="option-group-header">
+                    <span class="option-group-label">{{ group.label }}</span>
+                    <Handle
+                        type="source"
+                        :position="Position.Right"
+                        :id="group.handleId"
+                        class="connection-handle right-handle output-handle"
+                    />
+                </div>
+                <div class="node-param option-field" v-for="fk in group.fields" :key="fk">
+                    <div class="param-label">{{ node.data.params[fk]?.label || fk }}</div>
+                    <div class="param-control">
+                        <span class="option-field-tag">[{{ fk }}]</span>
+                    </div>
+                </div>
+            </template>
         </div>
     </div>
 </template>
@@ -289,6 +308,27 @@ const nodeClass = computed(() => `node-type-${nodeType.value}`)
 const headerClass = computed(() => `header-type-${nodeType.value}`)
 const iconClass = computed(() => `icon-type-${nodeType.value}`)
 const iconType = computed(() => getNodeIcon(nodeType.value))
+
+// ── 期权输出字段分组（source='期权' 时显示）──
+const OPTION_FIELD_GROUPS = [
+  { key: 'quote', label: '报价', handleId: 'field-quote', fields: ['bid1', 'ask1'] },
+  { key: 'greeks', label: 'Greeks', handleId: 'field-greeks', fields: ['theoPrice', 'iv', 'delta', 'gamma', 'theta', 'vega'] },
+  { key: 'other', label: '其他', handleId: 'field-other', fields: ['dte', 'openInterest', 'underlyingPrice', 'optionVolume'] },
+]
+const OPTION_ALL_FIELDS = OPTION_FIELD_GROUPS.flatMap(g => g.fields)
+const OHLCV_FIELDS = ['close', 'open', 'high', 'low', 'volume']
+
+const isOptionSource = computed(() =>
+  nodeType.value === 'input' && props.node.data.params?.source?.value === '期权'
+)
+
+const visibleOptionGroups = computed(() => {
+  if (!isOptionSource.value) return []
+  const params = props.node.data.params
+  return OPTION_FIELD_GROUPS
+    .map(g => ({ ...g, fields: g.fields.filter(k => params[k]?.visible !== false) }))
+    .filter(g => g.fields.length > 0)
+})
 
 // XGBoost 节点已绑定模型时，直接显示模型名而非文件选择器
 function isBoundModel(paramKey: string | number): boolean {
@@ -459,6 +499,14 @@ const updateParam = (paramKey: string, newValue: any) => {
         params.slippageAlpha.visible = useImpact
     }
 
+    // 数据源切换联动：OHLCV ↔ 期权字段互斥显隐
+    if (paramKey === 'source' && props.node.data.nodeType === 'input') {
+        const params = props.node.data.params
+        const optionMode = newValue === '期权'
+        OPTION_ALL_FIELDS.forEach(k => { if (params[k]) params[k].visible = optionMode })
+        OHLCV_FIELDS.forEach(k => { if (params[k]) params[k].visible = !optionMode })
+    }
+
     emit('update-node', props.node.id, paramKey, newValue)
 }
 
@@ -503,6 +551,17 @@ onMounted(() => {
         if (params.slippageBase) params.slippageBase.visible = useImpact
         if (params.slippageImpactK) params.slippageImpactK.visible = useImpact
         if (params.slippageAlpha) params.slippageAlpha.visible = useImpact
+    }
+
+    // 初始化数据源可见性（兼容旧 flow JSON 或缺省 visible 字段的情况）
+    if (props.node.data.nodeType === 'input') {
+        const params = props.node.data.params
+        const hasOptionFields = OPTION_ALL_FIELDS.some(k => params[k] != null)
+        if (hasOptionFields) {
+            const optionMode = params.source?.value === '期权'
+            OPTION_ALL_FIELDS.forEach(k => { if (params[k] && params[k].visible == null) params[k].visible = optionMode })
+            OHLCV_FIELDS.forEach(k => { if (params[k] && params[k].visible == null) params[k].visible = !optionMode })
+        }
     }
 
     document.addEventListener('click', handleClickOutside)
@@ -1361,5 +1420,33 @@ select.param-input:disabled {
 .vue-flow__node-custom input[type="number"]:hover::-webkit-outer-spin-button,
 .vue-flow__node-custom input[type="number"]:hover::-webkit-inner-spin-button {
     opacity: 1 !important;
+}
+
+/* ── 期权输出字段分组 ── */
+.option-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+    margin-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    position: relative;
+}
+.option-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--primary, #2962ff);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.option-field {
+    padding-left: 8px;
+    min-height: 22px !important;
+    margin: 4px 0 !important;
+}
+.option-field-tag {
+    font-size: 10px;
+    color: var(--text-tertiary, #718096);
+    font-family: 'SF Mono', 'Consolas', monospace;
 }
 </style>
