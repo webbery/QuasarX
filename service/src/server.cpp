@@ -20,6 +20,7 @@
 #include "StrategyNode.h"
 #include "Util/QuoteDB.h"
 #include "Util/DecisionDB.h"
+#include "Util/HolidayCalendar.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
@@ -279,6 +280,22 @@ bool Server::Init(const char* config) {
     // 创建 ExchangeManager 协调器
     _exchangeMgr = new ExchangeManager(this);
     _exchangeMgr->StartQuoteDispatcher();
+
+    // 首次启动加载中国交易日历：先读本地缓存，再拉当前年份
+    // 网络失败时保留缓存数据，WARN 不 FATAL（期权行权日退化为纯周末顺延）
+    {
+        String cacheDir = HolidayCalendar::defaultCacheDir(_config->GetDatabasePath());
+        HolidayCalendar::instance().loadFromCache(cacheDir);
+        std::tm lt{};
+        time_t now = Now();
+#ifdef _WIN32
+        localtime_s(&lt, &now);
+#else
+        localtime_r(&now, &lt);
+#endif
+        HolidayCalendar::instance().ensureCurrentYearLoaded(1900 + lt.tm_year);
+    }
+
     // _mode = mode;
     return true;
 }
@@ -1118,6 +1135,7 @@ void Server::Schedules(time_t t) {
     static bool daily_once = false;
     static bool daily_init_done = false;
     static bool daily_force_done = false;
+    static bool yearly_refresh_done = false;
     if (prev_day == -1) {
         prev_day = ltm->tm_wday;
     }
@@ -1125,7 +1143,31 @@ void Server::Schedules(time_t t) {
         daily_once = false;
         daily_init_done = false;
         daily_force_done = false;
+        yearly_refresh_done = false;
         prev_day = ltm->tm_wday;
+    }
+
+    // 12 月 20 日 年度刷新：拉取下一年的中国假日数据（异步，不阻塞 5s 定时循环）
+    // 国务院通常 11 月底发布次年放假安排，12 月 20 日留 ~10 天缓冲以应对官方临时调整
+    if (!yearly_refresh_done
+        && ltm->tm_mon == 11       // tm_mon 0-based: 11 = 12 月
+        && ltm->tm_mday == 20
+    ) {
+        yearly_refresh_done = true;
+        int nextYear = 1900 + ltm->tm_year + 1;
+        std::thread([nextYear]() {
+            bool ok = HolidayCalendar::instance().ensureYearLoaded(nextYear);
+            if (!ok) {
+                nng_socket sseSock = Server::GetSocket();
+                if (sseSock.id != 0) {
+                    SendSSE(sseSock, "schedule_error", {
+                        {"task", "holiday_calendar_refresh"},
+                        {"year", std::to_string(nextYear)},
+                        {"message", "fetch failed; keeping in-memory data"}
+                    });
+                }
+            }
+        }).detach();
     }
 
     // 15:00 初始化日级策略执行（收盘数据写入后由 TickFlowBridge 触发 MarkSymbolReady）

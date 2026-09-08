@@ -1,4 +1,5 @@
 #include "Util/finance.h"
+#include "Util/HolidayCalendar.h"
 #include "Util/datetime.h"
 #include "Algorithms/EMD_SIMD.h"
 #include <boost/math/statistics/univariate_statistics.hpp>
@@ -2054,6 +2055,32 @@ int daysToExercise(int trade_year, int trade_month, int trade_day,
     }};
     long days = (exp_sd - trade_sd).count();
     return static_cast<int>(std::max(days, 1L));
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// HolidayCalendar overload
+// ──────────────────────────────────────────────────────────────────────
+
+ExerciseDate computeExerciseDate(int year, int month, OptionExerciseRule rule,
+                                 const HolidayCalendar& cal) {
+    Vector<String> holidays = cal.getHolidaysForYear(year);
+    return computeExerciseDate(year, month, rule, holidays);
+}
+
+int daysToExercise(int trade_year, int trade_month, int trade_day,
+                   int expiry_year, int expiry_month,
+                   OptionExerciseRule rule,
+                   const HolidayCalendar& cal) {
+    // trade/expiry 可能跨年，分别取年后合并（去重）
+    Vector<String> h_trade  = cal.getHolidaysForYear(trade_year);
+    Vector<String> h_expiry = cal.getHolidaysForYear(expiry_year);
+    Vector<String> holidays;
+    holidays.reserve(h_trade.size() + h_expiry.size());
+    Set<String> seen;
+    for (auto& d : h_trade)  if (seen.insert(d).second) holidays.push_back(d);
+    for (auto& d : h_expiry) if (seen.insert(d).second) holidays.push_back(d);
+    return daysToExercise(trade_year, trade_month, trade_day,
+                          expiry_year, expiry_month, rule, holidays);
 }
 
 }

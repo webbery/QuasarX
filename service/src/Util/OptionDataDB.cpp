@@ -1,5 +1,6 @@
 #include "Util/OptionDataDB.h"
 #include "Util/system.h"
+#include "Util/finance.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/OptionSymbolMacros.h"
 #include "Util/log.h"
@@ -582,8 +583,10 @@ nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
     nlohmann::json::array_t contracts;
     for (idx_t i = 0; i < row_count; i++) {
         nlohmann::json row;
-        row["symbol_id"]     = duckdb_value_int64(&res, 0, i);
-        row["exchange"]      = duckdb_value_varchar(&res, 1, i);
+        int64_t sid = duckdb_value_int64(&res, 0, i);
+        String ex_name = duckdb_value_varchar(&res, 1, i);
+        row["symbol_id"]     = sid;
+        row["exchange"]      = ex_name;
         row["product"]       = duckdb_value_varchar(&res, 2, i);
         row["contract_name"] = duckdb_value_varchar(&res, 3, i);
         row["call_put"]      = duckdb_value_varchar(&res, 4, i);
@@ -592,6 +595,15 @@ nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
         row["start_date"]    = duckdb_value_varchar(&res, 7, i);
         row["end_date"]      = duckdb_value_varchar(&res, 8, i);
         row["count"]         = duckdb_value_int64(&res, 9, i);
+
+        // 行权日: 从 symbol_id 反解 year/month, 按交易所规则 (ThirdFriday / FourthWednesday) 计算
+        symbol_t sym;
+        std::memcpy(&sym, &sid, sizeof(symbol_t));
+        auto rule = finance::exerciseRuleForExchange(ex_name);
+        auto ed   = finance::computeExerciseDate(2000 + sym._year, sym._month, rule);
+        row["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",
+                                           ed.year, ed.month, ed.day);
+
         contracts.push_back(std::move(row));
     }
 

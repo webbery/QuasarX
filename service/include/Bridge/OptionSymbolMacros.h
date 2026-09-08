@@ -11,7 +11,7 @@
 //   (50ETF/300ETF/500ETF/STAR50ETF/SZSE 系列).
 //
 //   CFFEX 股指期权 (IO/HO/MO) strike 范围 2500~8000 点,
-//   远超 1023, 需用更大的单位 (unit=1000) 才能放下.
+//   远超 1023 (cents 单位), 需用更大的单位 (unit=50 点) 才能放下.
 //
 // 方案:
 //   不改动 symbol_t 位域布局, 用 _reserved 的 bit 0 做 scale 标志
@@ -23,7 +23,7 @@
 //   └──────────────────────────────────────────────────────┘
 //
 //   scale = 0 → _price × OPT_STRIKE_UNIT_ETF    (0.01 元/单位, 范围 0~1023 元, 精度 0.01)
-//   scale = 1 → _price × OPT_STRIKE_UNIT_INDEX  (10   点/单位, 范围 0~10230 点, 精度 10)
+//   scale = 1 → _price × OPT_STRIKE_UNIT_INDEX  (50   点/单位, 范围 0~51150 点, 精度 50)
 //              IO/HO/MO strikes (2500~8000) 全在范围内
 //
 //   对已有股票 / 旧 ETF 期权数据完全兼容 — 其 _reserved 全为 0, 默认 scale=0.
@@ -37,7 +37,7 @@
 
 // ── scale 取值 ──
 #define OPT_SCALE_ETF     0   // _price 单位 100   (ETF 期权, 0~1023 元, 精度 0.01)
-#define OPT_SCALE_INDEX   1   // _price 单位 10    (股指期权, 0~10230 点, 精度 10)
+#define OPT_SCALE_INDEX   1   // _price 单位 50    (股指期权, 0~51150 点, 精度 50)
 
 // ── _reserved 中使用的 bit 位置 ──
 #define OPT_SCALE_BIT     0   // bit 0 of _reserved (LSB)
@@ -45,13 +45,13 @@
 
 // ── strike 单位 (单位 × _price = 实际 strike) ──
 // ETF mode:    _price × OPT_STRIKE_UNIT_ETF    = strike (元), 精度 0.01
-// Index mode:  _price × OPT_STRIKE_UNIT_INDEX  = strike (点), 精度 10
+// Index mode:  _price × OPT_STRIKE_UNIT_INDEX  = strike (点), 精度 50
 #define OPT_STRIKE_UNIT_ETF     0.01     // 元/单位
-#define OPT_STRIKE_UNIT_INDEX   10.0     // 点/单位
+#define OPT_STRIKE_UNIT_INDEX   50.0     // 点/单位
 
 // ── strike → _price raw 转换因子 (即 1.0 / 单位) ──
 #define OPT_PRICE_FACTOR_ETF    100.0    // strike × 100 = _price
-#define OPT_PRICE_FACTOR_INDEX  0.1      // strike × 0.1  = _price
+#define OPT_PRICE_FACTOR_INDEX  0.02     // strike × 0.02 = _price (= strike / 50)
 
 // ── 读 ──
 #define GET_SYMBOL_OPT_SCALE(sym) \
@@ -90,7 +90,7 @@ inline double decode_option_strike(symbol_t sym) {
 inline bool encode_option_strike(symbol_t& sym, double strike, uint8_t scale) {
     uint32_t raw;
     if (scale == OPT_SCALE_INDEX) {
-        raw = static_cast<uint32_t>(strike * OPT_PRICE_FACTOR_INDEX + 0.5);  // 四舍五入到 10 点
+        raw = static_cast<uint32_t>(strike * OPT_PRICE_FACTOR_INDEX + 0.5);  // 四舍五入到 50 点
     } else {
         raw = static_cast<uint32_t>(strike * OPT_PRICE_FACTOR_ETF + 0.5);    // 四舍五入到 1 分
     }

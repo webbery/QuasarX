@@ -274,6 +274,8 @@ jobs:
           ls -la .
           cp -rf build-artifact/tools . 2>/dev/null || true
           cp -rf build/QuantService . 2>/dev/null || true
+          cp -rf build/config.template.json . 2>/dev/null || true
+          cp -rf build-artifact/test . 2>/dev/null || true
           cp -rf build/QuantService.debug . 2>/dev/null || true
           ls -la .
           rm -rf build-artifact

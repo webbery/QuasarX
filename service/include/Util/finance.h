@@ -2,6 +2,8 @@
 #include "std_header.h"
 #include <Eigen/Dense>
 
+class HolidayCalendar;
+
 namespace finance {
 
 /**
@@ -384,5 +386,20 @@ int daysToExercise(int trade_year, int trade_month, int trade_day,
                    int expiry_year, int expiry_month,
                    OptionExerciseRule rule,
                    const Vector<String>& holidays = {});
+
+// ──────────────────────────────────────────────────────────────────────
+// overload：自动从 HolidayCalendar 注入 holidays（按需读 trade/expiry 年）
+// 行为等价于上述版本，holidays 来自 HolidayCalendar 单例
+// ──────────────────────────────────────────────────────────────────────
+
+/// 同 computeExerciseDate，holidays 自动从 HolidayCalendar 注入
+ExerciseDate computeExerciseDate(int year, int month, OptionExerciseRule rule,
+                                 const HolidayCalendar& cal);
+
+/// 同 daysToExercise，holidays 自动从 HolidayCalendar 注入
+int daysToExercise(int trade_year, int trade_month, int trade_day,
+                   int expiry_year, int expiry_month,
+                   OptionExerciseRule rule,
+                   const HolidayCalendar& cal);
 
 }
