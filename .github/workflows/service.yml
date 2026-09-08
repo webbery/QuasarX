@@ -12,6 +12,13 @@ jobs:
     env:
       CCACHE_DIR: /home/runner/work/ccache  # ccache 缓存目录
     steps:
+      # 检出代码（必须放在第一步：actions/cache 的 save 在 job 末尾 post 步骤执行，
+      # checkout 默认 clean:true 会 git clean -ffdx 清掉其之前创建的所有 untracked
+      # 目录——deps-cache/onnxruntime-install 等缓存路径被清则缓存永远存不上）
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       # - name: Install GCC 13+ (C++23 support)
       #   run: |
       #     sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
@@ -187,11 +194,6 @@ jobs:
           make -j$(nproc)
           sudo make install
 
-      # 检出代码
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
       # 配置CMake并编译
       - name: Configure and build
         run: |
@@ -271,10 +273,8 @@ jobs:
         run: |
           ls -la .
           cp -rf build-artifact/tools . 2>/dev/null || true
-          cp -rf build-artifact/test . 2>/dev/null || true
           cp -rf build/QuantService . 2>/dev/null || true
           cp -rf build/QuantService.debug . 2>/dev/null || true
-          cp -rf build/config.template.json . 2>/dev/null || true
           ls -la .
           rm -rf build-artifact
 
