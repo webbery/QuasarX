@@ -91,11 +91,10 @@ jobs:
           sudo cp -r deps-cache/duckdb/install/include/duckdb* /usr/local/include/
           sudo ldconfig
 
-      - name: Install dependencies
-        if: steps.cache-xgboost.outputs.cache-hit != 'true'
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y  libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
+          sudo apt-get install -y libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install cython
