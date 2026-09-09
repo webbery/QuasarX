@@ -10,12 +10,15 @@
 
 import { tool } from "@langchain/core/tools"
 import { z } from "zod"
+import { applyAuthHeader, getAuthToken } from "./common/auth"
 
 const BASE_URL = "/v0"
 
 async function getAxios() {
   const mod = await import("axios")
-  return mod.default
+  const axios = mod.default
+  applyAuthHeader(axios)
+  return axios
 }
 
 function formatNumber(v: number, digits = 4): string {
@@ -30,6 +33,9 @@ function formatPercent(v: number, digits = 2): string {
 
 export const analysisTool = tool(
   async (params) => {
+    if (!getAuthToken()) {
+      return "错误：未登录或 token 已过期。请先在登录界面完成登录。"
+    }
     const { action } = params
     const axios = await getAxios()
 
@@ -294,6 +300,181 @@ export const analysisTool = tool(
           return lines.join("\n")
         }
 
+        // ========== 协整检验 ==========
+
+        case "cointegration": {
+          const { symbols, start_date, end_date, max_lag } = params
+          if (!symbols) return "错误：cointegration 需要 symbols 参数（≥2 个，逗号分隔）"
+
+          const symbolList = symbols.split(",").map((s: string) => s.trim()).filter(Boolean)
+          if (symbolList.length < 2) return "错误：cointegration 至少需要 2 个标的"
+
+          const res = await axios.get(`${BASE_URL}/analysis/cointegration`, {
+            params: {
+              symbols,
+              ...(start_date ? { start_date } : {}),
+              ...(end_date ? { end_date } : {}),
+              max_lag: max_lag ?? 10,
+            },
+          })
+          const d = res.data
+          if (!d) return "协整分析无结果"
+
+          const lines = [`**协整分析** — ${symbols}`]
+          lines.push(`  标的数: ${symbolList.length}，日期点: ${d.dates?.length ?? 0}`)
+
+          // 单位根检验
+          if (d.unit_root) {
+            lines.push("\n**单位根检验** (ADF)：")
+            for (const [sym, ur] of Object.entries(d.unit_root as Record<string, any>)) {
+              const adf = ur.adf
+              if (adf) {
+                lines.push(`  ${sym}: statistic=${formatNumber(adf.statistic, 4)}, p_value=${formatNumber(adf.p_value, 4)}, ${adf.is_stationary ? "平稳" : "非平稳"}`)
+              }
+            }
+          }
+
+          // 二元 Engle-Granger
+          if (d.pairwise_eg && Array.isArray(d.pairwise_eg)) {
+            lines.push(`\n**Engle-Granger 检验**（${d.pairwise_eg.length} 对）：`)
+            for (const eg of d.pairwise_eg) {
+              const adf = eg.adf ?? {}
+              lines.push(`  ${eg.symbol_x} ~ ${eg.symbol_y}: β=${formatNumber(eg.beta, 4)}, R²=${formatNumber(eg.r_squared, 4)}, 半衰期=${formatNumber(eg.half_life, 2)}, 协整=${eg.is_cointegrated ? "是" : "否"} (ADF p=${formatNumber(adf.p_value, 4)})`)
+            }
+          }
+
+          // Johansen 多元
+          if (d.johansen && d.johansen.rank !== undefined) {
+            const j = d.johansen
+            lines.push(`\n**Johansen 多元协整**：rank=${j.rank}/${j.n_variables}`)
+            if (j.trace_stats && j.trace_stats.length > 0) {
+              lines.push(`  Trace stats: ${j.trace_stats.map((v: number) => formatNumber(v, 3)).join(", ")}`)
+            }
+            if (j.max_eigen_stats && j.max_eigen_stats.length > 0) {
+              lines.push(`  Max eigen stats: ${j.max_eigen_stats.map((v: number) => formatNumber(v, 3)).join(", ")}`)
+            }
+          }
+
+          // Granger 因果
+          if (d.granger?.pairwise && d.granger.pairwise.length > 0) {
+            lines.push(`\n**Granger 因果检验**：`)
+            for (const g of d.granger.pairwise) {
+              lines.push(`  ${g.from} → ${g.to ?? "(其他)"}: F=${formatNumber(g.f_statistic, 4)}, p=${formatNumber(g.p_value, 4)}, ${g.is_significant ? "显著" : "不显著"}`)
+            }
+          }
+
+          return lines.join("\n")
+        }
+
+        // ========== CUSUM 变点检测 ==========
+
+        case "cusum": {
+          const { symbols, start_date, end_date, threshold, drift, mode } = params
+          if (!symbols) return "错误：cusum 需要 symbols 参数"
+
+          const res = await axios.post(`${BASE_URL}/analysis/cusum`, {
+            symbols,
+            ...(start_date ? { start_date } : {}),
+            ...(end_date ? { end_date } : {}),
+            threshold: threshold ?? 4.0,
+            drift: drift ?? 0.5,
+            mode: mode ?? "change_point",
+          })
+          const d = res.data
+          if (!d) return "CUSUM 检测无结果"
+
+          const lines = [`**CUSUM 累积和变点检测** — ${symbols}`]
+          lines.push(`  模式: ${mode ?? "change_point"}，阈值: ${threshold ?? 4.0}，漂移: ${drift ?? 0.5}`)
+
+          // 累积和路径
+          if (d.cusum_path && d.dates && d.dates.length === d.cusum_path.length) {
+            const n = d.cusum_path.length
+            const max = Math.max(...d.cusum_path.map((v: number) => Math.abs(v)))
+            const finalIdx = d.cusum_path.reduce((maxIdx: number, v: number, i: number, arr: number[]) =>
+              Math.abs(v) > Math.abs(arr[maxIdx]) ? i : maxIdx, 0)
+            lines.push(`  数据点: ${n}，累积和峰值: ${formatNumber(max, 4)} @ ${d.dates[finalIdx]}`)
+
+            // 显示前 5 个 + 峰值附近
+            lines.push("\n**累积和序列**（前 5 点）：")
+            for (let i = 0; i < Math.min(5, n); i++) {
+              lines.push(`  ${d.dates[i]}: ${formatNumber(d.cusum_path[i], 4)}`)
+            }
+            lines.push(`  ...`)
+            lines.push(`  ${d.dates[finalIdx]}: ${formatNumber(d.cusum_path[finalIdx], 4)} （峰值）`)
+          }
+
+          // 变点
+          if (d.change_points && d.change_points.length > 0) {
+            lines.push(`\n**检测到 ${d.change_points.length} 个变点**：`)
+            for (const cp of d.change_points.slice(0, 10)) {
+              lines.push(`  ${cp.date ?? cp.datetime}: statistic=${formatNumber(cp.statistic ?? cp.cusum_value, 4)}, ${cp.significance ? `p=${formatNumber(cp.significance, 4)}` : ""}`)
+            }
+            if (d.change_points.length > 10) lines.push(`  ... 共 ${d.change_points.length} 个`)
+          } else {
+            lines.push("\n**未检测到显著变点**")
+          }
+
+          return lines.join("\n")
+        }
+
+        // ========== 主成分分析 ==========
+
+        case "pca": {
+          const { symbols, start_date, end_date, n_components } = params
+          if (!symbols) return "错误：pca 需要 symbols 参数（≥2 个，逗号分隔）"
+
+          const symbolList = symbols.split(",").map((s: string) => s.trim()).filter(Boolean)
+          if (symbolList.length < 2) return "错误：pca 至少需要 2 个标的"
+
+          const res = await axios.get(`${BASE_URL}/analysis/pca`, {
+            params: {
+              symbols,
+              ...(start_date ? { start_date } : {}),
+              ...(end_date ? { end_date } : {}),
+              n_components: n_components ?? 3,
+            },
+          })
+          const d = res.data
+          if (!d) return "PCA 分析无结果"
+
+          const lines = [`**主成分分析** — ${symbols}`]
+          lines.push(`  标的数: ${symbolList.length}，主成分数: ${n_components ?? 3}`)
+
+          // 方差解释率
+          if (d.explained_variance_ratio) {
+            lines.push("\n**方差解释率**：")
+            const ev = d.explained_variance_ratio
+            for (let i = 0; i < ev.length; i++) {
+              lines.push(`  PC${i + 1}: ${(ev[i] * 100).toFixed(2)}%`)
+            }
+            const cumSum = ev.reduce((acc: number[], v: number) => {
+              acc.push((acc.length > 0 ? acc[acc.length - 1] : 0) + v)
+              return acc
+            }, [])
+            lines.push(`  累计解释: ${(cumSum[cumSum.length - 1] * 100).toFixed(2)}%`)
+          }
+
+          // 特征值
+          if (d.eigenvalues) {
+            lines.push("\n**特征值**：")
+            for (let i = 0; i < d.eigenvalues.length; i++) {
+              lines.push(`  λ${i + 1}: ${formatNumber(d.eigenvalues[i], 4)}`)
+            }
+          }
+
+          // 特征向量（每个主成分）
+          if (d.components && Array.isArray(d.components) && d.components.length > 0) {
+            lines.push("\n**特征向量**（载荷）：")
+            for (let i = 0; i < Math.min(d.components.length, n_components ?? 3); i++) {
+              const comp = d.components[i]
+              const weights = symbolList.map((sym: string, j: number) => `${sym}=${formatNumber(comp[j], 4)}`).join(", ")
+              lines.push(`  PC${i + 1}: ${weights}`)
+            }
+          }
+
+          return lines.join("\n")
+        }
+
         default:
           return `未知 action: ${action}`
       }
@@ -312,13 +493,17 @@ export const analysisTool = tool(
       "action='xgboost_train' XGBoost 训练（strategyGraph=策略图JSON，label={source,period,type,threshold}）；",
       "action='xgboost_shap' 计算 SHAP 值（model_id=模型ID）；",
       "action='xgboost_delete' 释放模型（model_id=模型ID）；",
-      "action='monte_carlo' Monte Carlo 价格预测（symbols=标的，times=模拟次数，steps=预测步数）",
+      "action='monte_carlo' Monte Carlo 价格预测（symbols=标的，times=模拟次数，steps=预测步数）；",
+      "action='cointegration' 协整分析（symbols=≥2个标的，返回单位根/Engle-Granger/Johansen/Granger因果检验）；",
+      "action='cusum' CUSUM 累积和变点检测（symbols，threshold 默认 4.0，drift 默认 0.5，mode=change_point/momentum/mean_revert）；",
+      "action='pca' 主成分分析（symbols=≥2个标的，n_components 主成分数默认 3）",
     ].join(""),
     schema: z.object({
       action: z.enum([
         "signal_emd", "volatility",
         "xgboost_train", "xgboost_shap", "xgboost_delete",
         "monte_carlo",
+        "cointegration", "cusum", "pca",
       ]).describe("操作类型"),
       symbols: z.string().optional().describe("标的代码，逗号分隔（如 sh.600000 或 sh.600000,sh.600036）"),
       start_date: z.string().optional().describe("起始日期 YYYY-MM-DD"),
@@ -339,6 +524,11 @@ export const analysisTool = tool(
       model_id: z.string().optional().describe("模型 ID（xgboost_shap/ml_delete 需要）"),
       times: z.number().optional().describe("Monte Carlo 模拟次数（默认 1000）"),
       steps: z.number().optional().describe("Monte Carlo 预测步数（默认 20）"),
+      max_lag: z.number().optional().describe("Granger 检验最大滞后阶数（cointegration 默认 10）"),
+      threshold: z.number().optional().describe("CUSUM 阈值（cusum 默认 4.0）"),
+      drift: z.number().optional().describe("CUSUM 漂移参数（cusum 默认 0.5）"),
+      mode: z.string().optional().describe("CUSUM 模式: change_point/momentum/mean_revert（默认 change_point）"),
+      n_components: z.number().optional().describe("PCA 主成分数（默认 3）"),
     }),
   }
 )

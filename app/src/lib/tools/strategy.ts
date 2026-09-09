@@ -13,6 +13,7 @@ import { tool } from "@langchain/core/tools"
 import { z } from "zod"
 import { createStrategyNode, getAllNodes, getNode, searchNodes } from "../nodes"
 import { useHistoryStore } from "@/stores/history"
+import { applyAuthHeader } from "./common/auth"
 
 // === 策略图 CRUD（使用 historyStore 管理）===
 
@@ -770,7 +771,8 @@ function getFlowConstraints(): string {
 // === 主 Tool ===
 
 export const strategyTool = tool(
-  async ({ action, keyword, data, category }) => {
+  async (params) => {
+    const { action, keyword, data, category, name, strategy, node, start, end, limit } = params
     switch (action) {
       // === 节点查询 ===
 
@@ -905,22 +907,198 @@ export const strategyTool = tool(
         return getResampleUsageGuide()
       }
 
+      // === 策略绩效与风控（聚合查询） ===
+
+      case "query_strategy_performance": {
+        const { name } = params
+        if (!name) return "错误：query_strategy_performance 需要提供 name 参数（策略名或 ID）"
+
+        const axios = await import('axios')
+        applyAuthHeader(axios.default)
+        const response = await axios.default.get(`/v0/strategy/performance`, {
+          params: { id: name },
+        })
+
+        const d = response.data
+        if (!d) return `策略 ${name} 无绩效数据`
+
+        const lines = [`**策略绩效** — ${name}`]
+        const pctKeys = ['annual_return', 'total_return', 'max_drawdown', 'win_rate']
+        for (const [k, v] of Object.entries(d as Record<string, any>)) {
+          if (typeof v !== 'number') continue
+          const formatted = pctKeys.includes(k)
+            ? `${(v * 100).toFixed(2)}%`
+            : (Math.abs(v) < 100 ? v.toFixed(4) : String(v))
+          lines.push(`  ${k}: ${formatted}`)
+        }
+        return lines.join('\n')
+      }
+
+      case "query_risk_aggregated": {
+        const axios = await import('axios')
+        applyAuthHeader(axios.default)
+        const response = await axios.default.get(`/v0/risk/strategies`)
+        const items = response.data
+        if (!items || (Array.isArray(items) && items.length === 0)) {
+          return "暂无策略风险指标（策略系统未初始化或无运行策略）"
+        }
+
+        const list = Array.isArray(items) ? items : Object.values(items)
+        const lines = [`**所有策略风险指标** — 共 ${list.length} 个策略`]
+        for (const item of list.slice(0, 30)) {
+          const name = item.name ?? item.strategy ?? item.strategy_id ?? "?"
+          const fields: [string, string][] = []
+          if (item.information_ratio !== undefined) fields.push(["IR", item.information_ratio.toFixed(4)])
+          if (item.sharpe !== undefined) fields.push(["Sharpe", item.sharpe.toFixed(4)])
+          if (item.max_drawdown !== undefined) fields.push(["MaxDD", `${(item.max_drawdown * 100).toFixed(2)}%`])
+          if (item.var !== undefined) fields.push(["VaR", `${(item.var * 100).toFixed(2)}%`])
+          if (item.cusum_signal !== undefined) fields.push(["CUSUM", item.cusum_signal.toFixed(4)])
+          if (item.win_rate !== undefined) fields.push(["WinRate", `${(item.win_rate * 100).toFixed(2)}%`])
+          if (item.health !== undefined) fields.push(["Health", String(item.health)])
+          const summary = fields.map(([k, v]) => `${k}=${v}`).join(", ")
+          lines.push(`  ${name}: ${summary}`)
+        }
+        if (list.length > 30) lines.push(`  ... 共 ${list.length} 个，仅显示前 30 个`)
+        return lines.join('\n')
+      }
+
+      case "query_capital_risk": {
+        const axios = await import('axios')
+        applyAuthHeader(axios.default)
+        const response = await axios.default.get(`/v0/risk/capital`)
+        const d = response.data
+        if (!d) return "无资金风控配置"
+
+        const lines = [`**资金风控配置与状态**`]
+        if (d.stoploss_line !== undefined) lines.push(`  止损线: ${d.stoploss_line}`)
+        if (d.daily_limit !== undefined) lines.push(`  单日限额: ${d.daily_limit}`)
+        if (d.current_equity !== undefined) lines.push(`  当前权益: ${d.current_equity}`)
+        if (d.total_capital !== undefined) lines.push(`  总资金: ${d.total_capital}`)
+        if (d.used_capital !== undefined) lines.push(`  已用资金: ${d.used_capital}`)
+        if (d.available !== undefined) lines.push(`  可用: ${d.available}`)
+        // 兼容不同字段命名
+        for (const [k, v] of Object.entries(d as Record<string, any>)) {
+          if (['stoploss_line', 'daily_limit', 'current_equity', 'total_capital', 'used_capital', 'available'].includes(k)) continue
+          lines.push(`  ${k}: ${typeof v === 'number' ? v.toFixed(4) : v}`)
+        }
+        return lines.join('\n')
+      }
+
+      case "query_risk_status": {
+        const axios = await import('axios')
+        applyAuthHeader(axios.default)
+        const response = await axios.default.get(`/v0/risk/status`)
+        const d = response.data
+        if (!d) return "无风控状态数据"
+
+        const lines = [`**风控断路器状态**`]
+        for (const [k, v] of Object.entries(d as Record<string, any>)) {
+          if (typeof v === 'object' && v !== null) {
+            lines.push(`  ${k}:`)
+            for (const [kk, vv] of Object.entries(v)) {
+              lines.push(`    ${kk}: ${typeof vv === 'number' ? vv.toFixed(4) : vv}`)
+            }
+          } else {
+            lines.push(`  ${k}: ${typeof v === 'number' ? v.toFixed(4) : v}`)
+          }
+        }
+        return lines.join('\n')
+      }
+
+      case "query_strategy_logs": {
+        const { name, start, end, limit } = params
+        if (!name) return "错误：query_strategy_logs 需要提供 name 参数（策略 ID）"
+
+        const axios = await import('axios')
+        applyAuthHeader(axios.default)
+        const response = await axios.default.get(`/v0/strategy/logs`, {
+          params: {
+            strategy_id: name,
+            ...(start ? { start_time: start } : {}),
+            ...(end ? { end_time: end } : {}),
+            limit: limit ?? 100,
+          },
+        })
+
+        const d = response.data
+        const logs = d?.logs ?? (Array.isArray(d) ? d : [])
+        if (!logs || logs.length === 0) return `策略 ${name} 无日志记录`
+
+        const lines = [`**策略日志** — ${name}（共 ${logs.length} 条）`]
+        for (const log of logs.slice(0, 30)) {
+          const ts = log.timestamp ?? log.datetime ?? log.time ?? ""
+          const lv = log.level ?? log.severity ?? "info"
+          const msg = log.message ?? log.msg ?? JSON.stringify(log).slice(0, 200)
+          lines.push(`  [${lv}] ${ts} ${msg}`)
+        }
+        if (logs.length > 30) lines.push(`  ... 共 ${logs.length} 条，仅显示前 30 条`)
+        return lines.join('\n')
+      }
+
+      case "query_node_io": {
+        const { strategy, node, start, end } = params
+        if (!strategy) return "错误：query_node_io 需要提供 strategy 参数（策略 ID）"
+        if (!node) return "错误：query_node_io 需要提供 node 参数（节点 ID）"
+
+        const axios = await import('axios')
+        applyAuthHeader(axios.default)
+        const response = await axios.default.get(`/v0/node/io`, {
+          params: {
+            strategy_id: strategy,
+            node_id: node,
+            ...(start ? { start_time: start } : {}),
+            ...(end ? { end_time: end } : {}),
+          },
+        })
+
+        const d = response.data
+        if (!d) return `节点 ${node} 无 I/O 日志`
+
+        const lines = [`**节点 I/O 日志** — 策略 ${strategy} / 节点 ${node}`]
+        const inputs = d.inputs ?? []
+        const outputs = d.outputs ?? []
+        if (inputs.length > 0) {
+          lines.push(`\n**输入日志**（${inputs.length} 条，前 10 条）：`)
+          for (const i of inputs.slice(0, 10)) {
+            lines.push(`  ${i.timestamp ?? i.time ?? ""}  ${i.key ?? i.field ?? ""} = ${JSON.stringify(i.value ?? i.data ?? "").slice(0, 100)}`)
+          }
+        }
+        if (outputs.length > 0) {
+          lines.push(`\n**输出日志**（${outputs.length} 条，前 10 条）：`)
+          for (const o of outputs.slice(0, 10)) {
+            lines.push(`  ${o.timestamp ?? o.time ?? ""}  ${o.key ?? o.field ?? ""} = ${JSON.stringify(o.value ?? o.data ?? "").slice(0, 100)}`)
+          }
+        }
+        if (inputs.length === 0 && outputs.length === 0) {
+          lines.push("  无 I/O 记录")
+        }
+        return lines.join('\n')
+      }
+
       default:
-        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage`
+        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs, query_node_io`
     }
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）\n- query_node_io: 查询节点 I/O 日志（strategy=策略ID，node=节点ID）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
         "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
-        "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage"
+        "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage",
+        "query_strategy_performance", "query_risk_aggregated", "query_capital_risk", "query_risk_status",
+        "query_strategy_logs", "query_node_io"
       ]).describe("操作类型"),
       keyword: z.string().optional().describe("节点 id/名称（get_node_info），或策略 id（get/update/delete_strategy），或搜索关键词（list_nodes 时可选）"),
       data: z.any().optional().describe("策略图 JSON 数据（create_strategy / update_strategy 时必填）"),
       category: z.string().optional().describe("节点分类过滤（list_nodes 时可选）: input/process/signal/execution/ml/risk/utility"),
+      name: z.union([z.string(), z.number()]).optional().describe("策略名或 ID（query_strategy_performance/query_strategy_logs）"),
+      strategy: z.union([z.string(), z.number()]).optional().describe("策略 ID（query_node_io）"),
+      node: z.string().optional().describe("节点 ID（query_node_io）"),
+      start: z.string().optional().describe("起始时间（query_strategy_logs/query_node_io，YYYY-MM-DD）"),
+      end: z.string().optional().describe("结束时间（query_strategy_logs/query_node_io，YYYY-MM-DD）"),
+      limit: z.number().optional().describe("返回条数上限（query_strategy_logs 默认 100）"),
     }),
   }
 )

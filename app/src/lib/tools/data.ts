@@ -11,12 +11,15 @@
 
 import { tool } from "@langchain/core/tools"
 import { z } from "zod"
+import { applyAuthHeader, getAuthToken } from "./common/auth"
 
 const BASE_URL = "/v0"
 
 async function getAxios() {
   const mod = await import("axios")
-  return mod.default
+  const axios = mod.default
+  applyAuthHeader(axios)
+  return axios
 }
 
 function formatQuoteBar(bar: any): string {
@@ -37,6 +40,9 @@ function truncateRows(rows: any[], limit: number, formatter: (r: any) => string)
 
 export const dataTool = tool(
   async (params) => {
+    if (!getAuthToken()) {
+      return "错误：未登录或 token 已过期。请先在登录界面完成登录。"
+    }
     const { action } = params
     const axios = await getAxios()
 
@@ -270,6 +276,71 @@ export const dataTool = tool(
           return lines.join("\n")
         }
 
+        // ========== 期权合约 ==========
+
+        case "query_option_simple": {
+          const res = await axios.get(`${BASE_URL}/option/simple`)
+          const items = res.data?.items ?? res.data ?? []
+          if (items.length === 0) return "无期权合约数据"
+
+          const lines = [`**期权合约列表** — 共 ${items.length} 个`]
+          const show = items.slice(0, 30)
+          for (const o of show) {
+            lines.push(`  ${o.symbol} ${o.name} (${o.exchange ?? ""})`)
+          }
+          if (items.length > 30) lines.push(`  ... 共 ${items.length} 个，仅显示前 30 个`)
+          return lines.join("\n")
+        }
+
+        case "query_option_history": {
+          const { code, start, end } = params
+          if (!code) return "错误：query_option_history 需要 code 参数（期权合约代码）"
+
+          const res = await axios.get(`${BASE_URL}/option/history`, {
+            params: {
+              id: code,
+              ...(start ? { start_date: start } : {}),
+              ...(end ? { end_date: end } : {}),
+            },
+          })
+          const d = res.data
+          const rows = d?.data ?? d?.bars ?? []
+          if (rows.length === 0) return `期权合约 ${code} 无历史行情`
+
+          const header = `**${code} 期权历史行情** — ${rows.length} 条`
+          const show = rows.slice(0, 15).map((bar: any) => {
+            const dt = typeof bar.datetime === "number"
+              ? new Date(bar.datetime * 1000).toLocaleDateString("zh-CN")
+              : bar.datetime ?? bar.date ?? ""
+            return `  ${dt}  O:${bar.open}  H:${bar.high}  L:${bar.low}  C:${bar.close}  V:${bar.volume ?? "-"}`
+          })
+          let out = `${header}\n${show.join("\n")}`
+          if (rows.length > 15) out += `\n  ... 共 ${rows.length} 条，仅显示前 15 条`
+          return out
+        }
+
+        case "query_option_data": {
+          const { code, start, end } = params
+          if (!code) return "错误：query_option_data 需要 code 参数（期权合约代码）"
+
+          const res = await axios.get(`${BASE_URL}/option/data`, {
+            params: { symbol: code },
+          })
+          const d = res.data
+          if (!d) return `期权 ${code} 无数据`
+
+          const lines = [`**${code} 期权数据**`]
+          if (d.underlying ?? d.underlying_symbol) {
+            lines.push(`  标的: ${d.underlying ?? d.underlying_symbol}`)
+          }
+          if (d.strike !== undefined) lines.push(`  行权价: ${d.strike}`)
+          if (d.expiry ?? d.maturity_date) lines.push(`  到期日: ${d.expiry ?? d.maturity_date}`)
+          if (d.is_call !== undefined) lines.push(`  类型: ${d.is_call ? "Call" : "Put"}`)
+          if (d.implied_volatility !== undefined) lines.push(`  隐含波动率: ${(d.implied_volatility * 100).toFixed(2)}%`)
+          if (start || end) lines.push(`  时间范围: ${start ?? "..."} ~ ${end ?? "..."}`)
+          return lines.join("\n")
+        }
+
         default:
           return `未知 action: ${action}`
       }
@@ -297,7 +368,10 @@ export const dataTool = tool(
       "action='query_stock_detail' 获取股票实时价格/成交量；",
       "action='query_stock_verbose' 获取股票详细信息（行业/主营/PE/PB等）；",
       "action='query_index' 获取指数行情；",
-      "action='query_future' 获取期货合约列表",
+      "action='query_future' 获取期货合约列表；",
+      "action='query_option_simple' 获取所有期权合约列表；",
+      "action='query_option_history' 查询期权历史行情（code=合约代码）；",
+      "action='query_option_data' 查询期权合约详情数据（code=合约代码）",
     ].join(""),
     schema: z.object({
       action: z.enum([
@@ -306,6 +380,7 @@ export const dataTool = tool(
         "list_finance", "query_finance", "download_finance", "delete_finance",
         "query_stock_info", "query_stock_detail", "query_stock_verbose",
         "query_index", "query_future",
+        "query_option_simple", "query_option_history", "query_option_data",
       ]).describe("操作类型"),
       table: z.string().optional().describe("行情表名，如 stock_1d, etf_5m, stock_5m"),
       symbol: z.string().optional().describe("标的代码，如 sh.600000（行情）或 SH000001（指数）"),
@@ -314,7 +389,7 @@ export const dataTool = tool(
       end: z.string().optional().describe("结束日期 YYYY-MM-DD"),
       freq: z.string().optional().describe("数据频率: daily/5m/15m/30m/60m（默认 daily）"),
       category: z.string().optional().describe("财务类别: profit/operation/growth/balance/cashflow/dupont/all"),
-      code: z.string().optional().describe("财务标的代码，如 600519.SH"),
+      code: z.string().optional().describe("代码: 财务标的代码（如 600519.SH）或期权合约代码（如 10004487.SH）"),
       format: z.string().optional().describe("导出格式: csv/json（默认 csv）"),
       adj: z.string().optional().describe("复权类型: hfq/none（默认 hfq）"),
       data: z.array(z.string()).optional().describe("CSV 行数据（import_quote 时使用）"),

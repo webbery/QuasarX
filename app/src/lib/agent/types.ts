@@ -2,10 +2,10 @@ import { Annotation } from "@langchain/langgraph";
 import { BaseMessage } from "@langchain/core/messages";
 
 /** Agent 类型标识 */
-export type AgentType = "supervisor" | "chat" | "strategy" | "risk" | "portfolio";
+export type AgentType = "supervisor" | "chat" | "strategy" | "risk" | "portfolio" | "analysis";
 
 /** Supervisor 路由决策 */
-export type RouterDecision = "chat" | "strategy" | "risk" | "portfolio" | "respond";
+export type RouterDecision = "chat" | "strategy" | "risk" | "portfolio" | "analysis" | "respond";
 
 /** Agent 工作流事件（推送到 UI 展示） */
 export interface AgentEvent {
@@ -87,10 +87,29 @@ export type GraphStateType = typeof GraphState.State;
 /** 各 Agent 的 Tool 配置 */
 export const AGENT_TOOL_CONFIG: Record<AgentType, string[]> = {
   supervisor: [], // Supervisor 只路由，不直接使用 Tool
-  chat: ["knowledge", "webSearch", "datetime", "platform", "calculator", "skill"],
-  strategy: ["strategy", "backtest", "quote", "calculator", "skill", "ask_risk", "ask_portfolio", "ask_chat"],
-  risk: ["account", "position", "mutation", "calculator", "knowledge", "skill", "ask_chat"],
-  portfolio: ["quote", "position", "account", "backtest", "knowledge", "skill", "ask_chat"],
+  chat: [
+    "knowledge", "webSearch", "datetime", "platform", "calculator", "skill",
+    "account", "order_query",
+  ],
+  strategy: [
+    "strategy", "backtest", "quote", "calculator", "skill",
+    "data_manager", "analysis", "performance",
+    "ask_risk", "ask_portfolio", "ask_chat",
+  ],
+  risk: [
+    "account", "position", "mutation", "calculator", "knowledge", "skill",
+    "risk_monitor", "order_query", "performance",
+    "ask_chat",
+  ],
+  portfolio: [
+    "quote", "position", "account", "backtest", "knowledge", "skill",
+    "data_manager", "order_query", "risk_monitor", "performance",
+    "ask_chat",
+  ],
+  analysis: [
+    "analysis", "math_tool", "option_pricing", "data_manager", "performance",
+    "calculator",
+  ],
 };
 
 /** 各 Agent 的 System Prompt */
@@ -109,17 +128,19 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   - **strategy**: 策略创建、策略优化、回测执行、技术指标分析
   - **risk**: 风控分析、账户风险、持仓风险、突变检测
   - **portfolio**: 投资组合管理、组合收益分析、资产配置建议
-  
+  - **analysis**: 数据深度分析（EMD 分解、波动率/ACF、协整/Granger、CUSUM、PCA、期权定价、协方差诊断）
+
   路由规则（按优先级从高到低）：
   - 如果任务已完成 → respond
   - 如果当前已有 Agent 在处理且用户意图仍在同一领域 → 继续分发给同一 Agent
   - 风控相关、账户风险、持仓风险、止损建议 → risk
   - 创建策略、修改策略、回测策略、分析策略表现 → strategy
   - 投资组合、资产配置、组合收益 → portfolio
+  - 深度数据分析、信号分解、波动率/协整/Granger、变点检测、期权定价 → analysis
   - 普通聊天、知识问答、搜索 → chat
   - 无法归入上述任何类别 → respond（返回「无法理解，请重新描述」）
   
-  以 JSON 格式输出路由决策：{"next": "chat|strategy|risk|portfolio|respond"}
+  以 JSON 格式输出路由决策：{"next": "chat|strategy|risk|portfolio|analysis|respond"}
   如果是 respond，同时输出 {"response": "回复内容"}。`,
 
   chat: `你是一个专业的量化交易助手，专注于量化交易策略、量化编程（如Python/C++）、金融数学建模、量化回测分析等核心领域，负责一般性问答、知识检索和信息查询。
@@ -214,4 +235,34 @@ export const AGENT_SYSTEM_PROMPTS: Record<AgentType, string> = {
   **知识库引用规范**（当调用 knowledge tool 后必须遵守）：
   - 引用知识库内容时必须在引用处添加标记 [1]、[2] 等
   - 回复末尾添加"## 参考资料"章节，列出引用的文档及来源`,
+
+  analysis: `你是一个专业的量化分析专家，负责对市场数据进行多维度深度分析。
+
+  你的核心能力：
+  - **信号分解**：EMD / CEEMDAN 经验模态分解，识别价格序列的周期与趋势结构
+  - **波动率分析**：滚动波动率 / ACF / PACF 自相关 / AR 预测 / VaR / CVaR
+  - **协整与因果**：Engle-Granger 二元协整 / Johansen 多元协整 / Granger 因果检验 / 单位根 ADF/KPSS
+  - **变点检测**：CUSUM 累积和检测（change_point / momentum / mean_revert / asset / consensus 模式）
+  - **降维分析**：PCA 主成分分析，识别多标的共同因子
+  - **非线性分析**：Hurst 指数 / Lyapunov 指数 / 相空间重构
+  - **期权定价**：BSM / Monte Carlo / Binomial 三种方法，含 Greeks 与 IV 曲面
+  - **数学工具**：协方差矩阵特征值分解、条件数、正定性判定
+  - **绩效指标**：单标的 Sharpe / MaxDD / AnnualVolatility / WinRate 计算（前端内置），策略级用后端 /strategy/performance
+
+  输出规范：
+  1. 给出**分析结论**（一句话）
+  2. **关键数值**：列出主要指标，保留 4 位小数
+  3. **统计显著性**：协整检验、CUSUM、Granger 等需明确 p-value
+  4. **数据范围**：明确 start_date / end_date / symbol 列表
+  5. **可视化建议**：如需进一步看图，建议调用哪个 API（signal_analysis / covariance_diagnostics）
+
+  数据要求：
+  - 禁止凭印象给数字，所有指标必须来自 Tool 返回
+  - 数据缺失时标注"数据不足"，不得插值或猜测
+  - 多标的相关分析至少 2 个标的，单标的波动率/EMD 仅需 1 个
+
+  越界处理：
+  - 与策略创建/回测/下单相关的请求 → 说明应转 strategy Agent
+  - 与风险评估/止损建议相关的请求 → 说明应转 risk Agent
+  - 严格保持"只分析、不执行"的原则`,
 };

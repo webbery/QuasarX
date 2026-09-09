@@ -14,6 +14,7 @@ import { useHistoryStore } from "@/stores/history"
 import type { BacktestResult } from "@/stores/history"
 import { computeStatistics, calculateReturns } from "@/lib/statistics"
 import { buildChartData } from "@/lib/chartData"
+import { applyAuthHeader } from "./common/auth"
 
 /**
  * 格式化指标为易读文本
@@ -319,54 +320,32 @@ export const backtestTool = tool(
     try {
       const historyStore = useHistoryStore()
 
+      const noResultMsg =
+        "当前没有回测结果。请先在主界面手动触发回测（流程图编辑器 → 回测按钮），完成后 Agent 才能读取结果分析。"
+
       switch (action) {
         // === 执行回测 ===
 
         case "run_backtest": {
-          if (!strategyGraph) {
-            return "错误：run_backtest 需要提供 strategyGraph 参数（策略图 JSON）"
-          }
-
-          // 调用后端回测 API
-          const axios = await import('axios')
-          const response = await axios.default.post('/v0/backtest', {
-            script: JSON.stringify(strategyGraph)
-          })
-
-          const result = response.data
-          const features = result.features || {}
-          const summary = result.summary || {}
-          const buy = result.buy || []
-          const sell = result.sell || []
-
-          // 如果后端未返回 skewness/kurtosis，从信号近似计算
-          if (features.skewness === undefined) {
-            const dist = computeDistributionFeatures(buy, sell)
-            features.skewness = dist.skewness
-            features.kurtosis = dist.kurtosis
-          }
-
-          // 构建回测结果对象
-          const backtestResult: BacktestResult = {
-            backtestTime: new Date().toISOString(),
-            features,
-            summary,
-            buy,
-            sell,
-          }
-
-          // 保存到 history store（自动更新 latestBacktestVersionId）
-          // 注意：如果没有 versionId，我们创建一个临时版本
-          const tempVersionId = `backtest_${Date.now()}`
-          await historyStore.saveBacktestResult(tempVersionId, backtestResult)
-
+          // D3-A Phase 5 决策：Agent 不直接触发后端回测。
+          // 回测耗时 30 秒-数分钟，且需 UI 监控；改为提示用户手动执行。
           return [
-            `**【回测完成】**`,
+            `**回测请手动执行**`,
             ``,
-            formatBacktestSummary(backtestResult),
+            `为避免长任务阻塞对话（回测可能耗时 30 秒-数分钟），Agent 不直接调用 \`/v0/backtest\`。`,
             ``,
-            `完整指标数据可使用 action="get_metrics" 查询`,
-            `交易信号明细可使用 action="get_signals" 查询`,
+            `请按以下步骤操作：`,
+            `1. 在主界面打开策略流程图编辑器`,
+            `2. 点击工具栏的「回测」按钮手动触发回测`,
+            `3. 回测完成后，结果会自动保存到 historyStore`,
+            ``,
+            `完成后，Agent 可通过以下 action 读取回测结果进行分析：`,
+            `- \`get_summary\` 获取回测摘要（年化/Sharpe/MaxDD/胜率）`,
+            `- \`get_metrics\` 获取完整指标列表`,
+            `- \`get_metric_value\` 获取单个指标值（metric=指标名）`,
+            `- \`get_signals\` 获取交易信号明细`,
+            `- \`get_chart_data\` 获取图表数据（price/performance/drawdown/distribution）`,
+            `- \`query_performance\` 查询策略绩效（策略级，调 \`/v0/strategy/performance\`）`,
           ].join('\n')
         }
 
@@ -374,7 +353,7 @@ export const backtestTool = tool(
 
         case "get_metrics": {
           const result = await historyStore.getLatestBacktestResult()
-          if (!result) return "当前没有回测结果，请先使用 action='run_backtest' 执行回测"
+          if (!result) return "当前没有回测结果。请先在主界面手动触发回测（流程图编辑器 → 回测按钮），完成后 Agent 才能读取结果分析。"
 
           return formatMetrics(result.features)
         }
@@ -382,7 +361,7 @@ export const backtestTool = tool(
         case "get_metric_value": {
           if (!metric) return "错误：get_metric_value 需要提供 metric 参数（指标名称）"
           const result = await historyStore.getLatestBacktestResult()
-          if (!result) return "当前没有回测结果"
+          if (!result) return noResultMsg
 
           const value = result.features?.[metric]
           if (value === undefined) return `未找到指标 "${metric}"。可用指标: ${Object.keys(result.features || {}).join(', ')}`
@@ -396,7 +375,7 @@ export const backtestTool = tool(
 
         case "get_signals": {
           const result = await historyStore.getLatestBacktestResult()
-          if (!result) return "当前没有回测结果"
+          if (!result) return noResultMsg
 
           return formatSignals(result.buy || [], result.sell || [])
         }
@@ -405,7 +384,7 @@ export const backtestTool = tool(
 
         case "get_summary": {
           const result = await historyStore.getLatestBacktestResult()
-          if (!result) return "当前没有回测结果"
+          if (!result) return noResultMsg
 
           return formatBacktestSummary(result)
         }
@@ -414,7 +393,7 @@ export const backtestTool = tool(
 
         case "get_chart_data": {
           const result = await historyStore.getLatestBacktestResult()
-          if (!result) return "当前没有回测结果"
+          if (!result) return noResultMsg
 
           const chartData = buildChartFromResult(result)
 
@@ -435,8 +414,91 @@ export const backtestTool = tool(
           return formatChartData(metric, chartData)
         }
 
+        // === 容量扫描 ===
+
+        case "run_capacity_scan": {
+          const { strategy, capital_min, capital_max, steps, impact_eta, closing_liquidity_ratio } = params
+          if (!strategy) return "错误：run_capacity_scan 需要提供 strategy 参数（策略图 JSON）"
+
+          const axios = await import('axios')
+          applyAuthHeader(axios.default)
+          const response = await axios.default.post('/v0/capacity', {
+            strategy,
+            capital_min: capital_min ?? 100000,
+            capital_max: capital_max ?? 10000000,
+            steps: steps ?? 10,
+            impact_eta: impact_eta ?? 0.1,
+            closing_liquidity_ratio: closing_liquidity_ratio ?? 0.05,
+          })
+
+          const d = response.data
+          if (!d) return "容量扫描无结果"
+
+          const lines = [`**容量扫描完成** — ${d.results?.length ?? 0} 个资金点`]
+          lines.push(`  资金范围: ${capital_min ?? 100000} ~ ${capital_max ?? 10000000}（${steps ?? 10} 档）`)
+          lines.push(`  冲击系数 η=${impact_eta ?? 0.1}，收盘流动性占比=${closing_liquidity_ratio ?? 0.05}`)
+
+          // 容量结果（基准回测）
+          if (d.capacity_metrics) {
+            const cm = d.capacity_metrics
+            lines.push("\n**基准回测**：")
+            if (cm.sharpe !== undefined) lines.push(`  Sharpe: ${cm.sharpe.toFixed(4)}`)
+            if (cm.total_return !== undefined) lines.push(`  Total Return: ${(cm.total_return * 100).toFixed(2)}%`)
+            if (cm.max_drawdown !== undefined) lines.push(`  Max Drawdown: ${(cm.max_drawdown * 100).toFixed(2)}%`)
+          }
+
+          // 容量曲线（每个资金量下的指标）
+          if (d.results && Array.isArray(d.results)) {
+            lines.push("\n**容量曲线**（前 10 个资金点）：")
+            for (const r of d.results.slice(0, 10)) {
+              const capital = r.capital ?? r.amount ?? "N/A"
+              const sharp = r.sharpe !== undefined ? `Sharpe=${r.sharpe.toFixed(3)}` : ""
+              const ret = r.total_return !== undefined ? `Return=${(r.total_return * 100).toFixed(1)}%` : ""
+              const dd = r.max_drawdown !== undefined ? `MaxDD=${(r.max_drawdown * 100).toFixed(1)}%` : ""
+              lines.push(`  ${capital}: ${sharp}  ${ret}  ${dd}`)
+            }
+            if (d.results.length > 10) lines.push(`  ... 共 ${d.results.length} 个`)
+          }
+
+          // 容量阈值
+          if (d.sharpe_decay_20 !== undefined || d.sharpe_decay_50 !== undefined) {
+            lines.push("\n**容量衰减阈值**：")
+            if (d.sharpe_decay_20 !== undefined) lines.push(`  Sharpe 衰减 20%: ${d.sharpe_decay_20}`)
+            if (d.sharpe_decay_50 !== undefined) lines.push(`  Sharpe 衰减 50%: ${d.sharpe_decay_50}`)
+          }
+
+          return lines.join('\n')
+        }
+
+        // === 策略绩效 ===
+
+        case "query_performance": {
+          const { strategy } = params
+          if (!strategy) return "错误：query_performance 需要提供 strategy 参数（策略名）"
+
+          const axios = await import('axios')
+          applyAuthHeader(axios.default)
+          const response = await axios.default.get(`/v0/strategy/performance`, {
+            params: { id: strategy },
+          })
+
+          const d = response.data
+          if (!d) return `策略 ${strategy} 无绩效数据`
+
+          const lines = [`**策略绩效** — ${strategy}`]
+          const pctKeys = ['annual_return', 'total_return', 'max_drawdown', 'win_rate']
+          for (const [k, v] of Object.entries(d as Record<string, any>)) {
+            if (typeof v !== 'number') continue
+            const formatted = pctKeys.includes(k)
+              ? `${(v * 100).toFixed(2)}%`
+              : (Math.abs(v) < 100 ? v.toFixed(4) : String(v))
+            lines.push(`  ${k}: ${formatted}`)
+          }
+          return lines.join('\n')
+        }
+
         default:
-          return `未知 action: ${action}。支持的 action: run_backtest, get_metrics, get_metric_value, get_signals, get_summary, get_chart_data`
+          return `未知 action: ${action}。支持的 action: run_backtest, get_metrics, get_metric_value, get_signals, get_summary, get_chart_data, run_capacity_scan, query_performance`
       }
     } catch (error: any) {
       console.warn("[Backtest Tool] 执行失败:", error)
@@ -446,7 +508,7 @@ export const backtestTool = tool(
   },
   {
     name: "backtest",
-    description: "策略回测工具。执行回测并获取指标、交易信号、摘要等信息。action='run_backtest' 执行回测（strategyGraph=策略图JSON）；action='get_metrics' 获取完整指标列表；action='get_metric_value' 获取单个指标值（metric=指标名）；action='get_signals' 获取交易信号明细；action='get_summary' 获取回测摘要",
+    description: "策略回测结果分析工具（D3-A Phase 5：Agent 不直接触发回测）。action='run_backtest' 提示用户手动触发回测（返回操作指引，不调用 /v0/backtest）；action='get_metrics' 获取完整指标列表；action='get_metric_value' 获取单个指标值（metric=指标名）；action='get_signals' 获取交易信号明细；action='get_summary' 获取回测摘要；action='get_chart_data' 获取图表数据（price/performance/drawdown/distribution/dailyReturns）；action='run_capacity_scan' 容量扫描（strategy=策略图JSON）；action='query_performance' 查询策略绩效（strategy=策略名或ID）。用户手动回测后，Agent 通过 get_* 类 action 读取 historyStore 中的结果进行分析。",
     schema: z.object({
       action: z.enum([
         "run_backtest",
@@ -455,9 +517,17 @@ export const backtestTool = tool(
         "get_signals",
         "get_summary",
         "get_chart_data",
+        "run_capacity_scan",
+        "query_performance",
       ]).describe("操作类型"),
       metric: z.string().optional().describe("指标名称（get_metric_value 时需要），或图表类型（get_chart_data 时需要：price/performance/drawdown/distribution/dailyReturns/all）"),
-      strategyGraph: z.any().optional().describe("策略图 JSON 数据（run_backtest 时需要）"),
+      strategyGraph: z.any().optional().describe("策略图 JSON 数据（已废弃：run_backtest 不再调用后端，保留仅为向后兼容）"),
+      strategy: z.union([z.string(), z.number()]).optional().describe("策略名（query_performance）或策略图 JSON（run_capacity_scan）"),
+      capital_min: z.number().optional().describe("容量扫描最小资金量（默认 100000）"),
+      capital_max: z.number().optional().describe("容量扫描最大资金量（默认 10000000）"),
+      steps: z.number().optional().describe("容量扫描资金分档数（默认 10）"),
+      impact_eta: z.number().optional().describe("平方根冲击模型系数（默认 0.1）"),
+      closing_liquidity_ratio: z.number().optional().describe("收盘流动性占比（默认 0.05）"),
     }),
   }
 )

@@ -24,6 +24,13 @@ import { backtestTool } from "../tools/backtest";
 import { mutationTool } from "../tools/mutation";
 import { calculatorTool } from "../tools/calculator";
 import { skillTool } from "../tools/skill";
+import { dataTool } from "../tools/data";
+import { analysisTool } from "../tools/analysis";
+import { optionPricingTool } from "../tools/optionPricing";
+import { riskMonitorTool } from "../tools/riskMonitor";
+import { orderQueryTool } from "../tools/orderQuery";
+import { performanceTool } from "../tools/performanceTool";
+import { mathTool } from "../tools/mathTool";
 
 import { AgentType, AGENT_SYSTEM_PROMPTS, AGENT_TOOL_CONFIG, GraphStateType, AgentEvent } from "./types";
 
@@ -41,6 +48,14 @@ const TOOL_REGISTRY: Record<string, StructuredToolInterface> = {
   mutation: mutationTool,
   calculator: calculatorTool,
   skill: skillTool,
+  // Phase 3 新增 Tool（5 个）
+  data_manager: dataTool,
+  analysis: analysisTool,
+  option_pricing: optionPricingTool,
+  risk_monitor: riskMonitorTool,
+  order_query: orderQueryTool,
+  performance: performanceTool,
+  math_tool: mathTool,
 };
 
 /**

@@ -194,6 +194,8 @@ async function supervisorNode(state: GraphStateType, emitEvent?: (event: AgentEv
     decision = "risk";
   } else if (content.includes('"portfolio"')) {
     decision = "portfolio";
+  } else if (content.includes('"analysis"')) {
+    decision = "analysis";
   }
 
   // 检查是否超过最大迭代次数
@@ -238,6 +240,8 @@ function routeToAgent(state: GraphStateType): string {
       return "riskAgent";
     case "portfolio":
       return "portfolioAgent";
+    case "analysis":
+      return "analysisAgent";
     case "respond":
     default:
       return "__end__";
@@ -315,6 +319,12 @@ export function buildSupervisorGraph(
     return node(state);
   });
 
+  // Analysis Agent Node
+  workflow.addNode("analysisAgent", async (state: GraphStateType) => {
+    const node = createAgentNode("analysis", emitEvent, internalTools);
+    return node(state);
+  });
+
   // === 添加边 ===
 
   // 入口 → Supervisor
@@ -328,6 +338,7 @@ export function buildSupervisorGraph(
     strategyAgent: "strategyAgent",
     riskAgent: "riskAgent",
     portfolioAgent: "portfolioAgent",
+    analysisAgent: "analysisAgent",
     __end__: "__end__",
   });
 
@@ -339,6 +350,7 @@ export function buildSupervisorGraph(
     strategyAgent: "strategyAgent",
     riskAgent: "riskAgent",
     portfolioAgent: "portfolioAgent",
+    analysisAgent: "analysisAgent",
   });
 
   // @ts-ignore - LangGraph 类型推断需要
@@ -348,6 +360,7 @@ export function buildSupervisorGraph(
     strategyAgent: "strategyAgent",
     riskAgent: "riskAgent",
     portfolioAgent: "portfolioAgent",
+    analysisAgent: "analysisAgent",
   });
 
   // @ts-ignore - LangGraph 类型推断需要
@@ -357,6 +370,7 @@ export function buildSupervisorGraph(
     strategyAgent: "strategyAgent",
     riskAgent: "riskAgent",
     portfolioAgent: "portfolioAgent",
+    analysisAgent: "analysisAgent",
   });
 
   // @ts-ignore - LangGraph 类型推断需要
@@ -366,6 +380,17 @@ export function buildSupervisorGraph(
     strategyAgent: "strategyAgent",
     riskAgent: "riskAgent",
     portfolioAgent: "portfolioAgent",
+    analysisAgent: "analysisAgent",
+  });
+
+  // @ts-ignore - LangGraph 类型推断需要
+  workflow.addConditionalEdges("analysisAgent", checkInternalToolRouting, {
+    supervisor: "supervisor",
+    chatAgent: "chatAgent",
+    strategyAgent: "strategyAgent",
+    riskAgent: "riskAgent",
+    portfolioAgent: "portfolioAgent",
+    analysisAgent: "analysisAgent",
   });
 
   // 编译图

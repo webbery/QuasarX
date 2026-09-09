@@ -27,6 +27,11 @@ import { calculatorTool } from "./calculator"
 import { skillTool } from "./skill"
 import { dataTool } from "./data"
 import { analysisTool } from "./analysis"
+import { optionPricingTool } from "./optionPricing"
+import { riskMonitorTool } from "./riskMonitor"
+import { orderQueryTool } from "./orderQuery"
+import { performanceTool } from "./performanceTool"
+import { mathTool } from "./mathTool"
 
 const builtinTools: StructuredToolInterface[] = [
   quoteTool,
@@ -43,6 +48,11 @@ const builtinTools: StructuredToolInterface[] = [
   skillTool,
   dataTool,
   analysisTool,
+  optionPricingTool,
+  riskMonitorTool,
+  orderQueryTool,
+  performanceTool,
+  mathTool,
 ]
 
 // === 插件 Tool 加载 ===

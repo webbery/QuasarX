@@ -375,10 +375,9 @@ void Server::Regist() {
     REGIST_POST(API_SIMULATE_BAR);
 #endif
 
-    REGIST_GET(API_RISK_VAR);
-    REGIST_POST(API_RISK_VAR);
-
-    REGIST_POST(API_MONTECARLO);
+    // /risk/var 与 /predict/montecarlo 路由已禁用：缺少对应 Handler 实现，
+    // 注册会导致 _handlers[...] 返回 nullptr 并在调用时 segfault。
+    // 待 VaRHandler / MonteCarloHandler 实现后重新启用。
 
     REGIST_GET(API_ALL_STOCK);
 

@@ -258,6 +258,7 @@ paths:
   /stocks/verbose:
     get:
       summary: stock verbose info
+      x-not-implemented: true
       description: 股票的详细信息(基本面/板块/十大股东/主营业务等)
       tags:
         - Stocks
@@ -313,6 +314,7 @@ paths:
   /stocks/range:
     get:
       summary: 获取股票当日涨跌停价格
+      x-not-implemented: true
       description: 获取股票当日涨跌停价格
       tags:
         - Stocks
@@ -370,6 +372,136 @@ paths:
                     symbol:
                       type: string
                       description: 期权代码
+
+  /option/simple:
+    get:
+      summary: 所有期权合约列表
+      description: 获取所有期权合约的代码和名称（symbol + name）
+      tags:
+        - Options
+      responses:
+        '200':
+          description: 期权合约列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    symbol:
+                      type: string
+                      description: 期权代码
+                    name:
+                      type: string
+                      description: 期权名称
+  /option/history:
+    get:
+      summary: 期权历史行情查询
+      description: 查询期权合约的历史 K 线数据
+      tags:
+        - Options
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: string
+          description: 期权合约代码
+        - in: query
+          name: start_date
+          schema:
+            type: string
+          description: 开始日期（YYYY-MM-DD）
+        - in: query
+          name: end_date
+          schema:
+            type: string
+          description: 结束日期（YYYY-MM-DD）
+      responses:
+        '200':
+          description: 历史行情数据
+          content:
+            application/json:
+              schema:
+                type: object
+  /option/data:
+    post:
+      summary: 期权数据下载
+      security:
+        - BearerAuth: []
+      description: 触发期权数据下载（异步任务）
+      tags:
+        - Options
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: 任务已启动
+          content:
+            application/json:
+              schema:
+                type: object
+    get:
+      summary: 期权数据查询
+      description: 查询已下载的期权数据
+      tags:
+        - Options
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 期权合约代码
+      responses:
+        '200':
+          description: 期权数据
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      summary: 期权数据清理
+      security:
+        - BearerAuth: []
+      description: 删除期权数据
+      tags:
+        - Options
+      parameters:
+        - in: query
+          name: symbol
+          schema:
+            type: string
+          description: 期权合约代码（留空删除全部）
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /option/detail:
+    get:
+      summary: 期权合约详情
+      description: 获取期权合约的详细信息（合约要素、希腊字母、隐含波动率等）
+      tags:
+        - Options
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: string
+          description: 期权合约代码
+      responses:
+        '200':
+          description: 期权合约详情
+          content:
+            application/json:
+              schema:
+                type: object
 
   /option/pricing:
     post:
@@ -589,9 +721,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IndexQuote"
+  /market/shibor:
+    get:
+      summary: Shibor 银行间同业拆借利率
+      description: 查询 Shibor 银行间同业拆借利率历史数据
+      tags:
+        - Index
+      parameters:
+        - in: query
+          name: start_date
+          schema:
+            type: string
+          description: 开始日期（YYYY-MM-DD）
+        - in: query
+          name: end_date
+          schema:
+            type: string
+          description: 结束日期（YYYY-MM-DD）
+      responses:
+        '200':
+          description: Shibor 利率数据
+          content:
+            application/json:
+              schema:
+                type: object
+  /market/macro:
+    get:
+      summary: 宏观经济指标
+      description: 查询宏观经济指标数据（CPI/PPI/PMI/M2 等）
+      tags:
+        - Index
+      parameters:
+        - in: query
+          name: indicator
+          schema:
+            type: string
+          description: 指标名称（如 CPI/PPI/PMI/M2）
+        - in: query
+          name: start_date
+          schema:
+            type: string
+          description: 开始日期（YYYY-MM-DD）
+        - in: query
+          name: end_date
+          schema:
+            type: string
+          description: 结束日期（YYYY-MM-DD）
+      responses:
+        '200':
+          description: 宏观经济指标数据
+          content:
+            application/json:
+              schema:
+                type: object
   /simulate:
     post:
       summary: simulate a exchange
+      x-not-implemented: true
       security:
         - BearerAuth: []
       description: 交易所仿真
@@ -662,6 +848,7 @@ paths:
   /risk/var:
     post:
       summary: run strategy for VaR
+      x-route-disabled: true
       security:
         - BearerAuth: []
       description: 计算策略的VaR
@@ -704,6 +891,7 @@ paths:
   /risk/drawdown:
     get:
       summary: drawdown
+      x-not-implemented: true
       description: 获取给定时间范围内的最大回撤
       tags:
         - Risk
@@ -879,6 +1067,7 @@ paths:
   /risk/factor/liquidity:
     get:
       summary: liquidity
+      x-not-implemented: true
       description: 获取给定时间范围内的流动性风险因子
       tags:
         - Risk
@@ -904,6 +1093,34 @@ paths:
                 type: array
                 items:
                   type: number
+  /risk/status:
+    get:
+      summary: 风控运行状态
+      description: 查询风控系统的运行状态（断路器是否触发、各级阈值状态等）
+      tags:
+        - Risk
+      responses:
+        '200':
+          description: 风控状态
+          content:
+            application/json:
+              schema:
+                type: object
+  /risk/reset-breaker:
+    post:
+      summary: 重置风控断路器
+      security:
+        - BearerAuth: []
+      description: 重置已触发的风控断路器（写入操作）
+      tags:
+        - Risk
+      responses:
+        '200':
+          description: 重置结果
+          content:
+            application/json:
+              schema:
+                type: object
   /portfolio:
     put:
       summary: portfolio
@@ -929,6 +1146,7 @@ paths:
   /commission:
     get:
       summary: commission
+      x-not-implemented: true
       description: 获取佣金
       tags: 
         - User
@@ -963,6 +1181,7 @@ paths:
   /strategy/metric:
     get:
       summary: metric
+      x-not-implemented: true
       description: 获取策略的评价指标
       tags: 
         - Strategy
@@ -1064,6 +1283,25 @@ paths:
                   message:
                     type: string
                     example: success
+  /strategy/performance:
+    get:
+      summary: 策略绩效指标
+      description: 获取策略的绩效指标（Sharpe/MaxDD/AnnualReturn/WinRate 等）
+      tags:
+        - Strategy
+      parameters:
+        - in: query
+          name: id
+          schema:
+            type: integer
+          description: 策略 id
+      responses:
+        '200':
+          description: 策略绩效
+          content:
+            application/json:
+              schema:
+                type: object
   /backtest:
     post:
       summary: 对某个策略做回测
@@ -1195,9 +1433,59 @@ paths:
           content:
             application/json:
               schema:
+  /strategy/logs:
+    get:
+      summary: 策略日志查询
+      description: 查询策略运行日志
+      tags:
+        - Strategy
+      parameters:
+        - in: query
+          name: strategy_id
+          schema:
+            type: integer
+          description: 策略 id
+        - in: query
+          name: level
+          schema:
+            type: string
+          description: 日志级别过滤（info/warn/error）
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          description: 返回条数上限
+      responses:
+        '200':
+          description: 日志列表
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      summary: 策略日志清理
+      security:
+        - BearerAuth: []
+      description: 删除策略日志
+      tags:
+        - Strategy
+      parameters:
+        - in: query
+          name: strategy_id
+          schema:
+            type: integer
+          description: 策略 id（留空清理全部）
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                type: object
   /predict/montecarlo:
     post:
       summary: predict price of asset
+      x-route-disabled: true
       description: use monte carlo predict price
       tags: 
         - Predict
@@ -1218,6 +1506,7 @@ paths:
   /predict/finity:
     post:
       summary: predict price of asset
+      x-not-implemented: true
       description: use finity difference method to predict
       tags: 
         - Predict
@@ -1318,6 +1607,7 @@ paths:
   /user/status:
     get:
       summary: cpu/memory info
+      x-not-implemented: true
       description: 获取服务器状态信息
       tags: 
         - User
@@ -1327,6 +1617,7 @@ paths:
   /user/logout:
     post:
       summary: logout
+      x-not-implemented: true
       description: 登出服务
       tags: 
         - User
@@ -1343,6 +1634,7 @@ paths:
   /user/switch:
     post:
       summary: 切换当前用户
+      x-not-implemented: true
       security:
         - BearerAuth: []  # requires admin role
       description: 切换当前用户
@@ -1388,6 +1680,7 @@ paths:
   /user/account:
     post:
       summary: switch account
+      x-not-implemented: true
       security:
         - BearerAuth: []  # requires admin role
       description: 切换账户/备用账户
@@ -1550,6 +1843,237 @@ paths:
       responses:
         '200':
           description: 长链接，无返回状态
+          content:
+            application/json:
+              schema:
+                type: object
+  /exchange:
+    post:
+      summary: 切换/管理交易所
+      security:
+        - BearerAuth: []
+      description: |
+        切换或管理当前激活的 Exchange 实例（Stock / ETF / Future 等），
+        通过 ExchangeManager 统一调度。
+      tags:
+        - Server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  description: 交易所类型（stock/etf/future）
+                action:
+                  type: string
+                  description: 操作（use/release/list）
+      responses:
+        '200':
+          description: 操作结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /record:
+    get:
+      summary: 影子模式/回放记录查询
+      description: 查询影子模式下的 Tick 与交易记录
+      tags:
+        - Server
+      parameters:
+        - in: query
+          name: strategy_id
+          schema:
+            type: integer
+          description: 策略 id
+      responses:
+        '200':
+          description: 记录数据
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      summary: 启动影子模式/回放记录
+      security:
+        - BearerAuth: []
+      description: 启动影子模式下的数据记录
+      tags:
+        - Server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: 启动结果
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      summary: 停止并清理记录
+      security:
+        - BearerAuth: []
+      description: 停止影子模式记录并清理已记录数据
+      tags:
+        - Server
+      parameters:
+        - in: query
+          name: strategy_id
+          schema:
+            type: integer
+          description: 策略 id
+      responses:
+        '200':
+          description: 停止结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /replay:
+    post:
+      summary: 历史行情回放控制
+      security:
+        - BearerAuth: []
+      description: 控制历史行情回放（启动/暂停/步进等）
+      tags:
+        - Server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  description: 操作（start/pause/resume/step/stop）
+                speed:
+                  type: number
+                  description: 回放速度倍率
+      responses:
+        '200':
+          description: 操作结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /python/run:
+    post:
+      summary: Python 脚本执行
+      security:
+        - BearerAuth: []  # admin 域
+      description: 执行任意 Python 脚本（admin 权限），返回 stdout/stderr 结果
+      tags:
+        - Server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: Python 源码
+                env:
+                  type: string
+                  description: Python 环境名称
+                timeout:
+                  type: integer
+                  description: 超时（秒）
+      responses:
+        '200':
+          description: 执行结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /sr/run:
+    post:
+      summary: 符号回归运行
+      security:
+        - BearerAuth: []
+      description: |
+        运行符号回归任务（PySR 后端），从数据中自动发现公式。
+        用于波动率建模、因子发现等场景。
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbols:
+                  type: string
+                  description: 标的代码（逗号分隔）
+                start_date:
+                  type: string
+                  description: 开始日期
+                end_date:
+                  type: string
+                  description: 结束日期
+                target:
+                  type: string
+                  description: 目标变量（如 volatility）
+                n_iterations:
+                  type: integer
+                  description: 搜索迭代次数
+      responses:
+        '200':
+          description: 符号回归结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /node/io:
+    get:
+      summary: 节点 I/O 日志查询
+      description: 查询策略节点的输入/输出日志
+      tags:
+        - Strategy
+      parameters:
+        - in: query
+          name: strategy_id
+          schema:
+            type: integer
+          description: 策略 id
+        - in: query
+          name: node_id
+          schema:
+            type: string
+          description: 节点 id
+      responses:
+        '200':
+          description: 节点 I/O 日志
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      summary: 节点 I/O 日志清理
+      security:
+        - BearerAuth: []
+      description: 清理节点 I/O 日志
+      tags:
+        - Strategy
+      parameters:
+        - in: query
+          name: strategy_id
+          schema:
+            type: integer
+          description: 策略 id（留空清理全部）
+      responses:
+        '200':
+          description: 删除结果
           content:
             application/json:
               schema:
@@ -1924,6 +2448,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /analysis/cusum:
+    post:
+      summary: CUSUM 累积和变点检测
+      security:
+        - BearerAuth: []
+      description: |
+        对指定时间序列做 CUSUM（Cumulative Sum）累积和变点检测，
+        输出累积和路径与检测到的变点位置。
+      tags:
+        - Analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbols:
+                  type: string
+                  description: 标的代码（逗号分隔）
+                start_date:
+                  type: string
+                  description: 开始日期
+                end_date:
+                  type: string
+                  description: 结束日期
+                threshold:
+                  type: number
+                  description: CUSUM 阈值
+                drift:
+                  type: number
+                  description: 漂移参数
+      responses:
+        '200':
+          description: CUSUM 检测结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /analysis/nonlinear:
+    get:
+      summary: 非线性动力学分析
+      description: |
+        对时间序列做非线性动力学分析，包括 Lyapunov 指数、Hurst 指数、
+        相关维数、近似熵等指标。
+      tags:
+        - Analysis
+      parameters:
+        - in: query
+          name: symbols
+          schema:
+            type: string
+          description: 标的代码（逗号分隔）
+        - in: query
+          name: start_date
+          schema:
+            type: string
+          description: 开始日期
+        - in: query
+          name: end_date
+          schema:
+            type: string
+          description: 结束日期
+      responses:
+        '200':
+          description: 非线性动力学分析结果
+          content:
+            application/json:
+              schema:
+                type: object
+  /analysis/pca:
+    get:
+      summary: 主成分分析
+      description: 对多标的价格/收益率序列做主成分分析 (PCA)
+      tags:
+        - Analysis
+      parameters:
+        - in: query
+          name: symbols
+          required: true
+          schema:
+            type: string
+          description: 标的代码（逗号分隔）
+        - in: query
+          name: start_date
+          schema:
+            type: string
+          description: 开始日期
+        - in: query
+          name: end_date
+          schema:
+            type: string
+          description: 结束日期
+        - in: query
+          name: n_components
+          schema:
+            type: integer
+          description: 主成分数量
+      responses:
+        '200':
+          description: PCA 结果
+          content:
+            application/json:
+              schema:
+                type: object
 
   # ═══════════════════════════════════════════════════════════
   #  行情数据
