@@ -283,6 +283,24 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         }
         k = std::max(1, std::min(k, static_cast<int>(scores.size())));
 
+        // [DIAG] 诊断 topk 实际 k 值与 score 分布
+        {
+            double maxScore = 0.0, minScore = 0.0;
+            int nonZeroCount = 0;
+            for (const auto& [sym, sc] : scores) {
+                if (sc != 0.0) ++nonZeroCount;
+                if (scores.size() == 1 || sc > maxScore) maxScore = sc;
+                if (scores.size() == 1 || sc < minScore) minScore = sc;
+            }
+            INFO("[TOPK-DIAG] node={} param_idx={} param_double={} k={}/scores.size()={} "
+                 "scores_min={} scores_max={} nonZero={}/{}",
+                 node.id,
+                 node.param.index(),
+                 std::holds_alternative<double>(node.param) ? std::get<double>(node.param) : -999.0,
+                 k, scores.size(),
+                 minScore, maxScore, nonZeroCount, scores.size());
+        }
+
         // 部分排序选前 k
         std::partial_sort(scores.begin(), scores.begin() + k, scores.end(),
             [](const auto& a, const auto& b) { return a.second > b.second; });

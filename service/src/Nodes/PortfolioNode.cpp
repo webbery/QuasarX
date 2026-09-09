@@ -364,7 +364,7 @@ ExecutionPlan PortfolioNode::generatePlan(
             for (const auto& pos : position._positions) {
                 if (pos._symbol == item._symbol) {
                     item._quantity = static_cast<int>(pos._holds);
-                    item._limitPrice = 0;
+                    item._limitPrice = price;
                     item._targetValue = item._quantity * price;
                     plan._items.push_back(item);
                     plan._usedCapital += item._targetValue;
@@ -384,7 +384,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                 // 有空仓，BUY = 平空
                 item._quantity = -currentQty;
                 item._flag = 1; // 平仓
-                item._limitPrice = 0;
+                item._limitPrice = price;
                 item._targetValue = item._quantity * price;
                 plan._items.push_back(item);
             } else if (currentQty > 0) {
@@ -409,7 +409,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                 }
                 item._quantity = quantity;
                 item._flag = 0; // 开仓
-                item._limitPrice = 0;
+                item._limitPrice = price;
                 item._targetValue = quantity * price;
                 plan._items.push_back(item);
                 plan._usedCapital += item._targetValue;
@@ -427,7 +427,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                 // 平多
                 item._quantity = currentQty;
                 item._flag = 1; // 平仓
-                item._limitPrice = 0;
+                item._limitPrice = price;
                 item._targetValue = currentQty * price;
                 plan._items.push_back(item);
             } else if (currentQty == 0 && _allowShort) {
@@ -436,7 +436,7 @@ ExecutionPlan PortfolioNode::generatePlan(
                 if (quantity >= 100) {
                     item._quantity = quantity;
                     item._flag = 0; // 开仓
-                    item._limitPrice = 0;
+                    item._limitPrice = price;
                     item._targetValue = quantity * price;
                     plan._items.push_back(item);
                 }
