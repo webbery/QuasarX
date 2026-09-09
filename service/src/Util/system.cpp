@@ -30,6 +30,7 @@
 #include <ifaddrs.h>
 #include <pthread.h>
 #include <sys/wait.h>
+#include <cerrno>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <net/if_arp.h>
@@ -246,6 +247,7 @@ bool RunCommand(const std::string& cmd, String& output) {
 
     HANDLE hStdoutRd, hStdoutWr;
     if (!CreatePipe(&hStdoutRd, &hStdoutWr, &sa, 0)) {
+        WARN("RunCommand: CreatePipe failed: err={} cmd={}", GetLastError(), cmd);
         return false;
     }
     SetHandleInformation(hStdoutRd, HANDLE_FLAG_INHERIT, 0);
@@ -275,8 +277,10 @@ bool RunCommand(const std::string& cmd, String& output) {
     );
 
     if (!success) {
+        DWORD err = GetLastError();
         CloseHandle(hStdoutWr);
         CloseHandle(hStdoutRd);
+        WARN("RunCommand: CreateProcess failed: err={} cmd={}", err, cmd);
         return false;
     }
 
@@ -306,15 +310,21 @@ bool RunCommand(const std::string& cmd, String& output) {
     CloseHandle(pi.hThread);
     CloseHandle(hStdoutRd);
 
+    if (exitCode != 0) {
+        WARN("RunCommand: child exit code {} cmd={}", exitCode, cmd);
+    }
     return exitCode == 0;
 #else
     int pipefd[2];
     if (pipe(pipefd) == -1) {
+        WARN("RunCommand: pipe() failed: {} (errno={}) cmd={}", strerror(errno), errno, cmd);
         return false;
     }
 
     pid_t pid = fork();
     if (pid == -1) {
+        WARN("RunCommand: fork() failed: {} (errno={}) cmd={} rss={:.1f}MB",
+             strerror(errno), errno, cmd, getProcessRSS());
         close(pipefd[0]);
         close(pipefd[1]);
         return false;
@@ -341,7 +351,16 @@ bool RunCommand(const std::string& cmd, String& output) {
         close(pipefd[0]);
         int status = 0;
         waitpid(pid, &status, 0); // 等待子进程结束
-        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        if (WIFSIGNALED(status)) {
+            WARN("RunCommand: child killed by signal {} (sig={}) cmd={} rss={:.1f}MB",
+                 WTERMSIG(status), WTERMSIG(status), cmd, getProcessRSS());
+            return false;
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            WARN("RunCommand: child exit code {} cmd={}", WEXITSTATUS(status), cmd);
+            return false;
+        }
+        return true;
     }
 #endif
   return true;
