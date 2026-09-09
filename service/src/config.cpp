@@ -92,7 +92,7 @@ uint64_t ServerConfig::AddStopLoss(const nlohmann::json& sl) {
 
 void ServerConfig::DeleteStopLoss(int id) {
     auto& sl = _config["risk"];
-    for (int i = 0; i < sl.size(); ++i) {
+    for (size_t i = 0; i < sl.size(); ++i) {
         if (sl[i]["id"] == id) {
             sl.erase(sl.begin() + i);
             break;
@@ -294,6 +294,13 @@ std::string ServerConfig::GetLLMKey() {
 
 std::string ServerConfig::GetProductID() {
     return _config["server"]["productID"];
+}
+
+bool ServerConfig::IsTestMode() {
+    if (_config["server"].contains("test_mode")) {
+        return _config["server"]["test_mode"].get<bool>();
+    }
+    return false;
 }
 
 void ServerConfig::Init()

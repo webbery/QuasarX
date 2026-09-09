@@ -246,6 +246,14 @@ private:
     bool IsUseShareMemory(const StrategyFlowInfo& flow);
 
     /**
+     * @brief 调用策略图中所有节点的 Done() 方法
+     * @param strategy 策略名称（传递给节点的 Done 方法）
+     * @param graph 策略图节点列表
+     * @note 用于回测/实时模式结束时，确保 DebugNode 等节点输出数据
+     */
+    void NotifyNodesDone(const String& strategy, const List<QNode*>& graph);
+
+    /**
      * @brief 设置策略级别的运行模式（在 LoadFlow 之前调用）
      */
     void SetStrategyRunningMode(const String& strategy, RuningType mode);

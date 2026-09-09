@@ -66,7 +66,9 @@ public:
   std::string GetLLMKey();
   
   std::string GetProductID();
-  
+
+  bool IsTestMode();
+
 private:
     void Init();
 

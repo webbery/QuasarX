@@ -92,19 +92,13 @@
                             </div>
                             <div class="input-group">
                                 <label>策略</label>
-                                <select v-model="quoteStrategy" class="quote-select">
-                                    <option value="">选择策略…</option>
-                                    <optgroup label="本地缓存">
-                                        <option v-for="s in historyStore.strategies" :key="`local:${s.id}`" :value="s.name">
-                                            {{ s.name }}
-                                        </option>
-                                    </optgroup>
-                                    <optgroup v-if="remoteFetched" label="远程运行">
-                                        <option v-for="s in remoteStrategies" :key="`remote:${s.name}`" :value="s.name">
-                                            {{ s.name }}{{ s.running ? ' ●运行' : '' }}{{ s.failed ? ' ✕失败' : '' }}
-                                        </option>
-                                    </optgroup>
-                                </select>
+                                <StrategySelect
+                                    v-model="quoteStrategy"
+                                    :local-strategies="historyStore.strategies"
+                                    :remote-strategies="remoteStrategies"
+                                    :remote-fetched="remoteFetched"
+                                    select-class="quote-select"
+                                />
                             </div>
                             <div v-if="quoteStrategy" class="pool-summary">
                                 标的池: <strong>{{ quoteStrategySymbolCount }}</strong> 个
@@ -548,12 +542,13 @@
                         <div class="card-label"><i class="fas fa-download"></i> 从策略下载</div>
                         <div class="input-group">
                             <label>策略</label>
-                            <select v-model="dividendStrategy" class="strategy-select">
-                                <option value="">全部策略</option>
-                                <option v-for="s in historyStore.strategies" :key="s.id" :value="s.name">
-                                    {{ s.name }}
-                                </option>
-                            </select>
+                            <StrategySelect
+                                v-model="dividendStrategy"
+                                :local-strategies="historyStore.strategies"
+                                :remote-strategies="remoteStrategies"
+                                :remote-fetched="remoteFetched"
+                                empty-label="全部策略"
+                            />
                         </div>
                         <div class="action-btn-row">
                             <button class="btn btn-primary btn-sm" @click="onDownloadDividend" :disabled="dividendDownloading">
@@ -862,6 +857,7 @@ import { ipcRenderer } from 'electron'
 import axios from 'axios'
 import sseService from '@/ts/SSEService'
 import PromptDialog from './PromptDialog.vue'
+import StrategySelect from './StrategySelect.vue'
 import { useHistoryStore } from '@/stores/history'
 import { extractSecuritiesFromFlowData } from '@/lib/strategyPool'
 
@@ -1084,30 +1080,51 @@ const dividendSymbolCount = computed(() => {
     return dividendStrategySymbols.value.split(',').filter(s => s.trim()).length
 })
 
-// 选择策略后从本地流程图提取标的池
+// 选择策略后从本地或远程策略提取标的池
 watch(dividendStrategy, async (name) => {
     if (!name) {
         dividendStrategySymbols.value = ''
         return
     }
-    const strategy = historyStore.strategies.find(s => s.name === name)
-    if (!strategy) {
-        dividendStrategySymbols.value = ''
+
+    // 1) 本地策略优先：从 IndexedDB 最新版本 flowData 提取标的池
+    const local = historyStore.strategies.find(s => s.name === name)
+    if (local) {
+        const versions = historyStore.getVersionsByStrategy(local.id)
+        if (versions.length === 0) {
+            dividendStrategySymbols.value = ''
+            return
+        }
+        const sorted = [...versions].sort((a, b) =>
+            new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
+        )
+        const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
+        if (flowData) {
+            const securities = extractSecuritiesFromFlowData(flowData as any)
+            dividendStrategySymbols.value = securities.map(s => toApiSymbol(s.code)).join(',')
+        } else {
+            dividendStrategySymbols.value = ''
+        }
         return
     }
-    // 取最新版本的 flowData
-    const versions = historyStore.getVersionsByStrategy(strategy.id)
-    if (versions.length === 0) {
-        dividendStrategySymbols.value = ''
-        return
-    }
-    const sorted = [...versions].sort((a, b) =>
-        new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
-    )
-    const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
-    if (flowData) {
-        const securities = extractSecuritiesFromFlowData(flowData as any)
-        dividendStrategySymbols.value = securities.map(s => s.code).join(',')
+
+    // 2) 远程策略：直接用 service 返回的 symbols 数组
+    const remote = remoteStrategies.value.find(s => s.name === name)
+    if (remote) {
+        if (remote.failed) {
+            dividendStrategySymbols.value = ''
+            dividendStatus.value = `远程策略「${name}」初始化失败，无可用标的池`
+            return
+        }
+        if (remote.symbols === null) {
+            // 卡片未展开过或上次拉取失败，按需补一次
+            await fetchRemoteStrategies(true)
+            const reloaded = remoteStrategies.value.find(s => s.name === name)
+            if (reloaded) remote.symbols = reloaded.symbols ?? []
+        }
+        dividendStrategySymbols.value = (remote.symbols ?? [])
+            .map(s => toApiSymbol(s))
+            .join(',')
     } else {
         dividendStrategySymbols.value = ''
     }

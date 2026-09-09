@@ -155,6 +155,12 @@ void RecordHandler::HandleReplayAction(const httplib::Request &req, httplib::Res
 
 void RecordHandler::HandleTicksQuery(const httplib::Request &req, httplib::Response &res) {
     String symbol = req.get_param_value("symbol");
+    if (symbol.empty()) {
+        res.status = 400;
+        res.set_content(nlohmann::json{{"error", "missing required parameter: symbol"}}.dump(), "application/json");
+        return;
+    }
+
     String startStr = req.get_param_value("start");
     String endStr = req.get_param_value("end");
     String limitStr = req.get_param_value("limit");

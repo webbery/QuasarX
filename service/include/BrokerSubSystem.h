@@ -209,7 +209,6 @@ public:
     void UnRegistIndicator(const String& strategy, StatisticIndicator indicator);
     void CleanAllIndicators(const String& strategy);
     const Set<StatisticIndicator> GetIndicatorsName(const String& strategy) const { return _indicators.at(strategy); }
-    float GetIndicator(const String& name, StatisticIndicator indicator);
     StringView GetIndicatorName(StatisticIndicator indicator);
 
     double GetProfitLoss();
@@ -268,9 +267,6 @@ private:
     void run();
     
     void flush(MDB_txn* txn, MDB_dbi dbi);
-
-    double VaR(float confidence);
-    double ES(double var);
 
     MDB_dbi GetDBI(int portfolid_id, MDB_txn* txn);
 

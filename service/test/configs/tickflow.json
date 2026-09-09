@@ -35,6 +35,7 @@
         }
     },
     "server": {
+        "test_mode": true,
         "productID": "",
         "addr": "localhost",
         "db_path": "data",

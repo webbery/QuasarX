@@ -57,6 +57,18 @@ class TestStrategy:
         except Exception:
             pass
 
+    def _use_real_symbol(self, script, symbol="sz.000001"):
+        """将脚本中 QuoteInputNode 的 code 改为真实标的。
+
+        ma_graph_strategy.json 默认使用合成标的 sz.900005，该标的在 TickFlow 实时行情中
+        不存在，导致策略 worker 永远收不到 quote、epochCount 始终为 0。
+        在 tickflow 模式的测试中，需要把 code 替换为 pool 中的真实标的。
+        """
+        for node in script.get('nodes', []):
+            if node.get('data', {}).get('nodeType') == 'input':
+                node['data']['params']['code'] = {'value': [symbol], 'type': 'text'}
+                break
+
     @pytest.mark.timeout(10)
     def test_upload_model(self, auth_token):
         kwargs = self._auth_kwargs(auth_token)
@@ -89,6 +101,7 @@ class TestStrategy:
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
+        self._use_real_symbol(script)
         kwargs = self._auth_kwargs(auth_token)
 
         def verify_strategy_list_format(strategies, expected_running=None, expect_epoch_count_increase=None):
@@ -217,7 +230,8 @@ class TestStrategy:
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
         check_response(resp)
 
-        # 第二次部署（覆盖）
+        # 第二次部署（覆盖）— 需要 force=true，否则同名运行中策略会被 409 拒绝
+        kwargs['json'] = {'mode': 0, 'name': redeploy_name, 'script': script, 'force': True}
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
         data = check_response(resp)
         assert data['message'] == 'success', "重复部署应成功"
@@ -356,6 +370,7 @@ class TestStrategy:
 
         script_path = './script/ma_graph_strategy.json'
         script = self.load_script(script_path)
+        self._use_real_symbol(script)
         kwargs = self._auth_kwargs(auth_token)
 
         kwargs['json'] = {'mode': 0, 'name': name, 'script': script}
@@ -372,10 +387,16 @@ class TestStrategy:
         assert found['running'] is True, "策略应处于运行状态"
         assert found['epochCount'] > 0, f"策略应至少执行 1 个 epoch，实际 {found['epochCount']}"
 
+        # 停止策略以触发 DebugNode 的 Done() 方法写入 CSV
+        # （实时/tickflow 模式下 Done() 仅在停止时调用）
+        kwargs['json'] = {'mode': 2, 'name': name}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
+        check_response(resp)
+        time.sleep(2)  # 等待文件写入
+
         # 验证 DebugNode 输出文件存在（证明 context 中有 quote 数据，策略图成功执行）
         # DebugNode 输出路径: {database_path}/data/debug/{strategy}/{label}.csv
         debug_dir = DEBUG_DIR / name
-        time.sleep(3)  # 等待文件写入
         assert debug_dir.exists(), f"Debug 输出目录不存在: {debug_dir}"
         csv_files = [f for f in os.listdir(debug_dir) if f.endswith('.csv')]
         assert len(csv_files) > 0, f"Debug 输出目录中无 CSV 文件: {debug_dir}"
@@ -404,11 +425,12 @@ class TestStrategy:
         script = self.load_script(script_path)
         kwargs = self._auth_kwargs(auth_token)
 
-        # 修改 QuoteInputNode 的 freq 为 "1m"
-        for node in script['graph']['nodes']:
+        # 修改 QuoteInputNode 的 freq 为 "1m"，并使用真实标的
+        for node in script['nodes']:
             if node.get('data', {}).get('nodeType') == 'input':
                 node['data']['params']['freq'] = {'value': '1m'}
                 break
+        self._use_real_symbol(script)
 
         kwargs['json'] = {'mode': 0, 'name': name, 'script': script}
         resp = requests.post(f"{BASE_URL}/strategy", **kwargs)

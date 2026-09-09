@@ -228,21 +228,6 @@ void BrokerSubSystem::InitPortfolio(MDB_txn* txn, MDB_dbi dbi) {
   }
 }
 
-float BrokerSubSystem::GetIndicator(const String& name, StatisticIndicator indicator) {
-  constexpr double confidence = 0.95;
-  switch (indicator) {
-  case StatisticIndicator::Sharp:
-    // return Sharp(name, -1);
-  case StatisticIndicator::VaR:
-    return VaR(confidence);
-  case StatisticIndicator::ES:
-    return ES(VaR(confidence));
-  case StatisticIndicator::MaxDrawDown:
-  default:
-    return 0;
-  }
-}
-
 StringView BrokerSubSystem::GetIndicatorName(StatisticIndicator indicator) {
   switch (indicator) {
   case StatisticIndicator::Sharp:
@@ -733,33 +718,6 @@ void BrokerSubSystem::flush(MDB_txn* txn, MDB_dbi dbi) {
   }
 }
 
-double BrokerSubSystem::VaR(float confidence)
-{
-    auto& holding = _portfolio->GetHolding();
-    if (holding.size() == 1) {
-      auto itr = holding.begin();
-      auto symbol = itr->first;
-      double cost = GetCost(itr->second);
-      // 计算最后组合的VaR值
-      // 计算期望与方差
-      double mu = 0;
-      double sigma = 1;
-      double p = 0.99; // 概率值
-      boost::math::normal_distribution<> norm(mu, sigma); // 均值0，标准差1
-      double z = quantile(norm, confidence); // 分位数值
-    }
-    else if (holding.size() > 1) {
-
-    }
-    return -1;
-}
-
-double BrokerSubSystem::ES(double var)
-{
-    // 计算最后组合的ES
-    return -1;
-}
-
 ICommission* BrokerSubSystem::GetCommision(symbol_t symbol) {
   auto itr = _commissions.find(symbol);
   if (itr == _commissions.end()) {
@@ -822,7 +780,7 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
         total_sell += info._quantity * info._price;
         while (!history.empty()) {
           auto& front = history.front();
-          if (front._quantity >= info._quantity) {
+          if (front._quantity >= static_cast<uint32_t>(info._quantity)) {
             org_princpal += front._price * info._quantity;
             front._quantity -= info._quantity;
             break;
@@ -846,10 +804,10 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
 }
 
 void BrokerSubSystem::ProcessOrderSuccess(const String& strategy, symbol_t symbol, const TradeReport& report) {
-    if (report._status == OrderStatus::OrderSuccess) {
-        auto& holds = _portfolio->GetHolding(strategy);
-        auto& history = holds[symbol];
-    }
+    // if (report._status == OrderStatus::OrderSuccess) {
+    //     auto& holds = _portfolio->GetHolding(strategy);
+    //     auto& history = holds[symbol];
+    // }
 }
 
 order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy, symbol_t symbol, const Order& order, int side, std::function<void (const TradeReport&)> cb) {

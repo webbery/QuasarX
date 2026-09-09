@@ -32,17 +32,6 @@ static std::vector<std::string> splitSymbols(const std::string& str, char delim 
     return result;
 }
 
-// 辅助：解析脚本输出中的 JSON 进度行
-static bool parseProgressLine(const std::string& line, nlohmann::json& out) {
-    if (line.find("\"type\": \"download_progress\"") == std::string::npos) return false;
-    try {
-        out = nlohmann::json::parse(line);
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
 void QuoteDownloadHandler::post(const httplib::Request& req, httplib::Response& res) {
     nlohmann::json params;
     try {

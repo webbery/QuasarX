@@ -40,6 +40,7 @@
         }
     },
     "server": {
+        "test_mode": false,
         "addr": "localhost",
         "db_path": "data",
         "default": {

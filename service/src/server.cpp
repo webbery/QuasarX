@@ -1133,7 +1133,7 @@ void Server::Schedules(time_t t) {
     static int prev_day = -1;
     static bool daily_once = false;
     static bool daily_init_done = false;
-    static bool daily_force_done = false;
+    // static bool daily_force_done = false;
     static bool yearly_refresh_done = false;
     if (prev_day == -1) {
         prev_day = ltm->tm_wday;
@@ -1141,7 +1141,7 @@ void Server::Schedules(time_t t) {
     if (prev_day != ltm->tm_wday) {
         daily_once = false;
         daily_init_done = false;
-        daily_force_done = false;
+        // daily_force_done = false;
         yearly_refresh_done = false;
         prev_day = ltm->tm_wday;
     }

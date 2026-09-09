@@ -109,6 +109,10 @@ void FlowSubsystem::Stop(const String& strategy) {
         flow._dailyWorker = nullptr;
     }
 
+    // 调用节点的 Done() 方法（回测路径在 StartBacktest 中调用，
+    // 实时/tickflow 路径需在此处调用，确保 DebugNode 等节点输出数据）
+    NotifyNodesDone(strategy, flow._graph);
+
     // 停止该策略启动的 Exchange（通过引用计数保证多策略安全）
     auto* exchangeMgr = _handle->GetExchangeManager();
     if (exchangeMgr) {
@@ -131,6 +135,8 @@ void FlowSubsystem::Release() {
             delete item.second._dailyWorker;
             item.second._dailyWorker = nullptr;
         }
+        // 调用节点的 Done() 方法（确保 DebugNode 等节点输出数据）
+        NotifyNodesDone(item.first, item.second._graph);
         for (auto node: item.second._graph) {
             delete node;
         }
@@ -223,9 +229,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 if (endNode) {
                     ComputeBacktestMetrics(strategy, flow, btContext, _handle->GetExchangeManager());
                 }
-                for (auto node : flow._graph) {
-                    node->Done(strategy);
-                }
+                NotifyNodesDone(strategy, flow._graph);
             }
 
             // 回测结束后登出
@@ -342,9 +346,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                 if (endNode) {
                     ComputeBacktestMetrics(strategy, flow, btContext, exchangeMgr);
                 }
-                for (auto node : flow._graph) {
-                    node->Done(strategy);
-                }
+                NotifyNodesDone(strategy, flow._graph);
             }
 
             auto info = fmt::format("backtest finish, cost {}s, {:.2f}ms/per datum", duration.count(), (flow._epochCount == 0? 0:duration.count()*1000.0/flow._epochCount));
@@ -835,6 +837,12 @@ bool FlowSubsystem::IsUseShareMemory(const StrategyFlowInfo& flow) {
     return false;
 }
 
+void FlowSubsystem::NotifyNodesDone(const String& strategy, const List<QNode*>& graph) {
+    for (auto node : graph) {
+        node->Done(strategy);
+    }
+}
+
 bool FlowSubsystem::IsRunning(const String& strategy) const {
     auto itr = _flows.find(strategy);
     if (itr == _flows.end()) {
@@ -1173,9 +1181,7 @@ bool FlowSubsystem::RunTrainingCollect(
             WARN("[TrainingCollect] Exception: {}", e.what());
         }
 
-        for (auto node : upstreamGraph) {
-            node->Done(strategy);
-        }
+        NotifyNodesDone(strategy, upstreamGraph);
         exchange->destroyBacktestContext(runId);
     });
     worker.join();
@@ -1313,7 +1319,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     result["status"] = "error";
                     result["error"] = flow._lastError.empty() ? "graph execution failed" : flow._lastError.c_str();
                 }
-                for (auto node : flow._graph) node->Done(strategy);
+                NotifyNodesDone(strategy, flow._graph);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Exception: {}", e.what());
                 result["status"] = "error";
@@ -1481,7 +1487,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         _handle->SendEmail(body);
                     }
                 }
-                for (auto node : flow._graph) node->Done(strategy);
+                NotifyNodesDone(strategy, flow._graph);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Live mode exception: {}", e.what());
                 result["status"] = "error";
