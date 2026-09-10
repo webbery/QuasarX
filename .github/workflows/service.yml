@@ -317,7 +317,8 @@ jobs:
         run: |
           pip install pytest requests pyyaml \
             numpy pandas scipy matplotlib statsmodels \
-            xgboost==3.3.0 PyEMD empyrical-reloaded
+            xgboost==3.3.0 PyEMD empyrical-reloaded \
+            backtrader
 
       - name: Create TLS certificates
         run: |

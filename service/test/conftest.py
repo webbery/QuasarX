@@ -126,20 +126,29 @@ def upload_test_data(auth_api, is_backtest):
                     result.append(line)
         return result
 
-    def _import_csv(csv_path, table, symbol):
-        with open(csv_path, 'r') as f:
-            lines = f.read().strip().split('\n')
-        if len(lines) < 2:
+    def _import_csv(org_path, hfq_path, table, symbol):
+        """导入行情数据：org 写入原始列，hfq 写入 adj_* 列"""
+        with open(hfq_path, 'r') as f:
+            hfq_lines = f.read().strip().split('\n')
+        if len(hfq_lines) < 2:
             return False
-        lines = _ensure_turnover(lines)
+        hfq_lines = _ensure_turnover(hfq_lines)
+
+        # org 数据：如果存在则读取，否则回退到 hfq（兼容无 org 数据的场景）
+        if org_path and org_path.exists():
+            with open(org_path, 'r') as f:
+                org_lines = f.read().strip().split('\n')
+            org_lines = _ensure_turnover(org_lines)
+        else:
+            org_lines = hfq_lines
+
         try:
-            # 一次调用同时传不复权(data) + 后复权(data_hfq)数据，后端合并后插入并替换
             resp = requests.post(f"{BASE_URL}/v0/quote/data", json={
                 "action": "import",
                 "table": table,
                 "symbol": symbol,
-                "data": lines,
-                "data_hfq": lines,
+                "data": org_lines,
+                "data_hfq": hfq_lines,
             }, headers=headers, verify=VERIFY_SSL)
             return resp.status_code == 200
         except Exception:
@@ -147,12 +156,14 @@ def upload_test_data(auth_api, is_backtest):
 
     # === 导入股票数据 (日线) ===
     hfq_dir = data_dir / "A_hfq"
+    org_dir = data_dir / "AStock"
     for symbol in sorted(stock_symbols):
-        csv_path = hfq_dir / f"{symbol}.csv"
-        if not csv_path.exists():
-            print(f"  [SKIP] 股票 {symbol}: CSV 不存在")
+        hfq_path = hfq_dir / f"{symbol}.csv"
+        org_path = org_dir / f"{symbol}.csv"
+        if not hfq_path.exists():
+            print(f"  [SKIP] 股票 {symbol}: hfq CSV 不存在")
             continue
-        ok = _import_csv(csv_path, "stock_1d", symbol)
+        ok = _import_csv(org_path, hfq_path, "stock_1d", symbol)
         if ok:
             imported_keys.append(("stock_1d", symbol))
             success_count += 1
@@ -161,6 +172,7 @@ def upload_test_data(auth_api, is_backtest):
 
     # === 导入 ETF 数据 (按频率) ===
     etf_hfq_dir = data_dir / "etf_hfq"
+    etf_org_dir = data_dir / "etf_org"
     for symbol in sorted(etf_symbols):
         if not etf_hfq_dir.exists():
             print(f"  [SKIP] ETF {symbol}: etf_hfq 目录不存在")
@@ -169,11 +181,12 @@ def upload_test_data(auth_api, is_backtest):
         for freq_dir in etf_hfq_dir.iterdir():
             if not freq_dir.is_dir():
                 continue
-            csv_path = freq_dir / f"{symbol}.csv"
-            if not csv_path.exists():
+            hfq_path = freq_dir / f"{symbol}.csv"
+            if not hfq_path.exists():
                 continue
+            org_path = etf_org_dir / freq_dir.name / f"{symbol}.csv"
             table = f"etf_{freq_dir.name}"
-            ok = _import_csv(csv_path, table, symbol)
+            ok = _import_csv(org_path, hfq_path, table, symbol)
             if ok:
                 imported_keys.append((table, symbol))
                 imported = True

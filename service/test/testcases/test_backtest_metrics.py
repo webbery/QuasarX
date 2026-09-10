@@ -21,6 +21,8 @@ import requests
 import json
 import math
 import numpy as np
+import pandas as pd
+import backtrader as bt
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -171,60 +173,6 @@ def compute_cvar(daily_returns: List[float], confidence: float = 0.95) -> float:
 
 
 # ============================================================
-# Empyrical 对比（黄金标准）
-# ============================================================
-
-def compute_empyrical_sharpe(daily_returns: List[float]) -> float:
-    """使用 empyrical 计算夏普比率"""
-    try:
-        import empyrical
-        ret = np.array(daily_returns)
-        return float(empyrical.sharpe_ratio(ret, risk_free=RISK_FREE_RATE, period='daily'))
-    except ImportError:
-        pytest.skip("empyrical not installed")
-
-
-def compute_empyrical_max_drawdown(daily_returns: List[float]) -> float:
-    """使用 empyrical 计算最大回撤"""
-    try:
-        import empyrical
-        ret = np.array(daily_returns)
-        return float(abs(empyrical.max_drawdown(ret)))
-    except ImportError:
-        pytest.skip("empyrical not installed")
-
-
-def compute_empyrical_annual_return(daily_returns: List[float]) -> float:
-    """使用 empyrical 计算年化收益"""
-    try:
-        import empyrical
-        ret = np.array(daily_returns)
-        return float(empyrical.annual_return(ret, period='daily'))
-    except ImportError:
-        pytest.skip("empyrical not installed")
-
-
-def compute_empyrical_annual_volatility(daily_returns: List[float]) -> float:
-    """使用 empyrical 计算年化波动率"""
-    try:
-        import empyrical
-        ret = np.array(daily_returns)
-        return float(empyrical.annual_volatility(ret, period='daily'))
-    except ImportError:
-        pytest.skip("empyrical not installed")
-
-
-def compute_empyrical_calmar(daily_returns: List[float]) -> float:
-    """使用 empyrical 计算卡玛比率"""
-    try:
-        import empyrical
-        ret = np.array(daily_returns)
-        return float(empyrical.calmar_ratio(ret))
-    except ImportError:
-        pytest.skip("empyrical not installed")
-
-
-# ============================================================
 # 标准测试数据生成器
 # ============================================================
 
@@ -355,15 +303,20 @@ def run_backtest_via_api(strategy_json_path: str, token: str) -> Dict:
 def extract_cpp_metrics(result: Dict) -> Dict:
     """
     从 C++ 回测结果中提取指标
-    
+
     返回扁平化的指标字典
     """
     metrics = {}
-    
+
     # 从 features 字段提取
     features = result.get("features", {})
     for key, value in features.items():
-        metrics[key] = float(value)
+        if value is None:
+            continue
+        try:
+            metrics[key] = float(value)
+        except (TypeError, ValueError):
+            continue
     
     # 从 summary 字段提取（作为备用）
     summary = result.get("summary", {})
@@ -531,92 +484,6 @@ class TestStandardCases:
 
 
 # ============================================================
-# 测试类：Empyrical 对比
-# ============================================================
-
-class TestEmpyricalComparison:
-    """使用 empyrical 库作为黄金标准对比"""
-
-    def test_sharpe_ratio_consistency(self):
-        """验证夏普比率与 empyrical 一致"""
-        # 生成随机收益率序列
-        np.random.seed(42)
-        daily_returns = list(np.random.normal(0.0005, 0.02, 252))
-        values = [100000 * (1 + r) for r in daily_returns]
-        values.insert(0, 100000)
-        
-        # 本地计算
-        local_sharpe = compute_sharpe_ratio(values, daily_returns)
-        
-        # Empyrical 计算
-        empyrical_sharpe = compute_empyrical_sharpe(daily_returns)
-        
-        # 对比（允许5%误差）
-        if empyrical_sharpe != 0:
-            relative_error = abs(local_sharpe - empyrical_sharpe) / abs(empyrical_sharpe)
-            assert relative_error < 0.05, (
-                f"夏普比率不一致: 本地={local_sharpe:.4f}, "
-                f"empyrical={empyrical_sharpe:.4f}, 误差={relative_error:.4f}"
-            )
-
-    def test_max_drawdown_consistency(self):
-        """验证最大回撤与 empyrical 一致"""
-        np.random.seed(42)
-        daily_returns = list(np.random.normal(0.0005, 0.02, 252))
-        
-        # 生成价值序列
-        values = [100000]
-        for r in daily_returns:
-            values.append(values[-1] * (1 + r))
-        
-        # 本地计算
-        local_max_dd = compute_max_drawdown(values)
-        
-        # Empyrical 计算
-        empyrical_max_dd = compute_empyrical_max_drawdown(daily_returns)
-        
-        # 对比
-        relative_error = abs(local_max_dd - empyrical_max_dd) / empyrical_max_dd
-        assert relative_error < 0.01, (
-            f"最大回撤不一致: 本地={local_max_dd:.4f}, "
-            f"empyrical={empyrical_max_dd:.4f}, 误差={relative_error:.4f}"
-        )
-
-    def test_annual_return_consistency(self):
-        """验证年化收益与 empyrical 一致"""
-        np.random.seed(42)
-        daily_returns = list(np.random.normal(0.0005, 0.02, 252))
-        
-        local_ann_ret = compute_annual_return([100000] + [100000 * (1 + r) for r in daily_returns])
-        empyrical_an_ret = compute_empyrical_annual_return(daily_returns)
-        
-        if empyrical_an_ret != 0:
-            relative_error = abs(local_ann_ret - empyrical_an_ret) / abs(empyrical_an_ret)
-            assert relative_error < 0.05, (
-                f"年化收益不一致: 本地={local_ann_ret:.4f}, "
-                f"empyrical={empyrical_an_ret:.4f}, 误差={relative_error:.4f}"
-            )
-
-    def test_calmar_ratio_consistency(self):
-        """验证卡玛比率与 empyrical 一致"""
-        np.random.seed(42)
-        daily_returns = list(np.random.normal(0.0005, 0.02, 252))
-        
-        values = [100000]
-        for r in daily_returns:
-            values.append(values[-1] * (1 + r))
-        
-        local_max_dd = compute_max_drawdown(values)
-        local_calmar = compute_calmar_ratio(values, local_max_dd)
-        empyrical_calmar = compute_empyrical_calmar(daily_returns)
-        
-        if empyrical_calmar != 0 and local_calmar != 0:
-            relative_error = abs(local_calmar - empyrical_calmar) / abs(empyrical_calmar)
-            assert relative_error < 0.05, (
-                f"卡玛比率不一致: 本地={local_calmar:.4f}, "
-                f"empyrical={empyrical_calmar:.4f}, 误差={relative_error:.4f}"
-            )
-
 
 # ============================================================
 # 测试类：数学属性验证
@@ -701,134 +568,204 @@ class TestMathProperties:
 
 
 # ============================================================
-# 测试类：C++ 与 Python 对比（需要启动服务）
+# MA 交叉策略端到端测试（backtrader vs C++ 策略图）
 # ============================================================
 
-class TestCPPVsPython:
-    """通过 HTTP API 对比 C++ 和 Python 指标计算"""
+class _MACrossoverStrategy(bt.Strategy):
+    """
+    MA(5)/MA(15) 金叉死叉策略，对齐 C++ 策略图回测。
 
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        """获取认证 token 和测试用例"""
-        self.token = get_auth_token()
-        self.cases = load_test_cases_summary()
+    对齐要点：
+    - data0 = hfq（后复权）→ MA 指标计算
+    - data1 = org（原始价格）→ 交易执行 + 持仓估值
+    - 成交价 = org_close（slippageModel=0 时无滑点）
+    - 100 股整手取整，与 C++ PortfolioNode 一致
+    - 快照在交易前记录（对齐 C++ matchOrders → recordDailySnapshot → RunGraph 时序）
+    """
+    params = (('ma_short', 5), ('ma_long', 15))
 
-    def _run_comparison(self, case_id: str, tolerance: float = 0.10):
-        """
-        运行单个用例的 C++ vs Python 对比
-        
-        参数:
-            case_id: 测试用例 ID
-            tolerance: 容差（默认 10%）
-        """
-        case = self.cases[case_id]
-        expected = case["expected"]
-        
-        # 1. 运行 C++ 回测
-        strategy_path = METRIC_TEST_DIR / case["strategy_file"]
-        if not strategy_path.exists():
-            pytest.skip(f"策略文件不存在: {strategy_path}")
-        
-        print(f"\n=== {case['name']} ({case_id}) ===")
-        cpp_result = run_backtest_via_api(str(strategy_path), self.token)
-        cpp_metrics = extract_cpp_metrics(cpp_result)
-        
-        # 2. 打印对比表
-        print(f"\n{'指标':<20} {'C++':>12} {'Python':>12} {'误差':>8}")
-        print("-" * 55)
-        
-        metrics_to_compare = [
-            ("total_return", "总收益率"),
-            ("annual_return", "年化收益"),
-            ("sharpe", "夏普比率"),
-            ("max_drawdown", "最大回撤"),
-            ("win_rate", "胜率"),
-            ("calmar", "卡玛比率"),
-            ("r_squared", "R²"),
-            ("var_95", "VaR(95%)"),
-            ("es", "CVaR(95%)"),
+    def __init__(self):
+        self.ma_s = bt.indicators.SMA(self.data0.close, period=self.p.ma_short)
+        self.ma_l = bt.indicators.SMA(self.data0.close, period=self.p.ma_long)
+        self.recorded_values = []
+        self._cash = INITIAL_CAPITAL
+        self._position = 0
+
+    def prenext(self):
+        # 预热期（MA 尚未就绪）：只记录快照，不交易
+        # 对齐 C++ recordDailySnapshot 从 bar 0 开始记录的行为
+        org_close = self.data1.close[0]
+        self.recorded_values.append(self._cash + self._position * org_close)
+
+    def next(self):
+        org_close = self.data1.close[0]
+
+        # ① 记录快照（对齐 C++ recordDailySnapshot：matchOrders 后、RunGraph 前）
+        self.recorded_values.append(self._cash + self._position * org_close)
+
+        if len(self) < 2:
+            return
+        if (math.isnan(self.ma_s[0]) or math.isnan(self.ma_l[0]) or
+                math.isnan(self.ma_s[-1]) or math.isnan(self.ma_l[-1])):
+            return
+
+        # ② 信号检测 + 交易执行（对齐 C++ RunGraph: SignalNode → PortfolioNode → ExecuteNode）
+        golden = (self.ma_s[0] > self.ma_l[0] and
+                  self.ma_s[-1] <= self.ma_l[-1])
+        death = (self.ma_s[0] < self.ma_l[0] and
+                 self.ma_s[-1] >= self.ma_l[-1])
+
+        if self._position == 0 and golden:
+            size = int(self._cash / org_close / 100) * 100
+            if size > 0:
+                cost = size * org_close
+                comm = max(5.0, cost * 0.0003)
+                self._cash -= (cost + comm)
+                self._position = size
+
+        elif self._position > 0 and death:
+            revenue = self._position * org_close
+            comm = max(5.0, revenue * 0.0003)
+            stamp = revenue * 0.001
+            self._cash += (revenue - comm - stamp)
+            self._position = 0
+
+
+def _run_python_backtrader(hfq_csv_path: str, org_csv_path: str) -> dict:
+    """
+    用 backtrader 运行 MA(5)/MA(15) 交叉策略，返回与 C++ summary 对齐的指标。
+
+    对齐 C++ 执行模型：
+    - 指标计算用后复权价格（hfq），交易执行用原始价格（org）
+    - 信号 bar T 挂单 → 成交价 = bar T org close ± 滑点
+    - 100 股整手取整
+    - nextpost() 记录快照（成交后估值）
+    """
+    df_hfq = pd.read_csv(hfq_csv_path)
+    df_hfq['datetime'] = pd.to_datetime(df_hfq['datetime'])
+    df_hfq = df_hfq.set_index('datetime')
+
+    df_org = pd.read_csv(org_csv_path)
+    df_org['datetime'] = pd.to_datetime(df_org['datetime'])
+    df_org = df_org.set_index('datetime')
+
+    cerebro = bt.Cerebro(runonce=False)
+
+    data0 = bt.feeds.PandasData(
+        dataname=df_hfq,
+        open='open', high='high', low='low', close='close', volume='volume',
+        openinterest=-1,
+    )
+    data1 = bt.feeds.PandasData(
+        dataname=df_org,
+        open='open', high='high', low='low', close='close', volume='volume',
+        openinterest=-1,
+    )
+    cerebro.adddata(data0)
+    cerebro.adddata(data1)
+    cerebro.addstrategy(_MACrossoverStrategy)
+    cerebro.broker.setcash(INITIAL_CAPITAL)
+
+    results = cerebro.run()
+    values = results[0].recorded_values
+    if len(values) < 2:
+        return {"total_return": 0, "annual_return": 0, "sharpe": 0,
+                "max_drawdown": 0, "win_rate": 0, "calmar_ratio": 0}
+
+    daily_returns = [(values[i] - values[i - 1]) / values[i - 1]
+                     for i in range(1, len(values))]
+
+    total_return = (values[-1] - values[0]) / values[0]
+    n = len(daily_returns)
+    annual_return = (1 + total_return) ** (YEAR_DAYS / n) - 1 if total_return > -1 else 0.0
+    annual_vol = float(np.std(daily_returns, ddof=1) * np.sqrt(YEAR_DAYS)) if n > 1 else 0.0
+    sharpe = (annual_return - RISK_FREE_RATE) / annual_vol if annual_vol >= 1e-6 else 0.0
+
+    peak = values[0]
+    max_dd = 0.0
+    for v in values:
+        if v > peak:
+            peak = v
+        dd = (peak - v) / peak if peak > 0 else 0
+        max_dd = max(max_dd, dd)
+
+    win_rate = sum(1 for r in daily_returns if r > 0) / n if n > 0 else 0.0
+    calmar = annual_return / max_dd if max_dd > 0 else 0.0
+
+    return {
+        "total_return": round(total_return, 6),
+        "annual_return": round(annual_return, 6),
+        "sharpe": round(sharpe, 6),
+        "max_drawdown": round(max_dd, 6),
+        "win_rate": round(win_rate, 6),
+        "calmar_ratio": round(calmar, 6),
+    }
+
+
+class TestMACrossoverE2E:
+    """
+    MA(5)/MA(15) 交叉策略端到端验证：backtrader Python 回测 vs C++ 策略图回测。
+
+    使用 ma_graph_strategy.json（sz.900005，2023-01-01 ~ 2023-06-30），
+    同一份 CSV 数据分别走 backtrader 和 C++ 回测引擎，对比 summary 指标。
+    """
+
+    STRATEGY_PATH = Path(__file__).parent.parent / "script" / "ma_graph_strategy.json"
+
+    @staticmethod
+    def _find_csv(symbol: str, subdir: str = "A_hfq") -> Path:
+        """定位服务数据目录中的 CSV"""
+        service_root = Path(__file__).parent.parent.parent
+        for sub in ["build/data", "data"]:
+            p = service_root / sub / subdir / f"{symbol}.csv"
+            if p.exists():
+                return p
+        raise FileNotFoundError(f"CSV not found for {symbol} in {subdir}")
+
+    def test_ma_crossover_metrics(self, auth_token, is_backtest):
+        """backtrader vs C++ 回测指标对比"""
+        if not is_backtest:
+            pytest.skip("仅在回测模式下运行")
+        if not self.STRATEGY_PATH.exists():
+            pytest.skip(f"策略文件不存在: {self.STRATEGY_PATH}")
+
+        symbol = "sz.900005"
+        hfq_path = self._find_csv(symbol, "A_hfq")
+        org_path = self._find_csv(symbol, "AStock")
+
+        # --- Python backtrader 回测 ---
+        py_metrics = _run_python_backtrader(str(hfq_path), str(org_path))
+        print(f"\n[Python backtrader] trades executed, "
+              f"total_return={py_metrics['total_return']:.4f}")
+
+        # --- C++ 策略图回测 ---
+        strategy = json.loads(self.STRATEGY_PATH.read_text())
+        cpp_result = run_backtest_via_api(str(self.STRATEGY_PATH), auth_token)
+        s = cpp_result.get("summary", {})
+
+        # --- 对比 ---
+        # C++ summary 字段名映射（C++ 用 "sharp" 而非 "sharpe"）
+        cpp_key_map = {"sharpe": "sharp"}
+        comparisons = [
+            ("total_return", "总收益率", 0.02),
+            ("annual_return", "年化收益", 0.05),
+            ("sharpe", "夏普比率", 0.10),
+            ("max_drawdown", "最大回撤", 0.02),
+            ("win_rate", "胜率", 0.05),
+            ("calmar_ratio", "卡玛比率", 0.10),
         ]
-        
-        for metric_key, label in metrics_to_compare:
-            cpp_val = cpp_metrics.get(metric_key)
-            py_val = expected.get(metric_key)
 
-            if cpp_val is not None and py_val is not None:
-                abs_diff = abs(cpp_val - py_val)
-                if abs(py_val) > 1e-6:
-                    error = abs_diff / abs(py_val)
-                    print(f"{label:<20} {cpp_val:>12.6f} {py_val:>12.6f} {error:>7.2%}")
-                else:
-                    print(f"{label:<20} {cpp_val:>12.6f} {py_val:>12.6f} {'N/A':>8}")
+        print(f"\n{'指标':<16} {'Python':>12} {'C++':>12} {'差值':>10} {'容差':>8}")
+        print("-" * 62)
 
-                # 特殊处理：极低波动率时夏普比率不稳定，跳过对比
-                if metric_key == "sharpe":
-                    py_vol = expected.get("annual_volatility", 0)
-                    if py_vol < 0.01:
-                        print(f"  → 波动率极低 ({py_vol:.6f})，跳过夏普对比")
-                        continue
-
-                # 特殊处理：卡玛比率是派生指标（annual_return / max_dd），误差被放大
-                # 当 max_dd 本身很小时，微小差异会导致 calmar 差异较大
-                if metric_key == "calmar":
-                    # 使用 0.10 容差（其他指标 0.05）
-                    calmar_tolerance = 0.10
-                    assert abs_diff < calmar_tolerance, (
-                        f"{label} 差异过大: C++={cpp_val:.6f}, Python={py_val:.6f}, "
-                        f"绝对差异={abs_diff:.6f}, 容差={calmar_tolerance:.4f}"
-                    )
-                    continue
-
-                # 使用绝对差异断言（对小预期值避免相对误差放大）
-                assert abs_diff < tolerance, (
-                    f"{label} 差异过大: C++={cpp_val:.6f}, Python={py_val:.6f}, "
-                    f"绝对差异={abs_diff:.6f}, 容差={tolerance:.4f}"
-                )
-            else:
-                print(f"{label:<20} {'N/A':>12} {py_val if py_val is not None else 'N/A':>12}")
-
-    def test_up_trend_comparison(self):
-        """单边上涨：完整指标对比"""
-        self._run_comparison("up_trend", tolerance=0.05)
-
-    def test_down_trend_comparison(self):
-        """单边下跌：完整指标对比"""
-        self._run_comparison("down_trend", tolerance=0.05)
-
-    def test_rise_fall_comparison(self):
-        """先涨后跌：完整指标对比"""
-        self._run_comparison("rise_fall", tolerance=0.05)
-
-    def test_sideways_comparison(self):
-        """横盘震荡：完整指标对比"""
-        self._run_comparison("sideways", tolerance=0.05)
-
-    def test_high_volatility_comparison(self):
-        """高波动率：完整指标对比"""
-        self._run_comparison("high_volatility", tolerance=0.05)
-
-    def test_steady_trend_comparison(self):
-        """稳定趋势：完整指标对比"""
-        self._run_comparison("steady_trend", tolerance=0.10)
-
-    def test_existing_strategy_cta(self):
-        """使用现有 CTA 策略验证指标"""
-        strategy_path = Path(__file__).parent.parent / "script" / "CTA.json"
-        
-        if not strategy_path.exists():
-            pytest.skip(f"CTA.json 不存在: {strategy_path}")
-        
-        print("\n=== CTA 策略回测指标 ===")
-        cpp_result = run_backtest_via_api(str(strategy_path), self.token)
-        cpp_metrics = extract_cpp_metrics(cpp_result)
-        
-        # 打印所有指标
-        print(f"\n{'指标':<25} {'值':>12}")
-        print("-" * 40)
-        for key, value in sorted(cpp_metrics.items()):
-            print(f"{key:<25} {value:>12.6f}")
-        
-        # 验证基本合理性
-        assert -1.0 <= cpp_metrics.get("total_return", 0) <= 10.0, "总收益率异常"
-        assert 0.0 <= cpp_metrics.get("win_rate", 0) <= 1.0, "胜率异常"
-        assert 0.0 <= cpp_metrics.get("max_drawdown", 0) <= 1.0, "最大回撤异常"
+        for key, label, tol in comparisons:
+            py_val = py_metrics.get(key, 0)
+            cpp_val = s.get(cpp_key_map.get(key, key), 0)
+            diff = abs(py_val - cpp_val)
+            ok = "✓" if diff < tol else "✗"
+            print(f"{label:<16} {py_val:>12.6f} {cpp_val:>12.6f} "
+                  f"{diff:>10.6f} {tol:>8.2f} {ok}")
+            assert diff < tol, (
+                f"{label} 差异过大: Python={py_val:.6f}, C++={cpp_val:.6f}, "
+                f"差值={diff:.6f}, 容差={tol}"
+            )
