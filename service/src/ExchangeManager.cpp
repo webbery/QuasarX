@@ -3,6 +3,7 @@
 #include "Bridge/HX/HXExchange.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/ETFHistorySimulation.h"
+#include "Bridge/SIM/OptionHistorySimulation.h"
 #include "Bridge/SIM/RealTimeSimulation.h"
 #include "Bridge/TickFlow/TickFlowBridge.h"
 #include "Bridge/SlippageModel.h"
@@ -135,6 +136,7 @@ bool ExchangeManager::Use(const String& name) {
     if (api == CTP_API)              type = ExchangeType::EX_CTP;
     else if (api == STOCK_HISTORY_SIM)  type = ExchangeType::EX_STOCK_HIST_SIM;
     else if (api == ETF_HISTORY_SIM)    type = ExchangeType::EX_ETF_HIST_SIM;
+    else if (api == OPTION_HISTORY_SIM) type = ExchangeType::EX_OPTION_HIST_SIM;
     else if (api == STOCK_REAL_SIM)     type = ExchangeType::EX_STOCK_REAL_SIM;
     else if (api == HX_API)             type = ExchangeType::EX_HX;
     else if (api == TICKFLOW_QUOTE_API) type = ExchangeType::EX_TICKFLOW_QUOTE;
@@ -186,6 +188,11 @@ bool ExchangeManager::RegisterExchange(const String& name, ExchangeType type) {
     }
     else if (type == EX_ETF_HIST_SIM) {
         ptr = new ETFHistorySimulation(_server);
+        ret = ptr->Init(exchangeCfg);
+        _enableSimulation = true;
+    }
+    else if (type == EX_OPTION_HIST_SIM) {
+        ptr = new OptionHistorySimulation(_server);
         ret = ptr->Init(exchangeCfg);
         _enableSimulation = true;
     }
@@ -350,7 +357,7 @@ Vector<ExchangeInterface*> ExchangeManager::GetActiveExchanges() const {
 }
 
 ExchangeInterface* ExchangeManager::GetExchangeByType(ExchangeType type) const {
-    if (_enableSimulation && type != ExchangeType::EX_STOCK_HIST_SIM && type != ExchangeType::EX_ETF_HIST_SIM) {
+    if (_enableSimulation && type != ExchangeType::EX_STOCK_HIST_SIM && type != ExchangeType::EX_ETF_HIST_SIM && type != ExchangeType::EX_OPTION_HIST_SIM) {
         // 模拟模式下强制返回仿真环境（非 ETF 类型）
         auto simItr = _typeExchanges.find(ExchangeType::EX_STOCK_HIST_SIM);
         if (simItr != _typeExchanges.end()) {
@@ -379,6 +386,8 @@ bool ExchangeManager::EnsureExchangeByType(ExchangeType type) {
         apiName = STOCK_HISTORY_SIM;
     } else if (type == EX_ETF_HIST_SIM) {
         apiName = ETF_HISTORY_SIM;
+    } else if (type == EX_OPTION_HIST_SIM) {
+        apiName = OPTION_HISTORY_SIM;
     } else {
         WARN("EnsureExchangeByType: unsupported type {}", (int)type);
         return false;
@@ -416,6 +425,10 @@ bool ExchangeManager::EnsureExchangeByType(ExchangeType type) {
         _enableSimulation = true;
     } else if (type == EX_ETF_HIST_SIM) {
         ptr = new ETFHistorySimulation(_server);
+        ret = ptr->Init(info);
+        _enableSimulation = true;
+    } else if (type == EX_OPTION_HIST_SIM) {
+        ptr = new OptionHistorySimulation(_server);
         ret = ptr->Init(info);
         _enableSimulation = true;
     }
@@ -456,6 +469,7 @@ bool ExchangeManager::GetTradingPosition(AccountPosition& outPosition) const {
         // 排除历史回测和纯行情 Bridge，只取真实交易 Exchange
         if (type == ExchangeType::EX_STOCK_HIST_SIM ||
             type == ExchangeType::EX_ETF_HIST_SIM ||
+            type == ExchangeType::EX_OPTION_HIST_SIM ||
             type == ExchangeType::EX_TICKFLOW_QUOTE) {
             continue;
         }
@@ -479,6 +493,7 @@ bool ExchangeManager::GetTradingOrders(SecurityType secType, OrderList& outOrder
         }
         if (type == ExchangeType::EX_STOCK_HIST_SIM ||
             type == ExchangeType::EX_ETF_HIST_SIM ||
+            type == ExchangeType::EX_OPTION_HIST_SIM ||
             type == ExchangeType::EX_TICKFLOW_QUOTE) {
             continue;
         }
@@ -535,6 +550,13 @@ Vector<ExchangeInterface*> ExchangeManager::GetExchangesByTypes(const Vector<Exc
 }
 
 ExchangeInterface* ExchangeManager::ResolveExchange(const symbol_t& symbol) const {
+    // 期权类标的走 OptionExchange
+    if (is_option(symbol)) {
+        auto itr = _typeExchanges.find(ExchangeType::EX_OPTION_HIST_SIM);
+        if (itr != _typeExchanges.end()) {
+            return itr->second;
+        }
+    }
     // 基金类标的优先走 ETFExchange
     if (is_fund(symbol) || is_etf(symbol)) {
         auto itr = _typeExchanges.find(ExchangeType::EX_ETF_HIST_SIM);
@@ -782,9 +804,11 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
                                               const Set<symbol_t>& symbols,
                                               double initialCapital) {
     // 按标的类型分组
-    Set<symbol_t> stockSymbols, etfSymbols;
+    Set<symbol_t> stockSymbols, etfSymbols, optionSymbols;
     for (auto sym : symbols) {
-        if (is_fund(sym) || is_etf(sym)) {
+        if (is_option(sym)) {
+            optionSymbols.insert(sym);
+        } else if (is_fund(sym) || is_etf(sym)) {
             etfSymbols.insert(sym);
         } else {
             stockSymbols.insert(sym);
@@ -816,6 +840,20 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
                 if (mainRunId == 0) {
                     // 如果没有股票标的，以 ETF 的 runId 为主 runId
                     mainRunId = etfRunId;
+                }
+            }
+        }
+    }
+
+    // 创建期权回测上下文
+    if (!optionSymbols.empty()) {
+        auto itr = _typeExchanges.find(ExchangeType::EX_OPTION_HIST_SIM);
+        if (itr != _typeExchanges.end()) {
+            auto* optExch = dynamic_cast<HistorySimulationBase*>(itr->second);
+            if (optExch) {
+                run_id_t optRunId = optExch->createBacktestContext(strategy, optionSymbols, initialCapital);
+                if (mainRunId == 0) {
+                    mainRunId = optRunId;
                 }
             }
         }
@@ -907,6 +945,7 @@ void ExchangeManager::ConfigureSlippageModels(const Set<contract_type>& sources,
             targetType = ExchangeType::EX_ETF_HIST_SIM;
         break;
         case contract_type::option:
+            targetType = ExchangeType::EX_OPTION_HIST_SIM;
         break;
         default:
             WARN("[Slippage] Unknown source type: {}", (int)source);

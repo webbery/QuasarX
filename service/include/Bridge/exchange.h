@@ -16,6 +16,7 @@
 #define STOCK_HISTORY_SIM   "stock_hist_sim"
 #define STOCK_REAL_SIM      "stock_real_sim"
 #define ETF_HISTORY_SIM     "etf_hist_sim"
+#define OPTION_HISTORY_SIM  "option_hist_sim"
 #define FEATURE_HISTORY_SIM "feature_hist_sim"
 #define FEATURE_REAL_SIM    "feature_real_sim"
 #define TICKFLOW_QUOTE_API  "tickflow"
@@ -302,6 +303,7 @@ enum ExchangeType {
     EX_FUTURE_REAL_SIM,
     EX_TICKFLOW_QUOTE,
     EX_ETF_HIST_SIM,
+    EX_OPTION_HIST_SIM,
     EX_Unknow
 };
 

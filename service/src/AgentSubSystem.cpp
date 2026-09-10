@@ -109,9 +109,8 @@ void FlowSubsystem::Stop(const String& strategy) {
         flow._dailyWorker = nullptr;
     }
 
-    // 调用节点的 Done() 方法（回测路径在 StartBacktest 中调用，
-    // 实时/tickflow 路径需在此处调用，确保 DebugNode 等节点输出数据）
-    NotifyNodesDone(strategy, flow._graph);
+    // NotifyNodesDone 已由各 worker 线程内的 DoneGuard 在 context 析构前调用，
+    // 此处不再调用——worker 退出后 DataContext 已销毁，裸指针悬空。
 
     // 停止该策略启动的 Exchange（通过引用计数保证多策略安全）
     auto* exchangeMgr = _handle->GetExchangeManager();
@@ -135,8 +134,7 @@ void FlowSubsystem::Release() {
             delete item.second._dailyWorker;
             item.second._dailyWorker = nullptr;
         }
-        // 调用节点的 Done() 方法（确保 DebugNode 等节点输出数据）
-        NotifyNodesDone(item.first, item.second._graph);
+        // NotifyNodesDone 已由各 worker 线程内的 DoneGuard 保证
         for (auto node: item.second._graph) {
             delete node;
         }
@@ -170,6 +168,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
 
     flow._worker = new std::thread([strategy, runId, this]() {
         DataContext context(strategy, _handle);
+        DoneGuard guard(this, strategy, _flows[strategy]._graph);
         context.setBacktestRunId(runId);
 
         // 设置 warmup epochs 到 context
@@ -229,6 +228,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 if (endNode) {
                     ComputeBacktestMetrics(strategy, flow, btContext, _handle->GetExchangeManager());
                 }
+                guard.dismiss();
                 NotifyNodesDone(strategy, flow._graph);
             }
 
@@ -280,6 +280,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
 
     flow._worker = new std::thread([strategy, runId, this, exchangeMgr]() {
         DataContext context(strategy, _handle);
+        DoneGuard guard(this, strategy, _flows[strategy]._graph);
         context.setBacktestRunId(runId);
 
         int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
@@ -346,6 +347,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                 if (endNode) {
                     ComputeBacktestMetrics(strategy, flow, btContext, exchangeMgr);
                 }
+                guard.dismiss();
                 NotifyNodesDone(strategy, flow._graph);
             }
 
@@ -710,8 +712,8 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
         }
 
         DataContext context(strategy, _handle);
-
         auto& flow = _flows[strategy];
+        DoneGuard guard(this, strategy, flow._graph);
 
         // 订阅原始行情
         nng_socket recvSock;
@@ -1256,6 +1258,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
         // 执行策略图
         DataContext context(strategy, _handle);
+        DoneGuard guard(this, strategy, flow._graph);
         run_id_t runId = 0;
         bool useSimulation = (simExchange != nullptr && runningMode == RuningType::Backtest);
 
@@ -1319,6 +1322,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     result["status"] = "error";
                     result["error"] = flow._lastError.empty() ? "graph execution failed" : flow._lastError.c_str();
                 }
+                guard.dismiss();
                 NotifyNodesDone(strategy, flow._graph);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Exception: {}", e.what());
@@ -1487,6 +1491,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         _handle->SendEmail(body);
                     }
                 }
+                guard.dismiss();
                 NotifyNodesDone(strategy, flow._graph);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Live mode exception: {}", e.what());

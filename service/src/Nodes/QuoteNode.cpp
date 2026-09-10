@@ -7,6 +7,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/ETFHistorySimulation.h"
+#include "Bridge/SIM/OptionHistorySimulation.h"
 #include "Util/system.h"
 #include <ctime>
 #include <limits>
@@ -178,6 +179,15 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
                 }
             }
         }
+        if (_sources.count(contract_type::option) && exchangeMgr) {
+            exchangeMgr->EnsureExchangeByType(ExchangeType::EX_OPTION_HIST_SIM);
+
+            auto* optExchange = dynamic_cast<HistorySimulationBase*>(
+                exchangeMgr->GetExchangeByType(ExchangeType::EX_OPTION_HIST_SIM));
+            if (optExchange) {
+                optExchange->SetFilter(filer);
+            }
+        }
     }
 
     // 读取缺失数据处理方式并创建对应策略
@@ -207,7 +217,7 @@ void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
         context.addExchangeType(ExchangeType::EX_STOCK_HIST_SIM);
     }
     if (_sources.count(contract_type::option)) {
-        // TODO: 期权回测引擎 EX_OPTION_HIST_SIM
+        context.addExchangeType(ExchangeType::EX_OPTION_HIST_SIM);
     }
 }
 
