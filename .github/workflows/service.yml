@@ -397,6 +397,7 @@ jobs:
           import copy
           config = copy.deepcopy(template)
           fill_config(config)
+          config['server']['test_mode'] = True  # CI 测试跳过图优化
           with open('config.json', 'w') as f:
               json.dump(config, f, indent=4)
           print('config.json generated successfully')

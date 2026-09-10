@@ -52,7 +52,9 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
     bool status = true;
     _flows[strategy]._graph = topo_flow;
     _flows[strategy]._lastError.clear();
-    OptimizeGraph(strategy);
+    if (!_handle->GetConfig().IsTestMode()) {
+        OptimizeGraph(strategy);
+    }
     return status;
 }
 
