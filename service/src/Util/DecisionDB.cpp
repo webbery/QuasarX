@@ -23,7 +23,8 @@ void DecisionDB::ensureTables() {
             timestamp   TIMESTAMP NOT NULL,
             executed    BOOLEAN DEFAULT FALSE,
             exec_qty    BIGINT DEFAULT 0,
-            exec_price  DOUBLE DEFAULT 0
+            exec_price  DOUBLE DEFAULT 0,
+            closed      BOOLEAN DEFAULT FALSE
         )
     )");
     exec_unsafe("CREATE INDEX IF NOT EXISTS idx_decisions_date ON decisions(timestamp)");
@@ -78,8 +79,8 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
 
     std::string sql = fmt::format(
-        "INSERT INTO decisions (id, strategy, symbol, action, is_open, quantity, price, epoch, timestamp, executed, exec_qty, exec_price) "
-        "VALUES ({}, '{}', {}, {}, {}, {}, {:.6f}, {}, TIMESTAMP '{}', {}, {}, {:.6f})",
+        "INSERT INTO decisions (id, strategy, symbol, action, is_open, quantity, price, epoch, timestamp, executed, exec_qty, exec_price, closed) "
+        "VALUES ({}, '{}', {}, {}, {}, {}, {:.6f}, {}, TIMESTAMP '{}', {}, {}, {:.6f}, {})",
         record._id,
         record._strategy,
         sym_encoded,
@@ -91,7 +92,8 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
         timebuf,
         record._executed ? 1 : 0,
         record._executed_quantity,
-        record._executed_price
+        record._executed_price,
+        record._closed ? 1 : 0
     );
 
     if (!exec(sql)) {
@@ -112,7 +114,7 @@ std::vector<DecisionRecord> DecisionDB::queryByDate(const std::string& date) {
 
     std::string sql = fmt::format(
         "SELECT id, strategy, symbol, action, is_open, quantity, price, epoch, epoch(timestamp) as ts, "
-        "executed, exec_qty, exec_price FROM decisions "
+        "executed, exec_qty, exec_price, closed FROM decisions "
         "WHERE CAST(timestamp AS DATE) = '{}' ORDER BY id",
         date
     );
@@ -142,6 +144,7 @@ std::vector<DecisionRecord> DecisionDB::queryByDate(const std::string& date) {
             rec._executed = duckdb_value_boolean(&result, 9, i);
             rec._executed_quantity = duckdb_value_int64(&result, 10, i);
             rec._executed_price = duckdb_value_double(&result, 11, i);
+            rec._closed = duckdb_value_boolean(&result, 12, i);
             rec._reserved = 0;
 
             results.push_back(rec);
@@ -163,6 +166,20 @@ bool DecisionDB::markExecuted(int id, int64_t exec_qty, double exec_price) {
     std::string sql = fmt::format(
         "UPDATE decisions SET executed = true, exec_qty = {}, exec_price = {:.6f} WHERE id = {}",
         exec_qty, exec_price, id
+    );
+    return exec(sql);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  标记已确认（关闭，不执行）
+// ═══════════════════════════════════════════════════════════
+
+bool DecisionDB::markClosed(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return false;
+
+    std::string sql = fmt::format(
+        "UPDATE decisions SET closed = true WHERE id = {}", id
     );
     return exec(sql);
 }

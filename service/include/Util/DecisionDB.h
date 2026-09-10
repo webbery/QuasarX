@@ -24,6 +24,9 @@ public:
     // 标记决策已执行
     bool markExecuted(int id, int64_t exec_qty, double exec_price);
 
+    // 标记决策已确认（关闭，不执行）
+    bool markClosed(int id);
+
     // 日终持仓快照
     void insertDailyPosition(const DailyPositionRecord& record);
     std::vector<DailyPositionRecord> queryDailyPositions(const std::string& strategy,

@@ -36,6 +36,7 @@ export interface DecisionItem {
   executed: boolean
   executedQuantity: number
   executedPrice: number
+  closed: boolean
 }
 
 export function useDecision() {
@@ -47,7 +48,7 @@ export function useDecision() {
   )
 
   const pendingDecisions = computed(() =>
-    decisions.value.filter(d => !d.executed)
+    decisions.value.filter(d => !d.executed && !d.closed)
   )
 
   const formatDate = (date: Date): string => {
@@ -92,6 +93,17 @@ export function useDecision() {
     }
   }
 
+  const closeDecision = async (id: number) => {
+    const d = decisions.value.find(d => d.id === id)
+    if (!d || d.executed || d.closed) return
+    try {
+      await axios.put('/v0/trade/decisions', { id })
+      d.closed = true
+    } catch (error) {
+      console.error('[Decision] close failed:', error)
+    }
+  }
+
   const onManualDecision = (messageData: any) => {
     try {
       const payload = JSON.parse(messageData.payload || messageData.data)
@@ -111,7 +123,8 @@ export function useDecision() {
               timestamp: Math.floor(Date.now() / 1000),
               executed: false,
               executedQuantity: 0,
-              executedPrice: 0
+              executedPrice: 0,
+              closed: false
             })
           }
         }
@@ -136,6 +149,7 @@ export function useDecision() {
     pendingDecisions,
     fetchDecisions,
     executeDecision,
+    closeDecision,
     registerSSE,
     unregisterSSE,
     actionLabels,
