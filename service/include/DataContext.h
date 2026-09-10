@@ -167,6 +167,15 @@ public:
         return _epoch;
     }
 
+    // 日终决策锁定：仅最后一根 bar 产出 BUY/SELL；前置 epoch 用于节点 warmup，
+    // 评估但不累积决策。回测路径每根都是决策（默认 true）。
+    void SetDecisionBar(bool is) {
+        _isDecisionBar = is;
+    }
+    bool IsDecisionBar() const {
+        return _isDecisionBar;
+    }
+
     void SetTime(time_t t);
     const List<time_t>& GetTime() const;
     time_t Current();
@@ -301,6 +310,9 @@ private:
 
     // 预热期数（回测模式下 FunctionNode 需要预热的 epoch 数）
     int _warmupEpochs = 0;
+
+    // 决策锁定标志（默认 true 兼容回测路径）
+    bool _isDecisionBar = true;
 
     // 策略初始化时设置的 Exchange 类型（支持股票+ETF 混合）
     Set<ExchangeType> _exchangeTypes;

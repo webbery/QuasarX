@@ -9,6 +9,12 @@
 
 bool ManualTiming::processSignal(const String& strategy, const TradeSignal& signal,
                                  const DataContext& context) {
+    // 决策锁定：非决策 bar 的信号不累积（前置 epoch 用于节点 warmup，
+    // SignalNode 评估但不产生最终决策）
+    if (!context.IsDecisionBar()) {
+        return true;
+    }
+
     auto action = signal.GetAction();
 
     // per-symbol 覆盖，只保留最终决策（含 HOLD）

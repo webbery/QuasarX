@@ -1472,6 +1472,8 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
                 for (size_t i = startBar; i < maxBars && !Server::IsExit(); ++i) {
                     context.SetEpoch(++epoch);
+                    // 决策锁定：仅最后一根 bar 产出 BUY/SELL；前置 epoch 用于节点 warmup
+                    context.SetDecisionBar(i + 1 == maxBars);
 
                     // 为每个 symbol 构建 QuoteInfo 写入 context
                     for (auto sym : symbolVec) {
