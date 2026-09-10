@@ -84,11 +84,7 @@ void FlowSubsystem::ClearFlow(const String& strategy) {
     auto it = _flows.find(strategy);
     if (it != _flows.end()) {
         // 等待日级执行线程结束，避免 delete 节点时线程仍在使用（ExecuteNode/ManualTiming 悬空）
-        if (it->second._dailyWorker) {
-            if (it->second._dailyWorker->joinable()) it->second._dailyWorker->join();
-            delete it->second._dailyWorker;
-            it->second._dailyWorker = nullptr;
-        }
+        joinDailyWorkerAsync(it->second, strategy);
         for (auto node: it->second._graph) {
             delete node;
         }
@@ -116,6 +112,26 @@ void FlowSubsystem::Start() {
     }
 }
 
+void FlowSubsystem::joinDailyWorkerAsync(StrategyFlowInfo& flow, const String& strategy) {
+    std::unique_ptr<std::thread> worker;
+    {
+        std::lock_guard<std::mutex> lock(flow._flowMtx);
+        worker = std::move(flow._dailyWorker);
+    }
+    if (worker && worker->joinable()) {
+        // detached monitor：join 完成后自动 delete thread 对象
+        // 注：std::async future 析构会阻塞至任务完成，无法实现真正非阻塞；
+        // 若 _dailyWorker 线程卡死，monitor 线程会泄漏（极端场景，表明 worker 内部有 bug）
+        auto* raw = worker.release();
+        std::thread([raw, strategy]() {
+            raw->join();
+            INFO("[FlowSubsystem] dailyWorker joined and cleaned up for '{}'", strategy);
+            delete raw;
+        }).detach();
+        INFO("[FlowSubsystem] dailyWorker async join pending for '{}'", strategy);
+    }
+}
+
 void FlowSubsystem::Stop(const String& strategy) {
     auto it = _flows.find(strategy);
     if (it == _flows.end()) return;
@@ -128,11 +144,7 @@ void FlowSubsystem::Stop(const String& strategy) {
     flow._worker = nullptr;
 
     // 等待日级执行线程结束（StartDaily 线程可能在 SendSummaryEmail/回调期间访问 flow 内对象）
-    if (flow._dailyWorker) {
-        if (flow._dailyWorker->joinable()) flow._dailyWorker->join();
-        delete flow._dailyWorker;
-        flow._dailyWorker = nullptr;
-    }
+    joinDailyWorkerAsync(flow, strategy);
 
     // NotifyNodesDone 已由各 worker 线程内的 DoneGuard 在 context 析构前调用，
     // 此处不再调用——worker 退出后 DataContext 已销毁，裸指针悬空。
@@ -154,11 +166,7 @@ void FlowSubsystem::Release() {
             if (item.second._worker->joinable()) item.second._worker->join();
             delete item.second._worker;
         }
-        if (item.second._dailyWorker) {
-            if (item.second._dailyWorker->joinable()) item.second._dailyWorker->join();
-            delete item.second._dailyWorker;
-            item.second._dailyWorker = nullptr;
-        }
+        joinDailyWorkerAsync(item.second, item.first);
         // NotifyNodesDone 已由各 worker 线程内的 DoneGuard 保证
         for (auto node: item.second._graph) {
             delete node;
@@ -1237,12 +1245,35 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
         return;
     }
     auto& flow = it->second;
-    if (flow._dailyWorker) {
-        if (flow._dailyWorker->joinable()) flow._dailyWorker->join();
-        delete flow._dailyWorker;
-        flow._dailyWorker = nullptr;
+    // 清理旧线程（异步 join，不阻塞当前 detached 线程）
+    joinDailyWorkerAsync(flow, strategy);
+    // Stop() 可能在 detach 线程调度期间被调用，检查 _running 避免创建孤儿线程
+    if (!flow._running) {
+        WARN("[StartDaily] Strategy '{}' stopped before StartDaily, skipping", strategy);
+        if (onComplete) {
+            nlohmann::json errResult;
+            errResult["strategy"] = strategy;
+            errResult["status"] = "error";
+            errResult["error"] = "strategy stopped before StartDaily";
+            onComplete(std::move(errResult));
+        }
+        return;
     }
-    flow._dailyWorker = new std::thread([this, strategy, symbols, onComplete = std::move(onComplete)]() {
+    {
+        std::lock_guard<std::mutex> lock(flow._flowMtx);
+        // 双重检查：持锁后再验 _running，防止与 Stop() 交叉
+        if (!flow._running) {
+            WARN("[StartDaily] Strategy '{}' stopped during lock, skipping", strategy);
+            if (onComplete) {
+                nlohmann::json errResult;
+                errResult["strategy"] = strategy;
+                errResult["status"] = "error";
+                errResult["error"] = "strategy stopped during StartDaily lock";
+                onComplete(std::move(errResult));
+            }
+            return;
+        }
+        flow._dailyWorker = std::make_unique<std::thread>([this, strategy, symbols, onComplete = std::move(onComplete)]() {
         SetCurrentThreadName(("Daily_" + strategy).c_str());
         INFO("[StartDaily] === Started for strategy '{}', {} symbols ===", strategy, symbols.size());
 
@@ -1546,4 +1577,5 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
         // 回调通知
         if (onComplete) onComplete(result);
     });
+    } // _flowMtx scope
 }

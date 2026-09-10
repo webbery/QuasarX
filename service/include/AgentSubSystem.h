@@ -10,7 +10,9 @@
 #include "json.hpp"
 #include <atomic>
 #include <functional>
+#include <future>
 #include <memory>
+#include <mutex>
 
 class Server;
 class RiskSubSystem;
@@ -285,7 +287,9 @@ private:
         std::atomic_bool _running = false;
         std::thread* _worker = nullptr;
         // 日级执行线程（StartDaily，detach 线程的句柄），Stop/ClearFlow 时 join 避免悬空访问
-        std::thread* _dailyWorker = nullptr;
+        // unique_ptr + _flowMtx 保护并发访问（Stop/ClearFlow/StartDaily 在不同线程执行）
+        std::mutex _flowMtx;
+        std::unique_ptr<std::thread> _dailyWorker;
 
         // 策略级别的影子模式标志（默认 false，跟随全局模式）
         bool isShadowMode = false;
@@ -319,6 +323,10 @@ private:
         mutable String _lastError;
     };
 
-    Map<String, StrategyFlowInfo> _flows; 
+    Map<String, StrategyFlowInfo> _flows;
     Set<time_range> _stock_working_range;
+
+    // 异步 join _dailyWorker：锁内 swap 转移所有权，detached monitor 线程完成 join + delete
+    // 调用后 flow._dailyWorker 保证为 null，调用方可立即创建新线程或安全销毁 flow
+    void joinDailyWorkerAsync(StrategyFlowInfo& flow, const String& strategy);
 };
