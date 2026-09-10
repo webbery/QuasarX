@@ -159,14 +159,6 @@ public:
      */
     // Vector<double> GetDailyClosePrice(symbol_t symbol, int N, StockAdjustType adjust);
 
-    /**
-     */
-    double AdjustAfter(symbol_t symbol, double org_price, time_t org_t);
-
-    double AdjustBefore(symbol_t symbol, double org_price, time_t org_t);
-
-    double ResetPrice(symbol_t symbol, double adj_price, time_t adj_t);
-
     bool IsOpen(symbol_t symbol, time_t t);
 
     bool IsOpen(ExchangeName exchange, time_t);
@@ -249,16 +241,6 @@ private:
     void ReloadMarketData(const String& path);
 
 private:
-    struct DividendData {
-        time_t _start;
-        double _recordPrice;
-        double _divd;
-        double _transf;
-        double _bonus;
-    };
-
-    bool GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info);
-
     static ExchangeName GetExchangeName(const String& prefix);
     
 private:
@@ -293,8 +275,6 @@ private:
     static Map<std::thread::id, nng_socket> _sseSockets;
     // 数据缓存
     List<String> _symbolCache;
-    // 除权出息信息
-    TickMap<symbol_t, Map<time_t, DividendData>> _dividends;
 
     std::thread* _timer;
 

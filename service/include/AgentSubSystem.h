@@ -28,6 +28,7 @@ public:
     
     bool LoadFlow(const String& strategy, const List<QNode*>& topo_flow);
     void ClearFlow(const String& strategy);
+    void OptimizeGraph(const String& strategy);
 
     void Start();
     void Stop(const String& strategy);
@@ -252,6 +253,25 @@ private:
      * @note 用于回测/实时模式结束时，确保 DebugNode 等节点输出数据
      */
     void NotifyNodesDone(const String& strategy, const List<QNode*>& graph);
+
+    // RAII 守卫：确保 NotifyNodesDone 在 DataContext 析构前执行。
+    // DataContext 是 worker 线程的栈局部变量，节点在 Prepare() 中缓存其裸指针。
+    // 若 NotifyNodesDone 在 worker 退出后被调用（如 Stop()），指针已悬空 → 崩溃。
+    // 将此 guard 放在 context 之后构造，利用栈 LIFO 保证 Done 在 context 存活时执行。
+    struct DoneGuard {
+        FlowSubsystem* _fs;
+        String _strategy;
+        List<QNode*>* _graph;
+        bool _dismissed = false;
+
+        DoneGuard(FlowSubsystem* fs, const String& s, List<QNode*>& g)
+            : _fs(fs), _strategy(s), _graph(&g) {}
+        ~DoneGuard() { if (!_dismissed) _fs->NotifyNodesDone(_strategy, *_graph); }
+        void dismiss() { _dismissed = true; }
+
+        DoneGuard(const DoneGuard&) = delete;
+        DoneGuard& operator=(const DoneGuard&) = delete;
+    };
 
     /**
      * @brief 设置策略级别的运行模式（在 LoadFlow 之前调用）

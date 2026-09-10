@@ -223,7 +223,7 @@ bool Server::_exit = false;
 std::mutex Server::_sseMutex;
 Map<std::thread::id, nng_socket> Server::_sseSockets;
 
-Server::Server():_config(nullptr), _dividends(12*60*12),
+Server::Server():_config(nullptr),
 _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
 _defaultPortfolio(1), _timer(nullptr)
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
@@ -1048,8 +1048,6 @@ void Server::Timer()
                 Schedules(curr);
                 // 
                 UpdateQuoteQueryStatus(curr);
-                //
-                _dividends.Update();
             });
             next_wake += interval;
         }
@@ -1596,96 +1594,6 @@ Set<String> Server::GetAccounts() {
         accs.insert(item.first);
     }
     return accs;
-}
-
-bool Server::GetDividendInfo(symbol_t symbol, Map<time_t, DividendData>& dividends_info) {
-    auto path = _config->GetDatabasePath();
-    path += "/dividend/" + get_symbol(symbol) + "_dividend.csv";
-    if (!std::filesystem::exists(path)) {
-        WARN("{} dividend info lost.", get_symbol(symbol));
-        return false;
-    }
-
-    std::ifstream ifs;
-    ifs.open(path.c_str());
-    if (!ifs.is_open())
-        return false;
-
-    
-    String line;
-    bool is_header = true;
-    // 1, 2, 3, 5, 6 - 送股,转增,派息,实施,登记日
-    while (std::getline(ifs, line)) {
-        if (line.empty())
-            break;
-        if (is_header) {
-            is_header = false;
-            continue;
-        }
-
-        Vector<String> content;
-        split(line, content, ",");
-        
-        DividendData data;
-        data._bonus = atof(content[1].c_str());
-        data._divd = atof(content[3].c_str());
-        data._transf = atof(content[2].c_str());
-        data._start = FromStr(content[5]);
-    }
-    ifs.close();
-    return true;
-}
-
-double Server::AdjustAfter(symbol_t symbol, double org_price, time_t org_t) {
-    if (!is_stock(symbol))
-        return org_price;
-
-    if (!_dividends.Exist(symbol)) {
-        if (!GetDividendInfo(symbol, _dividends[symbol])) {
-            return org_price;
-        }
-    }
-
-    Map<time_t, DividendData>& dividends_info = _dividends[symbol];
-    
-    auto litr = dividends_info.lower_bound(org_t);
-    for (auto itr = dividends_info.begin(); itr != litr; ++itr) {
-        org_price += itr->second._divd;
-    }
-    return org_price;
-}
-
-double Server::AdjustBefore(symbol_t symbol, double org_price, time_t org_t) {
-    if (!is_stock(symbol))
-        return org_price;
-
-    if (!_dividends.Exist(symbol)) {
-        if (!GetDividendInfo(symbol, _dividends[symbol])) {
-            return org_price;
-        }
-    }
-    Map<time_t, DividendData>& dividends_info = _dividends[symbol];
-    
-    for (auto itr = dividends_info.upper_bound(org_t); itr != dividends_info.end(); ++itr) {
-        org_price -= itr->second._divd;
-    }
-
-    return org_price;
-}
-
-double Server::ResetPrice(symbol_t symbol, double adj_price, time_t adj_t) {
-    if (!is_stock(symbol))
-        return adj_price;
-
-    Map<time_t, DividendData> dividends_info;
-    if (!GetDividendInfo(symbol, dividends_info)) {
-        return adj_price;
-    }
-    auto litr = dividends_info.lower_bound(adj_t);
-    for (auto itr = dividends_info.begin(); itr != litr; ++itr) {
-        adj_price -= itr->second._divd;
-    }
-    return adj_price;
 }
 
 bool Server::IsOpen(symbol_t symbol, time_t t) {

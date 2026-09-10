@@ -402,13 +402,7 @@ jobs:
 
           # tickflow.json: 仅保留 tickflow exchange（TickFlow 测试用）
           tickflow_config = copy.deepcopy(template)
-          tickflow_config['exchange'] = [
-              ex for ex in tickflow_config.get('exchange', [])
-              if ex.get('name') == 'tickflow-quote'
-          ]
-          tickflow_config['server']['default']['exchange'] = [
-              ex['name'] for ex in tickflow_config['exchange']
-          ]
+          tickflow_config['server']['default']['exchange'] = ['tickflow-quote']
           fill_config(tickflow_config)
           tickflow_config['server']['test_mode'] = True  # CI 测试跳过交易时段检查
           with open('tickflow.json', 'w') as f:
@@ -417,13 +411,7 @@ jobs:
 
           # stock_hist_sim.json: 仅保留历史回测 exchange（回测测试用）
           stock_config = copy.deepcopy(template)
-          stock_config['exchange'] = [
-              ex for ex in stock_config.get('exchange', [])
-              if ex.get('api') in ('stock_hist_sim', 'etf_hist_sim')
-          ]
-          stock_config['server']['default']['exchange'] = [
-              ex['name'] for ex in stock_config['exchange']
-          ]
+          stock_config['server']['default']['exchange'] = ['stock_sim']
           fill_config(stock_config)
           with open('stock_hist_sim.json', 'w') as f:
               json.dump(stock_config, f, indent=4)

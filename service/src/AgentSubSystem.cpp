@@ -52,7 +52,32 @@ bool FlowSubsystem::LoadFlow(const String& strategy, const List<QNode*>& topo_fl
     bool status = true;
     _flows[strategy]._graph = topo_flow;
     _flows[strategy]._lastError.clear();
+    OptimizeGraph(strategy);
     return status;
+}
+
+void FlowSubsystem::OptimizeGraph(const String& strategy) {
+    auto& graph = _flows[strategy]._graph;
+    size_t removed = 0;
+
+    for (auto it = graph.begin(); it != graph.end(); ) {
+        auto* debugNode = dynamic_cast<DebugNode*>(*it);
+        if (!debugNode) { ++it; continue; }
+
+        // 断开所有上游连接：upstream._outs 移除指向 debugNode 的边
+        for (auto& [handle, upstream] : debugNode->ins())
+            upstream->Disconnect(debugNode);
+        // 断开所有下游连接：downstream._ins 移除指向 debugNode 的边
+        for (auto& [handle, downstream] : debugNode->outs())
+            downstream->Disconnect(debugNode);
+
+        delete debugNode;
+        it = graph.erase(it);
+        ++removed;
+    }
+
+    if (removed > 0)
+        INFO("[OptimizeGraph] Strategy '{}': removed {} DebugNode(s)", strategy, removed);
 }
 
 void FlowSubsystem::ClearFlow(const String& strategy) {
@@ -280,6 +305,7 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
  * 3. 当多标的 bar 对齐时，拉动策略图执行
  */
 void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_t runId, ExchangeManager* exchangeMgr) {
+    Stop(strategy);
     auto& flow = _flows.at(strategy);
     flow._running = true;
     flow._backtestRunId = runId;

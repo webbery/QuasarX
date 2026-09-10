@@ -81,6 +81,12 @@ public:
         _outs.insert({from, next});
         next->_ins.insert({to, this});
     }
+    void Disconnect(QNode* other) {
+        for (auto it = _outs.begin(); it != _outs.end(); )
+            it->second == other ? it = _outs.erase(it) : ++it;
+        for (auto it = _ins.begin(); it != _ins.end(); )
+            it->second == other ? it = _ins.erase(it) : ++it;
+    }
     virtual void Done(const String& strategy) {}
     virtual void Prepare(const String& strategy, DataContext& context) {}
     /**

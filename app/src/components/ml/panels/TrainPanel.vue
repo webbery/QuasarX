@@ -12,6 +12,10 @@
           <i v-if="state.trainResult.loading" class="fas fa-spinner fa-spin"></i>
           {{ state.trainResult.loading ? '训练中…' : '开始训练' }}
         </button>
+        <button class="btn btn-ghost" :disabled="optimizeRunning || !state.featureReport.data" @click="onOptimize()">
+          <i v-if="optimizeRunning" class="fas fa-spinner fa-spin"></i>
+          {{ optimizeRunning ? '优化中…' : '自动优化' }}
+        </button>
         <span v-if="!state.featureReport.data" class="source-chip warn">
           <i class="fas fa-exclamation-circle"></i>请先完成特征分析
         </span>
@@ -82,10 +86,6 @@
             <input type="number" v-model.number="nTrials" min="5" max="500" step="5" class="select-input" />
           </div>
           <div class="config-item optimize-actions">
-            <button class="btn btn-primary" :disabled="optimizeRunning || !state.featureReport.data" @click="onOptimize()">
-              <i v-if="optimizeRunning" class="fas fa-spinner fa-spin"></i>
-              {{ optimizeRunning ? '优化中…' : '开始优化' }}
-            </button>
             <button class="btn btn-ghost" :disabled="optimizeRunning" @click="resetDomains()">重置默认域</button>
           </div>
         </div>

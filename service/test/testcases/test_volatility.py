@@ -124,8 +124,8 @@ def compute_forecast_golden(returns: np.ndarray, prices: List[float],
     model = AutoReg(returns, lags=p, old_names=False)
     fit_result = model.fit()
     forecast = fit_result.forecast(steps=p)
-    forecast_mean = forecast.mean.values
-    forecast_se = forecast.se_mean.values
+    forecast_mean = forecast.mean().values
+    forecast_se = forecast.se_mean().values
 
     last_price = prices[-1]
     return {

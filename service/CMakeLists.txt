@@ -142,6 +142,10 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
 add_compile_definitions(_DEBUG)
 add_compile_definitions(SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG)
 add_compile_options(-g -O0)
+if(ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
 add_compile_options(-mtune=generic -O3)
 # -g1 最小调试信息（函数名+行号），供 .debug 符号文件 addr2line 崩溃栈解析；
@@ -287,12 +291,6 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
 add_compile_options(-Wl,-rpath=.)
 set(LINUX_LIBS xfastmdapi fasttraderapi fastsptraderapi duckdb)
 else()
-if(ENABLE_ASAN)
-    # 添加编译和链接的 ASan 标志
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address)
-    # 可选：如果使用 CMake 3.13+ 也可用 target_compile_options / target_link_options 针对特定目标
-endif()
 set(LINUX_LIBS xmdapi traderapi sptraderapi duckdb)
 endif()
 if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")
@@ -302,7 +300,7 @@ if (EXISTS "${OPENSSL_LIBRARY_DIR}/libssl.a")
 else()
     target_link_libraries(${PROJECT_NAME} ssl crypto)
 endif()
-target_link_libraries(${PROJECT_NAME} curl -pthread nng papi
+target_link_libraries(${PROJECT_NAME} curl -pthread nng papi ffi
     xtpquoteapi xtptraderapi thostmduserapi_se thosttraderapi_se
     ${LINUX_LIBS}
 )
