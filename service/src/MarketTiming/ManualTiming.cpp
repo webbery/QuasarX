@@ -113,108 +113,80 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
         strategyAvailable = info.available;
     }
 
-    // 单决策值格式化辅助（带 ¥ + 千位分隔）
+    // 单决策值格式化辅助（千位分隔）
     auto fmtMoney = [](double v) {
-        return fmt::format("{:.2f}", v);
+        return fmt::format("{:,.2f}", v);
     };
 
-    // 组内占比 + 资金占比 格式化助手
-    // 同组占比："26.7% of BUY total"
-    // 资金占比："5.4% of capital"（strategyCap == 0 时只显示同组占比）
-    auto fmtRatio = [&](double val, double groupTotal) {
-        double grpPct = (groupTotal > 0.0) ? (val / groupTotal * 100.0) : 0.0;
-        if (strategyCap > 0.0) {
-            double capPct = val / strategyCap * 100.0;
-            return fmt::format("({:.1f}% of group, {:.1f}% of capital)", grpPct, capPct);
-        }
-        return fmt::format("({:.1f}% of group)", grpPct);
-    };
-
-    // ==== 构建邮件正文 ====
+    // ==== 构建邮件正文（表格格式） ====
+    const String sep(50, '=');
     String body;
-    body += "Strategy: " + strategy + "\n";
-    body += fmt::format("Total: {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}])\n\n",
-                        _decisions.size(), buys.size(), sells.size(),
-                        holds.size(), evalHolds.size(), defaultHolds.size());
+
+    // ── 表头 ──
+    body += sep + "\n";
+    body += fmt::format("  Strategy: {}\n", strategy);
+    body += fmt::format("  BUY: {}  |  SELL: {}  |  HOLD: {}\n",
+                        buys.size(), sells.size(), holds.size());
+    body += sep + "\n\n";
 
     // 警告：所有 HOLD 都是默认补的 → 上游 SignalNode 可能未评估
     if (!buys.empty() || !sells.empty()) {
         // 有真实 BUY/SELL，不需要警告
     } else if (!defaultHolds.empty() && evalHolds.empty()) {
-        body += "⚠ All HOLD decisions are default holds (SignalNode produced no signals).\n"
-                "  Likely cause: upstream warmup not ready (e.g. MA20 needs >=20 bars) or feature data insufficient.\n\n";
+        body += "WARNING: All HOLD are default (SignalNode produced no signals).\n"
+                "  Likely cause: warmup not ready or feature data insufficient.\n\n";
     } else if (!evalHolds.empty() && defaultHolds.empty()) {
-        body += "✓ All HOLD decisions are evaluated (SignalNode ran, no BUY/SELL crossover today).\n\n";
+        body += "All HOLD evaluated (SignalNode ran, no crossover today).\n\n";
     }
 
-    // 资金概况（仅在 CapitalPool 注册了该策略时显示）
+    // ── 资金概况 ──
     if (strategyCap > 0.0) {
-        body += fmt::format("Strategy Capital: ¥{}  (Available: ¥{})\n",
-                            fmtMoney(strategyCap), fmtMoney(strategyAvailable));
+        body += fmt::format("Capital:    {:>15}   (Available: {})\n",
+                            "¥" + fmtMoney(strategyCap), "¥" + fmtMoney(strategyAvailable));
     }
-
-    // 决策金额汇总（始终显示）
     body += fmt::format(
-        "Decision Value:\n"
-        "  BUY  total: ¥{}  ({:.1f}% of capital)\n"
-        "  SELL total: ¥{}  ({:.1f}% of capital)\n"
-        "  Net:        {}{}{:.2f}  ({:+.1f}% of capital)\n\n",
-        fmtMoney(totalBuyValue),
+        "BUY  total: {:>15}   ({:.1f}% of capital)\n"
+        "SELL total: {:>15}   ({:.1f}% of capital)\n"
+        "Net:        {}{:>15}   ({:+.1f}% of capital)\n\n",
+        "¥" + fmtMoney(totalBuyValue),
         (strategyCap > 0.0 ? totalBuyValue / strategyCap * 100.0 : 0.0),
-        fmtMoney(totalSellValue),
+        "¥" + fmtMoney(totalSellValue),
         (strategyCap > 0.0 ? totalSellValue / strategyCap * 100.0 : 0.0),
-        (netValue >= 0 ? "+" : "-"), "¥", std::abs(netValue),
+        (netValue >= 0 ? "+¥" : "-¥"), fmtMoney(std::abs(netValue)),
         (strategyCap > 0.0 ? netValue / strategyCap * 100.0 : 0.0));
 
-    if (!buys.empty()) {
-        body += "=== BUY ===\n";
-        for (size_t i = 0; i < buys.size(); ++i) {
-            auto* d = buys[i];
-            double val = d->_quantity * d->_price;
-            body += fmt::format("  [{}/{}] {} qty={} @ ¥{:.2f} = ¥{} {} epoch={}\n",
-                               i + 1, buys.size(),
-                               get_symbol(d->_symbol), d->_quantity, d->_price,
-                               fmtMoney(val), fmtRatio(val, totalBuyValue),
-                               d->_epoch);
-        }
-        body += "\n";
-    }
+    // ── 决策明细表 ──
+    body += "--- Decisions " + String(37, '-') + "\n";
+    body += "  Symbol       Action   Qty      Price     Amount      Group%   Cap%\n";
+    body += "  " + String(70, '-') + "\n";
 
-    if (!sells.empty()) {
-        body += "=== SELL ===\n";
-        for (size_t i = 0; i < sells.size(); ++i) {
-            auto* d = sells[i];
-            double val = d->_quantity * d->_price;
-            body += fmt::format("  [{}/{}] {} qty={} @ ¥{:.2f} = ¥{} {} epoch={}\n",
-                               i + 1, sells.size(),
-                               get_symbol(d->_symbol), d->_quantity, d->_price,
-                               fmtMoney(val), fmtRatio(val, totalSellValue),
-                               d->_epoch);
-        }
-        body += "\n";
-    }
+    auto emitRow = [&](const String& action, const DecisionSnapshot* d, double groupTotal) {
+        double val = d->_quantity * d->_price;
+        double grpPct = (groupTotal > 0.0) ? (val / groupTotal * 100.0) : 0.0;
+        double capPct = (strategyCap > 0.0) ? (val / strategyCap * 100.0) : 0.0;
+        body += fmt::format("  {:<13s}{:<9s}{:>7,}  {:>8.2f}  {:>12s}  {:>6.1f}%  {:>5.1f}%\n",
+                            get_symbol(d->_symbol), action,
+                            d->_quantity, d->_price,
+                            "¥" + fmtMoney(val),
+                            grpPct,
+                            strategyCap > 0.0 ? capPct : 0.0);
+    };
 
-    if (!evalHolds.empty()) {
-        body += "=== HOLD (evaluated) ===\n";
-        for (size_t i = 0; i < evalHolds.size(); ++i) {
-            auto* d = evalHolds[i];
-            body += fmt::format("  [{}/{}] HOLD {} qty={} price={:.2f} epoch={}\n",
-                               i + 1, evalHolds.size(),
-                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
-        }
-        body += "\n";
-    }
+    for (auto* d : buys)  emitRow("BUY",  d, totalBuyValue);
+    for (auto* d : sells) emitRow("SELL", d, totalSellValue);
 
-    if (!defaultHolds.empty()) {
-        body += "=== HOLD (default, no SignalNode eval) ===\n";
-        for (size_t i = 0; i < defaultHolds.size(); ++i) {
-            auto* d = defaultHolds[i];
-            body += fmt::format("  [{}/{}] HOLD {} qty={} price={:.2f} epoch={}\n",
-                               i + 1, defaultHolds.size(),
-                               get_symbol(d->_symbol), d->_quantity, d->_price, d->_epoch);
-        }
-        body += "\n";
-    }
+    // HOLD 单独标记（evaluated vs default）
+    auto emitHoldRow = [&](const DecisionSnapshot* d, bool evaluated) {
+        body += fmt::format("  {:<13s}{:<9s}{:>7,}  {:>8.2f}  {:>12s}   [{}]\n",
+                            get_symbol(d->_symbol), "HOLD",
+                            d->_quantity, d->_price,
+                            "¥" + fmtMoney(d->_quantity * d->_price),
+                            evaluated ? "eval" : "default");
+    };
+    for (auto* d : evalHolds)    emitHoldRow(d, true);
+    for (auto* d : defaultHolds) emitHoldRow(d, false);
+
+    body += "  " + String(70, '-') + "\n\n";
 
     _server->SendEmail(body);
 
