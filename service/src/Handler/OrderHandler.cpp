@@ -498,8 +498,39 @@ void DecisionHandler::get(const httplib::Request& req, httplib::Response& res) {
         item["executed"] = rec._executed;
         item["executedQuantity"] = rec._executed_quantity;
         item["executedPrice"] = rec._executed_price;
+        item["closed"] = rec._closed;
         result.push_back(item);
     }
 
     res.set_content(result.dump(), "application/json");
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DecisionHandler PUT — 标记决策已确认（关闭）
+//  PUT /v0/trade/decisions  body: { "id": 123 }
+// ═══════════════════════════════════════════════════════════
+
+void DecisionHandler::put(const httplib::Request& req, httplib::Response& res) {
+    try {
+        auto body = nlohmann::json::parse(req.body);
+        int id = body.value("id", -1);
+        if (id < 0) {
+            res.status = 400;
+            res.set_content(R"({"error":"invalid id"})", "application/json");
+            return;
+        }
+
+        auto* broker = _server->GetBrokerSubSystem();
+        bool ok = broker->MarkDecisionClosed(id);
+        if (!ok) {
+            res.status = 500;
+            res.set_content(R"({"error":"mark closed failed"})", "application/json");
+            return;
+        }
+
+        res.set_content(R"({"success":true})", "application/json");
+    } catch (const std::exception& e) {
+        res.status = 400;
+        res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
+    }
 }

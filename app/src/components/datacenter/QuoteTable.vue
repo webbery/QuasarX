@@ -1,9 +1,5 @@
 <template>
   <div class="quote-table-wrap">
-    <div class="table-meta">
-      <span class="meta-label">{{ freqLabel }}</span>
-      <span class="meta-count">{{ bars.length }} 根 K 线</span>
-    </div>
     <div v-if="bars.length === 0" class="empty-tip small">
       <i class="fas fa-info-circle"></i> 暂无行情数据
     </div>
@@ -63,7 +59,6 @@ import type { HistoryBar } from './composables/useSymbolDetailData'
 
 const props = defineProps<{
   bars: HistoryBar[]
-  freqLabel: string
   isDaily: boolean
   deletable?: boolean
   onDelete?: (bar: HistoryBar) => void
@@ -123,20 +118,6 @@ function formatVolume(v: number): string {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-.table-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--text-secondary, #b0b0b0);
-}
-
-.meta-label {
-  padding: 2px 6px;
-  background: var(--bg-secondary, #2a2a2a);
-  border-radius: 3px;
 }
 
 .detail-table {

@@ -6,6 +6,16 @@
         <div class="symbol-code">{{ symbol || '—' }}</div>
         <div class="symbol-name">{{ symbolName || (symbol ? '加载中…' : '') }}</div>
       </div>
+      <div class="header-stats" v-if="activeTab === 'hfq' && !loading && symbol">
+        <span class="header-stat">
+          <span class="header-stat-label">复权因子</span>
+          <span class="header-stat-value">{{ latestAdjFactor != null ? latestAdjFactor.toFixed(4) : '—' }}</span>
+        </span>
+        <span class="header-stat">
+          <span class="header-stat-label">样本数</span>
+          <span class="header-stat-value">{{ adjFactorSeries.length }}</span>
+        </span>
+      </div>
       <div class="header-meta">
         <span class="freq-badge" :class="{ 'freq-daily': isDaily }">
           <i class="fas fa-clock"></i> {{ freqLabel }}
@@ -46,7 +56,6 @@
         <div v-show="activeTab === 'quote'" class="tab-pane">
           <QuoteTable
             :bars="historyRaw"
-            :freq-label="freqLabel"
             :is-daily="isDaily"
             :deletable="true"
             :on-delete="onDeleteRawBar"
@@ -55,23 +64,8 @@
 
         <!-- 后复权 -->
         <div v-show="activeTab === 'hfq'" class="tab-pane">
-          <div class="metric-row">
-            <div class="metric-card">
-              <div class="metric-label">最新复权因子</div>
-              <div class="metric-value">
-                {{ latestAdjFactor != null ? latestAdjFactor.toFixed(4) : '—' }}
-              </div>
-              <div class="metric-hint">后复权价 / 未复权价</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-label">样本数</div>
-              <div class="metric-value">{{ adjFactorSeries.length }}</div>
-              <div class="metric-hint">与未复权时间对齐后</div>
-            </div>
-          </div>
           <QuoteTable
             :bars="historyHfq"
-            :freq-label="freqLabel + '·后复权'"
             :is-daily="isDaily"
             :deletable="true"
             :on-delete="onDeleteHfqBar"
@@ -325,6 +319,30 @@ function formatNum(v: any): string {
   font-size: 12px;
   color: var(--text-secondary, #b0b0b0);
   margin-top: 2px;
+}
+
+.header-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #b0b0b0);
+}
+
+.header-stat-label {
+  color: var(--text-secondary, #888);
+}
+
+.header-stat-value {
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  font-variant-numeric: tabular-nums;
 }
 
 .freq-badge {

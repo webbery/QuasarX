@@ -201,6 +201,8 @@ public:
     Vector<DecisionRecord> GetDecisions(const String& date);
     // 标记决策已执行
     bool MarkDecisionExecuted(int id, int64_t exec_qty, double exec_price);
+    // 标记决策已确认（关闭，不执行）
+    bool MarkDecisionClosed(int id);
     // 回测直接模拟成交（取 QuoteDB 最新 close）
     TradeReport SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side);
 

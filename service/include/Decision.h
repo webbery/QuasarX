@@ -49,11 +49,12 @@ struct DecisionRecord {
     double      _executed_price;
     time_t      _timestamp;
 
-    // 位域打包: action(2) + is_open(1) + executed(1) + reserved(4) = 1 byte
+    // 位域打包: action(2) + is_open(1) + executed(1) + closed(1) + reserved(3) = 1 byte
     DecisionAction _action   : 2;
     bool           _is_open  : 1;
     bool           _executed : 1;
-    uint8_t        _reserved : 4;
+    bool           _closed   : 1;
+    uint8_t        _reserved : 3;
 
     char _strategy[32];
 };

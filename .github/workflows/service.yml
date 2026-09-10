@@ -415,6 +415,7 @@ jobs:
           stock_config = copy.deepcopy(template)
           stock_config['server']['default']['exchange'] = ['stock_sim']
           fill_config(stock_config)
+          stock_config['server']['test_mode'] = True  # CI 测试跳过图优化（保留 DebugNode）
           with open('stock_hist_sim.json', 'w') as f:
               json.dump(stock_config, f, indent=4)
           print('stock_hist_sim.json generated successfully')

@@ -16,6 +16,7 @@
             <tr>
               <th>#</th>
               <th>标的</th>
+              <th>策略</th>
               <th>操作</th>
               <th>数量</th>
               <th>价格</th>
@@ -26,13 +27,14 @@
             <tr
               v-for="d in filteredDecisions"
               :key="d.id"
-              :class="{ selected: selectedId === d.id, executed: d.executed }"
+              :class="{ selected: selectedId === d.id, executed: d.executed, conflict: conflictSymbols.has(d.symbol) }"
               @click="selectedId = d.id"
             >
               <td>{{ d.id }}</td>
               <td class="symbol-cell">
                 <span class="symbol-code">{{ d.symbol }}</span>
               </td>
+              <td class="strategy-cell">{{ d.strategy }}</td>
               <td>
                 <span class="action-badge" :style="{ background: actionColors[d.action] + '22', color: actionColors[d.action] }">
                   {{ d.label }}
@@ -44,6 +46,7 @@
                 <span v-if="d.executed" class="status-executed">
                   已下单 {{ d.executedQuantity }}@{{ d.executedPrice.toFixed(2) }}
                 </span>
+                <span v-else-if="d.closed" class="status-closed">已确认</span>
                 <span v-else class="status-pending">待确认</span>
               </td>
             </tr>
@@ -63,7 +66,7 @@
         <h3>下单操作</h3>
       </div>
       <div class="action-content" v-if="selectedDecision">
-        <template v-if="!selectedDecision.executed">
+        <template v-if="!selectedDecision.executed && !selectedDecision.closed">
           <div class="info-row">
             <label>标的</label>
             <span class="info-value">{{ selectedDecision.symbol }}</span>
@@ -88,9 +91,45 @@
             <input type="number" v-model.number="editPrice" :min="0" step="0.01" class="form-input" />
             <span class="hint">参考价: {{ selectedDecision.price.toFixed(2) }}</span>
           </div>
-          <button class="execute-btn" @click="handleExecute" :disabled="executing">
-            {{ executing ? '提交中...' : '确认下单' }}
-          </button>
+          <div class="estimate-row">
+            <label>预估金额</label>
+            <span class="estimate-value">¥{{ estimatedAmount }}</span>
+          </div>
+          <div class="action-btns">
+            <button class="execute-btn" @click="handleExecute" :disabled="executing">
+              {{ executing ? '提交中...' : '确认下单' }}
+            </button>
+            <button class="close-btn" @click="handleClose">关闭订单</button>
+          </div>
+        </template>
+        <template v-else-if="selectedDecision.closed">
+          <div class="closed-detail">
+            <div class="info-row">
+              <label>标的</label>
+              <span class="info-value">{{ selectedDecision.symbol }}</span>
+            </div>
+            <div class="info-row">
+              <label>操作</label>
+              <span class="info-value" :style="{ color: actionColors[selectedDecision.action] }">
+                {{ selectedDecision.label }}
+              </span>
+            </div>
+            <div class="info-row">
+              <label>策略</label>
+              <span class="info-value">{{ selectedDecision.strategy }}</span>
+            </div>
+            <div class="info-row">
+              <label>决策数量</label>
+              <span class="info-value muted">{{ selectedDecision.quantity }}</span>
+            </div>
+            <div class="info-row">
+              <label>参考价</label>
+              <span class="info-value muted">{{ selectedDecision.price.toFixed(2) }}</span>
+            </div>
+            <div class="closed-badge">
+              <i class="fas fa-check-circle"></i> 已确认（未执行）
+            </div>
+          </div>
         </template>
         <template v-else>
           <div class="executed-detail">
@@ -134,7 +173,7 @@ import { message } from '@/tool'
 
 const {
   decisions, selectedId, selectedDecision, pendingDecisions,
-  fetchDecisions, executeDecision, registerSSE, unregisterSSE
+  fetchDecisions, executeDecision, closeDecision, registerSSE, unregisterSSE
 } = useDecision()
 
 const filter = ref<'all' | 'pending' | 'executed'>('all')
@@ -142,10 +181,33 @@ const editQuantity = ref(0)
 const editPrice = ref(0)
 const executing = ref(false)
 
+const estimatedAmount = computed(() => {
+  const total = (editQuantity.value || 0) * (editPrice.value || 0)
+  return total.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+})
+
+const conflictSymbols = computed(() => {
+  const map = new Map<string, Set<string>>()
+  for (const d of decisions.value) {
+    if (!map.has(d.symbol)) map.set(d.symbol, new Set())
+    map.get(d.symbol)!.add(d.strategy)
+  }
+  const result = new Set<string>()
+  for (const [sym, strategies] of map) {
+    if (strategies.size > 1) result.add(sym)
+  }
+  return result
+})
+
 const filteredDecisions = computed(() => {
-  if (filter.value === 'pending') return decisions.value.filter(d => !d.executed)
-  if (filter.value === 'executed') return decisions.value.filter(d => d.executed)
-  return decisions.value
+  let list = decisions.value
+  if (filter.value === 'pending') list = list.filter(d => !d.executed && !d.closed)
+  else if (filter.value === 'executed') list = list.filter(d => d.executed)
+  return [...list].sort((a, b) => {
+    const ac = conflictSymbols.value.has(a.symbol) ? 0 : 1
+    const bc = conflictSymbols.value.has(b.symbol) ? 0 : 1
+    return ac - bc
+  })
 })
 
 watch(selectedDecision, (d) => {
@@ -165,6 +227,13 @@ const handleExecute = async () => {
   } else {
     message.error(result.error || '下单失败')
   }
+}
+
+const handleClose = async () => {
+  if (selectedDecision.value && !selectedDecision.value.executed) {
+    await closeDecision(selectedDecision.value.id)
+  }
+  selectedId.value = null
 }
 
 onMounted(() => {
@@ -286,8 +355,25 @@ onUnmounted(() => {
   opacity: 0.6;
 }
 
+.decision-table tbody tr.conflict {
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.decision-table tbody tr.conflict.selected {
+  background: rgba(251, 191, 36, 0.2);
+}
+
 .symbol-code {
   font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.strategy-cell {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #94a3b8;
   font-size: 12px;
 }
 
@@ -307,6 +393,11 @@ onUnmounted(() => {
 
 .status-executed {
   color: #64748b;
+  font-size: 12px;
+}
+
+.status-closed {
+  color: #a78bfa;
   font-size: 12px;
 }
 
@@ -421,7 +512,7 @@ onUnmounted(() => {
 }
 
 .execute-btn {
-  margin-top: 8px;
+  flex: 1;
   padding: 10px;
   background: linear-gradient(135deg, #3b82f6, #2563eb);
   border: none;
@@ -443,6 +534,53 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+.close-btn {
+  flex: 1;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.action-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.estimate-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(74, 158, 255, 0.06);
+  border: 1px solid rgba(74, 158, 255, 0.12);
+  border-radius: 6px;
+}
+
+.estimate-row label {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.estimate-value {
+  color: #60a5fa;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
 .executed-detail {
   display: flex;
   flex-direction: column;
@@ -451,5 +589,27 @@ onUnmounted(() => {
   background: rgba(34, 197, 94, 0.05);
   border: 1px solid rgba(34, 197, 94, 0.15);
   border-radius: 8px;
+}
+
+.closed-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(167, 139, 250, 0.05);
+  border: 1px solid rgba(167, 139, 250, 0.15);
+  border-radius: 8px;
+}
+
+.closed-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(167, 139, 250, 0.1);
+  border-radius: 6px;
+  color: #a78bfa;
+  font-size: 13px;
+  font-weight: 500;
 }
 </style>

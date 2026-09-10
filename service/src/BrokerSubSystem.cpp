@@ -1138,6 +1138,7 @@ int BrokerSubSystem::AddDecision(const String& strategy, symbol_t symbol, Decisi
     rec._executed = false;
     rec._executed_quantity = 0;
     rec._executed_price = 0;
+    rec._closed = false;
     rec._reserved = 0;
     std::strncpy(rec._strategy, strategy.c_str(), sizeof(rec._strategy) - 1);
     rec._strategy[sizeof(rec._strategy) - 1] = '\0';
@@ -1176,14 +1177,19 @@ Vector<DecisionRecord> BrokerSubSystem::GetDecisions(const String& date) {
         return {};
     }
 
-    // 合并：内存中已执行的决策更新 DuckDB 结果
+    // 合并：内存中已执行/已确认的决策更新 DuckDB 结果
     std::lock_guard<std::mutex> lock(_decisionMtx);
     for (auto& dbRec : records) {
         for (const auto& memRec : _todayDecisions) {
-            if (memRec._id == dbRec._id && memRec._executed) {
-                dbRec._executed = true;
-                dbRec._executed_quantity = memRec._executed_quantity;
-                dbRec._executed_price = memRec._executed_price;
+            if (memRec._id == dbRec._id) {
+                if (memRec._executed) {
+                    dbRec._executed = true;
+                    dbRec._executed_quantity = memRec._executed_quantity;
+                    dbRec._executed_price = memRec._executed_price;
+                }
+                if (memRec._closed) {
+                    dbRec._closed = true;
+                }
                 break;
             }
         }
@@ -1204,6 +1210,19 @@ bool BrokerSubSystem::MarkDecisionExecuted(int id, int64_t exec_qty, double exec
         }
     }
     return DecisionDB::instance().markExecuted(id, exec_qty, exec_price);
+}
+
+bool BrokerSubSystem::MarkDecisionClosed(int id) {
+    {
+        std::lock_guard<std::mutex> lock(_decisionMtx);
+        for (auto& rec : _todayDecisions) {
+            if (rec._id == id) {
+                rec._closed = true;
+                break;
+            }
+        }
+    }
+    return DecisionDB::instance().markClosed(id);
 }
 
 TradeReport BrokerSubSystem::SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side) {
