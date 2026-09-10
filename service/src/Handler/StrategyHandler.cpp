@@ -56,6 +56,12 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
     // 复用现有 GetPools()，避免前端为获取标的池而缓存/回传完整 scriptJson
     bool includePools = req.get_param_value("include") == "pools";
 
+    // 日终管线状态（一次性获取，循环内按策略提取）
+    nlohmann::json dailyStatus;
+    if (strategySys) {
+        dailyStatus = strategySys->GetDailyStatus();
+    }
+
     nlohmann::json strategies = nlohmann::json::array();
     if (flow) {
         auto names = flow->GetFlowNames();
@@ -68,7 +74,8 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
             item["lastEvoke"] = (int64_t)flow->GetLastEvoke(name);
 
             // 执行模式：manual=日终决策型, live=盘中实盘, shadow=影子模式
-            switch (flow->GetExecType(name)) {
+            ExecuteType execType = flow->GetExecType(name);
+            switch (execType) {
                 case ExecuteType::Manual:
                     item["executionMode"] = "manual";
                     break;
@@ -79,6 +86,35 @@ void StrategyHandler::get(const httplib::Request& req, httplib::Response& res)
                 default:
                     item["executionMode"] = "shadow";
                     break;
+            }
+
+            // 日终策略附加管线状态：注册/执行/标的就绪进度
+            if (execType == ExecuteType::Manual && !dailyStatus.is_null()) {
+                bool executed = false;
+                if (dailyStatus.contains("executed_strategies")) {
+                    for (auto& s : dailyStatus["executed_strategies"]) {
+                        if (s.get<String>() == name) { executed = true; break; }
+                    }
+                }
+                bool registered = false;
+                int readyCount = 0, totalCount = 0;
+                if (dailyStatus.contains("pending_strategies")) {
+                    for (auto& p : dailyStatus["pending_strategies"]) {
+                        if (p.value("strategy", "") == to_utf8(name.c_str())) {
+                            registered = true;
+                            readyCount = p.value("ready_count", 0);
+                            totalCount = p.value("total_count", 0);
+                            break;
+                        }
+                    }
+                }
+                // 已执行的策略不在 pending 中，需要从 executed_strategies 确认注册
+                if (!registered && executed) registered = true;
+
+                item["dailyRegistered"] = registered;
+                item["dailyExecuted"] = executed;
+                item["dailyReadyCount"] = readyCount;
+                item["dailyTotalCount"] = totalCount;
             }
 
             // 补充策略资金信息

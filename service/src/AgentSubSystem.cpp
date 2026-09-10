@@ -145,6 +145,12 @@ void FlowSubsystem::Release() {
 run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbols, double initialCapital) {
     Stop(strategy);
 
+    // 日终策略（ManualTiming）不走 Realtime/Backtest，由日终管线 EnsureDailyReady → StartDaily 驱动
+    if (HasManualExecuteNode(strategy)) {
+        INFO("[Start] Strategy '{}' has Manual ExecuteNode, skip StartRealtime — registered for daily execution", strategy);
+        return 0;
+    }
+
     RuningType mode = _handle->GetRunningMode();
     if (mode == RuningType::Backtest) {
         return StartBacktest(strategy, symbols, initialCapital);

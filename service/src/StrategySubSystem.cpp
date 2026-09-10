@@ -241,6 +241,10 @@ bool StrategySubSystem::UninstallStrategy(const String& strategy) {
 
 void StrategySubSystem::Stop(const String& strategy) {
     _agentSystem->Stop(strategy);
+    // 从日终管线中移除，避免 Stop 后仍被 MarkSymbolReady 触发 StartDaily
+    std::lock_guard<std::mutex> lock(_dailyMtx);
+    _dailyStrategySymbols.erase(strategy);
+    _dailyExecutedStrategies.erase(strategy);
 }
 
 void StrategySubSystem::Train(const String& name, const Vector<symbol_t>& history, DataFrequencyType freq) {
