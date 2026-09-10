@@ -113,9 +113,9 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
         strategyAvailable = info.available;
     }
 
-    // 单决策值格式化辅助（千位分隔）
+    // 单决策值格式化辅助
     auto fmtMoney = [](double v) {
-        return fmt::format("{:,.2f}", v);
+        return fmt::format("{:.2f}", v);
     };
 
     // ==== 构建邮件正文（表格格式） ====
@@ -164,7 +164,7 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
         double val = d->_quantity * d->_price;
         double grpPct = (groupTotal > 0.0) ? (val / groupTotal * 100.0) : 0.0;
         double capPct = (strategyCap > 0.0) ? (val / strategyCap * 100.0) : 0.0;
-        body += fmt::format("  {:<13}{:<9}{:>7,}  {:>8.2f}  {:>12}  {:>6.1f}%  {:>5.1f}%\n",
+        body += fmt::format("  {:<13}{:<9}{:>7}  {:>8.2f}  {:>12}  {:>6.1f}%  {:>5.1f}%\n",
                             get_symbol(d->_symbol), action,
                             d->_quantity, d->_price,
                             "¥" + fmtMoney(val),
@@ -177,8 +177,8 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy) {
 
     // HOLD 单独标记（evaluated vs default）
     auto emitHoldRow = [&](const DecisionSnapshot* d, bool evaluated) {
-        body += fmt::format("  {:<13}{:<9}{:>7,}  {:>8.2f}  {:>12}   [{}]\n",
-                            get_symbol(d->_symbol), "HOLD",
+        body += fmt::format("  {:<13}{:<9}{:>7}  {:>8.2f}  {:>12}   [{}]\n",
+                            get_symbol(d->_symbol), String("HOLD"),
                             d->_quantity, d->_price,
                             "¥" + fmtMoney(d->_quantity * d->_price),
                             evaluated ? "eval" : "default");
