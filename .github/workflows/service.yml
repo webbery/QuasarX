@@ -567,7 +567,16 @@ jobs:
               # 检查是否被 OOM killer 杀掉
               sudo dmesg -T 2>/dev/null | grep -i "oom\|killed process" | tail -5 || true
             fi
-            curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+            # /v0/exit 走 JWTMiddleWare（service.cpp:1659），缺 Authorization 返回 401，
+            # 并把 {'error': 'Missing or invalid Authorization header.'} 写到 stdout 污染日志。
+            # 用服务就绪后 login 拿到的 token 带 header 调用，失败兜底走 kill -9。
+            if [ -n "${LOGIN_TOKEN:-}" ]; then
+              curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/exit" \
+                -H "Authorization: ${LOGIN_TOKEN}" -o /dev/null 2>/dev/null || true
+            else
+              curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/exit" \
+                -o /dev/null 2>/dev/null || true
+            fi
             sleep 1
             [ -n "${TEST_PID:-}" ] && kill -9 "$TEST_PID" 2>/dev/null || true
             echo "=== Cleanup done ==="
@@ -591,6 +600,15 @@ jobs:
             fi
             sleep 1
           done
+
+          # 登录拿 JWT token，供 cleanup 调用 /exit 使用（与 stage 1 stop_service 一致）
+          LOGIN_TOKEN=$(curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/user/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"${{ secrets.SERVER_USER }}\",\"pwd\":\"${{ secrets.SERVER_PASSWD }}\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('tk',''))" 2>/dev/null || echo "")
+          if [ -z "${LOGIN_TOKEN}" ]; then
+            echo "WARNING: failed to obtain login token; cleanup will skip /exit (kill -9 still kills the process)"
+          fi
 
           # 进入 test 目录（artifact 提取后 test/ 在 repo root 下）
           cd test
@@ -642,7 +660,16 @@ jobs:
       #         echo "Tickflow service already dead (PID=${TICKFLOW_PID:-unknown})"
       #         sudo dmesg -T 2>/dev/null | grep -i "oom\|killed process" | tail -5 || true
       #       fi
-      #       curl -sk -X POST https://localhost:${{ env.SERVER_PORT }}/v0/exit 2>/dev/null || true
+      #       # /v0/exit 走 JWTMiddleWare（service.cpp:1659），缺 Authorization 返回 401，
+      #       # 并把 {'error': 'Missing or invalid Authorization header.'} 写到 stdout 污染日志。
+      #       # 用服务就绪后 login 拿到的 token 带 header 调用，失败兜底走 kill -9。
+      #       if [ -n "${TICKFLOW_TOKEN:-}" ]; then
+      #         curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/exit" \
+      #           -H "Authorization: ${TICKFLOW_TOKEN}" -o /dev/null 2>/dev/null || true
+      #       else
+      #         curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/exit" \
+      #           -o /dev/null 2>/dev/null || true
+      #       fi
       #       sleep 1
       #       [ -n "${TICKFLOW_PID:-}" ] && kill -9 "$TICKFLOW_PID" 2>/dev/null || true
       #       echo "=== Cleanup done ==="
@@ -679,6 +706,15 @@ jobs:
       #       fi
       #       sleep 1
       #     done
+
+      #     # 登录拿 JWT token，供 cleanup 调用 /exit 使用（与 stage 2 / stage 1 stop_service 一致）
+      #     TICKFLOW_TOKEN=$(curl -sk -X POST "https://localhost:${{ env.SERVER_PORT }}/v0/user/login" \
+      #       -H "Content-Type: application/json" \
+      #       -d "{\"name\":\"${{ secrets.SERVER_USER }}\",\"pwd\":\"${{ secrets.SERVER_PASSWD }}\"}" \
+      #       | python3 -c "import sys,json; print(json.load(sys.stdin).get('tk',''))" 2>/dev/null || echo "")
+      #     if [ -z "${TICKFLOW_TOKEN}" ]; then
+      #       echo "WARNING: failed to obtain login token; cleanup will skip /exit (kill -9 still kills the process)"
+      #     fi
 
       #     cd test
 
