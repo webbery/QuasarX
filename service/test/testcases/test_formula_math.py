@@ -1107,6 +1107,10 @@ class TestFormulaXGBoostChain:
             assert not np.allclose(factor[valid], factor[valid][0]), \
                 f"[{symbol}] factor 全为常数, 未验证链式计算"
 
+            # XGBoost 概率非退化：不同 bar 应产生不同概率
+            assert not np.allclose(p0[valid], p0[valid][0]), \
+                f"[{symbol}] xgb_probs_0 恒定为 {p0[valid][0]:.4f}，模型训练域可能未覆盖推理域"
+
             # 值正确性: raw_strength == (p0 - p1) * factor
             expected = (p0[valid] - p1[valid]) * factor[valid]
             actual = result[valid]

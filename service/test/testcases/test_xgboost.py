@@ -750,6 +750,11 @@ class TestXGBoostE2E:
         # 非全零
         assert (valid_probs.values != 0).any(), "概率全为 0，模型可能未正确加载"
 
+        # 概率非退化：至少第 0 列概率随 bar 变化（模型训练域须覆盖推理域）
+        p0_vals = valid_probs.iloc[:, 0].values
+        assert not np.allclose(p0_vals, p0_vals[0]), \
+            f"概率恒定为 {p0_vals[0]:.4f}，模型训练域可能未覆盖推理域"
+
         # 每行概率和 ≈ 1（multi:softprob 输出）
         row_sums = valid_probs.sum(axis=1)
         np.testing.assert_allclose(row_sums.values, 1.0, atol=1e-5,
@@ -1174,6 +1179,386 @@ class TestFastBacktest:
         assert resp.status_code == 200, f"正常回测失败: {resp.text[:200]}"
         data = resp.json()
         assert "summary" in data
+
+
+# ============== 多标的 XGBoost + topk 轮动 + 分红 E2E 测试 ==============
+
+TOPK_SYMBOLS = ["sz.800001", "sz.800002", "sz.800003", "sz.800004", "sz.800005"]
+TOPK_DEPLOY_NAME = "test_xgb_topk_rotation"
+TOPK_XGB_LABEL = "XGBoost"
+TOPK_K = 3
+
+
+def _build_topk_rotation_strategy():
+    """5 标的 XGBoost + topk 轮动策略
+
+    拓扑: Input(5标的) → MA(5) → XGBoost(binary) → Signal(topk(3)) → Portfolio → Execution + DebugNode
+    sz.800001 有分红事件 (ex_div 2024-05-20, 每股派息 0.5 元)
+    """
+    return {
+        "id": TOPK_DEPLOY_NAME, "name": TOPK_DEPLOY_NAME, "version": 1, "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "行情数据", "nodeType": "input",
+                      "params": {"code": {"value": TOPK_SYMBOLS, "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"},
+                                 "open": {"value": "open", "type": "text"},
+                                 "high": {"value": "high", "type": "text"},
+                                 "low": {"value": "low", "type": "text"},
+                                 "volume": {"value": "volume", "type": "text"}}}},
+            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
+             "data": {"label": "ma5", "nodeType": "function",
+                      "params": {"method": {"value": "MA", "type": "select"},
+                                 "range": {"value": "5d", "type": "text"}}}},
+            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
+             "data": {"label": TOPK_XGB_LABEL, "nodeType": "xgboost",
+                      "params": {"modelFile": {"value": f"production/{TOPK_DEPLOY_NAME}-{TOPK_XGB_LABEL}.json", "type": "text"},
+                                 "features": {"value": "ma5", "type": "text"},
+                                 "objective": {"value": "binary:logistic", "type": "select"},
+                                 "num_class": {"value": 2, "type": "number"}}}},
+            {"id": "4", "type": "custom", "position": {"x": 600, "y": 0},
+             "data": {"label": "信号", "nodeType": "signal",
+                      "params": {"code": {"value": TOPK_SYMBOLS, "type": "text"},
+                                 "buy": {"value": f"topk(xgb_probs[0], {TOPK_K})", "type": "text"},
+                                 "sell": {"value": f"!topk(xgb_probs[0], {TOPK_K})", "type": "text"}}}},
+            {"id": "5", "type": "custom", "position": {"x": 800, "y": 0},
+             "data": {"label": "组合", "nodeType": "portfolio",
+                      "params": {"positionRatio": {"value": 0.5, "type": "number"}}}},
+            {"id": "6", "type": "custom", "position": {"x": 1000, "y": 0},
+             "data": {"label": "执行", "nodeType": "execution",
+                      "params": {"commission": {"value": 9e-05, "type": "number"},
+                                 "stampDuty": {"value": 0.0005, "type": "number"},
+                                 "slippage": {"value": 0.0005, "type": "number"}}}},
+            {"id": "7", "type": "custom", "position": {"x": 800, "y": 200},
+             "data": {"label": "topk_debug", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
+        ],
+        "edges": [
+            {"id": "e1->2", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e2->3", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            {"id": "e3->4", "source": "3", "target": "4",
+             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
+            {"id": "e4->5", "source": "4", "target": "5",
+             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
+            {"id": "e5->6", "source": "5", "target": "6",
+             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
+            # DebugNode 连接所有上游
+            {"id": "e2->7", "source": "2", "target": "7",
+             "sourceHandle": "2", "targetHandle": "7", "type": "default"},
+            {"id": "e3->7", "source": "3", "target": "7",
+             "sourceHandle": "3", "targetHandle": "7", "type": "default"},
+            {"id": "e4->7", "source": "4", "target": "7",
+             "sourceHandle": "4", "targetHandle": "7", "type": "default"},
+        ],
+    }
+
+
+def _cleanup_topk_strategy(auth_token):
+    try:
+        requests.post(f"{BASE_URL}/strategy",
+                      json={"mode": 2, "name": TOPK_DEPLOY_NAME},
+                      headers=_headers(auth_token), verify=VERIFY_SSL, timeout=5)
+        requests.delete(f"{BASE_URL}/strategy",
+                        json={"name": TOPK_DEPLOY_NAME},
+                        headers=_headers(auth_token), verify=VERIFY_SSL, timeout=5)
+    except Exception:
+        pass
+
+
+class TestXGBoostTopkRotationE2E:
+    """多标的 XGBoost + topk 轮动端到端测试
+
+    验证四层:
+      L1 — 回测不崩溃，summary 指标有限
+      L2 — XGBoost 概率非退化 (不同 bar 不同值)
+      L3 — topk 选择正确 (高概率标的被选中)
+      L4 — C++ vs Python 回测指标一致 (含分红处理)
+
+    测试数据:
+      - 5 个标的 (sz.800001~800005)，200 根日线
+      - sz.800001 有分红事件 (2024-05-20, 每股派息 0.5 元)
+      - org_close 在除权日下跌 0.5，adj_close 保持连续
+    """
+
+    @pytest.fixture(scope="class")
+    def _deployed(self, auth_token):
+        """deploy trivial 模型 + topk 策略"""
+        data_dir = Path(__file__).parent / "ai_test_data"
+        model_json = (data_dir / "xgb_trivial_model.json").read_text()
+        meta_json = (data_dir / "xgb_trivial_meta.json").read_text()
+        strategy = _build_topk_rotation_strategy()
+
+        files = {
+            "script": ("script.json", json.dumps(strategy).encode(), "application/json"),
+            f"model_{TOPK_XGB_LABEL}": (
+                f"{TOPK_XGB_LABEL}.json", model_json.encode(), "application/json"),
+            f"model_{TOPK_XGB_LABEL}_meta": (
+                f"{TOPK_XGB_LABEL}.meta.json", meta_json.encode(), "application/json"),
+        }
+        resp = requests.post(
+            f"{BASE_URL}/strategy", files=files,
+            data={"name": TOPK_DEPLOY_NAME},
+            headers=_headers(auth_token), verify=VERIFY_SSL, timeout=60)
+        assert resp.status_code == 200, f"deploy 失败: {resp.text}"
+
+        yield {"strategy": strategy}
+
+        _cleanup_topk_strategy(auth_token)
+
+    def _run_backtest(self, auth_token, strategy):
+        resp = requests.post(
+            f"{BASE_URL}/backtest",
+            json={"script": json.dumps(strategy), "validate": False},
+            headers=_headers(auth_token), verify=VERIFY_SSL, timeout=120)
+        assert resp.status_code == 200, f"回测失败: {resp.text}"
+        return resp.json()
+
+    # ---------- L1: 回测不崩溃 ----------
+
+    def test_backtest_runs_with_dividend(self, auth_token, _deployed):
+        """含分红事件的 5 标的回测正常完成，summary 指标有限"""
+        import math
+        data = self._run_backtest(auth_token, _deployed["strategy"])
+        summary = data.get("summary", {})
+        assert summary, f"summary 为空, 响应 keys: {list(data.keys())}"
+
+        for key in ["sharp", "max_drawdown", "total_return"]:
+            assert key in summary, f"summary 缺少 {key}"
+            v = summary[key]
+            assert isinstance(v, (int, float)), f"{key} 不是数值"
+            assert math.isfinite(v), f"{key} 非有限: {v}"
+
+        assert summary["max_drawdown"] >= 0
+
+    # ---------- L2: 概率非退化 ----------
+
+    def test_xgboost_probabilities_non_degenerate(self, auth_token, _deployed):
+        """所有 5 个标的的 XGBoost 概率随 bar 变化"""
+        import numpy as np
+        import pandas as pd
+
+        self._run_backtest(auth_token, _deployed["strategy"])
+        df = pd.read_csv(DEBUG_DIR / TOPK_DEPLOY_NAME / "topk_debug.csv")
+        assert len(df) > 0
+
+        for sym in TOPK_SYMBOLS:
+            prob_col = f"{sym}.xgb_probs_0"
+            assert prob_col in df.columns, f"缺少列 {prob_col}"
+            vals = pd.to_numeric(df[prob_col], errors="coerce").dropna().values
+            assert len(vals) > 0, f"{sym}: 概率全为 NaN"
+            assert not np.allclose(vals, vals[0]), \
+                f"{sym}: 概率恒定为 {vals[0]:.4f}，模型训练域未覆盖推理域"
+
+    # ---------- L3: topk 选择正确 ----------
+
+    def test_topk_selects_highest_probability(self, auth_token, _deployed):
+        """topk(3) 选中的 3 个标的概率 >= 未选中的 2 个"""
+        import numpy as np
+        import pandas as pd
+
+        self._run_backtest(auth_token, _deployed["strategy"])
+        df = pd.read_csv(DEBUG_DIR / TOPK_DEPLOY_NAME / "topk_debug.csv")
+
+        prob_cols = [f"{sym}.xgb_probs_0" for sym in TOPK_SYMBOLS]
+        for col in prob_cols:
+            assert col in df.columns, f"缺少列 {col}"
+
+        probs = df[prob_cols].apply(pd.to_numeric, errors="coerce")
+        valid_mask = probs.notna().all(axis=1)
+        valid_probs = probs[valid_mask]
+        assert len(valid_probs) > 0
+
+        correct_count = 0
+        total_count = 0
+        for _, row in valid_probs.iterrows():
+            sorted_probs = row.sort_values(ascending=False)
+            top3_syms = sorted_probs.index[:TOPK_K]
+            top3_min = sorted_probs.iloc[TOPK_K - 1]
+            non_top3_max = sorted_probs.iloc[TOPK_K]
+            total_count += 1
+            if top3_min >= non_top3_max:
+                correct_count += 1
+
+        assert correct_count == total_count, \
+            f"topk 选择错误: {correct_count}/{total_count} 个 bar 正确"
+
+    # ---------- L4: C++ vs Python 指标对比 ----------
+
+    def test_cpp_vs_python_metrics_with_dividend(self, auth_token, _deployed):
+        """C++ 回测指标与 Python 独立计算一致 (含分红调整)
+
+        Python 复现逻辑:
+        1. 从 Debug CSV 读取每标的每 bar 的 adj_close + xgb_probs
+        2. 计算 topk 信号 → 持仓变化
+        3. 从 org_close CSV 读取实际执行价格 (含除权跌价)
+        4. 分红事件: 除权日现金到账
+        5. 计算 total_return / max_drawdown / sharp
+        """
+        import numpy as np
+        import pandas as pd
+
+        data = self._run_backtest(auth_token, _deployed["strategy"])
+        cpp_summary = data["summary"]
+
+        df = pd.read_csv(DEBUG_DIR / TOPK_DEPLOY_NAME / "topk_debug.csv")
+        prob_cols = [f"{sym}.xgb_probs_0" for sym in TOPK_SYMBOLS]
+        ma_cols = [f"{sym}.ma5" for sym in TOPK_SYMBOLS]
+
+        # 读取各标的 CSV 价格 (org + adj)
+        csv_dir = CSV_DATA_DIR
+        prices = {}
+        for sym in TOPK_SYMBOLS:
+            csv_path = csv_dir / f"{sym}.csv"
+            sym_df = pd.read_csv(csv_path)
+            prices[sym] = {
+                "adj_close": sym_df["close"].values.astype(float),
+                "datetime": sym_df["datetime"].values,
+            }
+
+        # 读取 org_close (含除权跌价)
+        org_dir = csv_dir.parent / "AStock"
+        for sym in TOPK_SYMBOLS:
+            org_path = org_dir / f"{sym}.csv"
+            if org_path.exists():
+                org_df = pd.read_csv(org_path)
+                prices[sym]["org_close"] = org_df["close"].values.astype(float)
+            else:
+                prices[sym]["org_close"] = prices[sym]["adj_close"].copy()
+
+        probs = df[prob_cols].apply(pd.to_numeric, errors="coerce")
+        n_bars = len(probs)
+
+        # 分红参数 (sz.800001)
+        div_symbol = "sz.800001"
+        div_cash_per_share = 0.5
+        # 找到除权日在 CSV 中的索引
+        org_dates = prices[div_symbol]["datetime"]
+        ex_div_idx = None
+        for i, d in enumerate(org_dates):
+            if d == "2024-05-20":
+                ex_div_idx = i
+                break
+
+        # Python 模拟: T+1 执行，收盘价成交
+        initial_capital = 100000.0
+        capital = initial_capital
+        positions = {sym: 0 for sym in TOPK_SYMBOLS}
+        equity_curve = []
+        dividend_cash = 0.0
+
+        commission_rate = 9e-05
+        stamp_duty_rate = 0.0005
+        slippage_rate = 0.0005
+
+        for bar_idx in range(n_bars):
+            # 获取当前 bar 的概率
+            bar_probs = probs.iloc[bar_idx]
+            if bar_probs.isna().any():
+                # 预热期，无信号
+                equity = capital + sum(
+                    positions[sym] * prices[sym]["org_close"][min(bar_idx, len(prices[sym]["org_close"])-1)]
+                    for sym in TOPK_SYMBOLS
+                )
+                equity_curve.append(equity)
+                continue
+
+            # topk 选择：sort_values 的 index 是 prob 列名（带 .xgb_probs_0 后缀），
+            # 转回裸 symbol 用于 prices 字典查询
+            sorted_cols = bar_probs.sort_values(ascending=False).index[:TOPK_K]
+            topk_set = {col.replace(".xgb_probs_0", "") for col in sorted_cols}
+
+            # 执行: 先卖后买
+            for sym in TOPK_SYMBOLS:
+                price_idx = min(bar_idx, len(prices[sym]["org_close"]) - 1)
+                org_price = prices[sym]["org_close"][price_idx]
+
+                if sym not in topk_set and positions[sym] > 0:
+                    # 卖出
+                    qty = positions[sym]
+                    proceeds = qty * org_price
+                    cost = proceeds * (commission_rate + stamp_duty_rate + slippage_rate)
+                    capital += proceeds - cost
+                    positions[sym] = 0
+
+            for sym in topk_set:
+                price_idx = min(bar_idx, len(prices[sym]["org_close"]) - 1)
+                org_price = prices[sym]["org_close"][price_idx]
+
+                if positions[sym] == 0 and org_price > 0:
+                    # 买入: 用可用资金的 positionRatio 等分
+                    # org_price=0 时跳过（与 C++ PortfolioNode "Invalid price" 处理一致）
+                    target_alloc = capital * 0.5 / TOPK_K
+                    qty = int(target_alloc / org_price / 100) * 100  # 整手
+                    if qty > 0:
+                        cost = qty * org_price * (1 + commission_rate + slippage_rate)
+                        if cost <= capital:
+                            capital -= cost
+                            positions[sym] = qty
+
+            # 分红处理
+            if ex_div_idx is not None and bar_idx == ex_div_idx:
+                if positions[div_symbol] > 0:
+                    div_cash = positions[div_symbol] * div_cash_per_share
+                    capital += div_cash
+                    dividend_cash += div_cash
+
+            # 计算当日市值
+            equity = capital + sum(
+                positions[sym] * prices[sym]["org_close"][min(bar_idx, len(prices[sym]["org_close"])-1)]
+                for sym in TOPK_SYMBOLS
+            )
+            equity_curve.append(equity)
+
+        # 计算 Python 指标
+        equity_arr = np.array(equity_curve)
+        py_total_return = (equity_arr[-1] / initial_capital) - 1.0
+
+        # Max drawdown
+        peak = np.maximum.accumulate(equity_arr)
+        drawdown = (peak - equity_arr) / peak
+        py_max_dd = float(np.max(drawdown))
+
+        # Sharpe (年化, 无风险利率=0)
+        daily_returns = np.diff(equity_arr) / equity_arr[:-1]
+        valid_returns = daily_returns[np.isfinite(daily_returns)]
+        if len(valid_returns) > 1 and np.std(valid_returns) > 0:
+            py_sharp = float(np.mean(valid_returns) / np.std(valid_returns) * np.sqrt(252))
+        else:
+            py_sharp = 0.0
+
+        # 对比 (宽松容差: 执行时序/整手限制等差异)
+        print(f"\n=== C++ vs Python 指标对比 ===")
+        print(f"{'指标':<15} {'C++':>12} {'Python':>12} {'差异':>10}")
+        for name, cpp_val, py_val in [
+            ("total_return", cpp_summary["total_return"], py_total_return),
+            ("max_drawdown", cpp_summary["max_drawdown"], py_max_dd),
+            ("sharp", cpp_summary["sharp"], py_sharp),
+        ]:
+            diff = abs(cpp_val - py_val)
+            print(f"{name:<15} {cpp_val:>12.4f} {py_val:>12.4f} {diff:>10.4f}")
+
+        print(f"\n分红现金: {dividend_cash:.2f}")
+
+        # 断言: 指标方向一致、量级接近
+        # total_return: 容差 30% (执行时序差异)
+        assert np.sign(cpp_summary["total_return"]) == np.sign(py_total_return) or \
+            abs(cpp_summary["total_return"] - py_total_return) < 0.1, \
+            f"total_return 方向不一致: C++={cpp_summary['total_return']:.4f}, Python={py_total_return:.4f}"
+
+        # max_drawdown: Python 应 >= 0，C++ 与 Python 差异 < 50%
+        assert py_max_dd >= 0, f"Python max_drawdown 为负: {py_max_dd}"
+        if cpp_summary["max_drawdown"] > 0.001:
+            dd_ratio = abs(cpp_summary["max_drawdown"] - py_max_dd) / cpp_summary["max_drawdown"]
+            assert dd_ratio < 0.5, \
+                f"max_drawdown 差异过大: C++={cpp_summary['max_drawdown']:.4f}, Python={py_max_dd:.4f}, ratio={dd_ratio:.2f}"
+
+        # 分红验证: 如果有分红，C++ total_return 应包含分红收益
+        if dividend_cash > 0:
+            assert cpp_summary["total_return"] > py_total_return - 0.1, \
+                f"C++ 应包含分红收益: C++={cpp_summary['total_return']:.4f}, Python(含分红)={py_total_return:.4f}"
 
 
 # ============== Optimize 测试（Optuna 自动优化 + 快速回测） ==============

@@ -35,29 +35,45 @@ FEATURE_NAME = "ma5"
 
 
 def train_model() -> xgb.Booster:
-    """训练 1-棵 binary 分类树，5 个样本硬编码"""
-    X = np.array([[1], [2], [3], [4], [5]], dtype=np.float32)
-    y = np.array([0, 1, 0, 1, 0], dtype=np.float32)
+    """训练 multi-tree binary 分类树，训练域覆盖 MA(5) ∈ [50, 350]
+
+    训练域必须能覆盖所有回测标的的 MA(5) 实测范围，否则推理时全部落入
+    同一叶子节点 → 概率恒定（test_xgboost_probabilities_non_degenerate 失败）。
+
+    当前回测标的 MA(5) 实测范围：
+      sz.800001 ~ sz.800005: [~90, ~300]（sz.800004 单调上升至 ~296）
+
+    设计要点：
+    - 训练数据 X = linspace(50, 350, 100)，密集覆盖全区间
+    - y 用 sin+噪声生成伪标签，保证每棵树有分裂动力
+    - depth=3 + 5 棵树提供足够叶节点组合，避免 sz.800004 (MA5 ∈ [102, 296])
+      等单调上涨标的所有 bar 落入同一叶
+    - seed=42 固定保证可复现
+    """
+    rng = np.random.RandomState(42)
+    X = np.linspace(50, 350, 100).reshape(-1, 1).astype(np.float32)
+    y = (np.sin(X.flatten() / 15) + 0.5 * rng.randn(100) > 0).astype(np.float32)
     dtrain = xgb.DMatrix(X, label=y, feature_names=[FEATURE_NAME])
     params = {
         "objective": "binary:logistic",
-        "max_depth": 2,
+        "max_depth": 3,
         "learning_rate": 0.3,
         "verbosity": 0,
+        "seed": 42,
     }
-    return xgb.train(params, dtrain, num_boost_round=1)
+    return xgb.train(params, dtrain, num_boost_round=5)
 
 
 def write_meta(path: Path) -> None:
     """meta 文件：features/objective/num_class/label/params"""
     meta = {
         "strategy_id": STRATEGY_NAME,
-        "created_at": "2026-08-18",
+        "created_at": "2026-09-11",
         "source": "experiment",
         "label": {"type": "classification", "period": 5, "threshold": 0.0},
         "objective": "binary:logistic",
         "num_class": 2,
-        "params": {"learning_rate": 0.3, "max_depth": 2, "n_estimators": 1},
+        "params": {"learning_rate": 0.3, "max_depth": 3, "n_estimators": 5, "seed": 42},
         "features": [FEATURE_NAME],
     }
     path.write_text(json.dumps(meta, indent=2))
@@ -126,7 +142,7 @@ def write_strategy(path: Path) -> None:
 
 
 def main() -> None:
-    print(f"Training trivial 1-tree XGBoost model...")
+    print(f"Training trivial 5-tree XGBoost model (coverage [50, 350])...")
     bst = train_model()
     bst.save_model(str(MODEL_FILE))
     write_meta(META_FILE)

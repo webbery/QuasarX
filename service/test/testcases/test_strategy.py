@@ -666,3 +666,9 @@ class TestXGBoostStrategyBusiness:
         # binary:logistic 输出范围 [0, 1]
         assert (valid >= 0).all() and (valid <= 1).all(), \
             f"概率超出 [0, 1]: min={valid.min()}, max={valid.max()}"
+
+        # 概率非退化：不同 bar 应产生不同概率（模型训练域须覆盖推理域）
+        import numpy as np
+        vals = valid.values
+        assert not np.allclose(vals, vals[0]), \
+            f"概率恒定为 {vals[0]:.4f}，模型训练域可能未覆盖推理域"

@@ -80,29 +80,90 @@ def gen_anomaly(n_bars=200, anomaly_bar=100, seed=42):
 
 def write_csv(symbol, prices, start_date, hfq_path, org_path, anomaly_bar=None):
     np.random.seed(42)
+    dates = []
+    rows_data = []
+    current_date = start_date
+    for i, close in enumerate(prices):
+        while current_date.weekday() >= 5:
+            current_date += timedelta(days=1)
+        date_str = current_date.strftime("%Y-%m-%d")
+        dates.append(date_str)
+
+        if close <= 0:
+            open_price = high = low = 0.0
+        else:
+            open_price = close * (1 + np.random.normal(0, 0.001))
+            high = max(open_price, close) * (1 + abs(np.random.normal(0, 0.002)))
+            low = min(open_price, close) * (1 - abs(np.random.normal(0, 0.002)))
+
+        volume = 0 if (anomaly_bar is not None and i == anomaly_bar + 1) else int(np.random.uniform(1000000, 5000000))
+        turnover = round(volume * close, 2) if close > 0 else 0.0
+
+        rows_data.append([date_str, round(open_price, 2), round(close, 2),
+                          round(high, 2), round(low, 2), volume, turnover])
+        current_date += timedelta(days=1)
+
+    # 写 hfq (后复权，连续价格)
     with open(hfq_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['datetime', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
-        current_date = start_date
-        for i, close in enumerate(prices):
-            while current_date.weekday() >= 5:
-                current_date += timedelta(days=1)
-            date_str = current_date.strftime("%Y-%m-%d")
-
-            if close <= 0:
-                open_price = high = low = 0.0
-            else:
-                open_price = close * (1 + np.random.normal(0, 0.001))
-                high = max(open_price, close) * (1 + abs(np.random.normal(0, 0.002)))
-                low = min(open_price, close) * (1 - abs(np.random.normal(0, 0.002)))
-
-            volume = 0 if (anomaly_bar is not None and i == anomaly_bar + 1) else int(np.random.uniform(1000000, 5000000))
-            turnover = round(volume * close, 2) if close > 0 else 0.0
-
-            writer.writerow([date_str, round(open_price, 2), round(close, 2),
-                             round(high, 2), round(low, 2), volume, turnover])
-            current_date += timedelta(days=1)
+        for row in rows_data:
+            writer.writerow(row)
+    # 默认 org = hfq（无分红时两者一致）
     shutil.copy2(hfq_path, org_path)
+    return dates
+
+
+def generate_dividend_data(symbol, dates, hfq_path, org_path,
+                           ex_div_bar=100, cash_per_10=5.0):
+    """为指定标的生成分红测试数据
+
+    1. 修改 org CSV：除权日及之后价格下调 cash_per_10/10
+    2. 生成 dividend CSV：导入 FinanceDB 供回测引擎处理
+
+    hfq 保持连续（信号计算不受影响），org 含除权跌价（订单执行用）。
+    """
+    cash_per_share = cash_per_10 / 10.0
+
+    # 读取 hfq CSV，修改 org 价格
+    rows = []
+    with open(hfq_path, 'r') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        for row in reader:
+            rows.append(row)
+
+    with open(org_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        for i, row in enumerate(rows):
+            if i >= ex_div_bar:
+                # 除权日及之后: 价格下调
+                row = list(row)
+                for col_idx in [1, 2, 3, 4]:  # open, close, high, low
+                    row[col_idx] = round(float(row[col_idx]) - cash_per_share, 2)
+            writer.writerow(row)
+
+    # 生成 dividend CSV
+    div_dir = SERVICE_DATA_DIR / "dividend"
+    div_dir.mkdir(parents=True, exist_ok=True)
+    div_path = div_dir / f"{symbol}_dividend.csv"
+
+    ex_div_date = dates[ex_div_bar]
+    ex_dt = datetime.strptime(ex_div_date, "%Y-%m-%d")
+    announce_dt = ex_dt - timedelta(days=3)
+    record_dt = ex_dt - timedelta(days=1)
+
+    with open(div_path, 'w', newline='') as f:
+        f.write("symbol,announce_date,report_year,ex_dividend_date,record_date,"
+                "implement_date,bonus_per_10,transfer_per_10,cash_per_10,"
+                "allot_per_10,allot_price,ex_div_price,action_type\n")
+        f.write(f"{symbol},{announce_dt.strftime('%Y-%m-%d')},2023,"
+                f"{ex_div_date},{record_dt.strftime('%Y-%m-%d')},{ex_div_date},"
+                f"0,0,{cash_per_10},0,0,0,0\n")
+
+    print(f"  分红: {symbol} ex_div={ex_div_date} cash_per_10={cash_per_10}")
+    return div_path
 
 
 def make_strategy(strategy_id, nodes, edges, start_date, end_date, source="A_hfq"):
@@ -590,9 +651,16 @@ def main():
         print(f"\n[{ds_id}] {ds['name']} @ {symbol}")
         prices = ds["generator"](**ds["kwargs"])
         anomaly_bar = ds["kwargs"].get("anomaly_bar")
-        write_csv(symbol, prices, START_DATE,
-                  HFQ_DIR / f"{symbol}.csv", ORG_DIR / f"{symbol}.csv", anomaly_bar)
+        dates = write_csv(symbol, prices, START_DATE,
+                          HFQ_DIR / f"{symbol}.csv", ORG_DIR / f"{symbol}.csv", anomaly_bar)
         print(f"  CSV: {len(prices)} bars")
+
+        # sz.800001 生成分红测试数据 (ex_div at bar 100, 每10股派5元)
+        if symbol == "sz.800001":
+            generate_dividend_data(
+                symbol, dates,
+                HFQ_DIR / f"{symbol}.csv", ORG_DIR / f"{symbol}.csv",
+                ex_div_bar=100, cash_per_10=5.0)
 
         for gen_func, args, node_label in node_configs:
             strat = gen_func(symbol, *args, ds_id)

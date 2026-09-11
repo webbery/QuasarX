@@ -1,0 +1,21 @@
+{
+  "strategy_id": "test_xgb_business",
+  "created_at": "2026-09-11",
+  "source": "experiment",
+  "label": {
+    "type": "classification",
+    "period": 5,
+    "threshold": 0.0
+  },
+  "objective": "binary:logistic",
+  "num_class": 2,
+  "params": {
+    "learning_rate": 0.3,
+    "max_depth": 3,
+    "n_estimators": 5,
+    "seed": 42
+  },
+  "features": [
+    "ma5"
+  ]
+}
