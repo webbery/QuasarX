@@ -5,6 +5,7 @@
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
+#include "Function/Function.h"
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "server.h"
@@ -14,6 +15,7 @@ ProtectionNode::ProtectionNode(Server* server) : _server(server) {
 
 ProtectionNode::~ProtectionNode() {
     if (_formulaParser) delete _formulaParser;
+    // Phase 0: 内部计算器由 unique_ptr 自动清理
 }
 
 bool ProtectionNode::Init(const nlohmann::json& config) {
@@ -42,6 +44,25 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         if (params.contains("公式止损表达式")) {
             formulaExpr = params["公式止损表达式"]["value"].get<String>();
         }
+        // Phase 0: 4 类新止损（中文格式）
+        if (params.contains("ATR止损开关")) {
+            _atr_sl.enabled = params["ATR止损开关"]["value"];
+            _atr_sl.period = params.value("ATR周期", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
+            _atr_sl.multiplier = params.value("ATR倍数", nlohmann::json::object({{"value", 2.0}}))["value"].get<double>();
+        }
+        if (params.contains("MA止损开关")) {
+            _ma_sl.enabled = params["MA止损开关"]["value"];
+            _ma_sl.period = params.value("MA周期", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
+        }
+        if (params.contains("R2止损开关")) {
+            _r2_sl.enabled = params["R2止损开关"]["value"];
+            _r2_sl.period = params.value("R2周期", nlohmann::json::object({{"value", 10}}))["value"].get<int>();
+            _r2_sl.threshold = params.value("R2阈值", nlohmann::json::object({{"value", 0.5}}))["value"].get<double>();
+        }
+        if (params.contains("MAE止损开关")) {
+            _mae_sl.enabled = params["MAE止损开关"]["value"];
+            _mae_sl.percent = params.value("MAE比例", nlohmann::json::object({{"value", 0.05}}))["value"].get<double>();
+        }
     } else if (params.contains("stop_loss_enabled")) {
         // 后端导出英文扁平格式
         _sl.enabled = params["stop_loss_enabled"]["value"];
@@ -58,6 +79,25 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         if (params.contains("formula_stop_expression")) {
             formulaExpr = params["formula_stop_expression"]["value"].get<String>();
         }
+        // Phase 0: 4 类新止损（英文扁平格式）
+        if (params.contains("atr_stop_loss_enabled")) {
+            _atr_sl.enabled = params["atr_stop_loss_enabled"]["value"];
+            _atr_sl.period = params.value("atr_period", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
+            _atr_sl.multiplier = params.value("atr_multiplier", nlohmann::json::object({{"value", 2.0}}))["value"].get<double>();
+        }
+        if (params.contains("ma_stop_loss_enabled")) {
+            _ma_sl.enabled = params["ma_stop_loss_enabled"]["value"];
+            _ma_sl.period = params.value("ma_period", nlohmann::json::object({{"value", 20}}))["value"].get<int>();
+        }
+        if (params.contains("r2_stop_loss_enabled")) {
+            _r2_sl.enabled = params["r2_stop_loss_enabled"]["value"];
+            _r2_sl.period = params.value("r2_period", nlohmann::json::object({{"value", 10}}))["value"].get<int>();
+            _r2_sl.threshold = params.value("r2_threshold", nlohmann::json::object({{"value", 0.5}}))["value"].get<double>();
+        }
+        if (params.contains("mae_stop_loss_enabled")) {
+            _mae_sl.enabled = params["mae_stop_loss_enabled"]["value"];
+            _mae_sl.percent = params.value("mae_percent", nlohmann::json::object({{"value", 0.05}}))["value"].get<double>();
+        }
     } else if (params.contains("stop_loss")) {
         // 嵌套格式（直接 JSON 配置）
         _sl.enabled = params["stop_loss"]["enabled"];
@@ -71,6 +111,25 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
         if (params.contains("formula_stop")) {
             _formula.enabled = params["formula_stop"]["enabled"];
             formulaExpr = params["formula_stop"].value("expression", "");
+        }
+        // Phase 0: 4 类新止损（嵌套格式）
+        if (params.contains("atr_stop_loss")) {
+            _atr_sl.enabled = params["atr_stop_loss"].value("enabled", false);
+            _atr_sl.period = params["atr_stop_loss"].value("period", 20);
+            _atr_sl.multiplier = params["atr_stop_loss"].value("multiplier", 2.0);
+        }
+        if (params.contains("ma_stop_loss")) {
+            _ma_sl.enabled = params["ma_stop_loss"].value("enabled", false);
+            _ma_sl.period = params["ma_stop_loss"].value("period", 20);
+        }
+        if (params.contains("r2_stop_loss")) {
+            _r2_sl.enabled = params["r2_stop_loss"].value("enabled", false);
+            _r2_sl.period = params["r2_stop_loss"].value("period", 10);
+            _r2_sl.threshold = params["r2_stop_loss"].value("threshold", 0.5);
+        }
+        if (params.contains("mae_stop_loss")) {
+            _mae_sl.enabled = params["mae_stop_loss"].value("enabled", false);
+            _mae_sl.percent = params["mae_stop_loss"].value("percent", 0.05);
         }
     }
 
@@ -105,6 +164,20 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
 
         INFO("[ProtectionNode] Formula stop enabled: expr='{}' symbols={} variants={}",
              formulaExpr, _formulaSymbols.size(), _formulaVariants.size());
+    }
+
+    // Phase 0: 日志输出新止损配置
+    if (_atr_sl.enabled) {
+        INFO("[ProtectionNode] ATR stop loss enabled: period={}, multiplier={}", _atr_sl.period, _atr_sl.multiplier);
+    }
+    if (_ma_sl.enabled) {
+        INFO("[ProtectionNode] MA stop loss enabled: period={}", _ma_sl.period);
+    }
+    if (_r2_sl.enabled) {
+        INFO("[ProtectionNode] R2 stop loss enabled: period={}, threshold={}", _r2_sl.period, _r2_sl.threshold);
+    }
+    if (_mae_sl.enabled) {
+        INFO("[ProtectionNode] MAE stop loss enabled: percent={}", _mae_sl.percent);
     }
 
     return true;
@@ -207,12 +280,13 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                 }
             }
 
-            // 获取当前价作为初始最高价
+            // 获取当前价作为初始最高价和最低价
             String close_key = get_symbol(symbol) + ".close";
             if (context.exist(close_key)) {
                 auto price_var = context.get<Vector<double>>(close_key);
                 if (!price_var.empty()) {
                     info.highest_price = price_var.back();
+                    info.lowest_price = price_var.back();  // Phase 0: MAE 用
                 }
             }
 
@@ -325,10 +399,116 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             }
         }
 
-        // 更新最高价
+        // ===== Phase 0: 4 类新止损 =====
+
+        // 6. ATR 自适应止损: current < entry - multiplier * ATR(period)
+        if (_atr_sl.enabled && triggered == RiskTriggerType::None) {
+            // 懒初始化计算器
+            if (!_atr_calc[symbol]) {
+                _atr_calc[symbol] = std::make_unique<ATR>(_atr_sl.period);
+            }
+            // 构造输入参数
+            Map<String, context_t> args;
+            String prefix = get_symbol(symbol) + ".";
+            if (context.exist(prefix + "high"))  args["high"]  = context.get<Vector<double>>(prefix + "high");
+            if (context.exist(prefix + "low"))   args["low"]   = context.get<Vector<double>>(prefix + "low");
+            if (context.exist(prefix + "close")) args["close"] = context.get<Vector<double>>(prefix + "close");
+            
+            context_t result = (*_atr_calc[symbol])(args);
+            double atr = std::visit([](const auto& v) -> double {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, double>) return v;
+                else if constexpr (std::is_same_v<T, Vector<double>>) 
+                    return v.empty() ? std::nan("") : v.back();
+                else return std::nan("");
+            }, result);
+            
+            if (!std::isnan(atr) && atr > 0) {
+                double sl_price = info.avg_price - _atr_sl.multiplier * atr;
+                if (current_price <= sl_price) {
+                    triggered = RiskTriggerType::AtrStopLoss;
+                    triggered_symbol = symbol;
+                    triggered_price = current_price;
+                    break;
+                }
+            }
+        }
+
+        // 7. MA 跌破止损: current <= MA(period)
+        if (_ma_sl.enabled && triggered == RiskTriggerType::None) {
+            if (!_ma_calc[symbol]) {
+                _ma_calc[symbol] = std::make_unique<MA>(_ma_sl.period);
+            }
+            Map<String, context_t> args;
+            String close_key = get_symbol(symbol) + ".close";
+            if (context.exist(close_key)) {
+                args["close"] = context.get<Vector<double>>(close_key);
+            }
+            
+            context_t result = (*_ma_calc[symbol])(args);
+            double ma = std::visit([](const auto& v) -> double {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, double>) return v;
+                else if constexpr (std::is_same_v<T, Vector<double>>) 
+                    return v.empty() ? std::nan("") : v.back();
+                else return std::nan("");
+            }, result);
+            
+            if (!std::isnan(ma) && current_price <= ma) {
+                triggered = RiskTriggerType::MaStopLoss;
+                triggered_symbol = symbol;
+                triggered_price = current_price;
+                break;
+            }
+        }
+
+        // 8. R² 趋势消失止损: R2(period) <= threshold
+        if (_r2_sl.enabled && triggered == RiskTriggerType::None) {
+            if (!_r2_calc[symbol]) {
+                _r2_calc[symbol] = std::make_unique<R2>(_r2_sl.period);
+            }
+            Map<String, context_t> args;
+            String close_key = get_symbol(symbol) + ".close";
+            if (context.exist(close_key)) {
+                args["close"] = context.get<Vector<double>>(close_key);
+            }
+            
+            context_t result = (*_r2_calc[symbol])(args);
+            double r2 = std::visit([](const auto& v) -> double {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, double>) return v;
+                else if constexpr (std::is_same_v<T, Vector<double>>) 
+                    return v.empty() ? std::nan("") : v.back();
+                else return std::nan("");
+            }, result);
+            
+            if (!std::isnan(r2) && r2 <= _r2_sl.threshold) {
+                triggered = RiskTriggerType::R2StopLoss;
+                triggered_symbol = symbol;
+                triggered_price = current_price;
+                break;
+            }
+        }
+
+        // 9. MAE 最大不利偏移止损: (entry - lowest) / entry >= percent
+        if (_mae_sl.enabled && triggered == RiskTriggerType::None) {
+            double lowest = info.lowest_price > 0 ? info.lowest_price : info.avg_price;
+            double mae = (info.avg_price - lowest) / info.avg_price;
+            if (mae >= _mae_sl.percent) {
+                triggered = RiskTriggerType::MaeStopLoss;
+                triggered_symbol = symbol;
+                triggered_price = current_price;
+                break;
+            }
+        }
+
+        // 更新最高价和最低价
         auto& entry = _entry_info[symbol];
         if (current_price > entry.highest_price) {
             entry.highest_price = current_price;
+        }
+        if (current_price < entry.lowest_price || entry.lowest_price == 0) {
+            entry.lowest_price = current_price;
         }
     }
 
@@ -361,7 +541,8 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
 }
 
 const nlohmann::json ProtectionNode::getParams() {
-    return {"stop_loss", "take_profit", "trailing_stop", "time_stop", "formula_stop"};
+    return {"stop_loss", "take_profit", "trailing_stop", "time_stop", "formula_stop",
+            "atr_stop_loss", "ma_stop_loss", "r2_stop_loss", "mae_stop_loss"};
 }
 
 Map<String, ArgType> ProtectionNode::out_elements() {

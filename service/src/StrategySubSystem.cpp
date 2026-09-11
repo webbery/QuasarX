@@ -393,7 +393,7 @@ void StrategySubSystem::ClearStrategyFailure(const String& name) {
 // ═══════════════════════════════════════════════════════════
 
 void StrategySubSystem::EnsureDailyReady() {
-    std::lock_guard<std::mutex> lock(_dailyMtx);
+    std::unique_lock<std::mutex> lock(_dailyMtx);
 
     String today = ToString(Now(), "%Y-%m-%d");
     if (today != _lastDailyDate) {
@@ -408,6 +408,10 @@ void StrategySubSystem::EnsureDailyReady() {
     // 增量注册：扫描 _strategies 中尚未注册的策略
     INFO("[DailyExecution] EnsureDailyReady: _strategies.size()={}, _dailyStrategySymbols.size()={}",
          _strategies.size(), _dailyStrategySymbols.size());
+
+    // 收集新注册的策略，锁外订阅（避免持 _dailyMtx 调 ExchangeManager）
+    Vector<std::pair<String, Set<symbol_t>>> toSubscribe;
+
     for (auto& name : _strategies) {
         if (_dailyStrategySymbols.count(name)) continue;  // 已注册
         if (!_agentSystem->HasManualExecuteNode(name)) continue;
@@ -421,6 +425,24 @@ void StrategySubSystem::EnsureDailyReady() {
             String symList;
             for (auto& s : symbols) { if (!symList.empty()) symList += ","; symList += s; }
             INFO("[DailyExecution] Registered strategy '{}': [{}]", name, symList);
+            toSubscribe.emplace_back(name, pools);
+        }
+    }
+
+    // 释放 _dailyMtx 后再订阅，避免锁序问题
+    lock.unlock();
+
+    // 将日终策略标的注入 ExchangeManager → TickFlowBridge，
+    // 使 WriteCloseData / MarkSymbolReady 能覆盖这些标的，打破依赖死锁
+    if (!toSubscribe.empty()) {
+        auto* exchangeMgr = _handle ? _handle->GetExchangeManager() : nullptr;
+        if (exchangeMgr) {
+            for (auto& [strategy, symSet] : toSubscribe) {
+                auto sources = _agentSystem->GetRequiredSources(strategy);
+                exchangeMgr->SubscribeSymbols(strategy, sources, symSet);
+                INFO("[DailyExecution] Subscribed {} symbols for strategy '{}' to exchange",
+                     symSet.size(), strategy);
+            }
         }
     }
 }

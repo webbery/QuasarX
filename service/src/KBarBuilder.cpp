@@ -114,7 +114,7 @@ void KBarBuilder::OnTick(const QuoteInfo& tick) {
 
     // 第一次 tick 或进入新 bar
     if (!_initialized || tickBarStart >= state.barEnd) {
-        INFO("[KBarBuilder:{}] startNewBar: symbol={}, oldBarStart={}, newBarStart={}",
+        DEBUG_INFO("[KBarBuilder:{}] startNewBar: symbol={}, oldBarStart={}, newBarStart={}",
                        (int)_freq, tick._symbol, state.barStart, tickBarStart);
         startNewBar(state, tickBarStart);
     }
@@ -139,7 +139,6 @@ bool KBarBuilder::GetSnapshot(Map<symbol_t, QuoteInfo>& snapshot) {
     // 找出当前对齐的 bar 起始时间
     // 取所有已初始化 bar 的最小 barStart（即最早完成的 bar）
     time_t minBarStart = 0;
-    bool anyNewBar = false;
 
     for (auto& sym : _symbols) {
         auto itr = _barStates.find(sym);
@@ -218,7 +217,7 @@ bool KBarBuilder::GetSnapshot(Map<symbol_t, QuoteInfo>& snapshot) {
         }
     }
 
-    INFO("[KBarBuilder:{}] GetSnapshot: _lastBarStart={} -> minBarStart={}, snapshot size={}",
+    DEBUG_INFO("[KBarBuilder:{}] GetSnapshot: _lastBarStart={} -> minBarStart={}, snapshot size={}",
                    (int)_freq, _lastBarStart, minBarStart, snapshot.size());
 
     _lastBarStart = minBarStart;

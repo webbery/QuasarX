@@ -11,6 +11,14 @@ enum class RiskTriggerType {
     TrailingStop,   // 追踪止损（移动止盈）
     TimeStop,       // 时间止损（超时平仓）
     FormulaStop,    // 公式止损（表达式返回 true）
+    // Phase 0: 4 类新止损
+    AtrStopLoss,    // ATR 自适应止损
+    MaStopLoss,     // MA 跌破止损
+    R2StopLoss,     // R² 趋势消失止损
+    MaeStopLoss,    // MAE 最大不利偏移止损
+    // 后续阶段预留
+    // VolatilitySpikeStop,  // Phase 1: 波动率突增止损
+    // LadderTakeProfit,     // Phase 2: 阶梯分批止盈
     VaRBreach,      // VaR 超限
     DrawdownLevel1, // 回撤警戒（禁止新开仓）
     DrawdownLevel2, // 回撤减仓（持仓减半）
@@ -37,6 +45,11 @@ inline const char* to_string(RiskTriggerType t) {
         case RiskTriggerType::TrailingStop:   return "trailing_stop";
         case RiskTriggerType::TimeStop:       return "time_stop";
         case RiskTriggerType::FormulaStop:    return "formula_stop";
+        // Phase 0: 4 类新止损
+        case RiskTriggerType::AtrStopLoss:    return "atr_stop_loss";
+        case RiskTriggerType::MaStopLoss:     return "ma_stop_loss";
+        case RiskTriggerType::R2StopLoss:     return "r2_stop_loss";
+        case RiskTriggerType::MaeStopLoss:    return "mae_stop_loss";
         case RiskTriggerType::VaRBreach:      return "var_breach";
         case RiskTriggerType::DrawdownLevel1: return "drawdown_level1";
         case RiskTriggerType::DrawdownLevel2: return "drawdown_level2";
