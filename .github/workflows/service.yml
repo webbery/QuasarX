@@ -681,7 +681,14 @@ jobs:
             echo "ERROR: tickflow.json not found — Generate configs 步骤可能失败"
             exit 1
           fi
-          TF_PASSWD=$(python3 -c "import json; c=json.load(open('tickflow.json')); print((c.get('exchange') or [{}])[0].get('passwd',''))")
+          TF_PASSWD=$(python3 -c "
+          import json
+          c = json.load(open('tickflow.json'))
+          for ex in c.get('exchange', []):
+              if ex.get('name') == 'tickflow-quote':
+                  print(ex.get('passwd',''))
+                  break
+          ")
           if [ -z "$TF_PASSWD" ]; then
             echo "ERROR: tickflow.json exchange.passwd 为空（缺少 TICKFLOW_API_KEY）"
             cat tickflow.json
