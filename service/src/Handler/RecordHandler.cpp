@@ -161,6 +161,13 @@ void RecordHandler::HandleTicksQuery(const httplib::Request &req, httplib::Respo
         return;
     }
 
+    // symbol 格式校验：必须包含 '.' 分隔符（内部格式 sz.800001 或外部格式 600000.SH）
+    if (symbol.find('.') == String::npos) {
+        res.status = 400;
+        res.set_content(nlohmann::json{{"error", "invalid symbol format: " + symbol}}.dump(), "application/json");
+        return;
+    }
+
     String startStr = req.get_param_value("start");
     String endStr = req.get_param_value("end");
     String limitStr = req.get_param_value("limit");

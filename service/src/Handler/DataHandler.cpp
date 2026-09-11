@@ -1,5 +1,6 @@
 #include "Handler/DataHandler.h"
 #include "server.h"
+#include "json.hpp"
 #include <filesystem>
 #include <fstream>
 
@@ -12,7 +13,15 @@ void DataSyncHandler::get(const httplib::Request& req, httplib::Response& res) {
     auto datapath = cfg.GetDatabasePath();
     auto daily_path = datapath + "/daily";
     
-    if (std::filesystem::exists(daily_path) && !_server->IsDataLock()) {
+    if (!std::filesystem::exists(daily_path)) {
+        std::filesystem::create_directories(daily_path);
+    }
+    if (_server->IsDataLock()) {
+        res.status = 409;
+        res.set_content(nlohmann::json{{"error", "data is locked, try again later"}}.dump(), "application/json");
+        return;
+    }
+    {
         auto zip_path = datapath + "/bak.zip";
         String excp;
         if (!CreateZip(daily_path, zip_path, excp)) {
@@ -21,9 +30,6 @@ void DataSyncHandler::get(const httplib::Request& req, httplib::Response& res) {
             return;
         }
         SendFile(zip_path, res);
-        res.status = 200;
-    }
-    else {
         res.status = 200;
     }
 }

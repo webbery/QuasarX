@@ -16,6 +16,10 @@ class TestData:
             kwargs['headers'] = {'Authorization': auth_token}
 
         response = requests.get(f"{BASE_URL}/data/sync", **kwargs)
+
+        if response.status_code == 409:
+            pytest.skip("数据被锁定，无法同步")
+
         response.raise_for_status()
 
         assert 'chunked' in response.headers.get('Transfer-Encoding', '').lower()
