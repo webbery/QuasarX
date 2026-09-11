@@ -39,6 +39,7 @@ enum class CrossSectionFuncType {
     RANK,           // rank(expr) - 返回排名 (0~1)
     ZSCORE,         // zscore(expr) - 标准化
     PERCENTILE,     // percentile(expr, p) - 分位数
+    CS_COUNT,       // cs_count(expr, sign) - 跨标的计数 (>0/<0/==0 的标的数)
     RAW             // 原始分数透传
 };
 

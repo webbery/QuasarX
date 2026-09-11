@@ -184,7 +184,6 @@ void DebugNode::Done(const String& strategy) {
             continue;
         }
         auto& feature = _context->get(name);
-        INFO("read colunm {}", name);
         std::visit([&name, &columns](auto&& val) {
             using T = std::decay_t<decltype(val)>;
             if constexpr (std::is_same_v<T, double>) {

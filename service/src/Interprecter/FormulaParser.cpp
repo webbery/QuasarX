@@ -16,6 +16,7 @@
 #define INTRINSIC_RANK      "rank"
 #define INTRINSIC_ZSCORE    "zscore"
 #define INTRINSIC_PERCENTILE "pct"
+#define INTRINSIC_CS_COUNT  "cs_count"
 
 // 声明命名空间中的外部符号
 extern bool check_bool(const context_t& feature);
@@ -85,7 +86,8 @@ CrossSectionFuncType FormulaParser::getFuncType(const String& name) {
         {INTRINSIC_BOTTOMK, CrossSectionFuncType::BOTTOMK},
         {INTRINSIC_RANK, CrossSectionFuncType::RANK},
         {INTRINSIC_ZSCORE, CrossSectionFuncType::ZSCORE},
-        {INTRINSIC_PERCENTILE, CrossSectionFuncType::PERCENTILE}
+        {INTRINSIC_PERCENTILE, CrossSectionFuncType::PERCENTILE},
+        {INTRINSIC_CS_COUNT, CrossSectionFuncType::CS_COUNT}
     };
 
     auto it = typeMap.find(name);
@@ -99,6 +101,7 @@ bool FormulaParser::isCrossSectionFunction(const String& funName) {
         INTRINSIC_RANK,
         INTRINSIC_ZSCORE,
         INTRINSIC_PERCENTILE,
+        INTRINSIC_CS_COUNT,
     };
     return crossFuncs.count(funName);
 }
@@ -134,6 +137,14 @@ bool FormulaParser::hasCrossSectionFunctions(const peg::Ast& ast) {
 static std::optional<double> tryExtractNumber(const std::shared_ptr<peg::Ast>& node) {
     if (node->name == "Number") {
         return node->token_to_number<double>();
+    }
+    // 处理一元负号: Unary <- UnaryOp(-) Primary(Number)
+    if (node->name == "Unary" && node->nodes.size() == 2) {
+        auto& op = node->nodes[0];
+        if (op->name == "UnaryOp" && op->token == "-") {
+            auto inner = tryExtractNumber(node->nodes[1]);
+            if (inner) return -(*inner);
+        }
     }
     // Primary / Atom 等透传节点，递归到子节点
     if (node->nodes.size() == 1) {
@@ -248,6 +259,7 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         case CrossSectionFuncType::RAW:
         case CrossSectionFuncType::TOPK:
         case CrossSectionFuncType::BOTTOMK:
+        case CrossSectionFuncType::CS_COUNT:
             // 计算表达式值
             {
                 context_t val = evalNode(symbol, *node.exprAst, context);
@@ -282,24 +294,6 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
             k = static_cast<int>(std::get<double>(node.param));
         }
         k = std::max(1, std::min(k, static_cast<int>(scores.size())));
-
-        // [DIAG] 诊断 topk 实际 k 值与 score 分布
-        {
-            double maxScore = 0.0, minScore = 0.0;
-            int nonZeroCount = 0;
-            for (const auto& [sym, sc] : scores) {
-                if (sc != 0.0) ++nonZeroCount;
-                if (scores.size() == 1 || sc > maxScore) maxScore = sc;
-                if (scores.size() == 1 || sc < minScore) minScore = sc;
-            }
-            INFO("[TOPK-DIAG] node={} param_idx={} param_double={} k={}/scores.size()={} "
-                 "scores_min={} scores_max={} nonZero={}/{}",
-                 node.id,
-                 node.param.index(),
-                 std::holds_alternative<double>(node.param) ? std::get<double>(node.param) : -999.0,
-                 k, scores.size(),
-                 minScore, maxScore, nonZeroCount, scores.size());
-        }
 
         // 部分排序选前 k
         std::partial_sort(scores.begin(), scores.begin() + k, scores.end(),
@@ -376,6 +370,28 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         // 暂未实现，保持 RAW 输出
         for (auto& [sym, score] : scores) {
             node.outputs[sym] = score;
+        }
+        break;
+    }
+
+    case CrossSectionFuncType::CS_COUNT: {
+        // cs_count(expr, sign): 统计当前 bar 跨标的满足条件的数量
+        //   sign > 0:  score > 0 的标的数
+        //   sign < 0:  score < 0 的标的数
+        //   sign == 0: score == 0 的标的数
+        double sign = 1.0;
+        if (std::holds_alternative<double>(node.param)) {
+            sign = std::get<double>(node.param);
+        }
+        double cnt = 0.0;
+        for (auto& [sym, score] : scores) {
+            if (sign > 0 && score > 0)       ++cnt;
+            else if (sign < 0 && score < 0)  ++cnt;
+            else if (sign == 0 && score == 0) ++cnt;
+        }
+        // 所有标的输出相同的计数值
+        for (auto& [sym, score] : scores) {
+            node.outputs[sym] = cnt;
         }
         break;
     }

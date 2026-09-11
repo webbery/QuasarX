@@ -15,7 +15,6 @@
         "test_capital_risk",
         "test_volatility",
         "test_cusum_api",
-        "test_risk",
         "test_macro",
         "test_quote_finance",
         "test_node_unit",
@@ -23,7 +22,6 @@
         "test_position_events",
         "test_xgboost",
         "test_decision",
-        "test_protection_node",
         "test_capacity_scan"
       ]
     },

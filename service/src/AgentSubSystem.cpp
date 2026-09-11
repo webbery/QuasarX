@@ -80,6 +80,9 @@ void FlowSubsystem::OptimizeGraph(const String& strategy) {
 
     if (removed > 0)
         INFO("[OptimizeGraph] Strategy '{}': removed {} DebugNode(s)", strategy, removed);
+
+    // TODO 1：检查每个节点的输出特征的生命周期，过了生命周期后就释放掉，初次创建时预分配vector空间，避免重复创建离散空间
+    // TODO 2: 一次性计算完特征的所有vector元素，使用并行计算
 }
 
 void FlowSubsystem::ClearFlow(const String& strategy) {
@@ -1025,7 +1028,8 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
         }
 
         auto result = node->Process(strategy, context);
-        DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", context.GetEpoch(), node->id(), nodeType, (int)result);
+        if (context.GetEpoch() % 50 == 0)
+            DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", context.GetEpoch(), node->id(), nodeType, (int)result);
 
         switch (result) {
             case NodeProcessResult::Success:

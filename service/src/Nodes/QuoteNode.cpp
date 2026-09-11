@@ -340,8 +340,8 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
         auto name = get_symbol(*itr);
         auto baseKey = name + ".";
         
-        DEBUG_INFO("[QuoteInputNode:{}] out_elements: symbol='{}', _properties['{}'] size = {}", 
-             _id, *itr, name, _properties[name].size());
+        // DEBUG_INFO("[QuoteInputNode:{}] out_elements: symbol='{}', _properties['{}'] size = {}", 
+        //      _id, *itr, name, _properties[name].size());
         
         for (auto& item: _properties[name]) {
             if (item == "volume") {
