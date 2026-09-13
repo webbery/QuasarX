@@ -485,9 +485,11 @@ export function useMLData() {
         domains[k] = d
       }
 
+      const scriptJson = normalizeCodeParams(convertLabelsToKeys(script))
       const body: any = {
         action: 'optimize',
-        script: normalizeCodeParams(convertLabelsToKeys(script)),
+        script: scriptJson,
+        fast_backtest_strategy: scriptJson,
         label: {
           source: config.labelSource,
           period: config.labelPeriod,
@@ -500,6 +502,9 @@ export function useMLData() {
           end: config.endDate,
           frequency: config.frequency,
         },
+        start_date: config.startDate,
+        end_date: config.endDate,
+        frequency: config.frequency,
         objective: config.objective,
         num_class: config.numClass,
         test_ratio: config.testRatio,

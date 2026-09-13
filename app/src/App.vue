@@ -770,8 +770,13 @@ const onDataCenterSymbolSelected = (event) => {
 
 const onDataCenterOptionSelected = (event) => {
   const { contract_code, contract_name, exchange, product, symbol_id, call_put, strike_price } = event.detail || {}
-  if (!contract_code) return
-  selectedOptionContract.value = { contract_code, contract_name, exchange, product, symbol_id, call_put, strike_price }
+  console.log('[App.vue] option-selected event received:', { contract_code, contract_name, symbol_id, call_put, strike_price })
+  if (!symbol_id) {
+    console.warn('[App.vue] symbol_id is falsy, skipping')
+    return
+  }
+  selectedOptionContract.value = { contract_code: contract_code || contract_name, contract_name, exchange, product, symbol_id, call_put, strike_price }
+  console.log('[App.vue] selectedOptionContract set:', JSON.stringify(selectedOptionContract.value))
   selectedDataCenterSymbol.value = null  // 切换时清除股票选中
 }
 

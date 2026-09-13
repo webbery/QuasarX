@@ -103,6 +103,16 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
         {"open", "close", "high", "low", "volume", "turnover"},
         start_date, end_date, freq, adj, &dates);
 
+    // HFQ 模式下额外获取原始收盘价，用于前端对比复权数据
+    Vector<double> raw_close;
+    if (adj == AdjType::HFQ && !dates.empty()) {
+      auto raw_data = LoadHistoryDataWithFreq(sym,
+          {"close"}, start_date, end_date, freq, AdjType::None);
+      if (!raw_data["close"].empty()) {
+        raw_close = raw_data["close"];
+      }
+    }
+
     if (dates.empty()) {
       WARN("[StockHistory] No data for {} ({}, {}-{})", id, type, start_date, end_date);
       res.status = 400;
@@ -119,6 +129,9 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
       row["low"]     = (i < data["low"].size())      ? data["low"][i]     : 0.0;
       row["volume"]  = (i < data["volume"].size())   ? data["volume"][i]  : 0.0;
       row["turnover"] = (i < data["turnover"].size()) ? data["turnover"][i] : 0.0;
+      if (i < raw_close.size()) {
+        row["raw_close"] = raw_close[i];
+      }
       result.emplace_back(std::move(row));
     }
 

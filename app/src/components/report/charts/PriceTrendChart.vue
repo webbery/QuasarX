@@ -258,6 +258,16 @@ watch(() => props.selectedSymbol, (val) => {
   }
 })
 
+// 当前标的的价格数据异步加载完成后，刷新图表
+watch(
+  () => props.prices[localSymbol.value],
+  (chartData) => {
+    if (chartData && chartData.length > 0) {
+      updateChart(getPriceOption(chartData, props.sellSignals, props.buySignals, props.rawSellSignals, props.rawBuySignals, localSymbol.value), true)
+    }
+  }
+)
+
 onMounted(() => {
   console.info('[PriceTrendChart] 组件已挂载')
 })

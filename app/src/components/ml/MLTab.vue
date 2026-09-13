@@ -208,7 +208,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onActivated, watch } from 'vue'
 import { useMLState, LABEL_SHAPES } from './composables/useMLState'
 import { useMLData } from './composables/useMLData'
 import FeatureAnalysisPanel from './panels/FeatureAnalysisPanel.vue'
@@ -233,6 +233,13 @@ const state = useMLState()
 const { field, quickRange, frequency, dateRange, labelSymbol, QUICK_RANGES, setQuickRange, setFrequency, setField } = state
 const config = state.config
 const { fetchLabelAnalysis, runBatchLabelAnalysis } = useMLData()
+
+onActivated(() => {
+  if (state.optimizeRunning) {
+    state.optimizeRunning = false
+    state.optimizeProgress = '优化已中断（切换视图）'
+  }
+})
 
 const {
   strategyOptions,

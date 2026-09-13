@@ -436,14 +436,14 @@ nlohmann::json OptionDataDB::queryByContract(const String& contract_code,
 
     idx_t row_count = duckdb_row_count(&res);
     result["contract_code"] = contract_code;
-    result["symbol_id"] = symbol_id;
+    result["symbol_id"] = std::to_string(symbol_id);
     result["count"] = static_cast<int>(row_count);
 
     nlohmann::json::array_t data;
     for (idx_t i = 0; i < row_count; i++) {
         nlohmann::json row;
         row["trade_date"]         = duckdb_value_varchar(&res, 0,  i);
-        row["symbol_id"]          = duckdb_value_int64(&res, 1,  i);
+        row["symbol_id"]          = std::to_string(duckdb_value_int64(&res, 1,  i));
         row["exchange"]           = duckdb_value_varchar(&res, 2,  i);
         row["product"]            = duckdb_value_varchar(&res, 3,  i);
         row["underlying"]         = duckdb_value_varchar(&res, 4,  i);
@@ -507,14 +507,14 @@ nlohmann::json OptionDataDB::queryBySymbolId(int64_t symbol_id,
     }
 
     idx_t row_count = duckdb_row_count(&res);
-    result["symbol_id"] = symbol_id;
+    result["symbol_id"] = std::to_string(symbol_id);
     result["count"] = static_cast<int>(row_count);
 
     nlohmann::json::array_t data;
     for (idx_t i = 0; i < row_count; i++) {
         nlohmann::json row;
         row["trade_date"]         = duckdb_value_varchar(&res, 0,  i);
-        row["symbol_id"]          = duckdb_value_int64(&res, 1,  i);
+        row["symbol_id"]          = std::to_string(duckdb_value_int64(&res, 1,  i));
         row["exchange"]           = duckdb_value_varchar(&res, 2,  i);
         row["product"]            = duckdb_value_varchar(&res, 3,  i);
         row["underlying"]         = duckdb_value_varchar(&res, 4,  i);
@@ -585,7 +585,7 @@ nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
         nlohmann::json row;
         int64_t sid = duckdb_value_int64(&res, 0, i);
         String ex_name = duckdb_value_varchar(&res, 1, i);
-        row["symbol_id"]     = sid;
+        row["symbol_id"]     = std::to_string(sid);
         row["exchange"]      = ex_name;
         row["product"]       = duckdb_value_varchar(&res, 2, i);
         row["contract_name"] = duckdb_value_varchar(&res, 3, i);
@@ -596,9 +596,11 @@ nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
         row["end_date"]      = duckdb_value_varchar(&res, 8, i);
         row["count"]         = duckdb_value_int64(&res, 9, i);
 
-        // 行权日: 从 symbol_id 反解 year/month, 按交易所规则 (ThirdFriday / FourthWednesday) 计算
+        // 从 symbol_id 解码 symbol_t 补充年月信息
         symbol_t sym;
         std::memcpy(&sym, &sid, sizeof(symbol_t));
+        row["year"]  = static_cast<int>(2000 + sym._year);
+        row["month"] = static_cast<int>(sym._month);
         auto rule = finance::exerciseRuleForExchange(ex_name);
         auto ed   = finance::computeExerciseDate(2000 + sym._year, sym._month, rule);
         row["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",

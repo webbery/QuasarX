@@ -6,8 +6,8 @@
         <div class="contract-meta">
           <span v-if="exchange" class="meta-badge">{{ exchange }}</span>
           <span v-if="product" class="meta-badge">{{ product }}</span>
-          <span v-if="callPut" class="meta-badge" :class="callPut === 'call' ? 'badge-call' : 'badge-put'">
-            {{ callPut === 'call' ? '认购' : '认沽' }}
+          <span v-if="callPut" class="meta-badge" :class="isCall ? 'badge-call' : 'badge-put'">
+            {{ isCall ? '认购' : '认沽' }}
           </span>
           <span v-if="strikePrice" class="meta-badge">行权 {{ strikePrice }}</span>
         </div>
@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 
 const props = defineProps<{
@@ -111,7 +111,7 @@ const props = defineProps<{
   contractName?: string
   exchange?: string
   product?: string
-  symbolId?: number | null
+  symbolId?: string | number | null
   callPut?: string
   strikePrice?: number | null
 }>()
@@ -127,6 +127,7 @@ const contractName = computed(() => props.contractName || '')
 const exchange = computed(() => props.exchange || '')
 const product = computed(() => props.product || '')
 const callPut = computed(() => props.callPut || '')
+const isCall = computed(() => callPut.value === 'call' || callPut.value === '认购')
 const strikePrice = computed(() => props.strikePrice)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize)))
@@ -148,22 +149,29 @@ function formatVolume(v: number): string {
 }
 
 async function fetchData() {
-  if (!props.symbolId) return
+  if (!props.symbolId) {
+    console.log('[OptionDetail] symbolId is falsy, skipping fetch')
+    return
+  }
+  console.log('[OptionDetail] fetchData called with symbolId:', props.symbolId)
   loading.value = true
   error.value = ''
   page.value = 1
   const server = localStorage.getItem('remote')
   const token = localStorage.getItem('token')
   try {
-    const resp = await axios.get(`https://${server}/v0/option/data`, {
+    const url = `https://${server}/v0/option/data`
+    const resp = await axios.get(url, {
       params: { symbol_id: props.symbolId, limit: 10000 },
       headers: { 'Authorization': token || '' }
     })
+    console.log('[OptionDetail] API response:', { count: resp.data?.count, dataLen: resp.data?.data?.length, error: resp.data?.error })
     rows.value = resp.data.data || []
     if (resp.data.error) {
       error.value = resp.data.error
     }
   } catch (err: any) {
+    console.error('[OptionDetail] API error:', err.response?.status, err.response?.data, err.message)
     error.value = err.response?.data?.message || err.message
     rows.value = []
   } finally {
@@ -171,7 +179,12 @@ async function fetchData() {
   }
 }
 
+onMounted(() => {
+  console.log('[OptionDetail] mounted, symbolId:', props.symbolId, 'contractName:', props.contractName)
+})
+
 watch(() => props.symbolId, (id) => {
+  console.log('[OptionDetail] watch symbolId changed:', id)
   if (id) fetchData()
   else rows.value = []
 }, { immediate: true })

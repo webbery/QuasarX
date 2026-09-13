@@ -795,8 +795,19 @@
                                     <th>类型</th>
                                     <th>行权价</th>
                                     <th>标的</th>
-                                    <th>起始日期</th>
-                                    <th>结束日期</th>
+                                    <th>到期月</th>
+                                    <th class="sortable" @click="onOptionSort('start_date')">
+                                        起始日期
+                                        <span v-if="optionSortField === 'start_date'" class="sort-icon">
+                                            {{ optionSortAsc ? '▲' : '▼' }}
+                                        </span>
+                                    </th>
+                                    <th class="sortable" @click="onOptionSort('end_date')">
+                                        结束日期
+                                        <span v-if="optionSortField === 'end_date'" class="sort-icon">
+                                            {{ optionSortAsc ? '▲' : '▼' }}
+                                        </span>
+                                    </th>
                                     <th>数据量</th>
                                     <th>操作</th>
                                 </tr>
@@ -811,6 +822,7 @@
                                     <td>{{ c.call_put || '-' }}</td>
                                     <td>{{ c.strike_price ? c.strike_price.toFixed(2) : '-' }}</td>
                                     <td>{{ c.underlying || '-' }}</td>
+                                    <td>{{ c.year && c.month ? `${c.year}-${String(c.month).padStart(2, '0')}` : (c.exercise_date || '-') }}</td>
                                     <td>{{ c.start_date || '-' }}</td>
                                     <td>{{ c.end_date || '-' }}</td>
                                     <td>{{ c.count }}</td>
@@ -1245,6 +1257,8 @@ const optionPage = ref(1)
 const optionPageSize = ref(20)
 const optionJumpPage = ref<number>(1)
 const selectedOptionContract = ref<any>(null)
+const optionSortField = ref<'start_date' | 'end_date' | ''>('')
+const optionSortAsc = ref(true)
 
 const optionProductsByExchange: Record<string, { value: string; label: string }[]> = {
     CFFEX: [
@@ -1294,9 +1308,18 @@ watch(optionStrategy, async (name) => {
 const optionTotalPages = computed(() =>
     Math.max(1, Math.ceil(optionContracts.value.length / optionPageSize.value))
 )
+const sortedOptionContracts = computed(() => {
+    const arr = [...optionContracts.value]
+    if (!optionSortField.value) return arr
+    const field = optionSortField.value
+    const dir = optionSortAsc.value ? 1 : -1
+    return arr.sort((a, b) =>
+        dir * (a[field] || '').localeCompare(b[field] || '')
+    )
+})
 const pagedOptionContracts = computed(() => {
     const start = (optionPage.value - 1) * optionPageSize.value
-    return optionContracts.value.slice(start, start + optionPageSize.value)
+    return sortedOptionContracts.value.slice(start, start + optionPageSize.value)
 })
 
 const addOptionLog = (text: string, type: string = 'info') => {
@@ -2798,17 +2821,30 @@ const onOptionJumpPage = () => {
     optionJumpPage.value = p
 }
 
+const onOptionSort = (field: 'start_date' | 'end_date') => {
+    if (optionSortField.value === field) {
+        optionSortAsc.value = !optionSortAsc.value
+    } else {
+        optionSortField.value = field
+        optionSortAsc.value = true
+    }
+    optionPage.value = 1
+}
+
 const onOptionContractClick = (contract: any) => {
+    console.log('[OptionClick] contract:', JSON.stringify({ symbol_id: contract.symbol_id, contract_name: contract.contract_name, call_put: contract.call_put, strike_price: contract.strike_price }))
     selectedOptionContract.value = contract
-    window.dispatchEvent(new CustomEvent('datacenter-option-contract-selected', {
-        detail: {
-            contract_code: contract.contract_code,
-            contract_name: contract.contract_name,
-            exchange: contract.exchange,
-            product: contract.product,
-            symbol_id: contract.symbol_id,
-        }
-    }))
+    const detail = {
+        contract_code: contract.contract_code || contract.contract_name,
+        contract_name: contract.contract_name,
+        exchange: contract.exchange,
+        product: contract.product,
+        symbol_id: contract.symbol_id,
+        call_put: contract.call_put,
+        strike_price: contract.strike_price,
+    }
+    console.log('[OptionClick] dispatching event detail:', JSON.stringify(detail))
+    window.dispatchEvent(new CustomEvent('datacenter-option-contract-selected', { detail }))
 }
 
 const onOptionDeleteAll = async () => {

@@ -153,6 +153,7 @@ export function useChartData(
       }
 
       const prices: [string, number][] = []
+      let adjDiffCount = 0
       for (const oclhv of response.data) {
         const dt = oclhv['datetime']
         if (dt === undefined) continue
@@ -161,8 +162,24 @@ export function useChartData(
         const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-'
         const D = date.getDate()
         prices.push([Y + M + D, oclhv['close']])
+
+        // 对比复权价 vs 原始价，检测 adj_close 是否生效
+        if (oclhv['raw_close'] !== undefined && oclhv['close'] !== oclhv['raw_close']) {
+          adjDiffCount++
+        }
       }
       symbolPrices.value[symbol] = prices
+
+      // 输出复权诊断日志（前5条 + 差异统计）
+      if (response.data.length > 0) {
+        const sample = response.data.slice(0, 5).map((r: any) => ({
+          date: new Date(r.datetime * 1000).toISOString().slice(0, 10),
+          adj_close: r.close,
+          raw_close: r.raw_close,
+          same: r.close === r.raw_close
+        }))
+        console.info(`[useChartData] ${symbol} 复权诊断: ${response.data.length}条, adj≠raw: ${adjDiffCount}条`, sample)
+      }
 
       // 设置标记，等待图表初始化后更新
       needsPriceChartUpdate.value = true
@@ -404,8 +421,19 @@ export function useChartData(
       signalSymbol = backtestResult.buy?.[0]?.[0] || backtestResult.sell?.[0]?.[0] || ''
     }
 
-    const useStartDate = startDate || (signalStartDate ? formatDateTime(signalStartDate) : null)
-    const useEndDate = endDate || (signalEndDate ? formatDateTime(signalEndDate) : null)
+    // 优先使用 dailyDates 获取回测完整时间范围（而非仅信号日期范围）
+    let backtestStartDate: Date | null = null
+    let backtestEndDate: Date | null = null
+    if (backtestResult.dailyDates && backtestResult.dailyDates.length > 0) {
+      const dd = backtestResult.dailyDates
+      const minTs = Math.min(...dd)
+      const maxTs = Math.max(...dd)
+      backtestStartDate = new Date(minTs * 1000)
+      backtestEndDate = new Date(maxTs * 1000)
+    }
+
+    const useStartDate = startDate || formatDateTime(backtestStartDate || signalStartDate || new Date()) || null
+    const useEndDate = endDate || formatDateTime(backtestEndDate || signalEndDate || new Date()) || null
     const useSymbol = symbol || signalSymbol
 
     // 设置 selectedSymbol 数组
@@ -427,13 +455,15 @@ export function useChartData(
     }
 
     // 5. 加载基准数据
-    if (signalStartDate && signalEndDate) {
+    const benchmarkStart = backtestStartDate || signalStartDate
+    const benchmarkEnd = backtestEndDate || signalEndDate
+    if (benchmarkStart && benchmarkEnd) {
       const benchmarkSymbol = localStorage.getItem('benchmark_symbol') || 'SH000001'
       updateBenchmark({
         symbol: benchmarkSymbol,
         name: '',
-        startDate: signalStartDate,
-        endDate: signalEndDate
+        startDate: benchmarkStart,
+        endDate: benchmarkEnd
       })
     }
 
