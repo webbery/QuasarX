@@ -86,6 +86,21 @@ export interface ContractInfo {
   count: number
 }
 
+// ── 单合约 meta (权利金/保证金/行权日/dte/合约单位) ──
+//
+// 由后端 OptionDataDB::queryByContract/queryBySymbolId 在响应顶层 meta 字段返回
+// 数值字段在数据缺失时为 0 / "" — 前端按字段为 0 决定是否隐藏对应卡片
+export interface OptionContractMeta {
+  premium: number          // 最新结算/收盘价 = 权利金 (元/张)
+  spot: number             // 标的最新收盘价 (S)
+  contract_unit: number    // 合约乘数 (CFFEX IO/HO=300, MO=100; ETF=10000)
+  margin: number           // 卖出开仓义务仓保证金 (元/张)
+  exercise_date: string    // 行权日 "YYYY-MM-DD"
+  dte: number              // 距行权日天数 (≥1)
+  moneyness: string        // "ITM" / "ATM" / "OTM" / ""
+  last_trade_date: string  // 数据基准日 (与 meta 对应的 trade_date)
+}
+
 export async function priceOption(req: PricingRequest): Promise<PricingResult> {
   const res = await axios.post(`${BASE}/option/pricing`, req)
   return res.data
@@ -115,4 +130,23 @@ export async function listOptionContracts(exchange?: string, product?: string): 
   if (product) params.product = product
   const res = await axios.get(`${BASE}/option/data`, { params })
   return res.data.contracts || []
+}
+
+// 拉取单合约 meta (复用 GET /v0/option/data?symbol_id=xxx 端点, 读顶层 meta)
+// 仅拉最新一天数据 (limit=1) 减少带宽 — meta 计算在服务端基于 data 末行
+export async function fetchOptionContractMeta(symbolId: string | number): Promise<OptionContractMeta | null> {
+  const server = localStorage.getItem('remote')
+  const token = localStorage.getItem('token')
+  const url = server ? `https://${server}/v0/option/data` : `${BASE}/option/data`
+  try {
+    const res = await axios.get(url, {
+      params: { symbol_id: symbolId, limit: 1 },
+      headers: token ? { Authorization: token } : {}
+    })
+    if (!res.data?.meta) return null
+    return res.data.meta as OptionContractMeta
+  } catch (e) {
+    console.error('[useOptionPricing] fetchOptionContractMeta failed:', symbolId, e)
+    return null
+  }
 }

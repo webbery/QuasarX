@@ -402,4 +402,42 @@ int daysToExercise(int trade_year, int trade_month, int trade_day,
                    OptionExerciseRule rule,
                    const HolidayCalendar& cal);
 
+// ──────────────────────────────────────────────────────────────────────
+// 合约乘数 + 卖出开仓义务仓保证金
+//
+// 合约乘数 (静态映射, 与交易所公布的合约规格对齐):
+//   - SSE/SZSE ETF 期权 (50ETF/300ETF/500ETF/STAR50ETF/159919/159915/159922/159901): 10000
+//   - CFFEX IO (沪深300) / HO (上证50):  300
+//   - CFFEX MO (中证1000):                 100
+//   - 未知 product 兜底按 ETF 10000
+//
+// 保证金公式 (卖出方义务仓):
+//   - SSE/SZSE (中国结算, 2018 修订):
+//       认购: 单位 × max(12%·S − 虚值, 7%·S) + 单位 × S × 0.5%
+//       认沽: 单位 × max(12%·K − 虚值, 7%·K) + 单位 × K × 0.5%
+//       其中虚值 = max(K − S, 0) (认购) / max(S − K, 0) (认沽)
+//   - CFFEX (中金所):
+//       认购: 单位 × max(20%·S − 虚值 + P, 10%·S + P)
+//       认沽: 单位 × max(20%·K − 虚值 + P, 10%·K + P)
+//       其中虚值 同上; P 为权利金 (premium, 即最新成交价)
+//
+// 入参为 0/负 → 返回 0 (无法计算, 由调用方决定如何兜底展示)
+// ──────────────────────────────────────────────────────────────────────
+
+/// 返回 (exchange, product) 对应的合约乘数; 未知 product 兜底 ETF 10000
+int contractMultiplier(const String& exchange, const String& product);
+
+/// A 股期权卖出开仓义务仓保证金 (单位: 元/张)
+/// @param premium       最新成交价 (权利金), 必须 > 0
+/// @param spot          标的最新价 (S), 必须 > 0
+/// @param strike        行权价 (K), 必须 > 0
+/// @param is_call       认购/认沽
+/// @param contract_unit 合约乘数 (调用 contractMultiplier 或策略配置)
+double computeOptionMargin(const String& exchange,
+                            bool is_call,
+                            double spot,
+                            double strike,
+                            double premium,
+                            int contract_unit);
+
 }

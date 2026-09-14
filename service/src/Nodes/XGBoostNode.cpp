@@ -145,7 +145,7 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
             if (ret_feat == 0 && model_n_feat > 0 && model_feat_names) {
                 Vector<String> model_features;
                 for (bst_ulong i = 0; i < model_n_feat; i++) {
-                    if (model_feat_names[i])
+                    if (model_feat_names[i] && model_feat_names[i][0] != '\0')
                         model_features.push_back(model_feat_names[i]);
                 }
                 if (model_features.size() == static_cast<size_t>(_n_features)) {
@@ -233,6 +233,7 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
 
     // 为每个 symbol 解析特征 → context key
     _outputs.clear();
+    Set<String> unresolvedFeatures;  // 跟踪无法解析的特征
     for (auto& sym : symbolSet) {
         String symbol = get_symbol(sym);
         Vector<String> resolved;
@@ -244,12 +245,55 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
                 // 短名兜底：全局 key（如 "cusum_signal.drift"、"emd.energy_velocity"）
                 resolved.push_back(allOutKeys[feat]);
             } else {
-                // 直接作为 context key
+                // 无法解析：记录并继续使用原始名称（将在 Process 时报错）
+                unresolvedFeatures.insert(feat);
                 resolved.push_back(feat);
             }
         }
         _resolved_features[symbol] = resolved;
         buildOutputs(symbol + ".");
+    }
+
+    // [DEBUG X] 打印 _feature_keys 和第一个 symbol 的 resolved keys
+    {
+        String featList = boost::algorithm::join(_feature_keys, ",");
+        String emptyKeys;
+        for (size_t i = 0; i < _feature_keys.size(); ++i) {
+            if (_feature_keys[i].empty()) emptyKeys += std::to_string(i) + ",";
+        }
+        INFO("[XGBoost:{}] _feature_keys ({}): [{}] | empty_idx=[{}]",
+             _id, _feature_keys.size(), featList, emptyKeys);
+
+        if (!_resolved_features.empty()) {
+            const auto& firstSym = _resolved_features.begin()->first;
+            const auto& firstResolved = _resolved_features.begin()->second;
+            String resList;
+            for (size_t i = 0; i < firstResolved.size(); ++i) {
+                resList += "[" + std::to_string(i) + "]=" + firstResolved[i] + " ";
+            }
+            INFO("[XGBoost:{}] resolved[{}] ({}): {}", _id, firstSym, firstResolved.size(), resList);
+        }
+    }
+
+    // 如果有无法解析的特征，终止初始化
+    if (!unresolvedFeatures.empty()) {
+        String unresolvedList = boost::algorithm::join(unresolvedFeatures, ", ");
+        Vector<String> availableKeys;
+        for (auto& [k, v] : allOutKeys) availableKeys.push_back(k);
+        String availableList = boost::algorithm::join(availableKeys, ", ");
+
+        String errorMsg = fmt::format(
+            "[XGBoost:{}] Init FAILED: {} features could not be resolved from upstream nodes: {}. "
+            "Available upstream outputs: [{}]. "
+            "Fix: ensure feature names in model config match upstream node output keys "
+            "(e.g. EMD node outputs 'emd.nimf_0', not 'nimf_0').",
+            _id, unresolvedFeatures.size(), unresolvedList, availableList);
+        WARN("{}", errorMsg);
+
+        // 通过 strategy_log 通知前端（Init 阶段无 strategy name，用节点 id 标识）
+        strategy_log(fmt::format("xgboost_node_{}", _id), errorMsg);
+
+        return false;
     }
 
     INFO("[XGBoost:{}] {} '{}', {} symbols, {} features",
@@ -320,16 +364,36 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                                           symbol, failedFeature, validCount, _n_features);
         }
         if (!ok) continue;
-        // 有效 feature 不足时跳过推理（早期 epoch 滚动窗口未填满：
-        // EMD 120d + ZScore 20d → 前 119 根 K 线 EMD 派生 features 全 NaN），
-        // 避免 XGBoost 收到大量 NaN + 少量 finite 走 default branch 输出均匀分布
-        // 阈值 80%：15 维特征中至少 12 个有效才推理
-        const int minValid = (_n_features * 4 + 4) / 5;  // 80% 向上取整
-        if (validCount < minValid) {
-            DEBUG_INFO("[XGBoost:{}] skip predict for {}: only {}/{} features valid (need >={}, insufficient warmup)",
-                       _id, symbol, validCount, _n_features, minValid);
-            // 写 NaN 占位：保持输出序列与特征序列等长同序（DebugNode 按行索引 dump，
-            // 若此处不写入，probs 序列会比特征序列短，导致 CSV 行错位）
+        // 必须所有特征都有效才能推理，避免 XGBoost 收到 NaN 走 default branch 输出均匀分布
+        if (validCount < _n_features) {
+            // 预热期内：正常现象（EMD 120d + ZScore 20d 窗口未填满），静默跳过
+            if (context.IsInWarmup()) {
+                DEBUG_INFO("[XGBoost:{}] skip predict for {}: only {}/{} features valid (warmup epoch {})",
+                           _id, symbol, validCount, _n_features, context.GetEpoch());
+            } else {
+                // 预热期后仍然特征不足 → 特征解析或上游节点输出异常
+                String errorMsg = fmt::format(
+                    "[XGBoost:{}] symbol {} has only {}/{} valid features at epoch {} (past warmup). "
+                    "Feature '{}' is not finite. "
+                    "This means the upstream node is not producing valid output for this feature. "
+                    "Check node connections and feature names.",
+                    _id, symbol, validCount, _n_features, context.GetEpoch(), failedFeature);
+                WARN("{}", errorMsg);
+                strategy_log(strategy, errorMsg);
+
+                // 持续失败则终止推理
+                _consecutiveSkipCount++;
+                if (_consecutiveSkipCount > 50) {
+                    WARN("[XGBoost:{}] Persistent feature invalid after {} consecutive skips. "
+                          "Terminating inference. Last reason: {}",
+                          _id, _consecutiveSkipCount, _lastSkipReason);
+                    strategy_log(strategy, fmt::format(
+                        "[XGBoost:{}] Terminated: {} consecutive feature failures. "
+                        "Fix feature issues and restart.", _id, _consecutiveSkipCount));
+                    return NodeProcessResult::Error;
+                }
+            }
+            // 写 NaN 占位：保持输出序列与特征序列等长同序
             String prefix = symbol + ".";
             auto appendNan = [&context](const String& key) {
                 if (context.exist(key)) {
@@ -353,11 +417,11 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                 appendNan(prefix + "xgb_prediction");
                 break;
             }
-            // 预热期 NaN 占位是预期行为，已正确写入输出 → 视为成功
-            // 避免 _consecutiveSkipCount 累加导致误报 Error 终止 TrainingCollect
             anySuccess = true;
             continue;
         }
+        // 所有特征有效，重置连续跳过计数
+        _consecutiveSkipCount = 0;
 
         // 把 inf 替换为 NaN，让 XGBoost 把它们都识别为 missing
         // 修复: XGBoost 2.x 严格校验 — data 含 inf 但 missing=NaN 会报

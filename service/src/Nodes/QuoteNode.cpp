@@ -333,8 +333,8 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
     Map<String, ArgType> names;
     
     // 调试日志：打印 _symbols 和 _properties 的状态
-    DEBUG_INFO("[QuoteInputNode:{}] out_elements() called: _symbols size = {}, _properties size = {}", 
-         _id, _symbols.size(), _properties.size());
+    // DEBUG_INFO("[QuoteInputNode:{}] out_elements() called: _symbols size = {}, _properties size = {}", 
+    //      _id, _symbols.size(), _properties.size());
     
     for (auto itr = _symbols.begin(); itr != _symbols.end(); ++itr) {
         auto name = get_symbol(*itr);
@@ -353,7 +353,7 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
         }
     }
     
-    DEBUG_INFO("[QuoteInputNode:{}] out_elements returning {} elements", _id, names.size());
+    // DEBUG_INFO("[QuoteInputNode:{}] out_elements returning {} elements", _id, names.size());
     return names;
 }
 

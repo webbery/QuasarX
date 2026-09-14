@@ -310,8 +310,9 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
             if (!node->Init(itr->second)) {
                 String label = itr->second.value("label", "unknown");
                 String nodeType = itr->second.value("nodeType", "unknown");
+                auto failedId = node->id();
                 String errMsg = fmt::format("Node '{}' (id={}, type={}) initialization failed",
-                                            label, node->id(), nodeType);
+                                            label, failedId, nodeType);
                 WARN("[InitStrategy] {}", errMsg);
                 // 清理未接管的节点，避免内存泄漏
                 // TODO: 后续可考虑对已成功 Init 的节点调用清理接口
@@ -321,7 +322,7 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
                 result._errorMessage = errMsg;
                 result._failedNodeLabel = label;
                 result._failedNodeType = nodeType;
-                result._failedNodeId = node->id();
+                result._failedNodeId = failedId;
                 return result;
             }
         }

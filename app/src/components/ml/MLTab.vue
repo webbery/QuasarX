@@ -236,8 +236,8 @@ const { fetchLabelAnalysis, runBatchLabelAnalysis } = useMLData()
 
 onActivated(() => {
   if (state.optimizeRunning) {
-    state.optimizeRunning = false
-    state.optimizeProgress = '优化已中断（切换视图）'
+    state.optimizeRunning.value = false
+    state.optimizeProgress.value = '优化已中断（切换视图）'
   }
 })
 

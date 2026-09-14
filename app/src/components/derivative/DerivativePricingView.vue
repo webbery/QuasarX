@@ -95,6 +95,61 @@
         </button>
       </div>
 
+      <!-- 合约市场数据: 权利金 / 保证金 / 行权日 / dte / 合约单位 -->
+      <div class="section" v-if="activeContract">
+        <div class="section-title">
+          合约市场数据
+          <span v-if="loadingMeta" class="active-contract-tag">加载中...</span>
+        </div>
+        <div v-if="loadingMeta && !activeMeta" class="meta-loading">
+          <i class="fas fa-spinner fa-spin"></i> 拉取最新行情...
+        </div>
+        <template v-else-if="activeMeta">
+          <div class="meta-grid">
+            <div class="meta-item">
+              <span class="meta-label">权利金</span>
+              <span class="meta-value" :class="{ zero: !activeMeta.premium }">
+                {{ activeMeta.premium > 0 ? activeMeta.premium.toFixed(4) : '—' }}
+              </span>
+              <span class="meta-unit">元/张</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">标的价格 S</span>
+              <span class="meta-value" :class="{ zero: !activeMeta.spot }">
+                {{ activeMeta.spot > 0 ? activeMeta.spot.toFixed(4) : '—' }}
+              </span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">卖出保证金</span>
+              <span class="meta-value" :class="{ zero: !activeMeta.margin }">
+                {{ activeMeta.margin > 0 ? activeMeta.margin.toFixed(2) : '—' }}
+              </span>
+              <span class="meta-unit">元/张</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">行权日</span>
+              <span class="meta-value">{{ activeMeta.exercise_date || '—' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">距行权 (dte)</span>
+              <span class="meta-value" :class="{ warn: activeMeta.dte > 0 && activeMeta.dte <= 7 }">
+                {{ activeMeta.dte > 0 ? `${activeMeta.dte} 天` : '—' }}
+              </span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">合约单位</span>
+              <span class="meta-value">
+                {{ activeMeta.contract_unit > 0 ? activeMeta.contract_unit : '—' }}
+              </span>
+              <span class="meta-unit">份/张</span>
+            </div>
+          </div>
+          <div v-if="activeMeta.last_trade_date" class="meta-footnote">
+            数据基准日: {{ activeMeta.last_trade_date }}
+          </div>
+        </template>
+      </div>
+
       <!-- 结果卡片 -->
       <div class="section" v-if="result">
         <div class="section-title">定价结果</div>
@@ -162,8 +217,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import {
-  priceOption, listOptionContracts,
-  type PricingRequest, type PricingResult, type ContractInfo
+  priceOption, listOptionContracts, fetchOptionContractMeta,
+  type PricingRequest, type PricingResult, type ContractInfo, type OptionContractMeta
 } from './composables/useOptionPricing'
 import PayoffChart from './panels/PayoffChart.vue'
 import IVSurfaceChart from './panels/IVSurfaceChart.vue'
@@ -187,6 +242,9 @@ const result = ref<PricingResult | null>(null)
 const multiResults = ref<PricingResult[]>([])
 const calculating = ref(false)
 const activeChart = ref('payoff')
+// 选中合约的市场 meta (权利金/保证金/行权日/dte/合约单位)
+const activeMeta = ref<OptionContractMeta | null>(null)
+const loadingMeta = ref(false)
 
 const params = ref({
   spot: 3.2,
@@ -229,6 +287,31 @@ function fillParamsFromContract(c: ContractInfo) {
     const month = parseInt(m[2])
     params.value.expiry = `${year}-${String(month).padStart(2, '0')}-17`
   }
+  // 异步拉取最新一天 meta (权利金/保证金/行权日/dte/合约单位)
+  loadContractMeta(c)
+}
+
+async function loadContractMeta(c: ContractInfo) {
+  loadingMeta.value = true
+  activeMeta.value = null
+  try {
+    const meta = await fetchOptionContractMeta(c.symbol_id)
+    if (activeContract.value?.symbol_id === c.symbol_id) {
+      activeMeta.value = meta
+      // 用真实行权日覆盖默认的月中 17 号 (CFFEX 第3周五 / ETF 第4周三)
+      if (meta?.exercise_date) {
+        params.value.expiry = meta.exercise_date
+      }
+      // 用标的最新价回填 spot
+      if (meta?.spot && meta.spot > 0) {
+        params.value.spot = Number(meta.spot.toFixed(3))
+      }
+    }
+  } catch (e) {
+    console.error('loadContractMeta failed:', e)
+  } finally {
+    loadingMeta.value = false
+  }
 }
 
 function toggleContract(c: ContractInfo) {
@@ -248,6 +331,7 @@ async function onFilterChange() {
   contracts.value = await listOptionContracts(filters.value.exchange || undefined, filters.value.product || undefined)
   activeContract.value = null
   selectedContracts.value = []
+  activeMeta.value = null
 }
 
 async function calculate() {
@@ -524,6 +608,68 @@ onMounted(async () => {
   margin-top: 6px;
   font-size: 11px;
   color: #8899bb;
+}
+
+/* 合约市场数据 (权利金/保证金/行权日/dte/合约单位) */
+.meta-loading {
+  font-size: 12px;
+  color: #8899bb;
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.meta-item {
+  background: rgba(26, 34, 54, 0.6);
+  border: 1px solid rgba(74, 85, 104, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meta-label {
+  font-size: 10px;
+  color: #8899bb;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.meta-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+  font-variant-numeric: tabular-nums;
+}
+
+.meta-value.zero {
+  color: #556;
+  font-weight: 500;
+}
+
+.meta-value.warn {
+  color: #ffc107;  /* dte ≤ 7 天: 临期预警 */
+}
+
+.meta-unit {
+  font-size: 10px;
+  color: #6b7a99;
+  font-weight: 400;
+}
+
+.meta-footnote {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #556;
+  text-align: right;
 }
 
 /* 右侧图表 */

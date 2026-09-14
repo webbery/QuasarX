@@ -1,6 +1,7 @@
 #include "Util/OptionDataDB.h"
 #include "Util/system.h"
 #include "Util/finance.h"
+#include "Util/QuoteDB.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/OptionSymbolMacros.h"
 #include "Util/log.h"
@@ -12,6 +13,12 @@
 #include <cstdint>
 
 namespace fs = std::filesystem;
+
+// ── forward decl: 单合约查询响应顶层追加 meta 字段 (premium/spot/margin/exercise_date/dte) ──
+//    完整定义见 listContracts 函数上方 (需要先拿到 data 才能算)
+static void appendContractMeta(nlohmann::json& result,
+                                const nlohmann::json::array_t& data,
+                                int64_t symbol_id);
 
 // ═══════════════════════════════════════════════════════════
 //  单例
@@ -467,6 +474,7 @@ nlohmann::json OptionDataDB::queryByContract(const String& contract_code,
         row["implied_volatility"] = duckdb_value_double(&res, 22, i);
         data.push_back(std::move(row));
     }
+    appendContractMeta(result, data, symbol_id);
     result["data"] = std::move(data);
     duckdb_destroy_result(&res);
     return result;
@@ -538,6 +546,7 @@ nlohmann::json OptionDataDB::queryBySymbolId(int64_t symbol_id,
         row["implied_volatility"] = duckdb_value_double(&res, 22, i);
         data.push_back(std::move(row));
     }
+    appendContractMeta(result, data, symbol_id);
     result["data"] = std::move(data);
     duckdb_destroy_result(&res);
     return result;
@@ -546,6 +555,110 @@ nlohmann::json OptionDataDB::queryBySymbolId(int64_t symbol_id,
 // ═══════════════════════════════════════════════════════════
 //  查询：列出合约概要
 // ═══════════════════════════════════════════════════════════
+
+// ── helper: 在单合约查询响应顶层追加 meta 字段 ──
+//
+// 输入: result (顶层 json), data (日终 bar 数组, ASC 序), symbol_id
+// 输出: result["meta"] = {
+//   premium, spot, contract_unit, margin, exercise_date, dte, moneyness, last_trade_date
+// }
+//
+// 取 data 末行作为"最新一天":
+//   - premium = close (A 股 ETF/CFFEX 期权 close 即可视作最新权利金买方报价)
+//   - spot    = QuoteDB 拉标的最新收盘价 (sh.<underlying> / sz.<underlying>)
+//   - 行权日 / dte 通过 finance::computeExerciseDate + daysToExercise
+//   - 保证金通过 finance::computeOptionMargin
+//
+// 任一前置依赖缺失 (无 underlying / 无 close / 无 spot) 时对应字段填 0 或空,
+// 不报错 — 调用方可按字段为 0 决定是否在前端隐藏该卡片。
+static void appendContractMeta(nlohmann::json& result,
+                                const nlohmann::json::array_t& data,
+                                int64_t symbol_id) {
+    nlohmann::json meta;
+    meta["premium"] = 0.0;        // 最新收盘价 = 权利金
+    meta["spot"] = 0.0;           // 标的价格
+    meta["contract_unit"] = 0;
+    meta["margin"] = 0.0;
+    meta["exercise_date"] = "";   // "YYYY-MM-DD"
+    meta["dte"] = 0;              // days to exercise
+    meta["moneyness"] = "";       // "ITM" / "ATM" / "OTM"
+    meta["last_trade_date"] = "";
+
+    if (data.empty()) {
+        result["meta"] = std::move(meta);
+        return;
+    }
+
+    const auto& last = data.back();
+    String exchange     = last.value("exchange", "");
+    String product      = last.value("product", "");
+    String underlying   = last.value("underlying", "");
+    String call_put     = last.value("call_put", "");
+    double close        = last.value("close", 0.0);
+    double settlement   = last.value("settlement", 0.0);
+    double strike       = last.value("strike_price", 0.0);
+    String last_date    = last.value("trade_date", "");
+
+    // premium: 优先 settlement (官方结算价), 否则 close (最新成交)
+    double premium = settlement > 0 ? settlement : close;
+
+    meta["premium"] = premium;
+    meta["last_trade_date"] = last_date;
+
+    // 解码 symbol_id → symbol_t 提取到期年/月
+    symbol_t sym{};
+    std::memcpy(&sym, &symbol_id, sizeof(symbol_t));
+    int expiry_year  = 2000 + static_cast<int>(sym._year);
+    int expiry_month = static_cast<int>(sym._month);
+
+    auto rule = finance::exerciseRuleForExchange(exchange);
+    auto ed   = finance::computeExerciseDate(expiry_year, expiry_month, rule);
+    meta["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",
+                                        ed.year, ed.month, ed.day);
+
+    // dte: 基于 last_trade_date 作为 today 基准 (历史快照时间语义, 与 finance 注释一致)
+    int ty = 0, tm = 0, td = 0;
+    if (sscanf(last_date.c_str(), "%d-%d-%d", &ty, &tm, &td) == 3) {
+        meta["dte"] = finance::daysToExercise(ty, tm, td,
+                                              expiry_year, expiry_month, rule);
+    }
+
+    // 合约乘数
+    int unit = finance::contractMultiplier(exchange, product);
+    meta["contract_unit"] = unit;
+
+    // 标的价格: SSE/SZSE 期权 underlying 是 ETF 代码 (510050/510300 等),
+    //          CFFEX 期权 underlying 是指数代码 (000300/000016/000852)
+    //          QuoteDB 内只有股票 ETF 的日线, 指数类无法直接查, 此时 spot=0
+    double spot = 0.0;
+    if (!underlying.empty()) {
+        String prefix = (exchange == "SSE") ? "sh." : "sz.";
+        String quote_table = QuoteDB::tableName("stock", "daily");
+        spot = QuoteDB::instance().getLatestClose(quote_table, prefix + underlying);
+    }
+    meta["spot"] = spot;
+
+    // 保证金 + 实值/平值/虚值
+    bool is_call = (call_put == "认购");
+    if (premium > 0 && spot > 0 && strike > 0 && unit > 0) {
+        meta["margin"] = finance::computeOptionMargin(exchange, is_call,
+                                                       spot, strike, premium, unit);
+    }
+
+    // moneyness: spot vs strike
+    if (spot > 0 && strike > 0) {
+        double diff_pct = (spot - strike) / strike;
+        if (std::fabs(diff_pct) < 0.005) {
+            meta["moneyness"] = "ATM";
+        } else if ((is_call && spot > strike) || (!is_call && spot < strike)) {
+            meta["moneyness"] = "ITM";
+        } else {
+            meta["moneyness"] = "OTM";
+        }
+    }
+
+    result["meta"] = std::move(meta);
+}
 
 nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
                                            const String& product_filter) {

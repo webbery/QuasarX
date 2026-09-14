@@ -2083,4 +2083,52 @@ int daysToExercise(int trade_year, int trade_month, int trade_day,
                           expiry_year, expiry_month, rule, holidays);
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// 合约乘数 + 卖出开仓义务仓保证金
+// ──────────────────────────────────────────────────────────────────────
+
+int contractMultiplier(const String& exchange, const String& product) {
+    if (exchange == "CFFEX") {
+        // MO (中证1000 股指期权) 合约单位为 100 点/张, 其他为 300
+        if (product == "MO") return 100;
+        return 300;   // IO (沪深300) / HO (上证50)
+    }
+    // SSE / SZSE ETF 期权: 统一 10000
+    return 10000;
+}
+
+double computeOptionMargin(const String& exchange,
+                            bool is_call,
+                            double spot,
+                            double strike,
+                            double premium,
+                            int contract_unit) {
+    // 防御性: 任一关键参数缺失/非法则无法计算
+    if (spot <= 0.0 || strike <= 0.0 || premium <= 0.0 || contract_unit <= 0) {
+        return 0.0;
+    }
+
+    // 虚值额 (intrinsic deficit): 0 表示价内/平值, >0 表示虚值
+    double itm_amount = is_call ? std::max(strike - spot, 0.0)
+                                : std::max(spot - strike, 0.0);
+
+    if (exchange == "CFFEX") {
+        // 中金所: max(20%·ref − 虚值 + P, 10%·ref + P) × 单位
+        double ref = is_call ? spot : strike;
+        double upper = 0.20 * ref - itm_amount + premium;
+        double lower = 0.10 * ref + premium;
+        return contract_unit * std::max(upper, lower);
+    }
+
+    // SSE / SZSE ETF 期权 (中国结算 2018 修订):
+    //   认购: 单位 × max(12%·S − 虚值, 7%·S) + 单位 × S × 0.5%
+    //   认沽: 单位 × max(12%·K − 虚值, 7%·K) + 单位 × K × 0.5%
+    double base = is_call ? spot : strike;
+    double upper = 0.12 * base - itm_amount;
+    double lower = 0.07 * base;
+    double main  = contract_unit * std::max(upper, lower);
+    double fee   = contract_unit * spot * 0.005;   // 0.5% 风险准备金
+    return main + fee;
+}
+
 }

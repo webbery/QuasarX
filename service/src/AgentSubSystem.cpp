@@ -185,6 +185,10 @@ run_id_t FlowSubsystem::Start(const String& strategy, const Set<symbol_t>& symbo
 
     // 日终策略（ManualTiming）不走 Realtime/Backtest，由日终管线 EnsureDailyReady → StartDaily 驱动
     if (HasManualExecuteNode(strategy)) {
+        auto it = _flows.find(strategy);
+        if (it != _flows.end()) {
+            it->second._running = true;
+        }
         INFO("[Start] Strategy '{}' has Manual ExecuteNode, skip StartRealtime — registered for daily execution", strategy);
         return 0;
     }
@@ -1004,7 +1008,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
 
     // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
     bool inWarmup = context.IsInWarmup();
-
+    auto epch = context.GetEpoch();
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         String nodeType = "unknown";
@@ -1021,15 +1025,16 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             if (dynamic_cast<SignalNode*>(node) ||
                 dynamic_cast<ExecuteNode*>(node) ||
                 dynamic_cast<PortfolioNode*>(node)) {
-                INFO("[RunGraph] Epoch {} warmup: skip {} (id={}, type={})",
-                     context.GetEpoch(), node->id(), node->id(), nodeType);
+                if (epch % 50 == 0)
+                    DEBUG_INFO("[RunGraph] Epoch {} warmup: skip {} (id={}, type={})",
+                        epch, node->id(), node->id(), nodeType);
                 continue;
             }
         }
 
         auto result = node->Process(strategy, context);
-        if (context.GetEpoch() % 50 == 0)
-            DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", context.GetEpoch(), node->id(), nodeType, (int)result);
+        if (epch % 50 == 0)
+            DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", epch, node->id(), nodeType, (int)result);
 
         switch (result) {
             case NodeProcessResult::Success:
@@ -1040,7 +1045,7 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
                 // 时间不对齐等场景，跳过本轮
                 shouldSkipEpoch = true;
                 WARN("[RunGraph] Epoch {} node id={} ({}) returned Skip → epoch skipped, remaining nodes NOT executed",
-                     context.GetEpoch(), node->id(), nodeType);
+                    epch, node->id(), nodeType);
                 break;
 
             case NodeProcessResult::Finished:

@@ -1282,3 +1282,275 @@ class TestTopkVectorContext:
             f"TOPK 选择错误: {wrong_selections}/{total_with_diff} 个 bar "
             f"未选中 MA 更大的标的。可能原因: computeNode(TOPK) 未处理 Vector<double>，"
             f"所有 score=0，按 pool 顺序选择")
+
+
+# ============================================================
+# TestSignalLogicAndOr: and/or 算子与 topk 组合的 6 条独立分支路径
+#
+# Bug 现象（2026-09-14 诊断）:
+# CTA_v16 C++ 回测 buys_raw=42, 但 DEBUG D 显示 topk 正确返回 true_count=3。
+# 根因: evalAndExpr/evalOrExpr 让所有 symbol 通过布尔评估。
+#
+# 数据设计: 5 个标的，价格水平差异（top-3 高价 + 2 低价），让 and/or 分支
+# 命中可观察的不同结果。
+# ============================================================
+import csv
+import shutil
+from datetime import datetime, timedelta
+
+SIGNAL_LOGIC_PRICES = [
+    ("sz.900010", 100.0), ("sz.900011", 95.0), ("sz.900012", 90.0),  # top-3, high
+    ("sz.900013", 50.0), ("sz.900014", 40.0),                          # not top-3, low
+]
+SIGNAL_LOGIC_SYMBOLS = [s for s, _ in SIGNAL_LOGIC_PRICES]
+SIGNAL_LOGIC_HFQ_DIR = CSV_DATA_DIR  # _DATA_DIR / "A_hfq"
+SIGNAL_LOGIC_ORG_DIR = CSV_DATA_DIR.parent / "AStock"
+SIGNAL_LOGIC_START = datetime(2024, 1, 1)
+SIGNAL_LOGIC_N_BARS = 100
+
+
+def _signal_logic_write_csv(symbol, base_price):
+    """生成常数价格 CSV 并上传（确定性时间 + 噪声 OHLCV）"""
+    np.random.seed(hash(symbol) & 0x7FFFFFFF)
+    rows = []
+    d = SIGNAL_LOGIC_START
+    for _ in range(SIGNAL_LOGIC_N_BARS):
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        close = base_price * (1 + np.random.normal(0, 0.001))
+        open_p = close * (1 + np.random.normal(0, 0.001))
+        high = max(open_p, close) * 1.002
+        low = min(open_p, close) * 0.998
+        volume = int(np.random.uniform(1000000, 5000000))
+        turnover = round(volume * close, 2)
+        rows.append([d.strftime("%Y-%m-%d"), round(open_p, 2), round(close, 2),
+                     round(high, 2), round(low, 2), volume, turnover])
+        d += timedelta(days=1)
+
+    hfq_path = SIGNAL_LOGIC_HFQ_DIR / f"{symbol}.csv"
+    org_path = SIGNAL_LOGIC_ORG_DIR / f"{symbol}.csv"
+    hfq_path.parent.mkdir(parents=True, exist_ok=True)
+    org_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(hfq_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['datetime', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
+        for row in rows:
+            writer.writerow(row)
+    shutil.copy2(hfq_path, org_path)
+    return hfq_path, org_path
+
+
+def _signal_logic_upload(symbols, headers):
+    """通过 /v0/quote/data 上传 org 和 hfq（**必须分开**，见 data_pipeline_org_hfq_split_fix）"""
+    for symbol in symbols:
+        hfq_lines = (SIGNAL_LOGIC_HFQ_DIR / f"{symbol}.csv").read_text().strip().split("\n")[1:]
+        org_lines = (SIGNAL_LOGIC_ORG_DIR / f"{symbol}.csv").read_text().strip().split("\n")[1:]
+        resp = requests.post(f"{BASE_URL}/quote/data", json={
+            "action": "import", "table": "stock_1d", "symbol": symbol,
+            "data": org_lines, "data_hfq": hfq_lines,
+        }, headers=headers, verify=VERIFY_SSL, timeout=60)
+        if resp.status_code != 200:
+            return {"status": "error", "error": f"upload {symbol}: HTTP {resp.status_code} {resp.text[:200]}"}
+    return {"status": "ok"}
+
+
+def _signal_logic_cleanup(symbols, headers):
+    for symbol in symbols:
+        try:
+            requests.post(f"{BASE_URL}/quote/data", json={
+                "action": "delete", "table": "stock_1d", "symbol": symbol,
+            }, headers=headers, verify=VERIFY_SSL, timeout=30)
+        except Exception:
+            pass
+        for p in [SIGNAL_LOGIC_HFQ_DIR / f"{symbol}.csv", SIGNAL_LOGIC_ORG_DIR / f"{symbol}.csv"]:
+            if p.exists():
+                p.unlink()
+
+
+def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false"):
+    """Input(5 标的) → SignalNode(buy, sell) → Portfolio → Execution"""
+    return {
+        "id": strategy_id,
+        "name": f"信号逻辑测试_{strategy_id}",
+        "version": 1,
+        "description": "and/or 算子与 topk 组合测试",
+        "backtest": {
+            "start": SIGNAL_LOGIC_START.strftime("%Y-%m-%d"),
+            "end": (SIGNAL_LOGIC_START + timedelta(days=SIGNAL_LOGIC_N_BARS * 2)).strftime("%Y-%m-%d")
+        },
+        "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom",
+             "data": {"label": "行情", "nodeType": "input",
+                      "params": {"source": {"value": "股票", "type": "text"},
+                                 "code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"}}}},
+            {"id": "2", "type": "custom",
+             "data": {"label": "信号", "nodeType": "signal",
+                      "params": {"code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
+                                 "type": {"value": "股票", "type": "select"},
+                                 "allowShort": {"value": False, "type": "boolean"},
+                                 "buy": {"value": buy_expr, "type": "text"},
+                                 "sell": {"value": sell_expr, "type": "text"}}}},
+            {"id": "3", "type": "custom",
+             "data": {"label": "组合", "nodeType": "portfolio",
+                      "params": {"positionRatio": {"value": 1.0, "type": "number"}}}},
+            {"id": "4", "type": "custom",
+             "data": {"label": "执行", "nodeType": "execution",
+                      "params": {"commission": {"value": 0.0, "type": "number"},
+                                 "stampDuty": {"value": 0.0, "type": "number"},
+                                 "slippage": {"value": 0.0, "type": "number"},
+                                 "type": {"value": 1, "type": "select"}}}}],
+        "edges": [
+            {"id": "e1", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e2", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            {"id": "e3", "source": "3", "target": "4",
+             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
+        ]
+    }
+
+
+def _signal_logic_backtest(strategy_id, buy_expr, sell_expr="false", headers=None):
+    strategy = _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr)
+    r = requests.post(f"{BASE_URL}/backtest",
+                      json={"script": json.dumps(strategy), "validate": False},
+                      headers=headers, verify=VERIFY_SSL, timeout=1800)
+    if r.status_code != 200:
+        return {"status": "error", "error": f"HTTP {r.status_code}: {r.text[:300]}"}
+    return {"status": "ok", "result": r.json()}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _signal_logic_module_setup():
+    """模块级 fixture：生成 CSV → 上传 → 测试结束清理"""
+    headers = {"Authorization": requests.post(
+        f"{BASE_URL}/user/login", json={"name": "admin", "pwd": "admin"},
+        verify=VERIFY_SSL, timeout=10).json()["tk"]}
+    for symbol, price in SIGNAL_LOGIC_PRICES:
+        hfq, org = _signal_logic_write_csv(symbol, price)
+    upload_result = _signal_logic_upload([s for s, _ in SIGNAL_LOGIC_PRICES], headers)
+    if upload_result["status"] == "error":
+        pytest.skip(f"setup failed: {upload_result['error']}")
+    yield headers
+    _signal_logic_cleanup([s for s, _ in SIGNAL_LOGIC_PRICES], headers)
+
+
+@pytest.fixture
+def signal_headers(_signal_logic_module_setup):
+    return _signal_logic_module_setup
+
+
+class TestSignalLogicAndOr:
+    """and/or 算子与 topk 组合的 6 条独立分支路径
+
+    per_filter_branch_test_data 原则:
+    - L1/L4 对照组（双 true/left true）应产生 BUY/SELL
+    - L2/L3/L5/L6 剔除项（左 false/右 false/双 false/右 true 但左 false）应被正确剔除
+    """
+
+    def test_l1_and_both_true_buy_top3(self, signal_headers):
+        """L1 对照组: and 左 true + 右 true → BUY >=3 (top-3 高价)"""
+        resp = _signal_logic_backtest("l1_and_both_true",
+                                     "(close[t-1] >= 80) and topk(close, 3)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        result = resp["result"]
+        assert result["summary"]["buy_count"] >= 3, (
+            f"L1: 期望 BUY>=3 (top-3 高价), 实际 {result['summary']['buy_count']}。"
+            f"若=0 或 5, 说明 evalAndExpr 错误地把 and 整体吞掉。"
+        )
+
+    def test_l2_and_left_false_drops_all(self, signal_headers):
+        """L2: and 左 false → 全部 HOLD (即使 right=true)"""
+        resp = _signal_logic_backtest("l2_and_left_false",
+                                     "(close[t-1] >= 200) and topk(close, 3)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        assert resp["result"]["summary"]["buy_count"] == 0, (
+            f"L2: and 左 false 应全部 HOLD, 实际 BUY="
+            f"{resp['result']['summary']['buy_count']}。"
+            f"若>0, 说明 evalAndExpr 未实现 left=false 短路。"
+        )
+
+    def test_l3_and_right_false_drops_non_topk(self, signal_headers):
+        """L3 bug 路径: and 左 true + 右 false → HOLD
+
+        表达式: (close[t-1] <= 80) and topk(close, 3)
+        - top-3 (sz.900010/11/12, close>=90): left=false → HOLD
+        - sz.900013/14 (close<=50): left=true, right=false → HOLD
+        - 预期 BUY count = 0
+
+        Bug 触发: 当前 evalAndExpr 让所有 symbol 通过, BUY=5。
+        修复后: BUY count = 0。
+        """
+        resp = _signal_logic_backtest("l3_and_right_false",
+                                     "(close[t-1] <= 80) and topk(close, 3)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        buy_count = resp["result"]["summary"]["buy_count"]
+        assert buy_count == 0, (
+            f"L3 bug 检测: BUY count={buy_count}。"
+            f"若=5 表明 evalAndExpr 让所有 symbol 通过 AND 评估。"
+        )
+
+    def test_l3_low_symbols_not_bought(self, signal_headers):
+        """L3 子断言: 即使 BUY 总数非 0，low symbols 也不在 BUY 列表"""
+        resp = _signal_logic_backtest("l3_low_subcheck",
+                                     "(close[t-1] <= 80) and topk(close, 3)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        buy_symbols = {trade["symbol"] for trade in resp["result"].get("buy", [])}
+        for sym in ["sz.900013", "sz.900014"]:
+            assert sym not in buy_symbols, (
+                f"L3 细粒度: {sym} (low, not top-3) 不应 BUY, 实际 buys={buy_symbols}"
+            )
+
+    def test_l4_or_left_true_sells(self, signal_headers):
+        """L4 对照组: or 左 true → SELL (短路, 不评估右)"""
+        resp = _signal_logic_backtest("l4_or_left_true",
+                                     "false",
+                                     "(close[t-1] <= 60) or !topk(close, 3)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        sell_count = resp["result"]["summary"]["sell_count"]
+        assert sell_count >= 2, (
+            f"L4: 期望 sell>=2 (low symbols left=true), 实际 {sell_count}"
+        )
+
+    def test_l5_or_both_false_drops(self, signal_headers):
+        """L5: or 双 false → HOLD (应被剔除)"""
+        resp = _signal_logic_backtest("l5_or_both_false",
+                                     "false",
+                                     "(close[t-1] >= 200) or (close[t-1] <= 0)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        assert resp["result"]["summary"]["sell_count"] == 0, (
+            f"L5: or 双 false 应 HOLD, 实际 SELL="
+            f"{resp['result']['summary']['sell_count']}"
+        )
+
+    def test_l6_or_right_true_passes(self, signal_headers):
+        """L6: or 左 false + 右 true → SELL (应通过)"""
+        resp = _signal_logic_backtest("l6_or_right_true",
+                                     "false",
+                                     "(close[t-1] >= 200) or !topk(close, 3)",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        sell_count = resp["result"]["summary"]["sell_count"]
+        assert sell_count >= 2, (
+            f"L6: or left=false + right=true 应 SELL, 实际 {sell_count}"
+            f"期望>=2 (sz.900013/14 通过 !topk 分支)"
+        )
+
+    def test_topk_only_buy_control(self, signal_headers):
+        """对照: buy = topk(close, 3) 单独 → BUY >=3 (验证 topk 单独正确)"""
+        resp = _signal_logic_backtest("topk_only", "topk(close, 3)", "false",
+                                     headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        assert resp["result"]["summary"]["buy_count"] >= 3, (
+            f"topk_only: 期望 BUY>=3, 实际 {resp['result']['summary']['buy_count']}"
+        )
