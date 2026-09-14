@@ -2,6 +2,7 @@
 #include "Bridge/SIM/BacktestContext.h"
 #include "Bridge/PositionEvent.h"
 #include "Bridge/exchange.h"
+#include "BrokerSubSystem.h"
 #include "Util/FinanceDB.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
@@ -131,6 +132,15 @@ bool HistorySimulationBase::OrderReport(BacktestContext* context, order_id id, c
 
     orderCtx->_success.store(true);
     orderCtx->_flag.store(true);
+
+    // 回测模式：同步记录交易到 BrokerSubSystem（消除 worker 线程竞态）
+    if (_server && orderCtx->_running_type == static_cast<uint8_t>(RuningType::Backtest)) {
+        auto* broker = _server->GetBrokerSubSystem();
+        if (broker) {
+            broker->RecordTrade(*orderCtx);
+        }
+    }
+
     orderCtx->_promise.set_value(true);
 
     return true;

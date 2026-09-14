@@ -598,7 +598,8 @@ void BrokerSubSystem::run() {
             auto ctx = *itr;
             if (ctx->_flag) {
                 // 日志记录
-                if (ctx->_success) {
+                // 回测订单已在 HistorySimulationBase::OrderReport 中同步记录，跳过避免重复
+                if (ctx->_success && ctx->_running_type != static_cast<uint8_t>(RuningType::Backtest)) {
                     RecordTrade(*ctx);
                     LOG("Order Success:{}", ctx->_order);
                 }
