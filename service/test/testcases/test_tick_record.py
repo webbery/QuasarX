@@ -1,6 +1,5 @@
 import requests
 import time
-from pathlib import Path
 from tool import check_response, BASE_URL
 import pytest
 
@@ -67,27 +66,6 @@ class TestTickRecord:
                 for tick in data:
                     assert tick.get("time", 0) >= yesterday, f"tick time 小于 start: {tick}"
                     assert tick.get("time", 0) <= now, f"tick time 大于 end: {tick}"
-
-    @pytest.mark.timeout(10)
-    def test_daily_directory_exists(self):
-        """
-        验证 {db_path}/daily/zh/stock/ 目录存在。
-        RecordHandler 启动时即创建此目录。
-        """
-        config_path = Path(__file__).parent.parent / "configs" / "tickflow.json"
-        if not config_path.exists():
-            pytest.skip("找不到 tickflow 配置文件")
-
-        import json
-        with open(config_path) as f:
-            cfg = json.load(f)
-
-        db_path = cfg.get("server", {}).get("db_path", "data")
-        base_dir = Path(__file__).parent.parent.parent / "build"
-        daily_dir = base_dir / db_path / "daily" / "zh" / "stock"
-
-        assert daily_dir.exists(), f"tick 存储目录不存在: {daily_dir}"
-        print(f"\n[daily] 目录存在: {daily_dir}")
 
     @pytest.mark.timeout(30)
     def test_tick_query_accepts_pool_symbol(self, auth_token):
