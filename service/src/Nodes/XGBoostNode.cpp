@@ -448,17 +448,17 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                     context.set(predKey, Vector<double>{static_cast<double>(best)});
                 }
             }
-#ifdef _DEBUG
-            // 调试：打印 probs（仅首个 symbol 避免刷屏）
-            if (!_resolved_features.empty() && symbol == _resolved_features.begin()->first) {
-                auto epoch = context.GetEpoch();
-                String msg = "[XGBoost:" + std::to_string(epoch) + "] " + symbol + " probs:";
-                for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
-                    msg += " " + std::to_string(static_cast<double>(out_result[i]));
-                }
-                INFO("{}", msg);
-            }
-#endif
+// #ifdef _DEBUG
+//             // 调试：打印 probs（仅首个 symbol 避免刷屏）
+//             if (!_resolved_features.empty() && symbol == _resolved_features.begin()->first) {
+//                 auto epoch = context.GetEpoch();
+//                 String msg = "[XGBoost:" + std::to_string(epoch) + "] " + symbol + " probs:";
+//                 for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
+//                     msg += " " + std::to_string(static_cast<double>(out_result[i]));
+//                 }
+//                 INFO("{}", msg);
+//             }
+// #endif
             break;
         case XGBObjective::RegSquaredError: {
             double val = (total > 0) ? static_cast<double>(out_result[0]) : 0.0;

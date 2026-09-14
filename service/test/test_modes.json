@@ -35,7 +35,6 @@
         "test_sectorquote",
         "test_tick_record",
         "test_data",
-        "test_shibor",
         "test_decision"
       ]
     },

@@ -439,7 +439,7 @@ void TickFlowBridge::workerLoop() {
 
         // 检查工作时间（测试模式跳过）
         static bool isTestMode = _server && _server->GetConfig().IsTestMode();
-        if (!isTestMode && !IsWorking(curr)) {
+        if (!isTestMode && (!IsWorking(curr) || IsHoliday(curr))) {
             // 非工作时间，暂停 5s 再检查
             std::this_thread::sleep_for(std::chrono::seconds(5));
             continue;

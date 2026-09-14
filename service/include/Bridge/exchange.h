@@ -9,6 +9,7 @@
 #include <yas/std_types.hpp>
 #include <yas/std_traits.hpp>
 #include <boost/unordered/concurrent_flat_map.hpp>
+#include "Util/HolidayCalendar.h"
 
 #define XTP_API     "xtp"   //
 #define CTP_API     "ctp"   //
@@ -552,7 +553,17 @@ public:
     }
     return false;;
   }
-  
+
+  // A 股法定节假日判断；日历未加载当前年份时 isHoliday 返回 false（视为非假日）
+  bool IsHoliday(time_t tick) {
+    struct tm tm_buf{};
+#ifdef _WIN32
+    localtime_s(&tm_buf, &tick);
+#else
+    localtime_r(&tick, &tm_buf);
+#endif
+    return HolidayCalendar::instance().isHoliday(1900 + tm_buf.tm_year, 1 + tm_buf.tm_mon, tm_buf.tm_mday);
+  }
 protected:
   Server* _server;
 
