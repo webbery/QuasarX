@@ -1310,17 +1310,29 @@ SIGNAL_LOGIC_N_BARS = 100
 
 
 def _signal_logic_write_csv(symbol, base_price):
-    """生成常数价格 CSV 并上传（确定性时间 + 噪声 OHLCV）"""
+    """生成常数价格 CSV 并上传（确定性时间 + 噪声 OHLCV）
+
+    边界符号（base_price 与 cs_* 测试阈值对齐的，如 80/90）跳过噪声：
+    否则 close-90/close-80 的噪声会让 cs_count 在 2/3 之间漂移，
+    破坏 cs_size_vs_sum 等依赖"零值标的"的测试断言。
+    """
     np.random.seed(hash(symbol) & 0x7FFFFFFF)
     rows = []
     d = SIGNAL_LOGIC_START
+    is_boundary = base_price in (80.0, 90.0)
     for _ in range(SIGNAL_LOGIC_N_BARS):
         while d.weekday() >= 5:
             d += timedelta(days=1)
-        close = base_price * (1 + np.random.normal(0, 0.001))
-        open_p = close * (1 + np.random.normal(0, 0.001))
-        high = max(open_p, close) * 1.002
-        low = min(open_p, close) * 0.998
+        if is_boundary:
+            close = base_price
+            open_p = base_price
+            high = base_price
+            low = base_price
+        else:
+            close = base_price * (1 + np.random.normal(0, 0.001))
+            open_p = close * (1 + np.random.normal(0, 0.001))
+            high = max(open_p, close) * 1.002
+            low = min(open_p, close) * 0.998
         volume = int(np.random.uniform(1000000, 5000000))
         turnover = round(volume * close, 2)
         rows.append([d.strftime("%Y-%m-%d"), round(open_p, 2), round(close, 2),

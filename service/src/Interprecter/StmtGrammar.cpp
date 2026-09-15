@@ -47,7 +47,9 @@ String grammar = R"(
         TimeOffset      <- < 't' '-' [0-9]+ > / < 't' > / < [0-9]+ >
 
         # 函数调用
-        FunctionCall    <- Identifier '(' Arguments? ')'
+        # 加 { no_ast_opt }：防止零参数调用（如 cs_size()）被 peglib optimize_ast
+        # collapse 成 Identifier，导致 extractAndBuildGraph 漏注册 CS 节点
+        FunctionCall    <- Identifier '(' Arguments? ')' { no_ast_opt }
         Arguments       <- Expression (',' Expression)*
 
         # 数据结构
