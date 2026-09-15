@@ -785,13 +785,24 @@ void ExchangeManager::LogoutExchanges() {
 
 bool ExchangeManager::StepAllHistoryExchanges(run_id_t runId) {
     bool anyMoreData = false;
+    static int _stepCallCount = 0;
+    _stepCallCount++;
 
     for (auto& [name, exch] : _exchanges) {
         auto* base = dynamic_cast<HistorySimulationBase*>(exch);
         if (!base) continue;
 
         auto* ctx = base->getBacktestContext(runId);
-        if (!ctx || ctx->isFinished()) continue;
+        if (!ctx) {
+            if (_stepCallCount <= 3)
+                INFO("[StepAll] exchange='{}' ctx=nullptr for runId={}, skipping", name, runId);
+            continue;
+        }
+        if (ctx->isFinished()) {
+            if (_stepCallCount <= 3)
+                INFO("[StepAll] exchange='{}' ctx finished, skipping", name);
+            continue;
+        }
 
         if (base->stepForward(ctx)) {
             anyMoreData = true;

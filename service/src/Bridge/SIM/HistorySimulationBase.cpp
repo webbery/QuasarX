@@ -337,7 +337,8 @@ run_id_t HistorySimulationBase::createBacktestContext(
     bool needReload = !_dataLoadSuccess;
     if (!needReload) {
         for (auto symbol : symbols) {
-            if (_csvs.find(symbol) == _csvs.end()) {
+            auto itr = _csvs.find(symbol);
+            if (itr == _csvs.end() || itr->second.empty()) {
                 needReload = true;
                 break;
             }
@@ -536,10 +537,23 @@ static inline time_t DateOnly(time_t ts) {
 
 bool HistorySimulationBase::stepForward(BacktestContext* context) {
     auto symbols = context->getSymbols();
-    if (symbols.empty()) return false;
+    if (symbols.empty()) {
+        WARN("[stepForward] context has no symbols!");
+        return false;
+    }
 
     bool anyMoreData = false;
     bool anyFinished = false;
+    static int _sfCallCount = 0;
+    _sfCallCount++;
+    if (_sfCallCount == 1) {
+        // 首次调用：dump 第一个 symbol 的数据量
+        auto firstSym = *symbols.begin();
+        auto itr = _csvs.find(firstSym);
+        size_t dataSize = (itr != _csvs.end()) ? itr->second.size() : 0;
+        INFO("[stepForward] first call: symbols={}, _csvs.size={}, first_sym={} dataSize={}",
+             symbols.size(), _csvs.size(), get_symbol(firstSym), dataSize);
+    }
 
     std::shared_lock<std::shared_mutex> dataLock(_dataMutex);
 

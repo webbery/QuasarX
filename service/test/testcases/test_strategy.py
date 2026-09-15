@@ -472,7 +472,7 @@ class TestStrategyMultipartDeploy:
                           "params": {"code": {"value": ["sz.800001"], "type": "text"},
                                      "freq": {"value": "1d", "type": "select"}}}},
                 {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-                 "data": {"label": "MA", "nodeType": "function",
+                 "data": {"label": "ma5", "nodeType": "function",
                           "params": {"method": {"value": "MA", "type": "select"},
                                      "range": {"value": "5d", "type": "text"}}}},
                 {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},

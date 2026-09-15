@@ -371,10 +371,11 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
 
                 // 推进 Exchange 的回测时间
                 if (!exchangeMgr->StepAllHistoryExchanges(runId)) {
-                    INFO("Backtest data finished for strategy {}", strategy);
+                    INFO("Backtest data finished for strategy {}, epoch={}", strategy, flow._epochCount);
                     break;
                 }
                 if (!RunGraph(strategy, flow, context)) {
+                    INFO("RunGraph failed at epoch {}", flow._epochCount);
                     success = false;
                     break;
                 }
@@ -382,6 +383,7 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
 
             auto endTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
+            INFO("[Backtest] Loop exited: epochs={}, duration={:.3f}s, success={}", flow._epochCount, duration.count(), success);
 
             if (success) {
                 // 统计指标（封装为独立函数）

@@ -1368,7 +1368,7 @@ def _signal_logic_cleanup(symbols, headers):
                 p.unlink()
 
 
-def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false"):
+def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false", allow_short=False):
     """Input(5 标的) → SignalNode(buy, sell) → Portfolio → Execution"""
     return {
         "id": strategy_id,
@@ -1391,12 +1391,13 @@ def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false"):
              "data": {"label": "信号", "nodeType": "signal",
                       "params": {"code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
                                  "type": {"value": "股票", "type": "select"},
-                                 "allowShort": {"value": False, "type": "boolean"},
+                                 "allowShort": {"value": allow_short, "type": "boolean"},
                                  "buy": {"value": buy_expr, "type": "text"},
                                  "sell": {"value": sell_expr, "type": "text"}}}},
             {"id": "3", "type": "custom",
              "data": {"label": "组合", "nodeType": "portfolio",
-                      "params": {"positionRatio": {"value": 1.0, "type": "number"}}}},
+                      "params": {"positionRatio": {"value": 1.0, "type": "number"},
+                                 "allowShort": {"value": allow_short, "type": "boolean"}}}},
             {"id": "4", "type": "custom",
              "data": {"label": "执行", "nodeType": "execution",
                       "params": {"commission": {"value": 0.0, "type": "number"},
@@ -1414,8 +1415,8 @@ def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false"):
     }
 
 
-def _signal_logic_backtest(strategy_id, buy_expr, sell_expr="false", headers=None):
-    strategy = _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr)
+def _signal_logic_backtest(strategy_id, buy_expr, sell_expr="false", headers=None, allow_short=False):
+    strategy = _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr, allow_short=allow_short)
     r = requests.post(f"{BASE_URL}/backtest",
                       json={"script": json.dumps(strategy), "validate": False},
                       headers=headers, verify=VERIFY_SSL, timeout=1800)
@@ -1514,7 +1515,7 @@ class TestSignalLogicAndOr:
         resp = _signal_logic_backtest("l4_or_left_true",
                                      "false",
                                      "(close[t-1] <= 60) or !topk(close, 3)",
-                                     headers=signal_headers)
+                                     headers=signal_headers, allow_short=True)
         assert resp["status"] == "ok", resp.get("error")
         sell_count = resp["result"]["summary"]["sell_count"]
         assert sell_count >= 2, (
@@ -1538,7 +1539,7 @@ class TestSignalLogicAndOr:
         resp = _signal_logic_backtest("l6_or_right_true",
                                      "false",
                                      "(close[t-1] >= 200) or !topk(close, 3)",
-                                     headers=signal_headers)
+                                     headers=signal_headers, allow_short=True)
         assert resp["status"] == "ok", resp.get("error")
         sell_count = resp["result"]["summary"]["sell_count"]
         assert sell_count >= 2, (
