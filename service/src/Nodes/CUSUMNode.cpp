@@ -28,6 +28,7 @@ bool CUSUMNode::Init(const nlohmann::json& config) {
         if (p.contains("sigma")) _config._sigma = (double)p["sigma"]["value"];
         if (p.contains("cooldown")) _cooldownDays = (int)p["cooldown"]["value"];
         if (p.contains("consensus_threshold")) _consensusThreshold = (int)p["consensus_threshold"]["value"];
+        if (p.contains("calibrate_period")) _config._calibratePeriod = (size_t)(int)p["calibrate_period"]["value"];
     }
 
     // 从输入节点获取输入数据名
@@ -290,5 +291,7 @@ const nlohmann::json CUSUMNode::getParams() {
         {"consensus_threshold", {{"type", "number"}, {"default", 2}, {"min", 1}, {"max", 20},
                                   {"dependsOn", "mode"}, {"dependsValue", "consensus"},
                                   {"description", "共识触发最少资产数"}}},
+        {"calibrate_period", {{"type", "number"}, {"default", 30}, {"min", 0}, {"max", 252},
+                               {"description", "校准期 T：用前 T 个返回值的 mean/std 校准 mu/sigma（0=不校准，用 config 值）"}}},
     };
 }

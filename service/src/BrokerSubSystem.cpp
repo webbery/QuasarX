@@ -591,6 +591,10 @@ void BrokerSubSystem::run() {
         while (!_order_queue.empty()) {
             OrderContext* ctx = nullptr;
             if (_order_queue.pop(ctx)) {
+                // 防御：回测模式 OrderContext 由 BacktestContext 持有，不应由 Broker 工作线程处理
+                if (ctx->_running_type == static_cast<uint8_t>(RuningType::Backtest)) {
+                    continue;
+                }
                 contexts.push_back(ctx);
             }
         }
@@ -822,8 +826,13 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
                          _server->GetRunningMode());
     ctx->_callback = cb;
     auto id = AddOrderAsync(run_id, ctx);
-    _order_queue.push(ctx);
-    _cv.notify_all();
+    
+    // 回测模式：OrderContext 由 BacktestContext 通过 _orderReports 持有并释放
+    // 不入 _order_queue，避免 Broker 工作线程与 matchOrders 竞态 (use-after-free)
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        _order_queue.push(ctx);
+        _cv.notify_all();
+    }
     return id;
 }
 

@@ -15,6 +15,7 @@
         "test_capital_risk",
         "test_volatility",
         "test_cusum_api",
+        "test_cusum_calibrate",
         "test_macro",
         "test_quote_finance",
         "test_node_unit",

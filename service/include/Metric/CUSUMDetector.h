@@ -17,6 +17,7 @@ struct CUSUMConfig {
     double _lambda = 0.5;                // 容许偏差倍数 (k = lambda * sigma)
     double _threshold_multiplier = 4.0;  // 阈值倍数 (h = threshold_multiplier * sigma * sqrt(N))
     size_t _min_obs = 30;                // 最少观测数，低于此值不触发变点
+    size_t _calibratePeriod = 30;        // 校准期：用前 T 个值计算 mu/sigma（0=不校准，用config值）
 };
 
 /**
@@ -78,6 +79,11 @@ public:
      */
     void reset();
 
+    /**
+     * @brief 用前 T 个返回值校准 mu/sigma（与 Python calibrate 对齐）
+     */
+    void calibrate(const std::vector<double>& returns);
+
     // === 只读访问器 ===
     bool has_change_point() const { return _last_result._change_point; }
     size_t get_total_change_points() const { return _total_change_points; }
@@ -92,12 +98,17 @@ public:
 
 private:
     double compute_threshold() const;
+    void _step(double ret);
 
     CUSUMConfig _config;
     CUSUMStepResult _last_result;
     double _s_pos = 0.0;
     double _s_neg = 0.0;
     size_t _count = 0;
+
+    // 自适应校准状态
+    std::vector<double> _calibBuffer;
+    bool _calibrated = false;
 
     // 累计统计
     size_t _total_change_points = 0;

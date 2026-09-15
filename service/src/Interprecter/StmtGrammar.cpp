@@ -169,7 +169,7 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>>& arithm
     {'/', [](const context_t& left, const context_t& right) {
         double r = ctxToDoubleArith(right);
         if (std::abs(r) < 1e-10 || std::isnan(r)) {
-            WARN("Division by zero / NaN detected for symbol: {}", r);
+            // WARN("Division by zero / NaN detected for symbol: {}", r);
             return std::nan("nan");
         } else { [[likely]]
             return ctxToDoubleArith(left) / r;

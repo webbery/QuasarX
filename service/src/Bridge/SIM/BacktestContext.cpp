@@ -25,6 +25,14 @@ BacktestContext::~BacktestContext() {
         }
         _orderQueues.clear();
     }
+    // 清理 OrderContext（回测模式由 BacktestContext 持有所有权）
+    {
+        std::lock_guard<std::mutex> lock(_orderReportMtx);
+        for (auto& item : _orderReports) {
+            delete item.second;
+        }
+        _orderReports.clear();
+    }
 }
 
 uint32_t BacktestContext::getCurIndex(symbol_t symbol) const {

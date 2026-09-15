@@ -11,16 +11,58 @@ CUSUMDetector::CUSUMDetector(CUSUMConfig config)
 CUSUMStepResult CUSUMDetector::update(double new_return) {
     ++_count;
 
+    // 自适应校准：累积 calibratePeriod 个数据后校准 mu/sigma
+    if (_config._calibratePeriod > 0 && !_calibrated) {
+        _calibBuffer.push_back(new_return);
+        if (_calibBuffer.size() >= _config._calibratePeriod) {
+            calibrate(_calibBuffer);
+            // 校准后重喂历史数据（在 clear 之前）
+            for (double r : _calibBuffer) {
+                _step(r);
+            }
+            _calibBuffer.clear();
+        }
+        // 校准期内不触发变点，返回零值
+        _last_result = {false, _count - 1, _s_pos, _s_neg, _s_pos - _s_neg};
+        return _last_result;
+    }
+
+    _step(new_return);
+    return _last_result;
+}
+
+void CUSUMDetector::calibrate(const std::vector<double>& returns) {
+    if (returns.empty()) return;
+    double sum = 0.0;
+    for (double r : returns) sum += r;
+    double mean = sum / returns.size();
+
+    double sq_sum = 0.0;
+    for (double r : returns) sq_sum += (r - mean) * (r - mean);
+    double sigma = std::sqrt(sq_sum / returns.size());
+    if (sigma < 1e-10) sigma = 1e-10;
+
+    _config._mu = mean;
+    _config._sigma = sigma;
+    _calibrated = true;
+
+    // 重置累积状态
+    _s_pos = 0.0;
+    _s_neg = 0.0;
+    _max_drift = 0.0;
+    _total_change_points = 0;
+    _last_change_index = 0;
+}
+
+void CUSUMDetector::_step(double new_return) {
     // 最少观测数保护：初期不触发变点
     if (_count < _config._min_obs) {
-        _last_result = {
-            false,
-            _count - 1,
-            _s_pos,
-            _s_neg,
-            _s_pos - _s_neg
-        };
-        return _last_result;
+        double k = _config._lambda * _config._sigma;
+        double drift = new_return - _config._mu;
+        _s_pos = std::max(0.0, _s_pos + drift - k);
+        _s_neg = std::max(0.0, _s_neg - drift - k);
+        _last_result = {false, _count - 1, _s_pos, _s_neg, _s_pos - _s_neg};
+        return;
     }
 
     double k = _config._lambda * _config._sigma;
@@ -51,8 +93,6 @@ CUSUMStepResult CUSUMDetector::update(double new_return) {
         _s_neg,
         _s_pos - _s_neg
     };
-
-    return _last_result;
 }
 
 CUSUMResult CUSUMDetector::detect_batch(const std::vector<double>& returns) {
@@ -82,6 +122,8 @@ void CUSUMDetector::reset() {
     _max_drift = 0.0;
     _last_change_index = 0;
     _last_result = {};
+    _calibBuffer.clear();
+    _calibrated = false;
 }
 
 double CUSUMDetector::compute_threshold() const {
