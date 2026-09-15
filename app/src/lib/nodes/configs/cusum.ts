@@ -37,13 +37,15 @@ export const cusumNode: NodeRegistryEntry = {
       description: '预期收益率均值，通常取 0 或训练期均值' },
     { key: 'sigma', label: '预期波动率 σ', type: 'number', default: 1, min: 0.01, step: 0.01,
       description: '预期收益率波动率，用于计算 k 和 h 阈值' },
+    { key: 'calibrate_period', label: '校准期', type: 'number', default: 0, min: 0, max: 252,
+      description: '用前 N 个值重新估计 μ/σ（0=不校准，直接使用上方 μ/σ）。设为 0 时 mu/sigma 由用户指定或取全序列均值' },
     { key: 'cooldown', label: '冷却天数', type: 'number', default: 0, min: 0, max: 60,
       description: '触发后暂停检测的天数，0 表示不冷却' },
     { key: 'consensus_threshold', label: '共识阈值', type: 'number', default: 2, min: 1, max: 20,
       dependsOn: 'mode', dependsValue: 'consensus',
       description: 'Consensus 模式：最少多少个资产同向触发才输出全局信号' },
   ],
-  example: { mode: 'momentum', lambda: 0.5, threshold_multiplier: 4.0, min_obs: 30 }
+  example: { mode: 'momentum', lambda: 0.5, threshold_multiplier: 4.0, min_obs: 30, calibrate_period: 0 }
 }
 
 registerNode(cusumNode)

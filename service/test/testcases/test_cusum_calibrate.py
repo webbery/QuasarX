@@ -113,6 +113,7 @@ def compute_returns(prices):
 def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str):
     """Input → Return(1) → CUSUM(calibrate_period=T) → Debug"""
     return {
+        "id": f"test_cusum_cal_{calibrate_period}",
         "name": f"test_cusum_cal_{calibrate_period}",
         "nodes": [
             {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},

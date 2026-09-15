@@ -42,6 +42,8 @@
           <input type="number" v-model.number="threshold" class="select-small" step="0.5" min="1.0" max="10.0" />
           <span class="param-label">min_obs</span>
           <input type="number" v-model.number="minObs" class="select-small" step="5" min="10" max="100" />
+          <span class="param-label">校准期</span>
+          <input type="number" v-model.number="calibratePeriod" class="select-small" step="5" min="0" max="252" title="用前 N 个值重新估计 μ/σ，0=不校准" />
         </div>
 
         <div class="control-group">
@@ -312,6 +314,7 @@ initDateRangeFromQuickRange()
 const lambda = ref(0.5)
 const threshold = ref(4.0)
 const minObs = ref(30)
+const calibratePeriod = ref(0)
 const modes = reactive({
   mean: true,
   variance: true,
@@ -424,6 +427,7 @@ async function runAnalysis() {
       lambda: lambda.value,
       threshold_multiplier: threshold.value,
       min_obs: minObs.value,
+      calibrate_period: calibratePeriod.value,
       modes: activeModes,
       freq: '1d',
     }

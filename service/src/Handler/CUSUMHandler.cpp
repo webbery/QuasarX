@@ -122,6 +122,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         double threshold_multiplier = body.value("threshold_multiplier", 4.0);
         size_t min_obs = body.value("min_obs", 30);
         double ewma_decay = body.value("ewma_decay", 0.94);
+        size_t calibrate_period = body.value("calibrate_period", (size_t)0);
 
         // 解析频率
         BarFreq target_freq = BarFreq::Day;
@@ -246,6 +247,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     ._lambda = lambda,
                     ._threshold_multiplier = threshold_multiplier,
                     ._min_obs = min_obs,
+                    ._calibratePeriod = calibrate_period,
                 });
                 auto cusum_result = mean_detector.detect_batch(standardized_rets);
 
@@ -293,6 +295,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     ._lambda = lambda,
                     ._threshold_multiplier = threshold_multiplier,
                     ._min_obs = min_obs,
+                    ._calibratePeriod = calibrate_period,
                 });
                 auto cusum_result = var_detector.detect_batch(sq_rets);
 

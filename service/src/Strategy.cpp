@@ -122,7 +122,7 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
     List<QNode*> graph;
     auto& nodes = content["nodes"];
     auto& edges = content["edges"];
-    String strategyName = content["id"];
+    String strategyName = content.value("id", "unknown");
     Map<uint32_t, QNode*> nodeMap;
     Map<uint32_t, nlohmann::json> nodeConfigMap;
     for (auto& node: nodes) {

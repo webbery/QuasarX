@@ -17,7 +17,7 @@ struct CUSUMConfig {
     double _lambda = 0.5;                // 容许偏差倍数 (k = lambda * sigma)
     double _threshold_multiplier = 4.0;  // 阈值倍数 (h = threshold_multiplier * sigma * sqrt(N))
     size_t _min_obs = 30;                // 最少观测数，低于此值不触发变点
-    size_t _calibratePeriod = 30;        // 校准期：用前 T 个值计算 mu/sigma（0=不校准，用config值）
+    size_t _calibratePeriod = 0;         // 校准期：用前 T 个值计算 mu/sigma（0=不校准，用config值）
 };
 
 /**
