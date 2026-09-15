@@ -17,6 +17,7 @@
 #define INTRINSIC_ZSCORE    "zscore"
 #define INTRINSIC_PERCENTILE "pct"
 #define INTRINSIC_CS_COUNT  "cs_count"
+#define INTRINSIC_CS_SIZE   "cs_size"
 
 // 声明命名空间中的外部符号
 extern bool check_bool(const context_t& feature);
@@ -87,7 +88,8 @@ CrossSectionFuncType FormulaParser::getFuncType(const String& name) {
         {INTRINSIC_RANK, CrossSectionFuncType::RANK},
         {INTRINSIC_ZSCORE, CrossSectionFuncType::ZSCORE},
         {INTRINSIC_PERCENTILE, CrossSectionFuncType::PERCENTILE},
-        {INTRINSIC_CS_COUNT, CrossSectionFuncType::CS_COUNT}
+        {INTRINSIC_CS_COUNT, CrossSectionFuncType::CS_COUNT},
+        {INTRINSIC_CS_SIZE, CrossSectionFuncType::CS_SIZE}
     };
 
     auto it = typeMap.find(name);
@@ -102,6 +104,7 @@ bool FormulaParser::isCrossSectionFunction(const String& funName) {
         INTRINSIC_ZSCORE,
         INTRINSIC_PERCENTILE,
         INTRINSIC_CS_COUNT,
+        INTRINSIC_CS_SIZE,
     };
     return crossFuncs.count(funName);
 }
@@ -194,8 +197,8 @@ std::string FormulaParser::extractAndBuildGraph(const peg::Ast& node, int& count
             }
         }
 
-        // 注册变量名到节点 ID 的映射
-        _varToNodeId[funcName] = nodeId;
+        // 注册 AST 节点地址到节点 ID 的映射（每个 FunctionCall 地址唯一）
+        _csAstNodeToId[&node] = nodeId;
         return nodeId;
     }
     else {
@@ -210,7 +213,7 @@ std::string FormulaParser::extractAndBuildGraph(const peg::Ast& node, int& count
 // 从 AST 构建图
 void FormulaParser::buildCrossSectionGraph(const peg::Ast& ast) {
     _csGraph.clear();
-    _varToNodeId.clear();
+    _csAstNodeToId.clear();
 
     int nodeCounter = 0;
     extractAndBuildGraph(ast, nodeCounter);
@@ -396,6 +399,15 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         break;
     }
 
+    case CrossSectionFuncType::CS_SIZE: {
+        // cs_size(): 返回标的总数（所有标的输出相同值）
+        double sz = static_cast<double>(symbols.size());
+        for (auto& [sym, score] : scores) {
+            node.outputs[sym] = sz;
+        }
+        break;
+    }
+
     default:
     case CrossSectionFuncType::RAW: {
         // RAW：直接输出分数
@@ -484,11 +496,11 @@ List<Pair<symbol_t, TradeAction>> FormulaParser::envokeMixedCase(const Vector<sy
         static int dbgCounter = 0;
         if (++dbgCounter % 100 == 1) {  // 每 100 次 envoke 打一次（约每 100 个 epoch）
             INFO("[DEBUG D] === BUY parser envoke #{} ===", dbgCounter);
-            for (auto& [varName, nodeId] : _varToNodeId) {
+            for (auto& [astAddr, nodeId] : _csAstNodeToId) {
                 auto it = _csGraph.nodes.find(nodeId);
                 if (it == _csGraph.nodes.end()) continue;
                 INFO("[DEBUG D]   node={} ({}) computed={} outputs.size={}",
-                     varName, nodeId, it->second.computed, it->second.outputs.size());
+                     it->second.name, nodeId, it->second.computed, it->second.outputs.size());
                 int nTrue = 0, nFalse = 0;
                 for (auto& [sym, val] : it->second.outputs) {
                     if (std::holds_alternative<bool>(val)) {

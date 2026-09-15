@@ -40,6 +40,7 @@ enum class CrossSectionFuncType {
     ZSCORE,         // zscore(expr) - 标准化
     PERCENTILE,     // percentile(expr, p) - 分位数
     CS_COUNT,       // cs_count(expr, sign) - 跨标的计数 (>0/<0/==0 的标的数)
+    CS_SIZE,        // cs_size() - 返回标的总数
     RAW             // 原始分数透传
 };
 
@@ -206,8 +207,9 @@ private:
     Server* _server;
     TradeAction _default;
 
-    // 变量名 -> 截面节点 ID 映射（用于查找）
-    Map<String, String> _varToNodeId;
+    // AST FunctionCall 节点地址 → 截面节点 ID 映射
+    // 每个 FunctionCall AST 节点地址唯一，天然区分同名函数的不同调用
+    std::map<const void*, String> _csAstNodeToId;
 
     // 截面函数图
     CrossSectionGraph _csGraph;

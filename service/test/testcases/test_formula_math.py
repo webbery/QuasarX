@@ -1555,3 +1555,82 @@ class TestSignalLogicAndOr:
         assert resp["result"]["summary"]["buy_count"] >= 3, (
             f"topk_only: 期望 BUY>=3, 实际 {resp['result']['summary']['buy_count']}"
         )
+
+
+class TestCSFunctionSameNameCollision:
+    """同名 CS 函数多次调用（不同参数）应解析到不同节点
+
+    Bug（2026-09-15 修复）：_varToNodeId 按函数名映射，cs_count(x,1) 和
+    cs_count(x,-1) 冲突——两者都解析到最后一个创建的节点，返回相同值。
+    修复后用 AST 地址映射（_csAstNodeToId），每个调用独立。
+
+    新增 cs_size() 截面函数：返回标的总数，用于一致性公式分母。
+
+    数据（5 标的，close 恒定）：
+    - sz.900010: ~100, sz.900011: ~95, sz.900012: ~90  → close >= 80 = true (3个)
+    - sz.900013: ~50,  sz.900014: ~40                   → close >= 80 = false (2个)
+
+    cs_count(close - 80, 1) = 3   cs_count(close - 80, -1) = 2   cs_size() = 5
+    """
+
+    def test_cs_count_different_args_independent(self, signal_headers):
+        """cs_count(x, 1) 和 cs_count(x, -1) 应返回不同值
+
+        公式: max(cs_count(close-80, 1), cs_count(close-80, -1)) / cs_size() >= 0.6
+        正确: max(3,2)/5 = 0.6 >= 0.6 → true → topk 选 3 个 BUY
+        冲突: 若两者都返回同一值 → max(N,N)/5 = N/5
+          N=2 → 0.4 < 0.6 → 无 BUY（错误）
+          N=3 → 0.6 >= 0.6 → 碰巧正确但语义错误
+        """
+        resp = _signal_logic_backtest(
+            "cs_collision_consistency",
+            "(max(cs_count(close - 80, 1), cs_count(close - 80, -1)) / cs_size()) >= 0.6 and topk(close, 3)",
+            headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        buy_count = resp["result"]["summary"]["buy_count"]
+        assert buy_count >= 3, (
+            f"同名 CS 函数冲突检测: 期望 BUY>=3 (max(3,2)/5=0.6 通过 + topk 3), "
+            f"实际 buy_count={buy_count}。"
+            f"若=0 说明 cs_count(x,1) 和 cs_count(x,-1) 返回相同值（冲突未修复）。"
+        )
+
+    def test_cs_size_returns_total_symbols(self, signal_headers):
+        """cs_size() 应返回标的总数 5
+
+        公式: cs_count(close-80, 1) / cs_size() >= 0.6
+        3/5 = 0.6 >= 0.6 → true → 全部 BUY（无 topk 约束）
+        """
+        resp = _signal_logic_backtest(
+            "cs_size_basic",
+            "cs_count(close - 80, 1) / cs_size() >= 0.6",
+            headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        buy_count = resp["result"]["summary"]["buy_count"]
+        assert buy_count == 5, (
+            f"cs_size 基本测试: 3/5=0.6>=0.6 应全部 BUY, "
+            f"实际 buy_count={buy_count}。"
+        )
+
+    def test_cs_size_distinguishes_from_cs_count_sum(self, signal_headers):
+        """cs_size() 与 cs_count(1)+cs_count(-1) 应不同（当有零值时）
+
+        公式: cs_count(close - 90, 1) + cs_count(close - 90, -1) vs cs_size()
+        close-90: 100-90=+10, 95-90=+5, 90-90=0, 50-90=-40, 40-90=-50
+        cs_count(1)=2, cs_count(-1)=2, cs_count(0)=1
+        cs_count(1)+cs_count(-1) = 4, cs_size() = 5
+
+        用 cs_size 做分母: max(2,2)/5 = 0.4 < 0.5 → 无 BUY
+        用 sum 做分母:    max(2,2)/4 = 0.5 >= 0.5 → BUY（错误，忽略了零值标的）
+        """
+        resp = _signal_logic_backtest(
+            "cs_size_vs_sum",
+            "(max(cs_count(close - 90, 1), cs_count(close - 90, -1)) / cs_size()) >= 0.5 and topk(close, 3)",
+            headers=signal_headers)
+        assert resp["status"] == "ok", resp.get("error")
+        buy_count = resp["result"]["summary"]["buy_count"]
+        # max(2,2)/5 = 0.4 < 0.5 → false → 无 BUY
+        assert buy_count == 0, (
+            f"cs_size vs sum 区分测试: max(2,2)/5=0.4<0.5 应无 BUY, "
+            f"实际 buy_count={buy_count}。"
+            f"若>0 说明分母用了 cs_count(1)+cs_count(-1)=4 而非 cs_size()=5。"
+        )

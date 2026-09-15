@@ -38,16 +38,7 @@ context_t FormulaParser::evalBoolLiteral(const symbol_t& symbol, const peg::Ast&
 context_t FormulaParser::evalIdentifier(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
     String token(ast.token);
 
-    // 检查是否是截面函数调用
-    if (_varToNodeId.count(token)) {
-        String nodeId = _varToNodeId[token];
-        auto it = _csGraph.nodes.find(nodeId);
-        if (it != _csGraph.nodes.end() && it->second.computed && it->second.outputs.count(symbol)) {
-            return it->second.outputs.at(symbol);
-        }
-    }
-
-    // 原有逻辑
+    // 原有逻辑：从 context 查找变量
     auto name = get_symbol(symbol);
     auto key = name + "." + to_utf8(String(ast.token));
     if (context.exist(key)) {
@@ -561,13 +552,14 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
         }
     }
 
-    // 如果是截面函数，在 envokeMixedCase 中已经预计算，直接从 context 读取
+    // 如果是截面函数，在 envokeMixedCase 中已经预计算，直接从 CS 图读取
+    // 用 AST 节点地址精确查找（区分同名函数的不同调用）
     if (isCrossSectionFunction(funcName)) {
-        if (_varToNodeId.count(funcName)) {
-            String nodeId = _varToNodeId[funcName];
-            auto it = _csGraph.nodes.find(nodeId);
-            if (it != _csGraph.nodes.end() && it->second.computed && it->second.outputs.count(symbol)) {
-                return it->second.outputs.at(symbol);
+        auto csIt = _csAstNodeToId.find(&ast);
+        if (csIt != _csAstNodeToId.end()) {
+            auto& csNode = _csGraph.nodes.at(csIt->second);
+            if (csNode.computed && csNode.outputs.count(symbol)) {
+                return csNode.outputs.at(symbol);
             }
         }
         return false;
