@@ -33,6 +33,12 @@ BacktestContext::~BacktestContext() {
         }
         _orderReports.clear();
     }
+    // 归还本上下文建立的 CapitalPool 注册（长生命周期策略的注册不属于本上下文）
+    if (_capitalReserved && _capitalPool) {
+        double reclaimed = _capitalPool->reclaim(_strategyNameForCapital);
+        INFO("[BacktestContext] Reclaimed {:.0f} capital for strategy '{}' (runId={})",
+             reclaimed, _strategyNameForCapital, _runId);
+    }
 }
 
 uint32_t BacktestContext::getCurIndex(symbol_t symbol) const {

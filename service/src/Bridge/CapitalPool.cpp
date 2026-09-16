@@ -53,15 +53,19 @@ bool CapitalPool::allocate(const String& strategy, double requested) {
 
 double CapitalPool::reclaim(const String& strategy) {
     std::lock_guard<std::mutex> lock(_mutex);
-    
+
     auto it = _strategies.find(strategy);
     if (it == _strategies.end()) {
         return 0.0;
     }
-    
+
+    // 只置为非活跃，不移除 entry、不清零 available：
+    //   hasStrategy() 之后仍返回 true，故 DeleteStrategy→InitStrategy 路径不会再 allocate，
+    //   而是直接沿用这里的 available 作为本次回测的工作资金（原有行为，勿改）。
+    //   重复调用安全：active 已为 false 时再置一次无副作用。
     double reclaimed = it->second.available;
     it->second.active = false;
-    
+
     return reclaimed;
 }
 

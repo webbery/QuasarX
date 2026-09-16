@@ -51,6 +51,10 @@ public:
     // 资金管理（委托给 CapitalPool）
     void setCapitalPool(CapitalPool* pool) { _capitalPool = pool; }
     void setStrategyName(const String& name) { _strategyNameForCapital = name; }
+    // 标记本上下文是否为该策略在 CapitalPool 中建立了注册。
+    // true 时析构自动归还；由 InitStrategy/长生命周期策略持有的注册必须保持 false，
+    // 否则一次回测结束会把策略的资金注册一起注销掉。
+    void setCapitalReserved(bool reserved) { _capitalReserved = reserved; }
     double getCapital() const;
     double getAvailableFunds() const;
     void setCapital(double capital);  // 初始化策略资金
@@ -225,6 +229,7 @@ private:
     // 资金管理（委托给 CapitalPool，不拥有）
     CapitalPool* _capitalPool = nullptr;
     String _strategyNameForCapital;  // 用于 CapitalPool 查询的策略名
+    bool _capitalReserved = false;   // true：该策略的资金注册由本上下文建立，析构时归还
     double _initialCapital = 0.0;    // 策略初始资金（从 CapitalPool 分配）
 
     // 当前 Bar 的报价（每个线程私有，无需锁）

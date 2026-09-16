@@ -23,6 +23,39 @@
 
 namespace {
 
+// 资金注册作用域守卫。
+// 回测入口在创建回测上下文之前就先向资金池申请资金，而这两步之间还有图验证、
+// 策略初始化等多个可能提前 return 的校验；任何一个提前返回都会让资金被永久占用。
+// 用法：allocate 成功后 arm()，所有权交给回测上下文后 dismiss()。
+class CapitalScopeGuard {
+public:
+    CapitalScopeGuard() = default;
+    ~CapitalScopeGuard() {
+        if (_owned && _pool) {
+            double reclaimed = _pool->reclaim(_strategy);
+            INFO("[Backtest] Released {:.0f} capital for '{}' (aborted before context creation)",
+                 reclaimed, _strategy);
+        }
+    }
+    CapitalScopeGuard(const CapitalScopeGuard&) = delete;
+    CapitalScopeGuard& operator=(const CapitalScopeGuard&) = delete;
+
+    // 接管一笔已 allocate 成功的资金注册，作用域退出时归还
+    void arm(CapitalPool* pool, const String& strategy) {
+        _pool = pool;
+        _strategy = strategy;
+        _owned = true;
+    }
+
+    // 所有权已移交给回测上下文（BacktestContext 析构时归还），本守卫不再处理
+    void dismiss() { _owned = false; }
+
+private:
+    CapitalPool* _pool = nullptr;
+    String _strategy;
+    bool _owned = false;
+};
+
 // 特征计算节点类型集合（快速模式下会被 CacheFeatureNode 替换）
 const Set<String> FEATURE_NODE_TYPES = {
     "emd", "cusum", "function", "formula", "breakout", "hmm"
@@ -243,6 +276,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 从资金池分配资金
     auto* broker = _server->GetBrokerSubSystem();
     auto* pool = broker ? broker->GetCapitalPool() : nullptr;
+    CapitalScopeGuard capitalGuard;
     if (pool) {
         if (!pool->allocate(strategyName, strategyCapital)) {
             res.status = 400;
@@ -251,6 +285,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             return;
         }
         strategyCapital = pool->get(strategyName).allocated;
+        capitalGuard.arm(pool, strategyName);
         INFO("[Backtest] Capital allocated to {}: {:.0f}", strategyName, strategyCapital);
     }
 
@@ -341,8 +376,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     // 使用 ExchangeManager 创建多 Exchange 回测上下文
     double initialCapital = strategyCapital > 0 ? strategyCapital : BACKTEST_INITIAL_CAPITAL;
     INFO("[Backtest] CreateMultiContext (capital={:.0f})...", initialCapital); fflush(stdout);
-    run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital);
+    run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital,
+                                                     /*ownsCapital=*/true);
     INFO("[Backtest] CreateMultiContext done, runId={}", runId); fflush(stdout);
+    // 主上下文已接管资金注册，由其析构时归还；守卫不再负责（runId==0 表示没有创建上下文）
+    if (runId != 0) {
+        capitalGuard.dismiss();
+    }
 
     // 发送进度 (带 run_id)
     SendSSE(sse_sock, "backtest_progress", {{"strategy", strategyName}, {"run_id", std::to_string(runId)}, {"progress", "0.000000"}, {"message", "开始执行回测"}});
@@ -391,11 +431,7 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
     
-    // 回收策略资金
-    if (pool) {
-        double reclaimed = pool->reclaim(strategyName);
-        INFO("[Backtest] Reclaimed {:.0f} from strategy {}", reclaimed, strategyName);
-    }
+    // 策略资金由回测上下文析构时自动归还，此处不再显式回收
 
     INFO("[Backtest][RSS] after backtest loop: {:.1f} MB", getProcessRSS());
 

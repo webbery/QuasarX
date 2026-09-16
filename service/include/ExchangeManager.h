@@ -253,11 +253,15 @@ public:
 
     /**
      * @brief 创建回测上下文，根据标的类型分配到对应 Exchange
+     * @param ownsCapital true 表示该策略在 CapitalPool 的资金注册由本次回测建立，
+     *        所有权交给主上下文，由其析构时归还（一次性回测用）；
+     *        长生命周期策略（InitStrategy 已注册）必须传 false。
      * @return 主 Exchange 分配的 runId
      */
     run_id_t CreateMultiContext(const String& strategy,
                                  const Set<symbol_t>& symbols,
-                                 double initialCapital);
+                                 double initialCapital,
+                                 bool ownsCapital = false);
 
     /**
      * @brief 汇总所有历史回测 Exchange 的可用资金

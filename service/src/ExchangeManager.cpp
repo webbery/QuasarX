@@ -813,7 +813,8 @@ bool ExchangeManager::StepAllHistoryExchanges(run_id_t runId) {
 
 run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
                                               const Set<symbol_t>& symbols,
-                                              double initialCapital) {
+                                              double initialCapital,
+                                              bool ownsCapital) {
     // 按标的类型分组
     Set<symbol_t> stockSymbols, etfSymbols, optionSymbols;
     for (auto sym : symbols) {
@@ -828,6 +829,9 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
 
     // 主 Exchange 分配 runId
     run_id_t mainRunId = 0;
+    // 主上下文（ownsCapital 时接收资金注册所有权）。注意各 Exchange 的 runId
+    // 计数器互相独立，同一 runId 可能命中多个 Exchange，因此只能在此处按创建顺序确定。
+    BacktestContext* capitalOwner = nullptr;
 
     // 创建股票回测上下文
     if (!stockSymbols.empty()) {
@@ -836,6 +840,7 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
             auto* stockExch = dynamic_cast<HistorySimulationBase*>(itr->second);
             if (stockExch) {
                 mainRunId = stockExch->createBacktestContext(strategy, stockSymbols, initialCapital);
+                capitalOwner = stockExch->getBacktestContext(mainRunId);
             }
         }
     }
@@ -851,6 +856,7 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
                 if (mainRunId == 0) {
                     // 如果没有股票标的，以 ETF 的 runId 为主 runId
                     mainRunId = etfRunId;
+                    capitalOwner = etfExch->getBacktestContext(etfRunId);
                 }
             }
         }
@@ -865,9 +871,15 @@ run_id_t ExchangeManager::CreateMultiContext(const String& strategy,
                 run_id_t optRunId = optExch->createBacktestContext(strategy, optionSymbols, initialCapital);
                 if (mainRunId == 0) {
                     mainRunId = optRunId;
+                    capitalOwner = optExch->getBacktestContext(optRunId);
                 }
             }
         }
+    }
+
+    // 资金注册所有权移交给主上下文，由其析构时自动归还
+    if (ownsCapital && capitalOwner) {
+        capitalOwner->setCapitalReserved(true);
     }
 
     return mainRunId;

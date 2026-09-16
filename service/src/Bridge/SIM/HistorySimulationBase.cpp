@@ -384,7 +384,13 @@ run_id_t HistorySimulationBase::createBacktestContext(
         auto mode = _server->GetRunningMode();
         if ((mode == RuningType::Backtest || mode == RuningType::Simualtion)
             && pool && !pool->hasStrategy(strategy_name)) {
-            pool->allocate(strategy_name, initial_capital);
+            // 注册由本次调用建立 → 归属本上下文，析构时自动归还（RAII）
+            if (pool->allocate(strategy_name, initial_capital)) {
+                context->setCapitalReserved(true);
+            } else {
+                WARN("[createBacktestContext] Failed to allocate {:.0f} capital for '{}'",
+                     initial_capital, strategy_name);
+            }
         }
     }
 

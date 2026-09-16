@@ -139,7 +139,10 @@ void CapacityHandler::post(const httplib::Request& req, httplib::Response& res) 
 
     auto symbols = strategySys->GetPools(strategyName);
     double initialCapital = BACKTEST_INITIAL_CAPITAL;
-    run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital);
+    // 容量分析为一次性运行：该策略在 CapitalPool 的注册（InitStrategy 建立）
+    // 所有权交给回测上下文，由其析构时归还，否则会永久占用资金
+    run_id_t runId = exchangeMgr->CreateMultiContext(strategyName, symbols, initialCapital,
+                                                     /*ownsCapital=*/true);
 
     // 执行回测
     auto* flowSubsystem = strategySys->GetFlowSubsystem();

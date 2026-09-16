@@ -28,8 +28,8 @@ public:
     // 返回 false 表示资金不足
     bool allocate(const String& strategy, double requested);
 
-    // 回收策略资金（策略完全停止时调用）
-    // 返回实际回收的可用资金
+    // 回收策略资金（策略完全停止、或回测上下文析构时调用）
+    // 只把注册置为非活跃：不移除 entry、不清零 available（见 .cpp 中的说明）。重复调用安全。
     double reclaim(const String& strategy);
 
     // 回收所有策略资金（测试隔离 / 服务重置时使用）

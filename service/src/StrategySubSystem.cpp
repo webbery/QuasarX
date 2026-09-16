@@ -608,19 +608,9 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
             time_t todayTs = FromStr(today, "%Y-%m-%d");
             recordDailyPositions(strategy, report.decisions, todayTs);
 
-            // 回收日终执行分配的临时资金（createBacktestContext 分配的 CapitalPool 额度）
-            if (_handle) {
-                auto* broker = _handle->GetBrokerSubSystem();
-                if (broker) {
-                    auto* pool = broker->GetCapitalPool();
-                    if (pool) {
-                        double reclaimed = pool->reclaim(strategy);
-                        if (reclaimed > 0) {
-                            INFO("[DailyExecution] Reclaimed {:.0f} capital from strategy '{}'", reclaimed, strategy);
-                        }
-                    }
-                }
-            }
+            // 日终执行不再回收资金：该策略的 CapitalPool 注册归 InitStrategy 所有（长生命周期），
+            // 回收会注销其注册导致后续 updateAvailable 静默失效、资金永远扣不下来。
+            // 若注册确由本次执行的临时上下文建立，BacktestContext 析构时会自动归还。
 
             // 收集错误 + 检查是否全部完成，统一发送通知
             std::lock_guard<std::mutex> lock(_dailyMtx);
