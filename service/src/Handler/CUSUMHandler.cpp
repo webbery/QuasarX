@@ -120,6 +120,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
         auto modes = body["modes"].get<std::vector<String>>();
         double lambda = body.value("lambda", 0.5);
         double threshold_multiplier = body.value("threshold_multiplier", 4.0);
+        double threshold_cap = body.value("threshold_cap", 10.0);
         size_t min_obs = body.value("min_obs", 30);
         double ewma_decay = body.value("ewma_decay", 0.94);
         size_t calibrate_period = body.value("calibrate_period", (size_t)0);
@@ -246,6 +247,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     ._sigma = 1.0,  // 标准化后 sigma ≈ 1
                     ._lambda = lambda,
                     ._threshold_multiplier = threshold_multiplier,
+                    ._threshold_cap = threshold_cap,
                     ._min_obs = min_obs,
                     ._calibratePeriod = calibrate_period,
                 });
@@ -264,7 +266,10 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     }
                 }
                 sym_json["change_points"] = change_points;
-                sym_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma;
+                sym_json["threshold"] = mean_detector.get_config()._threshold_multiplier * mean_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
+                if (mean_detector.get_config()._threshold_cap > 0) {
+                    sym_json["threshold"] = std::min((double)sym_json["threshold"], mean_detector.get_config()._threshold_cap * mean_detector.get_config()._sigma);
+                }
                 per_symbol.push_back(sym_json);
             }
 
@@ -294,6 +299,7 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     ._sigma = sym_sigma_sq,
                     ._lambda = lambda,
                     ._threshold_multiplier = threshold_multiplier,
+                    ._threshold_cap = threshold_cap,
                     ._min_obs = min_obs,
                     ._calibratePeriod = calibrate_period,
                 });
@@ -312,7 +318,10 @@ void CUSUMHandler::post(const httplib::Request& req, httplib::Response& res) {
                     }
                 }
                 sym_json["change_points"] = change_points;
-                sym_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma;
+                sym_json["threshold"] = var_detector.get_config()._threshold_multiplier * var_detector.get_config()._sigma * std::sqrt((double)cusum_result._steps.size());
+                if (var_detector.get_config()._threshold_cap > 0) {
+                    sym_json["threshold"] = std::min((double)sym_json["threshold"], var_detector.get_config()._threshold_cap * var_detector.get_config()._sigma);
+                }
                 per_symbol_var.push_back(sym_json);
             }
 

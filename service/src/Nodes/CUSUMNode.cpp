@@ -29,6 +29,7 @@ bool CUSUMNode::Init(const nlohmann::json& config) {
         if (p.contains("cooldown")) _cooldownDays = (int)p["cooldown"]["value"];
         if (p.contains("consensus_threshold")) _consensusThreshold = (int)p["consensus_threshold"]["value"];
         if (p.contains("calibrate_period")) _config._calibratePeriod = (size_t)(int)p["calibrate_period"]["value"];
+        if (p.contains("threshold_cap")) _config._threshold_cap = (double)p["threshold_cap"]["value"];
     }
 
     // 从输入节点获取输入数据名
@@ -280,6 +281,8 @@ const nlohmann::json CUSUMNode::getParams() {
                      {"description", "容许偏差倍数 k = λ × σ"}}},
         {"threshold_multiplier", {{"type", "number"}, {"default", 4.0}, {"min", 0.5}, {"max", 10.0}, "step", 0.5,
                                    {"description", "阈值倍数 h = threshold × σ × √N"}}},
+        {"threshold_cap", {{"type", "number"}, {"default", 10.0}, {"min", 0.0}, {"max", 100.0}, "step", 1.0,
+                            {"description", "阈值上限 h_max = cap × σ（0=不封顶）"}}},
         {"min_obs", {{"type", "number"}, {"default", 30}, {"min", 5}, {"max", 252},
                       {"description", "最少观测数，低于此值不触发变点"}}},
         {"mu", {{"type", "number"}, {"default", 0.0}, "step", 0.01,

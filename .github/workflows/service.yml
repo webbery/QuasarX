@@ -193,6 +193,14 @@ jobs:
           make -j$(nproc)
           sudo make install
 
+          cd ..
+          git clone --branch fftw-3.3.11 --depth 1 https://github.com/FFTW/fftw3
+          cd fftw3
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF ..
+          make -j$(nproc)
+          sudo make install
+
       # 配置CMake并编译
       - name: Configure and build
         run: |
@@ -231,7 +239,7 @@ jobs:
           echo "=== third_party/libs/unix ==="
           ls -la service/third_party/libs/unix/ || echo "DIR NOT FOUND"
           echo "=== /usr/local/lib ==="
-          ls -la /usr/local/lib/libxgboost.* /usr/local/lib/libduckdb.so* /usr/local/lib/libnng.so* /usr/local/lib/libta_lib.* 2>&1 || true
+          ls -la /usr/local/lib/libxgboost.* /usr/local/lib/libduckdb.so* /usr/local/lib/libnng.so* /usr/local/lib/libta_lib.* /usr/local/lib/libfftw3* 2>&1 || true
 
       - name: Upload runtime libs
         uses: actions/upload-artifact@v4
@@ -242,6 +250,7 @@ jobs:
             /usr/local/lib/libduckdb.so*
             /usr/local/lib/libnng.so*
             /usr/local/lib/libnlopt.so*
+            /usr/local/lib/libfftw3*
             /usr/local/lib/libonnxruntime*
             service/third_party/libs/unix/libfastsptraderapi.so
             service/third_party/libs/unix/libfasttraderapi.so
@@ -298,6 +307,8 @@ jobs:
           sudo cp -f runtime-libs/usr/local/lib/lib*.so /usr/local/lib/ 2>/dev/null || true
           # ONNX Runtime: SONAME 化的版本化文件需单独拷贝并保留符号链接（lib*.so glob 不匹配 lib*.so.1.X.Y）
           sudo cp -Pf runtime-libs/usr/local/lib/libonnxruntime* /usr/local/lib/ 2>/dev/null || true
+          # FFTW: 同理 SOVERSION=3.6.9 生成的 libfftw3.so.3.6.9 需保留符号链接链
+          sudo cp -Pf runtime-libs/usr/local/lib/libfftw3* /usr/local/lib/ 2>/dev/null || true
           # third_party/libs/unix 下的券商/交易 SDK
           sudo cp -f runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so /usr/local/lib/ 2>/dev/null || true
           sudo ls /usr/local/lib
@@ -318,6 +329,7 @@ jobs:
           pip install pytest requests pyyaml \
             numpy pandas scipy matplotlib statsmodels \
             xgboost==3.3.0 PyEMD empyrical-reloaded \
+            vmdpy \
             backtrader
 
       - name: Create TLS certificates

@@ -4,6 +4,7 @@
 #include "Util/finance.h"
 #include "Algorithms/EMD_SIMD.h"
 #include "Algorithms/CEEMDAN.h"
+#include "Algorithms/VMD.h"
 #include "Util/datetime.h"
 #include "server.h"
 #include <sstream>
@@ -101,7 +102,7 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
             return;
         }
 
-        // 执行 EMD 或 CEEMDAN 分解
+        // 执行 EMD / CEEMDAN / VMD 分解
         nlohmann::json info_json = nlohmann::json::array();
         if (method == "ceemdan") {
             CEEMDAN ceemdan;
@@ -129,6 +130,48 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
             json["residual"] = result.residual;
             json["imf_info"] = info_json;
             json["reconstruction_error"] = result.reconstructionError;
+        } else if (method == "vmd") {
+            // VMD:频域变分分解(ADMM 求解),使用 FFTW3 后端
+            VMD vmd;
+            VMD::Config vcfg;
+            vcfg.K = num_imfs;
+            vcfg.alpha = 2000.0;
+            vcfg.tau = 0.0;
+            vcfg.tol = 1e-6;
+            vcfg.maxIter = 200;
+            vcfg.symmetricPad = true;
+
+            auto vresult = vmd.decompose(original, vcfg);
+
+            nlohmann::json imf_json = nlohmann::json::array();
+            for (size_t i = 0; i < vresult.imfs.size(); ++i) {
+                imf_json.push_back(vresult.imfs[i]);
+
+                nlohmann::json info;
+                info["index"] = static_cast<int>(i) + 1;
+                info["mean_period"] = finance::estimateMeanPeriod(vresult.imfs[i]);
+                info["energy_pct"] = finance::computeEnergyPct(vresult.imfs[i], original);
+                info["center_freq"] = vresult.centerFreqs[i];
+                info_json.push_back(info);
+            }
+
+            json["imf_components"] = imf_json;
+            json["residual"] = vresult.residual;
+            json["imf_info"] = info_json;
+            json["reconstruction_error"] = 0.0; // VMD 残差即 residual
+            {
+                double rms = 0;
+                for (size_t i = 0; i < vresult.residual.size(); ++i) {
+                    rms += vresult.residual[i] * vresult.residual[i];
+                }
+                json["reconstruction_error"] = std::sqrt(rms / vresult.residual.size());
+            }
+            json["vmd_meta"] = {
+                {"actual_k", vresult.actualK},
+                {"iterations", vresult.iterations},
+                {"converged", vresult.converged},
+                {"center_freqs", vresult.centerFreqs}
+            };
         } else {
             // 默认 EMD
             auto imfs = simd_emd(original, num_imfs, 10, 0.02);

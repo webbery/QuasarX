@@ -11,23 +11,25 @@ CUSUMDetector::CUSUMDetector(CUSUMConfig config)
 CUSUMStepResult CUSUMDetector::update(double new_return) {
     ++_count;
 
-    // 自适应校准：累积 calibratePeriod 个数据后校准 mu/sigma
-    if (_config._calibratePeriod > 0 && !_calibrated) {
+    // 自适应校准：始终用前 T 个值校准 mu/sigma（与 Python 对齐）
+    // T = max(calibratePeriod, min_obs)；calibratePeriod=0 时退化为 min_obs
+    if (!_calibrated) {
+        size_t effectivePeriod = std::max(_config._calibratePeriod, _config._min_obs);
         _calibBuffer.push_back(new_return);
-        if (_calibBuffer.size() >= _config._calibratePeriod) {
+        if (_calibBuffer.size() >= effectivePeriod) {
             calibrate(_calibBuffer);
-            // 校准后重喂历史数据（在 clear 之前）
             for (double r : _calibBuffer) {
                 _step(r);
             }
             _calibBuffer.clear();
+        } else {
+            _last_result = {false, _count - 1, 0.0, 0.0, 0.0};
+            return _last_result;
         }
-        // 校准期内不触发变点，返回零值
-        _last_result = {false, _count - 1, _s_pos, _s_neg, _s_pos - _s_neg};
-        return _last_result;
+    } else {
+        _step(new_return);
     }
 
-    _step(new_return);
     return _last_result;
 }
 
@@ -127,6 +129,11 @@ void CUSUMDetector::reset() {
 }
 
 double CUSUMDetector::compute_threshold() const {
-    // h = threshold_multiplier * sigma（固定阈值，与标准 CUSUM 一致）
-    return _config._threshold_multiplier * _config._sigma;
+    // h = min(threshold × σ × √n, cap × σ)（√n + 上限，与 Python 对齐）
+    size_t n = std::max(_count, size_t(1));
+    double h = _config._threshold_multiplier * _config._sigma * std::sqrt(n);
+    if (_config._threshold_cap > 0) {
+        h = std::min(h, _config._threshold_cap * _config._sigma);
+    }
+    return h;
 }

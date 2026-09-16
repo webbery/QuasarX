@@ -209,6 +209,22 @@ else (USE_CUDA)
     endif()
 endif (USE_CUDA)
 
+# FFTW 3 - 频谱分析依赖（install 装到 /usr/local，与 CI service.yml 的 git clone 构建步骤对齐）
+find_path(FFTW3_INCLUDE_DIR fftw3.h
+    PATHS /usr/local/include
+    NO_DEFAULT_PATH
+)
+find_library(FFTW3_LIBRARY fftw3
+    PATHS /usr/local/lib
+    NO_DEFAULT_PATH
+)
+if(FFTW3_INCLUDE_DIR AND FFTW3_LIBRARY)
+    message("-- Found FFTW3: ${FFTW3_LIBRARY}")
+    include_directories(${FFTW3_INCLUDE_DIR})
+else()
+    message(FATAL_ERROR "FFTW3 not found. Please install it first.")
+endif()
+
 include_directories(include third_party/include ${CUDA_INCLUDE_DIRS} ${TensorRT_INCLUDE_DIRS} ${TORCH_INCLUDE_DIRS})
 if (WIN32)
 if (USE_CUDA)
@@ -247,6 +263,7 @@ if(SIMD_COMPILE_FLAG)
         src/Algorithms/EMD_SIMD.cpp
         src/Algorithms/EMD.cpp
         src/Algorithms/CEEMDAN.cpp
+        src/Algorithms/VMD.cpp            # 频域变分分解(ADMM,FFT 后端已切到 FFTW3)
         src/Algorithms/RollingTopK.cpp    # rolling top-K extraction
         src/Nodes/EMDNode.cpp
         # ── Eigen 密集矩阵运算 ──
@@ -313,6 +330,9 @@ add_subdirectory(third_party/fmt)
 target_link_libraries(${PROJECT_NAME} fmt::fmt xgboost)
 if(NOT USE_CUDA AND ONNXRUNTIME_LIBRARY)
     target_link_libraries(${PROJECT_NAME} ${ONNXRUNTIME_LIBRARY})
+endif()
+if(FFTW3_LIBRARY)
+    target_link_libraries(${PROJECT_NAME} ${FFTW3_LIBRARY})
 endif()
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)

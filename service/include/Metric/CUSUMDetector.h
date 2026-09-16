@@ -16,6 +16,7 @@ struct CUSUMConfig {
     double _sigma = 1.0;                 // 样本外预期波动率（用于计算 k 和 h）
     double _lambda = 0.5;                // 容许偏差倍数 (k = lambda * sigma)
     double _threshold_multiplier = 4.0;  // 阈值倍数 (h = threshold_multiplier * sigma * sqrt(N))
+    double _threshold_cap = 10.0;        // 阈值上限 (h_max = cap * sigma, 0=不封顶)
     size_t _min_obs = 30;                // 最少观测数，低于此值不触发变点
     size_t _calibratePeriod = 0;         // 校准期：用前 T 个值计算 mu/sigma（0=不校准，用config值）
 };
