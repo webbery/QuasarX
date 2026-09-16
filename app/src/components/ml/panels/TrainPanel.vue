@@ -428,19 +428,20 @@ const { train, optimize } = useMLData()
 
 const config = props.state.config
 
-// 优化相关状态（从 state 解构）
-const optimizeResult = computed(() => props.state.optimizeResult)
-const optimizeRunning = computed(() => props.state.optimizeRunning)
-const optimizeTrials = computed(() => props.state.optimizeTrials)
-const optimizeProgress = computed(() => props.state.optimizeProgress)
+// 优化相关状态。props.state 是普通对象（非 reactive），其中的 ref 不会自动解包，
+// 必须显式 .value，否则拿到的是 Ref 对象（恒为真值）。
+const optimizeResult = computed(() => props.state.optimizeResult.value)
+const optimizeRunning = computed(() => props.state.optimizeRunning.value)
+const optimizeTrials = computed(() => props.state.optimizeTrials.value)
+const optimizeProgress = computed(() => props.state.optimizeProgress.value)
 const paramDomains = computed(() => props.state.paramDomains)
 const optimizeMetric = computed({
-  get: () => props.state.optimizeMetric,
-  set: (v: string) => { props.state.optimizeMetric = v },
+  get: () => props.state.optimizeMetric.value,
+  set: (v: string) => { props.state.optimizeMetric.value = v },
 })
 const nTrials = computed({
-  get: () => props.state.nTrials,
-  set: (v: number) => { props.state.nTrials = v },
+  get: () => props.state.nTrials.value,
+  set: (v: number) => { props.state.nTrials.value = v },
 })
 
 const METRIC_OPTIONS = [
@@ -685,10 +686,10 @@ async function onTrain() {
 
 async function onOptimize() {
   if (!props.state.featureReport.data) return
-  props.state.optimizeRunning = true
-  props.state.optimizeTrials = []
-  props.state.optimizeResult = null
-  props.state.optimizeProgress = '启动优化...'
+  props.state.optimizeRunning.value = true
+  props.state.optimizeTrials.value = []
+  props.state.optimizeResult.value = null
+  props.state.optimizeProgress.value = '启动优化...'
 
   try {
     const result = await optimize(props.script, {
@@ -705,18 +706,18 @@ async function onOptimize() {
       endDate: props.state.dateRange.value?.[1] || '',
       frequency: props.state.frequency.value || '1d',
       csvPath: props.state.featureReport.data?.csv_path,
-      optimizeMetric: props.state.optimizeMetric,
-      nTrials: props.state.nTrials,
+      optimizeMetric: props.state.optimizeMetric.value,
+      nTrials: props.state.nTrials.value,
       paramDomains: props.state.paramDomains,
     }, (type: string, data: any) => {
       if (type === 'trial') {
-        props.state.optimizeTrials.push(data)
-        const okCount = props.state.optimizeTrials.filter((t: any) => t.status === 'ok').length
+        props.state.optimizeTrials.value.push(data)
+        const okCount = props.state.optimizeTrials.value.filter((t: any) => t.status === 'ok').length
         const bestVal = data.best != null ? data.best.toFixed(4) : '—'
-        props.state.optimizeProgress = `${props.state.optimizeTrials.length} / ${props.state.nTrials} trials  best: ${bestVal}`
+        props.state.optimizeProgress.value = `${props.state.optimizeTrials.value.length} / ${props.state.nTrials.value} trials  best: ${bestVal}`
       } else if (type === 'info') {
         if (data.phase === 'split') {
-          props.state.optimizeProgress = `数据准备完成 (${data.n_train}/${data.n_val || 0}/${data.n_test})，开始搜索...`
+          props.state.optimizeProgress.value = `数据准备完成 (${data.n_train}/${data.n_val || 0}/${data.n_test})，开始搜索...`
         }
       } else if (type === 'log') {
         // 可选：记录日志
@@ -724,11 +725,11 @@ async function onOptimize() {
     })
 
     if (result) {
-      props.state.optimizeResult = result
-      props.state.optimizeProgress = `优化完成 — 最佳 ${props.state.optimizeMetric}: ${result.best_value.toFixed(4)} (trial #${result.best_trial_number})`
+      props.state.optimizeResult.value = result
+      props.state.optimizeProgress.value = `优化完成 — 最佳 ${props.state.optimizeMetric.value}: ${result.best_value.toFixed(4)} (trial #${result.best_trial_number})`
     }
   } finally {
-    props.state.optimizeRunning = false
+    props.state.optimizeRunning.value = false
   }
 }
 
