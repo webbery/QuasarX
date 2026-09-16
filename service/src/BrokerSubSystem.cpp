@@ -106,6 +106,15 @@ void BrokerSubSystem::initCapitalPool(double initialCapital, const String& persi
     }
 }
 
+void BrokerSubSystem::PersistCapitalPool() {
+    if (_dbpath.empty()) {
+        WARN("[BrokerSubSystem] PersistCapitalPool: _dbpath not initialized, skip");
+        return;
+    }
+    String path = _dbpath + "/capital_pool.json";
+    _capitalPool.persist(path);
+}
+
 void BrokerSubSystem::Release() {
   if (!_thread)
     return;

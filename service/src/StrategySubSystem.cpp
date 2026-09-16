@@ -341,9 +341,38 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
         INFO("[StrategySubSystem] Strategy '{}' shadow mode enabled", to_utf8(strategyName));
     }
 
-    // 保存策略配置资金（供 StartDaily 实盘路径使用）
+    // ── 注册策略资金到 CapitalPool ─────────────────────────────────────
+    // 历史 bug：SetStrategyCapital 只写入 FlowSubsystem._flows[str]._capital，
+    //   未在 BrokerSubSystem._capitalPool 注册 entry，导致：
+    //     1) ManualTiming::SendSummaryEmail 中 pool->hasStrategy() 永远为 false，
+    //        邮件 BUY/SELL/Net 行的 "(X% of capital)" 显示 0.0%
+    //     2) OrderDesk 后续调用 CapitalPool::updateAvailable 时，因 strategy entry 不存在
+    //        静默跳过，资金永远扣不下来
+    //     3) 第二天的 ManualTiming 无法读取"剩余可用资金"参与决策
+    // 修复：此处同步调 pool->allocate 并立即落盘，避免上面 3 个问题。
+    // 设计原则：allocate 内部幂等（hasStrategy 已存在时 _strategies 赋值覆盖 = no-op，
+    //   available 不会被重置回 allocated），所以多次调用安全。
     if (script.contains("capital") && script["capital"].is_number()) {
-        _agentSystem->SetStrategyCapital(strategyName, script["capital"].get<double>());
+        double scriptCapital = script["capital"].get<double>();
+        _agentSystem->SetStrategyCapital(strategyName, scriptCapital);
+
+        auto* broker = _handle->GetBrokerSubSystem();
+        if (broker) {
+            auto* pool = broker->GetCapitalPool();
+            if (pool && !pool->hasStrategy(strategyName)) {
+                if (pool->allocate(strategyName, scriptCapital)) {
+                    INFO("[StrategySubSystem] CapitalPool registered for '{}': allocated={:.0f}",
+                         to_utf8(strategyName), scriptCapital);
+                } else {
+                    WARN("[StrategySubSystem] CapitalPool allocate failed for '{}' (insufficient funds?)",
+                         to_utf8(strategyName));
+                }
+                // 立即落盘——initCapitalPool 接收的 persistPath 仅用于启动期 load，
+                // 此处必须显式 persist 才能让后续 BrokerSubSystem::Release 之前的
+                // 状态（mid-run 重启场景）也能恢复。
+                broker->PersistCapitalPool();
+            }
+        }
     }
 
     // 推断并保存预热期 epoch 数

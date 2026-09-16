@@ -168,6 +168,10 @@ public:
     // 从 config.json 初始化资金池
     void initCapitalPool(double initialCapital, const String& persistPath);
 
+    // 显式持久化 CapitalPool（用 _dbpath + "/capital_pool.json"，与 Release() 保持一致）
+    // StrategySubSystem 在策略初始化时调用，确保资金池条目立即落盘
+    void PersistCapitalPool();
+
     [[deprecated("使用异步版本 Buy(strategy, symbol, order, callback)")]]
     order_id Buy(const String& strategy, symbol_t symbol, const Order& order, TradeInfo& detail);
 
