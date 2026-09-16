@@ -1386,7 +1386,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     nlohmann::json decisions = nlohmann::json::array();
                     if (manualTiming) {
                         INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                        decisions = manualTiming->SendSummaryEmail(strategy);
+                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital);
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
                     }
@@ -1544,11 +1544,41 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                 INFO("[StartDaily] success={}, manualTiming={}", success, manualTiming != nullptr);
 
                 if (success) {
+                    // 计算今日组合市值（broker 持仓 + 今日决策 → 最新收盘价估值）
+                    double portfolioValue = 0.0;
+                    if (manualTiming) {
+                        auto* portfolio = _handle->GetPortforlioSubSystem();
+                        if (portfolio) {
+                            auto& holdings = portfolio->GetHolding(strategy);
+                            // 应用今日决策后的持仓
+                            Map<symbol_t, int64_t> updatedPositions;
+                            for (const auto& [sym, assets] : holdings) {
+                                int64_t qty = 0;
+                                for (const auto& a : assets) qty += a._quantity;
+                                if (qty > 0) updatedPositions[sym] = qty;
+                            }
+                            for (const auto& [sym, d] : manualTiming->getDecisions()) {
+                                if (d._action == TradeAction::BUY)
+                                    updatedPositions[sym] += d._quantity;
+                                else if (d._action == TradeAction::SELL)
+                                    updatedPositions[sym] = 0;
+                            }
+                            // 用最新收盘价估值
+                            for (const auto& [sym, pos] : updatedPositions) {
+                                if (pos <= 0) continue;
+                                auto it = allBars.find(sym);
+                                if (it != allBars.end() && !it->second.empty()) {
+                                    portfolioValue += pos * it->second.back().close;
+                                }
+                            }
+                        }
+                    }
+
                     // 成功 → 发送决策摘要邮件，返回决策数组（信号在 ExecuteNode 阶段已被 ConsumeSignals 消费）
                     nlohmann::json decisions = nlohmann::json::array();
                     if (manualTiming) {
                         INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                        decisions = manualTiming->SendSummaryEmail(strategy);
+                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital, portfolioValue);
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
                     }

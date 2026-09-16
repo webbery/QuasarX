@@ -29,7 +29,13 @@ public:
                                const DataContext& context) override;
 
     // 发送汇总邮件（含 SSE），返回非 HOLD 决策数组（action=BUY/SELL，兼容 DailyDecisionJson::parseAction），清空累积器
-    nlohmann::json SendSummaryEmail(const String& strategy);
+    // strategyCapital: 从 flow._capital 传入，当 CapitalPool 未注册时作为 fallback 显示资金占比
+    // portfolioValue: 今日组合市值（broker 持仓 × 最新收盘价），0 表示不展示
+    nlohmann::json SendSummaryEmail(const String& strategy, double strategyCapital = 0.0,
+                                    double portfolioValue = 0.0);
+
+    // 访问当前累积的决策（SendSummaryEmail 调用前可用）
+    const Map<symbol_t, DecisionSnapshot>& getDecisions() const { return _decisions; }
 
 private:
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策

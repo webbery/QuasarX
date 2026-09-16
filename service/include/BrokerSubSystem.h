@@ -210,6 +210,34 @@ public:
     // 回测直接模拟成交（取 QuoteDB 最新 close）
     TradeReport SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side);
 
+    // ── 手动成交回报（OrderDesk → BrokerSubSystem 写入路径） ─────────
+    // 用户在券商 App 实际成交后，OrderDesk 调此接口把成交结果回写到
+    // service 的运行时状态（资金/持仓/决策记录/历史快照）。
+    //
+    // amount 口径（默认 B，与 manual_order_desk_design.md 一致）：
+    //   BUY 净支出  = qty × price × (1 + commissionRate + slippageRate)
+    //   SELL 净收入 = qty × price × (1 - commissionRate - slippageRate)
+    //
+    // 副作用：
+    //   1) CapitalPool.updateAvailable(strategy, ±netAmount)
+    //   2) _portfolio.GetHolding(strategy)[symbol] FIFO 增减
+    //   3) DecisionDB::markExecuted(decisionId, qty, price) 关联今日决策
+    //   4) DecisionDB::insertDailyPosition(...) UPSERT 持仓快照
+    //   5) PersistCapitalPool() 立即落盘
+    //
+    // returns: 写入是否成功
+    bool RecordManualFill(const String& strategy,
+                          symbol_t symbol,
+                          DecisionAction action,
+                          int64_t quantity,
+                          double price,
+                          int decisionId = -1,
+                          double commissionRate = 9e-05,
+                          double slippageRate = 0.0005);
+
+    // 查询策略在某 symbol 上的累计持仓数量（FIFO 后）
+    int64_t GetHoldingQuantity(const String& strategy, symbol_t symbol);
+
     // 注册统计指标
     void RegistIndicator(const String& strategy, StatisticIndicator indicator);
     void UnRegistIndicator(const String& strategy, StatisticIndicator indicator);

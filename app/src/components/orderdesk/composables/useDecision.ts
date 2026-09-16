@@ -81,7 +81,8 @@ export function useDecision() {
         quantity,
         price,
         type: 1,
-        decisionId: id
+        decisionId: id,
+        strategy: d.strategy    // 触发 OrderHandler 手动回写路径（Fix #4）
       })
       d.executed = true
       d.executedQuantity = quantity

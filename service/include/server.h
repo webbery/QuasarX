@@ -166,6 +166,7 @@ public:
     time_t GetCloseTime(ExchangeName exchange);
 
     bool SendEmail(const String& content);
+    bool SendHtmlEmail(const String& htmlContent);
     // 检查是否在数据备份中
     bool IsDataLock() { return _isDataLock; }
     void LockData() { _isDataLock = true; }

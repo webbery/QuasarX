@@ -1276,3 +1276,119 @@ TradeReport BrokerSubSystem::SimulateFill(symbol_t symbol, int64_t quantity, dou
 
     return report;
 }
+
+// ═══════════════════════════════════════════════════════════
+//  手动成交回报（OrderDesk 回写路径）
+// ═══════════════════════════════════════════════════════════
+
+namespace {
+// 计算当日零点 Unix 时间戳（本地时区）
+time_t TodayMidnight() {
+    time_t now = time(nullptr);
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &now);
+#else
+    localtime_r(&now, &tm_val);
+#endif
+    tm_val.tm_hour = 0;
+    tm_val.tm_min = 0;
+    tm_val.tm_sec = 0;
+    return mktime(&tm_val);
+}
+} // anonymous namespace
+
+bool BrokerSubSystem::RecordManualFill(const String& strategy,
+                                       symbol_t symbol,
+                                       DecisionAction action,
+                                       int64_t quantity,
+                                       double price,
+                                       int decisionId,
+                                       double commissionRate,
+                                       double slippageRate) {
+    if (quantity <= 0 || price <= 0) {
+        WARN("[Broker] RecordManualFill: invalid qty={} price={}", quantity, price);
+        return false;
+    }
+
+    // 1) 计算净金额（B 口径：qty × price × (1 ± fees)）
+    double gross = static_cast<double>(quantity) * price;
+    double feeRate = commissionRate + slippageRate;
+    bool isBuy = (action == DecisionAction::OpenLong || action == DecisionAction::CloseShort);
+    double netDelta = isBuy ? -(gross * (1.0 + feeRate)) : (gross * (1.0 - feeRate));
+
+    // 2) CapitalPool 资金扣减
+    auto* pool = GetCapitalPool();
+    if (pool && pool->hasStrategy(strategy)) {
+        pool->updateAvailable(strategy, netDelta);
+    } else {
+        WARN("[Broker] RecordManualFill: strategy '{}' not in CapitalPool, skip fund deduction",
+             strategy);
+    }
+
+    // 3) 持仓更新（FIFO 复用 AddOrderBySide 逻辑）
+    auto& holds = _portfolio->GetHolding(strategy);
+    auto& history = holds[symbol];
+    bool isOpen = (action == DecisionAction::OpenLong || action == DecisionAction::OpenShort);
+    if (isOpen) {
+        history.push_back({static_cast<uint32_t>(quantity), price, time(nullptr)});
+    } else {
+        // FIFO 扣减（与 AddOrderBySide:773-799 逻辑一致）
+        int64_t remaining = quantity;
+        while (remaining > 0 && !history.empty()) {
+            auto& front = history.front();
+            if (front._quantity >= static_cast<uint32_t>(remaining)) {
+                front._quantity -= static_cast<uint32_t>(remaining);
+                remaining = 0;
+            } else {
+                remaining -= front._quantity;
+                history.pop_front();
+            }
+        }
+        if (history.empty()) {
+            holds.erase(symbol);
+        }
+    }
+
+    // 4) DecisionDB 关联已执行
+    if (decisionId > 0) {
+        MarkDecisionExecuted(decisionId, quantity, price);
+    }
+
+    // 5) DailyPosition UPSERT（当日持仓快照）
+    int64_t netPosition = 0;
+    for (const auto& asset : history) {
+        netPosition += asset._quantity;
+    }
+    // 做空时 netPosition 为负（history 中只有空头持仓时）
+    // 但当前 FIFO 逻辑不区分多空方向，仅记录绝对数量
+    // 对于 OpenLong/CloseLong：netPosition >= 0
+    // 对于 OpenShort/CloseShort：需要额外标记——暂用正数（后续可扩展）
+    DailyPositionRecord dp{};
+    dp.strategy = strategy;
+    dp.symbol = symbol;
+    dp.date = TodayMidnight();
+    dp.position = netPosition;
+    dp.close_price = price;
+    DecisionDB::instance().insertDailyPosition(dp);
+
+    // 6) 持久化 CapitalPool
+    PersistCapitalPool();
+
+    INFO("[Broker] RecordManualFill: {} {} {} qty={} price={:.2f} netDelta={:.0f} decisionId={}",
+         strategy, isBuy ? "BUY" : "SELL", get_symbol(symbol),
+         quantity, price, netDelta, decisionId);
+
+    return true;
+}
+
+int64_t BrokerSubSystem::GetHoldingQuantity(const String& strategy, symbol_t symbol) {
+    auto& holds = _portfolio->GetHolding(strategy);
+    auto it = holds.find(symbol);
+    if (it == holds.end()) return 0;
+    int64_t total = 0;
+    for (const auto& asset : it->second) {
+        total += asset._quantity;
+    }
+    return total;
+}

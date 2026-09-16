@@ -138,6 +138,45 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
         return;
     }
 
+    // ── 新增：OrderDesk 手动回写路径 ──────────────────────────────
+    // 当 decisionId 存在且 strategy 字段存在时，说明是 OrderDesk 用户手动确认成交，
+    // 不真的去券商下单，而是直接 RecordManualFill 回写 service 状态。
+    // 这样第二天 ManualTiming 能看到持仓，避免重复建议 BUY。
+    if (decisionId >= 0 && params.contains("strategy")) {
+        String strategy = params["strategy"];
+        DecisionAction action = (direct == 0) ? DecisionAction::OpenLong : DecisionAction::CloseLong;
+
+        bool ok = broker->RecordManualFill(strategy, symbol, action, quantity, prices, decisionId);
+
+        if (!ok) {
+            res.status = 400;
+            res.set_content(R"({"error": "RecordManualFill failed"})", "application/json");
+            return;
+        }
+
+        // 构造 TradeReport 给前端（与回测分支一致）
+        TradeReport report{};
+        report._status = OrderStatus::OrderSuccess;
+        report._side = direct;
+        report._quantity = quantity;
+        report._price = prices;
+        report._time = time(nullptr);
+
+        // SSE 推送成交回报
+        auto sock = Server::GetSocket();
+        auto info = to_sse_string(symbol, report);
+        nng_send(sock, info.data(), info.size(), NNG_FLAG_NONBLOCK);
+
+        result["id"] = 0;
+        result["price"] = prices;
+        result["quantity"] = quantity;
+        result["strategy"] = strategy;
+        result["manualFill"] = true;
+        res.status = 200;
+        res.set_content(result.dump(), "application/json");
+        return;
+    }
+
     // Simulation / Real：走 BrokerSubSystem 虚函数链路
     auto lambda_sendResult = [symbol, decisionId, broker, this](const TradeReport& report) {
         auto sock = Server::GetSocket();

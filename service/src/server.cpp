@@ -1632,6 +1632,17 @@ time_t Server::GetCloseTime(ExchangeName exchange) {
 }
 
 bool Server::SendEmail(const String& content) {
+    // 写入临时文件，避免 shell 转义问题（HTML 含引号/换行等）
+    String tmpPath = std::filesystem::temp_directory_path() / "qx_mail_body.txt";
+    {
+        std::ofstream ofs(tmpPath);
+        if (!ofs) {
+            WARN("SendEmail: failed to create temp file {}", tmpPath);
+            return false;
+        }
+        ofs << content;
+    }
+
     auto sender = _config->GetSMTPSender();
     auto pwd = _config->GetSMTPPasswd();
     if (pwd.empty() || sender.empty())
@@ -1640,20 +1651,65 @@ bool Server::SendEmail(const String& content) {
     String scriptFile("tools/mail.py");
     if (!std::filesystem::exists(scriptFile))
         return false;
-    String prefix = std::string(PYTHON_CMD) + std::string(" ") + scriptFile +" ";
-    prefix += sender + " " + pwd;
 
-    String cmd = prefix + " " + _config->GetWarningAddr() + " \"" + content + "\"";
+    String cmd = fmt::format("{} {} {} {} {}",
+                             PYTHON_CMD, scriptFile, sender, pwd,
+                             _config->GetWarningAddr());
+    // 追加文件路径和内容类型
+    cmd += " " + tmpPath + " plain";
     try {
-        return RunCommand(cmd);
+        bool ok = RunCommand(cmd);
+        std::filesystem::remove(tmpPath);
+        return ok;
     } catch (const std::exception& e) {
         WARN("send email fail: {}", e.what());
+        std::filesystem::remove(tmpPath);
         return false;
     } catch (...) {
         WARN("send email fail, unknow reason.");
+        std::filesystem::remove(tmpPath);
         return false;
     }
-    return true;
+}
+
+bool Server::SendHtmlEmail(const String& htmlContent) {
+    String tmpPath = std::filesystem::temp_directory_path() / "qx_mail_body.html";
+    {
+        std::ofstream ofs(tmpPath);
+        if (!ofs) {
+            WARN("SendHtmlEmail: failed to create temp file {}", tmpPath);
+            return false;
+        }
+        ofs << htmlContent;
+    }
+
+    auto sender = _config->GetSMTPSender();
+    auto pwd = _config->GetSMTPPasswd();
+    if (pwd.empty() || sender.empty())
+        return false;
+
+    String scriptFile("tools/mail.py");
+    if (!std::filesystem::exists(scriptFile))
+        return false;
+
+    String cmd = fmt::format("{} {} {} {} {}",
+                             PYTHON_CMD, scriptFile, sender, pwd,
+                             _config->GetWarningAddr());
+    cmd += " " + tmpPath + " html";
+    INFO("CMD: {}",cmd);
+    try {
+        bool ok = RunCommand(cmd);
+        std::filesystem::remove(tmpPath);
+        return ok;
+    } catch (const std::exception& e) {
+        WARN("send html email fail: {}", e.what());
+        std::filesystem::remove(tmpPath);
+        return false;
+    } catch (...) {
+        WARN("send html email fail, unknow reason.");
+        std::filesystem::remove(tmpPath);
+        return false;
+    }
 }
 
 bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) {

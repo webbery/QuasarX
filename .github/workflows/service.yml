@@ -94,7 +94,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev 7zip
+          sudo apt-get install -y libmlpack-dev libarmadillo-dev libpapi-dev libssl-dev libfftw3-dev 7zip
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install cython
@@ -193,13 +193,6 @@ jobs:
           make -j$(nproc)
           sudo make install
 
-          cd ..
-          git clone --branch fftw-3.3.11 --depth 1 https://github.com/FFTW/fftw3
-          cd fftw3
-          ./configure --enable-shared --enable-threads --enable-sse2 --enable-avx
-          make -j$(nproc)
-          sudo make install
-          sudo ldconfig
 
       # 配置CMake并编译
       - name: Configure and build

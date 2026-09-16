@@ -240,6 +240,16 @@ def loaded_strategy(decision_token):
     """加载测试策略，测试后自动清理"""
     strategy = json.loads(STRATEGY_PATH.read_text())
     api_load_strategy(decision_token, STRATEGY_NAME, strategy)
+    # load 只 InitStrategy 不 Run（_running=false），StartDaily 需要 _running=true
+    # 手动发 Run 请求（mode=1）让策略进入可运行状态
+    headers = {"Authorization": decision_token}
+    requests.post(
+        f"{BASE_URL}/strategy",
+        json={"mode": 1, "name": STRATEGY_NAME},
+        headers=headers,
+        verify=False,
+        timeout=10,
+    )
     yield strategy
     cleanup_strategy(decision_token, STRATEGY_NAME)
 

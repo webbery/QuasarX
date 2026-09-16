@@ -95,6 +95,9 @@
             <label>预估金额</label>
             <span class="estimate-value">¥{{ estimatedAmount }}</span>
           </div>
+          <div class="estimate-hint">
+            含佣金(9e-05) + 滑点(0.0005)
+          </div>
           <div class="action-btns">
             <button class="execute-btn" @click="handleExecute" :disabled="executing">
               {{ executing ? '提交中...' : '确认下单' }}
@@ -182,7 +185,11 @@ const editPrice = ref(0)
 const executing = ref(false)
 
 const estimatedAmount = computed(() => {
-  const total = (editQuantity.value || 0) * (editPrice.value || 0)
+  // B 口径：qty × price × (1 + commissionRate + slippageRate)
+  const gross = (editQuantity.value || 0) * (editPrice.value || 0)
+  const commissionRate = 9e-05    // 默认佣金率
+  const slippageRate = 0.0005     // 默认滑点率
+  const total = gross * (1 + commissionRate + slippageRate)
   return total.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 })
 
@@ -579,6 +586,14 @@ onUnmounted(() => {
   font-size: 15px;
   font-weight: 600;
   font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.estimate-hint {
+  text-align: right;
+  color: #64748b;
+  font-size: 11px;
+  margin-top: 4px;
+  opacity: 0.7;
 }
 
 .executed-detail {
