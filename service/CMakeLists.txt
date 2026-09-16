@@ -209,14 +209,12 @@ else (USE_CUDA)
     endif()
 endif (USE_CUDA)
 
-# FFTW 3 - 频谱分析依赖（install 装到 /usr/local，与 CI service.yml 的 git clone 构建步骤对齐）
+# FFTW 3 - 频谱分析依赖（CI 通过 apt-get install libfftw3-dev 安装到系统路径）
 find_path(FFTW3_INCLUDE_DIR fftw3.h
-    PATHS /usr/local/include
-    NO_DEFAULT_PATH
+    PATHS /usr/local/include /usr/include
 )
 find_library(FFTW3_LIBRARY fftw3
-    PATHS /usr/local/lib
-    NO_DEFAULT_PATH
+    PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu /usr/lib
 )
 if(FFTW3_INCLUDE_DIR AND FFTW3_LIBRARY)
     message("-- Found FFTW3: ${FFTW3_LIBRARY}")

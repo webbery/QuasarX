@@ -1633,7 +1633,7 @@ time_t Server::GetCloseTime(ExchangeName exchange) {
 
 bool Server::SendEmail(const String& content) {
     // 写入临时文件，避免 shell 转义问题（HTML 含引号/换行等）
-    String tmpPath = std::filesystem::temp_directory_path() / "qx_mail_body.txt";
+    String tmpPath = (std::filesystem::temp_directory_path() / "qx_mail_body.txt").string();
     {
         std::ofstream ofs(tmpPath);
         if (!ofs) {
@@ -1673,7 +1673,7 @@ bool Server::SendEmail(const String& content) {
 }
 
 bool Server::SendHtmlEmail(const String& htmlContent) {
-    String tmpPath = std::filesystem::temp_directory_path() / "qx_mail_body.html";
+    String tmpPath = (std::filesystem::temp_directory_path() / "qx_mail_body.html").string();
     {
         std::ofstream ofs(tmpPath);
         if (!ofs) {
