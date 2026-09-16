@@ -196,10 +196,10 @@ jobs:
           cd ..
           git clone --branch fftw-3.3.11 --depth 1 https://github.com/FFTW/fftw3
           cd fftw3
-          mkdir build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF ..
+          ./configure --enable-shared --enable-threads --enable-sse2 --enable-avx
           make -j$(nproc)
           sudo make install
+          sudo ldconfig
 
       # 配置CMake并编译
       - name: Configure and build
