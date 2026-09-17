@@ -25,8 +25,8 @@ public:
         int K = 5;                ///< IMF 数量
         double alpha = 2000.0;    ///< 带宽惩罚参数 (大=窄带, 小=宽带, 典型 500~5000)
         double tau = 0.0;         ///< 对偶上升步长 (噪声容忍, 信噪比高时为 0)
-        double tol = 1e-6;        ///< 收敛阈值 (L2 相对误差)
-        int maxIter = 200;        ///< 最大迭代次数
+        double tol = 1e-6;        ///< 收敛阈值 (模态频谱平均变化 uDiff, 对齐 vmdpy)
+        int maxIter = 500;        ///< 最大迭代次数 (对齐 vmdpy Niter)
         bool symmetricPad = true; ///< 对称延拓 (处理端点效应)
     };
 
@@ -61,7 +61,7 @@ public:
 private:
     String _summary;
 
-    /// 对称延拓到 2 的幂
+    /// 镜像对称延拓到 2 的幂(关于端点 data[0]/data[n-1] 反射)
     static Vector<double> symmetricPad(const Vector<double>& data, size_t& outSize);
 
     /// 从延拓结果中截取原始部分

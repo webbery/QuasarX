@@ -16,8 +16,8 @@
  * 接口(rfft/irfft)签名与旧 radix-2 inline 实现完全一致 → 下游 VMD.cpp / CEEMDAN.cpp
  * 无需任何改动即可切换到 FFTW3 后端。
  *
- * 适用条件:算法侧必须支持任意 2 的幂长度(FFTW3 r2c/c2r 要求 N 是 2/3/5/7 的因子,
- * 在 radix-2 路径下等价于 2 的幂)。
+ * 适用条件: FFTW3 r2c/c2r 支持任意 2/3/5/7 因子分解长度 (不再强制 power-of-2).
+ *                        对于偶数 N = 2n 等 2:2*3:3:5:7 最佳.
  */
 #include <fftw3.h>
 
@@ -113,16 +113,18 @@ inline size_t next_pow2(size_t n) {
 /**
  * @brief 实数序列 FFT (FFTW3 r2c 后端)
  * @param data  实数输入
- * @param n     输入长度(内部扩展到 next_pow2(n),零填充)
- * @return      复数半谱 (长度 = fftSize/2 + 1)
+ * @param n     输入长度 (FFTW3 自动按 2/3/5/7 因子分解,不再强制 power-of-2)
+ * @return      复数半谱 (长度 = n/2 + 1)
+ *
+ * 注: 由 VMD 需求驱动,支持任意 n (≥ 4). FFTW3 r2c 原生支持任意因子分解长度.
  */
 inline Vector<complex_t> rfft(const double* data, size_t n) {
-    size_t fftSize = detail::next_pow2(n);
+    // 直接使用 n,不再扩展到 next_pow2 (FFTW3 支持任意 2/3/5/7 因子分解)
+    size_t fftSize = n;
     auto& p = detail::PlanPool::instance().getR2C(fftSize);
 
-    // 输入 zero-pad 并 memcpy 到 FFTW buffer
-    std::memset(p.in, 0, sizeof(double) * fftSize);
-    if (n > 0) std::memcpy(p.in, data, sizeof(double) * n);
+    // 输入 memcpy 到 FFTW buffer (无 zero-pad,因 fftSize = n)
+    std::memcpy(p.in, data, sizeof(double) * n);
 
     fftw_execute(p.plan);
 
@@ -135,14 +137,15 @@ inline Vector<complex_t> rfft(const double* data, size_t n) {
 
 /**
  * @brief 复数半谱 IFFT (FFTW3 c2r 后端)
- * @param spectrum  半谱(长度 = fftSize/2 + 1)
- * @param n         输出实数序列长度(必须等于 IFFT 时的 fftSize)
+ * @param spectrum  半谱(长度 = n/2 + 1)
+ * @param n         输出实数序列长度 (必须等于 IFFT 时的 fftSize)
  * @return          时域实数序列 (长度 = n)
  *
  * 注意:FFT c2r 不归一化,需手动除以 N。
  */
 inline Vector<double> irfft(const Vector<complex_t>& spectrum, size_t n) {
-    size_t fftSize = detail::next_pow2(n);
+    // 直接使用 n,不再扩展到 next_pow2
+    size_t fftSize = n;
     auto& p = detail::PlanPool::instance().getC2R(fftSize);
 
     size_t halfLen = fftSize / 2 + 1;

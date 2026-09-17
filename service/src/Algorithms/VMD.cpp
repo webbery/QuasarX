@@ -1,6 +1,7 @@
 #include "Algorithms/VMD.h"
 #include "Algorithms/FFT.h"
 #include "Algorithms/EMD_SIMD.h"
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <numeric>
@@ -17,27 +18,20 @@ VMD::VMD() {}
 Vector<double> VMD::symmetricPad(const Vector<double>& data, size_t& outSize) {
     size_t n = data.size();
 
-    // 计算需要的填充长度：扩展到 2 的幂
-    int bits = 0;
-    size_t fftSize = 1;
-    // 目标长度至少为 2*n (保证足够的分辨率)
-    while (fftSize < 2 * n) {
-        fftSize <<= 1;
-        bits++;
-    }
-
+    // 对齐 vmdpy: fftSize = 2*n (而非 next_pow2(2n))
+    // 配合 FFT.h 解除 next_pow2 限制 (FFTW3 支持任意因子分解长度)
+    size_t fftSize = 2 * n;
     outSize = fftSize;
 
-    // 计算左右填充长度
-    size_t totalPad = fftSize - n;
-    size_t padLeft = totalPad / 2;
-    size_t padRight = totalPad - padLeft;
+    // vmdpy 风格镜像延拓: padLeft = n/2, padRight = n - n/2
+    size_t padLeft = n / 2;
+    size_t padRight = n - padLeft;
 
     Vector<double> padded(fftSize);
 
-    // 左端对称延拓 (镜像)
+    // 左端镜像反射: padded[i] = data[padLeft-1-i] (关于 data[0] 镜像)
     for (size_t i = 0; i < padLeft; ++i) {
-        size_t srcIdx = (i < n) ? (padLeft - i) : 0;
+        size_t srcIdx = (padLeft - 1 - i < n) ? (padLeft - 1 - i) : 0;
         padded[i] = data[srcIdx];
     }
 
@@ -46,9 +40,9 @@ Vector<double> VMD::symmetricPad(const Vector<double>& data, size_t& outSize) {
         padded[padLeft + i] = data[i];
     }
 
-    // 右端对称延拓 (镜像)
+    // 右端镜像反射: padded[padLeft+n+i] = data[n-1-i] (关于 data[n-1] 镜像)
     for (size_t i = 0; i < padRight; ++i) {
-        size_t srcIdx = (n - 2 - i >= 0) ? (n - 2 - i) : (n - 1);
+        size_t srcIdx = (n - 1 - i >= 0) ? (n - 1 - i) : 0;
         padded[padLeft + n + i] = data[srcIdx];
     }
 
@@ -79,14 +73,12 @@ VMD::Result VMD::decompose(const Vector<double>& data, const Config& cfg) {
     size_t origN = data.size();
     size_t fftSize;
 
-    // 对称延拓到 2 的幂
+    // 对称延拓到 2*n (对齐 vmdpy 黄金标准),不再 next_pow2
     Vector<double> padded;
     if (cfg.symmetricPad) {
         padded = symmetricPad(data, fftSize);
     } else {
-        int bits = 0;
-        fftSize = 1;
-        while (fftSize < data.size()) { fftSize <<= 1; bits++; }
+        fftSize = 2 * data.size();  // 与 vmdpy 一致
         padded = Vector<double>(fftSize, 0.0);
         for (size_t i = 0; i < data.size(); ++i) padded[i] = data[i];
     }
@@ -96,7 +88,7 @@ VMD::Result VMD::decompose(const Vector<double>& data, const Config& cfg) {
     // 正变换: f̂ = FFT(padded)
     auto fHat = fft::rfft(padded.data(), fftSize);
 
-    int K = cfg.K;
+    size_t K = cfg.K;
     double alpha = cfg.alpha;
     double tau = cfg.tau;
     double tol = cfg.tol;
@@ -109,49 +101,51 @@ VMD::Result VMD::decompose(const Vector<double>& data, const Config& cfg) {
         omegaAxis[i] = static_cast<double>(i) / static_cast<double>(fftSize);
     }
 
-    // 初始化: û_k = 0, ω_k = 均匀分布, λ̂ = 0
+    // 初始化: û_k = 0, ω_k = 均匀分布(对齐 vmdpy), λ̂ = 0
     Vector<Vector<complex_t>> uHat(K, Vector<complex_t>(freqLen, complex_t(0.0, 0.0)));
     Vector<double> omega(K);
-    for (int k = 0; k < K; ++k) {
-        // 初始中心频率均匀分布
-        omega[k] = (static_cast<double>(k) + 1.0) / static_cast<double>(K) * 0.5;
+    for (size_t k = 0; k < K; ++k) {
+        // 初始中心频率均匀分布,从 0 开始;不包含 0.5 (Nyquist)
+        // 对齐 vmdpy: omega_plus[0, i] = (0.5/K) * i
+        omega[k] = static_cast<double>(k) / static_cast<double>(K) * 0.5;
     }
 
     Vector<complex_t> lambdaHat(freqLen, complex_t(0.0, 0.0));
 
     bool converged = false;
     int iter = 0;
-    double eps = 0.0;
+    double eps = 1.0;  // 上一轮的收敛指标 uDiff (初值仅占位: iter==1 直接跳过判据)
 
     for (iter = 1; iter <= maxIter; ++iter) {
-        // 保存旧的 û_k 用于收敛检查
+        // 保存上一轮的 û_k,用于收敛检查 (vmdpy uDiff 判据)
         auto uHatOld = uHat;
 
         // ---- 第 1 步: 更新每个 IMF 的频域表示 û_k ----
-        for (int k = 0; k < K; ++k) {
-            // 计算残差: f̂ - Σ_{i≠k} û_i + λ̂/2
+        for (size_t k = 0; k < K; ++k) {
+            // 计算残差: f̂ - Σ_{i≠k} û_i - λ̂/2 (对齐 vmdpy / 原 MATLAB 符号)
             Vector<complex_t> residual(freqLen);
             for (size_t i = 0; i < freqLen; ++i) {
                 complex_t sum(0.0, 0.0);
-                for (int j = 0; j < K; ++j) {
+                for (size_t j = 0; j < K; ++j) {
                     if (j == k) continue;
                     sum += uHat[j][i];
                 }
-                residual[i] = fHat[i] - sum + lambdaHat[i] * 0.5;
+                residual[i] = fHat[i] - sum - lambdaHat[i] * 0.5;
             }
 
-            // 维纳滤波: û_k = residual / [1 + 2α(ω - ω_k)²]
+            // 维纳滤波: û_k = residual / [1 + α(ω - ω_k)²]
+            // 系数与 vmdpy / 原 MATLAB 参考实现一致: 单边半谱下惩罚项为 α
+            // (论文式(15) 的 2α 对应双侧全谱推导, 此处不可再乘 2)
             double wk = omega[k];
-            double twoAlpha = 2.0 * alpha;
             for (size_t i = 0; i < freqLen; ++i) {
                 double freqDiff = omegaAxis[i] - wk;
-                double denom = 1.0 + twoAlpha * freqDiff * freqDiff;
+                double denom = 1.0 + alpha * freqDiff * freqDiff;
                 uHat[k][i] = residual[i] / denom;
             }
         }
 
         // ---- 第 2 步: 更新中心频率 ω_k (功率谱质心) ----
-        for (int k = 0; k < K; ++k) {
+        for (size_t k = 0; k < K; ++k) {
             double num = 0.0, den = 0.0;
             for (size_t i = 0; i < freqLen; ++i) {
                 double magSq = std::norm(uHat[k][i]);
@@ -163,30 +157,30 @@ VMD::Result VMD::decompose(const Vector<double>& data, const Config& cfg) {
             }
         }
 
-        // ---- 第 3 步: 对偶上升 λ̂ ← λ̂ + τ·(f̂ - Σ û_k) ----
+        // ---- 第 3 步: 对偶上升 (对齐 vmdpy: λ̂ ← λ̂ + τ·(Σ û_k - f̂)) ----
         if (tau > 0.0) {
             for (size_t i = 0; i < freqLen; ++i) {
                 complex_t sum(0.0, 0.0);
-                for (int k = 0; k < K; ++k) sum += uHat[k][i];
-                lambdaHat[i] += tau * (fHat[i] - sum);
+                for (size_t k = 0; k < K; ++k) sum += uHat[k][i];
+                lambdaHat[i] += tau * (sum - fHat[i]);
             }
         }
 
-        // ---- 第 4 步: 收敛检查 ----
+        // ---- 第 4 步: 收敛检查 (对齐 vmdpy: uDiff = (1/T)Σ_k ‖û_k - û_k_old‖² < tol) ----
+        // 判据取模态频谱变化而非中心频率变化: ω 停滞 ≠ 模态收敛,
+        // 低频/直流模态(ω≈0)的幅度分配在 ω 稳定后仍会继续重分配
+        // 首轮迭代跳过:上一轮 û 全为 0,与初始化比较无意义
+        if (iter == 1) continue;
+
         eps = 0.0;
         for (int k = 0; k < K; ++k) {
-            double numSq = 0.0, denSq = 0.0;
             for (size_t i = 0; i < freqLen; ++i) {
-                double diff = std::norm(uHat[k][i] - uHatOld[k][i]);
-                numSq += diff;
-                denSq += std::norm(uHatOld[k][i]);
-            }
-            if (denSq > 1e-12) {
-                eps += numSq / denSq;
+                eps += std::norm(uHat[k][i] - uHatOld[k][i]);
             }
         }
+        eps /= static_cast<double>(fftSize);
 
-        if (eps < tol * tol) {
+        if (eps < tol) {
             converged = true;
             break;
         }
@@ -222,6 +216,22 @@ VMD::Result VMD::decompose(const Vector<double>& data, const Config& cfg) {
     // 中心频率
     result.centerFreqs.resize(K);
     for (int k = 0; k < K; ++k) result.centerFreqs[k] = omega[k];
+
+    // ---- 按中心频率升序排列 IMF + centerFreqs ----
+    // ADMM 迭代后,IMF 顺序可能乱(相近频率 mode 互换),需排序保证
+    // imf_info[i].center_freq 单调递增,且 IMF 与 vmdpy 按频率排序后的列表对齐
+    Vector<size_t> sortIdx(K);
+    for (size_t k = 0; k < K; ++k) sortIdx[k] = k;
+    std::sort(sortIdx.begin(), sortIdx.end(),
+              [&result](size_t a, size_t b) { return result.centerFreqs[a] < result.centerFreqs[b]; });
+    Vector<Vector<double>> imfsSorted(K);
+    Vector<double> freqsSorted(K);
+    for (size_t k = 0; k < K; ++k) {
+        imfsSorted[k] = result.imfs[sortIdx[k]];
+        freqsSorted[k] = result.centerFreqs[sortIdx[k]];
+    }
+    result.imfs = std::move(imfsSorted);
+    result.centerFreqs = std::move(freqsSorted);
 
     result.actualK = K;
     result.iterations = iter;
