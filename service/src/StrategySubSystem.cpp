@@ -27,7 +27,8 @@ namespace {
             String nodeType = node["data"].value("nodeType", "");
             if (nodeType == "input") {
                 auto& params = node["data"]["params"];
-                inputFreq = (String)params["freq"]["value"];
+                if (params.contains("freq"))
+                    inputFreq = (String)params["freq"]["value"];
                 break;
             }
         }
@@ -41,6 +42,7 @@ namespace {
             if (nodeType != "function") continue;
 
             auto& params = node["data"]["params"];
+            if (!params.contains("range")) continue;
             String range = params["range"]["value"];
 
             int rangeSeconds = TimeStringToSeconds(range);

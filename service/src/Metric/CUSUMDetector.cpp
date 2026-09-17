@@ -11,9 +11,9 @@ CUSUMDetector::CUSUMDetector(CUSUMConfig config)
 CUSUMStepResult CUSUMDetector::update(double new_return) {
     ++_count;
 
-    // 自适应校准：始终用前 T 个值校准 mu/sigma（与 Python 对齐）
-    // T = max(calibratePeriod, min_obs)；calibratePeriod=0 时退化为 min_obs
-    if (!_calibrated) {
+    // 自适应校准：calibratePeriod > 0 时用前 max(calibratePeriod, min_obs) 个值校准 mu/sigma
+    // calibratePeriod = 0 时不校准，直接使用 config 预设的 mu/sigma
+    if (_config._calibratePeriod > 0 && !_calibrated) {
         size_t effectivePeriod = std::max(_config._calibratePeriod, _config._min_obs);
         _calibBuffer.push_back(new_return);
         if (_calibBuffer.size() >= effectivePeriod) {

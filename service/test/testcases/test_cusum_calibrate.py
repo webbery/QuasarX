@@ -115,6 +115,7 @@ def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str
     return {
         "id": f"test_cusum_cal_{calibrate_period}",
         "name": f"test_cusum_cal_{calibrate_period}",
+        "version": 1,
         "nodes": [
             {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "数据", "nodeType": "input",

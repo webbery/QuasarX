@@ -69,12 +69,13 @@ CUSUM_MIN_OBS = 30  # 与 C++ BacktestContext 默认 _min_obs 保持一致
 class CUSUMDetectorRef:
     """双侧 CUSUM 检测器（Python 参考实现）"""
 
-    def __init__(self, mu=0.0, sigma=1.0, lambda_=0.5, threshold_multiplier=4.0, min_obs=30):
+    def __init__(self, mu=0.0, sigma=1.0, lambda_=0.5, threshold_multiplier=4.0, min_obs=30, threshold_cap=10.0):
         self.mu = mu
         self.sigma = sigma
         self.lambda_ = lambda_
         self.threshold_multiplier = threshold_multiplier
         self.min_obs = min_obs
+        self.threshold_cap = threshold_cap
         self.reset()
 
     def reset(self):
@@ -87,13 +88,24 @@ class CUSUMDetectorRef:
         self._steps = []
 
     def _compute_threshold(self):
-        # 标准 CUSUM 使用常数阈值，时变阈值仅用于初始校准
-        return self.threshold_multiplier * self.sigma
+        # 与 C++ 对齐：h = min(threshold × σ × √n, cap × σ)
+        n = max(self._count, 1)
+        h = self.threshold_multiplier * self.sigma * math.sqrt(n)
+        if self.threshold_cap > 0:
+            h = min(h, self.threshold_cap * self.sigma)
+        return h
 
     def update(self, new_return):
         self._count += 1
 
+        k = self.lambda_ * self.sigma
+        drift = new_return - self.mu
+
+        self._s_pos = max(0.0, self._s_pos + drift - k)
+        self._s_neg = max(0.0, self._s_neg - drift - k)
+
         if self._count < self.min_obs:
+            # warmup 期间累积 s_pos/s_neg 但不触发变点（与 C++ 校准后 re-feed 对齐）
             result = {
                 'change_point': False,
                 'step_index': self._count - 1,
@@ -102,12 +114,6 @@ class CUSUMDetectorRef:
             }
             self._steps.append(result)
             return result
-
-        k = self.lambda_ * self.sigma
-        drift = new_return - self.mu
-
-        self._s_pos = max(0.0, self._s_pos + drift - k)
-        self._s_neg = max(0.0, self._s_neg - drift - k)
 
         h = self._compute_threshold()
         change_point = max(self._s_pos, self._s_neg) > h
