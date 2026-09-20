@@ -193,7 +193,7 @@ class TestCUSUMCalibrateAlign:
     def setup(self, auth_token):
         self.token = auth_token
         self.symbol = "sz.900007"
-        self.symbol_api = "900007.SZ"
+        self.symbol_api = "sz.900007"
         self.prices = load_prices(self.symbol)
         self.returns = compute_returns(self.prices) if len(self.prices) > 1 else []
 
