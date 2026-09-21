@@ -193,7 +193,10 @@ class TestCUSUMCalibrateAlign:
     def setup(self, auth_token):
         self.token = auth_token
         self.symbol = "sz.900007"
-        self.symbol_api = "900007.SZ"
+        # 必须用内部格式 sz.900007——QuoteInputNode::Init → to_symbol() 假设
+        # 第一个 token 是交易所代码（system.cpp:654-656），外部格式 900007.SZ 会
+        # 让 tokens.front()="900007" 落到 exchange_map().at() 抛 map::at 异常
+        self.symbol_api = "sz.900007"
         self.prices = load_prices(self.symbol)
         self.returns = compute_returns(self.prices) if len(self.prices) > 1 else []
 

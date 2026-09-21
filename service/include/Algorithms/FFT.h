@@ -11,7 +11,8 @@
  * 通过 fftw_plan 缓存机制复用 FFTW3 planner,避免每次调用都重新创建 plan
  * (planner 创建开销 O(N log N) + Wisdom 搜索,缓存后单次调用退化为纯 memcpy+execute)。
  *
- * 线程安全:PlanPool::getOrCreate 内部 std::mutex 保护,多线程并发调用安全。
+ * 线程安全:plan 创建由 std::mutex 串行化(FFTW planner 本身非线程安全);
+ *          执行阶段使用每线程私有缓冲 + new-array execute,可并发调用。
  *
  * 接口(rfft/irfft)签名与旧 radix-2 inline 实现完全一致 → 下游 VMD.cpp / CEEMDAN.cpp
  * 无需任何改动即可切换到 FFTW3 后端。
@@ -31,6 +32,8 @@ namespace detail {
 struct R2CPlan {
     size_t n = 0;              // 输入长度(必须为 2 的幂)
     fftw_plan plan = nullptr;
+    // plan 创建时的缓冲: 仅作为对齐参照 + 保证 plan 内部引用有效,
+    // 实际执行改用 new-array execute 的每线程缓冲(见 ExecBufs)
     double* in = nullptr;
     fftw_complex* out = nullptr;
 };
@@ -41,6 +44,45 @@ struct C2RPlan {
     fftw_complex* in = nullptr;
     double* out = nullptr;
 };
+
+/// 每线程私有执行缓冲。
+/// fftw_plan 可以跨线程复用, 但 plan 绑定的 in/out 缓冲不能共享 —— 否则并发
+/// memcpy + execute 会互相覆盖。这里按线程(n -> 缓冲)持有, 线程退出时自动释放。
+struct ExecBufs {
+    double* rin = nullptr;
+    fftw_complex* cout = nullptr;
+    fftw_complex* cin = nullptr;
+    double* rout = nullptr;
+
+    ~ExecBufs() { release(); }
+    ExecBufs() = default;
+    ExecBufs(const ExecBufs&) = delete;
+    ExecBufs& operator=(const ExecBufs&) = delete;
+
+    void release() {
+        if (rin) { fftw_free(rin); rin = nullptr; }
+        if (cout) { fftw_free(cout); cout = nullptr; }
+        if (cin) { fftw_free(cin); cin = nullptr; }
+        if (rout) { fftw_free(rout); rout = nullptr; }
+    }
+
+    void ensure(size_t n) {
+        if (rin) return;
+        // 必须与 plan 创建时同源(fftw_malloc, 16 字节对齐):
+        // new-array execute 要求新数组与 plan 数组对齐一致
+        rin = (double*)fftw_malloc(sizeof(double) * n);
+        cout = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * (n / 2 + 1));
+        cin = (fftw_complex*)fftw_malloc(sizeof(fftw_complex) * (n / 2 + 1));
+        rout = (double*)fftw_malloc(sizeof(double) * n);
+    }
+};
+
+inline ExecBufs& execBufs(size_t n) {
+    static thread_local std::unordered_map<size_t, ExecBufs> cache;
+    auto& b = cache[n];
+    b.ensure(n);
+    return b;
+}
 
 /// 全局 plan 池(懒创建)
 class PlanPool {
@@ -122,16 +164,18 @@ inline Vector<complex_t> rfft(const double* data, size_t n) {
     // 直接使用 n,不再扩展到 next_pow2 (FFTW3 支持任意 2/3/5/7 因子分解)
     size_t fftSize = n;
     auto& p = detail::PlanPool::instance().getR2C(fftSize);
+    auto& b = detail::execBufs(fftSize);   // 每线程私有缓冲
 
-    // 输入 memcpy 到 FFTW buffer (无 zero-pad,因 fftSize = n)
-    std::memcpy(p.in, data, sizeof(double) * n);
+    // 输入 memcpy 到本线程 buffer (无 zero-pad,因 fftSize = n)
+    std::memcpy(b.rin, data, sizeof(double) * n);
 
-    fftw_execute(p.plan);
+    // new-array execute: plan 以 FFTW_ESTIMATE 创建 + 缓冲同源对齐 -> 允许换数组执行
+    fftw_execute_dft_r2c(p.plan, b.rin, b.cout);
 
     size_t halfLen = fftSize / 2 + 1;
     Vector<complex_t> result(halfLen);
     // fftw_complex == double[2] 在所有支持的平台;用 reinterpret_cast 而非 memcpy 即可
-    std::memcpy(result.data(), p.out, sizeof(fftw_complex) * halfLen);
+    std::memcpy(result.data(), b.cout, sizeof(fftw_complex) * halfLen);
     return result;
 }
 
@@ -147,15 +191,16 @@ inline Vector<double> irfft(const Vector<complex_t>& spectrum, size_t n) {
     // 直接使用 n,不再扩展到 next_pow2
     size_t fftSize = n;
     auto& p = detail::PlanPool::instance().getC2R(fftSize);
+    auto& b = detail::execBufs(fftSize);   // 每线程私有缓冲
 
     size_t halfLen = fftSize / 2 + 1;
-    std::memcpy(p.in, spectrum.data(), sizeof(fftw_complex) * std::min(halfLen, spectrum.size()));
+    std::memcpy(b.cin, spectrum.data(), sizeof(fftw_complex) * std::min(halfLen, spectrum.size()));
 
-    fftw_execute(p.plan);
+    fftw_execute_dft_c2r(p.plan, b.cin, b.rout);
 
     double scale = 1.0 / static_cast<double>(fftSize);
     Vector<double> out(n);
-    for (size_t i = 0; i < n; ++i) out[i] = p.out[i] * scale;
+    for (size_t i = 0; i < n; ++i) out[i] = b.rout[i] * scale;
     return out;
 }
 

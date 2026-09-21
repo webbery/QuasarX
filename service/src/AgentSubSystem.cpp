@@ -763,6 +763,17 @@ run_id_t FlowSubsystem::StartRealtime(const String& strategy, const Set<symbol_t
         }
 
         DataContext context(strategy, _handle);
+
+        // 设置 warmup epochs 到 context（与回测路径 222-224 行保持一致）
+        // 实盘模式下若不设，IsInWarmup() 恒为 false，warmup 形同虚设，
+        // SignalNode/PortfolioNode/ExecuteNode 在早期 epoch 会被错误地求值，
+        // 此时 MA 等函数节点尚未填满数据，产出的"信号"毫无意义。
+        int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
+        context.SetWarmupEpochs(warmupEpochs);
+        if (warmupEpochs > 0) {
+            STRATEGY_INFO(strategy, "[Realtime] Warmup period: {} epochs", warmupEpochs);
+        }
+
         auto& flow = _flows[strategy];
         DoneGuard guard(this, strategy, flow._graph);
 

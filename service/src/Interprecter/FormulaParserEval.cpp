@@ -179,14 +179,17 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
         auto& vec = std::get<Vector<double>>(base);
         if (vec.empty()) {
             WARN("getHistoricalValue - empty vector");
-            return 0.0;
+            return std::nan("");
         }
         int idx = (int)vec.size() - 1 + time_offset;
         if (idx >= 0 && idx < (int)vec.size()) {
             return vec[idx];
         } else {
             WARN("getHistoricalValue - index out of range, idx={}, size={}", idx, vec.size());
-            return vec.back();
+            // 之前回退到 vec.back()/vec.front() 会让 ma_short[t-1]==ma_short[t] 等恒等式成立，
+            // 进而触发金叉/死叉冲突消解、把全部信号丢弃（decisions=0）。
+            // 越界时必须返回 NaN，让比较运算符统一返回 false，使 SignalNode 产生 HOLD。
+            return std::nan("");
         }
     }
     // 标量 passthrough：数组展开后返回的 double 再经过 [t] 时会到这里
@@ -211,19 +214,20 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
             }
         }
         DEBUG_INFO("FormulaParser: key '{}' not found for symbol '{}'", key, name);
-        return 0.0;
+        return std::nan("");
     }
 
     auto& vec = context.get<Vector<double>>(key);
     if (vec.empty()) {
-        return 0.0;
+        return std::nan("");
     }
 
     int idx = (int)vec.size() - 1 + time_offset;
     if (idx >= 0 && idx < (int)vec.size()) {
         return vec[idx];
     } else {
-        return vec.front();
+        // 越界同样返回 NaN，理由同上。
+        return std::nan("");
     }
 }
 
