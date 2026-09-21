@@ -418,7 +418,15 @@ def formula_multinode_strategy(symbol, dataset_id):
                             debug_label="debug_formula_multi")
 
 
-def cusum_node(nid, mode="changepoint", min_obs=10):
+def cusum_node(nid, mode="changepoint", min_obs=10, *,
+               calibrate_period=0, mu=0.0, sigma=1.0, threshold_cap=0.0):
+    """CUSUM 节点。
+
+    这里显式写出 calibrate_period / mu / sigma / threshold_cap，不依赖
+    C++ CUSUMConfig 的结构体默认值——否则 C++ 默认值一改，测试语义会静默漂移
+    （历史事故：1544005 把 _calibratePeriod 由 0 改为 1，使本用例从"未校准"
+    变成"已校准"，输出由全零变成真实累积值，而测试本身毫无提示）。
+    """
     return {
         "id": nid, "type": "custom",
         "position": {"x": 0, "y": 0},
@@ -429,7 +437,11 @@ def cusum_node(nid, mode="changepoint", min_obs=10):
                 "lambda": {"value": 0.5, "type": "number"},
                 "threshold_multiplier": {"value": 4.0, "type": "number"},
                 "min_obs": {"value": min_obs, "type": "number"},
-                "cooldown": {"value": 0, "type": "number"}
+                "cooldown": {"value": 0, "type": "number"},
+                "calibrate_period": {"value": calibrate_period, "type": "number"},
+                "mu": {"value": mu, "type": "number"},
+                "sigma": {"value": sigma, "type": "number"},
+                "threshold_cap": {"value": threshold_cap, "type": "number"}
             }
         }
     }
@@ -449,8 +461,35 @@ def emd_node(nid, method="emd", num_imfs=5):
     }
 
 
-def cusum_strategy(symbol, n, dataset_id):
-    """CUSUM 节点测试: Input → Return(1) → CUSUM → Debug + Signal/Portfolio/Execution"""
+def cusum_returns(prices):
+    """按 FunctionNode::Return 的语义计算对数收益率，并剔除不可用值。
+
+    首 bar 无历史价格（C++ 返回 NaN）；0 价格（anomaly 数据集）会产生 ±inf/NaN。
+    两者在 CUSUMNode::ProcessSingleAsset 中都被 std::isfinite 过滤，这里同样剔除。
+    """
+    p = np.asarray(prices, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = np.log(p[1:] / p[:-1])
+    return r[np.isfinite(r)]
+
+
+def cusum_strategy(symbol, n, dataset_id, prices):
+    """CUSUM 节点测试: Input → Return(1) → CUSUM → Debug + Signal/Portfolio/Execution
+
+    mu/sigma 由生成数据的实测收益率标定（ddof=0，与 CUSUMDetector::calibrate 一致）
+    并显式写入策略 JSON。这样 mu/sigma 成为两侧共享的字面量，节点走
+    "不校准 + 纯累积"（calibrate_period=0, threshold_cap=0）路径，可与 Python 参考
+    逐 bar 精确比对；校准路径由 test_cusum_calibrate.py 覆盖。
+
+    ⚠️ 此处 mu 取自全序列均值（含未来信息），仅用于把"公式正确性"与"校准正确性"
+    解耦，禁止作为生产策略参数。
+    """
+    r = cusum_returns(prices)
+    mu = float(r.mean()) if r.size else 0.0
+    sigma = float(r.std()) if r.size else 1.0
+    if sigma < 1e-10:
+        sigma = 1e-10
+
     strat_id = f"test_{dataset_id}_cusum_{n}"
     debug_label = f"debug_cusum_{n}"
     return make_strategy(
@@ -458,7 +497,8 @@ def cusum_strategy(symbol, n, dataset_id):
         nodes=[
             input_node("1", symbol),
             function_node("2", "Return", f"{n}d", label=f"Return({n})"),
-            cusum_node("3", min_obs=10),
+            cusum_node("3", min_obs=10, calibrate_period=0, mu=mu, sigma=sigma,
+                       threshold_cap=0.0),
             debug_node("4", debug_label),
             signal_node("5", symbol),
             portfolio_node("6"),
@@ -663,7 +703,11 @@ def main():
                 ex_div_bar=100, cash_per_10=5.0)
 
         for gen_func, args, node_label in node_configs:
-            strat = gen_func(symbol, *args, ds_id)
+            # cusum_strategy 需要实测收益率来标定 mu/sigma（见其 docstring）
+            if gen_func is cusum_strategy:
+                strat = gen_func(symbol, *args, ds_id, prices)
+            else:
+                strat = gen_func(symbol, *args, ds_id)
             # 从函数名和参数推断文件名
             func_name = gen_func.__name__.replace("_strategy", "")
             if args:

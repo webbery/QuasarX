@@ -109,6 +109,22 @@
           "cooldown": {
             "value": 0,
             "type": "number"
+          },
+          "calibrate_period": {
+            "value": 0,
+            "type": "number"
+          },
+          "mu": {
+            "value": -0.0001212521624407111,
+            "type": "number"
+          },
+          "sigma": {
+            "value": 0.01298409003267144,
+            "type": "number"
+          },
+          "threshold_cap": {
+            "value": 0.0,
+            "type": "number"
           }
         }
       }

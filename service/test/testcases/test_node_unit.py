@@ -25,6 +25,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from tool import DEBUG_DIR, CSV_DATA_DIR, read_debug_csv
+from cusum_ref import CUSUMDetectorRef, log_returns, node_bar_series
 
 urllib3.disable_warnings()
 
@@ -755,68 +756,79 @@ class TestFormulaMultiNode:
 
 
 # ============================================================
-# L1: CUSUM 节点测试（迁自 test_cusum_api.py）
+# L1: CUSUM 节点测试（未校准 / 纯累积路径）
 # ============================================================
 
 class TestCUSUMNode:
     """CUSUM 变点检测节点
 
-    Python 参考实现: CUSUMDetectorRef
-    关键输出: {symbol}.cusum_signal.s_pos, {symbol}.cusum_signal.s_neg, {symbol}.cusum_signal.drift
+    Python 参考实现: cusum_ref.CUSUMDetectorRef（镜像 service/src/Metric/CUSUMDetector）
+    关键输出: {symbol}.cusum_signal.s_pos, {symbol}.cusum_signal.s_neg
+
+    策略 JSON 由 node_test_data/generate_node_data.py 生成，显式固定
+    calibrate_period=0 / threshold_cap=0，且 mu、sigma 由数据实测写入 —— 节点因此
+    走"不校准 + 纯累积"路径，mu/sigma 成为两侧共享的字面量，可与参考逐 bar 精确比对。
+    自适应校准路径由 test_cusum_calibrate.py 覆盖。
     """
 
     @pytest.mark.parametrize("dataset_id", ["sine", "step", "reversal", "deterministic", "anomaly"])
-    def test_cusum_spos_sneg(self, headers, summary, dataset_id):
-        """验证 s_pos/s_neg 序列与 Python 参考实现一致"""
+    def test_cusum_accumulators_match_reference(self, headers, summary, dataset_id):
+        """s_pos / s_neg 逐 bar 与参考实现一致（含首 bar 占位对齐）"""
         strategy_id = f"test_{dataset_id}_cusum_1"
         strategy_path = TEST_DIR / f"{dataset_id}_cusum_1.json"
         symbol = summary["datasets"][dataset_id]["symbol"]
 
+        # 策略必须显式声明全部 CUSUM 参数，不得依赖 C++ CUSUMConfig 结构体默认值。
+        # 历史事故：1544005 把 _calibratePeriod 默认 0→1，本用例从"未校准"静默变成
+        # "已校准"，输出由全零变为真实累积值，而用例本身毫无提示。
+        nodes = json.loads(strategy_path.read_text(encoding="utf-8"))["nodes"]
+        cusum_nodes = [n for n in nodes if n["data"].get("nodeType") == "cusum"]
+        assert len(cusum_nodes) == 1, f"[{dataset_id}] 期望 1 个 cusum 节点"
+        params = cusum_nodes[0]["data"]["params"]
+        for key in ("calibrate_period", "mu", "sigma", "threshold_cap"):
+            assert key in params, \
+                f"[{dataset_id}] 策略必须显式声明 {key}（不得依赖 C++ 默认值）"
+        assert params["calibrate_period"]["value"] == 0, \
+            f"[{dataset_id}] 本用例测纯累积路径，calibrate_period 必须为 0"
+
         _run_backtest(strategy_path, headers)
         df = read_debug_csv(strategy_id, "debug_cusum_1")
 
-        # 读取 CUSUM 输出 (per-symbol key: {symbol}.cusum_signal.s_pos)
-        spos_col = f"{symbol}.cusum_signal.s_pos"
-        sneg_col = f"{symbol}.cusum_signal.s_neg"
-        actual_spos = pd.to_numeric(df[spos_col], errors="coerce")
-        actual_sneg = pd.to_numeric(df[sneg_col], errors="coerce")
-
-        # Python 参考实现
         closes = _load_close_prices(symbol)
-        returns = pd.Series(closes).apply(np.log).diff(1).dropna().reset_index(drop=True)
+        det = CUSUMDetectorRef(
+            calibrate_period=0,
+            mu=float(params["mu"]["value"]),
+            sigma=float(params["sigma"]["value"]),
+            lambda_=0.5,
+            threshold=4.0,
+            min_obs=10,
+            threshold_cap=0.0,
+        )
+        # 首 bar 无收益率（FunctionNode::Return 返回 NaN）→ C++ 写占位输出；
+        # 0 价格产生的 ±inf/NaN 同样被 CUSUMNode 的 std::isfinite 过滤
+        exp_spos, exp_sneg = node_bar_series(det, log_returns(closes))
 
-        def cusum_ref(returns, lam=0.5, threshold=4.0, min_obs=10):
-            """双侧 CUSUM 参考实现"""
-            s_pos, s_neg = 0.0, 0.0
-            count = 0
-            spos_list, sneg_list = [], []
-            for r in returns:
-                count += 1
-                if count < min_obs:
-                    spos_list.append(np.nan)
-                    sneg_list.append(np.nan)
-                    continue
-                k = lam
-                s_pos = max(0.0, s_pos + r - k)
-                s_neg = max(0.0, s_neg - r - k)
-                spos_list.append(s_pos)
-                sneg_list.append(s_neg)
-            return pd.Series(spos_list), pd.Series(sneg_list)
+        # 注：部分数据集会触发重置（reversal 1 次、deterministic 2 次），这不影响
+        # 逐 bar 比对——mu/sigma 是两侧共享的字面量，且实测重置位置对 C++
+        # std::log 与 np.log 之间 ~1 ulp 的差异不敏感（±1 ulp 与 1e-15 相对扰动
+        # 均不改变重置位置，s_pos 偏差 ~4e-17）。
 
-        # 只与有效值比较（min_obs=10 之后）
-        exp_spos, exp_sneg = cusum_ref(returns)
+        for field, expected in (("s_pos", exp_spos), ("s_neg", exp_sneg)):
+            actual = pd.to_numeric(df[f"{symbol}.cusum_signal.{field}"], errors="coerce")
+            assert len(actual) == len(expected), \
+                f"[{dataset_id}] {field} bar 数不一致: C++={len(actual)}, Python={len(expected)}"
+            assert np.isfinite(actual.values).all(), \
+                f"[{dataset_id}] C++ {field} 含非有限值"
 
-        n = min(len(actual_spos), len(exp_spos))
-        # 跳过 NaN 部分（min_obs=10 前）
-        actual_valid = actual_spos.iloc[10:n].dropna().reset_index(drop=True)
-        expected_valid = exp_spos.iloc[10:n].dropna().reset_index(drop=True)
-
-        if len(actual_valid) > 0 and len(expected_valid) > 0:
-            diff = np.abs(actual_valid.values - expected_valid.values)
-            max_diff = np.max(diff)
-            # CUSUM 是迭代算法，允许小浮点误差
+            max_diff = float(np.max(np.abs(actual.values - np.asarray(expected, dtype=float))))
             assert max_diff < 1e-4, \
-                f"[{dataset_id}] s_pos max diff {max_diff:.2e} exceeds tolerance 1e-4"
+                f"[{dataset_id}] {field} max diff {max_diff:.2e} exceeds tolerance 1e-4" \
+                f"（参考侧重置位置={det.change_points}）"
+
+            # 非平凡护栏：全零意味着用例退化为空通过。
+            # 556ecfa 之前 C++ 与参考同时为全零，"通过"却什么都没验证。
+            assert np.count_nonzero(np.abs(actual.values) > 1e-9) > 0, \
+                f"[{dataset_id}] C++ {field} 全为 0 —— 用例退化为空通过"
 
 
 # ============================================================

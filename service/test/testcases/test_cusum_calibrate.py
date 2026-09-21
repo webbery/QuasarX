@@ -23,73 +23,16 @@ VERIFY_SSL = False
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from tool import _DATA_DIR as SERVICE_DATA_DIR
+from cusum_ref import CUSUMDetectorRef, node_bar_series
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 
 
 # ============================================================
-# Python 参考实现（与 C++ CUSUMDetector 新实现对齐）
+# Python 参考实现
 # ============================================================
-
-class CUSUMDetectorRef:
-    """带自适应校准的 CUSUM（与 C++ 对齐）"""
-
-    def __init__(self, mu=0.0, sigma=1.0, lambda_=0.5, threshold=4.0,
-                 min_obs=30, calibrate_period=30, threshold_cap=10.0):
-        self.mu = mu
-        self.sigma = sigma
-        self.lambda_ = lambda_
-        self.threshold = threshold
-        self.min_obs = min_obs
-        self.calibrate_period = calibrate_period
-        self.threshold_cap = threshold_cap
-        self.reset()
-
-    def reset(self):
-        self.s_pos = self.s_neg = 0.0
-        self.count = 0
-        self.calibrated = False
-        self.calib_buffer = []
-        self.change_points = []
-
-    def calibrate(self, returns):
-        self.mu = float(np.mean(returns))
-        self.sigma = float(np.std(returns, ddof=0))
-        if self.sigma < 1e-10:
-            self.sigma = 1e-10
-        self.calibrated = True
-        self.s_pos = self.s_neg = 0.0
-
-    def _step(self, ret):
-        k = self.lambda_ * self.sigma
-        drift = ret - self.mu
-        self.s_pos = max(0.0, self.s_pos + drift - k)
-        self.s_neg = max(0.0, self.s_neg - drift - k)
-        if self.count >= self.min_obs:
-            n = max(self.count, 1)
-            h = self.threshold * self.sigma * (n ** 0.5)
-            if self.threshold_cap > 0:
-                h = min(h, self.threshold_cap * self.sigma)
-            if max(self.s_pos, self.s_neg) > h:
-                self.s_pos = 0.0
-                self.s_neg = 0.0
-                self.change_points.append(self.count - 1)
-        return self.s_pos - self.s_neg
-
-    def update(self, ret):
-        self.count += 1
-        if self.calibrate_period > 0 and not self.calibrated:
-            self.calib_buffer.append(ret)
-            if len(self.calib_buffer) >= self.calibrate_period:
-                self.calibrate(self.calib_buffer)
-                for r in self.calib_buffer:
-                    self._step(r)
-                self.calib_buffer.clear()
-            return self.s_pos - self.s_neg
-        return self._step(ret)
-
-    def detect_batch(self, returns):
-        self.reset()
-        return [self.update(r) for r in returns]
+# 复用 testcases/cusum_ref.py 的唯一实现（原先此处是第 3 份拷贝，且其校准窗口
+# 用的是 calibrate_period 而非 C++ 的 max(calibrate_period, min_obs)）。
+# 导入见文件头部。
 
 
 # ============================================================
@@ -121,8 +64,14 @@ def compute_returns(prices):
             for i in range(1, len(prices))]
 
 
-def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str):
-    """Input → Return(1) → CUSUM(calibrate_period=T) → Debug"""
+def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str, *,
+                        mu: float = 0.0, sigma: float = 1.0,
+                        threshold_cap: float = 10.0):
+    """Input → Return(1) → CUSUM(calibrate_period=T) → Debug
+
+    mu/sigma/threshold_cap 显式写出，不依赖 C++ CUSUMConfig 的结构体默认值
+    （否则默认值一改，测试语义会静默漂移）。
+    """
     return {
         "id": f"test_cusum_cal_{calibrate_period}",
         "name": f"test_cusum_cal_{calibrate_period}",
@@ -142,10 +91,11 @@ def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str
                            "lambda": {"value": 0.5},
                            "threshold_multiplier": {"value": 4.0},
                            "min_obs": {"value": 10},
-                           "mu": {"value": 0.0},
-                           "sigma": {"value": 1.0},
+                           "mu": {"value": mu},
+                           "sigma": {"value": sigma},
                            "cooldown": {"value": 0},
                            "calibrate_period": {"value": calibrate_period},
+                           "threshold_cap": {"value": threshold_cap},
                        }}},
             {"id": "4", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": debug_label, "nodeType": "debug", "params": {}}},
@@ -243,9 +193,10 @@ class TestCUSUMCalibrateAlign:
         rows = run_backtest_read_debug(self.token, strategy, debug_label)
 
         # C++ bar 序列首 bar 无收益率（FunctionNode::Return 返回 NaN，CUSUMNode
-        # 跳过 update 但写占位输出）；Python 参考对齐该结构：首元素占位 0.0
+        # 跳过 update 但写占位输出）；node_bar_series 复现该 bar 对齐语义
         det = CUSUMDetectorRef(calibrate_period=T, min_obs=10)
-        py_drifts = [0.0] + det.detect_batch(self.returns[:len(rows) - 1])
+        py_spos, py_sneg = node_bar_series(det, self.returns[:len(rows) - 1])
+        py_drifts = [a - b for a, b in zip(py_spos, py_sneg)]
         py_cps = list(det.change_points)
 
         drift_col = f"{self.symbol}.cusum.drift"
@@ -297,7 +248,12 @@ class TestCUSUMCalibrateAlign:
         assert rel_l1 <= 0.50, f"drift 相对 L1 距离 {rel_l1:.1%} > 50%"
 
     def test_cpp_python_drift_no_calibrate(self):
-        """calibrate_period=0: drift 应恒为 0（C++ 和 Python 一致）"""
+        """calibrate_period=0 + sigma=1.0: drift 应恒为 0（C++ 和 Python 一致）
+
+        注意：该期望输出本身就是全零（k=λσ=0.5 ≫ |r|），因此它无法区分
+        "正确的退化"与"收益率被 NaN 污染导致的退化"——556ecfa 修复的正是后者，
+        而本用例当时照样通过。配对护栏见 test_cpp_python_drift_no_calibrate_nontrivial。
+        """
         if len(self.returns) < 60:
             pytest.skip("数据不足")
 
@@ -311,3 +267,42 @@ class TestCUSUMCalibrateAlign:
         for i in range(30, len(cpp_drifts)):
             assert abs(cpp_drifts[i]) < 1e-10, \
                 f"不校准 drift[{i}]={cpp_drifts[i]} 应恒为 0"
+
+    def test_cpp_python_drift_no_calibrate_nontrivial(self):
+        """配对护栏：calibrate_period=0 且 sigma 取数据同量纲 → drift 必须非全零
+
+        与上一个用例同一条代码路径，只把 sigma 从 1.0 换成实测波动率：
+          - sigma=1.0  → k=0.5 ≫ |r| → drift 恒为 0
+          - sigma=实测 → k 与 |r| 同量纲 → drift 非平凡
+        因此本用例同时验证两件事：
+          1. 收益率没有被 NaN 污染（污染会让校准/累积静默退化为全零）
+          2. 策略 JSON 的 sigma 参数确实被传入 detector（若被忽略而回落到 1.0，
+             输出也会全零）
+        """
+        if len(self.returns) < 60:
+            pytest.skip("数据不足")
+
+        sigma = float(np.std(self.returns))
+        if sigma < 1e-10:
+            pytest.skip("收益率波动近似为 0")
+
+        debug_label = "debug_cusum_cal0_nonzero"
+        strategy = make_cusum_strategy(self.symbol_api, 0, debug_label, sigma=sigma)
+        rows = run_backtest_read_debug(self.token, strategy, debug_label)
+
+        drift_col = f"{self.symbol}.cusum.drift"
+        cpp_drifts = [float(r[drift_col]) for r in rows]
+
+        det = CUSUMDetectorRef(calibrate_period=0, mu=0.0, sigma=sigma, lambda_=0.5,
+                               threshold=4.0, min_obs=10, threshold_cap=10.0)
+        py_spos, py_sneg = node_bar_series(det, self.returns)
+        py_drifts = [a - b for a, b in zip(py_spos, py_sneg)]
+
+        py_max = max(abs(x) for x in py_drifts)
+        assert py_max > 1e-6, \
+            f"参考实现 drift 全零（sigma={sigma:.3e}），护栏本身失效"
+
+        cpp_max = max(abs(x) for x in cpp_drifts)
+        assert cpp_max > 1e-6, \
+            f"calibrate_period=0 + sigma={sigma:.3e} 时 C++ drift 全零 —— " \
+            f"疑似收益率被 NaN 污染导致静默退化，或 sigma 参数未传入 detector"
