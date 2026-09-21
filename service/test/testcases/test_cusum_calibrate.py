@@ -166,7 +166,11 @@ def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str
 
 
 def run_backtest_read_debug(token: str, strategy: dict, debug_label: str):
-    """运行回测，读取 DebugNode CSV"""
+    """运行回测，读取 DebugNode CSV
+
+    DebugNode::Done 实际写入路径为 <db>/debug/<strategy_id>/<label>.csv，
+    因此目录取策略 id，文件名取节点 label（不再硬编码 xgb_debug.csv）。
+    """
     headers = {"Authorization": token}
     resp = requests.post(
         f"{BASE_URL}/backtest",
@@ -175,7 +179,8 @@ def run_backtest_read_debug(token: str, strategy: dict, debug_label: str):
     )
     assert resp.status_code == 200, f"Backtest failed: {resp.text[:300]}"
 
-    debug_csv = SERVICE_DATA_DIR / "debug" / debug_label / "xgb_debug.csv"
+    strategy_id = strategy["id"]
+    debug_csv = SERVICE_DATA_DIR / "debug" / strategy_id / f"{debug_label}.csv"
     assert debug_csv.exists(), f"Debug CSV not found: {debug_csv}"
 
     with open(debug_csv) as f:
