@@ -2,6 +2,7 @@
 #include "server.h"
 #include "Util/log.h"
 #include "boost/algorithm/string.hpp"
+#include <cmath>
 
 CUSUMNode::CUSUMNode(Server* server)
     : _server(server), _mode(CUSUMMode::ChangePoint),
@@ -124,6 +125,29 @@ NodeProcessResult CUSUMNode::ProcessSingleAsset(const String& strategy, DataCont
         auto it = _assetDetectors.find(sym);
         if (it == _assetDetectors.end()) continue;
 
+        // 非有限收益率（如 FunctionNode::Return 首 bar 的 NaN）不得进入 detector：
+        // NaN 会污染校准期统计量（sum += NaN → mean/sigma = NaN），
+        // 而 std::max(0.0, NaN) 恒为 0，导致 drift 全序列退化为 0。
+        // 跳过 update，但仍写占位输出以保持时间序列与 bar 对齐。
+        if (!std::isfinite(ret)) {
+            String prefix = sym + "." + _label + ".";
+            double s_pos = it->second->get_s_pos();
+            double s_neg = it->second->get_s_neg();
+            if (!context.exist(prefix + "signal")) {
+                context.set<Vector<double>>(prefix + "signal", {0.0});
+                context.set<Vector<double>>(prefix + "s_pos", {s_pos});
+                context.set<Vector<double>>(prefix + "s_neg", {s_neg});
+                context.set<Vector<double>>(prefix + "drift", {s_pos - s_neg});
+            } else {
+                context.add(prefix + "signal", 0.0);
+                context.add(prefix + "s_pos", s_pos);
+                context.add(prefix + "s_neg", s_neg);
+                context.add(prefix + "drift", s_pos - s_neg);
+            }
+            anySuccess = true;
+            continue;
+        }
+
         // 更新该 symbol 的 CUSUM detector
         auto result = it->second->update(ret);
 
@@ -185,7 +209,18 @@ NodeProcessResult CUSUMNode::ProcessMultiAsset(const String& strategy, DataConte
 
         if (!has_return) continue;
 
-        auto result = it->second->update(ret);
+        // 非有限收益率（如 FunctionNode::Return 首 bar 的 NaN）不得进入 detector，
+        // 否则 NaN 会污染校准期统计量（mean/sigma = NaN）使 drift 全 0。
+        // 跳过 update，用 detector 当前状态出占位结果（triggered=false，不计入 consensus）。
+        CUSUMStepResult result;
+        if (std::isfinite(ret)) {
+            result = it->second->update(ret);
+        } else {
+            result._change_point = false;
+            result._cusum_positive = it->second->get_s_pos();
+            result._cusum_negative = it->second->get_s_neg();
+            result._current_drift = result._cusum_positive - result._cusum_negative;
+        }
 
         bool triggered = result._change_point;
         bool s_pos_triggered = triggered && (result._cusum_positive > 0);
