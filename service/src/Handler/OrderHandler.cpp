@@ -69,6 +69,24 @@ namespace {
         return result;
     }
 
+    // 价格字段兼容以下写法：prices=数值、prices=数组(取首个)、price=数值。
+    // 缺失或类型不符时返回 0，由各分支自行处理（回测取最新收盘价 / 手动回写返回 400），
+    // 避免 nlohmann::json 隐式转换抛出异常导致 500。
+    double ParsePrices(const nlohmann::json& params) {
+        auto pick = [](const nlohmann::json& value) -> double {
+            if (value.is_number()) return value.get<double>();
+            if (value.is_array() && !value.empty() && value.front().is_number())
+                return value.front().get<double>();
+            return 0.0;
+        };
+        if (params.contains("prices")) {
+            double price = pick(params["prices"]);
+            if (price > 0) return price;
+        }
+        if (params.contains("price")) return pick(params["price"]);
+        return 0.0;
+    }
+
 }
 OrderType GetOrderType(nlohmann::json& params)
 {
@@ -97,7 +115,7 @@ void OrderHandler::post(const httplib::Request& req, httplib::Response& res) {
     int direct = params["direct"];
     auto symbol = GetSymbol(params);
     int quantity = params["quantity"];
-    double prices = params["prices"];
+    double prices = ParsePrices(params);
     int decisionId = params.value("decisionId", -1);
 
     auto broker = _server->GetBrokerSubSystem();

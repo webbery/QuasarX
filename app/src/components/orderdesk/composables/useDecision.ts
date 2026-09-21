@@ -79,7 +79,7 @@ export function useDecision() {
         symbol: d.symbol,
         direct: isBuy ? 0 : 1,
         quantity,
-        price,
+        prices: price,          // 服务端 OrderHandler 读取的是 prices
         type: 1,
         decisionId: id,
         strategy: d.strategy    // 触发 OrderHandler 手动回写路径（Fix #4）
@@ -96,12 +96,16 @@ export function useDecision() {
 
   const closeDecision = async (id: number) => {
     const d = decisions.value.find(d => d.id === id)
-    if (!d || d.executed || d.closed) return
+    if (!d) return { success: false, error: '决策不存在' }
+    if (d.executed) return { success: false, error: '决策已下单，无法关闭' }
+    if (d.closed) return { success: true }
     try {
       await axios.put('/v0/trade/decisions', { id })
       d.closed = true
-    } catch (error) {
+      return { success: true }
+    } catch (error: any) {
       console.error('[Decision] close failed:', error)
+      return { success: false, error: error.response?.data?.error || '关闭订单失败' }
     }
   }
 

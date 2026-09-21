@@ -237,10 +237,16 @@ const handleExecute = async () => {
 }
 
 const handleClose = async () => {
-  if (selectedDecision.value && !selectedDecision.value.executed) {
-    await closeDecision(selectedDecision.value.id)
+  const decision = selectedDecision.value
+  if (!decision || decision.executed || decision.closed) return
+  const result = await closeDecision(decision.id)
+  if (!result.success) {
+    message.error(result.error || '关闭订单失败')
+    return
   }
-  selectedId.value = null
+  // 以服务端为准刷新状态，并保留选中项以便右侧面板显示“已确认（未执行）”
+  await fetchDecisions()
+  message.success('已确认关闭')
 }
 
 onMounted(() => {
