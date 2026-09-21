@@ -236,3 +236,33 @@ bool FormulaParser::validate(const Map<String, ArgType>& availableVars) {
 
     return visit(*_ast);
 }
+
+bool FormulaParser::validate(const Map<String, ArgType>& availableVars,
+                             const Vector<symbol_t>& symbols) {
+    if (!_ast) return false;
+    _validationError.clear();
+
+    // 向后兼容:空 symbols 直接复用旧逻辑(此时没有任何 short-name 别名可以注入)
+    if (symbols.empty()) {
+        return validate(availableVars);
+    }
+
+    // 构造 augmented availableVars: 保留 full key,同时按 symbols 注入 short key。
+    // 例: full key "sz.900007.close" + symbol sz.900007 → short key "close"。
+    // 同名 short key 多 symbol 命中时,首个生效(实际多 symbol 上游类型一致,无副作用)。
+    Map<String, ArgType> aug = availableVars;
+    for (const auto& sym : symbols) {
+        String prefix = get_symbol(sym) + ".";
+        size_t plen = prefix.size();
+        for (const auto& kv : availableVars) {
+            const String& k = kv.first;
+            if (k.size() <= plen || k.compare(0, plen, prefix) != 0) continue;
+            String shortKey = k.substr(plen);
+            // 已存在则跳过(首个胜出)
+            aug.emplace(std::move(shortKey), kv.second);
+        }
+    }
+
+    // 调用单参数版本(递归 visit 逻辑保持不变)
+    return validate(aug);
+}

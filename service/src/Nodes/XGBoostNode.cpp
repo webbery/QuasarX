@@ -254,27 +254,6 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
         buildOutputs(symbol + ".");
     }
 
-    // [DEBUG X] 打印 _feature_keys 和第一个 symbol 的 resolved keys
-    {
-        String featList = boost::algorithm::join(_feature_keys, ",");
-        String emptyKeys;
-        for (size_t i = 0; i < _feature_keys.size(); ++i) {
-            if (_feature_keys[i].empty()) emptyKeys += std::to_string(i) + ",";
-        }
-        INFO("[XGBoost:{}] _feature_keys ({}): [{}] | empty_idx=[{}]",
-             _id, _feature_keys.size(), featList, emptyKeys);
-
-        if (!_resolved_features.empty()) {
-            const auto& firstSym = _resolved_features.begin()->first;
-            const auto& firstResolved = _resolved_features.begin()->second;
-            String resList;
-            for (size_t i = 0; i < firstResolved.size(); ++i) {
-                resList += "[" + std::to_string(i) + "]=" + firstResolved[i] + " ";
-            }
-            INFO("[XGBoost:{}] resolved[{}] ({}): {}", _id, firstSym, firstResolved.size(), resList);
-        }
-    }
-
     // 如果有无法解析的特征，终止初始化
     if (!unresolvedFeatures.empty()) {
         String unresolvedList = boost::algorithm::join(unresolvedFeatures, ", ");

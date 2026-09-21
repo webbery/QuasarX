@@ -256,6 +256,18 @@ private:
      */
     void NotifyNodesDone(const String& strategy, const List<QNode*>& graph);
 
+    /**
+     * @brief 重置策略图耗时剖析统计（回测循环开始前调用）
+     */
+    void ResetGraphPerf(StrategyFlowInfo& flow);
+
+    /**
+     * @brief 输出策略图耗时剖析日志，用于定位回测性能瓶颈
+     * @param final true=回测结束的完整排名，false=运行中的 top 节点快照
+     * @note 排名按节点累计耗时降序，并给出 graph vs data 推进的耗时对比
+     */
+    void LogGraphPerf(const String& strategy, const StrategyFlowInfo& flow, DataContext& context, bool final) const;
+
     // RAII 守卫：确保 NotifyNodesDone 在 DataContext 析构前执行。
     // DataContext 是 worker 线程的栈局部变量，节点在 Prepare() 中缓存其裸指针。
     // 若 NotifyNodesDone 在 worker 退出后被调用（如 Stop()），指针已悬空 → 崩溃。
@@ -321,6 +333,26 @@ private:
 
         // 最近一次节点执行错误信息（RunGraph 中节点返回 Error 时设置）
         mutable String _lastError;
+
+        // ── 策略图耗时剖析（仅用于回测性能瓶颈定位，不参与业务逻辑）──
+        // 单个节点累计耗时；RunGraph 每次 Process 后累加
+        struct NodePerfStat {
+            String type;            // 节点类型名，如 "FunctionNode"
+            uint64_t calls = 0;     // Process 调用次数
+            double totalMs = 0;     // 累计耗时
+            double maxMs = 0;       // 单次最大耗时（用于发现冷启动/初始化尖峰）
+        };
+        struct PerfProfile {
+            uint64_t epochs = 0;                // RunGraph 调用次数（≈回测 epoch 数）
+            double graphMs = 0;                 // RunGraph 累计耗时（节点 + 图调度）
+            double dataMs = 0;                  // 回测数据推进累计耗时（stepForward）
+            // 逐 epoch 采样（float：1 万 epoch 约 80KB），用于漂移与分位数分析
+            Vector<float> epochGraphMs;
+            Vector<float> epochDataMs;
+            Map<uint32_t, NodePerfStat> nodes;  // key = 节点 id
+        };
+        // mutable：RunGraph 以 const 引用接收 flow，但需要就地累计耗时
+        mutable PerfProfile _perf;
     };
 
     Map<String, StrategyFlowInfo> _flows;
@@ -329,4 +361,6 @@ private:
     // 异步 join _dailyWorker：锁内 swap 转移所有权，detached monitor 线程完成 join + delete
     // 调用后 flow._dailyWorker 保证为 null，调用方可立即创建新线程或安全销毁 flow
     void joinDailyWorkerAsync(StrategyFlowInfo& flow, const String& strategy);
+    // 同步 join _dailyWorker：阻塞直到 worker 线程结束，确保后续 delete 节点不会 UAF
+    void joinDailyWorkerSync(StrategyFlowInfo& flow, const String& strategy);
 };

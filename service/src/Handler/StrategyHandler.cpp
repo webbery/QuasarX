@@ -834,7 +834,7 @@ void StrategyNodeHandler::get(const httplib::Request& req, httplib::Response& re
     String label = req.get_param_value("label");
     auto& cfg = _server->GetConfig();
     auto path = cfg.GetDatabasePath();
-    path += "/data/debug/" + strategy + "/" + label;
+    path += "/debug/" + strategy + "/" + label;
     INFO("[StrategyNodeHandler] GET debug CSV: strategy='{}', label='{}', path='{}'", strategy, label, path);
     if (!std::filesystem::exists(path)) {
         WARN("[StrategyNodeHandler] File not found: {}", path);

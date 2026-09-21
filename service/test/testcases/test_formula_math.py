@@ -1387,7 +1387,7 @@ def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false", allow
         "name": f"信号逻辑测试_{strategy_id}",
         "version": 1,
         "description": "and/or 算子与 topk 组合测试",
-        "capital": 1000000,
+        "capital": 100000,
         "backtest": {
             "start": SIGNAL_LOGIC_START.strftime("%Y-%m-%d"),
             "end": (SIGNAL_LOGIC_START + timedelta(days=SIGNAL_LOGIC_N_BARS * 2)).strftime("%Y-%m-%d")

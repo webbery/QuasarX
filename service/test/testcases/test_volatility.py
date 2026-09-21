@@ -613,26 +613,50 @@ CORR_TOLERANCE = 1e-6  # 纯数学计算，应精确一致
 def compute_corr_golden(symbols: List[str]) -> Tuple[np.ndarray, List[str]]:
     """使用 numpy.corrcoef 计算相关系数矩阵（黄金标准）
 
+    与 C++ computeMulti 对齐：按第一个标的的日期范围过滤所有标的，
+    而非先算全部 returns 再取尾部（两者在标的日期范围不同时不等价）。
+
     Returns:
         (correlation_matrix, symbol_list) — symbol_list 与矩阵索引对应
     """
-    all_returns = []
+    all_prices = []
+    all_dates = []
     valid_symbols = []
     for sym in symbols:
-        closes, _ = load_csv_prices(sym)
+        closes, dates = load_csv_prices(sym)
         if len(closes) < 2:
             continue
-        rets = simple_returns(closes)
-        all_returns.append(rets)
+        all_prices.append(closes)
+        all_dates.append(dates)
         valid_symbols.append(sym)
 
-    # 对齐到共同长度（取最短，取尾部 — 与 C++ computeMulti 一致）
-    min_len = min(len(r) for r in all_returns)
-    aligned = np.array([r[-min_len:] for r in all_returns])
+    if len(valid_symbols) < 2:
+        return np.array([]), valid_symbols
 
-    # numpy.corrcoef 是标准 Pearson 相关系数（去均值）
+    # C++ compute() 以第一个成功加载标的的日期作为 common_dates，
+    # 其余标的按该日期范围查询 DB，因此这里用第一个标的的日期范围过滤
+    first_dates = all_dates[0]
+    start_date, end_date = first_dates[0], first_dates[-1]
+
+    filtered_returns = []
+    final_symbols = []
+    for i, sym in enumerate(valid_symbols):
+        # 按共同日期范围过滤价格
+        filtered = [(p, d) for p, d in zip(all_prices[i], all_dates[i])
+                    if start_date <= d <= end_date]
+        if len(filtered) < 2:
+            continue
+        prices = [p for p, _ in filtered]
+        rets = simple_returns(prices)
+        filtered_returns.append(rets)
+        final_symbols.append(sym)
+
+    # 对齐到共同长度（取尾部，处理过滤后长度仍有微小差异的情况）
+    min_len = min(len(r) for r in filtered_returns)
+    aligned = np.array([r[-min_len:] for r in filtered_returns])
+
     corr = np.corrcoef(aligned)
-    return corr, valid_symbols
+    return corr, final_symbols
 
 
 @pytest.mark.usefixtures("auth_token")

@@ -39,7 +39,28 @@ void DataContext::CollectNumericOutputs(Map<String, Vector<double>>& target) {
 //     return _outputs.at(name);
 // }
 
+uint64_t DataContext::ValueBytes(const context_t& value) {
+    return std::visit([](const auto& v) -> uint64_t {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, Vector<double>> ||
+                      std::is_same_v<T, Vector<float>> ||
+                      std::is_same_v<T, Vector<uint64_t>>) {
+            return v.size() * sizeof(typename T::value_type);
+        }
+        else if constexpr (std::is_same_v<T, List<symbol_t>>) {
+            return v.size() * sizeof(symbol_t);
+        }
+        else if constexpr (std::is_same_v<T, String>) {
+            return v.size();
+        }
+        else {
+            return sizeof(T);
+        }
+    }, value);
+}
+
 void DataContext::add(const String& name, context_t value) {
+    PerfScope scope(_perf.enabled, _perf.add);
     std::visit([this, &name, &value](auto&& v) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, double> || std::is_same_v<T, uint64_t>) {
@@ -57,6 +78,7 @@ void DataContext::add(const String& name, context_t value) {
 }
 
 bool DataContext::exist(const String& name) {
+    PerfScope scope(_perf.enabled, _perf.exist);
     return _outputs.contains(name);
 }
 

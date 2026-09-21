@@ -395,7 +395,7 @@ class TestStrategy:
         time.sleep(2)  # 等待文件写入
 
         # 验证 DebugNode 输出文件存在（证明 context 中有 quote 数据，策略图成功执行）
-        # DebugNode 输出路径: {database_path}/data/debug/{strategy}/{label}.csv
+        # DebugNode 输出路径: {database_path}/debug/{strategy}/{label}.csv
         debug_dir = DEBUG_DIR / name
         assert debug_dir.exists(), f"Debug 输出目录不存在: {debug_dir}"
         csv_files = [f for f in os.listdir(debug_dir) if f.endswith('.csv')]
@@ -650,7 +650,7 @@ class TestXGBoostStrategyBusiness:
         )
         assert resp.status_code == 200, f"回测失败: {resp.text}"
 
-        # DebugNode 输出路径: {database_path}/data/debug/{strategy}/{label}.csv
+        # DebugNode 输出路径: {database_path}/debug/{strategy}/{label}.csv
         csv_path = DEBUG_DIR / self.DEPLOY_NAME / "xgb_debug.csv"
         assert csv_path.exists(), f"Debug CSV 不存在: {csv_path}"
 

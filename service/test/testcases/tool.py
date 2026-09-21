@@ -66,7 +66,7 @@ def _resolve_data_dir() -> Path:
 
 
 _DATA_DIR = _resolve_data_dir()
-DEBUG_DIR = _DATA_DIR / "data" / "debug"
+DEBUG_DIR = _DATA_DIR / "debug"
 CSV_DATA_DIR = _DATA_DIR / "A_hfq"
 
 # --------------------------

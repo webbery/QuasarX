@@ -33,6 +33,22 @@ bool SignalNode::Init(const nlohmann::json& config) {
         }
     }
 
+    // BFS 上游拿到 _pools,提前到 validate() 之前。
+    // 这样 validate() 才能按 short-name ("close") 正确解析 availableVars,
+    // 不再因为 key 名不匹配而把类型校验静默放行。
+    Set<symbol_t> upstreamSymbols = discoverUpstreamSymbols();
+
+    if (upstreamSymbols.empty()) {
+        WARN("[SignalNode:{}] No upstream symbols found from QuoteInputNode, signal node will be skipped", _id);
+        return false;
+    }
+
+    for (const auto& sym : upstreamSymbols) {
+        _pools.emplace_back(sym);
+    }
+
+    INFO("[SignalNode:{}] Found {} symbols from upstream", _id, _pools.size());
+
     // 解析并验证买入公式
     if (!_buyParser) {
         _buyParser = new FormulaParser(_server);
@@ -43,8 +59,8 @@ bool SignalNode::Init(const nlohmann::json& config) {
         _buyParser = nullptr;
         throw std::runtime_error("Failed to parse buy signal expression");
     }
-    // 新增：类型验证
-    if (!_buyParser->validate(availableVars)) {
+    // 新增：类型验证 (带 symbols 以便 short-name 正确解析)
+    if (!_buyParser->validate(availableVars, _pools)) {
         std::string error = "Buy signal expression type validation failed: " +
                            _buyParser->getValidationError();
         FATAL("{}", error);
@@ -63,28 +79,14 @@ bool SignalNode::Init(const nlohmann::json& config) {
         _sellParser = nullptr;
         throw std::runtime_error("Failed to parse sell signal expression");
     }
-    // 新增：类型验证
-    if (!_sellParser->validate(availableVars)) {
+    // 新增：类型验证 (带 symbols 以便 short-name 正确解析)
+    if (!_sellParser->validate(availableVars, _pools)) {
         std::string error = "Sell signal expression type validation failed: " +
                            _sellParser->getValidationError();
         FATAL("{}", error);
         delete _sellParser;
         _sellParser = nullptr;
         throw std::runtime_error(error);
-    }
-
-    // BFS 上游找到所有可达的 QuoteInputNode 的 symbol
-    Set<symbol_t> upstreamSymbols = discoverUpstreamSymbols();
-
-    if (upstreamSymbols.empty()) {
-        WARN("[SignalNode:{}] No upstream symbols found from QuoteInputNode, signal node will be skipped", _id);
-        return false;
-    }
-
-    INFO("[SignalNode:{}] Found {} symbols from upstream", _id, upstreamSymbols.size());
-
-    for (const auto& sym : upstreamSymbols) {
-        _pools.emplace_back(sym);
     }
 
     if (config["params"].contains("allowShort")) {
@@ -112,79 +114,6 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
 
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
-
-    // [DEBUG C] 在特定 epoch dump raw_strength / strength_med_20d / filtered_strength 的实际值
-    {
-        int dbgEpoch = context.GetEpoch();
-        if (dbgEpoch == 200 || dbgEpoch == 500 || dbgEpoch == 800) {
-            INFO("[SignalNode:{}] === DEBUG C epoch={} ===", _id, dbgEpoch);
-
-            // Dump 第一个 5 个标的的 raw_strength / med / filtered
-            int n = 0;
-            for (auto& sym : _pools) {
-                if (n >= 5) break;
-                String symStr = get_symbol(sym);
-                String rawKey = symStr + ".raw_strength";
-                String medKey = symStr + ".strength_med_20d";
-                String filtKey = symStr + ".filtered_strength";
-
-                double raw = NAN, med = NAN, filt = NAN;
-                if (context.exist(rawKey)) {
-                    const auto& v = context.get(rawKey);
-                    if (auto* vec = std::get_if<Vector<double>>(&v)) {
-                        if (!vec->empty()) raw = vec->back();
-                    } else if (auto* sc = std::get_if<double>(&v)) {
-                        raw = *sc;
-                    }
-                }
-                if (context.exist(medKey)) {
-                    const auto& v = context.get(medKey);
-                    if (auto* vec = std::get_if<Vector<double>>(&v)) {
-                        if (!vec->empty()) med = vec->back();
-                    } else if (auto* sc = std::get_if<double>(&v)) {
-                        med = *sc;
-                    }
-                }
-                if (context.exist(filtKey)) {
-                    const auto& v = context.get(filtKey);
-                    if (auto* vec = std::get_if<Vector<double>>(&v)) {
-                        if (!vec->empty()) filt = vec->back();
-                    } else if (auto* sc = std::get_if<double>(&v)) {
-                        filt = *sc;
-                    }
-                }
-                INFO("[SignalNode]   {} raw={:.4f} med={:.4f} filt={:.4f} raw<med={}",
-                     symStr, raw, med, filt,
-                     (std::isfinite(raw) && std::isfinite(med)) ? (raw < med) : -1);
-                n++;
-            }
-
-            // 统计有多少 raw_strength 是 NaN 或 0
-            int nRawNan = 0, nRawZero = 0, nFiltZero = 0;
-            for (auto& sym : _pools) {
-                String symStr = get_symbol(sym);
-                if (context.exist(symStr + ".raw_strength")) {
-                    const auto& v = context.get(symStr + ".raw_strength");
-                    double raw = NAN;
-                    if (auto* vec = std::get_if<Vector<double>>(&v)) {
-                        if (!vec->empty()) raw = vec->back();
-                    } else if (auto* sc = std::get_if<double>(&v)) raw = *sc;
-                    if (!std::isfinite(raw)) nRawNan++;
-                    else if (raw == 0.0) nRawZero++;
-                }
-                if (context.exist(symStr + ".filtered_strength")) {
-                    const auto& v = context.get(symStr + ".filtered_strength");
-                    double filt = NAN;
-                    if (auto* vec = std::get_if<Vector<double>>(&v)) {
-                        if (!vec->empty()) filt = vec->back();
-                    } else if (auto* sc = std::get_if<double>(&v)) filt = *sc;
-                    if (std::isfinite(filt) && filt == 0.0) nFiltZero++;
-                }
-            }
-            INFO("[SignalNode]   stats: raw_NaN={}/42, raw_zero={}/42, filt_zero={}/42",
-                 nRawNan, nRawZero, nFiltZero);
-        }
-    }
 
     // 如果不允许做空，过滤无持仓标的的 SELL 信号
     Map<symbol_t, int64_t> heldSymbols;
@@ -248,18 +177,6 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
                 context.AddSignal(signal);
             }
         }
-    }
-
-    // [DEBUG A] SignalNode 诊断日志：每 100 epoch 输出一次信号数量
-    if (context.GetEpoch() % 100 == 0 || context.GetEpoch() < 5) {
-        int nBuy = 0, nSell = 0;
-        for (const auto& [sym, act] : decisions) {
-            if (act == TradeAction::BUY) nBuy++;
-            else if (act == TradeAction::SELL) nSell++;
-        }
-        INFO("[SignalNode:{}] epoch={} pools={} buys_raw={} sells_raw={} decisions={} (buy={} sell={})",
-             _id, context.GetEpoch(), _pools.size(), buys.size(), sells.size(),
-             decisions.size(), nBuy, nSell);
     }
 
     // 将信号数据写入 context，供 debug 节点使用

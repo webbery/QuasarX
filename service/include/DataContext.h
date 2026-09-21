@@ -6,6 +6,8 @@
 #include "Bridge/SIM/BacktestContext.h"
 #include "RiskContext.h"
 
+#include <chrono>
+
 struct TradeReport;
 class Server;
 using crash_flow_t = List<Pair<symbol_t, TradeReport>>;
@@ -119,16 +121,78 @@ public:
 
     ~DataContext();
 
+    // ── 性能剖析（回测排查用，默认关闭）──
+    // DataContext 由策略 worker 线程独占访问（栈局部对象），计数无需原子操作。
+    // 关闭时每个原语只多一次 bool 判断；开启时每次调用读两次 steady_clock（~25ns/次）。
+    struct PerfCounter {
+        uint64_t calls = 0;    // 调用次数
+        double totalMs = 0;    // 累计耗时
+        double maxMs = 0;      // 单次最大耗时（识别深拷贝大向量这类尖峰）
+    };
+    struct PerfStat {
+        bool enabled = false;
+        PerfCounter get, set, add, exist;
+        uint64_t keys = 0;     // _outputs 的 key 数量（GetPerfStat 时刷新）
+        uint64_t bytes = 0;    // _outputs 估算占用字节（key + 数值负载）
+        uint64_t ops() const { return get.calls + set.calls + add.calls + exist.calls; }
+        double totalMs() const { return get.totalMs + set.totalMs + add.totalMs + exist.totalMs; }
+        void reset() { get = {}; set = {}; add = {}; exist = {}; }
+    };
+
+    // RAII 计时：未开启时只是一次分支判断，不读时钟
+    class PerfScope {
+    public:
+        PerfScope(bool enabled, PerfCounter& counter)
+            : _counter(enabled ? &counter : nullptr) {
+            if (_counter) _start = std::chrono::steady_clock::now();
+        }
+        ~PerfScope() {
+            if (_counter) {
+                double ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - _start).count();
+                _counter->calls++;
+                _counter->totalMs += ms;
+                if (ms > _counter->maxMs) _counter->maxMs = ms;
+            }
+        }
+        PerfScope(const PerfScope&) = delete;
+        PerfScope& operator=(const PerfScope&) = delete;
+    private:
+        PerfCounter* _counter = nullptr;
+        std::chrono::steady_clock::time_point _start{};
+    };
+
+    void EnablePerfProfile(bool on) { _perf.enabled = on; }
+    bool IsPerfProfileEnabled() const { return _perf.enabled; }
+    void ResetPerfStat() { _perf.reset(); }
+    /**
+     * @brief 读取剖析结果；顺带刷新 _outputs 的 keys/bytes 规模快照
+     * @note 只在快照输出时调用，遍历 _outputs 有一定成本，不要放在热路径
+     */
+    const PerfStat& GetPerfStat() {
+        uint64_t bytes = 0;
+        for (const auto& [key, value] : _outputs) {
+            bytes += key.size() + sizeof(void*) * 2;  // key 字符串 + 容器节点开销
+            bytes += ValueBytes(value);
+        }
+        _perf.keys = _outputs.size();
+        _perf.bytes = bytes;
+        return _perf;
+    }
+
     template<typename T>
     T& get(const String& name) {
+        PerfScope scope(_perf.enabled, _perf.get);
         return std::get<T>(_outputs.at(name));
     }
     template<typename T>
     const T& get(const String& name) const {
+        PerfScope scope(_perf.enabled, _perf.get);
         return std::get<T>(_outputs.at(name));
     }
 
     context_t& get(const String& name) {
+        PerfScope scope(_perf.enabled, _perf.get);
         return _outputs.at(name);
     }
 
@@ -137,12 +201,14 @@ public:
 
     template<typename T>
     void set(const String& name, const T& f) {
+        PerfScope scope(_perf.enabled, _perf.set);
         _outputs[name] = f;
     }
 
     void add(const String& name, context_t value);
     template<typename T>
     void add(const String& name, const T& value) {
+        PerfScope scope(_perf.enabled, _perf.add);
         auto& item = _outputs[name];
         std::visit([&name, &value, this](auto&& v) {
             using CTX_T = std::decay_t<decltype(v)>;
@@ -150,7 +216,8 @@ public:
                 v.emplace_back(std::move(value));
             }
             else {
-                set(name, value);
+                // 直接赋值而非调用 set()：避免同一操作被计入 add 与 set 两个桶
+                _outputs[name] = value;
             }
             }, item);
     }
@@ -282,6 +349,9 @@ private:
 
      // 标记信号为已执行
     bool markSignalExecuted(const std::string& signal_id);
+
+    // context_t 数值负载的估算字节数（性能剖析用）
+    static uint64_t ValueBytes(const context_t& value);
 private:
     uint64_t _epoch = 0;
     const String _strategy;
@@ -316,4 +386,7 @@ private:
 
     // 策略初始化时设置的 Exchange 类型（支持股票+ETF 混合）
     Set<ExchangeType> _exchangeTypes;
+
+    // 性能剖析统计（mutable：const get() 也要计时）
+    mutable PerfStat _perf;
 };

@@ -140,8 +140,8 @@ def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str
              "data": {"label": debug_label, "nodeType": "debug", "params": {}}},
             {"id": "5", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "信号", "nodeType": "signal",
-                       "params": {"buy": {"value": "close > 0"},
-                                  "sell": {"value": "close < 0"},
+                       "params": {"buy": {"value": "close[t] > 0"},
+                                  "sell": {"value": "close[t] < 0"},
                                   "allowShort": {"value": False}}}},
             {"id": "6", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "组合", "nodeType": "portfolio", "params": {}}},
@@ -175,7 +175,7 @@ def run_backtest_read_debug(token: str, strategy: dict, debug_label: str):
     )
     assert resp.status_code == 200, f"Backtest failed: {resp.text[:300]}"
 
-    debug_csv = SERVICE_DATA_DIR / "data" / "debug" / debug_label / "xgb_debug.csv"
+    debug_csv = SERVICE_DATA_DIR / "debug" / debug_label / "xgb_debug.csv"
     assert debug_csv.exists(), f"Debug CSV not found: {debug_csv}"
 
     with open(debug_csv) as f:

@@ -169,9 +169,9 @@ void DebugNode::Done(const String& strategy) {
     if (!_context)
         return;
 
-    // 保存数据到/data/debug/strategy 路径以便下载
+    // 保存数据到 {db_path}/debug/strategy 路径以便下载
     auto& cfg = _server->GetConfig();
-    auto dir = cfg.GetDatabasePath() + "/data/debug/" + strategy;
+    auto dir = cfg.GetDatabasePath() + "/debug/" + strategy;
     auto& times = _context->GetTime();
 
     // 收集列数据

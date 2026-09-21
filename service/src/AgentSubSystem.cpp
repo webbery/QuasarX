@@ -39,6 +39,43 @@
 #include "Metric/Covariance.h"
 #include "Metric/MonteCarloSimulator.h"
 
+#include <algorithm>
+#include <chrono>
+
+namespace {
+// 性能剖析辅助：从起始时刻到当前的毫秒数（steady_clock 单调，不受系统时间调整影响）
+inline double ElapsedMs(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+// 回测中每 N 个 epoch 输出一次性能快照，避免长回测刷屏
+constexpr uint64_t kGraphPerfLogInterval = 200;
+
+// 逐 epoch 采样的分位数（拷贝一份后 nth_element，避免整表排序）
+double EpochPercentile(Vector<float> samples, double q) {
+    if (samples.empty()) return 0.0;
+    size_t idx = std::min(samples.size() - 1, static_cast<size_t>(q * samples.size()));
+    std::nth_element(samples.begin(), samples.begin() + idx, samples.end());
+    return samples[idx];
+}
+
+double EpochMax(const Vector<float>& samples) {
+    return samples.empty() ? 0.0 : *std::max_element(samples.begin(), samples.end());
+}
+
+// 首尾各 10% epoch 的均值比：>1 说明成本随数据增长（O(n²) 症状），<1 说明前置 warmup/懒加载开销
+double EpochDrift(const Vector<float>& samples) {
+    size_t n = samples.size();
+    if (n < 20) return 0.0;
+    size_t w = std::max<size_t>(1, n / 10);
+    double head = 0, tail = 0;
+    for (size_t i = 0; i < w; ++i) head += samples[i];
+    for (size_t i = n - w; i < n; ++i) tail += samples[i];
+    if (head <= 0) return 0.0;
+    return (tail / w) / (head / w);
+}
+}
+
 FlowSubsystem::FlowSubsystem(Server* handle):_handle(handle) {
     auto default_config = handle->GetConfig().GetDefault();
     _stock_working_range = GetWorkingRange(ExchangeName::MT_Beijing);
@@ -88,8 +125,8 @@ void FlowSubsystem::OptimizeGraph(const String& strategy) {
 void FlowSubsystem::ClearFlow(const String& strategy) {
     auto it = _flows.find(strategy);
     if (it != _flows.end()) {
-        // 等待日级执行线程结束，避免 delete 节点时线程仍在使用（ExecuteNode/ManualTiming 悬空）
-        joinDailyWorkerAsync(it->second, strategy);
+        // 同步等待日级执行线程结束，避免 delete 节点时线程仍在使用（ExecuteNode/ManualTiming 悬空）
+        joinDailyWorkerSync(it->second, strategy);
         for (auto node: it->second._graph) {
             delete node;
         }
@@ -137,6 +174,19 @@ void FlowSubsystem::joinDailyWorkerAsync(StrategyFlowInfo& flow, const String& s
     }
 }
 
+void FlowSubsystem::joinDailyWorkerSync(StrategyFlowInfo& flow, const String& strategy) {
+    std::unique_ptr<std::thread> worker;
+    {
+        std::lock_guard<std::mutex> lock(flow._flowMtx);
+        worker = std::move(flow._dailyWorker);
+    }
+    if (worker && worker->joinable()) {
+        INFO("[FlowSubsystem] dailyWorker sync join for '{}'", strategy);
+        worker->join();
+        INFO("[FlowSubsystem] dailyWorker joined for '{}'", strategy);
+    }
+}
+
 void FlowSubsystem::Stop(const String& strategy) {
     auto it = _flows.find(strategy);
     if (it == _flows.end()) return;
@@ -148,8 +198,8 @@ void FlowSubsystem::Stop(const String& strategy) {
     }
     flow._worker = nullptr;
 
-    // 等待日级执行线程结束（StartDaily 线程可能在 SendSummaryEmail/回调期间访问 flow 内对象）
-    joinDailyWorkerAsync(flow, strategy);
+    // 同步等待日级执行线程结束（StartDaily 线程可能在 SendSummaryEmail/回调期间访问 flow 内对象）
+    joinDailyWorkerSync(flow, strategy);
 
     // NotifyNodesDone 已由各 worker 线程内的 DoneGuard 在 context 析构前调用，
     // 此处不再调用——worker 退出后 DataContext 已销毁，裸指针悬空。
@@ -171,7 +221,7 @@ void FlowSubsystem::Release() {
             if (item.second._worker->joinable()) item.second._worker->join();
             delete item.second._worker;
         }
-        joinDailyWorkerAsync(item.second, item.first);
+        joinDailyWorkerSync(item.second, item.first);
         // NotifyNodesDone 已由各 worker 线程内的 DoneGuard 保证
         for (auto node: item.second._graph) {
             delete node;
@@ -242,6 +292,9 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
 
             uint64_t epoch = 0;
             bool success = true;
+            ResetGraphPerf(flow);
+            context.EnablePerfProfile(true);
+            context.ResetPerfStat();
             auto startTick = std::chrono::high_resolution_clock::now();
 
             // 使用 stepForward 推进回测时间
@@ -249,16 +302,29 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
                 context.SetEpoch(++epoch);
 
                 // 推进回测时间
+                auto dataStart = std::chrono::steady_clock::now();
                 if (btContext && !exchange->stepForward(btContext)) {
                     // 数据用完
                     INFO("Backtest data finished for strategy {}", strategy);
                     break;
                 }
-                if (!RunGraph(strategy, flow, context)) {
+                double dataMs = ElapsedMs(dataStart);
+                flow._perf.dataMs += dataMs;
+                flow._perf.epochDataMs.push_back((float)dataMs);
+
+                auto graphStart = std::chrono::steady_clock::now();
+                bool ok = RunGraph(strategy, flow, context);
+                double graphMs = ElapsedMs(graphStart);
+                flow._perf.graphMs += graphMs;
+                flow._perf.epochGraphMs.push_back((float)graphMs);
+
+                if (!ok) {
                     success = false;
                     break;
                 }
+                if (epoch % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
             }
+            LogGraphPerf(strategy, flow, context, true);
 
             auto endTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
@@ -290,6 +356,10 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
             strategy_log(strategy, info);
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
+        } catch (const std::exception& e) {
+            // 兜底:FormulaParser 等组件可能抛 std::runtime_error 等其他 std::exception,
+            // 不接住会逃出 std::thread lambda 触发 std::terminate,导致整个服务进程崩溃。
+            FATAL("[Backtest] strategy={} fatal error: {}", strategy, e.what());
         }
 
         // 清理回测上下文前，提取每日收益数据供 BackTestHandler 使用
@@ -362,6 +432,9 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
             }
 
             bool success = true;
+            ResetGraphPerf(flow);
+            context.EnablePerfProfile(true);
+            context.ResetPerfStat();
             auto startTick = std::chrono::high_resolution_clock::now();
 
             // 使用 exchangeMgr 协调多 Exchange stepForward
@@ -370,16 +443,29 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
                 context.SetEpoch(++flow._epochCount);
 
                 // 推进 Exchange 的回测时间
+                auto dataStart = std::chrono::steady_clock::now();
                 if (!exchangeMgr->StepAllHistoryExchanges(runId)) {
                     INFO("Backtest data finished for strategy {}, epoch={}", strategy, flow._epochCount);
                     break;
                 }
-                if (!RunGraph(strategy, flow, context)) {
+                double dataMs = ElapsedMs(dataStart);
+                flow._perf.dataMs += dataMs;
+                flow._perf.epochDataMs.push_back((float)dataMs);
+
+                auto graphStart = std::chrono::steady_clock::now();
+                bool ok = RunGraph(strategy, flow, context);
+                double graphMs = ElapsedMs(graphStart);
+                flow._perf.graphMs += graphMs;
+                flow._perf.epochGraphMs.push_back((float)graphMs);
+
+                if (!ok) {
                     INFO("RunGraph failed at epoch {}", flow._epochCount);
                     success = false;
                     break;
                 }
+                if (flow._epochCount % kGraphPerfLogInterval == 0) LogGraphPerf(strategy, flow, context, false);
             }
+            LogGraphPerf(strategy, flow, context, true);
 
             auto endTick = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(endTick - startTick);
@@ -406,6 +492,10 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
             strategy_log(strategy, info);
         } catch (const std::invalid_argument& e) {
             WARN("invalid argument error: {}", e.what());
+        } catch (const std::exception& e) {
+            // 兜底:FormulaParser 等组件可能抛 std::runtime_error 等其他 std::exception,
+            // 不接住会逃出 std::thread lambda 触发 std::terminate,导致整个服务进程崩溃。
+            FATAL("[Backtest] strategy={} fatal error: {}", strategy, e.what());
         }
 
         // 清理回测上下文前，提取每日收益数据
@@ -1018,12 +1108,105 @@ FlowSubsystem::BacktestMcPaths FlowSubsystem::GetBacktestMcPaths(const String& s
     return it->second._mcPaths;
 }
 
+void FlowSubsystem::ResetGraphPerf(StrategyFlowInfo& flow) {
+    flow._perf.epochs = 0;
+    flow._perf.graphMs = 0;
+    flow._perf.dataMs = 0;
+    flow._perf.epochGraphMs.clear();
+    flow._perf.epochDataMs.clear();
+    flow._perf.nodes.clear();
+}
+
+void FlowSubsystem::LogGraphPerf(const String& strategy, const StrategyFlowInfo& flow, DataContext& context, bool final) const {
+    const auto& perf = flow._perf;
+    if (perf.nodes.empty()) return;
+
+    const auto& ctxPerf = context.GetPerfStat();
+    double ctxMs = ctxPerf.totalMs();
+
+    // 按累计耗时降序，瓶颈节点排最前
+    Vector<Pair<uint32_t, const StrategyFlowInfo::NodePerfStat*>> ranked;
+    ranked.reserve(perf.nodes.size());
+    for (const auto& [id, stat] : perf.nodes) {
+        ranked.emplace_back(id, &stat);
+    }
+    std::sort(ranked.begin(), ranked.end(),
+              [](const auto& a, const auto& b) { return a.second->totalMs > b.second->totalMs; });
+
+    double nodesMs = 0;
+    for (const auto& [id, stat] : ranked) nodesMs += stat->totalMs;
+
+    double avgGraphMs = perf.epochs ? perf.graphMs / perf.epochs : 0.0;
+
+    if (!final) {
+        // 运行中快照：只报 top3 + context 占比，避免长回测日志刷屏
+        String top;
+        for (size_t i = 0; i < ranked.size() && i < 3; ++i) {
+            const auto& [id, stat] = ranked[i];
+            double share = nodesMs > 0 ? stat->totalMs * 100.0 / nodesMs : 0.0;
+            top += fmt::format("{}{}(id={}) {:.1f}% {:.2f}s", i ? ", " : "", stat->type, id, share, stat->totalMs / 1000.0);
+        }
+        INFO("[Perf] strategy={} epoch={} avg={:.2f}ms/epoch, nodes={:.2f}s, data={:.2f}s, ctx={:.2f}s({:.0f}%) | top: {}",
+             strategy, perf.epochs, avgGraphMs, nodesMs / 1000.0, perf.dataMs / 1000.0,
+             ctxMs / 1000.0, perf.graphMs > 0 ? ctxMs * 100.0 / perf.graphMs : 0.0, top);
+        return;
+    }
+
+    // 回测结束总结：整段日志一次性输出，避免多策略并行回测时行间交错
+    String msg = fmt::format("[Perf] ===== strategy graph profile: {} =====", strategy);
+    msg += fmt::format("\n[Perf] epochs={} graph_total={:.3f}s (avg {:.2f}ms/epoch) nodes_total={:.3f}s data_total={:.3f}s",
+                       perf.epochs, perf.graphMs / 1000.0, avgGraphMs, nodesMs / 1000.0, perf.dataMs / 1000.0);
+    for (size_t i = 0; i < ranked.size(); ++i) {
+        const auto& [id, stat] = ranked[i];
+        double share = nodesMs > 0 ? stat->totalMs * 100.0 / nodesMs : 0.0;
+        msg += fmt::format("\n[Perf]   #{} {} id={} calls={} total={:.3f}s avg={:.3f}ms max={:.3f}ms share={:.1f}%",
+                           i + 1, stat->type, id, stat->calls, stat->totalMs / 1000.0,
+                           stat->calls ? stat->totalMs / stat->calls : 0.0, stat->maxMs, share);
+    }
+    // graph_overhead = RunGraph 总耗时 - 各节点累计，反映图内的调度开销；
+    // data_advance 是回测数据推进（stepForward）耗时，用于判断瓶颈在策略图还是数据侧
+    double overheadMs = perf.graphMs - nodesMs;
+    msg += fmt::format("\n[Perf] graph_overhead={:.3f}s ({:.3f}ms/epoch), data_advance={:.3f}s ({:.3f}ms/epoch)",
+                       overheadMs / 1000.0, perf.epochs ? overheadMs / perf.epochs : 0.0,
+                       perf.dataMs / 1000.0, perf.epochs ? perf.dataMs / perf.epochs : 0.0);
+
+    // ── DataContext 原语开销：辨别节点的耗时是"算得慢"还是"取值慢" ──
+    // share_of_graph 是 context 累计耗时占 RunGraph 的比例；注意节点的 Process 内调用会同时
+    // 计入节点 total 与该桶，两者是"包含"关系而非并列，不要相加。
+    msg += "\n[Perf] ── DataContext ──";
+    msg += fmt::format("\n[Perf] ops={} total={:.3f}s avg={:.3f}us/op share_of_graph={:.1f}% keys={} bytes={:.2f}MB",
+                       ctxPerf.ops(), ctxMs / 1000.0,
+                       ctxPerf.ops() ? ctxMs * 1000.0 / ctxPerf.ops() : 0.0,
+                       perf.graphMs > 0 ? ctxMs * 100.0 / perf.graphMs : 0.0,
+                       ctxPerf.keys, ctxPerf.bytes / 1048576.0);
+    auto bucketLine = [](const char* name, const DataContext::PerfCounter& c) {
+        return fmt::format("\n[Perf]   {} calls={} total={:.3f}s avg={:.3f}us max={:.3f}ms",
+                           name, c.calls, c.totalMs / 1000.0,
+                           c.calls ? c.totalMs * 1000.0 / c.calls : 0.0, c.maxMs);
+    };
+    msg += bucketLine("get  ", ctxPerf.get);
+    msg += bucketLine("set  ", ctxPerf.set);
+    msg += bucketLine("add  ", ctxPerf.add);
+    msg += bucketLine("exist", ctxPerf.exist);
+
+    // ── 逐 epoch 分布：drift >> 1 说明成本随序列长度增长（O(n²) 症状），<< 1 说明前置开销大 ──
+    msg += "\n[Perf] ── per-epoch ──";
+    msg += fmt::format("\n[Perf]   graph p50={:.3f}ms p95={:.3f}ms max={:.3f}ms drift={:.2f}x",
+                       EpochPercentile(perf.epochGraphMs, 0.50), EpochPercentile(perf.epochGraphMs, 0.95),
+                       EpochMax(perf.epochGraphMs), EpochDrift(perf.epochGraphMs));
+    msg += fmt::format("\n[Perf]   data  p50={:.3f}ms p95={:.3f}ms max={:.3f}ms drift={:.2f}x",
+                       EpochPercentile(perf.epochDataMs, 0.50), EpochPercentile(perf.epochDataMs, 0.95),
+                       EpochMax(perf.epochDataMs), EpochDrift(perf.epochDataMs));
+    INFO("{}", msg);
+}
+
 bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flow, DataContext& context) {
     bool shouldSkipEpoch = false;
 
     // 回测模式下，预热期内跳过 Signal、Execution、Portfolio 节点
     bool inWarmup = context.IsInWarmup();
     auto epch = context.GetEpoch();
+    flow._perf.epochs++;
     // 根据策略图生成信号
     for (auto node: flow._graph) {
         String nodeType = "unknown";
@@ -1047,9 +1230,20 @@ bool FlowSubsystem::RunGraph(const String& strategy, const StrategyFlowInfo& flo
             }
         }
 
+        auto nodeStart = std::chrono::steady_clock::now();
         auto result = node->Process(strategy, context);
+        double nodeMs = ElapsedMs(nodeStart);
+
+        // 累计节点耗时，供回测结束后的瓶颈分析（mutable：RunGraph 持 const flow 引用）
+        auto& perfStat = flow._perf.nodes[node->id()];
+        perfStat.type = nodeType;
+        perfStat.calls++;
+        perfStat.totalMs += nodeMs;
+        if (nodeMs > perfStat.maxMs) perfStat.maxMs = nodeMs;
+
         if (epch % 50 == 0)
-            DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {}", epch, node->id(), nodeType, (int)result);
+            DEBUG_INFO("[RunGraph] Epoch {} node id={} ({}) returned {} in {:.3f}ms",
+                       epch, node->id(), nodeType, (int)result, nodeMs);
 
         switch (result) {
             case NodeProcessResult::Success:

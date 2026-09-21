@@ -99,6 +99,14 @@ public:
     // availableVars: 可用变量集合，格式为 "symbol.varname" -> ArgType
     bool validate(const Map<String, ArgType>& availableVars);
 
+    // 带 symbol 上下文的版本:
+    //   会基于 symbols 展开出 short-name 别名,例如:
+    //     full key "sz.900007.close" + symbol sz.900007 → short key "close"
+    //   让 identifier "close" 在 validateIdentifier 中能命中表项。
+    //   当 symbols 为空时,与单参数版本行为完全一致(向后兼容)。
+    bool validate(const Map<String, ArgType>& availableVars,
+                  const Vector<symbol_t>& symbols);
+
     // 获取验证错误信息
     const String& getValidationError() const { return _validationError; }
 

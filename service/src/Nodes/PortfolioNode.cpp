@@ -161,19 +161,6 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // ── 新增：仓位 sizing 调整 ──
     applySizingWeights(context, decisions, targetCapital);
 
-    // [DEBUG B] PortfolioNode 诊断日志：每 100 epoch 输出 decisions/capital
-    if (context.GetEpoch() % 100 == 0 || context.GetEpoch() < 5) {
-        int nBuy = 0, nSell = 0, nHold = 0;
-        for (const auto& [sym, act] : decisions) {
-            if (act == TradeAction::BUY) nBuy++;
-            else if (act == TradeAction::SELL) nSell++;
-            else nHold++;
-        }
-        INFO("[PortfolioNode:{}] epoch={} pool={} decisions={} (buy={} sell={} hold={}) capital={:.0f} target={:.0f}",
-             _id, context.GetEpoch(), _pool.size(), decisions.size(),
-             nBuy, nSell, nHold, capital, targetCapital);
-    }
-
     // 3. 生成执行计划
     ExecutionPlan newPlan;
     if (_server->GetRunningMode() != RuningType::Backtest) { [[likely]]
