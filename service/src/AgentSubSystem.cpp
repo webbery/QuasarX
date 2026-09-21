@@ -913,8 +913,10 @@ bool FlowSubsystem::IsRunning(const String& strategy) const {
         return false;
     }
     const auto& flow = itr->second;
+    // 日终策略（Manual ExecuteNode）由日终管线驱动，没有 worker 线程，
+    // 运行状态只能取 _running——否则启动后仍被报成“已停止”
     if (!flow._worker)
-        return false;
+        return flow._running.load();
     if (!flow._running.load()) {
         if (flow._worker && flow._worker->joinable()) {
             flow._worker->join();
