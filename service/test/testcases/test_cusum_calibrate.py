@@ -34,13 +34,14 @@ class CUSUMDetectorRef:
     """带自适应校准的 CUSUM（与 C++ 对齐）"""
 
     def __init__(self, mu=0.0, sigma=1.0, lambda_=0.5, threshold=4.0,
-                 min_obs=30, calibrate_period=30):
+                 min_obs=30, calibrate_period=30, threshold_cap=10.0):
         self.mu = mu
         self.sigma = sigma
         self.lambda_ = lambda_
         self.threshold = threshold
         self.min_obs = min_obs
         self.calibrate_period = calibrate_period
+        self.threshold_cap = threshold_cap
         self.reset()
 
     def reset(self):
@@ -62,6 +63,14 @@ class CUSUMDetectorRef:
         drift = ret - self.mu
         self.s_pos = max(0.0, self.s_pos + drift - k)
         self.s_neg = max(0.0, self.s_neg - drift - k)
+        if self.count >= self.min_obs:
+            n = max(self.count, 1)
+            h = self.threshold * self.sigma * (n ** 0.5)
+            if self.threshold_cap > 0:
+                h = min(h, self.threshold_cap * self.sigma)
+            if max(self.s_pos, self.s_neg) > h:
+                self.s_pos = 0.0
+                self.s_neg = 0.0
         return self.s_pos - self.s_neg
 
     def update(self, ret):
