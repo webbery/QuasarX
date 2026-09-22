@@ -25,6 +25,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
+        shell: bash
         working-directory: app
     steps:
       - name: Checkout
