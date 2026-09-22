@@ -23,6 +23,88 @@ void XGBoostNode::cleanup() {
     _loaded = false;
 }
 
+void XGBoostNode::writeNaNPlaceholders(DataContext& context, const String& symbol) const {
+    String prefix = symbol + ".";
+    auto appendNan = [&context](const String& key) {
+        if (context.exist(key)) {
+            context.add(key, std::numeric_limits<double>::quiet_NaN());
+        } else {
+            context.set(key, Vector<double>{std::numeric_limits<double>::quiet_NaN()});
+        }
+    };
+    switch (_objective) {
+    case XGBObjective::BinaryLogistic:
+        appendNan(prefix + "xgb_probs_0");
+        appendNan(prefix + "xgb_probs_1");
+        break;
+    case XGBObjective::MultiSoftprob:
+    case XGBObjective::MultiSoftmax:
+        for (int i = 0; i < _num_class; i++)
+            appendNan(prefix + "xgb_probs_" + std::to_string(i));
+        appendNan(prefix + "xgb_prediction");
+        break;
+    case XGBObjective::RegSquaredError:
+        appendNan(prefix + "xgb_prediction");
+        break;
+    }
+}
+
+void XGBoostNode::writeBatchPredictions(DataContext& context, const String& symbol,
+                                         const float* row, int colsPerRow) const {
+    String prefix = symbol + ".";
+    switch (_objective) {
+    case XGBObjective::BinaryLogistic: {
+        float p1 = (colsPerRow > 0) ? row[0] : 0.0f;
+        float p0 = 1.0f - p1;
+        String k0 = prefix + "xgb_probs_0";
+        String k1 = prefix + "xgb_probs_1";
+        if (context.exist(k0)) {
+            context.add(k0, static_cast<double>(p0));
+            context.add(k1, static_cast<double>(p1));
+        } else {
+            context.set(k0, Vector<double>{static_cast<double>(p0)});
+            context.set(k1, Vector<double>{static_cast<double>(p1)});
+        }
+        break;
+    }
+    case XGBObjective::MultiSoftprob:
+    case XGBObjective::MultiSoftmax:
+        for (int i = 0; i < _num_class && i < colsPerRow; i++) {
+            String key = prefix + "xgb_probs_" + std::to_string(i);
+            double val = static_cast<double>(row[i]);
+            if (context.exist(key)) {
+                context.add(key, val);
+            } else {
+                context.set(key, Vector<double>{val});
+            }
+        }
+        // argmax → xgb_prediction
+        {
+            int best = 0;
+            for (int i = 1; i < _num_class && i < colsPerRow; i++) {
+                if (row[i] > row[best]) best = i;
+            }
+            String predKey = prefix + "xgb_prediction";
+            if (context.exist(predKey)) {
+                context.add(predKey, static_cast<double>(best));
+            } else {
+                context.set(predKey, Vector<double>{static_cast<double>(best)});
+            }
+        }
+        break;
+    case XGBObjective::RegSquaredError: {
+        double val = (colsPerRow > 0) ? static_cast<double>(row[0]) : 0.0;
+        String key = prefix + "xgb_prediction";
+        if (context.exist(key)) {
+            context.add(key, val);
+        } else {
+            context.set(key, Vector<double>{val});
+        }
+        break;
+    }
+    }
+}
+
 XGBObjective XGBoostNode::parseObjective(const String& s) {
     if (s == "binary:logistic") return XGBObjective::BinaryLogistic;
     if (s == "multi:softprob") return XGBObjective::MultiSoftprob;
@@ -313,16 +395,22 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
 
     bool anySuccess = false;
 
+    // ── Pass 1: 收集每个 symbol 的特征 ──
+    //   - 收集异常 (!ok): 与旧逻辑一致——仅 continue，不写 NaN 占位、不 ++_consecutiveSkipCount
+    //   - 部分特征无效 (ok && validCount<_n_features): 预热期静默，否则计数并可能终止；写 NaN 占位
+    //   - 全部有效: 把特征向量追加进 batch 矩阵，记录其 symbol 顺序
+    //
+    // batch 是一段连续存储的 N_valid × _n_features 矩阵（行主序），batchOrder[i] 是第 i 行的 symbol。
+    Vector<float> batch;
+    Vector<const String*> batchOrder;
+
     for (auto& [symbol, resolvedKeys] : _resolved_features) {
-        // 收集当前时刻特征值
         Vector<float> features(_n_features);
         bool ok = true;
-        int validCount = 0;  // 统计有效 feature 数量（finite）
+        int validCount = 0;
         String failedFeature;
         for (int d = 0; d < _n_features; d++) {
             try {
-                // 兼容时间序列(Vector<double>)和标量(double)两种特征：
-                // 时间序列取当前时刻值(vec.back())，标量直接用当前值
                 const auto& value = context.get(resolvedKeys[d]);
                 if (auto* vec = std::get_if<Vector<double>>(&value)) {
                     if (vec->empty()) { ok = false; failedFeature = resolvedKeys[d] + "(empty_vec)"; break; }
@@ -342,15 +430,17 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
             _lastSkipReason = fmt::format("symbol={} failed at '{}' (valid={}/{})",
                                           symbol, failedFeature, validCount, _n_features);
         }
-        if (!ok) continue;
-        // 必须所有特征都有效才能推理，避免 XGBoost 收到 NaN 走 default branch 输出均匀分布
+
+        if (!ok) {
+            // 收集异常：与旧行为一致——不写 NaN 占位、不 ++_consecutiveSkipCount
+            continue;
+        }
+
         if (validCount < _n_features) {
-            // 预热期内：正常现象（EMD 120d + ZScore 20d 窗口未填满），静默跳过
             if (context.IsInWarmup()) {
                 DEBUG_INFO("[XGBoost:{}] skip predict for {}: only {}/{} features valid (warmup epoch {})",
                            _id, symbol, validCount, _n_features, context.GetEpoch());
             } else {
-                // 预热期后仍然特征不足 → 特征解析或上游节点输出异常
                 String errorMsg = fmt::format(
                     "[XGBoost:{}] symbol {} has only {}/{} valid features at epoch {} (past warmup). "
                     "Feature '{}' is not finite. "
@@ -360,7 +450,6 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                 WARN("{}", errorMsg);
                 strategy_log(strategy, errorMsg);
 
-                // 持续失败则终止推理
                 _consecutiveSkipCount++;
                 if (_consecutiveSkipCount > 50) {
                     WARN("[XGBoost:{}] Persistent feature invalid after {} consecutive skips. "
@@ -372,171 +461,118 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                     return NodeProcessResult::Error;
                 }
             }
-            // 写 NaN 占位：保持输出序列与特征序列等长同序
-            String prefix = symbol + ".";
-            auto appendNan = [&context](const String& key) {
-                if (context.exist(key)) {
-                    context.add(key, std::numeric_limits<double>::quiet_NaN());
-                } else {
-                    context.set(key, Vector<double>{std::numeric_limits<double>::quiet_NaN()});
-                }
-            };
-            switch (_objective) {
-            case XGBObjective::BinaryLogistic:
-                appendNan(prefix + "xgb_probs_0");
-                appendNan(prefix + "xgb_probs_1");
-                break;
-            case XGBObjective::MultiSoftprob:
-            case XGBObjective::MultiSoftmax:
-                for (int i = 0; i < _num_class; i++)
-                    appendNan(prefix + "xgb_probs_" + std::to_string(i));
-                appendNan(prefix + "xgb_prediction");
-                break;
-            case XGBObjective::RegSquaredError:
-                appendNan(prefix + "xgb_prediction");
-                break;
-            }
+            writeNaNPlaceholders(context, symbol);
             anySuccess = true;
             continue;
         }
-        // 所有特征有效，重置连续跳过计数
-        _consecutiveSkipCount = 0;
 
-        // 把 inf 替换为 NaN，让 XGBoost 把它们都识别为 missing
-        // 修复: XGBoost 2.x 严格校验 — data 含 inf 但 missing=NaN 会报
-        // "Input data contains inf, while missing is not set to inf"
+        // 全部有效：重置计数、把 inf 替换为 NaN，加入 batch
+        _consecutiveSkipCount = 0;
         for (int d = 0; d < _n_features; d++) {
             if (std::isinf(features[d])) features[d] = NAN;
         }
+        batch.insert(batch.end(), features.begin(), features.end());
+        batchOrder.push_back(&symbol);
+    }
 
-        // 创建 DMatrix (1 row × n_features)
-        // missing=NaN: 与 Python xgboost 默认行为一致，NaN/inf 都走 default branch
-        DMatrixHandle dmat = nullptr;
-        int ret = XGDMatrixCreateFromMat(features.data(), 1, _n_features,
-                                          std::numeric_limits<float>::quiet_NaN(), &dmat);
-        if (ret != 0) {
-            WARN("[XGBoost:{}] Failed to create DMatrix: {}", _id, XGBGetLastError());
-            continue;
+    int N = static_cast<int>(batchOrder.size());
+    if (N == 0) {
+        // 没有可推理的 symbol。
+        // 若 Pass 1 已有 NaN 占位（anySuccess==true），说明节点这一轮并非空转——与旧实现一致返回 Success；
+        // 否则视为 all-fail（持续 skip 计数 + 检查终止阈值）。
+        if (anySuccess) {
+            _consecutiveSkipCount = 0;
+            return NodeProcessResult::Success;
         }
+        ++_consecutiveSkipCount;
+        const int maxSkipEpochs = 60;
+        if (_consecutiveSkipCount > maxSkipEpochs) {
+            FATAL("[XGBoost:{}] All symbols failed feature collection for {} consecutive epochs (limit={}). "
+                  "Last reason: {}. Check upstream node data availability.",
+                  _id, _consecutiveSkipCount, maxSkipEpochs, _lastSkipReason);
+            return NodeProcessResult::Error;
+        }
+        if (_consecutiveSkipCount <= 3 || _consecutiveSkipCount % 20 == 0) {
+            WARN("[XGBoost:{}] All symbols failed feature collection ({}/{} epochs), reason: {}",
+                 _id, _consecutiveSkipCount, maxSkipEpochs, _lastSkipReason);
+        }
+        return NodeProcessResult::Skip;
+    }
 
-        // 推理
-        bst_ulong const* out_shape = nullptr;
-        bst_ulong out_dim = 0;
-        const float* out_result = nullptr;
+    // ── Pass 2: 批量推理（一次 DMatrix + 一次 Predict + 一次 Free） ──
+    // N==1 时 batch 与旧实现的 1×F 输入等价，输出 bit-identical；
+    // N>1 时省掉 N-1 次固定 C API 开销 + XGBoost 内部 dispatch。
+    // missing=NaN: 与 Python xgboost 默认行为一致，NaN/inf 都走 default branch
+    DMatrixHandle dmat = nullptr;
+    int ret = XGDMatrixCreateFromMat(batch.data(), N, _n_features,
+                                     std::numeric_limits<float>::quiet_NaN(), &dmat);
+    if (ret != 0) {
+        WARN("[XGBoost:{}] Failed to create DMatrix: {}", _id, XGBGetLastError());
+        // DMatrix 失败：若 Pass 1 已有 NaN 占位，仍视为 Success（与旧实现 "anySuccess=true→reset→Success" 一致）；
+        // 否则按 all-fail 处理。
+        if (anySuccess) {
+            _consecutiveSkipCount = 0;
+            return NodeProcessResult::Success;
+        }
+        ++_consecutiveSkipCount;
+        return NodeProcessResult::Skip;
+    }
+
+    bst_ulong const* out_shape = nullptr;
+    bst_ulong out_dim = 0;
+    const float* out_result = nullptr;
 
 #if XGBOOST_VER_MAJOR >= 2
-        // iteration_end=0 表示使用全部迭代（0 在 2.x/3.x 中特殊处理为 BoostedRounds）。
-        // 注意：iteration_end=-1 在 XGBoost 2.x C API 中等价于 0 棵树，
-        // 输出恒为 base_score 的均匀分布（margin=[0.5,0.5,0.5] → prob=1/3），任何输入都不变。
-        const char* config = R"({"type": 0, "training": false, "strict_shape": true, "iteration_begin": 0, "iteration_end": 0})";
-        ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
+    // iteration_end=0 表示使用全部迭代（0 在 2.x/3.x 中特殊处理为 BoostedRounds）。
+    // 注意：iteration_end=-1 在 XGBoost 2.x C API 中等价于 0 棵树，
+    // 输出恒为 base_score 的均匀分布（margin=[0.5,0.5,0.5] → prob=1/3），任何输入都不变。
+    const char* config = R"({"type": 0, "training": false, "strict_shape": true, "iteration_begin": 0, "iteration_end": 0})";
+    ret = XGBoosterPredictFromDMatrix(_booster, dmat, config, &out_shape, &out_dim, &out_result);
 #else
-        bst_ulong out_shape_val = 0;
-        bst_ulong out_dim_val = 0;
-        float* out_result_mut = nullptr;
-        ret = XGBoosterPredictFromDMatrix(_booster, dmat,
-                                           0, 0, 0, &out_shape_val, &out_dim_val, &out_result_mut);
-        out_shape = &out_shape_val;
-        out_dim = out_dim_val;
-        out_result = out_result_mut;
+    bst_ulong out_shape_val = 0;
+    bst_ulong out_dim_val = 0;
+    float* out_result_mut = nullptr;
+    ret = XGBoosterPredictFromDMatrix(_booster, dmat,
+                                       0, 0, 0, &out_shape_val, &out_dim_val, &out_result_mut);
+    out_shape = &out_shape_val;
+    out_dim = out_dim_val;
+    out_result = out_result_mut;
 #endif
-        XGDMatrixFree(dmat);
+    XGDMatrixFree(dmat);
 
-        if (ret != 0) {
-            WARN("[XGBoost:{}] Prediction failed for {}: {}", _id, symbol, XGBGetLastError());
-            continue;
+    if (ret != 0) {
+        WARN("[XGBoost:{}] Prediction failed: {}", _id, XGBGetLastError());
+        // 同 DMatrix 失败的处理：若 Pass 1 已写过 NaN，节点并非空转，返回 Success。
+        if (anySuccess) {
+            _consecutiveSkipCount = 0;
+            return NodeProcessResult::Success;
         }
-
-        bst_ulong total = 1;
-        for (bst_ulong i = 0; i < out_dim; i++) total *= out_shape[i];
-
-        // 写入 context（带 symbol 前缀，xgb_probs_N 命名）
-        String prefix = symbol + ".";
-        switch (_objective) {
-        case XGBObjective::BinaryLogistic: {
-            float p1 = (total > 0) ? out_result[0] : 0.0f;
-            float p0 = 1.0f - p1;
-            String k0 = prefix + "xgb_probs_0";
-            String k1 = prefix + "xgb_probs_1";
-            if (context.exist(k0)) {
-                context.add(k0, static_cast<double>(p0));
-                context.add(k1, static_cast<double>(p1));
-            } else {
-                context.set(k0, Vector<double>{static_cast<double>(p0)});
-                context.set(k1, Vector<double>{static_cast<double>(p1)});
-            }
-            break;
-        }
-        case XGBObjective::MultiSoftprob:
-        case XGBObjective::MultiSoftmax:
-            for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
-                String key = prefix + "xgb_probs_" + std::to_string(i);
-                double val = static_cast<double>(out_result[i]);
-                if (context.exist(key)) {
-                    context.add(key, val);
-                } else {
-                    context.set(key, Vector<double>{val});
-                }
-            }
-            // argmax → xgb_prediction
-            {
-                int best = 0;
-                for (int i = 1; i < _num_class && i < static_cast<int>(total); i++) {
-                    if (out_result[i] > out_result[best]) best = i;
-                }
-                String predKey = prefix + "xgb_prediction";
-                if (context.exist(predKey)) {
-                    context.add(predKey, static_cast<double>(best));
-                } else {
-                    context.set(predKey, Vector<double>{static_cast<double>(best)});
-                }
-            }
-// #ifdef _DEBUG
-//             // 调试：打印 probs（仅首个 symbol 避免刷屏）
-//             if (!_resolved_features.empty() && symbol == _resolved_features.begin()->first) {
-//                 auto epoch = context.GetEpoch();
-//                 String msg = "[XGBoost:" + std::to_string(epoch) + "] " + symbol + " probs:";
-//                 for (int i = 0; i < _num_class && i < static_cast<int>(total); i++) {
-//                     msg += " " + std::to_string(static_cast<double>(out_result[i]));
-//                 }
-//                 INFO("{}", msg);
-//             }
-// #endif
-            break;
-        case XGBObjective::RegSquaredError: {
-            double val = (total > 0) ? static_cast<double>(out_result[0]) : 0.0;
-            String key = prefix + "xgb_prediction";
-            if (context.exist(key)) {
-                context.add(key, val);
-            } else {
-                context.set(key, Vector<double>{val});
-            }
-            break;
-        }
-        }
-        anySuccess = true;
+        ++_consecutiveSkipCount;
+        return NodeProcessResult::Skip;
     }
 
-    if (anySuccess) {
-        _consecutiveSkipCount = 0;
-        return NodeProcessResult::Success;
+    bst_ulong total = 1;
+    for (bst_ulong i = 0; i < out_dim; i++) total *= out_shape[i];
+
+    // ── Pass 3: 按 batchOrder 顺序回写每个 symbol 的结果 ──
+    // out_result 布局：(out_dim × N)，out_shape = [N, colsPerRow]
+    //   binary:logistic  → colsPerRow = 1（total = N）
+    //   multi:softprob   → colsPerRow = n_class（total = N * n_class）
+    //   reg:squarederror → colsPerRow = 1（total = N）
+    int colsPerRow = static_cast<int>(total / N);
+    for (int i = 0; i < N; i++) {
+        const String& symbol = *batchOrder[i];
+        const float* rowPtr = out_result + i * colsPerRow;
+        writeBatchPredictions(context, symbol, rowPtr, colsPerRow);
     }
 
-    ++_consecutiveSkipCount;
-    // 预热期内允许 Skip（特征窗口尚未填满），超过阈值后视为持续性故障
-    const int maxSkipEpochs = 60;
-    if (_consecutiveSkipCount > maxSkipEpochs) {
-        FATAL("[XGBoost:{}] All symbols failed feature collection for {} consecutive epochs (limit={}). "
-              "Last reason: {}. Check upstream node data availability.",
-              _id, _consecutiveSkipCount, maxSkipEpochs, _lastSkipReason);
-        return NodeProcessResult::Error;
-    }
+    // Pass 3 成功完成：标记 anySuccess（与旧实现"在循环末尾隐式设 true"等价）。
+    // 注意：若 Pass 1 已有 NaN 占位，anySuccess 早已是 true；此处覆盖不会影响计数语义，
+    // 因为 Pass 1 的有效分支已把 _consecutiveSkipCount 重置为 0。
+    anySuccess = true;
 
-    if (_consecutiveSkipCount <= 3 || _consecutiveSkipCount % 20 == 0) {
-        WARN("[XGBoost:{}] All symbols failed feature collection ({}/{} epochs), reason: {}",
-             _id, _consecutiveSkipCount, maxSkipEpochs, _lastSkipReason);
-    }
-    return NodeProcessResult::Skip;
+    // 能走到这里，说明 N>0 且 Pass 2/3 全成功——必然返回 Success。
+    return NodeProcessResult::Success;
 }
 
 Map<String, ArgType> XGBoostNode::out_elements() {

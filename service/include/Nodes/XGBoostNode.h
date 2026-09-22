@@ -74,4 +74,10 @@ private:
     static XGBObjective parseObjective(const String& s);
     void buildOutputs(const String& symbolPrefix);
     void cleanup();
+
+    // 写 NaN 占位，保持输出序列与特征序列等长同序（与原行为一致）
+    void writeNaNPlaceholders(DataContext& context, const String& symbol) const;
+    // 把 batch 推理结果回写到单个 symbol：row[i] 为该 symbol 在第 i 个类别上的输出
+    void writeBatchPredictions(DataContext& context, const String& symbol,
+                               const float* row, int colsPerRow) const;
 };

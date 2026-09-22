@@ -1560,6 +1560,64 @@ class TestXGBoostTopkRotationE2E:
             assert cpp_summary["total_return"] > py_total_return - 0.1, \
                 f"C++ 应包含分红收益: C++={cpp_summary['total_return']:.4f}, Python(含分红)={py_total_return:.4f}"
 
+    # ---------- L5: 多标的 XGBoost 逐符号 C++ vs Python 推理对比 ----------
+
+    def test_cpp_vs_python_per_symbol(self, auth_token, _deployed):
+        """多标的 XGBoost 推理：每个 symbol 的 C++ 概率独立与 Python xgboost 对比 (atol=1e-4)
+
+        目的：捕获 batched inference 引入的行/列映射错位、batch 内 symbol 间状态泄漏等回归。
+        与单标的 test_cpp_vs_python_prediction 的区别：本测试覆盖 N symbol × N bar 的 batched 路径，
+        校验每个 symbol 的概率列独立正确（即 batched DMatrix 的行 i → symbol i 的输出映射正确）。
+
+        模型：testcases/ai_test_data/xgb_trivial_model.json（binary:logistic，单特征 ma5）。
+        """
+        import numpy as np
+        import pandas as pd
+        from pathlib import Path
+
+        # trivial 模型与 _deployed fixture 部署的是同一份文件；直接读本地路径即可
+        model_path = Path(__file__).parent / "ai_test_data" / "xgb_trivial_model.json"
+
+        # 跑回测，触发 DebugNode 写 CSV
+        self._run_backtest(auth_token, _deployed["strategy"])
+        df = pd.read_csv(DEBUG_DIR / TOPK_DEPLOY_NAME / "topk_debug.csv")
+        assert len(df) > 0, "Debug CSV 为空"
+
+        # 对每个 symbol 独立构造特征 + Python xgboost 推理，逐值对比
+        n_compared = 0
+        for sym in TOPK_SYMBOLS:
+            feat_col = f"{sym}.ma5"
+            prob0_col = f"{sym}.xgb_probs_0"
+            prob1_col = f"{sym}.xgb_probs_1"
+
+            assert feat_col in df.columns, f"缺少特征列 {feat_col}"
+            assert prob0_col in df.columns, f"缺少概率列 {prob0_col}"
+            assert prob1_col in df.columns, f"缺少概率列 {prob1_col}"
+
+            feats = df[feat_col].astype(float)
+            # MA(5) 前 4 根 NaN（窗口未满），XGBoostNode 在预热期 skip 写 NaN 占位，不参与推理
+            valid_mask = feats.notna() & np.isfinite(feats)
+            assert valid_mask.sum() > 0, f"{sym}: 无有效 MA(5) 行"
+
+            # Python xgboost 推理（binary:logistic 输出 1 列 = p1）
+            valid_feats = feats[valid_mask].to_frame("ma5").astype("float32")
+            py_p1 = _xgb_predict_python(str(model_path), valid_feats).astype(float)
+            py_p0 = 1.0 - py_p1
+
+            # C++ 端 BinaryLogistic: probs_0 = 1 - p1, probs_1 = p1
+            cpp_p0 = df[prob0_col].astype(float)[valid_mask].values
+            cpp_p1 = df[prob1_col].astype(float)[valid_mask].values
+
+            np.testing.assert_allclose(
+                cpp_p0, py_p0, atol=1e-4,
+                err_msg=f"[{sym}] C++ probs_0 vs Python (1-p1) 不一致")
+            np.testing.assert_allclose(
+                cpp_p1, py_p1, atol=1e-4,
+                err_msg=f"[{sym}] C++ probs_1 vs Python p1 不一致")
+            n_compared += int(valid_mask.sum())
+
+        assert n_compared > 0, "未对任何 symbol × bar 做对比"
+
 
 # ============== Optimize 测试（Optuna 自动优化 + 快速回测） ==============
 
