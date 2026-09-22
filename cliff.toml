@@ -1,0 +1,70 @@
+# git-cliff 配置
+# 文档：https://git-cliff.com/docs/configuration
+#
+# 解析两类 commit：
+#   1. Conventional Commits（feat/fix/perf/...）—— 严格分类
+#   2. 中文关键词 commit（修复/新增/优化/...）—— 宽松匹配，分类不严格
+
+[git]
+# 匹配 v1.2.3 这种 tag
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+"
+# 保留所有 commit（包括不合规的），由 commit_parsers 决定怎么分
+filter_unconventional = false
+split_commits = false
+# 按拓扑序排序（merge commit 自然落到最后）
+topo_order = true
+
+[changelog]
+# 文件开头
+header = """
+# Changelog\n
+All notable changes to QuasarX are documented in this file.\n
+"""
+# 每个 tag 段落的格式
+body = """
+{% if version -%}
+## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif -%}
+{% for group, commits in commits | filter(attribute="merge_commit", value=false) | group_by(attribute="group") -%}
+### {{ group | upper_first }}
+{% for commit in commits -%}
+- {{ commit.message | split(pat="\n") | first | trim | upper_first }} ([`{{ commit.id | truncate(length=7, end="") }}`]({{ commit.id }}))
+{% endfor -%}
+{% endfor -%}
+"""
+# 尾部（一般留空，让 git-cliff 自动加链接）
+trim = true
+
+commit_parsers = [
+  # ── Conventional Commits ──
+  { message = "^feat(\\(.*\\))?(!)?:", group = "Features" },
+  { message = "^feature(\\(.*\\))?(!)?:", group = "Features" },
+  { message = "^fix(\\(.*\\))?(!)?:", group = "Bug Fixes" },
+  { message = "^perf(\\(.*\\))?(!)?:", group = "Performance" },
+  { message = "^refactor(\\(.*\\))?(!)?:", group = "Refactor" },
+  { message = "^docs(\\(.*\\))?(!)?:", group = "Documentation" },
+  { message = "^test(\\(.*\\))?(!)?:", group = "Tests" },
+  { message = "^build(\\(.*\\))?(!)?:", group = "Build" },
+  { message = "^ci(\\(.*\\))?(!)?:", group = "CI" },
+  { message = "^chore(\\(.*\\))?(!)?:", group = "Chore" },
+  { message = "^style(\\(.*\\))?(!)?:", group = "Style" },
+
+  # ── 中文 commit 关键字（按出现顺序匹配，命中即分组）──
+  { message = "(修复|Fix bug|fixed)",            group = "Bug Fixes",  skip = false },
+  { message = "(新增|添加|加入|实现|introduce)",  group = "Features",   skip = false },
+  { message = "(优化|改进|提升|提升性能|perf)",    group = "Performance",skip = false },
+  { message = "(重构|重写|整理)",                  group = "Refactor",   skip = false },
+  { message = "(补充测试|新增测试|加测试|测试用例)",group = "Tests",      skip = false },
+  { message = "(文档|README|注释)",                group = "Documentation",skip = false },
+
+  # ── 跳过纯转发/合并/无意义提交 ──
+  { message = "^Merge (branch|pull request|remote-tracking)", skip = true },
+  { message = "^Merge branch",                                skip = true },
+  { message = "^(update|fixed test error)\\b",                skip = true },
+  { message = "^bump version",                                skip = true },
+]
+
+protect_breaking_commits = true
+filter_commits = true

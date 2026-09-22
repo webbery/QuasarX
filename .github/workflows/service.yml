@@ -919,13 +919,34 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ github.ref_name }} --output CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preview changelog
+        run: |
+          echo "=== CHANGELOG.md (first 80 lines) ==="
+          head -80 CHANGELOG.md
+          echo "===================================="
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: QuantService-*.tar.gz
-          generate_release_notes: true
+          files: |
+            QuantService-*.tar.gz
+            CHANGELOG.md
+          body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+          # CHANGELOG.md 已经覆盖 release body，不再额外生成 GitHub auto notes
+          generate_release_notes: false
           fail_on_unmatched_files: true
           # 与 app.yml 的 release 复用同一个 tag（同 tag 多次运行会复用已创建的 release 并追加资产）
           overwrite_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

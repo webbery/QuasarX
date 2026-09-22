@@ -40,6 +40,16 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Resolve version
+        id: version
+        # tag push（如 v1.2.3）→ VERSION=1.2.3；普通 push → VERSION= 空，electron-builder 回退到 package.json
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         run: npm run build
         env:
@@ -49,6 +59,8 @@ jobs:
           SSL_ESIGNER_CREDENTIAL_ID: ${{ secrets.SSL_ESIGNER_CREDENTIAL_ID }}
           SSL_ESIGNER_USER_TOTP: ${{ secrets.SSL_ESIGNER_USER_TOTP }}
           SIGN_APPLICATION: 1
+          # electron-builder 在 Linux/Windows 下会用 VERSION 环境变量覆盖 package.json 的 version 字段
+          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v5
@@ -117,10 +129,22 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Resolve version
+        id: version
+        # tag push（如 v1.2.3）→ VERSION=1.2.3；普通 push → VERSION= 空，electron-builder 回退到 package.json
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # electron-builder 在 Linux/Windows 下会用 VERSION 环境变量覆盖 package.json 的 version 字段
+          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v5
@@ -166,6 +190,22 @@ jobs:
             exit 1
           fi
 
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          # 仓库根目录为 cliff.toml 所在处，git-cliff action 默认就在那里跑
+          args: --tag ${{ github.ref_name }} --output CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preview changelog
+        run: |
+          echo "=== CHANGELOG.md (first 80 lines) ==="
+          head -80 CHANGELOG.md
+          echo "===================================="
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -176,9 +216,12 @@ jobs:
             artifacts/*.rpm
             artifacts/*.blockmap
             artifacts/latest-linux.yml
+            CHANGELOG.md
+          body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') }}
-          generate_release_notes: true
+          # CHANGELOG.md 已经覆盖 release body，不再额外生成 GitHub auto notes
+          generate_release_notes: false
           fail_on_unmatched_files: true
           # 与 service.yml 的 release 复用同一个 release（同 tag 多次运行追加资产）
           overwrite_files: false
