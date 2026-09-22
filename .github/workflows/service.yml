@@ -852,20 +852,34 @@ jobs:
 
       - name: Package release tarball
         run: |
+          set -euo pipefail
           TAG_NAME="${GITHUB_REF_NAME}"
           RELEASE_DIR="QuantService-${TAG_NAME}"
           mkdir -p "${RELEASE_DIR}"
 
-          # 主二进制 + 配置模板
-          cp build/QuantService "${RELEASE_DIR}/"
+          # upload-artifact@v4 会按工作目录相对路径归档，下载后实际目录为：
+          #   build-artifact/service/build/QuantService
+          #   build-artifact/service/tools/
+          BIN="build-artifact/service/build/QuantService"
+          TOOLS="build-artifact/service/tools"
 
-          # 运行时 so 库
+          if [ ! -f "${BIN}" ]; then
+            echo "ERROR: ${BIN} not found"
+            echo "--- build-artifact tree ---"
+            find build-artifact -maxdepth 5 -type f | head -40 || true
+            exit 1
+          fi
+
+          # 主二进制
+          cp "${BIN}" "${RELEASE_DIR}/"
+
+          # 工具脚本（离线复现/运维用；debug 符号、config 模板、test 目录不打包）
+          [ -d "${TOOLS}" ] && cp -r "${TOOLS}" "${RELEASE_DIR}/"
+
+          # 运行时 so 库（系统库 + 第三方交易 SDK）
           mkdir -p "${RELEASE_DIR}/lib"
           cp runtime-libs/usr/local/lib/lib*.so* "${RELEASE_DIR}/lib/" 2>/dev/null || true
           cp runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
-
-          # 工具脚本
-          cp -r tools "${RELEASE_DIR}/" 2>/dev/null || true
 
           # 生成版本信息
           echo "${TAG_NAME}" > "${RELEASE_DIR}/VERSION"
@@ -875,14 +889,39 @@ jobs:
           # 打包
           tar -czf "QuantService-${TAG_NAME}.tar.gz" "${RELEASE_DIR}"
           echo "=== Package contents ==="
-          tar -tzf "QuantService-${TAG_NAME}.tar.gz" | head -30
+          tar -tzf "QuantService-${TAG_NAME}.tar.gz" | head -50
           echo "========================"
           ls -lh "QuantService-${TAG_NAME}.tar.gz"
 
-      # - name: Create GitHub Release
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: QuantService-*.tar.gz
-      #     generate_release_notes: true
-      #     draft: false
-      #     prerelease: ${{ contains(github.ref_name, '-') }}
+      - name: Verify release artifact
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          ARCHIVE="QuantService-${TAG_NAME}.tar.gz"
+          if [ ! -f "${ARCHIVE}" ]; then
+            echo "ERROR: ${ARCHIVE} not produced"
+            exit 1
+          fi
+          SIZE=$(stat -c %s "${ARCHIVE}")
+          echo "Release artifact: ${ARCHIVE} (${SIZE} bytes)"
+          if [ "${SIZE}" -lt 1000000 ]; then
+            echo "WARNING: artifact suspiciously small (< 1MB), may be incomplete"
+          fi
+
+      - name: Upload Release Artifacts (Persist for later steps)
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-release-artifact
+          path: QuantService-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: QuantService-*.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          # 与 app.yml 的 release 复用同一个 tag（同 tag 多次运行会复用已创建的 release 并追加资产）
+          overwrite_files: false

@@ -54,8 +54,10 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: windows-build
-          path: dist/*.exe
-          if-no-files-found: ignore
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+          if-no-files-found: warn
 
   # ========== macOS 构建 ==========
   # build-macos:
@@ -125,7 +127,9 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.deb
-          if-no-files-found: ignore
+            dist/*.rpm
+            dist/latest-linux.yml
+          if-no-files-found: warn
 
   # ========== 发布到 GitHub Releases ==========
   release:
@@ -133,6 +137,8 @@ jobs:
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -141,13 +147,34 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: false
+
+      - name: List collected artifacts
+        run: |
+          echo "=== Files collected for release ==="
+          find artifacts -type f -printf '%p\t%s bytes\n' | sort
+          echo "================================="
+          # 兜底检查：如果 Windows 与 Linux 关键产物都不在，直接报错而不是发布空 release
+          if [ -z "$(find artifacts -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)" ]; then
+            echo "ERROR: no app installer artifacts found (no .exe/.AppImage/.deb/.rpm)"
+            exit 1
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.blockmap
+            artifacts/**/latest-linux.yml
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') }}
           generate_release_notes: true
+          fail_on_unmatched_files: false
+          # 与 service.yml 的 release 复用同一个 release（同 tag 多次运行追加资产）
+          overwrite_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
