@@ -843,6 +843,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifact
+          path: build-artifact
 
       - name: Download runtime libs
         uses: actions/download-artifact@v4

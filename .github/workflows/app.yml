@@ -54,10 +54,12 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: windows-build
+          # defaults.run.working-directory 只影响 run 步骤，upload-artifact 的 path 仍按
+          # 仓库根解析；产物实际在 app/dist/ 下，所以 path 必须从仓库根写
           path: |
-            dist/*.exe
-            dist/*.blockmap
-          if-no-files-found: warn
+            app/dist/*.exe
+            app/dist/*.blockmap
+          if-no-files-found: error
 
   # ========== macOS 构建 ==========
   # build-macos:
@@ -124,12 +126,14 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: linux-build
+          # defaults.run.working-directory 只影响 run 步骤，upload-artifact 的 path 仍按
+          # 仓库根解析；产物实际在 app/dist/ 下，所以 path 必须从仓库根写
           path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/latest-linux.yml
-          if-no-files-found: warn
+            app/dist/*.AppImage
+            app/dist/*.deb
+            app/dist/*.rpm
+            app/dist/latest-linux.yml
+          if-no-files-found: error
 
   # ========== 发布到 GitHub Releases ==========
   release:
@@ -147,15 +151,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: false
+          # 走默认 merge-multiple: true 行为：所有 artifacts 合并到 artifacts/ 下，
+          # 文件按上传时的路径展开（app/dist/QuasarX_Setup_*.exe 等）
+          merge-multiple: true
 
       - name: List collected artifacts
         run: |
           echo "=== Files collected for release ==="
           find artifacts -type f -printf '%p\t%s bytes\n' | sort
           echo "================================="
-          # 兜底检查：如果 Windows 与 Linux 关键产物都不在，直接报错而不是发布空 release
-          if [ -z "$(find artifacts -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)" ]; then
+          # 兜底检查：关键产物不在时直接报错（关键检查改为 if-no-files-found: error 后这一步是双保险）
+          if [ -z "$(find artifacts/app/dist -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)" ]; then
             echo "ERROR: no app installer artifacts found (no .exe/.AppImage/.deb/.rpm)"
             exit 1
           fi
@@ -164,16 +170,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/**/*.exe
-            artifacts/**/*.AppImage
-            artifacts/**/*.deb
-            artifacts/**/*.rpm
-            artifacts/**/*.blockmap
-            artifacts/**/latest-linux.yml
+            artifacts/app/dist/*.exe
+            artifacts/app/dist/*.AppImage
+            artifacts/app/dist/*.deb
+            artifacts/app/dist/*.rpm
+            artifacts/app/dist/*.blockmap
+            artifacts/app/dist/latest-linux.yml
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') }}
           generate_release_notes: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           # 与 service.yml 的 release 复用同一个 release（同 tag 多次运行追加资产）
           overwrite_files: false
         env:
