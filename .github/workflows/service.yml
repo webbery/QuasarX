@@ -858,11 +858,12 @@ jobs:
           RELEASE_DIR="QuantService-${TAG_NAME}"
           mkdir -p "${RELEASE_DIR}"
 
-          # upload-artifact@v4 会按工作目录相对路径归档，下载后实际目录为：
-          #   build-artifact/service/build/QuantService
-          #   build-artifact/service/tools/
-          BIN="build-artifact/service/build/QuantService"
-          TOOLS="build-artifact/service/tools"
+          # upload-artifact@v4 对 path 中的仓库子目录前缀（这里是 service/）会自动截断，
+          # 下载后实际目录为：
+          #   build-artifact/build/QuantService
+          #   build-artifact/tools/
+          BIN="build-artifact/build/QuantService"
+          TOOLS="build-artifact/tools"
 
           if [ ! -f "${BIN}" ]; then
             echo "ERROR: ${BIN} not found"
@@ -878,9 +879,11 @@ jobs:
           [ -d "${TOOLS}" ] && cp -r "${TOOLS}" "${RELEASE_DIR}/"
 
           # 运行时 so 库（系统库 + 第三方交易 SDK）
+          # upload-artifact 对绝对路径 /usr/local/lib/... 保留为 runtime-libs/usr/local/lib/
+          # 对相对路径 service/third_party/libs/unix/... 截断 service/ 前缀，下载后是 runtime-libs/third_party/libs/unix/
           mkdir -p "${RELEASE_DIR}/lib"
           cp runtime-libs/usr/local/lib/lib*.so* "${RELEASE_DIR}/lib/" 2>/dev/null || true
-          cp runtime-libs/home/runner/work/QuasarX/QuasarX/service/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
+          cp runtime-libs/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
 
           # 生成版本信息
           echo "${TAG_NAME}" > "${RELEASE_DIR}/VERSION"

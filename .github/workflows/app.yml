@@ -161,7 +161,7 @@ jobs:
           find artifacts -type f -printf '%p\t%s bytes\n' | sort
           echo "================================="
           # 兜底检查：关键产物不在时直接报错（关键检查改为 if-no-files-found: error 后这一步是双保险）
-          if [ -z "$(find artifacts/app/dist -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)" ]; then
+          if [ -z "$(find artifacts -maxdepth 2 -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)" ]; then
             echo "ERROR: no app installer artifacts found (no .exe/.AppImage/.deb/.rpm)"
             exit 1
           fi
@@ -170,12 +170,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/app/dist/*.exe
-            artifacts/app/dist/*.AppImage
-            artifacts/app/dist/*.deb
-            artifacts/app/dist/*.rpm
-            artifacts/app/dist/*.blockmap
-            artifacts/app/dist/latest-linux.yml
+            artifacts/*.exe
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.blockmap
+            artifacts/latest-linux.yml
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') }}
           generate_release_notes: true
