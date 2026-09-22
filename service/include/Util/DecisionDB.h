@@ -21,6 +21,12 @@ public:
     // 按日期查询决策列表（date 格式 "YYYY-MM-DD"）
     std::vector<DecisionRecord> queryByDate(const std::string& date);
 
+    // 检查决策是否存在
+    bool exists(int id);
+
+    // 按日期清除决策记录，返回删除行数
+    int clearByDate(const std::string& date);
+
     // 标记决策已执行
     bool markExecuted(int id, int64_t exec_qty, double exec_price);
 

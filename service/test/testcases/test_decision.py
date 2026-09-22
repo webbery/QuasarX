@@ -216,6 +216,24 @@ def cleanup_strategy(token: str, name: str):
 
 # ==================== Fixture ====================
 
+def clear_decisions(token: str, date: str = None) -> int:
+    """DELETE /v0/trade/decisions 清除指定日期决策，返回删除数量"""
+    headers = {"Authorization": token}
+    params = {}
+    if date:
+        params["date"] = date
+    resp = requests.delete(
+        f"{BASE_URL}/trade/decisions",
+        params=params,
+        headers=headers,
+        verify=False,
+        timeout=10,
+    )
+    if resp.ok:
+        return resp.json().get("deleted", 0)
+    return 0
+
+
 @pytest.fixture(scope="module", autouse=True)
 def reclaim_capital(auth_token):
     """回收先前测试残留的 CapitalPool 资金，确保日终策略有足够资金分配"""
@@ -227,6 +245,8 @@ def reclaim_capital(auth_token):
         verify=False,
         timeout=10,
     )
+    # 清除当日残留决策（上次测试/服务重启前的数据）
+    clear_decisions(auth_token, date=today_str())
 
 
 @pytest.fixture
@@ -540,11 +560,17 @@ class TestStrategyPerformance:
         bar2 = dict(bar, datetime="2025-01-16 00:00:00")
         simulate_bar(auth_token, bar2)
 
-        deadline = time.time() + 10
+        # 等待 Day 2 执行完成：决策数量增加（Day 2 产生新决策）
+        prev_count = len(get_decisions(auth_token, date=today_str()))
+        deadline = time.time() + 15
         while time.time() < deadline:
-            if get_decisions(auth_token, date=today_str()):
+            curr_count = len(get_decisions(auth_token, date=today_str()))
+            if curr_count > prev_count:
                 break
             time.sleep(0.5)
+
+        # recordDailyPositions 在决策创建后的回调中执行，需额外等待
+        time.sleep(1)
 
         resp = requests.get(
             f"{BASE_URL}/strategy/performance",
@@ -1327,3 +1353,225 @@ class TestTickflowDailyStrategy:
             except Exception:
                 pass
             _cleanup_tf_data(auth_token)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 决策关闭（PUT）+ 执行确认 测试
+#
+# 覆盖：
+# 1. PUT /v0/trade/decisions 关闭 pending 决策
+# 2. 幂等性：重复关闭不报错
+# 3. 无效 id：负数 → 400，不存在 → 404
+# 4. POST /v0/trade/order + decisionId 执行决策
+# 5. 状态转换：executed 后 closed 的组合状态
+#
+# 依赖 simulate_bar（仅 Debug 构建），CI Release 下 skip
+# ─────────────────────────────────────────────────────────────────────────────
+
+def close_decision(token: str, decision_id: int) -> requests.Response:
+    """PUT /v0/trade/decisions 关闭决策"""
+    return requests.put(
+        f"{BASE_URL}/trade/decisions",
+        json={"id": decision_id},
+        headers={"Authorization": token},
+        verify=False,
+        timeout=10,
+    )
+
+
+def wait_for_pending_decision(token, strategy_name, timeout=10):
+    """等待出现指定策略的 pending 决策"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        decisions = get_decisions(token, date=today_str())
+        for d in decisions:
+            if (d.get("strategy") == strategy_name
+                    and not d["executed"] and not d.get("closed")):
+                return d
+        time.sleep(0.5)
+    return None
+
+
+@pytest.fixture
+def produced_decision(auth_token, loaded_strategy, is_backtest):
+    """通过 simulate_bar 产生一条 pending 决策"""
+    if not is_backtest:
+        pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+    try:
+        bar = get_latest_bar(auth_token, TEST_SYMBOL)
+    except ValueError as e:
+        pytest.skip(f"无测试数据: {e}")
+
+    # close > open 触发买入信号
+    if not bar["close"] > bar["open"]:
+        bar["open"] = bar["close"] * 0.99
+        bar["high"] = max(bar["open"], bar["high"])
+        bar["low"] = min(bar["open"], bar["low"])
+
+    result = simulate_bar(auth_token, bar)
+    if "status" in result and result.get("status") == "error":
+        pytest.skip(f"simulate/bar 不可用（Release 构建）: {result}")
+
+    decision = wait_for_pending_decision(auth_token, STRATEGY_NAME)
+    if decision is None:
+        pytest.skip("simulate_bar 后未产生决策")
+
+    return decision
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestDecisionCloseAndExecute:
+    """决策关闭（PUT）和执行（POST order + decisionId）测试
+
+    仅 Debug 构建可运行（依赖 simulate/bar 端点产生决策）。
+    """
+
+    def test_close_pending_decision(self, auth_token, produced_decision):
+        """关闭 pending 决策 → closed=true"""
+        decision = produced_decision
+        resp = close_decision(auth_token, decision["id"])
+        assert resp.ok, f"关闭失败: {resp.text}"
+        data = resp.json()
+        assert data.get("success") is True
+
+        # 验证 GET 返回 closed=true
+        time.sleep(0.5)
+        updated = [d for d in get_decisions(auth_token, date=today_str())
+                   if d["id"] == decision["id"]]
+        assert updated, "决策消失"
+        assert updated[0]["closed"] is True, "closed 未更新"
+
+    def test_close_already_closed_is_idempotent(
+            self, auth_token, produced_decision):
+        """重复关闭已关闭的决策 → 仍然成功（幂等）"""
+        decision = produced_decision
+        close_decision(auth_token, decision["id"])
+        time.sleep(0.5)
+
+        resp = close_decision(auth_token, decision["id"])
+        assert resp.ok, f"重复关闭应成功: {resp.text}"
+
+    def test_close_invalid_id_negative(self, auth_token):
+        """负数 id → 400"""
+        resp = close_decision(auth_token, -1)
+        assert resp.status_code == 400, f"应返回 400: {resp.text}"
+        data = resp.json()
+        assert "error" in data
+
+    def test_close_nonexistent_id(self, auth_token):
+        """不存在的 id → 404"""
+        resp = close_decision(auth_token, 999999)
+        assert resp.status_code == 404, f"应返回 404: {resp.text}"
+        data = resp.json()
+        assert "error" in data
+
+    def test_execute_pending_decision(
+            self, auth_token, produced_decision, is_backtest):
+        """POST /v0/trade/order + decisionId → executed=true"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        decision = produced_decision
+        direct = 0 if decision["action"] in ["open_long", "close_short"] else 1
+
+        resp = order_with_decision_id(
+            auth_token, TEST_SYMBOL, decision["id"],
+            quantity=decision["quantity"],
+            price=decision["price"],
+            direct=direct,
+        )
+        assert resp.status_code == 200, f"下单失败: {resp.text}"
+
+        # 验证 executed 状态
+        time.sleep(0.5)
+        updated = [d for d in get_decisions(auth_token, date=today_str())
+                   if d["id"] == decision["id"]]
+        assert updated, "决策消失"
+        assert updated[0]["executed"] is True, "executed 未更新"
+        assert updated[0]["executedQuantity"] > 0, "executedQuantity 未更新"
+
+    def test_close_after_execute(
+            self, auth_token, produced_decision, is_backtest):
+        """已执行的决策也可以被关闭（前端确认后关闭）"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        decision = produced_decision
+        direct = 0 if decision["action"] in ["open_long", "close_short"] else 1
+
+        # 先执行
+        order_with_decision_id(
+            auth_token, TEST_SYMBOL, decision["id"],
+            quantity=decision["quantity"],
+            price=decision["price"],
+            direct=direct,
+        )
+        time.sleep(0.5)
+
+        # 再关闭
+        resp = close_decision(auth_token, decision["id"])
+        assert resp.ok, f"执行后关闭应成功: {resp.text}"
+
+        # 验证两者同时为 true
+        time.sleep(0.5)
+        updated = [d for d in get_decisions(auth_token, date=today_str())
+                   if d["id"] == decision["id"]]
+        assert updated
+        assert updated[0]["executed"] is True
+        assert updated[0]["closed"] is True
+
+    def test_query_reflects_mixed_status(
+            self, auth_token, loaded_strategy, is_backtest):
+        """多条决策：一条关闭、一条执行，GET 分别返回正确状态"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        # 产生第一条决策
+        try:
+            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        except ValueError:
+            pytest.skip("无测试数据")
+        if not bar["close"] > bar["open"]:
+            bar["open"] = bar["close"] * 0.99
+
+        result = simulate_bar(auth_token, bar)
+        if "status" in result and result.get("status") == "error":
+            pytest.skip(f"simulate/bar 不可用: {result}")
+
+        d1 = wait_for_pending_decision(auth_token, STRATEGY_NAME)
+        if d1 is None:
+            pytest.skip("未产生第一条决策")
+
+        # 关闭第一条
+        close_decision(auth_token, d1["id"])
+        time.sleep(0.5)
+
+        # 产生第二条决策（不同日期）
+        bar2 = dict(bar, datetime="2025-02-20 00:00:00")
+        simulate_bar(auth_token, bar2)
+
+        d2 = wait_for_pending_decision(
+            auth_token, STRATEGY_NAME, timeout=15)
+        if d2 is None:
+            pytest.skip("未产生第二条决策")
+
+        # 执行第二条
+        direct = 0 if d2["action"] in ["open_long", "close_short"] else 1
+        order_with_decision_id(
+            auth_token, TEST_SYMBOL, d2["id"],
+            quantity=d2["quantity"], price=d2["price"], direct=direct,
+        )
+        time.sleep(0.5)
+
+        # 验证两条决策状态
+        all_decisions = get_decisions(auth_token, date=today_str())
+        d1_updated = next((d for d in all_decisions if d["id"] == d1["id"]), None)
+        d2_updated = next((d for d in all_decisions if d["id"] == d2["id"]), None)
+
+        assert d1_updated is not None
+        assert d1_updated["closed"] is True, "d1 应为 closed"
+        assert d1_updated["executed"] is False, "d1 不应为 executed"
+
+        assert d2_updated is not None
+        assert d2_updated["executed"] is True, "d2 应为 executed"

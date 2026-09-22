@@ -580,8 +580,8 @@ void DecisionHandler::put(const httplib::Request& req, httplib::Response& res) {
         auto* broker = _server->GetBrokerSubSystem();
         bool ok = broker->MarkDecisionClosed(id);
         if (!ok) {
-            res.status = 500;
-            res.set_content(R"({"error":"mark closed failed"})", "application/json");
+            res.status = 404;
+            res.set_content(R"({"error":"decision not found"})", "application/json");
             return;
         }
 
@@ -590,4 +590,33 @@ void DecisionHandler::put(const httplib::Request& req, httplib::Response& res) {
         res.status = 400;
         res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DecisionHandler DELETE — 清除指定日期的决策记录
+//  DELETE /v0/trade/decisions?date=YYYY-MM-DD
+// ═══════════════════════════════════════════════════════════
+
+void DecisionHandler::del(const httplib::Request& req, httplib::Response& res) {
+    auto date = req.get_param_value("date");
+    if (date.empty()) {
+        time_t now = time(nullptr);
+        struct tm tm_val;
+#ifdef _WIN32
+        localtime_s(&tm_val, &now);
+#else
+        localtime_r(&now, &tm_val);
+#endif
+        char buf[16];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
+        date = buf;
+    }
+
+    auto* broker = _server->GetBrokerSubSystem();
+    int deleted = broker->ClearDecisions(date);
+
+    nlohmann::json result;
+    result["success"] = true;
+    result["deleted"] = deleted;
+    res.set_content(result.dump(), "application/json");
 }

@@ -12,7 +12,7 @@ DecisionDB& DecisionDB::instance() {
 void DecisionDB::ensureTables() {
     exec_unsafe(R"(
         CREATE TABLE IF NOT EXISTS decisions (
-            id          INTEGER,
+            id          INTEGER PRIMARY KEY,
             strategy    VARCHAR,
             symbol      BIGINT NOT NULL,
             action      TINYINT NOT NULL,
@@ -28,7 +28,6 @@ void DecisionDB::ensureTables() {
         )
     )");
     exec_unsafe("CREATE INDEX IF NOT EXISTS idx_decisions_date ON decisions(timestamp)");
-    exec_unsafe("CREATE INDEX IF NOT EXISTS idx_decisions_id ON decisions(id)");
 
     exec_unsafe(R"(
         CREATE TABLE IF NOT EXISTS daily_positions (
@@ -79,7 +78,7 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm_val);
 
     std::string sql = fmt::format(
-        "INSERT INTO decisions (id, strategy, symbol, action, is_open, quantity, price, epoch, timestamp, executed, exec_qty, exec_price, closed) "
+        "INSERT OR REPLACE INTO decisions (id, strategy, symbol, action, is_open, quantity, price, epoch, timestamp, executed, exec_qty, exec_price, closed) "
         "VALUES ({}, '{}', {}, {}, {}, {}, {:.6f}, {}, TIMESTAMP '{}', {}, {}, {:.6f}, {})",
         record._id,
         record._strategy,
@@ -97,7 +96,12 @@ int DecisionDB::insertDecision(const DecisionRecord& record) {
     );
 
     if (!exec(sql)) {
-        FATAL("[DecisionDB] insertDecision failed: id={}", record._id);
+        // 重新执行一次以获取具体错误信息
+        duckdb_result r;
+        auto st = duckdb_query(conn(), sql.c_str(), &r);
+        const char* err = (st != DuckDBSuccess) ? duckdb_result_error(&r) : "unknown";
+        FATAL("[DecisionDB] insertDecision failed: id={} sql={} err={}", record._id, sql, err ? err : "null");
+        duckdb_destroy_result(&r);
         return -1;
     }
     return record._id;
@@ -159,9 +163,29 @@ std::vector<DecisionRecord> DecisionDB::queryByDate(const std::string& date) {
 //  标记已执行
 // ═══════════════════════════════════════════════════════════
 
+bool DecisionDB::exists(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return false;
+
+    auto sql = fmt::format("SELECT COUNT(*) FROM decisions WHERE id = {}", id);
+    bool found = false;
+    query(sql, [&found](duckdb_result& result) {
+        if (duckdb_row_count(&result) > 0) {
+            auto* val = duckdb_value_varchar(&result, 0, 0);
+            if (val) {
+                found = std::stoi(val) > 0;
+                duckdb_free(val);
+            }
+        }
+        return true;
+    });
+    return found;
+}
+
 bool DecisionDB::markExecuted(int id, int64_t exec_qty, double exec_price) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     if (!isInitialized()) return false;
+    if (!exists(id)) return false;
 
     std::string sql = fmt::format(
         "UPDATE decisions SET executed = true, exec_qty = {}, exec_price = {:.6f} WHERE id = {}",
@@ -177,11 +201,41 @@ bool DecisionDB::markExecuted(int id, int64_t exec_qty, double exec_price) {
 bool DecisionDB::markClosed(int id) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     if (!isInitialized()) return false;
+    if (!exists(id)) return false;
 
     std::string sql = fmt::format(
         "UPDATE decisions SET closed = true WHERE id = {}", id
     );
     return exec(sql);
+}
+
+int DecisionDB::clearByDate(const std::string& date) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return 0;
+
+    // 先查数量
+    auto selectSql = fmt::format(
+        "SELECT COUNT(*) FROM decisions WHERE CAST(timestamp AS DATE) = '{}'", date
+    );
+    int count = 0;
+    query(selectSql, [&count](duckdb_result& result) {
+        if (duckdb_row_count(&result) > 0) {
+            auto* val = duckdb_value_varchar(&result, 0, 0);
+            if (val) {
+                count = std::stoi(val);
+                duckdb_free(val);
+            }
+        }
+        return true;
+    });
+
+    if (count > 0) {
+        auto deleteSql = fmt::format(
+            "DELETE FROM decisions WHERE CAST(timestamp AS DATE) = '{}'", date
+        );
+        exec(deleteSql);
+    }
+    return count;
 }
 
 // ═══════════════════════════════════════════════════════════

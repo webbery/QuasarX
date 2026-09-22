@@ -61,4 +61,5 @@ public:
     DecisionHandler(Server* server) : HttpHandler(server) {}
     void get(const httplib::Request& req, httplib::Response& res) override;
     void put(const httplib::Request& req, httplib::Response& res) override;
+    void del(const httplib::Request& req, httplib::Response& res) override;
 };

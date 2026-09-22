@@ -207,6 +207,8 @@ public:
     bool MarkDecisionExecuted(int id, int64_t exec_qty, double exec_price);
     // 标记决策已确认（关闭，不执行）
     bool MarkDecisionClosed(int id);
+    // 清除指定日期的决策记录（内存 + DuckDB），返回删除行数
+    int ClearDecisions(const String& date);
     // 回测直接模拟成交（取 QuoteDB 最新 close）
     TradeReport SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side);
 

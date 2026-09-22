@@ -1224,10 +1224,11 @@ bool BrokerSubSystem::MarkDecisionExecuted(int id, int64_t exec_qty, double exec
                 rec._executed = true;
                 rec._executed_quantity = exec_qty;
                 rec._executed_price = exec_price;
-                break;
+                return DecisionDB::instance().markExecuted(id, exec_qty, exec_price);
             }
         }
     }
+    // 不在内存中（服务重启后残留决策），直接更新 DuckDB
     return DecisionDB::instance().markExecuted(id, exec_qty, exec_price);
 }
 
@@ -1237,11 +1238,20 @@ bool BrokerSubSystem::MarkDecisionClosed(int id) {
         for (auto& rec : _todayDecisions) {
             if (rec._id == id) {
                 rec._closed = true;
-                break;
+                return DecisionDB::instance().markClosed(id);
             }
         }
     }
+    // 不在内存中（服务重启后残留决策），直接更新 DuckDB
     return DecisionDB::instance().markClosed(id);
+}
+
+int BrokerSubSystem::ClearDecisions(const String& date) {
+    {
+        std::lock_guard<std::mutex> lock(_decisionMtx);
+        _todayDecisions.clear();
+    }
+    return DecisionDB::instance().clearByDate(date);
 }
 
 TradeReport BrokerSubSystem::SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side) {
