@@ -13,6 +13,7 @@
 #include "Util/DailyDecision.h"
 #include "Util/DecisionDB.h"
 #include "Util/datetime.h"
+#include "Util/system.h"
 
 namespace {
     // 从策略配置推断预热期 epoch 数（支持任意 Nx 格式：20d/60d/120d/250d 等）
@@ -24,11 +25,13 @@ namespace {
         // 1. 找到 Input 节点的 freq
         String inputFreq;
         for (auto& node : config["nodes"]) {
+            JSON_SKIP_IF_MISSING(node, "data");
             String nodeType = node["data"].value("nodeType", "");
             if (nodeType == "input") {
-                auto& params = node["data"]["params"];
-                if (params.contains("freq"))
-                    inputFreq = (String)params["freq"]["value"];
+                auto& data = node["data"];
+                JSON_SKIP_IF_MISSING(data, "params");
+                if (data["params"].contains("freq"))
+                    inputFreq = (String)data["params"]["freq"]["value"];
                 break;
             }
         }
@@ -38,11 +41,14 @@ namespace {
 
         // 2. 遍历 Function 节点，计算最大 warmup
         for (auto& node : config["nodes"]) {
-            String nodeType = node["data"]["nodeType"];
+            JSON_SKIP_IF_MISSING(node, "data");
+            String nodeType = node["data"].value("nodeType", "");
             if (nodeType != "function") continue;
 
-            auto& params = node["data"]["params"];
-            if (!params.contains("range")) continue;
+            auto& data = node["data"];
+            JSON_SKIP_IF_MISSING(data, "params");
+            auto& params = data["params"];
+            JSON_SKIP_IF_MISSING(params, "range");
             String range = params["range"]["value"];
 
             int rangeSeconds = TimeStringToSeconds(range);

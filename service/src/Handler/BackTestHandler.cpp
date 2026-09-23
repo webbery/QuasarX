@@ -68,10 +68,8 @@ const Set<String> FEATURE_NODE_TYPES = {
 // 4. 插入 CacheFeatureNode，连接到 XGBoost
 // 5. 如有 modelPath，覆盖 XGBoost 的 modelFile 参数
 void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, const String& modelPath) {
-    if (!script.contains("nodes") || !script.contains("edges")) {
-        WARN("[RewriteForFastMode] script missing nodes/edges, skipping");
-        return;
-    }
+    JSON_RETURN_IF_MISSING(script, "nodes");
+    JSON_RETURN_IF_MISSING(script, "edges");
 
     auto& nodes = script["nodes"];
     auto& edges = script["edges"];
@@ -79,6 +77,7 @@ void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, c
     // 1. 找 XGBoost 节点 ID
     String xgbNodeId;
     for (auto& node : nodes) {
+        JSON_SKIP_IF_MISSING(node, "id");
         String nodeType = node.contains("data") ? node["data"].value("nodeType", "") : "";
         if (nodeType == "xgboost") {
             xgbNodeId = node["id"].get<std::string>();
@@ -102,6 +101,7 @@ void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, c
     // 3. 标记要删除的节点（只删特征节点，保留 input 节点）
     Set<String> nodesToRemove;
     for (auto& node : nodes) {
+        JSON_SKIP_IF_MISSING(node, "id");
         String nodeId = node["id"].get<std::string>();
         String nodeType = node.contains("data") ? node["data"].value("nodeType", "") : "";
         if (upstreamIds.count(nodeId) && FEATURE_NODE_TYPES.count(nodeType)) {
@@ -117,6 +117,7 @@ void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, c
             String source = edge.value("source", "");
             if (nodesToRemove.count(target)) {
                 for (auto& n : nodes) {
+                    if (!n.contains("id")) continue;
                     String nid = n["id"].get<std::string>();
                     if (nid == source) {
                         String nt = n.contains("data") ? n["data"].value("nodeType", "") : "";
@@ -132,7 +133,8 @@ void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, c
 
     // 4. 删除特征节点
     auto newNodesEnd = std::remove_if(nodes.begin(), nodes.end(), [&](const nlohmann::json& n) {
-        return nodesToRemove.count(n["id"].get<std::string>());
+        if (!n.contains("id")) return false;
+        return nodesToRemove.count(n["id"].get<std::string>()) > 0;
     });
     nodes.erase(newNodesEnd, nodes.end());
 

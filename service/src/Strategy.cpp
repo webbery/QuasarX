@@ -36,6 +36,7 @@
 #include "Nodes/BreakoutNode.h"
 #include "Nodes/CacheFeatureNode.h"
 #include "std_header.h"
+#include "Util/system.h"
 
 namespace {
     Map<String, StrategyNodeType>& node_type_map() {
@@ -120,12 +121,22 @@ QNode* generate_node(const String& id, Server* server) {
 
 List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* server, SlippageConfigInfo* outSlippageConfig, std::map<uint32_t, nlohmann::json>* outNodeConfigMap) {
     List<QNode*> graph;
+    
+    // 前置校验：检查必需的顶层字段
+    JSON_REQUIRE_KEY(content, "nodes");
+    JSON_REQUIRE_KEY(content, "edges");
+    
     auto& nodes = content["nodes"];
     auto& edges = content["edges"];
     String strategyName = content.value("id", "unknown");
     Map<uint32_t, QNode*> nodeMap;
     Map<uint32_t, nlohmann::json> nodeConfigMap;
     for (auto& node: nodes) {
+        // 校验 node 必需字段
+        JSON_REQUIRE_KEY(node, "id");
+        JSON_REQUIRE_KEY(node, "data");
+        JSON_REQUIRE_KEY(node["data"], "nodeType");
+        
         String node_type = node["data"]["nodeType"];
         QNode* nodeInstance = nullptr;
         auto type = node_type_map()[node_type];
@@ -208,6 +219,12 @@ List<QNode*> parse_strategy_script_v2(const nlohmann::json& content, Server* ser
     }
     // 构建连接关系
     for (auto& edge: edges) {
+        // 校验 edge 必需字段
+        JSON_REQUIRE_KEY(edge, "source");
+        JSON_REQUIRE_KEY(edge, "target");
+        JSON_REQUIRE_KEY(edge, "sourceHandle");
+        JSON_REQUIRE_KEY(edge, "targetHandle");
+        
         String from = edge["source"];
         String target = edge["target"];
         String sourceHandle = edge["sourceHandle"];
@@ -320,16 +337,18 @@ static contract_type sourceStringToType(const String& type) {
 
 Set<contract_type> collectRequiredSources(const nlohmann::json& content) {
     Set<contract_type> sources;
+    // 缺失 nodes 时返回默认值（stock）
     if (!content.contains("nodes")) {
         sources.insert(contract_type::stock);
         return sources;
     }
     for (auto& node : content["nodes"]) {
-        if (!node.contains("data") || !node["data"].contains("nodeType") ||
-            node["data"]["nodeType"] != "input" ||
-            !node["data"].contains("params") ||
-            !node["data"]["params"].contains("source"))
+        JSON_SKIP_IF_MISSING(node, "data");
+        if (!node["data"].contains("nodeType") ||
+            node["data"]["nodeType"] != "input")
             continue;
+        JSON_SKIP_IF_MISSING(node["data"], "params");
+        JSON_SKIP_IF_MISSING(node["data"]["params"], "source");
         auto& srcVal = node["data"]["params"]["source"]["value"];
         for (auto& s : srcVal) {
             sources.insert(sourceStringToType((String)s));

@@ -40,6 +40,26 @@
 #define URI_SERVER_EVENT "inproc://SSE_PULL"        // SSE
 #define URI_DISPATH_EVENT "inproc://SSE_PUB"        // SSE
 
+// 校验 JSON 对象中必须包含指定 key，缺失则抛出 std::invalid_argument
+#define JSON_REQUIRE_KEY(obj, key) \
+    do { \
+        if (!(obj).contains(key)) { \
+            throw std::invalid_argument("JSON missing required field: '" key "'"); \
+        } \
+    } while (0)
+
+// 校验 JSON 对象中是否包含指定 key，缺失则 continue（用于循环中的可选字段）
+#define JSON_SKIP_IF_MISSING(obj, key) \
+    if (!(obj).contains(key)) continue
+
+// 校验 JSON 对象中是否包含指定 key，缺失则 return（用于 void 函数提前返回）
+#define JSON_RETURN_IF_MISSING(obj, key) \
+    if (!(obj).contains(key)) return
+
+// 校验 JSON 对象中是否包含指定 key，缺失则 return val（用于有返回值的函数提前返回）
+#define JSON_RETURN_VAL_IF_MISSING(obj, key, val) \
+    if (!(obj).contains(key)) return (val)
+
 constexpr std::size_t flags = yas::mem|yas::binary;
 
 std::string GetIP();

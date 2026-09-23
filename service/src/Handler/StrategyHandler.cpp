@@ -570,6 +570,9 @@ void StrategyHandler::stop(const String& name, httplib::Response& res) {
 
 void StrategyHandler::validate(const nlohmann::json& param, httplib::Response& res) {
     try {
+        // 校验必需字段
+        JSON_REQUIRE_KEY(param, "config");
+        
         // 获取策略配置
         auto& config = param["config"];
 

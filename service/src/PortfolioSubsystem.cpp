@@ -42,6 +42,8 @@ hold_t& PortfolioSubSystem::GetHolding(const String& id) {
 }
 
 void PortfolioSubSystem::AddPortfolio(const nlohmann::json& p) {
+  JSON_REQUIRE_KEY(p, "id");
+  JSON_REQUIRE_KEY(p, "pool");
   PortfolioInfo& pi = _portfolios[p["id"]];
   for (const String& symbol: p["pool"]) {
     pi._pools.insert(symbol);
