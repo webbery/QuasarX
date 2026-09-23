@@ -4,6 +4,7 @@
 #include <cmath>
 #include <unordered_map>
 #include <mutex>
+#include <shared_mutex>
 
 /**
  * FFT — FFTW3 后端
@@ -85,6 +86,9 @@ inline ExecBufs& execBufs(size_t n) {
 }
 
 /// 全局 plan 池(懒创建)
+/// shared_mutex: 缓存命中用 shared_lock (多线程并发读),
+/// 首创建用 unique_lock 串行 (FFTW planner 本身非线程安全).
+/// 串行时仅极少数次 (每个 fftSize 一次), 后续每次 rfft/irfft 都是 O(1) 读.
 class PlanPool {
 public:
     static PlanPool& instance() {
@@ -93,9 +97,15 @@ public:
     }
 
     R2CPlan& getR2C(size_t n) {
-        std::lock_guard<std::mutex> lk(mtx_);
+        {
+            std::shared_lock<std::shared_mutex> rlk(mtx_);
+            auto it = r2c_.find(n);
+            if (it != r2c_.end()) return it->second;
+        }
+        // 缓存未命中: 升级写锁 (FFTW plan 创建在 OS FFTW 库内非线程安全)
+        std::unique_lock<std::shared_mutex> wlk(mtx_);
         auto it = r2c_.find(n);
-        if (it != r2c_.end()) return it->second;
+        if (it != r2c_.end()) return it->second;   // 竞态: 其他线程可能先于我们创建好
 
         R2CPlan p;
         p.n = n;
@@ -109,7 +119,12 @@ public:
     }
 
     C2RPlan& getC2R(size_t n) {
-        std::lock_guard<std::mutex> lk(mtx_);
+        {
+            std::shared_lock<std::shared_mutex> rlk(mtx_);
+            auto it = c2r_.find(n);
+            if (it != c2r_.end()) return it->second;
+        }
+        std::unique_lock<std::shared_mutex> wlk(mtx_);
         auto it = c2r_.find(n);
         if (it != c2r_.end()) return it->second;
 
@@ -138,7 +153,7 @@ public:
 
 private:
     PlanPool() = default;
-    std::mutex mtx_;
+    std::shared_mutex mtx_;
     std::unordered_map<size_t, R2CPlan> r2c_;
     std::unordered_map<size_t, C2RPlan> c2r_;
 };

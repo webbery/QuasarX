@@ -43,11 +43,13 @@ private:
     Vector<double> computeVolumeRegime(const Vector<Vector<double>>& imfs,
                                        const Vector<double>& volume, int window) const;
 
+    // Process 中每个 symbol 的主体 (提取出来便于 OMP 并行)
+    NodeProcessResult processSymbol(const String& inputKey, DataContext& context);
+
     Server* _server;
     String _label;
     EMDMethod _method:3;             // 算法类型
     WarmupFillType _fillmode:2;
-    bool _rollingInitialized: 1 = false;
     bool _computeEnergyVelocity: 1;   // 是否计算 energy_velocity
     bool _computeVolumeRegime: 1;     // 是否计算 volume_regime
     int _numIMFs;                  // IMF 分量数量

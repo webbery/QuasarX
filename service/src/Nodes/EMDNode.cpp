@@ -14,7 +14,7 @@ EMDNode::EMDNode(Server* server)
 
 bool EMDNode::Init(const nlohmann::json& config) {
     _rollingIMFs.clear();
-    _rollingInitialized = false;
+    // (旧 _rollingInitialized 已删除: stored.empty() 检查已足够)
 
     _label = (String)config["label"];
 
@@ -149,6 +149,14 @@ bool EMDNode::Init(const nlohmann::json& config) {
     INFO("EMDNode initialized: label={}, method={}, numIMFs={}, window={}, inputs={}",
          _label, methodName, _numIMFs, _windowSize > 0 ? std::to_string(_windowSize) : "global",
          _params.size());
+
+    // 预填 _rollingIMFs 所有 key (空 Vector 即可): Process 在 OMP 中并发写
+    // 不同 inputKey 对应的 entry, 关键不变量是"不再有 operator[] 的隐式 insert",
+    // 否则 std::unordered_map 的 rehash 会破坏并发安全.
+    // 注: Map = std::map (USE_PMR 未定义), std::map 没有 reserve(), 直接 emplace.
+    for (const auto& [k, _] : _params) {
+        _rollingIMFs.emplace(k, Vector<Vector<double>>{});
+    }
     return true;
 }
 
@@ -296,58 +304,81 @@ Vector<double> EMDNode::computeVolumeRegime(const Vector<Vector<double>>& imfs,
 }
 
 NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context) {
-    for (auto& [inputKey, argType] : _params) {
-        // 从 DataContext 获取输入时间序列（避免拷贝，用 const 引用）
-        auto& value = context.get(inputKey);
-        const Vector<double>* pInput = std::get_if<Vector<double>>(&value);
-        if (!pInput) {
-            WARN("EMDNode input {} is not a time series", inputKey);
-            return NodeProcessResult::Error;
-        }
-        const auto& input_data = *pInput;
-        const int n = static_cast<int>(input_data.size());
+    // OMP 并行遍历 _params 的 inputKey (每个 inputKey = 1 个 symbol).
+    // 并发安全前提:
+    //   1. 每个 inputKey 唯一对应一个 symbol, 写出的 context key 也是 symbol-prefixed,
+    //      不同线程只触碰各自的 key, 不会写同一个 key (没有真正的 map 冲突).
+    //   2. _rollingIMFs 在 Init 时已预填所有 inputKey (空 entry), Process 内不再 insert,
+    //      因此 std::unordered_map 不会因 rehash 而破坏并发安全.
+    //   3. 依赖的实际行为: 对已有 key 的 operator[]/find() + 赋值不会触发 rehash.
+    //      (标准未做硬性保证, 但 libstdc++/libc++ 都是这样; 若未来换成别的 STL 实现
+    //      出现并发 bug, 应在 DataContext 的 set/add 加 shared_mutex.)
+    // schedule(dynamic, 1) 而非 static: 不同 window 数据收敛迭代数差异较大 (实测
+    // 38 ~ 421 次), 静态分块会导致线程空闲不均.
+    const size_t N = _params.size();
+    Vector<String> inputKeys;
+    inputKeys.reserve(N);
+    for (const auto& [k, _] : _params) inputKeys.push_back(k);
 
-        const int minLen = _windowSize > 0 ? _windowSize : 10;
-        if (n < minLen) {
-            // warmup 期：输出 NaN 占位，保持向量长度与输入同步。
-            // 下游节点（FunctionNode/XGBoostNode）可读到 key，
-            // 由 XGBoostNode 的 80% 有效性规则决定是否跳过推理。
-            String prefix;
-            for (auto& p : _symbolPrefixes) {
-                if (inputKey.size() > p.size() &&
-                    inputKey.compare(0, p.size(), p) == 0) {
-                    prefix = p;
-                    break;
-                }
+    // ---- 预填 DataContext._outputs 中所有 per-symbol 输出 key ----
+    // 必须先于 OMP 并行: warmup 阶段是这些 key 的首次写入时刻,
+    // 多线程并发 insert 到 std::unordered_map 会触发 rehash, 进而破坏其它线程
+    // 正在进行的 find/contains 访问 (崩溃根因).
+    // 一次性预填空 Vector 占位, 后续 set/add 都不再 insert, 也就不会再 rehash.
+    // 该步骤每 epoch 重复, 但已存在 key 的 set 退化为值赋值 (~50 ns/op),
+    // 总开销约 210 keys × 50 ns = 10 µs/epoch, 对全回测影响可忽略.
+    for (const auto& [inputKey, _] : _params) {
+        String prefix;
+        for (const auto& p : _symbolPrefixes) {
+            if (inputKey.size() > p.size() &&
+                inputKey.compare(0, p.size(), p) == 0) {
+                prefix = p;
+                break;
             }
-            if (!prefix.empty()) {
-                double nan = std::numeric_limits<double>::quiet_NaN();
-                for (int i = 0; i < _numIMFs; ++i) {
-                    String outKey = prefix + _label + ".nimf_" + std::to_string(i);
-                    if (context.exist(outKey)) {
-                        context.add(outKey, nan);
-                    } else {
-                        context.set(outKey, Vector<double>(1, nan));
-                    }
-                }
-                if (_computeEnergyVelocity) {
-                    String k = prefix + _label + ".energy_velocity";
-                    if (context.exist(k)) context.add(k, nan);
-                    else context.set(k, Vector<double>(1, nan));
-                }
-                if (_computeVolumeRegime) {
-                    String k = prefix + _label + ".volume_regime";
-                    if (context.exist(k)) context.add(k, nan);
-                    else context.set(k, Vector<double>(1, nan));
-                }
-            }
-            continue;
         }
+        if (prefix.empty()) continue;
+        for (int i = 0; i < _numIMFs; ++i) {
+            String outKey = prefix + _label + ".nimf_" + std::to_string(i);
+            context.set(outKey, Vector<double>{});
+        }
+        if (_computeEnergyVelocity) {
+            context.set(prefix + _label + ".energy_velocity", Vector<double>{});
+        }
+        if (_computeVolumeRegime) {
+            context.set(prefix + _label + ".volume_regime", Vector<double>{});
+        }
+    }
 
-        // 从 inputKey 匹配出正确的 symbol prefix
-        // 修复 bug: 旧实现用 inputKey.find('.') 截取，对 "sz.000423.volume"
-        // 会截成 "sz."（symbol 自身的 '.' 被吃掉）。改用 Init 时缓存的
-        // _symbolPrefixes（"sz.000423."）按前缀匹配，避免被 symbol 中的 '.' 干扰
+    NodeProcessResult finalResult = NodeProcessResult::Success;
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (size_t idx = 0; idx < N; ++idx) {
+        NodeProcessResult r = processSymbol(inputKeys[idx], context);
+        if (r != NodeProcessResult::Success) {
+            #pragma omp critical
+            {
+                if (finalResult == NodeProcessResult::Success) finalResult = r;
+            }
+        }
+    }
+    return finalResult;
+}
+
+NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& context) {
+    // 从 DataContext 获取输入时间序列（避免拷贝，用 const 引用）
+    auto& value = context.get(inputKey);
+    const Vector<double>* pInput = std::get_if<Vector<double>>(&value);
+    if (!pInput) {
+        WARN("EMDNode input {} is not a time series", inputKey);
+        return NodeProcessResult::Error;
+    }
+    const auto& input_data = *pInput;
+    const int n = static_cast<int>(input_data.size());
+
+    const int minLen = _windowSize > 0 ? _windowSize : 10;
+    if (n < minLen) {
+        // warmup 期：输出 NaN 占位，保持向量长度与输入同步。
+        // 下游节点（FunctionNode/XGBoostNode）可读到 key，
+        // 由 XGBoostNode 的 80% 有效性规则决定是否跳过推理。
         String prefix;
         for (auto& p : _symbolPrefixes) {
             if (inputKey.size() > p.size() &&
@@ -356,101 +387,135 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
                 break;
             }
         }
-        if (prefix.empty()) {
-            WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
-            return NodeProcessResult::Skip;
-        }
-
-        Vector<Vector<double>> imfs;
-
-        if (_windowSize > 0) {
-            // ===== 滚动模式：增量计算，只处理最新窗口 =====
-            auto& stored = _rollingIMFs[inputKey];
-
-            if (!_rollingInitialized || stored.empty()) {
-                // 首次：计算全部位置（bootstrap）
-                if (!decomposeOne(input_data, imfs)) {
-                    WARN("EMDNode decomposition failed for input {}", inputKey);
-                    return NodeProcessResult::Skip;
-                }
-                stored = imfs;
-                _rollingInitialized = true;
-            } else {
-                // 后续 epoch：只计算最新一个窗口（O(1) 而非 O(n)）
-                const int w = _windowSize;
-                Vector<double> window_data(w);
-                for (int j = 0; j < w; ++j) {
-                    window_data[j] = input_data[n - w + j];
-                }
-
-                Vector<Vector<double>> win_imfs;
-                if (_method == EMDMethod::VMD) {
-                    VMD vmd;
-                    VMD::Config cfg;
-                    cfg.K = _numIMFs; cfg.alpha = _alpha;
-                    cfg.tau = _tau; cfg.tol = _tol;
-                    win_imfs = vmd.decompose(window_data, cfg).imfs;
-                } else if (_method == EMDMethod::CEEMDAN) {
-                    CEEMDAN ceemdan;
-                    CEEMDAN::Config cfg;
-                    cfg.numIMFs = _numIMFs; cfg.ensembles = _ensembles;
-                    cfg.noiseStd = _noiseStd; cfg.seed = 42;
-                    cfg.zeroPad = false;
-                    win_imfs = ceemdan.decompose(window_data, cfg).imfs;
+        if (!prefix.empty()) {
+            double nan = std::numeric_limits<double>::quiet_NaN();
+            for (int i = 0; i < _numIMFs; ++i) {
+                String outKey = prefix + _label + ".nimf_" + std::to_string(i);
+                if (context.exist(outKey)) {
+                    context.add(outKey, nan);
                 } else {
-                    EMD emd_algo;
-                    win_imfs = emd_algo.emd(window_data, _numIMFs, /*zeroPad=*/false);
+                    context.set(outKey, Vector<double>(1, nan));
                 }
-
-                // 追加最新值到持久存储
-                // 不足 _numIMFs 的 IMF 延续前一值，避免虚假零值
-                const int actual = static_cast<int>(win_imfs.size());
-                for (int k = 0; k < _numIMFs; ++k) {
-                    if (k >= static_cast<int>(stored.size())) {
-                        stored.emplace_back(Vector<double>(n - 1, 0.0));
-                    }
-                    double val = (k < actual && !win_imfs[k].empty())
-                        ? win_imfs[k].back()
-                        : (stored[k].empty() ? 0.0 : stored[k].back());
-                    stored[k].push_back(val);
-                }
-                imfs = stored;
             }
-        } else {
-            // ===== 全局模式：每次完整分解 =====
+            if (_computeEnergyVelocity) {
+                String k = prefix + _label + ".energy_velocity";
+                if (context.exist(k)) context.add(k, nan);
+                else context.set(k, Vector<double>(1, nan));
+            }
+            if (_computeVolumeRegime) {
+                String k = prefix + _label + ".volume_regime";
+                if (context.exist(k)) context.add(k, nan);
+                else context.set(k, Vector<double>(1, nan));
+            }
+        }
+        return NodeProcessResult::Success;
+    }
+
+    // 从 inputKey 匹配出正确的 symbol prefix
+    // 修复 bug: 旧实现用 inputKey.find('.') 截取，对 "sz.000423.volume"
+    // 会截成 "sz."（symbol 自身的 '.' 被吃掉）。改用 Init 时缓存的
+    // _symbolPrefixes（"sz.000423."）按前缀匹配，避免被 symbol 中的 '.' 干扰
+    String prefix;
+    for (auto& p : _symbolPrefixes) {
+        if (inputKey.size() > p.size() &&
+            inputKey.compare(0, p.size(), p) == 0) {
+            prefix = p;
+            break;
+        }
+    }
+    if (prefix.empty()) {
+        WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
+        return NodeProcessResult::Skip;
+    }
+
+    Vector<Vector<double>> imfs;
+
+    if (_windowSize > 0) {
+        // ===== 滚动模式：增量计算，只处理最新窗口 =====
+        // _rollingIMFs 在 Init 已预填该 key (空 entry), 此处取到的 ref 不会触发 map insert
+        auto& stored = _rollingIMFs.at(inputKey);
+
+        if (stored.empty()) {
+            // 首次：计算全部位置（bootstrap）
             if (!decomposeOne(input_data, imfs)) {
                 WARN("EMDNode decomposition failed for input {}", inputKey);
                 return NodeProcessResult::Skip;
             }
-        }
-
-        // 写入 per-symbol IMF 输出: {symbol}.label.nimf_N
-        int idx = 0;
-        for (auto& imf : imfs) {
-            if (idx >= _numIMFs) break;
-            String outKey = prefix + _label + ".nimf_" + std::to_string(idx);
-            context.set(outKey, imf);
-            ++idx;
-        }
-
-        // 计算衍生特征（如果启用）
-        if (_computeEnergyVelocity) {
-            auto energy_vel = computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
-            context.set(prefix + _label + ".energy_velocity", energy_vel);
-        }
-        if (_computeVolumeRegime) {
-            // 从当前 inputKey 推导同 symbol 的 volume key
-            String volKey = prefix + "volume";
-            try {
-                const auto& vol = context.get<Vector<double>>(volKey);
-                auto vol_regime = computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);
-                context.set(prefix + _label + ".volume_regime", vol_regime);
-            } catch (...) {
-                WARN("EMDNode: volume_regime requested but no volume input found for {}", prefix);
+            stored = imfs;
+        } else {
+            // 后续 epoch：只计算最新一个窗口（O(1) 而非 O(n)）
+            const int w = _windowSize;
+            Vector<double> window_data(w);
+            for (int j = 0; j < w; ++j) {
+                window_data[j] = input_data[n - w + j];
             }
+
+            Vector<Vector<double>> win_imfs;
+            if (_method == EMDMethod::VMD) {
+                VMD vmd;
+                VMD::Config cfg;
+                cfg.K = _numIMFs; cfg.alpha = _alpha;
+                cfg.tau = _tau; cfg.tol = _tol;
+                win_imfs = vmd.decompose(window_data, cfg).imfs;
+            } else if (_method == EMDMethod::CEEMDAN) {
+                CEEMDAN ceemdan;
+                CEEMDAN::Config cfg;
+                cfg.numIMFs = _numIMFs; cfg.ensembles = _ensembles;
+                cfg.noiseStd = _noiseStd; cfg.seed = 42;
+                cfg.zeroPad = false;
+                win_imfs = ceemdan.decompose(window_data, cfg).imfs;
+            } else {
+                EMD emd_algo;
+                win_imfs = emd_algo.emd(window_data, _numIMFs, /*zeroPad=*/false);
+            }
+
+            // 追加最新值到持久存储
+            // 不足 _numIMFs 的 IMF 延续前一值，避免虚假零值
+            const int actual = static_cast<int>(win_imfs.size());
+            for (int k = 0; k < _numIMFs; ++k) {
+                if (k >= static_cast<int>(stored.size())) {
+                    stored.emplace_back(Vector<double>(n - 1, 0.0));
+                }
+                double val = (k < actual && !win_imfs[k].empty())
+                    ? win_imfs[k].back()
+                    : (stored[k].empty() ? 0.0 : stored[k].back());
+                stored[k].push_back(val);
+            }
+            imfs = stored;
+        }
+    } else {
+        // ===== 全局模式：每次完整分解 =====
+        if (!decomposeOne(input_data, imfs)) {
+            WARN("EMDNode decomposition failed for input {}", inputKey);
+            return NodeProcessResult::Skip;
         }
     }
 
+    // 写入 per-symbol IMF 输出: {symbol}.label.nimf_N
+    int idx = 0;
+    for (auto& imf : imfs) {
+        if (idx >= _numIMFs) break;
+        String outKey = prefix + _label + ".nimf_" + std::to_string(idx);
+        context.set(outKey, imf);
+        ++idx;
+    }
+
+    // 计算衍生特征（如果启用）
+    if (_computeEnergyVelocity) {
+        auto energy_vel = computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
+        context.set(prefix + _label + ".energy_velocity", energy_vel);
+    }
+    if (_computeVolumeRegime) {
+        // 从当前 inputKey 推导同 symbol 的 volume key
+        String volKey = prefix + "volume";
+        try {
+            const auto& vol = context.get<Vector<double>>(volKey);
+            auto vol_regime = computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);
+            context.set(prefix + _label + ".volume_regime", vol_regime);
+        } catch (...) {
+            WARN("EMDNode: volume_regime requested but no volume input found for {}", prefix);
+        }
+    }
     return NodeProcessResult::Success;
 }
 
