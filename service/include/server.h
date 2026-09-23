@@ -167,6 +167,11 @@ public:
 
     bool SendEmail(const String& content);
     bool SendHtmlEmail(const String& htmlContent);
+    bool SendEmail(const String& content, const String& subject);
+    bool SendHtmlEmail(const String& htmlContent, const String& subject);
+    bool SendMailWithAttachments(const String& body, bool isHtml,
+                                 const Vector<String>& attachments,
+                                 const String& subject = "");
     // 检查是否在数据备份中
     bool IsDataLock() { return _isDataLock; }
     void LockData() { _isDataLock = true; }
@@ -233,6 +238,11 @@ private:
     // void SendCloseFeatures();
 
     bool JWTMiddleWare(const httplib::Request& req, httplib::Response& res);
+
+    // 邮件发送内部实现：写临时文件 + 拼命令 + RunCommand + 清理
+    bool SendMailInternal(const String& body, bool isHtml,
+                          const String& subject,
+                          const Vector<String>& attachments);
 
     void InitStocks(const String& path);
     void InitStocks();

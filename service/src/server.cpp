@@ -1632,85 +1632,121 @@ time_t Server::GetCloseTime(ExchangeName exchange) {
     return 0;
 }
 
-bool Server::SendEmail(const String& content) {
-    // 写入临时文件，避免 shell 转义问题（HTML 含引号/换行等）
-    String tmpPath = (std::filesystem::temp_directory_path() / "qx_mail_body.txt").string();
+// 去除字符串首尾的引号（单引号或双引号）
+static String StripQuotes(const String& s) {
+    if (s.size() >= 2) {
+        if ((s.front() == '"' && s.back() == '"') ||
+            (s.front() == '\'' && s.back() == '\'')) {
+            return s.substr(1, s.size() - 2);
+        }
+    }
+    return s;
+}
+
+// Shell 转义：对 argv 做单引号转义（RunCommand 走 system()，路径可能含空格）
+static String ShellQuote(const String& s) {
+    String result = "'";
+    for (char c : s) {
+        if (c == '\'') {
+            result += "'\\''";  // 结束单引号，加转义单引号，再开始单引号
+        } else {
+            result += c;
+        }
+    }
+    result += "'";
+    return result;
+}
+
+// 私有发送接口：写临时文件 + 拼命令 + RunCommand + 清理
+bool Server::SendMailInternal(const String& body, bool isHtml,
+                              const String& subject,
+                              const Vector<String>& attachments) {
+    String ext = isHtml ? "html" : "txt";
+    String tmpPath = (std::filesystem::temp_directory_path() / ("qx_mail_body." + ext)).string();
     {
         std::ofstream ofs(tmpPath);
         if (!ofs) {
-            WARN("SendEmail: failed to create temp file {}", tmpPath);
+            WARN("SendMailInternal: failed to create temp file {}", tmpPath);
             return false;
         }
-        ofs << content;
+        ofs << body;
     }
 
     auto sender = _config->GetSMTPSender();
     auto pwd = _config->GetSMTPPasswd();
-    if (pwd.empty() || sender.empty())
+    if (pwd.empty() || sender.empty()) {
+        std::filesystem::remove(tmpPath);
         return false;
+    }
 
     String scriptFile("tools/mail.py");
-    if (!std::filesystem::exists(scriptFile))
+    if (!std::filesystem::exists(scriptFile)) {
+        std::filesystem::remove(tmpPath);
         return false;
+    }
 
-    String cmd = fmt::format("{} {} {} {} {}",
-                             PYTHON_CMD, scriptFile, sender, pwd,
-                             _config->GetWarningAddr());
-    // 追加文件路径和内容类型
-    cmd += " " + tmpPath + " plain";
+    // 构建命令：python mail.py sender pwd receiver body content_type subject [attach1] [attach2] ...
+    // 注意：配置值可能包含引号，需要先去除再转义
+    String cmd = fmt::format("{} {} {} {} {} {} {}",
+                             PYTHON_CMD,
+                             ShellQuote(scriptFile),
+                             ShellQuote(StripQuotes(sender)),
+                             ShellQuote(StripQuotes(pwd)),
+                             ShellQuote(StripQuotes(_config->GetWarningAddr())),
+                             ShellQuote(tmpPath),
+                             ShellQuote(isHtml ? "html" : "plain"));
+    
+    // 追加 subject（非空时）
+    if (!subject.empty()) {
+        cmd += " " + ShellQuote(subject);
+    }
+    
+    // 追加附件路径
+    for (const auto& attach : attachments) {
+        if (std::filesystem::exists(attach)) {
+            cmd += " " + ShellQuote(attach);
+        } else {
+            WARN("SendMailInternal: attachment not found, skipping: {}", attach);
+        }
+    }
+
+    INFO("SendMailInternal: cmd={}", cmd);
+    
     try {
         bool ok = RunCommand(cmd);
         std::filesystem::remove(tmpPath);
         return ok;
     } catch (const std::exception& e) {
-        WARN("send email fail: {}", e.what());
+        WARN("SendMailInternal: send email fail: {}", e.what());
         std::filesystem::remove(tmpPath);
         return false;
     } catch (...) {
-        WARN("send email fail, unknow reason.");
+        WARN("SendMailInternal: send email fail, unknown reason.");
         std::filesystem::remove(tmpPath);
         return false;
     }
 }
 
+bool Server::SendEmail(const String& content) {
+    return SendMailInternal(content, false, "", {});
+}
+
 bool Server::SendHtmlEmail(const String& htmlContent) {
-    String tmpPath = (std::filesystem::temp_directory_path() / "qx_mail_body.html").string();
-    {
-        std::ofstream ofs(tmpPath);
-        if (!ofs) {
-            WARN("SendHtmlEmail: failed to create temp file {}", tmpPath);
-            return false;
-        }
-        ofs << htmlContent;
-    }
+    return SendMailInternal(htmlContent, true, "", {});
+}
 
-    auto sender = _config->GetSMTPSender();
-    auto pwd = _config->GetSMTPPasswd();
-    if (pwd.empty() || sender.empty())
-        return false;
+bool Server::SendEmail(const String& content, const String& subject) {
+    return SendMailInternal(content, false, subject, {});
+}
 
-    String scriptFile("tools/mail.py");
-    if (!std::filesystem::exists(scriptFile))
-        return false;
+bool Server::SendHtmlEmail(const String& htmlContent, const String& subject) {
+    return SendMailInternal(htmlContent, true, subject, {});
+}
 
-    String cmd = fmt::format("{} {} {} {} {}",
-                             PYTHON_CMD, scriptFile, sender, pwd,
-                             _config->GetWarningAddr());
-    cmd += " " + tmpPath + " html";
-    INFO("CMD: {}",cmd);
-    try {
-        bool ok = RunCommand(cmd);
-        std::filesystem::remove(tmpPath);
-        return ok;
-    } catch (const std::exception& e) {
-        WARN("send html email fail: {}", e.what());
-        std::filesystem::remove(tmpPath);
-        return false;
-    } catch (...) {
-        WARN("send html email fail, unknow reason.");
-        std::filesystem::remove(tmpPath);
-        return false;
-    }
+bool Server::SendMailWithAttachments(const String& body, bool isHtml,
+                                     const Vector<String>& attachments,
+                                     const String& subject) {
+    return SendMailInternal(body, isHtml, subject, attachments);
 }
 
 bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) {

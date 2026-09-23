@@ -13,6 +13,7 @@
 #include "server.h"
 #include "Util/system.h"
 #include "Util/QuoteDB.h"
+#include "Util/EodReport.h"
 #include "StrategySubSystem.h"
 #include "json.hpp"
 #include "Bridge/CTP/CTPSymbol.h"
@@ -1593,7 +1594,21 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     nlohmann::json decisions = nlohmann::json::array();
                     if (manualTiming) {
                         INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital);
+                        
+                        // 构建调试报告
+                        EodDebugSpec debugSpec;  // 使用默认配置
+                        Set<symbol_t> universe;  // 从 SignalNode 获取
+                        for (auto* node : flow._graph) {
+                            if (auto* signalNode = dynamic_cast<SignalNode*>(node)) {
+                                universe = signalNode->GetPool();
+                                break;
+                            }
+                        }
+                        EodDebugReport debugReport = BuildEodDebugReport(
+                            _handle, strategy, flow._graph, context, universe,
+                            manualTiming->getDecisions(), debugSpec);
+                        
+                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital, 0.0, &debugReport);
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
                     }
@@ -1785,7 +1800,21 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     nlohmann::json decisions = nlohmann::json::array();
                     if (manualTiming) {
                         INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital, portfolioValue);
+                        
+                        // 构建调试报告
+                        EodDebugSpec debugSpec;  // 使用默认配置
+                        Set<symbol_t> universe;  // 从 SignalNode 获取
+                        for (auto* node : flow._graph) {
+                            if (auto* signalNode = dynamic_cast<SignalNode*>(node)) {
+                                universe = signalNode->GetPool();
+                                break;
+                            }
+                        }
+                        EodDebugReport debugReport = BuildEodDebugReport(
+                            _handle, strategy, flow._graph, context, universe,
+                            manualTiming->getDecisions(), debugSpec);
+                        
+                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital, portfolioValue, &debugReport);
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
                     }

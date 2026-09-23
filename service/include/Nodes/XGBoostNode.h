@@ -45,6 +45,7 @@ public:
     virtual void UpdateLabel(const String& label) override;
 
     const Vector<String>& featureKeys() const { return _feature_keys; }
+    const Map<String, Vector<String>>& resolvedFeatures() const { return _resolved_features; }
 
 private:
     Server* _server;

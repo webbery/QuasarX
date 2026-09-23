@@ -39,6 +39,9 @@ public:
     Map<String, ArgType> out_elements() override;
     void UpdateLabel(const String& label) override;
 
+    const Vector<String>& featureKeys() const { return _featureKeys; }
+    const Map<String, Vector<String>>& resolvedFeatures() const { return _resolvedFeatures; }
+
 private:
     Server* _server;
     String _label;

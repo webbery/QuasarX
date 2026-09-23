@@ -7,6 +7,7 @@
 #include "BrokerSubSystem.h"
 #include "Bridge/CapitalPool.h"
 #include "Decision.h"
+#include "Util/EodReport.h"
 
 bool ManualTiming::processSignal(const String& strategy, const TradeSignal& signal,
                                  const DataContext& context) {
@@ -56,7 +57,8 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
 }
 
 nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double strategyCapital,
-                                              double portfolioValue) {
+                                              double portfolioValue,
+                                              const EodDebugReport* debugReport) {
     INFO("[Manual] SendSummaryEmail called for strategy {}, decisions count: {}", strategy, _decisions.size());
 
     auto* broker = _server->GetBrokerSubSystem();
@@ -271,11 +273,25 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     }
     html += "</div>";
 
+    // ── 调试报告区块（如果有） ──
+    if (debugReport && !debugReport->htmlSection.empty()) {
+        html += debugReport->htmlSection;
+    }
+
     // ── 页脚 ──
     html += R"h(<div style="padding:12px 24px;background:#f8fafc;font-size:11px;color:#94a3b8;text-align:center;border-radius:0 0 12px 12px;">QuasarX · 量化交易决策通知 · 自动生成</div>)h";
     html += "</div></body></html>";
 
-    _server->SendHtmlEmail(html);
+    // ── 发送邮件（带附件） ──
+    if (debugReport && !debugReport->attachments.empty()) {
+        String subject = fmt::format("[QuasarX] {} 日终决策 {} · BUY{}/SELL{}",
+                                     strategy,
+                                     ToString(Now(), "%Y-%m-%d"),
+                                     buys.size(), sells.size());
+        _server->SendMailWithAttachments(html, true, debugReport->attachments, subject);
+    } else {
+        _server->SendHtmlEmail(html);
+    }
 
     INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}])",
          strategy, buys.size(), sells.size(), holds.size(),
