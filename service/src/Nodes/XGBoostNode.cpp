@@ -421,6 +421,7 @@ NodeProcessResult XGBoostNode::Process(const String& strategy, DataContext& cont
                     ok = false; failedFeature = resolvedKeys[d] + "(bad_variant)"; break;
                 }
                 if (std::isfinite(features[d])) ++validCount;
+                else failedFeature = resolvedKeys[d];
             } catch (...) {
                 DEBUG_INFO("[XGBoost] Read feature {} fail.", resolvedKeys[d]);
                 ok = false; failedFeature = resolvedKeys[d] + "(exception)"; break;
