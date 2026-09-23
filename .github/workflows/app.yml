@@ -43,12 +43,14 @@ jobs:
 
       - name: Resolve version
         id: version
-        # tag push（如 v1.2.3）→ VERSION=1.2.3；普通 push → VERSION= 空，electron-builder 回退到 package.json
+        # tag push（如 v1.2.3）→ 直接改写 package.json version；普通 push → 保持 package.json 原值
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            npm version "$TAG_VERSION" --no-git-tag-version --allow-same-version
+            echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           else
-            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build
@@ -60,8 +62,6 @@ jobs:
           SSL_ESIGNER_CREDENTIAL_ID: ${{ secrets.SSL_ESIGNER_CREDENTIAL_ID }}
           SSL_ESIGNER_USER_TOTP: ${{ secrets.SSL_ESIGNER_USER_TOTP }}
           SIGN_APPLICATION: 1
-          # electron-builder 在 Linux/Windows 下会用 VERSION 环境变量覆盖 package.json 的 version 字段
-          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v5
@@ -132,20 +132,20 @@ jobs:
 
       - name: Resolve version
         id: version
-        # tag push（如 v1.2.3）→ VERSION=1.2.3；普通 push → VERSION= 空，electron-builder 回退到 package.json
+        # tag push（如 v1.2.3）→ 直接改写 package.json version；普通 push → 保持 package.json 原值
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            npm version "$TAG_VERSION" --no-git-tag-version --allow-same-version
+            echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           else
-            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # electron-builder 在 Linux/Windows 下会用 VERSION 环境变量覆盖 package.json 的 version 字段
-          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v5

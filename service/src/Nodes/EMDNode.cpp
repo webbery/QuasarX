@@ -351,7 +351,7 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
 
     NodeProcessResult finalResult = NodeProcessResult::Success;
     #pragma omp parallel for schedule(dynamic, 1)
-    for (size_t idx = 0; idx < N; ++idx) {
+    for (int idx = 0; idx < N; ++idx) {
         NodeProcessResult r = processSymbol(inputKeys[idx], context);
         if (r != NodeProcessResult::Success) {
             #pragma omp critical
