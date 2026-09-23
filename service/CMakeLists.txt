@@ -252,6 +252,22 @@ source_group(TREE ${PROJECT_SOURCE_DIR}/src PREFIX "SourceFiles" FILES ${prj_fil
 
 add_executable(${PROJECT_NAME} ${prj_files_cpp} ${prj_files_header})
 
+# ── Eigen 对齐/分配器配置：必须所有 TU 完全一致，且在任何 Eigen 头文件之前生效 ──
+# Eigen 的对齐配置由编译期宏推导（EIGEN_MAX_ALIGN_BYTES / EIGEN_DEFAULT_ALIGN_BYTES /
+# EIGEN_MALLOC_ALREADY_ALIGNED），而这些宏直接由 __AVX512F__/__AVX__ 决定；分配与释放函数
+# 又是 header 内联（同名弱符号，链接时全程序只保留一份）。于是带 -D__AVX512F__ 的 SIMD 文件
+# 会用 64 字节对齐 handmade 分配器（返回偏移后的内部指针，真实指针存在 ptr-8），
+# 其它文件用 16 字节对齐 + 直通 free；两者被链接器合并后就会出现"按 A 约定分配、按 B 约定释放"
+# → glibc 读到伪造的 chunk 头 → abort（free(): invalid size）。
+# 下方两个宏把配置固定成全 TU 统一的一套：
+#   EIGEN_DONT_ALIGN          → EIGEN_MAX_ALIGN_BYTES=EIGEN_MAX_STATIC_ALIGN_BYTES=0，所有 TU 均不再假设对齐
+#   EIGEN_MALLOC_ALREADY_ALIGNED=0 → 所有 TU 都用 handmade 分配器；其释放只读 ptr-8，
+#                                    与对齐值（各 TU 可能 64/16）无关，因此跨 TU/符号合并都安全
+# 注意：不要改成 EIGEN_MALLOC_ALREADY_ALIGNED=1。AVX512 TU 里 EIGEN_DEFAULT_ALIGN_BYTES 仍为 64，
+# Eigen 内部存在 Map<...,EIGEN_DEFAULT_ALIGN_BYTES> 这类"假定 64 字节对齐"的缓冲
+# （src/Core/util/Memory.h:662），而 malloc 只保证 16 字节 → 会触发 _mm512_load_pd 对齐异常。
+target_compile_definitions(${PROJECT_NAME} PRIVATE EIGEN_DONT_ALIGN EIGEN_MALLOC_ALREADY_ALIGNED=0)
+
 # ── SIMD 编译标志仅应用于算法文件 ──
 # 全局 /arch:AVX2 或 __AVX2__ 会导致第三方库（Eigen/fmt 等）
 # 在非 SIMD 文件中生成 AVX 代码，但没有对应的 /arch 标志 → 寄存器状态不保存 → 崩溃

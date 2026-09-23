@@ -96,10 +96,10 @@ using Boolean = Expected<bool, int>;
 #define SECOND_PER_DAY 86400
 #endif
 
-// AVX512 编译时禁用 Eigen 对齐要求，避免 _mm512_load_pd 在动态矩阵上 segfault
-#if defined(__AVX512F__)
-#define EIGEN_DONT_ALIGN
-#endif
+// Eigen 对齐/分配器配置已统一放到 CMake（service/CMakeLists.txt 的 target_compile_definitions：
+// EIGEN_DONT_ALIGN + EIGEN_MALLOC_ALREADY_ALIGNED=0），对所有 TU 一视同仁。
+// 不要再在这里按 __AVX512F__ 之类的条件宏定义 EIGEN_* —— 那会让各 TU 的 Eigen 配置不一致，
+// 分配/释放约定被链接器合并后互相错配，导致堆损坏。
 #include "Eigen/Core"
 #include "Util/log.h"
 
