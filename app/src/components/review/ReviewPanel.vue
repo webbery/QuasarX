@@ -59,10 +59,10 @@
       />
 
       <!-- 空状态 -->
-      <div v-if="!hasData" class="empty-state">
+      <div v-if="!hasData && !loading" class="empty-state">
         <i class="fas fa-chart-line"></i>
         <p>暂无复盘数据</p>
-        <span>选择策略并加载回测结果后查看复盘分析</span>
+        <span>该策略暂无交易记录，请确认策略已运行并产生持仓数据</span>
       </div>
     </div>
   </div>
@@ -70,14 +70,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { useHistoryStore, type BacktestResult } from '@/stores/history'
+import axios from 'axios'
 import BasicMetricsTab from './tabs/BasicMetricsTab.vue'
 import AttributionTab from './tabs/AttributionTab.vue'
 import SensitivityTab from './tabs/SensitivityTab.vue'
 import TradeDetailTab from './tabs/TradeDetailTab.vue'
 
 interface Props {
-  strategyId?: string
+  strategyName?: string
 }
 
 const props = defineProps<Props>()
@@ -92,6 +92,7 @@ const tabs = [
 
 const activeTab = ref('trades')
 const hasData = ref(false)
+const loading = ref(false)
 
 // === 回测信息 ===
 interface BacktestInfo {
@@ -221,152 +222,111 @@ function clearData() {
   hasData.value = false
 }
 
-function formatUnixDate(timestamp: number): string {
-  const d = new Date(timestamp * 1000)
-  const Y = d.getFullYear() + '-'
-  const M = (d.getMonth() + 1 < 10 ? '0' + (d.getMonth() + 1) : d.getMonth() + 1) + '-'
-  const D = d.getDate() < 10 ? '0' + d.getDate() : '' + d.getDate()
-  return Y + M + D
-}
-
-function extractBacktestInfo(result: BacktestResult): BacktestInfo {
-  const ts = result.dailyDates && result.dailyDates.length > 0 ? result.dailyDates : null
-  const allSignalTs = [
-    ...(result.buy || []).map(s => s[1]),
-    ...(result.sell || []).map(s => s[1]),
-  ]
-  const startTs = ts ? ts[0] : (allSignalTs.length > 0 ? Math.min(...allSignalTs) : null)
-  const endTs = ts ? ts[ts.length - 1] : (allSignalTs.length > 0 ? Math.max(...allSignalTs) : null)
-  return {
-    startDate: startTs ? formatUnixDate(startTs) : '-',
-    endDate: endTs ? formatUnixDate(endTs) : '-',
-    initialCapital: 1000000,
-  }
-}
-
-function extractDailyReturns(result: BacktestResult): [string, number][] {
-  if (!result.dailyReturns || !result.dailyDates) return []
-  return result.dailyDates.map((ts, i) => [formatUnixDate(ts), result.dailyReturns![i]])
-}
-
-function extractNavCurve(result: BacktestResult): [string, number][] {
-  const ts = result.chartData?.performance?.timestamps
-  const vals = result.chartData?.performance?.values?.[0]
-  if (!ts || !vals) return []
-  return ts.map((t, i) => [formatUnixDate(t), vals[i]])
-}
-
-function extractBenchmarkCurve(result: BacktestResult): [string, number][] {
-  const ts = result.chartData?.performance?.timestamps
-  const vals = result.chartData?.performance?.values?.[1]
-  if (!ts || !vals) return []
-  return ts.map((t, i) => [formatUnixDate(t), vals[i]])
-}
-
-function extractDrawdownCurve(result: BacktestResult): [string, number][] {
-  const ts = result.chartData?.drawdown?.timestamps
-  const vals = result.chartData?.drawdown?.values?.[0]
-  if (!ts || !vals) return []
-  return ts.map((t, i) => [formatUnixDate(t), -vals[i]])
-}
-
-function extractTradesAndHoldings(result: BacktestResult): {
-  trades: TradeRecord[]
-  holdings: HoldingPeriod[]
-} {
-  const trades: TradeRecord[] = []
-  const holdings: HoldingPeriod[] = []
-  type Sig = { dir: 'buy' | 'sell'; sym: string; ts: number; qty: number; price: number }
-  const buyQueues = new Map<string, Array<{ ts: number; qty: number; price: number }>>()
-  const signals: Sig[] = [
-    ...(result.buy || []).map(s => ({ dir: 'buy' as const, sym: s[0], ts: s[1], qty: s[2], price: s[3] })),
-    ...(result.sell || []).map(s => ({ dir: 'sell' as const, sym: s[0], ts: s[1], qty: s[2], price: s[3] })),
-  ].sort((a, b) => a.ts - b.ts)
-
-  let id = 0
-  for (const sig of signals) {
-    const trade: TradeRecord = {
-      id: `t${id++}`,
-      symbol: sig.sym,
-      direction: sig.dir,
-      price: sig.price,
-      quantity: sig.qty,
-      amount: sig.price * sig.qty,
-      commission: 0,
-      timestamp: formatUnixDate(sig.ts),
-    }
-
-    if (sig.dir === 'buy') {
-      if (!buyQueues.has(sig.sym)) buyQueues.set(sig.sym, [])
-      buyQueues.get(sig.sym)!.push({ ts: sig.ts, qty: sig.qty, price: sig.price })
-    } else {
-      const queue = buyQueues.get(sig.sym)
-      if (queue && queue.length > 0) {
-        let remainingQty = sig.qty
-        let sellPnl = 0
-        let matchedQty = 0
-        while (remainingQty > 0 && queue.length > 0) {
-          const front = queue[0]
-          const matchQty = Math.min(front.qty, remainingQty)
-          const pnl = (sig.price - front.price) * matchQty
-          holdings.push({
-            symbol: sig.sym,
-            buyDate: formatUnixDate(front.ts),
-            sellDate: formatUnixDate(sig.ts),
-            buyPrice: front.price,
-            sellPrice: sig.price,
-            holdingDays: Math.max(1, Math.round((sig.ts - front.ts) / 86400)),
-            pnl: parseFloat(pnl.toFixed(2)),
-            pnlPercent: parseFloat(((sig.price / front.price - 1) * 100).toFixed(2)),
-          })
-          sellPnl += pnl
-          matchedQty += matchQty
-          front.qty -= matchQty
-          remainingQty -= matchQty
-          if (front.qty === 0) queue.shift()
-        }
-        if (matchedQty > 0) {
-          trade.pnl = parseFloat(sellPnl.toFixed(2))
-        }
-      }
-    }
-
-    trades.push(trade)
-  }
-
-  return { trades, holdings }
-}
-
-// === 对外暴露方法 ===
+// === 服务端数据加载 ===
 
 async function loadData() {
   clearData()
-  if (!props.strategyId) return
+  if (!props.strategyName) return
 
-  const historyStore = useHistoryStore()
-  const version = historyStore.getLatestVersion(props.strategyId)
-  if (!version) {
-    console.info(`[ReviewPanel] 策略 ${props.strategyId} 暂无版本`)
-    return
+  loading.value = true
+  try {
+    // 并行请求交易明细和绩效指标
+    const [tradeResp, perfResp] = await Promise.all([
+      axios.get('/v0/strategy/trade', { params: { name: props.strategyName } }),
+      axios.get('/v0/strategy/performance', { params: { name: props.strategyName } }),
+    ])
+
+    // 处理交易明细
+    const tradeData = tradeResp.data
+    if (tradeData.trades && tradeData.trades.length > 0) {
+      mapTradeData(tradeData)
+      hasData.value = true
+    }
+
+    // 处理绩效指标
+    const perfData = perfResp.data
+    if (perfData.metrics) {
+      mapPerformanceData(perfData)
+      hasData.value = true
+    }
+  } catch (e: any) {
+    console.error('[ReviewPanel] 加载数据失败:', e.message)
+  } finally {
+    loading.value = false
+  }
+}
+
+function mapTradeData(data: any) {
+  const trades: TradeRecord[] = []
+  const holdings: HoldingPeriod[] = []
+
+  // 映射 trades
+  if (Array.isArray(data.trades)) {
+    data.trades.forEach((t: any, i: number) => {
+      trades.push({
+        id: `t${i}`,
+        symbol: t.symbol,
+        direction: t.direction,
+        price: t.price,
+        quantity: t.quantity,
+        amount: t.price * t.quantity,
+        commission: 0,
+        timestamp: t.date,
+        pnl: t.pnl ?? undefined,
+      })
+    })
   }
 
-  const result = await historyStore.loadBacktestResult(version.id)
-  if (!result) {
-    console.info(`[ReviewPanel] 版本 ${version.id} 暂无回测结果`)
-    return
+  // 映射 holdings（排除未平仓的）
+  if (Array.isArray(data.holdings)) {
+    data.holdings.forEach((h: any) => {
+      if (h.open || !h.sell_date) return
+      holdings.push({
+        symbol: h.symbol,
+        buyDate: h.buy_date,
+        sellDate: h.sell_date,
+        buyPrice: h.buy_price,
+        sellPrice: h.sell_price,
+        holdingDays: h.holding_days || 1,
+        pnl: h.pnl || 0,
+        pnlPercent: h.pnl_pct || 0,
+      })
+    })
   }
 
-  backtestInfo.value = extractBacktestInfo(result)
-  metricsData.value = result.features || {}
-  dailyReturns.value = extractDailyReturns(result)
-  navCurve.value = extractNavCurve(result)
-  benchmarkCurve.value = extractBenchmarkCurve(result)
-  drawdownCurve.value = extractDrawdownCurve(result)
-  const { trades, holdings } = extractTradesAndHoldings(result)
   tradeRecords.value = trades
   holdingPeriods.value = holdings
 
-  hasData.value = true
+  // 设置回测时间范围
+  if (data.trades && data.trades.length > 0) {
+    const dates = data.trades.map((t: any) => t.date).sort()
+    backtestInfo.value = {
+      startDate: dates[0],
+      endDate: dates[dates.length - 1],
+      initialCapital: 1000000,
+    }
+  }
+}
+
+function mapPerformanceData(data: any) {
+  const m = data.metrics
+  metricsData.value = {
+    total_return: m.total_return || 0,
+    annual_return: m.annual_return || 0,
+    volatility: m.annual_volatility || 0,
+    sharp: m.sharpe_ratio || 0,
+    max_drawdown: m.max_drawdown || 0,
+    win_rate: m.win_rate || 0,
+    calmar_ratio: m.calmar_ratio || 0,
+  }
+
+  if (data.initial_capital && data.final_value) {
+    backtestInfo.value = {
+      startDate: backtestInfo.value?.startDate || '-',
+      endDate: backtestInfo.value?.endDate || '-',
+      initialCapital: data.initial_capital,
+    }
+  }
 }
 
 function reset() {
@@ -375,10 +335,10 @@ function reset() {
 
 defineExpose({ loadData, reset })
 
-// === 监听策略 ID 变化 ===
+// === 监听策略名称变化 ===
 
-watch(() => props.strategyId, (newId) => {
-  if (newId) {
+watch(() => props.strategyName, (newName) => {
+  if (newName) {
     loadData()
   } else {
     clearData()
@@ -389,8 +349,7 @@ watch(() => props.strategyId, (newId) => {
 
 onMounted(() => {
   console.info('[ReviewPanel] 组件已挂载')
-  // 如果有策略 ID，自动加载数据
-  if (props.strategyId) {
+  if (props.strategyName) {
     loadData()
   }
 })

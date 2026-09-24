@@ -26,3 +26,6 @@ private:
 
 symbol_t get_etf_option_symbol(const String& code);
 String get_etf_option_code(symbol_t symbol);
+
+// 更新缓存中指定合约的 symbol_t (用于 CSV 导入后从 trade_date 补填 _year)
+void update_etf_option_symbol(const String& code, symbol_t sym);

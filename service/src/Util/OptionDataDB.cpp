@@ -1,6 +1,7 @@
 #include "Util/OptionDataDB.h"
 #include "Util/system.h"
 #include "Util/finance.h"
+#include "Util/HolidayCalendar.h"
 #include "Util/QuoteDB.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/OptionSymbolMacros.h"
@@ -286,6 +287,22 @@ int OptionDataDB::importCsv(const String& csv_path) {
         r.has_strike = ok_s;
         r.symbol_id = encodeContractId(exchange, r.contract_code, r.contract_name, v_s);
 
+        // 合约名不含年份 (如 "50ETF购10月2750"), 从 trade_date 补填 _year
+        if (!r.trade_date.empty()) {
+            int yr = 0;
+            if (sscanf(r.trade_date.c_str(), "%d", &yr) == 1 && yr >= 2000) {
+                symbol_t sym;
+                std::memcpy(&sym, &r.symbol_id, sizeof(symbol_t));
+                uint32_t year_short = static_cast<uint32_t>(yr - 2000) & 0x3F;
+                if (sym._year != year_short) {
+                    sym._year = year_short;
+                    std::memcpy(&r.symbol_id, &sym, sizeof(symbol_t));
+                    // 同步更新缓存, 避免后续查询仍返回 _year=0
+                    update_etf_option_symbol(r.contract_code, sym);
+                }
+            }
+        }
+
         auto ok_open    = safeDouble(getField(cols, c_open));         r.open        = ok_open.second;    r.has_open    = ok_open.first;
         auto ok_high    = safeDouble(getField(cols, c_high));         r.high        = ok_high.second;    r.has_high    = ok_high.first;
         auto ok_low     = safeDouble(getField(cols, c_low));          r.low         = ok_low.second;     r.has_low     = ok_low.first;
@@ -416,6 +433,12 @@ nlohmann::json OptionDataDB::queryByContract(const String& contract_code,
 
     // 编码为 symbol_id (传入 contract_name, 8 位 ETF 期权需要它来反推交易所)
     int64_t symbol_id = encodeContractId(exchange, code, contract_name, 0.0);
+
+    // ETF 期权: 缓存中可能有 importCsv 补填了 _year 的正确 symbol_t
+    symbol_t cached = get_etf_option_symbol(code);
+    if (cached._year != 0) {
+        std::memcpy(&symbol_id, &cached, sizeof(symbol_t));
+    }
 
     String sql =
         "SELECT trade_date, symbol_id, exchange, product, underlying, contract_name, "
@@ -589,7 +612,42 @@ static void appendContractMeta(nlohmann::json& result,
         return;
     }
 
-    const auto& last = data.back();
+    // 直接查最新一行 (data 可能只有 LIMIT 1 行且是 ASC 排序的最早日期)
+    nlohmann::json last;
+    {
+        String latest_sql =
+            "SELECT trade_date, exchange, product, underlying, contract_name, "
+            "call_put, strike_price, close, settlement "
+            "FROM option_daily WHERE symbol_id = " + std::to_string(symbol_id) +
+            " ORDER BY trade_date DESC LIMIT 1";
+        std::lock_guard<std::recursive_mutex> lock(OptionDataDB::instance().mtx());
+        duckdb_result res;
+        if (duckdb_query(OptionDataDB::instance().conn(), latest_sql.c_str(), &res) == DuckDBSuccess) {
+            if (duckdb_row_count(&res) > 0) {
+                last["trade_date"]    = duckdb_value_varchar(&res, 0, 0);
+                last["exchange"]      = duckdb_value_varchar(&res, 1, 0);
+                last["product"]       = duckdb_value_varchar(&res, 2, 0);
+                last["underlying"]    = duckdb_value_varchar(&res, 3, 0);
+                last["contract_name"] = duckdb_value_varchar(&res, 4, 0);
+                last["call_put"]      = duckdb_value_varchar(&res, 5, 0);
+                last["strike_price"]  = duckdb_value_double(&res, 6, 0);
+                last["close"]         = duckdb_value_double(&res, 7, 0);
+                last["settlement"]    = duckdb_value_double(&res, 8, 0);
+            }
+            duckdb_destroy_result(&res);
+        }
+    }
+    // 回退: 如果最新行查询失败, 用 data 中 trade_date 最大的行
+    if (last.empty()) {
+        size_t last_idx = 0;
+        String max_date;
+        for (size_t i = 0; i < data.size(); ++i) {
+            String d = data[i].value("trade_date", "");
+            if (d > max_date) { max_date = d; last_idx = i; }
+        }
+        last = data[last_idx];
+    }
+
     String exchange     = last.value("exchange", "");
     String product      = last.value("product", "");
     String underlying   = last.value("underlying", "");
@@ -612,15 +670,25 @@ static void appendContractMeta(nlohmann::json& result,
     int expiry_month = static_cast<int>(sym._month);
 
     auto rule = finance::exerciseRuleForExchange(exchange);
-    auto ed   = finance::computeExerciseDate(expiry_year, expiry_month, rule);
+    auto& cal = HolidayCalendar::instance();
+    auto ed   = finance::computeExerciseDate(expiry_year, expiry_month, rule, cal);
     meta["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",
                                         ed.year, ed.month, ed.day);
+    if (sym._year == 0) {
+        WARN("[OptionDataDB] symbol_id={} decoded _year=0, exchange={}, product={}, "
+             "exercise_date={}-{:02d}-{:02d}",
+             symbol_id, exchange, product, ed.year, ed.month, ed.day);
+    }
 
     // dte: 基于 last_trade_date 作为 today 基准 (历史快照时间语义, 与 finance 注释一致)
     int ty = 0, tm = 0, td = 0;
     if (sscanf(last_date.c_str(), "%d-%d-%d", &ty, &tm, &td) == 3) {
         meta["dte"] = finance::daysToExercise(ty, tm, td,
-                                              expiry_year, expiry_month, rule);
+                                              expiry_year, expiry_month, rule, cal);
+        INFO("[OptionDataDB] DTE calc: last_trade_date={}, exercise_date={}-{:02d}-{:02d}, "
+             "dte={}, _year={}, _month={}",
+             last_date, ed.year, ed.month, ed.day,
+             meta["dte"].get<int>(), (int)sym._year, (int)sym._month);
     }
 
     // 合约乘数
@@ -715,7 +783,8 @@ nlohmann::json OptionDataDB::listContracts(const String& exchange_filter,
         row["year"]  = static_cast<int>(2000 + sym._year);
         row["month"] = static_cast<int>(sym._month);
         auto rule = finance::exerciseRuleForExchange(ex_name);
-        auto ed   = finance::computeExerciseDate(2000 + sym._year, sym._month, rule);
+        auto& cal = HolidayCalendar::instance();
+        auto ed   = finance::computeExerciseDate(2000 + sym._year, sym._month, rule, cal);
         row["exercise_date"] = fmt::format("{:04d}-{:02d}-{:02d}",
                                            ed.year, ed.month, ed.day);
 

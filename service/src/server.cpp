@@ -42,6 +42,7 @@
 #include "Handler/NavHandler.h"
 #include "Handler/StrategyHandler.h"
 #include "Handler/StrategyPerformanceHandler.h"
+#include "Handler/StrategyTradeHandler.h"
 #include "Handler/StockHandler.h"
 #include "Handler/StrategyLogHandler.h"
 #include "Handler/NodeIOHandler.h"
@@ -159,6 +160,7 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_COMMISSION      "/commission"
 #define API_STRATEGY        "/strategy"
 #define API_STRATEGY_PERFORMANCE "/strategy/performance"
+#define API_STRATEGY_TRADE  "/strategy/trade"
 #define API_STRATEGY_NODES  "/strategy/nodes"
 #define API_STRATEGY_NODE   "/strategy/node"
 #define API_BACKTEST        "/backtest"
@@ -394,6 +396,7 @@ void Server::Regist() {
 
     REGIST_GET(API_STRATEGY);
     REGIST_GET(API_STRATEGY_PERFORMANCE);
+    REGIST_GET(API_STRATEGY_TRADE);
     REGIST_POST(API_STRATEGY);
     REGIST_DEL(API_STRATEGY);
 
@@ -1527,6 +1530,7 @@ void Server::InitHandlers() {
     RegistHandler(API_OPTION_HISTORY, OptionHistoryHandler);
     RegistHandler(API_STRATEGY, StrategyHandler);
     RegistHandler(API_STRATEGY_PERFORMANCE, StrategyPerformanceHandler);
+    RegistHandler(API_STRATEGY_TRADE, StrategyTradeHandler);
     RegistHandler(API_STRATEGY_NODES, StrategyNodesHandler);
     RegistHandler(API_STRATEGY_NODE, StrategyNodeHandler);
     RegistHandler(API_INDEX, IndexHandler);

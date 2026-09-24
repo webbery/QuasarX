@@ -5,6 +5,8 @@
 #include "Util/OptionDataDB.h"
 #include "Util/QuoteDB.h"
 #include "Util/system.h"
+#include "Util/finance.h"
+#include "Util/HolidayCalendar.h"
 #include <chrono>
 #include <regex>
 
@@ -30,11 +32,13 @@ static std::pair<int, int> parseExpiryFromName(const String& contract_name, cons
 }
 
 // ── 工具: 计算到期天数 ──
-static int daysToExpiry(int expiry_year, int expiry_month, int trade_year, int trade_month, int trade_day) {
-    // 简化: 到期日取第三个周五的近似（月度期权）= 月份第 15~21 天
-    // 用月中 17 日近似
+static int daysToExpiry(int expiry_year, int expiry_month, int trade_year, int trade_month, int trade_day,
+                        const String& exchange) {
     auto trade = sys_days{year_month_day{year{trade_year}, month{static_cast<unsigned>(trade_month)}, day{static_cast<unsigned>(trade_day)}}};
-    auto expiry = sys_days{year_month_day{year{expiry_year}, month{static_cast<unsigned>(expiry_month)}, day{17u}}};
+    auto rule = finance::exerciseRuleForExchange(exchange);
+    auto& cal = HolidayCalendar::instance();
+    auto ed = finance::computeExerciseDate(expiry_year, expiry_month, rule, cal);
+    auto expiry = sys_days{year_month_day{year{ed.year}, month{static_cast<unsigned>(ed.month)}, day{static_cast<unsigned>(ed.day)}}};
     long days = (expiry - trade).count();
     return static_cast<int>(std::max(days, 1L));
 }
@@ -239,7 +243,7 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
                 auto [ey, em] = parseExpiryFromName(c.contract_name, product);
                 if (ey == 0) continue;
 
-                int expiry_days = daysToExpiry(ey, em, ty, tm, td);
+                int expiry_days = daysToExpiry(ey, em, ty, tm, td, exchange);
 
                 // IV 缺失时从 close 价格反算
                 if (c.iv <= 0 && c.close > 0 && spot_price > 0) {

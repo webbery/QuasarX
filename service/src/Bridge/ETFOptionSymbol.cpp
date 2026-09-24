@@ -7,7 +7,6 @@
 #include <format>
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
-#include "server.h"
 
 #define SHORT_ID_OFFSET 4
 
@@ -62,6 +61,10 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
         code_symbol_map().visit(code, [this](CodeSymbolMap::value_type& value) {
             _symbol = value.second;
         });
+        if (_symbol._year == 0) {
+            WARN("[ETFOptionSymbol] CACHE HIT _year=0 for code={}, name={}, cached _month={}",
+                 code, name, (int)_symbol._month);
+        }
         return;
     }
     auto idx = etf_code_map().size() + 1;
@@ -83,7 +86,7 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
         id = GetOptionInfo(name, "购", month, price);
     }
     else {
-        WARN("parse {} fail.", name);
+        WARN("[ETFOptionSymbol] no 购/沽 in name, code={}, name={}, len={}", code, name, name.size());
         return;
     }
 
@@ -92,21 +95,10 @@ ETFOptionSymbol::ETFOptionSymbol(const String& code, const String& name)
     _symbol._type = t;
     SET_SYMBOL_OPT_DIRECTION(_symbol, direction);
     SetCode(idx, id);
-    try {
-        auto& info = Server::GetSecurity(code);
-        Vector<String> tokens;
-        split(info._deliveryDate, tokens, "-");
-        if (!tokens[0].empty()) {
-            _symbol._year = atoi(tokens.front().substr(2).c_str());
-        } else {
-            _symbol._year = 0;
-        }
-    }
-    catch (std::runtime_error& e) {
-        // 说明该期权已经过期
-        _symbol._year = 0;
-    }
-    
+    // _year 此处为 0 (合约名不含年份), 由 OptionDataDB::importCsv 从 trade_date 补填
+    INFO("[ETFOptionSymbol] NEW code={}, name={}, _year={}, _month={}",
+         code, name, (unsigned)_symbol._year, (unsigned)_symbol._month);
+
     if (!code_symbol_map().contains(code)) {
         code_symbol_map().emplace(code, _symbol);
     }
@@ -135,6 +127,8 @@ uint64_t ETFOptionSymbol::GetOptionInfo(const String& name, const String& token,
     Vector<String> info;
     auto back = tokens.back().substr(2);
     split(back, info, "月");
+    // 合约名格式: "50ETF购10月2750" — 不含年份, 只有月份和行权价
+    // 年份由 OptionDataDB::importCsv 从 trade_date 补填
     month = atoi(info.front().c_str());
     price = atoi(info.back().substr(2).c_str());
     return id;
@@ -227,4 +221,9 @@ String get_etf_option_code(symbol_t symbol)
         result = value.second;
         });
     return result;
+}
+
+void update_etf_option_symbol(const String& code, symbol_t sym)
+{
+    code_symbol_map().insert_or_assign(code, sym);
 }

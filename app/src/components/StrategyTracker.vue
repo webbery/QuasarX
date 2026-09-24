@@ -201,7 +201,7 @@
             <ReviewPanel
                 v-else
                 ref="reviewPanelRef"
-                :strategy-id="selectedStrategy"
+                :strategy-name="selectedStrategy"
             />
         </div>
 

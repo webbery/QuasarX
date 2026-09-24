@@ -128,8 +128,8 @@ const breakerBadgeClass = computed(() => {
 async function fetchStrategies() {
   try {
     const { data } = await axios.get('/v0/risk/strategies')
-    
-    // 根据四维评分计算健康度
+
+    // 后端返回 snake_case，前端需要 camelCase；补全缺失字段
     strategies.value = data.map((item: any) => {
       const health = assessHealth({
         ir: item.information_ratio || 0,
@@ -139,8 +139,35 @@ async function fetchStrategies() {
         winRate: item.win_rate || 0,
         avgWinLossRatio: item.avg_win_loss_ratio || 1,
       })
+
+      // 从四维评分推导风险等级
+      let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low'
+      const dd = Math.abs(item.max_drawdown || 0)
+      if (dd > 15 || health.level === 'critical') riskLevel = 'critical'
+      else if (dd > 10 || health.level === 'warning') riskLevel = 'high'
+      else if (dd > 5) riskLevel = 'medium'
+
       return {
         ...item,
+        // snake_case → camelCase 映射
+        sharpeRatio: item.sharpe_ratio || 0,
+        informationRatio: item.information_ratio || 0,
+        maxDrawdown: item.max_drawdown || 0,
+        var_95: item.var_95 || 0,
+        var_convexity: item.var_convexity || 0,
+        winRate: item.win_rate || 0,
+        cusumSignal: item.cusum_signal || 0,
+        cusumTriggered: item.cusum_triggered || false,
+        cusum_drift_ratio: item.cusum_drift_ratio || 0,
+        excess_kurtosis: item.excess_kurtosis || 0,
+        avg_win_loss_ratio: item.avg_win_loss_ratio || 1,
+        // 补全缺失字段
+        description: '',
+        riskLevel,
+        riskScore: health.score,
+        strategyType: item.type || 'mixed',
+        updatedAt: '',
+        // 健康度
         healthLevel: health.level,
         healthSuggestion: health.suggestion,
         healthScore: health.score,
