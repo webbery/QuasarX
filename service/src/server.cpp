@@ -1590,6 +1590,44 @@ AccountPosition& Server::GetPosition(const String& account) {
     return _account_positions[account];
 }
 
+int Server::SyncDailyPositionsFromBroker(const String& strategy) {
+    auto* portfolioSub = GetPortforlioSubSystem();
+    auto& ap = _account_positions[""];
+    ap._positions.clear();
+
+    if (!portfolioSub) {
+        WARN("[Server] SyncDailyPositionsFromBroker: PortfolioSubSystem is null, "
+             "SignalNode/PortfolioNode will see empty positions for strategy '{}'", strategy);
+        return 0;
+    }
+
+    auto& holds = portfolioSub->GetHolding(strategy);
+    int synced = 0;
+    for (const auto& [sym, assets] : holds) {
+        int64_t qty = 0;
+        double costSum = 0.0;
+        for (const auto& a : assets) {
+            int64_t q = static_cast<int64_t>(a._quantity);
+            qty += q;
+            costSum += a._price * static_cast<double>(q);
+        }
+        if (qty <= 0) continue;
+
+        position_t p{};
+        p._symbol = sym;
+        p._holds = static_cast<uint32_t>(qty);
+        p._validHolds = static_cast<uint32_t>(qty);
+        p._price = costSum / static_cast<double>(qty);
+        ap._positions.push_back(p);
+        ++synced;
+    }
+
+    INFO("[Server] SyncDailyPositionsFromBroker: synced {} position(s) from "
+         "PortfolioSubSystem to _account_positions for strategy '{}'",
+         synced, strategy);
+    return synced;
+}
+
 Set<String> Server::GetAccounts() {
     Set<String> accs;
     for (auto& item: _account_positions) {

@@ -1691,6 +1691,11 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             INFO("[StartDaily] flow._capital={}, getAvailableCapital={} (CapitalPool preferred over flow._capital)",
                  flow._capital, context.getAvailableCapital());
 
+            // 持仓账本同步：把 Broker PortfolioSubSystem 的策略持仓灌入
+            // Server._account_positions[""]，让 SignalNode 看到真实持仓、
+            // 不再因 "无持仓" 静默丢弃 SELL 信号，也让已持仓标的的 BUY 能正确去重。
+            _server->SyncDailyPositionsFromBroker(strategy);
+
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
 

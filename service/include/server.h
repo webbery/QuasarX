@@ -152,6 +152,20 @@ public:
      */
     AccountPosition& GetPosition(const String& account = "");
 
+    /**
+     * @brief 日终模式下，把 Broker PortfolioSubSystem 中指定策略的持仓同步到
+     *        Server._account_positions[""]，让 SignalNode / PortfolioNode /
+     *        ExecuteNode / ProtectionNode / CapitalRiskManager 看到真实持仓。
+     *
+     * 历史 bug：SignalNode 读 _server->GetPosition("") 永远空（仅实盘 HX 写入），
+     * 导致 (1) 所有 SELL 信号被"无持仓"过滤器静默丢弃；
+     *      (2) 已持仓标的的 BUY 无法被去重，触发重复买入。
+     *
+     * @param strategy 策略名称
+     * @return 同步的持仓条目数（0 表示 PortfolioSubSystem 未注册或无持仓）
+     */
+    int SyncDailyPositionsFromBroker(const String& strategy);
+
     Set<String> GetAccounts();
 
     /**
