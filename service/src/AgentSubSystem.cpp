@@ -1684,12 +1684,12 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             INFO("[StartDaily] Live mode: {} bars max across {} symbols for {}",
                  maxBars, symbolVec.size(), strategy);
 
-            INFO("[StartDaily] flow._capital={}, getAvailableCapital={}", 
+            // 历史兼容：此分支原会在 getAvailableCapital<=0 时用 flow._capital 覆写 _capital，
+            // 导致 PortfolioNode 第二天仍按 ¥1,000,000 算仓位，忽略 Broker 真实剩余。
+            // 修复：DataContext::getAvailableCapital 已优先读取 CapitalPool，此处覆写已无必要
+            // 且会污染 _capital。保留 INFO 日志用于资金口径对账监控。
+            INFO("[StartDaily] flow._capital={}, getAvailableCapital={} (CapitalPool preferred over flow._capital)",
                  flow._capital, context.getAvailableCapital());
-            if (flow._capital > 0 && context.getAvailableCapital() <= 0) {
-                context.setCapital(flow._capital);
-                INFO("[StartDaily] Set capital={} from strategy config", flow._capital);
-            }
 
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);

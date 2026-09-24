@@ -2,6 +2,7 @@
 #include "ExchangeManager.h"
 #include "Util/system.h"
 #include "server.h"
+#include "BrokerSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
 #include "Bridge/SIM/HistorySimulationBase.h"
 #include "Bridge/SIM/BacktestContext.h"
@@ -168,10 +169,25 @@ double DataContext::getAvailableCapital() const
         return _capital;
     }
 
-    // 策略配置了资金（日终模式）→ 直接使用
+    // 日终/实盘模式：优先从 Broker 的 CapitalPool 读取"策略实际剩余可用资金"。
+    // 历史口径：日终下 _capital 是策略配置初始值（flow._capital），永不被成交扣减，
+    // PortfolioNode 因此按 ¥1,000,000 均分仓位，与 Broker 真实剩余（如 ¥337,637）脱钩。
+    // ManualTiming 邮件已正确显示 CapitalPool 可用资金，此处对齐同一口径。
+    if (auto* broker = _server->GetBrokerSubSystem()) {
+        if (auto* pool = broker->GetCapitalPool()) {
+            if (pool->hasStrategy(_strategy)) {
+                double poolAvail = pool->getAvailable(_strategy);
+                if (poolAvail > 0) {
+                    return poolAvail;
+                }
+            }
+        }
+    }
+
+    // 兜底：策略配置资金（日终模式 flow._capital 经 AgentSubSystem 写入 _capital）
     if (_capital > 0) return _capital;
 
-    // 实盘模式：使用活跃的股票交易 Exchange
+    // 实盘兜底：活跃的股票交易 Exchange
     auto* exchange = exchangeMgr.GetActiveStockExchange();
     if (exchange) {
         double funds = exchange->GetAvailableFunds(0);
