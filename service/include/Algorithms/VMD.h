@@ -59,6 +59,43 @@ public:
     String getSummary() const;
 
 private:
+    /**
+     * @brief SoA 布局的 VMD 状态（优化版）
+     *
+     * 将复数频谱从交错布局 [re0, im0, re1, im1, ...] 改为分离的实部/虚部平面，
+     * 使内层循环变成纯 double* 运算，让编译器自动向量化（AVX-512: 8 doubles/指令）。
+     *
+     * 循环融合后不再需要 uHatOld 快照（旧值在寄存器内直接求差）与 residualHat
+     * 中间缓冲（残差就地消费），每次迭代省下 K×2 个平面的写回/重读。
+     */
+    struct VMDState {
+        Vector<Vector<double>> _uHat_re;  ///< [K][freqLen] 当前迭代 û_k 实部
+        Vector<Vector<double>> _uHat_im;  ///< [K][freqLen] 当前迭代 û_k 虚部
+        Vector<double> _uHatTotal_re;     ///< [freqLen] Σ_j û_j 实部（轮首刷新 + 增量维护）
+        Vector<double> _uHatTotal_im;     ///< [freqLen] Σ_j û_j 虚部
+        Vector<double> _fHat_re;          ///< [freqLen] 输入信号频谱实部
+        Vector<double> _fHat_im;          ///< [freqLen] 输入信号频谱虚部
+        Vector<double> _lambdaHat_re;     ///< [freqLen] 对偶变量实部
+        Vector<double> _lambdaHat_im;     ///< [freqLen] 对偶变量虚部
+        Vector<double> _omegaAxis;        ///< [freqLen] 归一化频率轴
+        Vector<double> _epsAcc;           ///< [freqLen] 收敛量逐元素累积器 Σ_k |Δû_k|²
+        Vector<double> _omega;            ///< [K] 中心频率
+
+        /**
+         * @brief 初始化状态
+         * @param K IMF 数量
+         * @param freqLen 频谱长度（fftSize/2 + 1）
+         */
+        void init(int K, size_t freqLen);
+    };
+
+    /// ADMM 迭代统计（对齐 vmdpy 收敛语义）
+    struct IterStats {
+        int _iterations = 0;   ///< 实际迭代次数
+        double _eps = 1.0;     ///< 末轮收敛指标 uDiff（未进入第 2 轮时保持初值 1.0）
+        bool _converged = false;  ///< eps < tol
+    };
+
     String _summary;
 
     /// 镜像对称延拓到 2 的幂(关于端点 data[0]/data[n-1] 反射)
@@ -66,4 +103,13 @@ private:
 
     /// 从延拓结果中截取原始部分
     static Vector<double> unpad(const Vector<double>& padded, size_t origSize, size_t padLeft);
+
+    /**
+     * @brief SoA 布局 + 循环融合的 VMD 核心迭代（ADMM）
+     * @param state VMD 状态（SoA 布局）
+     * @param cfg 配置参数
+     * @param fftSize FFT 大小
+     * @return 迭代统计（次数 / 收敛指标 / 是否收敛）
+     */
+    static IterStats decomposeSoA(VMDState& state, const Config& cfg, size_t fftSize);
 };

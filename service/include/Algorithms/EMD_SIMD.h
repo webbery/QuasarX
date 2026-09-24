@@ -821,3 +821,103 @@ Vector<Vector<double>> simd_emd(const Vector<double>& data,
                                 int maxSiftingIter = 10,
                                 double sdThreshold = 0.02,
                                 bool zeroPad = true);
+
+// ======================== VMD 专用归约函数 ========================
+
+/// 数组求和: Σ a[i]
+/// 归约（求和）在 -O3 且无 -ffast-math 时不会被 GCC 自动向量化
+/// （重排浮点加法需 -fassociative-math），故显式用 SIMD 累加器实现。
+QUASARX_SIMD_TARGET
+inline double simd_sum(const double* a, size_t n) {
+    double sum = 0.0;
+    size_t i = 0;
+#if defined(__AVX512F__)
+    __m512d vacc = _mm512_setzero_pd();
+    for (; i + 7 < n; i += 8) {
+        vacc = _mm512_add_pd(vacc, _mm512_loadu_pd(a + i));
+    }
+    alignas(64) double buf[8];
+    _mm512_store_pd(buf, vacc);
+    for (int j = 0; j < 8; ++j) sum += buf[j];
+#elif defined(__AVX2__)
+    __m256d vacc = _mm256_setzero_pd();
+    for (; i + 3 < n; i += 4) {
+        vacc = _mm256_add_pd(vacc, _mm256_loadu_pd(a + i));
+    }
+    alignas(32) double buf[4];
+    _mm256_store_pd(buf, vacc);
+    for (int j = 0; j < 4; ++j) sum += buf[j];
+#elif defined(__SSE2__)
+    __m128d vacc = _mm_setzero_pd();
+    for (; i + 1 < n; i += 2) {
+        vacc = _mm_add_pd(vacc, _mm_loadu_pd(a + i));
+    }
+    alignas(16) double buf[2];
+    _mm_store_pd(buf, vacc);
+    for (int j = 0; j < 2; ++j) sum += buf[j];
+#endif
+    for (; i < n; ++i) sum += a[i];
+    return sum;
+}
+
+/// 计算 Σ_i ω[i] * |û[i]|² 和 Σ_i |û[i]|²（VMD 中心频率更新）
+/// 返回 (numerator, denominator)
+QUASARX_SIMD_TARGET
+inline std::pair<double, double> simd_reduce_weighted_mag_sq(
+    const double* uHat_re, const double* uHat_im,
+    const double* omegaAxis, size_t freqLen) {
+    double num = 0.0, den = 0.0;
+    size_t i = 0;
+#if defined(__AVX512F__)
+    __m512d vnum = _mm512_setzero_pd();
+    __m512d vden = _mm512_setzero_pd();
+    for (; i + 7 < freqLen; i += 8) {
+        __m512d vre = _mm512_loadu_pd(uHat_re + i);
+        __m512d vim = _mm512_loadu_pd(uHat_im + i);
+        __m512d vomega = _mm512_loadu_pd(omegaAxis + i);
+        __m512d vmagSq = _mm512_fmadd_pd(vre, vre, _mm512_mul_pd(vim, vim));
+        vnum = _mm512_fmadd_pd(vomega, vmagSq, vnum);
+        vden = _mm512_add_pd(vden, vmagSq);
+    }
+    alignas(64) double numBuf[8], denBuf[8];
+    _mm512_store_pd(numBuf, vnum);
+    _mm512_store_pd(denBuf, vden);
+    for (int j = 0; j < 8; ++j) { num += numBuf[j]; den += denBuf[j]; }
+#elif defined(__AVX2__)
+    __m256d vnum = _mm256_setzero_pd();
+    __m256d vden = _mm256_setzero_pd();
+    for (; i + 3 < freqLen; i += 4) {
+        __m256d vre = _mm256_loadu_pd(uHat_re + i);
+        __m256d vim = _mm256_loadu_pd(uHat_im + i);
+        __m256d vomega = _mm256_loadu_pd(omegaAxis + i);
+        __m256d vmagSq = _mm256_fmadd_pd(vre, vre, _mm256_mul_pd(vim, vim));
+        vnum = _mm256_fmadd_pd(vomega, vmagSq, vnum);
+        vden = _mm256_add_pd(vden, vmagSq);
+    }
+    alignas(32) double numBuf[4], denBuf[4];
+    _mm256_store_pd(numBuf, vnum);
+    _mm256_store_pd(denBuf, vden);
+    for (int j = 0; j < 4; ++j) { num += numBuf[j]; den += denBuf[j]; }
+#elif defined(__SSE2__)
+    __m128d vnum = _mm_setzero_pd();
+    __m128d vden = _mm_setzero_pd();
+    for (; i + 1 < freqLen; i += 2) {
+        __m128d vre = _mm_loadu_pd(uHat_re + i);
+        __m128d vim = _mm_loadu_pd(uHat_im + i);
+        __m128d vomega = _mm_loadu_pd(omegaAxis + i);
+        __m128d vmagSq = _mm_add_pd(_mm_mul_pd(vre, vre), _mm_mul_pd(vim, vim));
+        vnum = _mm_add_pd(vnum, _mm_mul_pd(vomega, vmagSq));
+        vden = _mm_add_pd(vden, vmagSq);
+    }
+    alignas(16) double numBuf[2], denBuf[2];
+    _mm_store_pd(numBuf, vnum);
+    _mm_store_pd(denBuf, vden);
+    for (int j = 0; j < 2; ++j) { num += numBuf[j]; den += denBuf[j]; }
+#endif
+    for (; i < freqLen; ++i) {
+        double magSq = uHat_re[i] * uHat_re[i] + uHat_im[i] * uHat_im[i];
+        num += omegaAxis[i] * magSq;
+        den += magSq;
+    }
+    return {num, den};
+}
