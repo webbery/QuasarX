@@ -115,6 +115,22 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
 
+    // 诊断日志：记录 raw_strength 值（每 100 个 epoch 记录一次，避免日志过多）
+    static int epoch_counter = 0;
+    if (++epoch_counter % 100 == 0) {
+        for (const auto& symbol : _pools) {
+            String key = get_symbol(symbol) + ".raw_strength";
+            if (context.exist(key)) {
+                auto s_var = context.get<Vector<double>>(key);
+                if (!s_var.empty()) {
+                    double strength = s_var.back();
+                    INFO("[SignalNode:{}] epoch={} {} raw_strength={:.6f}", 
+                         _id, epoch_counter, get_symbol(symbol), strength);
+                }
+            }
+        }
+    }
+
     // 如果不允许做空，过滤无持仓标的的 SELL 信号
     Map<symbol_t, int64_t> heldSymbols;
     if (_server->GetRunningMode() == RuningType::Backtest) {

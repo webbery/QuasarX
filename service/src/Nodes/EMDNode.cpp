@@ -259,19 +259,17 @@ Vector<double> EMDNode::computeEnergyVelocity(const Vector<Vector<double>>& imfs
     }
 
     // rolling mean of energy
-    for (int i = window - 1; i < n; ++i) {
-        double sum = 0.0;
-        for (int j = i - window + 1; j <= i; ++j) sum += total_energy[j];
+    // 滚动和改写: 维护窗口和, 每步只做一次加一次减, O(n) 而非每个 i 重算整窗的 O(n×window)
+    double sum = 0.0;
+    for (int j = 0; j < window && j < n; ++j) sum += total_energy[j];
+    for (int i = window; i < n; ++i) {
+        double prev_mean = sum / window;  // 上一窗口 [i-window, i-1]
+        sum += total_energy[i] - total_energy[i - window];
         double mean = sum / window;
 
         // velocity = diff(mean) / mean (即滚动变化率)
-        if (i > window - 1) {
-            double prev_sum = 0.0;
-            for (int j = i - window; j < i; ++j) prev_sum += total_energy[j];
-            double prev_mean = prev_sum / window;
-            if (prev_mean > 0) {
-                result[i] = (mean - prev_mean) / prev_mean;
-            }
+        if (prev_mean > 0) {
+            result[i] = (mean - prev_mean) / prev_mean;
         }
     }
 
@@ -289,12 +287,18 @@ Vector<double> EMDNode::computeVolumeRegime(const Vector<Vector<double>>& imfs,
     // 最低频 IMF 是最后一个
     const auto& imf_low = imfs.back();
 
-    for (int i = window - 1; i < n; ++i) {
-        double sum_imf = 0.0, sum_vol = 0.0;
-        for (int j = i - window + 1; j <= i; ++j) {
-            sum_imf += std::abs(imf_low[j]);
-            sum_vol += volume[j];
-        }
+    // rolling sum of |IMF_low| / volume (滚动和改写, O(n))
+    double sum_imf = 0.0, sum_vol = 0.0;
+    for (int j = 0; j < window && j < n; ++j) {
+        sum_imf += std::abs(imf_low[j]);
+        sum_vol += volume[j];
+    }
+    if (window - 1 < n && sum_vol > 0) {
+        result[window - 1] = sum_imf / sum_vol;
+    }
+    for (int i = window; i < n; ++i) {
+        sum_imf += std::abs(imf_low[i]) - std::abs(imf_low[i - window]);
+        sum_vol += volume[i] - volume[i - window];
         if (sum_vol > 0) {
             result[i] = sum_imf / sum_vol;
         }
