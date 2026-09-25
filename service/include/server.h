@@ -296,8 +296,6 @@ private:
     static std::multimap<std::string, ContractInfo> _markets;
     static std::map<time_t, float> _inter_rates;
 
-    static std::mutex _sseMutex;
-    static Map<std::thread::id, nng_socket> _sseSockets;
     // 数据缓存
     List<String> _symbolCache;
 

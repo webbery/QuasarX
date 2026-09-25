@@ -161,7 +161,7 @@ bool DuckDBLogger::init(const String& db_path) {
     char* open_error = nullptr;
     duckdb_config cfg = nullptr;
     duckdb_create_config(&cfg);
-    duckdb_set_config(cfg, "max_memory", "256MB");
+    duckdb_set_config(cfg, "max_memory", "128MB");
     duckdb_set_config(cfg, "threads", "2");
     duckdb_state state = duckdb_open_ext(db_path.c_str(), &db_, cfg, &open_error);
     duckdb_destroy_config(&cfg);
@@ -357,6 +357,13 @@ void DuckDBLogger::log_ticks(const std::vector<TickDataEntry>& ticks) {
 
     {
         std::lock_guard<std::mutex> lock(tick_queue_mutex_);
+        static constexpr size_t MAX_QUEUE_SIZE = 50000;
+        if (tick_queue_.size() > MAX_QUEUE_SIZE) {
+            size_t drop = tick_queue_.size() - MAX_QUEUE_SIZE;
+            for (size_t i = 0; i < drop; ++i) tick_queue_.pop();
+            SPDLOG_WARN("[DuckDBLogger] tick queue overflow ({}), dropped {} oldest entries",
+                        tick_queue_.size() + drop, drop);
+        }
         for (auto& tick : ticks) {
             tick_queue_.push(tick);
         }

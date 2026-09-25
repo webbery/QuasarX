@@ -847,6 +847,8 @@ const onStatusChange = (status, info) => {
   if (status) {
     runningMode.value = info
     showLogin.value = false
+    uninitServerEvent()
+    initServerEvent()
     // 切换服务器后，如果在策略工厂界面且有选中策略，立即刷新策略运行状态
     if (is_strategy.value && currentStrategyName.value) {
       fetchServerStrategies()

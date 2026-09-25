@@ -313,12 +313,21 @@ const handleLogin = () => {
               globalStorage.setItem('securities', securities)
             })
             closeModal();
+          } else if (response.status === 401) {
+            message.error('用户名或密码错误')
           } else {
-            message.error(`登录失败`)
+            message.error(`登录失败 (HTTP ${response.status})`)
           }
         })
         .catch(error => {
-          message.error(`登录失败: ${error}`)
+          console.error('登录请求失败:', error)
+          let errMsg = '无法连接到服务器'
+          if (error.message && error.message.includes('Failed to fetch')) {
+            errMsg = `无法连接到服务器 ${loginForm.server}，请检查服务是否启动`
+          } else if (error.message) {
+            errMsg = `连接失败: ${error.message}`
+          }
+          message.error(errMsg)
         }).finally(()=>{
           isSubmitting.value = false;
         })

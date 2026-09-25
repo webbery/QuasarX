@@ -20,6 +20,7 @@
 #include "StrategyNode.h"
 #include "Util/QuoteDB.h"
 #include "Util/DecisionDB.h"
+#include "Util/DuckDBLogger.h"
 #include "Util/HolidayCalendar.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
@@ -222,8 +223,6 @@ void trim(std::string& input) {
 std::multimap<std::string, ContractInfo> Server::_markets;
 std::map<time_t, float> Server::_inter_rates;
 bool Server::_exit = false;
-std::mutex Server::_sseMutex;
-Map<std::thread::id, nng_socket> Server::_sseSockets;
 
 Server::Server():_config(nullptr),
 _strategySystem(nullptr), _brokerSystem(nullptr), _portfolioSystem(nullptr),
@@ -1272,6 +1271,16 @@ void Server::Schedules(time_t t) {
 
         // TODO: run daily forecast with newest data
         // SendCloseFeatures();
+
+        // 每日 20:00 清理过期数据，防止 DuckDB 无限膨胀
+        // 清理 30 天前的 tick 数据
+        int64_t tick_cutoff = static_cast<int64_t>(t) - 30 * 86400;
+        int64_t tick_deleted = DuckDBLogger::instance().delete_tick_data_before(tick_cutoff);
+        if (tick_deleted > 0) {
+            INFO("[Schedules] Cleaned {} tick records older than 30 days", tick_deleted);
+        }
+        // 清理 90 天前的策略日志
+        DuckDBLogger::instance().cleanup_old_logs(90);
     }
 }
 
@@ -1819,16 +1828,11 @@ bool Server::JWTMiddleWare(const httplib::Request& req, httplib::Response& res) 
 }
 
 nng_socket Server::GetSocket() {
-    auto id = std::this_thread::get_id();
-    std::unique_lock<std::mutex> lock(_sseMutex);
-    auto itr = _sseSockets.find(id);
-    if (itr == _sseSockets.end()) {
-        nng_socket sock;
+    thread_local nng_socket sock{ 0 };
+    if (sock.id == 0) {
         Pusher(URI_SERVER_EVENT, sock);
-        _sseSockets[id] = sock;
-        return sock;
     }
-    return _sseSockets[id];
+    return sock;
 }
 
 ExchangeName Server::GetExchangeName(const String& prefix) {

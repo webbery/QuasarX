@@ -5,10 +5,10 @@
 #include <mutex>
 #include <string>
 
-// 统一 DuckDB 打开方式：限制 max_memory 防止每个实例预留 ~80% 系统 RAM 的虚拟地址空间
-// 默认 80% × 16GB ≈ 12.8GB/实例，4 个实例 VmSize 达 50GB，导致 fork() ENOMEM
+// 统一 DuckDB 打开方式：限制 max_memory 防止多个实例叠加超出系统 RAM
+// 5 个实例 × 100MB = 500MB（之前 256MB × 5 = 1.28GB 导致 OOM）
 inline bool DuckDBOpenWithLimits(const std::string& path, duckdb_database* out_db,
-                                 int max_memory_mb = 256, int threads = 2) {
+                                 int max_memory_mb = 100, int threads = 2) {
     duckdb_config cfg = nullptr;
     if (duckdb_create_config(&cfg) != DuckDBSuccess) {
         return duckdb_open(path.c_str(), out_db) == DuckDBSuccess;
