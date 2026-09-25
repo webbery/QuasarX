@@ -202,7 +202,7 @@ jobs:
           git checkout 12.0.0
           cd -
           mkdir service/build && cd service/build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON -DSIMD_LEVEL=none
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON -DSIMD_LEVEL=AVX512
           cmake --build . --config Release -j$(nproc)
 
       # 显示缓存统计（验证加速效果）
@@ -838,6 +838,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git-cliff 需要完整历史才能计算 tag 之间的 commit 范围
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
