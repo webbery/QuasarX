@@ -302,3 +302,68 @@ std::vector<DailyPositionRecord> DecisionDB::queryDailyPositions(
 
     return results;
 }
+
+// ═══════════════════════════════════════════════════════════
+//  删除指定策略的所有历史记录
+// ═══════════════════════════════════════════════════════════
+
+int DecisionDB::deleteByStrategy(const std::string& strategy) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return 0;
+
+    int totalDeleted = 0;
+
+    // 删除 decisions 表中该策略的记录
+    {
+        auto countSql = fmt::format(
+            "SELECT COUNT(*) FROM decisions WHERE strategy = '{}'", strategy);
+        int count = 0;
+        query(countSql, [&count](duckdb_result& result) {
+            if (duckdb_row_count(&result) > 0) {
+                auto* val = duckdb_value_varchar(&result, 0, 0);
+                if (val) {
+                    count = std::stoi(val);
+                    duckdb_free(val);
+                }
+            }
+            return true;
+        });
+
+        if (count > 0) {
+            auto deleteSql = fmt::format(
+                "DELETE FROM decisions WHERE strategy = '{}'", strategy);
+            exec(deleteSql);
+            totalDeleted += count;
+        }
+    }
+
+    // 删除 daily_positions 表中该策略的记录
+    {
+        auto countSql = fmt::format(
+            "SELECT COUNT(*) FROM daily_positions WHERE strategy = '{}'", strategy);
+        int count = 0;
+        query(countSql, [&count](duckdb_result& result) {
+            if (duckdb_row_count(&result) > 0) {
+                auto* val = duckdb_value_varchar(&result, 0, 0);
+                if (val) {
+                    count = std::stoi(val);
+                    duckdb_free(val);
+                }
+            }
+            return true;
+        });
+
+        if (count > 0) {
+            auto deleteSql = fmt::format(
+                "DELETE FROM daily_positions WHERE strategy = '{}'", strategy);
+            exec(deleteSql);
+            totalDeleted += count;
+        }
+    }
+
+    if (totalDeleted > 0) {
+        exec("VACUUM");
+    }
+
+    return totalDeleted;
+}

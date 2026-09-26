@@ -17,6 +17,8 @@
 #include "Bridge/CapitalPool.h"
 #include "BrokerSubSystem.h"
 #include "StrategySubSystem.h"
+#include "Util/DecisionDB.h"
+#include "Util/DuckDBLogger.h"
 #include <boost/hana.hpp>
 #include "Nodes/FunctionNode.h"
 #include "Nodes/OnnxInferenceNode.h"
@@ -281,6 +283,30 @@ void StrategyHandler::del(const httplib::Request& req, httplib::Response& res) {
     String erase_file(SCRIPTS_DIR);
     erase_file += "/" + name;
     std::filesystem::remove(erase_file);
+
+    // 清理该策略的 XGBoost 模型文件（models/production/{strategyName}-*.json）
+    {
+        String dbPath = _server->GetConfig().GetDatabasePath();
+        String prodDir = dbPath + "/models/production";
+        if (std::filesystem::exists(prodDir) && std::filesystem::is_directory(prodDir)) {
+            String prefix = name + "-";
+            for (auto& entry : std::filesystem::directory_iterator(prodDir)) {
+                String fname = entry.path().filename().string();
+                if (fname.size() > prefix.size() && fname.substr(0, prefix.size()) == prefix) {
+                    std::filesystem::remove(entry.path());
+                    INFO("[StrategyHandler] Removed model file: {}", fname);
+                }
+            }
+        }
+    }
+
+    // 清理该策略的历史记录（decisions + daily_positions + strategy_logs + node_io_logs）
+    int decisionDeleted = DecisionDB::instance().deleteByStrategy(name);
+    auto logResult = DuckDBLogger::instance().delete_strategy_logs(name, "", "", "");
+    int64_t nodeIoDeleted = DuckDBLogger::instance().delete_node_io_logs_by_strategy(name);
+    INFO("[StrategyHandler] Deleted strategy '{}': {} decision/position records, {} log records, {} node_io records",
+         name, decisionDeleted, logResult.deleted_count > 0 ? logResult.deleted_count : 0, nodeIoDeleted);
+
     res.status = 200;
     nlohmann::json result;
     result["message"] = "success";

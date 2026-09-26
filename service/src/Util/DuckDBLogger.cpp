@@ -1256,6 +1256,46 @@ int64_t DuckDBLogger::delete_node_io_logs_before(const std::string& timestamp) {
     return before_count;
 }
 
+int64_t DuckDBLogger::delete_node_io_logs_by_strategy(const std::string& strategy_name) {
+    if (!initialized_) {
+        return 0;
+    }
+
+    if (strategy_name.empty()) {
+        return 0;
+    }
+
+    std::lock_guard<std::mutex> lock(conn_mtx_);
+
+    // 先查询将删除的数量
+    int count = 0;
+    {
+        std::string count_sql = "SELECT COUNT(*) FROM node_io_logs WHERE strategy_name = ?";
+        std::vector<duckdb_value> count_params;
+        count_params.push_back(make_varchar(strategy_name));
+        duckdb_result count_res;
+        if (query_params(count_sql, count_params, count_res)) {
+            idx_t rc = duckdb_row_count(&count_res);
+            if (rc > 0) {
+                auto* data = (int32_t*)duckdb_column_data(&count_res, 0);
+                if (data) count = *data;
+            }
+            duckdb_destroy_result(&count_res);
+        }
+        for (auto& v : count_params) duckdb_destroy_value(&v);
+    }
+
+    if (count > 0) {
+        duckdb_value v = make_varchar(strategy_name);
+        exec_params("DELETE FROM node_io_logs WHERE strategy_name = ?", {v});
+        duckdb_destroy_value(&v);
+        exec("VACUUM");
+    }
+
+    SPDLOG_INFO("[DuckDBLogger] Deleted {} node IO logs for strategy '{}'", count, strategy_name);
+    return count;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // 关闭
 // ──────────────────────────────────────────────────────────────────────

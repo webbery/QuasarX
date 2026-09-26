@@ -39,6 +39,9 @@ public:
                                                          time_t startDate = 0,
                                                          time_t endDate = 0);
 
+    // 删除指定策略的所有历史记录（decisions + daily_positions）
+    int deleteByStrategy(const std::string& strategy);
+
 private:
     friend class DuckDBBaseT<DecisionDB>;
     void ensureTables();

@@ -447,6 +447,83 @@ class TestStrategy:
 
         self.cleanup_strategy(auth_token, name)
 
+    @pytest.mark.timeout(30)
+    def test_delete_nonexistent_no_error(self, auth_token):
+        """删除不存在的策略不应返回 500（幂等性）"""
+        kwargs = self._auth_kwargs(auth_token)
+        kwargs['json'] = {'name': 'nonexistent_strategy_xyz_12345'}
+        resp = requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=10)
+        assert resp.status_code in (200, 400, 404), \
+            f"删除不存在策略不应返回 500，实际 {resp.status_code}"
+
+    @pytest.mark.timeout(60)
+    def test_delete_idempotent(self, auth_token, is_backtest):
+        """重复删除同一策略不应报错"""
+        if is_backtest:
+            pytest.skip("回测模式下不支持策略操作")
+
+        name = 'test_delete_idempotent'
+        self.cleanup_strategy(auth_token, name)
+
+        script_path = './script/ma_graph_strategy.json'
+        script = self.load_script(script_path)
+        kwargs = self._auth_kwargs(auth_token)
+
+        # 部署
+        kwargs['json'] = {'mode': 0, 'name': name, 'script': script}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=30)
+        check_response(resp)
+        time.sleep(2)
+
+        # 第一次删除
+        kwargs['json'] = {'name': name}
+        resp = requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=10)
+        data = check_response(resp)
+        assert data['message'] == 'success'
+
+        # 第二次删除（应幂等，不崩溃）
+        time.sleep(1)
+        resp = requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=10)
+        assert resp.status_code in (200, 400, 404), \
+            f"重复删除不应返回 500，实际 {resp.status_code}"
+
+    @pytest.mark.timeout(60)
+    def test_delete_cleanup_isolation(self, auth_token, is_backtest):
+        """删除策略 A 不应影响策略 B 的历史记录和运行状态"""
+        if is_backtest:
+            pytest.skip("回测模式下跳过")
+
+        name_a = 'test_del_iso_a'
+        name_b = 'test_del_iso_b'
+        self.cleanup_strategy(auth_token, name_a)
+        self.cleanup_strategy(auth_token, name_b)
+
+        script_path = './script/ma_graph_strategy.json'
+        script = self.load_script(script_path)
+        kwargs = self._auth_kwargs(auth_token)
+
+        try:
+            # 部署两个策略
+            kwargs['json'] = {'mode': 0, 'name': name_a, 'script': script}
+            requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=30)
+            kwargs['json'] = {'mode': 0, 'name': name_b, 'script': script}
+            requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=30)
+            time.sleep(3)
+
+            # 删除 A
+            kwargs['json'] = {'name': name_a}
+            requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=10)
+            time.sleep(1)
+
+            # B 应仍在列表中且正常运行
+            strategies = self.get_all_strategies(auth_token)
+            found = self.find_strategy(strategies, name_b)
+            assert found is not None, "删除 A 不应影响 B"
+            assert found['running'] is True, "B 应仍在运行"
+        finally:
+            self.cleanup_strategy(auth_token, name_a)
+            self.cleanup_strategy(auth_token, name_b)
+
 
 # ============== Multipart 部署（含模型文件 + 跨策略共享校验） ==============
 

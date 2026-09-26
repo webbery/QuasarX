@@ -251,6 +251,13 @@ public:
     int64_t delete_node_io_logs_before(const std::string& timestamp);
 
     /**
+     * 按策略名删除 node_io_logs
+     * @param strategy_name 策略名称
+     * @return 删除的行数
+     */
+    int64_t delete_node_io_logs_by_strategy(const std::string& strategy_name);
+
+    /**
      * 关闭日志器（服务退出时调用）
      */
     void shutdown();

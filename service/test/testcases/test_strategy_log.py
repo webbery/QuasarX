@@ -237,3 +237,91 @@ class TestStrategyLog:
         kwargs["json"] = {"name": test_name}
         requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=5)
         time.sleep(0.5)
+
+    @pytest.mark.timeout(60)
+    def test_delete_strategy_removes_logs(self, auth_token, is_backtest):
+        """删除策略后 strategy_logs 应被清理为 0"""
+        if is_backtest:
+            pytest.skip("回测模式下跳过")
+
+        test_name = "test_del_log_cleanup"
+
+        # 先清理残留
+        kwargs = self._auth_kwargs(auth_token)
+        kwargs["json"] = {"mode": 2, "name": test_name}
+        requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=5)
+        kwargs["json"] = {"name": test_name}
+        requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=5)
+        time.sleep(0.5)
+
+        import json, os
+        script_path = "./script/ma_graph_strategy.json"
+        if not os.path.exists(script_path):
+            pytest.skip(f"策略脚本不存在: {script_path}")
+        with open(script_path, "r", encoding="utf-8") as f:
+            script = json.load(f)
+
+        # 部署策略
+        kwargs["json"] = {"mode": 0, "name": test_name, "script": script}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=30)
+        check_response(resp)
+
+        # 等待日志写入
+        time.sleep(3)
+
+        # 删除策略
+        kwargs["json"] = {"name": test_name}
+        resp = requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=10)
+        data = check_response(resp)
+        assert data["message"] == "success"
+
+        # 验证日志被清理
+        time.sleep(1)
+        logs_data = self.get_strategy_logs(auth_token, type="default", strategy=test_name)
+        assert logs_data.get("total", 0) == 0, \
+            f"删除后 strategy_logs 应为 0，实际 {logs_data.get('total', -1)}"
+
+    @pytest.mark.timeout(60)
+    def test_delete_strategy_removes_node_io_logs(self, auth_token, is_backtest):
+        """删除策略后 node_io_logs 应被清理为 0"""
+        if is_backtest:
+            pytest.skip("回测模式下跳过")
+
+        test_name = "test_del_nodeio_cleanup"
+
+        # 先清理残留
+        kwargs = self._auth_kwargs(auth_token)
+        kwargs["json"] = {"mode": 2, "name": test_name}
+        requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=5)
+        kwargs["json"] = {"name": test_name}
+        requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=5)
+        time.sleep(0.5)
+
+        import json, os
+        script_path = "./script/ma_graph_strategy.json"
+        if not os.path.exists(script_path):
+            pytest.skip(f"策略脚本不存在: {script_path}")
+        with open(script_path, "r", encoding="utf-8") as f:
+            script = json.load(f)
+
+        # 部署策略
+        kwargs["json"] = {"mode": 0, "name": test_name, "script": script}
+        resp = requests.post(f"{BASE_URL}/strategy", **kwargs, timeout=30)
+        check_response(resp)
+
+        # 等待 node_io 日志写入
+        time.sleep(3)
+
+        # 删除策略
+        kwargs["json"] = {"name": test_name}
+        resp = requests.delete(f"{BASE_URL}/strategy", **kwargs, timeout=10)
+        check_response(resp)
+
+        # 验证 node_io 日志被清理（GET /v0/node/io?strategy=xxx）
+        time.sleep(1)
+        kwargs = self._auth_kwargs(auth_token)
+        kwargs["params"] = {"strategy": test_name}
+        resp = requests.get(f"{BASE_URL}/node/io", **kwargs, timeout=10)
+        data = check_response(resp)
+        assert data.get("total", 0) == 0, \
+            f"删除后 node_io_logs 应为 0，实际 {data.get('total', -1)}"
