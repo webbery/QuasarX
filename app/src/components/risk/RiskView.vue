@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineEmits, onMounted } from 'vue'
+import { ref, computed, defineEmits, onMounted, onActivated } from 'vue'
 import axios from 'axios'
 import type { MarketType, StrategyRiskItem, StrategyRiskConfig, MarketRiskData } from './types/risk'
 import { assessHealth } from './hooks/useHealthAssess'
@@ -179,7 +179,17 @@ async function fetchStrategies() {
   }
 }
 
+// KeepAlive 下 onActivated 在首次挂载和后续激活时都会触发
+// onMounted 仅在首次创建时触发，用 flag 防止 onActivated 首次重复调用
+let initialized = false
 onMounted(() => {
+  fetchStrategies()
+  fetchBreakerStatus()
+  initialized = true
+})
+
+onActivated(() => {
+  if (!initialized) return
   fetchStrategies()
   fetchBreakerStatus()
 })
