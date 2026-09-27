@@ -194,14 +194,24 @@ jobs:
           sudo make install
 
 
-      # 配置CMake并编译
-      - name: Configure and build
+      # 克隆 fmt（两个版本共享）
+      - name: Clone fmt
         run: |
           git clone --recursive https://github.com/fmtlib/fmt service/third_party/fmt
           cd service/third_party/fmt
           git checkout 12.0.0
-          cd -
-          mkdir service/build && cd service/build
+
+      # ── 构建 AVX2 版本（用于 CI 测试 + 发布）──
+      - name: Build AVX2
+        run: |
+          mkdir -p service/build_avx2 && cd service/build_avx2
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON -DSIMD_LEVEL=AVX2
+          cmake --build . --config Release -j$(nproc)
+
+      # ── 构建 AVX-512 版本（仅用于发布）──
+      - name: Build AVX512
+        run: |
+          mkdir -p service/build_avx512 && cd service/build_avx512
           cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NODE_IO_LOGGING=ON -DENABLE_ASAN=ON -DSIMD_LEVEL=AVX512
           cmake --build . --config Release -j$(nproc)
 
@@ -209,20 +219,31 @@ jobs:
       - name: Show ccache stats
         run: ccache -s
 
-      # 上传构建产物供 test job 使用（二进制 + 配置模板，统一放在 service/build/ 下）
+      # 上传 AVX2 构建产物供 test job 使用
       - name: Prepare build artifact
-        run: cp service/config.template.json service/build/
+        run: cp service/config.template.json service/build_avx2/
 
-      - name: Upload build artifact
+      - name: Upload build artifact (AVX2)
         uses: actions/upload-artifact@v4
         with:
           name: build-artifact
           path: |
-            service/build/QuantService
-            service/build/QuantService.debug
-            service/build/config.template.json
+            service/build_avx2/QuantService
+            service/build_avx2/QuantService.debug
+            service/build_avx2/config.template.json
             service/tools/
             service/test/
+          compression-level: 5
+          retention-days: 1
+
+      # 上传 AVX-512 构建产物供 release job 使用
+      - name: Upload AVX512 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-avx512
+          path: |
+            service/build_avx512/QuantService
+            service/build_avx512/QuantService.debug
           compression-level: 5
           retention-days: 1
 
@@ -274,10 +295,10 @@ jobs:
         run: |
           ls -la .
           cp -rf build-artifact/tools . 2>/dev/null || true
-          cp -rf build/QuantService . 2>/dev/null || true
-          cp -rf build/config.template.json . 2>/dev/null || true
+          cp -rf build_avx2/QuantService . 2>/dev/null || true
+          cp -rf build_avx2/config.template.json . 2>/dev/null || true
           cp -rf build-artifact/test . 2>/dev/null || true
-          cp -rf build/QuantService.debug . 2>/dev/null || true
+          cp -rf build_avx2/QuantService.debug . 2>/dev/null || true
           ls -la .
           rm -rf build-artifact
 
@@ -841,11 +862,17 @@ jobs:
         with:
           fetch-depth: 0  # git-cliff 需要完整历史才能计算 tag 之间的 commit 范围
 
-      - name: Download build artifact
+      - name: Download build artifact (AVX2)
         uses: actions/download-artifact@v4
         with:
           name: build-artifact
           path: build-artifact
+
+      - name: Download build artifact (AVX512)
+        uses: actions/download-artifact@v4
+        with:
+          name: build-avx512
+          path: build-avx512
 
       - name: Download runtime libs
         uses: actions/download-artifact@v4
@@ -853,65 +880,67 @@ jobs:
           name: runtime-libs
           path: runtime-libs
 
-      - name: Package release tarball
+      # 打包函数：为每个 SIMD 版本生成独立的 tarball
+      - name: Package release tarballs
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF_NAME}"
-          RELEASE_DIR="QuantService-${TAG_NAME}"
-          mkdir -p "${RELEASE_DIR}"
-
-          # upload-artifact@v4 对 path 中的仓库子目录前缀（这里是 service/）会自动截断，
-          # 下载后实际目录为：
-          #   build-artifact/build/QuantService
-          #   build-artifact/tools/
-          BIN="build-artifact/build/QuantService"
           TOOLS="build-artifact/tools"
 
-          if [ ! -f "${BIN}" ]; then
-            echo "ERROR: ${BIN} not found"
-            echo "--- build-artifact tree ---"
-            find build-artifact -maxdepth 5 -type f | head -40 || true
-            exit 1
-          fi
+          package_variant() {
+            local SIMD_LABEL="$1"
+            local BIN_PATH="$2"
+            local RELEASE_DIR="QuantService-${TAG_NAME}-${SIMD_LABEL}"
+            mkdir -p "${RELEASE_DIR}"
 
-          # 主二进制
-          cp "${BIN}" "${RELEASE_DIR}/"
+            if [ ! -f "${BIN_PATH}" ]; then
+              echo "ERROR: ${BIN_PATH} not found"
+              return 1
+            fi
 
-          # 工具脚本（离线复现/运维用；debug 符号、config 模板、test 目录不打包）
-          [ -d "${TOOLS}" ] && cp -r "${TOOLS}" "${RELEASE_DIR}/"
+            cp "${BIN_PATH}" "${RELEASE_DIR}/QuantService"
 
-          # 运行时 so 库（系统库 + 第三方交易 SDK）
-          # upload-artifact 对绝对路径 /usr/local/lib/... 保留为 runtime-libs/usr/local/lib/
-          # 对相对路径 service/third_party/libs/unix/... 截断 service/ 前缀，下载后是 runtime-libs/third_party/libs/unix/
-          mkdir -p "${RELEASE_DIR}/lib"
-          cp runtime-libs/usr/local/lib/lib*.so* "${RELEASE_DIR}/lib/" 2>/dev/null || true
-          cp runtime-libs/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
+            # 工具脚本（离线复现/运维用）
+            [ -d "${TOOLS}" ] && cp -r "${TOOLS}" "${RELEASE_DIR}/"
 
-          # 生成版本信息
-          echo "${TAG_NAME}" > "${RELEASE_DIR}/VERSION"
-          echo "Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "${RELEASE_DIR}/VERSION"
-          echo "Commit: ${GITHUB_SHA}" >> "${RELEASE_DIR}/VERSION"
+            # 运行时 so 库
+            mkdir -p "${RELEASE_DIR}/lib"
+            cp runtime-libs/usr/local/lib/lib*.so* "${RELEASE_DIR}/lib/" 2>/dev/null || true
+            cp runtime-libs/third_party/libs/unix/lib*.so "${RELEASE_DIR}/lib/" 2>/dev/null || true
 
-          # 打包
-          tar -czf "QuantService-${TAG_NAME}.tar.gz" "${RELEASE_DIR}"
-          echo "=== Package contents ==="
-          tar -tzf "QuantService-${TAG_NAME}.tar.gz" | head -50
-          echo "========================"
-          ls -lh "QuantService-${TAG_NAME}.tar.gz"
+            # 版本信息
+            echo "${TAG_NAME} (${SIMD_LABEL})" > "${RELEASE_DIR}/VERSION"
+            echo "Build date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "${RELEASE_DIR}/VERSION"
+            echo "Commit: ${GITHUB_SHA}" >> "${RELEASE_DIR}/VERSION"
+            echo "SIMD: ${SIMD_LABEL}" >> "${RELEASE_DIR}/VERSION"
 
-      - name: Verify release artifact
+            tar -czf "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz" "${RELEASE_DIR}"
+            echo "=== ${SIMD_LABEL} package ==="
+            tar -tzf "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz" | head -20
+            ls -lh "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz"
+          }
+
+          # upload-artifact@v4 下载时自动截断仓库子目录前缀（service/）
+          # build-artifact → build_avx2/QuantService (AVX2)
+          # build-avx512 → build_avx512/QuantService (AVX512)
+          package_variant "AVX2"   "build-artifact/build_avx2/QuantService"
+          package_variant "AVX512" "build-avx512/build_avx512/QuantService"
+
+      - name: Verify release artifacts
         run: |
           TAG_NAME="${GITHUB_REF_NAME}"
-          ARCHIVE="QuantService-${TAG_NAME}.tar.gz"
-          if [ ! -f "${ARCHIVE}" ]; then
-            echo "ERROR: ${ARCHIVE} not produced"
-            exit 1
-          fi
-          SIZE=$(stat -c %s "${ARCHIVE}")
-          echo "Release artifact: ${ARCHIVE} (${SIZE} bytes)"
-          if [ "${SIZE}" -lt 1000000 ]; then
-            echo "WARNING: artifact suspiciously small (< 1MB), may be incomplete"
-          fi
+          for SUFFIX in AVX2 AVX512; do
+            ARCHIVE="QuantService-${TAG_NAME}-${SUFFIX}.tar.gz"
+            if [ ! -f "${ARCHIVE}" ]; then
+              echo "ERROR: ${ARCHIVE} not produced"
+              exit 1
+            fi
+            SIZE=$(stat -c %s "${ARCHIVE}")
+            echo "${ARCHIVE}: ${SIZE} bytes"
+            if [ "${SIZE}" -lt 1000000 ]; then
+              echo "WARNING: ${ARCHIVE} suspiciously small (< 1MB)"
+            fi
+          done
 
       - name: Upload Release Artifacts (Persist for later steps)
         uses: actions/upload-artifact@v4
