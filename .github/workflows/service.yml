@@ -916,7 +916,12 @@ jobs:
 
             tar -czf "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz" "${RELEASE_DIR}"
             echo "=== ${SIMD_LABEL} package ==="
-            tar -tzf "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz" | head -20
+            # step 顶部 `set -euo pipefail`：head -20 读完即关 stdin，tar 收到 SIGPIPE
+            # 写 "stdout: write error" 后非零退出 → pipefail 标记 pipeline 失败 →
+            # set -e 让脚本立刻退出（AVX512 完全没机会跑）。
+            # 这里用 `{ head -20; cat >/dev/null; }` 接管 pipe 继续读完 tar 剩余输出，
+            # 源头消除 SIGPIPE，无需抑制 stderr / 加 || true 兜底退出码。
+            tar -tzf "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz" | { head -20; cat >/dev/null; }
             ls -lh "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz"
           }
 
