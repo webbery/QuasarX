@@ -315,14 +315,15 @@ function updateCumPnlChart() {
       borderColor: '#2a3449',
       textStyle: { color: '#e0e0e0' },
       formatter: (params: any) => {
+        const ts = params[0].value[0]
         const val = params[0].value[1]
-        return `${params[0].value[0]}<br/>累计盈亏: <span style="color: ${val >= 0 ? '#10b981' : '#ff1744'}; font-weight: bold;">¥${val.toFixed(2)}</span>`
+        const dateStr = typeof ts === 'number' ? new Date(ts).toLocaleDateString() : String(ts)
+        return `${dateStr}<br/>累计盈亏: <span style="color: ${val >= 0 ? '#10b981' : '#ff1744'}; font-weight: bold;">¥${val.toFixed(2)}</span>`
       },
     },
     grid: { left: '3%', right: '4%', bottom: '12%', containLabel: true },
     xAxis: {
-      type: 'category',
-      data: cumPnlData.map(d => d[0]),
+      type: 'time',
       axisLine: { lineStyle: { color: '#6E7079' } },
       axisLabel: { color: '#a0aec0', rotate: 45 },
       splitLine: { show: false },
@@ -336,7 +337,7 @@ function updateCumPnlChart() {
     series: [{
       name: '累计盈亏',
       type: 'line',
-      data: cumPnlData.map(d => d[1]),
+      data: cumPnlData,
       lineStyle: { width: 2 },
       itemStyle: { color: '#2962ff' },
       areaStyle: {
