@@ -191,6 +191,19 @@ def parse_cffex_excel(content: bytes, date_str: str, product_hint: str = None) -
 
     df = df.rename(columns=col_map)
 
+    # 统一 call_put 值为 "认购" / "认沽"
+    if "call_put" in df.columns:
+        def normalize_call_put(val):
+            if pd.isna(val):
+                return val
+            val_str = str(val).strip()
+            if val_str in ("看涨", "Call", "CALL", "C", "call"):
+                return "认购"
+            elif val_str in ("看跌", "Put", "PUT", "P", "put"):
+                return "认沽"
+            return val_str
+        df["call_put"] = df["call_put"].apply(normalize_call_put)
+
     # 添加日期和品种列
     df["trade_date"] = date_str
     df["product"] = product_code

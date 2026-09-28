@@ -84,8 +84,8 @@ def fetch_product(product: str, underlying_code: str,
         strike_price = ctr.get('行权价', '')
         start_dt_str = str(ctr.get('开始日期', ''))
 
-        # 类型映射: 认购 → call, 认沽 → put
-        call_put = 'call' if '认购' in call_put_raw else ('put' if '认沽' in call_put_raw else call_put_raw)
+        # 类型映射: 统一为 "认购" / "认沽"
+        call_put = '认购' if '认购' in call_put_raw else ('认沽' if '认沽' in call_put_raw else call_put_raw)
 
         try:
             daily = ak.option_sse_daily_sina(symbol=contract_code)

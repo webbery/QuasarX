@@ -5,31 +5,38 @@
       <!-- 合约选择 -->
       <div class="section">
         <div class="section-title">合约选择</div>
-        <div class="form-row">
-          <label>交易所</label>
-          <select v-model="filters.exchange" @change="onFilterChange">
-            <option value="">全部</option>
-            <option value="CFFEX">CFFEX</option>
-            <option value="SSE">SSE</option>
-            <option value="SZSE">SZSE</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>标的</label>
-          <select v-model="filters.product" @change="onFilterChange">
-            <option value="">全部</option>
-            <option v-for="p in availableProducts" :key="p" :value="p">{{ p }}</option>
-          </select>
+        <div class="form-row-inline">
+          <div class="form-row">
+            <label>交易所</label>
+            <select v-model="filters.exchange" @change="onFilterChange">
+              <option value="">全部</option>
+              <option value="CFFEX">CFFEX</option>
+              <option value="SSE">SSE</option>
+              <option value="SZSE">SZSE</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>标的</label>
+            <select v-model="filters.product" @change="onFilterChange">
+              <option value="">全部</option>
+              <option v-for="p in availableProducts" :key="p" :value="p">{{ p }}</option>
+            </select>
+          </div>
         </div>
         <div class="contract-list">
+          <div class="contract-list-header">
+            <span class="contract-name">合约</span>
+            <span class="contract-strike">行权价</span>
+            <span class="contract-type">类型</span>
+          </div>
           <div v-for="c in filteredContracts" :key="c.symbol_id"
             class="contract-item"
             :class="{ selected: isSelected(c), active: activeContract?.symbol_id === c.symbol_id }"
             @click="toggleContract(c)">
             <span class="contract-name">{{ c.contract_name }}</span>
             <span class="contract-strike">{{ c.strike_price }}</span>
-            <span :class="['cp-badge', c.call_put === '认购' ? 'call' : 'put']">
-              {{ c.call_put === '认购' ? 'C' : 'P' }}
+            <span :class="['cp-badge', isCall(c.call_put) ? 'call' : 'put']">
+              {{ isCall(c.call_put) ? 'C' : 'P' }}
             </span>
           </div>
           <div v-if="filteredContracts.length === 0" class="empty-hint">
@@ -277,10 +284,14 @@ function isSelected(c: ContractInfo) {
   return selectedContracts.value.some(s => s.symbol_id === c.symbol_id)
 }
 
+function isCall(callPut: string): boolean {
+  return callPut === '认购' || callPut === 'call' || callPut === 'C' || callPut === 'CALL'
+}
+
 function fillParamsFromContract(c: ContractInfo) {
   activeContract.value = c
   params.value.strike = c.strike_price
-  params.value.is_call = c.call_put === '认购'
+  params.value.is_call = isCall(c.call_put)
   const m = c.contract_name.match(/(\d{2})(\d{2})/)
   if (m) {
     const year = 2000 + parseInt(m[1])
@@ -425,6 +436,17 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
+.form-row-inline {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.form-row-inline .form-row {
+  flex: 1;
+  margin-bottom: 0;
+}
+
 .form-row {
   display: flex;
   align-items: center;
@@ -456,6 +478,26 @@ onMounted(async () => {
 
 .form-row select option {
   background: #1a2236;
+}
+
+.contract-list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #6b7a99;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.3);
+  background: rgba(26, 34, 54, 0.5);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.contract-list-header .contract-type {
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .contract-list {

@@ -288,12 +288,19 @@ int OptionDataDB::importCsv(const String& csv_path) {
         r.symbol_id = encodeContractId(exchange, r.contract_code, r.contract_name, v_s);
 
         // 合约名不含年份 (如 "50ETF购10月2750"), 从 trade_date 补填 _year
+        // 跨年处理: 如果合约月份 < 数据月份, 说明合约是下一年到期 (如 9月数据 + 3月合约 = 明年3月)
         if (!r.trade_date.empty()) {
-            int yr = 0;
-            if (sscanf(r.trade_date.c_str(), "%d", &yr) == 1 && yr >= 2000) {
+            int yr = 0, mo = 0, dy = 0;
+            if (sscanf(r.trade_date.c_str(), "%d-%d-%d", &yr, &mo, &dy) >= 2 && yr >= 2000) {
                 symbol_t sym;
                 std::memcpy(&sym, &r.symbol_id, sizeof(symbol_t));
+                uint32_t contract_month = sym._month;
+                uint32_t data_month = static_cast<uint32_t>(mo);
                 uint32_t year_short = static_cast<uint32_t>(yr - 2000) & 0x3F;
+                // 跨年: 合约月份 < 数据月份 → 合约是下一年到期
+                if (contract_month > 0 && contract_month < data_month) {
+                    year_short = (year_short + 1) & 0x3F;
+                }
                 if (sym._year != year_short) {
                     sym._year = year_short;
                     std::memcpy(&r.symbol_id, &sym, sizeof(symbol_t));

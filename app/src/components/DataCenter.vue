@@ -2723,6 +2723,11 @@ const onOptionDownload = async () => {
         optionStatus.value = '请至少选择一个品种'
         return
     }
+    // 日期验证: 结束日期必须在起始日期之后
+    if (optionStartDate.value && optionEndDate.value && optionEndDate.value < optionStartDate.value) {
+        optionStatus.value = '结束日期必须在起始日期之后'
+        return
+    }
 
     optionDownloading.value = true
     optionLogs.value = []
