@@ -283,6 +283,20 @@ bool XGBoostNode::Init(const nlohmann::json& config) {
     // ── 从连接图发现 symbol 并解析特征 ──
     // BFS 上游找到所有可达的 QuoteInputNode 的 symbol
     auto symbolSet = discoverUpstreamSymbols();
+
+    // 快速回测模式 fallback：CacheFeatureNode 替代了整个上游子图，
+    // discoverUpstreamSymbols() 找不到 QuoteInputNode，从 params.fast_mode_symbols 获取
+    if (symbolSet.empty() && config.contains("params") && config["params"].contains("fast_mode_symbols")) {
+        auto& symArray = config["params"]["fast_mode_symbols"];
+        if (symArray.is_array()) {
+            for (auto& s : symArray) {
+                symbol_t sym = to_symbol(s.get<String>().c_str());
+                symbolSet.insert(sym);
+            }
+            INFO("[XGBoost:{}] Using fast_mode_symbols ({} symbols) from params", _id, symbolSet.size());
+        }
+    }
+
     if (symbolSet.empty()) {
         WARN("[XGBoost:{}] Cannot discover symbol from upstream connections", _id);
         return false;

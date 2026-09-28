@@ -357,7 +357,16 @@ void PythonRunner::readerThread() {
             flushRemnant(stdout_buf, PythonOutput::STDOUT);
             flushRemnant(stderr_buf, PythonOutput::STDERR);
 
-            int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+            int exit_code;
+            if (WIFEXITED(status)) {
+                exit_code = WEXITSTATUS(status);
+            } else if (WIFSIGNALED(status)) {
+                int sig = WTERMSIG(status);
+                WARN("PythonRunner: child pid={} killed by signal {} ({})", pid_, sig, strsignal(sig));
+                exit_code = -sig;
+            } else {
+                exit_code = -1;
+            }
             drainAndFinish(exit_code);
             break;
         }

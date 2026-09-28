@@ -230,7 +230,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
                 INFO("[ProtectionNode] syncPositions: run_id={}, epoch={}", run_id, context.GetEpoch());
                 for (const auto& sym : btCtx->getSymbols()) {
                     int64_t pos = btCtx->getPosition(sym);
-                    INFO("[ProtectionNode]   symbol={} position={}", get_symbol(sym), pos);
+                    // INFO("[ProtectionNode]   symbol={} position={}", get_symbol(sym), pos);
                     if (pos != 0) {
                         current_symbols.insert(sym);
                     }

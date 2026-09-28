@@ -42,6 +42,12 @@ std::mutex MLHandler::s_sessionMtx;
 
 namespace {
 
+// Python 子进程 stdout/stderr 的 readLine 空闲超时（毫秒）。
+// 训练/优化脚本只在每个 trial/阶段边界输出一行，而单个 trial 的
+// train+backtest 可超过 1 分钟；超时过短会把仍在工作的子进程误判为
+// "脚本未输出 result" 并对其发 SIGTERM。
+#define QS_PYTHON_READLINE_TIMEOUT_MS 300000
+
 #ifdef _WIN32
 inline int QS_GETPID() { return _getpid(); }
 #else
@@ -365,8 +371,8 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             auto pyEnv = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
             auto interpreter = pyEnv.resolve(params.value("py_env", ""));
 
-            // base-url 用 localhost 直连（同进程）；auth_token 透传
-            String baseUrl = "http://localhost:19107";
+            // base-url 从服务配置动态获取（同进程 localhost 回环）
+            String baseUrl = "https://localhost:" + std::to_string(_server->GetConfig().GetPort());
             String authToken = params.value("auth_token", "");
 
             std::vector<std::string> args = {
@@ -409,9 +415,10 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             }
 
             String resultLine, stderrLines;
+            bool childExited = false;
             PythonOutput out;
-            while (runner.readLine(out, 60000)) {
-                if (out.type == PythonOutput::DONE) break;
+            while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
+                if (out.type == PythonOutput::DONE) { childExited = true; break; }
                 if (out.type == PythonOutput::STDOUT) {
                     if (out.line.find("\"type\":\"result\"") != std::string::npos) {
                         resultLine = out.line;
@@ -436,7 +443,13 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
 
             std::lock_guard<std::mutex> lk(session->_mtx);
             if (resultLine.empty()) {
-                String msg = stderrLines.empty() ? "optimize script 未输出 result" : stderrLines.substr(0, 500);
+                String msg;
+                if (!childExited) {
+                    msg = fmt::format("空闲超时（{}s 内无任何输出），已终止 Python 进程",
+                                      QS_PYTHON_READLINE_TIMEOUT_MS / 1000);
+                } else {
+                    msg = stderrLines.empty() ? "optimize script 未输出 result" : stderrLines.substr(0, 500);
+                }
                 while (!msg.empty() && msg.back() == '\n') msg.pop_back();
                 session->_hasError = true;
                 session->_result = {{"error", String("优化失败: ") + msg}};
@@ -752,7 +765,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         }
         PythonOutput out;
         String resultLine, stderrLines;
-        while (runner.readLine(out, 60000)) {
+        while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
             if (out.type == PythonOutput::DONE) break;
             if (out.type == PythonOutput::STDOUT) {
                 if (out.line.find("\"type\":\"result\"") != std::string::npos) resultLine = out.line;

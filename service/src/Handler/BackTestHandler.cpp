@@ -11,6 +11,8 @@
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <thread>
 #include <variant>
 #include <algorithm>
@@ -60,6 +62,32 @@ private:
 const Set<String> FEATURE_NODE_TYPES = {
     "emd", "cusum", "function", "formula", "breakout", "hmm"
 };
+
+// 从 feature_cache CSV 头部提取 symbol 列表
+// CSV 列名格式: date,{exchange}.{code}.{feature},...
+// 返回去重的 symbol 集合（如 {"sh.600111", "sz.000100", ...}）
+static Set<String> ExtractSymbolsFromCsv(const String& csvPath) {
+    Set<String> symbols;
+    std::ifstream csvFile(csvPath);
+    if (!csvFile.is_open()) return symbols;
+
+    String headerLine;
+    if (!std::getline(csvFile, headerLine)) return symbols;
+
+    std::istringstream ss(headerLine);
+    String col;
+    while (std::getline(ss, col, ',')) {
+        auto firstDot = col.find('.');
+        if (firstDot == String::npos) continue;
+        auto secondDot = col.find('.', firstDot + 1);
+        if (secondDot == String::npos) continue;
+        String symbol = col.substr(0, secondDot);
+        if (symbol.size() > 3 && (symbol.substr(0, 3) == "sh." || symbol.substr(0, 3) == "sz.")) {
+            symbols.insert(symbol);
+        }
+    }
+    return symbols;
+}
 
 // 快速回测模式：重写策略图 JSON
 // 1. 找到 XGBoost 节点
@@ -178,6 +206,24 @@ void RewriteScriptForFastMode(nlohmann::json& script, const String& cachePath, c
                 node["data"]["params"]["modelFile"]["value"] = modelPath;
                 break;
             }
+        }
+    }
+
+    // 9. 从 feature_cache CSV 提取 symbol 列表，注入 XGBoost 节点 params
+    //    快速模式下 CacheFeatureNode 替代了整个上游子图，discoverUpstreamSymbols() 无法找到 QuoteInputNode，
+    //    需要显式传递 symbol 列表供 XGBoostNode Init 使用
+    if (!cachePath.empty()) {
+        auto symbols = ExtractSymbolsFromCsv(cachePath);
+        if (!symbols.empty()) {
+            nlohmann::json symArray = nlohmann::json::array();
+            for (auto& s : symbols) symArray.push_back(s);
+            for (auto& node : nodes) {
+                if (node["id"].get<std::string>() == xgbNodeId) {
+                    node["data"]["params"]["fast_mode_symbols"] = symArray;
+                    break;
+                }
+            }
+            INFO("[RewriteForFastMode] injected {} symbols from CSV into XGBoost({})", symbols.size(), xgbNodeId);
         }
     }
 

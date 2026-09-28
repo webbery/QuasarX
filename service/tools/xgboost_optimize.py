@@ -139,7 +139,9 @@ def load_and_prepare_data(args):
 
     if args.label_shape == "matrix":
         # 多标的 matrix 模式：从列名前缀解析 symbols
-        symbol_prefixes = sorted({f"{c.split('.')[0]}." for c in df.columns if c != "date" and len(c.split('.')) >= 3})
+        # 列名格式: {exchange}.{code}.{feature}，如 sh.600111.breakout
+        # 标的前缀 = 前两段: sh.600111.
+        symbol_prefixes = sorted({".".join(c.split(".")[:2]) + "." for c in df.columns if c != "date" and len(c.split(".")) >= 3})
         if not symbol_prefixes:
             emit({"type": "error", "message": "matrix 模式无法从列名解析标的前缀"})
             sys.exit(1)
@@ -312,7 +314,7 @@ def main():
     parser.add_argument("--frequency", default="1d")
 
     # 快速回测参数
-    parser.add_argument("--base-url", default="https://localhost:19107")
+    parser.add_argument("--base-url", required=True, help="服务地址（C++ 传入）")
     parser.add_argument("--auth-token", default="")
     parser.add_argument("--feature-cache", required=True,
                         help="/v0/ml collect 产出的特征 CSV 路径")
@@ -322,11 +324,12 @@ def main():
 
     args = parser.parse_args()
 
-    # 输出目录：experiments/optimize_fast_{ts}/
+    # 输出目录：data/models/experiments/optimize_fast_{ts}/
+    # XGBoostNode 从 {dbPath}/models/ 解析 modelFile，所以模型必须保存在 data/models/ 下
     if not args.output_dir:
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output_dir = f"experiments/optimize_fast_{ts}"
+        args.output_dir = f"data/models/experiments/optimize_fast_{ts}"
 
     try:
         domains = json.loads(args.param_domains) if args.param_domains else {}
@@ -377,11 +380,18 @@ def main():
         trial_start = time.time()
         params = suggest_params(trial, domains)
 
+        # 进度心跳：trial 结束前 Python 无任何输出，若单个阶段的静默时长超过
+        # C++ 侧 readLine 空闲超时，会被误判为"脚本未输出 result"。每个阶段开始
+        # 时 emit 一次，既维持输出又供前端显示进度。
+        emit({"type": "trial_progress", "number": trial.number, "phase": "training"})
+
         # 训练
         booster = train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feature_cols)
 
         # 保存模型
         trial_model_path = save_model_and_get_path(booster, feature_cols, args, trial.number)
+
+        emit({"type": "trial_progress", "number": trial.number, "phase": "backtesting"})
 
         # 快速回测
         summary, err = call_fast_backtest(args, trial_model_path, str(Path(trial_model_path).with_suffix(".meta.json")))

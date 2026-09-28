@@ -73,44 +73,17 @@ bool PortfolioNode::Init(const nlohmann::json& config) {
         }
     }
 
-    // 交易池 - 沿路径回溯，从上游 QuoteInputNode 获取标的池
-    // 使用 BFS 遍历所有上游节点，收集所有 QuoteInputNode 的 symbol
-    Set<QNode*> visited;
-    Vector<QNode*> queue;
-
-    // 从直接上游节点开始 BFS
-    for (auto& [port, inputNode] : _ins) {
-        queue.push_back(inputNode);
-    }
-
-    while (!queue.empty()) {
-        QNode* current = queue.back();
-        queue.pop_back();
-
-        if (visited.count(current)) continue;
-        visited.insert(current);
-
-        // 如果是 QuoteInputNode，提取其 symbol
-        if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(current)) {
-            const auto& symbols = quoteNode->GetSymbols();
-            for (const auto& symbol : symbols) {
-                _pool.insert(symbol);
-            }
-        }
-
-        // 继续向上游遍历
-        for (auto& item: current->ins()) {
-            if (!visited.count(item.second)) {
-                queue.push_back(item.second);
-            }
-        }
-    }
+    // 交易池 - 沿路径回溯获取上游标的池。
+    // 快速回测模式下特征子图被 CacheFeatureNode 替代，QuoteInputNode 与交易链路断开，
+    // 因此必须走基类的 discoverUpstreamSymbols()（同时识别 QuoteInputNode 和 CacheFeatureNode），
+    // 与 SignalNode / FunctionNode / EMDNode / CUSUMNode / XGBoostNode 保持一致。
+    _pool = discoverUpstreamSymbols();
 
     if (_pool.empty()) {
-        WARN("[PortfolioNode:{}] No symbols found from upstream QuoteInputNode (traversed {} nodes)", _id, visited.size());
+        WARN("[PortfolioNode:{}] No symbols found from upstream nodes", _id);
     } else {
-        INFO("[PortfolioNode:{}] Found {} symbols from {} upstream nodes (traversed {} nodes)",
-             _id, _pool.size(), _ins.size(), visited.size());
+        INFO("[PortfolioNode:{}] Found {} symbols from {} upstream nodes",
+             _id, _pool.size(), _ins.size());
     }
 
     return true;

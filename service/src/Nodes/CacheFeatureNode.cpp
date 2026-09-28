@@ -50,13 +50,13 @@ bool CacheFeatureNode::LoadCache() {
         _featureNames.push_back(headers[i]);
         _data[headers[i]] = Vector<double>{};
 
-        // 从 key 中提取 symbol（格式 "sz.800001.MA(5)" → exchange="sz", code="800001"）
+        // 从 key 中提取 symbol（格式 "sh.600111.breakout" → "sh.600111"）
         const String& key = headers[i];
         auto firstDot = key.find('.');
         if (firstDot != String::npos) {
             auto secondDot = key.find('.', firstDot + 1);
             if (secondDot != String::npos) {
-                String strSymbol = key.substr(0, secondDot - firstDot - 1);
+                String strSymbol = key.substr(0, secondDot);
                 _symbols.insert(to_symbol(strSymbol));
             }
         }
