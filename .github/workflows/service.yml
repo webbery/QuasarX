@@ -925,11 +925,11 @@ jobs:
             ls -lh "QuantService-${TAG_NAME}-${SIMD_LABEL}.tar.gz"
           }
 
-          # upload-artifact@v4 下载时自动截断仓库子目录前缀（service/）
-          # build-artifact → build_avx2/QuantService (AVX2)
-          # build-avx512 → build_avx512/QuantService (AVX512)
+          # upload-artifact@v4 存储时截断所有路径的公共祖先目录：
+          # AVX2 上传含 service/tools/、service/test/ → 公共祖先 service/ → 产物含 build_avx2/QuantService
+          # AVX512 仅上传 service/build_avx512/* → 公共祖先 service/build_avx512/ → 产物仅含 QuantService
           package_variant "AVX2"   "build-artifact/build_avx2/QuantService"
-          package_variant "AVX512" "build-avx512/build_avx512/QuantService"
+          package_variant "AVX512" "build-avx512/QuantService"
 
       - name: Verify release artifacts
         run: |
