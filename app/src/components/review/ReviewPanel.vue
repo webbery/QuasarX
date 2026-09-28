@@ -222,38 +222,75 @@ function clearData() {
   hasData.value = false
 }
 
-// === 服务端数据加载 ===
+// === 服务端数据加载（按 Tab 懒加载 + 缓存） ===
 
-async function loadData() {
-  clearData()
-  if (!props.strategyName) return
+// 当前策略下已请求过的 Tab（含请求中）；切换策略时整体失效
+const loadedTabs = new Set<string>()
+// 请求序号 + 在途计数：用于丢弃切策略后的过期响应、避免 loading 提前复位
+let loadSeq = 0
+let inflight = 0
 
+async function loadTradeData() {
+  const seq = loadSeq
+  const name = props.strategyName
+  const resp = await axios.get('/v0/strategy/trade', { params: { name } })
+  if (seq !== loadSeq || name !== props.strategyName) return
+
+  const data = resp.data
+  if (data.trades && data.trades.length > 0) {
+    mapTradeData(data)
+    hasData.value = true
+  }
+}
+
+async function loadPerformanceData() {
+  const seq = loadSeq
+  const name = props.strategyName
+  const resp = await axios.get('/v0/strategy/performance', { params: { name } })
+  if (seq !== loadSeq || name !== props.strategyName) return
+
+  const data = resp.data
+  if (data.metrics) {
+    mapPerformanceData(data)
+    hasData.value = true
+  }
+}
+
+// Tab → 数据源；未列出的 Tab（归因分析/敏感性分析）暂无服务端数据源，不请求
+const tabLoaders: Record<string, () => Promise<void>> = {
+  trades: loadTradeData,
+  metrics: loadPerformanceData,
+}
+
+/** 加载某个 Tab 的数据；已加载过的 Tab 直接复用缓存 */
+async function loadTab(tab: string) {
+  const loader = tabLoaders[tab]
+  if (!loader) return
+  if (!props.strategyName || loadedTabs.has(tab)) return
+
+  loadedTabs.add(tab)  // 先标记，避免并发/重复触发
+  inflight++
   loading.value = true
   try {
-    // 并行请求交易明细和绩效指标
-    const [tradeResp, perfResp] = await Promise.all([
-      axios.get('/v0/strategy/trade', { params: { name: props.strategyName } }),
-      axios.get('/v0/strategy/performance', { params: { name: props.strategyName } }),
-    ])
-
-    // 处理交易明细
-    const tradeData = tradeResp.data
-    if (tradeData.trades && tradeData.trades.length > 0) {
-      mapTradeData(tradeData)
-      hasData.value = true
-    }
-
-    // 处理绩效指标
-    const perfData = perfResp.data
-    if (perfData.metrics) {
-      mapPerformanceData(perfData)
-      hasData.value = true
-    }
+    await loader()
   } catch (e: any) {
     console.error('[ReviewPanel] 加载数据失败:', e.message)
+    loadedTabs.delete(tab)  // 失败不缓存，切回该 Tab 时可重试
   } finally {
-    loading.value = false
+    if (--inflight === 0) loading.value = false
   }
+}
+
+/** 使所有 Tab 缓存失效并清空数据（切换策略时调用） */
+function invalidate() {
+  loadSeq++
+  loadedTabs.clear()
+  clearData()
+}
+
+/** 确保当前 Tab 的数据已加载（对外/供父组件调用） */
+function loadData() {
+  return loadTab(activeTab.value)
 }
 
 function mapTradeData(data: any) {
@@ -330,18 +367,23 @@ function mapPerformanceData(data: any) {
 }
 
 function reset() {
-  clearData()
+  invalidate()
 }
 
 defineExpose({ loadData, reset })
 
-// === 监听策略名称变化 ===
+// === Tab 切换：只在被展示时请求该 Tab 的数据源 ===
+
+watch(activeTab, (tab) => {
+  loadTab(tab)
+})
+
+// === 监听策略名称变化：缓存失效后重载当前 Tab ===
 
 watch(() => props.strategyName, (newName) => {
+  invalidate()
   if (newName) {
-    loadData()
-  } else {
-    clearData()
+    loadTab(activeTab.value)
   }
 })
 
@@ -350,7 +392,7 @@ watch(() => props.strategyName, (newName) => {
 onMounted(() => {
   console.info('[ReviewPanel] 组件已挂载')
   if (props.strategyName) {
-    loadData()
+    loadTab(activeTab.value)
   }
 })
 </script>
