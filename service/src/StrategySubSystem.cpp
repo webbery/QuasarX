@@ -16,11 +16,14 @@
 #include "Util/system.h"
 
 namespace {
-    // 从策略配置推断预热期 epoch 数（支持任意 Nx 格式：20d/60d/120d/250d 等）
+    // 从策略配置推断预热期 epoch 数（依赖链累积）
+    //
+    // 不能只取单节点 range 的最大值——链路是累加的。例如
+    //   input → MA(120d) → Return(20d) → ZScore(20d)
+    // 真实预热约 160 个 bar，而单节点 max 只有 120。
+    // 因此按 DAG 最长路径累加：warmup[node] = own[node] + max(warmup[parent])。
     int InferWarmupEpochsFromConfig(const nlohmann::json& config) {
-        int maxWarmup = 0;
-
-        if (!config.contains("nodes")) return maxWarmup;
+        if (!config.contains("nodes")) return 0;
 
         // 1. 找到 Input 节点的 freq
         String inputFreq;
@@ -37,28 +40,90 @@ namespace {
         }
 
         int freqSeconds = TimeStringToSeconds(inputFreq);
-        if (freqSeconds <= 0) return maxWarmup;
+        if (freqSeconds <= 0) return 0;
 
-        // 2. 遍历 Function 节点，计算最大 warmup
+        auto jsonScalarInt = [](const nlohmann::json& v) -> int {
+            if (v.is_number_integer()) return v.get<int>();
+            if (v.is_number()) return (int)v.get<double>();
+            if (v.is_string()) {
+                try { return std::stoi(v.get<std::string>()); } catch (...) { return 0; }
+            }
+            return 0;
+        };
+
+        // 节点自身预热（bar 数）
+        auto ownBars = [&](const nlohmann::json& node) -> int {
+            if (!node.contains("data")) return 0;
+            const auto& data = node["data"];
+            if (!data.contains("params")) return 0;
+            const auto& params = data["params"];
+            String nodeType = data.value("nodeType", "");
+
+            // FunctionNode：range 按 freq 换算为 bar 数
+            if (nodeType == "function" && params.contains("range")) {
+                auto& rv = params["range"];
+                String range = rv.is_object() ? rv.value("value", String{}) : rv.get<String>();
+                int sec = TimeStringToSeconds(range);
+                if (sec > 0) return (sec + freqSeconds - 1) / freqSeconds;
+                return 0;
+            }
+            // EMD/VMD 滚动窗口：windowSize 已是 bar 数
+            if (nodeType == "emd" && params.contains("windowSize")) {
+                auto& wv = params["windowSize"];
+                return wv.is_object() ? jsonScalarInt(wv["value"]) : jsonScalarInt(wv);
+            }
+            // HMM 预热期
+            if (nodeType == "hmm" && params.contains("warmup_period")) {
+                auto& wv = params["warmup_period"];
+                return wv.is_object() ? jsonScalarInt(wv["value"]) : jsonScalarInt(wv);
+            }
+            return 0;
+        };
+
+        // 2. 建图
+        Map<String, int> own;                    // node id -> 自身预热
+        Map<String, int> indeg;                  // node id -> 入度
+        Map<String, Vector<String>> children;    // node id -> 下游
         for (auto& node : config["nodes"]) {
-            JSON_SKIP_IF_MISSING(node, "data");
-            String nodeType = node["data"].value("nodeType", "");
-            if (nodeType != "function") continue;
-
-            auto& data = node["data"];
-            JSON_SKIP_IF_MISSING(data, "params");
-            auto& params = data["params"];
-            JSON_SKIP_IF_MISSING(params, "range");
-            String range = params["range"]["value"];
-
-            int rangeSeconds = TimeStringToSeconds(range);
-            if (rangeSeconds <= 0) continue;  // 解析失败/格式异常 → 跳过
-
-            // 计算需要的 epoch 数（向上取整）
-            int epochs = (rangeSeconds + freqSeconds - 1) / freqSeconds;
-            maxWarmup = std::max(maxWarmup, epochs);
+            JSON_SKIP_IF_MISSING(node, "id");
+            String id = node["id"].get<std::string>();
+            own[id] = ownBars(node);
+            indeg[id] = 0;
+        }
+        if (config.contains("edges")) {
+            for (auto& e : config["edges"]) {
+                if (!e.contains("source") || !e.contains("target")) continue;
+                String s = e["source"].get<std::string>();
+                String t = e["target"].get<std::string>();
+                if (!own.count(s) || !own.count(t)) continue;
+                children[s].push_back(t);
+                indeg[t]++;
+            }
         }
 
+        // 3. Kahn 拓扑 + 最长路径累积
+        Map<String, int> warmup;
+        Vector<String> queue;
+        for (auto& [id, d] : indeg) {
+            if (d == 0) {
+                queue.push_back(id);
+                warmup[id] = own[id];
+            }
+        }
+        int maxWarmup = 0;
+        for (size_t i = 0; i < queue.size(); ++i) {
+            // 必须按值取，不能用 const String&：循环体里的 queue.push_back 会触发
+            // vector 扩容，指向 queue 元素的引用随之失效，后续 children[id] / warmup[id]
+            // 就解引用了野指针。表现为 std::bad_alloc（堆被写坏后分配器失控），
+            // 独立复现时是 SIGSEGV。仅当某节点有 >=2 个下游时才会踩到——单子节点时
+            // 扩容后不再解引用，侥幸不炸，所以很难复现。
+            const String id = queue[i];
+            maxWarmup = std::max(maxWarmup, warmup[id]);
+            for (auto& c : children[id]) {
+                warmup[c] = std::max(warmup[c], own[c] + warmup[id]);
+                if (--indeg[c] == 0) queue.push_back(c);
+            }
+        }
         return maxWarmup;
     }
 }
