@@ -410,16 +410,9 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
         DoneGuard guard(this, strategy, _flows[strategy]._graph);
         context.setBacktestRunId(runId);
 
-        int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
-        context.SetWarmupEpochs(warmupEpochs);
-
-        if (warmupEpochs > 0) {
-            INFO("[Backtest] Warmup period: {} epochs", warmupEpochs);
-        }
-
         auto& flow = _flows[strategy];
 
-        // 获取主 Exchange 的 BacktestContext（用于快照数据）
+        // 获取主 Exchange 的 BacktestContext（用于快照数据 + 交易起点偏移）
         auto* stockExch = dynamic_cast<HistorySimulationBase*>(
             exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
         BacktestContext* btContext = stockExch ? stockExch->getBacktestContext(runId) : nullptr;
@@ -429,6 +422,19 @@ void FlowSubsystem::StartBacktestWithExchangeMgr(const String& strategy, run_id_
             auto* etfExch = dynamic_cast<HistorySimulationBase*>(
                 exchangeMgr->GetExchangeByType(ExchangeType::EX_ETF_HIST_SIM));
             btContext = etfExch ? etfExch->getBacktestContext(runId) : nullptr;
+        }
+
+        // warmup 取「推断值」与「backtest.start 交易起点偏移」的 max（与 StartDaily 同口径）：
+        //   推断值保证特征预热完成，偏移保证不早于 backtest.start 交易。
+        //   只用推断值会让回测在 backtest.start 之前就下单，OOS 窗口被样本内持仓污染。
+        int inferredWarmup = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
+        int tradingStartEpochs = btContext ? btContext->getWarmupEpochsHint() : 0;
+        int warmupEpochs = std::max(inferredWarmup, tradingStartEpochs);
+        context.SetWarmupEpochs(warmupEpochs);
+
+        if (warmupEpochs > 0) {
+            INFO("[Backtest] Warmup period: {} epochs (inferred={}, tradingStart={})",
+                 warmupEpochs, inferredWarmup, tradingStartEpochs);
         }
 
         try {
