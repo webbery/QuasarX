@@ -955,6 +955,15 @@ void ExchangeManager::SetBacktestTimeRange(time_t start, time_t end) {
     }
 }
 
+void ExchangeManager::ClearBacktestTimeRange() {
+    for (auto& [name, exch] : _exchanges) {
+        auto* base = dynamic_cast<HistorySimulationBase*>(exch);
+        if (base) {
+            base->ClearBacktestTimeRange();
+        }
+    }
+}
+
 void ExchangeManager::ConfigureSlippageModels(const Set<contract_type>& sources, const nlohmann::json& slippageConfig) {
     auto model = SlippageFactory::create(slippageConfig);
 

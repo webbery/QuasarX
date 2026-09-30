@@ -101,6 +101,8 @@ public:
 
     // === 回测时间范围配置 ===
     void SetBacktestTimeRange(time_t start, time_t end);
+    // 清除时间范围配置（每次回测入口显式调用，避免上一次回测的范围泄漏到本次）
+    void ClearBacktestTimeRange();
     bool HasBacktestTimeRange() const;
     time_t GetBacktestStartTime() const;
     time_t GetBacktestEndTime() const;

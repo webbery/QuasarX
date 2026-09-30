@@ -58,6 +58,7 @@ bool FormulaParser::parse(const String& code) {
         INFO("** Node: {}, token: {}", _ast->name, _ast->token);
         printAST(_ast);
 #endif
+        _init = true;
         return true;
     } else {
         FATAL("Parse failed for formula: {}", _codes);

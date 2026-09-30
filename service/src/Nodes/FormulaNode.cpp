@@ -42,7 +42,21 @@ bool FormulaNode::Init(const nlohmann::json& config) {
         }
     }
 
+    CollectVariants();
     return true;
+}
+
+void FormulaNode::CollectVariants() {
+    for (auto& item : _ins) {
+        auto outs = item.second->out_elements();
+        for (auto& [key, type] : outs) {
+            Vector<String> tokens;
+            split(key, tokens, ".");
+            if (!tokens.empty()) {
+                _variants.insert(tokens.back());
+            }
+        }
+    }
 }
 
 NodeProcessResult FormulaNode::Process(const String& strategy, DataContext& context) {
@@ -51,21 +65,8 @@ NodeProcessResult FormulaNode::Process(const String& strategy, DataContext& cont
         return NodeProcessResult::Skip;
     }
 
-    // 收集变量名
-    Set<String> variants;
-    for (auto& item : _ins) {
-        auto outs = item.second->out_elements();
-        for (auto& [key, type] : outs) {
-            Vector<String> tokens;
-            split(key, tokens, ".");
-            if (!tokens.empty()) {
-                variants.insert(tokens.back());
-            }
-        }
-    }
-
     // 复用 FormulaParser 计算
-    auto results = _parser->computeNumeric(_symbols, variants, context);
+    auto results = _parser->computeNumeric(_symbols, _variants, context);
 
     // 写入 DataContext
     for (auto& [sym, value] : results) {

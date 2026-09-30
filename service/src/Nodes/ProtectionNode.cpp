@@ -227,7 +227,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             auto run_id = context.getBacktestRunId();
             auto btCtx = histExchange->getBacktestContext(run_id);
             if (btCtx) {
-                INFO("[ProtectionNode] syncPositions: run_id={}, epoch={}", run_id, context.GetEpoch());
+                // INFO("[ProtectionNode] syncPositions: run_id={}, epoch={}", run_id, context.GetEpoch());
                 for (const auto& sym : btCtx->getSymbols()) {
                     int64_t pos = btCtx->getPosition(sym);
                     // INFO("[ProtectionNode]   symbol={} position={}", get_symbol(sym), pos);
@@ -253,6 +253,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
     // 移除已平仓的标的
     for (auto it = _entry_info.begin(); it != _entry_info.end(); ) {
         if (!current_symbols.count(it->first)) {
+            _pending_close.erase(it->first);
             it = _entry_info.erase(it);
         } else {
             ++it;
@@ -308,7 +309,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     // 从 Server 同步持仓
     syncPositions(strategy, context);
 
-    INFO("[ProtectionNode] Process: epoch={}, _entry_info.size={}", context.GetEpoch(), _entry_info.size());
+    DEBUG_INFO("[ProtectionNode] Process: epoch={}, _entry_info.size={}", context.GetEpoch(), _entry_info.size());
 
     if (_entry_info.empty()) {
         INFO("[ProtectionNode] _entry_info is empty, returning early");
@@ -328,6 +329,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
 
     for (const auto& [symbol, info] : _entry_info) {
         if (info.avg_price <= 0) continue;
+        if (_pending_close.count(symbol)) continue;
 
         // 获取当前价
         double current_price = 0.0;
@@ -516,6 +518,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         rc->triggered = true;
         rc->trigger_type = triggered;
         rc->action = RiskAction::Close;
+        _pending_close.insert(triggered_symbol);
 
         ProtectionEvent evt;
         evt.bar_index = current_bar;

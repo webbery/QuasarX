@@ -270,18 +270,25 @@ run_id_t FlowSubsystem::StartBacktest(const String& strategy, const Set<symbol_t
         DoneGuard guard(this, strategy, _flows[strategy]._graph);
         context.setBacktestRunId(runId);
 
-        // 设置 warmup epochs 到 context
-        int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
-        context.SetWarmupEpochs(warmupEpochs);
-
-        if (warmupEpochs > 0) {
-            INFO("[Backtest] Warmup period: {} epochs", warmupEpochs);
-        }
-
         auto& flow = _flows[strategy];
         // 获取回测上下文
         auto* exchange = dynamic_cast<HistorySimulationBase*>(_handle->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
         BacktestContext* btContext = exchange ? exchange->getBacktestContext(runId) : nullptr;
+
+        // 设置 warmup epochs 到 context：
+        //   推断值（依赖链累积）与 context 里的交易起点偏移（backtest.start 对应的 bar 数）取 max。
+        //   前者保证特征预热完成，后者保证不早于 backtest.start 交易。
+        int warmupEpochs = _handle->GetStrategySystem()->GetWarmupEpochs(strategy);
+        int tradingStartEpochs = btContext ? btContext->getWarmupEpochsHint() : 0;
+        if (tradingStartEpochs > warmupEpochs) {
+            warmupEpochs = tradingStartEpochs;
+        }
+        context.SetWarmupEpochs(warmupEpochs);
+
+        if (warmupEpochs > 0) {
+            INFO("[Backtest] Warmup period: {} epochs (inferred={}, tradingStart={})",
+                 warmupEpochs, _handle->GetStrategySystem()->GetWarmupEpochs(strategy), tradingStartEpochs);
+        }
 
         try {
             if (IsUseShareMemory(flow)) {

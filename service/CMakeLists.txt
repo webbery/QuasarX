@@ -306,6 +306,10 @@ if(SIMD_COMPILE_FLAG)
 endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE QS_VERSION="${GIT_TAG_VERSION}")
+# SIMD 档位写进产物指纹：CI 从同一 git tag 构建 AVX2/AVX512 两个二进制，git describe
+# 无法区分，而 VMD/CUSUM 等数值路径与 SIMD 档位绑定（排查"两端数值分歧"时必须先确认
+# 两边是不是同一档位）。这只是字符串宏，不会启用任何代码生成。
+target_compile_definitions(${PROJECT_NAME} PRIVATE QS_SIMD_LEVEL="${SIMD_LEVEL}")
 
 
 if (WIN32)

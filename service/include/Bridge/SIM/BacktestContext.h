@@ -91,6 +91,12 @@ public:
     time_t getCommonEndTime() const { return _commonEndTime; }
     void setCommonEndTime(time_t t) { _commonEndTime = t; }
 
+    // 交易起点偏移：数据窗起点 → backtest.start 之间的 bar 数。
+    // 作为 warmup 下限交给 FlowSubsystem（与推断 warmup 取 max），
+    // 保证 Signal/Execution/Portfolio 不早于 backtest.start 执行。
+    int getWarmupEpochsHint() const { return _warmupEpochsHint; }
+    void setWarmupEpochsHint(int n) { _warmupEpochsHint = n; }
+
     // 跨日检测（T+0/T+1 控制用）
     time_t getLastTradeDay() const { return _lastTradeDay; }
     void setLastTradeDay(time_t day) { _lastTradeDay = day; }
@@ -251,6 +257,7 @@ private:
     // 共同时间范围（多标的时间对齐）
     time_t _commonStartTime = 0;
     time_t _commonEndTime = 0;
+    int _warmupEpochsHint = 0;   // 交易起点偏移（数据窗起点 → backtest.start 的 bar 数）
 
     // 上一个交易日（用于跨日检测）
     time_t _lastTradeDay = 0;

@@ -277,6 +277,7 @@ public:
      * @brief 对所有历史回测 Exchange 设置回测时间范围
      */
     void SetBacktestTimeRange(time_t start, time_t end);
+    void ClearBacktestTimeRange();
 
     /**
      * @brief 从 config.json 加载 etf.t0/etf.t1 并设置到 ETFHistorySimulation

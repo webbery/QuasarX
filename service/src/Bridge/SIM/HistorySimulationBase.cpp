@@ -399,7 +399,10 @@ run_id_t HistorySimulationBase::createBacktestContext(
     time_t minEndTime = std::numeric_limits<time_t>::max();
 
     if (_hasBacktestTimeRange) {
-        INFO("[Backtest] Configured time range: {} ~ {}",
+        // backtest.start 表示「交易起点」而非「数据窗截断」：数据仍从自然起点加载，
+        // 让特征节点有足够历史预热，只是在前 N 个 epoch 内跳过 Signal/Execution/Portfolio
+        // 节点（N = 数据窗起点到 backtest.start 的 bar 数，见下方 tradingStartEpochs）。
+        INFO("[Backtest] Configured range: trading {} ~ {} (data window keeps full history for warmup)",
              ToString(_backtestStartTime, "%Y-%m-%d"),
              ToString(_backtestEndTime, "%Y-%m-%d"));
     }
@@ -430,9 +433,6 @@ run_id_t HistorySimulationBase::createBacktestContext(
         }
     }
 
-    if (_backtestStartTime != 0) {
-        maxStartTime = _backtestStartTime;
-    }
     if (_backtestEndTime != 0) {
         minEndTime = _backtestEndTime;
     }
@@ -445,6 +445,10 @@ run_id_t HistorySimulationBase::createBacktestContext(
 
     // 设置每个 symbol 的起始索引，并计算对齐后的共同 bar 数量
     size_t commonBars = std::numeric_limits<size_t>::max();
+    // 交易起点偏移：数据窗起点 → backtest.start 之间的 bar 数（取所有标的最晚值）。
+    // 数据窗本身不截断，特征节点照常从窗口起点开始预热；
+    // 该偏移只会作为 warmup 下限，让 Signal/Execution/Portfolio 在 start 之前不执行。
+    size_t tradingStartEpochs = 0;
     for (auto symbol : symbols) {
         auto itr = _csvs.find(symbol);
         if (itr != _csvs.end()) {
@@ -461,6 +465,17 @@ run_id_t HistorySimulationBase::createBacktestContext(
             context->setCurIndex(symbol, startIndex);
             INFO("Symbol {} start index: {}", get_symbol(symbol), startIndex);
 
+            if (_backtestStartTime != 0) {
+                size_t off = data.size() - startIndex;  // 默认：start 之后无数据 → 全程不交易
+                for (size_t i = startIndex; i < data.size(); ++i) {
+                    if (data._datetime[i] >= _backtestStartTime) {
+                        off = i - startIndex;
+                        break;
+                    }
+                }
+                tradingStartEpochs = std::max(tradingStartEpochs, off);
+            }
+
             size_t symbolBars = (data.size() > startIndex) ? (data.size() - startIndex) : 0;
             if (symbolBars < commonBars) {
                 commonBars = symbolBars;
@@ -469,6 +484,13 @@ run_id_t HistorySimulationBase::createBacktestContext(
             context->setCurIndex(symbol, 0);
             commonBars = 0;  // 没有数据的 symbol，共同 bar 数为 0
         }
+    }
+
+    // 交易起点偏移作为 warmup 下限写入 context（AgentSubSystem 会与推断 warmup 取 max）
+    context->setWarmupEpochsHint(static_cast<int>(tradingStartEpochs));
+    if (tradingStartEpochs > 0) {
+        INFO("[Backtest] Trading starts after {} warmup epochs (backtest.start), data window starts at {}",
+             tradingStartEpochs, ToString(maxStartTime, "%Y-%m-%d"));
     }
 
     // 使用对齐后的共同 bar 数量，而不是第一个 symbol 的 bar 数
@@ -1119,6 +1141,12 @@ void HistorySimulationBase::SetBacktestTimeRange(time_t start, time_t end) {
     _hasBacktestTimeRange = true;
     _backtestStartTime = start;
     _backtestEndTime = end;
+}
+
+void HistorySimulationBase::ClearBacktestTimeRange() {
+    _hasBacktestTimeRange = false;
+    _backtestStartTime = 0;
+    _backtestEndTime = 0;
 }
 
 void HistorySimulationBase::SetLoadDateRange(const String& startDate, const String& endDate) {

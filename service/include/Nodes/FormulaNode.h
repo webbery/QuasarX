@@ -16,9 +16,12 @@ public:
     virtual Map<String, ArgType> out_elements() override;
 
 private:
+    void CollectVariants();
+private:
     Server* _server;
     FormulaParser* _parser;
     String _expression;
     Vector<symbol_t> _symbols;
     String _label;
+    Set<String> _variants;
 };

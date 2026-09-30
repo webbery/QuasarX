@@ -609,7 +609,7 @@ Map<symbol_t, double> FormulaParser::computeNumeric(const Vector<symbol_t>& symb
     }
 
     // 预处理截面函数：先构建截面图，再执行（与 envokeMixedCase 一致）
-    if (hasCrossSectionFunctions(*_ast)) {
+    if ((_init && _hasCross) || (_hasCross = hasCrossSectionFunctions(*_ast))) {
         buildCrossSectionGraph(*_ast);
         computeCrossSectionGraph(symbols, context);
     }

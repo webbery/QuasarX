@@ -955,12 +955,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # 仅生成「上一个 v* tag → 当前 tag」的变更段，而非完整历史 changelog
+      # 通过 git tag 按版本号降序排，找到当前 tag 之后的下一个 tag（即前一个发布版本）
+      - name: Find previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | sed -n "/^${GITHUB_REF_NAME}$/{n;p;}")
+          if [ -n "$PREV_TAG" ]; then
+            echo "Previous tag: $PREV_TAG"
+            echo "range=--range ${PREV_TAG}..${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No previous v* tag (first release) — fallback to full history up to ${GITHUB_REF_NAME}"
+            echo "range=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate changelog
         id: changelog
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --tag ${{ github.ref_name }} --output CHANGELOG.md
+          # range 为空时（首个 tag），git-cliff 默认从首个 commit 开始，等价于本次发布的全部变更
+          args: --tag ${{ github.ref_name }} ${{ steps.prev_tag.outputs.range }} --output CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

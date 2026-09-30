@@ -222,5 +222,8 @@ private:
     // 截面函数图
     CrossSectionGraph _csGraph;
 
+    bool _init: 1 = false; // 是否已经初始化parser
+    bool _hasCross: 1 = false; // 是否有截面函数
+
     std::unordered_map<String, intrinsic_function> _functions;
 };

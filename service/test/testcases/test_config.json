@@ -99,6 +99,10 @@
       "_doc": "SHIBOR 利率",
       "enabled": true
     },
+    "option_download": {
+      "_doc": "期权下载脚本 smoke + 在线执行测试 (RUN_OPTION_DOWNLOAD_TESTS=1 启用网络测试)",
+      "enabled": true
+    },
     "sectorquote": {
       "_doc": "行业板块实时行情",
       "enabled": true

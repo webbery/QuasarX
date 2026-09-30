@@ -88,6 +88,9 @@ private:
     // 风控触发事件记录（供回测 summary 和复盘使用）
     Vector<ProtectionEvent> _events;
 
+    // 已触发风控但持仓尚未平仓的标的（防止重复触发）
+    Set<symbol_t> _pending_close;
+
     // 公式止损
     FormulaParser* _formulaParser = nullptr;
     Vector<symbol_t> _formulaSymbols;

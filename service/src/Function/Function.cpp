@@ -87,6 +87,11 @@ context_t STD::operator()(const Map<String, context_t>& args) {
         }
     }, args.begin()->second);
 
+    // 跳过 NaN 输入，不污染滑动窗口和累加器
+    if (std::isnan(value) || std::isinf(value)) {
+        return std::nan("nan");
+    }
+
     if (_count < _window) {
         _buffer[_count] = value;
         _sumAcc.add(value);
@@ -239,6 +244,11 @@ context_t ZScore::operator()(const Map<String, context_t>& args) {
             value = std::nan("nan");
         }
     }, args.begin()->second);
+
+    // 跳过 NaN 输入，不污染滑动窗口和累加器
+    if (std::isnan(value) || std::isinf(value)) {
+        return std::nan("nan");
+    }
 
     // 滑动窗口更新
     if (_count < _window) {
