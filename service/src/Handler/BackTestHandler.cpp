@@ -8,6 +8,7 @@
 #include "ExchangeManager.h"
 #include "Util/system.h"
 #include "Util/datetime.h"
+#include "Util/provenance.h"
 #include "json.hpp"
 #include "server.h"
 #include <filesystem>
@@ -87,6 +88,25 @@ static Set<String> ExtractSymbolsFromCsv(const String& csvPath) {
         }
     }
     return symbols;
+}
+
+// 从策略图里取 XGBoost 节点的 modelFile（provenance 记录模型身份用）
+static String findXgbModelFile(const nlohmann::json& script) {
+    if (!script.contains("nodes") || !script["nodes"].is_array()) return String();
+    for (const auto& node : script["nodes"]) {
+        if (!node.is_object() || !node.contains("data")) continue;
+        const auto& data = node["data"];
+        if (!data.is_object() || data.value("nodeType", "") != "xgboost") continue;
+        if (!data.contains("params") || !data["params"].is_object()) continue;
+        const auto& p = data["params"];
+        if (!p.contains("modelFile")) continue;
+        const auto& mf = p["modelFile"];
+        if (mf.is_string()) return mf.get<String>();
+        if (mf.is_object() && mf.contains("value") && mf["value"].is_string()) {
+            return mf["value"].get<String>();
+        }
+    }
+    return String();
 }
 
 // 快速回测模式：重写策略图 JSON
@@ -299,15 +319,32 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     }
 
     // === 快速回测模式：检测 feature_cache 字段 ===
-    {
-        // JSON 模式从 params 读取；multipart 模式从 script 顶层字段读取
-        String featureCache = isMultipart ? script.value("feature_cache", "") : params.value("feature_cache", "");
-        String modelPath = isMultipart ? script.value("model_path", "") : params.value("model_path", "");
+    // JSON 模式从 params 读取；multipart 模式从 script 顶层字段读取
+    String featureCache = isMultipart ? script.value("feature_cache", "") : params.value("feature_cache", "");
+    String modelPath = isMultipart ? script.value("model_path", "") : params.value("model_path", "");
 
-        if (!featureCache.empty()) {
-            INFO("[Backtest] Fast mode: feature_cache='{}', model_path='{}'", featureCache, modelPath);
-            RewriteScriptForFastMode(script, featureCache, modelPath);
-        }
+    // 指纹必须在快速模式重写图**之前**算：它标识用户 authored 的那张图。
+    // 重写后再算一份 effective_hash，标识实际被执行的图（两者不同即说明走了 cache 路径）。
+    const prov::StrategyFingerprint strategyFp = prov::fingerprintStrategy(script);
+
+    // 回测一开始就把策略身份写进日志：翻日志找"某次回测跑的哪一版策略"时，
+    // 用这次 hash 与 scripts/.history/{name}/{hash 前 16 位}.json 直接对上原文。
+    // hash 是语义值指纹（不含 name/id/排版），因此同名不同版也能区分。
+    INFO("[Backtest][Provenance] strategy='{}' id='{}' hash={} shape={} nodes={} edges={} mode={}",
+         script.value("name", ""), script.value("id", ""),
+         strategyFp.hash, strategyFp.shapeDigest, strategyFp.nodeCount, strategyFp.edgeCount,
+         featureCache.empty() ? "compute" : "cache");
+    if (!strategyFp.err.empty()) {
+        WARN("[Backtest][Provenance] fingerprint unavailable: {}", strategyFp.err);
+    }
+
+    if (!featureCache.empty()) {
+        INFO("[Backtest] Fast mode: feature_cache='{}', model_path='{}'", featureCache, modelPath);
+        RewriteScriptForFastMode(script, featureCache, modelPath);
+    }
+    const String effectiveHash = prov::fingerprintStrategy(script).hash;
+    if (!featureCache.empty()) {
+        INFO("[Backtest][Provenance] effective_hash={} (快速模式重写后实际执行的图)", effectiveHash);
     }
 
     String strategyName = script.value("id", "unknown");
@@ -369,7 +406,9 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
         }
     }
 
-    // 2.6 解析回测时间范围（可选，不配置则使用数据文件的全范围）
+    // 2.6 解析回测时间范围（可选）
+    //     每次回测都显式设置/重置，避免上一次回测的范围残留到本次（HistorySimulation 是长驻单例）。
+    //     语义：backtest.start = 交易起点（数据窗仍保留完整历史用于特征预热），backtest.end = 数据结束。
     if (script.contains("backtest") && script["backtest"].contains("start") && script["backtest"].contains("end")) {
         String startStr = script["backtest"]["start"].get<std::string>();
         String endStr = script["backtest"]["end"].get<std::string>();
@@ -379,10 +418,14 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
 
         if (startT > 0 && endT > 0 && endT > startT) {
             exchangeMgr->SetBacktestTimeRange(startT, endT);
-            INFO("[Backtest] Time range configured: {} ~ {}", startStr, endStr);
+            INFO("[Backtest] Trading range configured: {} ~ {}", startStr, endStr);
         } else {
-            WARN("[Backtest] Invalid time range: {} ~ {}, using data range", startStr, endStr);
+            exchangeMgr->ClearBacktestTimeRange();
+            WARN("[Backtest] Invalid time range: {} ~ {}, using full data range", startStr, endStr);
         }
+    } else {
+        // 策略未配置范围 → 显式清除，否则会继承上一次回测的残留配置
+        exchangeMgr->ClearBacktestTimeRange();
     }
 
     INFO("[Backtest] Strategy graph validation passed for: {}", strategyName);
@@ -724,6 +767,71 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
     INFO("[Backtest][RSS] after ReleaseStrategy: {:.1f} MB (delta from start: {:+.1f} MB)",
          getProcessRSS(), getProcessRSS() - rss_start);
 
+    // === provenance：把这次运行的四件身份钉进结果 ===
+    // 动机：策略文件 / 模型 / 特征缓存在磁盘上都是原地覆盖，路径与 mtime 都不构成
+    // 身份，事后无法回答"这次回测到底用了哪一版"。见 Util/provenance.h
+    {
+        const String dbPath = _server->GetConfig().GetDatabasePath();
+
+        nlohmann::json pv;
+        pv["scheme"] = prov::kScheme;
+        pv["mode"] = featureCache.empty() ? "compute" : "cache";
+        pv["strategy"] = {
+            {"name", script.value("name", "")},
+            {"id", strategyName},
+            {"version", prov::metaField(script, "version", "")},
+            {"hash", strategyFp.hash},
+            {"shape_digest", strategyFp.shapeDigest},
+            {"effective_hash", effectiveHash},
+            {"nodes", strategyFp.nodeCount},
+            {"edges", strategyFp.edgeCount}};
+        if (!strategyFp.err.empty()) pv["strategy"]["error"] = strategyFp.err;
+
+        // 模型身份：快速模式用请求里的 model_path，否则从图里取 XGBoost 节点
+        String mf = modelPath.empty() ? findXgbModelFile(script) : modelPath;
+        if (mf.empty()) {
+            pv["model"] = nullptr;
+        } else {
+            pv["model"] = {{"path", mf},
+                           {"sha256", prov::sha256File(dbPath + "/models/" + mf)}};
+        }
+
+        // 特征缓存身份：cache 模式下这是训练/推理一致性的锚点
+        if (featureCache.empty()) {
+            pv["feature_cache"] = nullptr;
+        } else {
+            pv["feature_cache"] = {{"path", featureCache},
+                                   {"sha256", prov::sha256File(featureCache)}};
+        }
+
+        pv["runtime"] = {{"version", prov::runtimeVersion()},
+                         {"build", prov::runtimeBuildTime()},
+                         {"simd", prov::runtimeSimdLevel()}};
+        pv["warnings"] = nlohmann::json::array();
+
+        results["provenance"] = pv;
+
+        // 收尾再打一行：无论有没有 debug 目录都打，保证日志里一定能查到
+        // 本次回测的策略/模型/缓存身份（用于跨运行对比"是不是同一版"）
+        INFO("[Backtest][Provenance] done: strategy_hash={} effective_hash={} shape={} model_sha256={} cache_sha256={}",
+             prov::shortHash(strategyFp.hash, 16),
+             prov::shortHash(effectiveHash, 16),
+             prov::shortHash(strategyFp.shapeDigest, 12),
+             pv["model"].is_null() ? "none" : prov::shortHash(pv["model"]["sha256"].get<String>(), 16),
+             pv["feature_cache"].is_null() ? "none" : prov::shortHash(pv["feature_cache"]["sha256"].get<String>(), 16));
+
+        // DebugNode 的目录在 ReleaseStrategy 时才创建；存在才写，避免为不产生
+        // 调试输出的策略（test_mode 关闭时 DebugNode 会被 OptimizeGraph 移除）造空目录
+        const String dbgDir = dbPath + "/debug/" + strategyName;
+        if (std::filesystem::exists(dbgDir)) {
+            String perr;
+            if (!prov::writeProvenance(dbgDir, pv, &perr)) {
+                WARN("[Backtest] writeProvenance failed: {}", perr);
+            } else {
+                INFO("[Backtest] provenance written: {}/provenance.json(+.jsonl)", dbgDir);
+            }
+        }
+    }
 
     INFO("[Backtest] Completed: {}, {}", features.dump(), results["summary"].dump());
     res.status = 200;

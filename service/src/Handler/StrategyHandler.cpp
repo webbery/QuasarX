@@ -10,6 +10,8 @@
 #include "AgentSubSystem.h"
 #include "Util/string_algorithm.h"
 #include "Util/system.h"
+#include "Util/datetime.h"
+#include "Util/provenance.h"
 #include "json.hpp"
 #include "nng/nng.h"
 #include "server.h"
@@ -425,6 +427,50 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
 
     INFO("[StrategyHandler] Strategy '{}' saved successfully", name);
 
+    // === provenance：策略指纹 + 历史版本归档 ===
+    // scripts/{name} 是原地覆盖写的，覆盖后旧版本就没了。这里把每次保存的
+    // 指纹与原文各存一份，使"某次回测用的是哪一版策略图"事后可查、可重放。
+    // 注意子目录会被 StrategySubSystem 的 is_regular_file() 过滤掉，不会被当策略加载。
+    const prov::StrategyFingerprint svFp = prov::fingerprintStrategy(scriptJson);
+    {
+        nlohmann::json pv;
+        pv["scheme"] = prov::kScheme;
+        pv["name"] = name;
+        pv["id"] = prov::metaField(scriptJson, "id", "");
+        pv["version"] = prov::metaField(scriptJson, "version", "");
+        pv["hash"] = svFp.hash;
+        pv["shape_digest"] = svFp.shapeDigest;
+        pv["nodes"] = svFp.nodeCount;
+        pv["edges"] = svFp.edgeCount;
+        pv["saved_at"] = ToString(Now(), "%Y-%m-%dT%H:%M:%S");
+        if (!svFp.err.empty()) pv["error"] = svFp.err;
+
+        String perr;
+        const String provDir = String(SCRIPTS_DIR) + "/.prov/" + name;
+        if (!prov::writeProvenance(provDir, pv, &perr)) {
+            WARN("[StrategyHandler] writeProvenance failed for '{}': {}", name, perr);
+        }
+
+        // 该指纹的原文归档；同 hash 已存在则不重复写（幂等，重复保存无副作用）
+        if (!svFp.hash.empty()) {
+            const String histDir = String(SCRIPTS_DIR) + "/.history/" + name;
+            const String histPath = histDir + "/" + prov::shortHash(svFp.hash, 16) + ".json";
+            if (!std::filesystem::exists(histPath)) {
+                std::error_code ec;
+                std::filesystem::create_directories(histDir, ec);
+                std::ofstream hofs(histPath, std::ios::out | std::ios::trunc);
+                if (hofs.is_open()) {
+                    hofs << scripts;
+                } else {
+                    WARN("[StrategyHandler] cannot archive strategy version: {}", histPath);
+                }
+            }
+        }
+        INFO("[StrategyHandler] '{}' fingerprint: hash={}, shape={}, nodes={}, edges={}",
+             name, prov::shortHash(svFp.hash, 16), prov::shortHash(svFp.shapeDigest, 12),
+             svFp.nodeCount, svFp.edgeCount);
+    }
+
     // ============ 处理 multipart 模型文件 ============
     {
         String modelErrMsg;
@@ -507,6 +553,10 @@ void StrategyHandler::deployImpl(const nlohmann::json& param, const httplib::Req
     result["message"] = "success";
     result["name"] = name;
     result["running"] = running;
+    result["provenance"] = {
+        {"scheme", prov::kScheme},
+        {"hash", svFp.hash},
+        {"shape_digest", svFp.shapeDigest}};
     res.set_content(result.dump(), "application/json");
 }
 

@@ -12,6 +12,7 @@
 #include "Util/log.h"
 #include "Util/string_algorithm.h"
 #include "Util/datetime.h"
+#include "Util/provenance.h"
 #include "server.h"
 #include "std_header.h"
 #include <fstream>
@@ -833,6 +834,23 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 String userDisplayName = params.value("display_name", String());
                 if (!userVersion.empty()) meta["version"] = userVersion;
                 if (!userDisplayName.empty()) meta["display_name"] = userDisplayName;
+
+                // === provenance：模型身份 ===
+                // 路径会被 publish 原地覆盖，mtime 会被 copy2 保留源值（伪证），
+                // 只有内容哈希能标识"这一版模型"。feature_names_sha256 单独记：
+                // 特征名顺序漂移是训练/推理不一致的经典根因，必须能独立比对。
+                meta["scheme"] = prov::kScheme;
+                meta["model_sha256"] = prov::sha256File(persistPath);
+                {
+                    std::error_code ec;
+                    const auto sz = std::filesystem::file_size(persistPath, ec);
+                    if (!ec) meta["size_bytes"] = sz;
+                }
+                meta["feature_names_sha256"] = prov::featureNamesHash(state->_featureNames);
+                meta["runtime"] = {{"version", prov::runtimeVersion()},
+                                   {"build", prov::runtimeBuildTime()},
+                                   {"simd", prov::runtimeSimdLevel()}};
+
                 std::ofstream ofs(expDir + "/" + persistName + ".meta.json");
                 if (ofs.is_open()) ofs << meta.dump(2);
             }
@@ -885,6 +903,11 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                         try {
                             auto m = nlohmann::json::parse(std::ifstream(metaPath));
                             m["model_id"] = modelId;
+                            // 元数据骨架指纹：在字段最终确定后计算，这样字段增删
+                            // （如新增训练参数）会被发现，而只改值不触发。自身不参与。
+                            nlohmann::json shapeSrc = m;
+                            shapeSrc.erase("meta_shape_digest");
+                            m["meta_shape_digest"] = prov::keyPathShapeDigest(shapeSrc);
                             std::ofstream ofs(metaPath);
                             if (ofs.is_open()) ofs << m.dump(2);
                         } catch (...) {}
