@@ -145,6 +145,19 @@ def _load_base_url_from_config():
 BASE_URL = _load_base_url_from_config()
 VERIFY_SSL = False
 
+
+def reclaim_capital(token: str, strategy: str = None) -> None:
+    """归还策略资金（测试隔离用）。strategy=None 归还全部，否则归还指定策略。"""
+    body = {"action": "reclaim_all"} if strategy is None else {"action": "reclaim", "name": strategy}
+    requests.post(
+        f"{BASE_URL}/strategy",
+        json=body,
+        headers={"Authorization": token},
+        verify=VERIFY_SSL,
+        timeout=30,
+    )
+
+
 # --------------------------
 # 测试工具函数
 # --------------------------

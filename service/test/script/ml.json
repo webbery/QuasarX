@@ -1,123 +1,117 @@
 {
-    "id": "graph_001",
-    "name": "机器学习流水线",
-    "description": "包含数据输入、预处理、特征工程、模型训练和结果输出的完整流水线",
-    "nodes": [
+  "id": "test_ml_repro",
+  "name": "ML稳定性测试",
+  "version": 1,
+  "description": "Input → MA(5) → XGBoost(binary) → Signal → Portfolio → Execution，用于数值复现性测试",
+  "source": "A_hfq",
+  "backtest": {
+    "start": "2023-01-01",
+    "end": "2023-06-30"
+  },
+  "capital": 100000,
+  "nodes": [
     {
-        "id": "1",
-        "type": "custom",
-        "data": { 
-            "label": "数据输入",
-            "nodeType": "input",
-            "params": {
-                "source": {
-                    "value": "股票",
-                    "type": "select",
-                    "options": ["股票", "期货", "期权"]
-                },
-                "code": {
-                    "value": ["000001"],
-                    "type": "text"
-                },
-                "freq": {
-                    "value": "1d",
-                    "type": "select",
-                    "options": ["1d", "5m"]
-                }
-            }
-        },
-        "position": { "x": 50, "y": 100 }
+      "id": "1",
+      "type": "custom",
+      "position": { "x": 0, "y": 0 },
+      "data": {
+        "label": "行情数据",
+        "nodeType": "input",
+        "params": {
+          "source": { "value": "股票", "type": "text" },
+          "code": { "value": ["sz.800001"], "type": "text" },
+          "freq": { "value": "1d", "type": "select" },
+          "close": { "value": "close", "type": "text" },
+          "open": { "value": "open", "type": "text" },
+          "high": { "value": "high", "type": "text" },
+          "low": { "value": "low", "type": "text" },
+          "volume": { "value": "volume", "type": "text" }
+        }
+      }
     },
     {
-        "id": "2",
-        "type": "custom",
-        "data": { 
-        "label": "MinMax",
+      "id": "2",
+      "type": "custom",
+      "position": { "x": 200, "y": 0 },
+      "data": {
+        "label": "ma5",
         "nodeType": "function",
         "params": {
-            "method": {
-                "value": "MinMax",
-                "type": "select",
-                "options": ["Z-score", "MinMax", "标准化", "归一化"]
-            },
-            "缺失值": {
-            "value": "填充",
-            "type": "select",
-            "options": ["填充", "删除", "插值"]
-            },
-            "填充值": {
-            "value": "0",
-            "type": "text",
-            "visible": 0
-            }
+          "method": { "value": "MA", "type": "select" },
+          "range": { "value": "5d", "type": "text" }
         }
-        },
-        "position": { "x": 300, "y": 100 }
+      }
     },
     {
-        "id": "6",
-        "type": "custom",
-        "data": { 
-        "label": "LSTM",
-        "nodeType": "lstm",
+      "id": "3",
+      "type": "custom",
+      "position": { "x": 400, "y": 0 },
+      "data": {
+        "label": "XGBoost",
+        "nodeType": "xgboost",
         "params": {
-            "model": {
-                "value": "/root/lstm_model.onnx",
-                "type": "text"
-            },
-            "input": {
-                "value": 10,
-                "type": "number"
-            },
-            "step": {
-                "value": 5,
-                "type": "number"
-            }
+          "modelFile": { "value": "production/test_xgb_business-XGBoost.json", "type": "text" },
+          "features": { "value": "", "type": "text" },
+          "objective": { "value": "binary:logistic", "type": "select" },
+          "num_class": { "value": 2, "type": "number" }
         }
-        },
-        "position": { "x": 800, "y": 150 }
+      }
     },
     {
-        "id": "5",
-        "type": "custom",
-        "data": { 
-        "label": "结果输出",
+      "id": "4",
+      "type": "custom",
+      "position": { "x": 600, "y": 0 },
+      "data": {
+        "label": "信号",
+        "nodeType": "signal",
+        "params": {
+          "code": { "value": ["sz.800001"], "type": "text" },
+          "buy": { "value": "xgb_probs[0] > 0.5", "type": "text" },
+          "sell": { "value": "xgb_probs[0] < 0.5", "type": "text" }
+        }
+      }
+    },
+    {
+      "id": "5",
+      "type": "custom",
+      "position": { "x": 800, "y": 0 },
+      "data": {
+        "label": "组合",
+        "nodeType": "portfolio",
+        "params": {
+          "target": { "value": 0.5, "type": "number" }
+        }
+      }
+    },
+    {
+      "id": "6",
+      "type": "custom",
+      "position": { "x": 1000, "y": 0 },
+      "data": {
+        "label": "执行",
+        "nodeType": "execution",
+        "params": {}
+      }
+    },
+    {
+      "id": "7",
+      "type": "custom",
+      "position": { "x": 400, "y": 200 },
+      "data": {
+        "label": "debug",
         "nodeType": "debug",
         "params": {
-            "suffix": {
-                "value": "CSV",
-                "type": "select",
-                "options": ["CSV", "JSON", "txt"]
-            }
+          "suffix": { "value": "csv", "type": "select" }
         }
-        },
-        "position": { "x": 1050, "y": 100 }
+      }
     }
-    ],
-    "edges": [
-    {
-        "id": "1-close->2",
-        "source": "1",
-        "target": "2",
-        "sourceHandle": "field-close",
-        "targetHandle": "input",
-        "type": "default"
-    },
-    {
-        "id": "2->6",
-        "source": "2",
-        "target": "6",
-        "sourceHandle": "output",
-        "targetHandle": "input",
-        "type": "default"
-    },
-    {
-        "id": "6->5",
-        "source": "6",
-        "target": "5",
-        "sourceHandle": "output",
-        "targetHandle": "input",
-        "type": "default"
-    }
-    ]
+  ],
+  "edges": [
+    { "id": "e1->2", "source": "1", "target": "2", "sourceHandle": "1-close", "targetHandle": "2", "type": "default" },
+    { "id": "e2->3", "source": "2", "target": "3", "sourceHandle": "2", "targetHandle": "3", "type": "default" },
+    { "id": "e3->4", "source": "3", "target": "4", "sourceHandle": "3", "targetHandle": "4", "type": "default" },
+    { "id": "e4->5", "source": "4", "target": "5", "sourceHandle": "4", "targetHandle": "5", "type": "default" },
+    { "id": "e5->6", "source": "5", "target": "6", "sourceHandle": "5", "targetHandle": "6", "type": "default" },
+    { "id": "e3->7", "source": "3", "target": "7", "sourceHandle": "3", "targetHandle": "7", "type": "default" }
+  ]
 }

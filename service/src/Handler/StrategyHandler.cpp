@@ -217,20 +217,40 @@ void StrategyHandler::post(const httplib::Request& req, httplib::Response& res) 
         return;
     }
 
-    // 回收所有策略资金（测试隔离 / 管理接口）
-    if (params.contains("action") && params["action"] == "reclaim_all") {
-        auto* broker = _server->GetBrokerSubSystem();
-        if (broker && broker->GetCapitalPool()) {
-            broker->GetCapitalPool()->reclaimAll();
+    // 回收策略资金（测试隔离 / 管理接口）
+    // reclaim_all: 归还全部; reclaim: 归还指定策略（需传 name）
+    if (params.contains("action") && params["action"].is_string()) {
+        const String action = params["action"].get<String>();
+        if (action == "reclaim_all" || action == "reclaim") {
+            INFO("[StrategyHandler] reclaim request: action={}", action);
+            auto* broker = _server->GetBrokerSubSystem();
+            if (!broker || !broker->GetCapitalPool()) {
+                WARN("[StrategyHandler] capital pool not available");
+                res.status = 500;
+                res.set_content(R"({"error": "capital pool not available"})", "application/json");
+                return;
+            }
             nlohmann::json result;
-            result["message"] = "all capital reclaimed";
+            if (action == "reclaim_all") {
+                broker->GetCapitalPool()->reclaimAll();
+                INFO("[StrategyHandler] reclaimAll done");
+                result["message"] = "all capital reclaimed";
+            } else {
+                String name = params.value("name", "");
+                if (name.empty()) {
+                    res.status = 400;
+                    res.set_content(R"({"error": "reclaim requires 'name' field"})", "application/json");
+                    return;
+                }
+                double reclaimed = broker->GetCapitalPool()->reclaim(name);
+                INFO("[StrategyHandler] reclaim '{}' done, reclaimed={}", name, reclaimed);
+                result["message"] = "capital reclaimed";
+                result["reclaimed"] = reclaimed;
+            }
             res.status = 200;
             res.set_content(result.dump(), "application/json");
-        } else {
-            res.status = 500;
-            res.set_content(R"({"error": "capital pool not available"})", "application/json");
+            return;
         }
-        return;
     }
 
     // 批量拉取策略关联的模型信息（生产 + 实验 + 元数据 + 是否最新）

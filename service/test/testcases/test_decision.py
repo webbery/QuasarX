@@ -235,16 +235,10 @@ def clear_decisions(token: str, date: str = None) -> int:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def reclaim_capital(auth_token):
+def reclaim_capital_fixture(auth_token):
     """回收先前测试残留的 CapitalPool 资金，确保日终策略有足够资金分配"""
-    headers = {"Authorization": auth_token}
-    requests.post(
-        f"{BASE_URL}/strategy",
-        json={"action": "reclaim_all"},
-        headers=headers,
-        verify=False,
-        timeout=10,
-    )
+    from tool import reclaim_capital
+    reclaim_capital(auth_token)
     # 清除当日残留决策（上次测试/服务重启前的数据）
     clear_decisions(auth_token, date=today_str())
 

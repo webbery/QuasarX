@@ -61,11 +61,8 @@ def cleanup_strategy(token: str, name: str):
         json={"action": "stop", "name": name},
         headers=headers, verify=False, timeout=10,
     )
-    requests.post(
-        f"{BASE_URL}/strategy",
-        json={"action": "reclaim_all"},
-        headers=headers, verify=False, timeout=10,
-    )
+    from tool import reclaim_capital
+    reclaim_capital(token)
 
 
 def simulate_bar(token: str, bar: dict) -> dict:
