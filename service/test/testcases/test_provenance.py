@@ -42,7 +42,7 @@ import pytest
 import requests
 import urllib3
 
-from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, SCRIPTS_DIR, load_strategy, run_backtest
+from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, SCRIPTS_DIR, DEBUG_DIR, load_strategy, run_backtest
 
 urllib3.disable_warnings()
 
@@ -83,13 +83,8 @@ def _deploy(name: str, script: dict, token: str):
 
 def _reclaim_all(token: str) -> None:
     """归还全部策略资金（服务端已有的测试隔离接口 action=reclaim_all）"""
-    requests.post(
-        f"{BASE_URL}/strategy",
-        json={"action": "reclaim_all"},
-        headers=_headers(token),
-        verify=VERIFY_SSL,
-        timeout=30,
-    )
+    from tool import reclaim_capital
+    reclaim_capital(token)
 
 
 def _prov_of(name: str) -> dict:
@@ -510,7 +505,7 @@ class TestBacktestProvenance:
         assert result.get("provenance") is not None, f"回测未产出 provenance: {result}"
 
         strategy_id = result["provenance"]["strategy"]["id"]
-        dbg_dir = SERVICE_ROOT / "build" / "data" / "debug" / strategy_id
+        dbg_dir = DEBUG_DIR / strategy_id
         sidecar = dbg_dir / "provenance.json"
         history = dbg_dir / "provenance.jsonl"
 
