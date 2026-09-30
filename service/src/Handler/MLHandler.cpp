@@ -17,6 +17,7 @@
 #include "std_header.h"
 #include <fstream>
 #include <sstream>
+#include <iomanip>
 #include <random>
 #include <algorithm>
 #include <numeric>
@@ -105,7 +106,7 @@ bool writeCsv(const String& path, const Map<String, Vector<double>>& data, const
             const auto& v = data.at(k);
             double val = (i < v.size()) ? v[i] : 0.0;
             if (val != val) ofs << "";
-            else ofs << val;
+            else ofs << std::setprecision(17) << val;
             first = false;
         }
         ofs << "\n";

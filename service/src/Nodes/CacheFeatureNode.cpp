@@ -2,6 +2,7 @@
 #include "Util/system.h"
 #include <fstream>
 #include <sstream>
+#include <limits>
 
 bool CacheFeatureNode::Init(const nlohmann::json& config) {
     _cachePath = (String)config["params"]["cache_path"]["value"];
@@ -71,10 +72,15 @@ bool CacheFeatureNode::LoadCache() {
         size_t col = 0;
         while (std::getline(ss, cell, ',')) {
             if (col >= firstDataCol && (col - firstDataCol) < _featureNames.size()) {
-                try {
-                    _data[_featureNames[col - firstDataCol]].push_back(std::stod(cell));
-                } catch (...) {
-                    _data[_featureNames[col - firstDataCol]].push_back(0.0);
+                auto& vec = _data[_featureNames[col - firstDataCol]];
+                if (cell.empty()) {
+                    vec.push_back(std::numeric_limits<double>::quiet_NaN());
+                } else {
+                    try {
+                        vec.push_back(std::stod(cell));
+                    } catch (...) {
+                        vec.push_back(0.0);
+                    }
                 }
             }
             ++col;
