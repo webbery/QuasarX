@@ -963,7 +963,7 @@ jobs:
           PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | sed -n "/^${GITHUB_REF_NAME}$/{n;p;}")
           if [ -n "$PREV_TAG" ]; then
             echo "Previous tag: $PREV_TAG"
-            echo "range=--range ${PREV_TAG}..${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "range=${PREV_TAG}..${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
             echo "No previous v* tag (first release) — fallback to full history up to ${GITHUB_REF_NAME}"
             echo "range=" >> "$GITHUB_OUTPUT"
