@@ -42,12 +42,10 @@ import pytest
 import requests
 import urllib3
 
-from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, load_strategy, run_backtest
+from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, SCRIPTS_DIR, load_strategy, run_backtest
 
 urllib3.disable_warnings()
 
-# 服务工作目录为 service/build/，脚本与指纹工件都在其下
-SCRIPTS_DIR = SERVICE_ROOT / "build" / "scripts"
 PROV_DIR = SCRIPTS_DIR / ".prov"
 HISTORY_DIR = SCRIPTS_DIR / ".history"
 NODE_DATA_DIR = Path(__file__).parent / "node_test_data"

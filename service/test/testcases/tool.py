@@ -69,6 +69,26 @@ _DATA_DIR = _resolve_data_dir()
 DEBUG_DIR = _DATA_DIR / "debug"
 CSV_DATA_DIR = _DATA_DIR / "A_hfq"
 
+
+def _resolve_scripts_dir() -> Path:
+    """定位服务运行时的 scripts 目录（C++ SCRIPTS_DIR="scripts" 的绝对路径）
+
+    与 _resolve_data_dir 同理，取决于服务 cwd：
+      - CI：QuantService 在 SERVICE_ROOT → SERVICE_ROOT/scripts
+      - 本地：QuantService 在 SERVICE_ROOT/build/ → SERVICE_ROOT/build/scripts
+    """
+    if (SERVICE_ROOT / "QuantService").exists():
+        return SERVICE_ROOT / "scripts"
+    if (SERVICE_ROOT.parent / "QuantService").exists():
+        return SERVICE_ROOT.parent / "scripts"
+    build_dir = SERVICE_ROOT / "build"
+    if (build_dir / "QuantService").exists():
+        return build_dir / "scripts"
+    return SERVICE_ROOT / "scripts"
+
+
+SCRIPTS_DIR = _resolve_scripts_dir()
+
 # --------------------------
 # Debug CSV 读取
 # --------------------------
