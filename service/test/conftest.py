@@ -43,16 +43,15 @@ def upload_test_data(auth_api, is_backtest):
         return
 
     import re
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent / "testcases"))
+    from tool import SERVICE_ROOT, _resolve_data_dir
 
-    # 解析数据目录：CI 二进制在 repo root → data/；本地在 service/build/ → build/data/
-    _service_root = Path(__file__).parent.parent
-    if (_service_root / "QuantService").exists():
-        data_dir = _service_root / "data"
-    elif (_service_root / "build" / "QuantService").exists():
-        data_dir = _service_root / "build" / "data"
-    else:
-        data_dir = _service_root / "data"
-    script_dir = _service_root / "test" / "script"
+    data_dir = _resolve_data_dir()
+    # 测试合成数据（如 sz.900007）在 build/data/，服务运行数据在 winbuild/data/
+    # 导入时优先从 build/data/ 查找 CSV，回退到服务数据目录
+    _test_data_dir = SERVICE_ROOT / "build" / "data"
+    script_dir = SERVICE_ROOT / "test" / "script"
     token = auth_api.token
     headers = {"Authorization": token}
 
@@ -66,7 +65,7 @@ def upload_test_data(auth_api, is_backtest):
         if not directory.exists():
             return stocks, etfs
         for script_file in directory.glob("*.json"):
-            content = script_file.read_text()
+            content = script_file.read_text(encoding="utf-8")
             for sym in re.findall(r'(?:sh|sz|bj)\.\d{6}', content):
                 code = sym.split('.')[1]
                 prefix = int(code[:3])
@@ -154,12 +153,21 @@ def upload_test_data(auth_api, is_backtest):
         except Exception:
             return False
 
+    def _resolve_csv(filename, *search_dirs):
+        """在多个数据目录中查找同名 CSV，返回第一个存在的路径"""
+        for d in search_dirs:
+            p = d / filename
+            if p.exists():
+                return p
+        return search_dirs[0] / filename  # 兜底返回第一个路径
+
+    # 数据目录搜索顺序：build/data/（测试合成数据） > 服务数据目录（生产数据）
+    _csv_search_dirs = [_test_data_dir, data_dir]
+
     # === 导入股票数据 (日线) ===
-    hfq_dir = data_dir / "A_hfq"
-    org_dir = data_dir / "AStock"
     for symbol in sorted(stock_symbols):
-        hfq_path = hfq_dir / f"{symbol}.csv"
-        org_path = org_dir / f"{symbol}.csv"
+        hfq_path = _resolve_csv(f"A_hfq/{symbol}.csv", *_csv_search_dirs)
+        org_path = _resolve_csv(f"AStock/{symbol}.csv", *_csv_search_dirs)
         if not hfq_path.exists():
             print(f"  [SKIP] 股票 {symbol}: hfq CSV 不存在")
             continue
