@@ -207,6 +207,12 @@
       <div class="chart-content">
         <PayoffChart v-show="activeChart === 'payoff'"
           :result="result" :multi-results="multiResults" :params="params" />
+        <ProfitChart v-show="activeChart === 'profit'"
+          :result="result"
+          :premium="activeMeta?.premium ?? 0"
+          :spot="activeMeta?.spot || params.spot"
+          :strike="params.strike"
+          :is-call="params.is_call" />
         <IVSurfaceChart v-show="activeChart === 'iv'"
           :exchange="filters.exchange || 'SSE'" :product="filters.product || '50ETF'" />
         <GreeksChart v-show="activeChart === 'greeks'"
@@ -228,6 +234,7 @@ import {
   type PricingRequest, type PricingResult, type ContractInfo, type OptionContractMeta
 } from './composables/useOptionPricing'
 import PayoffChart from './panels/PayoffChart.vue'
+import ProfitChart from './panels/ProfitChart.vue'
 import IVSurfaceChart from './panels/IVSurfaceChart.vue'
 import GreeksChart from './panels/GreeksChart.vue'
 import MultiContractCompare from './panels/MultiContractCompare.vue'
@@ -235,6 +242,7 @@ import StrategyBuilder from './panels/StrategyBuilder.vue'
 
 const chartTabs = [
   { key: 'payoff', label: '收益图' },
+  { key: 'profit', label: '利润图' },
   { key: 'iv', label: 'IV 曲面' },
   { key: 'greeks', label: 'Greeks' },
   { key: 'compare', label: '多合约对比' },
