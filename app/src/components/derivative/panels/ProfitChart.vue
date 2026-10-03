@@ -13,11 +13,11 @@
         <span v-if="premiumSource !== 'market'" class="source-tag">{{ premiumSourceLabel }}</span>
       </div>
     </div>
-    <div v-if="!hasCurve" class="empty-hint">
+    <div v-show="!hasCurve" class="empty-hint">
       <i class="fas fa-chart-area"></i>
       请先在左侧选择合约并点击「计算定价」
     </div>
-    <div v-else ref="chartRef" class="chart-area"></div>
+    <div v-show="hasCurve" ref="chartRef" class="chart-area"></div>
   </div>
 </template>
 
@@ -71,6 +71,8 @@ let chart: echarts.ECharts | null = null
 
 function render() {
   if (!chart || !chartRef.value) return
+  if (!hasCurve.value) return
+  chart.resize()
 
   const series: any[] = []
   const prem = effectivePremium.value
@@ -175,6 +177,10 @@ function render() {
       },
       splitLine: { lineStyle: { color: 'rgba(74, 85, 104, 0.1)' } },
     },
+    dataZoom: [
+      { type: 'inside', xAxisIndex: 0 },
+      { type: 'inside', yAxisIndex: 0 },
+    ],
     series,
   }, true)
 }
@@ -234,15 +240,26 @@ function buildMarkLines(spots: number[]) {
 
 function handleResize() { chart?.resize() }
 
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(() => {
   if (chartRef.value) {
     chart = echarts.init(chartRef.value)
-    render()
+    if (hasCurve.value) render()
+
+    resizeObserver = new ResizeObserver(() => {
+      if (chart && chartRef.value && chartRef.value.offsetWidth > 0) {
+        chart.resize()
+        if (hasCurve.value) render()
+      }
+    })
+    resizeObserver.observe(chartRef.value)
   }
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
+  resizeObserver?.disconnect()
   window.removeEventListener('resize', handleResize)
   chart?.dispose()
 })

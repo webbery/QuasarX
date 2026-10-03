@@ -24,6 +24,9 @@
         <span class="filter-arrow" :class="{ expanded: showFilterDetail }">▼</span>
       </div>
     </div>
+    <div v-if="isMismatch" class="mismatch-hint">
+      当前标的与过滤器不一致，请切换或重新选择
+    </div>
     <div v-if="showFilterDetail && filterStats" class="filter-detail">
       <div class="filter-summary">
         <span v-for="(count, layer) in filterStats.removed_by_layer" :key="layer" class="layer-stat">
@@ -85,6 +88,10 @@ let surfaceData: IVSurfaceResult | null = null
 
 const productOptions = computed(() => PRODUCT_MAP[exchange.value] || [])
 
+const isMismatch = computed(() => {
+  return props.exchange !== exchange.value || props.product !== product.value
+})
+
 watch(exchange, () => {
   const opts = PRODUCT_MAP[exchange.value]
   if (opts && opts.length > 0) {
@@ -99,6 +106,10 @@ async function loadSurface() {
   showFilterDetail.value = false
   try {
     surfaceData = await getIVSurface(exchange.value, product.value)
+    console.log('[IVSurface] exchange=', exchange.value, 'product=', product.value,
+      'count=', surfaceData?.count,
+      'raw_points=', surfaceData?.raw_points?.length,
+      'filter_stats=', JSON.stringify(surfaceData?.filter_stats))
     if (!surfaceData || surfaceData.count === 0) {
       error.value = '无 IV 数据，请先在数据中心下载期权数据'
       filterStats.value = null
@@ -272,6 +283,15 @@ watch(viewMode, render)
   color: #2962ff; font-size: 12px; cursor: pointer;
 }
 .btn-toggle:hover { background: rgba(41, 98, 255, 0.3); }
+.mismatch-hint {
+  padding: 6px 12px;
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 4px;
+  color: #ffc107;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
 .filter-badge {
   display: flex; align-items: center; gap: 4px;
   padding: 4px 10px; background: rgba(76, 175, 80, 0.15);

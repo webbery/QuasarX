@@ -4,6 +4,7 @@
 #include "Derivative/OptionContractFilter.h"
 #include "Util/OptionDataDB.h"
 #include "Util/QuoteDB.h"
+#include "Util/data.h"
 #include "Util/system.h"
 #include "Util/finance.h"
 #include "Util/HolidayCalendar.h"
@@ -198,9 +199,7 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
             });
         }
         if (!underlying_code.empty()) {
-            String prefix = (exchange == "SSE") ? "sh." : "sz.";
-            String quote_table = QuoteDB::tableName("stock", "daily");
-            spot_price = QuoteDB::instance().getLatestClose(quote_table, prefix + underlying_code);
+            spot_price = ResolveUnderlying(underlying_code, exchange, product).latest_close;
         }
 
         double risk_free_rate = 0.015;

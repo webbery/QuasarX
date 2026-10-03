@@ -29,10 +29,11 @@
             <span class="contract-strike">行权价</span>
             <span class="contract-type">类型</span>
           </div>
+          <div class="select-hint">单击查看 · Ctrl/⌘+单击多选</div>
           <div v-for="c in filteredContracts" :key="c.symbol_id"
             class="contract-item"
             :class="{ selected: isSelected(c), active: activeContract?.symbol_id === c.symbol_id }"
-            @click="toggleContract(c)">
+            @click="onContractClick(c, $event)">
             <span class="contract-name">{{ c.contract_name }}</span>
             <span class="contract-strike">{{ c.strike_price }}</span>
             <span :class="['cp-badge', isCall(c.call_put) ? 'call' : 'put']">
@@ -205,8 +206,6 @@
         </button>
       </div>
       <div class="chart-content">
-        <PayoffChart v-show="activeChart === 'payoff'"
-          :result="result" :multi-results="multiResults" :params="params" />
         <ProfitChart v-show="activeChart === 'profit'"
           :result="result"
           :premium="activeMeta?.premium ?? 0"
@@ -233,7 +232,6 @@ import {
   priceOption, listOptionContracts, fetchOptionContractMeta,
   type PricingRequest, type PricingResult, type ContractInfo, type OptionContractMeta
 } from './composables/useOptionPricing'
-import PayoffChart from './panels/PayoffChart.vue'
 import ProfitChart from './panels/ProfitChart.vue'
 import IVSurfaceChart from './panels/IVSurfaceChart.vue'
 import GreeksChart from './panels/GreeksChart.vue'
@@ -241,7 +239,6 @@ import MultiContractCompare from './panels/MultiContractCompare.vue'
 import StrategyBuilder from './panels/StrategyBuilder.vue'
 
 const chartTabs = [
-  { key: 'payoff', label: '收益图' },
   { key: 'profit', label: '利润图' },
   { key: 'iv', label: 'IV 曲面' },
   { key: 'greeks', label: 'Greeks' },
@@ -256,7 +253,7 @@ const activeContract = ref<ContractInfo | null>(null)
 const result = ref<PricingResult | null>(null)
 const multiResults = ref<PricingResult[]>([])
 const calculating = ref(false)
-const activeChart = ref('payoff')
+const activeChart = ref('profit')
 // 选中合约的市场 meta (权利金/保证金/行权日/dte/合约单位)
 const activeMeta = ref<OptionContractMeta | null>(null)
 const loadingMeta = ref(false)
@@ -300,11 +297,16 @@ function fillParamsFromContract(c: ContractInfo) {
   activeContract.value = c
   params.value.strike = c.strike_price
   params.value.is_call = isCall(c.call_put)
-  const m = c.contract_name.match(/(\d{2})(\d{2})/)
-  if (m) {
-    const year = 2000 + parseInt(m[1])
+  // 从合约名解析到期年月: 找第一组合法 YYMM (month 01-12)
+  // 合约名如 "50ETF2512C3200" → 2512 → 2025-12; "IO2501-C-3800" → 2501 → 2025-01
+  // 跳过非法月份 (如 "50ETF2750C3500" 中 2750 → month=50 无效, 继续找)
+  for (const m of c.contract_name.matchAll(/(\d{2})(\d{2})/g)) {
     const month = parseInt(m[2])
-    params.value.expiry = `${year}-${String(month).padStart(2, '0')}-17`
+    if (month >= 1 && month <= 12) {
+      const year = 2000 + parseInt(m[1])
+      params.value.expiry = `${year}-${String(month).padStart(2, '0')}-17`
+      break
+    }
   }
   // 异步拉取最新一天 meta (权利金/保证金/行权日/dte/合约单位)
   loadContractMeta(c)
@@ -333,17 +335,33 @@ async function loadContractMeta(c: ContractInfo) {
   }
 }
 
-function toggleContract(c: ContractInfo) {
-  const idx = selectedContracts.value.findIndex(s => s.symbol_id === c.symbol_id)
-  if (idx >= 0) {
-    selectedContracts.value.splice(idx, 1)
-    if (activeContract.value?.symbol_id === c.symbol_id) {
-      activeContract.value = selectedContracts.value[0] ?? null
+function onContractClick(c: ContractInfo, event: MouseEvent) {
+  const isMulti = event.ctrlKey || event.metaKey
+  if (isMulti) {
+    // Ctrl/Cmd + 单击：在已选列表里 toggle c，不重置参数面板
+    const idx = selectedContracts.value.findIndex(s => s.symbol_id === c.symbol_id)
+    if (idx >= 0) {
+      selectedContracts.value.splice(idx, 1)
+      // 不变量：activeContract ∈ selectedContracts（集合为空时为 null）
+      if (activeContract.value?.symbol_id === c.symbol_id) {
+        const next = selectedContracts.value[0] ?? null
+        activeContract.value = next
+        if (next) loadContractMeta(next)
+        else activeMeta.value = null
+      }
+    } else {
+      selectedContracts.value.push(c)
+      // 当前无 active 时，把这次加入的设为 active
+      if (!activeContract.value) {
+        activeContract.value = c
+        loadContractMeta(c)
+      }
     }
   } else {
-    selectedContracts.value.push(c)
+    // 单击：把 c 设为唯一选中 + 填充参数面板
+    selectedContracts.value = [c]
+    fillParamsFromContract(c)
   }
-  fillParamsFromContract(c)
 }
 
 async function onFilterChange() {
@@ -506,6 +524,14 @@ onMounted(async () => {
   width: 24px;
   text-align: center;
   flex-shrink: 0;
+}
+
+.select-hint {
+  font-size: 10px;
+  color: #6b7a99;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.1);
+  background: rgba(26, 34, 54, 0.3);
 }
 
 .contract-list {

@@ -132,8 +132,6 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
             auto sym_list = group.symbols;
 
             std::string table = QuoteDB::tableName(asset_type, freq);
-            std::string hfq_dir = asset_type + "_hfq/" + freq;
-            std::string org_dir = asset_type + "_org/" + freq;
 
             INFO("[QuoteDownload] === {} group start: {} symbols, freq={}, start={}, end={} ===",
                  asset_type, sym_list.size(), freq, start.empty() ? "max" : start, end.empty() ? "today" : end);
@@ -147,148 +145,64 @@ void QuoteDownloadHandler::runDownloadJob(nng_socket sseSock,
             int downloaded = 0;
             int failed = 0;
             int total_rows = 0;
-            auto& quoteDB = QuoteDB::instance();
 
             for (size_t i = 0; i < sym_list.size(); i++) {
                 const auto& sym = sym_list[i];
 
-                // 构建单标的下载命令
-                std::string cmd = interpreter + " tools/download_etf_bs.py "
-                                + sym + " " + quote_dir
-                                + " --freq " + freq
-                                + " --asset-type " + asset_type;
-                if (!start.empty()) cmd += " --start " + start;
-                if (!end.empty())   cmd += " --end " + end;
-
                 auto t_sym_start = std::chrono::steady_clock::now();
                 INFO("[QuoteDownload] [{}/{}] Downloading {} ...", i + 1, sym_list.size(), sym);
 
-                String output;
-                bool ok = RunCommand(cmd, output);
-                auto t_sym_end = std::chrono::steady_clock::now();
-                auto sym_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_sym_end - t_sym_start).count();
+                auto dlResult = DownloadAndImportSymbol(
+                    sym, freq, start, end, interpreter, quote_dir, overwrite);
 
-                if (!ok) {
+                auto sym_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t_sym_start).count();
+
+                if (!dlResult.download_ok) {
                     failed++;
-                    WARN("[QuoteDownload] [{}/{}] {} FAILED in {} ms, output: {}",
-                         i + 1, sym_list.size(), sym, sym_ms, output);
-                    std::string err_msg = output.empty() ? "download script failed"
-                                        : output.substr(0, std::min(output.size(), (size_t)500));
+                    WARN("[QuoteDownload] [{}/{}] {} FAILED in {} ms",
+                         i + 1, sym_list.size(), sym, sym_ms);
                     SendSSE(sseSock, "quote_download", {
                         {"status", "symbol_failed"},
                         {"asset_type", asset_type},
                         {"symbol", sym},
-                        {"error", err_msg},
+                        {"error", "download script failed"},
                         {"downloaded", std::to_string(downloaded + failed)},
                         {"total", std::to_string(sym_list.size())},
                     });
                     continue;
                 }
 
-                // 从脚本输出中提取行数（匹配 "[OK] ... (N 条)" 格式）
-                int rows = 0;
-                {
-                    std::istringstream iss(output);
-                    std::string line;
-                    while (std::getline(iss, line)) {
-                        // 匹配 "([0-9]+) 条" 提取行数
-                        auto pos = line.find("条)");
-                        if (pos != std::string::npos) {
-                            auto paren = line.rfind('(', pos);
-                            if (paren != std::string::npos) {
-                                try {
-                                    rows = std::stoi(line.substr(paren + 1, pos - paren - 1));
-                                } catch (...) {}
-                            }
-                        }
-                    }
-                }
-
                 downloaded++;
 
-                // Python 脚本保存文件名用 CODE.EXCHANGE 格式（如 600111.SH.csv）
-                // sym 是 baostock 格式（如 sh.600111），需要转换
-                std::string csv_name = sym;
-                {
-                    auto dot = sym.find('.');
-                    if (dot != std::string::npos && dot <= 3) {
-                        std::string market = sym.substr(0, dot);
-                        std::string code = sym.substr(dot + 1);
-                        std::transform(market.begin(), market.end(), market.begin(), ::toupper);
-                        csv_name = code + "." + market;
-                    }
-                }
-
-                std::string org_path = quote_dir + "/" + org_dir + "/" + csv_name + ".csv";
-                std::string hfq_path = quote_dir + "/" + hfq_dir + "/" + csv_name + ".csv";
-
-                // 从 CSV 文件获取行数（比解析脚本输出更可靠）
-                if (fs::exists(org_path) || fs::exists(hfq_path)) {
-                    std::string count_path = fs::exists(org_path) ? org_path : hfq_path;
-                    std::ifstream ifs(count_path);
-                    if (ifs.is_open()) {
-                        int csv_rows = 0;
-                        std::string line;
-                        bool header_skipped = false;
-                        while (std::getline(ifs, line)) {
-                            if (line.empty()) continue;
-                            if (!header_skipped) {
-                                header_skipped = true;
-                                continue;  // 跳过表头
-                            }
-                            csv_rows++;
-                        }
-                        rows = csv_rows;
-                    }
-                }
-
-                INFO("[QuoteDownload] [{}/{}] {} done: {} rows in {} ms", i + 1, sym_list.size(), sym, rows, sym_ms);
+                INFO("[QuoteDownload] [{}/{}] {} done: {} rows ({} imported) in {} ms",
+                     i + 1, sym_list.size(), sym, dlResult.rows, dlResult.imported, sym_ms);
                 SendSSE(sseSock, "quote_download", {
                     {"status", "symbol_downloaded"},
                     {"asset_type", asset_type},
                     {"symbol", sym},
-                    {"rows", std::to_string(rows)},
+                    {"rows", std::to_string(dlResult.rows)},
                     {"downloaded", std::to_string(downloaded + failed)},
                     {"total", std::to_string(sym_list.size())},
                 });
 
-                // 立即下载后导入
-                if (!quoteDB.isInitialized()) {
-                    INFO("[QuoteDownload] QuoteDB not initialized, skipping import for {}", sym);
-                    continue;
-                }
-
-                if (fs::exists(org_path) || fs::exists(hfq_path)) {
-                    std::string org_p = fs::exists(org_path) ? org_path : hfq_path;
-                    std::string hfq_p = fs::exists(hfq_path) ? hfq_path : org_path;
-
-                    auto t_import_start = std::chrono::steady_clock::now();
-                    int imported = quoteDB.importCsv(org_p, hfq_p, table, toInternalSymbol(sym), overwrite);
-                    auto t_import_end = std::chrono::steady_clock::now();
-                    auto import_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_import_end - t_import_start).count();
-                    INFO("[QuoteDownload] importCsv {} done: {} rows in {} ms", sym, imported, import_ms);
-
-                    if (imported > 0) {
-                        total_rows += imported;
-                        SendSSE(sseSock, "quote_download", {
-                            {"status", "importing"},
-                            {"table", table},
-                            {"symbol", sym},
-                            {"rows", std::to_string(imported)}
-                        });
-                    }
+                if (dlResult.import_ok) {
+                    total_rows += dlResult.imported;
+                    SendSSE(sseSock, "quote_download", {
+                        {"status", "importing"},
+                        {"table", table},
+                        {"symbol", sym},
+                        {"rows", std::to_string(dlResult.imported)}
+                    });
 
                     // 股票除权校验
-                    if (imported > 0 && table == "stock_1d") {
+                    if (table == "stock_1d") {
                         auto t_adj_start = std::chrono::steady_clock::now();
                         validateAndReconcileAdj(sseSock, table, sym);
-                        auto t_adj_end = std::chrono::steady_clock::now();
-                        auto adj_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_adj_end - t_adj_start).count();
+                        auto adj_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t_adj_start).count();
                         INFO("[QuoteDownload] validateAndReconcileAdj {} done in {} ms", sym, adj_ms);
                     }
-
-                    fs::remove(org_p);
-                    fs::remove(hfq_p);
                 }
             }
 
