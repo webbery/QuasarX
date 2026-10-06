@@ -70,8 +70,13 @@ const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
 function render() {
-  if (!chart || !chartRef.value) return
   if (!hasCurve.value) return
+  // 确保 chart 已初始化 (延迟 init，避免 0×0 容器)
+  if (!ensureChart()) return
+  // 容器尺寸为 0 时跳过渲染 (v-show=false 时 display:none)
+  // 避免 echarts-gl 全局副作用导致 "Dom has no width or height" 错误
+  if (!chartRef.value || chartRef.value.offsetWidth === 0 || chartRef.value.offsetHeight === 0) return
+
   chart.resize()
 
   const series: any[] = []
@@ -242,15 +247,24 @@ function handleResize() { chart?.resize() }
 
 let resizeObserver: ResizeObserver | null = null
 
-onMounted(() => {
-  if (chartRef.value) {
+// 延迟初始化 echarts，只在容器有尺寸时才 init
+function ensureChart() {
+  if (!chart && chartRef.value && chartRef.value.offsetWidth > 0 && chartRef.value.offsetHeight > 0) {
     chart = echarts.init(chartRef.value)
-    if (hasCurve.value) render()
+  }
+  return chart
+}
 
+onMounted(() => {
+  // 设置 ResizeObserver，当容器从隐藏变为可见时触发初始化
+  if (chartRef.value) {
     resizeObserver = new ResizeObserver(() => {
-      if (chart && chartRef.value && chartRef.value.offsetWidth > 0) {
-        chart.resize()
-        if (hasCurve.value) render()
+      if (chartRef.value && chartRef.value.offsetWidth > 0) {
+        ensureChart()  // 首次激活时初始化
+        if (chart) {
+          chart.resize()
+          if (hasCurve.value) render()
+        }
       }
     })
     resizeObserver.observe(chartRef.value)

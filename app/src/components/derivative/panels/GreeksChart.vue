@@ -30,7 +30,12 @@ const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
 async function render() {
-  if (!chart || !props.result) return
+  if (!props.result) return
+  // 确保 chart 已初始化 (延迟 init，避免 0×0 容器)
+  if (!ensureChart()) return
+  // 容器尺寸为 0 时跳过渲染 (v-show=false 时 display:none)
+  // 避免 echarts-gl 全局副作用导致 "Dom has no width or height" 错误
+  if (!chartRef.value || chartRef.value.offsetWidth === 0 || chartRef.value.offsetHeight === 0) return
 
   // 生成 Greeks vs spot 曲线
   const spotRange = generateSpotRange(props.params.spot, 0.3, 50)
@@ -116,12 +121,32 @@ function generateSpotRange(center: number, pct: number, n: number): number[] {
 
 function handleResize() { chart?.resize() }
 
+let resizeObserver: ResizeObserver | null = null
+
+// 延迟初始化 echarts，只在容器有尺寸时才 init
+function ensureChart() {
+  if (!chart && chartRef.value && chartRef.value.offsetWidth > 0 && chartRef.value.offsetHeight > 0) {
+    chart = echarts.init(chartRef.value)
+  }
+  return chart
+}
+
 onMounted(() => {
-  if (chartRef.value) chart = echarts.init(chartRef.value)
+  // 设置 ResizeObserver，当容器从隐藏变为可见时触发初始化
+  if (chartRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      if (chartRef.value && chartRef.value.offsetWidth > 0) {
+        ensureChart()  // 首次激活时初始化
+        if (chart && props.result) render()
+      }
+    })
+    resizeObserver.observe(chartRef.value)
+  }
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
+  resizeObserver?.disconnect()
   window.removeEventListener('resize', handleResize)
   chart?.dispose()
 })
