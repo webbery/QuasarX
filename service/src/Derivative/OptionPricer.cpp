@@ -76,6 +76,19 @@ BSResult blackScholes(double S, double K, double T, double sigma,
     res.gamma = eq * nd1 / (S * sigma * sqrtT);
     res.vega = S * eq * nd1 * sqrtT / 100.0;
 
+    // 理论下限 (欧式期权无套利边界)
+    // Call: S*e^(-qT) - K*e^(-rT);  Put: K*e^(-rT) - S*e^(-qT)
+    double eq_bs = std::exp(-q * T);
+    double er_bs = std::exp(-r * T);
+    double discounted_spot = S * eq_bs;
+    double discounted_strike = K * er_bs;
+    if (is_call) {
+        res.lower_bound = discounted_spot - discounted_strike;
+    } else {
+        res.lower_bound = discounted_strike - discounted_spot;
+    }
+    res.lower_bound = std::max(res.lower_bound, 0.0);  // 下限不为负
+
     res.intrinsic_value = is_call ? std::max(S - K, 0.0) : std::max(K - S, 0.0);
     res.time_value = res.price - res.intrinsic_value;
     res.moneyness = classifyMoneyness(S, K);
@@ -206,6 +219,7 @@ PricingResult price(const String& method,
         res.price = bs.price;
         res.intrinsic_value = bs.intrinsic_value;
         res.time_value = bs.time_value;
+        res.lower_bound = bs.lower_bound;  // 理论下限
         res.moneyness = bs.moneyness;
         res.delta = bs.delta;
         res.gamma = bs.gamma;
@@ -217,6 +231,14 @@ PricingResult price(const String& method,
         res.price = mc.price;
         res.mc_std_error = mc.std_error;
         res.mc_payoff_distribution = std::move(mc.payoff_distribution);
+        // 理论下限 (与 BS 相同)
+        double er_mc = std::exp(-r * T);
+        double eq_mc = std::exp(-q * T);
+        double disc_spot_mc = S * eq_mc;
+        double disc_strike_mc = K * er_mc;
+        res.lower_bound = is_call
+            ? std::max(disc_spot_mc - disc_strike_mc, 0.0)
+            : std::max(disc_strike_mc - disc_spot_mc, 0.0);
         res.intrinsic_value = is_call ? std::max(S - K, 0.0) : std::max(K - S, 0.0);
         res.time_value = res.price - res.intrinsic_value;
         res.moneyness = classifyMoneyness(S, K);
@@ -237,6 +259,14 @@ PricingResult price(const String& method,
         auto tree = binomialTree(S, K, T, sigma, r, q, is_call, n_steps, is_american);
         res.price = tree.price;
         res.early_exercise_premium = tree.early_exercise_premium;
+        // 理论下限 (与 BS 相同)
+        double er_tree = std::exp(-r * T);
+        double eq_tree = std::exp(-q * T);
+        double disc_spot_tree = S * eq_tree;
+        double disc_strike_tree = K * er_tree;
+        res.lower_bound = is_call
+            ? std::max(disc_spot_tree - disc_strike_tree, 0.0)
+            : std::max(disc_strike_tree - disc_spot_tree, 0.0);
         res.intrinsic_value = is_call ? std::max(S - K, 0.0) : std::max(K - S, 0.0);
         res.time_value = res.price - res.intrinsic_value;
         res.moneyness = classifyMoneyness(S, K);

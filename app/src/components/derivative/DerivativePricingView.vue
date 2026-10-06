@@ -175,6 +175,10 @@
             <span class="result-value">{{ result.time_value.toFixed(4) }}</span>
           </div>
           <div class="result-item">
+            <span class="result-label">理论下限</span>
+            <span class="result-value">{{ result.lower_bound.toFixed(4) }}</span>
+          </div>
+          <div class="result-item">
             <span class="result-label">虚实度</span>
             <span :class="['moneyness-badge', result.moneyness.toLowerCase()]">
               {{ moneynessLabel(result.moneyness) }}
@@ -213,14 +217,17 @@
           :strike="params.strike"
           :is-call="params.is_call" />
         <IVSurfaceChart v-show="activeChart === 'iv'"
-          :exchange="filters.exchange || 'SSE'" :product="filters.product || '50ETF'" />
+          :exchange="filters.exchange || 'SSE'" :product="filters.product || '50ETF'"
+          :active="activeChart === 'iv'" />
         <GreeksChart v-show="activeChart === 'greeks'"
           :result="result" :params="params" />
         <MultiContractCompare v-show="activeChart === 'compare'"
           :contracts="selectedContracts" :params="params"
           @update:results="(r) => multiResults = r" />
         <StrategyBuilder v-show="activeChart === 'strategy'"
-          :spot="params.spot" :risk-free-rate="params.risk_free_rate" />
+          :spot="params.spot"
+          :risk-free-rate="params.risk_free_rate"
+          :contracts="filteredContracts" />
       </div>
     </div>
   </div>
@@ -614,7 +621,7 @@ onMounted(async () => {
 
 .result-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin-bottom: 10px;
 }

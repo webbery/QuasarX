@@ -73,7 +73,11 @@ const PRODUCT_MAP: Record<string, Array<{ value: string; label: string }>> = {
   ],
 }
 
-const props = defineProps<{ exchange: string; product: string }>()
+const props = defineProps<{
+  exchange: string
+  product: string
+  active?: boolean  // 当前 tab 是否激活
+}>()
 
 const exchange = ref(props.exchange)
 const product = ref(props.product)
@@ -147,6 +151,12 @@ function render3D(d: IVSurfaceResult) {
   // 原始数据点散点
   const scatter = d.raw_points.map(p => [p.strike, p.expiry_days, p.iv] as [number, number, number])
 
+  console.log('[IVSurface] render3D: data length=', data.length, 
+              'strikes=', d.strikes.length, 'expiry_days=', d.expiry_days.length)
+
+  // 强制刷新尺寸，确保容器有宽高（修复 "Dom has no width or height"）
+  chart!.resize()
+
   chart!.setOption({
     backgroundColor: 'transparent',
     tooltip: {
@@ -177,6 +187,7 @@ function render3D(d: IVSurfaceResult) {
       {
         type: 'surface',
         data,
+        dataShape: [d.expiry_days.length, d.strikes.length],
         shading: 'color',
         itemStyle: { opacity: 0.8 },
       },
@@ -252,12 +263,31 @@ onMounted(() => {
     chart = echarts.init(chartRef.value)
   }
   window.addEventListener('resize', handleResize)
-  loadSurface()
+  // 只在 tab 激活时加载数据
+  if (props.active) {
+    loadSurface()
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   chart?.dispose()
+})
+
+// 监听 tab 激活状态，首次激活时加载数据
+let loaded = false
+watch(() => props.active, (isActive) => {
+  if (isActive && !loaded) {
+    loaded = true
+    loadSurface()
+  }
+})
+
+// 监听参数变化，重新加载
+watch([exchange, product], () => {
+  if (props.active) {
+    loadSurface()
+  }
 })
 
 watch(viewMode, render)
