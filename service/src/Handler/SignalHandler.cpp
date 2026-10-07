@@ -172,6 +172,375 @@ void SignalHandler::get(const httplib::Request& req, httplib::Response& res) {
                 {"converged", vresult.converged},
                 {"center_freqs", vresult.centerFreqs}
             };
+
+            // ─── VMD 滚动窗口稳定性分析 ───
+            if (rolling_window > 0 && (int)original.size() > rolling_window) {
+                int rw = std::min(rolling_window, (int)original.size() / 2);
+                int step = 1;
+                int n_windows = ((int)original.size() - rw) / step + 1;
+
+                if (n_windows >= 2) {
+                    // 存储每个窗口的中心频率和能量
+                    Vector<Vector<double>> center_freq_series(num_imfs);  // [K][n_windows]
+                    Vector<Vector<double>> energy_series(num_imfs);       // [K][n_windows]
+                    Vector<double> convergence_errors(n_windows, 0.0);
+                    Vector<int> actual_k_series(n_windows, 0);
+                    Vector<String> window_dates;
+
+                    for (int w = 0; w < n_windows; ++w) {
+                        int start_idx = w * step;
+                        int end_idx = start_idx + rw;
+                        Vector<double> window_data(original.begin() + start_idx, original.begin() + end_idx);
+
+                        // 对每个窗口执行 VMD
+                        VMD window_vmd;
+                        VMD::Config wcfg;
+                        wcfg.K = num_imfs;
+                        wcfg.alpha = vcfg.alpha;
+                        wcfg.tau = vcfg.tau;
+                        wcfg.tol = vcfg.tol;
+                        wcfg.maxIter = vcfg.maxIter;
+                        wcfg.symmetricPad = vcfg.symmetricPad;
+
+                        auto wresult = window_vmd.decompose(window_data, wcfg);
+
+                        // 记录收敛信息
+                        convergence_errors[w] = wresult.convergenceError;
+                        actual_k_series[w] = wresult.actualK;
+
+                        // 记录每个模态的中心频率和能量
+                        for (int k = 0; k < num_imfs && k < (int)wresult.imfs.size(); ++k) {
+                            center_freq_series[k].push_back(wresult.centerFreqs[k]);
+
+                            // 计算该窗口内 IMF 的能量占比
+                            double energy = 0.0;
+                            for (double v : wresult.imfs[k]) {
+                                energy += v * v;
+                            }
+                            double total_energy = 0.0;
+                            for (double v : window_data) {
+                                total_energy += v * v;
+                            }
+                            double energy_pct = (total_energy > 1e-10) ? (energy / total_energy * 100.0) : 0.0;
+                            energy_series[k].push_back(energy_pct);
+                        }
+
+                        // 填充不足的模态（如果 actualK < num_imfs）
+                        for (int k = (int)wresult.imfs.size(); k < num_imfs; ++k) {
+                            center_freq_series[k].push_back(0.0);
+                            energy_series[k].push_back(0.0);
+                        }
+
+                        // 记录窗口日期（使用窗口中心点）
+                        int center_idx = start_idx + rw / 2;
+                        if (center_idx < (int)dates.size()) {
+                            window_dates.push_back(dates[center_idx]);
+                        }
+                    }
+
+                    // 构建输出 JSON
+                    nlohmann::json vmd_rolling;
+                    vmd_rolling["window"] = rw;
+                    vmd_rolling["dates"] = window_dates;
+
+                    // 中心频率轨迹
+                    nlohmann::json freq_traj = nlohmann::json::array();
+                    for (int k = 0; k < num_imfs; ++k) {
+                        freq_traj.push_back(center_freq_series[k]);
+                    }
+                    vmd_rolling["center_freq_trajectory"] = freq_traj;
+
+                    // 能量占比轨迹
+                    nlohmann::json energy_traj = nlohmann::json::array();
+                    for (int k = 0; k < num_imfs; ++k) {
+                        energy_traj.push_back(energy_series[k]);
+                    }
+                    vmd_rolling["energy_trajectory"] = energy_traj;
+
+                    // 收敛误差序列
+                    vmd_rolling["convergence_errors"] = convergence_errors;
+
+                    // 实际 K 值序列
+                    vmd_rolling["actual_k_series"] = actual_k_series;
+
+                    // ─── 稳定性指标 ───
+                    nlohmann::json stability;
+
+                    // 1. 中心频率平滑度（相邻窗口变化率的平均值）
+                    Vector<double> freq_smoothness(num_imfs, 0.0);
+                    for (int k = 0; k < num_imfs; ++k) {
+                        double total_change = 0.0;
+                        int count = 0;
+                        for (size_t i = 1; i < center_freq_series[k].size(); ++i) {
+                            double change = std::abs(center_freq_series[k][i] - center_freq_series[k][i-1]);
+                            total_change += change;
+                            count++;
+                        }
+                        freq_smoothness[k] = (count > 0) ? (total_change / count) : 0.0;
+                    }
+                    stability["freq_smoothness"] = freq_smoothness;
+
+                    // 2. 模态间最小频率距离（检测模态混叠）
+                    Vector<double> min_freq_distances;
+                    for (size_t i = 0; i < window_dates.size(); ++i) {
+                        Vector<double> freqs_at_t;
+                        for (int k = 0; k < num_imfs; ++k) {
+                            if (i < center_freq_series[k].size()) {
+                                freqs_at_t.push_back(center_freq_series[k][i]);
+                            }
+                        }
+                        // 排序并计算最小间距
+                        std::sort(freqs_at_t.begin(), freqs_at_t.end());
+                        double min_dist = 1.0;
+                        for (size_t k = 1; k < freqs_at_t.size(); ++k) {
+                            double dist = freqs_at_t[k] - freqs_at_t[k-1];
+                            if (dist < min_dist) min_dist = dist;
+                        }
+                        min_freq_distances.push_back(min_dist);
+                    }
+                    stability["min_freq_distance"] = min_freq_distances;
+
+                    // 3. 频率跳变检测（变化率超过历史均值 3 倍）
+                    Vector<double> freq_jump_ratio(num_imfs, 0.0);
+                    for (int k = 0; k < num_imfs; ++k) {
+                        Vector<double> changes;
+                        for (size_t i = 1; i < center_freq_series[k].size(); ++i) {
+                            changes.push_back(std::abs(center_freq_series[k][i] - center_freq_series[k][i-1]));
+                        }
+                        if (changes.empty()) continue;
+
+                        // 计算历史均值和标准差
+                        double mean = 0.0;
+                        for (double c : changes) mean += c;
+                        mean /= changes.size();
+
+                        double std_dev = 0.0;
+                        for (double c : changes) {
+                            double diff = c - mean;
+                            std_dev += diff * diff;
+                        }
+                        std_dev = std::sqrt(std_dev / changes.size());
+
+                        // 跳变比例 = 超过 mean + 3*std 的次数
+                        int jump_count = 0;
+                        double threshold = mean + 3.0 * std_dev;
+                        for (double c : changes) {
+                            if (c > threshold) jump_count++;
+                        }
+                        freq_jump_ratio[k] = (double)jump_count / changes.size() * 100.0;
+                    }
+                    stability["freq_jump_ratio"] = freq_jump_ratio;
+
+                    // 4. 整体稳定性评分（0-100，越高越稳定）
+                    double smoothness_score = 0.0;
+                    for (int k = 0; k < num_imfs; ++k) {
+                        // 平滑度越低越好
+                        smoothness_score += (1.0 - std::min(freq_smoothness[k] * 100.0, 1.0));
+                    }
+                    smoothness_score /= num_imfs;
+
+                    double distance_score = 0.0;
+                    for (double d : min_freq_distances) {
+                        // 距离越大越好（无混叠）
+                        distance_score += std::min(d * 10.0, 1.0);
+                    }
+                    distance_score /= min_freq_distances.size();
+
+                    double jump_score = 0.0;
+                    for (int k = 0; k < num_imfs; ++k) {
+                        // 跳变比例越低越好
+                        jump_score += (1.0 - freq_jump_ratio[k] / 100.0);
+                    }
+                    jump_score /= num_imfs;
+
+                    stability["overall_score"] = (smoothness_score + distance_score + jump_score) / 3.0 * 100.0;
+
+                    // ─── 能量稳定性指标（新增） ───
+                    
+                    // 5. 能量占比一阶差分（检测能量突变）
+                    Vector<Vector<double>> energy_diff(num_imfs);
+                    for (int k = 0; k < num_imfs; ++k) {
+                        for (size_t i = 1; i < energy_series[k].size(); ++i) {
+                            double diff = std::abs(energy_series[k][i] - energy_series[k][i-1]);
+                            energy_diff[k].push_back(diff);
+                        }
+                    }
+                    
+                    // 计算每个模态的能量突变程度（平均差分）
+                    Vector<double> energy_volatility(num_imfs, 0.0);
+                    for (int k = 0; k < num_imfs; ++k) {
+                        if (energy_diff[k].empty()) continue;
+                        double sum = 0.0;
+                        for (double d : energy_diff[k]) sum += d;
+                        energy_volatility[k] = sum / energy_diff[k].size();
+                    }
+                    stability["energy_volatility"] = energy_volatility;
+                    
+                    // 6. 能量熵（检测能量分布重构）
+                    Vector<double> energy_entropy;
+                    for (size_t t = 0; t < window_dates.size(); ++t) {
+                        // 计算该时刻的能量分布熵
+                        double total_energy = 0.0;
+                        Vector<double> energy_dist;
+                        for (int k = 0; k < num_imfs; ++k) {
+                            if (t < energy_series[k].size()) {
+                                double e = energy_series[k][t];
+                                energy_dist.push_back(e);
+                                total_energy += e;
+                            }
+                        }
+                        
+                        // 归一化为概率分布
+                        if (total_energy > 1e-10) {
+                            double entropy = 0.0;
+                            for (double e : energy_dist) {
+                                double p = e / total_energy;
+                                if (p > 1e-10) {
+                                    entropy -= p * std::log(p);
+                                }
+                            }
+                            energy_entropy.push_back(entropy);
+                        } else {
+                            energy_entropy.push_back(0.0);
+                        }
+                    }
+                    stability["energy_entropy"] = energy_entropy;
+                    
+                    // 7. 能量熵突变检测（熵的一阶差分）
+                    Vector<double> entropy_diff;
+                    for (size_t i = 1; i < energy_entropy.size(); ++i) {
+                        entropy_diff.push_back(std::abs(energy_entropy[i] - energy_entropy[i-1]));
+                    }
+                    stability["entropy_diff"] = entropy_diff;
+                    
+                    // 8. 能量熵稳定性评分（熵变化越小越稳定）
+                    double entropy_stability = 0.0;
+                    if (!entropy_diff.empty()) {
+                        double avg_entropy_diff = 0.0;
+                        for (double d : entropy_diff) avg_entropy_diff += d;
+                        avg_entropy_diff /= entropy_diff.size();
+                        // 熵变化 < 0.1 认为稳定
+                        entropy_stability = std::max(0.0, 1.0 - avg_entropy_diff * 10.0) * 100.0;
+                    }
+                    stability["entropy_stability_score"] = entropy_stability;
+
+                    // ─── 模态相似性分析（新增） ───
+                    // 计算相邻窗口对应IMF的相关系数 ρ_k(t) = corr(u_k(t), u_k(t-1))
+                    
+                    // 存储每个窗口所有IMF的时域数据（用于计算相关性）
+                    Vector<Vector<Vector<double>>> window_imfs(n_windows);  // [n_windows][K][window_size]
+                    
+                    // 重新执行VMD以获取IMF时域数据（之前的循环只记录了频率和能量）
+                    for (int w = 0; w < n_windows; ++w) {
+                        int start_idx = w * step;
+                        int end_idx = start_idx + rw;
+                        Vector<double> window_data(original.begin() + start_idx, original.begin() + end_idx);
+                        
+                        VMD window_vmd;
+                        VMD::Config wcfg;
+                        wcfg.K = num_imfs;
+                        wcfg.alpha = vcfg.alpha;
+                        wcfg.tau = vcfg.tau;
+                        wcfg.tol = vcfg.tol;
+                        wcfg.maxIter = vcfg.maxIter;
+                        wcfg.symmetricPad = vcfg.symmetricPad;
+                        
+                        auto wresult = window_vmd.decompose(window_data, wcfg);
+                        window_imfs[w] = wresult.imfs;
+                    }
+                    
+                    // 计算相邻窗口对应IMF的相关系数
+                    Vector<Vector<double>> imf_correlations(num_imfs);  // [K][n_windows-1]
+                    for (int k = 0; k < num_imfs; ++k) {
+                        for (int w = 1; w < n_windows; ++w) {
+                            // 获取两个相邻窗口的第k个IMF
+                            if (w - 1 >= 0 && 
+                                k < (int)window_imfs[w].size() && 
+                                k < (int)window_imfs[w-1].size()) {
+                                
+                                const auto& imf_curr = window_imfs[w][k];
+                                const auto& imf_prev = window_imfs[w-1][k];
+                                
+                                // 计算相关系数
+                                int n = std::min(imf_curr.size(), imf_prev.size());
+                                if (n > 1) {
+                                    double mean1 = 0.0, mean2 = 0.0;
+                                    for (int i = 0; i < n; ++i) {
+                                        mean1 += imf_curr[i];
+                                        mean2 += imf_prev[i];
+                                    }
+                                    mean1 /= n;
+                                    mean2 /= n;
+                                    
+                                    double var1 = 0.0, var2 = 0.0, cov = 0.0;
+                                    for (int i = 0; i < n; ++i) {
+                                        double d1 = imf_curr[i] - mean1;
+                                        double d2 = imf_prev[i] - mean2;
+                                        var1 += d1 * d1;
+                                        var2 += d2 * d2;
+                                        cov += d1 * d2;
+                                    }
+                                    var1 /= n;
+                                    var2 /= n;
+                                    cov /= n;
+                                    
+                                    double corr = 0.0;
+                                    if (var1 > 1e-10 && var2 > 1e-10) {
+                                        corr = cov / std::sqrt(var1 * var2);
+                                    }
+                                    imf_correlations[k].push_back(corr);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 输出模态相似性指标
+                    nlohmann::json modal_similarity;
+                    
+                    // 1. 相关系数序列
+                    nlohmann::json corr_series = nlohmann::json::array();
+                    for (int k = 0; k < num_imfs; ++k) {
+                        corr_series.push_back(imf_correlations[k]);
+                    }
+                    modal_similarity["correlation_series"] = corr_series;
+                    
+                    // 2. 平均相关系数（每个IMF的稳定性指标）
+                    Vector<double> avg_correlation(num_imfs, 0.0);
+                    for (int k = 0; k < num_imfs; ++k) {
+                        if (imf_correlations[k].empty()) continue;
+                        double sum = 0.0;
+                        for (double c : imf_correlations[k]) sum += c;
+                        avg_correlation[k] = sum / imf_correlations[k].size();
+                    }
+                    modal_similarity["avg_correlation"] = avg_correlation;
+                    
+                    // 3. 相关系数下降检测（突然下降 > 0.3 认为不稳定）
+                    Vector<int> correlation_drops(num_imfs, 0);
+                    for (int k = 0; k < num_imfs; ++k) {
+                        for (size_t i = 1; i < imf_correlations[k].size(); ++i) {
+                            double drop = imf_correlations[k][i-1] - imf_correlations[k][i];
+                            if (drop > 0.3) {
+                                correlation_drops[k]++;
+                            }
+                        }
+                    }
+                    modal_similarity["correlation_drops"] = correlation_drops;
+                    
+                    // 4. 相似性稳定性评分（平均相关系数越高越稳定）
+                    double similarity_score = 0.0;
+                    for (int k = 0; k < num_imfs; ++k) {
+                        similarity_score += std::max(0.0, avg_correlation[k]);
+                    }
+                    similarity_score /= num_imfs;
+                    similarity_score *= 100.0;  // 转换为0-100分
+                    modal_similarity["similarity_score"] = similarity_score;
+                    
+                    stability["modal_similarity"] = modal_similarity;
+
+                    vmd_rolling["stability"] = stability;
+                    json["vmd_rolling"] = vmd_rolling;
+                }
+            }
         } else {
             // 默认 EMD
             auto imfs = simd_emd(original, num_imfs, 10, 0.02);

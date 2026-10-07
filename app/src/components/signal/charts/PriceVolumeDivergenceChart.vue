@@ -44,9 +44,9 @@ function buildOption() {
         const date = params[0].axisValueLabel
         const lines = params.map((p: any) => {
           if (p.seriesName.includes('比值')) {
-            return `${p.marker} ${p.seriesName}: ${p.value.toFixed(3)}`
+            return `${p.marker} ${p.seriesName}: ${p.value.toFixed(4)}`
           }
-          return `${p.marker} ${p.seriesName}: ${p.value.toFixed(2)}%`
+          return `${p.marker} ${p.seriesName}: ${p.value.toFixed(4)}%`
         })
         return `<b>${date}</b><br/>${lines.join('<br/>')}`
       }

@@ -41,6 +41,7 @@
           <select v-model="state.method" class="select-small">
             <option value="emd">EMD</option>
             <option value="ceemdan">CEEMDAN</option>
+            <option value="vmd">VMD</option>
           </select>
         </div>
 
@@ -74,7 +75,7 @@
     <!-- 分析结果 -->
     <div v-if="result" class="results">
       <section class="section">
-        <h3 class="section-title">EMD 分解</h3>
+        <h3 class="section-title">{{ methodDisplayName }} 分解</h3>
         <div class="chart-grid">
           <div class="chart-card full">
             <IMF3DChart :data="result" />
@@ -109,6 +110,34 @@
           </div>
         </div>
       </section>
+
+      <!-- 稳定性分析（仅当 vmd_rolling 存在时显示） -->
+      <section v-if="result.vmd_rolling" class="section">
+        <h3 class="section-title">稳定性分析</h3>
+        <div class="chart-grid">
+          <div class="chart-card full">
+            <StabilityChart :data="result" />
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card full">
+            <DistanceChart :data="result" />
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card full">
+            <EnergyTrajectoryChart :data="result" />
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card full">
+            <ModalSimilarityChart :data="result" />
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- 空状态 -->
@@ -131,6 +160,10 @@ import IMF3DChart from './charts/IMF3DChart.vue'
 import IMFEnergyChart from './charts/IMFEnergyChart.vue'
 import RollingEnergyChart from './charts/RollingEnergyChart.vue'
 import PriceVolumeDivergenceChart from './charts/PriceVolumeDivergenceChart.vue'
+import StabilityChart from './charts/StabilityChart.vue'
+import DistanceChart from './charts/DistanceChart.vue'
+import EnergyTrajectoryChart from './charts/EnergyTrajectoryChart.vue'
+import ModalSimilarityChart from './charts/ModalSimilarityChart.vue'
 
 const { state, result, QUICK_RANGES, removeSymbol, setQuickRange } = useSignalState()
 const { fetchSignal } = useSignalData()
@@ -157,6 +190,15 @@ const filteredMacroOptions = computed(() =>
 
 const analysisLoading = ref(false)
 const loading = computed(() => securitiesLoading.value || analysisLoading.value)
+
+const methodDisplayName = computed(() => {
+  const names: Record<string, string> = {
+    emd: 'EMD',
+    ceemdan: 'CEEMDAN',
+    vmd: 'VMD'
+  }
+  return names[state.method] || state.method.toUpperCase()
+})
 
 const canAnalyze = computed(() => {
   if (loading.value) return false

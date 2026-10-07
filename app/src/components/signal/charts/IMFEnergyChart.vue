@@ -63,9 +63,9 @@ function buildOption() {
         const cum = cumulative[imfIdx]
         const rows = params.map((p: any) => {
           const marker = p.marker ?? ''
-          return `${marker} ${p.seriesName}: ${p.value.toFixed(2)}%`
+          return `${marker} ${p.seriesName}: ${p.value.toFixed(4)}%`
         }).join('<br/>')
-        return `<b>IMF${imfIdx + 1}</b> · 周期 ${info.mean_period.toFixed(1)}<br/>${rows}<br/><span style="color:#a0aec0">累计解释: ${cum.toFixed(1)}%</span>`
+        return `<b>IMF${imfIdx + 1}</b> · 周期 ${info.mean_period.toFixed(4)}<br/>${rows}<br/><span style="color:#a0aec0">累计解释: ${cum.toFixed(4)}%</span>`
       }
     },
     legend: {
