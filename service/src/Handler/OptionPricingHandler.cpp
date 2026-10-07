@@ -370,7 +370,7 @@ void OptionPricingHandler::get(const httplib::Request& req, httplib::Response& r
 
         res.set_content(response.dump(), "application/json");
     } catch (const std::exception& e) {
-        ERROR("[IVSurface] Exception: {}", e.what());
+        FATAL("[IVSurface] Exception: {}", e.what());
         nlohmann::json err;
         err["error"] = e.what();
         res.status = 500;

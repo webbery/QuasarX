@@ -69,7 +69,7 @@ async function render() {
     }
   }
 
-  chart.setOption({
+  chart!.setOption({
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',

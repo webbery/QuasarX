@@ -77,7 +77,7 @@ function render() {
   // 避免 echarts-gl 全局副作用导致 "Dom has no width or height" 错误
   if (!chartRef.value || chartRef.value.offsetWidth === 0 || chartRef.value.offsetHeight === 0) return
 
-  chart.resize()
+  chart!.resize()
 
   const series: any[] = []
   const prem = effectivePremium.value
@@ -137,7 +137,7 @@ function render() {
     },
   })
 
-  chart.setOption({
+  chart!.setOption({
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
