@@ -3,20 +3,14 @@
 #include "Util/datetime.h"
 #include "Util/system.h"
 #include "Util/string_algorithm.h"
+#include "server.h"
+#include "AgentSubSystem.h"
 #include <map>
 #include <queue>
 #include <cmath>
 
 static std::string formatTimestamp(time_t ts) {
-    struct tm tm_val;
-#ifdef _WIN32
-    gmtime_s(&tm_val, &ts);
-#else
-    gmtime_r(&ts, &tm_val);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_val);
-    return buf;
+    return ToString(ts, "%Y-%m-%d");
 }
 
 struct BuyLot {
@@ -39,6 +33,13 @@ void StrategyTradeHandler::get(const httplib::Request& req, httplib::Response& r
     if (!startStr.empty()) startDate = FromStr(startStr, "%Y-%m-%d");
     if (!endStr.empty()) endDate = FromStr(endStr, "%Y-%m-%d");
 
+    // 获取策略的佣金率配置
+    double commissionRate = 9e-05;  // 默认值
+    auto* flowSubsystem = _server->GetStrategySystem()->GetFlowSubsystem();
+    if (flowSubsystem) {
+        commissionRate = flowSubsystem->GetStrategyCommissionRate(strategy);
+    }
+    
     auto records = DecisionDB::instance().queryDailyPositions(strategy, startDate, endDate);
     if (records.empty()) {
         nlohmann::json result;
@@ -80,12 +81,16 @@ void StrategyTradeHandler::get(const httplib::Request& req, httplib::Response& r
 
             if (delta > 0) {
                 // Buy
+                double gross = static_cast<double>(delta) * rec->close_price;
+                double commission = gross * commissionRate;
+                
                 nlohmann::json trade;
                 trade["date"] = formatTimestamp(rec->date);
                 trade["symbol"] = to_utf8(symStr.c_str());
                 trade["direction"] = "buy";
                 trade["quantity"] = delta;
                 trade["price"] = rec->close_price;
+                trade["commission"] = std::round(commission * 100.0) / 100.0;
                 trade["position_after"] = rec->position;
                 trades.push_back(trade);
 
@@ -129,6 +134,11 @@ void StrategyTradeHandler::get(const httplib::Request& req, httplib::Response& r
                 trade["direction"] = "sell";
                 trade["quantity"] = -delta;
                 trade["price"] = rec->close_price;
+                
+                double gross = static_cast<double>(-delta) * rec->close_price;
+                double commission = gross * commissionRate;
+                trade["commission"] = std::round(commission * 100.0) / 100.0;
+                
                 trade["position_after"] = rec->position;
                 if (matchedQty > 0) {
                     trade["pnl"] = std::round(sellPnl * 100.0) / 100.0;

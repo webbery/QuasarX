@@ -146,6 +146,19 @@ void FlowSubsystem::SetStrategyCapital(const String& strategy, double capital) {
     INFO("[FlowSubsystem] Strategy '{}' capital set to {:.0f}", strategy, capital);
 }
 
+void FlowSubsystem::SetStrategyCommissionRate(const String& strategy, double commissionRate) {
+    _flows[strategy]._commissionRate = commissionRate;
+    INFO("[FlowSubsystem] Strategy '{}' commission rate set to {:.6f}", strategy, commissionRate);
+}
+
+double FlowSubsystem::GetStrategyCommissionRate(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it != _flows.end()) {
+        return it->second._commissionRate;
+    }
+    return 9e-05;  // 默认万0.9
+}
+
 void FlowSubsystem::Start() {
     auto strategySys = _handle->GetStrategySystem();
     for (auto& item : _flows) {

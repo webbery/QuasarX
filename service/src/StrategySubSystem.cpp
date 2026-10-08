@@ -448,6 +448,23 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
         }
     }
 
+    // 读取 execution 节点的 commission 参数并存储到 StrategyFlowInfo
+    if (script.contains("nodes")) {
+        for (const auto& node : script["nodes"]) {
+            if (node.contains("data") && 
+                node["data"].contains("nodeType") && 
+                node["data"]["nodeType"] == "execution") {
+                if (node["data"].contains("params") && 
+                    node["data"]["params"].contains("commission") &&
+                    node["data"]["params"]["commission"].contains("value")) {
+                    double commissionRate = node["data"]["params"]["commission"]["value"].get<double>();
+                    _agentSystem->SetStrategyCommissionRate(strategyName, commissionRate);
+                    break;  // 只取第一个 execution 节点的佣金配置
+                }
+            }
+        }
+    }
+
     // 推断并保存预热期 epoch 数
     int warmup = InferWarmupEpochsFromConfig(script);
     _strategyWarmupEpochs[strategyName] = warmup;
@@ -774,16 +791,20 @@ void StrategySubSystem::recordDailyPositions(
                    d.action == DailyDecisionJson::Action::CLOSE) {
             positions[sym] = 0;
         }
-        // HOLD: 持仓不变
+        // HOLD: 持仓不变，不写入 DailyPosition（避免被统计为交易）
 
-        // 写入 DuckDB 快照
-        DailyPositionRecord rec;
-        rec.strategy = strategy;
-        rec.symbol = sym;
-        rec.date = date;
-        rec.position = positions[sym];
-        rec.close_price = d.target_price;
-        DecisionDB::instance().insertDailyPosition(rec);
+        // 只有持仓变化时才写入 DuckDB 快照
+        if (d.action == DailyDecisionJson::Action::BUY ||
+            d.action == DailyDecisionJson::Action::SELL ||
+            d.action == DailyDecisionJson::Action::CLOSE) {
+            DailyPositionRecord rec;
+            rec.strategy = strategy;
+            rec.symbol = sym;
+            rec.date = date;
+            rec.position = positions[sym];
+            rec.close_price = d.target_price;
+            DecisionDB::instance().insertDailyPosition(rec);
+        }
     }
 
     INFO("[DailyExecution] Recorded {} position(s) for strategy '{}' on {}",
