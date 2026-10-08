@@ -1470,7 +1470,8 @@ bool FlowSubsystem::RunTrainingCollect(
 // ═══════════════════════════════════════════════════════════
 
 void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symbols,
-                                std::function<void(nlohmann::json)> onComplete) {
+                                std::function<void(nlohmann::json)> onComplete,
+                                const String& simDate) {
     // 异步执行，不阻塞调用线程；线程句柄保存到 flow，Stop/ClearFlow 时 join，
     // 避免线程执行期间 flow 内对象（ExecuteNode/ManualTiming）被并发释放导致悬空崩溃
     auto it = _flows.find(strategy);
@@ -1507,7 +1508,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             }
             return;
         }
-        flow._dailyWorker = std::make_unique<std::thread>([this, strategy, symbols, onComplete = std::move(onComplete)]() {
+        flow._dailyWorker = std::make_unique<std::thread>([this, strategy, symbols, simDate, onComplete = std::move(onComplete)]() {
         SetCurrentThreadName(("Daily_" + strategy).c_str());
         INFO("[StartDaily] === Started for strategy '{}', {} symbols ===", strategy, symbols.size());
 
@@ -1583,6 +1584,22 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     if (!simExchange->stepForward(btContext)) {
                         INFO("[StartDaily] Data finished for {} at epoch {}", strategy, epoch);
                         break;
+                    }
+                    // 日终逐日模拟：只处理 simDate 当天及之前的 bar。
+                    // stepForward 已把当前 bar 写入 btContext，遇到更晚日期的 bar 立即截止，
+                    // 使决策落在 simDate 那根 bar 上（而非数据窗最后一根）。
+                    // 按日期字符串比较（"YYYY-MM-DD" 字典序 == 时间序），日线与盘中 bar 均适用。
+                    if (!simDate.empty()) {
+                        time_t barTs = 0;
+                        for (auto sym : symbols) {
+                            const QuoteInfo* q = btContext->getQuote(sym);
+                            if (q && q->_time > 0) { barTs = q->_time; break; }
+                        }
+                        if (barTs > 0 && ToString(barTs, "%Y-%m-%d") > simDate) {
+                            INFO("[StartDaily] Replay truncated to simDate {} at epoch {} (next bar {})",
+                                 simDate, epoch, ToString(barTs, "%Y-%m-%d"));
+                            break;
+                        }
                     }
                     if (!RunGraph(strategy, flow, context)) {
                         WARN("[StartDaily] RunGraph failed at epoch {}", epoch);
@@ -1666,6 +1683,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             constexpr size_t kDailyLookback = 160;
             for (auto sym : symbolVec) {
                 String symStr = get_symbol(sym);
+                // 实盘输入由 WriteCloseData 保证最后一根即当日 bar，无需按 simDate 截断
                 auto bars = quoteDB.query("stock_1d", symStr, "", "", 0);
                 if (bars.size() > kDailyLookback) {
                     bars.erase(bars.begin(), bars.end() - kDailyLookback);

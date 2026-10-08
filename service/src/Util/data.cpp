@@ -1,5 +1,6 @@
 #include "Util/data.h"
 #include "Util/QuoteDB.h"
+#include "Util/PythonRunner.h"
 #include "Util/datetime.h"
 #include "Util/log.h"
 #include "Util/system.h"
@@ -138,7 +139,7 @@ static Map<String, Vector<double>> parseCsvFile(
     time_t end_t = end_date.empty() ? 0 : FromStr(end_date, "%Y-%m-%d");
 
     Vector<String> dates;
-    std::string line;
+    String line;
     std::getline(file, line); // skip header
 
     while (std::getline(file, line)) {
@@ -206,10 +207,10 @@ static Map<String, Vector<double>> loadCsvData(
     const String& end_date,
     Vector<String>* out_dates)
 {
-    std::string base_dir = "./data";
+    String base_dir = "./data";
 
     // 规范化 symbol（统一小写）
-    std::string normalized = symbol;
+    String normalized = symbol;
     std::transform(normalized.begin(), normalized.end(),
                    normalized.begin(), ::tolower);
 
@@ -225,8 +226,8 @@ static Map<String, Vector<double>> loadCsvData(
         // 有后缀：将 CODE.EXCHANGE 转换为 exchange.code 格式
         // 例如: 000001.SZ → sz.000001, 600000.SH → sh.600000
         auto dot_pos = normalized.find('.');
-        std::string code = normalized.substr(0, dot_pos);
-        std::string exchange = normalized.substr(dot_pos + 1);
+        String code = normalized.substr(0, dot_pos);
+        String exchange = normalized.substr(dot_pos + 1);
 
         search_paths.push_back(base_dir + "/A_hfq/" + exchange + "." + code + ".csv");
         search_paths.push_back(base_dir + "/Astock/" + exchange + "." + code + ".csv");
@@ -241,8 +242,8 @@ static Map<String, Vector<double>> loadCsvData(
         String etf_code = normalized;
         auto dot_pos = etf_code.find('.');
         if (dot_pos != String::npos) {
-            std::string code = etf_code.substr(0, dot_pos);
-            std::string exchange = etf_code.substr(dot_pos + 1);
+            String code = etf_code.substr(0, dot_pos);
+            String exchange = etf_code.substr(dot_pos + 1);
             String etf_formatted = exchange + "." + code;
 
             // 后复权数据（指标计算用，与回测一致）
@@ -296,7 +297,7 @@ static Map<String, Vector<double>> loadCsvData(
     time_t end_t = end_date.empty() ? 0 : FromStr(end_date, "%Y-%m-%d");
 
     Vector<String> dates;
-    std::string line;
+    String line;
     std::getline(file, line); // skip header
 
     while (std::getline(file, line)) {
@@ -539,9 +540,9 @@ bool FetchMacroData(
     Vector<double>& out_prices)
 {
     auto slash = symbol.find('/');
-    if (slash == std::string::npos) return false;
-    std::string country = symbol.substr(0, slash);
-    std::string indicator = symbol.substr(slash + 1);
+    if (slash == String::npos) return false;
+    String country = symbol.substr(0, slash);
+    String indicator = symbol.substr(slash + 1);
 
     nlohmann::json cached_data;
     bool cache_ok = ReadMacroCache(db_path, country, indicator, cached_data);
@@ -563,7 +564,7 @@ bool FetchMacroData(
     out_prices.clear();
     for (const auto& item : data["data"]) {
         if (item.contains("date") && item.contains("value")) {
-            std::string d = item["date"].get<std::string>();
+            String d = item["date"].get<String>();
             // 跳过非标准日期（如"美国CPI月率报告"）
             if (d.size() < 10 || d[4] != '-') continue;
             auto v = item["value"];
@@ -696,7 +697,7 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
         // 此处为回退逻辑，尝试使用 "./data/quote" 路径
         auto& quoteDB = QuoteDB::instance();
         if (!quoteDB.isInitialized()) {
-            std::string db_dir = "./data/quote";
+            String db_dir = "./data/quote";
             if (!quoteDB.init(db_dir, "quote.db")) {
                 WARN("[LoadHistoryDataWithFreq] Failed to initialize QuoteDB at {}", db_dir);
                 // goto fallback_csv;
@@ -803,8 +804,8 @@ Map<String, Vector<double>> LoadHistoryDataWithFreq(
 
 namespace DataUtil {
 
-std::string WriteTempCsv(const std::vector<std::string>& csv_lines,
-                         const std::string& name) {
+String WriteTempCsv(const std::vector<String>& csv_lines,
+                         const String& name) {
     auto tmp_dir = std::filesystem::temp_directory_path() / "quasarx_test";
     std::filesystem::create_directories(tmp_dir);
     auto tmp_path = tmp_dir / (name + ".csv");
@@ -819,16 +820,16 @@ std::string WriteTempCsv(const std::vector<std::string>& csv_lines,
     return tmp_path.string();
 }
 
-void CleanupTempFile(const std::string& path) {
+void CleanupTempFile(const String& path) {
     if (!path.empty()) {
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }
 }
 
-std::pair<bool, std::string> CleanupDBData(
-    const std::string& table,
-    const std::string& symbol,
+std::pair<bool, String> CleanupDBData(
+    const String& table,
+    const String& symbol,
     const DBCleanupOps& ops) {
 
     if (!table.empty() && !symbol.empty()) {
@@ -858,3 +859,174 @@ std::pair<bool, std::string> CleanupDBData(
 }
 
 } // namespace DataUtil
+
+// ============================================================
+// BaoStock 单标的下载 + 导入
+// ============================================================
+
+DownloadSymbolResult DownloadAndImportSymbol(
+    const String& symbol,
+    const String& freq,
+    const String& start,
+    const String& end,
+    const String& interpreter,
+    const String& quote_dir,
+    bool overwrite)
+{
+    namespace fs = std::filesystem;
+    DownloadSymbolResult result;
+
+    // 从 symbol 推断 asset_type: sh.5xxxxx / sh.58xxxx → etf, 其余 → stock
+    String asset_type = "stock";
+    {
+        auto dot = symbol.find('.');
+        if (dot != String::npos && dot <= 3) {
+            String code = symbol.substr(dot + 1);
+            if (!code.empty() && (code[0] == '5')) {
+                asset_type = "etf";
+            }
+        }
+    }
+
+    // 构建下载命令
+    String cmd = interpreter + " tools/download_etf_bs.py "
+                    + symbol + " " + quote_dir
+                    + " --freq " + freq
+                    + " --asset-type " + asset_type;
+    if (!start.empty()) cmd += " --start " + start;
+    if (!end.empty())   cmd += " --end "   + end;
+
+    // 执行下载
+    String output;
+    bool ok = RunCommand(cmd, output);
+    if (!ok) {
+        WARN("[DownloadAndImport] {} download failed: {}", symbol, output);
+        return result;  // download_ok=false
+    }
+    result.download_ok = true;
+
+    // baostock 格式 → CODE.EXCHANGE (sh.510050 → 510050.SH)
+    String csv_name = symbol;
+    {
+        auto dot = symbol.find('.');
+        if (dot != String::npos && dot <= 3) {
+            String market = symbol.substr(0, dot);
+            String code = symbol.substr(dot + 1);
+            std::transform(market.begin(), market.end(), market.begin(), ::toupper);
+            csv_name = code + "." + market;
+        }
+    }
+
+    String org_path = quote_dir + "/" + asset_type + "_org/" + freq + "/" + csv_name + ".csv";
+    String hfq_path = quote_dir + "/" + asset_type + "_hfq/" + freq + "/" + csv_name + ".csv";
+
+    if (!fs::exists(org_path) && !fs::exists(hfq_path)) {
+        WARN("[DownloadAndImport] {} CSV not found after download", symbol);
+        return result;  // download_ok=true, import_ok=false
+    }
+
+    // 从 CSV 文件获取行数
+    {
+        String count_path = fs::exists(org_path) ? org_path : hfq_path;
+        std::ifstream ifs(count_path);
+        if (ifs.is_open()) {
+            int csv_rows = 0;
+            String line;
+            bool header_skipped = false;
+            while (std::getline(ifs, line)) {
+                if (line.empty()) continue;
+                if (!header_skipped) { header_skipped = true; continue; }
+                csv_rows++;
+            }
+            result.rows = csv_rows;
+        }
+    }
+
+    // 导入 QuoteDB（未初始化则自动初始化）
+    auto& quoteDB = QuoteDB::instance();
+    if (!quoteDB.isInitialized()) {
+        INFO("[DownloadAndImport] Auto-initializing QuoteDB at {}/quote.db", quote_dir);
+        if (!quoteDB.init(quote_dir, "quote.db")) {
+            WARN("[DownloadAndImport] QuoteDB init failed, skipping import for {}", symbol);
+            return result;
+        }
+    }
+
+    String org_p = fs::exists(org_path) ? org_path : hfq_path;
+    String hfq_p = fs::exists(hfq_path) ? hfq_path : org_path;
+    String table = QuoteDB::tableName(asset_type, freq);
+    String internal_sym = toInternalSymbol(csv_name);
+
+    auto t0 = std::chrono::steady_clock::now();
+    int imported = quoteDB.importCsv(org_p, hfq_p, table, internal_sym, overwrite);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    INFO("[DownloadAndImport] {} import done: {} rows in {} ms", internal_sym, imported, ms);
+
+    // 清理 CSV
+    fs::remove(org_p);
+    fs::remove(hfq_p);
+
+    if (imported > 0) {
+        result.imported = imported;
+        result.import_ok = true;
+    }
+
+    return result;
+}
+
+// ============================================================
+// 标的 → QuoteDB 查询
+// ============================================================
+
+UnderlyingQuoteInfo ResolveUnderlying(const String& underlying, const String& exchange,
+                                      const String& product) {
+    UnderlyingQuoteInfo info;
+    if (underlying.empty()) {
+        INFO("[ResolveUnderlying] underlying is empty, returning empty");
+        return info;
+    }
+
+    // SSE: underlying 可能是产品名 ("50ETF") 而非 ETF 代码 ("510050")
+    // 通过 product 参数做映射; 如果 underlying 本身是纯数字代码则直接用
+    static const std::map<String, String> SSE_PRODUCT_TO_CODE = {
+        {"50ETF",     "510050"},
+        {"300ETF",    "510300"},
+        {"500ETF",    "510500"},
+        {"STAR50ETF", "588000"},
+    };
+
+    String code = underlying;
+    if (exchange == "SSE" && !product.empty()) {
+        auto it = SSE_PRODUCT_TO_CODE.find(product);
+        if (it != SSE_PRODUCT_TO_CODE.end()) {
+            code = it->second;
+        }
+    }
+
+    // 构造 baostock 格式 symbol
+    String prefix = (exchange == "SSE" || exchange == "CFFEX") ? "sh." : "sz.";
+    info.symbol = prefix + code;
+
+    // 自动判断 asset_type
+    symbol_t sym = to_symbol(info.symbol);
+    bool etf = is_etf(sym);
+    String asset_type = etf ? "etf" : "stock";
+    info.table = QuoteDB::tableName(asset_type, "daily");
+
+    INFO("[ResolveUnderlying] underlying='{}' product='{}' exchange='{}' → code='{}' symbol='{}' is_etf={} table='{}'",
+         underlying, product, exchange, code, info.symbol, etf, info.table);
+
+    // 取最新收盘价
+    auto& quoteDB = QuoteDB::instance();
+    if (!quoteDB.isInitialized()) {
+        WARN("[ResolveUnderlying] QuoteDB NOT initialized!");
+        return info;
+    }
+
+    info.latest_close = quoteDB.getLatestClose(info.table, info.symbol);
+    INFO("[ResolveUnderlying] getLatestClose({}, {}) = {}",
+         info.table, info.symbol, info.latest_close);
+    return info;
+}

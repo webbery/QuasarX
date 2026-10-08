@@ -1,6 +1,7 @@
 #include "Handler/OptionDataHandler.h"
 #include "Util/OptionDataDB.h"
 #include "Util/PythonRunner.h"
+#include "Util/data.h"
 #include "Util/system.h"
 #include "server.h"
 #include <filesystem>
@@ -254,12 +255,73 @@ void OptionDataHandler::post(const httplib::Request& req, httplib::Response& res
             });
         }
 
+        // ── SSE 期权: 追加下载标的 ETF 价格数据 (用于计算期权收益) ──
+        int etf_rows_total = 0;
+        if (exchange == "SSE") {
+            static const std::map<String, String> SSE_UNDERLYING_ETFS = {
+                {"50ETF",     "sh.510050"},
+                {"300ETF",    "sh.510300"},
+                {"500ETF",    "sh.510500"},
+                {"STAR50ETF", "sh.588000"},
+            };
+
+            auto quote_dir = db_path + "/quote";
+
+            SendSSE(sse_sock, "option_data_download", {
+                {"status", "etf_download_started"},
+                {"exchange", exchange},
+                {"message", "开始下载标的 ETF 数据"}
+            });
+
+            for (const auto& prod : products) {
+                auto it = SSE_UNDERLYING_ETFS.find(prod);
+                if (it == SSE_UNDERLYING_ETFS.end()) continue;
+                const auto& etf_sym = it->second;
+
+                SendSSE(sse_sock, "option_data_download", {
+                    {"status", "etf_downloading"},
+                    {"product", prod},
+                    {"etf_symbol", etf_sym}
+                });
+
+                INFO("[OptionDataHandler] 下载标的 ETF: {} (标的={})", etf_sym, prod);
+
+                auto r = DownloadAndImportSymbol(
+                    etf_sym, "daily", start_date, end_date, interpreter, quote_dir);
+
+                if (!r.download_ok) {
+                    SendSSE(sse_sock, "option_data_download", {
+                        {"status", "etf_download_failed"},
+                        {"product", prod},
+                        {"etf_symbol", etf_sym}
+                    });
+                    continue;
+                }
+
+                if (r.import_ok && r.imported > 0) {
+                    etf_rows_total += r.imported;
+                    SendSSE(sse_sock, "option_data_download", {
+                        {"status", "etf_imported"},
+                        {"product", prod},
+                        {"etf_symbol", etf_sym},
+                        {"rows", std::to_string(r.imported)}
+                    });
+                }
+            }
+
+            SendSSE(sse_sock, "option_data_download", {
+                {"status", "etf_download_done"},
+                {"total_etf_rows", std::to_string(etf_rows_total)}
+            });
+        }
+
         SendSSE(sse_sock, "option_data_download", {
             {"status", "done"},
             {"exchange", exchange},
             {"success_products", std::to_string(success_products)},
             {"fail_products", std::to_string(fail_products)},
-            {"total_rows", std::to_string(total_imported)}
+            {"total_rows", std::to_string(total_imported)},
+            {"etf_rows", std::to_string(etf_rows_total)}
         });
     }).detach();
 

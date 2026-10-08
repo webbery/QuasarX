@@ -47,6 +47,36 @@ export interface SignalAnalysisResult {
     volume_normalized: number[]
     energy_to_volume_ratio: number[]
   }
+  vmd_meta?: {
+    actual_k: number
+    iterations: number
+    converged: boolean
+    center_freqs: number[]
+  }
+  vmd_rolling?: {
+    window: number
+    dates: string[]
+    center_freq_trajectory: number[][]
+    energy_trajectory: number[][]
+    convergence_errors: number[]
+    actual_k_series: number[]
+    stability: {
+      freq_smoothness: number[]
+      min_freq_distance: number[]
+      freq_jump_ratio: number[]
+      overall_score: number
+      energy_volatility: number[]
+      energy_entropy: number[]
+      entropy_diff: number[]
+      entropy_stability_score: number
+      modal_similarity: {
+        correlation_series: number[][]
+        avg_correlation: number[]
+        correlation_drops: number[]
+        similarity_score: number
+      }
+    }
+  }
 }
 
 const QUICK_RANGES: [string, () => [string, string]][] = [

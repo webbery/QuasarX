@@ -83,7 +83,16 @@ function buildOption() {
       axisPointer: { type: 'cross' },
       backgroundColor: 'rgba(26, 34, 54, 0.95)',
       borderColor: '#2a3449',
-      textStyle: { color: '#e0e0e0', fontSize: 11 }
+      textStyle: { color: '#e0e0e0', fontSize: 11 },
+      formatter: (params: any) => {
+        if (!params || !params.length) return ''
+        const date = params[0].axisValue
+        const lines = params.map((p: any) => {
+          const value = typeof p.value === 'number' ? p.value.toFixed(4) : p.value
+          return `${p.marker} ${p.seriesName}: ${value}`
+        })
+        return `<b>${date}</b><br/>${lines.join('<br/>')}`
+      }
     },
     legend: {
       data: [...by_imf_energy.map((_, i) => `IMF${i + 1}`), '残差', '总能量变化率'],

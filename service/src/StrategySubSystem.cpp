@@ -649,7 +649,9 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
     String dataDir = _handle->GetConfig().GetDatabasePath();
     String today = simDate.empty() ? ToString(Now(), "%Y-%m-%d") : simDate;
 
-    // 异步执行，回调中保存决策
+    // 异步执行，回调中保存决策。
+    // 末参 simDate：把日终重放窗口截止到推送当天（空 = 不截断，保持原有全窗口行为），
+    // 否则每次推送都会重放整段固定历史、只对数据窗最后一根 bar 决策。
     _agentSystem->StartDaily(strategy, pools,
         [this, strategy, dataDir, today](nlohmann::json decisions) {
             INFO("[DailyExecution] Callback for '{}': status={}, keys={}",
@@ -701,7 +703,7 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
                 if (_handle) _handle->SendEmail(body);
                 _dailyErrors.clear();
             }
-        });
+        }, simDate);
 }
 
 void StrategySubSystem::ForceExecuteAllDaily() {

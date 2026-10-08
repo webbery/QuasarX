@@ -3,6 +3,7 @@
 #include "Util/finance.h"
 #include "Util/HolidayCalendar.h"
 #include "Util/QuoteDB.h"
+#include "Util/data.h"
 #include "Bridge/ETFOptionSymbol.h"
 #include "Bridge/OptionSymbolMacros.h"
 #include "Util/log.h"
@@ -704,12 +705,17 @@ static void appendContractMeta(nlohmann::json& result,
 
     // 标的价格: SSE/SZSE 期权 underlying 是 ETF 代码 (510050/510300 等),
     //          CFFEX 期权 underlying 是指数代码 (000300/000016/000852)
-    //          QuoteDB 内只有股票 ETF 的日线, 指数类无法直接查, 此时 spot=0
+    //          QuoteDB 内 ETF 在 etf_1d, 股票在 stock_1d, 指数无数据 → spot=0
     double spot = 0.0;
     if (!underlying.empty()) {
-        String prefix = (exchange == "SSE") ? "sh." : "sz.";
-        String quote_table = QuoteDB::tableName("stock", "daily");
-        spot = QuoteDB::instance().getLatestClose(quote_table, prefix + underlying);
+        INFO("[appendContractMeta] symbol_id={} underlying='{}' exchange='{}' product='{}'",
+             symbol_id, underlying, exchange, product);
+        auto uq = ResolveUnderlying(underlying, exchange, product);
+        spot = uq.latest_close;
+        INFO("[appendContractMeta] → spot={}", spot);
+    } else {
+        WARN("[appendContractMeta] symbol_id={} underlying is EMPTY! exchange='{}' product='{}'",
+             symbol_id, exchange, product);
     }
     meta["spot"] = spot;
 

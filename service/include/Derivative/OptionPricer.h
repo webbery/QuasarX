@@ -33,6 +33,7 @@ struct BSResult {
     double price = 0;
     double intrinsic_value = 0;
     double time_value = 0;
+    double lower_bound = 0;        // 理论下限 (无套利边界)
     double delta = 0, gamma = 0, theta = 0, vega = 0, rho = 0;
     String moneyness;   // "ITM" / "ATM" / "OTM"
 };
@@ -59,6 +60,7 @@ struct PricingResult {
     double price = 0;
     double intrinsic_value = 0;
     double time_value = 0;
+    double lower_bound = 0;        // 理论下限 (无套利边界)
     String moneyness;
     double delta = 0, gamma = 0, theta = 0, vega = 0, rho = 0;
     Vector<PayoffPoint> payoff_curve;

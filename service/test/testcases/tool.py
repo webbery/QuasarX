@@ -46,10 +46,11 @@ SERVICE_ROOT = find_service_root()
 def _resolve_data_dir() -> Path:
     """定位服务运行时的数据根目录（db_path 解析后的绝对路径）
 
-    服务运行目录有三种布局：
+    服务运行目录有四种布局：
     - CI (find_service_root 找到 repo root): 二进制在 SERVICE_ROOT → 数据在 SERVICE_ROOT/data
     - CI (find_service_root 找到 service/): 二进制在 SERVICE_ROOT 的上一级 → 数据在 parent/data
-    - 本地: service/build/ 下有 QuantService 二进制 → 数据在 service/build/data
+    - 本地 Linux: service/build/ 下有 QuantService 二进制 → 数据在 service/build/data
+    - 本地 Windows: service/winbuild/ 下有 QuantService.exe → 数据在 service/winbuild/data
     - 兜底: SERVICE_ROOT/data
     """
     # 二进制在 SERVICE_ROOT
@@ -58,10 +59,14 @@ def _resolve_data_dir() -> Path:
     # 二进制在 SERVICE_ROOT 的上一级（CI 布局：find_service_root 找到 service/，但二进制在 repo root）
     if (SERVICE_ROOT.parent / "QuantService").exists():
         return SERVICE_ROOT.parent / "data"
-    # 本地开发：二进制在 service/build/
+    # 本地 Linux 开发：二进制在 service/build/
     build_dir = SERVICE_ROOT / "build"
     if (build_dir / "QuantService").exists():
         return build_dir / "data"
+    # 本地 Windows 开发：二进制在 service/winbuild/{Debug,Release}/
+    winbuild_dir = SERVICE_ROOT / "winbuild"
+    if (winbuild_dir / "data").is_dir():
+        return winbuild_dir / "data"
     return SERVICE_ROOT / "data"
 
 
@@ -75,7 +80,8 @@ def _resolve_scripts_dir() -> Path:
 
     与 _resolve_data_dir 同理，取决于服务 cwd：
       - CI：QuantService 在 SERVICE_ROOT → SERVICE_ROOT/scripts
-      - 本地：QuantService 在 SERVICE_ROOT/build/ → SERVICE_ROOT/build/scripts
+      - 本地 Linux：QuantService 在 SERVICE_ROOT/build/ → SERVICE_ROOT/build/scripts
+      - 本地 Windows：QuantService 在 SERVICE_ROOT/winbuild/ → SERVICE_ROOT/winbuild/scripts
     """
     if (SERVICE_ROOT / "QuantService").exists():
         return SERVICE_ROOT / "scripts"
@@ -84,6 +90,9 @@ def _resolve_scripts_dir() -> Path:
     build_dir = SERVICE_ROOT / "build"
     if (build_dir / "QuantService").exists():
         return build_dir / "scripts"
+    winbuild_dir = SERVICE_ROOT / "winbuild"
+    if (winbuild_dir / "scripts").is_dir():
+        return winbuild_dir / "scripts"
     return SERVICE_ROOT / "scripts"
 
 

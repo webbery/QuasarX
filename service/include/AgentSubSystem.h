@@ -223,8 +223,12 @@ public:
      * @param symbols 标的列表
      * @param onComplete 完成回调，参数为决策 JSON
      */
+    // simDate: 日终回放截止日期（"YYYY-MM-DD"，空 = 不截断，保持原有全窗口行为）。
+    // 逐日模拟（POST /strategy/simulate/bar）必须传入推送当天，使重放窗口截止到
+    // 当天，决策针对当天而非数据窗最后一根 bar。
     void StartDaily(const String& strategy, const Set<symbol_t>& symbols,
-                    std::function<void(nlohmann::json)> onComplete);
+                    std::function<void(nlohmann::json)> onComplete,
+                    const String& simDate = String());
 
 private:
 

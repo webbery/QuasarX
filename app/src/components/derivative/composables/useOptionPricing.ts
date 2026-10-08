@@ -35,6 +35,7 @@ export interface PricingResult {
   price: number
   intrinsic_value: number
   time_value: number
+  lower_bound: number        // 理论下限 (无套利边界)
   moneyness: string
   greeks: Greeks
   payoff_curve: PayoffPoint[]
