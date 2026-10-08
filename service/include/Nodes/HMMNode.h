@@ -54,6 +54,8 @@ private:
     int _days_since_train = 0;         // 距离上次训练的天数
     int _n_features = 0;
     bool _trained = false;
+    bool _pretrained = false;       // 当前模型来自 modelFile（尚未被在线重训替换）
+    String _model_path;             // modelFile 路径，仅用于日志
 
     // 当前推理结果
     Eigen::VectorXd _current_probs;    // 状态概率

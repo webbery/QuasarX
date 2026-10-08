@@ -4,6 +4,7 @@
 #include <Eigen/Eigenvalues>
 #include <vector>
 #include <random>
+#include "json.hpp"
 
 /**
  * @brief 对角协方差高斯隐马尔可夫模型
@@ -62,14 +63,38 @@ public:
     /** @brief 模型是否已训练 */
     bool is_trained() const { return trained_; }
 
-private:
-    // Forward 算法（带 scaling）
-    // alpha: T×N 前向概率, scales: T 缩放因子
-    void forward(const Eigen::MatrixXd& obs, Eigen::MatrixXd& alpha, Eigen::VectorXd& scales);
+    /**
+     * @brief 序列化为 JSON
+     */
+    nlohmann::json to_json() const;
 
-    // Backward 算法（使用 forward 的 scales）
+    /**
+     * @brief 从 JSON 加载模型
+     */
+    static GaussianHMM from_json(const nlohmann::json& j);
+
+    /** @brief 获取配置 */
+    const Config& config() const { return config_; }
+
+    /** @brief 获取初始分布 */
+    const Eigen::VectorXd& initial_distribution() const { return pi_; }
+
+    /** @brief 获取各状态均值 */
+    const Eigen::MatrixXd& means() const { return mu_; }
+
+    /** @brief 获取对角协方差 */
+    const Eigen::MatrixXd& cov_diag() const { return cov_diag_; }
+
+private:
+    // Forward 算法（带 scaling），log_b 由调用方预先算好（T×N 发射概率）
+    // alpha: T×N 前向概率, scales: T 缩放因子
+    void forward(const Eigen::MatrixXd& obs, const Eigen::MatrixXd& log_b,
+                 Eigen::MatrixXd& alpha, Eigen::VectorXd& scales);
+
+    // Backward 算法（使用 forward 的 scales），log_b 由调用方预先算好
     // beta: T×N 后向概率
-    void backward(const Eigen::MatrixXd& obs, const Eigen::VectorXd& scales, Eigen::MatrixXd& beta);
+    void backward(const Eigen::MatrixXd& obs, const Eigen::MatrixXd& log_b,
+                  const Eigen::VectorXd& scales, Eigen::MatrixXd& beta);
 
     // EM 一步，返回 log-likelihood
     double em_step(const Eigen::MatrixXd& obs,

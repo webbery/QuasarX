@@ -2,6 +2,7 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include "json.hpp"
 
 namespace {
     constexpr double LOG_ZERO = -1e10;
@@ -63,10 +64,10 @@ Eigen::MatrixXd GaussianHMM::emission_log_prob(const Eigen::MatrixXd& obs) {
 // scales[t] = c_t
 // ============================================================
 
-void GaussianHMM::forward(const Eigen::MatrixXd& obs, Eigen::MatrixXd& alpha, Eigen::VectorXd& scales) {
+void GaussianHMM::forward(const Eigen::MatrixXd& obs, const Eigen::MatrixXd& log_b,
+                          Eigen::MatrixXd& alpha, Eigen::VectorXd& scales) {
     int T = obs.rows();
     int N = config_.n_states;
-    auto log_b = emission_log_prob(obs);
 
     // t = 0
     for (int j = 0; j < N; j++) {
@@ -101,10 +102,10 @@ void GaussianHMM::forward(const Eigen::MatrixXd& obs, Eigen::MatrixXd& alpha, Ei
 // beta[t,j] = P(o_{t+1}..o_T | s_t=j) / (c_{t+1} * ... * c_T)
 // ============================================================
 
-void GaussianHMM::backward(const Eigen::MatrixXd& obs, const Eigen::VectorXd& scales, Eigen::MatrixXd& beta) {
+void GaussianHMM::backward(const Eigen::MatrixXd& obs, const Eigen::MatrixXd& log_b,
+                           const Eigen::VectorXd& scales, Eigen::MatrixXd& beta) {
     int T = obs.rows();
     int N = config_.n_states;
-    auto log_b = emission_log_prob(obs);
 
     // t = T-1
     beta.row(T - 1).setZero();  // log(1) = 0
@@ -134,8 +135,14 @@ double GaussianHMM::em_step(const Eigen::MatrixXd& obs,
 
     Eigen::MatrixXd alpha(T, N), beta(T, N);
     Eigen::VectorXd scales(T);
-    forward(obs, alpha, scales);
-    backward(obs, scales, beta);
+    // 发射概率整轮只依赖观测和当前参数，forward/backward/下面的 xi 循环共用同一份。
+    // 之前 xi 的三重循环里每次迭代都重算一遍 emission_log_prob(obs)：那是 T×N 的
+    // 矩阵分配 + T×N×D 的浮点运算，被调用 (T-1)×N×N 次，单个 EM 迭代上亿次运算，
+    // 7 年日线训练直接跑不完。
+    const Eigen::MatrixXd log_b = emission_log_prob(obs);
+
+    forward(obs, log_b, alpha, scales);
+    backward(obs, log_b, scales, beta);
 
     // gamma[t,j] = alpha[t,j] * beta[t,j] / P(O)
     double log_prob = 0.0;
@@ -160,7 +167,7 @@ double GaussianHMM::em_step(const Eigen::MatrixXd& obs,
             for (int j = 0; j < N; j++) {
                 double log_val = alpha(t, i)
                                + std::log(std::max(A_(i, j), 1e-300))
-                               + emission_log_prob(obs)(t + 1, j)
+                               + log_b(t + 1, j)
                                + beta(t + 1, j);
                 xi_flat(t, i * N + j) = log_val;
                 log_norm = (log_norm > log_val) ? log_norm : log_val;
@@ -333,11 +340,20 @@ Eigen::VectorXd GaussianHMM::predict_proba(const Eigen::VectorXd& observation) {
     int N = config_.n_states;
     Eigen::VectorXd prob(N);
 
-    if (!trained_) return prob;
+    // 未训练时返回均匀分布：prob 是值初始化的全零向量，直接返回会让调用方
+    // 拿到和为 0 的「概率」，归一化断言和下游 argmax 全部失效。
+    if (!trained_) return prob.setConstant(1.0 / N);
 
     // 用最后一个 forward 步的 gamma 近似
     // 简单做法: 贝叶斯更新 P(s|o) ∝ P(o|s) * P(s)
-    auto log_b = emission_log_prob(observation);  // 1×N
+    // emission_log_prob 按 T×D 矩阵访问 obs(t, d)，而 observation 是 1 维列向量：
+    // 直接传进去时 d≥1 越界，Debug 下触发 Eigen 断言 abort，Release 下读野内存。
+    // 显式构造成 1×D 行矩阵，与下面 log_b(0, j) 的取法保持一致。
+    Eigen::MatrixXd obs_row(1, observation.size());
+    for (Eigen::Index d = 0; d < observation.size(); ++d) {
+        obs_row(0, d) = observation(d);
+    }
+    auto log_b = emission_log_prob(obs_row);  // 1×N
     for (int j = 0; j < N; j++) {
         prob(j) = std::exp(log_b(0, j)) * pi_(j);
     }
@@ -407,4 +423,108 @@ Eigen::VectorXd GaussianHMM::state_duration() const {
         dur(i) = 1.0 / (1.0 - stay_prob);
     }
     return dur;
+}
+
+// ============================================================
+// Serialization
+// ============================================================
+
+nlohmann::json GaussianHMM::to_json() const {
+    nlohmann::json j;
+    
+    j["model_type"] = "hmm";
+    j["version"] = "1.0";
+    
+    // 模型配置
+    j["model_config"]["n_states"] = config_.n_states;
+    j["model_config"]["n_features"] = config_.n_features;
+    j["model_config"]["covariance_type"] = "diag";
+    j["model_config"]["random_seed"] = config_.random_seed;
+    
+    // 模型参数（Eigen → JSON 数组）
+    // pi: 初始分布
+    j["model_params"]["pi"] = std::vector<double>(pi_.data(), pi_.data() + pi_.size());
+    
+    // Eigen 默认列主序：row(i).data() 指向 A(0,i)，连续读 cols() 个元素拿到的是
+    // 第 i 列而非第 i 行。原来的裸指针区间构造会把整个矩阵转置写进 JSON，
+    // 读回来的转移矩阵也是转置的。改为逐元素拷贝。
+    auto row_to_vec = [](const Eigen::MatrixXd& m, int i) {
+        std::vector<double> v(static_cast<size_t>(m.cols()));
+        for (Eigen::Index k = 0; k < m.cols(); ++k) v[k] = m(i, k);
+        return v;
+    };
+
+    // A: 转移矩阵
+    std::vector<std::vector<double>> A_vec;
+    for (int i = 0; i < A_.rows(); ++i) {
+        A_vec.push_back(row_to_vec(A_, i));
+    }
+    j["model_params"]["A"] = A_vec;
+
+    // mu: 各状态均值
+    std::vector<std::vector<double>> mu_vec;
+    for (int i = 0; i < mu_.rows(); ++i) {
+        mu_vec.push_back(row_to_vec(mu_, i));
+    }
+    j["model_params"]["mu"] = mu_vec;
+
+    // cov_diag: 对角协方差
+    std::vector<std::vector<double>> cov_vec;
+    for (int i = 0; i < cov_diag_.rows(); ++i) {
+        cov_vec.push_back(row_to_vec(cov_diag_, i));
+    }
+    j["model_params"]["cov_diag"] = cov_vec;
+    
+    // 训练信息
+    j["training_info"]["log_likelihood"] = log_likelihood_;
+    j["training_info"]["converged"] = trained_;
+    j["training_info"]["current_state"] = current_state_;
+    
+    return j;
+}
+
+GaussianHMM GaussianHMM::from_json(const nlohmann::json& j) {
+    Config cfg;
+    cfg.n_states = j["model_config"]["n_states"];
+    cfg.n_features = j["model_config"]["n_features"];
+    cfg.random_seed = j["model_config"]["random_seed"];
+    
+    GaussianHMM hmm(cfg);
+    
+    // 加载模型参数
+    const auto& pi_vec = j["model_params"]["pi"];
+    hmm.pi_ = Eigen::VectorXd(cfg.n_states);
+    for (int i = 0; i < cfg.n_states; ++i) {
+        hmm.pi_(i) = pi_vec[i];
+    }
+    
+    const auto& A_vec = j["model_params"]["A"];
+    hmm.A_ = Eigen::MatrixXd(cfg.n_states, cfg.n_states);
+    for (int i = 0; i < cfg.n_states; ++i) {
+        for (int k = 0; k < cfg.n_states; ++k) {
+            hmm.A_(i, k) = A_vec[i][k];
+        }
+    }
+    
+    const auto& mu_vec = j["model_params"]["mu"];
+    hmm.mu_ = Eigen::MatrixXd(cfg.n_states, cfg.n_features);
+    for (int i = 0; i < cfg.n_states; ++i) {
+        for (int k = 0; k < cfg.n_features; ++k) {
+            hmm.mu_(i, k) = mu_vec[i][k];
+        }
+    }
+    
+    const auto& cov_vec = j["model_params"]["cov_diag"];
+    hmm.cov_diag_ = Eigen::MatrixXd(cfg.n_states, cfg.n_features);
+    for (int i = 0; i < cfg.n_states; ++i) {
+        for (int k = 0; k < cfg.n_features; ++k) {
+            hmm.cov_diag_(i, k) = cov_vec[i][k];
+        }
+    }
+    
+    hmm.trained_ = true;
+    hmm.log_likelihood_ = j.value("training_info/log_likelihood", 0.0);
+    hmm.current_state_ = j.value("training_info/current_state", 0);
+    
+    return hmm;
 }

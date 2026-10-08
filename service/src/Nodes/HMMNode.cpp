@@ -3,6 +3,8 @@
 #include "server.h"
 #include "Util/log.h"
 #include "boost/algorithm/string.hpp"
+#include <fstream>
+#include "json.hpp"
 
 HMMNode::HMMNode(Server* server) : _server(server) {}
 
@@ -55,6 +57,41 @@ bool HMMNode::Init(const nlohmann::json& config) {
     _outputs["hmm_probs"] = ArgType::Double_TimeSeries;
     _outputs["hmm_transition"] = ArgType::Double_TimeSeries;
     _outputs["hmm_duration"] = ArgType::Double_TimeSeries;
+
+    // 如果指定了 modelFile，从文件加载模型
+    if (config.contains("modelFile")) {
+        String modelPath = config["modelFile"];
+        _model_path = modelPath;
+        try {
+            std::ifstream ifs(modelPath);
+            if (ifs.is_open()) {
+                nlohmann::json modelJson;
+                ifs >> modelJson;
+                GaussianHMM loaded = GaussianHMM::from_json(modelJson);
+
+                // 维度必须与节点配置一致，否则下面写 context 时会按 _n_states/_n_features
+                // 遍历模型实际维度更小的数组，release 构建下静默读越界内存。
+                if (loaded.config().n_states != _n_states ||
+                    loaded.config().n_features != _n_features) {
+                    WARN("[HMM] model dimension mismatch: file has states={} features={}, "
+                         "node configured states={} features={}. Reusing node config.",
+                         loaded.config().n_states, loaded.config().n_features,
+                         _n_states, _n_features);
+                    return false;
+                }
+
+                _hmm = std::move(loaded);
+                _pretrained = true;
+                _trained = true;
+                INFO("[HMM] Loaded model from {} (states={}, features={})",
+                     modelPath, _hmm.config().n_states, _hmm.config().n_features);
+            } else {
+                WARN("[HMM] Failed to open model file: {}", modelPath);
+            }
+        } catch (const std::exception& e) {
+            WARN("[HMM] Failed to load model from {}: {}", modelPath, e.what());
+        }
+    }
 
     INFO("[HMM] Initialized: n_states={}, features={}, window={}, interval={}, warmup={}",
          _n_states, _n_features, _train_window, _retrain_interval, _warmup_period);
@@ -116,10 +153,28 @@ NodeProcessResult HMMNode::Process(const String& strategy, DataContext& context)
         GaussianHMM hmm(cfg);
         Eigen::MatrixXd train_data = _obs_buffer.topRows(_train_window);
 
-        if (hmm.train(train_data)) {
+        // train() 返回的是「是否收敛」，不是「是否训练成功」。用返回值判断会把
+        // 「训完了但没收敛」的模型当成失败丢弃，于是 _hmm 永远停在第一个模型上，
+        // 而 _days_since_train 照常归零，冷却期内没有任何重试迹象。
+        // 成功与否看 is_trained()，收敛与否只作为日志信息。
+        const bool converged = hmm.train(train_data);
+        if (hmm.is_trained()) {
             _hmm = std::move(hmm);
             _trained = true;
-            INFO("[HMM] Retrained: ll={:.2f}, state={}", _hmm.log_likelihood(), _hmm.current_state());
+            // 离线模型与在线模型的状态编号各自独立训练而来，同一个编号在两段里
+            // 含义可能完全不同。下游按 state 编号分支的策略会看到无法解释的跳变，
+            // 所以切换点必须留日志。
+            if (_pretrained) {
+                INFO("[HMM] Switching from pretrained model {} to online-trained model. "
+                     "State ids are NOT comparable across this boundary.",
+                     _model_path);
+                _pretrained = false;
+            }
+            INFO("[HMM] Retrained: ll={:.2f}, converged={}, state={}",
+                 _hmm.log_likelihood(), converged, _hmm.current_state());
+        } else {
+            WARN("[HMM] Retrain failed: {} observations < {} required (n_states={})",
+                 train_data.rows(), _n_states * 2, _n_states);
         }
         _days_since_train = 0;
     }

@@ -11,6 +11,9 @@
 #include "ExchangeManager.h"
 #include "Handler/PositionHandler.h"
 #include "Handler/RiskHandler.h"
+#include "Nodes/DebugNode.h"
+#include "Nodes/FormulaNode.h"
+#include "Nodes/FunctionNode.h"
 #include "RiskSubSystem.h"
 #include "Handler/ServerEventHandler.h"
 #include "Handler/RecordHandler.h"
@@ -81,6 +84,7 @@
 #include "Handler/StrategyRiskHandler.h"
 #include "Handler/ShiborHandler.h"
 #include "Handler/MacroHandler.h"
+#include "Handler/HMMHandler.h"
 #ifdef _DEBUG
 #include "Handler/SimulateBarHandler.h"
 #endif
@@ -211,7 +215,8 @@ _svr.Delete(API_VERSION api_name, [this](const httplib::Request & req, httplib::
 #define API_FINANCE         "/finance"
 #define API_FINANCE_DATA    "/finance/data"
 #define API_DIVIDEND        "/dividend"
-#define API_ML         "/ml"
+#define API_ML              "/ml"
+#define API_HMM             "/hmm"
 
 void trim(std::string& input) {
   if (input.empty()) return ;
@@ -445,6 +450,9 @@ void Server::Regist() {
     REGIST_POST(API_ML);
     REGIST_GET(API_ML);
     REGIST_DEL(API_ML);
+    REGIST_POST(API_HMM);
+    REGIST_GET(API_HMM);
+    REGIST_DEL(API_HMM);
     REGIST_GET(API_STOCK_PRIVILEGE);
     REGIST_GET(API_STOCK_PARAMS);
     REGIST_GET(API_OPTION_HISTORY);
@@ -722,9 +730,28 @@ std::pair<bool, String> Server::ValidateStrategyConfig(const nlohmann::json& con
 
         // 检查是否有未访问的节点(不连通)
         if (visited.size() != nodes.size()) {
+            // 收集孤立节点的详细信息
+            List<String> isolatedNodeInfos;
+            for (auto* node : nodes) {
+                if (!visited.count(node)) {
+                    String nodeType = "unknown";
+                    if (dynamic_cast<QuoteInputNode*>(node)) nodeType = "input";
+                    else if (dynamic_cast<SignalNode*>(node)) nodeType = "signal";
+                    else if (dynamic_cast<PortfolioNode*>(node)) nodeType = "portfolio";
+                    else if (dynamic_cast<ExecuteNode*>(node)) nodeType = "execution";
+                    else if (dynamic_cast<FunctionNode*>(node)) nodeType = "function";
+                    else if (dynamic_cast<FormulaNode*>(node)) nodeType = "formula";
+                    else if (dynamic_cast<ProtectionNode*>(node)) nodeType = "protection";
+                    else if (dynamic_cast<DebugNode*>(node)) nodeType = "debug";
+                    
+                    String nodeInfo = std::format("ID={} (type={})", node->id(), nodeType);
+                    isolatedNodeInfos.push_back(nodeInfo);
+                }
+            }
+            
             lambda_delete(nodes);
-            String errorMsg = std::format("策略图存在孤立的节点，总节点数={}，可到达节点数={}", 
-                nodes.size(), visited.size());
+            String errorMsg = std::format("策略图存在孤立的节点，总节点数={}，可到达节点数={}，孤立节点: [{}]",
+                nodes.size(), visited.size(), boost::algorithm::join(isolatedNodeInfos, "; "));
             WARN("{}", errorMsg);
             return {false, errorMsg};
         }
@@ -1587,6 +1614,7 @@ void Server::InitHandlers() {
     RegistHandler(API_OPTION_PRICING_MULTI, OptionPricingHandler);
     RegistHandler(API_OPTION_IV_SURFACE, OptionPricingHandler);
     RegistHandler(API_ML, MLHandler);
+    RegistHandler(API_HMM, HMMHandler);
 
 #ifdef _DEBUG
     RegistHandler(API_SIMULATE_BAR, SimulateBarHandler);
