@@ -58,6 +58,7 @@ public:
     void SetShadowMode(const String& strategy);
 
     void SetStrategyCapital(const String& strategy, double capital);
+    void SetStrategyCommissionRate(const String& strategy, double commissionRate);
 
     /**
      * @brief 启动实盘策略（K-bar 聚合驱动）
@@ -105,6 +106,12 @@ public:
      * @brief 获取策略最后一次成功 evoke 的时间戳（Unix time_t）
      */
     time_t GetLastEvoke(const String& strategy) const;
+
+    /**
+     * @brief 获取策略的佣金率（从 execution 节点配置读取）
+     * @return 佣金率，如果未配置则返回默认值 9e-05（万0.9）
+     */
+    double GetStrategyCommissionRate(const String& strategy) const;
 
     /**
      * @brief 计算回测指标和 MonteCarlo 模拟，结果写入 flow._collections 和 flow._mcPaths
@@ -314,6 +321,8 @@ private:
         List<QNode*> _graph;
         // 策略配置资金（从策略 JSON "capital" 字段读取，供 StartDaily 实盘路径使用）
         double _capital = 0;
+        // 策略配置佣金率（从 execution 节点的 commission 参数读取，供交易记录计算使用）
+        double _commissionRate = 9e-05;  // 默认万0.9
         // 择时模块
         ITimingStrategy* _timing = nullptr;
 

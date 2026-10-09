@@ -307,7 +307,7 @@ function mapTradeData(data: any) {
         price: t.price,
         quantity: t.quantity,
         amount: t.price * t.quantity,
-        commission: 0,
+        commission: t.commission ?? 0,  // 从后端数据读取佣金，默认为0
         timestamp: t.date,
         pnl: t.pnl ?? undefined,
       })
