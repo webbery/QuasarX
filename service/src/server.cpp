@@ -52,6 +52,7 @@
 #include "Handler/NodeIOHandler.h"
 #include "Handler/PythonRunnerHandler.h"
 #include "Handler/MLHandler.h"
+#include "Handler/HMMHandler.h"
 #include "Handler/QuoteDownloadHandler.h"
 #include "Util/PythonRunner.h"
 #include "Handler/QuoteDataHandler.h"

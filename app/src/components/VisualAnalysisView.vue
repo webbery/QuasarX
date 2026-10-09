@@ -36,6 +36,11 @@
           <MLTab />
         </div>
 
+        <!-- HMM 隐马尔可夫分析 Tab -->
+        <div v-show="activeTab === 'hmm'" class="tab-content">
+          <HMMTab />
+        </div>
+
         <!-- 基本面分析 Tab -->
         <div v-show="activeTab === 'fundamental'" class="tab-content">
           <FundamentalTab />
@@ -260,6 +265,7 @@ import SignalTab from './signal/SignalTab.vue'
 import PCATab from './pca/PCATab.vue'
 import CUSUMTab from './cusum/CUSUMTab.vue'
 import MLTab from './ml/MLTab.vue'
+import HMMTab from './hmm/HMMTab.vue'
 import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
 import CointegrationTab from './cointegration/CointegrationTab.vue'
@@ -274,6 +280,7 @@ const allTabs = [
   { label: 'PCA 主成分', name: 'pca' },
   { label: 'CUSUM 结构变化', name: 'cusum' },
   { label: '机器学习分析', name: 'ml' },
+  { label: 'HMM 隐马尔可夫', name: 'hmm' },
   { label: '基本面分析', name: 'fundamental' },
   { label: '容量分析', name: 'capacity' },
   { label: '协整分析', name: 'cointegration' },
