@@ -8,6 +8,37 @@ double GetCost(const List<Asset>& assets) {
   return total;
 }
 
+double ApplyFillToHolding(hold_t& holds, symbol_t symbol, int64_t quantity,
+                          double price, time_t when, bool isOpen) {
+  if (quantity <= 0) return 0.0;
+
+  auto& history = holds[symbol];
+  if (isOpen) {
+    history.push_back({static_cast<uint32_t>(quantity), price, when});
+    return 0.0;
+  }
+
+  // 先进先出扣减，同时累计被消耗掉的成本
+  double consumed = 0.0;
+  int64_t remaining = quantity;
+  while (remaining > 0 && !history.empty()) {
+    auto& front = history.front();
+    if (front._quantity >= static_cast<uint32_t>(remaining)) {
+      consumed += front._price * static_cast<double>(remaining);
+      front._quantity -= static_cast<uint32_t>(remaining);
+      remaining = 0;
+    } else {
+      consumed += front._price * static_cast<double>(front._quantity);
+      remaining -= front._quantity;
+      history.pop_front();
+    }
+  }
+  if (history.empty()) {
+    holds.erase(symbol);
+  }
+  return consumed;
+}
+
 PortfolioSubSystem::PortfolioSubSystem(Server* server)
   :_server(server)
 {

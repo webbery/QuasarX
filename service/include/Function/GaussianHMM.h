@@ -60,6 +60,17 @@ public:
     /** @brief 各状态期望持续时间: 1/(1 - A_ii) */
     Eigen::VectorXd state_duration() const;
 
+    /**
+     * @brief 重排状态编号，使状态语义在多次重训之间保持可比
+     *
+     * EM 每次训练都从随机初始化开始，状态编号的含义（哪个是震荡、哪个是上涨）
+     * 完全可能翻转。下游按 `state == 1` 这类固定编号分支的策略会看到毫无规律的
+     * 跳变。调用方按某个绝对判据（如各状态观测均值的升序）算出重排方案后调用本方法。
+     *
+     * @param perm 新编号 i 对应的旧编号，perm 必须是 [0, n_states) 的完整排列
+     */
+    void reorder_states(const Vector<int>& perm);
+
     /** @brief 模型是否已训练 */
     bool is_trained() const { return trained_; }
 

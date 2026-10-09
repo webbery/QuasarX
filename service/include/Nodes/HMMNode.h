@@ -17,6 +17,23 @@
  *   hmm_probs    — 状态概率分布 (vector<double>)
  *   hmm_transition — 状态转移矩阵展平 (vector<double>, N² 个值)
  *   hmm_duration   — 各状态期望持续时间 (vector<double>, N 个值)
+ *
+ * 除以上无前缀的 handle 外，还按「每个 symbol 一份」写出带前缀的时间序列：
+ *   {symbol}.hmm_state、{symbol}.hmm_probs_{j}
+ * 原因：FormulaNode / SignalNode 解析标识符时一律拼成 `{symbol}.{name}` 去
+ * context 里取，无前缀的 handle 它们永远查不到，`hmm_state == 1` 这类判断
+ * 会静默拿到 NaN。带前缀的写法与 FunctionNode / XGBoostNode 的约定一致，
+ * 也是公式里 `hmm_probs[1]` 能展开成 `hmm_probs_1` 的前提。
+ *
+ * 状态编号语义（state_order = "drift" 时）：
+ *   训练完成后按各状态观测均值升序重排，n_states=3 时
+ *   0 = 下跌趋势、1 = 震荡、2 = 上涨趋势。
+ *   不重排的话每次重训的编号含义都可能翻转，按固定编号分支的策略会失灵。
+ *
+ * 预热期（skip_while_warming = false 时）：
+ *   输出 hmm_state = -1（未知）而不是 Skip。Skip 会让 RunGraph 直接 break，
+ *   本节点之后的所有节点（含 Signal / Execute / Portfolio）当轮全部不执行，
+ *   风控检查也被跳过——把 HMM 放在交易链路上时这是致命的。
  */
 class HMMNode : public QNode {
 public:
@@ -47,6 +64,14 @@ private:
     double _regularization = 1e-6;
     uint32_t _random_seed = 42;
 
+    // 状态编号排序策略："none" = 保持 EM 原始编号；"drift" = 按观测均值升序重排
+    String _state_order = "none";
+    // 预热期是否 Skip（true = 旧行为；false = 输出 hmm_state=-1 并继续跑完整轮）
+    bool _skip_while_warming = true;
+
+    // 由 features 推出的 symbol 列表（特征 key 形如 {symbol}.{label}）
+    Vector<symbol_t> _symbols;
+
     // 内部状态
     GaussianHMM _hmm;
     Eigen::MatrixXd _obs_buffer;       // 观测缓冲区 (window × D)
@@ -63,4 +88,9 @@ private:
 
     Map<String, ArgType> _params;      // 输入参数
     Map<String, ArgType> _outputs;     // 输出元素声明
+
+    /** @brief 按 _state_order 把当前模型的状态重排成固定语义 */
+    void applyStateOrder();
+    /** @brief 预热/未就绪时输出占位状态（hmm_state=-1）并返回 Success */
+    void emitNotReady(DataContext& context);
 };

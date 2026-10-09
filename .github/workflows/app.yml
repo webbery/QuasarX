@@ -231,8 +231,6 @@ jobs:
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
-            artifacts/*.rpm
-            artifacts/*.blockmap
             artifacts/latest-linux.yml
             CHANGELOG.md
           body_path: CHANGELOG.md

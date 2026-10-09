@@ -104,6 +104,54 @@ void BrokerSubSystem::initCapitalPool(double initialCapital, const String& persi
         _capitalPool.init(initialCapital);
         INFO("[BrokerSubSystem] CapitalPool initialized with initialCapital={}", initialCapital);
     }
+
+    // 播种决策 id 计数器：decisions.id 是 PRIMARY KEY 且 insertDecision 用 INSERT OR REPLACE，
+    // 若进程重启后从 1 重新编号，会与历史 id 撞号并整行覆盖已成交记录，导致持仓无法恢复。
+    auto& decisionDB = DecisionDB::instance();
+    if (decisionDB.isInitialized()) {
+        int64_t seeded = decisionDB.maxDecisionId();
+        _decisionIdCounter = static_cast<int>(seeded);
+        INFO("[BrokerSubSystem] Decision id counter seeded from DB: {}", seeded);
+    } else {
+        WARN("[BrokerSubSystem] DecisionDB unavailable — decision ids restart from 0 and may "
+             "overwrite historical fills. Check decisions.db before trading.");
+    }
+}
+
+// 从成交流水（DecisionDB.decisions 中 executed=true 的记录）重放持仓。
+// PortfolioSubSystem 的分批持仓是纯内存结构，进程重启即丢失；而 decisions 表已持久化
+// 每一笔真实成交。启动时按时间正序重放 FIFO，即可还原与实时路径一致的持仓状态。
+void BrokerSubSystem::restoreHoldingsFromDB() {
+    auto& decisionDB = DecisionDB::instance();
+    if (!decisionDB.isInitialized()) {
+        FATAL("[BrokerSubSystem] DecisionDB 未初始化，持仓无法从下单记录恢复。"
+              "为避免重复建仓，请修复 decisions.db 后重启");
+        return;
+    }
+
+    int total = 0;
+    for (const auto& strategy : decisionDB.queryFilledStrategies()) {
+        auto fills = decisionDB.queryExecutedFills(strategy);
+        if (fills.empty()) continue;
+
+        auto& holds = _portfolio->GetHolding(strategy);
+        holds.clear();  // 幂等：重复调用不会叠加
+
+        int64_t replayed = 0;
+        for (const auto& info : fills) {
+            for (const auto& report : info._reports) {
+                // _flag: 0=开仓 / 1=平仓（与 decision_to_flag 一致）
+                ApplyFillToHolding(holds, info._symbol, report._quantity,
+                                   report._price, report._time, report._flag == 0);
+                ++replayed;
+            }
+        }
+        total += static_cast<int>(holds.size());
+        INFO("[BrokerSubSystem] Holdings restored for '{}': {} fill(s) replayed, {} open position(s)",
+             strategy, replayed, holds.size());
+    }
+
+    INFO("[BrokerSubSystem] Holdings restore complete: {} position(s) from order log", total);
 }
 
 void BrokerSubSystem::PersistCapitalPool() {
@@ -778,35 +826,19 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
         break;
       }
     }
-    // 记录
+    // 记录（FIFO 复用 ApplyFillToHolding，返回被消耗的成本用于损益）
     auto& holds = _portfolio->GetHolding(strategy);
-    auto& history = holds[symbol];
     if (side == 0) {
       for (auto& info: detail._reports) {
-        history.push_back({static_cast<uint32_t>(info._quantity), info._price, info._time});
+        ApplyFillToHolding(holds, symbol, info._quantity, info._price, info._time, true);
       }
     }
     else if (side == 1) {
-      // 先进先出
       double org_princpal = 0;
       double total_sell = 0;
       for (auto info: detail._reports) {
         total_sell += info._quantity * info._price;
-        while (!history.empty()) {
-          auto& front = history.front();
-          if (front._quantity >= static_cast<uint32_t>(info._quantity)) {
-            org_princpal += front._price * info._quantity;
-            front._quantity -= info._quantity;
-            break;
-          } else {
-            org_princpal += front._price * front._quantity;
-            info._quantity -= front._quantity;
-            history.pop_front();
-          }
-        }
-      }
-      if (history.empty()) {
-        holds.erase(symbol);
+        org_princpal += ApplyFillToHolding(holds, symbol, info._quantity, info._price, info._time, false);
       }
       // 损益
       double profit = total_sell - org_princpal;
@@ -1336,29 +1368,10 @@ bool BrokerSubSystem::RecordManualFill(const String& strategy,
              strategy);
     }
 
-    // 3) 持仓更新（FIFO 复用 AddOrderBySide 逻辑）
+    // 3) 持仓更新（FIFO，复用共用实现）
     auto& holds = _portfolio->GetHolding(strategy);
-    auto& history = holds[symbol];
     bool isOpen = (action == DecisionAction::OpenLong || action == DecisionAction::OpenShort);
-    if (isOpen) {
-        history.push_back({static_cast<uint32_t>(quantity), price, time(nullptr)});
-    } else {
-        // FIFO 扣减（与 AddOrderBySide:773-799 逻辑一致）
-        int64_t remaining = quantity;
-        while (remaining > 0 && !history.empty()) {
-            auto& front = history.front();
-            if (front._quantity >= static_cast<uint32_t>(remaining)) {
-                front._quantity -= static_cast<uint32_t>(remaining);
-                remaining = 0;
-            } else {
-                remaining -= front._quantity;
-                history.pop_front();
-            }
-        }
-        if (history.empty()) {
-            holds.erase(symbol);
-        }
-    }
+    ApplyFillToHolding(holds, symbol, quantity, price, time(nullptr), isOpen);
 
     // 4) DecisionDB 关联已执行
     if (decisionId > 0) {
@@ -1366,9 +1379,13 @@ bool BrokerSubSystem::RecordManualFill(const String& strategy,
     }
 
     // 5) DailyPosition UPSERT（当日持仓快照）
+    // 注意：ApplyFillToHolding 可能在平仓后移除该标的，需重新查找而非复用旧引用
     int64_t netPosition = 0;
-    for (const auto& asset : history) {
-        netPosition += asset._quantity;
+    auto holdIt = holds.find(symbol);
+    if (holdIt != holds.end()) {
+        for (const auto& asset : holdIt->second) {
+            netPosition += asset._quantity;
+        }
     }
     // 做空时 netPosition 为负（history 中只有空头持仓时）
     // 但当前 FIFO 逻辑不区分多空方向，仅记录绝对数量

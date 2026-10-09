@@ -2,6 +2,8 @@
 #include "Util/datetime.h"
 #include "Util/system.h"
 #include "Util/log.h"
+// TradeAction 的完整定义（decision_to_action 返回该枚举，此处需与 TradeAction::BUY 比较）
+#include "DataContext.h"
 #include <cstring>
 
 DecisionDB& DecisionDB::instance() {
@@ -301,6 +303,93 @@ std::vector<DailyPositionRecord> DecisionDB::queryDailyPositions(
     });
 
     return results;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  成交流水查询（持仓恢复用）
+// ═══════════════════════════════════════════════════════════
+
+List<TradeInfo> DecisionDB::queryExecutedFills(const std::string& strategy) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    List<TradeInfo> results;
+    if (!isInitialized()) return results;
+
+    // 只取实际成交（executed）且未被关闭（closed）的决策。
+    // exec_qty 为 0 说明尚未成交或成交数量丢失，跳过。
+    // 同秒多笔按 id 兜底排序，保证 FIFO 顺序稳定。
+    std::string sql = fmt::format(
+        "SELECT symbol, action, exec_qty, exec_price, epoch(timestamp) AS ts FROM decisions "
+        "WHERE strategy = '{}' AND executed = true AND closed = false AND exec_qty > 0 "
+        "ORDER BY symbol ASC, ts ASC, id ASC",
+        strategy);
+
+    query(sql, [&](duckdb_result& result) -> bool {
+        int64_t row_count = duckdb_row_count(&result);
+        for (int64_t i = 0; i < row_count; ++i) {
+            int64_t sym_encoded = duckdb_value_int64(&result, 0, i);
+            symbol_t sym = decodeSymbol(sym_encoded);
+            auto action = static_cast<DecisionAction>(duckdb_value_uint8(&result, 1, i));
+
+            TradeReport report{};
+            report._status = OrderStatus::OrderSuccess;
+            report._quantity = static_cast<int>(duckdb_value_int64(&result, 2, i));
+            report._price = duckdb_value_double(&result, 3, i);
+            report._time = static_cast<time_t>(duckdb_value_int64(&result, 4, i));
+            // side: 0=买 / 1=卖（与 BrokerSubSystem.cpp:1260 一致）
+            report._side = (decision_to_action(action) == TradeAction::BUY) ? 0 : 1;
+            // flag: 0=开仓 / 1=平仓
+            report._flag = static_cast<char>(decision_to_flag(action));
+
+            // 按标的分组（SQL 已按 symbol 排序，同标的行连续）
+            if (results.empty() || results.back()._symbol != sym) {
+                TradeInfo info{};
+                info._symbol = sym;
+                results.push_back(info);
+            }
+            results.back()._reports.push_back(report);
+        }
+        return true;
+    });
+
+    return results;
+}
+
+List<String> DecisionDB::queryFilledStrategies() {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    List<String> results;
+    if (!isInitialized()) return results;
+
+    const char* sql =
+        "SELECT DISTINCT strategy FROM decisions "
+        "WHERE executed = true AND exec_qty > 0 ORDER BY strategy";
+
+    query(sql, [&](duckdb_result& result) -> bool {
+        int64_t row_count = duckdb_row_count(&result);
+        for (int64_t i = 0; i < row_count; ++i) {
+            const char* strat = duckdb_value_varchar(&result, 0, i);
+            if (strat) {
+                results.push_back(String(strat));
+                duckdb_free((void*)strat);
+            }
+        }
+        return true;
+    });
+
+    return results;
+}
+
+int64_t DecisionDB::maxDecisionId() {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return 0;
+
+    int64_t maxId = 0;
+    query("SELECT COALESCE(MAX(id), 0) FROM decisions", [&](duckdb_result& result) -> bool {
+        if (duckdb_row_count(&result) > 0 && !duckdb_value_is_null(&result, 0, 0)) {
+            maxId = duckdb_value_int64(&result, 0, 0);
+        }
+        return true;
+    });
+    return maxId;
 }
 
 // ═══════════════════════════════════════════════════════════

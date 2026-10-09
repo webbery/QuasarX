@@ -3,6 +3,7 @@
 #include "Util/system.h"
 #include "peglib.h"
 #include "server.h"
+#include <boost/algorithm/string/join.hpp>
 #include <cstdint>
 #include <functional>
 #include <variant>
@@ -13,6 +14,28 @@
 #include <numeric>
 
 // ========== FormulaParser 静态类型验证实现 ==========
+
+namespace {
+
+// 公式里合法出现、但不是「变量」的标识符：内置函数名。
+// validateIdentifier 只被用于校验变量引用，遇到这些名字必须放行——
+// 表达式 zscore(close, 20) 里的 zscore 是截面函数，close 才是变量。
+// 该名单与 FormulaParserEval.cpp 中 evalFunctionCall 实际 dispatch 的分支
+// 保持一致，外加 isCrossSectionFunction() 覆盖的截面函数。
+const UnorderedSet<String>& builtinFunctionNames() {
+    static const UnorderedSet<String> names{
+        // evalFunctionCall 中的一元/二元数学函数
+        "abs", "exp", "log", "sqrt", "sigmoid", "min", "max",
+        "argmax", "count", "MA",
+        "rolling_topk", "rolling_topk_idx",
+        // 截面函数（isCrossSectionFunction）
+        "topk", "bottomk", "rank", "zscore", "pct",
+        "cs_count", "cs_size",
+    };
+    return names;
+}
+
+} // namespace
 
 FormulaParser::ExprType FormulaParser::inferExpressionType(
     const peg::Ast& ast, const Map<String, ArgType>& availableVars) {
@@ -106,9 +129,39 @@ bool FormulaParser::validateIdentifier(const peg::Ast& ast,
     String varName(ast.token);
     auto it = availableVars.find(varName);
     if (it == availableVars.end()) {
-        // 变量不存在，可能是截面函数或其他内置函数，跳过检查
+        // 内置函数名不是变量引用，放行
+        if (builtinFunctionNames().count(varName)) {
+            outType = ExprType::UNKNOWN;
+            return true;
+        }
+
+        // 未知变量必须报错，不能放行。
+        // 放行时运行期只会拿到 NaN，而 NaN 参与比较恒为 false：SignalNode 全程
+        // HOLD，回测正常跑完但 0 笔交易，指标全零，日志里只有一条 debug 级
+        // 「key not found」。拼错变量名（含 FormulaNode 的 label 写错导致的
+        // 上下游 key 对不上）曾经就是这样静默失效的。
+        //
+        // availableVars 里既有 {symbol}.{var} 全名，也有 validate() 第二参数
+        // 注入的短名。报错时把同前缀的候选列出来，直接指向「是不是 label 写错了」。
+        Vector<String> candidates;
+        String prefix;
+        size_t dot = varName.find('.');
+        if (dot != String::npos) prefix = varName.substr(0, dot + 1);
+        for (auto& kv : availableVars) {
+            if (prefix.empty() || kv.first.compare(0, prefix.size(), prefix) == 0) {
+                candidates.push_back(kv.first);
+            }
+        }
+        std::sort(candidates.begin(), candidates.end());
+        if (candidates.size() > 12) candidates.resize(12);
+
+        _validationError = fmt::format(
+            "Unknown variable '{}' in formula. Upstream nodes do not publish this key — "
+            "check the spelling, and for FormulaNode make sure its 'label' is an ASCII "
+            "identifier that matches the name used downstream. Available: [{}]",
+            varName, boost::algorithm::join(candidates, ", "));
         outType = ExprType::UNKNOWN;
-        return true;
+        return false;
     }
 
     switch (it->second) {
@@ -221,6 +274,28 @@ bool FormulaParser::validate(const Map<String, ArgType>& availableVars) {
                     if (!validateTimeOffset(*node.nodes[i], baseType)) {
                         return false;
                     }
+                }
+            }
+        }
+
+        // 未知变量检查。放在遍历器里而不是单独调用 validateIdentifier，是因为
+        // 只有遍历器知道父节点，才能区分「变量引用」和同样叫 Identifier 的：
+        //   FunctionCall    → nodes[0] 是函数名（zscore(...) 里的 zscore）
+        //   AssignmentStmt  → nodes[0] 是赋值目标（x = ... 里的 x）
+        //   Trailer         → 整个子节点都是成员名（a.b 里的 b）
+        // 这三类都不是变量引用，送进 validateIdentifier 会被误判成拼错的变量。
+        size_t firstVarIdx = 0;
+        if (node.name == "FunctionCall" || node.name == "AssignmentStmt") {
+            firstVarIdx = node.nodes.empty() ? 0 : 1;
+        } else if (node.name == "Trailer") {
+            firstVarIdx = node.nodes.size();  // 整个 Trailer 都不检查
+        }
+        for (size_t i = firstVarIdx; i < node.nodes.size(); ++i) {
+            const auto& child = node.nodes[i];
+            if (child->name == "Identifier") {
+                ExprType ignored = ExprType::UNKNOWN;
+                if (!validateIdentifier(*child, availableVars, ignored)) {
+                    return false;
                 }
             }
         }

@@ -166,7 +166,12 @@ public:
     const CapitalPool* GetCapitalPool() const { return &_capitalPool; }
     
     // 从 config.json 初始化资金池
+    // 同时从 DecisionDB 播种决策 id 计数器（见 .cpp 注释：PRIMARY KEY 撞号会覆盖成交记录）
     void initCapitalPool(double initialCapital, const String& persistPath);
+
+    // 从 DecisionDB 的成交流水重放持仓。进程重启后 PortfolioSubSystem 持仓为空，
+    // 必须在策略开始日终执行前调用，否则已持仓标的会被当成空仓重复建仓。
+    void restoreHoldingsFromDB();
 
     // 显式持久化 CapitalPool（用 _dbpath + "/capital_pool.json"，与 Release() 保持一致）
     // StrategySubSystem 在策略初始化时调用，确保资金池条目立即落盘

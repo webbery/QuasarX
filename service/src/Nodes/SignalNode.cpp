@@ -64,6 +64,9 @@ bool SignalNode::Init(const nlohmann::json& config) {
         std::string error = "Buy signal expression type validation failed: " +
                            _buyParser->getValidationError();
         FATAL("{}", error);
+        // 同步推给前端：策略初始化发生在回测请求里，只回 HTTP 500 的话前端只能
+        // 看到一句泛化的 "Failed to initialize strategy"，定位不到具体是哪个变量。
+        strategy_error("", error);
         delete _buyParser;
         _buyParser = nullptr;
         throw std::runtime_error(error);
@@ -84,6 +87,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         std::string error = "Sell signal expression type validation failed: " +
                            _sellParser->getValidationError();
         FATAL("{}", error);
+        strategy_error("", error);
         delete _sellParser;
         _sellParser = nullptr;
         throw std::runtime_error(error);

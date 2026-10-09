@@ -1,5 +1,6 @@
 #pragma once
 #include "Decision.h"
+#include "Bridge/exchange.h"
 #include "Util/DuckDBBaseT.h"
 #include <vector>
 
@@ -38,6 +39,17 @@ public:
     std::vector<DailyPositionRecord> queryDailyPositions(const std::string& strategy,
                                                          time_t startDate = 0,
                                                          time_t endDate = 0);
+
+    // 已成交决策（成交流水）：按标的分组，组内按成交时间正序。
+    // TradeReport._side 0=买/1=卖，_flag 0=开仓/1=平仓，与 AddOrderBySide 一致。
+    List<TradeInfo> queryExecutedFills(const std::string& strategy);
+
+    // 有成交记录的所有策略名（去重）
+    List<String> queryFilledStrategies();
+
+    // 当前最大决策 id：进程重启后播种 id 计数器，
+    // 否则 id 从 1 重新计数会撞上 PRIMARY KEY，INSERT OR REPLACE 覆盖历史成交。
+    int64_t maxDecisionId();
 
     // 删除指定策略的所有历史记录（decisions + daily_positions）
     int deleteByStrategy(const std::string& strategy);

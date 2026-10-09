@@ -426,6 +426,68 @@ Eigen::VectorXd GaussianHMM::state_duration() const {
 }
 
 // ============================================================
+// reorder_states
+// ============================================================
+
+void GaussianHMM::reorder_states(const Vector<int>& perm) {
+    int N = config_.n_states;
+    if (static_cast<int>(perm.size()) != N) {
+        throw std::runtime_error(
+            fmt::format("reorder_states: perm size {} != n_states {}", perm.size(), N));
+    }
+
+    // 必须是 [0, N) 的完整排列。重复或越界的编号会让 A_ 的行和不再为 1，
+    // 而行归一是 Forward 算法概率缩放的隐含前提，出错后不会立刻暴露。
+    Vector<int> seen(N, 0);
+    for (int i = 0; i < N; i++) {
+        if (perm[i] < 0 || perm[i] >= N) {
+            throw std::runtime_error(
+                fmt::format("reorder_states: perm[{}]={} out of range [0,{})", i, perm[i], N));
+        }
+        seen[perm[i]]++;
+    }
+    for (int i = 0; i < N; i++) {
+        if (seen[i] != 1) {
+            throw std::runtime_error(
+                fmt::format("reorder_states: perm is not a permutation, {} appears {} times",
+                            i, seen[i]));
+        }
+    }
+
+    if (pi_.size() == N) {
+        Eigen::VectorXd pi_new(N);
+        for (int i = 0; i < N; i++) pi_new(i) = pi_(perm[i]);
+        pi_ = pi_new;
+    }
+
+    if (A_.rows() == N && A_.cols() == N) {
+        Eigen::MatrixXd A_new(N, N);
+        for (int i = 0; i < N; i++)
+            for (int j = 0; j < N; j++)
+                A_new(i, j) = A_(perm[i], perm[j]);
+        A_ = A_new;
+    }
+
+    if (mu_.rows() == N) {
+        Eigen::MatrixXd mu_new(N, mu_.cols());
+        for (int i = 0; i < N; i++) mu_new.row(i) = mu_.row(perm[i]);
+        mu_ = mu_new;
+    }
+
+    if (cov_diag_.rows() == N) {
+        Eigen::MatrixXd cov_new(N, cov_diag_.cols());
+        for (int i = 0; i < N; i++) cov_new.row(i) = cov_diag_.row(perm[i]);
+        cov_diag_ = cov_new;
+    }
+
+    // current_state_ 是旧编号，同步成新编号，否则 reorder 与下一次 predict_proba
+    // 之间读到的仍是上一个模型的编号。
+    for (int i = 0; i < N; i++) {
+        if (perm[i] == current_state_) current_state_ = i;
+    }
+}
+
+// ============================================================
 // Serialization
 // ============================================================
 

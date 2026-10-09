@@ -25,6 +25,7 @@
         "test_decision",
         "test_signal_vmd",
         "test_capacity_scan",
+        "test_hmm",
         "test_provenance"
       ]
     },

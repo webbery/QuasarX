@@ -617,6 +617,10 @@ void Server::InitDefault() {
     String capitalPersistPath = dbpath + "/capital_pool.json";
     _brokerSystem->initCapitalPool(initialCapital, capitalPersistPath);
 
+    // 从成交流水恢复持仓：PortfolioSubSystem 的持仓是纯内存的，进程重启会清空。
+    // 不恢复的话，日终决策会把已持仓标的当成空仓重复建仓。
+    _brokerSystem->restoreHoldingsFromDB();
+
     // 初始化风控子系统
     _riskSystem = new RiskSubSystem(this);
     nlohmann::json riskConfig = nlohmann::json::object();
@@ -1666,6 +1670,18 @@ int Server::SyncDailyPositionsFromBroker(const String& strategy) {
     INFO("[Server] SyncDailyPositionsFromBroker: synced {} position(s) from "
          "PortfolioSubSystem to _account_positions for strategy '{}'",
          synced, strategy);
+
+    // 对账：资金池显示该策略已投入资金，但持仓同步为 0，说明订单库与资金池口径不一致
+    // （例如成交记录被 decisions.id 撞号覆盖）。继续跑会重复建仓，必须显式失败。
+    if (synced == 0 && _brokerSystem) {
+        double used = _brokerSystem->GetCapitalPool()->getUsed(strategy);
+        if (used > 1.0) {
+            FATAL("[Server] 持仓对账失败：strategy='{}' 资金池已投入 ¥{:.2f}，"
+                  "但从 PortfolioSubSystem 同步到 0 条持仓。订单库与资金池不一致，"
+                  "继续日终执行会重复建仓，请检查 decisions.db 的成交流水后重启。",
+                  strategy, used);
+        }
+    }
     return synced;
 }
 
