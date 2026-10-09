@@ -14,6 +14,7 @@ const defaultPanels: AnalysisPanelItem[] = [
   { id: 'pca', label: 'PCA 主成分', enabled: true },
   { id: 'cusum', label: 'CUSUM 结构变化', enabled: true },
   { id: 'ml', label: '机器学习分析', enabled: false },
+  { id: 'hmm', label: 'HMM 隐马尔可夫', enabled: true },
   { id: 'fundamental', label: '基本面分析', enabled: true },
   { id: 'capacity', label: '容量分析', enabled: false },
   { id: 'cointegration', label: '协整分析', enabled: true },

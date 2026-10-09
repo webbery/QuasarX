@@ -314,8 +314,12 @@ bool GaussianHMM::train(const Eigen::MatrixXd& observations) {
     double prev_ll = -std::numeric_limits<double>::infinity();
     bool converged = false;
 
+    // 重训前清空，否则第二次 train() 的曲线会带上上一轮的迭代点
+    ll_history_.clear();
+
     for (int iter = 0; iter < config_.max_iter; iter++) {
         double ll = em_step(observations, gamma, xi_flat);
+        ll_history_.push_back(ll);
 
         if (iter > 0 && std::abs(ll - prev_ll) < config_.tol) {
             converged = true;
@@ -408,6 +412,42 @@ std::vector<int> GaussianHMM::decode(const Eigen::MatrixXd& observations) {
         path[t] = psi(t + 1, path[t + 1]);
     }
     return path;
+}
+
+// ============================================================
+// state_posterior: 平滑后验
+// ============================================================
+
+Eigen::MatrixXd GaussianHMM::state_posterior(const Eigen::MatrixXd& observations) {
+    const int T = observations.rows();
+    const int N = config_.n_states;
+    Eigen::MatrixXd gamma(T, N);
+
+    // 维度不匹配时返回全零：调用方（HMMHandler）已先行校验并给出 400，
+    // 这里只是不让 Eigen 在后续访问上越界。行和为 0 的语义是「无可用后验」。
+    if (!trained_ || T <= 0 || observations.cols() != config_.n_features) {
+        return gamma;
+    }
+
+    const Eigen::MatrixXd log_b = emission_log_prob(observations);
+    Eigen::MatrixXd alpha(T, N), beta(T, N);
+    Eigen::VectorXd scales(T);
+    forward(observations, log_b, alpha, scales);
+    backward(observations, log_b, scales, beta);
+
+    // alpha/beta 都在 log 空间且各自做过缩放，两者相加后再归一化即得平滑后验，
+    // 与 em_step 里算 gamma 的写法一致。
+    for (int t = 0; t < T; t++) {
+        Eigen::VectorXd log_gamma(N);
+        for (int j = 0; j < N; j++) {
+            log_gamma(j) = alpha(t, j) + beta(t, j);
+        }
+        const double log_norm = log_sum_exp(log_gamma);
+        for (int j = 0; j < N; j++) {
+            gamma(t, j) = std::exp(log_gamma(j) - log_norm);
+        }
+    }
+    return gamma;
 }
 
 // ============================================================

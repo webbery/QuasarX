@@ -420,6 +420,7 @@ void HMMHandler::handleTrain(const nlohmann::json& params, httplib::Response& re
         {"training_info", {
             {"converged", converged},
             {"log_likelihood", hmm.log_likelihood()},
+            {"log_likelihood_history", hmm.log_likelihood_history()},
             {"data_points", dates.size()},
             {"features", featureNames},
             {"symbols", usedSymbols},
@@ -555,6 +556,14 @@ void HMMHandler::handleDecode(const nlohmann::json& params, httplib::Response& r
     GaussianHMM hmm = GaussianHMM::from_json(modelJson);
     const auto path = hmm.decode(obs);
 
+    // 平滑后验 T×N，供前端画堆叠概率图；decode 只给 Viterbi 路径，每点只有一个状态。
+    const Eigen::MatrixXd posterior = hmm.state_posterior(obs);
+    nlohmann::json probs = nlohmann::json::array();
+    for (Eigen::Index t = 0; t < posterior.rows(); ++t) {
+        probs.push_back(std::vector<double>(posterior.row(t).data(),
+                                             posterior.row(t).data() + posterior.cols()));
+    }
+
     nlohmann::json transitions = nlohmann::json::array();
     for (size_t i = 1; i < path.size(); ++i) {
         if (path[i] != path[i - 1]) {
@@ -574,6 +583,7 @@ void HMMHandler::handleDecode(const nlohmann::json& params, httplib::Response& r
         {"status", "success"},
         {"decode", {
             {"state_sequence", std::vector<int>(path.begin(), path.end())},
+            {"probs", probs},
             {"dates", dates},
             {"transitions", transitions},
             {"regime_summary", summary},

@@ -48,11 +48,23 @@ public:
      */
     std::vector<int> decode(const Eigen::MatrixXd& observations);
 
+    /**
+     * @brief 平滑后验 P(s_t | o_1..o_T)，返回 T×N 矩阵，每行和为 1
+     *
+     * decode() 只给出 Viterbi 最可能路径（每个时间点一个状态编号），无法回答
+     * 「该时刻有多大把握处于状态 j」。画堆叠概率图需要的是完整后验分布。
+     * 参数固定后跑一次前向后向即可，与 em_step 内部的 gamma 同源。
+     */
+    Eigen::MatrixXd state_posterior(const Eigen::MatrixXd& observations);
+
     /** @brief 当前最可能状态编号 */
     int current_state() const { return current_state_; }
 
     /** @brief 当前对数似然 */
     double log_likelihood() const { return log_likelihood_; }
+
+    /** @brief EM 每次迭代的 log-likelihood 序列，用于画收敛曲线 */
+    const std::vector<double>& log_likelihood_history() const { return ll_history_; }
 
     /** @brief 状态转移矩阵 A (N×N) */
     const Eigen::MatrixXd& transition_matrix() const { return A_; }
@@ -130,6 +142,7 @@ private:
     Eigen::MatrixXd cov_diag_;  // 对角协方差 (N×D)
     int current_state_ = 0;
     double log_likelihood_ = 0;
+    std::vector<double> ll_history_;   // EM 每次迭代的 log-likelihood
     bool trained_ = false;
     Config config_;
     std::mt19937 rng_;
