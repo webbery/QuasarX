@@ -223,6 +223,28 @@ def run_backtest(strategy_str: str, headers: dict, validate: bool = True) -> dic
         return {"status": "error", "error": str(e)}
 
 
+def run_backtest_graph(strategy: dict, headers: dict, validate: bool = False,
+                       timeout: int = 1800) -> dict:
+    """提交策略图（dict）回测，失败直接抛 AssertionError
+
+    与 run_backtest 的区别：接收 dict 而非 JSON 字符串，且失败时抛异常而非返回
+    error 字典——节点测试需要「回测没跑起来」就是测试失败，不能被静默跳过。
+
+    提取自 test_signal_logic.py 与 test_node_unit.py 各自的 _run_backtest，
+    两者签名不同（dict / Path），此处统一为 dict 入口。
+    """
+    resp = requests.post(
+        f"{BASE_URL}/backtest",
+        json={"script": json.dumps(strategy), "validate": validate},
+        headers=headers,
+        verify=VERIFY_SSL,
+        timeout=timeout,
+    )
+    assert resp.status_code == 200, \
+        f"Backtest failed: HTTP {resp.status_code}: {resp.text[:300]}"
+    return resp.json()
+
+
 
 # if __name__ == "__main__":
 #     check_login()

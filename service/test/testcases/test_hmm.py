@@ -18,13 +18,14 @@ close/high/low 读错位，所以导入前必须按表头名重排。
   pytest test_hmm.py -v
 """
 
+import json
 import pytest
 import requests
 from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
-from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, CSV_DATA_DIR
+from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, CSV_DATA_DIR, run_backtest_graph
 
 # 真实日线标的（每个 4048 根 bar，覆盖 2010~2026）
 TEST_SYMBOLS = ["sh.600000", "sh.600016", "sh.600028"]
@@ -492,15 +493,20 @@ class TestHMMDecode:
         assert len(dec["dates"]) == len(seq)
 
     @pytest.mark.timeout(200)
-    def test_decode_dimension_mismatch_rejected(self, cleanup_model, headers):
-        """请求覆盖成非法特征名时应因该特征名本身被拒绝"""
+    def test_decode_rejects_mismatched_features(self, cleanup_model, headers):
+        """
+        请求的 features 与模型训练特征不一致时必须 400，不能静默改用模型的特征。
+
+        decode 历史上无条件用模型自带的 features 覆盖请求值：传 ["close"] 也会
+        成功返回，调用方却以为是用 close 解码的结果。静默忽略输入比报错更糟。
+        """
         data = _hmm({"action": "decode", "model_path": cleanup_model["model_path"],
                      "features": ["close"]}, headers)
-        assert data.get("status") == "error"
-        # 必须明确指出是 "close" 这个特征名非法，而不是模型自带的 features 列表有问题。
-        # 后者曾长期发生：decode 把模型里的限定名 sh.600000.return_1d 直接回传给
-        # buildObservations，撞上 unknown feature，使所有 decode 请求都失败。
-        assert "close" in data.get("error", ""), f"错误信息不符: {data}"
+        assert data.get("status") == "error", f"特征不匹配却返回成功: {data}"
+        assert data.get("requested") == ["close"], \
+            f"错误信息应回显请求的特征，实际: {data}"
+        assert data.get("model_features") == ["return_1d"], \
+            f"错误信息应回显模型特征，实际: {data}"
 
     @pytest.mark.timeout(200)
     def test_decode_uses_model_features(self, cleanup_model, headers):
@@ -516,6 +522,15 @@ class TestHMMDecode:
         assert all(0 <= s < n_states for s in seq)
         assert len(dec["dates"]) == len(seq)
         assert sum(dec["regime_summary"].values()) == len(seq)
+
+    @pytest.mark.timeout(200)
+    def test_decode_accepts_matching_features(self, cleanup_model, headers):
+        """显式传入与模型一致的特征（裸名或限定名都应接受）不应被拒"""
+        for feats in (["return_1d"], cleanup_model["training_info"]["features"]):
+            data = _hmm({"action": "decode", "model_path": cleanup_model["model_path"],
+                         "features": feats}, headers)
+            assert data.get("status") != "error", \
+                f"传入与模型一致的特征 {feats} 却被拒: {data}"
 
 
 # ============================================================
@@ -615,3 +630,310 @@ class TestHMMModelLifecycle:
     def test_post_rejects_unknown_action(self, headers):
         data = _hmm({"action": "nonexistent"}, headers, expect=400)
         assert "action" in data.get("error", "")
+
+
+# ============================================================
+# HMMNode（策略图节点）
+#
+# 走回测链路：input → Return(1) → HMM → DebugNode
+#
+# 参数刻意取小（train_window=60 / warmup_period=10），回测窗口 1 年约
+# 240 根 bar，够跑完「预热 + 填缓冲 + 训练 + 数次重训」又不拖慢用例。
+# 默认参数需要 252+60=312 根 bar，得用 7 年窗口，代价太大。
+#
+# 输出语义（务必区分，否则断言会写错）：
+#   hmm_state       —— DataContext::add(double) 逐 bar 追加，是时间序列
+#   hmm_probs       —— add(Vector<double>) 整体替换，只保留最后一根 bar 的向量
+#   hmm_transition  —— 同上，长度 n_states²
+#   hmm_duration    —— 同上，长度 n_states
+# 向量类输出因此只对最后一根 bar 有效（与 Formula 里 hmm_probs[1] 的用法一致）。
+# ============================================================
+
+NODE_TRAIN_WINDOW = 60
+NODE_WARMUP = 10
+NODE_RETRAIN = 20
+NODE_N_STATES = 3
+NODE_DEBUG_LABEL = "debug_hmm"
+NODE_START = "2023-01-01"
+NODE_END = "2023-12-31"
+
+
+def _hmm_node_strategy(symbol: str, strategy_id: str,
+                       n_states: int = NODE_N_STATES,
+                       train_window: int = NODE_TRAIN_WINDOW,
+                       warmup_period: int = NODE_WARMUP,
+                       retrain_interval: int = NODE_RETRAIN,
+                       max_iter: int = 100,
+                       model_file: str = None) -> dict:
+    """构造 input → Return(1) → HMM → DebugNode 策略图
+
+    features 留空：HMMNode::Init 会自动从上游 out_elements() 取 key
+    （FunctionNode 输出 {symbol}.{label}，此处即 {symbol}.Return(1)）。
+    """
+    hmm_params = {
+        "n_states":        {"value": n_states,        "type": "number"},
+        "train_window":    {"value": train_window,    "type": "number"},
+        "warmup_period":   {"value": warmup_period,   "type": "number"},
+        "retrain_interval":{"value": retrain_interval,"type": "number"},
+        "max_iter":        {"value": max_iter,        "type": "number"},
+        "random_seed":     {"value": 42,              "type": "number"},
+    }
+    if model_file:
+        hmm_params["modelFile"] = {"value": model_file, "type": "text"}
+
+    return {
+        "id": strategy_id,
+        "name": f"HMMNode测试_{strategy_id}",
+        "version": 1,
+        "description": "HMMNode 单元测试",
+        "backtest": {"start": NODE_START, "end": NODE_END},
+        "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "行情数据", "nodeType": "input", "params": {
+                 "source": {"value": "股票", "type": "text"},
+                 "code":   {"value": [symbol],     "type": "text"},
+                 "freq":   {"value": "1d",         "type": "select"},
+                 "close":  {"value": "close",      "type": "text"},
+             }}},
+            {"id": "2", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "Return(1)", "nodeType": "function", "params": {
+                 "method": {"value": "Return", "type": "select"},
+                 "range":  {"value": "1d",     "type": "text"},
+             }}},
+            {"id": "3", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": "HMM", "nodeType": "hmm", "params": hmm_params}},
+            {"id": "4", "type": "custom", "position": {"x": 0, "y": 0},
+             "data": {"label": NODE_DEBUG_LABEL, "nodeType": "debug", "params": {
+                 "suffix": {"value": "csv", "type": "select"},
+             }}},
+        ],
+        "edges": [
+            {"id": "1-close->2", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "2->3", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            {"id": "3->4", "source": "3", "target": "4",
+             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
+        ],
+    }
+
+
+def _read_hmm_csv(strategy_id: str) -> "pd.DataFrame":
+    """读取 DebugNode 导出的 HMM 输出 CSV"""
+    from tool import read_debug_csv
+    return read_debug_csv(strategy_id, NODE_DEBUG_LABEL)
+
+
+def _hmm_node_backtest(hmm_data, headers, **kwargs) -> "pd.DataFrame":
+    """跑一次 HMMNode 回测并读取 DebugNode 导出的 CSV
+
+    复用 hmm_data fixture 已导入的行情（取首个标的），行情不单独清理。
+    kwargs 透传给 _hmm_node_strategy，可用 strategy_id 覆盖回测 id。
+    """
+    symbol = hmm_data[0]
+    strategy_id = kwargs.pop("strategy_id", "test_hmmnode")
+    strategy = _hmm_node_strategy(symbol, strategy_id, **kwargs)
+    run_backtest_graph(strategy, headers, validate=False)
+    return _read_hmm_csv(strategy_id)
+
+
+def _hmm_state_series(df) -> "pd.Series":
+    """取出 hmm_state 时间序列（去掉前导 NaN）
+
+    列名就是 hmm_state，不带 symbol 前缀：HMMNode::Init 里
+    _outputs["hmm_state"] 是硬编码的，与 FunctionNode 的 {symbol}.{label} 约定不同。
+    """
+    import pandas as pd
+    col = "hmm_state"
+    assert col in df.columns, f"列 {col} 不存在，实际列: {list(df.columns)}"
+    return pd.to_numeric(df[col], errors="coerce").dropna()
+
+
+def _hmm_tail_vector(df, column: str) -> list:
+    """取向量类输出的最后一组有效值
+
+    hmm_probs / hmm_transition / hmm_duration 在 context 里是 last-write-wins，
+    DebugNode 把整个向量写进一列的前若干行，因此取该列开头的 n 个有效值。
+    """
+    import pandas as pd
+    assert column in df.columns, f"列 {column} 不存在，实际列: {list(df.columns)}"
+    vals = pd.to_numeric(df[column], errors="coerce").dropna().tolist()
+    return vals
+
+
+class TestHMMNodeOutputs:
+    """HMMNode 数值不变量：概率/转移矩阵/持续时间的数学硬约束"""
+
+    @pytest.mark.timeout(600)
+    def test_node_emits_valid_probabilities(self, hmm_data, headers):
+        """概率分布归一、状态编号合法、转移矩阵行归一、duration 定义式成立"""
+        df = _hmm_node_backtest(hmm_data, headers, strategy_id="test_hmmnode_valid")
+
+        states = _hmm_state_series(df)
+        assert len(states) > 20, f"有效输出过少，可能节点没跑起来: {len(states)}"
+
+        # hmm_state 是时间序列：整数且落在 [0, n_states)
+        assert all(float(s).is_integer() for s in states), "状态编号必须是整数"
+        assert all(0 <= int(s) < NODE_N_STATES for s in states), \
+            f"状态越界: {sorted(set(int(s) for s in states))}"
+
+        # hmm_probs：归一（非负 + 和为 1）
+        probs = _hmm_tail_vector(df, "hmm_probs")
+        assert len(probs) == NODE_N_STATES, \
+            f"hmm_probs 长度应为 {NODE_N_STATES}，实际 {len(probs)}"
+        assert all(p >= 0 for p in probs), f"概率为负: {probs}"
+        assert abs(sum(probs) - 1.0) < 1e-6, f"概率未归一: {probs}（和={sum(probs)}）"
+
+        # hmm_transition：n_states² 个值，reshape 后每行归一
+        trans = _hmm_tail_vector(df, "hmm_transition")
+        assert len(trans) == NODE_N_STATES ** 2, \
+            f"hmm_transition 长度应为 {NODE_N_STATES**2}，实际 {len(trans)}"
+        A = [trans[i * NODE_N_STATES:(i + 1) * NODE_N_STATES]
+             for i in range(NODE_N_STATES)]
+        for i, row in enumerate(A):
+            assert abs(sum(row) - 1.0) < 1e-6, \
+                f"转移矩阵第 {i} 行未归一（和={sum(row)}），疑似序列化转置: {row}"
+            assert all(v >= 0 for v in row)
+
+        # hmm_duration == 1 / (1 - A_ii)，纯代数恒等式
+        dur = _hmm_tail_vector(df, "hmm_duration")
+        assert len(dur) == NODE_N_STATES, \
+            f"hmm_duration 长度应为 {NODE_N_STATES}，实际 {len(dur)}"
+        for i in range(NODE_N_STATES):
+            expected = 1.0 / (1.0 - A[i][i]) if A[i][i] < 1.0 else 10000.0
+            assert abs(dur[i] - expected) < 1e-3 * max(1.0, expected), \
+                f"状态 {i} 持续时间与 1/(1-A_ii) 不符: {dur[i]} vs {expected}"
+
+    @pytest.mark.timeout(600)
+    def test_node_state_matches_argmax_probs(self, hmm_data, headers):
+        """hmm_state 应等于 hmm_probs 的 argmax（两者来自同一次 predict_proba）"""
+        df = _hmm_node_backtest(hmm_data, headers, strategy_id="test_hmmnode_argmax")
+        probs = _hmm_tail_vector(df, "hmm_probs")
+        states = _hmm_state_series(df)
+        assert len(states) > 0
+
+        # 向量输出只对应最后一根 bar，用最后一根 bar 的 state 做比对
+        last_state = int(states.iloc[-1])
+        assert last_state == probs.index(max(probs)), \
+            f"hmm_state={last_state} 与 argmax(hmm_probs)={probs.index(max(probs))} 不一致"
+
+
+class TestHMMNodeTiming:
+    """HMMNode 时序状态机：预热期、首次输出滞后、重训行为
+
+    注意 backtest.start 只是**交易起点**，引擎仍加载完整历史用于特征预热
+    （BackTestHandler.cpp:411），实测 CSV 覆盖 2010~2026 共 4001 根 bar。
+    因此不能用「CSV 行索引」当 bar 序号——HMMNode 在交易开始前就已训练完成
+    并持续输出，首个有效值落在索引 0。
+
+    这里改用差分法：固定其余参数、只改 train_window，两次回测的
+    「首个有效输出位置」之差应等于 train_window 之差。该关系与预热历史长度无关。
+    """
+
+    @staticmethod
+    def _first_valid_index(df) -> int:
+        import pandas as pd
+        series = pd.to_numeric(df["hmm_state"], errors="coerce")
+        idx = series.first_valid_index()
+        assert idx is not None, "HMMNode 全程无输出"
+        return int(idx)
+
+    @pytest.mark.timeout(600)
+    def test_first_output_shifts_with_train_window(self, hmm_data, headers):
+        """
+        首次输出滞后量随 train_window 线性平移。
+
+        HMMNode::Process：前 warmup_period 根只累积不输出；之后每根追加观测，
+        直到缓冲区填满 train_window 才首次训练并输出。故滞后 = warmup + train_window，
+        两者的差即为 train_window 之差。
+        """
+        base = _hmm_node_backtest(hmm_data, headers,
+                                 strategy_id="test_hmmnode_w60", train_window=60)
+        longer = _hmm_node_backtest(hmm_data, headers,
+                                    strategy_id="test_hmmnode_w120", train_window=120)
+
+        idx_base = self._first_valid_index(base)
+        idx_long = self._first_valid_index(longer)
+        assert idx_long - idx_base == 60, \
+            f"train_window 60→120 首个输出应后移 60，实际后移 {idx_long - idx_base}" \
+            f"（{idx_base} → {idx_long}）"
+
+    @pytest.mark.timeout(600)
+    def test_warmup_does_not_trigger_early_output(self, hmm_data, headers):
+        """
+        预热期内不得有任何输出。
+
+        warmup_period 内 _days_since_train 持续自增但直接返回 Skip，不训练不输出。
+        把 warmup_period 调到远大于 train_window，若实现有误（例如预热期就训练），
+        首个输出会提前到 warmup 之前。
+        """
+        df = _hmm_node_backtest(hmm_data, headers,
+                                strategy_id="test_hmmnode_bigwarm",
+                                warmup_period=500, train_window=60)
+        idx = self._first_valid_index(df)
+        # 预热 500 根 + 训练窗口 60 根，首个输出不可能早于 500
+        assert idx >= 500, \
+            f"warmup_period=500 时首个输出在索引 {idx}，早于预热期结束，违反 Skip 语义"
+
+    @pytest.mark.timeout(600)
+    def test_retrain_interval_shorter_than_warmup(self, hmm_data, headers):
+        """
+        retrain_interval < warmup_period 时，首次输出仍应等满 warmup + train_window。
+
+        预热期 _days_since_train 虽自增但直接 Skip，训练时机只取决于缓冲区是否填满，
+        与 retrain_interval 无关。用大 warmup + 小 interval 钉住这一点。
+        """
+        df = _hmm_node_backtest(hmm_data, headers,
+                                strategy_id="test_hmmnode_shortwarm",
+                                warmup_period=300, retrain_interval=5,
+                                train_window=60)
+        idx = self._first_valid_index(df)
+        assert idx >= 300, \
+            f"warmup=300 / retrain_interval=5 时首个输出在索引 {idx}，" \
+            f"被重训间隔提前了"
+
+
+class TestHMMNodeTraining:
+    """HMMNode 训练行为：模型确实被更新、参数边界"""
+
+    @pytest.mark.timeout(600)
+    def test_model_is_actually_retrained(self, hmm_data, headers):
+        """
+        max_iter=1 时模型也应被更新，不能永远停在第一个模型。
+
+        GaussianHMM::train() 返回的是「是否收敛」，不是「是否训练成功」。
+        曾经 HMMNode 用返回值判断，EM 未收敛时新模型被丢弃、_hmm 永远停在
+        第一个模型，而 _days_since_train 照常归零，日志里看不出异常。
+        这里用短 retrain_interval 保证回测期内有多次重训机会，
+        断言状态序列的取值不是恒定不变。
+        """
+        df = _hmm_node_backtest(hmm_data, headers,
+                                strategy_id="test_hmmnode_retrain",
+                                max_iter=1, retrain_interval=5)
+        states = _hmm_state_series(df)
+        assert len(states) > 20, f"有效输出过少: {len(states)}"
+        # 状态取值不应只有一个（模型僵死会导致全程同一状态）
+        assert len(set(states.tolist())) > 1, \
+            "全程只有单一状态，模型可能被判定为未收敛而未更新"
+
+    @pytest.mark.timeout(600)
+    def test_invalid_train_window_rejected(self, hmm_data, headers):
+        """train_window 小于 n_states*2 时训练必然失败，节点应报错而非静默产出垃圾"""
+        symbol = hmm_data[0]
+        strategy = _hmm_node_strategy(symbol, "test_hmmnode_badwindow",
+                                      train_window=3, n_states=3)
+        resp = requests.post(f"{BASE_URL}/backtest",
+                             json={"script": json.dumps(strategy), "validate": False},
+                             headers=headers, verify=VERIFY_SSL, timeout=300)
+        # 回测本身可能仍返回 200（训练失败只打 WARN），关键是不要产出有效状态
+        if resp.status_code == 200:
+            try:
+                df = _read_hmm_csv("test_hmmnode_badwindow")
+            except AssertionError:
+                return  # 没生成 CSV 更好：说明节点压根没跑起来
+            states = _hmm_state_series(df)
+            assert len(states) == 0, \
+                f"train_window=3 < n_states*2=6，不可能训练成功，却输出了 {len(states)} 个状态"
+        else:
+            assert resp.status_code in (400, 500)

@@ -24,7 +24,7 @@ import urllib3
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from tool import DEBUG_DIR, CSV_DATA_DIR, read_debug_csv
+from tool import DEBUG_DIR, CSV_DATA_DIR, read_debug_csv, run_backtest_graph
 from cusum_ref import CUSUMDetectorRef, log_returns, node_bar_series
 
 urllib3.disable_warnings()
@@ -71,14 +71,10 @@ def _load_volume(symbol: str) -> np.ndarray:
 
 
 def _run_backtest(strategy_path: Path, headers: dict) -> dict:
-    """提交回测并返回响应"""
+    """从文件读策略并提交回测（提交逻辑复用 tool.run_backtest_graph）"""
     with open(strategy_path) as f:
         strategy = json.load(f)
-    r = requests.post(f"{BASE_URL}/backtest",
-                      json={"script": json.dumps(strategy), "validate": False},
-                      headers=headers, verify=VERIFY_SSL)
-    assert r.status_code == 200, f"Backtest failed: {r.text}"
-    return r.json()
+    return run_backtest_graph(strategy, headers, validate=False)
 
 
 def _extract_node_series(df: pd.DataFrame, symbol: str, node_label: str) -> pd.Series:

@@ -508,6 +508,27 @@ void HMMHandler::handleDecode(const nlohmann::json& params, httplib::Response& r
         return;
     }
 
+    // 请求显式传了 features 时必须与模型一致。静默改用模型的特征会让调用方
+    // 以为用自己指定的特征组合解码，实际得到的是另一套特征的解码结果，且无任何提示。
+    if (params.contains("features")) {
+        const auto& requested = params["features"];
+        if (!requested.is_array()) {
+            res.status = 400;
+            res.set_content(R"({"error": "features must be an array of feature names"})", "application/json");
+            return;
+        }
+        Vector<String> requestedBare = stripSymbolPrefix(requested.get<Vector<String>>());
+        if (requestedBare != bareFeatures) {
+            res.status = 400;
+            res.set_content(nlohmann::json({
+                {"error", "requested features do not match the model; decode always uses the model's training features"},
+                {"requested", requested},
+                {"model_features", bareFeatures},
+            }).dump(), "application/json");
+            return;
+        }
+    }
+
     nlohmann::json decodeParams = params;
     decodeParams["features"] = bareFeatures;
     if (!params.contains("symbols")) {
