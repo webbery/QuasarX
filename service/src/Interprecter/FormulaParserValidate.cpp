@@ -35,6 +35,24 @@ const UnorderedSet<String>& builtinFunctionNames() {
     return names;
 }
 
+// availableVars 里既有 {symbol}.{var} 全名，也有 validate(availableVars, symbols)
+// 注入的短名；单参数版本没有短名，校验列索引时两种形式都要认。
+// 带 "." 前缀锚定，避免 "probs_0" 误命中 "{symbol}.xgb_probs_0" 的尾部。
+bool varExists(const Map<String, ArgType>& availableVars, const String& name) {
+    if (availableVars.find(name) != availableVars.end()) {
+        return true;
+    }
+    String suffix = "." + name;
+    for (const auto& kv : availableVars) {
+        const String& k = kv.first;
+        if (k.size() > suffix.size() &&
+            k.compare(k.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 FormulaParser::ExprType FormulaParser::inferExpressionType(
@@ -72,11 +90,13 @@ FormulaParser::ExprType FormulaParser::inferExpressionType(
         return ExprType::DOUBLE_TIMESERIES;  // 默认假设返回时间序列
     }
 
-    if (ast.name == "Primary" && ast.nodes.size() > 1) {
-        // 检查是否有 TimeOffset（如 [t], [t-1]）
+if (ast.name == "Primary" && ast.nodes.size() > 1) {
+        // 两种下标都会把序列塌缩成标量：[t] 取历史某根 bar，[N] 取某一列的最新值
         for (auto& node : ast.nodes) {
-            if (node->name == "TimeOffset") {
-                // 使用了时间索引，将时间序列转换为标量
+            if (node->name == "TimeIndex" || node->name == "ColumnIndex") {
+                if (node->name == "ColumnIndex") {
+                    return ExprType::DOUBLE_SCALAR;
+                }
                 auto baseType = inferExpressionType(*ast.nodes.front(), availableVars);
                 if (baseType == ExprType::DOUBLE_TIMESERIES ||
                     baseType == ExprType::INTEGER_TIMESERIES) {
@@ -126,7 +146,30 @@ bool FormulaParser::validateTimeOffset(const peg::Ast& ast, ExprType baseType) {
 bool FormulaParser::validateIdentifier(const peg::Ast& ast,
                                        const Map<String, ArgType>& availableVars,
                                        ExprType& outType) {
-    String varName(ast.token);
+    return validateIdentifierName(String(ast.token), availableVars, outType);
+}
+
+bool FormulaParser::resolveColumnName(const peg::Ast& primary, String& outColumnName) const {
+    // xgb_probs[0] 的 AST 是 Primary[Identifier "xgb_probs", ColumnIndex "0"]，
+    // 真实 key 由语法唯一确定：xgb_probs_0。不做「先当变量名查、查不到再猜 _N」。
+    if (primary.nodes.size() < 2 || primary.nodes.front()->name != "Identifier") {
+        return false;
+    }
+    for (size_t i = 1; i < primary.nodes.size(); ++i) {
+        if (primary.nodes[i]->name == "ColumnIndex") {
+            // token 是 string_view，先转成 String 再拼，跟本文件其他地方的写法一致
+            String base(primary.nodes.front()->token);
+            String index(primary.nodes[i]->token);
+            outColumnName = base + "_" + index;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FormulaParser::validateIdentifierName(const String& varName,
+                                           const Map<String, ArgType>& availableVars,
+                                           ExprType& outType) {
     auto it = availableVars.find(varName);
     if (it == availableVars.end()) {
         // 内置函数名不是变量引用，放行
@@ -267,15 +310,26 @@ bool FormulaParser::validate(const Map<String, ArgType>& availableVars) {
             }
         }
         else if (node.name == "Primary" && node.nodes.size() > 1) {
-            // 检查 TimeOffset
+            // 检查 TimeIndex
             for (size_t i = 1; i < node.nodes.size(); ++i) {
-                if (node.nodes[i]->name == "TimeOffset") {
+                if (node.nodes[i]->name == "TimeIndex") {
                     auto baseType = inferExpressionType(*node.nodes.front(), availableVars);
                     if (!validateTimeOffset(*node.nodes[i], baseType)) {
                         return false;
                     }
                 }
             }
+        }
+
+        // 列索引 xgb_probs[0]：Identifier 只是列名前缀，要校验的是展开后的 xgb_probs_0。
+        // 报未知变量时也报展开后的名字——用户写的是 [0]，回一句 "xgb_probs_0 not found"
+        // 比 "xgb_probs not found" 更能指出是第几列不存在。
+        String columnName;
+        bool hasColumnIndex = node.name == "Primary" &&
+                              resolveColumnName(node, columnName);
+        if (hasColumnIndex && !varExists(availableVars, columnName)) {
+            ExprType ignored = ExprType::UNKNOWN;
+            return validateIdentifierName(columnName, availableVars, ignored);
         }
 
         // 未知变量检查。放在遍历器里而不是单独调用 validateIdentifier，是因为
@@ -289,6 +343,8 @@ bool FormulaParser::validate(const Map<String, ArgType>& availableVars) {
             firstVarIdx = node.nodes.empty() ? 0 : 1;
         } else if (node.name == "Trailer") {
             firstVarIdx = node.nodes.size();  // 整个 Trailer 都不检查
+        } else if (hasColumnIndex) {
+            firstVarIdx = 1;  // nodes[0] 的列名已按 columnName 校验过
         }
         for (size_t i = firstVarIdx; i < node.nodes.size(); ++i) {
             const auto& child = node.nodes[i];

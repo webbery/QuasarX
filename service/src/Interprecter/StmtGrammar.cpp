@@ -42,9 +42,14 @@ String grammar = R"(
         Primary         <- Atom (Trailer)*
         Atom            <- Number / String / BoolLiteral / FunctionCall / ListExpr / Identifier / '(' Expression ')'
 
-        # 时间序列访问
-        Trailer         <- '.' Identifier / '(' Arguments? ')' / '[' TimeOffset ']'
-        TimeOffset      <- < 't' '-' [0-9]+ > / < 't' > / < [0-9]+ >
+        # 下标访问。两种下标语义完全不同，必须在语法上分成两个规则：
+        #   [t] / [t-N]  时间序列偏移 —— 读 {symbol}.{var} 的历史某根 bar
+        #   [0] / [1]     多列输出的列索引 —— 读 {symbol}.{var}_{N}
+        # 合成一条规则的话，解析器看到 [0] 无法判断是「往回 0 根」还是「第 0 列」，
+        # 只能运行期探测 key 是否存在才能区分，验证侧就再也对不上求值侧的语义了。
+        Trailer         <- '.' Identifier / '(' Arguments? ')' / TimeIndex / ColumnIndex
+        TimeIndex       <- '[' < 't' '-' [0-9]+ > ']' / '[' < 't' > ']'
+        ColumnIndex     <- '[' < [0-9]+ > ']'
 
         # 函数调用
         # 加 { no_ast_opt }：防止零参数调用（如 cs_size()）被 peglib optimize_ast
@@ -175,29 +180,6 @@ Map<char, std::function<context_t(const context_t& , const context_t&)>>& arithm
             return ctxToDoubleArith(left) / r;
         }
     }},
-};
-    return m;
-}
-
-Map<String, EvalPtr>& evalMap() {
-    static Map<String, EvalPtr> m{
-    {"Number", &FormulaParser::evalNumber},
-    {"BoolLiteral", &FormulaParser::evalBoolLiteral},
-    {"Identifier", &FormulaParser::evalIdentifier},
-    {"CompareExpr", &FormulaParser::evalComparison},
-    {"FunctionCall", &FormulaParser::evalFunctionCall},
-    {"Term", &FormulaParser::evalTerm},
-    {"Unary", &FormulaParser::evalUnary},
-    {"Program", &FormulaParser::evalProgram},
-    {"Statement", &FormulaParser::evalStatement},
-    {"AndExpr", &FormulaParser::evalAndExpr},
-    {"OrExpr", &FormulaParser::evalOrExpr},
-    {"NotExpr", &FormulaParser::evalNotExpr},
-    {"NotPrefix", &FormulaParser::evalNotPrefix},
-    {"Primary", &FormulaParser::evalPrimary},
-    {"ArithExpr", &FormulaParser::evalArithmetic},
-    {"Expression", &FormulaParser::evalExpression},
-    {"ExpressionStmt", &FormulaParser::evalStatement}
 };
     return m;
 }

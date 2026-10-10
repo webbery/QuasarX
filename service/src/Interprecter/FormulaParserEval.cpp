@@ -19,6 +19,9 @@
 #define INTRINSIC_ZSCORE    "zscore"
 #define INTRINSIC_PERCENTILE "pct"
 
+// "Primary"_ → 该节点名的编译期 tag（peglib 的 str2tag），用于按 ast.tag 分发
+using namespace peg::udl;
+
 // ========== FormulaParser eval 方法实现 ==========
 
 context_t FormulaParser::eval(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
@@ -108,14 +111,14 @@ context_t FormulaParser::evalExpression(const symbol_t& symbol, const peg::Ast& 
 }
 
 context_t FormulaParser::evalStatement(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    if (ast.name == "ExpressionStmt") {
+    if (ast.tag == "ExpressionStmt"_) {
         return evalNode(symbol, *ast.nodes[0], context);
     }
-    else if (ast.name == "AssignmentStmt") {
+    else if (ast.tag == "AssignmentStmt"_) {
         String vaName(ast.nodes[0]->token);
         return evalNode(symbol, *ast.nodes[1], context);
     }
-    else if (ast.name == "EOF") {
+    else if (ast.tag == "EOF"_) {
         return 0.;
     } else {
         WARN("not support statement {}", ast.name);
@@ -130,8 +133,11 @@ context_t FormulaParser::evalPrimary(const symbol_t& symbol, const peg::Ast& ast
         if (trailer->name == "Trailer") {
             value = evalTrailer(symbol, value, *trailer, context);
         }
-        else if (trailer->name == "TimeOffset") {
+        else if (trailer->name == "TimeIndex") {
             value = evalTimeIndex(symbol, value, *trailer, context);
+        }
+        else if (trailer->name == "ColumnIndex") {
+            value = evalColumnIndex(symbol, value, *trailer, context);
         }
     }
     return value;
@@ -141,37 +147,60 @@ context_t FormulaParser::evalTrailer(const symbol_t& symbol, const context_t& ba
     if (ast.nodes.empty()) return base;
 
     auto& trailer_type = ast.nodes[0];
-    if (trailer_type->name == "TimeOffset") {
+    if (trailer_type->name == "TimeIndex") {
         return evalTimeIndex(symbol, base, *trailer_type, context);
+    }
+    if (trailer_type->name == "ColumnIndex") {
+        return evalColumnIndex(symbol, base, *trailer_type, context);
     }
     return base;
 }
 
 context_t FormulaParser::evalTimeIndex(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context) {
-    int time_offset = 0;
+    // grammar 保证 TimeIndex 的 token 只有 't' 和 't-N' 两种形态。
+    // 列索引走 evalColumnIndex，不会到这里。
     String token(ast.token);
+    int time_offset = 0;
 
-    if (token == "t") {
-        time_offset = 0;
-    } else if (token.size() > 1 && token[0] == 't' && token[1] == '-') {
+    if (token != "t") {
+        if (token.size() < 2 || token.compare(0, 2, "t-") != 0) {
+            WARN("Invalid time index: {}", token);
+            return std::nan("");
+        }
         try {
             double num = std::stod(token.substr(2));
             time_offset = -static_cast<int>(num);
         } catch (...) {
             WARN("Invalid time offset: {}", token);
-            time_offset = 0;
-        }
-    } else {
-        try {
-            double num = std::stod(token);
-            time_offset = static_cast<int>(num);
-        } catch (...) {
-            WARN("Invalid time index: {}", token);
-            time_offset = 0;
+            return std::nan("");
         }
     }
 
     return getHistoricalValue(symbol, base, time_offset, context);
+}
+
+context_t FormulaParser::evalColumnIndex(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context) {
+    // xgb_probs[0] → 读 {symbol}.xgb_probs_0 的最新值。
+    // key 由语法唯一确定：节点只发布带下标的 key（XGBoostNode/OnnxInferenceNode/HMMNode
+    // 都是 xgb_probs_0 / onnx_probs_0 / hmm_probs_0 这种形式），不存在裸名版本，
+    // 所以这里不需要「先试 {symbol}.xgb_probs 失败再退到 _0」的探测。
+    if (!std::holds_alternative<String>(base)) {
+        WARN("Column index applied to a value that is not a variable");
+        return std::nan("");
+    }
+
+    auto name = get_symbol(symbol);
+    String key = name + "." + std::get<String>(base) + "_" + String(ast.token);
+    if (!context.exist(key)) {
+        DEBUG_INFO("FormulaParser: column '{}' not found", key);
+        return std::nan("");
+    }
+
+    auto& vec = context.get<Vector<double>>(key);
+    if (vec.empty()) {
+        return std::nan("");
+    }
+    return vec.back();  // 列是逐 bar 追加的，取最新一根
 }
 
 double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t& base, int time_offset, DataContext& context) {
@@ -192,7 +221,7 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
             return std::nan("");
         }
     }
-    // 标量 passthrough：数组展开后返回的 double 再经过 [t] 时会到这里
+    // 标量 passthrough：已取到具体值的 double 再经过 [t] 时会到这里
     else if (std::holds_alternative<double>(base)) {
         return std::get<double>(base);
     }
@@ -202,17 +231,6 @@ double FormulaParser::getHistoricalValue(const symbol_t& symbol, const context_t
     String key = name + "." + var_name;
 
     if (!context.exist(key)) {
-        // 数组展开: name[N] → name_N (如 xgb_probs[0] → xgb_probs_0)
-        if (time_offset >= 0) {
-            String arrayKey = name + "." + var_name + "_" + std::to_string(time_offset);
-            if (context.exist(arrayKey)) {
-                auto& vec = context.get<Vector<double>>(arrayKey);
-                if (!vec.empty()) {
-                    int idx = (int)vec.size() - 1;  // 取最新值
-                    return vec[idx];
-                }
-            }
-        }
         DEBUG_INFO("FormulaParser: key '{}' not found for symbol '{}'", key, name);
         return std::nan("");
     }
@@ -263,11 +281,48 @@ context_t FormulaParser::evalNotPrefix(const symbol_t& symbol, const peg::Ast& a
 }
 
 context_t FormulaParser::evalNode(const symbol_t& symbol, const peg::Ast& ast, DataContext& context) {
-    if (statement::evalMap().count(ast.name) == 0) {
-        INFO("ast node `{}` not found", ast.name);
-        return false;
+    // 按 peglib 建树时算好的 ast.tag 分发：tag 是 constexpr 哈希，"Primary"_ 编译期就是常量，
+    // switch 落成跳转表。原来的 evalMap().count(name) + evalMap()[name] 每求值一个节点
+    // 要做两次 std::string 哈希查找——求值路径每根 bar × 每个标的 × 每个节点都走这里。
+    switch (ast.tag) {
+        case "Number"_:
+            return evalNumber(symbol, ast, context);
+        case "BoolLiteral"_:
+            return evalBoolLiteral(symbol, ast, context);
+        case "Identifier"_:
+            return evalIdentifier(symbol, ast, context);
+        case "CompareExpr"_:
+            return evalComparison(symbol, ast, context);
+        case "FunctionCall"_:
+            return evalFunctionCall(symbol, ast, context);
+        case "Term"_:
+            return evalTerm(symbol, ast, context);
+        case "Unary"_:
+            return evalUnary(symbol, ast, context);
+        case "Program"_:
+            return evalProgram(symbol, ast, context);
+        case "Statement"_:
+            return evalStatement(symbol, ast, context);
+        case "AndExpr"_:
+            return evalAndExpr(symbol, ast, context);
+        case "OrExpr"_:
+            return evalOrExpr(symbol, ast, context);
+        case "NotExpr"_:
+            return evalNotExpr(symbol, ast, context);
+        case "NotPrefix"_:
+            return evalNotPrefix(symbol, ast, context);
+        case "Primary"_:
+            return evalPrimary(symbol, ast, context);
+        case "ArithExpr"_:
+            return evalArithmetic(symbol, ast, context);
+        case "Expression"_:
+            return evalExpression(symbol, ast, context);
+        case "ExpressionStmt"_:
+            return evalStatement(symbol, ast, context);
+        default:
+            INFO("ast node `{}` not found", ast.name);
+            return false;
     }
-    return (this->*(statement::evalMap()[ast.name]))(symbol, ast, context);
 }
 
 // 辅助：从 context_t 提取 double 标量

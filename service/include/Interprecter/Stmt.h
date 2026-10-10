@@ -13,8 +13,6 @@ namespace statement {
 
     Map<String, std::function<bool (const context_t& , const context_t& )>>& comparationMap();
     Map<char, std::function<context_t(const context_t& , const context_t&)>>& arithmeticMap();
-    using EvalPtr = context_t (FormulaParser::*)(const symbol_t&, const peg::Ast& , DataContext&);
-    Map<String, EvalPtr>& evalMap();
 
     bool check_bool(const context_t& feature);
 
@@ -153,6 +151,10 @@ private:
 
     context_t evalTimeIndex(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context);
 
+    // 列索引 xgb_probs[0]：读 {symbol}.xgb_probs_0 的最新值，
+    // 与 [t] 的时间偏移是两种语法、两种语义
+    context_t evalColumnIndex(const symbol_t& symbol, const context_t& base, const peg::Ast& ast, DataContext& context);
+
     double getHistoricalValue(const symbol_t& symbol, const context_t& base, int time_offset, DataContext& context);
 
     context_t getVariableValue(const symbol_t& symbol, const String& varName, DataContext* context);
@@ -189,7 +191,12 @@ private:
     bool validateComparison(const peg::Ast& ast, const Map<String, ArgType>& availableVars);
     bool validateArithmetic(const peg::Ast& ast, const Map<String, ArgType>& availableVars);
     bool validateIdentifier(const peg::Ast& ast, const Map<String, ArgType>& availableVars, ExprType& outType);
+    bool validateIdentifierName(const String& varName, const Map<String, ArgType>& availableVars, ExprType& outType);
     bool validateTimeOffset(const peg::Ast& ast, ExprType baseType);
+
+    // ColumnIndex 子节点的 Primary（xgb_probs[0]）解析出真实 key：xgb_probs_0。
+    // 是 ColumnIndex 就返回 true 并填 outColumnName，否则返回 false。
+    bool resolveColumnName(const peg::Ast& primary, String& outColumnName) const;
 
     String _validationError;  // 存储验证错误信息
 

@@ -463,6 +463,7 @@ function getHMMUsageGuide(): string {
 |--------|------|------|
 | \`hmm_state\` | 整数时间序列 | 当前最可能的隐状态编号（0, 1, 2...），如 n_states=3 则值为 0/1/2 |
 | \`hmm_probs\` | 向量时间序列 | 各状态的概率分布，长度为 n_states，如 [0.7, 0.2, 0.1] 表示 70% 概率为状态 0 |
+| \`hmm_probs_{j}\` | 时间序列 | 第 j 个状态的概率（逐 bar），公式里用列索引 \`hmm_probs[j]\` 读取 |
 | \`hmm_transition\` | 向量时间序列 | 状态转移矩阵展平，长度为 n_states²，按行优先排列：A[0,0], A[0,1], ..., A[N-1,N-1] |
 | \`hmm_duration\` | 向量时间序列 | 各状态的期望持续时间（天），长度为 n_states |
 
@@ -473,7 +474,8 @@ function getHMMUsageGuide(): string {
 
 ## Signal 公式中的用法
 
-HMM 输出的是**时间序列**，在 Signal 公式中需带时间索引 \`[t]\` 引用：
+HMM 输出的是**时间序列**，在 Signal 公式中需带时间索引 \`[t]\` 引用；
+概率向量按列拆成了 \`hmm_probs_{j}\` 时间序列，用列索引 \`[j]\` 读取第 j 个状态：
 
 \`\`\`
 // 基于状态编号的简单规则
@@ -481,7 +483,7 @@ buy: hmm_state[t] == 0    // 状态 0 时买入（假设 0 = 牛市）
 sell: hmm_state[t] == 2   // 状态 2 时卖出（假设 2 = 熊市）
 
 // 基于状态概率的高置信度规则
-buy: hmm_state[t] == 0 and hmm_probs[t] > 0.7   // 高置信度牛市
+buy: hmm_state[t] == 0 and hmm_probs[0] > 0.7   // 高置信度牛市
 
 // 结合技术指标的状态过滤
 buy: close[t] > MA_5[t] and hmm_state[t] == 0   // 金叉 + 牛市状态
