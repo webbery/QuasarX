@@ -2,6 +2,8 @@
 #include "Callable.h"
 #include "Algorithms/Kahan.h"
 #include <cstdint>
+#include <deque>
+#include <utility>
 
 class MA : public ICallable {
 public:
@@ -160,6 +162,38 @@ private:
     int32_t _count;       // 当前已填充数量
     int32_t _nextIndex;   // 下一个写入位置（环形缓冲）
     std::vector<double> _buffer;  // 滑动窗口缓冲区
+};
+
+/**
+ * 区间最高价: rolling_max(price, window)
+ *
+ * 输入:
+ *   args["price"] — 收盘价时间序列 (Vector<double>)，取最新一根 bar
+ *
+ * 输出: 窗口内的最大值
+ * 数据不足时: NaN（与 MA/Median 一致，保证输出长度与输入同步）
+ *
+ * 用途: 与 close 组合即可算回撤，如 (close[t] / cummax[t] - 1)。
+ *
+ * 实现: 单调队列（deque），均摊 O(1) per push。
+ *   max 不可逆加减，无法像 MA 那样增量 sub/add —— 滑出窗口的元素一旦
+ *   正是当前最大值就必须回退，队列法保证这只在必要时发生：
+ *   入队时从队尾弹掉所有 ≤ 新值的下标（它们永远不可能再成为最大值），
+ *   出队时弹掉已滑出窗口的队首下标。队首恒为窗口内最大值。
+ */
+class CumMax : public ICallable {
+public:
+    /**
+     * @param window 滚动窗口大小（bars 数）
+     */
+    CumMax(int32_t window);
+    virtual context_t operator()(const Map<String, context_t>& args);
+
+private:
+    int32_t _window;
+    int32_t _count;       // 已推入的 bar 总数
+    // 单调递减队列：存 (下标, 值)，值从队首到队尾严格递减
+    std::deque<std::pair<int32_t, double>> _dq;
 };
 
 /**

@@ -69,7 +69,7 @@ export const basicIndexNode: NodeRegistryEntry = {
   nodeType: 'function',
   category: 'process',
   icon: 'fas fa-calculator',
-  description: '计算技术指标：移动平均(MA)、标准差(STD)、收益率(Return)、拟合优度(R2)、标准化(ZScore)、中位数(Median)、量价相关性(VPCorr)、平均真实波幅(ATR)。',
+  description: '计算技术指标：移动平均(MA)、标准差(STD)、收益率(Return)、拟合优度(R2)、标准化(ZScore)、中位数(Median)、区间最高价(CumMax)、量价相关性(VPCorr)、平均真实波幅(ATR)。',
   inputs: ['timeseries'],
   outputs: ['indicator'],
   params: [
@@ -80,6 +80,7 @@ export const basicIndexNode: NodeRegistryEntry = {
       { label: 'R2 (拟合优度)', value: 'R2' },
       { label: 'ZScore (标准化)', value: 'ZScore' },
       { label: 'Median (中位数)', value: 'Median' },
+      { label: 'CumMax (区间最高价)', value: 'CumMax' },
       { label: 'VPCorr (量价相关性)', value: 'VPCorr' },
       { label: 'ATR (平均真实波幅)', value: 'ATR' }
     ]},
@@ -87,7 +88,7 @@ export const basicIndexNode: NodeRegistryEntry = {
       placeholder: '如 5d、30m、1h（正整数 + s/m/h/d 后缀）',
       pattern: '^\\d+[smhd]$',
       errorMsg: '格式错误，必须为正整数 + s/m/h/d 后缀（如 5d、30m、1h）',
-      description: '滑动窗口大小。MA=平滑周期，STD=标准差窗口，Return=回溯步数，R2=拟合窗口，ZScore=标准化窗口，VPCorr=相关系数窗口，ATR=TR均值周期' },
+      description: '滑动窗口大小。MA=平滑周期，STD=标准差窗口，Return=回溯步数，R2=拟合窗口，ZScore=标准化窗口，VPCorr=相关系数窗口，ATR=TR均值周期，CumMax=区间最高价的回看窗口（留空默认 252 根日线）' },
   ],
   example: { method: 'MA', range: '5d' }
 }

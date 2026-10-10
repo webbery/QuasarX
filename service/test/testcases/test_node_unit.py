@@ -260,6 +260,149 @@ class TestMedianNode:
 
 
 # ============================================================
+# L1: CumMax 节点测试
+# ============================================================
+
+class TestCumMaxNode:
+    """CumMax(w) 节点：滚动窗口最高价
+
+    Python 黄金标准: pd.Series.rolling(w).max()
+    实现是单调队列，均摊 O(1) per push。max 不可逆加减，无法像 MA 那样
+    增量 sub/add —— 窗口滑出的元素一旦正是当前最大值，就必须回退到窗口内
+    的次高值。「忘记旧高」这条路径是本实现最容易写错的地方，下面
+    test_cummax_forgets_old_high 专门盯它。
+    """
+
+    DATASETS = ["sine", "step", "reversal", "deterministic", "anomaly"]
+
+    @pytest.mark.parametrize("dataset_id", DATASETS)
+    @pytest.mark.parametrize("window", [5, 15, 60])
+    def test_cummax_vs_pandas(self, headers, summary, dataset_id, window):
+        """5 个数据集 × CumMax(5/15/60) 与 rolling().max() 逐 bar 一致"""
+        strategy_id = f"test_{dataset_id}_cummax_{window}"
+        strategy_path = TEST_DIR / f"{dataset_id}_cummax_{window}.json"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(strategy_path, headers)
+        df = read_debug_csv(strategy_id, f"debug_cummax_{window}")
+        actual = _extract_node_series(df, symbol, f"CumMax({window})")
+
+        closes = _load_close_prices(symbol)
+        expected = pd.Series(closes).rolling(window).max()
+
+        n = min(len(actual), len(expected))
+        a = actual.iloc[:n].dropna().reset_index(drop=True)
+        e = expected.iloc[:n].dropna().reset_index(drop=True)
+        assert len(a) == len(e), \
+            f"[{dataset_id}/w{window}] 有效值数量不一致: C++={len(a)}, Python={len(e)}"
+
+        diff = np.abs(a.values - e.values)
+        max_diff = np.max(diff) if len(diff) else 0.0
+        assert max_diff < TOLERANCE, \
+            f"[{dataset_id}/w{window}] max diff {max_diff:.2e} exceeds tolerance {TOLERANCE}"
+
+    def test_cummax_nan_position(self, headers, summary):
+        """CumMax 预热期返回 NaN（前 w-1 根），与 MA/Median 一致"""
+        window = 15
+        dataset_id = "sine"
+        strategy_id = f"test_{dataset_id}_cummax_{window}"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(TEST_DIR / f"{dataset_id}_cummax_{window}.json", headers)
+        df = read_debug_csv(strategy_id, f"debug_cummax_{window}")
+        actual = _extract_node_series(df, symbol, f"CumMax({window})")
+
+        for i in range(window - 1):
+            assert pd.isna(actual.iloc[i]), \
+                f"预热期 bar {i} 应为 NaN，实际 {actual.iloc[i]}"
+        assert not pd.isna(actual.iloc[window - 1]), \
+            f"bar {window-1} 应有有效值，实际 NaN"
+
+    def test_cummax_forgets_old_high(self, headers, summary):
+        """窗口滑出后必须忘掉历史最高价（单调队列的回退路径）
+
+        只在「上一个窗口的最大值已滑出、且严格大于当前窗口最大值」时才能检验。
+        先确认样本里确实出现了这种情形，否则说明用例没覆盖到该路径。
+        """
+        window = 5
+        dataset_id = "step"
+        strategy_id = f"test_{dataset_id}_cummax_{window}"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(TEST_DIR / f"{dataset_id}_cummax_{window}.json", headers)
+        df = read_debug_csv(strategy_id, f"debug_cummax_{window}")
+        actual = _extract_node_series(df, symbol, f"CumMax({window})")
+
+        closes = _load_close_prices(symbol)
+        checked = 0
+        for i in range(window, len(closes)):
+            prev_max = closes[i - window:i].max()       # 即将滑出的那个窗口
+            cur_max = closes[i - window + 1:i + 1].max()  # 当前窗口
+            if prev_max <= cur_max + TOLERANCE:
+                continue
+            got = actual.iloc[i]
+            if pd.isna(got):
+                continue
+            assert abs(got - cur_max) < TOLERANCE, (
+                f"bar {i}: 旧高 {prev_max} 已滑出窗口，期望回退到 {cur_max}，"
+                f"实际 {got}。单调队列没有正确弹出过期的最大值。"
+            )
+            checked += 1
+
+        assert checked > 0, (
+            "样本中未出现「旧高滑出」的情形，本用例没有覆盖到回退逻辑。"
+            "step 数据集本应包含阶跃后回落，如需请更换数据集或窗口。"
+        )
+
+    def test_cummax_bounds(self, headers, summary):
+        """窗口最大值必然等于窗口内 15 根的最大值，且不小于当根 close
+
+        注意方向：窗口**包含**当根这一根，所以 rolling max 必然 >= 当根 close。
+        当根不是窗口最高点时（常见的震荡/回落），输出严格大于当根 close 是
+        正确行为，不能断言 got <= closes[i]。
+        """
+        window = 15
+        dataset_id = "reversal"
+        strategy_id = f"test_{dataset_id}_cummax_{window}"
+        symbol = summary["datasets"][dataset_id]["symbol"]
+
+        _run_backtest(TEST_DIR / f"{dataset_id}_cummax_{window}.json", headers)
+        df = read_debug_csv(strategy_id, f"debug_cummax_{window}")
+        actual = _extract_node_series(df, symbol, f"CumMax({window})")
+
+        closes = _load_close_prices(symbol)
+        for i in range(window - 1, min(len(actual), len(closes))):
+            got = actual.iloc[i]
+            if pd.isna(got):
+                continue
+            win = closes[i - window + 1:i + 1]
+            assert abs(got - win.max()) < TOLERANCE, \
+                f"bar {i}: 输出 {got} != 窗口最大值 {win.max()}"
+            assert got >= closes[i] - TOLERANCE, \
+                f"bar {i}: 输出 {got} 小于当根 close {closes[i]}（当根也在窗口内，不应发生）"
+
+    def test_cummax_deterministic_exact(self, headers, summary):
+        """deterministic 数据集：手算校验 CumMax(5)
+
+        deterministic 前若干根: 100, 100, 100, 100, 100, 101, 102, 103, ...
+        bar 4 (窗口 [100,100,100,100,100]) → 100
+        bar 7 (窗口 [100,101,102,103,104]) → 104
+        """
+        strategy_id = "test_deterministic_cummax_5"
+        symbol = "sz.800004"
+
+        _run_backtest(TEST_DIR / "deterministic_cummax_5.json", headers)
+        df = read_debug_csv(strategy_id, "debug_cummax_5")
+        actual = _extract_node_series(df, symbol, "CumMax(5)")
+
+        closes = _load_close_prices(symbol)
+        assert abs(actual.iloc[4] - closes[:5].max()) < TOLERANCE, \
+            f"bar 4: actual={actual.iloc[4]}, expected={closes[:5].max()}"
+        assert abs(actual.iloc[7] - closes[3:8].max()) < TOLERANCE, \
+            f"bar 7: actual={actual.iloc[7]}, expected={closes[3:8].max()}"
+
+
+# ============================================================
 # L1: MA 节点测试
 # ============================================================
 

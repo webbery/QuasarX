@@ -331,6 +331,15 @@ def median_strategy(symbol, window, dataset_id):
                                 "Median", f"{window}d", f"debug_median_{window}")
 
 
+def cummax_strategy(symbol, window, dataset_id):
+    """CumMax 测试策略: Input(close) → FunctionNode(CumMax) → Debug
+
+    与 Median 同构，但测的是单调队列的回退逻辑：窗口滑出后必须忘掉历史最高价。
+    """
+    return single_node_strategy(symbol, dataset_id, f"cummax_{window}",
+                                "CumMax", f"{window}d", f"debug_cummax_{window}")
+
+
 def vpcorr_strategy(symbol, window, dataset_id):
     """VPCorr 测试策略: Input(close+volume) → FunctionNode(VPCorr) → Debug
 
@@ -668,6 +677,10 @@ def main():
         # Median 节点 (滚动中位数) — 2026-08-20 新增
         (median_strategy, [5], "Median(5)"),
         (median_strategy, [15], "Median(15)"),
+        # CumMax 节点 (区间最高价) — 配合 drawdown 使用
+        (cummax_strategy, [5], "CumMax(5)"),
+        (cummax_strategy, [15], "CumMax(15)"),
+        (cummax_strategy, [60], "CumMax(60)"),
         # VPCorr 节点 (量价相关性)
         (vpcorr_strategy, [5], "VPCorr(5)"),
         (vpcorr_strategy, [15], "VPCorr(15)"),

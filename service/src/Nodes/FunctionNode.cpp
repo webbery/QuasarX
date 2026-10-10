@@ -82,6 +82,9 @@ namespace {
         {"Median", [] (const nlohmann::json& config) -> ICallable* {
             return new Median(config.value("_windowBars", 20));
         }},
+        {"CumMax", [] (const nlohmann::json& config) -> ICallable* {
+            return new CumMax(config.value("_windowBars", 252));
+        }},
     };
     constexpr size_t intrinsic_count = sizeof(intrinsic_table) / sizeof(intrinsic_table[0]);
 }
@@ -149,6 +152,14 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         }
     }
     int windowBars = 15; // 默认值
+    // CumMax 用于算回撤时，15 根 bar 的区间最高价没有意义（那不是回撤）。
+    // 未显式配置 range 时给它一年的窗口——但只在真的没配 range 时生效，
+    // 配置了 range 的一律以 range 为准。
+    if (methodName == "CumMax" &&
+        !(config["params"].contains("range") && config["params"]["range"].contains("value"))) {
+        windowBars = 252;
+        INFO("[FunctionNode:{}] CumMax without range, defaulting to 252 bars", _id);
+    }
     if (config["params"].contains("range") && config["params"]["range"].contains("value")) {
         String rangeStr = (String)config["params"]["range"]["value"];
         TimeValue tv = ParseTimeValue(rangeStr);

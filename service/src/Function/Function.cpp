@@ -386,6 +386,51 @@ context_t Median::operator()(const Map<String, context_t>& args) {
     }
 }
 
+CumMax::CumMax(int32_t window) : _window(window), _count(0) {
+}
+
+context_t CumMax::operator()(const Map<String, context_t>& args) {
+    double value;
+    std::visit([&value] (auto&& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, double>) {
+            value = v;
+        }
+        else if constexpr (std::is_same_v<T, Vector<double>>) {
+            value = v.empty() ? std::nan("nan") : v.back();
+        } else {
+            value = std::nan("nan");
+        }
+    }, args.begin()->second);
+
+    // NaN 不可比较，混进队列会永久占据队首并污染后续所有结果。
+    // 跳过它（相当于该 bar 没有观测），窗口按实际收到的有效 bar 计。
+    if (std::isnan(value)) {
+        return std::nan("nan");
+    }
+
+    const int32_t idx = _count++;
+
+    // 队尾弹出所有 ≤ 新值的下标：这些位置上的值被新值支配，
+    // 而新值位置更靠后、滑出更晚，它们永远不可能再成为窗口最大值。
+    while (!_dq.empty() && _dq.back().second <= value) {
+        _dq.pop_back();
+    }
+    _dq.emplace_back(idx, value);
+
+    // 队首弹出已滑出窗口的下标
+    const int32_t windowStart = idx - _window + 1;
+    while (!_dq.empty() && _dq.front().first < windowStart) {
+        _dq.pop_front();
+    }
+
+    // 窗口未满时返回 NaN，与 MA/Median 保持一致的预热语义
+    if (_count < _window) {
+        return std::nan("nan");
+    }
+    return _dq.front().second;
+}
+
 context_t VPCorr::operator()(const Map<String, context_t>& args) {
     // 按槽位名提取（与 FunctionNode::methodSlotMap 的契约）
     // methodSlotMap 定义: {"price": "close", "volume": "volume"}

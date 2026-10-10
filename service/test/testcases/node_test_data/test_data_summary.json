@@ -621,6 +621,81 @@
       "dataset": "anomaly",
       "symbol": "sz.800005",
       "node": "EMD(numIMFs=5)"
+    },
+    "sine_cummax_5": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "CumMax(5)"
+    },
+    "sine_cummax_15": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "CumMax(15)"
+    },
+    "sine_cummax_60": {
+      "dataset": "sine",
+      "symbol": "sz.800001",
+      "node": "CumMax(60)"
+    },
+    "step_cummax_5": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "CumMax(5)"
+    },
+    "step_cummax_15": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "CumMax(15)"
+    },
+    "step_cummax_60": {
+      "dataset": "step",
+      "symbol": "sz.800002",
+      "node": "CumMax(60)"
+    },
+    "reversal_cummax_5": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "CumMax(5)"
+    },
+    "reversal_cummax_15": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "CumMax(15)"
+    },
+    "reversal_cummax_60": {
+      "dataset": "reversal",
+      "symbol": "sz.800003",
+      "node": "CumMax(60)"
+    },
+    "deterministic_cummax_5": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "CumMax(5)"
+    },
+    "deterministic_cummax_15": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "CumMax(15)"
+    },
+    "deterministic_cummax_60": {
+      "dataset": "deterministic",
+      "symbol": "sz.800004",
+      "node": "CumMax(60)"
+    },
+    "anomaly_cummax_5": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "CumMax(5)"
+    },
+    "anomaly_cummax_15": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "CumMax(15)"
+    },
+    "anomaly_cummax_60": {
+      "dataset": "anomaly",
+      "symbol": "sz.800005",
+      "node": "CumMax(60)"
     }
   }
 }
