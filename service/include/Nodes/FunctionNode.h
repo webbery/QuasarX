@@ -1,5 +1,6 @@
 #pragma once
 #include "StrategyNode.h"
+#include "server.h"
 
 class FunctionNode: public QNode {
 public:
@@ -38,6 +39,12 @@ private:
     Map<String, ICallable*> _callables;
 
     String _label;
+
+    // 上游视图频率：用于判断是否需要按视图频率调用 callable
+    // 当视图频率低于加载频率时（如周频视图），callable 应只在有新数据时调用
+    DataFrequencyType _viewFreq = DataFrequencyType::Day;
+    // 每个 symbol 上一次处理的输入向量长度（用于检测新数据）
+    Map<String, size_t> _lastInputLengths;
 };
 
 List<String> GetAllFunctionNames();

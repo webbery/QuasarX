@@ -18,26 +18,6 @@
 #define ADD_ARGUMENT(type, name) { type v = data["params"][name]["value"]; node->AddArgument(name, v);}
 
 namespace {
-    // 每 bar 对应的分钟数
-    int MinutesPerBar(DataFrequencyType freq) {
-        switch (freq) {
-            case DataFrequencyType::Day:    return 240;
-            case DataFrequencyType::Min1:   return 1;
-            case DataFrequencyType::Min5:   return 5;
-            case DataFrequencyType::Second: return 1;
-            default: return 240;
-        }
-    }
-
-    // 将 TimeValue 按数据频率换算为 bar 数（复用 Util/datetime 中的 TimeStringToMinutes）
-    int TimeValueToBars(const TimeValue& tv, DataFrequencyType freq) {
-        String rangeStr = std::to_string(tv.value);
-        if (tv.unit != '\0') rangeStr.push_back(tv.unit);
-        int rangeMinutes = TimeStringToMinutes(rangeStr);
-        if (rangeMinutes <= 0) return 1;  // 解析失败兜底为 1 bar
-        return std::max(1, rangeMinutes / MinutesPerBar(freq));
-    }
-
     using CallableFactory = ICallable* (*)(const nlohmann::json&);
 
     struct IntrinsicEntry {
@@ -143,11 +123,14 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     }
     String methodName = config["params"]["method"]["value"];
 
-    // 2.5 从上游 input 节点提取数据频率，将 range 换算为 bar 数
+    // 2.5 解析窗口长度。
+    // 上游频率只在兼容旧的 "Nd" 写法时才需要；纯数字写法与频率无关，
+    // 因此同一份配置挂在日线分支就是 N 日、挂在周频分支就是 N 周。
     DataFrequencyType dataFreq = DataFrequencyType::Day;
     for (auto& [handle, node] : _ins) {
         if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
             dataFreq = quoteNode->GetFreq();
+            _viewFreq = quoteNode->GetViewFreq();
             break;
         }
     }
@@ -161,11 +144,18 @@ bool FunctionNode::Init(const nlohmann::json& config) {
         INFO("[FunctionNode:{}] CumMax without range, defaulting to 252 bars", _id);
     }
     if (config["params"].contains("range") && config["params"]["range"].contains("value")) {
-        String rangeStr = (String)config["params"]["range"]["value"];
-        TimeValue tv = ParseTimeValue(rangeStr);
-        windowBars = TimeValueToBars(tv, dataFreq);
-        DEBUG_INFO("[FunctionNode:{}] Init: range='{}', dataFreq={}, windowBars={}",
-             _id, rangeStr, static_cast<int>(dataFreq), windowBars);
+        // range 单位是 bar 数，前端 type:'number' 保证序列化为 JSON 数字。
+        // 非数字值视为配置错误，直接抛异常而非静默兼容。
+        const auto& rv = config["params"]["range"]["value"];
+        if (!rv.is_number()) {
+            throw std::runtime_error(fmt::format(
+                "[FunctionNode:{}] range must be a number (bar count), got: {}",
+                _id, rv.type_name()));
+        }
+        int bars = rv.is_number_integer() ? static_cast<int>(rv.get<long long>())
+                                          : static_cast<int>(rv.get<double>());
+        windowBars = std::max(1, bars);
+        DEBUG_INFO("[FunctionNode:{}] Init: range={}, windowBars={}", _id, bars, windowBars);
     }
     auto callableConfig = config;
     callableConfig["_windowBars"] = windowBars;
@@ -235,6 +225,7 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         auto& symbol = item.first;
         // 构建该 symbol 的输入参数（从连接信息解析的映射）
         Map<String, context_t> args;
+        size_t inputLength = 0;
         for (auto& [dataName, contextKey] : _resolvedInputs) {
             String symbolKey = contextKey;
             auto firstDot = contextKey.find('.');
@@ -247,6 +238,13 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             if (context.exist(symbolKey)) {
                 String slot = (dataName == "close") ? "price" : dataName;
                 args[slot] = context.get(symbolKey);
+                // 记录输入向量长度（用于检测新数据）
+                std::visit([&inputLength](const auto& val) {
+                    using T = std::decay_t<decltype(val)>;
+                    if constexpr (std::is_same_v<T, Vector<double>>) {
+                        inputLength = std::max(inputLength, val.size());
+                    }
+                }, args[slot]);
             }
             else {
                 INFO("[FunctionNode:{}] key {} not exist.", _id, symbolKey);
@@ -265,11 +263,32 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             continue;
         }
 
+        // 检查输入是否真正更新（用于周频视图等降频场景）
+        String output_key = symbol + "." + _label;
+        bool inputGrown = (inputLength > _lastInputLengths[symbol]);
+        
+        if (_viewFreq != DataFrequencyType::Day && !inputGrown) {
+            // 输入未更新（如周内无新定稿），前向填充上一次的输出
+            if (context.exist(output_key)) {
+                auto& existing = context.get<Vector<double>>(output_key);
+                if (!existing.empty()) {
+                    double lastVal = existing.back();
+                    context.add(output_key, lastVal);
+                } else {
+                    context.add(output_key, std::numeric_limits<double>::quiet_NaN());
+                }
+            } else {
+                context.set(output_key, Vector<double>{std::numeric_limits<double>::quiet_NaN()});
+            }
+            continue;
+        }
+
+        // 输入已更新，正常调用 callable
         auto callable = item.second;
         auto result = (*callable)(args);
+        _lastInputLengths[symbol] = inputLength;
 
         // 写入输出
-        String output_key = symbol + "." + _label;
         std::visit([this, &output_key, &context, &symbol](const auto& val) {
             using T = std::decay_t<decltype(val)>;
 
