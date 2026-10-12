@@ -83,7 +83,7 @@ def make_cusum_strategy(symbol_api: str, calibrate_period: int, debug_label: str
             {"id": "2", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "ret1", "nodeType": "function",
                        "params": {"method": {"value": "Return"},
-                                  "range": {"value": "1d"}}}},
+                                  "range": {"value": 1}}}},
             {"id": "3", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "cusum", "nodeType": "cusum",
                        "params": {

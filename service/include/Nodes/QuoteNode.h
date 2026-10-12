@@ -2,6 +2,7 @@
 #include "StrategyNode.h"
 #include "Nodes/QuoteFillStrategy.h"
 #include "Util/system.h"
+#include "KBarBuilder.h"
 #include "server.h"
 
 class Server;
@@ -56,7 +57,17 @@ public:
     /**
      * @brief 获取频率设置
      */
-    DataFrequencyType GetFreq() const { return _freq; }
+    DataFrequencyType GetFreq() const { return _loadFreq; }
+
+    /**
+     * @brief 获取视图频率
+     *
+     * 与 GetFreq() 的区别：GetFreq 是交易所加载的原始数据频率（周频视图下为日线），
+     * GetViewFreq 是本节点对外输出的 bar 节奏。周频视图的序列增长慢于日频，
+     * 因此下游挂在它上面的窗口指标自动按周计算，无需任何频率换算。
+     */
+    DataFrequencyType GetViewFreq() const { return _viewFreq; }
+
 private:
     /**
      * @brief 从 QuoteInfo 中提取指定属性值（open/close/high/low/volume）
@@ -69,6 +80,18 @@ private:
     void writeQuote(DataContext& context, const QuoteInfo& quote);
 
     void addQuoteProperty(DataContext& context, const String& key, double val);
+
+    /**
+     * @brief 把当前 bar 喂给降频聚合器，有定稿低频 bar 时写入对应 key
+     * 非降频视图时为空操作
+     */
+    void feedView(DataContext& context, const Map<symbol_t, QuoteInfo>& quotes);
+
+    /**
+     * @brief 把定稿低频 bar 快照写入 context（key 带频率后缀）
+     */
+    void writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot);
+
 private:
     Set<symbol_t> _symbols;
     Map<String, Set<String>> _properties;
@@ -78,5 +101,10 @@ private:
     Map<symbol_t, QuoteInfo> _curQuotes;   // 当前轮次各 symbol 的 quote
     Map<symbol_t, QuoteInfo> _lastQuotes;  // 每个 symbol 上一次写入的 quote
     Set<contract_type> _sources;                // 数据源类型
-    DataFrequencyType _freq = DataFrequencyType::Day;  // 频率设置
+    DataFrequencyType _loadFreq = DataFrequencyType::Day;  // 交易所加载的原始数据频率
+    DataFrequencyType _viewFreq = DataFrequencyType::Day;  // 对外输出的 bar 节奏
+    // 降频聚合器（仅当视图频率低于加载频率时非空）
+    std::shared_ptr<KBarBuilder> _kbarBuilder;
+    // 上一个定稿快照（用于前向填充）
+    Map<symbol_t, QuoteInfo> _lastViewSnapshot;
 };

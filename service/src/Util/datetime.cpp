@@ -1,5 +1,7 @@
 #include <chrono>
 #include "Util/datetime.h"
+// BarFreqToSeconds 需要 BarFreq 的枚举成员；datetime.h 中仅前置声明以避免循环包含
+#include "KBarBuilder.h"
 #include "Util/string_algorithm.h"
 #include <cstdio>
 #include <sstream>
@@ -79,6 +81,64 @@ time_t Now()
 
   std::tm local_tm = *std::localtime(&utc_time);
   return std::mktime(&local_tm);
+}
+
+time_t DateOnly(time_t ts) {
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &ts);
+#else
+    localtime_r(&ts, &tm_val);
+#endif
+    tm_val.tm_hour = 0;
+    tm_val.tm_min = 0;
+    tm_val.tm_sec = 0;
+    return mktime(&tm_val);
+}
+
+int IsoWeekId(time_t ts) {
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &ts);
+#else
+    localtime_r(&ts, &tm_val);
+#endif
+    // ISO 8601: %G = 周年ISO年, %V = 周年ISO周号（周一为首日）
+    char buf[16] = {0};
+    if (strftime(buf, sizeof(buf), "%G", &tm_val) == 0) return -1;
+    int iso_year = atoi(buf);
+    if (strftime(buf, sizeof(buf), "%V", &tm_val) == 0) return -1;
+    int iso_week = atoi(buf);
+    return iso_year * 100 + iso_week;
+}
+
+time_t IsoWeekMonday(time_t ts) {
+    time_t day = DateOnly(ts);
+    struct tm tm_val;
+#ifdef _WIN32
+    localtime_s(&tm_val, &day);
+#else
+    localtime_r(&day, &tm_val);
+#endif
+    // tm_wday: 0=周日 ... 6=周六；转成「距周一的天数」
+    int daysSinceMonday = (tm_val.tm_wday + 6) % 7;
+    return day - static_cast<time_t>(daysSinceMonday) * 86400;
+}
+
+int64_t BarFreqToSeconds(BarFreq freq) {
+    switch (freq) {
+        case BarFreq::Min1:  return 60;
+        case BarFreq::Min5:  return 300;
+        case BarFreq::Min15: return 900;
+        case BarFreq::Min30: return 1800;
+        case BarFreq::Hour1: return 3600;
+        case BarFreq::Hour2: return 7200;
+        case BarFreq::Hour4: return 14400;
+        case BarFreq::Day:   return 86400;
+        case BarFreq::Week:  return 604800;  // ISO 周恒为 7 天
+        case BarFreq::Month: return 0;        // 月长不固定，无固定秒数
+    }
+    return 60;
 }
 
 TimeValue ParseTimeValue(const std::string& str) {

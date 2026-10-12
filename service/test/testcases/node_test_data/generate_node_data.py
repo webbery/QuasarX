@@ -197,7 +197,7 @@ def _make_edges(edge_list):
     return result
 
 
-def input_node(nid, symbol, source="股票"):
+def input_node(nid, symbol, source="股票", freq="1d"):
     return {
         "id": nid, "type": "custom",
         "position": {"x": 0, "y": 0},
@@ -206,7 +206,7 @@ def input_node(nid, symbol, source="股票"):
             "params": {
                 "source": {"value": source, "type": "text"},
                 "code": {"value": [symbol], "type": "text"},
-                "freq": {"value": "1d", "type": "select"},
+                "freq": {"value": freq, "type": "select"},
                 "close": {"value": "close", "type": "text"},
                 "open": {"value": "open", "type": "text"},
                 "high": {"value": "high", "type": "text"},
@@ -218,6 +218,8 @@ def input_node(nid, symbol, source="股票"):
 
 
 def function_node(nid, func_name, range_val, label=None):
+    # range 单位是 bar（不再带 s/m/h/d 后缀），序列化为数字
+    window = int(str(range_val).rstrip("smhdSMHD")) if str(range_val).strip() else 15
     return {
         "id": nid, "type": "custom",
         "position": {"x": 0, "y": 0},
@@ -225,7 +227,7 @@ def function_node(nid, func_name, range_val, label=None):
             "label": label or func_name, "nodeType": "function",
             "params": {
                 "method": {"value": func_name, "type": "select"},
-                "range": {"value": range_val, "type": "text"}
+                "range": {"value": window, "type": "number"}
             }
         }
     }

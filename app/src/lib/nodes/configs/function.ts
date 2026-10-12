@@ -84,13 +84,13 @@ export const basicIndexNode: NodeRegistryEntry = {
       { label: 'VPCorr (量价相关性)', value: 'VPCorr' },
       { label: 'ATR (平均真实波幅)', value: 'ATR' }
     ]},
-    { key: 'range', label: '窗口', type: 'text', default: '5d',
-      placeholder: '如 5d、30m、1h（正整数 + s/m/h/d 后缀）',
-      pattern: '^\\d+[smhd]$',
-      errorMsg: '格式错误，必须为正整数 + s/m/h/d 后缀（如 5d、30m、1h）',
-      description: '滑动窗口大小。MA=平滑周期，STD=标准差窗口，Return=回溯步数，R2=拟合窗口，ZScore=标准化窗口，VPCorr=相关系数窗口，ATR=TR均值周期，CumMax=区间最高价的回看窗口（留空默认 252 根日线）' },
+    { key: 'range', label: '窗口', type: 'number', default: 5, min: 1,
+      placeholder: '正整数，窗口长度（bar 数）',
+      pattern: '^\\d+$',
+      errorMsg: '格式错误，必须为正整数（窗口长度以 bar 计）',
+      description: '滑动窗口大小，单位是 bar 而非时间。MA=平滑周期，STD=标准差窗口，Return=回溯步数，R2=拟合窗口，ZScore=标准化窗口，VPCorr=相关系数窗口，ATR=TR均值周期，CumMax=区间最高价的回看窗口（留空默认 252 bar）。同一配置挂在日线输入上就是 N 个交易日，挂在周频输入（freq=1w）上就是 N 周，无需换算' },
   ],
-  example: { method: 'MA', range: '5d' }
+  example: { method: 'MA', range: 5 }
 }
 
 registerNode(basicIndexNode)

@@ -19,28 +19,15 @@ namespace {
     // 从策略配置推断预热期 epoch 数（依赖链累积）
     //
     // 不能只取单节点 range 的最大值——链路是累加的。例如
-    //   input → MA(120d) → Return(20d) → ZScore(20d)
+    //   input → MA(120) → Return(20) → ZScore(20)
     // 真实预热约 160 个 bar，而单节点 max 只有 120。
     // 因此按 DAG 最长路径累加：warmup[node] = own[node] + max(warmup[parent])。
+    //
+    // range 的单位是 bar，与频率无关，所以这里不再做「时间 → bar」换算。
+    // 兼容旧的 "Nd" 写法：按日线基准换算（1 交易日 = 240 分钟），保证迁移前
+    // 存量日线策略的预热推断结果不变。
     int InferWarmupEpochsFromConfig(const nlohmann::json& config) {
         if (!config.contains("nodes")) return 0;
-
-        // 1. 找到 Input 节点的 freq
-        String inputFreq;
-        for (auto& node : config["nodes"]) {
-            JSON_SKIP_IF_MISSING(node, "data");
-            String nodeType = node["data"].value("nodeType", "");
-            if (nodeType == "input") {
-                auto& data = node["data"];
-                JSON_SKIP_IF_MISSING(data, "params");
-                if (data["params"].contains("freq"))
-                    inputFreq = (String)data["params"]["freq"]["value"];
-                break;
-            }
-        }
-
-        int freqSeconds = TimeStringToSeconds(inputFreq);
-        if (freqSeconds <= 0) return 0;
 
         auto jsonScalarInt = [](const nlohmann::json& v) -> int {
             if (v.is_number_integer()) return v.get<int>();
@@ -59,13 +46,17 @@ namespace {
             const auto& params = data["params"];
             String nodeType = data.value("nodeType", "");
 
-            // FunctionNode：range 按 freq 换算为 bar 数
+            // FunctionNode：range 单位即 bar 数，前端 type:'number' 保证为 JSON 数字
             if (nodeType == "function" && params.contains("range")) {
                 auto& rv = params["range"];
-                String range = rv.is_object() ? rv.value("value", String{}) : rv.get<String>();
-                int sec = TimeStringToSeconds(range);
-                if (sec > 0) return (sec + freqSeconds - 1) / freqSeconds;
-                return 0;
+                const auto& v = rv.is_object() ? rv["value"] : rv;
+                if (!v.is_number()) {
+                    WARN("[InferWarmup] function node range must be a number, got: {}", v.type_name());
+                    return 0;
+                }
+                int bars = v.is_number_integer() ? static_cast<int>(v.get<long long>())
+                                                 : static_cast<int>(v.get<double>());
+                return std::max(0, bars);
             }
             // EMD/VMD 滚动窗口：windowSize 已是 bar 数
             if (nodeType == "emd" && params.contains("windowSize")) {

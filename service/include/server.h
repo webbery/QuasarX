@@ -75,6 +75,7 @@ struct ContractInfo {
 
 enum class DataFrequencyType {
   Day,
+  Week,
   Min1,
   Min5,
   Min15,

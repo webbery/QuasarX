@@ -1323,6 +1323,7 @@ ExchangeInterface* Server::GetExchange(ExchangeType type) {
 const char* DataFrequencyTypeToString(DataFrequencyType f) {
     switch (f) {
         case DataFrequencyType::Day:    return "daily";
+        case DataFrequencyType::Week:   return "1w";
         case DataFrequencyType::Min1:   return "1m";
         case DataFrequencyType::Min5:   return "5m";
         case DataFrequencyType::Min15:  return "15m";
@@ -1337,6 +1338,7 @@ DataFrequencyType DataFrequencyTypeFromString(const char* s) {
     if (!s) return DataFrequencyType::Day;
     String str = s;
     if (str == "1d" || str == "daily") return DataFrequencyType::Day;
+    if (str == "1w" || str == "week" || str == "weekly") return DataFrequencyType::Week;
     if (str == "1m") return DataFrequencyType::Min1;
     if (str == "5m") return DataFrequencyType::Min5;
     if (str == "15m") return DataFrequencyType::Min15;

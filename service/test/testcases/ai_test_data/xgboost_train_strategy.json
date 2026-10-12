@@ -33,7 +33,7 @@
         "nodeType": "function",
         "params": {
           "method": {"value": "MA", "type": "select"},
-          "range": {"value": "5d", "type": "text"}
+          "range": {"value": 5, "type": "number"}
         }
       }
     },
@@ -46,7 +46,7 @@
         "nodeType": "function",
         "params": {
           "method": {"value": "STD", "type": "select"},
-          "range": {"value": "5d", "type": "text"}
+          "range": {"value": 5, "type": "number"}
         }
       }
     },
@@ -59,7 +59,7 @@
         "nodeType": "function",
         "params": {
           "method": {"value": "Return", "type": "select"},
-          "range": {"value": "1d", "type": "text"}
+          "range": {"value": 1, "type": "number"}
         }
       }
     },

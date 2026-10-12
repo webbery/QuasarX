@@ -24,7 +24,16 @@ export const dataSourceNode: NodeRegistryEntry = {
     { key: 'high', label: 'high', type: 'text', default: 'high' },
     { key: 'low', label: 'low', type: 'text', default: 'low' },
     { key: 'volume', label: 'volume', type: 'text', default: 'volume' },
-    { key: 'freq', label: '频率', type: 'select', default: '1d', options: ['1d', '1m', '5m', '15m', '30m', '1h', '4h', '1w'] },
+    { key: 'freq', label: '频率', type: 'select', default: '1d', options: [
+      { label: '日线', value: '1d' },
+      { label: '周线（日线聚合，周内定稿）', value: '1w' },
+      { label: '1 分钟', value: '1m' },
+      { label: '5 分钟', value: '5m' },
+      { label: '15 分钟', value: '15m' },
+      { label: '30 分钟', value: '30m' },
+      { label: '1 小时', value: '1h' },
+      { label: '4 小时', value: '4h' }
+    ], description: '1w 是「周频视图」：基础数据仍为日线，由引擎按 ISO 周聚合成周线，额外输出 close_w / high_w / low_w / open_w / volume_w。采用完成周滞后语义——本周走完后才定稿，下周一才对下游可见，因此周内读到的是上一周的值。挂在它下面的窗口指标（range）自动按周计算，range=20 即 20 周' },
     { key: 'missingHandle', label: '缺失处理', type: 'select', default: 'skip', options: [
       { label: '跳过', value: 'skip' },
       { label: '线性插值', value: 'linear' },

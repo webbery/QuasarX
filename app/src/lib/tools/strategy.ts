@@ -659,6 +659,90 @@ sell: volume_resampled[t] > MA_volume_20[t] * 1.5
 5. 建议将 ResampleNode 放在 Input 和 HMM/Function 之间`
 }
 
+// === 多频率行情输入使用指南 ===
+
+function getMultiFreqUsage(): string {
+  return `# 多频率行情输入（日线 + 周线）
+
+## 概述
+
+\`input\` 节点的 \`freq\` 支持 \`1w\`，用于在同一个策略图里同时使用日频和周频数据。
+典型场景是「日频信号 + 周频状态过滤」。
+
+**关键点：周线由日线在引擎内聚合而成，不是单独的数据源。** 基础数据始终是日线，
+引擎按 ISO 周年周号（周一为首日）聚合成周线，因此无需额外的行情文件。
+
+## 输入节点配置
+
+\`\`\`json
+{ "label": "周线视图", "nodeType": "input",
+  "params": { "source": "股票", "code": ["sz.000001"], "freq": "1w" } }
+\`\`\`
+
+周频输入会**同时**输出两套序列：
+
+| key | 含义 |
+|-----|------|
+| \`sz.000001.close\` | 日线收盘（后复权） |
+| \`sz.000001.close_w\` | 周线收盘（后复权，ISO 周聚合） |
+| \`sz.000001.org_close_w\` | 周线收盘（原始价） |
+| \`sz.000001.high_w\` / \`low_w\` / \`open_w\` | 周内最高 / 最低 / 首个交易日开盘 |
+| \`sz.000001.volume_w\` | 周内成交量之和 |
+
+## 周线聚合语义（完成周滞后）
+
+周线 bar 采用**完成周滞后一周**的语义，与 KBarBuilder 只发完成 bar 的行为一致：
+
+- 周频序列只在**本周走完**后才追加一个点，即下周一才对下游可见
+- 周内任一日读到的周频值，都恒等于**上一周**的定稿值
+- 因此不存在前视风险，也不会有周内逐日跳变
+- 代价是状态最多滞后 5 个交易日；回测区间内最后一周不完整，不产出
+
+## 窗口单位：bar，不是时间
+
+\`function\` 节点的 \`range\` 单位是 **bar 数**，不再带 s/m/h/d 后缀。这让窗口长度
+与频率彻底解耦：
+
+- 挂在日频输入下：\`range=20\` 是 20 个交易日
+- 挂在周频输入（\`freq=1w\`）下：\`range=20\` 是 20 周
+
+**这正是多频率策略能正确工作的原因**——不需要任何「时间 → bar」的换算。
+
+## 完整示例：日频信号 + 周频状态过滤
+
+\`\`\`json
+{
+  "nodes": [
+    { "id": "1", "data": { "label": "日线", "nodeType": "input",
+      "params": { "source": "股票", "code": ["sz.000001"], "freq": "1d" } } },
+    { "id": "2", "data": { "label": "周线", "nodeType": "input",
+      "params": { "source": "股票", "code": ["sz.000001"], "freq": "1w" } } },
+    { "id": "3", "data": { "label": "周线MA", "nodeType": "function",
+      "params": { "method": "MA", "range": 10 } } },
+    { "id": "4", "data": { "label": "日线MA", "nodeType": "function",
+      "params": { "method": "MA", "range": 5 } } },
+    { "id": "5", "data": { "label": "信号", "nodeType": "signal",
+      "params": { "buy": "...", "sell": "..." } } },
+    { "id": "6", "data": { "label": "组合", "nodeType": "portfolio",
+      "params": { "positionRatio": 1.0 } } },
+    { "id": "7", "data": { "label": "执行", "nodeType": "execution",
+      "params": { "commission": 0.0003, "stampDuty": 0.001 } } }
+  ]
+}
+\`\`
+
+节点 3 的 \`range=10\` 自动表示 **10 周**，节点 4 的 \`range=5\` 是 **5 个交易日**，
+两者写在同一份配置里不会互相干扰。
+
+## 注意事项
+
+1. 周频输入的基础数据仍是日线，所以需要至少覆盖目标回测区间起点往前 1 周
+2. 同图可有多个 input 节点；同 symbol 的日线与周线靠 \`_w\` 后缀区分，不会互相覆盖
+3. 周频序列增长慢于日线，下游窗口指标因此自动按周计算
+4. 若只想做单纯的周频门控（如判断周频值与日频值的相对关系），无需 ResampleNode
+`
+}
+
 // === 策略图约束规则 ===
 
 function getFlowConstraints(): string {
@@ -909,6 +993,10 @@ export const strategyTool = tool(
         return getResampleUsageGuide()
       }
 
+      case "multi_freq_usage": {
+        return getMultiFreqUsage()
+      }
+
       // === 策略绩效与风控（聚合查询） ===
 
       case "query_strategy_performance": {
@@ -1078,17 +1166,18 @@ export const strategyTool = tool(
       }
 
       default:
-        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs, query_node_io`
+        return `未知 action: ${action}。支持的 action: list_nodes, get_node_info, list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, signal_syntax, flow_constraints, hmm_usage, emd_usage, resample_usage, multi_freq_usage, query_strategy_performance, query_risk_aggregated, query_capital_risk, query_risk_status, query_strategy_logs, query_node_io`
     }
   },
   {
     name: "strategy",
-    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）\n- query_node_io: 查询节点 I/O 日志（strategy=策略ID，node=节点ID）",
+    description: "策略管理工具。查询节点类型、创建/管理策略图、获取 Signal/Formula 公式语法和策略图约束规则。\n\n创建策略图关键约束：\n- 必须包含 4 类节点：input, signal, portfolio, execution\n- 每个节点必须有：id, type=\"custom\", data.label, data.nodeType, data.params, position\n- Edge 端点：Input 节点输出为 \"{id}-{字段名}\"（如 \"1-close\"），其他节点直接用 ID（如 \"2\"）\n- 数据流向：Input → Function/ML/Formula → Signal → Portfolio → Execution\n- 可选节点：HMM（市场状态识别）、EMD（信号分解）、Resample（数据重采样，高频→低频聚合）、Formula（公式计算，自定义表达式）\n\naction 说明：\n- list_nodes: 列出所有可用节点类型\n- get_node_info: 获取单个节点详情（keyword=节点 id 或名称）\n- list_strategies: 列出已保存策略\n- get_strategy: 获取策略图 JSON（keyword=策略 id）\n- create_strategy: 创建新策略图（data=JSON，必须包含 nodes 和 edges）\n- update_strategy: 更新策略图（keyword=id, data=JSON）\n- delete_strategy: 删除策略图（keyword=id）\n- signal_syntax: 获取 Signal 公式语法（buy/sell 表达式规则）\n- formula_syntax: 获取 Formula 公式语法（表达式规则、变量引用、截面函数、典型示例）\n- flow_constraints: 获取完整策略图约束规则（节点结构、Edge 端点命名、完整示例）\n- hmm_usage: 获取 HMM 市场状态识别使用指南（输出变量、Signal 公式用法、参数建议）\n- emd_usage: 获取 EMD 分解使用指南（输出变量命名规则、Signal 公式用法、参数建议）\n- resample_usage: 获取数据重采样使用指南（聚合规则、频率选项、多时间框架策略示例）\n- multi_freq_usage: 获取多频率行情输入指南（freq=1w 周线视图、完成周滞后语义、range 以 bar 为单位）\n- query_strategy_performance: 查询策略绩效指标（name=策略ID）\n- query_risk_aggregated: 查询所有策略风险指标聚合（IR/CUSUM/VaR/MaxDD/Sharpe）\n- query_capital_risk: 查询资金风控配置（止损线/单日限额/当前权益）\n- query_risk_status: 查询风控断路器状态\n- query_strategy_logs: 查询策略日志（name=策略ID，start/end 时间范围，limit 条数）\n- query_node_io: 查询节点 I/O 日志（strategy=策略ID，node=节点ID）",
     schema: z.object({
       action: z.enum([
         "list_nodes", "get_node_info",
         "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
         "signal_syntax", "formula_syntax", "flow_constraints", "hmm_usage", "emd_usage", "resample_usage",
+        "multi_freq_usage",
         "query_strategy_performance", "query_risk_aggregated", "query_capital_risk", "query_risk_status",
         "query_strategy_logs", "query_node_io"
       ]).describe("操作类型"),

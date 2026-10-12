@@ -101,7 +101,7 @@ def write_strategy(path: Path) -> None:
             {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
              "data": {"label": "ma5", "nodeType": "function",
                       "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": "5d", "type": "text"}}}},
+                                 "range": {"value": 5, "type": "number"}}}},
             {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
              "data": {"label": XGB_LABEL, "nodeType": "xgboost",
                       "params": {"modelFile": {"value": MODEL_PATH, "type": "text"},

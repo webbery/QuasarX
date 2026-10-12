@@ -94,7 +94,7 @@ def _build_strategy(expression: str, strategy_id: str) -> dict:
                     "label": "ma5", "nodeType": "function",
                     "params": {
                         "method": {"value": "MA", "type": "select"},
-                        "range": {"value": "5d", "type": "text"},
+                        "range": {"value": 5, "type": "number"},
                     }
                 }
             },
@@ -185,7 +185,7 @@ def _build_two_input_strategy(expression: str, strategy_id: str) -> dict:
             "label": "ma15", "nodeType": "function",
             "params": {
                 "method": {"value": "MA", "type": "select"},
-                "range": {"value": "15d", "type": "text"},
+                "range": {"value": 15, "type": "number"},
             }
         }
     })
@@ -215,7 +215,7 @@ def _build_three_input_strategy(expression: str, strategy_id: str) -> dict:
             "label": "ma30", "nodeType": "function",
             "params": {
                 "method": {"value": "MA", "type": "select"},
-                "range": {"value": "30d", "type": "text"},
+                "range": {"value": 30, "type": "number"},
             }
         }
     })
@@ -851,7 +851,7 @@ def _build_xgb_matrix_strategy() -> dict:
             {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
              "data": {"label": "ma5", "nodeType": "function",
                       "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": "5d", "type": "text"}}}},
+                                 "range": {"value": 5, "type": "number"}}}},
             {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
              "data": {"label": "XGBoost", "nodeType": "xgboost",
                       "params": {"modelFile": {"value": "production/test_formula_xgb_matrix-XGBoost.json", "type": "text"},
@@ -1019,7 +1019,7 @@ def _build_xgb_chain_strategy() -> dict:
             {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
              "data": {"label": "ma5", "nodeType": "function",
                       "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": "5d", "type": "text"}}}},
+                                 "range": {"value": 5, "type": "number"}}}},
             {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
              "data": {"label": "XGBoost", "nodeType": "xgboost",
                       "params": {"modelFile": {"value": "production/test_formula_xgb_chain-XGBoost.json", "type": "text"},
@@ -1165,7 +1165,7 @@ def _build_topk_vector_strategy() -> dict:
             {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
              "data": {"label": "ma5", "nodeType": "function",
                       "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": "5d", "type": "text"}}}},
+                                 "range": {"value": 5, "type": "number"}}}},
             # topk_result: 1.0 = 被 topk 选中, 0.0 = 未选中
             {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
              "data": {"label": "topk_result", "nodeType": "formula",

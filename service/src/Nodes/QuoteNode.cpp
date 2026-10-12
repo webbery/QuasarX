@@ -122,12 +122,22 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
     }
 
     // 读取频率设置（回测和实盘模式都需要）
+    //
+    // freq 有两层含义：
+    // - 基础频率：决定交易所加载哪种原始数据（日线 / 分钟线）
+    // - 视图频率：决定本节点对外输出的 bar 节奏（周频 = 从日线聚合出的周线视图）
+    // 两者目前只支持「周频视图 + 日线基础数据」，故 1w 的基础频率仍是日线。
     String freqStr = "1d";
     if (config["params"].contains("freq")) {
         freqStr = (String)config["params"]["freq"]["value"];
-        if (freqStr == "1m") _freq = DataFrequencyType::Min1;
-        else if (freqStr == "5m") _freq = DataFrequencyType::Min5;
-        else _freq = DataFrequencyType::Day;  // "1d" 或其他
+        // 未知频率不能静默落成 Day——那会让「配错了却跑出日线结果」。
+        static const Set<String> known = {"1d", "1w", "1m", "5m", "15m", "30m", "1h"};
+        if (!known.count(freqStr)) {
+            WARN("[QuoteInputNode:{}] unknown freq '{}', fallback to 1d. Supported: 1d/1w/1m/5m/15m/30m/1h",
+                 _id, freqStr);
+        }
+        _loadFreq = DataFrequencyTypeFromString(freqStr.c_str());
+        _viewFreq = (freqStr == "1w") ? DataFrequencyType::Week : _loadFreq;
     }
 
     // 回测模式专属逻辑
@@ -149,6 +159,9 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
 
         auto* exchangeMgr = _server->GetExchangeManager();
 
+        // 基础数据频率：周频视图仍需加载日线，由本节点聚合出周线
+        String loadFreqStr = (freqStr == "1w") ? String("1d") : freqStr;
+
         // 按 source 类型初始化对应 Exchange
         if (_sources.count(contract_type::exchange_traded_fund) && exchangeMgr) {
             exchangeMgr->EnsureExchangeByType(ExchangeType::EX_ETF_HIST_SIM);
@@ -158,7 +171,7 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
             if (etfExchange) {
                 etfExchange->SetFilter(filer);
                 auto* etfHist = dynamic_cast<ETFHistorySimulation*>(etfExchange);
-                if (etfHist) etfHist->UseFreq(freqStr);
+                if (etfHist) etfHist->UseFreq(loadFreqStr);
             }
         }
         if (_sources.count(contract_type::stock) && exchangeMgr) {
@@ -170,11 +183,11 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
                 exchange->SetFilter(filer);
                 auto* stockHist = dynamic_cast<StockHistorySimulation*>(exchange);
                 if (stockHist) {
-                    if (freqStr == "1d") {
+                    if (loadFreqStr == "1d") {
                         stockHist->UseLevel(TradingMode::T1);
                     } else {
                         stockHist->UseLevel(TradingMode::T0);
-                        stockHist->SetT0Freq(freqStr);
+                        stockHist->SetT0Freq(loadFreqStr);
                     }
                 }
             }
@@ -219,6 +232,52 @@ void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
     if (_sources.count(contract_type::option)) {
         context.addExchangeType(ExchangeType::EX_OPTION_HIST_SIM);
     }
+
+    _curQuotes.clear();
+    _lastQuotes.clear();
+
+    // 降频视图：初始化聚合器。
+    // Bar 模式（SetAggregateOhlc(true)）使 OHLC 取自输入日线 bar 本身，
+    // 而不是像 tick 模式那样全部由 _close 推导。
+    if (_viewFreq == DataFrequencyType::Week) {
+        if (!_kbarBuilder) {
+            _kbarBuilder = std::make_shared<KBarBuilder>(BarFreq::Week, 0);
+        }
+        _kbarBuilder->SetAggregateOhlc(true);
+        _kbarBuilder->SetSymbols(_symbols);
+    }
+}
+
+/**
+ * @brief 把定稿的周线快照写入 context（key 带 _w 后缀隔离命名空间）
+ *
+ * 仅在 KBarBuilder 报告「有新的定稿周线」时调用。快照来自 _lastQuotes，
+ * 天然滞后一根（本周走完后才可见），周内不写即等价于前向填充。
+ */
+void QuoteInputNode::writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot) {
+    for (auto& [symbol, q] : snapshot) {
+        auto name = get_symbol(symbol);
+        auto baseKey = name + ".";
+        for (auto& property : _properties[name]) {
+            if (property == "open") {
+                addQuoteProperty(context, baseKey + "open_w", q._adj_open > 0.0 ? q._adj_open : q._open);
+                addQuoteProperty(context, baseKey + "org_open_w", q._open);
+            } else if (property == "close") {
+                addQuoteProperty(context, baseKey + "close_w", q._adj_close > 0.0 ? q._adj_close : q._close);
+                addQuoteProperty(context, baseKey + "org_close_w", q._close);
+            } else if (property == "high") {
+                addQuoteProperty(context, baseKey + "high_w", q._adj_high > 0.0 ? q._adj_high : q._high);
+                addQuoteProperty(context, baseKey + "org_high_w", q._high);
+            } else if (property == "low") {
+                addQuoteProperty(context, baseKey + "low_w", q._adj_low > 0.0 ? q._adj_low : q._low);
+                addQuoteProperty(context, baseKey + "org_low_w", q._low);
+            } else if (property == "volume") {
+                addQuoteProperty(context, baseKey + "volume_w", (double)q._volume);
+            } else {
+                addQuoteProperty(context, baseKey + property + "_w", getProp(q, property));
+            }
+        }
+    }
 }
 
 NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& context) {
@@ -226,6 +285,7 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
     if (_server->GetRunningMode() != RuningType::Backtest) {
         bool anyQuote = false;
         time_t min_t = std::numeric_limits<time_t>::max();
+        _curQuotes.clear();
         for (auto& symbol : _symbols) {
             const QuoteInfo* q = context.GetQuote(symbol);
             if (q && q->_time > 0) {
@@ -237,6 +297,9 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
             }
         }
         if (anyQuote) {
+            // 降频视图同样生效：实盘引擎的 KBarBuilder 按 _loadFreq（日线）产 bar，
+            // 这里再聚合一层得到周线，语义与回测完全一致
+            feedView(context, _curQuotes);
             context.SetTime(min_t);
 
             // 实盘模式：记录节点 IO 日志到 DuckDB
@@ -273,6 +336,10 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
     run_id_t runId = context.getBacktestRunId();
     auto* exchangeMgr = _server->GetExchangeManager();
 
+    // 必须先清空：下面是「取到就 return Finished」的早退路径，
+    // 上一轮残留的半填充 _curQuotes 会污染本轮的对齐判断。
+    _curQuotes.clear();
+
     // 第一步：收集所有 symbol 当前 bar 的 quote，同时找出最小时间戳
     time_t min_t = std::numeric_limits<time_t>::max();
     for (auto& symbol : _symbols) {
@@ -302,6 +369,7 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
             writeQuote(context, quote);
             _lastQuotes[symbol] = quote;
         }
+        feedView(context, _curQuotes);
         context.SetTime(min_t);
         return NodeProcessResult::Success;
     }
@@ -321,12 +389,47 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
         for (auto& [symbol, quote] : _curQuotes) {
             _lastQuotes[symbol] = quote;
         }
+        feedView(context, _curQuotes);
         context.SetTime(min_t);
         return NodeProcessResult::Success;
     }
 
     // Skip 策略返回 false，跳过本轮
     return NodeProcessResult::Skip;
+}
+
+/**
+ * @brief 把当前 bar 喂给降频聚合器，并在有定稿周线时写入 _w 序列
+ *
+ * 非降频视图时为空操作，日线路径行为完全不变。
+ * 
+ * 实现"完成周滞后"语义：
+ * - 当进入新一周时（GetSnapshot 返回 true），保存定稿快照并输出
+ * - 在周内其他交易日，输出上一个定稿快照（前向填充）
+ */
+void QuoteInputNode::feedView(DataContext& context, const Map<symbol_t, QuoteInfo>& quotes) {
+    if (_viewFreq != DataFrequencyType::Week || !_kbarBuilder) return;
+
+    for (auto& [symbol, q] : quotes) {
+        // 填充策略在多标的时间不对齐时会写 NaN close（QuoteFillStrategy.cpp），
+        // 那样会污染周内 high/low 极值，故直接跳过该 bar。
+        if (q._time <= 0) continue;
+        if (std::isnan(q._close) || std::isnan(q._high) || std::isnan(q._low) ||
+            std::isnan(q._open)) {
+            continue;
+        }
+        _kbarBuilder->OnTick(q);
+    }
+
+    Map<symbol_t, QuoteInfo> snapshot;
+    if (_kbarBuilder->GetSnapshot(snapshot)) {
+        // 进入新一周：保存定稿快照
+        _lastViewSnapshot = snapshot;
+        writeView(context, snapshot);
+    } else if (!_lastViewSnapshot.empty()) {
+        // 周内其他交易日：输出上一个定稿快照（前向填充）
+        writeView(context, _lastViewSnapshot);
+    }
 }
 
 Map<String, ArgType> QuoteInputNode::out_elements() {
@@ -343,9 +446,19 @@ Map<String, ArgType> QuoteInputNode::out_elements() {
                 names[baseKey + item] = ArgType::Double_TimeSeries;   // 默认后复权
                 names[baseKey + "org_" + item] = ArgType::Double_TimeSeries;  // 原始价
             }
+
+            // 周频视图额外输出 _w 后缀序列，供下游按周频节奏计算指标
+            if (_viewFreq == DataFrequencyType::Week) {
+                if (item == "volume") {
+                    names[baseKey + "volume_w"] = ArgType::Double_TimeSeries;
+                } else {
+                    names[baseKey + item + "_w"] = ArgType::Double_TimeSeries;
+                    names[baseKey + "org_" + item + "_w"] = ArgType::Double_TimeSeries;
+                }
+            }
         }
     }
-    
+
     return names;
 }
 

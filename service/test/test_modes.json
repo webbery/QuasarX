@@ -20,6 +20,7 @@
         "test_quote_finance",
         "test_node_unit",
         "test_formula_math",
+        "test_multi_freq",
         "test_position_events",
         "test_xgboost",
         "test_decision",

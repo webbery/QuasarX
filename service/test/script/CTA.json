@@ -66,7 +66,7 @@
                         "options": ["Return"]
                     },
                     "range": {
-                        "value": "5d",
+                        "value": 5,
                         "type": "select",
                         "options": ["6s", "30s", "1m", "5m", "30m", "1h", "1d", "3d", "5d"]
                     }

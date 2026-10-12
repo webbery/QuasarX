@@ -73,8 +73,8 @@
             "type": "select"
           },
           "range": {
-            "value": "3d",
-            "type": "text"
+            "value": 3,
+            "type": "number"
           }
         }
       }

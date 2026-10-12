@@ -698,7 +698,7 @@ def _hmm_node_strategy(symbol: str, strategy_id: str,
             {"id": "2", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "Return(1)", "nodeType": "function", "params": {
                  "method": {"value": "Return", "type": "select"},
-                 "range":  {"value": "1d",     "type": "text"},
+                 "range": {"value": 1, "type": "number"},
              }}},
             {"id": "3", "type": "custom", "position": {"x": 0, "y": 0},
              "data": {"label": "HMM", "nodeType": "hmm", "params": hmm_params}},

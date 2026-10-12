@@ -78,8 +78,8 @@
             ]
           },
           "range": {
-            "value": "5d",
-            "type": "text"
+            "value": 5,
+            "type": "number"
           }
         }
       },
@@ -103,8 +103,8 @@
             ]
           },
           "range": {
-            "value": "15d",
-            "type": "text"
+            "value": 15,
+            "type": "number"
           }
         }
       },
