@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <string_view>
 
 // ========== FormulaParser 静态类型验证实现 ==========
 
@@ -51,6 +52,68 @@ bool varExists(const Map<String, ArgType>& availableVars, const String& name) {
         }
     }
     return false;
+}
+
+// xgb_probs[0] 这类写法：基名 xgb_probs 没有任何节点发布，运行期是靠
+// FormulaParser::getHistoricalValue 的数组展开 fallback 落到 xgb_probs_0 的。
+// XGBoostNode 故意不发布裸 xgb_probs——一旦发布，evalIdentifier 会直接命中返回
+// 向量，[0]/[1] 就被当成时间偏移，xgb_probs[0]-xgb_probs[1] 恒为 0。校验器若不
+// 认这条规则，XGBoost → Signal 这类策略会在 Init 阶段直接 500，而运行期求值本来
+// 是好的。
+//
+// 这里只做语法形状识别（Primary + 基名 + 非负整数下标），不判断这一列是否存在。
+// AST 形状：Primary <- Atom (Trailer)*，optimize_ast 会把单子节点的 Trailer 塌缩
+// 并改名为 TimeOffset，所以 xgb_probs[0] 的 Primary 直接带一个 TimeOffset 子节点；
+// a.b[0] 的 Trailer 有两个子节点、保留自身名字，两种形状都要认。
+bool matchArrayExpansion(const peg::Ast& node, String& baseName, String& index) {
+    if (node.name != "Primary" || node.nodes.empty()) return false;
+    if (node.nodes.front()->name != "Identifier") return false;
+
+    bool found = false;
+    for (size_t i = 1; i < node.nodes.size() && !found; ++i) {
+        const peg::Ast& trailer = *node.nodes[i];
+        const peg::Ast* offset = nullptr;
+        if (trailer.name == "TimeOffset") {
+            offset = &trailer;
+        } else if (trailer.name == "Trailer") {
+            for (auto& sub : trailer.nodes) {
+                if (sub->name == "TimeOffset") { offset = sub.get(); break; }
+            }
+        }
+        if (offset == nullptr) continue;
+        // "t" / "t-N" 是时间偏移，走常规时间序列路径，不适用数组展开规则
+        // （对应 getHistoricalValue 里 time_offset >= 0 才展开的那个分支）。
+        // peglib 的 AstBase::token 是 string_view，不能绑到 const String&。
+        const std::string_view token = offset->token;
+        if (token.empty()) continue;
+        if (!std::all_of(token.begin(), token.end(),
+                         [](char c) { return c >= '0' && c <= '9'; })) continue;
+        index.assign(token.data(), token.size());
+        found = true;
+    }
+    if (!found) return false;
+
+    const std::string_view base(node.nodes.front()->token);
+    baseName.assign(base.data(), base.size());
+    return true;
+}
+
+// 列出 {base}_{N} 形式的合法列号（N 必须全为数字），下标越界时报错用。
+Vector<String> arrayColumnNames(const Map<String, ArgType>& availableVars,
+                                const String& base) {
+    Vector<String> columns;
+    const String p = base + "_";
+    for (auto& kv : availableVars) {
+        const String& k = kv.first;
+        if (k.size() <= p.size() || k.compare(0, p.size(), p) != 0) continue;
+        const String suffix = k.substr(p.size());
+        if (std::all_of(suffix.begin(), suffix.end(),
+                        [](char c) { return c >= '0' && c <= '9'; })) {
+            columns.push_back(suffix);
+        }
+    }
+    std::sort(columns.begin(), columns.end());
+    return columns;
 }
 
 } // namespace
@@ -346,13 +409,42 @@ bool FormulaParser::validate(const Map<String, ArgType>& availableVars) {
         } else if (hasColumnIndex) {
             firstVarIdx = 1;  // nodes[0] 的列名已按 columnName 校验过
         }
+
+        // xgb_probs[0] 的基名走数组展开、不在 availableVars 里，先把这种形状摘出来，
+        // 别让下面的未知变量检查把它当成拼错的变量。放行条件收紧到「展开后的
+        // {base}_{N} 确实存在」：不加下标的裸 xgb_probs（运行期只拿得到 NaN）和
+        // 越界下标仍然报错，不会重新打开"静默失效"这个口子。
+        String arrayBase;
+        String arrayIdx;
+        const bool hasArrayShape = matchArrayExpansion(node, arrayBase, arrayIdx);
+
         for (size_t i = firstVarIdx; i < node.nodes.size(); ++i) {
             const auto& child = node.nodes[i];
-            if (child->name == "Identifier") {
-                ExprType ignored = ExprType::UNKNOWN;
-                if (!validateIdentifier(*child, availableVars, ignored)) {
+            if (child->name != "Identifier") continue;
+
+            if (i == 0 && hasArrayShape &&
+                String(child->token.data(), child->token.size()) == arrayBase) {
+                if (availableVars.count(arrayBase + "_" + arrayIdx) > 0) {
+                    continue;  // 展开后的列存在，放行
+                }
+                Vector<String> columns = arrayColumnNames(availableVars, arrayBase);
+                if (!columns.empty()) {
+                    // 形状对但没这一列——多半是下标越界，直接说清楚是哪几列可选，
+                    // 免得只报一句"未知变量 xgb_probs"，而 Available 里明明列着
+                    // xgb_probs_0/xgb_probs_1，看着自相矛盾。
+                    _validationError = fmt::format(
+                        "Unknown array column '{}' in formula. '{}' is a multi-column "
+                        "output; available columns: [{}]",
+                        arrayIdx, arrayBase,
+                        boost::algorithm::join(columns, ", "));
                     return false;
                 }
+                // 一个 {base}_{N} 都没有 → 不是数组展开基名，落到通用报错。
+            }
+
+            ExprType ignored = ExprType::UNKNOWN;
+            if (!validateIdentifier(*child, availableVars, ignored)) {
+                return false;
             }
         }
 

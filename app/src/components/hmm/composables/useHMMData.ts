@@ -2,6 +2,8 @@ import axios from 'axios'
 import type { HMMConfig, HMMResult } from './useHMMState'
 
 interface TrainResponse {
+  // decode 动作的入参，服务端从 experiments/ 目录下的模型文件读取
+  model_path: string
   model: {
     A: number[][]
     mu: number[][]

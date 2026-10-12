@@ -642,6 +642,7 @@ jobs:
           # 生成测试数据
           python testcases/generate_test_data.py
           python testcases/node_test_data/generate_node_data.py
+          python testcases/node_test_data/generate_multi_freq_data.py
           python testcases/ai_test_data/generate_xgb_trivial.py
 
           # 说明：当前 CI 构建为 Release 模式（cmake -DCMAKE_BUILD_TYPE=Release），

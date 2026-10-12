@@ -23,9 +23,9 @@
         v-for="m in models.models"
         :key="m.node_id"
         class="models-row"
-        @mouseenter="hoveredRow = m.node_id"
-        @mouseleave="hoveredRow = null"
-        @click="togglePopover(m.node_id)"
+        @mouseenter="onRowEnter($event, m.node_id)"
+        @mouseleave="scheduleHide"
+        @click="togglePopover(m.node_id, $event)"
       >
         <div class="col-label" :title="m.node_id">{{ m.label || '—' }}</div>
         <div class="col-version">
@@ -49,10 +49,14 @@
           <span v-else class="status-chip status-stale">✗ 落后</span>
         </div>
 
-        <!-- 自实现轻量级 popover：hover 或点击展开 -->
+        <!-- 自实现轻量级 popover：hover 或点击展开。内容完整展开不加滚动条，
+             靠 popoverPlacement 选空间较大的一侧来避开父元素裁剪 -->
         <div
           v-if="hoveredRow === m.node_id || pinnedRow === m.node_id"
           class="popover"
+          :class="popoverPlacement"
+          @mouseenter="cancelHide"
+          @mouseleave="scheduleHide"
           @click.stop
         >
           <div class="popover-section">
@@ -152,7 +156,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
@@ -164,6 +168,7 @@ const props = defineProps({
 
 const hoveredRow = ref(null)
 const pinnedRow = ref(null)
+const popoverPlacement = ref('below')
 const editingItem = ref(null)
 const editingVersion = ref('')
 const editingDisplayName = ref('')
@@ -171,9 +176,67 @@ const editingDescription = ref('')
 const saving = ref(false)
 const editError = ref(null)
 
-function togglePopover(nodeId) {
+// popover 与行之间的间距，需与 .popover 的 margin 保持一致
+const POPOVER_GAP = 6
+// 指针离开 hover 域后，tip 再保留多久才收起
+const POPOVER_HIDE_DELAY = 300
+
+let hideTimer = null
+
+// 找到最近的可滚动/裁剪祖先：popover 是 absolute 定位，越过它就会被裁掉
+function findClipContainer(el) {
+  for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+    const overflowY = getComputedStyle(node).overflowY
+    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'hidden') {
+      return node
+    }
+  }
+  return null
+}
+
+// 内容完整展开、不设最大高度也不出滚动条，所以避免裁剪只能靠选边：
+// 把整份内容放到空间较大的一侧。
+function updatePopoverPlacement(rowEl) {
+  const row = rowEl.getBoundingClientRect()
+  const clip = findClipContainer(rowEl)?.getBoundingClientRect()
+
+  const spaceBelow = (clip ? clip.bottom : window.innerHeight) - row.bottom - POPOVER_GAP
+  const spaceAbove = row.top - (clip ? clip.top : 0) - POPOVER_GAP
+
+  popoverPlacement.value = spaceBelow >= spaceAbove ? 'below' : 'above'
+}
+
+function onRowEnter(event, nodeId) {
+  cancelHide()
+  hoveredRow.value = nodeId
+  updatePopoverPlacement(event.currentTarget)
+}
+
+// 指针离开后延迟收起：popover 与行之间有 margin 间隙，移向 tip 时会先穿过
+// 间隙而短暂离开行；这段时间里让 tip 留着，指针移回行或进入 tip 都会取消收起。
+function scheduleHide() {
+  cancelHide()
+  hideTimer = setTimeout(() => {
+    hoveredRow.value = null
+    hideTimer = null
+  }, POPOVER_HIDE_DELAY)
+}
+
+function cancelHide() {
+  if (hideTimer !== null) {
+    clearTimeout(hideTimer)
+    hideTimer = null
+  }
+}
+
+function togglePopover(nodeId, event) {
+  if (pinnedRow.value !== nodeId) {
+    updatePopoverPlacement(event.currentTarget)
+  }
   pinnedRow.value = pinnedRow.value === nodeId ? null : nodeId
 }
+
+onBeforeUnmount(cancelHide)
 
 function prodMeta(m) {
   return m.production?.meta ?? null
@@ -340,9 +403,7 @@ async function saveMeta() {
 /* Popover */
 .popover {
   position: absolute;
-  top: 100%;
   right: 0;
-  margin-top: 6px;
   z-index: 100;
   min-width: 480px;
   max-width: 720px;
@@ -352,6 +413,19 @@ async function saveMeta() {
   padding: 14px 18px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   font-size: 12px;
+  /* 路径/特征名需要能选中复制，不设滚动容器 */
+  user-select: text;
+}
+
+/* 默认行下方；空间不足时由 JS 切到 .above */
+.popover.below {
+  top: 100%;
+  margin-top: 6px;
+}
+
+.popover.above {
+  bottom: 100%;
+  margin-bottom: 6px;
 }
 
 .popover-section {
@@ -393,8 +467,6 @@ async function saveMeta() {
 }
 
 .features-cell {
-  max-height: 100px;
-  overflow-y: auto;
   font-family: 'SF Mono', 'Consolas', monospace;
   font-size: 11px;
 }

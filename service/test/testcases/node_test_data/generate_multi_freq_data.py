@@ -24,24 +24,14 @@ from datetime import date, timedelta
 
 _HERE = os.path.dirname(os.path.abspath(__file__))          # .../service/test/testcases/node_test_data
 _TESTCASES = os.path.dirname(_HERE)                          # .../service/test/testcases
-SERVICE_ROOT = os.path.dirname(os.path.dirname(_TESTCASES))  # .../service
 
+# 路径统一从 tool.py 解析（与 generate_node_data.py / generate_test_data.py 一致）。
+# 不要自己手写探测：tool.py 的 find_service_root() + _resolve_data_dir() 认识 CI 布局
+# （二进制在 repo root、数据在 repo_root/data），手写版本会漏掉这一支而写到 service/data。
+sys.path.insert(0, _TESTCASES)
+from tool import _DATA_DIR as SERVICE_DATA_DIR
 
-def _resolve_csv_dir():
-    """与 testcases/tool.py 的 _resolve_data_dir 保持一致。
-
-    这里刻意不 import tool：那会连带引入 pytest，而生成器只需要一个目录。
-    """
-    if os.path.exists(os.path.join(SERVICE_ROOT, "QuantService")):
-        return os.path.join(SERVICE_ROOT, "data", "A_hfq")
-    if os.path.exists(os.path.join(SERVICE_ROOT, "build", "QuantService")):
-        return os.path.join(SERVICE_ROOT, "build", "data", "A_hfq")
-    if os.path.isdir(os.path.join(SERVICE_ROOT, "winbuild", "data")):
-        return os.path.join(SERVICE_ROOT, "winbuild", "data", "A_hfq")
-    return os.path.join(SERVICE_ROOT, "data", "A_hfq")
-
-
-CSV_DIR = _resolve_csv_dir()
+CSV_DIR = os.path.join(str(SERVICE_DATA_DIR), "A_hfq")
 OUT_DIR = _HERE  # 策略文件直接放在 node_test_data/ 下，与现有测试一致
 
 WEEK_SYMBOL = "sz.800010"
