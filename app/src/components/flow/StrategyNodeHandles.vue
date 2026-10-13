@@ -61,6 +61,19 @@
       </div>
     </template>
 
+    <!-- MacroInput 节点：单一 value 输出 -->
+    <template v-if="nodeType === 'macroInput'">
+      <div class="macro-output">
+        <Handle
+          type="source"
+          :position="Position.Right"
+          id="field-value"
+          class="connection-handle right-handle output-handle macro-handle"
+        />
+        <span class="macro-handle-label">值</span>
+      </div>
+    </template>
+
     <!-- EMD 节点：无额外 handles，IMF 和衍生特征的 handles 在参数面板中渲染 -->
 
     <!-- 其他节点：单一输出连接点 -->
@@ -85,7 +98,7 @@ const props = defineProps<{
 }>()
 
 const shouldShowOutput = computed(() => {
-  return !['output', 'input', 'execution', 'emd', 'hmm'].includes(props.nodeType)
+  return !['output', 'input', 'macroInput', 'execution', 'emd', 'hmm'].includes(props.nodeType)
 })
 
 const emdImfCount = computed(() => {
@@ -106,7 +119,7 @@ const functionMethod = computed(() => {
 const functionSlots = computed(() => functionInputSlots[functionMethod.value] || [])
 
 const shouldShowGenericInput = computed(() => {
-  return props.nodeType !== 'input' && props.nodeType !== 'function' && props.nodeType !== 'breakout'
+  return props.nodeType !== 'input' && props.nodeType !== 'macroInput' && props.nodeType !== 'function' && props.nodeType !== 'breakout'
 })
 
 const shouldShowSingleFunctionInput = computed(() => {
@@ -140,13 +153,13 @@ const singleFunctionInputId = computed(() => getFunctionInputHandleId(functionMe
   left: -12px;
 }
 
-.hmm-outputs, .emd-output {
+.hmm-outputs, .emd-output, .macro-output {
   display: flex;
   align-items: center;
   gap: 4px;
   margin: 2px 0;
 }
-.hmm-handle-label, .emd-handle-label {
+.hmm-handle-label, .emd-handle-label, .macro-handle-label {
   font-size: 10px;
   color: var(--text-secondary, #a0aec0);
   user-select: none;

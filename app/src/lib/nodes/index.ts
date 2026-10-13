@@ -6,6 +6,7 @@
  */
 
 import './configs/input'
+import './configs/macroInput'
 import './configs/function'
 import './configs/signal'
 import './configs/execution'
