@@ -141,6 +141,12 @@ bool MacroHandler::FetchFromPython(const String& country, const String& indicato
         return false;
     }
 
+    // 提取 JSON 部分：跳过 Windows cmd 的 "Active code page: 65001" 前缀
+    auto json_start = output.find('{');
+    if (json_start != std::string::npos) {
+        output = output.substr(json_start);
+    }
+
     try {
         // 解析JSON输出
         out = nlohmann::json::parse(output);
@@ -170,11 +176,16 @@ std::vector<String> MacroHandler::GetFredSeriesIds(const String& indicator) cons
 
 bool MacroHandler::FetchFromFred(const String& indicator,
                                   const String& start, const String& end,
-                                  nlohmann::json& out) {
-    // 获取 FRED API Key
-    String api_key = _server->GetConfig().GetFredKey();
-    if (api_key.empty()) {
-        WARN("[MacroHandler] FRED API Key 未配置, 请在 config.json 的 server.fred_key 中设置");
+                                  nlohmann::json& out,
+                                  const String& api_key) {
+    // 优先使用从请求参数传递的 API Key，否则从配置文件获取
+    String fred_key = api_key;
+    if (fred_key.empty()) {
+        fred_key = _server->GetConfig().GetFredKey();
+    }
+    
+    if (fred_key.empty()) {
+        WARN("[MacroHandler] FRED API Key 未配置, 请在 config.json 的 server.fred_key 中设置，或通过请求参数 fred_key 传递");
         return false;
     }
 
@@ -186,7 +197,7 @@ bool MacroHandler::FetchFromFred(const String& indicator,
     }
 
     // 构建命令: python3 tools/fetch_fred_data.py --api-key KEY --series S1 S2 ... --json
-    String cmd = fmt::format("python3 tools/fetch_fred_data.py --api-key {}", api_key);
+    String cmd = fmt::format("python3 tools/fetch_fred_data.py --api-key {}", fred_key);
     cmd += " --series";
     for (const auto& sid : series_ids) {
         cmd += fmt::format(" {}", sid);
@@ -206,6 +217,13 @@ bool MacroHandler::FetchFromFred(const String& indicator,
     if (!success || output.empty()) {
         WARN("[MacroHandler] FRED Python脚本执行失败: {}", cmd);
         return false;
+    }
+
+    // 提取 JSON 部分：跳过 Windows cmd 的 "Active code page: 65001" 前缀
+    // 找到第一个 '{' 字符，从那里开始是纯 JSON
+    auto json_start = output.find('{');
+    if (json_start != std::string::npos) {
+        output = output.substr(json_start);
     }
 
     try {
@@ -304,6 +322,7 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
     String start = GetParam(req, "start");
     String end = GetParam(req, "end");
     String refresh_str = GetParam(req, "refresh", "false");
+    String fred_key = GetParam(req, "fred_key");  // 从请求参数获取 FRED API Key（可选）
     bool refresh = (refresh_str == "true");
 
     nlohmann::json response;
@@ -368,7 +387,7 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
             bool fetch_ok = false;
 
             if (is_fred) {
-                fetch_ok = FetchFromFred(indicator, start, end, fresh_data);
+                fetch_ok = FetchFromFred(indicator, start, end, fresh_data, fred_key);
             } else {
                 fetch_ok = FetchFromPython(country, indicator, start, end, fresh_data);
             }

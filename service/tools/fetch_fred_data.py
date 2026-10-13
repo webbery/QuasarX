@@ -131,7 +131,7 @@ def fetch_series(api_key: str, series_id: str, start: str = None, end: str = Non
     }
 
 
-def fetch_multiple(api_key: str, series_ids: list, start: str = None, end: str = None) -> list:
+def fetch_multiple(api_key: str, series_ids: list, start: str = None, end: str = None, quiet: bool = False) -> list:
     """批量获取多个 series"""
     results = []
     for sid in series_ids:
@@ -140,9 +140,11 @@ def fetch_multiple(api_key: str, series_ids: list, start: str = None, end: str =
             valid = [o for o in result["observations"] if o.get("value") != "."]
             result["valid_count"] = len(valid)
             results.append(result)
-            print(f"  ✓ {sid}: {len(valid)} 条有效数据")
+            if not quiet:
+                print(f"  ✓ {sid}: {len(valid)} 条有效数据")
         except Exception as e:
-            print(f"  ✗ {sid}: {e}")
+            if not quiet:
+                print(f"  ✗ {sid}: {e}")
     return results
 
 
@@ -377,20 +379,24 @@ def main():
         print("错误: 未指定任何要下载的数据序列")
         return
 
-    # 打印任务信息
-    print(f"\n{'=' * 70}")
-    print(f"FRED 数据下载")
-    print(f"{'=' * 70}")
-    print(f"数据序列: {', '.join(series_ids)}")
-    print(f"日期范围: {args.start or '最早'} ~ {args.end or '最新'}")
-    print(f"{'=' * 70}")
+    # --json 模式只输出纯 JSON，不打印进度信息
+    if not args.json:
+        # 打印任务信息
+        print(f"\n{'=' * 70}")
+        print(f"FRED 数据下载")
+        print(f"{'=' * 70}")
+        print(f"数据序列: {', '.join(series_ids)}")
+        print(f"日期范围: {args.start or '最早'} ~ {args.end or '最新'}")
+        print(f"{'=' * 70}")
 
     # 下载数据
-    print(f"\n正在下载...")
-    results = fetch_multiple(args.api_key, series_ids, args.start, args.end)
+    if not args.json:
+        print(f"\n正在下载...")
+    results = fetch_multiple(args.api_key, series_ids, args.start, args.end, quiet=args.json)
 
     if not results:
-        print("\n未获取到任何数据")
+        if not args.json:
+            print("\n未获取到任何数据")
         return
 
     # 输出

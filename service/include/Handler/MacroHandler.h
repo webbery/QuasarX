@@ -58,7 +58,9 @@ private:
 
     // === FRED API 调用 ===
     bool FetchFromFred(const String& indicator,
-                       const String& start, const String& end, nlohmann::json& out);
+                       const String& start, const String& end,
+                       nlohmann::json& out,
+                       const String& api_key = "");  // 可选：从请求参数传递的 API Key
     bool IsFredIndicator(const String& indicator) const;
     std::vector<String> GetFredSeriesIds(const String& indicator) const;
 
