@@ -68,6 +68,18 @@ public:
      */
     DataFrequencyType GetViewFreq() const { return _viewFreq; }
 
+    /**
+     * @brief 已定稿的视图 bar 数量（仅降频视图维护，按 symbol）
+     *
+     * 视图序列在日线网格上逐日前向填充，向量长度每个 epoch 都在增长，
+     * 下游不能靠长度判断「有没有新的低频数据」。这个计数只在定稿时递增，
+     * 是「窗口该往前推一根」的唯一可靠信号（FunctionNode 等下游使用）。
+     */
+    uint64_t GetViewVersion(symbol_t symbol) const {
+        auto itr = _viewVersions.find(symbol);
+        return itr == _viewVersions.end() ? 0 : itr->second;
+    }
+
 private:
     /**
      * @brief 从 QuoteInfo 中提取指定属性值（open/close/high/low/volume）
@@ -89,8 +101,12 @@ private:
 
     /**
      * @brief 把定稿低频 bar 快照写入 context（key 带频率后缀）
+     *
+     * writeNaN=true 时写入 NaN 占位（尚无定稿 bar 的 epoch）。占位保证视图列
+     * 从第一个 epoch 起就与时间轴逐行对齐，否则整列会相对时间轴整体前移。
      */
-    void writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot);
+    void writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot,
+                   bool writeNaN = false);
 
 private:
     Set<symbol_t> _symbols;
@@ -107,4 +123,6 @@ private:
     std::shared_ptr<KBarBuilder> _kbarBuilder;
     // 上一个定稿快照（用于前向填充）
     Map<symbol_t, QuoteInfo> _lastViewSnapshot;
+    // 每个 symbol 已定稿的视图 bar 数量（见 GetViewVersion）
+    Map<symbol_t, uint64_t> _viewVersions;
 };

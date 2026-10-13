@@ -213,7 +213,7 @@ public:
         std::visit([&name, &value, this](auto&& v) {
             using CTX_T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<CTX_T, Vector<double>> && std::is_same_v<T, double>) {
-                v.emplace_back(std::move(value));
+                AppendEpochValue(name, v, std::move(value));
             }
             else {
                 // 直接赋值而非调用 set()：避免同一操作被计入 add 与 set 两个桶
@@ -352,10 +352,36 @@ private:
 
     // context_t 数值负载的估算字节数（性能剖析用）
     static uint64_t ValueBytes(const context_t& value);
+
+    /**
+     * @brief 追加一个序列值，保证「每个 epoch 每个 key 至多一个值」
+     *
+     * 同一 epoch 内重复写入同一 key 时覆盖上一次的值，而不是再 append 一个：
+     * 多输入节点图（如同时挂在 sz.800010 上的 1d / 1w 两个 input 节点）会让
+     * 同一个序列被写两次，逐次 append 会让该列每个 epoch 增长多次，与
+     * 「每 epoch 一行」的时间轴（DebugNode 导出、按长度判新数据）整体错位。
+     */
+    template<typename T>
+    void AppendEpochValue(const String& name, Vector<T>& series, T value) {
+        auto itr = _lastWriteEpoch.find(name);
+        if (itr != _lastWriteEpoch.end() && itr->second == _epoch && !series.empty()) {
+            series.back() = std::move(value);
+            return;
+        }
+        series.emplace_back(std::move(value));
+        _lastWriteEpoch[name] = _epoch;
+    }
+
 private:
     uint64_t _epoch = 0;
     const String _strategy;
     List<time_t> _times;
+
+    // 各序列最后一次 append 所在的 epoch（配合 AppendEpochValue 做同 epoch 覆盖）
+    Map<String, uint64_t> _lastWriteEpoch;
+    // _times 最后一次 append 所在的 epoch（多输入节点图里每个 input 节点都会
+    // 调用 SetTime，时间轴同样只能每个 epoch 追加一次）
+    uint64_t _lastTimeEpoch = 0;
     Server* _server;
 
     std::unordered_map<symbol_t, TradeSignal*> _signals;

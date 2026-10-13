@@ -19,6 +19,22 @@
 QuoteInputNode::QuoteInputNode(Server* server): _server(server) {
 }
 
+namespace {
+    // 降频视图键后缀：周频视图的序列（close_w 等）只在与定稿周线对应的
+    // 节奏上取值，日线 tick 上不存在对应值。
+    constexpr const char* kViewSuffix = "_w";
+
+    bool IsViewKey(const String& name) {
+        return name.size() > 2 && name.compare(name.size() - 2, 2, kViewSuffix) == 0;
+    }
+
+    // 去掉可能存在的 _w 后缀：前端把 handle 拖成 "1-close_w" 时，属性名本身
+    // 就带后缀，直接用会叠加出 close_w_w 这种不存在的键。
+    String ViewBaseProp(const String& property) {
+        return IsViewKey(property) ? property.substr(0, property.size() - 2) : property;
+    }
+}
+
 /**
  * @brief 从 QuoteInfo 提取指定属性值
  */
@@ -42,6 +58,10 @@ void QuoteInputNode::writeQuote(DataContext& context, const QuoteInfo& quote) {
     auto name = get_symbol(quote._symbol);
     auto baseKey = name + ".";
     for (auto& property : _properties[name]) {
+        // 降频视图键（*_w）不在日线 tick 上取值：它们由 writeView 在定稿 bar 上
+        // 写入。这里若按日线 tick 写入（getProp 对未知属性返回 0.0），会把整条
+        // 视图序列污染成 0 与真实值交替出现。
+        if (IsViewKey(property)) continue;
         if (property == "open") {
             addQuoteProperty(context, baseKey + property, quote._adj_open > 0.0 ? quote._adj_open : quote._open);
             addQuoteProperty(context, baseKey + "org_open", quote._open);
@@ -235,6 +255,8 @@ void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
 
     _curQuotes.clear();
     _lastQuotes.clear();
+    _lastViewSnapshot.clear();
+    _viewVersions.clear();
 
     // 降频视图：初始化聚合器。
     // Bar 模式（SetAggregateOhlc(true)）使 OHLC 取自输入日线 bar 本身，
@@ -253,30 +275,53 @@ void QuoteInputNode::Prepare(const String& strategy, DataContext& context) {
  *
  * 仅在 KBarBuilder 报告「有新的定稿周线」时调用。快照来自 _lastQuotes，
  * 天然滞后一根（本周走完后才可见），周内不写即等价于前向填充。
+ *
+ * writeNaN=true 时对全部 symbol 写 NaN 占位（尚无定稿 bar 的 epoch）：
+ * 视图列必须从第一个 epoch 起逐行对齐，中途才开始 append 会让整列相对
+ * 时间轴前移（DebugNode 导出按行号对齐）。
  */
-void QuoteInputNode::writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot) {
-    for (auto& [symbol, q] : snapshot) {
-        auto name = get_symbol(symbol);
+void QuoteInputNode::writeView(DataContext& context, const Map<symbol_t, QuoteInfo>& snapshot,
+                               bool writeNaN) {
+    auto writeSymbol = [&](const String& name, const QuoteInfo* q) {
         auto baseKey = name + ".";
         for (auto& property : _properties[name]) {
-            if (property == "open") {
-                addQuoteProperty(context, baseKey + "open_w", q._adj_open > 0.0 ? q._adj_open : q._open);
-                addQuoteProperty(context, baseKey + "org_open_w", q._open);
-            } else if (property == "close") {
-                addQuoteProperty(context, baseKey + "close_w", q._adj_close > 0.0 ? q._adj_close : q._close);
-                addQuoteProperty(context, baseKey + "org_close_w", q._close);
-            } else if (property == "high") {
-                addQuoteProperty(context, baseKey + "high_w", q._adj_high > 0.0 ? q._adj_high : q._high);
-                addQuoteProperty(context, baseKey + "org_high_w", q._high);
-            } else if (property == "low") {
-                addQuoteProperty(context, baseKey + "low_w", q._adj_low > 0.0 ? q._adj_low : q._low);
-                addQuoteProperty(context, baseKey + "org_low_w", q._low);
-            } else if (property == "volume") {
-                addQuoteProperty(context, baseKey + "volume_w", (double)q._volume);
+            String prop = ViewBaseProp(property);
+            double val = std::numeric_limits<double>::quiet_NaN();
+            if (q) {
+                if (prop == "open") val = q->_adj_open > 0.0 ? q->_adj_open : q->_open;
+                else if (prop == "close") val = q->_adj_close > 0.0 ? q->_adj_close : q->_close;
+                else if (prop == "high") val = q->_adj_high > 0.0 ? q->_adj_high : q->_high;
+                else if (prop == "low") val = q->_adj_low > 0.0 ? q->_adj_low : q->_low;
+                else val = getProp(*q, prop);
+            }
+            if (prop == "open") {
+                addQuoteProperty(context, baseKey + "open_w", val);
+                addQuoteProperty(context, baseKey + "org_open_w", q ? q->_open : val);
+            } else if (prop == "close") {
+                addQuoteProperty(context, baseKey + "close_w", val);
+                addQuoteProperty(context, baseKey + "org_close_w", q ? q->_close : val);
+            } else if (prop == "high") {
+                addQuoteProperty(context, baseKey + "high_w", val);
+                addQuoteProperty(context, baseKey + "org_high_w", q ? q->_high : val);
+            } else if (prop == "low") {
+                addQuoteProperty(context, baseKey + "low_w", val);
+                addQuoteProperty(context, baseKey + "org_low_w", q ? q->_low : val);
+            } else if (prop == "volume") {
+                addQuoteProperty(context, baseKey + "volume_w", q ? (double)q->_volume : val);
             } else {
-                addQuoteProperty(context, baseKey + property + "_w", getProp(q, property));
+                addQuoteProperty(context, baseKey + prop + "_w", val);
             }
         }
+    };
+
+    if (writeNaN) {
+        for (auto& symbol : _symbols) {
+            writeSymbol(get_symbol(symbol), nullptr);
+        }
+        return;
+    }
+    for (auto& [symbol, q] : snapshot) {
+        writeSymbol(get_symbol(symbol), &q);
     }
 }
 
@@ -406,6 +451,7 @@ NodeProcessResult QuoteInputNode::Process(const String& strategy, DataContext& c
  * 实现"完成周滞后"语义：
  * - 当进入新一周时（GetSnapshot 返回 true），保存定稿快照并输出
  * - 在周内其他交易日，输出上一个定稿快照（前向填充）
+ * - 首个定稿周完成之前，输出 NaN 占位（保持视图列与时间轴逐行对齐）
  */
 void QuoteInputNode::feedView(DataContext& context, const Map<symbol_t, QuoteInfo>& quotes) {
     if (_viewFreq != DataFrequencyType::Week || !_kbarBuilder) return;
@@ -423,12 +469,19 @@ void QuoteInputNode::feedView(DataContext& context, const Map<symbol_t, QuoteInf
 
     Map<symbol_t, QuoteInfo> snapshot;
     if (_kbarBuilder->GetSnapshot(snapshot)) {
-        // 进入新一周：保存定稿快照
+        // 进入新一周：保存定稿快照，并推进定稿计数（下游据此推进窗口）
         _lastViewSnapshot = snapshot;
+        for (auto& [sym, q] : snapshot) {
+            ++_viewVersions[sym];
+        }
         writeView(context, snapshot);
     } else if (!_lastViewSnapshot.empty()) {
         // 周内其他交易日：输出上一个定稿快照（前向填充）
         writeView(context, _lastViewSnapshot);
+    } else {
+        // 还没有任何定稿周线：写 NaN 占位，保证视图列从第一个 epoch 起
+        // 就与时间轴逐行对齐（否则整列相对行号前移，导出/比对全部错位）
+        writeView(context, snapshot, /*writeNaN=*/true);
     }
 }
 

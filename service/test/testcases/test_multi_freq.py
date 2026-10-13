@@ -105,10 +105,9 @@ def _num(series):
 def _resample_to_weekly(values, csv_dates):
     """将日线网格上前向填充的周频值还原为周线网格。
 
-    debug CSV 每个交易日有 2 行（两个 epoch），直接与外部传入的日线日期
-    zip 会错位：values 比 dates 长一倍，zip 截断后只剩前半段，且第 i 行
-    与第 i+1 行其实是同一天。这里改用 CSV 自带的 datetime 列，并跳过同一
-    天的第二个 epoch，再按 ISO 周分组取每周最后一个有效值。
+    debug CSV 每个 epoch 一行（一行就是一个交易日），同一交易日重复出现时
+    （历史上多输入节点图会写两行）只取第一行，再按 ISO 周分组取每周最后一个
+    有效值。
 
     返回 (weekly_values, week_keys)，其中 week_keys 是 (iso_year, iso_week) 元组列表。
     """
@@ -118,7 +117,7 @@ def _resample_to_weekly(values, csv_dates):
         if np.isnan(val):
             continue
         day = str(datestr).split()[0]   # CSV 带 " 00:00:00"，只取日期部分
-        if day in seen:                 # 同一天的第二个 epoch，跳过
+        if day in seen:                 # 同一天的重复 epoch，跳过
             continue
         seen.add(day)
         key = _iso_week(day)
@@ -165,21 +164,20 @@ class TestWeeklyAggregation:
         actual, week_keys = _resample_to_weekly(
             _num(weekly_debug[col]), weekly_debug["datetime"].tolist())
         expected = np.array([w["close"] for w in weekly_ref])
-        
-        # "完成周滞后一周"语义：第 N 周输出的是第 N-1 周的定稿值
-        # 所以 actual[i] 应该等于 expected[i-1]
-        # 跳过第一周（没有上一周可定稿）
-        if len(actual) > 1 and len(expected) > 1:
-            actual_shifted = actual[1:]  # 从第 2 周开始
-            expected_shifted = expected[:-1]  # 到倒数第 2 周
-            n = min(len(actual_shifted), len(expected_shifted))
-            assert n > 0, "周频序列为空，用例退化"
-            np.testing.assert_allclose(actual_shifted[:n], expected_shifted[:n], rtol=0, atol=TOLERANCE)
-        else:
-            # 数据太少，无法验证滞后语义
-            n = min(len(actual), len(expected))
-            assert n > 0, "周频序列为空，用例退化"
-            np.testing.assert_allclose(actual[:n], expected[:n], rtol=0, atol=TOLERANCE)
+
+        # "完成周滞后一周"语义：第 N 周（N≥2）可见的是第 N-1 周的定稿值。
+        # 第 1 周没有「上一周」可定稿，故周频序列从第 2 个 ISO 周才开始：
+        # actual[j] 对应第 j+2 个 ISO 周，正好等于 expected[j]（索引直接对齐，
+        # 不能再对 actual 做一次位移——那会把滞后算成两周）。
+        assert len(actual) > 0, "周频序列为空，用例退化"
+        expected_weeks = [_iso_week(w["date"]) for w in weekly_ref]
+        assert week_keys[0] == expected_weeks[1], (
+            f"周频序列应从第 2 个 ISO 周 {expected_weeks[1]} 开始"
+            f"（第 1 周没有可定稿的上一周），实际 {week_keys[0]}；"
+            f"若第 1 周就有值说明存在前视")
+        n = min(len(actual), len(expected))
+        assert n > 0, "周频序列为空，用例退化"
+        np.testing.assert_allclose(actual[:n], expected[:n], rtol=0, atol=TOLERANCE)
 
     def test_weekly_ohlc_and_volume_match_reference(self, weekly_debug, weekly_ref, daily_rows):
         """open/high/low/volume 四项一起比对。"""
@@ -191,6 +189,7 @@ class TestWeeklyAggregation:
         }
         # 引擎把周频值前向填充到日线网格，必须先还原到周线网格再比对
         csv_dates = weekly_debug["datetime"].tolist()
+        expected_weeks = [_iso_week(w["date"]) for w in weekly_ref]
         compared = 0
         for suffix, ref_key in checks.items():
             col = f"{WEEK_SYMBOL}.{suffix}"
@@ -198,38 +197,49 @@ class TestWeeklyAggregation:
                 continue  # 该字段未通过 edge 导出
             actual, week_keys = _resample_to_weekly(_num(weekly_debug[col]), csv_dates)
             expected = np.array([w[ref_key] for w in weekly_ref])
-            
-            # "完成周滞后一周"语义：第 N 周输出的是第 N-1 周的定稿值
-            if len(actual) > 1 and len(expected) > 1:
-                actual_shifted = actual[1:]
-                expected_shifted = expected[:-1]
-                n = min(len(actual_shifted), len(expected_shifted))
-                assert n > 0, f"{suffix} 序列为空"
-                if ref_key == "volume":
-                    np.testing.assert_allclose(actual_shifted[:n], expected_shifted[:n], rtol=0, atol=1e-6)
-                else:
-                    np.testing.assert_allclose(actual_shifted[:n], expected_shifted[:n], rtol=0, atol=TOLERANCE)
+
+            # 与 close 同一口径：第 N 周（N≥2）可见的是第 N-1 周的定稿值，
+            # 序列从第 2 个 ISO 周开始，actual[j] 直接对应 expected[j]。
+            assert len(actual) > 0, f"{suffix} 序列为空"
+            assert week_keys[0] == expected_weeks[1], (
+                f"{suffix} 序列应从第 2 个 ISO 周 {expected_weeks[1]} 开始，"
+                f"实际 {week_keys[0]}")
+            n = min(len(actual), len(expected))
+            assert n > 0, f"{suffix} 序列为空"
+            if ref_key == "volume":
+                np.testing.assert_allclose(actual[:n], expected[:n], rtol=0, atol=1e-6)
             else:
-                n = min(len(actual), len(expected))
-                assert n > 0, f"{suffix} 序列为空"
-                if ref_key == "volume":
-                    np.testing.assert_allclose(actual[:n], expected[:n], rtol=0, atol=1e-6)
-                else:
-                    np.testing.assert_allclose(actual[:n], expected[:n], rtol=0, atol=TOLERANCE)
+                np.testing.assert_allclose(actual[:n], expected[:n], rtol=0, atol=TOLERANCE)
             compared += 1
         assert compared > 0, "没有任何 OHLCV 字段被比对，用例退化为空通过"
 
     def test_weekly_series_is_shorter_than_daily(self, weekly_debug):
-        """周频序列必须明显短于日线，否则说明降频没生效。"""
+        """周频序列的取值数必须明显少于日线，否则说明降频没生效。
+
+        周频值在日线网格上是前向填充的（每个交易日都能读到最近一个定稿周值），
+        所以「非空点数」与日线同量级是预期行为；降频体现在取值只按周更新，
+        因此比较「不同取值的个数」与「取值变化次数」。
+        """
         daily_col = f"{WEEK_SYMBOL}.close"
         weekly_col = f"{WEEK_SYMBOL}.close_w"
         assert daily_col in weekly_debug.columns and weekly_col in weekly_debug.columns
 
-        n_daily = weekly_debug[daily_col].notna().sum()
-        n_weekly = weekly_debug[weekly_col].notna().sum()
-        assert n_weekly > 0, "周频序列为空"
+        daily_vals = weekly_debug[daily_col].dropna()
+        weekly_vals = weekly_debug[weekly_col].dropna()
+        assert len(weekly_vals) > 0, "周频序列为空"
+
+        n_daily = daily_vals.nunique()
+        n_weekly = weekly_vals.nunique()
         assert n_weekly < n_daily / 3, (
-            f"周频点数 {n_weekly} 相对日线 {n_daily} 过多，降频可能未生效")
+            f"周频不同取值 {n_weekly} 相对日线 {n_daily} 过多，降频可能未生效")
+
+        # 取值应只在 ISO 周之间变化：周内逐日重复是前向填充的结果，不算新值。
+        # 若一周内多次换值，说明是周内滚动而非定稿值。
+        arr = weekly_vals.to_numpy()
+        changes = int((arr[1:] != arr[:-1]).sum())
+        assert changes < n_daily / 3, (
+            f"周频取值发生 {changes} 次变化（日线 {n_daily} 根），"
+            f"疑似周内滚动而非按周定稿")
 
 
 # ------------------------------------------------------------
@@ -259,8 +269,10 @@ class TestSettledWeekSemantics:
             f"疑似周内滚动而非完成周滞后")
 
     def test_weekly_lags_daily_by_one_week(self, weekly_debug, daily_rows):
-        """下周一才可见上周定稿值：周频序列的第 i 个值应等于
-        第 i 个 ISO 周的定稿值，而非本周至今的值。"""
+        """下周一才可见上周定稿值：第 N 周（N≥2）读到的是第 N-1 周的定稿值，
+        而不是当周至今的滚动值。序列从第 2 个 ISO 周开始，故 actual[j] 对应
+        第 j+2 周、等于 expected[j]；这里只做「非当周滚动」的反向校验，
+        逐值比对在 TestWeeklyAggregation 里。"""
         weekly_ref = weekly_reference(daily_rows)
         col = f"{WEEK_SYMBOL}.close_w"
         actual = _num(weekly_debug[col].dropna())
@@ -269,8 +281,8 @@ class TestSettledWeekSemantics:
         n = min(len(actual), len(expected))
         assert n > 2, "样本不足以判断滞后语义"
 
-        # actual[k] 对应 expected[k]，且 actual 的取值不应等于「本周至今」
-        # ——后者会与日线最后一根相等。用「与日线最后值不相等」做反向校验。
+        # actual 的取值不应等于「本周至今」——后者会与日线最后一根相等。
+        # 用「与日线最后值不相等」做反向校验。
         last_daily = _num(weekly_debug[f"{WEEK_SYMBOL}.close"].dropna())
         if len(last_daily):
             tail = actual[-1]

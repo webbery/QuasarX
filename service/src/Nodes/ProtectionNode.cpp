@@ -183,24 +183,6 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
     return true;
 }
 
-static int64_t get_position_quantity(Server* server, DataContext& context, symbol_t symbol) {
-    if (server->GetRunningMode() == RuningType::Backtest) {
-        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
-            server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
-        if (histExchange) {
-            return histExchange->GetPositionQuantity(symbol);
-        }
-    } else {
-        auto& ap = server->GetPosition("");
-        for (const auto& pos : ap._positions) {
-            if (pos._symbol == symbol) {
-                return pos._holds;
-            }
-        }
-    }
-    return 0;
-}
-
 static double get_position_cost(Server* server, DataContext& context, symbol_t symbol) {
     if (server->GetRunningMode() == RuningType::Backtest) {
         // 回测模式下 BacktestContext 不保存成本价，返回 0

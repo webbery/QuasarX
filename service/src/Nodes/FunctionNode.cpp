@@ -126,12 +126,14 @@ bool FunctionNode::Init(const nlohmann::json& config) {
     // 2.5 解析窗口长度。
     // 上游频率只在兼容旧的 "Nd" 写法时才需要；纯数字写法与频率无关，
     // 因此同一份配置挂在日线分支就是 N 日、挂在周频分支就是 N 周。
-    DataFrequencyType dataFreq = DataFrequencyType::Day;
     for (auto& [handle, node] : _ins) {
         if (auto* quoteNode = dynamic_cast<QuoteInputNode*>(node)) {
-            dataFreq = quoteNode->GetFreq();
-            _viewFreq = quoteNode->GetViewFreq();
-            break;
+            // 视图频率沿用「第一个上游 input 节点」的口径（与迁移前一致）；
+            // 但定稿计数要把所有上游 input 节点都收进来，多输入时取最大。
+            if (_upstreamQuotes.empty()) {
+                _viewFreq = quoteNode->GetViewFreq();
+            }
+            _upstreamQuotes.push_back(quoteNode);
         }
     }
     int windowBars = 15; // 默认值
@@ -225,7 +227,6 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
         auto& symbol = item.first;
         // 构建该 symbol 的输入参数（从连接信息解析的映射）
         Map<String, context_t> args;
-        size_t inputLength = 0;
         for (auto& [dataName, contextKey] : _resolvedInputs) {
             String symbolKey = contextKey;
             auto firstDot = contextKey.find('.');
@@ -238,13 +239,6 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             if (context.exist(symbolKey)) {
                 String slot = (dataName == "close") ? "price" : dataName;
                 args[slot] = context.get(symbolKey);
-                // 记录输入向量长度（用于检测新数据）
-                std::visit([&inputLength](const auto& val) {
-                    using T = std::decay_t<decltype(val)>;
-                    if constexpr (std::is_same_v<T, Vector<double>>) {
-                        inputLength = std::max(inputLength, val.size());
-                    }
-                }, args[slot]);
             }
             else {
                 INFO("[FunctionNode:{}] key {} not exist.", _id, symbolKey);
@@ -263,30 +257,41 @@ NodeProcessResult FunctionNode::Process(const String& strategy, DataContext& con
             continue;
         }
 
-        // 检查输入是否真正更新（用于周频视图等降频场景）
+        // 降频视图（如 freq=1w）：只有出现新的定稿 bar 时才调用 callable，
+        // 让窗口按周推进；周内前向填充上一次的输出。
+        //
+        // 判据必须是上游 input 节点的定稿计数，不能用输入向量长度：视图序列
+        // 在日线网格上逐日前向填充，长度每个 epoch 都在增长，用长度判断会让
+        // MA 等窗口指标在周内逐日滑动（窗口内容随重复值滚动而改变）。
         String output_key = symbol + "." + _label;
-        bool inputGrown = (inputLength > _lastInputLengths[symbol]);
-        
-        if (_viewFreq != DataFrequencyType::Day && !inputGrown) {
-            // 输入未更新（如周内无新定稿），前向填充上一次的输出
-            if (context.exist(output_key)) {
-                auto& existing = context.get<Vector<double>>(output_key);
-                if (!existing.empty()) {
-                    double lastVal = existing.back();
-                    context.add(output_key, lastVal);
-                } else {
-                    context.add(output_key, std::numeric_limits<double>::quiet_NaN());
-                }
-            } else {
-                context.set(output_key, Vector<double>{std::numeric_limits<double>::quiet_NaN()});
+        if (_viewFreq != DataFrequencyType::Day && !_upstreamQuotes.empty()) {
+            auto sym = to_symbol(symbol);
+            uint64_t version = 0;
+            for (auto* quoteNode : _upstreamQuotes) {
+                version = std::max(version, quoteNode->GetViewVersion(sym));
             }
-            continue;
+            uint64_t& lastVersion = _lastViewVersion[symbol];
+            if (version == lastVersion) {
+                // 周内无新定稿，前向填充上一次的输出
+                if (context.exist(output_key)) {
+                    auto& existing = context.get<Vector<double>>(output_key);
+                    if (!existing.empty()) {
+                        double lastVal = existing.back();
+                        context.add(output_key, lastVal);
+                    } else {
+                        context.add(output_key, std::numeric_limits<double>::quiet_NaN());
+                    }
+                } else {
+                    context.set(output_key, Vector<double>{std::numeric_limits<double>::quiet_NaN()});
+                }
+                continue;
+            }
+            lastVersion = version;
         }
 
         // 输入已更新，正常调用 callable
         auto callable = item.second;
         auto result = (*callable)(args);
-        _lastInputLengths[symbol] = inputLength;
 
         // 写入输出
         std::visit([this, &output_key, &context, &symbol](const auto& val) {

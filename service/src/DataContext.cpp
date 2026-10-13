@@ -69,7 +69,7 @@ void DataContext::add(const String& name, context_t value) {
             if (itr == _outputs.end()) {
                 _outputs[name] = Vector<T>{std::get<T>(value)};
                 } else { [[likely]]
-                    std::get<Vector<T>>(itr->second).push_back(std::get<T>(value));
+                    AppendEpochValue(name, std::get<Vector<T>>(itr->second), std::get<T>(value));
                 }
         }
         else if constexpr (std::is_same_v<T, uint64_t>){
@@ -92,7 +92,15 @@ void DataContext::erase(const String& name) {
 // }
 
 void DataContext::SetTime(time_t t) {
-    _times.push_back(t);    
+    // 一个 epoch 只保留一个时间戳：回测里每个 input 节点都会调用 SetTime，
+    // 逐次 push 会让时间轴长度是 epoch 数的整数倍，与「每个 epoch 一行」的
+    // 序列（DebugNode 导出按此对齐）错位。
+    if (_lastTimeEpoch == _epoch && !_times.empty()) {
+        _times.back() = t;
+        return;
+    }
+    _times.push_back(t);
+    _lastTimeEpoch = _epoch;
 }
 
 const List<time_t>& DataContext::GetTime() const {
