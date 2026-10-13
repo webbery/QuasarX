@@ -486,7 +486,7 @@ bool ReadMacroCache(const String& db_path, const String& country, const String& 
     catch (...) { return false; }
 }
 
-bool IsMacroCacheExpired(const nlohmann::json& cached) {
+bool IsMacroCacheExpired(const nlohmann::json& cached, bool is_fred) {
     if (!cached.contains("updated_at")) return true;
     String updated_at = cached["updated_at"];
     struct tm tm_val = {};
@@ -498,11 +498,57 @@ bool IsMacroCacheExpired(const nlohmann::json& cached) {
     time_t cache_time = mktime(&tm_val);
     auto now = std::chrono::system_clock::now();
     time_t now_t = std::chrono::system_clock::to_time_t(now);
-    return (now_t - cache_time) > (7 * 24 * 3600);  // 7天
+    // FRED 数据使用更短的缓存时间 (1天 vs 7天)
+    int ttl = is_fred ? (24 * 3600) : (7 * 24 * 3600);
+    return (now_t - cache_time) > ttl;
+}
+
+/** 判断指标是否为 FRED 指标 */
+bool IsFredIndicator(const String& indicator) {
+    static const std::set<String> fred_indicators = {
+        "sofr", "treasury_yield", "treasury_spread", "fx_rate"
+    };
+    return fred_indicators.count(indicator) > 0;
 }
 
 bool FetchMacroFromPython(const String& country, const String& indicator, nlohmann::json& out) {
-    String cmd = fmt::format("python3 tools/fetch_macro_data.py --indicator {} --country {} --json", indicator, country);
+    String cmd;
+
+    if (IsFredIndicator(indicator)) {
+        // FRED 指标: 调用 fetch_fred_data.py
+        String api_key = "";  // 从 config 获取需要 server 实例，这里通过环境变量传递
+        const char* env_key = std::getenv("FRED_API_KEY");
+        if (env_key) api_key = env_key;
+
+        if (api_key.empty()) {
+            WARN("[MacroData] FRED API Key 未配置 (环境变量 FRED_API_KEY)");
+            return false;
+        }
+
+        // 映射 indicator -> series IDs
+        std::map<String, std::vector<String>> fred_map = {
+            {"sofr",            {"SOFR"}},
+            {"treasury_yield",  {"DGS2", "DGS5", "DGS10", "DGS30"}},
+            {"treasury_spread", {"T10Y2Y", "T10Y3M"}},
+            {"fx_rate",         {"DEXCHUS", "DEXUSEU", "DEXJPUS", "DEXHKUS", "DEXUSUK", "DEXUSAL", "DEXUSCA"}},
+        };
+
+        auto it = fred_map.find(indicator);
+        if (it == fred_map.end()) {
+            WARN("[MacroData] 未知的 FRED 指标: {}", indicator);
+            return false;
+        }
+
+        cmd = fmt::format("python3 tools/fetch_fred_data.py --api-key {} --series", api_key);
+        for (const auto& sid : it->second) {
+            cmd += fmt::format(" {}", sid);
+        }
+        cmd += " --json";
+    } else {
+        // akshare 指标: 调用 fetch_macro_data.py
+        cmd = fmt::format("python3 tools/fetch_macro_data.py --indicator {} --country {} --json", indicator, country);
+    }
+
     String output;
     bool success = RunCommand(cmd, output);
     if (!success || output.empty()) {
@@ -510,7 +556,39 @@ bool FetchMacroFromPython(const String& country, const String& indicator, nlohma
         return false;
     }
     try {
-        out = nlohmann::json::parse(output);
+        auto parsed = nlohmann::json::parse(output);
+
+        if (IsFredIndicator(indicator)) {
+            // FRED 输出格式: {"updated_at": "...", "series": [{"series_id": "...", "data": [...]}]}
+            // 转换为标准格式: {"data": [{"date": "...", "value": ...}], ...}
+            if (!parsed.contains("series") || !parsed["series"].is_array()) {
+                WARN("[MacroData] FRED 输出格式错误");
+                return false;
+            }
+
+            nlohmann::json data_array = nlohmann::json::array();
+            const auto& series_arr = parsed["series"];
+            bool multi = (series_arr.size() > 1);
+
+            for (const auto& s : series_arr) {
+                if (!s.contains("data")) continue;
+                String sid = s.value("series_id", "");
+                for (const auto& item : s["data"]) {
+                    nlohmann::json entry;
+                    entry["date"] = item.value("date", "");
+                    entry["value"] = item.value("value", 0.0);
+                    if (multi) entry["series_id"] = sid;
+                    data_array.push_back(entry);
+                }
+            }
+
+            out["data"] = data_array;
+            out["updated_at"] = parsed.value("updated_at", "");
+            return true;
+        }
+
+        // akshare 格式: {"data": [...], "name": "...", ...}
+        out = parsed;
         return out.contains("data") && out["data"].is_array();
     }
     catch (const std::exception& e) {
@@ -546,7 +624,8 @@ bool FetchMacroData(
 
     nlohmann::json cached_data;
     bool cache_ok = ReadMacroCache(db_path, country, indicator, cached_data);
-    bool cache_expired = !cache_ok || IsMacroCacheExpired(cached_data);
+    bool is_fred = IsFredIndicator(indicator);
+    bool cache_expired = !cache_ok || IsMacroCacheExpired(cached_data, is_fred);
 
     nlohmann::json data;
     bool fetch_ok = false;

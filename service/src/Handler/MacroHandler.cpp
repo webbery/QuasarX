@@ -10,14 +10,33 @@ namespace fs = std::filesystem;
 
 // === 指标白名单 ===
 const Set<String> MacroHandler::VALID_INDICATORS = {
+    // akshare 指标
     "cpi", "ppi", "gdp", "pmi", "m2", "social_financing",
     "unemployment", "trade", "interest_rate", "retail_sales",
     "industrial_production", "fixed_asset_investment",
-    "consumer_confidence", "housing_starts", "nonfarm"
+    "consumer_confidence", "housing_starts", "nonfarm",
+    // FRED 指标
+    "sofr", "treasury_yield", "treasury_spread", "fx_rate",
 };
 
 const Set<String> MacroHandler::VALID_COUNTRIES = {
     "china", "usa", "global"
+};
+
+// === FRED 指标 → series ID 映射 ===
+const Map<String, std::vector<String>> MacroHandler::FRED_INDICATOR_MAP = {
+    {"sofr",            {"SOFR"}},
+    {"treasury_yield",  {"DGS2", "DGS5", "DGS10", "DGS30"}},
+    {"treasury_spread", {"T10Y2Y", "T10Y3M"}},
+    {"fx_rate",         {"DEXCHUS", "DEXUSEU", "DEXJPUS", "DEXHKUS", "DEXUSUK", "DEXUSAL", "DEXUSCA"}},
+};
+
+// === FRED 指标 → 显示名称 ===
+const Map<String, String> MacroHandler::FRED_INDICATOR_NAMES = {
+    {"sofr",            "SOFR 担保隔夜融资利率"},
+    {"treasury_yield",  "美国国债收益率 (2Y/5Y/10Y/30Y)"},
+    {"treasury_spread", "美国国债利差 (10Y-2Y / 10Y-3M)"},
+    {"fx_rate",         "主要货币兑美元汇率"},
 };
 
 MacroHandler::MacroHandler(Server* server) : HttpHandler(server) {
@@ -74,7 +93,7 @@ bool MacroHandler::SaveCache(const String& country, const String& indicator, con
     }
 }
 
-bool MacroHandler::IsCacheExpired(const nlohmann::json& cached) {
+bool MacroHandler::IsCacheExpired(const nlohmann::json& cached, bool is_fred) {
     if (!cached.contains("updated_at")) {
         return true;  // 没有时间戳，视为过期
     }
@@ -94,11 +113,13 @@ bool MacroHandler::IsCacheExpired(const nlohmann::json& cached) {
     auto now = std::chrono::system_clock::now();
     time_t now_t = std::chrono::system_clock::to_time_t(now);
 
-    return (now_t - cache_time) > CACHE_TTL_SECONDS;
+    // FRED 数据使用更短的缓存时间 (1天 vs 7天)
+    int ttl = is_fred ? FRED_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS;
+    return (now_t - cache_time) > ttl;
 }
 
 // ============================================================
-// Python调用
+// Python调用 (akshare)
 // ============================================================
 
 bool MacroHandler::FetchFromPython(const String& country, const String& indicator,
@@ -127,6 +148,122 @@ bool MacroHandler::FetchFromPython(const String& country, const String& indicato
     }
     catch (const std::exception& e) {
         WARN("[MacroHandler] 解析Python输出失败: {}, output: {}", e.what(), output.substr(0, 200));
+        return false;
+    }
+}
+
+// ============================================================
+// FRED API 调用
+// ============================================================
+
+bool MacroHandler::IsFredIndicator(const String& indicator) const {
+    return FRED_INDICATOR_MAP.find(indicator) != FRED_INDICATOR_MAP.end();
+}
+
+std::vector<String> MacroHandler::GetFredSeriesIds(const String& indicator) const {
+    auto it = FRED_INDICATOR_MAP.find(indicator);
+    if (it != FRED_INDICATOR_MAP.end()) {
+        return it->second;
+    }
+    return {};
+}
+
+bool MacroHandler::FetchFromFred(const String& indicator,
+                                  const String& start, const String& end,
+                                  nlohmann::json& out) {
+    // 获取 FRED API Key
+    String api_key = _server->GetConfig().GetFredKey();
+    if (api_key.empty()) {
+        WARN("[MacroHandler] FRED API Key 未配置, 请在 config.json 的 server.fred_key 中设置");
+        return false;
+    }
+
+    // 获取该指标对应的所有 series ID
+    auto series_ids = GetFredSeriesIds(indicator);
+    if (series_ids.empty()) {
+        WARN("[MacroHandler] 未知的 FRED 指标: {}", indicator);
+        return false;
+    }
+
+    // 构建命令: python3 tools/fetch_fred_data.py --api-key KEY --series S1 S2 ... --json
+    String cmd = fmt::format("python3 tools/fetch_fred_data.py --api-key {}", api_key);
+    cmd += " --series";
+    for (const auto& sid : series_ids) {
+        cmd += fmt::format(" {}", sid);
+    }
+    cmd += " --json";
+
+    if (!start.empty()) {
+        cmd += fmt::format(" --start {}", start);
+    }
+    if (!end.empty()) {
+        cmd += fmt::format(" --end {}", end);
+    }
+
+    String output;
+    bool success = RunCommand(cmd, output);
+
+    if (!success || output.empty()) {
+        WARN("[MacroHandler] FRED Python脚本执行失败: {}", cmd);
+        return false;
+    }
+
+    try {
+        // 解析 fetch_fred_data.py 的 JSON 输出
+        // 格式: {"updated_at": "...", "series": [{"series_id": "...", "name": "...", "data": [...]}]}
+        auto fred_output = nlohmann::json::parse(output);
+
+        if (!fred_output.contains("series") || !fred_output["series"].is_array()) {
+            WARN("[MacroHandler] FRED 输出格式错误: 缺少 series 字段");
+            return false;
+        }
+
+        // 转换为 MacroHandler 标准格式
+        // 单 series: data = [{date, value}, ...]
+        // 多 series: data = [{date, series_id, value}, ...]
+        nlohmann::json data_array = nlohmann::json::array();
+        String combined_name;
+        String combined_unit;
+
+        const auto& series_array = fred_output["series"];
+        bool multi_series = (series_array.size() > 1);
+
+        for (const auto& s : series_array) {
+            String sid = s.value("series_id", "");
+            String sname = s.value("name", "");
+            String sunit = s.value("unit", "");
+
+            if (combined_name.empty()) {
+                combined_name = sname;
+                combined_unit = sunit;
+            }
+
+            if (!s.contains("data") || !s["data"].is_array()) continue;
+
+            for (const auto& item : s["data"]) {
+                nlohmann::json entry;
+                entry["date"] = item.value("date", "");
+                entry["value"] = item.value("value", 0.0);
+                if (multi_series) {
+                    entry["series_id"] = sid;
+                }
+                data_array.push_back(entry);
+            }
+        }
+
+        // 构造标准输出
+        auto name_it = FRED_INDICATOR_NAMES.find(indicator);
+        String display_name = (name_it != FRED_INDICATOR_NAMES.end()) ? name_it->second : combined_name;
+
+        out["name"] = display_name;
+        out["unit"] = combined_unit;
+        out["data"] = data_array;
+        out["updated_at"] = fred_output.value("updated_at", "");
+
+        return true;
+    }
+    catch (const std::exception& e) {
+        WARN("[MacroHandler] 解析FRED输出失败: {}, output: {}", e.what(), output.substr(0, 200));
         return false;
     }
 }
@@ -202,9 +339,11 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
     }
 
     try {
+        bool is_fred = IsFredIndicator(indicator);
+
         nlohmann::json cached_data;
         bool cache_ok = ReadCache(country, indicator, cached_data);
-        bool cache_expired = !cache_ok || IsCacheExpired(cached_data);
+        bool cache_expired = !cache_ok || IsCacheExpired(cached_data, is_fred);
 
         bool use_cache = cache_ok && !cache_expired && !refresh;
 
@@ -218,14 +357,21 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
             response["unit"] = cached_data.value("unit", "");
         }
         else {
-            // 调用Python获取新数据
-            INFO("[MacroHandler] 获取新数据: {}/{} (缓存{}{})",
+            // 获取新数据
+            INFO("[MacroHandler] 获取新数据: {}/{} (缓存{}{}, 数据源: {})",
                  country, indicator,
                  cache_ok ? "存在但" : "不存在",
-                 cache_expired ? "已过期" : "");
+                 cache_expired ? "已过期" : "",
+                 is_fred ? "FRED" : "akshare");
 
             nlohmann::json fresh_data;
-            bool fetch_ok = FetchFromPython(country, indicator, start, end, fresh_data);
+            bool fetch_ok = false;
+
+            if (is_fred) {
+                fetch_ok = FetchFromFred(indicator, start, end, fresh_data);
+            } else {
+                fetch_ok = FetchFromPython(country, indicator, start, end, fresh_data);
+            }
 
             if (fetch_ok) {
                 // 保存缓存
@@ -237,7 +383,7 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
                 response["unit"] = fresh_data.value("unit", "");
             }
             else if (cache_ok) {
-                // Python失败但有旧缓存，降级返回旧数据
+                // 获取失败但有旧缓存，降级返回旧数据
                 WARN("[MacroHandler] 获取新数据失败，降级使用旧缓存");
                 response["cached"] = true;
                 response["stale"] = true;
@@ -246,10 +392,12 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
                 response["unit"] = cached_data.value("unit", "");
             }
             else {
-                // 无缓存且Python失败
+                // 无缓存且获取失败
                 response["status"] = "error";
                 response["code"] = "FETCH_FAILED";
-                response["message"] = "获取宏观数据失败";
+                response["message"] = is_fred
+                    ? fmt::format("获取FRED数据失败 (指标: {})", indicator)
+                    : "获取宏观数据失败";
                 res.status = 500;
                 res.set_content(response.dump(), "application/json");
                 return;

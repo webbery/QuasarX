@@ -30,6 +30,13 @@
             >
                 <i class="fas fa-stream"></i> 期权数据
             </button>
+            <button
+                class="tab-btn"
+                :class="{ active: activeTab === 'macro' }"
+                @click="activeTab = 'macro'"
+            >
+                <i class="fas fa-globe"></i> 宏观数据
+            </button>
         </div>
 
         <!-- ═══════════ Tab: 行情数据 ═══════════ -->
@@ -859,6 +866,168 @@
             </div>
         </div>
 
+        <!-- ═══════════ Tab: 宏观数据 ═══════════ -->
+        <div v-show="activeTab === 'macro'" class="tab-content">
+            <div class="section-title">
+                <i class="fas fa-globe"></i> 宏观数据管理
+            </div>
+
+            <!-- 下载区 -->
+            <div class="download-section">
+                <div class="section-header" @click="macroDownloadExpanded = !macroDownloadExpanded">
+                    <div class="section-title">
+                        <i class="fas fa-download"></i> 数据下载
+                    </div>
+                    <i class="fas chevron-icon" :class="macroDownloadExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                </div>
+                <div v-show="macroDownloadExpanded" class="download-body">
+                    <div class="download-card">
+                        <div class="card-title"><i class="fas fa-chart-area"></i> 下载宏观指标</div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>国家</label>
+                                <select v-model="macroCountry" class="quote-select" @change="onMacroCountryChange">
+                                    <option value="china">中国</option>
+                                    <option value="usa">美国</option>
+                                    <option value="global">全球</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label>指标</label>
+                                <select v-model="macroIndicator" class="quote-select">
+                                    <option value="">请选择指标</option>
+                                    <option v-for="opt in filteredMacroOptions" :key="opt.indicator" :value="opt.indicator">
+                                        {{ opt.label }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>开始日期 (可选)</label>
+                                <input type="date" v-model="macroStartDate" />
+                            </div>
+                            <div class="input-group">
+                                <label>结束日期 (可选)</label>
+                                <input type="date" v-model="macroEndDate" />
+                            </div>
+                        </div>
+                        <div class="button-row">
+                            <button class="btn btn-primary" @click="onDownloadMacro" :disabled="macroDownloading || !macroIndicator">
+                                <i class="fas fa-download"></i>
+                                {{ macroDownloading ? '下载中...' : '下载数据' }}
+                            </button>
+                            <button class="btn" @click="onRefreshMacro" :disabled="macroDownloading || !macroIndicator">
+                                <i class="fas fa-sync-alt"></i> 强制刷新
+                            </button>
+                        </div>
+                        <div v-if="macroStatus" class="status-text" :class="{ 'status-error': macroStatus.includes('失败') }">
+                            {{ macroStatus }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 已缓存数据列表 -->
+            <div class="manage-section">
+                <div class="section-title">
+                    <i class="fas fa-database"></i> 已缓存的宏观数据
+                </div>
+
+                <div class="symbol-search-row">
+                    <div class="search-item">
+                        <span class="search-label">国家</span>
+                        <select v-model="macroFilterCountry" @change="loadMacroCacheList">
+                            <option value="">全部</option>
+                            <option value="china">中国</option>
+                            <option value="usa">美国</option>
+                            <option value="global">全球</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary btn-sm" @click="loadMacroCacheList" :disabled="loadingMacroCache">
+                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingMacroCache }"></i> 刷新
+                    </button>
+                    <button class="btn-danger btn-sm" @click="onClearAllMacroCache" :disabled="clearingMacroCache || macroCacheList.length === 0">
+                        <i class="fas fa-trash"></i> 清空所有缓存
+                    </button>
+                </div>
+
+                <div v-if="loadingMacroCache" class="loading-text">
+                    <i class="fas fa-spinner fa-spin"></i> 加载中...
+                </div>
+                <div v-else-if="macroCacheList.length === 0" class="empty-text">
+                    <i class="fas fa-info-circle"></i> 暂无已缓存的宏观数据
+                </div>
+                <div v-else class="quote-data-table">
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead class="sticky-header">
+                                <tr>
+                                    <th>国家</th>
+                                    <th>指标</th>
+                                    <th>数据条数</th>
+                                    <th>最后更新</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in macroCacheList" :key="`${item.country}/${item.indicator}`">
+                                    <td>{{ item.country_name }}</td>
+                                    <td>{{ item.indicator_name }}</td>
+                                    <td>{{ item.count?.toLocaleString() || '-' }}</td>
+                                    <td>{{ item.updated_at || '-' }}</td>
+                                    <td>
+                                        <button class="btn-info btn-xs" @click="onPreviewMacro(item)">
+                                            <i class="fas fa-eye"></i> 预览
+                                        </button>
+                                        <button class="btn-danger btn-xs" @click="onDeleteMacroCache(item)">
+                                            <i class="fas fa-trash"></i> 删除
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据预览弹窗 -->
+            <div v-if="macroPreviewVisible" class="finance-detail-overlay" @click.self="macroPreviewVisible = false">
+                <div class="finance-detail-dialog" style="width: 80%; max-width: 900px;">
+                    <div class="finance-detail-header">
+                        <span>{{ macroPreviewTitle }}</span>
+                        <button class="finance-detail-close" @click="macroPreviewVisible = false">&times;</button>
+                    </div>
+                    <div class="finance-detail-body">
+                        <div v-if="macroPreviewData.length === 0" class="empty-text">
+                            <i class="fas fa-info-circle"></i> 暂无数据
+                        </div>
+                        <div v-else class="table-scroll" style="max-height: 500px;">
+                            <table class="data-table">
+                                <thead class="sticky-header">
+                                    <tr>
+                                        <th>日期</th>
+                                        <th v-if="macroPreviewHasSeriesId">Series ID</th>
+                                        <th>值</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(row, i) in macroPreviewData.slice(0, 100)" :key="i">
+                                        <td>{{ row.date }}</td>
+                                        <td v-if="macroPreviewHasSeriesId">{{ row.series_id || '-' }}</td>
+                                        <td>{{ typeof row.value === 'number' ? row.value.toFixed(4) : row.value }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div v-if="macroPreviewData.length > 100" class="status-hint" style="margin-top: 10px;">
+                            <i class="fas fa-info-circle"></i> 仅显示前 100 条数据，共 {{ macroPreviewData.length }} 条
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <PromptDialog ref="promptDialogRef" />
     </div>
 </template>
@@ -880,7 +1049,7 @@ defineEmits(['load-version', 'strategy-click'])
 const promptDialogRef = ref<{ confirm: (opts: { title: string; message: string }) => Promise<boolean> } | null>(null)
 
 // Tab 状态
-const activeTab = ref<'quote' | 'finance' | 'dividend' | 'option'>('quote')
+const activeTab = ref<'quote' | 'finance' | 'dividend' | 'option' | 'macro'>('quote')
 const downloadExpanded = ref(true)
 
 // 登录状态
@@ -2873,6 +3042,287 @@ const onOptionDeleteAll = async () => {
         optionDeleting.value = false
     }
 }
+
+// ── 宏观数据状态 ──
+const macroCountry = ref('usa')
+const macroIndicator = ref('')
+const macroStartDate = ref('')
+const macroEndDate = ref('')
+const macroDownloading = ref(false)
+const macroStatus = ref('')
+const macroDownloadExpanded = ref(true)
+
+// 已缓存数据列表
+const macroCacheList = ref<any[]>([])
+const loadingMacroCache = ref(false)
+const clearingMacroCache = ref(false)
+const macroFilterCountry = ref('')
+
+// 数据预览
+const macroPreviewVisible = ref(false)
+const macroPreviewTitle = ref('')
+const macroPreviewData = ref<any[]>([])
+const macroPreviewHasSeriesId = ref(false)
+
+// 指标元数据（与 useMacroIndicators.ts 保持一致）
+const INDICATOR_META: Record<string, string> = {
+    cpi: 'CPI',
+    ppi: 'PPI',
+    gdp: 'GDP',
+    pmi: 'PMI',
+    m2: 'M2',
+    social_financing: '社融',
+    unemployment: '失业率',
+    trade: '贸易',
+    interest_rate: '利率',
+    retail_sales: '零售销售',
+    industrial_production: '工业增加值',
+    fixed_asset_investment: '固投',
+    consumer_confidence: '消费者信心',
+    housing_starts: '新屋开工',
+    nonfarm: '非农就业',
+    sofr: 'SOFR',
+    treasury_yield: '国债收益率',
+    treasury_spread: '国债利差',
+    fx_rate: '汇率',
+}
+
+const FRED_INDICATORS = new Set(['sofr', 'treasury_yield', 'treasury_spread', 'fx_rate'])
+const COMMON_INDICATORS = [
+    'cpi', 'ppi', 'gdp', 'pmi', 'm2', 'social_financing',
+    'unemployment', 'trade', 'interest_rate', 'retail_sales',
+    'industrial_production', 'fixed_asset_investment',
+    'consumer_confidence', 'housing_starts', 'nonfarm'
+]
+
+const COUNTRY_META: Record<string, string> = {
+    china: '中国',
+    usa: '美国',
+    global: '全球'
+}
+
+// 根据选择的国家过滤指标选项
+const filteredMacroOptions = computed(() => {
+    const options: { indicator: string; label: string }[] = []
+    const country = macroCountry.value
+
+    // 通用指标：所有国家都显示
+    for (const indicator of COMMON_INDICATORS) {
+        options.push({
+            indicator,
+            label: INDICATOR_META[indicator]
+        })
+    }
+
+    // FRED 指标：仅美国
+    if (country === 'usa') {
+        for (const indicator of FRED_INDICATORS) {
+            options.push({
+                indicator,
+                label: INDICATOR_META[indicator]
+            })
+        }
+    }
+
+    return options
+})
+
+// 切换国家时清空已选指标
+const onMacroCountryChange = () => {
+    macroIndicator.value = ''
+}
+
+// 下载宏观数据
+const onDownloadMacro = async () => {
+    if (!macroIndicator.value) {
+        macroStatus.value = '请选择指标'
+        return
+    }
+
+    macroDownloading.value = true
+    macroStatus.value = ''
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        const params: any = {
+            country: macroCountry.value,
+            indicator: macroIndicator.value
+        }
+        if (macroStartDate.value) params.start = macroStartDate.value
+        if (macroEndDate.value) params.end = macroEndDate.value
+
+        const response = await axios.get(`https://${server}/v0/market/macro`, {
+            params,
+            headers: { 'Authorization': token || '' }
+        })
+
+        const data = response.data
+        if (data.status === 'success') {
+            const count = data.count || 0
+            macroStatus.value = `下载成功：${count} 条数据`
+            await loadMacroCacheList()
+        } else {
+            macroStatus.value = `下载失败：${data.message || '未知错误'}`
+        }
+    } catch (err: any) {
+        macroStatus.value = `下载失败：${err.response?.data?.message || err.message}`
+    } finally {
+        macroDownloading.value = false
+    }
+}
+
+// 强制刷新（绕过缓存）
+const onRefreshMacro = async () => {
+    if (!macroIndicator.value) {
+        macroStatus.value = '请选择指标'
+        return
+    }
+
+    macroDownloading.value = true
+    macroStatus.value = ''
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        const params: any = {
+            country: macroCountry.value,
+            indicator: macroIndicator.value,
+            refresh: 'true'
+        }
+        if (macroStartDate.value) params.start = macroStartDate.value
+        if (macroEndDate.value) params.end = macroEndDate.value
+
+        const response = await axios.get(`https://${server}/v0/market/macro`, {
+            params,
+            headers: { 'Authorization': token || '' }
+        })
+
+        const data = response.data
+        if (data.status === 'success') {
+            const count = data.count || 0
+            macroStatus.value = `刷新成功：${count} 条数据`
+            await loadMacroCacheList()
+        } else {
+            macroStatus.value = `刷新失败：${data.message || '未知错误'}`
+        }
+    } catch (err: any) {
+        macroStatus.value = `刷新失败：${err.response?.data?.message || err.message}`
+    } finally {
+        macroDownloading.value = false
+    }
+}
+
+// 加载已缓存的宏观数据列表
+const loadMacroCacheList = async () => {
+    loadingMacroCache.value = true
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        // 通过遍历可能的国家/指标组合来检查缓存
+        // 由于后端没有提供列表 API，我们通过尝试获取每个指标来检查
+        const countries = macroFilterCountry.value ? [macroFilterCountry.value] : ['china', 'usa', 'global']
+        const allIndicators = [...COMMON_INDICATORS, ...Array.from(FRED_INDICATORS)]
+
+        const cacheList: any[] = []
+
+        for (const country of countries) {
+            const indicators = country === 'usa' ? allIndicators : COMMON_INDICATORS
+            for (const indicator of indicators) {
+                try {
+                    const response = await axios.get(`https://${server}/v0/market/macro`, {
+                        params: { country, indicator },
+                        headers: { 'Authorization': token || '' }
+                    })
+
+                    const data = response.data
+                    if (data.status === 'success' && data.count > 0) {
+                        cacheList.push({
+                            country,
+                            indicator,
+                            country_name: COUNTRY_META[country] || country,
+                            indicator_name: INDICATOR_META[indicator] || indicator,
+                            count: data.count,
+                            updated_at: data.updated_at || '',
+                            data: data.data || []
+                        })
+                    }
+                } catch (err) {
+                    // 忽略错误（可能是缓存不存在）
+                }
+            }
+        }
+
+        macroCacheList.value = cacheList
+    } catch (err: any) {
+        console.error('加载宏观数据缓存列表失败:', err)
+    } finally {
+        loadingMacroCache.value = false
+    }
+}
+
+// 预览宏观数据
+const onPreviewMacro = (item: any) => {
+    macroPreviewTitle.value = `${item.country_name} ${item.indicator_name}`
+    macroPreviewData.value = item.data || []
+    macroPreviewHasSeriesId.value = item.data?.some((d: any) => d.series_id) || false
+    macroPreviewVisible.value = true
+}
+
+// 删除单个宏观数据缓存
+const onDeleteMacroCache = async (item: any) => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认删除',
+        message: `确定要删除 ${item.country_name} ${item.indicator_name} 的缓存数据吗？`
+    })
+    if (!confirmed) return
+
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        // 后端没有提供删除单个宏观数据的 API，这里只是从列表中移除
+        // 实际删除需要手动删除文件或使用清空所有缓存
+        macroCacheList.value = macroCacheList.value.filter(
+            c => !(c.country === item.country && c.indicator === item.indicator)
+        )
+        macroStatus.value = '已从列表中移除（实际文件需手动删除）'
+    } catch (err: any) {
+        macroStatus.value = `删除失败：${err.response?.data?.message || err.message}`
+    }
+}
+
+// 清空所有宏观数据缓存
+const onClearAllMacroCache = async () => {
+    const confirmed = await promptDialogRef.value?.confirm({
+        title: '确认清空',
+        message: '确定要清空所有宏观数据缓存吗？此操作不可恢复！'
+    })
+    if (!confirmed) return
+
+    clearingMacroCache.value = true
+    const server = localStorage.getItem('remote')
+    const token = localStorage.getItem('token')
+
+    try {
+        // 后端没有提供清空宏观数据缓存的 API
+        // 这里只是清空列表显示
+        macroCacheList.value = []
+        macroStatus.value = '缓存列表已清空（实际文件需手动删除）'
+    } catch (err: any) {
+        macroStatus.value = `清空失败：${err.response?.data?.message || err.message}`
+    } finally {
+        clearingMacroCache.value = false
+    }
+}
+
+// 切换到宏观数据 tab 时自动加载缓存列表
+watch(activeTab, (newTab) => {
+    if (newTab === 'macro' && macroCacheList.value.length === 0) {
+        loadMacroCacheList()
+    }
+})
 </script>
 
 <style scoped>

@@ -64,7 +64,9 @@ public:
   void AddStockAccount(const std::string& name, const std::string& pwd);
 
   std::string GetLLMKey();
-  
+
+  std::string GetFredKey();
+
   std::string GetProductID();
 
   bool IsTestMode();

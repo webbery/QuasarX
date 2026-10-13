@@ -57,6 +57,7 @@
         },
         "jwt": null,
         "llmkey": null,
+        "fred_key": null,
         "notice": { "email": null },
         "passwd": null,
         "port": 0,

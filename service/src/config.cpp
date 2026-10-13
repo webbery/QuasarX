@@ -292,6 +292,13 @@ std::string ServerConfig::GetLLMKey() {
     return _config["server"]["llmkey"];
 }
 
+std::string ServerConfig::GetFredKey() {
+    if (!_config["server"].contains("fred_key")) return "";
+    auto& key = _config["server"]["fred_key"];
+    if (key.is_null()) return "";
+    return key.get<std::string>();
+}
+
 std::string ServerConfig::GetProductID() {
     auto& pid = _config["server"]["productID"];
     if (pid.is_null() || pid.empty()) return "";
@@ -335,6 +342,7 @@ void ServerConfig::Init()
         {"strategy", {}},
     };
     server["llmkey"] = "";
+    server["fred_key"] = "";
     server["jwt"] = "";
     server["notice"] = { {"email", ""} };
     server["passwd"] = "admin";
