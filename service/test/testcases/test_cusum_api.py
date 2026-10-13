@@ -1107,6 +1107,51 @@ def _prices_to_csv_lines(prices, start_date="2024-01-02"):
     return lines
 
 
+# 合成数据标的（模块级：class 级 fixture 拿不到 self，只能引用模块名）
+CALIB_SYMBOLS = {
+    "normal": {"symbol": "sz.800010", "mu": 0.0003, "sigma": 0.02, "n": 250, "seed": 42},
+    "high_vol": {"symbol": "sz.800011", "mu": 0.0001, "sigma": 0.05, "n": 250, "seed": 43},
+    "low_vol": {"symbol": "sz.800012", "mu": 0.0005, "sigma": 0.008, "n": 250, "seed": 44},
+}
+# 数据不足用例的专用标的（只有 6 根 bar，用于触发 404）
+CALIB_SHORT_SYMBOL = "sz.800013"
+
+
+def _delete_calib_symbols(symbols, headers):
+    """按 symbol 清空 stock_1d 中的全部 bar
+
+    注意：DELETE /v0/quote/data 只解析 **JSON body**，用 params=（query string）
+    会让 body 为空 → parse 失败 → 静默返回 400，清理形同虚设。
+    """
+    for symbol in symbols:
+        resp = requests.delete(f"{BASE_URL}/quote/data", json={
+            "action": "cleanup",
+            "table": "stock_1d",
+            "symbol": symbol,
+        }, headers=headers, verify=VERIFY_SSL)
+        assert resp.status_code == 200, \
+            f"清理 {symbol} 失败: status={resp.status_code}, body={resp.text}"
+
+
+@pytest.fixture(scope="class", autouse=True)
+def isolated_calib_symbols(auth_token):
+    """在整个校准测试类的前后各隔离一次标的，避免每个用例重复删/导
+
+    import 是 upsert，只覆盖 (symbol, datetime) 命中的行，不在本次日期范围内的
+    旧 bar 会原样残留。校准标的（sz.800010 等）与 session 级 fixture 导入的标准
+    行情共用，残留的旧 bar 会被拼进同一条价格序列，在拼接处产生大量伪收益率，
+    μ/σ 随之失真（表现为 C++ 与 Python 对不上），所以进类前必须清空。
+
+    类内每个标的的合成序列都由固定参数生成、完全确定，重复 import 只是对同一批
+    (symbol, datetime) 写入同样的值（幂等 upsert），因此逐用例清理没有必要。
+    """
+    headers = {"Authorization": auth_token}
+    symbols = [c["symbol"] for c in CALIB_SYMBOLS.values()] + [CALIB_SHORT_SYMBOL]
+    _delete_calib_symbols(symbols, headers)
+    yield
+    _delete_calib_symbols(symbols, headers)
+
+
 class TestCUSUMCalibration:
     """
     CUSUM 自适应参数校准测试（合成数据 + Python 对比）。
@@ -1123,23 +1168,15 @@ class TestCUSUMCalibration:
     MC_SIMULATIONS = 2000  # 测试用较少次数，加速
     BOOTSTRAP_ITERS = 500
 
-    # 合成数据标的
-    CALIB_SYMBOLS = {
-        "normal": {"symbol": "sz.800010", "mu": 0.0003, "sigma": 0.02, "n": 250, "seed": 42},
-        "high_vol": {"symbol": "sz.800011", "mu": 0.0001, "sigma": 0.05, "n": 250, "seed": 43},
-        "low_vol": {"symbol": "sz.800012", "mu": 0.0005, "sigma": 0.008, "n": 250, "seed": 44},
-    }
+    CALIB_SYMBOLS = CALIB_SYMBOLS
 
     @pytest.fixture(autouse=True)
     def setup(self, auth_token):
         self.token = auth_token
         self.headers = {"Authorization": self.token}
-        self._imported = []
-        yield
-        self._cleanup()
 
     def _import_synthetic_data(self, symbol, prices):
-        """导入合成价格数据到 DuckDB"""
+        """导入合成价格数据到 DuckDB（标的隔离由 isolated_calib_symbols 负责）"""
         lines = _prices_to_csv_lines(prices)
         resp = requests.post(f"{BASE_URL}/quote/data", json={
             "action": "import",
@@ -1150,18 +1187,6 @@ class TestCUSUMCalibration:
         }, headers=self.headers, verify=VERIFY_SSL)
         assert resp.status_code == 200, \
             f"导入合成数据失败: status={resp.status_code}, body={resp.text}"
-        self._imported.append(symbol)
-
-    def _cleanup(self):
-        """清理导入的合成数据"""
-        for symbol in self._imported:
-            try:
-                requests.delete(f"{BASE_URL}/quote/data", params={
-                    "table": "stock_1d",
-                    "symbol": symbol,
-                }, headers=self.headers, verify=VERIFY_SSL)
-            except Exception:
-                pass
 
     def _calibrate_via_api(self, symbols, start="2024-01-02", end="2024-12-31",
                            detectable_shift=0.5, target_arl0=500):
@@ -1382,7 +1407,7 @@ class TestCUSUMCalibration:
     def test_insufficient_data_returns_error(self):
         """数据不足时应返回错误"""
         # 导入只有 5 天的数据（少于 min_obs 最低要求）
-        symbol = "sz.800013"
+        symbol = CALIB_SHORT_SYMBOL
         prices = _generate_synthetic_prices(n=5, seed=99)
         self._import_synthetic_data(symbol, prices)
 

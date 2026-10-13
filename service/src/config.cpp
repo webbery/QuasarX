@@ -293,7 +293,9 @@ std::string ServerConfig::GetLLMKey() {
 }
 
 std::string ServerConfig::GetProductID() {
-    return _config["server"]["productID"];
+    auto& pid = _config["server"]["productID"];
+    if (pid.is_null() || pid.empty()) return "";
+    return pid;
 }
 
 bool ServerConfig::IsTestMode() {
