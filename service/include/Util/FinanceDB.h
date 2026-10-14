@@ -46,6 +46,29 @@ public:
 
     nlohmann::json queryAllDividends(int limit, int offset);
 
+    // === 宏观数据相关 ===
+    
+    /// 导入宏观数据（从 JSON 格式）
+    int importMacroJson(const String& country, 
+                        const String& indicator,
+                        const nlohmann::json& data);
+    
+    /// 查询宏观数据
+    nlohmann::json queryMacro(const String& country,
+                              const String& indicator,
+                              const String& start_date = "",
+                              const String& end_date = "",
+                              int limit = 500);
+    
+    /// 列出所有宏观数据（按 country + indicator 分组）
+    nlohmann::json listMacroData();
+    
+    /// 删除宏观数据
+    bool deleteMacroData(const String& country, const String& indicator);
+    
+    /// 获取宏观数据的最新更新时间
+    nlohmann::json queryMacroMetadata(const String& country, const String& indicator);
+
     struct DividendEvent {
         String symbol;
         time_t ex_dividend_date = 0;
@@ -84,6 +107,8 @@ private:
 
     void ensureTable(const String& category);
     void ensureDividendTable();
+    void ensureMacroTable();
+    void ensureMacroMetadataTable();
 
 public:
     ~FinanceDB();

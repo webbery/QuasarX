@@ -46,11 +46,10 @@ public:
     void get(const httplib::Request& req, httplib::Response& res) override;
 
 private:
-    // === 缓存相关 ===
-    String GetCachePath(const String& country, const String& indicator);
+    // === 缓存相关（已迁移到 DuckDB）===
     bool ReadCache(const String& country, const String& indicator, nlohmann::json& out);
     bool SaveCache(const String& country, const String& indicator, const nlohmann::json& data);
-    bool IsCacheExpired(const nlohmann::json& cached, bool is_fred = false);
+    bool IsCacheExpired(const String& country, const String& indicator, bool is_fred = false);
 
     // === Python调用 ===
     bool FetchFromPython(const String& country, const String& indicator,

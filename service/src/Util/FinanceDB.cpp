@@ -1350,3 +1350,229 @@ nlohmann::json FinanceDB::recalcAllAdjPrices() {
                 symbols.size(), total_bars, errors.size());
     return result;
 }
+
+// ═══════════════════════════════════════════════════════════
+//  宏观数据表
+// ═══════════════════════════════════════════════════════════
+
+void FinanceDB::ensureMacroTable() {
+    const char* sql = R"sql(
+        CREATE TABLE IF NOT EXISTS macro_data (
+            id          INTEGER,
+            country     VARCHAR(20) NOT NULL,
+            indicator   VARCHAR(50) NOT NULL,
+            stat_date   TIMESTAMP NOT NULL,
+            value       DOUBLE,
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(country, indicator, stat_date)
+        )
+    )sql";
+    exec_unsafe(sql);
+    
+    exec_unsafe("CREATE INDEX IF NOT EXISTS idx_macro_country_indicator "
+                "ON macro_data(country, indicator, stat_date DESC)");
+}
+
+void FinanceDB::ensureMacroMetadataTable() {
+    const char* sql = R"sql(
+        CREATE TABLE IF NOT EXISTS macro_metadata (
+            indicator   VARCHAR(50) PRIMARY KEY,
+            name        VARCHAR(200),
+            source      VARCHAR(50),
+            unit        VARCHAR(50),
+            frequency   VARCHAR(20)
+        )
+    )sql";
+    exec_unsafe(sql);
+}
+
+int FinanceDB::importMacroJson(const String& country, 
+                               const String& indicator,
+                               const nlohmann::json& data) {
+    if (!data.contains("data") || !data["data"].is_array()) {
+        SPDLOG_WARN("[FinanceDB] importMacroJson: invalid data format");
+        return -1;
+    }
+    
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    ensureMacroTable();
+    
+    int count = 0;
+    for (const auto& item : data["data"]) {
+        if (!item.contains("date") || !item.contains("value")) {
+            continue;
+        }
+        
+        String date = item["date"].get<String>();
+        double value = item["value"].get<double>();
+        
+        // 使用 INSERT OR REPLACE 处理重复数据
+        String sql = fmt::format(
+            "INSERT OR REPLACE INTO macro_data "
+            "(country, indicator, stat_date, value, updated_at) "
+            "VALUES ('{}', '{}', '{}', {}, CURRENT_TIMESTAMP)",
+            country, indicator, date, value
+        );
+        exec_unsafe(sql);
+        count++;
+    }
+    
+    SPDLOG_INFO("[FinanceDB] Imported {} macro records: {}/{}", 
+                count, country, indicator);
+    return count;
+}
+
+nlohmann::json FinanceDB::queryMacro(const String& country,
+                                     const String& indicator,
+                                     const String& start_date,
+                                     const String& end_date,
+                                     int limit) {
+    nlohmann::json result;
+    result["data"] = nlohmann::json::array();
+    
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+    
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    
+    String sql = fmt::format(
+        "SELECT CAST(stat_date AS VARCHAR), value FROM macro_data "
+        "WHERE country = '{}' AND indicator = '{}'",
+        country, indicator
+    );
+    
+    if (!start_date.empty()) {
+        sql += fmt::format(" AND stat_date >= '{}'", start_date);
+    }
+    if (!end_date.empty()) {
+        sql += fmt::format(" AND stat_date <= '{}'", end_date);
+    }
+    
+    sql += fmt::format(" ORDER BY stat_date DESC LIMIT {}", limit);
+    
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return result;
+    }
+    
+    idx_t row_count = duckdb_row_count(&res);
+    for (idx_t i = 0; i < row_count; i++) {
+        nlohmann::json item;
+        item["date"] = duckdb_value_varchar(&res, 0, i);
+        item["value"] = duckdb_value_double(&res, 1, i);
+        result["data"].push_back(item);
+    }
+    
+    duckdb_destroy_result(&res);
+    
+    result["country"] = country;
+    result["indicator"] = indicator;
+    result["count"] = result["data"].size();
+    
+    return result;
+}
+
+nlohmann::json FinanceDB::listMacroData() {
+    nlohmann::json result;
+    result["data"] = nlohmann::json::array();
+    
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+    
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    
+    const char* sql = 
+        "SELECT country, indicator, COUNT(*) as count, "
+        "MIN(CAST(stat_date AS VARCHAR)) as min_date, "
+        "MAX(CAST(stat_date AS VARCHAR)) as max_date "
+        "FROM macro_data "
+        "GROUP BY country, indicator "
+        "ORDER BY country, indicator";
+    
+    duckdb_result res;
+    if (duckdb_query(conn(), sql, &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return result;
+    }
+    
+    idx_t row_count = duckdb_row_count(&res);
+    for (idx_t i = 0; i < row_count; i++) {
+        nlohmann::json item;
+        item["country"] = duckdb_value_varchar(&res, 0, i);
+        item["indicator"] = duckdb_value_varchar(&res, 1, i);
+        item["count"] = duckdb_value_int32(&res, 2, i);
+        item["min_date"] = duckdb_value_varchar(&res, 3, i);
+        item["max_date"] = duckdb_value_varchar(&res, 4, i);
+        result["data"].push_back(item);
+    }
+    
+    duckdb_destroy_result(&res);
+    
+    return result;
+}
+
+bool FinanceDB::deleteMacroData(const String& country, const String& indicator) {
+    if (!isInitialized()) {
+        return false;
+    }
+    
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    
+    String sql = fmt::format(
+        "DELETE FROM macro_data WHERE country = '{}' AND indicator = '{}'",
+        country, indicator
+    );
+    
+    bool success = exec(sql);
+    SPDLOG_INFO("[FinanceDB] Deleted macro data: {}/{} (success={})", 
+                country, indicator, success);
+    return success;
+}
+
+nlohmann::json FinanceDB::queryMacroMetadata(const String& country, const String& indicator) {
+    nlohmann::json result;
+    
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+    
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    
+    // 查询该 country+indicator 的最新更新时间
+    String sql = fmt::format(
+        "SELECT MAX(CAST(updated_at AS VARCHAR)) as latest_update FROM macro_data "
+        "WHERE country = '{}' AND indicator = '{}'",
+        country, indicator
+    );
+    
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        duckdb_destroy_result(&res);
+        result["exists"] = false;
+        return result;
+    }
+    
+    idx_t row_count = duckdb_row_count(&res);
+    if (row_count == 0 || duckdb_value_is_null(&res, 0, 0)) {
+        duckdb_destroy_result(&res);
+        result["exists"] = false;
+        return result;
+    }
+    
+    result["exists"] = true;
+    result["latest_update"] = duckdb_value_varchar(&res, 0, 0);
+    
+    duckdb_destroy_result(&res);
+    
+    return result;
+}

@@ -1,4 +1,5 @@
 #include "Handler/MacroHandler.h"
+#include "Util/FinanceDB.h"
 #include "Util/log.h"
 #include "Util/system.h"
 #include "server.h"
@@ -43,65 +44,60 @@ MacroHandler::MacroHandler(Server* server) : HttpHandler(server) {
 }
 
 // ============================================================
-// 缓存相关
+// 缓存相关（已迁移到 DuckDB）
 // ============================================================
 
-String MacroHandler::GetCachePath(const String& country, const String& indicator) {
-    auto db_path = _server->GetConfig().GetDatabasePath();
-    return db_path + "/macro/" + country + "/" + indicator + ".json";
-}
-
 bool MacroHandler::ReadCache(const String& country, const String& indicator, nlohmann::json& out) {
-    String path = GetCachePath(country, indicator);
-    if (!fs::exists(path)) {
-        return false;
-    }
-
-    try {
-        std::ifstream ifs(path);
-        if (!ifs.is_open()) {
+    auto& financeDB = FinanceDB::instance();
+    if (!financeDB.isInitialized()) {
+        auto db_path = _server->GetConfig().GetDatabasePath();
+        if (!financeDB.init(db_path + "/finance", "finance.db")) {
+            WARN("[MacroHandler] 无法初始化 FinanceDB");
             return false;
         }
-        ifs >> out;
-        return out.contains("data") && out["data"].is_array();
     }
-    catch (const std::exception& e) {
-        WARN("[MacroHandler] 读取缓存失败: {}", e.what());
-        return false;
-    }
+    
+    out = financeDB.queryMacro(country, indicator);
+    return out.contains("data") && !out["data"].empty();
 }
 
 bool MacroHandler::SaveCache(const String& country, const String& indicator, const nlohmann::json& data) {
-    String path = GetCachePath(country, indicator);
-    String dir = fs::path(path).parent_path().string();
-
-    try {
-        fs::create_directories(dir);
-        std::ofstream ofs(path);
-        if (!ofs.is_open()) {
-            WARN("[MacroHandler] 无法写入缓存: {}", path);
+    auto& financeDB = FinanceDB::instance();
+    if (!financeDB.isInitialized()) {
+        auto db_path = _server->GetConfig().GetDatabasePath();
+        if (!financeDB.init(db_path + "/finance", "finance.db")) {
+            WARN("[MacroHandler] 无法初始化 FinanceDB");
             return false;
         }
-        ofs << data.dump(2);
-        ofs.close();
-        INFO("[MacroHandler] 缓存已保存: {}", path);
-        return true;
     }
-    catch (const std::exception& e) {
-        WARN("[MacroHandler] 保存缓存失败: {}", e.what());
-        return false;
+    
+    int count = financeDB.importMacroJson(country, indicator, data);
+    if (count > 0) {
+        INFO("[MacroHandler] 已保存 {} 条宏观数据到 DuckDB: {}/{}", 
+             count, country, indicator);
     }
+    return count > 0;
 }
 
-bool MacroHandler::IsCacheExpired(const nlohmann::json& cached, bool is_fred) {
-    if (!cached.contains("updated_at")) {
-        return true;  // 没有时间戳，视为过期
+bool MacroHandler::IsCacheExpired(const String& country, const String& indicator, bool is_fred) {
+    auto& financeDB = FinanceDB::instance();
+    if (!financeDB.isInitialized()) {
+        return true;  // 未初始化，视为过期
     }
-
-    String updated_at = cached["updated_at"];
-    // 解析 ISO 8601: "2026-06-02T13:30:00"
+    
+    auto metadata = financeDB.queryMacroMetadata(country, indicator);
+    if (!metadata.value("exists", false)) {
+        return true;  // 从未导入过
+    }
+    
+    String updated_at_str = metadata.value("latest_update", "");
+    if (updated_at_str.empty()) {
+        return true;
+    }
+    
+    // 解析时间戳（简化处理，假设格式为 "2024-01-01 12:00:00"）
     struct tm tm_val = {};
-    if (sscanf(updated_at.c_str(), "%d-%d-%dT%d:%d:%d",
+    if (sscanf(updated_at_str.c_str(), "%d-%d-%d %d:%d:%d",
                &tm_val.tm_year, &tm_val.tm_mon, &tm_val.tm_mday,
                &tm_val.tm_hour, &tm_val.tm_min, &tm_val.tm_sec) != 6) {
         return true;  // 解析失败，视为过期
@@ -109,11 +105,10 @@ bool MacroHandler::IsCacheExpired(const nlohmann::json& cached, bool is_fred) {
     tm_val.tm_year -= 1900;
     tm_val.tm_mon -= 1;
     time_t cache_time = mktime(&tm_val);
-
+    
     auto now = std::chrono::system_clock::now();
     time_t now_t = std::chrono::system_clock::to_time_t(now);
-
-    // FRED 数据使用更短的缓存时间 (1天 vs 7天)
+    
     int ttl = is_fred ? FRED_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS;
     return (now_t - cache_time) > ttl;
 }
@@ -362,7 +357,7 @@ void MacroHandler::get(const httplib::Request& req, httplib::Response& res) {
 
         nlohmann::json cached_data;
         bool cache_ok = ReadCache(country, indicator, cached_data);
-        bool cache_expired = !cache_ok || IsCacheExpired(cached_data, is_fred);
+        bool cache_expired = !cache_ok || IsCacheExpired(country, indicator, is_fred);
 
         bool use_cache = cache_ok && !cache_expired && !refresh;
 
