@@ -928,35 +928,17 @@
                 </div>
             </div>
 
-            <!-- 已缓存数据列表 -->
+            <!-- 宏观数据列表 -->
             <div class="manage-section">
                 <div class="section-title">
-                    <i class="fas fa-database"></i> 已缓存的宏观数据
+                    <i class="fas fa-database"></i> 宏观数据
                 </div>
 
-                <div class="symbol-search-row">
-                    <div class="search-item">
-                        <span class="search-label">国家</span>
-                        <select v-model="macroFilterCountry" @change="loadMacroCacheList">
-                            <option value="">全部</option>
-                            <option value="china">中国</option>
-                            <option value="usa">美国</option>
-                            <option value="global">全球</option>
-                        </select>
-                    </div>
-                    <button class="btn btn-primary btn-sm" @click="loadMacroCacheList" :disabled="loadingMacroCache">
-                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingMacroCache }"></i> 刷新
-                    </button>
-                    <button class="btn-danger btn-sm" @click="onClearAllMacroCache" :disabled="clearingMacroCache || macroCacheList.length === 0">
-                        <i class="fas fa-trash"></i> 清空所有缓存
-                    </button>
-                </div>
-
-                <div v-if="loadingMacroCache" class="loading-text">
+                <div v-if="loadingMacroData" class="loading-text">
                     <i class="fas fa-spinner fa-spin"></i> 加载中...
                 </div>
-                <div v-else-if="macroCacheList.length === 0" class="empty-text">
-                    <i class="fas fa-info-circle"></i> 暂无已缓存的宏观数据
+                <div v-else-if="macroDataSummary.length === 0" class="empty-text">
+                    <i class="fas fa-info-circle"></i> 暂无宏观数据，请先下载
                 </div>
                 <div v-else class="quote-data-table">
                     <div class="table-scroll">
@@ -965,64 +947,26 @@
                                 <tr>
                                     <th>国家</th>
                                     <th>指标</th>
-                                    <th>数据条数</th>
-                                    <th>最后更新</th>
-                                    <th>操作</th>
+                                    <th>起始日期</th>
+                                    <th>结束日期</th>
+                                    <th>数据量</th>
+                                    <th>更新时间</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="item in macroCacheList" :key="`${item.country}/${item.indicator}`">
+                                <tr v-for="item in macroDataSummary" :key="`${item.country}/${item.indicator}`"
+                                    :class="{ 'row-selected': selectedMacroKey === `${item.country}/${item.indicator}` }"
+                                    @click="onMacroRowClick(item)"
+                                    style="cursor: pointer;">
                                     <td>{{ item.country_name }}</td>
                                     <td>{{ item.indicator_name }}</td>
+                                    <td>{{ item.start_date || '-' }}</td>
+                                    <td>{{ item.end_date || '-' }}</td>
                                     <td>{{ item.count?.toLocaleString() || '-' }}</td>
                                     <td>{{ item.updated_at || '-' }}</td>
-                                    <td>
-                                        <button class="btn-info btn-xs" @click="onPreviewMacro(item)">
-                                            <i class="fas fa-eye"></i> 预览
-                                        </button>
-                                        <button class="btn-danger btn-xs" @click="onDeleteMacroCache(item)">
-                                            <i class="fas fa-trash"></i> 删除
-                                        </button>
-                                    </td>
                                 </tr>
                             </tbody>
                         </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 数据预览弹窗 -->
-            <div v-if="macroPreviewVisible" class="finance-detail-overlay" @click.self="macroPreviewVisible = false">
-                <div class="finance-detail-dialog" style="width: 80%; max-width: 900px;">
-                    <div class="finance-detail-header">
-                        <span>{{ macroPreviewTitle }}</span>
-                        <button class="finance-detail-close" @click="macroPreviewVisible = false">&times;</button>
-                    </div>
-                    <div class="finance-detail-body">
-                        <div v-if="macroPreviewData.length === 0" class="empty-text">
-                            <i class="fas fa-info-circle"></i> 暂无数据
-                        </div>
-                        <div v-else class="table-scroll" style="max-height: 500px;">
-                            <table class="data-table">
-                                <thead class="sticky-header">
-                                    <tr>
-                                        <th>日期</th>
-                                        <th v-if="macroPreviewHasSeriesId">Series ID</th>
-                                        <th>值</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-for="(row, i) in macroPreviewData.slice(0, 100)" :key="i">
-                                        <td>{{ row.date }}</td>
-                                        <td v-if="macroPreviewHasSeriesId">{{ row.series_id || '-' }}</td>
-                                        <td>{{ typeof row.value === 'number' ? row.value.toFixed(4) : row.value }}</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <div v-if="macroPreviewData.length > 100" class="status-hint" style="margin-top: 10px;">
-                            <i class="fas fa-info-circle"></i> 仅显示前 100 条数据，共 {{ macroPreviewData.length }} 条
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1043,7 +987,7 @@ import { useHistoryStore } from '@/stores/history'
 import { extractSecuritiesFromFlowData } from '@/lib/strategyPool'
 
 // 声明接收父组件传递的事件（避免 Vue fragment 警告）
-defineEmits(['load-version', 'strategy-click'])
+const emit = defineEmits(['load-version', 'strategy-click', 'macro-data-click'])
 
 // PromptDialog 引用
 const promptDialogRef = ref<{ confirm: (opts: { title: string; message: string }) => Promise<boolean> } | null>(null)
@@ -1749,7 +1693,7 @@ onMounted(() => {
     // 只在首次挂载时注册 SSE handler（KeepAlive 不会触发重复注册）
     ipcRenderer.on('tick-download-progress', onTickProgress)
     sseService.on('quote_download', onQuoteDownloadEvent)
-    
+
     // 加载已下载的行情数据列表
     if (isLoggedIn.value) {
         loadQuoteData()
@@ -3052,17 +2996,10 @@ const macroDownloading = ref(false)
 const macroStatus = ref('')
 const macroDownloadExpanded = ref(true)
 
-// 已缓存数据列表
-const macroCacheList = ref<any[]>([])
-const loadingMacroCache = ref(false)
-const clearingMacroCache = ref(false)
-const macroFilterCountry = ref('')
-
-// 数据预览
-const macroPreviewVisible = ref(false)
-const macroPreviewTitle = ref('')
-const macroPreviewData = ref<any[]>([])
-const macroPreviewHasSeriesId = ref(false)
+// 宏观数据列表
+const macroDataSummary = ref<any[]>([])  // 列表数据（每个指标的摘要）
+const loadingMacroData = ref(false)
+const selectedMacroKey = ref('')  // 当前选中的指标 key
 
 // 指标元数据（与 useMacroIndicators.ts 保持一致）
 const INDICATOR_META: Record<string, string> = {
@@ -3161,7 +3098,8 @@ const onDownloadMacro = async () => {
         if (data.status === 'success') {
             const count = data.count || 0
             macroStatus.value = `下载成功：${count} 条数据`
-            await loadMacroCacheList()
+            // 更新列表数据
+            await loadMacroDataList()
         } else {
             macroStatus.value = `下载失败：${data.message || '未知错误'}`
         }
@@ -3202,7 +3140,8 @@ const onRefreshMacro = async () => {
         if (data.status === 'success') {
             const count = data.count || 0
             macroStatus.value = `刷新成功：${count} 条数据`
-            await loadMacroCacheList()
+            // 更新列表数据
+            await loadMacroDataList()
         } else {
             macroStatus.value = `刷新失败：${data.message || '未知错误'}`
         }
@@ -3213,19 +3152,16 @@ const onRefreshMacro = async () => {
     }
 }
 
-// 加载已缓存的宏观数据列表
-const loadMacroCacheList = async () => {
-    loadingMacroCache.value = true
+// 加载宏观数据列表（遍历所有指标检查缓存）
+const loadMacroDataList = async () => {
+    loadingMacroData.value = true
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
 
     try {
-        // 通过遍历可能的国家/指标组合来检查缓存
-        // 由于后端没有提供列表 API，我们通过尝试获取每个指标来检查
-        const countries = macroFilterCountry.value ? [macroFilterCountry.value] : ['china', 'usa', 'global']
+        const countries = ['china', 'usa', 'global']
         const allIndicators = [...COMMON_INDICATORS, ...Array.from(FRED_INDICATORS)]
-
-        const cacheList: any[] = []
+        const summaryList: any[] = []
 
         for (const country of countries) {
             const indicators = country === 'usa' ? allIndicators : COMMON_INDICATORS
@@ -3238,14 +3174,21 @@ const loadMacroCacheList = async () => {
 
                     const data = response.data
                     if (data.status === 'success' && data.count > 0) {
-                        cacheList.push({
+                        // 计算起始和结束日期
+                        const dates = data.data?.map((d: any) => d.date).filter(Boolean) || []
+                        const startDate = dates.length > 0 ? dates[0] : ''
+                        const endDate = dates.length > 0 ? dates[dates.length - 1] : ''
+
+                        summaryList.push({
                             country,
                             indicator,
                             country_name: COUNTRY_META[country] || country,
                             indicator_name: INDICATOR_META[indicator] || indicator,
                             count: data.count,
+                            start_date: startDate,
+                            end_date: endDate,
                             updated_at: data.updated_at || '',
-                            data: data.data || []
+                            data: data.data || []  // 保留完整数据用于详情展示
                         })
                     }
                 } catch (err) {
@@ -3254,75 +3197,45 @@ const loadMacroCacheList = async () => {
             }
         }
 
-        macroCacheList.value = cacheList
+        macroDataSummary.value = summaryList
     } catch (err: any) {
-        console.error('加载宏观数据缓存列表失败:', err)
+        console.error('加载宏观数据列表失败:', err)
     } finally {
-        loadingMacroCache.value = false
+        loadingMacroData.value = false
     }
 }
 
-// 预览宏观数据
-const onPreviewMacro = (item: any) => {
-    macroPreviewTitle.value = `${item.country_name} ${item.indicator_name}`
-    macroPreviewData.value = item.data || []
-    macroPreviewHasSeriesId.value = item.data?.some((d: any) => d.series_id) || false
-    macroPreviewVisible.value = true
-}
-
-// 删除单个宏观数据缓存
-const onDeleteMacroCache = async (item: any) => {
-    const confirmed = await promptDialogRef.value?.confirm({
-        title: '确认删除',
-        message: `确定要删除 ${item.country_name} ${item.indicator_name} 的缓存数据吗？`
+// 单击指标行，emit 到 App.vue 显示详情
+const onMacroRowClick = (item: any) => {
+    selectedMacroKey.value = `${item.country}/${item.indicator}`
+    // emit 事件到 App.vue，传递指标数据
+    emit('macro-data-click', {
+        country: item.country,
+        country_name: item.country_name,
+        indicator: item.indicator,
+        indicator_name: item.indicator_name,
+        data: item.data,
+        count: item.count,
+        start_date: item.start_date,
+        end_date: item.end_date
     })
-    if (!confirmed) return
-
-    const server = localStorage.getItem('remote')
-    const token = localStorage.getItem('token')
-
-    try {
-        // 后端没有提供删除单个宏观数据的 API，这里只是从列表中移除
-        // 实际删除需要手动删除文件或使用清空所有缓存
-        macroCacheList.value = macroCacheList.value.filter(
-            c => !(c.country === item.country && c.indicator === item.indicator)
-        )
-        macroStatus.value = '已从列表中移除（实际文件需手动删除）'
-    } catch (err: any) {
-        macroStatus.value = `删除失败：${err.response?.data?.message || err.message}`
-    }
 }
 
-// 清空所有宏观数据缓存
-const onClearAllMacroCache = async () => {
-    const confirmed = await promptDialogRef.value?.confirm({
-        title: '确认清空',
-        message: '确定要清空所有宏观数据缓存吗？此操作不可恢复！'
-    })
-    if (!confirmed) return
-
-    clearingMacroCache.value = true
-    const server = localStorage.getItem('remote')
-    const token = localStorage.getItem('token')
-
-    try {
-        // 后端没有提供清空宏观数据缓存的 API
-        // 这里只是清空列表显示
-        macroCacheList.value = []
-        macroStatus.value = '缓存列表已清空（实际文件需手动删除）'
-    } catch (err: any) {
-        macroStatus.value = `清空失败：${err.response?.data?.message || err.message}`
-    } finally {
-        clearingMacroCache.value = false
-    }
-}
-
-// 切换到宏观数据 tab 时自动加载缓存列表
-watch(activeTab, (newTab) => {
-    if (newTab === 'macro' && macroCacheList.value.length === 0) {
-        loadMacroCacheList()
+// 切换指标时自动加载列表
+watch(macroIndicator, async (newIndicator) => {
+    if (newIndicator && macroDataSummary.value.length === 0) {
+        // 首次选择指标时加载列表
+        await loadMacroDataList()
     }
 })
+
+// 切换到宏观数据 tab 时自动加载列表
+watch(activeTab, (newTab) => {
+    if (newTab === 'macro' && macroDataSummary.value.length === 0) {
+        loadMacroDataList()
+    }
+})
+
 </script>
 
 <style scoped>
