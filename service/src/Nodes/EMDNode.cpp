@@ -309,14 +309,17 @@ Vector<double> EMDNode::computeVolumeRegime(const Vector<Vector<double>>& imfs,
 
 NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context) {
     // OMP 并行遍历 _params 的 inputKey (每个 inputKey = 1 个 symbol).
-    // 并发安全前提:
-    //   1. 每个 inputKey 唯一对应一个 symbol, 写出的 context key 也是 symbol-prefixed,
-    //      不同线程只触碰各自的 key, 不会写同一个 key (没有真正的 map 冲突).
-    //   2. _rollingIMFs 在 Init 时已预填所有 inputKey (空 entry), Process 内不再 insert,
-    //      因此 std::unordered_map 不会因 rehash 而破坏并发安全.
-    //   3. 依赖的实际行为: 对已有 key 的 operator[]/find() + 赋值不会触发 rehash.
-    //      (标准未做硬性保证, 但 libstdc++/libc++ 都是这样; 若未来换成别的 STL 实现
-    //      出现并发 bug, 应在 DataContext 的 set/add 加 shared_mutex.)
+    //
+    // 并发约束：并行区内**只读** DataContext，所有 set/add 留到循环之后串行执行。
+    //   1. DataContext::add() 会经 AppendEpochValue 往 _lastWriteEpoch (std::map)
+    //      插入新 key，没有任何同步；预热期的 NaN 占位写正是这些 key 的首次 add，
+    //      多线程并发 insert 会破坏红黑树（崩溃栈
+    //      _Rb_tree_insert_and_rebalance / local_Rb_tree_rotate_left）。
+    //   2. 写入搬出并行区后，_outputs / _lastWriteEpoch 不再有并发结构修改，
+    //      并行区内只剩 .at() / contains() 读取。
+    //   3. _rollingIMFs 的并发安全：Init 已按 inputKey 预填所有 entry，并行区只用
+    //      .at() 只读查找、不 insert；每个线程只触碰自己 key 的 value。
+    //
     // schedule(dynamic, 1) 而非 static: 不同 window 数据收敛迭代数差异较大 (实测
     // 38 ~ 421 次), 静态分块会导致线程空闲不均.
     const size_t N = _params.size();
@@ -325,12 +328,10 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
     for (const auto& [k, _] : _params) inputKeys.push_back(k);
 
     // ---- 预填 DataContext._outputs 中所有 per-symbol 输出 key ----
-    // 必须先于 OMP 并行: warmup 阶段是这些 key 的首次写入时刻,
-    // 多线程并发 insert 到 std::unordered_map 会触发 rehash, 进而破坏其它线程
-    // 正在进行的 find/contains 访问 (崩溃根因).
-    // 一次性预填空 Vector 占位, 后续 set/add 都不再 insert, 也就不会再 rehash.
-    // 该步骤每 epoch 重复, 但已存在 key 的 set 退化为值赋值 (~50 ns/op),
-    // 总开销约 210 keys × 50 ns = 10 µs/epoch, 对全回测影响可忽略.
+    // 每个 epoch 先把输出 key 重置为空 Vector：
+    //   - warmup 期的 add() 在空序列上追加，等价于「每 epoch 一个 NaN」；
+    //   - 分解失败/Skip 的 symbol 下游也能读到 key（空序列），与旧行为一致。
+    // 串行执行，开销约 210 keys × 50 ns ≈ 10 µs/epoch。
     for (const auto& [inputKey, _] : _params) {
         String prefix;
         for (const auto& p : _symbolPrefixes) {
@@ -353,21 +354,83 @@ NodeProcessResult EMDNode::Process(const String& strategy, DataContext& context)
         }
     }
 
-    NodeProcessResult finalResult = NodeProcessResult::Success;
+    // ---- 并行计算：只写各自的 outs[idx] 槽位，不碰 context ----
+    Vector<SymbolOutput> outs(N);
+    Vector<NodeProcessResult> statuses(N, NodeProcessResult::Success);
     #pragma omp parallel for schedule(dynamic, 1)
     for (int idx = 0; idx < N; ++idx) {
-        NodeProcessResult r = processSymbol(inputKeys[idx], context);
-        if (r != NodeProcessResult::Success) {
-            #pragma omp critical
-            {
-                if (finalResult == NodeProcessResult::Success) finalResult = r;
+        statuses[idx] = processSymbol(inputKeys[idx], context, outs[idx]);
+    }
+
+    // ---- 串行发布：写入顺序与旧实现逐 key 一致 ----
+    NodeProcessResult finalResult = NodeProcessResult::Success;
+    for (size_t idx = 0; idx < N; ++idx) {
+        if (statuses[idx] != NodeProcessResult::Success &&
+            finalResult == NodeProcessResult::Success) {
+            finalResult = statuses[idx];
+        }
+        SymbolOutput& out = outs[idx];
+        if (out.prefix.empty()) continue;
+
+        if (out.warmup) {
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            for (int i = 0; i < _numIMFs; ++i) {
+                String outKey = out.prefix + _label + ".nimf_" + std::to_string(i);
+                if (context.exist(outKey)) {
+                    context.add(outKey, nan);
+                } else {
+                    context.set(outKey, Vector<double>(1, nan));
+                }
             }
+            if (_computeEnergyVelocity) {
+                String k = out.prefix + _label + ".energy_velocity";
+                if (context.exist(k)) context.add(k, nan);
+                else context.set(k, Vector<double>(1, nan));
+            }
+            if (_computeVolumeRegime) {
+                String k = out.prefix + _label + ".volume_regime";
+                if (context.exist(k)) context.add(k, nan);
+                else context.set(k, Vector<double>(1, nan));
+            }
+            continue;
+        }
+
+        if (!out.publish || !out.imfs_view) continue;
+
+        if (out.imfs_movable) {
+            // 全局模式：imfs_owned 是本 epoch 的临时结果，发布后不再需要 -> move
+            int i = 0;
+            for (auto& imf : out.imfs_owned) {
+                if (i >= _numIMFs) break;
+                context.set(out.prefix + _label + ".nimf_" + std::to_string(i),
+                            std::move(imf));
+                ++i;
+            }
+            out.imfs_owned.clear();
+        } else {
+            // 滚动模式：imfs_view 指向 _rollingIMFs 的持久状态，下一 epoch 还要用 -> 拷贝
+            int i = 0;
+            for (const auto& imf : *out.imfs_view) {
+                if (i >= _numIMFs) break;
+                context.set(out.prefix + _label + ".nimf_" + std::to_string(i), imf);
+                ++i;
+            }
+        }
+
+        if (_computeEnergyVelocity) {
+            context.set(out.prefix + _label + ".energy_velocity",
+                        std::move(out.energy_velocity));
+        }
+        if (out.has_volume_regime) {
+            context.set(out.prefix + _label + ".volume_regime",
+                        std::move(out.volume_regime));
         }
     }
     return finalResult;
 }
 
-NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& context) {
+NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& context,
+                                         SymbolOutput& out) {
     // 从 DataContext 获取输入时间序列（避免拷贝，用 const 引用）
     auto& value = context.get(inputKey);
     const Vector<double>* pInput = std::get_if<Vector<double>>(&value);
@@ -391,27 +454,8 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
                 break;
             }
         }
-        if (!prefix.empty()) {
-            double nan = std::numeric_limits<double>::quiet_NaN();
-            for (int i = 0; i < _numIMFs; ++i) {
-                String outKey = prefix + _label + ".nimf_" + std::to_string(i);
-                if (context.exist(outKey)) {
-                    context.add(outKey, nan);
-                } else {
-                    context.set(outKey, Vector<double>(1, nan));
-                }
-            }
-            if (_computeEnergyVelocity) {
-                String k = prefix + _label + ".energy_velocity";
-                if (context.exist(k)) context.add(k, nan);
-                else context.set(k, Vector<double>(1, nan));
-            }
-            if (_computeVolumeRegime) {
-                String k = prefix + _label + ".volume_regime";
-                if (context.exist(k)) context.add(k, nan);
-                else context.set(k, Vector<double>(1, nan));
-            }
-        }
+        out.prefix = prefix;
+        out.warmup = true;
         return NodeProcessResult::Success;
     }
 
@@ -431,8 +475,7 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
         WARN("EMDNode: cannot determine symbol prefix for inputKey '{}'", inputKey);
         return NodeProcessResult::Skip;
     }
-
-    Vector<Vector<double>> imfs;
+    out.prefix = prefix;
 
     if (_windowSize > 0) {
         // ===== 滚动模式：增量计算，只处理最新窗口 =====
@@ -441,11 +484,12 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
 
         if (stored.empty()) {
             // 首次：计算全部位置（bootstrap）
+            Vector<Vector<double>> imfs;
             if (!decomposeOne(input_data, imfs)) {
                 WARN("EMDNode decomposition failed for input {}", inputKey);
                 return NodeProcessResult::Skip;
             }
-            stored = imfs;
+            stored = std::move(imfs);   // 分解结果直接搬进持久状态，不拷贝
         } else {
             // 后续 epoch：只计算最新一个窗口（O(1) 而非 O(n)）
             const int w = _windowSize;
@@ -485,41 +529,43 @@ NodeProcessResult EMDNode::processSymbol(const String& inputKey, DataContext& co
                     : (stored[k].empty() ? 0.0 : stored[k].back());
                 stored[k].push_back(val);
             }
-            imfs = stored;
         }
+
+        // 直接指向持久状态：整段历史不再拷进 SymbolOutput
+        out.imfs_view = &stored;
     } else {
         // ===== 全局模式：每次完整分解 =====
+        Vector<Vector<double>> imfs;
         if (!decomposeOne(input_data, imfs)) {
             WARN("EMDNode decomposition failed for input {}", inputKey);
             return NodeProcessResult::Skip;
         }
+        out.imfs_owned = std::move(imfs);
+        out.imfs_view = &out.imfs_owned;
+        out.imfs_movable = true;
     }
 
-    // 写入 per-symbol IMF 输出: {symbol}.label.nimf_N
-    int idx = 0;
-    for (auto& imf : imfs) {
-        if (idx >= _numIMFs) break;
-        String outKey = prefix + _label + ".nimf_" + std::to_string(idx);
-        context.set(outKey, imf);
-        ++idx;
-    }
+    const Vector<Vector<double>>& imfs = *out.imfs_view;
 
-    // 计算衍生特征（如果启用）
+    // 计算衍生特征（如果启用）：返回值是现算的新序列，发布时直接 move 进 context
     if (_computeEnergyVelocity) {
-        auto energy_vel = computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
-        context.set(prefix + _label + ".energy_velocity", energy_vel);
+        out.energy_velocity =
+            computeEnergyVelocity(imfs, _windowSize > 0 ? _windowSize : 20);
     }
     if (_computeVolumeRegime) {
         // 从当前 inputKey 推导同 symbol 的 volume key
         String volKey = prefix + "volume";
         try {
             const auto& vol = context.get<Vector<double>>(volKey);
-            auto vol_regime = computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);
-            context.set(prefix + _label + ".volume_regime", vol_regime);
+            out.volume_regime =
+                computeVolumeRegime(imfs, vol, _windowSize > 0 ? _windowSize : 20);
+            out.has_volume_regime = true;
         } catch (...) {
             WARN("EMDNode: volume_regime requested but no volume input found for {}", prefix);
         }
     }
+
+    out.publish = true;
     return NodeProcessResult::Success;
 }
 

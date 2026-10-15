@@ -199,6 +199,22 @@ public:
     // context_t& get(const String& name); 
     // const context_t& get(const String& name) const;
 
+    // 两个重载并存，各管一类调用：
+    //
+    // 1) 转发引用 —— 不显式指定 T 的普通调用走这里。左值仍按拷贝赋值；右值
+    //    （临时对象、std::move 的结果）直接 move 进 variant，省掉一次整段序列的
+    //    拷贝。对 EMD 发布 nimf / energy_velocity 这类与回测等长的序列收益最明显，
+    //    也让调用方既有的 std::move(...) 真正生效（此前被 const T& 静默退化成拷贝）。
+    // 2) const T& —— 只在**显式指定 T** 且实参是左值/花括号初始化列表时可选，
+    //    例如 context.set<Vector<double>>(k, {0.0}) / context.set<double>(k, global_signal)。
+    //    T 被显式钉死成 Vector<double>/double 时转发重载会要求 rvalue 引用而无法绑定，
+    //    所以这一版必须保留；显式指定 T 的调用也正是花括号初始化列表唯一可行的写法。
+    template<typename T>
+    void set(const String& name, T&& f) {
+        PerfScope scope(_perf.enabled, _perf.set);
+        _outputs[name] = std::forward<T>(f);
+    }
+
     template<typename T>
     void set(const String& name, const T& f) {
         PerfScope scope(_perf.enabled, _perf.set);

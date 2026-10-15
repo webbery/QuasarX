@@ -34,6 +34,29 @@ public:
     virtual void UpdateLabel(const String& label) override;
 
 private:
+    // 单个 symbol 的计算结果（并行区内只写自己的槽位，不碰 DataContext）
+    //
+    // 为什么必须这样拆：DataContext::add() 会经 AppendEpochValue 往
+    // _lastWriteEpoch (std::map) 插入新 key，没有任何同步。EMD 的预热 NaN 占位
+    // 写是这些 key 的首次 add，多线程并发 insert 会破坏红黑树，实测崩溃栈为
+    // _Rb_tree_insert_and_rebalance / local_Rb_tree_rotate_left。
+    // 因此并行区只产出结果，context 的 set/add 全部留到并行区之后串行做。
+    struct SymbolOutput {
+        String prefix;                        // "{symbol}." ；空 = 未匹配到 symbol
+        bool warmup = false;                  // 预热期：按 NaN 占位路径发布
+        bool publish = false;                 // 是否发布正式输出（分解失败/Skip 时不发布）
+        // nimf 输出。滚动模式指向 _rollingIMFs 里的持久状态：每 epoch 只在尾部追加
+        // 一个值，整段历史（~n × numIMFs）不必再拷一份，发布完下一 epoch 继续用。
+        // 全局模式没有持久状态可指，持有本 epoch 的分解结果，发布时直接 move 进 context。
+        const Vector<Vector<double>>* imfs_view = nullptr;
+        Vector<Vector<double>> imfs_owned;
+        bool imfs_movable = false;            // true: imfs_view 指向 imfs_owned，可 move
+
+        Vector<double> energy_velocity;       // 本 epoch 现算的派生特征，发布后不再需要 -> move
+        Vector<double> volume_regime;
+        bool has_volume_regime = false;       // false = 没算（无 volume 输入），保持预填空 key
+    };
+
     // 对单个输入序列执行 EMD（全局或滚动）
     bool decomposeOne(const Vector<double>& input_data,
                       Vector<Vector<double>>& out_imfs) const;
@@ -44,7 +67,11 @@ private:
                                        const Vector<double>& volume, int window) const;
 
     // Process 中每个 symbol 的主体 (提取出来便于 OMP 并行)
-    NodeProcessResult processSymbol(const String& inputKey, DataContext& context);
+    //
+    // 并行区内只计算、只读 context，结果写进调用方给的 SymbolOutput 槽位；
+    // 真正的 context 写入由 Process 在并行区结束后串行执行（见 SymbolOutput）。
+    NodeProcessResult processSymbol(const String& inputKey, DataContext& context,
+                                    SymbolOutput& out);
 
     Server* _server;
     String _label;
