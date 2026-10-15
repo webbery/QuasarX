@@ -305,6 +305,54 @@ std::vector<DailyPositionRecord> DecisionDB::queryDailyPositions(
     return results;
 }
 
+bool DecisionDB::deleteDailyPosition(const std::string& strategy, symbol_t symbol, time_t date) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return false;
+
+    int64_t sym_encoded = encodeSymbol(symbol);
+    int64_t date_ts = static_cast<int64_t>(date);
+
+    std::string sql = fmt::format(
+        "DELETE FROM daily_positions WHERE strategy = '{}' AND symbol = {} AND date = {}",
+        strategy, sym_encoded, date_ts
+    );
+
+    if (!exec(sql)) {
+        WARN("[DecisionDB] deleteDailyPosition failed: strategy={}, symbol={}, date={}",
+             strategy, get_symbol(symbol), date_ts);
+        return false;
+    }
+    return true;
+}
+
+bool DecisionDB::queryDecisionInfo(int id, std::string& strategy, symbol_t& symbol, time_t& timestamp) {
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    if (!isInitialized()) return false;
+
+    std::string sql = fmt::format(
+        "SELECT strategy, symbol, epoch(timestamp) FROM decisions WHERE id = {}", id
+    );
+
+    bool found = false;
+    query(sql, [&](duckdb_result& result) -> bool {
+        int64_t row_count = duckdb_row_count(&result);
+        if (row_count > 0) {
+            const char* strat = duckdb_value_varchar(&result, 0, 0);
+            if (strat) {
+                strategy = strat;
+                duckdb_free((void*)strat);
+            }
+            int64_t sym_encoded = duckdb_value_int64(&result, 1, 0);
+            symbol = decodeSymbol(sym_encoded);
+            timestamp = static_cast<time_t>(duckdb_value_int64(&result, 2, 0));
+            found = true;
+        }
+        return true;
+    });
+
+    return found;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  成交流水查询（持仓恢复用）
 // ═══════════════════════════════════════════════════════════

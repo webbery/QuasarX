@@ -19,8 +19,6 @@ const nlohmann::json MacroInputNode::getParams() {
 }
 
 bool MacroInputNode::Init(const nlohmann::json& config) {
-    if (!QNode::Init(config)) return false;
-
     auto params = config.value("params", nlohmann::json::object());
 
     // 解析参数（支持英文 key 和中文 label）
@@ -41,8 +39,6 @@ bool MacroInputNode::Init(const nlohmann::json& config) {
 }
 
 void MacroInputNode::Prepare(const String& strategy, DataContext& context) {
-    QNode::Prepare(strategy, context);
-
     if (!loadMacroData()) {
         WARN("[MacroInputNode:{}] 加载宏观数据失败: {}/{}", _id, _country, _indicator);
     }

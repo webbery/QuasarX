@@ -39,6 +39,12 @@ public:
     std::vector<DailyPositionRecord> queryDailyPositions(const std::string& strategy,
                                                          time_t startDate = 0,
                                                          time_t endDate = 0);
+    
+    // 删除指定策略、标的和日期的持仓记录（用于取消决策时清理）
+    bool deleteDailyPosition(const std::string& strategy, symbol_t symbol, time_t date);
+    
+    // 根据决策ID查询决策的strategy、symbol和date（用于取消决策时定位持仓记录）
+    bool queryDecisionInfo(int id, std::string& strategy, symbol_t& symbol, time_t& timestamp);
 
     // 已成交决策（成交流水）：按标的分组，组内按成交时间正序。
     // TradeReport._side 0=买/1=卖，_flag 0=开仓/1=平仓，与 AddOrderBySide 一致。
