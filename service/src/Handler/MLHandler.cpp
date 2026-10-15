@@ -1415,7 +1415,6 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
 
     bst_ulong out_dim = 0;
     const float* out_data = nullptr;
-    size_t n_out;
 
     // 调试日志：调用前
     INFO("[ML SHAP] Before predict: booster={}, dmat={}, n_samples={}, n_features={}", 
@@ -1447,8 +1446,6 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
         INFO("[ML SHAP] {}", shapeStr);
     }
     
-    // out_shape[0] = 总元素数 = n_samples × out_dim；n_samples 沿用预设值
-    n_out = n_samples * out_dim;
 #else
     // XGBoost < 2.x: 旧版 (option, ntree_limit, training) 参数
     bst_ulong out_n = 0;
@@ -1458,7 +1455,6 @@ void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res)
                                        &out_n, &out_dim, &out_data_mut);
     out_data = out_data_mut;
     n_samples = out_n;
-    n_out = n_samples * out_dim;
 #endif
 
     XGDMatrixFree(dmat);

@@ -298,6 +298,32 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         return NodeProcessResult::Success;
     }
 
+    // 实盘策略（日终+实时）：非决策bar只更新内部状态，不触发止损
+    // 回测模式：每根bar都执行（计算真实触发时机）
+    // Why: 日终策略回放历史bar时，ProtectionNode不应根据历史价格误触发止损
+    //      实时策略每根bar都触发止损检查过于激进，应该在最后一根bar决策
+    bool isRealtimeStrategy = (_server->GetRunningMode() != RuningType::Backtest);
+    bool isDecisionBar = context.IsDecisionBar();
+    
+    if (isRealtimeStrategy && !isDecisionBar) {
+        // 非决策bar：只更新 highest/lowest price，不触发止损检查
+        for (auto& [symbol, info] : _entry_info) {
+            String close_key = get_symbol(symbol) + ".close";
+            if (context.exist(close_key)) {
+                auto price_var = context.get<Vector<double>>(close_key);
+                if (!price_var.empty()) {
+                    double current = price_var.back();
+                    if (current > 0) {
+                        info.highest_price = std::max(info.highest_price, current);
+                        info.lowest_price = std::min(info.lowest_price, current);
+                    }
+                }
+            }
+        }
+        return NodeProcessResult::Success;
+    }
+
+    // 回测模式 或 决策bar：正常执行止损检查
     int current_bar = context.GetEpoch();
     RiskTriggerType triggered = RiskTriggerType::None;
     symbol_t triggered_symbol;
@@ -327,7 +353,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         // 1. 检查止损: current < entry * (1 - percent)
         if (_sl.enabled) {
             double sl_price = info.avg_price * (1.0 - _sl.percent);
-            INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}", 
+            INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}",
                  get_symbol(symbol), info.avg_price, current_price, sl_price, _sl.enabled);
             if (current_price <= sl_price) {
                 INFO("[ProtectionNode] StopLoss TRIGGERED!");

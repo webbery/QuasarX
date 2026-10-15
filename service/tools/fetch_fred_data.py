@@ -61,12 +61,20 @@ SERIES_CATALOG = {
     "T10Y2Y": {"name": "10Y-2Y Treasury Spread 10年-2年利差", "category": "rate", "unit": "Percent"},
     "T10Y3M": {"name": "10Y-3M Treasury Spread 10年-3月利差", "category": "rate", "unit": "Percent"},
     "TEDRATE": {"name": "TED Spread TED利差", "category": "rate", "unit": "Percent"},
+
+    # === CPI / 物价 ===
+    # 注意：CPIAUCSL / CPILFESL 是【月度】序列，FRED 把观测标记在月初，
+    # 但 BLS 实际在次月中旬才公布。直接按标记日期对齐会引入约 1.5 个月的前视，
+    # 下游用 data_fred.py 统一后移到发布日再对齐交易日。
+    "CPIAUCSL": {"name": "CPI 消费者价格指数(季调)", "category": "cpi", "unit": "Index 1982-1984=100"},
+    "CPILFESL": {"name": "Core CPI 核心消费者价格指数(季调, 剔除食品能源)", "category": "cpi", "unit": "Index 1982-1984=100"},
 }
 
 # 按类别分组的 series ID
 CATEGORY_SERIES = {
     "exchange_rate": [k for k, v in SERIES_CATALOG.items() if v["category"] == "exchange_rate"],
     "rate": [k for k, v in SERIES_CATALOG.items() if v["category"] == "rate"],
+    "cpi": [k for k, v in SERIES_CATALOG.items() if v["category"] == "cpi"],
 }
 
 
@@ -283,7 +291,7 @@ def list_series():
         cat = info["category"]
         if cat != current_cat:
             current_cat = cat
-            cat_name = "汇率" if cat == "exchange_rate" else "利率"
+            cat_name = {"exchange_rate": "汇率", "rate": "利率", "cpi": "物价"}[cat]
             print(f"\n【{cat_name}】")
             print(f"{'-' * 70}")
 
@@ -319,6 +327,7 @@ def resolve_series_ids(args_type: str, args_series: list) -> list:
     elif args_type == "all":
         ids.extend(CATEGORY_SERIES["exchange_rate"])
         ids.extend(CATEGORY_SERIES["rate"])
+        ids.extend(CATEGORY_SERIES["cpi"])
 
     # 去重保序
     seen = set()
@@ -346,8 +355,8 @@ def main():
     )
     parser.add_argument("--api-key", type=str, help="FRED API Key (必填, 免费申请: https://fred.stlouisfed.org/docs/api/api_key.html)")
     parser.add_argument("--type", type=str, default=None,
-                        choices=["exchange_rate", "rate", "sofr", "all"],
-                        help="数据类型: exchange_rate(汇率), rate(利率), sofr(SOFR), all(全部)")
+                        choices=["exchange_rate", "rate", "cpi", "sofr", "all"],
+                        help="数据类型: exchange_rate(汇率), rate(利率), cpi(物价), sofr(SOFR), all(全部)")
     parser.add_argument("--series", nargs="+", type=str, help="自定义 series ID (如 DFF DGS10 SOFR)")
     parser.add_argument("--start", type=str, help="起始日期 (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, help="结束日期 (YYYY-MM-DD)")

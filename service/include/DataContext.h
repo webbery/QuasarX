@@ -25,6 +25,19 @@ enum class TradeAction: char {
     SELL,
     EXEC,
 };
+
+enum class ExecuteType : char {
+    ImmediatlyMarket,     // 立即执行(市价单)
+    ImmediatlyLimit,      // 立即执行(限价单)
+    VWAP,
+    TWAP,
+    Breakout,       // 突破入场
+    LA,             // LiquidityAdaptive 流动性自适应
+    MOC,
+    Manual,               // 决策型：策略只产意图，不实际下单
+    Shadow,               // 影子模式（未配置 type 时的默认值）
+};
+
 // 交易决策信号
 class TradeSignal {
 public:
@@ -259,6 +272,32 @@ public:
         return _isDecisionBar;
     }
 
+    // 策略执行类型（从ExecuteNode传递，供ProtectionNode判断邮件发送方式）
+    void SetExecuteType(ExecuteType type) {
+        _executeType = type;
+    }
+    ExecuteType GetExecuteType() const {
+        return _executeType;
+    }
+
+    // 紧急平仓记录（日终策略用，由ExecuteNode记录，ManualTiming读取）
+    struct EmergencyCloseRecord {
+        symbol_t _symbol;
+        RiskTriggerType _triggerType = RiskTriggerType::None;  // 使用枚举类型
+        double _cost = 0.0;
+        double _currentPrice = 0.0;
+        int64_t _quantity = 0;
+    };
+    void AddEmergencyClose(symbol_t sym, RiskTriggerType type, double cost, double current, int64_t qty) {
+        _emergencyCloses.push_back({sym, type, cost, current, qty});
+    }
+    const Vector<EmergencyCloseRecord>& GetEmergencyCloses() const { 
+        return _emergencyCloses; 
+    }
+    void ClearEmergencyCloses() { 
+        _emergencyCloses.clear(); 
+    }
+
     void SetTime(time_t t);
     const List<time_t>& GetTime() const;
     time_t Current();
@@ -358,6 +397,7 @@ public:
      */
     void CollectNumericOutputs(Map<String, Vector<double>>& target);
 
+    ExecuteType GetExecuteType() { return _executeType; }
 private:
     // 移除过期信号
     void cleanupExpiredSignals();
@@ -425,6 +465,12 @@ private:
 
     // 决策锁定标志（默认 true 兼容回测路径）
     bool _isDecisionBar = true;
+    
+    // 策略执行类型（从ExecuteNode传递）
+    ExecuteType _executeType = ExecuteType::Shadow;
+    
+    // 紧急平仓记录（日终策略用）
+    Vector<EmergencyCloseRecord> _emergencyCloses;
 
     // 策略初始化时设置的 Exchange 类型（支持股票+ETF 混合）
     Set<ExchangeType> _exchangeTypes;

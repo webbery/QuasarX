@@ -17,7 +17,6 @@ void CapitalRiskHandler::get(const httplib::Request& req, httplib::Response& res
         return;
     }
 
-    auto config = _riskManager->GetConfig();
     nlohmann::json response = _riskManager->ToJson();
 
     // 添加止损线数值

@@ -1,6 +1,7 @@
 #pragma once
 #include "MarketTiming.h"
 #include "json.hpp"
+#include "RiskContext.h"
 
 class Server;
 enum class TradeAction: char;
@@ -15,6 +16,15 @@ struct DecisionSnapshot {
     int _flag = 0;
     int _epoch = -1;
     bool _signalEvaluated = false;  // true=SignalNode 评估产生的；false=ExecuteNode 默认补 HOLD
+};
+
+// 紧急平仓记录（日终策略执行时由ExecuteNode记录）
+struct EmergencyCloseRecord {
+    symbol_t _symbol;
+    RiskTriggerType _triggerType = RiskTriggerType::None;
+    double _cost = 0.0;
+    double _currentPrice = 0.0;
+    int64_t _quantity = 0;
 };
 
 /**
@@ -39,7 +49,15 @@ public:
 
     // 访问当前累积的决策（SendSummaryEmail 调用前可用）
     const Map<symbol_t, DecisionSnapshot>& getDecisions() const { return _decisions; }
+    
+    // 紧急平仓记录管理（由ExecuteNode在日终策略执行时调用）
+    void AddEmergencyClose(symbol_t sym, RiskTriggerType type, double cost, double current, int64_t qty) {
+        _emergencyCloses.push_back({sym, type, cost, current, qty});
+    }
+    const Vector<EmergencyCloseRecord>& GetEmergencyCloses() const { return _emergencyCloses; }
+    void ClearEmergencyCloses() { _emergencyCloses.clear(); }
 
 private:
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策
+    Vector<EmergencyCloseRecord> _emergencyCloses;  // 紧急平仓记录（日终策略用）
 };

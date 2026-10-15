@@ -65,10 +65,56 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
     if (rc && rc->triggered && rc->action == RiskAction::Close) {
         if (_server->GetRunningMode() != RuningType::Backtest) {
             STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
-            // 实盘模式：发送风控触发邮件
-            String emailContent = std::format("[风控] {} 触发紧急平仓 (trigger={})",
-                strategy, to_string(rc->trigger_type));
-            _server->SendEmail(emailContent);
+            
+            // 收集被平仓的标的
+            Vector<String> closedSymbols;
+            auto& ap = _server->GetPosition("");
+            for (const auto& pos : ap._positions) {
+                if (pos._holds > 0) {
+                    closedSymbols.push_back(get_symbol(pos._symbol));
+                }
+            }
+            
+            // 根据ExecuteType决定邮件发送方式
+            ExecuteType execType = context.GetExecuteType();
+            if (execType == ExecuteType::Manual) {
+                // 日终策略：记录到context，由ManualTiming统一发送
+                for (const auto& pos : ap._positions) {
+                    if (pos._holds > 0) {
+                        context.AddEmergencyClose(
+                            pos._symbol,
+                            rc->trigger_type,  // 直接传枚举类型
+                            pos._price,
+                            0.0,  // currentPrice需要从context读取，这里先填0
+                            pos._holds
+                        );
+                    }
+                }
+                STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close recorded for daily strategy (symbols={})", 
+                    [&]() { 
+                        String s; 
+                        for (const auto& sym : closedSymbols) { 
+                            if (!s.empty()) s += ","; 
+                            s += sym; 
+                        } 
+                        return s; 
+                    }());
+            } else {
+                // 实时策略：立即发邮件
+                String symbolsStr;
+                for (const auto& sym : closedSymbols) {
+                    if (!symbolsStr.empty()) symbolsStr += ", ";
+                    symbolsStr += sym;
+                }
+                String emailContent = std::format(
+                    "[风控] {} 触发紧急平仓\n"
+                    "触发类型: {}\n"
+                    "平仓标的: {}",
+                    strategy,
+                    int(rc->trigger_type),
+                    symbolsStr);
+                _server->SendEmail(emailContent);
+            }
         } else {
             INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
         }
@@ -256,6 +302,11 @@ void ExecuteNode::Prepare(const String& strategy, DataContext& context)
     ISignalObserver* obs = new BasicSignalObserver(_server);
     obs->RegistTimingStrategy(_timing);
     context.RegistSignalObserver(obs);
+    
+    // 把ExecuteType传递给context，供ProtectionNode等节点使用
+    // Why: ProtectionNode需要知道策略类型以决定邮件发送方式
+    // （日终策略Manual的紧急平仓记录到context，实时策略立即发邮件）
+    context.SetExecuteType(_execType);
 }
 
 ITimingStrategy* ExecuteNode::GenerateTiming(ExecuteType type)

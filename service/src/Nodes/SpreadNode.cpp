@@ -1,7 +1,6 @@
 #include "Nodes/SpreadNode.h"
 #include "Util/log.h"
 #include <cmath>
-#include <numeric>
 
 SpreadNode::SpreadNode()
 : _method(SpreadMethod::SIMPLE_DIFF)
@@ -99,7 +98,7 @@ double SpreadNode::calculateRollingRegression(double priceA, double priceB) {
     
     // 计算均值
     double sumA = 0.0, sumB = 0.0;
-    for (size_t i = 0; i < _count; ++i) {
+    for (int i = 0; i < _count; ++i) {
         sumA += _priceABuffer[i];
         sumB += _priceBBuffer[i];
     }
@@ -108,7 +107,7 @@ double SpreadNode::calculateRollingRegression(double priceA, double priceB) {
     
     // 计算协方差和方差
     double covAB = 0.0, varB = 0.0;
-    for (size_t i = 0; i < _count; ++i) {
+    for (int i = 0; i < _count; ++i) {
         double diffA = _priceABuffer[i] - meanA;
         double diffB = _priceBBuffer[i] - meanB;
         covAB += diffA * diffB;
