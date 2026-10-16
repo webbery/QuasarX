@@ -24,6 +24,8 @@ public:
         return {_pools.begin(), _pools.end()};
     }
 private:
+    /// 确保可做空标的列表已加载（如果 allowShort=true）
+    void ensureMarginStockData();
 
     Server* _server;
     FormulaParser* _buyParser;
@@ -32,4 +34,5 @@ private:
     bool _allowShort = false;  // 是否允许做空
     String _buyExpression;     // 原始买入表达式（用于日志）
     String _sellExpression;    // 原始卖出表达式（用于日志）
+    Set<symbol_t> _shortableSymbols;  // 可做空标的集合（allowShort=true 时有效）
 };

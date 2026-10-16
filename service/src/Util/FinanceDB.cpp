@@ -132,6 +132,7 @@ FinanceDB::~FinanceDB() = default;
 
 void FinanceDB::ensureTables() {
     ensureDividendTable();
+    ensureMarginStockTable();
     // 类别表按需创建（importCsv 时调 ensureTable）
 }
 
@@ -1575,4 +1576,130 @@ nlohmann::json FinanceDB::queryMacroMetadata(const String& country, const String
     duckdb_destroy_result(&res);
     
     return result;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  可做空标的（融资融券标的）
+// ═══════════════════════════════════════════════════════════
+
+void FinanceDB::ensureMarginStockTable() {
+    const char* sql = R"sql(
+        CREATE TABLE IF NOT EXISTS margin_stock (
+            symbol      BIGINT NOT NULL,
+            exchange    VARCHAR(10) NOT NULL,
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(symbol)
+        )
+    )sql";
+    exec_unsafe(sql);
+
+    exec_unsafe("CREATE INDEX IF NOT EXISTS idx_margin_stock_exchange "
+                "ON margin_stock(exchange)");
+}
+
+int FinanceDB::importMarginStocks(const nlohmann::json& data) {
+    if (!data.contains("data") || !data["data"].is_array()) {
+        SPDLOG_WARN("[FinanceDB] importMarginStocks: invalid data format");
+        return -1;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+    ensureMarginStockTable();
+
+    // 全量刷新：先清空再导入
+    exec_unsafe("DELETE FROM margin_stock");
+
+    int count = 0;
+    for (const auto& item : data["data"]) {
+        if (!item.contains("code") || !item.contains("exchange")) {
+            continue;
+        }
+
+        String code = item["code"].get<String>();
+        String exchange = item["exchange"].get<String>();
+
+        int64_t sym_encoded = encodeSymbol(toInternalSymbol(code));
+
+        String sql = fmt::format(
+            "INSERT INTO margin_stock (symbol, exchange, updated_at) "
+            "VALUES ({}, '{}', CURRENT_TIMESTAMP)",
+            sym_encoded, exchange
+        );
+        exec_unsafe(sql);
+        count++;
+    }
+
+    SPDLOG_INFO("[FinanceDB] Imported {} margin stocks (shortable stocks)", count);
+    return count;
+}
+
+nlohmann::json FinanceDB::queryMarginStocks(const String& exchange) {
+    nlohmann::json result;
+    result["data"] = nlohmann::json::array();
+
+    if (!isInitialized()) {
+        result["error"] = "FinanceDB not initialized";
+        return result;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    String sql = "SELECT symbol, exchange, CAST(updated_at AS VARCHAR) FROM margin_stock";
+    if (!exchange.empty()) {
+        sql += fmt::format(" WHERE exchange = '{}'", exchange);
+    }
+    sql += " ORDER BY symbol";
+
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        const char* err = duckdb_result_error(&res);
+        result["error"] = fmt::format("Query failed: {}", err ? err : "unknown");
+        duckdb_destroy_result(&res);
+        return result;
+    }
+
+    idx_t row_count = duckdb_row_count(&res);
+    for (idx_t i = 0; i < row_count; i++) {
+        nlohmann::json item;
+        int64_t sym_encoded = duckdb_value_int64(&res, 0, i);
+        item["code"] = decodeSymbol(sym_encoded);
+        item["exchange"] = duckdb_value_varchar(&res, 1, i);
+        item["updated_at"] = duckdb_value_varchar(&res, 2, i);
+        result["data"].push_back(item);
+    }
+
+    duckdb_destroy_result(&res);
+
+    result["count"] = result["data"].size();
+    return result;
+}
+
+bool FinanceDB::isMarginStock(const String& symbol) {
+    if (!isInitialized()) {
+        return false;
+    }
+
+    int64_t sym_encoded = encodeSymbol(symbol);
+
+    std::lock_guard<std::recursive_mutex> lock(mtx());
+
+    String sql = fmt::format(
+        "SELECT COUNT(*) FROM margin_stock WHERE symbol = {}",
+        sym_encoded
+    );
+
+    duckdb_result res;
+    if (duckdb_query(conn(), sql.c_str(), &res) != DuckDBSuccess) {
+        duckdb_destroy_result(&res);
+        return false;
+    }
+
+    bool is_margin = false;
+    if (duckdb_row_count(&res) > 0) {
+        int count = duckdb_value_int32(&res, 0, 0);
+        is_margin = (count > 0);
+    }
+
+    duckdb_destroy_result(&res);
+    return is_margin;
 }

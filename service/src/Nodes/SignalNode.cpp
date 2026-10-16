@@ -3,6 +3,7 @@
 #include "ExchangeManager.h"
 #include "Interprecter/Stmt.h"
 #include "Util/log.h"
+#include "Util/FinanceDB.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
 #include "Bridge/SIM/StockHistorySimulation.h"
@@ -97,7 +98,77 @@ bool SignalNode::Init(const nlohmann::json& config) {
         _allowShort = config["params"]["allowShort"]["value"];
     }
 
+    // 如果允许做空，确保可做空标的列表已加载
+    if (_allowShort) {
+        ensureMarginStockData();
+    }
+
     return true;
+}
+
+void SignalNode::ensureMarginStockData() {
+    auto& financeDB = FinanceDB::instance();
+
+    // 检查 FinanceDB 是否已初始化
+    if (!financeDB.isInitialized()) {
+        auto db_path = _server->GetConfig().GetDatabasePath();
+        if (!financeDB.init(db_path + "/finance", "finance.db")) {
+            WARN("[SignalNode:{}] 无法初始化 FinanceDB，做空功能将被禁用", _id);
+            _allowShort = false;
+            return;
+        }
+    }
+
+    // 查询是否已有可做空标的数据
+    auto result = financeDB.queryMarginStocks();
+    bool hasData = result.contains("data") && result["data"].is_array() && !result["data"].empty();
+
+    if (!hasData) {
+        // 没有数据，调用 Python 脚本获取
+        INFO("[SignalNode:{}] 可做空标的列表为空，正在从交易所获取...", _id);
+
+        String cmd = "python3 tools/fetch_shortable_stocks.py";
+        String output;
+        bool success = RunCommand(cmd, output);
+
+        if (!success || output.empty()) {
+            WARN("[SignalNode:{}] 获取可做空标的列表失败，做空功能将被禁用", _id);
+            _allowShort = false;
+            return;
+        }
+
+        // 跳过可能的非 JSON 前缀
+        auto json_start = output.find('{');
+        if (json_start != std::string::npos) {
+            output = output.substr(json_start);
+        }
+
+        try {
+            nlohmann::json data = nlohmann::json::parse(output);
+            int count = financeDB.importMarginStocks(data);
+            if (count > 0) {
+                INFO("[SignalNode:{}] 已导入 {} 只可做空标的", _id, count);
+            } else {
+                WARN("[SignalNode:{}] 导入可做空标的列表失败，做空功能将被禁用", _id);
+                _allowShort = false;
+                return;
+            }
+        } catch (const std::exception& e) {
+            WARN("[SignalNode:{}] 解析可做空标的数据失败: {}", _id, e.what());
+            _allowShort = false;
+            return;
+        }
+    }
+
+    // 构建当前策略标的池中的可做空标的集合
+    for (const auto& sym : _pools) {
+        String symStr = get_symbol(sym);
+        if (financeDB.isMarginStock(symStr)) {
+            _shortableSymbols.insert(sym);
+        }
+    }
+
+    INFO("[SignalNode:{}] 策略标的池中可做空标的: {}/{}", _id, _shortableSymbols.size(), _pools.size());
 }
 
 NodeProcessResult SignalNode::Process(const String& strategy, DataContext& context)
@@ -157,14 +228,20 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
         }
     }
     if (!_allowShort) {
+        // 不允许做空：过滤所有无持仓标的的 SELL 信号
         for (auto it = sells.begin(); it != sells.end(); ++it) {
             if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
-                // if (_server->GetRunningMode() != RuningType::Backtest) {
-                //     STRATEGY_IMPORTANT(strategy, "[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
-                // } else {
-                //     IMPORTANT("[SignalNode] SELL signal for {} dropped: no position held (_allowShort=false)", get_symbol(it->first));
-                // }
                 it->second = TradeAction::HOLD;
+            }
+        }
+    } else {
+        // 允许做空：只允许对可做空标的（融资融券标的）开空仓
+        for (auto it = sells.begin(); it != sells.end(); ++it) {
+            if (it->second == TradeAction::SELL && !heldSymbols.count(it->first)) {
+                // 无持仓 + SELL = 尝试开空，检查是否可做空
+                if (!_shortableSymbols.count(it->first)) {
+                    it->second = TradeAction::HOLD;
+                }
             }
         }
     }

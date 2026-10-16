@@ -69,6 +69,18 @@ public:
     /// 获取宏观数据的最新更新时间
     nlohmann::json queryMacroMetadata(const String& country, const String& indicator);
 
+    // === 可做空标的（融资融券标的）===
+
+    /// 导入可做空标的列表
+    /// data 格式: {"data": [{"code": "sh.600000", "exchange": "SSE"}, ...]}
+    int importMarginStocks(const nlohmann::json& data);
+
+    /// 查询所有可做空标的（可按 exchange 过滤）
+    nlohmann::json queryMarginStocks(const String& exchange = "");
+
+    /// 查询指定标的是否可做空
+    bool isMarginStock(const String& symbol);
+
     struct DividendEvent {
         String symbol;
         time_t ex_dividend_date = 0;
@@ -109,6 +121,7 @@ private:
     void ensureDividendTable();
     void ensureMacroTable();
     void ensureMacroMetadataTable();
+    void ensureMarginStockTable();
 
 public:
     ~FinanceDB();
