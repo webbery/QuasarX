@@ -380,8 +380,8 @@ OptionExerciseRule exerciseRuleForExchange(const String& exchange);
 ExerciseDate computeExerciseDate(int year, int month, OptionExerciseRule rule,
                                  const Vector<String>& holidays = {});
 
-/// 给定 trade_date (year/month/day) 和 expiry 年月, 返回到行权日的天数
-/// 返回值 clamp 到 ≥1 (历史 trade_date 视作 1, 与现有 daysToExpiry 行为一致)
+/// 给定基准日期 (year/month/day) 和 expiry 年月, 返回到行权日的天数
+/// 不做 clamp: 行权日已过返回 0, 当天到期返回 0, 调用方按 >0 判定是否有效
 int daysToExercise(int trade_year, int trade_month, int trade_day,
                    int expiry_year, int expiry_month,
                    OptionExerciseRule rule,

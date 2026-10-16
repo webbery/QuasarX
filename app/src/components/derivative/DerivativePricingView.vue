@@ -103,7 +103,7 @@
         </button>
       </div>
 
-      <!-- 合约市场数据: 权利金 / 保证金 / 行权日 / dte / 合约单位 -->
+      <!-- 合约市场数据: 权利金 / 保证金 / 行权日 / dte_today / 合约单位 -->
       <div class="section" v-if="activeContract">
         <div class="section-title">
           合约市场数据
@@ -140,8 +140,8 @@
             </div>
             <div class="meta-item">
               <span class="meta-label">距行权 (dte)</span>
-              <span class="meta-value" :class="{ warn: activeMeta.dte > 0 && activeMeta.dte <= 7 }">
-                {{ activeMeta.dte > 0 ? `${activeMeta.dte} 天` : '—' }}
+              <span class="meta-value" :class="{ warn: activeMeta.dte_today > 0 && activeMeta.dte_today <= 7 }">
+                {{ activeMeta.dte_today > 0 ? `${activeMeta.dte_today} 天` : '—' }}
               </span>
             </div>
             <div class="meta-item">
@@ -153,7 +153,7 @@
             </div>
           </div>
           <div v-if="activeMeta.last_trade_date" class="meta-footnote">
-            数据基准日: {{ activeMeta.last_trade_date }}
+            行情基准日 {{ activeMeta.last_trade_date }} (权利金/标的价格/保证金) · dte 按当日计算
           </div>
         </template>
       </div>
@@ -261,7 +261,7 @@ const result = ref<PricingResult | null>(null)
 const multiResults = ref<PricingResult[]>([])
 const calculating = ref(false)
 const activeChart = ref('profit')
-// 选中合约的市场 meta (权利金/保证金/行权日/dte/合约单位)
+// 选中合约的市场 meta (权利金/保证金/行权日/dte_today/合约单位)
 const activeMeta = ref<OptionContractMeta | null>(null)
 const loadingMeta = ref(false)
 
@@ -315,7 +315,7 @@ function fillParamsFromContract(c: ContractInfo) {
       break
     }
   }
-  // 异步拉取最新一天 meta (权利金/保证金/行权日/dte/合约单位)
+  // 异步拉取最新一天 meta (权利金/保证金/行权日/dte_today/合约单位)
   loadContractMeta(c)
 }
 
@@ -693,7 +693,7 @@ onMounted(async () => {
   color: #8899bb;
 }
 
-/* 合约市场数据 (权利金/保证金/行权日/dte/合约单位) */
+/* 合约市场数据 (权利金/保证金/行权日/dte_today/合约单位) */
 .meta-loading {
   font-size: 12px;
   color: #8899bb;
@@ -739,7 +739,7 @@ onMounted(async () => {
 }
 
 .meta-value.warn {
-  color: #ffc107;  /* dte ≤ 7 天: 临期预警 */
+  color: #ffc107;  /* dte_today ≤ 7 天: 临期预警 */
 }
 
 .meta-unit {

@@ -87,7 +87,7 @@ export interface ContractInfo {
   count: number
 }
 
-// ── 单合约 meta (权利金/保证金/行权日/dte/合约单位) ──
+// ── 单合约 meta (权利金/保证金/行权日/dte_today/合约单位) ──
 //
 // 由后端 OptionDataDB::queryByContract/queryBySymbolId 在响应顶层 meta 字段返回
 // 数值字段在数据缺失时为 0 / "" — 前端按字段为 0 决定是否隐藏对应卡片
@@ -97,9 +97,9 @@ export interface OptionContractMeta {
   contract_unit: number    // 合约乘数 (CFFEX IO/HO=300, MO=100; ETF=10000)
   margin: number           // 卖出开仓义务仓保证金 (元/张)
   exercise_date: string    // 行权日 "YYYY-MM-DD"
-  dte: number              // 距行权日天数 (≥1)
+  dte_today: number        // 距行权日天数 (以系统当天为基准; 0 = 已到期)
   moneyness: string        // "ITM" / "ATM" / "OTM" / ""
-  last_trade_date: string  // 数据基准日 (与 meta 对应的 trade_date)
+  last_trade_date: string  // 快照基准日 (premium/spot/margin 对应的 trade_date)
 }
 
 export async function priceOption(req: PricingRequest): Promise<PricingResult> {

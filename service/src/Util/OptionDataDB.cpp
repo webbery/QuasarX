@@ -1,6 +1,7 @@
 #include "Util/OptionDataDB.h"
 #include "Util/system.h"
 #include "Util/finance.h"
+#include "Util/datetime.h"
 #include "Util/HolidayCalendar.h"
 #include "Util/QuoteDB.h"
 #include "Util/data.h"
@@ -16,7 +17,7 @@
 
 namespace fs = std::filesystem;
 
-// ── forward decl: 单合约查询响应顶层追加 meta 字段 (premium/spot/margin/exercise_date/dte) ──
+// ── forward decl: 单合约查询响应顶层追加 meta 字段 (premium/spot/margin/exercise_date/dte_today) ──
 //    完整定义见 listContracts 函数上方 (需要先拿到 data 才能算)
 static void appendContractMeta(nlohmann::json& result,
                                 const nlohmann::json::array_t& data,
@@ -591,14 +592,17 @@ nlohmann::json OptionDataDB::queryBySymbolId(int64_t symbol_id,
 //
 // 输入: result (顶层 json), data (日终 bar 数组, ASC 序), symbol_id
 // 输出: result["meta"] = {
-//   premium, spot, contract_unit, margin, exercise_date, dte, moneyness, last_trade_date
+//   premium, spot, contract_unit, margin, exercise_date, dte_today, moneyness, last_trade_date
 // }
 //
 // 取 data 末行作为"最新一天":
 //   - premium = close (A 股 ETF/CFFEX 期权 close 即可视作最新权利金买方报价)
 //   - spot    = QuoteDB 拉标的最新收盘价 (sh.<underlying> / sz.<underlying>)
-//   - 行权日 / dte 通过 finance::computeExerciseDate + daysToExercise
+//   - 行权日 通过 finance::computeExerciseDate, dte_today 通过 daysToExercise
 //   - 保证金通过 finance::computeOptionMargin
+//
+// dte_today 以系统当前日期为基准 (而非快照的 last_trade_date —— 快照日陈旧时
+// 会让 DTE 偏大); 其余字段仍是 last_trade_date 当天的快照。
 //
 // 任一前置依赖缺失 (无 underlying / 无 close / 无 spot) 时对应字段填 0 或空,
 // 不报错 — 调用方可按字段为 0 决定是否在前端隐藏该卡片。
@@ -611,7 +615,7 @@ static void appendContractMeta(nlohmann::json& result,
     meta["contract_unit"] = 0;
     meta["margin"] = 0.0;
     meta["exercise_date"] = "";   // "YYYY-MM-DD"
-    meta["dte"] = 0;              // days to exercise
+    meta["dte_today"] = 0;        // days to exercise (from today, 0 = 已到期)
     meta["moneyness"] = "";       // "ITM" / "ATM" / "OTM"
     meta["last_trade_date"] = "";
 
@@ -688,15 +692,19 @@ static void appendContractMeta(nlohmann::json& result,
              symbol_id, exchange, product, ed.year, ed.month, ed.day);
     }
 
-    // dte: 基于 last_trade_date 作为 today 基准 (历史快照时间语义, 与 finance 注释一致)
+    // dte_today: 以系统当前日期为基准。
+    // 不用 last_trade_date —— 期权日线可能停留在很久以前 (数据未更新),
+    // 用快照日当基准会让 DTE 偏大 (曾出现 快照 09-30 → 行权 10-28 显示 28 天, 实际只剩 12 天)。
+    // 已到期 (行权日已过) 返回 0, 调用方按 >0 判定有效。
+    String today = ToString(Now(), "%Y-%m-%d");
     int ty = 0, tm = 0, td = 0;
-    if (sscanf(last_date.c_str(), "%d-%d-%d", &ty, &tm, &td) == 3) {
-        meta["dte"] = finance::daysToExercise(ty, tm, td,
-                                              expiry_year, expiry_month, rule, cal);
-        INFO("[OptionDataDB] DTE calc: last_trade_date={}, exercise_date={}-{:02d}-{:02d}, "
-             "dte={}, _year={}, _month={}",
-             last_date, ed.year, ed.month, ed.day,
-             meta["dte"].get<int>(), (int)sym._year, (int)sym._month);
+    if (sscanf(today.c_str(), "%d-%d-%d", &ty, &tm, &td) == 3) {
+        meta["dte_today"] = finance::daysToExercise(ty, tm, td,
+                                                    expiry_year, expiry_month, rule, cal);
+        INFO("[OptionDataDB] DTE calc: today={}, exercise_date={}-{:02d}-{:02d}, "
+             "dte_today={}, last_trade_date={}, _year={}, _month={}",
+             today, ed.year, ed.month, ed.day,
+             meta["dte_today"].get<int>(), last_date, (int)sym._year, (int)sym._month);
     }
 
     // 合约乘数

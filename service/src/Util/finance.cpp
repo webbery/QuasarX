@@ -2054,7 +2054,7 @@ int daysToExercise(int trade_year, int trade_month, int trade_day,
         day{static_cast<unsigned>(ex.day)}
     }};
     long days = (exp_sd - trade_sd).count();
-    return static_cast<int>(std::max(days, 1L));
+    return static_cast<int>(days);
 }
 
 // ──────────────────────────────────────────────────────────────────────
