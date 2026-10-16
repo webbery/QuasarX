@@ -340,11 +340,13 @@ jobs:
 
       - name: Install test dependencies (Python)
         run: |
+          # duckdb 版本必须与服务端 libduckdb(v1.5.4) 一致 —— test/prepare.py 用它预灌 DuckDB
           pip install pytest requests pyyaml \
             numpy pandas scipy matplotlib statsmodels \
             xgboost==3.3.0 PyEMD empyrical-reloaded \
             vmdpy \
-            backtrader
+            backtrader \
+            duckdb==1.5.4
 
       - name: Create TLS certificates
         run: |
@@ -608,6 +610,11 @@ jobs:
             echo "=== Cleanup done ==="
           }
           trap cleanup EXIT
+
+          # 前置数据预灌：必须在服务启动前跑 —— DuckDB 是单写者，服务持有库文件后外部进程打不开。
+          # test/prepare.py 从 stock_hist_sim.json 读 server.db_path（= "data"，相对服务工作目录），
+          # 与下面的 ./QuantService 同在仓库根执行，解析到同一个 data/finance/finance.db。
+          python3 test/prepare.py --config stock_hist_sim.json
 
           nohup ./QuantService stock_hist_sim.json > service_test.log 2>&1 &
           TEST_PID=$!
