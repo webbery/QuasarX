@@ -294,7 +294,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     DEBUG_INFO("[ProtectionNode] Process: epoch={}, _entry_info.size={}", context.GetEpoch(), _entry_info.size());
 
     if (_entry_info.empty()) {
-        INFO("[ProtectionNode] _entry_info is empty, returning early");
+        DEBUG_INFO("[ProtectionNode] _entry_info is empty, returning early");
         return NodeProcessResult::Success;
     }
 
@@ -353,7 +353,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         // 1. 检查止损: current < entry * (1 - percent)
         if (_sl.enabled) {
             double sl_price = info.avg_price * (1.0 - _sl.percent);
-            INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}",
+            DEBUG_INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}",
                  get_symbol(symbol), info.avg_price, current_price, sl_price, _sl.enabled);
             if (current_price <= sl_price) {
                 INFO("[ProtectionNode] StopLoss TRIGGERED!");

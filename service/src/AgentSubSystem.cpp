@@ -1743,11 +1743,34 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             try {
                 for (auto node : flow._graph) node->Prepare(strategy, context);
 
-                // 日终策略优化：数据已窗口化（最近 kDailyLookback 根），
-                // 从窗口第 0 根完整回放以累积节点内部状态（EMD/CUSUM/MA 逐 bar 填充），
-                // 保证最新一根 bar 各窗口指标已 warmup。不再按 warmup 跳跃起跑——
-                // warmup 推断只覆盖 function 节点，会漏掉 EMD 等窗口型节点导致状态空。
+                // 日终策略优化：数据已窗口化（最近 kDailyLookback 根），只需回放
+                // warmup + extraBars 根即可让状态型节点（EMD 滚动分解/CUSUM/MA）
+                // 在最后一根 bar 完成预热，无需全量回放历史。
+                //
+                // warmup 由 InferWarmupEpochsFromConfig 按 DAG 最长路径推断，已覆盖
+                // function(range) / emd(windowSize) / hmm(warmup_period) 三类节点。
+                // 早先这里恒为 startBar=0，是因为当时的推断只认 function 节点且对
+                // 数字型 range 硬转字符串会抛异常，导致 warmup 返回 0、跳跃退化成
+                // "只喂 extraBars 根"，EMD 永远出不了 NaN 占位分支。该推断已修复。
+                //
+                // 防御：推断失败（<=0）或数据窗不足时退回全量回放。宁可慢，
+                // 也不能让决策 bar 读到空状态。
+                int warmup = 0;
+                if (auto* strategySys = _handle->GetStrategySystem()) {
+                    warmup = strategySys->GetWarmupEpochs(strategy);
+                }
+                constexpr size_t extraBars = 5;
                 size_t startBar = 0;
+                if (warmup > 0) {
+                    size_t feedBars = static_cast<size_t>(warmup) + extraBars;
+                    if (maxBars > feedBars) startBar = maxBars - feedBars;
+                }
+                INFO("[StartDaily] warmup={} epochs, maxBars={}, startBar={}, replaying {} bar(s)",
+                     warmup, maxBars, startBar, maxBars - startBar);
+                if (startBar == 0 && warmup <= 0) {
+                    WARN("[StartDaily] warmup inference unavailable, falling back to full replay "
+                         "of {} bars", maxBars);
+                }
 
                 uint64_t epoch = startBar;
                 bool success = true;
