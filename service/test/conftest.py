@@ -164,19 +164,60 @@ def upload_test_data(auth_api, is_backtest):
     # 数据目录搜索顺序：build/data/（测试合成数据） > 服务数据目录（生产数据）
     _csv_search_dirs = [_test_data_dir, data_dir]
 
-    # === 导入股票数据 (日线) ===
+    def _freq_names(root_name):
+        """收集 {root_name}/{freq}/ 下出现过的频率名（30m/5m/...），跨数据目录合并"""
+        names = set()
+        for d in _csv_search_dirs:
+            root = d / root_name
+            if root.is_dir():
+                names.update(p.name for p in root.iterdir() if p.is_dir())
+        return sorted(names)
+
+    def _freq_csv(root_name, freq, symbol):
+        """查找 {root_name}/{freq}/ 下的标的 CSV，找不到返回 None
+
+        兼容两种命名：合成数据用 {symbol}.csv（sz.900007.csv），
+        download_etf_bs.py 的产物用 CODE.EXCHANGE.csv（000423.SZ.csv）。
+        """
+        code, _, market = symbol.partition(".")
+        names = [symbol] + ([f"{code}.{market.upper()}"] if code else [])
+        for d in _csv_search_dirs:
+            for n in names:
+                p = d / root_name / freq / f"{n}.csv"
+                if p.exists():
+                    return p
+        return None
+
+    # === 导入股票数据 (日线 + 各分钟频) ===
+    stock_freqs = _freq_names("stock_hfq")
+    if stock_freqs:
+        print(f"[upload_test_data] 检测到股票分钟频数据: {stock_freqs}")
     for symbol in sorted(stock_symbols):
         hfq_path = _resolve_csv(f"A_hfq/{symbol}.csv", *_csv_search_dirs)
         org_path = _resolve_csv(f"AStock/{symbol}.csv", *_csv_search_dirs)
         if not hfq_path.exists():
-            print(f"  [SKIP] 股票 {symbol}: hfq CSV 不存在")
-            continue
-        ok = _import_csv(org_path, hfq_path, "stock_1d", symbol)
-        if ok:
-            imported_keys.append(("stock_1d", symbol))
-            success_count += 1
+            print(f"  [SKIP] 股票 {symbol}: 日线 hfq CSV 不存在")
         else:
-            fail_count += 1
+            ok = _import_csv(org_path, hfq_path, "stock_1d", symbol)
+            if ok:
+                imported_keys.append(("stock_1d", symbol))
+                success_count += 1
+            else:
+                fail_count += 1
+
+        # 分钟频：stock_hfq|stock_org/{freq}/{symbol}.csv → stock_{freq}
+        # 目录约定与 download_etf_bs.py --asset-type stock 的输出同构
+        for freq in stock_freqs:
+            freq_hfq = _freq_csv("stock_hfq", freq, symbol)
+            if freq_hfq is None:
+                continue
+            freq_org = _freq_csv("stock_org", freq, symbol)
+            table = f"stock_{freq}"
+            if _import_csv(freq_org, freq_hfq, table, symbol):
+                imported_keys.append((table, symbol))
+                success_count += 1
+            else:
+                fail_count += 1
 
     # === 导入 ETF 数据 (按频率) ===
     etf_hfq_dir = data_dir / "etf_hfq"

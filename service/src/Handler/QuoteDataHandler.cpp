@@ -218,16 +218,23 @@ bool QuoteDataHandler::exportCsv(const QuoteDataRequest& req,
             return false;
         }
 
+        // 日线表只输出日期；分钟表必须保留时分秒 —— 只留日期会把同一天的 N 根
+        // bar 压成同一个时间戳，导出的 CSV 无法再导回（QuoteDB 唯一键是
+        // (symbol, datetime)），也无法用来验证分钟粒度。
+        const std::string& t = req.table;
+        const bool daily = (t.size() >= 3 && t.compare(t.size() - 3, 3, "_1d") == 0) ||
+                           (t.size() >= 6 && t.compare(t.size() - 6, 6, "_daily") == 0);
+
         // 构建 CSV
         std::ostringstream oss;
-        oss << "date,open,high,low,close,volume,turnover,adj_open,adj_high,adj_low,adj_close\n";
+        oss << (daily ? "date" : "datetime")
+            << ",open,high,low,close,volume,turnover,adj_open,adj_high,adj_low,adj_close\n";
 
         for (const auto& bar : bars) {
-            // datetime 格式：只保留日期部分
-            std::string date_str = bar.datetime.substr(0, 10);
+            const std::string ts = daily ? bar.datetime.substr(0, 10) : bar.datetime;
 
             oss << fmt::format("{},{:.2f},{:.2f},{:.2f},{:.2f},{},{:.2f},{:.2f},{:.2f},{:.2f},{:.2f}\n",
-                             date_str,
+                             ts,
                              bar.open, bar.high, bar.low, bar.close,
                              bar.volume, bar.turnover,
                              bar.adj_open, bar.adj_high, bar.adj_low, bar.adj_close);

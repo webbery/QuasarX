@@ -33,6 +33,15 @@ HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 # 原始价格数据（用于实际交易撮合）
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
 
+# 股票分钟频数据路径（按频率分层，与 download_etf_bs.py --asset-type stock 的输出同构）
+# 导入侧：conftest.py 的 upload_test_data 扫 stock_hfq/{freq}/ → 表 stock_{freq}
+INTRADAY_HFQ_ROOT = SERVICE_DATA_DIR / "stock_hfq"
+INTRADAY_ORG_ROOT = SERVICE_DATA_DIR / "stock_org"
+INTRADAY_FREQ = "30m"
+# A 股 30 分钟 bar 的结束时刻（BaoStock 同口径），每日 8 根
+INTRADAY_BAR_TIMES = ["10:00", "10:30", "11:00", "11:30",
+                      "13:30", "14:00", "14:30", "15:00"]
+
 # 确保目录存在
 HFQ_DIR.mkdir(parents=True, exist_ok=True)
 ORG_DIR.mkdir(parents=True, exist_ok=True)
@@ -287,12 +296,15 @@ def generate_granger_cointegration_test_data():
 # CSV 数据生成
 # ============================================================
 
-def generate_csv(symbol, prices, start_date, hfq_path, org_path):
+def generate_csv(symbol, prices, start_date, hfq_path, org_path, daily_sink=None):
     """
     生成标准 CSV 格式的价格数据
     同时生成后复权（用于指标计算）和原始价格（用于交易撮合）
 
     格式：datetime,open,close,high,low,volume,turnover
+
+    daily_sink: 传入 list 时，逐日追加 {date, close, volume}，供分钟频派生复用，
+                保证同一 symbol 的日线与分钟频落在同一组交易日上。
 
     返回:
         opens: 开盘价序列
@@ -323,13 +335,80 @@ def generate_csv(symbol, prices, start_date, hfq_path, org_path):
             writer.writerow([date_str, round(open_price, 2), round(close, 2),
                              round(high, 2), round(low, 2), volume, turnover])
 
+            if daily_sink is not None:
+                daily_sink.append({"date": date_str, "close": round(close, 2),
+                                   "volume": volume})
+
             current_date += timedelta(days=1)
 
     # 原始价格数据：直接复制后复权数据（测试场景下两者相同）
     import shutil
     shutil.copy2(hfq_path, org_path)
-    
+
     return opens
+
+
+def generate_intraday_csv(symbol, daily_rows, freq=INTRADAY_FREQ, seed=42):
+    """
+    由日线派生分钟频 CSV → stock_hfq/{freq}/{symbol}.csv + stock_org/{freq}/{symbol}.csv
+
+    每日 8 根 30 分钟 bar（BaoStock 同口径，bar 记结束时刻）。约束：
+      - 当日最后一根 bar 的 close == 当日日线 close，volume 合计 == 当日日线 volume
+        （分钟频聚合成日线后与日线表一致，便于两个频率的用例互相对照）
+      - 同一 symbol 的分钟频与日线共用同一组交易日
+      - org 与 hfq 内容相同（测试场景不需要复权差异，与日线侧 generate_csv 的处理一致）
+
+    返回: (hfq_path, org_path)
+    """
+    rng = np.random.default_rng(seed)
+    bars_per_day = len(INTRADAY_BAR_TIMES)
+
+    hfq_path = INTRADAY_HFQ_ROOT / freq / f"{symbol}.csv"
+    org_path = INTRADAY_ORG_ROOT / freq / f"{symbol}.csv"
+    hfq_path.parent.mkdir(parents=True, exist_ok=True)
+    org_path.parent.mkdir(parents=True, exist_ok=True)
+
+    prev_close = None
+    with open(hfq_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['datetime', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
+
+        for row in daily_rows:
+            day_close, day_volume = row["close"], row["volume"]
+            # 当日第一根 bar 的开盘价 = 前一日收盘价（首日无前值，用当日收盘价近似）
+            start_price = prev_close if prev_close is not None else day_close
+
+            # 8 个收盘价在 start_price → day_close 之间均匀插值并叠加噪声；
+            # 末位强制落回 day_close，保证日内聚合与日线一致
+            closes = list(np.linspace(start_price, day_close, bars_per_day))
+            closes[-1] = day_close
+            jitter = rng.normal(0, 0.0015, bars_per_day - 1)
+            closes[:-1] = np.maximum(0.01, closes[:-1] * (1 + jitter))
+
+            # 日成交量均分到各 bar，末根吃掉取整余数，合计 == day_volume
+            volumes = [day_volume // bars_per_day] * bars_per_day
+            volumes[-1] += day_volume - sum(volumes)
+
+            prev_bar_close = start_price
+            for k, bar_time in enumerate(INTRADAY_BAR_TIMES):
+                open_price = prev_bar_close
+                close = float(closes[k])
+                high = max(open_price, close) * (1 + abs(rng.normal(0, 0.001)))
+                low = min(open_price, close) * (1 - abs(rng.normal(0, 0.001)))
+                volume = volumes[k]
+                writer.writerow([
+                    f"{row['date']} {bar_time}:00",
+                    round(open_price, 2), round(close, 2),
+                    round(high, 2), round(low, 2), volume,
+                    round(volume * close, 2),
+                ])
+                prev_bar_close = close
+
+            prev_close = day_close
+
+    import shutil
+    shutil.copy2(hfq_path, org_path)
+    return hfq_path, org_path
 
 
 # ============================================================
@@ -650,10 +729,18 @@ def main():
         # 2. 生成 CSV 数据到服务数据目录
         hfq_path = HFQ_DIR / f"{symbol}.csv"
         org_path = ORG_DIR / f"{symbol}.csv"
-        opens = generate_csv(symbol, prices, START_DATE, hfq_path, org_path)
+        daily_rows = []
+        opens = generate_csv(symbol, prices, START_DATE, hfq_path, org_path,
+                             daily_sink=daily_rows)
         print(f"  后复权数据: {hfq_path}")
         print(f"  原始数据:   {org_path}")
         print(f"  数据条数:   {len(prices)}")
+
+        # 2b. 由日线派生分钟频数据（与日线同一组交易日，最后一根 bar 的 close
+        #     与 volume 合计对齐当日日线）→ stock_hfq|stock_org/{INTRADAY_FREQ}/
+        intraday_hfq, intraday_org = generate_intraday_csv(symbol, daily_rows)
+        print(f"  分钟频({INTRADAY_FREQ}): {intraday_hfq.name} "
+              f"({len(daily_rows) * len(INTRADAY_BAR_TIMES)} bars)")
 
         # 3. 计算预期指标（从实际 CSV 读取，与 C++ 使用相同数据）
         expected = compute_expected_metrics_from_csv(hfq_path)
@@ -687,15 +774,19 @@ def main():
     # 读取现有数据（如果有）
     existing_rows = []
     existing_symbols = set()
+    # 沿用原文件的表头：run_task.py 写出的列是 代码/交易所/name/market，
+    # 写死 ['代码','交易所','name'] 会让 DictWriter 抛 ValueError
+    market_fields = ['代码', '交易所', 'name']
     if market_csv_path.exists():
         import shutil
         shutil.copy2(market_csv_path, market_backup_path)
         with open(market_csv_path, 'r', newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
+            market_fields = reader.fieldnames or market_fields
             for row in reader:
                 existing_rows.append(row)
                 existing_symbols.add(row.get('代码', ''))
-    
+
     # 追加新的测试 symbol（去重）
     new_rows = []
     for case_id, case_info in test_cases.items():
@@ -705,13 +796,18 @@ def main():
         code_num = parts[1]
         if code_num not in existing_symbols:
             new_rows.append({'代码': code_num, '交易所': exchange, 'name': case_info["name"]})
-    
+
     if new_rows:
-        with open(market_csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['代码', '交易所', 'name'])
+        # 先写临时文件再替换：直接 open('w') 会先截断原文件，
+        # 中途抛异常就把全 A 股列表弄丢了
+        tmp_path = market_csv_path.with_suffix('.csv.tmp')
+        with open(tmp_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=market_fields)
             writer.writeheader()
             for row in existing_rows + new_rows:
-                writer.writerow(row)
+                writer.writerow({k: row.get(k, '') for k in market_fields})
+        import os
+        os.replace(tmp_path, market_csv_path)
         print(f"\n  市场数据: {market_csv_path} (新增 {len(new_rows)} 个测试 symbol)")
     else:
         print(f"\n  市场数据: {market_csv_path} (已存在，无需追加)")
