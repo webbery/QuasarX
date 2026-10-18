@@ -38,12 +38,10 @@ def update_symbol_market(dst):
         market.append('SZ')
         bk = row['板块']
         types.append(bk_dict[bk])
-        if symbol_info[symbol] is None:
-            names.append('')
-            continue
+        # 用 .get：symbol_info 由 stock_info_a_code_name() 构建，B 股等代码不在其中
+        name = symbol_info.get(symbol)
+        names.append(name if name is not None else '')
 
-        names.append(symbol_info[symbol])
-        
     for type in [('主板A股', 'A'), ("主板B股", 'B'), ("科创板", "KCB")]:
         sh_A = ak.stock_info_sh_name_code(symbol=type[0])
         for _, row in sh_A.iterrows():
@@ -51,11 +49,9 @@ def update_symbol_market(dst):
             codes.append(symbol)
             market.append('SH')
             types.append(type[1])
-            if symbol_info[symbol] is None:
-                names.append('')
-                continue
+            name = symbol_info.get(symbol)
+            names.append(name if name is not None else '')
 
-            names.append(symbol_info[symbol])
     # sh_kc = ak.stock_info_sh_name_code(symbol='科创板')
     bj_A = ak.stock_info_bj_name_code()
     for _, row in bj_A.iterrows():
@@ -63,11 +59,8 @@ def update_symbol_market(dst):
         codes.append(symbol)
         market.append('BJ')
         types.append('-')
-        if symbol_info[symbol] is None:
-            names.append('')
-            continue
-
-        names.append(symbol_info[symbol])
+        name = symbol_info.get(symbol)
+        names.append(name if name is not None else '')
 
     df = pd.DataFrame({
         '代码': codes,
