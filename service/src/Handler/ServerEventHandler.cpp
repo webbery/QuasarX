@@ -2,35 +2,79 @@
 #include "Util/system.h"
 #include "nng/nng.h"
 #include "server.h"
+#include <atomic>
+#include <cstdint>
+#include <memory>
 #include <thread>
+
+// SSE 订阅 socket 的接收超时。nng_recv 到点返回 NNG_ETIMEDOUT，provider 借此回到循环
+// 顶部重新检查 sink.is_writable() —— 这个值就是「客户端断开后多久能感知到」的上限。
+// 空载连接每秒醒一次，客户端数量不多时代价可忽略。
+static constexpr short SSE_RECV_TIMEOUT_MS = 1000;
+
+namespace {
+
+/// 每条 SSE 连接一份的订阅状态。
+///
+/// 刻意不用 thread_local：nng_close 按值传参（int nng_close(nng_socket)），
+/// 关不掉调用方的 sock.id。挂在 worker 线程上会导致「下一条落到同线程的连接」
+/// 看到 sock.id != 0 而跳过 Subscribe()，直接对已关闭的 socket 调 nng_recv，
+/// 立刻失败 → return true → httplib 反复回调 → 空转烧核，且该连接一个事件都收不到。
+struct SseConn {
+    nng_socket sock{0};
+    uint32_t seq{0};
+
+    ~SseConn() {
+        close();
+    }
+
+    void close() {
+        if (sock.id) {
+            nng_close(sock);
+            sock.id = 0;
+        }
+    }
+};
+
+std::atomic<uint32_t> g_sse_conn_seq{0};
+
+}  // namespace
 
 void ServerEventHandler::run()
 {
     // 收集消息，然后分发给每个sink
     nng_socket pull_sock, pub_sock;
     if (!Puller(URI_SERVER_EVENT, pull_sock)) {
-        WARN("EventDispatch Subscribe fail.");
+        WARN("[SSE] dispatcher: listen on {} failed, SSE fan-out disabled", URI_SERVER_EVENT);
         return;
     }
     if (!Publish(URI_DISPATH_EVENT, pub_sock)) {
-        WARN("EventDispatch Subscribe fail.");
+        WARN("[SSE] dispatcher: publish on {} failed, close pull socket {}", URI_DISPATH_EVENT, URI_SERVER_EVENT);
+        nng_close(pull_sock);
         return;
     }
     SetCurrentThreadName("SSEDispather");
+    INFO("[SSE] dispatcher started: {} -> {}", URI_SERVER_EVENT, URI_DISPATH_EVENT);
     while (!Server::IsExit()) {
         char* buff = NULL;
         size_t sz = 0;
         int rv = nng_recv(pull_sock, &buff, &sz, NNG_FLAG_ALLOC);
         if (rv != 0) {
-            nng_free(buff, sz);
+            if (buff) {
+                nng_free(buff, sz);
+            }
+            WARN("[SSE] dispatcher: nng_recv on {} failed: {}", URI_SERVER_EVENT, nng_strerror(rv));
             continue;
         }
         // 发送给客户端
-        nng_send(pub_sock, buff, sz, NNG_FLAG_NONBLOCK);
+        if (nng_send(pub_sock, buff, sz, NNG_FLAG_NONBLOCK) != 0) {
+            WARN("[SSE] dispatcher: nng_send on {} failed, {} bytes dropped", URI_DISPATH_EVENT, sz);
+        }
         nng_free(buff, sz);
     }
     nng_close(pull_sock);
     nng_close(pub_sock);
+    INFO("[SSE] dispatcher stopped");
 }
 
 std::thread* ServerEventHandler::_dispather = nullptr;
@@ -52,27 +96,55 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
     if (!_dispather) {
         _dispather = new std::thread(&ServerEventHandler::run, this);
     }
+
+    // 每个 get() 一份 conn，lambda 按值捕获 —— 订阅状态随连接走，不随线程走
+    auto conn = std::make_shared<SseConn>();
+    conn->seq = ++g_sse_conn_seq;
+
     res.set_chunked_content_provider("text/event-stream",
-        [&](size_t offset, httplib::DataSink& sink) {
+    [conn](size_t offset, httplib::DataSink& sink) {
         // 当客户端首次连接时，将其添加到分发器
-        thread_local nng_socket sock{ 0 };
-        if (sock.id == 0) {
-            Subscribe(URI_DISPATH_EVENT, sock);
+        if (conn->sock.id == 0) {
+            if (!Subscribe(URI_DISPATH_EVENT, conn->sock, SSE_RECV_TIMEOUT_MS)) {
+                // Subscribe 失败时可能已打开 socket，交给 ~SseConn 兜底关闭
+                WARN("[SSE] conn#{}: subscribe {} failed, close connection",
+                     conn->seq, URI_DISPATH_EVENT);
+                return false;
+            }
+            INFO("[SSE] conn#{}: subscribed {}, recv-timeout {}ms",
+                 conn->seq, URI_DISPATH_EVENT, (int)SSE_RECV_TIMEOUT_MS);
         }
         if (!sink.is_writable() || Server::IsExit()) {
-            nng_close(sock);
+            INFO("[SSE] conn#{}: {}, close socket",
+                 conn->seq, Server::IsExit() ? "server exiting" : "client disconnected");
+            conn->close();
             sink.done();
             return false;
         }
         char* buff = NULL;
         size_t sz = 0;
-        int rv = nng_recv(sock, &buff, &sz, NNG_FLAG_ALLOC);
-        if (rv != 0) {
-            nng_free(buff, sz);
+        int rv = nng_recv(conn->sock, &buff, &sz, NNG_FLAG_ALLOC);
+        if (rv == NNG_ETIMEDOUT) {
+            // 正常心跳：没有新事件，回到循环顶部重新检查 sink 是否还活着
             return true;
         }
+        if (rv != 0) {
+            if (buff) {
+                nng_free(buff, sz);
+            }
+            WARN("[SSE] conn#{}: nng_recv failed: {}, close connection",
+                 conn->seq, nng_strerror(rv));
+            conn->close();
+            return false;
+        }
         // 发送消息
-        return sink.write(buff, sz);
+        bool ok = sink.write(buff, sz);
+        nng_free(buff, sz);
+        if (!ok) {
+            WARN("[SSE] conn#{}: sink.write failed, close connection", conn->seq);
+            conn->close();
+        }
+        return ok;
     });
     res.status = 200;
 }

@@ -120,8 +120,15 @@ class SSEService {
     if (!this.messageHandlers.has(messageType)) {
       this.messageHandlers.set(messageType, [])
     }
-    this.messageHandlers.get(messageType)!.push(handler)
-    console.log(`[SSE] on() 注册 handler: ${messageType}, 当前 handler 数量：${this.messageHandlers.get(messageType)!.length}`)
+    const handlers = this.messageHandlers.get(messageType)!
+    // 同一 handler 重复注册会让每条 SSE 事件被重复处理（进度计数成倍虚高），
+    // 而 off() 只摘掉第一个实例，补注册救不回来 —— 这里直接挡掉
+    if (handlers.includes(handler)) {
+      console.warn(`[SSE] on() handler 已存在，跳过重复注册: ${messageType}`)
+      return
+    }
+    handlers.push(handler)
+    console.log(`[SSE] on() 注册 handler: ${messageType}, 当前 handler 数量：${handlers.length}`)
   }
 
   off(messageType: string, handler: (message: string) => void) {

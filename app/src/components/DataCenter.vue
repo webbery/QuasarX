@@ -1027,6 +1027,57 @@ const quoteLogs = ref<any[]>([])
 const quoteLogRef = ref<HTMLElement | null>(null)
 const quoteProgress = reactive({ downloaded: 0, total: 0, phase: '' as '' | 'downloading' | 'importing' })
 
+// SSE 进度是按「分组」下发的，每组各自从 0 重新计数，所以要按组记录再求和。
+// 「更新到最新」/「批量更新」会对每个 (table, startDate) 各发一次 POST，于是同一
+// asset_type 会有多个先后相继的分组 —— 用递增序号区分，并记住每种 asset_type
+// 当前活跃的那个分组，symbol_* 事件才知道该记到哪一组头上
+const quoteGroupProgress = reactive<Record<string, { downloaded: number; total: number }>>({})
+const quoteActiveGroup = new Map<string, string>()
+let quoteGroupSeq = 0
+
+const sumGroupProgress = (key: 'downloaded' | 'total') =>
+    Object.values(quoteGroupProgress).reduce((sum, g) => sum + (g[key] || 0), 0)
+
+const resetQuoteProgress = () => {
+    Object.keys(quoteGroupProgress).forEach(k => { delete quoteGroupProgress[k] })
+    quoteActiveGroup.clear()
+    quoteProgress.downloaded = 0
+    quoteProgress.total = 0
+    quoteProgress.phase = ''
+}
+
+// 总数只认 POST /v0/quote 响应里的 groups —— 服务端返回的是本次请求实际受理的标的清单，
+// 是权威值。SSE 事件可能因重连被重复投递，拿它累加分母会让 42 显示成 252
+const applyGroupsTotal = (groups: any) => {
+    if (!Array.isArray(groups)) return
+    const n = groups.reduce((sum, g) =>
+        sum + String(g?.symbols ?? '').split(',').filter(s => s.trim()).length, 0)
+    if (n > 0) quoteProgress.total += n
+}
+
+const openQuoteGroup = (d: any) => {
+    const at = d.asset_type || 'default'
+    const key = `${at}#${++quoteGroupSeq}`
+    quoteGroupProgress[key] = { downloaded: 0, total: Number(d.total) || 0 }
+    quoteActiveGroup.set(at, key)
+}
+
+// 服务端已下发权威的 downloaded，直接赋值而不是 ++：
+// 同一事件被重复投递时结果不变，进度不会成倍虚高
+const applyGroupDownloaded = (d: any) => {
+    const at = d.asset_type || 'default'
+    let key = quoteActiveGroup.get(at)
+    if (!key) {
+        // 漏了 started（重连中途接入等），就地补一个分组，别让这批计数丢失
+        openQuoteGroup({ asset_type: at, total: d.total })
+        key = quoteActiveGroup.get(at)!
+    }
+    const g = quoteGroupProgress[key]
+    if (!g) return
+    g.downloaded = Number(d.downloaded) || 0
+    quoteProgress.downloaded = sumGroupProgress('downloaded')
+}
+
 // 按策略下载行情（与 dividend tab 同样思路：取最新版本 flowData → 提取 symbols）
 const quoteStrategy = ref('')
 const quoteStrategySymbols = ref('')
@@ -1637,16 +1688,17 @@ const onQuoteDownloadEvent = (msg: any) => {
     const d = msg.data
     switch (d.status) {
         case 'started':
-            quoteProgress.total += Number(d.total) || 0
+            // 只登记分组，不动全局 total —— total 由 POST 响应决定（见 applyGroupsTotal）
+            openQuoteGroup(d)
             quoteProgress.phase = 'downloading'
             addQuoteLog(`📥 开始下载: ${d.total} 只标的 (${d.asset_type})`)
             break
         case 'symbol_downloaded':
-            quoteProgress.downloaded++
+            applyGroupDownloaded(d)
             addQuoteLog(`✅ ${d.symbol}: ${d.rows} 行 (${d.downloaded}/${d.total})`, 'success')
             break
         case 'symbol_failed':
-            quoteProgress.downloaded++
+            applyGroupDownloaded(d)
             addQuoteLog(`❌ ${d.symbol}: 下载失败 (${d.error})`, 'error')
             break
         case 'downloaded':
@@ -1791,13 +1843,13 @@ const onHandleQuoteDownload = async () => {
     activeDownloadScenario.value = 'single'
     quoteStatus.value = ''
     quoteLogs.value = []
-    quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
+    resetQuoteProgress()
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
 
     try {
-        await axios.post(`https://${server}/v0/quote`, {
+        const resp = await axios.post(`https://${server}/v0/quote`, {
             symbols: quoteSymbols.value.trim(),
             freq: quoteFreq.value,
             start: quoteStartDate.value || undefined,
@@ -1805,6 +1857,8 @@ const onHandleQuoteDownload = async () => {
         }, {
             headers: { 'Authorization': token || '' }
         })
+        // 总数取响应里的 groups；SSE 只负责推进分子
+        applyGroupsTotal(resp.data?.groups)
         // POST 立即返回，进度通过 SSE 推送
     } catch (err: any) {
         quoteDownloading.value = false
@@ -1849,13 +1903,13 @@ const onDownloadQuoteByStrategy = async () => {
     activeDownloadScenario.value = 'strategy'
     quoteStatus.value = `正在从策略「${quoteStrategy.value}」下载 ${quoteStrategySymbolCount.value} 个标的...`
     quoteLogs.value = []
-    quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
+    resetQuoteProgress()
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
 
     try {
-        await axios.post(`https://${server}/v0/quote`, {
+        const resp = await axios.post(`https://${server}/v0/quote`, {
             symbols: quoteStrategySymbols.value,
             freq: quoteStrategyFreq.value,
             start: quoteStrategyStartDate.value || undefined,
@@ -1863,6 +1917,8 @@ const onDownloadQuoteByStrategy = async () => {
         }, {
             headers: { 'Authorization': token || '' }
         })
+        // 总数取响应里的 groups（服务端受理的标的清单），不用 SSE 反推
+        applyGroupsTotal(resp.data?.groups)
         addQuoteLog(`✓ 已提交下载请求：${quoteStrategySymbolCount.value} 个标的 (${quoteStrategyFreq.value})`)
     } catch (err: any) {
         quoteStrategyDownloading.value = false
@@ -2065,6 +2121,7 @@ const onBatchDeleteSymbols = async () => {
 // 批量更新选中的标的（按起始时间分组合并，跳过已是最新日期的标的）
 const onBatchUpdateSymbols = async () => {
     updatingSymbol.value = true
+    resetQuoteProgress()
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -2165,9 +2222,10 @@ const onBatchUpdateSymbols = async () => {
         }
 
         try {
-            await axios.post(`https://${server}/v0/quote`, params, {
+            const resp = await axios.post(`https://${server}/v0/quote`, params, {
                 headers: { 'Authorization': token || '' }
             })
+            applyGroupsTotal(resp.data?.groups)
             successCount += symbols.length  // 该组所有标的都算成功
         } catch (err: any) {
             failCount += symbols.length
@@ -2195,7 +2253,7 @@ const onUpdateToLatest = async () => {
     activeDownloadScenario.value = 'updateLatest'
     quoteLogs.value = []
     quoteStatus.value = ''
-    quoteProgress.downloaded = 0; quoteProgress.total = 0; quoteProgress.phase = ''
+    resetQuoteProgress()
 
     const server = localStorage.getItem('remote')
     const token = localStorage.getItem('token')
@@ -2296,9 +2354,10 @@ const onUpdateToLatest = async () => {
         }
 
         try {
-            await axios.post(`https://${server}/v0/quote`, params, {
+            const resp = await axios.post(`https://${server}/v0/quote`, params, {
                 headers: { 'Authorization': token || '' }
             })
+            applyGroupsTotal(resp.data?.groups)
             successCount += symbols.length
             expectedDones.value++  // POST 成功 = 期望收到 1 个 done 事件
         } catch (err: any) {
