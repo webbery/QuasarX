@@ -1,19 +1,20 @@
 """
-使用 BaoStock 下载 ETF 分钟级/日线历史数据
+使用 BaoStock 下载 ETF/股票 分钟级/日线历史数据
 
 数据源: BaoStock (http://baostock.com)
 优点: 免费、稳定、官方数据源、不易被封
-限制: 不支持1m，分钟数据约3个月历史，日线数据完整
+限制: 不支持 1m（BaoStock 无此频率），日线数据完整
       支持频率: 5m, 15m, 30m, 60m, daily
+      分钟线可回溯数年（实测 30m 至少 5 年，2021-10 ~ 2026-10 共 9696 根）
 
 用法:
   # 日线数据（完整历史）
   python download_etf_bs.py 510300.SH build/data --freq daily
 
-  # 5分钟数据（约3个月）
-  python download_etf_bs.py 510300.SH build/data --freq 5m
+  # 30分钟数据（默认回溯 5 年）
+  python download_etf_bs.py 510300.SH build/data --freq 30m
 
-  # 多只ETF
+  # 多只标的
   python download_etf_bs.py "510300.SH,159919.SZ" build/data --freq 5m
 
   # 指定日期范围
@@ -104,12 +105,49 @@ def to_code_exchange(symbol: str) -> str:
 
 FREQ_MAP = {
     "daily": "d",
-    # "1m": "1",  # BaoStock 不支持 1m
+    # BaoStock 无 1m 频率
     "5m": "5",
     "15m": "15",
     "30m": "30",
     "60m": "60",
 }
+
+# 分钟线可用的指标字段（不含 turn/tradestatus/pctChg/isST —— 这些是日线专属，
+# 分钟线传入会被服务端拒绝: "30分钟线指标参数传入错误:turn"）
+DAILY_FIELDS = "date,open,high,low,close,volume,amount"
+MINUTE_FIELDS = "date,time,code,open,high,low,close,volume,amount"
+
+# 未指定 --start 时，分钟线默认回溯年数（BaoStock 分钟线实际可回溯数年，
+# 30m 实测 2021-10 ~ 2026-10 共 9696 根，不是「最近 3 个月」）
+MINUTE_LOOKBACK_YEARS = 5
+DAILY_DEFAULT_START = "2010-01-01"
+
+
+# ============================================================
+# 分页取数
+# ============================================================
+
+def fetch_all_pages(rs) -> pd.DataFrame:
+    """
+    逐页取全量数据，返回 DataFrame（失败返回空表）
+
+    不能用 rs.get_data()：它内部用 DataFrame.append() 拼接分页结果，该 API 在
+    pandas 2.0 已被移除 → 只要结果超过一页（BAOSTOCK_PER_PAGE_COUNT = 500 行）
+    就抛 AttributeError: 'DataFrame' object has no attribute 'append'。
+    日线长历史和全部分钟线数据都会跨页，必须自行翻页。
+    """
+    if rs is None or rs.error_code != '0':
+        return pd.DataFrame()
+
+    rows = []
+    while rs.next():
+        row = rs.get_row_data()
+        if row:
+            rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows, columns=rs.fields)
 
 
 # ============================================================
@@ -128,7 +166,7 @@ def download_etf_data(
 
     Args:
         symbol: baostock 格式代码 (如 "sh.510300")
-        freq: 频率 daily/1m/5m/15m/30m/60m
+        freq: 频率 daily/5m/15m/30m/60m
         start_date: 开始日期 YYYY-MM-DD
         end_date: 结束日期
         adjust: 1=后复权 2=前复权 3=不复权
@@ -140,18 +178,18 @@ def download_etf_data(
 
     if not start_date:
         if frequency == "d":
-            start_date = "2010-01-01"
+            start_date = DAILY_DEFAULT_START
         else:
-            start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=365 * MINUTE_LOOKBACK_YEARS)).strftime("%Y-%m-%d")
 
     if not end_date:
         end_date = datetime.now().strftime("%Y-%m-%d")
 
-    # 字段
+    # 字段：分钟线没有 turn（换手率），只有 amount
     if frequency == "d":
-        fields = "date,open,high,low,close,volume,amount,turn"
+        fields = DAILY_FIELDS
     else:
-        fields = "date,time,open,high,low,close,volume,amount,turn"
+        fields = MINUTE_FIELDS
 
     try:
         rs = bs.query_history_k_data_plus(
@@ -167,7 +205,7 @@ def download_etf_data(
             print(f"  [{symbol}] 查询失败: {rs.error_msg}")
             return pd.DataFrame()
 
-        df = rs.get_data()
+        df = fetch_all_pages(rs)
 
         if df.empty:
             print(f"  [{symbol}] 无数据 ({freq}, {start_date} ~ {end_date})")
@@ -197,21 +235,22 @@ def normalize_columns(df: pd.DataFrame, freq: str) -> pd.DataFrame:
         'low': 'low',
         'close': 'close',
         'volume': 'volume',
-        'turn': 'turnover',
+        # amount(成交额) → turnover：本项目 QuoteDB 的 turnover 语义是成交额
+        # （见 Capacity.cpp 的 turnover_adv / TickFlowBridge 的 amount→turnover），
+        # 不是 BaoStock 的 turn(换手率%)
+        'amount': 'turnover',
     }
     df = df.rename(columns=col_map)
 
     # 分钟数据: 合并 date + time
     if freq != "daily" and '_time' in df.columns:
-        # BaoStock time 格式: YYYYMMDDHHMMSS000
-        # 取前14位 -> YYYY-MM-DD HH:MM:SS
-        def parse_bstime(row):
-            t = str(row['_time'])
-            if len(t) >= 14:
-                return f"{t[:4]}-{t[4:6]}-{t[6:8]} {t[8:10]}:{t[10:12]}:{t[12:14]}"
-            return str(row['datetime']) + " 09:30:00"
-
-        df['datetime'] = df.apply(parse_bstime, axis=1)
+        # BaoStock time 格式: YYYYMMDDHHMMSS000（bar 结束时刻）
+        # 取 HH:MM 与 date 的 YYYYMMDD 拼接成 datetime
+        day = df['datetime'].astype(str).str.slice(0, 10).str.replace('-', '', regex=False)
+        t = df['_time'].astype(str).str.strip()
+        hhmm = t.str.slice(8, 12)
+        hhmm = hhmm.where(t.str.len() >= 12, '0000')
+        df['datetime'] = day + ' ' + hhmm.str.slice(0, 2) + ':' + hhmm.str.slice(2, 4) + ':00'
         df = df.drop(columns=['_time'])
 
     df['datetime'] = pd.to_datetime(df['datetime'])
@@ -327,7 +366,7 @@ def main():
     parser.add_argument("symbols", nargs="?", default="510300.SH")
     parser.add_argument("data_dir", nargs="?", default="build/data")
     parser.add_argument("--freq", default="5m",
-                        choices=["daily", "5m", "15m", "30m", "60m"],
+                        choices=list(FREQ_MAP.keys()),
                         help="BaoStock 不支持 1m 数据")
     parser.add_argument("--start", default=None, help="开始日期 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="结束日期 YYYY-MM-DD")
@@ -367,8 +406,8 @@ def main():
                 time.sleep(1)
 
         print(f"\n完成: {ok_count}/{len(symbols)} 成功")
-        if args.freq != "daily":
-            print("[WARN] 分钟数据约3个月历史")
+        if args.freq != "daily" and not args.start:
+            print(f"[INFO] 分钟数据默认回溯 {MINUTE_LOOKBACK_YEARS} 年（可用 --start 指定更早）")
 
     finally:
         bs.logout()
