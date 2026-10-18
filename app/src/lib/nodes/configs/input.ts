@@ -55,7 +55,6 @@ export const dataSourceNode: NodeRegistryEntry = {
     { key: 'dte', label: 'DTE', type: 'label', visible: false },
     { key: 'openInterest', label: '未平仓合约数', type: 'label', visible: false },
     { key: 'underlyingPrice', label: '标的价格', type: 'label', visible: false },
-    { key: 'optionVolume', label: '交易量', type: 'label', visible: false },
   ],
   example: {
     source: '股票',

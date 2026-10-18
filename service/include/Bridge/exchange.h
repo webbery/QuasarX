@@ -73,6 +73,17 @@ enum class OrderType: char {
     // 
 };
 
+// 信用交易（融资融券）委托类型
+// 与 Order._side 正交：_side 只区分买/卖，_creditType 决定走现金账户还是信用账户。
+// 不扩 _side 的位宽是因为它已在绩效与成本计算里被大量 ==0/==1 比较。
+enum class CreditOrderType : char {
+    None,        // 现金账户
+    MarginBuy,   // 融资买入
+    ShortSell,   // 融券卖出
+    CoverShort,  // 买券还券（平空）
+    RepayCash,   // 直接还款
+    PayInterest, // 还息
+};
 // 订单状态
 enum class OrderStatus : char {
     OrderUnknow,
@@ -115,6 +126,8 @@ struct Order {
     unsigned char _flag: 1;
     // 是否行权单
     bool _exec: 1;
+    // 信用委托类型，默认现金账户
+    CreditOrderType _creditType = CreditOrderType::None;
     OrderTimeValid _validTime;
     OptionHedge _hedge;
     OrderStatus _status;

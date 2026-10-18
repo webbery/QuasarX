@@ -7,7 +7,7 @@
         @click="$emit('update:modelValue', 'flow')"
       >
         <i class="fas fa-project-diagram"></i>
-        流程图
+        策略图
       </button>
       <button
         class="tab-button"
@@ -16,6 +16,14 @@
       >
         <i class="fas fa-chart-line"></i>
         回测结果
+      </button>
+      <button
+        class="tab-button"
+        :class="{ active: modelValue === 'stability' }"
+        @click="$emit('update:modelValue', 'stability')"
+      >
+        <i class="fas fa-shield-alt"></i>
+        稳定性分析
       </button>
     </div>
   </div>
@@ -26,7 +34,7 @@ defineProps({
   modelValue: {
     type: String,
     required: true,
-    validator: (value) => ['flow', 'backtest'].includes(value)
+    validator: (value) => ['flow', 'backtest', 'stability'].includes(value)
   }
 })
 

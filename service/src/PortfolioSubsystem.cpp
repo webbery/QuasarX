@@ -1,4 +1,6 @@
 #include "PortfolioSubsystem.h"
+#include "Util/datetime.h"
+#include "Util/log.h"
 
 double GetCost(const List<Asset>& assets) {
   double total = 0;
@@ -9,12 +11,15 @@ double GetCost(const List<Asset>& assets) {
 }
 
 double ApplyFillToHolding(hold_t& holds, symbol_t symbol, int64_t quantity,
-                          double price, time_t when, bool isOpen) {
+                          double price, time_t when, bool isOpen,
+                          int64_t* applied) {
+  if (applied) *applied = 0;
   if (quantity <= 0) return 0.0;
 
   auto& history = holds[symbol];
   if (isOpen) {
     history.push_back({static_cast<uint32_t>(quantity), price, when});
+    if (applied) *applied = quantity;
     return 0.0;
   }
 
@@ -33,9 +38,17 @@ double ApplyFillToHolding(hold_t& holds, symbol_t symbol, int64_t quantity,
       history.pop_front();
     }
   }
+
+  // 持仓不足时 remaining 是被丢弃的超卖量，必须让调用方看见，否则 PnL 会虚增
+  if (remaining > 0) {
+    WARN("[ApplyFillToHolding] {} close {} but only {} available, {} discarded",
+         get_symbol(symbol), quantity, quantity - remaining, remaining);
+  }
+
   if (history.empty()) {
     holds.erase(symbol);
   }
+  if (applied) *applied = quantity - remaining;
   return consumed;
 }
 

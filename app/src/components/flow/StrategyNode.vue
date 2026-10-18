@@ -46,9 +46,8 @@
 
             <div
                 class="node-param"
-                v-for="(paramConfig, key) in node.data.params"
+                v-for="([key, paramConfig]) in visibleParams"
                 :key="key"
-                v-show="paramConfig.visible !== false"
                 :class="{ 'data-field-param': isDataFieldParam(key) }"
             >
                 <div class="param-label" v-if="validParamTypes.includes(paramConfig.type)">{{ paramConfig.label || key }}</div>
@@ -313,22 +312,25 @@ const iconType = computed(() => getNodeIcon(nodeType.value))
 const OPTION_FIELD_GROUPS = [
   { key: 'quote', label: '报价', handleId: 'field-quote', fields: ['bid1', 'ask1'] },
   { key: 'greeks', label: 'Greeks', handleId: 'field-greeks', fields: ['theoPrice', 'iv', 'delta', 'gamma', 'theta', 'vega'] },
-  { key: 'other', label: '其他', handleId: 'field-other', fields: ['dte', 'openInterest', 'underlyingPrice', 'optionVolume'] },
+  { key: 'other', label: '其他', handleId: 'field-other', fields: ['dte', 'openInterest', 'underlyingPrice'] },
 ]
 const OPTION_ALL_FIELDS = OPTION_FIELD_GROUPS.flatMap(g => g.fields)
-const OHLCV_FIELDS = ['close', 'open', 'high', 'low', 'volume']
 
 const isOptionSource = computed(() =>
   nodeType.value === 'input' && props.node.data.params?.source?.value === '期权'
 )
 
-const visibleOptionGroups = computed(() => {
-  if (!isOptionSource.value) return []
-  const params = props.node.data.params
-  return OPTION_FIELD_GROUPS
-    .map(g => ({ ...g, fields: g.fields.filter(k => params[k]?.visible !== false) }))
-    .filter(g => g.fields.length > 0)
+// 期权字段只在分组区渲染，主参数循环里排除，避免重复渲染
+const visibleParams = computed(() => {
+  const entries = Object.entries(props.node.data.params || {}) as [string, any][]
+  return entries.filter(([key, cfg]) =>
+    cfg.visible !== false && !(isOptionSource.value && OPTION_ALL_FIELDS.includes(key))
+  )
 })
+
+const visibleOptionGroups = computed(() =>
+  isOptionSource.value ? OPTION_FIELD_GROUPS : []
+)
 
 // XGBoost 节点已绑定模型时，直接显示模型名而非文件选择器
 function isBoundModel(paramKey: string | number): boolean {
@@ -499,14 +501,7 @@ const updateParam = (paramKey: string, newValue: any) => {
         params.slippageAlpha.visible = useImpact
     }
 
-    // 数据源切换联动：OHLCV ↔ 期权字段互斥显隐
-    if (paramKey === 'source' && props.node.data.nodeType === 'input') {
-        const params = props.node.data.params
-        const optionMode = newValue === '期权'
-        OPTION_ALL_FIELDS.forEach(k => { if (params[k]) params[k].visible = optionMode })
-        OHLCV_FIELDS.forEach(k => { if (params[k]) params[k].visible = !optionMode })
-    }
-
+    // 数据源切换联动已由 isOptionSource 计算属性驱动，无需再改 visible 标记
     emit('update-node', props.node.id, paramKey, newValue)
 }
 
@@ -551,17 +546,6 @@ onMounted(() => {
         if (params.slippageBase) params.slippageBase.visible = useImpact
         if (params.slippageImpactK) params.slippageImpactK.visible = useImpact
         if (params.slippageAlpha) params.slippageAlpha.visible = useImpact
-    }
-
-    // 初始化数据源可见性（兼容旧 flow JSON 或缺省 visible 字段的情况）
-    if (props.node.data.nodeType === 'input') {
-        const params = props.node.data.params
-        const hasOptionFields = OPTION_ALL_FIELDS.some(k => params[k] != null)
-        if (hasOptionFields) {
-            const optionMode = params.source?.value === '期权'
-            OPTION_ALL_FIELDS.forEach(k => { if (params[k] && params[k].visible == null) params[k].visible = optionMode })
-            OHLCV_FIELDS.forEach(k => { if (params[k] && params[k].visible == null) params[k].visible = !optionMode })
-        }
     }
 
     document.addEventListener('click', handleClickOutside)

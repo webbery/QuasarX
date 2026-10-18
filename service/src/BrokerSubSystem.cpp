@@ -835,8 +835,11 @@ order_id BrokerSubSystem::AddOrderBySide(run_id_t run_id, const String& strategy
       double org_princpal = 0;
       double total_sell = 0;
       for (auto info: detail._reports) {
-        total_sell += info._quantity * info._price;
-        org_princpal += ApplyFillToHolding(holds, symbol, info._quantity, info._price, info._time, false);
+        // 收入按实际平掉的数量计：超卖时 FIFO 只能扣到余额为止，
+        // 若用 info._quantity 会把没平掉的部分也算成卖出收入，虚增收益
+        int64_t applied = 0;
+        org_princpal += ApplyFillToHolding(holds, symbol, info._quantity, info._price, info._time, false, &applied);
+        total_sell += static_cast<double>(applied) * info._price;
       }
       // 损益
       double profit = total_sell - org_princpal;

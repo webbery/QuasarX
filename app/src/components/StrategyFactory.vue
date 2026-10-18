@@ -78,6 +78,11 @@
       <ReportView ref="reportViewRef"></ReportView>
     </div>
 
+    <!-- 稳定性分析面板 -->
+    <div v-show="activeTab === 'stability'" class="stability-panel-container">
+      <StabilityPanel />
+    </div>
+
     <PromptDialog ref="promptDialogRef" />
   </div>
 </template>
@@ -86,6 +91,7 @@
 import { ref, watch, nextTick, onMounted, onUnmounted, provide, computed, inject } from 'vue'
 import ReportView from './report/ReportView.vue'
 import InfoPanel from './strategy/InfoPanel.vue'
+import StabilityPanel from './strategy/StabilityPanel.vue'
 import FlowCanvas from './FlowCanvas.vue'
 import FlowTabHeader from './FlowTabHeader.vue'
 import FlowContextMenu from './FlowContextMenu.vue'
@@ -514,6 +520,10 @@ const getStrategyGraph = () => {
   return JSON.parse(normalizedJson)
 }
 
+// 稳定性扫描以当前画布为基准：必须在本函数声明之后 provide，
+// 否则 provide 执行时 getStrategyGraph 还在 TDZ
+provide('getStrategyGraph', getStrategyGraph)
+
 // 对外暴露
 defineExpose({
   runBacktest: handleRunBacktest,
@@ -605,6 +615,15 @@ defineExpose({
 
 /* 回测结果面板 */
 .backtest-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+}
+
+/* 稳定性分析面板 */
+.stability-panel-container {
   flex: 1;
   display: flex;
   flex-direction: column;
