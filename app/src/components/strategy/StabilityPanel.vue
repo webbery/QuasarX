@@ -366,9 +366,9 @@ import { fetchCapitalPool } from './stability/stabilityApi'
 type GetStrategyGraph = () => Record<string, any> | null
 
 // 基准策略图由 StrategyFactory 构建（已做 convertLabelsToKeys + normalizeCodeParams）
-const getStrategyGraph = inject<GetStrategyGraph>('getStrategyGraph', null)
+const getStrategyGraph = inject<GetStrategyGraph>('getStrategyGraph')
 // 用户当前配置的本金，用于选归一化基准档
-const strategyCapital = inject<{ value: number }>('strategyCapital', null)
+const strategyCapital = inject<{ value: number }>('strategyCapital')
 
 const dimensions = STABILITY_DIMENSIONS
 

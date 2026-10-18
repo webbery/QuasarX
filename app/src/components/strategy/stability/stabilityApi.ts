@@ -16,7 +16,7 @@ export interface CapitalPoolInfo {
 
 /** 读资金池现状，用于生成不超过上限的资金档位 */
 export async function fetchCapitalPool(): Promise<CapitalPoolInfo> {
-  if (!applyAuthHeader(axios.default)) {
+  if (!applyAuthHeader(axios)) {
     throw new Error('未登录，无法读取资金池信息')
   }
   const res = await axios.get('/v0/position')
@@ -49,7 +49,7 @@ export interface BacktestRunResponse {
 }
 
 export async function runBacktestOnce(scriptJson: string): Promise<BacktestRunResponse> {
-  if (!applyAuthHeader(axios.default)) {
+  if (!applyAuthHeader(axios)) {
     throw new Error('未登录，无法运行回测')
   }
   const res = await axios.post('/v0/backtest', { script: scriptJson })
