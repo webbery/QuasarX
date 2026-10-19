@@ -251,6 +251,14 @@
                             <option value="ETF">ETF</option>
                         </select>
                     </div>
+                    <div class="search-item">
+                        <span class="search-label">频率</span>
+                        <select v-model="freqFilter" @change="currentPage = 1">
+                            <option v-for="opt in FREQ_FILTER_OPTIONS" :key="opt.value" :value="opt.value">
+                                {{ opt.label }}
+                            </option>
+                        </select>
+                    </div>
                     <button class="btn btn-primary btn-sm" @click="onUpdateToLatest"
                             :disabled="isUpdatingLatest || quoteDataList.length === 0 || !isLoggedIn"
                             title="对当前过滤结果全量下载增量数据到最新日期">
@@ -373,7 +381,7 @@
                 <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length === 0" class="empty-text">
                     <i class="fas fa-info-circle"></i> 暂无已导入的行情数据
                 </div>
-                <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length > 0 && (symbolFilter || assetTypeFilter)" class="empty-text">
+                <div v-if="allFlatSymbols.length === 0 && !loadingQuoteData && quoteDataList.length > 0 && (symbolFilter || assetTypeFilter || freqFilter)" class="empty-text">
                     <i class="fas fa-search"></i> 无匹配的标的，请调整筛选条件
                 </div>
 
@@ -1167,6 +1175,23 @@ const pageSize = ref(20)
 // 标的筛选
 const symbolFilter = ref('')
 const assetTypeFilter = ref('')
+const freqFilter = ref('')
+
+// 频率筛选项（value 为表名后缀，与后端 toString(BarFreq) 一致）
+// 注意：下载接口的 "60m" 经 parseBarFreq 落到 BarFreq::Hour1，落表后缀是 1h，
+// 即 60分钟 与 1小时 是同一批数据，这里只列 1小时
+const FREQ_FILTER_OPTIONS = [
+    { value: '', label: '全部' },
+    { value: '1d', label: '日线' },
+    { value: '5m', label: '5分钟' },
+    { value: '15m', label: '15分钟' },
+    { value: '30m', label: '30分钟' },
+    { value: '1h', label: '1小时' },
+]
+
+// 表名后缀归一：日线在下载接口叫 daily，历史表可能残留 60m 后缀（等价 1h）
+const FREQ_ALIASES: Record<string, string> = { daily: '1d', '60m': '1h' }
+const normalizeFreq = (rawFreq: string) => FREQ_ALIASES[rawFreq] || rawFreq
 
 // ── 基本面数据状态 ──
 const financeCode = ref('')
@@ -1573,6 +1598,11 @@ const flatSymbols = computed(() => {
     // 按资产类型筛选
     if (assetTypeFilter.value) {
         result = result.filter(item => item.assetType === assetTypeFilter.value)
+    }
+
+    // 按频率筛选
+    if (freqFilter.value) {
+        result = result.filter(item => normalizeFreq(item.rawFreq) === freqFilter.value)
     }
 
     // 排序
