@@ -27,6 +27,7 @@
         "test_signal_vmd",
         "test_capacity_scan",
         "test_hmm",
+        "test_shortable",
         "test_provenance"
       ]
     },

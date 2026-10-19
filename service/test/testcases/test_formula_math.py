@@ -1380,8 +1380,60 @@ def _signal_logic_cleanup(symbols, headers):
                 p.unlink()
 
 
-def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false", allow_short=False):
-    """Input(5 标的) → SignalNode(buy, sell) → Portfolio → Execution"""
+def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false",
+                                 allow_short=False, debug_signal=False):
+    """Input(5 标的) → SignalNode(buy, sell) → Portfolio → Execution
+
+    debug_signal=True 时额外挂一个 DebugNode 旁路挂在 SignalNode 之后，
+    导出 {symbol}.signal 时间序列。成交笔数要到 broker 层才拿得到，而
+    or/and 短路语义属于信号层，用 .signal 断言才能只测一件事。
+    """
+    nodes = [
+        {"id": "1", "type": "custom",
+         "data": {"label": "行情", "nodeType": "input",
+                  "params": {"source": {"value": "股票", "type": "text"},
+                             "code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
+                             "freq": {"value": "1d", "type": "select"},
+                             "close": {"value": "close", "type": "text"}}}},
+        {"id": "2", "type": "custom",
+         "data": {"label": "信号", "nodeType": "signal",
+                  "params": {"code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
+                             "type": {"value": "股票", "type": "select"},
+                             "allowShort": {"value": allow_short, "type": "boolean"},
+                             "buy": {"value": buy_expr, "type": "text"},
+                             "sell": {"value": sell_expr, "type": "text"}}}},
+        {"id": "3", "type": "custom",
+         "data": {"label": "组合", "nodeType": "portfolio",
+                  "params": {"positionRatio": {"value": 1.0, "type": "number"},
+                             "allowShort": {"value": allow_short, "type": "boolean"}}}},
+        {"id": "4", "type": "custom",
+         "data": {"label": "执行", "nodeType": "execution",
+                  "params": {"commission": {"value": 0.0, "type": "number"},
+                             "stampDuty": {"value": 0.0, "type": "number"},
+                             "slippage": {"value": 0.0, "type": "number"},
+                             "type": {"value": 1, "type": "select"}}}},
+    ]
+    edges = [
+        {"id": "e1", "source": "1", "target": "2",
+         "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+        {"id": "e2", "source": "2", "target": "3",
+         "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+        {"id": "e3", "source": "3", "target": "4",
+         "sourceHandle": "3", "targetHandle": "4", "type": "default"},
+    ]
+
+    if debug_signal:
+        nodes.append(
+            {"id": "5", "type": "custom",
+             "data": {"label": "debug_signal", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}}
+        )
+        # 旁路：SignalNode 的 .signal 不经过 broker，直接落盘
+        edges.append(
+            {"id": "e4", "source": "2", "target": "5",
+             "sourceHandle": "2", "targetHandle": "5", "type": "default"}
+        )
+
     return {
         "id": strategy_id,
         "name": f"信号逻辑测试_{strategy_id}",
@@ -1393,49 +1445,39 @@ def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false", allow
             "end": (SIGNAL_LOGIC_START + timedelta(days=SIGNAL_LOGIC_N_BARS * 2)).strftime("%Y-%m-%d")
         },
         "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom",
-             "data": {"label": "行情", "nodeType": "input",
-                      "params": {"source": {"value": "股票", "type": "text"},
-                                 "code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"}}}},
-            {"id": "2", "type": "custom",
-             "data": {"label": "信号", "nodeType": "signal",
-                      "params": {"code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
-                                 "type": {"value": "股票", "type": "select"},
-                                 "allowShort": {"value": allow_short, "type": "boolean"},
-                                 "buy": {"value": buy_expr, "type": "text"},
-                                 "sell": {"value": sell_expr, "type": "text"}}}},
-            {"id": "3", "type": "custom",
-             "data": {"label": "组合", "nodeType": "portfolio",
-                      "params": {"positionRatio": {"value": 1.0, "type": "number"},
-                                 "allowShort": {"value": allow_short, "type": "boolean"}}}},
-            {"id": "4", "type": "custom",
-             "data": {"label": "执行", "nodeType": "execution",
-                      "params": {"commission": {"value": 0.0, "type": "number"},
-                                 "stampDuty": {"value": 0.0, "type": "number"},
-                                 "slippage": {"value": 0.0, "type": "number"},
-                                 "type": {"value": 1, "type": "select"}}}}],
-        "edges": [
-            {"id": "e1", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "e3", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-        ]
+        "nodes": nodes,
+        "edges": edges,
     }
 
 
-def _signal_logic_backtest(strategy_id, buy_expr, sell_expr="false", headers=None, allow_short=False):
-    strategy = _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr, allow_short=allow_short)
+def _signal_logic_backtest(strategy_id, buy_expr, sell_expr="false", headers=None,
+                           allow_short=False, debug_signal=False):
+    strategy = _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr,
+                                            allow_short=allow_short,
+                                            debug_signal=debug_signal)
     r = requests.post(f"{BASE_URL}/backtest",
                       json={"script": json.dumps(strategy), "validate": False},
                       headers=headers, verify=VERIFY_SSL, timeout=1800)
     if r.status_code != 200:
         return {"status": "error", "error": f"HTTP {r.status_code}: {r.text[:300]}"}
     return {"status": "ok", "result": r.json()}
+
+
+def _symbols_with_signal(strategy_id, action):
+    """读 Debug CSV，返回历史上出现过该动作的标的集合。
+
+    action: 1=BUY, -1=SELL, 0=HOLD。SignalNode 每根 bar 都为池内所有标的写
+    一个值，所以 HOLD 恒覆盖全部标的；只关心 ±1 时直接看集合差集。
+    """
+    df = read_debug_csv(strategy_id, "debug_signal")
+    hit = set()
+    for col in df.columns:
+        if not col.endswith(".signal"):
+            continue
+        symbol = col[: -len(".signal")]
+        if (df[col] == action).any():
+            hit.add(symbol)
+    return hit
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -1524,15 +1566,22 @@ class TestSignalLogicAndOr:
             )
 
     def test_l4_or_left_true_sells(self, signal_headers):
-        """L4 对照组: or 左 true → SELL (短路, 不评估右)"""
+        """L4 对照组: or 左 true → SELL (短路, 不评估右)
+
+        断言落在 SignalNode 的 .signal 上，不看成交笔数：
+        融券卖出目前还没接通 broker 层（StockPositionManager 拒绝无持仓卖出），
+        用 sell_count 断言会把 or 短路语义和融券成交链路耦在一起。
+        """
         resp = _signal_logic_backtest("l4_or_left_true",
                                      "false",
                                      "(close[t-1] <= 60) or !topk(close, 3)",
-                                     headers=signal_headers, allow_short=True)
+                                     headers=signal_headers, allow_short=True,
+                                     debug_signal=True)
         assert resp["status"] == "ok", resp.get("error")
-        sell_count = resp["result"]["summary"]["sell_count"]
-        assert sell_count >= 2, (
-            f"L4: 期望 sell>=2 (low symbols left=true), 实际 {sell_count}"
+        sold = _symbols_with_signal("l4_or_left_true", -1)
+        # 左支命中低价组；这两个在 prepare.py 里预灌为可做空标的
+        assert {"sz.900013", "sz.900014"} <= sold, (
+            f"L4: 期望低价组产生 SELL 信号，实际 sold={sorted(sold)}"
         )
 
     def test_l5_or_both_false_drops(self, signal_headers):
@@ -1548,16 +1597,19 @@ class TestSignalLogicAndOr:
         )
 
     def test_l6_or_right_true_passes(self, signal_headers):
-        """L6: or 左 false + 右 true → SELL (应通过)"""
+        """L6: or 左 false + 右 true → SELL (应通过)
+
+        左支 (close>=200) 全 false，命中的是 !topk 分支的低价组。
+        """
         resp = _signal_logic_backtest("l6_or_right_true",
                                      "false",
                                      "(close[t-1] >= 200) or !topk(close, 3)",
-                                     headers=signal_headers, allow_short=True)
+                                     headers=signal_headers, allow_short=True,
+                                     debug_signal=True)
         assert resp["status"] == "ok", resp.get("error")
-        sell_count = resp["result"]["summary"]["sell_count"]
-        assert sell_count >= 2, (
-            f"L6: or left=false + right=true 应 SELL, 实际 {sell_count}"
-            f"期望>=2 (sz.900013/14 通过 !topk 分支)"
+        sold = _symbols_with_signal("l6_or_right_true", -1)
+        assert {"sz.900013", "sz.900014"} <= sold, (
+            f"L6: 期望 !topk 分支的低价组产生 SELL 信号，实际 sold={sorted(sold)}"
         )
 
     def test_topk_only_buy_control(self, signal_headers):

@@ -25,7 +25,12 @@ from pathlib import Path
 try:
     import duckdb
 except ImportError:
-    sys.exit("需要 duckdb：pip install duckdb==1.5.4（版本须与服务端 libduckdb 一致）")
+    # 必须以非 0 退出：sys.exit(str) 的退出码是 0，CI 里这个步骤会显示成功，
+    # 预灌静默跳过，之后所有 allowShort 测试都以"名单为空"的形式失败，
+    # 排查方向完全跑偏。argparse 的 error() 也是同样的退出码约定。
+    print("需要 duckdb：pip install duckdb==1.5.4（版本须与服务端 libduckdb 一致）",
+          file=sys.stderr)
+    sys.exit(1)
 
 # std_header.h — enum contract_type
 CONTRACT_TYPES = {
@@ -100,9 +105,15 @@ def seed_margin_stock(ctx):
 
     合成标的也不可能在真实名单里，所以只能预灌。
 
-    _type 取决于 Server::GetContractType() 查 _markets 的结果（查不到兜底 AStock），
-    而 _markets 内容依赖运行模式与交易所注册情况。这里对每个标的把全部
-    contract_type 都插一遍 —— isMarginStock() 只做 COUNT(*) 匹配，多余的行无副作用。
+    _type 只写 stock(0)，与生产写入路径保持一致：
+    FinanceDB::importMarginStocks 走 encodeSymbol(toInternalSymbol(code))，
+    而 to_symbol 对 "sz.900020" 这类代码只会解析出 AStock → contract_type::stock。
+
+    早期版本"保险起见"把全部 6 种 contract_type 都插一遍，结果制造了非法行：
+    margin_stock 里的 option 行经 FinanceDB::queryMarginStocks → decodeSymbol
+    → get_symbol 会构造 ETFOptionSymbol，其 name() 执行 ID2Symbol().at(id)，
+    合成期权不在 ETF 期权注册表里 → 抛 std::out_of_range("map::at")，
+    整个策略初始化失败。测试数据比生产数据"更全"不是好事，必须与生产同形。
     """
     db_file = ctx.finance_db
     ctx.log(f"margin_stock → {db_file.resolve()}")
@@ -110,8 +121,7 @@ def seed_margin_stock(ctx):
     rows = []
     for symbol in ctx.symbols:
         exchange = symbol.partition(".")[0].upper()
-        for type_name, type_value in CONTRACT_TYPES.items():
-            rows.append((encode_symbol(symbol, type_value), exchange, type_name))
+        rows.append((encode_symbol(symbol, CONTRACT_TYPES["stock"]), exchange, "stock"))
 
     conn = ctx.connect(db_file)
     try:
@@ -168,8 +178,12 @@ def main():
     parser.add_argument("steps", nargs="*", help=f"要执行的步骤，默认全部：{', '.join(STEPS)}")
     parser.add_argument("--config", help="服务配置文件，读 server.db_path")
     parser.add_argument("--db-path", help="直接指定 db_path，覆盖 --config")
-    parser.add_argument("--symbols", default="sz.900013,sz.900014",
-                        help="内部格式标的，逗号分隔（默认 sz.900013,sz.900014）")
+    parser.add_argument("--symbols",
+                        default="sz.900013,sz.900014,sz.900020,sz.900021",
+                        help="内部格式标的，逗号分隔"
+                             "（默认覆盖 test_formula_math 的 L4/L6 与 "
+                             "test_shortable 各自的可做空标的；"
+                             "池内其余标的不在名单里，即对照组）")
     parser.add_argument("--list", action="store_true", help="列出可用步骤后退出")
     args = parser.parse_args()
 
@@ -180,11 +194,14 @@ def main():
 
     unknown = [s for s in args.steps if s not in STEPS]
     if unknown:
-        sys.exit(f"未知步骤: {', '.join(unknown)}（可用: {', '.join(STEPS)}）")
+        print(f"未知步骤: {', '.join(unknown)}（可用: {', '.join(STEPS)}）",
+              file=sys.stderr)
+        sys.exit(1)
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     if not symbols:
-        sys.exit("--symbols 为空")
+        print("--symbols 为空", file=sys.stderr)
+        sys.exit(1)
 
     db_path = resolve_db_path(args.db_path, args.config)
     print(f"[prepare] duckdb {duckdb.__version__} | db_path={db_path} "

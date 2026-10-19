@@ -243,6 +243,14 @@ private:
      */
     void updateActiveStrategiesQuote(bool overwrite = false);
 
+    /// 刷新融资融券（可做空）标的名单：拉 tools/fetch_shortable_stocks.py 并全量重写
+    /// FinanceDB::margin_stock。由 Schedules 在每周六的日终时点调用。
+    ///
+    /// SignalNode 只读这张表，不自行抓取 —— 全局数据不该挂在单策略的生命周期上。
+    /// 必须由服务进程写：DuckDB 单写者，服务持有 finance.db 后外部脚本打不开。
+    /// 抓取或解析失败时保留原名单（importMarginStocks 对空输入不清表）。
+    void RefreshMarginStockList(nng_socket sseSock);
+
     void TimerWorker(nng_socket sock);
 
     void UpdateQuoteQueryStatus(time_t);

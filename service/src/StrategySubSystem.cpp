@@ -371,15 +371,33 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
     for (auto* node: sorted_nodes) {
         auto itr = nodeConfigMap.find(node->id());
         if (itr != nodeConfigMap.end()) {
-            if (!node->Init(itr->second)) {
-                String label = itr->second.value("label", "unknown");
-                String nodeType = itr->second.value("nodeType", "unknown");
-                auto failedId = node->id();
-                String errMsg = fmt::format("Node '{}' (id={}, type={}) initialization failed",
-                                            label, failedId, nodeType);
-                WARN("[InitStrategy] {}", errMsg);
-                // 清理未接管的节点，避免内存泄漏
-                // TODO: 后续可考虑对已成功 Init 的节点调用清理接口
+            String label = itr->second.value("label", "unknown");
+            String nodeType = itr->second.value("nodeType", "unknown");
+            auto failedId = node->id();
+            try {
+                if (!node->Init(itr->second)) {
+                    String errMsg = fmt::format("Node '{}' (id={}, type={}) initialization failed",
+                                                label, failedId, nodeType);
+                    WARN("[InitStrategy] {}", errMsg);
+                    // 清理未接管的节点，避免内存泄漏
+                    // TODO: 后续可考虑对已成功 Init 的节点调用清理接口
+                    for (auto* n : sorted_nodes) {
+                        delete n;
+                    }
+                    result._errorMessage = errMsg;
+                    result._failedNodeLabel = label;
+                    result._failedNodeType = nodeType;
+                    result._failedNodeId = failedId;
+                    return result;
+                }
+            } catch (const std::exception& e) {
+                // 节点 Init 内部抛异常时，原始 e.what() 往往只有 "map::at"
+                // 这种毫无线索的信息（BackTestHandler 只能原样透传）。这里补上
+                // 节点身份，让失败能直接定位到具体节点与类型。
+                String errMsg = fmt::format(
+                    "Node '{}' (id={}, type={}) threw during init: {}",
+                    label, failedId, nodeType, e.what());
+                FATAL("[InitStrategy] {}", errMsg);
                 for (auto* n : sorted_nodes) {
                     delete n;
                 }

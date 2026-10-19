@@ -3,6 +3,7 @@
 #include "ExchangeManager.h"
 #include "Interprecter/Stmt.h"
 #include "Util/log.h"
+#include "Util/system.h"
 #include "Util/FinanceDB.h"
 #include "server.h"
 #include "BrokerSubSystem.h"
@@ -50,6 +51,10 @@ bool SignalNode::Init(const nlohmann::json& config) {
 
     INFO("[SignalNode:{}] Found {} symbols from upstream", _id, _pools.size());
 
+    // 解析/验证阶段打点：validate() 成功时是静默的，Init 中途抛异常时
+    // 只剩一句 e.what()（如 "map::at"），无法判断断在哪个阶段。
+    DEBUG_INFO("[SignalNode:{}] stage: parse buy", _id);
+
     // 解析并验证买入公式
     if (!_buyParser) {
         _buyParser = new FormulaParser(_server);
@@ -60,6 +65,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         _buyParser = nullptr;
         throw std::runtime_error("Failed to parse buy signal expression");
     }
+    DEBUG_INFO("[SignalNode:{}] stage: validate buy", _id);
     // 新增：类型验证 (带 symbols 以便 short-name 正确解析)
     if (!_buyParser->validate(availableVars, _pools)) {
         std::string error = "Buy signal expression type validation failed: " +
@@ -73,6 +79,8 @@ bool SignalNode::Init(const nlohmann::json& config) {
         throw std::runtime_error(error);
     }
 
+    DEBUG_INFO("[SignalNode:{}] stage: parse sell", _id);
+
     // 解析并验证卖出公式
     if (!_sellParser) {
         _sellParser = new FormulaParser(_server);
@@ -83,6 +91,7 @@ bool SignalNode::Init(const nlohmann::json& config) {
         _sellParser = nullptr;
         throw std::runtime_error("Failed to parse sell signal expression");
     }
+    DEBUG_INFO("[SignalNode:{}] stage: validate sell", _id);
     // 新增：类型验证 (带 symbols 以便 short-name 正确解析)
     if (!_sellParser->validate(availableVars, _pools)) {
         std::string error = "Sell signal expression type validation failed: " +
@@ -107,68 +116,57 @@ bool SignalNode::Init(const nlohmann::json& config) {
 }
 
 void SignalNode::ensureMarginStockData() {
+    // 只读：margin_stock 是全局数据，由 Server::RefreshMarginStockList 在每周六
+    // 的日终时点刷新，策略不负责拉取。此前在这里同步调 fetch_shortable_stocks.py
+    // 有三个问题：
+    //   1. 全量拉交易所名单（实测 1681 只 / 6 分钟）只为回答本策略几个标的的成员资格；
+    //   2. RunCommand 同步阻塞在 Init 里，失败还静默降级，排查时只有一行 WARN；
+    //   3. 全局数据的生命周期挂在单策略上，每个策略启动都可能触发一次网络阻塞。
+    // 现在读不到就明确告警并禁用做空，刷新动作交给定时任务。
     auto& financeDB = FinanceDB::instance();
+    DEBUG_INFO("[SignalNode:{}] margin: FinanceDB initialized={}", _id,
+               financeDB.isInitialized());
 
-    // 检查 FinanceDB 是否已初始化
     if (!financeDB.isInitialized()) {
         auto db_path = _server->GetConfig().GetDatabasePath();
         if (!financeDB.init(db_path + "/finance", "finance.db")) {
-            WARN("[SignalNode:{}] 无法初始化 FinanceDB，做空功能将被禁用", _id);
+            WARN("[SignalNode:{}] 无法初始化 FinanceDB，禁用做空。"
+                 "请确认 {} 是否可写", _id, db_path + "/finance/finance.db");
             _allowShort = false;
             return;
         }
     }
 
-    // 查询是否已有可做空标的数据
     auto result = financeDB.queryMarginStocks();
-    bool hasData = result.contains("data") && result["data"].is_array() && !result["data"].empty();
+    size_t total = result.contains("data") && result["data"].is_array()
+                   ? result["data"].size() : 0;
+    DEBUG_INFO("[SignalNode:{}] margin: {} rows in table", _id, total);
 
-    if (!hasData) {
-        // 没有数据，调用 Python 脚本获取
-        INFO("[SignalNode:{}] 可做空标的列表为空，正在从交易所获取...", _id);
-
-        String cmd = "python3 tools/fetch_shortable_stocks.py";
-        String output;
-        bool success = RunCommand(cmd, output);
-
-        if (!success || output.empty()) {
-            WARN("[SignalNode:{}] 获取可做空标的列表失败，做空功能将被禁用", _id);
-            _allowShort = false;
-            return;
-        }
-
-        // 跳过可能的非 JSON 前缀
-        auto json_start = output.find('{');
-        if (json_start != std::string::npos) {
-            output = output.substr(json_start);
-        }
-
-        try {
-            nlohmann::json data = nlohmann::json::parse(output);
-            int count = financeDB.importMarginStocks(data);
-            if (count > 0) {
-                INFO("[SignalNode:{}] 已导入 {} 只可做空标的", _id, count);
-            } else {
-                WARN("[SignalNode:{}] 导入可做空标的列表失败，做空功能将被禁用", _id);
-                _allowShort = false;
-                return;
-            }
-        } catch (const std::exception& e) {
-            WARN("[SignalNode:{}] 解析可做空标的数据失败: {}", _id, e.what());
-            _allowShort = false;
-            return;
-        }
+    if (total == 0) {
+        WARN("[SignalNode:{}] margin_stock 为空，禁用做空（策略将退化为纯做多）。"
+             "名单由 Server::RefreshMarginStockList 每周六日终刷新；"
+             "如需立即生效请手工执行 tools/fetch_shortable_stocks.py 并导入 FinanceDB",
+             _id);
+        _allowShort = false;
+        return;
     }
 
-    // 构建当前策略标的池中的可做空标的集合
     for (const auto& sym : _pools) {
         String symStr = get_symbol(sym);
-        if (financeDB.isMarginStock(symStr)) {
+        bool isMargin = financeDB.isMarginStock(symStr);
+        DEBUG_INFO("[SignalNode:{}] margin: {} isMarginStock={}", _id, symStr, isMargin);
+        if (isMargin) {
             _shortableSymbols.insert(sym);
         }
     }
 
-    INFO("[SignalNode:{}] 策略标的池中可做空标的: {}/{}", _id, _shortableSymbols.size(), _pools.size());
+    if (_shortableSymbols.empty()) {
+        WARN("[SignalNode:{}] 标的池 {} 只中无一可做空（margin_stock 共 {} 只），"
+             "本策略不会有空头仓位", _id, _pools.size(), total);
+    } else {
+        INFO("[SignalNode:{}] 标的池中可做空 {}/{}（margin_stock 共 {} 只）",
+             _id, _shortableSymbols.size(), _pools.size(), total);
+    }
 }
 
 NodeProcessResult SignalNode::Process(const String& strategy, DataContext& context)

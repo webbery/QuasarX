@@ -1283,6 +1283,12 @@ void Server::Schedules(time_t t) {
             }
         }
 
+        // 融资融券标的（可做空标的）名单：每周六晚间刷新一次。
+        // 名单是慢变量（交易所按月调整），按周而非按日，避免每次都付几分钟抓取代价。
+        if (ltm->tm_wday == 6) {  // tm_wday 0-based: 6 = 周六
+            RefreshMarginStockList(sseSock);
+        }
+
         if (prev_day == 6) {
             // every week 6 run once
             //RunCommand("cd ../tools && python compress_ctp.py ../data/zh ./zh.tar.gz");
@@ -1314,6 +1320,55 @@ void Server::Schedules(time_t t) {
         // 清理 90 天前的策略日志
         DuckDBLogger::instance().cleanup_old_logs(90);
     }
+}
+
+void Server::RefreshMarginStockList(nng_socket sseSock) {
+    auto& financeDB = FinanceDB::instance();
+
+    // FinanceDB 是懒初始化的（各消费方自己 init），而本函数可能先于任何
+    // 回测/行情流程触发，必须自己确保打开过
+    if (!financeDB.isInitialized() &&
+        !financeDB.init(_config->GetDatabasePath() + "/finance", "finance.db")) {
+        WARN("[RefreshMarginStock] FinanceDB init failed，原名单保持不变");
+        SendSSE(sseSock, "schedule_error", {
+            {"task", "fetch_shortable_stocks.py"},
+            {"message", "FinanceDB init failed; 原名单保持不变"}
+        });
+        return;
+    }
+
+    INFO("[RefreshMarginStock] 拉取融资融券标的名单...");
+    String output;
+    bool ok = RunCommand("cd ../tools && " + std::string(PYTHON_CMD) +
+                         " fetch_shortable_stocks.py", output);
+
+    int imported = 0;
+    if (ok && !output.empty()) {
+        // 脚本 stdout 可能带非 JSON 前缀（如 Windows code page 提示），从第一个 '{' 起截
+        auto json_start = output.find('{');
+        try {
+            auto data = nlohmann::json::parse(
+                json_start != std::string::npos ? output.substr(json_start) : output);
+            // importMarginStocks 对空输入返回 0 且不清表，所以失败不会毁掉现有名单
+            imported = financeDB.importMarginStocks(data);
+        } catch (const std::exception& e) {
+            WARN("[RefreshMarginStock] 解析脚本输出失败: {}", e.what());
+        }
+    }
+
+    if (!ok || imported == 0) {
+        String msg = fmt::format("融资融券标的刷新失败（保留原名单），ok={} imported={}",
+                                 ok, imported);
+        WARN("[RefreshMarginStock] {}", msg);
+        SendSSE(sseSock, "schedule_error", {
+            {"task", "fetch_shortable_stocks.py"},
+            {"message", msg},
+            {"output", output.substr(0, 500)}
+        });
+        return;
+    }
+
+    INFO("[RefreshMarginStock] 已刷新 {} 只可做空标的", imported);
 }
 
 ExchangeInterface* Server::GetExchange(ExchangeType type) {

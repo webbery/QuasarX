@@ -1606,20 +1606,35 @@ int FinanceDB::importMarginStocks(const nlohmann::json& data) {
     std::lock_guard<std::recursive_mutex> lock(mtx());
     ensureMarginStockTable();
 
-    // 全量刷新：先清空再导入
-    exec_unsafe("DELETE FROM margin_stock");
-
-    int count = 0;
+    // 先把行解析出来再动表：本函数是全量刷新（DELETE + INSERT），而调用方是
+    // 无人值守的定时任务（Server::Schedules 每周六 20:00）。抓取失败或返回
+    // 空列表时若照常 DELETE，会把现有名单清干净，让所有 allowShort 策略
+    // 静默退化成纯做多 —— 宁可保持旧数据不动。
+    Vector<std::pair<int64_t, String>> rows;
+    rows.reserve(1024);
     for (const auto& item : data["data"]) {
         if (!item.contains("code") || !item.contains("exchange")) {
             continue;
         }
+        try {
+            int64_t sym_encoded = encodeSymbol(toInternalSymbol(item["code"].get<String>()));
+            rows.emplace_back(sym_encoded, item["exchange"].get<String>());
+        } catch (const std::exception& e) {
+            SPDLOG_WARN("[FinanceDB] importMarginStocks: skip malformed code '{}': {}",
+                        item["code"].dump(), e.what());
+        }
+    }
 
-        String code = item["code"].get<String>();
-        String exchange = item["exchange"].get<String>();
+    if (rows.empty()) {
+        SPDLOG_WARN("[FinanceDB] importMarginStocks: no valid rows, keeping existing table intact");
+        return 0;
+    }
 
-        int64_t sym_encoded = encodeSymbol(toInternalSymbol(code));
+    exec_unsafe("BEGIN TRANSACTION");
+    exec_unsafe("DELETE FROM margin_stock");
 
+    int count = 0;
+    for (const auto& [sym_encoded, exchange] : rows) {
         String sql = fmt::format(
             "INSERT INTO margin_stock (symbol, exchange, updated_at) "
             "VALUES ({}, '{}', CURRENT_TIMESTAMP)",
@@ -1628,6 +1643,7 @@ int FinanceDB::importMarginStocks(const nlohmann::json& data) {
         exec_unsafe(sql);
         count++;
     }
+    exec_unsafe("COMMIT");
 
     SPDLOG_INFO("[FinanceDB] Imported {} margin stocks (shortable stocks)", count);
     return count;
@@ -1662,7 +1678,17 @@ nlohmann::json FinanceDB::queryMarginStocks(const String& exchange) {
     for (idx_t i = 0; i < row_count; i++) {
         nlohmann::json item;
         int64_t sym_encoded = duckdb_value_int64(&res, 0, i);
-        item["code"] = decodeSymbol(sym_encoded);
+        // decodeSymbol → get_symbol 按 _type 分支，future/option 会去查 CTP/ETF 期权
+        // 注册表。表里若混入非 stock 的行（脏数据或脚本写错），.at() 会抛
+        // std::out_of_range —— 那会让 SignalNode::ensureMarginStockData 整个炸掉，
+        // 策略直接 500。名单是"缺一条无所谓、多一条崩全局"的性质，这里逐行兜住。
+        try {
+            item["code"] = decodeSymbol(sym_encoded);
+        } catch (const std::exception& e) {
+            SPDLOG_WARN("[FinanceDB] queryMarginStocks: skip undecodable row symbol_id={} ({})",
+                        sym_encoded, e.what());
+            continue;
+        }
         item["exchange"] = duckdb_value_varchar(&res, 1, i);
         item["updated_at"] = duckdb_value_varchar(&res, 2, i);
         result["data"].push_back(item);

@@ -50,6 +50,17 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
     }
     std::lock_guard<std::mutex> lock(_mutex);
 
+    // TODO(融券做空): 这里是空头开仓的阻塞点。
+    //   回测成交链路 HistorySimulationBase::OrderReport → BacktestContext::adjustPosition
+    //   → 本函数，无持仓时直接 return，因此 SignalNode/PortfolioNode 已放行的
+    //   融券卖出信号到此为止，broker 侧不产生任何成交回报。
+    //   通关条件（两件都做完才算接通）：
+    //     1. 加 _allowShort 开关，允许 qty > pos._qty 时产生负持仓；
+    //        同时让 exchange.h 的 CreditOrderType 真正参与路由
+    //        （目前只有字段声明，全仓无人读取）。
+    //     2. 借券成本模型（年化费率按持仓天数计提），
+    //        否则做空收益系统性虚高。
+    //   对应测试见 service/test/testcases/test_shortable.py 的第二层 TODO。
     auto it = _positions.find(symbol);
     if (it == _positions.end()) {
         WARN("No position to sell: {}", symbol);
