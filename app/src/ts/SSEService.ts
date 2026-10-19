@@ -40,7 +40,12 @@ class SSEService {
           'Cache-Control': 'no-cache'
         },
         signal: this.abortController.signal,
-        
+        // 不注册库内置的 visibilitychange 监听器。该监听器在页面由隐藏变回可见时
+        // 会 abort 当前连接并重建：Electron 里窗口被遮挡/切走就会翻转 document.hidden，
+        // 一天能触发几十次，每次都留下一条服务端尚未回收的订阅，重连窗口内的事件还会
+        // 被 inproc pub/sub 直接丢弃。SSE 本就该在后台持续收消息，保持连接不重建。
+        openWhenHidden: true,
+
         onopen: async (response: any) => {
           this.isConnected.value = true
           console.log('SSE 连接已建立')
@@ -172,7 +177,10 @@ class SSEService {
       this.abortController = null
     }
     this.isConnected.value = false
-    this.messageHandlers.clear()
+    // 不清 messageHandlers：handler 的生命周期归组件管（onMounted 注册、
+    // onUnmounted 注销），服务单方面 clear 会把它们抹掉且没人补注册 ——
+    // 第二次登录走 connect() → disconnect() 时，所有面板的 handler 就此失联，
+    // 行情下载进度条会永久停在旧值不动。
   }
 
   getMessagesByType(type: string): SSEMessage[] {

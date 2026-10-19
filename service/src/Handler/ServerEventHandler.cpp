@@ -3,14 +3,26 @@
 #include "nng/nng.h"
 #include "server.h"
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <thread>
 
 // SSE 订阅 socket 的接收超时。nng_recv 到点返回 NNG_ETIMEDOUT，provider 借此回到循环
 // 顶部重新检查 sink.is_writable() —— 这个值就是「客户端断开后多久能感知到」的上限。
 // 空载连接每秒醒一次，客户端数量不多时代价可忽略。
 static constexpr short SSE_RECV_TIMEOUT_MS = 1000;
+
+// 空闲心跳间隔。必须有心跳，否则空闲连接一次 socket 写入都不会发生，
+// 服务端永远发现不了对端已经走了 —— 僵尸订阅者只增不减，各自占着一个 nng socket
+// 和一个 httplib worker 线程，worker 池迟早被占满连带其他 API 一起卡住。
+static constexpr auto SSE_HEARTBEAT_INTERVAL = std::chrono::seconds(15);
+
+// SSE 注释行。冒号开头的行会被前端解析器识别成 fieldLength == 0 而直接忽略，
+// 不会产生消息。注意结尾只留一个换行、不要再加空行：空行会触发一次「空消息派发」
+// （虽然被 SSEService 的 if (event.data) 挡掉，但每次心跳都会白跑两行 console.log）。
+static constexpr std::string_view SSE_HEARTBEAT = ": keepalive\n";
 
 namespace {
 
@@ -23,6 +35,7 @@ namespace {
 struct SseConn {
     nng_socket sock{0};
     uint32_t seq{0};
+    std::chrono::steady_clock::time_point next_heartbeat{};
 
     ~SseConn() {
         close();
@@ -111,8 +124,10 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
                      conn->seq, URI_DISPATH_EVENT);
                 return false;
             }
-            INFO("[SSE] conn#{}: subscribed {}, recv-timeout {}ms",
-                 conn->seq, URI_DISPATH_EVENT, (int)SSE_RECV_TIMEOUT_MS);
+            conn->next_heartbeat = std::chrono::steady_clock::now() + SSE_HEARTBEAT_INTERVAL;
+            INFO("[SSE] conn#{}: subscribed {}, recv-timeout {}ms, heartbeat {}s",
+                 conn->seq, URI_DISPATH_EVENT, (int)SSE_RECV_TIMEOUT_MS,
+                 (int)std::chrono::duration_cast<std::chrono::seconds>(SSE_HEARTBEAT_INTERVAL).count());
         }
         if (!sink.is_writable() || Server::IsExit()) {
             INFO("[SSE] conn#{}: {}, close socket",
@@ -125,7 +140,18 @@ void ServerEventHandler::get(const httplib::Request& req, httplib::Response& res
         size_t sz = 0;
         int rv = nng_recv(conn->sock, &buff, &sz, NNG_FLAG_ALLOC);
         if (rv == NNG_ETIMEDOUT) {
-            // 正常心跳：没有新事件，回到循环顶部重新检查 sink 是否还活着
+            // 正常心跳：没有新事件。顺带按间隔发一条 SSE 注释行 ——
+            // 这是空闲连接唯一的 socket 写入机会，写失败即说明对端已走，立刻回收。
+            auto now = std::chrono::steady_clock::now();
+            if (now >= conn->next_heartbeat) {
+                conn->next_heartbeat = now + SSE_HEARTBEAT_INTERVAL;
+                if (!sink.write(SSE_HEARTBEAT.data(), SSE_HEARTBEAT.size())) {
+                    WARN("[SSE] conn#{}: heartbeat write failed, close connection", conn->seq);
+                    conn->close();
+                    return false;
+                }
+            }
+            // 回到循环顶部重新检查 sink 是否还活着
             return true;
         }
         if (rv != 0) {
