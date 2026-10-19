@@ -122,7 +122,10 @@ void StockHistoryHandler::get(const httplib::Request& req, httplib::Response& re
     nlohmann::json result = nlohmann::json::array();
     for (size_t i = 0; i < dates.size(); ++i) {
       nlohmann::json row;
-      row["datetime"] = FromStr(dates[i]);
+      // 分钟级 bar 的时间戳形如 "YYYY-MM-DD HH:MM:SS"；用默认的 "%Y-%m-%d" 解析
+      // 会丢掉时分秒，同一天所有 bar 全部落到零点，前端看到的时间就都一样
+      const String& dt = dates[i];
+      row["datetime"] = FromStr(dt, dt.size() >= 19 && dt[10] == ' ' ? "%Y-%m-%d %H:%M:%S" : "%Y-%m-%d");
       row["open"]    = (i < data["open"].size())    ? data["open"][i]    : 0.0;
       row["close"]   = (i < data["close"].size())   ? data["close"][i]   : 0.0;
       row["high"]    = (i < data["high"].size())     ? data["high"][i]    : 0.0;
