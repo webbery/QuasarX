@@ -336,6 +336,8 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
     String labelType = labelCfg.value("type", "classification");
     String labelShape = labelCfg.value("shape", "matrix");
     double volK = labelCfg.value("vol_k", 0.5);
+    // 标签阈值的波动率口径：expanding=逐行因果(默认,无泄漏)；full=全序列常数(旧行为)
+    String labelSigmaMode = labelCfg.value("sigma_mode", "expanding");
     String objective = params.value("objective", "multi:softprob");
     int numClass = params.value("num_class", 3);
     double testRatio = params.value("test_ratio", 0.2);
@@ -361,7 +363,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
 
     // 后台线程：调 xgboost_optimize.py（前端先调 collect 拿到 csv_path 作为 feature_cache 传入）
     std::thread([this, params, fastStrategy, session, sendSSE, labelSource, labelPeriod,
-                 labelType, labelShape, volK, objective, numClass, testRatio, valRatio, nTrials,
+                 labelType, labelShape, volK, labelSigmaMode, objective, numClass, testRatio, valRatio, nTrials,
                  paramDomains, optimizeMetric, startDate, endDate, frequency, featureCache]() {
         String strategyPath;
         try {
@@ -387,6 +389,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
                 "--label-type", labelType,
                 "--label-shape", labelShape,
                 "--vol-k", std::to_string(volK),
+                "--label-sigma-mode", labelSigmaMode,
                 "--objective", objective,
                 "--num-class", std::to_string(numClass),
                 "--test-ratio", std::to_string(testRatio),
@@ -529,6 +532,8 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     String labelType = labelCfg.value("type", "classification");
     String labelShape = labelCfg.value("shape", "matrix");
     double volK = labelCfg.value("vol_k", 0.5);
+    // 标签阈值的波动率口径：expanding=逐行因果(默认,无泄漏)；full=全序列常数(旧行为)
+    String labelSigmaMode = labelCfg.value("sigma_mode", "expanding");
     String objective = params.value("objective", labelType == "classification" ? "multi:softprob" : "reg:squarederror");
     int numClass = params.value("num_class", 3);
 
@@ -575,7 +580,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     // 后台训练线程：执行所有训练阶段，通过 sendSSE 推送进度
     std::thread trainThread([state, session, sendSSE, params, this,
         script, labelCfg, xgbParams, dateRangeCfg, testRatio, valRatio,
-        labelSource, labelPeriod, labelType, labelShape, volK, objective, numClass,
+        labelSource, labelPeriod, labelType, labelShape, volK, labelSigmaMode, objective, numClass,
         startDate, endDate, frequency, strategyName, modelType]() mutable {
 
         auto cleanupGraph = [&]() { for (auto n : state->_fullGraph) delete n; };
@@ -749,7 +754,8 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             "--data", state->_csvPath, "--label-source", labelSource,
             "--label-period", std::to_string(labelPeriod), "--label-type", labelType,
             "--label-shape", labelShape,
-            "--vol-k", std::to_string(volK), "--objective", objective,
+            "--vol-k", std::to_string(volK),
+            "--label-sigma-mode", labelSigmaMode, "--objective", objective,
             "--num-class", std::to_string(numClass), "--model-output", state->_modelPath,
             "--params", xgbParams.dump(), "--test-ratio", std::to_string(testRatio),
             "--val-ratio", std::to_string(valRatio),

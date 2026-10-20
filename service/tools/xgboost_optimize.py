@@ -47,6 +47,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# 公共实现：标签计算、标签参数、meta 抽取
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from xgb_util import add_label_args, compute_label, label_meta
+
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
@@ -159,7 +163,8 @@ def load_and_prepare_data(args):
             else:
                 continue
             sym_df = df[sym_cols].rename(columns=lambda c, p=prefix: c[len(p):])
-            sym_label, _ = compute_label(sym_df_for_label, args.label_period, args.label_type, args.vol_k)
+            sym_label, _ = compute_label(sym_df_for_label, args.label_period, args.label_type,
+                                          args.vol_k, args.label_sigma_mode)
             valid = sym_label.notna() & sym_df.notna().all(axis=1)
             X_parts.append(sym_df.loc[valid].values)
             y_parts.append(sym_label[valid].values)
@@ -171,7 +176,8 @@ def load_and_prepare_data(args):
         if args.label_source not in df.columns:
             emit({"type": "error", "message": f"标签来源列 '{args.label_source}' 不在数据中"})
             sys.exit(1)
-        raw_label, _ = compute_label(df[args.label_source], args.label_period, args.label_type, args.vol_k)
+        raw_label, _ = compute_label(df[args.label_source], args.label_period, args.label_type,
+                                      args.vol_k, args.label_sigma_mode)
         feature_cols = [c for c in df.columns if c not in {args.label_source, "date"}]
         all_nan = [c for c in feature_cols if df[c].notna().sum() == 0]
         feature_cols = [c for c in feature_cols if c not in set(all_nan)]
@@ -193,23 +199,6 @@ def load_and_prepare_data(args):
         emit({"type": "info", "phase": "split",
               "n_train": split, "n_val": 0, "n_test": n - split, "n_features": X.shape[1]})
         return X[:split], y[:split], None, None, X[split:], y[split:], feature_cols
-
-
-def compute_label(s, period, label_type, vol_k):
-    """计算标签：未来 period 周期收益率，按 vol_k 自适应阈值分类"""
-    s = pd.Series(s) if not isinstance(s, pd.Series) else s.astype(float)
-    future = s.shift(-period) / s - 1.0
-    if label_type == "classification":
-        log_ret = np.log(s / s.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
-        sigma = log_ret.std() if len(log_ret) >= 20 else 0.0
-        threshold = float(np.clip(vol_k * sigma * np.sqrt(period), 0.005, 0.10)) if sigma > 1e-12 else 0.015
-        label = pd.Series(np.nan, index=s.index)
-        label[future > threshold] = 0
-        label[future < -threshold] = 2
-        label[(future >= -threshold) & (future <= threshold)] = 1
-    else:
-        label = future
-    return label, future
 
 
 def train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feature_cols):
@@ -251,6 +240,7 @@ def save_model_and_get_path(booster, feature_cols, args, trial_number):
         "features": list(feature_cols),
         "objective": args.objective,
         "num_class": args.num_class if args.label_type == "classification" else 0,
+        "label": label_meta(args),
     }
     meta_path = out_dir / f"trial_{trial_number}.meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
@@ -296,11 +286,6 @@ def call_fast_backtest(args, trial_model_path, trial_meta_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True, help="训练数据 CSV（Python 训练用）")
-    parser.add_argument("--label-source", default="")
-    parser.add_argument("--label-period", type=int, default=5)
-    parser.add_argument("--label-type", choices=["classification", "regression"], default="classification")
-    parser.add_argument("--label-shape", choices=["vector", "matrix"], default="matrix")
-    parser.add_argument("--vol-k", type=float, default=0.5)
     parser.add_argument("--objective", default="multi:softprob")
     parser.add_argument("--num-class", type=int, default=3)
     parser.add_argument("--test-ratio", type=float, default=0.2)
@@ -322,6 +307,7 @@ def main():
                         help="回测策略 JSON 路径（XGBoost 节点 → CacheFeatureNode 链路）")
     parser.add_argument("--output-dir", default="")
 
+    add_label_args(parser)
     args = parser.parse_args()
 
     # 输出目录：data/models/experiments/optimize_fast_{ts}/

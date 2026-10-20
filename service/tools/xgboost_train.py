@@ -28,8 +28,13 @@ import os
 import sys
 import time
 import traceback
+from pathlib import Path
 import numpy as np
 import pandas as pd
+
+# 公共实现：标签计算、标签参数、meta 抽取
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from xgb_util import add_label_args, compute_label, label_meta
 
 # 强制 stdout/stderr 无缓冲，防止管道模式下进程退出时数据丢失
 sys.stdout.reconfigure(line_buffering=True)
@@ -47,48 +52,9 @@ def emit(obj):
     print(json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":")), flush=True)
 
 
-def compute_label(s, period, label_type, vol_k):
-    """计算标签：future_return = source[t+N]/source[t] - 1
-
-    classification (自适应三分类):
-      threshold = vol_k × σ × √N  (σ = 对数收益率标准差)
-      future > +threshold  → 0 (UP)
-      future < -threshold  → 2 (DOWN)
-      otherwise            → 1 (FLAT)
-    regression: label = future_return
-
-    参数 s 可以是 numpy 数组或 pd.Series；返回的 label / future 会保留 s 的 index（用于按时间对齐）
-    """
-    s = pd.Series(s) if not isinstance(s, pd.Series) else s.astype(float)
-    future = s.shift(-period) / s - 1.0
-    if label_type == "classification":
-        log_ret = np.log(s / s.shift(1))
-        log_ret = log_ret.replace([np.inf, -np.inf], np.nan).dropna()
-        sigma = log_ret.std()
-        if len(log_ret) < 20 or sigma < 1e-12:
-            threshold = 0.015
-        else:
-            threshold = vol_k * sigma * np.sqrt(period)
-            threshold = float(np.clip(threshold, 0.005, 0.10))
-        label = pd.Series(np.nan, index=s.index)
-        label[future > threshold] = 0    # UP
-        label[future < -threshold] = 2   # DOWN
-        label[(future >= -threshold) & (future <= threshold)] = 1  # FLAT
-    else:
-        label = future
-    return label, future
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True, help="特征数据 CSV 路径")
-    parser.add_argument("--label-source", default="", help="标签来源列名（vector 模式必填，matrix 模式自动从各标的 close 计算）")
-    parser.add_argument("--label-period", type=int, default=5, help="未来收益周期 N")
-    parser.add_argument("--label-type", choices=["classification", "regression"],
-                        default="classification")
-    parser.add_argument("--label-shape", choices=["vector", "matrix"], default="matrix",
-                        help="标签形状: vector=单标签(N×1), matrix=多标签矩阵(N×K, per-symbol)")
-    parser.add_argument("--vol-k", type=float, default=0.5, help="自适应阈值系数 vol_k (threshold = vol_k × σ × √N)")
     parser.add_argument("--objective", default="multi:softprob")
     parser.add_argument("--num-class", type=int, default=3)
     parser.add_argument("--model-output", required=True, help="模型保存路径")
@@ -100,6 +66,7 @@ def main():
     parser.add_argument("--frequency", default="1d", help="数据频率 (1d/1w/1M)")
     parser.add_argument("--xtest-output", default="", help="X_test 保存路径")
     parser.add_argument("--ytest-output", default="", help="y_test 保存路径")
+    add_label_args(parser)
     args = parser.parse_args()
 
     try:
@@ -205,7 +172,8 @@ def main():
                 sym_df = df[sym_cols].rename(columns=lambda c, p=sym: c[len(p):])
 
             # 计算该 symbol 的标签
-            sym_label, sym_future = compute_label(sym_df_for_label, args.label_period, args.label_type, args.vol_k)
+            sym_label, sym_future = compute_label(sym_df_for_label, args.label_period, args.label_type, args.vol_k,
+                                                 args.label_sigma_mode)
 
             # 有效性掩码
             valid = sym_label.notna() & sym_df.notna().all(axis=1)
@@ -244,6 +212,7 @@ def main():
             args.label_period,
             args.label_type,
             args.vol_k,
+            args.label_sigma_mode,
         )
 
         # 排除标签列
@@ -527,6 +496,7 @@ def main():
     emit({
         "type": "result",
         "model_path": args.model_output,
+        "label": label_meta(args),
         "best_iteration": int(best_iteration),
         "n_train": len(X_train),
         "n_val": n_val,
