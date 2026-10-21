@@ -34,9 +34,10 @@ namespace peg{
 enum class CrossSectionFuncType {
     TOPK,           // topk(expr, k) - 选前 k 名
     BOTTOMK,        // bottomk(expr, k) - 选后 k 名
-    RANK,           // rank(expr) - 返回排名 (0~1)
+    RANK,           // rank(expr) - 返回排名 (0~1，最高 1.0)
     ZSCORE,         // zscore(expr) - 标准化
-    PERCENTILE,     // percentile(expr, p) - 分位数
+    PERCENTILE,     // pct(expr) - 截面百分位排名 (0~1，最高 1.0)
+                    // pct(expr, p) - 截面 p 分位数 (p∈[0,1]，线性插值)
     CS_COUNT,       // cs_count(expr, sign) - 跨标的计数 (>0/<0/==0 的标的数)
     CS_SIZE,        // cs_size() - 返回标的总数
     RAW             // 原始分数透传

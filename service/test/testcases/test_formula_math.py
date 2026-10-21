@@ -1699,3 +1699,325 @@ class TestCSFunctionSameNameCollision:
             f"实际 buy_count={buy_count}。"
             f"若>0 说明分母用了 cs_count(1)+cs_count(-1)=4 而非 cs_size()=5。"
         )
+
+
+# ============================================================
+# PCT / RANK 截面百分位测试
+#
+# 覆盖三件事:
+#   1. pct(close) 升序百分位：值最高的得 1.0，并列取平均名次，
+#      与 pandas rank(pct=True) 逐值相等（研究管线的 *_xs 特征就是这么算的）
+#   2. rank(close) 方向：值最高的得 1.0、最低的得 0.0
+#      （此前实现是降序排序，最高的反而得 0.0，与文档契约相反）
+#   3. NaN 标的被排除在排名之外，自身输出 NaN
+#      （基本面特征在首次公告前必然是 NaN，这条是基本面节点落地的前提）
+#
+# 数据用常数价，不加噪声：排名是纯函数，常数价让期望值完全确定。
+# NaN 源用 close/(close-100)：分母为 0 时引擎的除法返回 NaN
+# （StmtGrammar.cpp 的 '/' 分支），其它标的是有限值。
+# ============================================================
+
+PCT_PRICES = [
+    ("sz.900020", 10.0),
+    ("sz.900021", 20.0),
+    ("sz.900022", 20.0),   # 与 900021 并列 → 平均名次
+    ("sz.900023", 30.0),
+    ("sz.900024", 40.0),
+    ("sz.900025", 50.0),
+    ("sz.900026", 100.0),  # close/(close-100) 的分母 → NaN
+]
+PCT_SYMBOLS = [s for s, _ in PCT_PRICES]
+PCT_PRICE_ARRAY = np.array([p for _, p in PCT_PRICES], dtype=float)
+PCT_HFQ_DIR = CSV_DATA_DIR
+PCT_ORG_DIR = CSV_DATA_DIR.parent / "AStock"
+PCT_START = datetime(2024, 1, 1)
+PCT_N_BARS = 100
+PCT_TOLERANCE = 1e-9
+
+
+def _pct_write_csv(symbol, base_price):
+    """写常数价 CSV（hfq + org），不加噪声以保证排名期望值完全确定"""
+    rows = []
+    d = PCT_START
+    for _ in range(PCT_N_BARS):
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        volume = 1000000
+        rows.append([d.strftime("%Y-%m-%d"), base_price, base_price,
+                     base_price, base_price, volume, round(volume * base_price, 2)])
+        d += timedelta(days=1)
+
+    hfq_path = PCT_HFQ_DIR / f"{symbol}.csv"
+    org_path = PCT_ORG_DIR / f"{symbol}.csv"
+    hfq_path.parent.mkdir(parents=True, exist_ok=True)
+    org_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (hfq_path, org_path):
+        with open(path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['datetime', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
+            for row in rows:
+                writer.writerow(row)
+    return hfq_path, org_path
+
+
+def _pct_upload(symbols, headers):
+    """上传 org 和 hfq（必须分开，见 data_pipeline_org_hfq_split_fix）"""
+    for symbol in symbols:
+        hfq_lines = (PCT_HFQ_DIR / f"{symbol}.csv").read_text().strip().split("\n")[1:]
+        org_lines = (PCT_ORG_DIR / f"{symbol}.csv").read_text().strip().split("\n")[1:]
+        resp = requests.post(f"{BASE_URL}/quote/data", json={
+            "action": "import", "table": "stock_1d", "symbol": symbol,
+            "data": org_lines, "data_hfq": hfq_lines,
+        }, headers=headers, verify=VERIFY_SSL, timeout=60)
+        if resp.status_code != 200:
+            return {"status": "error",
+                    "error": f"upload {symbol}: HTTP {resp.status_code} {resp.text[:200]}"}
+    return {"status": "ok"}
+
+
+def _pct_cleanup(symbols, headers):
+    for symbol in symbols:
+        try:
+            requests.post(f"{BASE_URL}/quote/data", json={
+                "action": "delete", "table": "stock_1d", "symbol": symbol,
+            }, headers=headers, verify=VERIFY_SSL, timeout=30)
+        except Exception:
+            pass
+        for p in (PCT_HFQ_DIR / f"{symbol}.csv", PCT_ORG_DIR / f"{symbol}.csv"):
+            if p.exists():
+                p.unlink()
+
+
+def _build_pct_strategy(strategy_id, expression, label):
+    """Input(7 标的) → FormulaNode(expression) → DebugNode"""
+    return {
+        "id": strategy_id,
+        "name": f"截面百分位测试_{strategy_id}",
+        "version": 1,
+        "description": "pct/rank 截面百分位测试",
+        "capital": 100000,
+        "backtest": {
+            "start": PCT_START.strftime("%Y-%m-%d"),
+            "end": (PCT_START + timedelta(days=PCT_N_BARS * 2)).strftime("%Y-%m-%d")
+        },
+        "source": "A_hfq",
+        "nodes": [
+            {"id": "1", "type": "custom",
+             "data": {"label": "行情", "nodeType": "input",
+                      "params": {"source": {"value": "股票", "type": "text"},
+                                 "code": {"value": PCT_SYMBOLS, "type": "text"},
+                                 "freq": {"value": "1d", "type": "select"},
+                                 "close": {"value": "close", "type": "text"}}}},
+            {"id": "2", "type": "custom",
+             "data": {"label": label, "nodeType": "formula",
+                      "params": {"expression": {"value": expression, "type": "text"}}}},
+            {"id": "3", "type": "custom",
+             "data": {"label": "debug_pct", "nodeType": "debug",
+                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "1", "target": "2",
+             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
+            {"id": "e2", "source": "2", "target": "3",
+             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+        ],
+    }
+
+
+def _engine_div(numerator, denominator):
+    """复刻 StmtGrammar.cpp 的除法语义：分母 |x| < 1e-10 时返回 NaN
+
+    numpy 的 0 分母给 inf，引擎给 NaN，这里必须对齐引擎。
+    """
+    num = np.asarray(numerator, dtype=float)
+    den = np.asarray(denominator, dtype=float)
+    near_zero = np.abs(den) < 1e-10
+    safe_den = np.where(near_zero, 1.0, den)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(near_zero, np.nan, num / safe_den)
+
+
+def _pct_expected(values):
+    """黄金标准：pandas rank(pct=True)，NaN 不参与排名且自身为 NaN"""
+    return pd.Series(np.asarray(values, dtype=float)).rank(pct=True).values
+
+
+def _rank_expected(values):
+    """黄金标准：pandas rank() 归一化到 0~1（与 rank 名次差 1 的线性映射）"""
+    s = pd.Series(np.asarray(values, dtype=float))
+    r = s.rank()
+    n = int(r.notna().sum())
+    if n <= 1:
+        return pd.Series(np.where(r.notna(), 0.5, np.nan)).values
+    return ((r - 1.0) / (n - 1)).values
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _pct_module_setup():
+    """模块级 fixture：生成常数价 CSV → 上传 → 测试结束清理"""
+    headers = {"Authorization": requests.post(
+        f"{BASE_URL}/user/login", json={"name": "admin", "pwd": "admin"},
+        verify=VERIFY_SSL, timeout=10).json()["tk"]}
+    for symbol, price in PCT_PRICES:
+        _pct_write_csv(symbol, price)
+    result = _pct_upload(PCT_SYMBOLS, headers)
+    if result["status"] == "error":
+        pytest.skip(f"setup failed: {result['error']}")
+    yield headers
+    _pct_cleanup(PCT_SYMBOLS, headers)
+
+
+@pytest.fixture
+def pct_headers(_pct_module_setup):
+    return _pct_module_setup
+
+
+def _read_pct_columns(strategy_id, label):
+    """读 Debug CSV，返回 {symbol: 该标的的结果序列}"""
+    df = read_debug_csv(strategy_id, "debug_pct")
+    out = {}
+    for symbol in PCT_SYMBOLS:
+        col = f"{symbol}.{label}"
+        assert col in df.columns, f"缺少列 {col}, 实际列: {list(df.columns)}"
+        out[symbol] = pd.to_numeric(df[col], errors="coerce").values
+    return out
+
+
+class TestCrossSectionPercentile:
+    """pct / rank 截面百分位与名次"""
+
+    def test_pct_matches_pandas_rank_pct(self, pct_headers):
+        """pct(close) 应等于 pandas rank(pct=True)：升序、最高 1.0、并列取平均"""
+        sid = "test_pct_basic"
+        strategy = _build_pct_strategy(sid, "pct(close)", "pct_result")
+        _run_backtest(strategy, pct_headers)
+
+        actual = _read_pct_columns(sid, "pct_result")
+        expected = _pct_expected(PCT_PRICE_ARRAY)
+
+        for i, symbol in enumerate(PCT_SYMBOLS):
+            vals = actual[symbol]
+            finite = np.isfinite(vals)
+            assert finite.any(), f"[{symbol}] pct 全为 NaN"
+            got = vals[finite]
+            exp = expected[i]
+            assert np.allclose(got, exp, atol=PCT_TOLERANCE), (
+                f"[{symbol}] pct(close) 期望 {exp}, 实际 {got[:3]}... "
+                f"(pandas rank(pct=True) 口径: 最高 1.0, 并列取平均名次)"
+            )
+
+    def test_pct_highest_is_one(self, pct_headers):
+        """pct(close) 中价格最高的标的必须得 1.0（方向不能反）"""
+        sid = "test_pct_highest"
+        strategy = _build_pct_strategy(sid, "pct(close)", "pct_result")
+        _run_backtest(strategy, pct_headers)
+
+        actual = _read_pct_columns(sid, "pct_result")
+        highest = PCT_SYMBOLS[int(np.argmax(PCT_PRICE_ARRAY))]
+        lowest = PCT_SYMBOLS[int(np.argmin(PCT_PRICE_ARRAY))]
+
+        hi_vals = actual[highest][np.isfinite(actual[highest])]
+        lo_vals = actual[lowest][np.isfinite(actual[lowest])]
+        assert np.allclose(hi_vals, 1.0, atol=PCT_TOLERANCE), (
+            f"最高价标的 {highest} 的 pct 应恒为 1.0, 实际 {hi_vals[:3]}"
+        )
+        expected_low = 1.0 / len(PCT_SYMBOLS)
+        assert np.allclose(lo_vals, expected_low, atol=PCT_TOLERANCE), (
+            f"最低价标的 {lowest} 的 pct 应恒为 {expected_low}, 实际 {lo_vals[:3]}"
+        )
+
+    def test_rank_highest_is_one_lowest_is_zero(self, pct_headers):
+        """rank(close) 方向：最高 1.0、最低 0.0（与文档契约一致）"""
+        sid = "test_rank_direction"
+        strategy = _build_pct_strategy(sid, "rank(close)", "rank_result")
+        _run_backtest(strategy, pct_headers)
+
+        actual = _read_pct_columns(sid, "rank_result")
+        expected = _rank_expected(PCT_PRICE_ARRAY)
+
+        for i, symbol in enumerate(PCT_SYMBOLS):
+            vals = actual[symbol]
+            finite = np.isfinite(vals)
+            assert finite.any(), f"[{symbol}] rank 全为 NaN"
+            got = vals[finite]
+            exp = expected[i]
+            assert np.allclose(got, exp, atol=PCT_TOLERANCE), (
+                f"[{symbol}] rank(close) 期望 {exp}, 实际 {got[:3]}... "
+                f"(rank 契约: 最高 1.0、最低 0.0；实现若给最高 0.0 说明方向反了)"
+            )
+
+    def test_pct_excludes_nan_symbols(self, pct_headers):
+        """NaN 标的应被排除在排名之外，自身输出 NaN
+
+        close/(close-100): 价格 100 的标的分母为 0 → 引擎除法返回 NaN。
+        有效值只有 6 个，pct 分母应为 6 而不是 7。
+        """
+        sid = "test_pct_nan"
+        strategy = _build_pct_strategy(sid, "pct(close/(close-100))", "pct_result")
+        _run_backtest(strategy, pct_headers)
+
+        actual = _read_pct_columns(sid, "pct_result")
+        values = _engine_div(PCT_PRICE_ARRAY, PCT_PRICE_ARRAY - 100)
+        expected = _pct_expected(values)
+
+        nan_symbol = PCT_SYMBOLS[int(np.argmax(PCT_PRICE_ARRAY))]  # 100 → NaN
+        for i, symbol in enumerate(PCT_SYMBOLS):
+            vals = actual[symbol]
+            if np.isnan(expected[i]):
+                assert not np.isfinite(vals).any(), (
+                    f"[{symbol}] 期望 NaN（分母为 0），实际有有限值 {vals[np.isfinite(vals)][:3]}"
+                )
+                continue
+            finite = np.isfinite(vals)
+            assert finite.any(), f"[{symbol}] pct 全为 NaN"
+            got = vals[finite]
+            assert np.allclose(got, expected[i], atol=PCT_TOLERANCE), (
+                f"[{symbol}] 期望 {expected[i]}, 实际 {got[:3]}... "
+                f"(NaN 标的必须被排除在排名之外，否则分母会从 6 变成 7)"
+            )
+
+    def test_pct_ties_take_average_rank(self, pct_headers):
+        """并列值取平均名次（pandas rank(method='average') 口径）"""
+        sid = "test_pct_ties"
+        strategy = _build_pct_strategy(sid, "pct(close)", "pct_result")
+        _run_backtest(strategy, pct_headers)
+
+        actual = _read_pct_columns(sid, "pct_result")
+        expected = _pct_expected(PCT_PRICE_ARRAY)
+
+        tied = [i for i, s in enumerate(PCT_SYMBOLS) if s in ("sz.900021", "sz.900022")]
+        assert len(tied) == 2, "测试数据应有两个并列标的"
+        for i in tied:
+            vals = actual[PCT_SYMBOLS[i]]
+            finite = np.isfinite(vals)
+            got = vals[finite]
+            assert np.allclose(got, expected[i], atol=PCT_TOLERANCE), (
+                f"[{PCT_SYMBOLS[i]}] 并列值期望平均名次 {expected[i]}, 实际 {got[:3]}"
+            )
+        # 两个并列标的的 pct 必须相等
+        v1 = actual[PCT_SYMBOLS[tied[0]]][np.isfinite(actual[PCT_SYMBOLS[tied[0]]])]
+        v2 = actual[PCT_SYMBOLS[tied[1]]][np.isfinite(actual[PCT_SYMBOLS[tied[1]]])]
+        assert np.allclose(v1, v2), "并列值的 pct 应相等"
+
+    def test_pct_with_level_returns_quantile(self, pct_headers):
+        """pct(close, p) 应返回截面的 p 分位数（所有标的一个标量值）
+
+        线性插值口径，与 numpy.quantile / pandas.quantile 默认一致。
+        第二个参数不能被静默忽略 —— 否则 pct(close, 0.9) 会被当成
+        百分位排名返回 0~1 的数，语义完全跑偏。
+        """
+        sid = "test_pct_quantile"
+        strategy = _build_pct_strategy(sid, "pct(close, 0.5)", "pct_result")
+        _run_backtest(strategy, pct_headers)
+
+        actual = _read_pct_columns(sid, "pct_result")
+        expected = float(np.quantile(PCT_PRICE_ARRAY, 0.5))
+
+        for symbol in PCT_SYMBOLS:
+            vals = actual[symbol]
+            finite = np.isfinite(vals)
+            assert finite.any(), f"[{symbol}] pct(close, 0.5) 全为 NaN"
+            got = vals[finite]
+            assert np.allclose(got, expected, atol=PCT_TOLERANCE), (
+                f"[{symbol}] pct(close, 0.5) 期望中位数 {expected}, 实际 {got[:3]}"
+            )
