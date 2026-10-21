@@ -1,7 +1,9 @@
 """模型无关的评估指标。
 
-这里只依赖 numpy，不依赖 xgboost/pandas，便于单测和被不同模型（XGBoost/
-CNN/Transformer）复用。
+指标计算本身只依赖 numpy（不依赖 xgboost），统计口径（Newey-West、
+Spearman IC）统一来自 ml_stats.py，这里不再保留第二份实现——历史上
+ml_metrics 与 feature_screen 各写了一套 NW-t，注释写着"同一口径"，
+代码却是两份，归一化方式还不同。
 
 约定：
   - classification 的 y_true / pred_idx 都是全局编码后的类别索引 0..K-1；
@@ -10,78 +12,18 @@ CNN/Transformer）复用。
   - 所有输出都经过 JSON 安全处理，NaN/Inf → None。
 """
 
-import math
-
 import numpy as np
 
+# 统计口径的唯一实现。这里重新导出，保持 ml_metrics 原有的公开接口不变
+# （ml_cv.py / ml_adapter.py / test_ml_pipeline.py 都从这里导入）。
+from ml_stats import (daily_cs_ic_long, newey_west_t, num, rankdata,
+                      spearman_ic)
 
-def num(value):
-    """JSON 安全的 float：NaN/Inf/不可转换 → None。"""
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return None
-    return v if np.isfinite(v) else None
-
-
-def newey_west_t(series, lag: int):
-    """Newey-West HAC t 值和双侧 p 值（正态近似）。
-
-    与 service/lab/feature_screen.py 的实现保持同一口径。
-    """
-    x = np.asarray(series, dtype=float)
-    x = x[np.isfinite(x)]
-    n = len(x)
-    if n < 10:
-        return float("nan"), float("nan")
-    lag = max(1, min(int(lag), n - 2))
-    mu = float(x.mean())
-    e = x - mu
-    var = float((e * e).mean())
-    for l in range(1, lag + 1):
-        gamma = float((e[l:] * e[:-l]).mean())
-        var += 2.0 * (1.0 - l / (lag + 1.0)) * gamma
-    if var <= 1e-18:
-        if abs(mu) < 1e-18:
-            return 0.0, 1.0
-        return math.copysign(float("inf"), mu), 0.0
-    se = math.sqrt(var / n)
-    t = mu / se
-    p = math.erfc(abs(t) / math.sqrt(2.0))
-    return float(t), float(p)
-
-
-def rankdata(values) -> np.ndarray:
-    """平均秩（处理 ties），用于 Spearman IC。"""
-    x = np.asarray(values, dtype=float)
-    n = len(x)
-    order = np.argsort(x, kind="mergesort")
-    ranks = np.empty(n, dtype=float)
-    ranks[order] = np.arange(1, n + 1, dtype=float)
-    sorted_x = x[order]
-    i = 0
-    while i < n:
-        j = i + 1
-        while j < n and sorted_x[j] == sorted_x[i]:
-            j += 1
-        if j - i > 1:
-            ranks[order[i:j]] = (i + 1 + j) / 2.0
-        i = j
-    return ranks
-
-
-def spearman_ic(x, y) -> float:
-    """Spearman rank IC；有效样本不足或任一侧无变化时返回 NaN。"""
-    a = np.asarray(x, dtype=float)
-    b = np.asarray(y, dtype=float)
-    m = np.isfinite(a) & np.isfinite(b)
-    if int(m.sum()) < 3:
-        return float("nan")
-    ra = rankdata(a[m])
-    rb = rankdata(b[m])
-    if ra.std() < 1e-12 or rb.std() < 1e-12:
-        return float("nan")
-    return float(np.corrcoef(ra, rb)[0, 1])
+__all__ = [
+    "num", "rankdata", "spearman_ic", "newey_west_t",
+    "classification_metrics", "regression_metrics", "ic_metrics",
+    "learning_curve", "predictions_payload",
+]
 
 
 def classification_metrics(y_true, pred_idx, proba, n_classes):
@@ -158,19 +100,14 @@ def regression_metrics(y_true, pred):
 
 
 def ic_metrics(score, future, date_codes, mask, nw_lag):
-    """优先截面 IC；横截面样本不足时退化为整段时序 IC。"""
+    """优先截面 IC；横截面样本不足时退化为整段时序 IC。
+
+    逐日 IC 与 feature_screen 共用 ml_stats.daily_cs_ic_long，口径一致。
+    """
     score = np.asarray(score, dtype=float)
     future = np.asarray(future, dtype=float)
-    dates = np.unique(date_codes[mask])
 
-    ics = []
-    for d in dates:
-        m = mask & (date_codes == d) & np.isfinite(score) & np.isfinite(future)
-        if int(m.sum()) < 2:
-            continue
-        ic = spearman_ic(score[m], future[m])
-        if np.isfinite(ic):
-            ics.append(ic)
+    _, ics = daily_cs_ic_long(score, future, date_codes, mask, min_names=2)
 
     if len(ics) >= 5:
         arr = np.asarray(ics, dtype=float)

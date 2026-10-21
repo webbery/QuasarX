@@ -930,5 +930,104 @@ def generate_xgb_vector_csv(path, n_days=400, seed=42):
     return str(path)
 
 
+def generate_screen_feature_cache(path, n_days=320, n_symbols=20, seed=42):
+    """生成 feature_screen 门禁测试用的特征缓存宽表。
+
+    列名约定与 C++ /v0/ml action=collect 一致：``date`` + ``<symbol>.<feature>``，
+    且每个标的都有 ``<symbol>.close``。
+
+    三个特征族的预期结论（tools/test/test_feature_screen.py 的 API 测试依赖）：
+
+      sig   —— AR(1) φ=0.97，且未来收益由它驱动
+               → IC 高、应进 A 档；滞后判定 persistent
+      fast  —— iid，只驱动次日收益（不在 5 日前瞻窗口的起点之后重复出现）
+               → 有 IC；滞后判定 decaying
+      noise —— 与收益无关 → 不应入选
+
+    收益构造保证因果性：``r[t] = 0.002*sig[t-1] + 0.01*fast[t-1] + ε``。
+    只有 sig[t-1] / fast[t-1] 参与 r[t]，不会用到 t 之后的信息。
+
+    返回 dict（不是 str）：测试需要日期切分点和预期特征名。
+    """
+    import pandas as pd
+
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2023-01-02", periods=n_days, freq="B")
+    data = {"date": dates}
+    symbols = []
+
+    for i in range(n_symbols):
+        sym = f"sh.{600000 + i:06d}"
+        symbols.append(sym)
+
+        sig = np.zeros(n_days)
+        for t in range(1, n_days):
+            sig[t] = 0.97 * sig[t - 1] + rng.normal()
+
+        fast = rng.normal(size=n_days)
+        noise = rng.normal(size=n_days)
+        eps = rng.normal(scale=0.01, size=n_days)
+
+        ret = np.zeros(n_days)
+        ret[1:] = 0.002 * sig[:-1] + 0.01 * fast[:-1] + eps[1:]
+        close = 100.0 * np.exp(np.cumsum(ret))
+
+        data[f"{sym}.close"] = close
+        data[f"{sym}.sig"] = sig
+        data[f"{sym}.fast"] = fast
+        data[f"{sym}.noise"] = noise
+
+    pd.DataFrame(data).to_csv(path, index=False)
+
+    # DEV/TEST 切分：留最后 80 天做 TEST，显式传给 API 避免 80/20 回退
+    return {
+        "path": str(path),
+        "symbols": symbols,
+        "features": ["sig", "fast", "noise"],
+        "dev_end": str(dates[-81].date()),
+        "test_start": str(dates[-80].date()),
+        "date_start": str(dates[0].date()),
+        "date_end": str(dates[-1].date()),
+    }
+
+
+def generate_screen_ohlcv(path, cache_path, seed=43):
+    """基于特征缓存的 close 生成配套 OHLCV 宽表（--entry next_open 用）。
+
+    列名 ``<symbol>.open/.high/.low/.close/.volume/.turnover``，与
+    feature_screen.load_ohlcv 的宽表格式一致。开盘价取前一日收盘附近加微小
+    跳空，保证涨跌停掩码不会把样本全部过滤掉。
+    """
+    import pandas as pd
+
+    df = pd.read_csv(cache_path, parse_dates=["date"])
+    rng = np.random.default_rng(seed)
+    out = {"date": df["date"]}
+
+    for col in [c for c in df.columns if str(c).endswith(".close")]:
+        col = str(col)
+        sym = col[:-len(".close")]
+        close = df[col].to_numpy(dtype=float)
+
+        op = np.r_[close[0], close[:-1]] * (
+            1.0 + rng.normal(scale=0.002, size=len(close)))
+        high = np.maximum(op, close) * (
+            1.0 + np.abs(rng.normal(scale=0.003, size=len(close))))
+        low = np.minimum(op, close) * (
+            1.0 - np.abs(rng.normal(scale=0.003, size=len(close))))
+        volume = rng.uniform(1e5, 1e6, size=len(close))
+        turnover = rng.uniform(0.5, 5.0, size=len(close))
+
+        out[f"{sym}.open"] = op
+        out[f"{sym}.high"] = high
+        out[f"{sym}.low"] = low
+        out[f"{sym}.close"] = close
+        out[f"{sym}.volume"] = volume
+        out[f"{sym}.turnover"] = turnover
+
+    pd.DataFrame(out).to_csv(path, index=False)
+    return str(path)
+
+
 if __name__ == "__main__":
     main()

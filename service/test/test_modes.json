@@ -23,6 +23,7 @@
         "test_multi_freq",
         "test_position_events",
         "test_xgboost",
+        "test_feature_screen",
         "test_decision",
         "test_signal_vmd",
         "test_capacity_scan",

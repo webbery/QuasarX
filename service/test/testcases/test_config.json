@@ -122,6 +122,10 @@
     "mc": {
       "_doc": "空文件占位",
       "enabled": false
+    },
+    "feature_screen": {
+      "_doc": "特征筛选门禁 /v0/ml action=screen（合成数据，不依赖行情源）",
+      "enabled": true
     }
   }
 }

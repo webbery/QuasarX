@@ -3139,6 +3139,21 @@ paths:
         - action=collect：收集特征数据
           与 train 共享上游子图执行逻辑，但只收集不训练，返回 csv_path
 
+        - action=screen：特征筛选门禁（Step 1）
+          1. 输入一份特征缓存 CSV（collect 返回的 csv_path），**不需要策略图、不需要行情源**
+          2. 后台线程调用 tools/feature_screen.py，统一口径计算：
+             日频横截面 rank IC、Newey-West t、折稳定性、top-k 超额、
+             增量 IC（残差回归）、BH FDR / Bonferroni、IC 衰减、滞后敏感性
+          3. 结果落到 `<server.db_path>/reports/feature_screen/<run_id>/`
+             （feature_screen.json / .csv / .md）
+          4. SSE 推送 prepare / validate / load_cache / compute_target / evaluate /
+             multiple_testing / report 等 step，以及逐特征 progress
+          5. `GET ?action=train_status&session_id=...` 读 summary + files；
+             完整逐特征明细用 `GET ?action=screen_result&run_id=...`
+          6. 服务端调用固定加 `--no-plot`：不依赖 matplotlib，绘图由前端用
+             JSON 里的 `dev` / `test` / `decay` / `yearly` / `lag` 字段完成
+          7. screen 与 train/optimize/collect 共用单会话槽，同一时刻只跑一个
+
         - action=shap：计算 SHAP 值
           使用 XGBoost C API 在 C++ 端直接计算（XGBOOST_OUTPUT_CONTRIBUTION），
           不依赖 Python shap 库，不持久化到数据库。
@@ -3164,6 +3179,7 @@ paths:
                 - $ref: "#/components/schemas/XGBoostDeleteRequest"
                 - $ref: "#/components/schemas/XGBoostUpdateMetaRequest"
                 - $ref: "#/components/schemas/XGBoostOptimizeRequest"
+                - $ref: "#/components/schemas/XGBoostScreenRequest"
             examples:
               train:
                 summary: 训练模型（单次切分）
@@ -3233,6 +3249,27 @@ paths:
                   objective: multi:softprob
                   num_class: 3
                   test_ratio: 0.2
+              screen:
+                summary: 特征筛选（门禁）
+                value:
+                  action: screen
+                  csv_path: /tmp/xgb_data_xxx.csv
+                  label:
+                    period: 5
+                    vol_k: 0.34
+                    sigma_mode: expanding
+                  horizons: [1, 5, 10, 20]
+                  entry: close
+                  n_folds: 5
+                  rules:
+                    min_ic: 0.02
+                    min_t: 2.5
+                    min_sign_folds: 4
+                    fdr_q: 0.10
+                    min_coverage: 0.50
+                    gate_topk: 5
+                  trial_count: 0
+                  lag_shifts: [-2, -1, 0, 1, 2]
               shap:
                 summary: 计算 SHAP 值
                 value:
@@ -3257,6 +3294,7 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/XGBoostTrainResponse"
                   - $ref: "#/components/schemas/XGBoostOptimizeSubmitResponse"
+                  - $ref: "#/components/schemas/XGBoostScreenSubmitResponse"
                   - $ref: "#/components/schemas/XGBoostShapResponse"
                   - $ref: "#/components/schemas/XGBoostDeleteResponse"
         '400':
@@ -3273,6 +3311,81 @@ paths:
                 $ref: "#/components/schemas/Error"
         '500':
           description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      summary: 查询训练/筛选会话状态与产物
+      description: |
+        通过 `action` 查询参数路由：
+
+        - `action=list`：列出 experiments/ 与 production/ 下的模型文件
+        - `action=train`：会话进度 **SSE 流**。重放历史事件后实时推送。
+          train / optimize / collect / screen 共用这同一条通道。
+          事件名：`step` / `progress` / `log` / `warning` / `error`
+        - `action=train_status`：会话最终结果（`status` = running | done | error）
+        - `action=screen_result`：按 `run_id` 读取一次特征筛选的完整 JSON
+        - `action=download`：下载模型文件（`model_id`）
+        - `action=shap`：GET 形式的 SHAP 计算（`model_id`）
+      tags:
+        - XGBoost
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [list, train, train_status, screen_result, download, shap]
+        - name: session_id
+          in: query
+          schema:
+            type: string
+          description: action=train / train_status 时必填
+        - name: run_id
+          in: query
+          schema:
+            type: string
+          description: |
+            action=screen_result 时必填。形如 `screen_20261021_190500_1234`，
+            由 POST action=screen 的返回/SSE 或 train_status 结果给出。
+        - name: model_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: action=download / shap 时必填
+        - name: strategy_id
+          in: query
+          schema:
+            type: string
+          description: action=list 时可选，按策略过滤
+      responses:
+        '200':
+          description: |
+            list → 模型列表；train → text/event-stream；
+            train_status → 会话结果；screen_result → 完整特征筛选 JSON；
+            download → 模型 JSON。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/XGBoostListResponse"
+                  - $ref: "#/components/schemas/XGBoostScreenResult"
+                  - $ref: "#/components/schemas/XGBoostScreenDetail"
+                  - $ref: "#/components/schemas/XGBoostTrainResponse"
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 流；每条消息形如 `event:<type>\ndata:<json>\n\n`
+        '400':
+          description: 缺少或非法的查询参数（如 run_id 不符合白名单格式）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        '404':
+          description: 会话 / 模型 / 筛选结果不存在
           content:
             application/json:
               schema:
@@ -5781,6 +5894,207 @@ components:
           type: integer
         optimize_metric:
           type: string
+
+    XGBoostScreenRequest:
+      type: object
+      description: |
+        特征筛选门禁（Step 1）。只需一份特征缓存 CSV，不需要策略图或行情源。
+        统计口径由 service/tools/feature_screen.py 统一实现。
+      required: [action, csv_path]
+      properties:
+        action:
+          type: string
+          enum: [screen]
+        csv_path:
+          type: string
+          description: 特征缓存 CSV，来自 /v0/ml action=collect 的 csv_path
+        label:
+          type: object
+          description: |
+            `period` 决定前瞻期（未显式传 primary_horizon 时作为主 horizon）。
+            `vol_k` / `sigma_mode` 只影响三分类训练，不改变 rank IC，
+            服务端仅记录在结果的 label 字段里用于对账。
+          properties:
+            period: { type: integer, default: 5, minimum: 1, maximum: 250 }
+            vol_k: { type: number, default: 0.34 }
+            sigma_mode:
+              type: string
+              enum: [expanding, full]
+              default: expanding
+        primary_horizon:
+          type: integer
+          default: 5
+          minimum: 1
+          maximum: 250
+          description: 选择与 top-k 使用的主 horizon；缺省取 label.period
+        horizons:
+          type: array
+          items: { type: integer }
+          default: [1, 5, 10, 20]
+          description: 仅控制 IC 衰减曲线；主 horizon 会自动并入
+        entry:
+          type: string
+          enum: [close, next_open]
+          default: close
+        ohlcv_cache:
+          type: string
+          description: entry=next_open 时必填；宽表/长表 CSV 或每标的 CSV 目录
+        dev_end:
+          type: string
+          format: date
+          default: '2025-10-28'
+        test_start:
+          type: string
+          format: date
+          default: '2025-10-29'
+        n_folds: { type: integer, default: 5, minimum: 2, maximum: 50 }
+        min_names: { type: integer, default: 15, minimum: 2 }
+        nw_lag:
+          type: integer
+          default: 0
+          description: 0 = max(10, 2*primary_horizon)
+        rules:
+          type: object
+          properties:
+            min_ic: { type: number, default: 0.02, minimum: 0 }
+            min_t: { type: number, default: 2.5, minimum: 0 }
+            min_sign_folds: { type: integer, default: 4 }
+            fdr_q: { type: number, default: 0.10, exclusiveMinimum: 0, maximum: 1 }
+            min_coverage: { type: number, default: 0.50, minimum: 0, maximum: 1 }
+            gate_topk: { type: integer, default: 5, minimum: 1 }
+        trial_count:
+          type: integer
+          default: 0
+          description: 历史累计尝试过的特征数，用于 BH FDR 的 M；0 = 用本次候选数
+        features:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+          description: 只筛这些特征；空 = 全部
+        incremental_base:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+          description: 增量 IC 的回归基准特征；空 = 用本次全部特征
+        lag_shifts:
+          type: array
+          items: { type: integer }
+          default: [-2, -1, 0, 1, 2]
+          description: 滞后敏感性诊断的平移步数；k>0 用更旧的数据
+        no_test: { type: boolean, default: false }
+        no_incremental: { type: boolean, default: false }
+        no_lag_sensitivity: { type: boolean, default: false }
+        winsorize: { type: number, default: 0.01 }
+        vol_scale: { type: boolean, default: false }
+        limit_eps: { type: number, default: 0.002 }
+        min_turnover: { type: number, default: 0.0 }
+        py_env:
+          type: string
+          description: |
+            Python 解释器或 config.json 里的环境名。服务默认 python3 不一定
+            装有 pandas，建议显式指定（同 action=train 的 py_env）。
+
+    XGBoostScreenSubmitResponse:
+      type: object
+      description: action=screen 提交后立即返回（session_id 用于 SSE / train_status）
+      properties:
+        session_id:
+          type: string
+          example: screen_1761123456789012345
+        status:
+          type: string
+          enum: [started, running]
+        message:
+          type: string
+          description: 已有其他 ML 会话在跑时返回 "another ML session is running"
+
+    XGBoostScreenResult:
+      type: object
+      description: |
+        action=screen 完成后的结果，通过
+        `GET /v0/ml?action=train_status&session_id=...` 获取
+        （完整逐特征明细用 `GET ?action=screen_result&run_id=...`）。
+      properties:
+        status:
+          type: string
+          enum: [done, error]
+        session_id: { type: string }
+        run_id:
+          type: string
+          example: screen_20261021_190500_1234
+        out_dir:
+          type: string
+          description: 结果目录（绝对路径）
+        files:
+          type: object
+          properties:
+            json: { type: string }
+            csv: { type: string }
+            md: { type: string }
+          description: 不包含 PNG——服务端固定 --no-plot，由前端用 JSON 绘图
+        summary:
+          type: object
+          properties:
+            n_features: { type: integer }
+            n_tier_a: { type: integer }
+            n_tier_b: { type: integer }
+            m_tests: { type: integer }
+            bonferroni_t: { type: number }
+            dev_days: { type: integer }
+            test_days: { type: integer }
+            primary_horizon: { type: integer }
+            lag_sensitivity: { type: boolean }
+            plots: { type: boolean, description: 恒为 false（服务端 --no-plot） }
+        label:
+          type: object
+          description: 回显 label.period / vol_k / sigma_mode，便于与训练配置对账
+          properties:
+            period: { type: integer }
+            vol_k: { type: number }
+            sigma_mode: { type: string }
+        meta:
+          type: object
+          additionalProperties: true
+          description: 与结果 JSON 的 meta 相同（日期切分、规则、lag_shifts 等）
+        error:
+          type: string
+          description: status=error 时的失败原因
+
+    XGBoostScreenDetail:
+      type: object
+      description: |
+        `GET ?action=screen_result&run_id=...` 返回的完整结果，结构为
+        `{meta: {...}, features: {<name>: {dev, test, incremental, decay, lag,
+        q_value, selection}}}`。字段与 feature_screen.json 一致，此处不展开
+        （随筛选维度变化），前端按需读取。
+      additionalProperties: true
+
+    XGBoostListResponse:
+      type: object
+      properties:
+        experiments:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              filename: { type: string }
+              meta:
+                type: object
+                nullable: true
+                additionalProperties: true
+        production:
+          type: object
+          nullable: true
+          properties:
+            path: { type: string }
+            filename: { type: string }
+            meta:
+              type: object
+              nullable: true
+              additionalProperties: true
 
     XGBoostOptimizeResult:
       type: object

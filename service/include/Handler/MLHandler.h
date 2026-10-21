@@ -112,6 +112,10 @@ private:
     void handleTrain(const nlohmann::json& params, httplib::Response& res);
     void handleOptimize(const nlohmann::json& params, httplib::Response& res);
     void handleCollect(const nlohmann::json& params, httplib::Response& res);
+    // 特征筛选门禁：吃 collect 产出的 CSV，跑 tools/feature_screen.py
+    void handleScreen(const nlohmann::json& params, httplib::Response& res);
+    // 读取一次筛选的完整结果 JSON（summary 见 train_status）
+    void handleScreenResult(const httplib::Request& req, httplib::Response& res);
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleTrainStatus(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);

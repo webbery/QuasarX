@@ -334,7 +334,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
     String labelSource = labelCfg.value("source", "");
     if (params.contains("cv") && !params["cv"].is_null() && !params["cv"].is_object()) {
         res.status = 400;
-        res.set_content(R"({"message":"invalid 'cv' (object required)"})", "application/json");
+        res.set_content(R"json({"message":"invalid 'cv' (object required)"})json", "application/json");
         return;
     }
     bool cvOptEnabled = params.contains("cv") && params["cv"].is_object() &&
@@ -543,7 +543,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     nlohmann::json cvCfg = params.value("cv", nlohmann::json::object());
     if (!cvCfg.is_null() && !cvCfg.is_object()) {
         res.status = 400;
-        res.set_content(R"({"message":"invalid 'cv' (object required)"})", "application/json");
+        res.set_content(R"json({"message":"invalid 'cv' (object required)"})json", "application/json");
         return;
     }
     bool cvEnabled = cvCfg.is_object() && cvCfg.contains("enabled") &&
@@ -1285,6 +1285,335 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
     collectThread.detach();
 }
 
+// ============ 特征筛选门禁 ============
+
+namespace {
+
+// 把 JSON 的整数数组（或逗号分隔字符串）统一成逗号分隔字符串。
+// 前端可能传 [1,5,10,20]，脚本的 CLI 只认 "1,5,10,20"。
+String joinInts(const nlohmann::json& v, const String& fallback) {
+    if (v.is_array()) {
+        String out;
+        for (auto& x : v) {
+            if (!x.is_number_integer()) continue;
+            if (!out.empty()) out += ",";
+            out += std::to_string(x.get<long long>());
+        }
+        return out.empty() ? fallback : out;
+    }
+    if (v.is_string()) {
+        String s = v.get<String>();
+        if (!s.empty()) return s;
+    }
+    return fallback;
+}
+
+// 同上，处理字符串数组（features / incremental_base）
+String joinStringsCsv(const nlohmann::json& v, const String& fallback) {
+    if (v.is_array()) {
+        String out;
+        for (auto& x : v) {
+            if (!x.is_string()) continue;
+            const String& s = x.get_ref<const String&>();
+            if (s.empty()) continue;
+            if (!out.empty()) out += ",";
+            out += s;
+        }
+        return out.empty() ? fallback : out;
+    }
+    if (v.is_string()) {
+        String s = v.get<String>();
+        if (!s.empty()) return s;
+    }
+    return fallback;
+}
+
+}  // namespace
+
+void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& res) {
+    // ---- 1. 参数校验：全部在启动线程之前完成，失败直接 400 ----
+    auto bad = [&res](const String& msg) {
+        res.status = 400;
+        res.set_content(nlohmann::json{{"message", msg}}.dump(),
+                        "application/json");
+    };
+
+    String csvPath = params.value("csv_path", "");
+    if (csvPath.empty()) return bad("missing 'csv_path'");
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(csvPath, ec))
+        return bad("csv_path not found: " + csvPath);
+
+    nlohmann::json labelCfg = params.value("label", nlohmann::json::object());
+    if (!labelCfg.is_object()) return bad("'label' must be an object");
+    int labelPeriod = labelCfg.value("period", 0);
+    // 门禁的目标是连续 forward return，label.period 决定前瞻期；
+    // 显式传 primary_horizon 时以它为准。vol_k / sigma_mode 只影响后续
+    // 三分类训练，不改变 rank IC，这里只记录不参与计算。
+    int primaryHorizon = params.value(
+        "primary_horizon", labelPeriod > 0 ? labelPeriod : 5);
+    double volK = labelCfg.value("vol_k", 0.34);
+    String sigmaMode = labelCfg.value("sigma_mode", "expanding");
+    String entry = params.value("entry", "close");
+    String ohlcvCache = params.value("ohlcv_cache", "");
+
+    nlohmann::json rules = params.value("rules", nlohmann::json::object());
+    if (!rules.is_object()) return bad("'rules' must be an object");
+    double minIc = rules.value("min_ic", 0.02);
+    double minT = rules.value("min_t", 2.5);
+    int minSignFolds = rules.value("min_sign_folds", 4);
+    double fdrQ = rules.value("fdr_q", 0.10);
+    double minCoverage = rules.value("min_coverage", 0.50);
+    int gateTopk = rules.value("gate_topk", 5);
+
+    int nFolds = params.value("n_folds", 5);
+    int minNames = params.value("min_names", 15);
+    int nwLag = params.value("nw_lag", 0);
+    int trialCount = params.value("trial_count", 0);
+    double winsorize = params.value("winsorize", 0.01);
+    bool volScale = params.value("vol_scale", false);
+    double limitEps = params.value("limit_eps", 0.002);
+    double minTurnover = params.value("min_turnover", 0.0);
+    String features = joinStringsCsv(params.value("features", nlohmann::json()), "");
+    String incrementalBase =
+        joinStringsCsv(params.value("incremental_base", nlohmann::json()), "");
+    bool noTest = params.value("no_test", false);
+    bool noIncremental = params.value("no_incremental", false);
+    bool noLagSens = params.value("no_lag_sensitivity", false);
+    String pyEnv = params.value("py_env", "");
+
+    String horizons = joinInts(params.value("horizons", nlohmann::json()), "1,5,10,20");
+    String lagShifts = joinInts(params.value("lag_shifts", nlohmann::json()), "-2,-1,0,1,2");
+    String topk = joinInts(params.value("topk", nlohmann::json()), "3,5,10");
+
+    if (entry != "close" && entry != "next_open")
+        return bad("'entry' must be 'close' or 'next_open'");
+    if (entry == "next_open" && ohlcvCache.empty())
+        return bad("'entry=next_open' requires 'ohlcv_cache'");
+    // OHLCV 可以是文件（宽表/长表 CSV）或目录（每标的一个 CSV）
+    if (!ohlcvCache.empty() && !std::filesystem::exists(ohlcvCache, ec))
+        return bad("ohlcv_cache not found: " + ohlcvCache);
+    if (primaryHorizon < 1 || primaryHorizon > 250)
+        return bad("'primary_horizon' must be in [1, 250]");
+    if (nFolds < 2 || nFolds > 50)
+        return bad("'n_folds' must be in [2, 50]");
+    if (minNames < 2)
+        return bad("'min_names' must be >= 2");
+    if (minSignFolds < 0 || minSignFolds > nFolds)
+        return bad("'rules.min_sign_folds' must be in [0, n_folds]");
+    if (!(fdrQ > 0.0 && fdrQ <= 1.0))
+        return bad("'rules.fdr_q' must be in (0, 1]");
+    if (minIc < 0.0 || minT < 0.0)
+        return bad("'rules.min_ic' / 'rules.min_t' must be >= 0");
+    if (!(minCoverage >= 0.0 && minCoverage <= 1.0))
+        return bad("'rules.min_coverage' must be in [0, 1]");
+    if (gateTopk < 1)
+        return bad("'rules.gate_topk' must be >= 1");
+
+    // ---- 2. 幂等检查：与 train/optimize/collect 共用单会话槽 ----
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && !s_activeSession->_done) {
+            nlohmann::json resp;
+            resp["session_id"] = s_activeSession->_sessionId;
+            resp["status"] = "running";
+            resp["message"] = "another ML session is running";
+            res.set_content(resp.dump(), "application/json");
+            return;
+        }
+    }
+
+    auto session = std::make_shared<TrainSession>();
+    session->_sessionId = fmt::format(
+        "screen_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        s_activeSession = session;
+    }
+
+    nlohmann::json resp;
+    resp["session_id"] = session->_sessionId;
+    resp["status"] = "started";
+    res.set_content(resp.dump(), "application/json");
+
+    std::thread screenThread(
+        [this, session, csvPath, ohlcvCache, entry, primaryHorizon, horizons,
+         lagShifts, topk, nFolds, minNames, nwLag, trialCount, gateTopk,
+         minIc, minT, minSignFolds, fdrQ, minCoverage, winsorize, volScale,
+         limitEps, minTurnover, features, incrementalBase, noTest,
+         noIncremental, noLagSens, pyEnv, sigmaMode, volK]() mutable {
+
+        auto sendSSE = [session](const String& type, const nlohmann::json& data) {
+            session->pushEvent(type, data);
+        };
+
+        try {
+            // 输出目录：<db_path>/reports/feature_screen/<run_id>/
+            // 转绝对路径，避免依赖子进程 CWD
+            String dbPath = _server->GetConfig().GetDatabasePath();
+            String stamp = ToString(Now(), "%Y%m%d_%H%M%S");
+            auto seq = std::chrono::steady_clock::now().time_since_epoch().count() % 10000;
+            String runId = fmt::format("screen_{}_{:04d}", stamp, seq);
+            std::filesystem::path base = std::filesystem::absolute(dbPath);
+            String outDir = (base / "reports" / "feature_screen" / runId).string();
+            std::filesystem::create_directories(outDir);
+
+            // 注意：validate/load_cache/... 这些 step 由 Python 侧发出，
+            // 这里只用 prepare 表示建目录+启动子进程这一段。
+            sendSSE("step", {{"step", "prepare"}, {"status", "start"}});
+            sendSSE("step", {{"step", "prepare"}, {"status", "done"},
+                             {"run_id", runId}, {"csv_path", csvPath}});
+
+            std::vector<std::string> args = {
+                "--feature-cache", csvPath,
+                "--out-dir", outDir,
+                "--emit-events", "--no-plot",
+                "--entry", entry,
+                "--primary-horizon", std::to_string(primaryHorizon),
+                "--horizons", horizons,
+                "--n-folds", std::to_string(nFolds),
+                "--min-names", std::to_string(minNames),
+                "--nw-lag", std::to_string(nwLag),
+                "--topk", topk,
+                "--gate-topk", std::to_string(gateTopk),
+                "--min-ic", std::to_string(minIc),
+                "--min-t", std::to_string(minT),
+                "--min-sign-folds", std::to_string(minSignFolds),
+                "--fdr-q", std::to_string(fdrQ),
+                "--min-coverage", std::to_string(minCoverage),
+                "--winsorize", std::to_string(winsorize),
+                "--limit-eps", std::to_string(limitEps),
+                "--min-turnover", std::to_string(minTurnover),
+                "--trial-count", std::to_string(trialCount),
+                "--lag-shifts", lagShifts,
+            };
+            if (!ohlcvCache.empty())
+                args.insert(args.end(), {"--ohlcv-cache", ohlcvCache});
+            if (volScale) args.push_back("--vol-scale");
+            if (!features.empty())
+                args.insert(args.end(), {"--features", features});
+            if (!incrementalBase.empty())
+                args.insert(args.end(), {"--incremental-base", incrementalBase});
+            if (noTest) args.push_back("--no-test");
+            if (noIncremental) args.push_back("--no-incremental");
+            if (noLagSens) args.push_back("--no-lag-sensitivity");
+
+            auto pyEnvCfg = PythonEnv::fromConfig(_server->GetConfig().GetRawConfig());
+            auto interpreter = pyEnvCfg.resolve(pyEnv);
+            INFO("[MLScreen] interpreter='{}' csv='{}' out='{}'",
+                 interpreter, csvPath, outDir);
+
+            PythonRunner runner;
+            if (!runner.start("tools/feature_screen.py", args, interpreter)) {
+                WARN("[MLScreen] PythonRunner::start() failed");
+                sendSSE("error", {{"step", "screen"},
+                                  {"msg", "failed to start feature_screen.py"}});
+                session->finish({{"error", "failed to start feature_screen.py"}}, true);
+                return;
+            }
+
+            String resultLine, stderrLines, tailLog;
+            PythonOutput out;
+            while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
+                if (out.type == PythonOutput::DONE) break;
+                if (out.type == PythonOutput::STDERR) {
+                    WARN("[MLScreen stderr] {}", to_utf8(out.line));
+                    if (stderrLines.size() < 2000) stderrLines += out.line + "\n";
+                    continue;
+                }
+
+                // stdout：优先当作事件 JSON 解析；解析失败的当人类可读日志
+                nlohmann::json ev;
+                bool isEvent = false;
+                if (!out.line.empty()) {
+                    try {
+                        ev = nlohmann::json::parse(out.line);
+                        isEvent = ev.is_object() && ev.contains("type");
+                    } catch (...) {}
+                }
+                if (isEvent) {
+                    String type = ev.value("type", "");
+                    if (type == "result") {
+                        resultLine = out.line;
+                    } else if (type == "error") {
+                        sendSSE("error", ev);
+                        if (stderrLines.size() < 2000) stderrLines += out.line + "\n";
+                    } else {
+                        sendSSE(type, ev);  // step / progress
+                    }
+                } else if (!out.line.empty()) {
+                    sendSSE("log", {{"step", "screen"}, {"line", out.line}});
+                    if (tailLog.size() < 2000) tailLog += out.line + "\n";
+                }
+            }
+
+            if (resultLine.empty()) {
+                String msg = stderrLines.empty() ? tailLog : stderrLines;
+                while (!msg.empty() && msg.back() == '\n') msg.pop_back();
+                if (msg.empty()) msg = "特征筛选脚本未输出 result";
+                sendSSE("error", {{"step", "screen"}, {"msg", msg.substr(0, 800)}});
+                session->finish({{"error", msg.substr(0, 2000)}}, true);
+                return;
+            }
+
+            nlohmann::json result;
+            try {
+                result = nlohmann::json::parse(resultLine);
+            } catch (...) {
+                sendSSE("error", {{"step", "screen"},
+                                  {"msg", "筛选结果解析失败"}});
+                session->finish({{"error", "invalid result line"}}, true);
+                return;
+            }
+            result.erase("type");
+            result["session_id"] = session->_sessionId;
+            result["run_id"] = runId;
+            // vol_k / sigma_mode 不参与 rank IC，只记录以便与训练配置对账
+            result["label"] = {{"period", primaryHorizon},
+                               {"vol_k", volK}, {"sigma_mode", sigmaMode}};
+            session->finish(result);
+
+        } catch (const std::exception& e) {
+            FATAL("[MLScreen] uncaught exception: {}", e.what());
+            sendSSE("error", {{"step", "screen"},
+                              {"msg", String("internal error: ") + e.what()}});
+            session->finish({{"error", String("internal error: ") + e.what()}}, true);
+        } catch (...) {
+            FATAL("[MLScreen] unknown uncaught exception");
+            sendSSE("error", {{"step", "screen"}, {"msg", "unknown internal error"}});
+            session->finish({{"error", "unknown internal error"}}, true);
+        }
+    });
+    screenThread.detach();
+}
+
+void MLHandler::handleScreenResult(const httplib::Request& req, httplib::Response& res) {
+    String runId = req.get_param_value("run_id");
+    // 严格白名单：screen_ 前缀 + 仅数字/下划线，杜绝路径穿越
+    static const String kPrefix = "screen_";
+    bool valid = !runId.empty() && runId.rfind(kPrefix, 0) == 0 &&
+                 runId.find_first_not_of("0123456789_", kPrefix.size()) == String::npos;
+    if (!valid) {
+        res.status = 400;
+        res.set_content(R"({"message":"invalid run_id"})", "application/json");
+        return;
+    }
+
+    String dbPath = _server->GetConfig().GetDatabasePath();
+    String path = dbPath + "/reports/feature_screen/" + runId + "/feature_screen.json";
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs.is_open()) {
+        res.status = 404;
+        res.set_content(
+            nlohmann::json{{"message", "result not found: " + runId}}.dump(),
+            "application/json");
+        return;
+    }
+    std::string body((std::istreambuf_iterator<char>(ifs)),
+                     std::istreambuf_iterator<char>());
+    res.set_content(body, "application/json");
+}
+
 void MLHandler::handleTrainProgress(const httplib::Request& req, httplib::Response& res) {
     String sessionId = req.get_param_value("session_id");
     if (sessionId.empty()) {
@@ -1814,6 +2143,8 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
         handleOptimize(params, res);
     } else if (action == "collect") {
         handleCollect(params, res);
+    } else if (action == "screen") {
+        handleScreen(params, res);
     } else if (action == "shap") {
         handleShap(params, res);
     } else if (action == "delete") {
@@ -1873,7 +2204,7 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|shap|delete|update_meta)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|screen|shap|delete|update_meta)\"}",
             "application/json");
         return;
     }
@@ -1887,6 +2218,8 @@ void MLHandler::get(const httplib::Request& req, httplib::Response& res) {
         handleTrainProgress(req, res);
     } else if (action == "train_status") {
         handleTrainStatus(req, res);
+    } else if (action == "screen_result") {
+        handleScreenResult(req, res);
     } else if (action == "download") {
         // 下载训练产物：model_id → .json + .meta.json，打包成 zip 流式返回
         String modelIdStr = req.get_param_value("model_id");
@@ -1955,7 +2288,7 @@ void MLHandler::get(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (list|shap|download)\"}",
+            "{\"message\":\"missing or invalid 'action' (list|shap|download|train_status|screen_result)\"}",
             "application/json");
         return;
     }
