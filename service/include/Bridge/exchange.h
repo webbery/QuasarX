@@ -416,6 +416,23 @@ struct QuoteInfo {
     _source, _confidence, _upper, _lower);
 };
 
+/// 原始价（不复权）：收盘价优先，其次开盘价；都不可用返回 0
+///
+/// 口径约定：context 里 "<sym>.close" 序列写的是复权价（QuoteNode 写 quote._adj_close），
+/// 而持仓成本 pos._price / 撮合成交价是原始价。凡是要与持仓成本、成交价放在一起用的
+/// 价格都必须走原始价口径，否则除权日附近会算错。
+inline double raw_price(const QuoteInfo& q) {
+  if (q._close > 0) return q._close;
+  if (q._open > 0) return q._open;
+  return 0.0;
+}
+
+/// 复权因子（复权价 / 原始价）：把原始价换算到复权口径；不可用返回 1.0（等价于不复权）
+inline double adj_factor(const QuoteInfo& q) {
+  if (q._close > 0 && q._adj_close > 0) return q._adj_close / q._close;
+  return 1.0;
+}
+
 namespace fmt {
   template <>
   struct formatter<QuoteInfo> {

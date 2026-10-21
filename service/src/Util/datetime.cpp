@@ -34,6 +34,18 @@ time_t FromTick(const std::string& str) {
     return atoll(str.c_str());
 }
 
+bool IsYmdDate(const String& str) {
+    if (str.size() != 10) return false;
+    for (size_t i = 0; i < str.size(); ++i) {
+        if (i == 4 || i == 7) {
+            if (str[i] != '-') return false;
+        } else if (str[i] < '0' || str[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 int64_t FromNaiveTimestamp(const std::string& str) {
     int y = 0, mo = 1, d = 1, hh = 0, mi = 0, ss = 0;
     if (str.size() >= 10) {

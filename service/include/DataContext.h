@@ -280,24 +280,6 @@ public:
         return _executeType;
     }
 
-    // 紧急平仓记录（日终策略用，由ExecuteNode记录，ManualTiming读取）
-    struct EmergencyCloseRecord {
-        symbol_t _symbol;
-        RiskTriggerType _triggerType = RiskTriggerType::None;  // 使用枚举类型
-        double _cost = 0.0;
-        double _currentPrice = 0.0;
-        int64_t _quantity = 0;
-    };
-    void AddEmergencyClose(symbol_t sym, RiskTriggerType type, double cost, double current, int64_t qty) {
-        _emergencyCloses.push_back({sym, type, cost, current, qty});
-    }
-    const Vector<EmergencyCloseRecord>& GetEmergencyCloses() const { 
-        return _emergencyCloses; 
-    }
-    void ClearEmergencyCloses() { 
-        _emergencyCloses.clear(); 
-    }
-
     void SetTime(time_t t);
     const List<time_t>& GetTime() const;
     time_t Current();
@@ -334,6 +316,21 @@ public:
     // QuoteInfo 存储和获取（用于影子模式）
     void SetQuote(symbol_t symbol, const QuoteInfo& quote);
     const QuoteInfo* GetQuote(symbol_t symbol) const;
+
+    /**
+     * @brief 取当前 Bar 的原始价（不复权）
+     *
+     * 读的是 QuoteInfo 缓存（回测 / 日终回放 / 实盘三条路径都会写入），
+     * 不依赖 context 里的价格序列。口径说明见 raw_price()。
+     */
+    double GetRawPrice(symbol_t symbol) const;
+
+    /**
+     * @brief 取当前 Bar 的复权因子（复权价 / 原始价）
+     *
+     * 用于把原始价（如持仓成本）换算到复权口径；取不到时返回 1.0（等价于不复权）。
+     */
+    double GetAdjFactor(symbol_t symbol) const;
 
     // ============ 多线程回测支持 ============
 
@@ -468,9 +465,6 @@ private:
     
     // 策略执行类型（从ExecuteNode传递）
     ExecuteType _executeType = ExecuteType::Shadow;
-    
-    // 紧急平仓记录（日终策略用）
-    Vector<EmergencyCloseRecord> _emergencyCloses;
 
     // 策略初始化时设置的 Exchange 类型（支持股票+ETF 混合）
     Set<ExchangeType> _exchangeTypes;

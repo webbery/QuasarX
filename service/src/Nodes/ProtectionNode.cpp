@@ -199,6 +199,27 @@ static double get_position_cost(Server* server, DataContext& context, symbol_t s
     return 0.0;
 }
 
+// 触发时被平掉的持仓量（供风控事件展示）
+static int64_t get_position_qty(Server* server, DataContext& context, symbol_t symbol) {
+    if (server->GetRunningMode() == RuningType::Backtest) {
+        auto* histExchange = dynamic_cast<HistorySimulationBase*>(
+            server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+        if (histExchange) {
+            auto run_id = context.getBacktestRunId();
+            auto btCtx = histExchange->getBacktestContext(run_id);
+            if (btCtx) return btCtx->getPosition(symbol);
+        }
+        return 0;
+    }
+    auto& ap = server->GetPosition("");
+    for (const auto& pos : ap._positions) {
+        if (pos._symbol == symbol) {
+            return pos._holds;
+        }
+    }
+    return 0;
+}
+
 void ProtectionNode::syncPositions(const String& strategy, DataContext& context) {
     // 获取当前所有有持仓的标的
     Set<symbol_t> current_symbols;
@@ -246,38 +267,48 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
     for (const auto& symbol : current_symbols) {
         if (!_entry_info.count(symbol)) {
             EntryInfo info;
-            info.entry_bar = context.GetEpoch();
+            info._entry_bar = context.GetEpoch();
+
+            // 当前 Bar 的复权因子：把原始价换算到 .close 序列所在的复权口径
+            double factor = context.GetAdjFactor(symbol);
 
             // 获取成本价（实盘模式从 position 读取，回测模式为 0）
             double cost = get_position_cost(_server, context, symbol);
             if (cost > 0) {
-                info.avg_price = cost;
+                // pos._price 是撮合成交价（原始价），换算成复权口径后再与 .close 序列比较，
+                // 否则除权日附近会拿原始成本和复权现价比，算出来的止损位是错的。
+                info._raw_cost = cost;
+                info._avg_price = cost * factor;
             } else {
-                // 回测模式或无成本价：用当前 Bar 收盘价作为近似入场价
+                // 回测模式或无成本价：用当前 Bar 收盘价（复权）作为近似入场价
                 String close_key = get_symbol(symbol) + ".close";
                 if (context.exist(close_key)) {
                     auto price_var = context.get<Vector<double>>(close_key);
                     if (!price_var.empty()) {
-                        info.avg_price = price_var.back();
+                        info._avg_price = price_var.back();
                     }
+                }
+                // 折算回原始价，保证展示口径与 _raw_cost 一致
+                if (info._avg_price > 0 && factor > 0) {
+                    info._raw_cost = info._avg_price / factor;
                 }
             }
 
-            // 获取当前价作为初始最高价和最低价
+            // 获取当前价作为初始最高价和最低价（复权口径，与止损判定一致）
             String close_key = get_symbol(symbol) + ".close";
             if (context.exist(close_key)) {
                 auto price_var = context.get<Vector<double>>(close_key);
                 if (!price_var.empty()) {
-                    info.highest_price = price_var.back();
-                    info.lowest_price = price_var.back();  // Phase 0: MAE 用
+                    info._highest_price = price_var.back();
+                    info._lowest_price = price_var.back();  // Phase 0: MAE 用
                 }
             }
 
             _entry_info[symbol] = info;
             if (_server->GetRunningMode() != RuningType::Backtest) {
-                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info.avg_price);
+                STRATEGY_INFO(strategy, "[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info._raw_cost);
             } else {
-                INFO("[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info.avg_price);
+                INFO("[ProtectionNode] New position detected: {} cost={}", get_symbol(symbol), info._raw_cost);
             }
         }
     }
@@ -314,8 +345,8 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
                 if (!price_var.empty()) {
                     double current = price_var.back();
                     if (current > 0) {
-                        info.highest_price = std::max(info.highest_price, current);
-                        info.lowest_price = std::min(info.lowest_price, current);
+                        info._highest_price = std::max(info._highest_price, current);
+                        info._lowest_price = std::min(info._lowest_price, current);
                     }
                 }
             }
@@ -327,7 +358,6 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     int current_bar = context.GetEpoch();
     RiskTriggerType triggered = RiskTriggerType::None;
     symbol_t triggered_symbol;
-    double triggered_price = 0.0;
 
     // 公式止损：一次性计算所有标的
     Map<symbol_t, double> formulaResults;
@@ -336,7 +366,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
     }
 
     for (const auto& [symbol, info] : _entry_info) {
-        if (info.avg_price <= 0) continue;
+        if (info._avg_price <= 0) continue;
         if (_pending_close.count(symbol)) continue;
 
         // 获取当前价
@@ -352,48 +382,44 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
 
         // 1. 检查止损: current < entry * (1 - percent)
         if (_sl.enabled) {
-            double sl_price = info.avg_price * (1.0 - _sl.percent);
+            double sl_price = info._avg_price * (1.0 - _sl.percent);
             DEBUG_INFO("[ProtectionNode] StopLoss check: symbol={} avg_price={} current_price={} sl_price={} enabled={}",
-                 get_symbol(symbol), info.avg_price, current_price, sl_price, _sl.enabled);
+                 get_symbol(symbol), info._avg_price, current_price, sl_price, _sl.enabled);
             if (current_price <= sl_price) {
                 INFO("[ProtectionNode] StopLoss TRIGGERED!");
                 triggered = RiskTriggerType::StopLoss;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
 
         // 2. 检查止盈: current > entry * (1 + percent)
         if (_tp.enabled && triggered == RiskTriggerType::None) {
-            double tp_price = info.avg_price * (1.0 + _tp.percent);
+            double tp_price = info._avg_price * (1.0 + _tp.percent);
             if (current_price >= tp_price) {
                 triggered = RiskTriggerType::TakeProfit;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
 
         // 3. 检查追踪止损: current < highest * (1 - percent)
         if (_ts.enabled && triggered == RiskTriggerType::None) {
-            double highest = info.highest_price > 0 ? info.highest_price : info.avg_price;
+            double highest = info._highest_price > 0 ? info._highest_price : info._avg_price;
             double ts_price = highest * (1.0 - _ts.percent);
             if (current_price <= ts_price) {
                 triggered = RiskTriggerType::TrailingStop;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
 
         // 4. 检查时间止损: held_bars > max_bars
         if (_time.enabled && triggered == RiskTriggerType::None) {
-            int held_bars = current_bar - info.entry_bar;
+            int held_bars = current_bar - info._entry_bar;
             if (held_bars >= _time.max_bars) {
                 triggered = RiskTriggerType::TimeStop;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
@@ -404,7 +430,6 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (it != formulaResults.end() && it->second != 0.0) {
                 triggered = RiskTriggerType::FormulaStop;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
@@ -434,11 +459,10 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             }, result);
             
             if (!std::isnan(atr) && atr > 0) {
-                double sl_price = info.avg_price - _atr_sl.multiplier * atr;
+                double sl_price = info._avg_price - _atr_sl.multiplier * atr;
                 if (current_price <= sl_price) {
                     triggered = RiskTriggerType::AtrStopLoss;
                     triggered_symbol = symbol;
-                    triggered_price = current_price;
                     break;
                 }
             }
@@ -467,7 +491,6 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (!std::isnan(ma) && current_price <= ma) {
                 triggered = RiskTriggerType::MaStopLoss;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
@@ -495,30 +518,28 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
             if (!std::isnan(r2) && r2 <= _r2_sl.threshold) {
                 triggered = RiskTriggerType::R2StopLoss;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
 
         // 9. MAE 最大不利偏移止损: (entry - lowest) / entry >= percent
         if (_mae_sl.enabled && triggered == RiskTriggerType::None) {
-            double lowest = info.lowest_price > 0 ? info.lowest_price : info.avg_price;
-            double mae = (info.avg_price - lowest) / info.avg_price;
+            double lowest = info._lowest_price > 0 ? info._lowest_price : info._avg_price;
+            double mae = (info._avg_price - lowest) / info._avg_price;
             if (mae >= _mae_sl.percent) {
                 triggered = RiskTriggerType::MaeStopLoss;
                 triggered_symbol = symbol;
-                triggered_price = current_price;
                 break;
             }
         }
 
         // 更新最高价和最低价
         auto& entry = _entry_info[symbol];
-        if (current_price > entry.highest_price) {
-            entry.highest_price = current_price;
+        if (current_price > entry._highest_price) {
+            entry._highest_price = current_price;
         }
-        if (current_price < entry.lowest_price || entry.lowest_price == 0) {
-            entry.lowest_price = current_price;
+        if (current_price < entry._lowest_price || entry._lowest_price == 0) {
+            entry._lowest_price = current_price;
         }
     }
 
@@ -528,23 +549,28 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         rc->action = RiskAction::Close;
         _pending_close.insert(triggered_symbol);
 
+        const auto& trig_info = _entry_info[triggered_symbol];
         ProtectionEvent evt;
-        evt.bar_index = current_bar;
-        evt.datetime = context.Current();
-        evt.symbol = triggered_symbol;
-        evt.type = triggered;
-        evt.entry_price = _entry_info[triggered_symbol].avg_price;
-        evt.current_price = triggered_price;
+        evt._bar_index = current_bar;
+        evt._datetime = context.Current();
+        evt._symbol = triggered_symbol;
+        evt._type = triggered;
+        // 事件里记原始价：成本取撮合成交价，现价取当前 Bar 原始报价。
+        // 止损判定用的 _avg_price 是复权口径，两者不能混用于展示，
+        // 否则除权日附近算出来的盈亏是错的。
+        evt._entry_price = trig_info._raw_cost > 0 ? trig_info._raw_cost : trig_info._avg_price;
+        evt._current_price = context.GetRawPrice(triggered_symbol);
+        evt._quantity = get_position_qty(_server, context, triggered_symbol);
         _events.push_back(evt);
 
         if (_server->GetRunningMode() != RuningType::Backtest) {
-            STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
+            STRATEGY_INFO(strategy, "[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
                  get_symbol(triggered_symbol), to_string(triggered),
-                 evt.entry_price, evt.current_price);
+                 evt._entry_price, evt._current_price, evt._quantity);
         } else {
-            INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={}",
+            INFO("[ProtectionNode] Risk triggered: symbol={} type={} cost={} current={} qty={}",
                  get_symbol(triggered_symbol), to_string(triggered),
-                 evt.entry_price, evt.current_price);
+                 evt._entry_price, evt._current_price, evt._quantity);
         }
     }
 

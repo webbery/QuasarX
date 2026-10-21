@@ -65,7 +65,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
     if (rc && rc->triggered && rc->action == RiskAction::Close) {
         if (_server->GetRunningMode() != RuningType::Backtest) {
             STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
-            
+
             // 收集被平仓的标的
             Vector<String> closedSymbols;
             auto& ap = _server->GetPosition("");
@@ -74,30 +74,20 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     closedSymbols.push_back(get_symbol(pos._symbol));
                 }
             }
-            
+
             // 根据ExecuteType决定邮件发送方式
             ExecuteType execType = context.GetExecuteType();
             if (execType == ExecuteType::Manual) {
-                // 日终策略：记录到context，由ManualTiming统一发送
-                for (const auto& pos : ap._positions) {
-                    if (pos._holds > 0) {
-                        context.AddEmergencyClose(
-                            pos._symbol,
-                            rc->trigger_type,  // 直接传枚举类型
-                            pos._price,
-                            0.0,  // currentPrice需要从context读取，这里先填0
-                            pos._holds
-                        );
-                    }
-                }
-                STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close recorded for daily strategy (symbols={})", 
-                    [&]() { 
-                        String s; 
-                        for (const auto& sym : closedSymbols) { 
-                            if (!s.empty()) s += ","; 
-                            s += sym; 
-                        } 
-                        return s; 
+                // 日终策略：风控事件由 ProtectionNode 的 ProtectionEvent 记录，
+                // 这里只负责生成平仓指令（数量 + 委托价）。
+                STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close recorded for daily strategy (symbols={})",
+                    [&]() {
+                        String s;
+                        for (const auto& sym : closedSymbols) {
+                            if (!s.empty()) s += ",";
+                            s += sym;
+                        }
+                        return s;
                     }());
             } else {
                 // 实时策略：立即发邮件
@@ -152,9 +142,16 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 if (pos._holds > 0) {
                     auto* signal = new TradeSignal(pos._symbol, TradeAction::SELL);
                     signal->SetQuantity(pos._holds);
+                    // 决策价：当前 Bar 原始价（与 PortfolioNode 的 limitPrice 同口径）。
+                    // 行情缺失时退回持仓成本价——不能留 0，日终邮件的金额/占比都由这个价算出。
+                    double price = context.GetRawPrice(pos._symbol);
+                    if (price <= 0) {
+                        price = pos._price;
+                    }
+                    signal->SetPrice(price);
                     signal->SetFlag(1); // 平仓
                     context.AddSignal(signal);
-                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={}", get_symbol(pos._symbol), pos._holds);
+                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={} @ {}", get_symbol(pos._symbol), pos._holds, price);
                 }
             }
         }

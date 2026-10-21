@@ -678,12 +678,13 @@ void BackTestHandler::post(const httplib::Request& req, httplib::Response& res) 
             nlohmann::json eventsArray = nlohmann::json::array();
             for (const auto& evt : protEvents) {
                 nlohmann::json item;
-                item["bar"] = evt.bar_index;
-                item["datetime"] = evt.datetime;
-                item["symbol"] = get_symbol(evt.symbol);
-                item["type"] = to_string(evt.type);
-                item["entry_price"] = evt.entry_price;
-                item["current_price"] = evt.current_price;
+                item["bar"] = evt._bar_index;
+                item["datetime"] = evt._datetime;
+                item["symbol"] = get_symbol(evt._symbol);
+                item["type"] = to_string(evt._type);
+                item["entry_price"] = evt._entry_price;
+                item["current_price"] = evt._current_price;
+                item["quantity"] = evt._quantity;
                 eventsArray.emplace_back(std::move(item));
             }
             results["protection_events"] = std::move(eventsArray);

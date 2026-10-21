@@ -216,6 +216,16 @@ const QuoteInfo* DataContext::GetQuote(symbol_t symbol) const {
     return nullptr;
 }
 
+double DataContext::GetRawPrice(symbol_t symbol) const {
+    const QuoteInfo* q = GetQuote(symbol);
+    return q ? raw_price(*q) : 0.0;
+}
+
+double DataContext::GetAdjFactor(symbol_t symbol) const {
+    const QuoteInfo* q = GetQuote(symbol);
+    return q ? adj_factor(*q) : 1.0;
+}
+
 void DataContext::setInitialCapital(double capital) {
     _initialCapital = capital;
 }

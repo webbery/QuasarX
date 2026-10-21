@@ -7,6 +7,15 @@ time_t FromStr(const String& str, const char* fmt = "%Y-%m-%d");
 time_t FromTick(const String& str);
 
 /**
+ * 判断字符串是否是 "YYYY-MM-DD" 形式的日期
+ *
+ * 只校验格式（4 位年 - 2 位月 - 2 位日），不校验日期是否真实存在
+ * （"2025-13-45" 也算合法格式）。用于接口参数这类"先挡掉明显非法值、
+ * 真正的日期有效性交给下游解析"的场景。
+ */
+bool IsYmdDate(const String& str);
+
+/**
  * 按壁钟分量解析 "YYYY-MM-DD[ HH:MM:SS]" 为 epoch 微秒（naive，无时区转换）。
  * 与 DuckDB VARCHAR→TIMESTAMP 解析语义一致；FromStr 的 mktime 会引入本地时区偏移
  */

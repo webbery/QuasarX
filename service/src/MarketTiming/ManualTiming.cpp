@@ -273,31 +273,35 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     }
     html += "</div>";
 
-    // ── 紧急平仓记录（日终策略执行时由ProtectionNode触发） ──
-    if (!_emergencyCloses.empty()) {
+    // ── 风控事件（由 ProtectionNode 触发，价格为原始价） ──
+    if (!_riskEvents.empty()) {
         html += R"h(<div style="padding:16px 24px;">)h";
         html += R"h(<div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">今日风控事件</div>)h";
-        
-        for (const auto& record : _emergencyCloses) {
-            String triggerStr = to_string(record._triggerType);
+
+        for (const auto& event : _riskEvents) {
+            String triggerStr = to_string(event._type);
             html += fmt::format(R"h(<div style="padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:8px;">)h");
             html += fmt::format(R"h(<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">)h");
             html += fmt::format(R"h(<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#fee2e2;color:#dc2626;">{}</span>)h", triggerStr);
-            html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;color:#1a1a2e;">{}</span>)h", get_symbol(record._symbol));
+            html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;color:#1a1a2e;">{}</span>)h", get_symbol(event._symbol));
             html += "</div>";
             html += fmt::format(R"h(<div style="font-size:12px;color:#64748b;">)h");
-            html += fmt::format(R"h(<span>成本: {:.2f}</span>)h", record._cost);
-            if (record._currentPrice > 0) {
-                html += fmt::format(R"h(<span style="margin-left:12px;">当前: {:.2f}</span>)h", record._currentPrice);
-                double pnl = (record._currentPrice - record._cost) / record._cost * 100.0;
-                String pnlColor = pnl >= 0 ? "#22c55e" : "#ef4444";
-                html += fmt::format(R"h(<span style="margin-left:12px;color:{};">盈亏: {:+.2f}%</span>)h", pnlColor, pnl);
+            html += fmt::format(R"h(<span>成本: {:.2f}</span>)h", event._entry_price);
+            if (event._current_price > 0) {
+                html += fmt::format(R"h(<span style="margin-left:12px;">当前: {:.2f}</span>)h", event._current_price);
+                if (event._entry_price > 0) {
+                    double pnl = (event._current_price - event._entry_price) / event._entry_price * 100.0;
+                    String pnlColor = pnl >= 0 ? "#22c55e" : "#ef4444";
+                    html += fmt::format(R"h(<span style="margin-left:12px;color:{};">盈亏: {:+.2f}%</span>)h", pnlColor, pnl);
+                }
             }
-            html += fmt::format(R"h(<span style="margin-left:12px;">数量: {}</span>)h", record._quantity);
+            if (event._quantity > 0) {
+                html += fmt::format(R"h(<span style="margin-left:12px;">数量: {}</span>)h", event._quantity);
+            }
             html += "</div>";
             html += "</div>";
         }
-        
+
         html += "</div>";
     }
 
@@ -321,13 +325,13 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
         _server->SendHtmlEmail(html);
     }
 
-    INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}], emergency_closes={})",
+    INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}], risk_events={})",
          strategy, buys.size(), sells.size(), holds.size(),
-         evalHolds.size(), defaultHolds.size(), _emergencyCloses.size());
+         evalHolds.size(), defaultHolds.size(), _riskEvents.size());
 
     // 清空累积器
     _decisions.clear();
-    _emergencyCloses.clear();
+    _riskEvents.clear();
 
     return decisionsResult;
 }

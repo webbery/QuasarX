@@ -33,12 +33,16 @@ class R2;
 class ProtectionNode : public QNode {
 public:
     struct ProtectionEvent {
-        int bar_index = 0;
-        time_t datetime = 0;
-        symbol_t symbol;
-        RiskTriggerType type = RiskTriggerType::None;
-        double entry_price = 0.0;
-        double current_price = 0.0;
+        int _bar_index = 0;
+        time_t _datetime = 0;
+        symbol_t _symbol;
+        RiskTriggerType _type = RiskTriggerType::None;
+        // 入场成本（原始价，撮合成交价口径）
+        double _entry_price = 0.0;
+        // 触发时当前价（原始价，与 _entry_price 同口径）
+        double _current_price = 0.0;
+        // 触发时被平掉的持仓量
+        int64_t _quantity = 0;
     };
 
     RegistClassName(ProtectionNode);
@@ -77,11 +81,15 @@ private:
     Guard _mae_sl;  // MAE 最大不利偏移止损
 
     // 记录每个标的入场信息（节点自己维护）
+    // 价格口径：_avg_price / _highest_price / _lowest_price 是复权口径，
+    // 与 context 中 "<sym>.close" 序列一致，用于止损判定；
+    // _raw_cost 是原始价（撮合成交价），用于展示与盈亏计算。
     struct EntryInfo {
-        double avg_price = 0.0;       // 入场均价
-        double highest_price = 0.0;   // 持仓期间最高价
-        double lowest_price = 0.0;    // 持仓期间最低价（MAE 用）
-        int    entry_bar = 0;         // 入场 Bar 索引
+        double _avg_price = 0.0;       // 入场均价（复权口径）
+        double _raw_cost = 0.0;        // 入场成本（原始价）
+        double _highest_price = 0.0;   // 持仓期间最高价（复权口径）
+        double _lowest_price = 0.0;    // 持仓期间最低价（复权口径，MAE 用）
+        int    _entry_bar = 0;         // 入场 Bar 索引
     };
     Map<symbol_t, EntryInfo> _entry_info;
 
