@@ -1382,6 +1382,10 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
     bool noLagSens = params.value("no_lag_sensitivity", false);
     String pyEnv = params.value("py_env", "");
 
+    // DEV/TEST 切分点：空 = 不传，由 Python 侧用自己的默认值
+    String devEnd = params.value("dev_end", "");
+    String testStart = params.value("test_start", "");
+
     String horizons = joinInts(params.value("horizons", nlohmann::json()), "1,5,10,20");
     String lagShifts = joinInts(params.value("lag_shifts", nlohmann::json()), "-2,-1,0,1,2");
     String topk = joinInts(params.value("topk", nlohmann::json()), "3,5,10");
@@ -1409,6 +1413,10 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
         return bad("'rules.min_coverage' must be in [0, 1]");
     if (gateTopk < 1)
         return bad("'rules.gate_topk' must be >= 1");
+    if (!devEnd.empty() && !IsYmdDate(devEnd))
+        return bad("'dev_end' must be YYYY-MM-DD");
+    if (!testStart.empty() && !IsYmdDate(testStart))
+        return bad("'test_start' must be YYYY-MM-DD");
 
     // ---- 2. 幂等检查：与 train/optimize/collect 共用单会话槽 ----
     {
@@ -1441,7 +1449,8 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
          lagShifts, topk, nFolds, minNames, nwLag, trialCount, gateTopk,
          minIc, minT, minSignFolds, fdrQ, minCoverage, winsorize, volScale,
          limitEps, minTurnover, features, incrementalBase, noTest,
-         noIncremental, noLagSens, pyEnv, sigmaMode, volK]() mutable {
+         noIncremental, noLagSens, pyEnv, sigmaMode, volK,
+         devEnd, testStart]() mutable {
 
         auto sendSSE = [session](const String& type, const nlohmann::json& data) {
             session->pushEvent(type, data);
@@ -1485,10 +1494,16 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
                 "--limit-eps", std::to_string(limitEps),
                 "--min-turnover", std::to_string(minTurnover),
                 "--trial-count", std::to_string(trialCount),
-                "--lag-shifts", lagShifts,
+                // 用 "--opt=value" 形式：lag-shifts 的值以 "-" 开头，
+                // 拆成两个 token 时 argparse 会把它当成新选项，直接报错退出。
+                "--lag-shifts=" + lagShifts,
             };
             if (!ohlcvCache.empty())
                 args.insert(args.end(), {"--ohlcv-cache", ohlcvCache});
+            if (!devEnd.empty())
+                args.insert(args.end(), {"--dev-end", devEnd});
+            if (!testStart.empty())
+                args.insert(args.end(), {"--test-start", testStart});
             if (volScale) args.push_back("--vol-scale");
             if (!features.empty())
                 args.insert(args.end(), {"--features", features});
