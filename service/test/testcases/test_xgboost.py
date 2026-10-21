@@ -24,6 +24,7 @@ import urllib3
 import requests
 from pathlib import Path
 from tool import DEBUG_DIR, CSV_DATA_DIR
+from generate_test_data import generate_xgb_matrix_csv, generate_xgb_vector_csv
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1816,6 +1817,322 @@ class TestXGBoostDelete:
             verify=VERIFY_SSL,
         )
         assert resp.status_code == 404
+
+
+# ============== Walk-forward 交叉验证测试 ==============
+
+@pytest.fixture(scope="module")
+def synthetic_matrix_csv_path(tmp_path_factory):
+    """合成 matrix 模式 CSV（3 标的 × 400 天）"""
+    path = tmp_path_factory.mktemp("cv_test") / "matrix.csv"
+    return generate_xgb_matrix_csv(path)
+
+
+@pytest.fixture(scope="module")
+def synthetic_vector_csv_path(tmp_path_factory):
+    """合成 vector 模式 CSV（单标的 × 400 天）"""
+    path = tmp_path_factory.mktemp("cv_test") / "vector.csv"
+    return generate_xgb_vector_csv(path)
+
+
+def _train_with_csv(auth_token, csv_path, label_cfg, cv_cfg=None, params=None):
+    """调用 /v0/ml?action=train，使用预收集 CSV，返回最终结果"""
+    body = {
+        "action": "train",
+        "script": "{}",  # 空策略，csv_path 跳过数据收集
+        "csv_path": csv_path,
+        "label": label_cfg,
+        "params": params or {"max_depth": 3, "n_estimators": 20},
+    }
+    if cv_cfg:
+        body["cv"] = cv_cfg
+
+    resp = requests.post(
+        f"{BASE_URL}/ml",
+        json=body,
+        headers=_headers(auth_token),
+        verify=VERIFY_SSL,
+        timeout=120,
+    )
+    if resp.status_code != 200:
+        return None, resp.status_code, resp.text
+
+    submit_result = resp.json()
+    session_id = submit_result.get("session_id")
+    if not session_id:
+        return None, 200, submit_result
+
+    # 轮询 train_status 直到训练完成
+    for _ in range(120):
+        time.sleep(1)
+        try:
+            status_resp = requests.get(
+                f"{BASE_URL}/ml",
+                params={"action": "train_status", "session_id": session_id},
+                headers=_headers(auth_token),
+                verify=VERIFY_SSL,
+                timeout=10,
+            )
+        except requests.exceptions.RequestException:
+            continue
+
+        if status_resp.status_code != 200:
+            continue
+
+        data = status_resp.json()
+        status = data.get("status")
+        if status == "done":
+            return data, 200, None
+        if status == "error":
+            return None, 200, data.get("error", "unknown")
+
+    return None, 200, "timeout"
+
+
+class TestXGBoostCV:
+    """Walk-forward 交叉验证测试（P0+P1+P2）"""
+
+    # P0：基本功能
+    def test_cv_walk_forward_matrix_classification(self, auth_token, synthetic_matrix_csv_path):
+        """P0：matrix + classification + CV walk-forward"""
+        label_cfg = {
+            "period": 5,
+            "type": "classification",
+            "shape": "matrix",
+            "vol_k": 0.5,
+        }
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+            "gap": {"bars": 5},
+            "nw": {"lag": 10},
+            "final_model": "refit_full",
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200, f"训练失败: {err}"
+        assert result is not None, f"训练失败: {err}"
+        assert result["split_mode"] == "cv_walk_forward"
+        assert "cv" in result
+        cv = result["cv"]
+        assert cv["enabled"] is True
+        assert cv["scheme"] == "walk_forward"
+        assert cv["n_folds"] == 3
+        assert cv["gap_bars"] == 5
+        assert cv["nw_lag"] == 10
+        assert cv["final_model"] == "refit_full"
+        assert cv["n_oof"] > 0
+        assert len(cv["folds"]) == 3
+        assert "oof_metrics" in cv
+        assert "oof_ic" in cv
+
+    def test_cv_walk_forward_vector_regression(self, auth_token, synthetic_vector_csv_path):
+        """P0：vector + regression + CV walk-forward"""
+        label_cfg = {
+            "source": "close",
+            "period": 5,
+            "type": "regression",
+            "shape": "vector",
+        }
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+            "gap": {"bars": 5},
+            "final_model": "refit_full",
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_vector_csv_path, label_cfg, cv_cfg)
+        assert status == 200, f"训练失败: {err}"
+        assert result is not None, f"训练失败: {err}"
+        assert result["split_mode"] == "cv_walk_forward"
+        cv = result["cv"]
+        assert cv["n_folds"] == 3
+        assert "rmse" in cv["oof_metrics"]
+        assert "mae" in cv["oof_metrics"]
+
+    def test_cv_invalid_scheme(self, auth_token, synthetic_matrix_csv_path):
+        """P0：非法 scheme 返回 400"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "purged_kfold",  # 不支持
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 400
+        assert "walk_forward" in err.lower()
+
+    def test_cv_invalid_final_model(self, auth_token, synthetic_matrix_csv_path):
+        """P0：非法 final_model 返回 400"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+            "final_model": "ensemble_mean",  # 不支持
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 400
+        assert "refit_full" in err.lower()
+
+    # P1：详细验证
+    def test_cv_meta_json_contains_cv(self, auth_token, synthetic_matrix_csv_path):
+        """P1：meta.json 包含 cv_config 和 cv"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+
+        # 下载 meta.json
+        model_id = result["model_id"]
+        resp = requests.get(
+            f"{BASE_URL}/ml",
+            params={"action": "download", "model_id": model_id},
+            headers=_headers(auth_token),
+            verify=VERIFY_SSL,
+        )
+        assert resp.status_code == 200
+        download = resp.json()
+        meta = json.loads(download["meta_json"])
+        assert "cv_config" in meta
+        assert "cv" in meta
+        assert meta["cv"]["scheme"] == "walk_forward"
+        assert meta["split_mode"] == "cv_walk_forward"
+        assert meta["classes"] == [0, 1, 2]
+
+    def test_cv_leakage_checks(self, auth_token, synthetic_matrix_csv_path):
+        """P1：泄漏检查"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+            "gap": {"bars": 5},
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+        cv = result["cv"]
+        checks = cv["leakage_checks"]
+        assert checks["gap_ge_label_period"] is True
+        assert checks["overlap_rows"] == 0
+        assert checks["oof_rows"] == cv["n_oof"]
+
+        # 验证 OOS 不重叠
+        oos_dates = []
+        for fold in cv["folds"]:
+            start = fold["oos_start"]
+            end = fold["oos_end"]
+            oos_dates.append((start, end))
+        for i in range(len(oos_dates) - 1):
+            assert oos_dates[i][1] <= oos_dates[i + 1][0], \
+                f"折 {i} 和折 {i+1} 的 OOS 重叠"
+
+    def test_cv_fold_structure(self, auth_token, synthetic_matrix_csv_path):
+        """P1：折结构完整"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+        cv = result["cv"]
+        for fold in cv["folds"]:
+            assert "index" in fold
+            assert "train_start" in fold
+            assert "train_end" in fold
+            assert "oos_start" in fold
+            assert "oos_end" in fold
+            assert "n_train" in fold
+            assert "n_inner_val" in fold
+            assert "n_oos" in fold
+            assert "best_rounds" in fold
+            assert "metrics" in fold
+            assert "ic" in fold
+            assert fold["n_train"] > 0
+            assert fold["n_oos"] > 0
+
+    # P2：边界和自动行为
+    def test_cv_gap_clamped_to_label_period(self, auth_token, synthetic_matrix_csv_path):
+        """P2：gap < label.period 自动抬升"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+            "gap": {"bars": 1},  # 小于 label.period
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+        cv = result["cv"]
+        assert cv["gap_bars"] == 5  # 抬升到 label.period
+
+    def test_cv_nw_lag_auto(self, auth_token, synthetic_matrix_csv_path):
+        """P2：nw.lag=0 自动计算"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {"train_len": 120, "oos_len": 30},
+            "nw": {"lag": 0},  # 自动
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+        cv = result["cv"]
+        assert cv["nw_lag"] == 10  # max(10, 2*5)
+
+    def test_cv_inner_val_ratio(self, auth_token, synthetic_matrix_csv_path):
+        """P2：inner_val_ratio 折内 early stopping"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        cv_cfg = {
+            "enabled": True,
+            "scheme": "walk_forward",
+            "n_folds": 3,
+            "walk_forward": {
+                "train_len": 120,
+                "oos_len": 30,
+                "inner_val_ratio": 0.15,
+            },
+        }
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+        cv = result["cv"]
+        for fold in cv["folds"]:
+            assert fold["n_inner_val"] > 0
+
+    def test_legacy_still_works(self, auth_token, synthetic_matrix_csv_path):
+        """P0：legacy 单次切分回归测试"""
+        label_cfg = {"period": 5, "type": "classification", "shape": "matrix"}
+        # 不传 cv，或 cv.enabled=false
+        result, status, err = _train_with_csv(
+            auth_token, synthetic_matrix_csv_path, label_cfg, cv_cfg=None)
+        assert status == 200 and result is not None, f"训练失败: {err}"
+        assert result["split_mode"] in ("date", "row")
+        assert "cv" not in result
+        assert "eval_metrics" in result
+        assert "accuracy" in result["eval_metrics"]
 
 
 if __name__ == "__main__":

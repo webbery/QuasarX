@@ -1,55 +1,79 @@
-"""
-XGBoost 离线训练脚本（QuasarX 后端调用）
+"""XGBoost 离线训练入口（瘦 CLI）。
 
-输入参数：
-  --data           特征数据 CSV 路径（C++ 端生成，列 = 节点输出变量名 + 时间序列）
-  --label-source   标签来源变量名（如 "sh.600000.close"）
-  --label-period   未来收益周期 N（默认 5）
-  --label-type     classification / regression
-  --vol-k          自适应阈值系数 vol_k (threshold = vol_k × σ × √N, 默认 0.5)
-  --objective      XGBoost 目标函数：multi:softprob / binary:logistic / reg:squarederror（分类时自动推导）
-  --model-output   模型保存路径（.json 格式）
-  --params         超参数 JSON 字符串
-  --test-ratio     测试集比例（默认 0.2，时序切分）
-  --xtest-output   X_test 保存路径（供 SHAP 计算，可选）
-  --ytest-output   y_test 保存路径（可选）
+职责边界：
+  - ml_dataset：CSV → Dataset（标签、matrix/vector、日期、全局类别编码）
+  - ml_cv：单次切分 / walk-forward OOF / refit_full
+  - ml_adapter.XGBoostAdapter：XGBoost 的 fit/predict/decode/save
 
-输出（stdout 每行 JSON）：
-  {"type":"progress", "iteration":N, "train_loss":..., "eval_loss":...}
-  {"type":"result", "model_path":"...", "learning_curve":[...], "feature_importance":[...],
-   "eval_metrics":{...}, "predictions":[...], "n_train":N, "n_test":N}
-
-依赖：xgboost, pandas, scikit-learn, numpy
+本文件只负责解析参数、组装 XGBoost 参数、选择验证协议并输出 result JSON。
 """
 
 import argparse
 import json
-import os
 import sys
-import time
 import traceback
 from pathlib import Path
-import numpy as np
+
 import pandas as pd
 
-# 公共实现：标签计算、标签参数、meta 抽取
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from xgb_util import add_label_args, compute_label, label_meta
-
-# 强制 stdout/stderr 无缓冲，防止管道模式下进程退出时数据丢失
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
-
-try:
-    import xgboost as xgb
-except ImportError:
-    print(json.dumps({"type": "error", "message": "未安装 xgboost: pip install xgboost"}), flush=True)
-    sys.exit(1)
+from xgb_util import add_label_args, label_meta
+from ml_dataset import build_dataset, prepare_dataframe
+from ml_adapter import XGBoostAdapter
+from ml_cv import run_single_split, run_walk_forward
 
 
 def emit(obj):
-    """输出一行紧凑 JSON 到 stdout（无空格分隔符）"""
+    """输出一行紧凑 JSON 到 stdout（无空格分隔符）。"""
     print(json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":")), flush=True)
+
+
+def build_xgb_params(args, dataset, user_params):
+    """把 CLI 参数和用户超参组装成 xgb.train 的 params + 轮数/早停。"""
+    is_classification = dataset.is_classification
+    if is_classification:
+        if dataset.n_classes == 2:
+            objective = "binary:logistic"
+            num_class = 1
+        else:
+            objective = "multi:softprob"
+            num_class = dataset.n_classes
+    else:
+        # 直接调用脚本时 --objective 默认是 multi:softprob；回归模式下换成默认回归目标
+        objective = args.objective if args.objective != "multi:softprob" else "reg:squarederror"
+        num_class = 0
+
+    params = {
+        "learning_rate": 0.1,
+        "max_depth": 6,
+        "n_estimators": 200,
+        "early_stopping_rounds": 20,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "objective": objective,
+        "verbosity": 0,
+    }
+    if is_classification:
+        params["eval_metric"] = "mlogloss" if num_class > 1 else "logloss"
+    else:
+        params["eval_metric"] = "rmse"
+
+    params.update(user_params)
+    # objective 必须与 adapter.decode 使用的目标一致，禁止 user_params 覆盖
+    params["objective"] = objective
+    params.pop("num_class", None)
+    if is_classification and num_class > 1:
+        params["num_class"] = num_class
+
+    esr = 20
+    for k in ("early_stopping_rounds", "early_stopping"):
+        if k in params:
+            esr = int(params.pop(k))
+            break
+    params.pop("early_stopping_rounds", None)
+    n_estimators = int(params.pop("n_estimators", 200))
+
+    return params, n_estimators, esr, objective
 
 
 def main():
@@ -60,456 +84,87 @@ def main():
     parser.add_argument("--model-output", required=True, help="模型保存路径")
     parser.add_argument("--params", default="{}", help="XGBoost 超参数 JSON")
     parser.add_argument("--test-ratio", type=float, default=0.2)
-    parser.add_argument("--val-ratio", type=float, default=0.15, help="验证集比例（默认 0.15，设为 0 或数据量 < 1000 时退化为两段划分）")
+    parser.add_argument("--val-ratio", type=float, default=0.15,
+                        help="单次切分的验证集比例；CV 时作为折内 early-stopping 比例")
     parser.add_argument("--start-date", default="", help="训练数据开始日期 (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="", help="训练数据结束日期 (YYYY-MM-DD)")
     parser.add_argument("--frequency", default="1d", help="数据频率 (1d/1w/1M)")
-    parser.add_argument("--xtest-output", default="", help="X_test 保存路径")
-    parser.add_argument("--ytest-output", default="", help="y_test 保存路径")
+    parser.add_argument("--xtest-output", default="", help="X_test 保存路径（预留）")
+    parser.add_argument("--ytest-output", default="", help="y_test 保存路径（预留）")
+    parser.add_argument("--cv-json", default="",
+                        help="walk-forward 交叉验证配置 JSON；为空或 enabled=false 时走单次切分")
     add_label_args(parser)
     args = parser.parse_args()
 
     try:
-        params = json.loads(args.params) if args.params else {}
+        user_params = json.loads(args.params) if args.params else {}
+        cv_cfg = json.loads(args.cv_json) if args.cv_json else {}
     except json.JSONDecodeError as e:
-        emit({"type": "error", "message": f"params JSON 解析失败: {e}"})
+        emit({"type": "error", "message": f"JSON 解析失败: {e}"})
         sys.exit(1)
+    if not isinstance(user_params, dict) or not isinstance(cv_cfg, dict):
+        emit({"type": "error", "message": "params / cv 必须是 JSON object"})
+        sys.exit(1)
+
+    cv_enabled = cv_cfg.get("enabled", False) is True
+    if cv_enabled:
+        scheme = cv_cfg.get("scheme", "walk_forward")
+        final_model = cv_cfg.get("final_model", "refit_full")
+        if scheme != "walk_forward":
+            emit({"type": "error",
+                  "message": f"cv.scheme='{scheme}' 暂不支持，Phase 1 仅支持 walk_forward"})
+            sys.exit(1)
+        if final_model != "refit_full":
+            emit({"type": "error",
+                  "message": f"cv.final_model='{final_model}' 暂不支持，Phase 1 仅支持 refit_full"})
+            sys.exit(1)
 
     df = pd.read_csv(args.data)
     emit({"type": "progress", "phase": "load_data", "rows": len(df), "cols": len(df.columns)})
 
-    # 日期过滤 + date 作 index（按时间对齐，避免 RangeIndex 错位）
-    if "date" in df.columns and (args.start_date or args.end_date):
-        df["date"] = pd.to_datetime(df["date"])
-        if args.start_date:
-            df = df[df["date"] >= args.start_date]
-        if args.end_date:
-            df = df[df["date"] <= args.end_date]
-        df = df.set_index("date").sort_index()
-        emit({"type": "info", "phase": "date_filter",
-              "start": args.start_date, "end": args.end_date,
-              "rows_after": len(df), "date_range": f"{df.index.min()} ~ {df.index.max()}"})
-    elif "date" in df.columns:
-        # 有 date 列但未指定范围：仍转为 datetime index 便于按时间对齐
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-    elif args.start_date or args.end_date:
-        emit({"type": "info", "phase": "date_filter",
-              "message": "CSV 无 date 列，跳过日期过滤。需 C++ 端 writeCsv 输出日期列"})
-
-    # 频率重采样（如果指定了非日级频率且 CSV 有日期列）
-    # TODO: 需要 C++ 端在 CSV 中输出日期列才能支持
-
-    # ========== 标签形状处理 ==========
-    if args.label_shape == "matrix":
-        # --- 多标签矩阵模式：per-symbol 标签 + 匿名化特征拼接 ---
-        # 从列名解析 symbol 前缀（market.code 格式，如 sz.000001, sh.600000）
-        symbol_prefixes = set()
-        for col in df.columns:
-            if col == "date":
-                continue
-            parts = col.split(".")
-            if len(parts) >= 3:
-                prefix = f"{parts[0]}.{parts[1]}."
-                symbol_prefixes.add(prefix)
-        symbols = sorted(symbol_prefixes)
-
-        if len(symbols) == 0:
-            emit({"type": "error", "message": "matrix 模式无法从列名解析标的前缀（期望 market.code.feature 格式）"})
-            sys.exit(1)
-
-        emit({"type": "info", "phase": "label_shape",
-              "shape": "matrix", "symbols": symbols, "n_symbols": len(symbols)})
-
-        # 按 feature 名分组：col_name → 去掉 symbol 前缀后的 feature 名
-        def strip_prefix(col, prefix):
-            return col[len(prefix):] if col.startswith(prefix) else None
-
-        # 发现所有 feature 名（取第一个 symbol 的列为参考）
-        feature_names = []
-        for col in df.columns:
-            if col == "date":
-                continue
-            feat = strip_prefix(col, symbols[0])
-            if feat is not None:
-                feature_names.append(feat)
-
-        # 为每个 symbol 提取特征子集并计算独立标签
-        X_parts = []
-        y_parts = []
-        close_suffix = ".close"
-
-        for sym in symbols:
-            sym_cols = [sym + f for f in feature_names if (sym + f) in df.columns]
-            if not sym_cols:
-                emit({"type": "warning", "message": f"标的 {sym} 无有效特征列，跳过"})
-                continue
-
-            # 构建该 symbol 的特征 DataFrame（列名匿名化，去掉 symbol 前缀）
-            sym_df = df[sym_cols].rename(columns=lambda c, p=sym: c[len(p):])
-
-            # 找该 symbol 的 close 列用于计算标签
-            close_col = None
-            for candidate in ["quote.close", "input.close", "close"]:
-                if candidate in sym_df.columns:
-                    close_col = candidate
-                    break
-            if close_col is None:
-                # 尝试从原始 df 中找 sym + close_suffix
-                raw_close = sym + "close"
-                if raw_close in df.columns:
-                    close_col = raw_close
-                    sym_df_for_label = df[raw_close]
-                else:
-                    emit({"type": "warning", "message": f"标的 {sym} 无 close 列，无法计算标签，跳过"})
-                    continue
-            else:
-                sym_df_for_label = sym_df[close_col]
-                sym_df = sym_df.drop(columns=[close_col], errors="ignore")
-                # 更新 feature_names 去掉 close
-                feature_names = [f for f in feature_names if f != close_col]
-                sym_cols = [sym + f for f in feature_names if (sym + f) in df.columns]
-                sym_df = df[sym_cols].rename(columns=lambda c, p=sym: c[len(p):])
-
-            # 计算该 symbol 的标签
-            sym_label, sym_future = compute_label(sym_df_for_label, args.label_period, args.label_type, args.vol_k,
-                                                 args.label_sigma_mode)
-
-            # 有效性掩码
-            valid = sym_label.notna() & sym_df.notna().all(axis=1)
-            X_parts.append(sym_df.loc[valid].values)
-            y_parts.append(sym_label[valid].values)
-
-        if not X_parts:
-            emit({"type": "error", "message": "matrix 模式：所有标的均无有效数据"})
-            sys.exit(1)
-
-        X = np.vstack(X_parts)
-        y = np.concatenate(y_parts)
-        feature_cols = list(feature_names)
-
-        emit({"type": "info", "phase": "matrix_reshape",
-              "symbols": len(symbols), "samples_per_symbol": [len(xp) for xp in X_parts],
-              "total_samples": len(X), "n_features": len(feature_cols),
-              "features": feature_cols})
-
-        # 跳过后续通用流程中的 label/feature 解析，直接进入 split
-        # 设置标志避免重复处理
-        _matrix_mode_done = True
-    else:
-        # --- 单标签向量模式（原始逻辑） ---
-        _matrix_mode_done = False
-
-        if not args.label_source:
-            emit({"type": "error", "message": "vector 模式需要指定 --label-source"})
-            sys.exit(1)
-        if args.label_source not in df.columns:
-            emit({"type": "error", "message": f"标签来源列 '{args.label_source}' 不在数据中。可用列: {list(df.columns)}"})
-            sys.exit(1)
-
-        raw_label, future = compute_label(
-            df[args.label_source],
-            args.label_period,
-            args.label_type,
-            args.vol_k,
-            args.label_sigma_mode,
-        )
-
-        # 排除标签列
-        exclude_cols = {args.label_source}
-        feature_cols = [c for c in df.columns if c not in exclude_cols]
-        if len(feature_cols) == 0:
-            emit({"type": "error", "message": "没有可用的特征列"})
-            sys.exit(1)
-
-    if not _matrix_mode_done:
-        # NaN 诊断：统计每列有效值数量
-        nan_stats = {c: int(df[c].notna().sum()) for c in feature_cols}
-        total_rows = len(df)
-        all_nan_cols = [c for c, cnt in nan_stats.items() if cnt == 0]
-        partial_nan_cols = [c for c, cnt in nan_stats.items() if cnt < total_rows]
-
-        emit({"type": "info", "phase": "nan_stats",
-              "total_rows": total_rows,
-              "all_nan_cols": all_nan_cols,
-              "partial_nan_cols_count": len(partial_nan_cols),
-              "fully_valid_cols": total_rows - len(all_nan_cols)})
-
-        # 丢弃全 NaN 列
-        if all_nan_cols:
-            feature_cols = [c for c in feature_cols if c not in set(all_nan_cols)]
-            emit({"type": "info", "phase": "drop_all_nan",
-                  "dropped": all_nan_cols, "remaining_features": len(feature_cols)})
-
-        if len(feature_cols) == 0:
-            emit({"type": "error", "message": f"所有 {total_rows} 行特征数据均为 NaN，无法训练。"
-                  f"原始列: {list(nan_stats.keys())}"})
-            sys.exit(1)
-
-        valid_mask = raw_label.notna() & df[feature_cols].notna().all(axis=1)
-        X = df.loc[valid_mask, feature_cols].values
-        y = raw_label[valid_mask].values
-
-        if len(X) == 0:
-            col_valid = {c: int(df[c].notna().sum()) for c in feature_cols}
-            label_valid = int(raw_label.notna().sum())
-            partial = sorted(
-                [(c, v) for c, v in col_valid.items() if v < total_rows],
-                key=lambda kv: kv[1]
-            )
-            partial_detail = []
-            for c, v in partial[:6]:
-                nan_idx = df.index[df[c].isna()].tolist()
-                if len(nan_idx) <= 10:
-                    idx_str = ",".join(str(i) for i in nan_idx)
-                else:
-                    idx_str = f"{','.join(str(i) for i in nan_idx[:5])}...{','.join(str(i) for i in nan_idx[-5:])} (共{len(nan_idx)}个)"
-                partial_detail.append(f"{c}={v}/{total_rows} (NaN@[{idx_str}])")
-            if len(partial) > 6:
-                partial_detail.append(f"...其余 {len(partial) - 6} 列省略")
-            emit({"type": "error", "message": (
-                f"标签过滤后无有效样本。标签有效: {label_valid}/{total_rows}。"
-                f"日期范围: {df.index.min()} ~ {df.index.max()}。"
-                f"部分 NaN 特征列 ({len(partial)} 个): {'; '.join(partial_detail)}。"
-                f"可能原因：特征间时间对齐不一致，或标签来源列与特征列日期范围不重叠。"
-            )})
-            sys.exit(1)
-
-    # ========== 两条路径在此汇合：X, y, feature_cols 已就绪 ==========
-    n = len(X)
-    use_val = args.val_ratio > 0 and n >= 1000
-    if use_val:
-        train_end = int(n * (1 - args.val_ratio - args.test_ratio))
-        val_end = int(n * (1 - args.test_ratio))
-        X_train, X_val, X_test = X[:train_end], X[train_end:val_end], X[val_end:]
-        y_train, y_val, y_test = y[:train_end], y[train_end:val_end], y[val_end:]
-    else:
-        X_val, y_val = None, None
-        split = int(n * (1 - args.test_ratio))
-        X_train, X_test = X[:split], X[split:]
-        y_train, y_test = y[:split], y[split:]
-
-    # 提取 X_test 对应的日期（用于 SHAP 时间热力图）
-    test_dates = []
-    if hasattr(df, 'index') and hasattr(df.index, 'strftime'):
-        try:
-            valid_dates = df.index[valid_mask]
-            if use_val:
-                test_dates = valid_dates[val_end:].strftime('%Y-%m-%d').tolist()
-            else:
-                test_dates = valid_dates[split:].strftime('%Y-%m-%d').tolist()
-        except NameError:
-            all_dates = df.index.strftime('%Y-%m-%d').tolist()
-            n_symbols = len(X) // len(all_dates) if len(all_dates) > 0 else 0
-            if n_symbols > 0:
-                test_rows = len(X_test)
-                if use_val:
-                    test_dates = (all_dates * n_symbols)[val_end:val_end + test_rows]
-                else:
-                    test_dates = (all_dates * n_symbols)[split:split + test_rows]
-            elif len(all_dates) >= len(X):
-                if use_val:
-                    test_dates = all_dates[val_end:]
-                else:
-                    test_dates = all_dates[split:]
-
-    n_val = len(X_val) if X_val is not None else 0
-    emit({"type": "progress", "phase": "split", "n_train": len(X_train), "n_val": n_val, "n_test": len(X_test), "n_features": X.shape[1]})
-
-    is_classification = args.label_type == "classification"
-
-    # 自适应分类数：分类模式下自动检测实际标签数
-    if is_classification:
-        unique_labels = sorted(set(y[~np.isnan(y)]))
-        n_classes = len(unique_labels)
-        if n_classes <= 1:
-            emit({"type": "error", "message": f"标签只有 {n_classes} 个类别，无法训练分类模型"})
-            sys.exit(1)
-        if n_classes == 2:
-            args.objective = "binary:logistic"
-            args.num_class = 1  # XGBoost binary 不需要 num_class
+    has_date_col = "date" in df.columns
+    df = prepare_dataframe(df, args.start_date, args.end_date)
+    if args.start_date or args.end_date:
+        if has_date_col:
+            emit({"type": "info", "phase": "date_filter",
+                  "start": args.start_date, "end": args.end_date,
+                  "rows_after": len(df),
+                  "date_range": f"{df.index.min()} ~ {df.index.max()}"})
         else:
-            args.objective = "multi:softprob"
-            args.num_class = n_classes
-        emit({"type": "info", "phase": "label_stats", "n_classes": n_classes,
-              "classes": [int(c) for c in unique_labels], "objective": args.objective})
+            emit({"type": "warning", "message": "CSV 无 date 列，跳过日期过滤"})
 
-    default_params = {
-        "learning_rate": 0.1,
-        "max_depth": 6,
-        "n_estimators": 200,
-        "early_stopping_rounds": 20,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "objective": args.objective,
-        "verbosity": 0,
-    }
-    if is_classification:
-        default_params["eval_metric"] = "mlogloss" if args.num_class > 1 else "logloss"
-    else:
-        default_params["eval_metric"] = "rmse"
-
-    default_params.update(params)
-
-    # 多分类时强制设置 num_class
-    if is_classification and args.num_class > 1:
-        default_params["num_class"] = args.num_class
-
-    if "early_stopping_rounds" in default_params:
-        del default_params["early_stopping_rounds"]
-    if "n_estimators" in default_params:
-        n_estimators = default_params.pop("n_estimators")
-    else:
-        n_estimators = 200
-
-    esr = 20
-    for k in ("early_stopping_rounds", "early_stopping"):
-        if k in default_params:
-            esr = int(default_params.pop(k))
-            break
-
-    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_cols)
-    dtest = xgb.DMatrix(X_test, label=y_test, feature_names=feature_cols)
-    dval = xgb.DMatrix(X_val, label=y_val, feature_names=feature_cols) if X_val is not None else None
-
-    progress_state = {"it": 0}
-    last_emit = [time.time()]
-
-    class ProgressCallback(xgb.callback.TrainingCallback):
-        def after_iteration(self, model, epoch, evals_log):
-            now = time.time()
-            if now - last_emit[0] < 0.2 and epoch != model.num_boosted_rounds() - 1:
-                return False
-            last_emit[0] = now
-            train_loss = None
-            eval_loss = None
-            if evals_log and "train" in evals_log:
-                for metric_vals in evals_log["train"].values():
-                    train_loss = float(metric_vals[-1])
-                    break
-            if evals_log and "eval" in evals_log:
-                for metric_vals in evals_log["eval"].values():
-                    eval_loss = float(metric_vals[-1])
-                    break
-            emit({
-                "type": "progress",
-                "phase": "training",
-                "iteration": epoch,
-                "train_loss": train_loss,
-                "eval_loss": eval_loss,
-            })
-            return False
-
-    eval_set = [(dtrain, "train"), (dval if dval is not None else dtest, "eval")]
-    booster = xgb.train(
-        default_params,
-        dtrain,
-        num_boost_round=n_estimators,
-        evals=eval_set,
-        early_stopping_rounds=esr if len(X_test) > 0 else None,
-        verbose_eval=False,
-        callbacks=[ProgressCallback()],
+    dataset = build_dataset(
+        df,
+        label_source=args.label_source,
+        label_period=args.label_period,
+        label_type=args.label_type,
+        label_shape=args.label_shape,
+        vol_k=args.vol_k,
+        sigma_mode=args.label_sigma_mode,
+        emit=emit,
     )
 
-    best_iteration = booster.best_iteration if hasattr(booster, "best_iteration") else n_estimators - 1
+    params, n_estimators, esr, objective = build_xgb_params(args, dataset, user_params)
+    adapter = XGBoostAdapter(
+        params=params, n_estimators=n_estimators, esr=esr,
+        objective=objective, feature_cols=dataset.feature_cols,
+    )
 
-    learning_curve = []
-    history = booster.evals_result() if hasattr(booster, "evals_result") else {}
-    if history:
-        def _first_metric(d):
-            """取第一个可用指标的列表（优先 logloss/mlogloss/rmse）"""
-            for key in ("logloss", "mlogloss", "rmse"):
-                if key in d:
-                    return d[key]
-            return next(iter(d.values()), []) if d else []
-        train_losses = _first_metric(history.get("train", {}))
-        eval_losses = _first_metric(history.get("eval", {}))
-        for i in range(min(len(train_losses), len(eval_losses))):
-            learning_curve.append({
-                "iteration": i,
-                "train_loss": float(train_losses[i]),
-                "eval_loss": float(eval_losses[i]),
-            })
+    if cv_enabled:
+        result = run_walk_forward(
+            dataset, adapter, cv_cfg, args.label_period,
+            inner_val_ratio=args.val_ratio,
+            model_output=args.model_output, emit=emit,
+        )
+    else:
+        result = run_single_split(
+            dataset, adapter, args.test_ratio, args.val_ratio,
+            model_output=args.model_output, emit=emit,
+        )
 
-    importance = booster.get_score(importance_type="gain")
-    feature_importance = []
-    for feat in feature_cols:
-        g = importance.get(feat, 0.0)
-        feature_importance.append({"feature": feat, "gain": float(g), "weight": 0.0, "cover": 0.0})
-
-    fi_w = booster.get_score(importance_type="weight")
-    fi_c = booster.get_score(importance_type="cover")
-    for item in feature_importance:
-        item["weight"] = float(fi_w.get(item["feature"], 0))
-        item["cover"] = float(fi_c.get(item["feature"], 0))
-
-    predictions = []
-    eval_metrics = {}
-    if len(X_test) > 0:
-        preds_proba = booster.predict(dtest)
-        if is_classification:
-            if args.objective == "binary:logistic":
-                preds_class = (preds_proba > 0.5).astype(int)
-            else:
-                preds_class = np.argmax(preds_proba, axis=1)
-            for i in range(len(y_test)):
-                predictions.append({
-                    "actual": int(y_test[i]),
-                    "predicted": float(preds_proba[i]) if preds_proba.ndim == 1 else float(np.max(preds_proba[i])),
-                    "pred_class": int(preds_class[i]),
-                })
-            try:
-                from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
-                eval_metrics["accuracy"] = float(accuracy_score(y_test, preds_class))
-                eval_metrics["f1"] = float(f1_score(y_test, preds_class, average="binary" if args.num_class == 2 else "weighted", zero_division=0))
-                eval_metrics["precision"] = float(precision_score(y_test, preds_class, average="binary" if args.num_class == 2 else "weighted", zero_division=0))
-                eval_metrics["recall"] = float(recall_score(y_test, preds_class, average="binary" if args.num_class == 2 else "weighted", zero_division=0))
-                if args.objective == "binary:logistic":
-                    try:
-                        eval_metrics["auc"] = float(roc_auc_score(y_test, preds_proba))
-                    except Exception:
-                        pass
-            except ImportError:
-                pass
-        else:
-            for i in range(len(y_test)):
-                predictions.append({
-                    "actual": float(y_test[i]),
-                    "predicted": float(preds_proba[i]),
-                    "pred_class": 0,
-                })
-            try:
-                from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-                eval_metrics["rmse"] = float(np.sqrt(mean_squared_error(y_test, preds_proba)))
-                eval_metrics["mae"] = float(mean_absolute_error(y_test, preds_proba))
-                eval_metrics["r2"] = float(r2_score(y_test, preds_proba))
-            except ImportError:
-                pass
-
-    os.makedirs(os.path.dirname(args.model_output) or ".", exist_ok=True)
-    booster.save_model(args.model_output)
-
-    # X_test 序列化为 JSON 列表传给 C++，供 SHAP 计算
-    # 大量样本时这个 JSON 可能很大；如有性能问题可改用文件
-    xtest_json = X_test.tolist() if len(X_test) > 0 else []
-
-    emit({
-        "type": "result",
-        "model_path": args.model_output,
-        "label": label_meta(args),
-        "best_iteration": int(best_iteration),
-        "n_train": len(X_train),
-        "n_val": n_val,
-        "n_test": len(X_test),
-        "n_features": len(feature_cols),
-        "features": feature_cols,
-        "learning_curve": learning_curve,
-        "feature_importance": feature_importance,
-        "eval_metrics": eval_metrics,
-        "predictions": predictions,
-        "X_test": xtest_json,
-        "X_test_dates": test_dates,
-    })
+    result["type"] = "result"
+    result["label"] = label_meta(args)
+    emit(result)
 
 
 if __name__ == "__main__":
@@ -518,6 +173,7 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as e:
-        emit({"type": "error", "message": f"未捕获异常: {e}", "traceback": traceback.format_exc()})
+        emit({"type": "error", "message": f"未捕获异常: {e}",
+              "traceback": traceback.format_exc()})
         traceback.print_exc()
         sys.exit(1)

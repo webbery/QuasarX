@@ -332,6 +332,22 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
 
     nlohmann::json labelCfg = params.value("label", nlohmann::json::object());
     String labelSource = labelCfg.value("source", "");
+    if (params.contains("cv") && !params["cv"].is_null() && !params["cv"].is_object()) {
+        res.status = 400;
+        res.set_content(R"({"message":"invalid 'cv' (object required)"})", "application/json");
+        return;
+    }
+    bool cvOptEnabled = params.contains("cv") && params["cv"].is_object() &&
+                        params["cv"].contains("enabled") &&
+                        params["cv"]["enabled"].is_boolean() &&
+                        params["cv"]["enabled"].get<bool>();
+    if (cvOptEnabled) {
+        res.status = 400;
+        res.set_content(
+            R"({"message":"optimize 暂不支持 cv；请先用单次切分做参数搜索，Phase 2 再接入 OOF 目标"})",
+            "application/json");
+        return;
+    }
     int labelPeriod = labelCfg.value("period", 5);
     String labelType = labelCfg.value("type", "classification");
     String labelShape = labelCfg.value("shape", "matrix");
@@ -524,6 +540,25 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
     nlohmann::json labelCfg = params.value("label", nlohmann::json::object());
     nlohmann::json xgbParams = params.value("params", nlohmann::json::object());
     nlohmann::json dateRangeCfg = params.value("date_range", nlohmann::json::object());
+    nlohmann::json cvCfg = params.value("cv", nlohmann::json::object());
+    if (!cvCfg.is_null() && !cvCfg.is_object()) {
+        res.status = 400;
+        res.set_content(R"({"message":"invalid 'cv' (object required)"})", "application/json");
+        return;
+    }
+    bool cvEnabled = cvCfg.is_object() && cvCfg.contains("enabled") &&
+                     cvCfg["enabled"].is_boolean() && cvCfg["enabled"].get<bool>();
+    if (cvEnabled) {
+        String cvScheme = cvCfg.value("scheme", "walk_forward");
+        String finalModel = cvCfg.value("final_model", "refit_full");
+        if (cvScheme != "walk_forward" || finalModel != "refit_full") {
+            res.status = 400;
+            res.set_content(
+                R"({"message":"cv.scheme 仅支持 walk_forward，cv.final_model 仅支持 refit_full"})",
+                "application/json");
+            return;
+        }
+    }
     double testRatio = params.value("test_ratio", 0.2);
     double valRatio = params.value("val_ratio", 0.15);
 
@@ -579,7 +614,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
 
     // 后台训练线程：执行所有训练阶段，通过 sendSSE 推送进度
     std::thread trainThread([state, session, sendSSE, params, this,
-        script, labelCfg, xgbParams, dateRangeCfg, testRatio, valRatio,
+        script, labelCfg, xgbParams, dateRangeCfg, cvCfg, cvEnabled, testRatio, valRatio,
         labelSource, labelPeriod, labelType, labelShape, volK, labelSigmaMode, objective, numClass,
         startDate, endDate, frequency, strategyName, modelType]() mutable {
 
@@ -763,6 +798,8 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         };
         if (!startDate.empty()) args.insert(args.end(), {"--start-date", startDate});
         if (!endDate.empty()) args.insert(args.end(), {"--end-date", endDate});
+        if (cvEnabled)
+            args.insert(args.end(), {"--cv-json", cvCfg.dump()});
         PythonRunner runner;
         INFO("[MLTrain] Starting Python training: interpreter='{}', script='{}', data='{}'", interpreter, "tools/xgboost_train.py", state->_csvPath);
         if (!runner.start("tools/xgboost_train.py", args, interpreter)) {
@@ -835,6 +872,10 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
                 if (trainResult.contains("n_train")) meta["n_train"] = trainResult["n_train"];
                 if (trainResult.contains("n_val")) meta["n_val"] = trainResult["n_val"];
                 if (trainResult.contains("n_test")) meta["n_test"] = trainResult["n_test"];
+                if (params.contains("cv")) meta["cv_config"] = params["cv"];
+                if (trainResult.contains("cv")) meta["cv"] = trainResult["cv"];
+                if (trainResult.contains("classes")) meta["classes"] = trainResult["classes"];
+                if (trainResult.contains("split_mode")) meta["split_mode"] = trainResult["split_mode"];
                 meta["n_features"] = state->_featureNames.size();
                 // 可选：训练时由前端传入的语义版本号 + 友好名称（缺省时由 publish/update_meta 补）
                 String userVersion = params.value("version", String());

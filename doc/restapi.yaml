@@ -3115,6 +3115,19 @@ paths:
           4. 返回学习曲线、特征重要性、评估指标、预测结果等 JSON
           5. 模型句柄保留在内存供 SHAP 计算
 
+          **Walk-forward 交叉验证**：传入 `cv.enabled=true` 时，训练流程切换为
+          walk-forward OOF 评估 + 全量 refit：
+          - 按 `cv.walk_forward.train_len/oos_len/gap` 生成折计划（单位：唯一交易日期数）
+          - 每折训练 + 预测 OOS，收集 OOF 预测，计算 OOF 指标和截面/时序 IC（含 Newey-West t）
+          - 最终模型在全量数据上重训，轮数取各折 best_rounds 的中位数
+          - 折内 early stopping 用训练段末尾的 `inner_val_ratio`，并在 inner train/inner val 之间留 gap
+          - `cv.scheme` 当前仅支持 `walk_forward`，`cv.final_model` 仅支持 `refit_full`
+          - `cv.gap.bars` 不传时默认等于 `label.period`；小于 `label.period` 会自动抬升并告警
+          - `cv.nw.lag=0` 自动取 `max(10, 2 * label.period)`
+
+          **数据切分**：matrix/vector 两条路径都按"唯一日期"切分，保证同一天的所有标的
+          落在同一段；不再按行号切分（旧实现会把最后几个标的当成测试集）。
+
         - action=optimize：Optuna 自动优化 + 快速回测评估
           1. 前端先调 action=collect 拿到 csv_path 作为 feature_cache 传入
           2. 后端后台线程启动 xgboost_optimize.py
@@ -3153,7 +3166,7 @@ paths:
                 - $ref: "#/components/schemas/XGBoostOptimizeRequest"
             examples:
               train:
-                summary: 训练模型
+                summary: 训练模型（单次切分）
                 value:
                   action: train
                   script: '{"id":"strategy_demo","nodes":[...], "edges":[...]}'
@@ -3170,6 +3183,39 @@ paths:
                     max_depth: 6
                     n_estimators: 200
                     early_stopping_rounds: 20
+              train_cv:
+                summary: 训练模型（walk-forward 交叉验证）
+                value:
+                  action: train
+                  script: '{"id":"strategy_demo","nodes":[...], "edges":[...]}'
+                  label:
+                    source: sh.600000.close
+                    period: 5
+                    type: classification
+                    shape: matrix
+                    vol_k: 0.5
+                    sigma_mode: expanding
+                  params:
+                    learning_rate: 0.1
+                    max_depth: 6
+                    n_estimators: 200
+                    early_stopping_rounds: 20
+                  cv:
+                    enabled: true
+                    scheme: walk_forward
+                    n_folds: 5
+                    walk_forward:
+                      train_len: 504
+                      oos_len: 63
+                      step: 63
+                      window_mode: rolling
+                      inner_val_ratio: 0.15
+                    gap:
+                      mode: label
+                      bars: 5
+                    nw:
+                      lag: 0
+                    final_model: refit_full
               optimize:
                 summary: Optuna 自动优化（快速回测评估）
                 value:
@@ -5256,6 +5302,11 @@ components:
           type: object
         py_env:
           type: string
+        csv_path:
+          type: string
+          description: 预收集的特征 CSV 路径（跳过数据收集阶段）
+        cv:
+          $ref: "#/components/schemas/CVConfig"
 
     XGBoostShapRequest:
       type: object
@@ -5324,6 +5375,221 @@ components:
         meta:
           type: object
           description: 修改后的完整 meta.json 内容（含自动写入的 updated_at）
+
+    CVConfig:
+      type: object
+      description: |
+        Walk-forward 交叉验证配置。传入 `cv.enabled=true` 时，训练流程切换为
+        walk-forward OOF 评估 + 全量 refit；不传或 `enabled=false` 时走单次切分。
+
+        单位约定：`train_len` / `oos_len` / `gap.bars` / `step` 都是**唯一交易日期数**，
+        不是样本行数。多标的 matrix 模式下，同一天所有标的落在同一段。
+
+        Phase 1 约束：`scheme` 仅支持 `walk_forward`，`final_model` 仅支持 `refit_full`。
+        非法值返回 400。
+      properties:
+        enabled:
+          type: boolean
+          default: false
+          description: 是否启用 CV
+        scheme:
+          type: string
+          enum: [walk_forward]
+          default: walk_forward
+          description: 折计划方案（Phase 1 仅支持 walk_forward）
+        n_folds:
+          type: integer
+          default: 5
+          description: 最大折数；实际折数由可用数据决定
+        walk_forward:
+          type: object
+          properties:
+            train_len:
+              type: integer
+              description: 训练窗口长度（唯一日期数）
+              example: 504
+            oos_len:
+              type: integer
+              description: 每折 OOS 长度（唯一日期数）
+              example: 63
+            step:
+              type: integer
+              description: |
+                折间步长（唯一日期数）。不传时按 n_folds 在可用数据上均分；
+                算出来小于 oos_len 时会抬到 oos_len，保证 OOF 不重叠。
+            window_mode:
+              type: string
+              enum: [rolling, anchored]
+              default: rolling
+              description: rolling=固定窗口滚动；anchored=从第 0 根开始
+            inner_val_ratio:
+              type: number
+              default: 0.15
+              description: 折内 early stopping 用的验证集比例；0 表示不用
+        gap:
+          type: object
+          description: |
+            训练集与 OOS 折之间的空隙，防止标签前瞻窗口泄漏。
+            不传时默认等于 `label.period`。
+          properties:
+            mode:
+              type: string
+              enum: [label, nw]
+              default: label
+              description: |
+                label=按 label.period；nw=按 max(label.period, nw.lag)
+            bars:
+              type: integer
+              description: 显式指定 gap 长度（唯一日期数）；优先级高于 mode
+        nw:
+          type: object
+          description: Newey-West HAC t 值的滞后阶数配置
+          properties:
+            lag:
+              type: integer
+              default: 0
+              description: |
+                NW lag；0=自动取 max(10, 2 * label.period)。
+                用于 OOF IC 的显著性检验，不影响切分。
+        final_model:
+          type: string
+          enum: [refit_full]
+          default: refit_full
+          description: 最终模型策略（Phase 1 仅支持 refit_full）
+
+    CVResult:
+      type: object
+      description: |
+        Walk-forward CV 结果。仅在 `cv.enabled=true` 时出现在响应中。
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        scheme:
+          type: string
+          example: walk_forward
+        n_folds_requested:
+          type: integer
+          description: 请求的最大折数
+        n_folds:
+          type: integer
+          description: 实际成功的折数
+        window_mode:
+          type: string
+          example: rolling
+        train_len:
+          type: integer
+        oos_len:
+          type: integer
+        step:
+          type: integer
+          description: 实际使用的折间步长
+        gap_bars:
+          type: integer
+          description: 实际使用的 gap（可能因抬升到 label.period 而变大）
+        gap_mode:
+          type: string
+          example: label
+        nw_lag:
+          type: integer
+          description: 实际使用的 NW lag
+        inner_val_ratio:
+          type: number
+        final_model:
+          type: string
+          example: refit_full
+        final_rounds:
+          type: integer
+          description: 全量重训使用的轮数（各折 best_rounds 的中位数）
+        n_oof:
+          type: integer
+          description: OOF 总样本数
+        folds:
+          type: array
+          items:
+            $ref: "#/components/schemas/CVFold"
+        oof_metrics:
+          type: object
+          additionalProperties: { type: number }
+          description: OOF 汇总指标（分类：accuracy/f1/logloss/...；回归：rmse/mae/r2）
+        oof_ic:
+          $ref: "#/components/schemas/CVIC"
+        leakage_checks:
+          type: object
+          properties:
+            gap_ge_label_period:
+              type: boolean
+              description: gap >= label.period
+            overlap_rows:
+              type: integer
+              description: OOF 重叠行数（必须为 0）
+            oof_rows:
+              type: integer
+
+    CVFold:
+      type: object
+      properties:
+        index:
+          type: integer
+        train_start:
+          type: string
+          format: date
+        train_end:
+          type: string
+          format: date
+        oos_start:
+          type: string
+          format: date
+        oos_end:
+          type: string
+          format: date
+        n_train:
+          type: integer
+        n_inner_val:
+          type: integer
+          description: 折内 early stopping 用的验证集样本数
+        n_oos:
+          type: integer
+        best_rounds:
+          type: integer
+        metrics:
+          type: object
+          additionalProperties: { type: number }
+        ic:
+          $ref: "#/components/schemas/CVIC"
+
+    CVIC:
+      type: object
+      description: |
+        Spearman IC 指标。优先截面 IC（每天一个 IC 值，再对时间序列做 NW t）；
+        横截面样本不足时退化为整段时序 IC。
+      properties:
+        kind:
+          type: string
+          enum: [cross_sectional, time_series]
+        mean:
+          type: number
+          nullable: true
+        std:
+          type: number
+          nullable: true
+        ir:
+          type: number
+          nullable: true
+          description: mean / std
+        nw_t:
+          type: number
+          nullable: true
+          description: Newey-West t 值
+        p_value:
+          type: number
+          nullable: true
+        days:
+          type: integer
+          description: 有效天数
+        positive_ratio:
+          type: number
+          nullable: true
 
     XGBoostOptimizeRequest:
       type: object
@@ -5412,11 +5678,29 @@ components:
         model_path: { type: string }
         best_iteration: { type: integer }
         n_train: { type: integer }
+        n_val: { type: integer }
         n_test: { type: integer }
         n_features: { type: integer }
         features:
           type: array
           items: { type: string }
+        classes:
+          type: array
+          items: { type: integer }
+          nullable: true
+          description: 分类的全局类别编码（回归时为 null）
+        split_mode:
+          type: string
+          enum: [date, row, cv_walk_forward]
+          description: |
+            切分模式：date=按唯一日期切分；row=按行切分（无日期列时退化）；
+            cv_walk_forward=walk-forward CV
+        test_date_start:
+          type: string
+          format: date
+        test_date_end:
+          type: string
+          format: date
         learning_curve:
           type: array
           items:
@@ -5437,6 +5721,8 @@ components:
         eval_metrics:
           type: object
           additionalProperties: { type: number }
+          description: |
+            单次切分：测试集指标；CV：OOF 汇总指标
         predictions:
           type: array
           items:
@@ -5445,6 +5731,19 @@ components:
               actual: { type: number }
               predicted: { type: number }
               pred_class: { type: integer }
+        X_test:
+          type: array
+          items:
+            type: array
+            items: { type: number }
+          description: 测试集特征（SHAP 用）
+        X_test_dates:
+          type: array
+          items: { type: string }
+          description: 测试集日期（与 X_test 行对齐）
+        cv:
+          $ref: "#/components/schemas/CVResult"
+          description: CV 结果（仅 cv.enabled=true 时存在）
 
     XGBoostShapResponse:
       type: object

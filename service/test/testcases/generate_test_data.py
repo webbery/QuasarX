@@ -847,5 +847,88 @@ def main():
     generate_dividend_data()
 
 
+# ============================================================
+# XGBoost 交叉验证测试数据生成
+# ============================================================
+
+def generate_xgb_matrix_csv(path, n_days=400, n_symbols=3, seed=42):
+    """
+    生成 XGBoost matrix 模式测试数据（多标的 × 多日期）
+
+    每个标的包含：
+    - f1: 过去 1 日收益（滞后特征）
+    - f2: 10 日滚动均值（滞后特征）
+    - f3: 20 日滚动标准差（滞后特征）
+    - quote.close: 收盘价（用于计算标签）
+
+    参数:
+        path: CSV 文件路径
+        n_days: 交易天数（默认 400）
+        n_symbols: 标的数量（默认 3）
+        seed: 随机种子（默认 42）
+
+    返回:
+        str: CSV 文件路径
+    """
+    import pandas as pd
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2020-01-01", periods=n_days, freq="D")
+    data = {"date": dates}
+
+    for i in range(n_symbols):
+        sym = f"sh.60000{i}."
+        ret = rng.normal(0, 0.02, n_days)
+        close = 100 * np.exp(np.cumsum(ret))
+        f1 = np.r_[0, ret[:-1]]
+        f2 = pd.Series(f1).rolling(10, min_periods=3).mean().fillna(0).to_numpy()
+        f3 = pd.Series(f1).rolling(20, min_periods=5).std().fillna(0).to_numpy()
+        data[sym + "f1"] = f1
+        data[sym + "f2"] = f2
+        data[sym + "f3"] = f3
+        data[sym + "quote.close"] = close
+
+    df = pd.DataFrame(data)
+    df.to_csv(path, index=False)
+    return str(path)
+
+
+def generate_xgb_vector_csv(path, n_days=400, seed=42):
+    """
+    生成 XGBoost vector 模式测试数据（单标的）
+
+    包含：
+    - f1: 过去 1 日收益（滞后特征）
+    - f2: 10 日滚动均值（滞后特征）
+    - f3: 20 日滚动标准差（滞后特征）
+    - close: 收盘价（用于计算标签）
+
+    参数:
+        path: CSV 文件路径
+        n_days: 交易天数（默认 400）
+        seed: 随机种子（默认 42）
+
+    返回:
+        str: CSV 文件路径
+    """
+    import pandas as pd
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2020-01-01", periods=n_days, freq="D")
+    ret = rng.normal(0, 0.02, n_days)
+    close = 100 * np.exp(np.cumsum(ret))
+    f1 = np.r_[0, ret[:-1]]
+    f2 = pd.Series(f1).rolling(10, min_periods=3).mean().fillna(0).to_numpy()
+    f3 = pd.Series(f1).rolling(20, min_periods=5).std().fillna(0).to_numpy()
+
+    df = pd.DataFrame({
+        "date": dates,
+        "f1": f1,
+        "f2": f2,
+        "f3": f3,
+        "close": close,
+    })
+    df.to_csv(path, index=False)
+    return str(path)
+
+
 if __name__ == "__main__":
     main()

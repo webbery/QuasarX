@@ -50,6 +50,7 @@ import pandas as pd
 # 公共实现：标签计算、标签参数、meta 抽取
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from xgb_util import add_label_args, compute_label, label_meta
+from cv_util import sort_samples_by_date, split_indices_by_date
 
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
@@ -154,7 +155,8 @@ def load_and_prepare_data(args):
         feature_names = [c[len(first_prefix):] for c in df.columns if c.startswith(first_prefix)]
         close_col = next((c for c in ["quote.close", "input.close", "close"] if c in feature_names), None)
 
-        X_parts, y_parts = [], []
+        X_parts, y_parts, date_parts = [], [], []
+        sample_dates = None
         for prefix in symbol_prefixes:
             sym_cols = [prefix + f for f in feature_names if (prefix + f) in df.columns]
             if close_col:
@@ -168,8 +170,15 @@ def load_and_prepare_data(args):
             valid = sym_label.notna() & sym_df.notna().all(axis=1)
             X_parts.append(sym_df.loc[valid].values)
             y_parts.append(sym_label[valid].values)
+            date_parts.append(sym_df.index[valid])
         X = np.vstack(X_parts)
         y = np.concatenate(y_parts)
+        if len(X) == 0:
+            emit({"type": "error", "message": "matrix 模式：标签/特征过滤后无有效样本"})
+            sys.exit(1)
+        if isinstance(df.index, pd.DatetimeIndex):
+            sample_dates = pd.DatetimeIndex(
+                np.concatenate([np.asarray(d) for d in date_parts]))
         feature_cols = [f for f in feature_names if f != close_col]
     else:
         # vector 模式
@@ -184,21 +193,51 @@ def load_and_prepare_data(args):
         valid = raw_label.notna() & df[feature_cols].notna().all(axis=1)
         X = df.loc[valid, feature_cols].values
         y = raw_label[valid].values
+        sample_dates = df.index[valid.to_numpy()] if isinstance(df.index, pd.DatetimeIndex) else None
 
     n = len(X)
     use_val = args.val_ratio > 0 and n >= 1000
+
+    # 与 xgboost_train.py 同一口径：按唯一日期切分，避免多标的按行切分时
+    # 把最后几个标的当成测试集。
+    X, y, sample_dates, has_sample_dates = sort_samples_by_date(X, y, sample_dates)
+
+    split = None
+    if has_sample_dates:
+        split = split_indices_by_date(sample_dates, use_val, args.val_ratio, args.test_ratio)
+        if split is None and use_val:
+            emit({"type": "warning",
+                  "message": "日期数不足以切出 train/val/test 三段，退化为 train/test 两段"})
+            use_val = False
+            split = split_indices_by_date(sample_dates, False, args.val_ratio, args.test_ratio)
+        if split is None:
+            emit({"type": "warning",
+                  "message": "日期切分失败，退化为按行切分（多标的场景可能出现同日跨集）"})
+
+    if split is not None:
+        if use_val:
+            train_end, val_end = split
+        else:
+            train_end, val_end = split[0], None
+        split_mode = "date"
+    else:
+        if use_val:
+            train_end = int(n * (1 - args.val_ratio - args.test_ratio))
+            val_end = int(n * (1 - args.test_ratio))
+        else:
+            train_end = int(n * (1 - args.test_ratio))
+            val_end = None
+        split_mode = "row"
+
     if use_val:
-        train_end = int(n * (1 - args.val_ratio - args.test_ratio))
-        val_end = int(n * (1 - args.test_ratio))
         n_val = val_end - train_end
-        emit({"type": "info", "phase": "split",
+        emit({"type": "info", "phase": "split", "split_mode": split_mode,
               "n_train": train_end, "n_val": n_val, "n_test": n - val_end, "n_features": X.shape[1]})
         return X[:train_end], y[:train_end], X[train_end:val_end], y[train_end:val_end], X[val_end:], y[val_end:], feature_cols
     else:
-        split = int(n * (1 - args.test_ratio))
-        emit({"type": "info", "phase": "split",
-              "n_train": split, "n_val": 0, "n_test": n - split, "n_features": X.shape[1]})
-        return X[:split], y[:split], None, None, X[split:], y[split:], feature_cols
+        emit({"type": "info", "phase": "split", "split_mode": split_mode,
+              "n_train": train_end, "n_val": 0, "n_test": n - train_end, "n_features": X.shape[1]})
+        return X[:train_end], y[:train_end], None, None, X[train_end:], y[train_end:], feature_cols
 
 
 def train_xgb(X_train, y_train, X_val, y_val, X_test, y_test, params, args, feature_cols):
