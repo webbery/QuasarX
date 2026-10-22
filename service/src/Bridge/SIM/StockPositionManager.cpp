@@ -23,16 +23,16 @@ TradeFees StockPositionManager::Buy(symbol_t symbol, int64_t qty, double price) 
     if (it == _positions.end()) {
         StockPosition pos;
         pos._symbol = symbol;
-        pos._qty = qty;
-        pos._cost = price;
+        pos._quantity = qty;
+        pos._avgPrice = price;
         pos._totalCost = amount;
         _positions[symbol] = pos;
     } else {
         StockPosition& pos = it->second;
-        int64_t newQty = pos._qty + qty;
+        int64_t newQty = pos._quantity + qty;
         pos._totalCost += amount;
-        pos._cost = (newQty != 0) ? (pos._totalCost / newQty) : 0.0;
-        pos._qty = newQty;
+        pos._avgPrice = (newQty != 0) ? (pos._totalCost / newQty) : 0.0;
+        pos._quantity = newQty;
     }
 
     // T+1 控制：记录当日买入
@@ -55,7 +55,7 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
     //   → 本函数，无持仓时直接 return，因此 SignalNode/PortfolioNode 已放行的
     //   融券卖出信号到此为止，broker 侧不产生任何成交回报。
     //   通关条件（两件都做完才算接通）：
-    //     1. 加 _allowShort 开关，允许 qty > pos._qty 时产生负持仓；
+    //     1. 加 _allowShort 开关，允许 qty > pos._quantity 时产生负持仓；
     //        同时让 exchange.h 的 CreditOrderType 真正参与路由
     //        （目前只有字段声明，全仓无人读取）。
     //     2. 借券成本模型（年化费率按持仓天数计提），
@@ -68,15 +68,15 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
     }
 
     StockPosition& pos = it->second;
-    if (pos._qty < qty) {
-        WARN("Insufficient position: have={} sell={}", pos._qty, qty);
-        qty = pos._qty;  // 卖出全部持仓
+    if (pos._quantity < qty) {
+        WARN("Insufficient position: have={} sell={}", pos._quantity, qty);
+        qty = pos._quantity;  // 卖出全部持仓
     }
 
     // T+1 限制：当日买入不能当日卖出
     auto buyIt = _todayBuyQty.find(symbol);
     if (buyIt != _todayBuyQty.end() && buyIt->second > 0) {
-        int64_t canSell = pos._qty - buyIt->second;
+        int64_t canSell = pos._quantity - buyIt->second;
         if (canSell < qty) {
             WARN("T+1 restriction: can only sell {} of {} today (bought {} today)",
                  canSell, qty, buyIt->second);
@@ -94,8 +94,8 @@ StockPositionManager::SellResult StockPositionManager::Sell(symbol_t symbol, int
     result.actualQty = qty;
 
     // 更新持仓
-    pos._qty -= qty;
-    if (pos._qty == 0) {
+    pos._quantity -= qty;
+    if (pos._quantity == 0) {
         _positions.erase(it);
     }
 
@@ -119,7 +119,7 @@ PositionEffect StockPositionManager::ApplyEvent(
     std::lock_guard<std::mutex> lock(_mutex);
 
     auto it = _positions.find(symbol);
-    int64_t curQty = (it != _positions.end()) ? it->second._qty : 0;
+    int64_t curQty = (it != _positions.end()) ? it->second._quantity : 0;
 
     PositionEffect fx = event.computeEffect(curQty, currentPrice);
 
@@ -128,19 +128,19 @@ PositionEffect StockPositionManager::ApplyEvent(
 
     auto& pos = _positions[symbol];
     pos._symbol = symbol;
-    pos._qty += fx.qtyDelta;
+    pos._quantity += fx.qtyDelta;
     pos._totalCost += fx.costBasisDelta;
 
-    if (pos._qty > 0 && pos._totalCost > 0) {
-        pos._cost = pos._totalCost / pos._qty;
+    if (pos._quantity > 0 && pos._totalCost > 0) {
+        pos._avgPrice = pos._totalCost / pos._quantity;
     }
-    if (pos._qty == 0) {
-        pos._cost = 0;
+    if (pos._quantity == 0) {
+        pos._avgPrice = 0;
         pos._totalCost = 0;
     }
 
     INFO("EVENT symbol={} qtyDelta={} cashDelta={} newQty={}",
-         symbol, fx.qtyDelta, fx.cashDelta, pos._qty);
+         symbol, fx.qtyDelta, fx.cashDelta, pos._quantity);
     return fx;
 }
 
@@ -152,7 +152,7 @@ int64_t StockPositionManager::GetPosition(symbol_t symbol) const {
     if (it == _positions.end()) {
         return 0;
     }
-    return it->second._qty;
+    return it->second._quantity;
 }
 
 void StockPositionManager::SetPosition(symbol_t symbol, int64_t qty) {
@@ -162,13 +162,13 @@ void StockPositionManager::SetPosition(symbol_t symbol, int64_t qty) {
         if (qty != 0) {
             StockPosition pos;
             pos._symbol = symbol;
-            pos._qty = qty;
-            pos._cost = 0.0;
+            pos._quantity = qty;
+            pos._avgPrice = 0.0;
             pos._totalCost = 0.0;
             _positions[symbol] = pos;
         }
     } else {
-        it->second._qty = qty;
+        it->second._quantity = qty;
         if (qty == 0) {
             _positions.erase(it);
         }
@@ -181,7 +181,7 @@ double StockPositionManager::GetPositionCost(symbol_t symbol) const {
     if (it == _positions.end()) {
         return 0.0;
     }
-    return it->second._cost;
+    return it->second._avgPrice;
 }
 
 AccountAsset StockPositionManager::GetAsset() const {
@@ -198,9 +198,9 @@ bool StockPositionManager::GetPosition(AccountPosition& pos) const {
     for (const auto& [symbol, sp] : _positions) {
         position_t p{};
         p._symbol = symbol;
-        p._holds = sp._qty;
-        p._validHolds = sp._qty;
-        p._price = sp._cost;
+        p._quantity = sp._quantity;
+        p._validQuantity = sp._quantity;
+        p._avgPrice = sp._avgPrice;
         pos._positions.push_back(p);
     }
     return !pos._positions.empty();

@@ -162,11 +162,6 @@ private:
     void handleDelete(uint64_t modelId, httplib::Response& res);
     void handleUpdateMeta(const nlohmann::json& params, httplib::Response& res);
 
-    // 从 XGBoostNode 上游收集特征名（若 XGBoostNode 指定了 features 则按其过滤）
-    static void collectXGBoostFeatures(
-        const List<QNode*>& upstreamSubgraph,
-        Vector<String>& outFeatureNames);
-
     // 尝试获取会话槽：检查当前活跃会话，返回 CanCreate/Reused/Conflict
     static SessionAcquireResult tryAcquireSession(MLAction kind);
 

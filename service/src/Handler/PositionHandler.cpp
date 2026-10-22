@@ -21,10 +21,10 @@ void PositionHandler::get(const httplib::Request& req, httplib::Response& res) {
         nlohmann::json pos;
         pos["id"] = get_symbol(item._symbol);
         pos["name"] = to_utf8(item._name);
-        pos["price"] = item._price;
-        pos["curPrice"] = item._curPrice;
-        pos["quantity"] = item._holds;
-        pos["valid_quantity"] = item._validHolds;
+        pos["price"] = item._avgPrice;
+        pos["curPrice"] = item._currentPrice;
+        pos["quantity"] = item._quantity;
+        pos["valid_quantity"] = item._validQuantity;
         positionsArray.emplace_back(std::move(pos));
     }
     result["positions"] = positionsArray;

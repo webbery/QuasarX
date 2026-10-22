@@ -41,6 +41,10 @@ public:
     // 更新策略可用资金（成交时调用，delta 为负表示资金被占用）
     void updateAvailable(const String& strategy, double delta);
 
+    // 直接设置策略可用资金（StrategyCapital 持久化回写时使用）
+    // entry 不存在时创建，allocated 取 max(现有 allocated, available)
+    void setAvailable(const String& strategy, double available);
+
     // 查询策略资金信息
     StrategyCapitalInfo get(const String& strategy) const;
 

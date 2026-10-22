@@ -20,11 +20,15 @@ public:
     virtual Map<String, ArgType> out_elements() override;
 
 private:
-    ExecutionPlan generatePlan(const String& strategy, DataContext& context, const Map<symbol_t, TradeAction>& decisions,
-                              double capital);
-    ExecutionPlan generatePlan(DataContext& context, const Map<symbol_t, TradeAction>& decisions,
-                              double capital,
-                              BacktestContext* btContext);
+    // 合并后的 generatePlan：通过 adapter 注入持仓与价格来源
+    ExecutionPlan generatePlan(
+        const String& strategy,
+        DataContext& context,
+        const Map<symbol_t, TradeAction>& decisions,
+        double targetCapital,
+        std::function<double(symbol_t)> getQuotePrice,
+        std::function<int64_t(symbol_t)> getPositionQuantity,
+        const String& source);
     bool isPlanChanged(const ExecutionPlan& newPlan);
 
     // ── 仓位 sizing 方法（默认关闭，保持原有等权行为） ──

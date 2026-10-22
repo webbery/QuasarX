@@ -183,24 +183,22 @@ bool ProtectionNode::Init(const nlohmann::json& config) {
     return true;
 }
 
-static double get_position_cost(Server* server, DataContext& context, symbol_t symbol) {
+static double get_position_cost(Server* server, DataContext& context, const String& strategy, symbol_t symbol) {
     if (server->GetRunningMode() == RuningType::Backtest) {
         // 回测模式下 BacktestContext 不保存成本价，返回 0
         // ProtectionNode 在新建仓时自己记录当前价作为成本
         return 0.0;
     } else {
-        auto& ap = server->GetPosition("");
-        for (const auto& pos : ap._positions) {
-            if (pos._symbol == symbol) {
-                return pos._price;
-            }
-        }
+        auto* broker = server->GetBrokerSubSystem();
+        auto* capital = broker->GetStrategyCapital(strategy);
+        auto pos = capital->getPositions().getPosition(symbol);
+        return pos._avgPrice;
     }
     return 0.0;
 }
 
 // 触发时被平掉的持仓量（供风控事件展示）
-static int64_t get_position_qty(Server* server, DataContext& context, symbol_t symbol) {
+static int64_t get_position_qty(Server* server, DataContext& context, const String& strategy, symbol_t symbol) {
     if (server->GetRunningMode() == RuningType::Backtest) {
         auto* histExchange = dynamic_cast<HistorySimulationBase*>(
             server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
@@ -211,13 +209,9 @@ static int64_t get_position_qty(Server* server, DataContext& context, symbol_t s
         }
         return 0;
     }
-    auto& ap = server->GetPosition("");
-    for (const auto& pos : ap._positions) {
-        if (pos._symbol == symbol) {
-            return pos._holds;
-        }
-    }
-    return 0;
+    auto* broker = server->GetBrokerSubSystem();
+    auto* capital = broker->GetStrategyCapital(strategy);
+    return capital->getPositions().getHoldingQuantity(symbol);
 }
 
 void ProtectionNode::syncPositions(const String& strategy, DataContext& context) {
@@ -245,10 +239,11 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             INFO("[ProtectionNode] syncPositions: histExchange is null");
         }
     } else {
-        auto& ap = _server->GetPosition("");
-        for (const auto& pos : ap._positions) {
-            if (pos._holds != 0) {
-                current_symbols.insert(pos._symbol);
+        auto* broker = _server->GetBrokerSubSystem();
+        auto* capital = broker->GetStrategyCapital(strategy);
+        for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
+            if (pos._quantity != 0) {
+                current_symbols.insert(symbol);
             }
         }
     }
@@ -273,7 +268,7 @@ void ProtectionNode::syncPositions(const String& strategy, DataContext& context)
             double factor = context.GetAdjFactor(symbol);
 
             // 获取成本价（实盘模式从 position 读取，回测模式为 0）
-            double cost = get_position_cost(_server, context, symbol);
+            double cost = get_position_cost(_server, context, strategy, symbol);
             if (cost > 0) {
                 // pos._price 是撮合成交价（原始价），换算成复权口径后再与 .close 序列比较，
                 // 否则除权日附近会拿原始成本和复权现价比，算出来的止损位是错的。
@@ -560,7 +555,7 @@ NodeProcessResult ProtectionNode::Process(const String& strategy, DataContext& c
         // 否则除权日附近算出来的盈亏是错的。
         evt._entry_price = trig_info._raw_cost > 0 ? trig_info._raw_cost : trig_info._avg_price;
         evt._current_price = context.GetRawPrice(triggered_symbol);
-        evt._quantity = get_position_qty(_server, context, triggered_symbol);
+        evt._quantity = get_position_qty(_server, context, strategy, triggered_symbol);
         _events.push_back(evt);
 
         if (_server->GetRunningMode() != RuningType::Backtest) {

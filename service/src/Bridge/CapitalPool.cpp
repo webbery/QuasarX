@@ -96,6 +96,21 @@ void CapitalPool::updateAvailable(const String& strategy, double delta) {
     }
 }
 
+void CapitalPool::setAvailable(const String& strategy, double available) {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    auto it = _strategies.find(strategy);
+    if (it != _strategies.end()) {
+        it->second.available = available;
+    } else {
+        StrategyCapitalInfo info;
+        info.allocated = std::max(available, 0.0);
+        info.available = available;
+        info.active = true;
+        _strategies[strategy] = info;
+    }
+}
+
 StrategyCapitalInfo CapitalPool::get(const String& strategy) const {
     std::lock_guard<std::mutex> lock(_mutex);
 

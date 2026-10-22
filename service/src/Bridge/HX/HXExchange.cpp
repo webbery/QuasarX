@@ -893,7 +893,7 @@ bool HXExchange::GetPosition(AccountPosition& ap){
     // 更新当前价格
     for (auto& item : positions) {
         auto qt = _quote->GetQuote(item._symbol);
-        item._curPrice = qt._close;
+        item._currentPrice = qt._close;
     }
     ap._positions = std::move(positions);
     return true;

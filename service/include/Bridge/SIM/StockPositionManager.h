@@ -1,15 +1,12 @@
 #pragma once
 #include "Bridge/exchange.h"
 #include "Bridge/PositionEvent.h"
+#include "Util/system.h"
 #include <mutex>
 
 // 股票模拟持仓信息
-struct StockPosition {
-    symbol_t _symbol;
-    int64_t _qty = 0;          // 持仓数量（正=多头，负=空头）
-    double _cost = 0.0;        // 持仓成本（均价）
-    double _totalCost = 0.0;   // 总成本 = qty * cost
-};
+// 统一使用 system.h 中的 Position（含两融字段），此处仅保留别名以兼容既有调用点。
+using StockPosition = Position;
 
 // 交易费用明细（Buy/Sell 返回给调用方，由调用方扣资金）
 struct TradeFees {
@@ -88,7 +85,7 @@ private:
     TradeFees CalcFees(double amount, bool isSell) const;
 
     mutable std::mutex _mutex;
-    Map<symbol_t, StockPosition> _positions;
+    Map<symbol_t, position_t> _positions;
     double _commissionRate;  // 佣金费率
     double _stampTaxRate;    // 印花税率（仅卖出）
 

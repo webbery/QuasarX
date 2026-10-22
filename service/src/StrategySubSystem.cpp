@@ -454,6 +454,13 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
                 // 状态（mid-run 重启场景）也能恢复。
                 broker->PersistCapitalPool();
             }
+
+            // C2：建立统一的策略资金账本（以资金池持久化状态为初值）
+            MarginConfig marginConfig;
+            if (script.contains("allowShort") && script["allowShort"].is_boolean()) {
+                marginConfig._allowShort = script["allowShort"].get<bool>();
+            }
+            broker->CreateStrategyCapital(strategyName, scriptCapital, marginConfig);
         }
     }
 

@@ -17,23 +17,9 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
         return true;
     }
 
+    // C1 重构：plan 是唯一权威，ManualTiming 不再本地改写 action。
+    // ExecuteNode 已经把 plan 翻译成 signal，这里直接累积即可。
     auto action = signal.GetAction();
-
-    // ── 新增：持仓过滤（避免重复建仓） ────────────────────────
-    // 当 OrderDesk 已经回写过手动成交（Fix #2），_portfolio 中已有持仓；
-    // 此时如果 SignalNode 仍给 BUY，转 HOLD 让邮件显示"已持仓"。
-    // Why: 历史 bug 是 ManualTiming 完全不看 _portfolio，第二天建议 BUY
-    //      与已有持仓冲突。Fix #1 注册 CapitalPool 后，_portfolio 的
-    //      GetHolding 是真实状态——直接读即可。
-    if (action == TradeAction::BUY) {
-        auto* broker = _server->GetBrokerSubSystem();
-        int64_t currentQty = broker->GetHoldingQuantity(strategy, signal.GetSymbol());
-        if (currentQty > 0) {
-            INFO("[Manual] {} already hold {} shares, BUY → HOLD",
-                 get_symbol(signal.GetSymbol()), currentQty);
-            action = TradeAction::HOLD;
-        }
-    }
 
     // per-symbol 覆盖，只保留最终决策（含 HOLD）
     DecisionSnapshot snap;
@@ -123,18 +109,13 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     for (auto* d : sells) totalSellValue += d->_quantity * d->_price;
     double netValue = totalBuyValue - totalSellValue;
 
-    // 策略分配资金（CapitalPool 优先，未注册时 fallback 到 flow._capital）
+    // 策略分配资金（C2 重构：使用 StrategyCapital）
     double strategyCap = 0.0;
     double strategyAvailable = 0.0;
-    auto* pool = _server->GetBrokerSubSystem()->GetCapitalPool();
-    if (pool && pool->hasStrategy(strategy)) {
-        auto info = pool->get(strategy);
-        strategyCap       = info.allocated;
-        strategyAvailable = info.available;
-    } else if (strategyCapital > 0.0) {
-        strategyCap = strategyCapital;
-        INFO("[Manual] CapitalPool not registered for '{}', using flow._capital={:.0f} as fallback",
-             strategy, strategyCapital);
+    auto* capital = _server->GetBrokerSubSystem()->GetStrategyCapital(strategy);
+    if (capital) {
+        strategyCap = capital->getAllocated();
+        strategyAvailable = capital->getAvailable();
     }
 
     // 单决策值格式化辅助

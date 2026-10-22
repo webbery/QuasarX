@@ -5,6 +5,7 @@
 #include "MarketTiming/ManualTiming.h"
 #include "MarketTiming/ShadowTiming.h"
 #include "server.h"
+#include "BrokerSubSystem.h"
 #include "RiskContext.h"
 #include "Util/log.h"
 
@@ -60,7 +61,7 @@ bool ExecuteNode::Init(const nlohmann::json& config) {
 }
 
 NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& context) {
-    // ── 风控短路处理：RiskContext triggered 时执行紧急平仓 ──
+    // ── 风控短路处理：RiskContext triggered 时修改 plan（添加平仓腿） ──
     auto* rc = context.GetRiskContext();
     if (rc && rc->triggered && rc->action == RiskAction::Close) {
         if (_server->GetRunningMode() != RuningType::Backtest) {
@@ -68,18 +69,17 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
 
             // 收集被平仓的标的
             Vector<String> closedSymbols;
-            auto& ap = _server->GetPosition("");
-            for (const auto& pos : ap._positions) {
-                if (pos._holds > 0) {
-                    closedSymbols.push_back(get_symbol(pos._symbol));
+            auto* broker = _server->GetBrokerSubSystem();
+            auto* capital = broker->GetStrategyCapital(strategy);
+            for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
+                if (pos._quantity > 0) {
+                    closedSymbols.push_back(get_symbol(symbol));
                 }
             }
 
-            // 根据ExecuteType决定邮件发送方式
+            // 根据 ExecuteType 决定邮件发送方式
             ExecuteType execType = context.GetExecuteType();
             if (execType == ExecuteType::Manual) {
-                // 日终策略：风控事件由 ProtectionNode 的 ProtectionEvent 记录，
-                // 这里只负责生成平仓指令（数量 + 委托价）。
                 STRATEGY_INFO(strategy, "[ExecuteNode] Emergency close recorded for daily strategy (symbols={})",
                     [&]() {
                         String s;
@@ -90,7 +90,6 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                         return s;
                     }());
             } else {
-                // 实时策略：立即发邮件
                 String symbolsStr;
                 for (const auto& sym : closedSymbols) {
                     if (!symbolsStr.empty()) symbolsStr += ", ";
@@ -109,10 +108,35 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             INFO("[ExecuteNode] Emergency close triggered: type={}", to_string(rc->trigger_type));
         }
 
-        // 获取当前所有持仓并生成平仓信号
-        if (_server->GetRunningMode() == RuningType::Backtest) {
+        // 修改 plan：为每个持仓添加平仓腿
+        auto& plan = context.GetExecutionPlan();
+        if (_server->GetRunningMode() != RuningType::Backtest) {
+            auto* broker = _server->GetBrokerSubSystem();
+            auto* capital = broker->GetStrategyCapital(strategy);
+            for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
+                if (pos._quantity > 0) {
+                    ExecutionItem item;
+                    item._symbol = symbol;
+                    item._action = TradeAction::SELL;
+                    item._quantity = static_cast<int>(pos._quantity);
+                    item._flag = 1; // 平仓
+                    // 决策价：当前 Bar 原始价（与 PortfolioNode 的 limitPrice 同口径）
+                    double price = context.GetRawPrice(symbol);
+                    if (price <= 0) {
+                        price = pos._avgPrice;
+                    }
+                    item._limitPrice = price;
+                    item._targetValue = item._quantity * price;
+                    item._isEmergencyClose = true;
+                    plan._items.push_back(item);
+                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={} @ {}",
+                                  get_symbol(symbol), pos._quantity, price);
+                }
+            }
+        } else {
+            // 回测模式：从 BacktestContext 获取持仓
             auto* histExchange = dynamic_cast<HistorySimulationBase*>(
-                _server->GetExchange(ExchangeType::EX_STOCK_HIST_SIM));
+                _server->GetExchangeManager()->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM));
             if (histExchange) {
                 auto run_id = context.getBacktestRunId();
                 auto btCtx = histExchange->getBacktestContext(run_id);
@@ -120,51 +144,30 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     for (const auto& symbol : btCtx->getSymbols()) {
                         int64_t qty = btCtx->getPosition(symbol);
                         if (qty > 0) {
-                            auto* signal = new TradeSignal(symbol, TradeAction::SELL);
-                            signal->SetQuantity(qty);
-                            signal->SetFlag(1); // 平仓
-                            if (context.Current() > 0) {
-                                signal->SetBacktestTime(context.Current());
-                            }
-                            context.AddSignal(signal);
-                            if (_server->GetRunningMode() != RuningType::Backtest) {
-                                STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
-                            } else {
-                                INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
-                            }
+                            ExecutionItem item;
+                            item._symbol = symbol;
+                            item._action = TradeAction::SELL;
+                            item._quantity = static_cast<int>(qty);
+                            item._flag = 1; // 平仓
+                            item._limitPrice = 0.0; // 回测模式下价格由 BacktestContext 提供
+                            item._targetValue = 0.0;
+                            item._isEmergencyClose = true;
+                            plan._items.push_back(item);
+                            INFO("[ExecuteNode] Emergency sell: {} qty={}", get_symbol(symbol), qty);
                         }
                     }
                 }
             }
-        } else {
-            auto& ap = _server->GetPosition("");
-            for (const auto& pos : ap._positions) {
-                if (pos._holds > 0) {
-                    auto* signal = new TradeSignal(pos._symbol, TradeAction::SELL);
-                    signal->SetQuantity(pos._holds);
-                    // 决策价：当前 Bar 原始价（与 PortfolioNode 的 limitPrice 同口径）。
-                    // 行情缺失时退回持仓成本价——不能留 0，日终邮件的金额/占比都由这个价算出。
-                    double price = context.GetRawPrice(pos._symbol);
-                    if (price <= 0) {
-                        price = pos._price;
-                    }
-                    signal->SetPrice(price);
-                    signal->SetFlag(1); // 平仓
-                    context.AddSignal(signal);
-                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={} @ {}", get_symbol(pos._symbol), pos._holds, price);
-                }
-            }
         }
+        plan._hasChanged = true;
 
-        context.ConsumeSignals();
         rc->reset();
-        return NodeProcessResult::Success;
+        // 继续执行下面的 plan → signal 翻译逻辑
     }
 
-    // 从 PortfolioNode 读取执行计划
-    if (context.GetExecutionPlan()._hasChanged) {
-        const auto& plan = context.GetExecutionPlan();
-
+    // ── plan → signal 翻译 ──
+    const auto& plan = context.GetExecutionPlan();
+    if (plan._hasChanged) {
         // 构建 plan 中已处理的 symbol 集合
         Set<symbol_t> plannedSymbols;
         for (const auto& item : plan._items) {
@@ -176,34 +179,31 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
         const auto& allSignals = context.getAllSignals();
         for (const auto& [sym, signal] : allSignals) {
             if (plannedSymbols.count(sym) == 0) {
-                // 该 symbol 不在 plan 中，说明被 PortfolioNode 跳过了
                 if (signal->GetAction() == TradeAction::BUY || signal->GetAction() == TradeAction::SELL) {
-                    // 数量不足或其他原因被跳过，标记为 HOLD 防止 ImmediateTiming 执行
                     signal->SetAction(TradeAction::HOLD);
                 }
             }
         }
 
+        // 为 plan 中的每个 item 创建或更新 signal
         for (const auto& item : plan._items) {
             auto* signal = context.getSignalBySymbol(item._symbol);
             if (item._action == TradeAction::HOLD) {
                 if (signal) {
                     signal->SetAction(TradeAction::HOLD);
                 }
-                continue;  // 保持仓位，不下单
+                continue;
             }
 
             if (signal) {
                 signal->SetAction(item._action);
-            }
-            else {
+            } else {
                 signal = new TradeSignal(item._symbol, item._action);
                 context.AddSignal(signal);
             }
             signal->SetQuantity(item._quantity);
             signal->SetPrice(item._limitPrice);
 
-            // 设置回测时间 (从 DataContext 获取当前 Bar 时间)
             if (_server->GetRunningMode() == RuningType::Backtest) {
                 signal->SetBacktestTime(context.Current());
             }
@@ -245,6 +245,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             item_json["quantity"] = item._quantity;
             item_json["limit_price"] = item._limitPrice;
             item_json["target_value"] = item._targetValue;
+            item_json["is_emergency_close"] = item._isEmergencyClose;
             plan_items_json.push_back(item_json);
         }
         input["plan_items"] = plan_items_json;
@@ -284,7 +285,7 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                 if (_server->GetRunningMode() == RuningType::Backtest) {
                     signal->SetBacktestTime(context.Current());
                 }
-                signal->SetDefaultHold(true);  // 标记为默认补 HOLD，便于 ManualTiming 区分
+                signal->SetDefaultHold(true);
                 context.AddSignal(signal);
             }
         }

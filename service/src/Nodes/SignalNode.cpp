@@ -218,10 +218,11 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
             }
         }
     } else {
-        auto& positions = _server->GetPosition("");
-        for (const auto& pos : positions._positions) {
-            if (pos._holds != 0) {
-                heldSymbols[pos._symbol] = pos._holds;
+        auto* broker = _server->GetBrokerSubSystem();
+        auto* capital = broker->GetStrategyCapital(strategy);
+        for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
+            if (pos._quantity != 0) {
+                heldSymbols[symbol] = pos._quantity;
             }
         }
     }

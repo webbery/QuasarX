@@ -34,10 +34,10 @@ namespace {
         position_t position;
         position._symbol = to_symbol(field.SecurityID);
         position._name = String(field.SecurityName, strlen(field.SecurityName));
-        position._holds = field.CurrentPosition;
-        position._validHolds = field.AvailablePosition;
-        position._price = field.OpenPosCost / field.CurrentPosition;
-        position._curPrice = 0;
+        position._quantity = field.CurrentPosition;
+        position._validQuantity = field.AvailablePosition;
+        position._avgPrice = field.OpenPosCost / field.CurrentPosition;
+        position._currentPrice = 0;
         return position;
     }
 }
@@ -253,7 +253,7 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
         }
         if (pPositionField) {
             position_t position = toPosition(*pPositionField);
-            if (position._holds != 0) {
+            if (position._quantity != 0) {
                 _positions.emplace_back(std::move(position));
             }
         }
@@ -264,7 +264,7 @@ void HXTrade::OnRspQryPosition(TORASTOCKAPI::CTORATstpPositionField *pPositionFi
             return;
         }
         position_t position = toPosition(*pPositionField);
-        if (position._holds != 0) {
+        if (position._quantity != 0) {
             _positions.emplace_back(std::move(position));
         }
     }

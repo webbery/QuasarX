@@ -187,21 +187,95 @@ struct fmt::formatter<symbol_t> {
     }
 };
 
-struct position_t {
-  symbol_t _symbol;
-  String _name;
-  // 成本价
-  double _price;
-  // 当前价
-  double _curPrice;
-  time_t _buy;
-  time_t _sell;
-  uint32_t _holds;      // 总量
-  uint32_t _validHolds; // 可用量
+// 统一持仓结构（合并 position_t 和 StockPosition，支持两融）
+// 可被 StockPositionManager、StrategyCapital、PortfolioNode、HXTrade 等多个模块复用
+struct Position {
+    symbol_t _symbol;
+    int64_t _quantity = 0;        // 持仓数量（正=多头，负=空头）
+    double _avgPrice = 0.0;       // 平均成本
+    double _currentPrice = 0.0;   // 当前价格
+    double _totalCost = 0.0;      // 总成本 = _quantity × _avgPrice
+    
+    // 基础信息
+    String _name;                 // 标的名称
+    time_t _buyTime = 0;          // 买入时间
+    time_t _sellTime = 0;         // 卖出时间
+    int64_t _validQuantity = 0;   // 可用量（T+1 控制）
+    
+    // 两融相关
+    bool _isMargin = false;       // 是否保证金交易
+    double _marginRatio = 1.0;    // 保证金比例（1.0=全额，0.5=50%保证金）
+    int64_t _borrowedShares = 0;  // 借入的股票数量（融券卖出）
+    double _borrowedCash = 0.0;   // 借入的现金（融资买入）
+    
+    // 计算方法
+    double getMarketValue() const {
+        return _quantity * _currentPrice;
+    }
+    
+    double getUnrealizedPnL() const {
+        return _quantity * (_currentPrice - _avgPrice);
+    }
+    
+    double getMarginRequirement() const {
+        if (!_isMargin) return std::abs(getMarketValue());
+        return std::abs(getMarketValue()) * _marginRatio;
+    }
+    
+    bool isLong() const { return _quantity > 0; }
+    bool isShort() const { return _quantity < 0; }
+};
+
+// 兼容旧代码的类型别名
+using position_t = Position;
+
+// 成交记录（支持两融）
+// 表示一笔已完成的交易，用于 StrategyCapital 的成交回写
+struct Fill {
+    symbol_t _symbol;
+    int64_t _quantity = 0;        // 成交数量（正=买入，负=卖出）
+    double _price = 0.0;          // 成交价格
+    time_t _time = 0;             // 成交时间
+    
+    // 费用
+    double _commission = 0.0;     // 佣金
+    double _stampTax = 0.0;       // 印花税（仅卖出）
+    double _slippage = 0.0;       // 滑点
+    
+    // 两融相关
+    bool _isMargin = false;       // 是否保证金交易
+    double _marginRatio = 1.0;    // 保证金比例（1.0=全额，0.5=50%保证金）
+    bool _isShortSell = false;    // 是否融券卖出
+    bool _isShortCover = false;   // 是否买入平空
+    double _financingRate = 0.0;  // 融资利率（年化，如 0.08 = 8%）
+    double _securitiesLendingRate = 0.0; // 融券费率（年化，如 0.10 = 10%）
+    
+    // 计算方法
+    double getGrossAmount() const {
+        return std::abs(_quantity) * _price;
+    }
+    
+    double getTotalFees() const {
+        return _commission + _stampTax + _slippage;
+    }
+    
+    double getNetAmount() const {
+        double gross = getGrossAmount();
+        if (_quantity > 0) {
+            // 买入：净支出 = 总金额 + 费用
+            return -(gross + getTotalFees());
+        } else {
+            // 卖出：净收入 = 总金额 - 费用
+            return gross - getTotalFees();
+        }
+    }
+    
+    bool isBuy() const { return _quantity > 0; }
+    bool isSell() const { return _quantity < 0; }
 };
 
 struct AccountPosition {
-  List<position_t> _positions;
+  List<Position> _positions;
 };
 
 Set<symbol_t> get_holds(const AccountPosition& account);

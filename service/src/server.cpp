@@ -1108,11 +1108,11 @@ void Server::TimerWorker(nng_socket sock) {
     for (auto& item : ap._positions) {
         nlohmann::json position;
         position["id"] = get_symbol(item._symbol);
-        position["price"] = fmt::format("{:.4f}", item._price);
-        position["curPrice"] = fmt::format("{:.4f}", item._curPrice);
+        position["price"] = fmt::format("{:.4f}", item._avgPrice);
+        position["curPrice"] = fmt::format("{:.4f}", item._currentPrice);
         position["name"] = to_utf8(item._name);
-        position["quantity"] = std::to_string(item._holds);
-        position["valid_quantity"] = std::to_string(item._validHolds);
+        position["quantity"] = std::to_string(item._quantity);
+        position["valid_quantity"] = std::to_string(item._validQuantity);
         holds.emplace_back(std::move(position));
     }
     if (!ap._positions.empty()) {
@@ -1689,14 +1689,8 @@ void Server::InitHandlers() {
     // 注意：RiskSubSystem 在 FlowSubsystem 中初始化，需要在 InitDefault 中关联
 }
 
-AccountPosition& Server::GetPosition(const String& account) {
-    return _account_positions[account];
-}
-
 int Server::SyncDailyPositionsFromBroker(const String& strategy) {
     auto* portfolioSub = GetPortforlioSubSystem();
-    auto& ap = _account_positions[""];
-    ap._positions.clear();
 
     if (!portfolioSub) {
         WARN("[Server] SyncDailyPositionsFromBroker: PortfolioSubSystem is null, "
@@ -1706,6 +1700,7 @@ int Server::SyncDailyPositionsFromBroker(const String& strategy) {
 
     auto& holds = portfolioSub->GetHolding(strategy);
     int synced = 0;
+    Map<symbol_t, Position> capitalPositions;
     for (const auto& [sym, assets] : holds) {
         int64_t qty = 0;
         double costSum = 0.0;
@@ -1716,17 +1711,27 @@ int Server::SyncDailyPositionsFromBroker(const String& strategy) {
         }
         if (qty <= 0) continue;
 
-        position_t p{};
+        Position p{};
         p._symbol = sym;
-        p._holds = static_cast<uint32_t>(qty);
-        p._validHolds = static_cast<uint32_t>(qty);
-        p._price = costSum / static_cast<double>(qty);
-        ap._positions.push_back(p);
+        p._quantity = qty;
+        p._validQuantity = qty;
+        p._avgPrice = costSum / static_cast<double>(qty);
+
+        capitalPositions[sym] = p;
         ++synced;
     }
 
+    // C2：同步到策略资金账本，使 SpendableBudget 的权益口径能看到真实持仓市值
+    if (_brokerSystem) {
+        if (auto* strategyCapital = _brokerSystem->GetStrategyCapital(strategy)) {
+            if (auto* impl = dynamic_cast<StrategyCapitalImpl*>(strategyCapital)) {
+                impl->syncPositions(capitalPositions);
+            }
+        }
+    }
+
     INFO("[Server] SyncDailyPositionsFromBroker: synced {} position(s) from "
-         "PortfolioSubSystem to _account_positions for strategy '{}'",
+         "PortfolioSubSystem to StrategyCapital for strategy '{}'",
          synced, strategy);
 
     // 对账：资金池显示该策略已投入资金，但持仓同步为 0，说明订单库与资金池口径不一致
@@ -1741,14 +1746,6 @@ int Server::SyncDailyPositionsFromBroker(const String& strategy) {
         }
     }
     return synced;
-}
-
-Set<String> Server::GetAccounts() {
-    Set<String> accs;
-    for (auto& item: _account_positions) {
-        accs.insert(item.first);
-    }
-    return accs;
 }
 
 bool Server::IsOpen(symbol_t symbol, time_t t) {

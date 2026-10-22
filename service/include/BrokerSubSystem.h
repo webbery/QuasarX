@@ -2,6 +2,7 @@
 #include "std_header.h"
 #include "Bridge/exchange.h"
 #include "Bridge/CapitalPool.h"
+#include "Bridge/StrategyCapital.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
 #include "Util/lmdb.h"
@@ -164,6 +165,17 @@ public:
     // 资金池访问
     CapitalPool* GetCapitalPool() { return &_capitalPool; }
     const CapitalPool* GetCapitalPool() const { return &_capitalPool; }
+    
+    // 策略资金访问（C2 重构：统一的策略资金接口）
+    StrategyCapital* GetStrategyCapital(const String& strategy);
+    const StrategyCapital* GetStrategyCapital(const String& strategy) const;
+    
+    // 获取所有策略的总持仓（用于全局风控）
+    AccountPosition GetAllStrategyPositions() const;
+    
+    // 创建或获取策略资金实例
+    StrategyCapital* CreateStrategyCapital(const String& strategy, double allocated, 
+                                           const MarginConfig& marginConfig = MarginConfig{});
     
     // 从 config.json 初始化资金池
     // 同时从 DecisionDB 播种决策 id 计数器（见 .cpp 注释：PRIMARY KEY 撞号会覆盖成交记录）
@@ -352,6 +364,11 @@ private:
     
     // 策略级资金池
     CapitalPool _capitalPool;
+    
+    // 策略级资金实例（C2 重构：统一的策略资金接口）
+    Map<String, std::unique_ptr<StrategyCapitalImpl>> _strategyCapitals;
+    mutable std::mutex _capitalMutex;
+    
     std::thread* _thread;
     std::mutex _mutex;
     std::condition_variable _cv;

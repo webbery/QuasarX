@@ -4,6 +4,7 @@
 #include "StrategyNode.h"
 #include "Util/system.h"
 #include "server.h"
+#include "BrokerSubSystem.h"
 #include "Bridge/exchange.h"
 #include "Util/log.h"
 #include "PortfolioSubsystem.h"
@@ -128,29 +129,101 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     applyRiskContext(context, decisions);
 
     // 2. 获取可用资金
-    double capital = context.getAvailableCapital();
-    double targetCapital = capital * _positionRatio;
+    // live/日终：走 StrategyCapital（统一账本，含持仓市值与两融口径）
+    // 回测：保持原有 BacktestContext 资金口径，避免改变回测结果
+    double targetCapital = 0.0;
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        auto* broker = _server->GetBrokerSubSystem();
+        auto* strategyCapital = broker->GetStrategyCapital(strategy);
+
+        // 先把本 bar 的最新价格灌进资金账本，否则权益口径的持仓市值为 0
+        // （StrategyCapital 只在日终开始时同步数量，不持有行情）。
+        for (const auto& symbol : _pool) {
+            const QuoteInfo* q = context.GetQuote(symbol);
+            if (q && q->_close > 0) {
+                strategyCapital->updatePrice(symbol, q->_close);
+            } else if (q && q->_open > 0) {
+                strategyCapital->updatePrice(symbol, q->_open);
+            }
+        }
+
+        // SpendableBudget 已按 positionRatio 折算，不能再乘一次 _positionRatio。
+        Set<symbol_t> sellSymbols;
+        for (const auto& [symbol, action] : decisions) {
+            if (action == TradeAction::SELL) {
+                sellSymbols.insert(symbol);
+            }
+        }
+        targetCapital = strategyCapital->SpendableBudget(_positionRatio, _allowShort, sellSymbols);
+    } else {
+        targetCapital = context.getAvailableCapital() * _positionRatio;
+    }
 
     // ── 新增：仓位 sizing 调整 ──
     applySizingWeights(context, decisions, targetCapital);
 
-    // 3. 生成执行计划
+    // 3. 生成执行计划（合并 live/backtest，通过 adapter 注入持仓与价格来源）
     ExecutionPlan newPlan;
-    if (_server->GetRunningMode() != RuningType::Backtest) { [[likely]]
-        newPlan = generatePlan(strategy, context, decisions, targetCapital);
-    } else {
-        // 回测模式：获取 BacktestContext 以获取正确的 symbol 索引
-        BacktestContext* btContext = nullptr;
-        auto* exchangeMgr = _server->GetExchangeManager();
-        for (auto type : context.getExchangeTypes()) {
-            auto* histExchange = dynamic_cast<HistorySimulationBase*>(
-                exchangeMgr->GetExchangeByType(type));
-            if (histExchange) {
-                btContext = histExchange->getBacktestContext(context.getBacktestRunId());
-                if (btContext) break;
+    if (_server->GetRunningMode() != RuningType::Backtest) {
+        // Live adapter
+        auto getQuotePrice = [&](symbol_t symbol) -> double {
+            const QuoteInfo* q = context.GetQuote(symbol);
+            if (q && q->_close > 0) return q->_close;
+            if (q && q->_open > 0) return q->_open;
+
+            auto* exchangeMgr = _server->GetExchangeManager();
+            ExchangeInterface* exchange = nullptr;
+            for (auto type : context.getExchangeTypes()) {
+                exchange = exchangeMgr->GetExchangeByType(type);
+                if (exchange) break;
             }
+            if (!exchange) {
+                exchange = exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
+            }
+            if (exchange) {
+                QuoteInfo eq = exchange->GetQuote(symbol);
+                if (eq._close > 0) return eq._close;
+                if (eq._open > 0) return eq._open;
+            }
+            return 0.0;
+        };
+
+        auto getPositionQuantity = [&](symbol_t symbol) -> int64_t {
+            auto* broker = _server->GetBrokerSubSystem();
+            auto* capital = broker->GetStrategyCapital(strategy);
+            return capital->getPositions().getHoldingQuantity(symbol);
+        };
+
+        newPlan = generatePlan(strategy, context, decisions, targetCapital,
+                               getQuotePrice, getPositionQuantity, "live");
+    } else {
+        // Backtest adapter
+        auto* exchangeMgr = _server->GetExchangeManager();
+        HistorySimulationBase* histExchange = nullptr;
+        for (auto type : context.getExchangeTypes()) {
+            histExchange = dynamic_cast<HistorySimulationBase*>(
+                exchangeMgr->GetExchangeByType(type));
+            if (histExchange) break;
         }
-        newPlan = generatePlan(context, decisions, targetCapital, btContext);
+        BacktestContext* btContext = histExchange ?
+            histExchange->getBacktestContext(context.getBacktestRunId()) : nullptr;
+
+        auto getQuotePrice = [&](symbol_t symbol) -> double {
+            if (!histExchange || !btContext) return 0.0;
+            uint32_t curIndex = btContext->getCurIndex(symbol);
+            if (curIndex > 0) {
+                return histExchange->GetPrimitivePrice(symbol, curIndex - 1);
+            }
+            return 0.0;
+        };
+
+        auto getPositionQuantity = [&](symbol_t symbol) -> int64_t {
+            if (!histExchange) return 0;
+            return histExchange->GetPositionQuantity(symbol);
+        };
+
+        newPlan = generatePlan(strategy, context, decisions, targetCapital,
+                               getQuotePrice, getPositionQuantity, "backtest");
     }
 
     // 4. 检查是否有变化
@@ -162,6 +235,8 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         _lastPlan._totalCapital = newPlan._totalCapital;
         _lastPlan._usedCapital = newPlan._usedCapital;
         _lastPlan._hasChanged = true;
+        _lastPlan._generatedAt = newPlan._generatedAt;
+        _lastPlan._source = newPlan._source;
 
         context.GetExecutionPlan() = _lastPlan;
     } else {
@@ -225,7 +300,7 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     // ── DuckDB node_io 日志（仅实盘模式）──
     NODE_IO_LOG("portfolio", _id,
         input["capital"] = context.getAvailableCapital();
-        input["available_funds"] = capital;
+        input["available_funds"] = targetCapital;
         nlohmann::json decisions_json = nlohmann::json::object();
         for (const auto& [sym, action] : decisions) {
             String action_str = "HOLD";
@@ -265,16 +340,22 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
     return NodeProcessResult::Success;
 }
 
+// 合并后的 generatePlan：通过 adapter 注入持仓与价格来源
 ExecutionPlan PortfolioNode::generatePlan(
     const String& strategy,
     DataContext& context,
     const Map<symbol_t, TradeAction>& decisions,
-    double targetCapital
+    double targetCapital,
+    std::function<double(symbol_t)> getQuotePrice,
+    std::function<int64_t(symbol_t)> getPositionQuantity,
+    const String& source
 ) {
     ExecutionPlan plan;
     plan._totalCapital = targetCapital;
     plan._usedCapital = 0.0;
     plan._hasChanged = false;
+    plan._generatedAt = context.GetEpoch();
+    plan._source = source;
 
     if (decisions.empty()) {
         return plan;
@@ -289,31 +370,6 @@ ExecutionPlan PortfolioNode::generatePlan(
             return targetCapital * _weights.at(symbol);
         }
         return perSymbolCapital;
-    };
-
-    // 优先从 DataContext 获取行情（TickFlow/实盘模式下 quote 通过 nng 推入 context）
-    // fallback: 从 Exchange 获取（回测模式下 exchange 持有历史数据）
-    auto getQuotePrice = [&](symbol_t symbol) -> double {
-        const QuoteInfo* q = context.GetQuote(symbol);
-        if (q && q->_close > 0) return q->_close;
-        if (q && q->_open > 0) return q->_open;
-
-        // fallback: 从 Exchange 获取
-        auto* exchangeMgr = _server->GetExchangeManager();
-        ExchangeInterface* exchange = nullptr;
-        for (auto type : context.getExchangeTypes()) {
-            exchange = exchangeMgr->GetExchangeByType(type);
-            if (exchange) break;
-        }
-        if (!exchange) {
-            exchange = exchangeMgr->GetExchangeByType(ExchangeType::EX_STOCK_HIST_SIM);
-        }
-        if (exchange) {
-            QuoteInfo eq = exchange->GetQuote(symbol);
-            if (eq._close > 0) return eq._close;
-            if (eq._open > 0) return eq._open;
-        }
-        return 0.0;
     };
 
     for (const auto& [symbol, action] : decisions) {
@@ -332,43 +388,38 @@ ExecutionPlan PortfolioNode::generatePlan(
             continue;
         }
 
+        int64_t currentQty = getPositionQuantity(symbol);
+
         if (item._action == TradeAction::HOLD) {
-            auto& position = _server->GetPosition("");
-            for (const auto& pos : position._positions) {
-                if (pos._symbol == item._symbol) {
-                    item._quantity = static_cast<int>(pos._holds);
-                    item._limitPrice = price;
-                    item._targetValue = item._quantity * price;
-                    plan._items.push_back(item);
-                    plan._usedCapital += item._targetValue;
-                    break;
-                }
+            if (currentQty > 0) {
+                item._quantity = static_cast<int>(currentQty);
+                item._limitPrice = price;
+                item._targetValue = item._quantity * price;
+                plan._items.push_back(item);
+                plan._usedCapital += item._targetValue;
             }
         } else if (item._action == TradeAction::BUY) {
-            auto& position = _server->GetPosition("");
-            int currentQty = 0;
-            for (const auto& pos : position._positions) {
-                if (pos._symbol == item._symbol) {
-                    currentQty = static_cast<int>(pos._holds);
-                    break;
-                }
-            }
             if (currentQty < 0) {
                 // 有空仓，BUY = 平空
-                item._quantity = -currentQty;
+                item._quantity = static_cast<int>(-currentQty);
                 item._flag = 1; // 平仓
                 item._limitPrice = price;
                 item._targetValue = item._quantity * price;
                 plan._items.push_back(item);
             } else if (currentQty > 0) {
                 // 已有多仓，跳过
+                if (_server->GetRunningMode() == RuningType::Backtest) {
+                    INFO("Symbol {} already has position {}, skipping buy",
+                         get_symbol(item._symbol), currentQty);
+                }
                 continue;
             } else {
                 // 无仓，BUY = 开多
                 int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
                 if (quantity < 100) {
                     if (_server->GetRunningMode() != RuningType::Backtest) {
-                        STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
+                        STRATEGY_WARN(strategy, "Quantity {} too small for symbol {}",
+                                      quantity, get_symbol(item._symbol));
                     } else {
                         WARN("Quantity {} too small for symbol {}", quantity, get_symbol(item._symbol));
                     }
@@ -388,21 +439,20 @@ ExecutionPlan PortfolioNode::generatePlan(
                 plan._usedCapital += item._targetValue;
             }
         } else if (item._action == TradeAction::SELL) {
-            auto& position = _server->GetPosition("");
-            int currentQty = 0;
-            for (const auto& pos : position._positions) {
-                if (pos._symbol == item._symbol) {
-                    currentQty = static_cast<int>(pos._holds);
-                    break;
-                }
-            }
             if (currentQty > 0) {
                 // 平多
-                item._quantity = currentQty;
+                item._quantity = static_cast<int>(currentQty);
                 item._flag = 1; // 平仓
                 item._limitPrice = price;
                 item._targetValue = currentQty * price;
                 plan._items.push_back(item);
+                plan._usedCapital += item._targetValue;
+                if (_server->GetRunningMode() == RuningType::Backtest) {
+                    INFO("[PortfolioNode] SELL action for {}, currentQty={}, price={:.2f}, allowShort={}",
+                         get_symbol(item._symbol), currentQty, price, _allowShort);
+                    INFO("[PortfolioNode] -> SELL {} added to plan: qty={}, price={:.2f}",
+                         get_symbol(item._symbol), currentQty, price);
+                }
             } else if (currentQty == 0 && _allowShort) {
                 // 做空（开仓）
                 int quantity = static_cast<int>(getSymbolCapital(symbol) / price / 100) * 100;
@@ -412,155 +462,17 @@ ExecutionPlan PortfolioNode::generatePlan(
                     item._limitPrice = price;
                     item._targetValue = quantity * price;
                     plan._items.push_back(item);
-                }
-            }
-        }
-    }
-
-    return plan;
-}
-
-ExecutionPlan PortfolioNode::generatePlan(DataContext& context, const Map<symbol_t, TradeAction>& decisions,
-                              double targetCapital,
-                              BacktestContext* btContext) {
-    ExecutionPlan plan;
-    plan._totalCapital = targetCapital;
-    plan._usedCapital = 0.0;
-    plan._hasChanged = false;
-
-    if (decisions.empty()) {
-        return plan;
-    }
-
-    size_t count = decisions.size();
-    double perSymbolCapital = targetCapital / count;
-
-    // Strength 模式：按归一化权重分配资金
-    auto getSymbolCapital = [&](symbol_t symbol) -> double {
-        if (!_weights.empty() && _weights.count(symbol)) {
-            return targetCapital * _weights.at(symbol);
-        }
-        return perSymbolCapital;
-    };
-
-    // 从 DataContext 获取策略初始化时设置的 Exchange 类型，用于获取未复权价格
-    auto* exchangeMgr = _server->GetExchangeManager();
-    HistorySimulationBase* histExchange = nullptr;
-    for (auto type : context.getExchangeTypes()) {
-        histExchange = dynamic_cast<HistorySimulationBase*>(
-            exchangeMgr->GetExchangeByType(type));
-        if (histExchange) break;
-    }
-
-    for (const auto& [symbol, action] : decisions) {
-        ExecutionItem item;
-        item._symbol = symbol;
-        item._action = action;
-
-        String symbolName = get_symbol(item._symbol);
-        // 获取未复权价格（原始价格）用于回测交易
-        // 使用 BacktestContext 中每个 symbol 独立的 curIndex，而非全局 epoch
-        // stepForward 已经 incrementCurIndex，所以当前 bar 的索引是 curIndex - 1
-        double price = 0.0;
-        if (_server->GetRunningMode() == RuningType::Backtest && histExchange && btContext) {
-            uint32_t curIndex = btContext->getCurIndex(item._symbol);
-            if (curIndex > 0) {
-                price = histExchange->GetPrimitivePrice(item._symbol, curIndex - 1);
-            }
-        }
-        // 日终/实盘模式：BacktestContext 不存在（histExchange 为 null），
-        // 从 DataContext 拿原始收盘价（org_close，QuoteInputNode 写入）
-        else {
-            String orgKey = symbolName + ".org_close";
-            if (context.exist(orgKey)) {
-                const auto& val = context.get(orgKey);
-                if (auto* vec = std::get_if<Vector<double>>(&val)) {
-                    if (!vec->empty()) price = vec->back();
-                } else if (auto* scalar = std::get_if<double>(&val)) {
-                    price = *scalar;
-                }
-            }
-        }
-
-        if (price <= 0) {
-            WARN("Invalid price for symbol {} in backtest context", symbolName);
-            continue;
-        }
-
-        if (item._action == TradeAction::HOLD) {
-            // 保持持仓：从 StockHistorySimulation 获取当前持仓
-            int64_t currentQty = 0;
-            if (histExchange) {
-                currentQty = histExchange->GetPositionQuantity(item._symbol);
-            }
-            item._quantity = currentQty;
-            if (item._quantity > 0) {
-                item._limitPrice = 0;
-                item._targetValue = item._quantity * price;
-                plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
-            }
-        } else if (item._action == TradeAction::BUY) {
-            int64_t currentQty = 0;
-            if (histExchange) {
-                currentQty = histExchange->GetPositionQuantity(item._symbol);
-            }
-            if (currentQty < 0) {
-                // 有空仓，BUY = 平空
-                item._quantity = static_cast<int>(-currentQty);
-                item._flag = 1; // 平仓
-                item._limitPrice = price;
-                item._targetValue = item._quantity * price;
-                plan._items.push_back(item);
-            } else if (currentQty > 0) {
-                // 已有多仓，跳过
-                INFO("Symbol {} already has position {}, skipping buy", symbolName, currentQty);
-                continue;
-            } else {
-                // 无仓，BUY = 开多
-                int64_t quantity = static_cast<int64_t>(getSymbolCapital(symbol) / price / 100) * 100;
-                if (quantity < 100) {
-                    WARN("Quantity {} too small for symbol {}", quantity, symbolName);
-                    continue;
-                }
-                item._quantity = quantity;
-                item._flag = 0; // 开仓
-                item._limitPrice = price;
-                item._targetValue = quantity * price;
-                plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
-            }
-        } else if (item._action == TradeAction::SELL) {
-            int64_t currentQty = 0;
-            if (histExchange) {
-                currentQty = histExchange->GetPositionQuantity(item._symbol);
-            }
-            String symName = get_symbol(item._symbol);
-            INFO("[PortfolioNode] SELL action for {}, currentQty={}, price={:.2f}, allowShort={}",
-                 symName, currentQty, price, _allowShort);
-            if (currentQty > 0) {
-                // 平多
-                item._quantity = currentQty;
-                item._flag = 1; // 平仓
-                item._limitPrice = price;
-                item._targetValue = currentQty * price;
-                plan._items.push_back(item);
-                plan._usedCapital += item._targetValue;
-                INFO("[PortfolioNode] -> SELL {} added to plan: qty={}, price={:.2f}", symName, currentQty, price);
-            } else if (currentQty == 0 && _allowShort) {
-                // 做空（开仓）
-                int64_t quantity = static_cast<int64_t>(getSymbolCapital(symbol) / price / 100) * 100;
-                if (quantity >= 100) {
-                    item._quantity = quantity;
-                    item._flag = 0; // 开仓
-                    item._limitPrice = price;
-                    item._targetValue = quantity * price;
-                    plan._items.push_back(item);
                     plan._usedCapital += item._targetValue;
-                    INFO("[PortfolioNode] -> SHORT {} added to plan: qty={}, price={:.2f}", symName, quantity, price);
+                    if (_server->GetRunningMode() == RuningType::Backtest) {
+                        INFO("[PortfolioNode] -> SHORT {} added to plan: qty={}, price={:.2f}",
+                             get_symbol(item._symbol), quantity, price);
+                    }
                 }
             } else {
-                INFO("[PortfolioNode] -> SELL {} skipped: currentQty={}, allowShort={}", symName, currentQty, _allowShort);
+                if (_server->GetRunningMode() == RuningType::Backtest) {
+                    INFO("[PortfolioNode] -> SELL {} skipped: currentQty={}, allowShort={}",
+                         get_symbol(item._symbol), currentQty, _allowShort);
+                }
             }
         }
     }

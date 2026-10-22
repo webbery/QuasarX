@@ -118,6 +118,77 @@ void BrokerSubSystem::initCapitalPool(double initialCapital, const String& persi
     }
 }
 
+StrategyCapital* BrokerSubSystem::GetStrategyCapital(const String& strategy) {
+    std::lock_guard<std::mutex> lock(_capitalMutex);
+    auto it = _strategyCapitals.find(strategy);
+    if (it != _strategyCapitals.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+const StrategyCapital* BrokerSubSystem::GetStrategyCapital(const String& strategy) const {
+    std::lock_guard<std::mutex> lock(_capitalMutex);
+    auto it = _strategyCapitals.find(strategy);
+    if (it != _strategyCapitals.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+AccountPosition BrokerSubSystem::GetAllStrategyPositions() const {
+    std::lock_guard<std::mutex> lock(_capitalMutex);
+    AccountPosition result;
+    for (const auto& [strategy, capital] : _strategyCapitals) {
+        for (const auto& [symbol, pos] : capital->getPositions().getAll()) {
+            if (pos._quantity != 0) {
+                result._positions.push_back(pos);
+            }
+        }
+    }
+    return result;
+}
+
+StrategyCapital* BrokerSubSystem::CreateStrategyCapital(const String& strategy, double allocated, 
+                                                        const MarginConfig& marginConfig) {
+    std::lock_guard<std::mutex> lock(_capitalMutex);
+    
+    // 如果已存在，直接返回
+    auto it = _strategyCapitals.find(strategy);
+    if (it != _strategyCapitals.end()) {
+        return it->second.get();
+    }
+    
+    // 以资金池的持久化状态为初值：allocate 只在首次注册时执行，
+    // 进程重启后 available 可能是历史成交扣减后的余额（甚至为负），
+    // 不能简单地用 allocated 重置。
+    double seedAllocated = allocated;
+    double seedAvailable = allocated;
+    if (_capitalPool.hasStrategy(strategy)) {
+        auto info = _capitalPool.get(strategy);
+        seedAllocated = info.allocated;
+        seedAvailable = info.available;
+    }
+    
+    auto capital = std::make_unique<StrategyCapitalImpl>(seedAllocated, marginConfig);
+    capital->setAvailable(seedAvailable);
+    
+    // 成交后把最新可用资金回写资金池并落盘
+    capital->setPersistCallback([this, strategy](double available) {
+        _capitalPool.setAvailable(strategy, available);
+        PersistCapitalPool();
+    });
+    
+    StrategyCapital* ptr = capital.get();
+    _strategyCapitals[strategy] = std::move(capital);
+    
+    INFO("[BrokerSubSystem] Created StrategyCapital for '{}': allocated={:.2f}, available={:.2f}, "
+         "initialMarginRatio={:.2f}",
+         strategy, seedAllocated, seedAvailable, marginConfig._initialMarginRatio);
+    
+    return ptr;
+}
+
 // 从成交流水（DecisionDB.decisions 中 executed=true 的记录）重放持仓。
 // PortfolioSubSystem 的分批持仓是纯内存结构，进程重启即丢失；而 decisions 表已持久化
 // 每一笔真实成交。启动时按时间正序重放 FIFO，即可还原与实时路径一致的持仓状态。

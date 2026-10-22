@@ -67,13 +67,13 @@ double CapitalRiskManager::GetCurrentEquity() {
     // 获取当前总资产（持仓市值 + 可用资金）
     double totalEquity = 0;
 
-    // 通过 Server 获取当前持仓信息
-    auto& positions = _server->GetPosition();
+    // 通过 BrokerSubSystem 获取所有策略的持仓信息
+    auto positions = broker->GetAllStrategyPositions();
 
     double positionValue = 0;
     for (auto& pos : positions._positions) {
         // 持仓市值 = 持仓数量 * 当前价格
-        positionValue += pos._holds * pos._curPrice;
+        positionValue += pos._quantity * pos._currentPrice;
     }
 
     // TODO: 获取可用资金 - 需要从 Broker 或配置中获取
@@ -278,13 +278,14 @@ void CapitalRiskManager::ExecuteClosePosition() {
 
 void CapitalRiskManager::CloseAllPositions() {
     // 获取所有持仓并平仓
-    auto& positions = _server->GetPosition();
     auto broker = _server->GetBrokerSubSystem();
 
     if (!broker) {
         WARN("[CAPITAL RISK] BrokerSubSystem not available, cannot close positions.");
         return;
     }
+
+    auto positions = broker->GetAllStrategyPositions();
 
     // 重置计数器
     _pendingCloseOrders = 0;
@@ -294,11 +295,11 @@ void CapitalRiskManager::CloseAllPositions() {
     int orderCount = 0;
 
     for (auto& pos : positions._positions) {
-        if (pos._validHolds > 0) {
+        if (pos._validQuantity > 0) {
             // 创建市价卖出订单
             Order sellOrder;
             sellOrder._symbol = pos._symbol;
-            sellOrder._volume = pos._validHolds;  // 卖出可用数量
+            sellOrder._volume = pos._validQuantity;  // 卖出可用数量
             sellOrder._type = OrderType::Market;
             sellOrder._side = 1;  // 1=卖出，0=买入
             sellOrder._price = 0;  // 市价单
@@ -333,7 +334,7 @@ void CapitalRiskManager::CloseAllPositions() {
             // 调用 Broker 卖出，使用 "system" 作为策略名，表示系统策略
             broker->Sell(0, "system", pos._symbol, sellOrder, callback);
             INFO("[CAPITAL RISK] Send close position order for {}: {} shares @ market",
-                 get_symbol(pos._symbol), pos._validHolds);
+                 get_symbol(pos._symbol), pos._validQuantity);
             orderCount++;
         }
     }
