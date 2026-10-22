@@ -1413,6 +1413,9 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
     int gateTopk = rules.value("gate_topk", 5);
 
     int nFolds = params.value("n_folds", 5);
+    // 折间间隔：相邻折之间被跳过的 bar 数。Python 侧生效值 = max(fold_gap,
+    // primary_horizon)，保证相邻折的标签窗口不重叠。
+    int foldGap = params.value("fold_gap", 0);
     int minNames = params.value("min_names", 15);
     int nwLag = params.value("nw_lag", 0);
     int trialCount = params.value("trial_count", 0);
@@ -1447,6 +1450,8 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
         return bad("'primary_horizon' must be in [1, 250]");
     if (nFolds < 2 || nFolds > 50)
         return bad("'n_folds' must be in [2, 50]");
+    if (foldGap < 0 || foldGap > 250)
+        return bad("'fold_gap' must be in [0, 250]");
     if (minNames < 2)
         return bad("'min_names' must be >= 2");
     if (minSignFolds < 0 || minSignFolds > nFolds)
@@ -1494,7 +1499,7 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
 
     std::thread screenThread(
         [this, session, csvPath, ohlcvCache, entry, primaryHorizon, horizons,
-         lagShifts, topk, nFolds, minNames, nwLag, trialCount, gateTopk,
+         lagShifts, topk, nFolds, foldGap, minNames, nwLag, trialCount, gateTopk,
          minIc, minT, minSignFolds, fdrQ, minCoverage, winsorize, volScale,
          limitEps, minTurnover, features, incrementalBase, noTest,
          noIncremental, noLagSens, pyEnv, sigmaMode, volK,
@@ -1529,6 +1534,7 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
                 "--primary-horizon", std::to_string(primaryHorizon),
                 "--horizons", horizons,
                 "--n-folds", std::to_string(nFolds),
+                "--fold-gap", std::to_string(foldGap),
                 "--min-names", std::to_string(minNames),
                 "--nw-lag", std::to_string(nwLag),
                 "--topk", topk,
@@ -1634,6 +1640,9 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
             // vol_k / sigma_mode 不参与 rank IC，只记录以便与训练配置对账
             result["label"] = {{"period", primaryHorizon},
                                {"vol_k", volK}, {"sigma_mode", sigmaMode}};
+            // 与 train / collect 对齐：终态走 SSE 的 result 事件，
+            // 前端才能用同一套 fetchEventSource 管道收结果。
+            sendSSE("result", result);
             session->finish(result);
 
         } catch (const std::exception& e) {

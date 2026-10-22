@@ -62,6 +62,8 @@ __all__ = [
     "autocorr_1",
     "topk_excess",
     "fold_stats",
+    "effective_gap",
+    "MIN_FOLD_OBS",
 ]
 
 
@@ -475,26 +477,92 @@ def topk_excess(x, fwd, mask, sign: int, k: int, min_names: int,
 # 折稳定性
 # ============================================================
 
-def fold_stats(ic, n_folds: int, nw_lag: int) -> dict:
-    """把 DEV 区间的逐日 IC 切成 n_folds 个连续折，报每折 IC 与同号折数。
+# 折内最少有效观测数：低于此值该折不可信
+MIN_FOLD_OBS = 10
 
-    ic：一维序列（逐日 IC）。不足 n_folds*10 个有效观测时返回空结果。
+
+def effective_gap(user_gap: int, horizon: int) -> Tuple[int, bool]:
+    """折间间隔（gap）的生效值。
+
+    gap = 相邻折之间被完全跳过、不参与任何折的 bar 数。
+
+    标签是 horizon 根 bar 的前瞻收益时，第 t 根 bar 的标签窗口覆盖
+    [t, t+horizon]。要让相邻两折的标签窗口不重叠，两折之间至少要隔
+    horizon 根 bar，所以：
+
+        effective_gap = max(user_gap, horizon)
+
+    返回 (生效值, 是否被提升)。设定值小于 horizon 时自动提升到
+    horizon，调用方需要显式提示用户，不能静默截断。
     """
-    s = np.asarray(ic, dtype=float).ravel()
-    s = s[np.isfinite(s)]
-    if len(s) < n_folds * 10:
-        return {"fold_ic": [], "fold_t": [], "sign_consistency": 0,
-                "fold_ic_std": float("nan"), "n_folds": int(n_folds)}
-    chunks = np.array_split(s, n_folds)
-    means, ts = [], []
-    for part in chunks:
-        means.append(float(part.mean()))
-        t, _ = newey_west_t(part, nw_lag)
-        ts.append(t)
-    sign = np.sign(s.mean())
-    consistency = int(sum(np.sign(m) == sign for m in means)) if sign != 0 else 0
-    return {"fold_ic": [round(x, 6) for x in means],
+    user_gap = int(max(0, user_gap or 0))
+    horizon = int(max(0, horizon or 0))
+    eff = max(user_gap, horizon)
+    return eff, eff != user_gap
+
+
+def fold_stats(ic, n_folds: int, nw_lag: int, gap: int = 0,
+               horizon: int = 0) -> dict:
+    """把一段逐日 IC 切成 n_folds 个折，报每折 IC 与同号折数。
+
+    ic：逐日 IC 序列。传**带日期索引的 Series** 时 gap 按日历 bar 计——
+        此时序列必须保留无效日的 NaN，不能先 dropna 再切，否则 gap 变成
+        "有效观测数"口径，与 bar 口径不符。传一维数组时 gap 按数组位置计。
+    gap ：相邻折之间被完全跳过、不参与任何折的 bar 数。
+        实际生效值 = max(gap, horizon)，见 effective_gap。
+    horizon：标签前瞻期（根 bar），是 gap 的下限。
+
+    观测数不足以支撑 n_folds 折（含 gap 占用的间隔）时返回空结果。
+    """
+    eff_gap, gap_raised = effective_gap(gap, horizon)
+    n_folds = int(n_folds)
+
+    empty = {"fold_ic": [], "fold_t": [], "sign_consistency": 0,
+             "fold_ic_std": float("nan"), "n_folds": int(n_folds),
+             "gap": int(eff_gap), "effective_gap": int(eff_gap),
+             "gap_raised": bool(gap_raised), "fold_dates": []}
+
+    has_index = hasattr(ic, "index") and hasattr(ic, "iloc")
+    values = np.asarray(ic, dtype=float).ravel()
+    index = ic.index if has_index else None
+
+    n = len(values)
+    need = n_folds * MIN_FOLD_OBS + max(0, n_folds - 1) * eff_gap
+    if n_folds < 1 or n < need:
+        return empty
+
+    # 折宽 = 剩余长度均分；折与折之间跳过 eff_gap 根 bar
+    width = (n - (n_folds - 1) * eff_gap) // n_folds
+    means, ts, dates = [], [], []
+    start = 0
+    for _ in range(n_folds):
+        stop = start + width
+        part = values[start:stop]
+        part = part[np.isfinite(part)]
+        if len(part) == 0:
+            means.append(float("nan"))
+            ts.append(float("nan"))
+        else:
+            means.append(float(part.mean()))
+            t, _ = newey_west_t(part, nw_lag)
+            ts.append(float(t))
+        if index is not None and stop > start:
+            dates.append([str(index[start]), str(index[stop - 1])])
+        else:
+            dates.append(None)
+        start = stop + eff_gap
+
+    finite_all = values[np.isfinite(values)]
+    sign = np.sign(finite_all.mean()) if len(finite_all) else 0.0
+    consistency = (int(sum(1 for m in means
+                           if np.isfinite(m) and np.sign(m) == sign))
+                   if sign != 0 else 0)
+    return {"fold_ic": [round(x, 6) if np.isfinite(x) else None for x in means],
             "fold_t": [round(x, 4) if np.isfinite(x) else None for x in ts],
             "sign_consistency": consistency,
             "fold_ic_std": float(np.std(means, ddof=1)) if len(means) > 1 else float("nan"),
-            "n_folds": int(n_folds)}
+            "n_folds": int(n_folds),
+            "gap": int(eff_gap),
+            "effective_gap": int(eff_gap),
+            "gap_raised": bool(gap_raised),
+            "fold_dates": dates}

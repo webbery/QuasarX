@@ -383,3 +383,103 @@ class TestScreenParamPlumbing:
         detail = _detail(auth_token, run["run_id"])
         assert detail["features"]["sig"]["dev"]["ic_mean"] > 0
         assert detail["features"]["sig"]["dev"]["coverage"] > 0.5
+
+
+# ============== 折间间隔（gap） ==============
+
+class TestFoldGap:
+    """折间间隔参数：生效值、折日期边界、容量校验。"""
+
+    def test_gap_floored_to_horizon(self, auth_token, py_env, panel):
+        """fold_gap=0 时生效值 = primary_horizon。"""
+        run = _run_screen(
+            auth_token, py_env, panel,
+            fold_gap=0,
+            label={"period": 5},
+            features=["sig"],
+            no_test=True, no_incremental=True, no_lag_sensitivity=True,
+        )
+        assert run["status"] == "done"
+        assert run["meta"]["fold_gap"] == 0
+        assert run["meta"]["effective_gap"] == 5
+        detail = _detail(auth_token, run["run_id"])
+        folds = detail["features"]["sig"]["dev"]["folds"]
+        assert folds["gap"] == 5
+        assert folds["effective_gap"] == 5
+        assert folds["gap_raised"] is True
+
+    def test_gap_explicit(self, auth_token, py_env, panel):
+        """fold_gap=20 > horizon=5 时生效值 = 20，gap_raised=False。"""
+        run = _run_screen(
+            auth_token, py_env, panel,
+            fold_gap=20,
+            label={"period": 5},
+            features=["sig"],
+            no_test=True, no_incremental=True, no_lag_sensitivity=True,
+        )
+        assert run["status"] == "done"
+        assert run["meta"]["fold_gap"] == 20
+        assert run["meta"]["effective_gap"] == 20
+        detail = _detail(auth_token, run["run_id"])
+        folds = detail["features"]["sig"]["dev"]["folds"]
+        assert folds["gap"] == 20
+        assert folds["effective_gap"] == 20
+        assert folds["gap_raised"] is False
+
+    def test_gap_between_folds(self, auth_token, py_env, panel):
+        """相邻折的日期边界间隔恰好 = effective_gap 根 bar。"""
+        from datetime import datetime, timedelta
+        run = _run_screen(
+            auth_token, py_env, panel,
+            fold_gap=10,
+            label={"period": 5},
+            n_folds=5,
+            features=["sig"],
+            no_test=True, no_incremental=True, no_lag_sensitivity=True,
+        )
+        assert run["status"] == "done"
+        detail = _detail(auth_token, run["run_id"])
+        folds = detail["features"]["sig"]["dev"]["folds"]
+        dates = folds["fold_dates"]
+        assert len(dates) == 5
+        # 折 i 的结束日期与折 i+1 的开始日期之间间隔恰好 = effective_gap 根 bar
+        for i in range(len(dates) - 1):
+            end_i = datetime.strptime(dates[i][1].split()[0], "%Y-%m-%d")
+            start_next = datetime.strptime(dates[i+1][0].split()[0], "%Y-%m-%d")
+            # 工作日间隔（排除周末）
+            gap_bars = 0
+            d = end_i + timedelta(days=1)
+            while d < start_next:
+                if d.weekday() < 5:  # 周一到周五
+                    gap_bars += 1
+                d += timedelta(days=1)
+            assert gap_bars == folds["effective_gap"], \
+                f"fold {i+1}->{i+2} gap={gap_bars}, expected {folds['effective_gap']}"
+
+    def test_gap_capacity_insufficient(self, auth_token, py_env, panel):
+        """折数过高导致容量不足时，服务端应返回错误。"""
+        resp = _submit(auth_token, {
+            "action": "screen",
+            "csv_path": panel["path"],
+            "py_env": py_env,
+            "dev_end": panel["dev_end"],
+            "test_start": panel["test_start"],
+            "label": {"period": 5},
+            "horizons": [1, 5, 10, 20],
+            "entry": "close",
+            "n_folds": 50,  # 过高
+            "fold_gap": 20,  # 过大
+            "min_names": 15,
+            "features": ["sig"],
+            "no_test": True, "no_incremental": True, "no_lag_sensitivity": True,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        session_id = data.get("session_id")
+        if data.get("status") == "running" and not str(session_id).startswith("screen_"):
+            pytest.skip(f"服务上有其他 ML 会话在跑: {session_id}")
+        result = _poll(auth_token, session_id, timeout=60)
+        # 应返回 error 状态，且错误信息包含容量不足
+        assert result["status"] == "error"
+        err = str(result.get("error", ""))
+        assert "不足" in err or "capacity" in err.lower() or "too small" in err.lower()

@@ -51,6 +51,135 @@ export interface TrainResult {
   predictions: Prediction[]
 }
 
+// ── 特征门禁（/v0/ml action=screen）──────────────────────────────
+
+/** DEV 内某一折的 IC 统计 */
+export interface ScreenFoldStats {
+  fold_ic: (number | null)[]
+  fold_t: (number | null)[]
+  sign_consistency: number
+  fold_ic_std: number | null
+  n_folds: number
+  gap: number
+  effective_gap: number
+  gap_raised: boolean
+  /** 每折的起止日期（左闭右开） */
+  fold_dates: (string[] | null)[] | null
+}
+
+/** top-k 超额 */
+export interface ScreenTopk {
+  k: number
+  excess: number
+  excess_t: number
+  ls: number
+  ls_t: number
+  hit: number
+  days: number
+}
+
+/** 单个特征的门禁结论 */
+export interface ScreenFeature {
+  sign: 1 | -1
+  coverage: number
+  q_value: number | null
+  selection: {
+    selected: boolean
+    tier: 'A' | 'B' | 'C'
+    reasons: string[]
+    gate_k: number
+    gate_topk: ScreenTopk
+  }
+  dev: {
+    days: number
+    coverage: number
+    ic_mean: number
+    ic_std: number
+    hit_rate: number
+    pooled_ic: number
+    nw_t: number
+    p_value: number
+    icir: number
+    ts_ic_mean?: number
+    ts_ic_std?: number
+    folds?: ScreenFoldStats
+    topk?: Record<string, ScreenTopk>
+    yearly?: Record<string, number>
+  }
+  test: {
+    days: number
+    coverage: number
+    ic_mean: number
+    nw_t: number
+    icir: number
+    hit_rate: number
+    pooled_ic: number
+    topk?: Record<string, ScreenTopk>
+  } | null
+  incremental: {
+    incr_ic: number
+    incr_t: number
+    incr_ratio: number
+    incr_days: number
+    n_regressors: number
+  }
+  /** IC 衰减：horizon -> {ic, t, days, coverage} */
+  decay: Record<string, { ic: number; t: number; days: number; coverage: number }>
+  lag: {
+    ic?: Record<string, number>
+    autocorr1?: number
+    lag_retention?: number
+    verdict?: string
+  } | null
+}
+
+/** screen_result 返回的完整报告 */
+export interface ScreenReport {
+  meta: {
+    generated_at?: string
+    entry?: string
+    primary_horizon?: number
+    horizons?: number[]
+    dev_end?: string
+    dev_split_end?: string
+    dev_days?: number
+    test_start?: string
+    test_days?: number
+    purge?: number
+    n_folds?: number
+    fold_gap?: number
+    effective_gap?: number
+    min_names?: number
+    nw_lag?: number
+    gate_topk?: number
+    rules?: Record<string, number>
+    m_tests?: number
+    bonferroni_t?: number
+    has_ohlcv?: boolean
+  }
+  features: Record<string, ScreenFeature>
+}
+
+/** screen 任务终态（SSE result 事件） */
+export interface ScreenTaskResult {
+  run_id: string
+  out_dir: string
+  files: { json?: string; csv?: string; md?: string }
+  summary: {
+    n_features: number
+    n_tier_a: number
+    n_tier_b: number
+    m_tests: number
+    bonferroni_t: number
+    dev_days: number
+    test_days: number
+    primary_horizon: number
+    lag_sensitivity: boolean
+    plots: boolean
+  }
+  meta: Record<string, any>
+}
+
 export interface ShapResult {
   model_id: number
   features: string[]
@@ -233,6 +362,23 @@ export function useMLState() {
     logs: [],
   })
 
+  // 特征门禁（/v0/ml action=screen）
+  const screenState = reactive<{
+    task: ScreenTaskResult | null   // 任务终态（summary / meta / run_id）
+    report: ScreenReport | null      // 逐特征明细（screen_result）
+    loading: boolean
+    steps: TrainStep[]
+    logs: TrainLog[]
+    error: string
+  }>({
+    task: null,
+    report: null,
+    loading: false,
+    steps: [],
+    logs: [],
+    error: '',
+  })
+
   // 训练配置
   const config = reactive({
     labelSource: '',         // 标签来源变量（如 "sh.600000.close"）
@@ -240,8 +386,13 @@ export function useMLState() {
     labelType: 'classification',
     labelShape: 'matrix',    // 'vector' = 单标签(N×1), 'matrix' = 多标签矩阵(N×K, per-symbol)
     volK: 0.5,               // 自适应阈值系数：threshold = volK × σ × √N
+    sigmaMode: 'expanding',  // 标签阈值波动率口径：expanding=逐行因果(无泄露) / full=全序列(旧行为)
     objective: 'multi:softprob',
     numClass: 3,
+    // 特征门禁 / 交叉验证共用参数（特征分析面板设定，训练面板只读）
+    nFolds: 5,               // 门禁的 DEV 内折数（2..50）
+    foldGap: 0,              // 折间间隔 bar 数；生效值 = max(foldGap, labelPeriod)
+    selectedFeatures: [] as string[],   // 门禁通过、准备用于训练的特征名
     valRatio: 0.15,
     testRatio: 0.15,
     learningRate: 0.1,
@@ -351,6 +502,12 @@ export function useMLState() {
     featureReport.loading = false
     featureReport.steps = []
     featureReport.logs = []
+    screenState.task = null
+    screenState.report = null
+    screenState.loading = false
+    screenState.steps = []
+    screenState.logs = []
+    screenState.error = ''
     labelAnalysis.result = null
     labelAnalysis.loading = false
     labelSymbol.value = ''
@@ -449,6 +606,7 @@ export function useMLState() {
     recomputeLabels,
     trainResult,
     featureReport,
+    screenState,
     config,
     QUICK_RANGES,
     setQuickRange,

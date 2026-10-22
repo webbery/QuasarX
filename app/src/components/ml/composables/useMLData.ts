@@ -4,7 +4,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog } from './useMLState'
+import type { ShapResult, TrainResult, FeatureReport, LabelAnalysisResult, BatchLabelStat, TrainStep, TrainLog, ScreenTaskResult, ScreenReport } from './useMLState'
 import { convertLabelsToKeys, normalizeCodeParams } from '@/lib/nodes'
 import { parseBackendDate } from '@/ts/dateUtils'
 
@@ -213,6 +213,137 @@ export function useMLData() {
       const msg = err.response?.data?.message || err.message || '特征收集失败'
       ElMessage.error(`特征收集失败: ${msg}`)
       console.error('[ML] collect error:', err)
+      return null
+    }
+  }
+
+  /**
+   * 特征门禁：提交 /v0/ml action=screen 并订阅进度
+   *
+   * 服务端所有 ML 动作共用一个会话槽：同 kind 的在跑任务会被复用（幂等），
+   * 不同 kind 在跑时返回 409，这里要单独提示。
+   */
+  async function screen(
+    csvPath: string,
+    config: {
+      nFolds: number
+      foldGap: number
+      primaryHorizon: number
+      labelPeriod: number
+      volK: number
+      sigmaMode: string
+      minIc: number
+      minT: number
+      minSignFolds: number
+      fdrQ: number
+      minCoverage: number
+      gateTopk: number
+      minNames: number
+      trialCount: number
+      noTest: boolean
+      noIncremental: boolean
+      noLagSensitivity: boolean
+    },
+    onEvent?: (type: string, data: any) => void,
+  ): Promise<ScreenTaskResult | null> {
+    try {
+      const body: Record<string, any> = {
+        action: 'screen',
+        csv_path: csvPath,
+        n_folds: config.nFolds,
+        fold_gap: config.foldGap,
+        primary_horizon: config.primaryHorizon,
+        label: {
+          period: config.labelPeriod,
+          vol_k: config.volK,
+          sigma_mode: config.sigmaMode,
+        },
+        rules: {
+          min_ic: config.minIc,
+          min_t: config.minT,
+          min_sign_folds: config.minSignFolds,
+          fdr_q: config.fdrQ,
+          min_coverage: config.minCoverage,
+          gate_topk: config.gateTopk,
+        },
+        min_names: config.minNames,
+        trial_count: config.trialCount,
+        entry: 'close',
+        no_test: config.noTest,
+        no_incremental: config.noIncremental,
+        no_lag_sensitivity: config.noLagSensitivity,
+      }
+
+      const server = localStorage.getItem('remote') || 'localhost:19107'
+      const token = localStorage.getItem('token') || ''
+
+      const postResp = await axios.post('/v0/ml', JSON.parse(JSON.stringify(body)))
+      const sessionId = postResp.data?.session_id
+      if (!sessionId) {
+        ElMessage.error('特征门禁启动失败：未返回 session_id')
+        return null
+      }
+
+      let result: ScreenTaskResult | null = null
+      await fetchEventSource(
+        `https://${server}/v0/ml?action=train&session_id=${sessionId}`,
+        {
+          method: 'GET',
+          headers: { 'Authorization': token },
+          openWhenHidden: true,
+
+          onopen: async (response) => {
+            if (response.ok) return
+            const text = await response.text()
+            throw new Error(text || `HTTP ${response.status}`)
+          },
+
+          onmessage: (event) => {
+            if (!event.data) return
+            try {
+              const data = JSON.parse(event.data)
+              onEvent?.(event.event || 'message', data)
+              if (event.event === 'result') {
+                result = data as ScreenTaskResult
+              } else if (event.event === 'error') {
+                ElMessage.error(`特征门禁失败: ${data.msg || data.message || '未知错误'}`)
+              }
+            } catch { /* skip malformed */ }
+          },
+
+          onclose: () => {},
+          onerror: (err) => {
+            if (result) return
+            throw err
+          },
+        }
+      )
+
+      return result
+    } catch (err: any) {
+      const status = err.response?.status
+      if (status === 409) {
+        const kind = err.response?.data?.running_kind || '其他'
+        ElMessage.warning(`服务端有其他 ML 任务在跑（${kind}），请等它结束后再门禁`)
+      } else {
+        const msg = err.response?.data?.message || err.message || '特征门禁失败'
+        ElMessage.error(`特征门禁失败: ${msg}`)
+      }
+      console.error('[ML] screen error:', err)
+      return null
+    }
+  }
+
+  /** 拉取门禁的逐特征明细（screen_result 返回 feature_screen.json） */
+  async function screenResult(runId: string): Promise<ScreenReport | null> {
+    try {
+      const resp = await axios.get('/v0/ml', {
+        params: { action: 'screen_result', run_id: runId },
+      })
+      return resp.data as ScreenReport
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || '门禁明细获取失败'
+      ElMessage.error(`门禁明细获取失败: ${msg}`)
       return null
     }
   }
@@ -566,5 +697,5 @@ export function useMLData() {
     }
   }
 
-  return { train, collect, shap, deleteModel, deleteModelFile, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis, optimize }
+  return { train, collect, screen, screenResult, shap, deleteModel, deleteModelFile, listModels, publishModel, fetchLabelAnalysis, runBatchLabelAnalysis, optimize }
 }

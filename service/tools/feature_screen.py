@@ -107,8 +107,8 @@ SERVICE_ROOT = SCRIPT_DIR.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from ml_stats import (autocorr_1, bh_qvalues, bonferroni_t_crit,
-                      daily_cs_ic_wide, fold_stats as _fold_stats,
+from ml_stats import (MIN_FOLD_OBS, autocorr_1, bh_qvalues, bonferroni_t_crit,
+                      daily_cs_ic_wide, effective_gap, fold_stats as _fold_stats,
                       newey_west_t, pooled_ic as _pooled_ic, spearman_ic,
                       topk_excess, ts_ic as _ts_ic)
 
@@ -488,6 +488,9 @@ def period_stats(x: pd.DataFrame, fwd: pd.DataFrame, mask: pd.DataFrame | None,
         "hit_rate": float((ic_valid > 0).mean()) if len(ic_valid) else float("nan"),
         "pooled_ic": pooled_ic(xp, yp, mp),
         "_ic": ic_valid,
+        # 完整逐日序列（含无效日的 NaN）：fold 按日历 bar 切折时要用它，
+        # 不能用 dropna 后的 _ic，否则 gap 会变成"有效观测数"口径。
+        "_ic_full": ic,
     }
     t, p = newey_west_t(ic_valid, nw_lag)
     out["nw_t"], out["p_value"] = t, p
@@ -499,9 +502,14 @@ def period_stats(x: pd.DataFrame, fwd: pd.DataFrame, mask: pd.DataFrame | None,
     return out
 
 
-def fold_stats(ic: pd.Series, n_folds: int, nw_lag: int) -> dict:
-    """DEV 内连续折的 IC 与同号折数。底层是 ml_stats.fold_stats。"""
-    return _fold_stats(np.asarray(ic, dtype=float), n_folds, nw_lag)
+def fold_stats(ic: pd.Series, n_folds: int, nw_lag: int,
+               gap: int = 0, horizon: int = 0) -> dict:
+    """DEV 内连续折的 IC 与同号折数。底层是 ml_stats.fold_stats。
+
+    ic 必须是**带日期索引的完整逐日序列**（含无效日的 NaN）：gap 按日历
+    bar 计，若先 dropna 再切，gap 会变成"有效观测数"口径，与 bar 口径不符。
+    """
+    return _fold_stats(ic, n_folds, nw_lag, gap=gap, horizon=horizon)
 
 
 # ============================================================
@@ -679,6 +687,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--test-start", default="2025-10-29",
                     help="锁定 TEST 第一天（含）; 找不到则退化为后 20%%")
     ap.add_argument("--n-folds", type=int, default=5, help="DEV 内连续折数")
+    ap.add_argument("--fold-gap", type=int, default=0,
+                    help="相邻折之间跳过的 bar 数；生效值 = max(fold_gap, primary_horizon)，"
+                         "用于保证相邻折的标签窗口不重叠")
     ap.add_argument("--min-names", type=int, default=15,
                     help="单日横截面最少有效标的数")
     ap.add_argument("--nw-lag", type=int, default=0,
@@ -810,6 +821,22 @@ def main() -> None:
     log(f"  TEST: {test_dates.min().date()} ~ {test_dates.max().date()} "
         f"({len(test_dates)} 天)")
 
+    # ---- 折间间隔（gap）----
+    # 生效值 = max(fold_gap, primary_horizon)：标签是 primary_horizon 根 bar
+    # 的前瞻收益，相邻折至少要隔这么多 bar，两折的标签窗口才不重叠。
+    eff_gap, gap_raised = effective_gap(args.fold_gap, args.primary_horizon)
+    need_days = args.n_folds * MIN_FOLD_OBS + max(0, args.n_folds - 1) * eff_gap
+    if len(dev_dates) < need_days:
+        raise SystemExit(
+            f"DEV 区间不足以支撑 {args.n_folds} 折 + 折间间隔 {eff_gap} bar："
+            f"需要至少 {need_days} 根 bar，当前只有 {len(dev_dates)} 根。"
+            f"请减少 --n-folds、减小 --fold-gap，或拉长 DEV 区间。")
+    if gap_raised:
+        log(f"  折间间隔：设定 {args.fold_gap} → 生效 {eff_gap} bar"
+            f"（受 primary_horizon={args.primary_horizon} 约束，不可小于它）")
+    else:
+        log(f"  折间间隔：{eff_gap} bar")
+
     # ---- 目标与掩码 ----
     step("compute_target", "start")
     targets = {}
@@ -841,7 +868,8 @@ def main() -> None:
         dev["topk"] = {k: topk_stats(x, target["fwd"], target["mask"], dev_dates,
                                      sign, k, args.min_names, nw_lag)
                        for k in [int(v) for v in args.topk.split(",")]}
-        dev["folds"] = fold_stats(dev["_ic"], args.n_folds, nw_lag)
+        dev["folds"] = fold_stats(dev["_ic_full"], args.n_folds, nw_lag,
+                                  gap=args.fold_gap, horizon=args.primary_horizon)
         dev["yearly"] = {int(y): float(v) for y, v in
                          dev["_ic"].groupby(dev["_ic"].index.year).mean().items()}
 
@@ -971,6 +999,9 @@ def main() -> None:
                   "test_start": str(test_dates.min().date()),
                   "horizons": horizons,
                   "nw_lag": args.nw_lag or max(10, 2 * args.primary_horizon),
+                  "n_folds": args.n_folds,
+                  "fold_gap": int(args.fold_gap),
+                  "effective_gap": int(eff_gap),
                   "rules": {"min_ic": args.min_ic, "min_t": args.min_t,
                             "min_sign_folds": args.min_sign_folds,
                             "fdr_q": args.fdr_q,
@@ -1084,6 +1115,8 @@ def write_outputs(args, results, feats, horizons, dev_dates, test_dates,
             "test_days": len(test_dates),
             "purge": max(horizons),
             "n_folds": args.n_folds,
+            "fold_gap": int(args.fold_gap),
+            "effective_gap": int(effective_gap(args.fold_gap, primary)[0]),
             "min_names": args.min_names,
             "nw_lag": args.nw_lag or max(10, 2 * primary),
             "gate_topk": args.gate_topk,
@@ -1300,6 +1333,7 @@ def build_markdown(args, results, feats, horizons, dev_dates, test_dates,
                    boundary, m_tests, t_crit, has_ohlcv, suffix, t0,
                    has_plots: bool = True) -> list[str]:
     primary = args.primary_horizon
+    eff_gap = effective_gap(args.fold_gap, primary)[0]
     L: list[str] = []
     L.append("# 特征筛选报告（Step 1）\n")
     L.append(f"生成时间：{t0:%Y-%m-%d %H:%M:%S}\n")
@@ -1317,7 +1351,9 @@ def build_markdown(args, results, feats, horizons, dev_dates, test_dates,
     L.append(f"- 入场：`{args.entry}`；缩尾：{args.winsorize:g}；"
              f"波动率标准化：{'是' if args.vol_scale else '否'}")
     L.append(f"- 单日最少标的：{args.min_names}；NW lag："
-             f"{args.nw_lag or max(10, 2 * primary)}；折数：{args.n_folds}")
+             f"{args.nw_lag or max(10, 2 * primary)}；折数：{args.n_folds}"
+             f"；折间间隔：{eff_gap} bar（设定 {args.fold_gap}，"
+             f"受主 horizon {primary} 约束）")
     if has_ohlcv:
         extras = ["停牌", "涨跌停"]
         if args.min_turnover > 0:
@@ -1441,6 +1477,9 @@ def build_markdown(args, results, feats, horizons, dev_dates, test_dates,
 
     # 逐折
     L.append("## 逐折稳定性（DEV）\n")
+    L.append(f"> DEV 内切 {args.n_folds} 个连续折，折间跳过 **{eff_gap} bar**"
+             f"（设定 {args.fold_gap}，受标签周期 {args.primary_horizon} 约束）。"
+             "跳过的 bar 不参与任何折，保证相邻折的标签窗口不重叠。\n")
     L.append("| 特征 | " + " | ".join(f"折{i+1}" for i in range(args.n_folds))
              + " | 同号 | 折间std |")
     L.append("|" + "---|" * (args.n_folds + 3))

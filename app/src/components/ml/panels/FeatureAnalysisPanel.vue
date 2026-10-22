@@ -57,6 +57,12 @@
       <div class="empty-icon">🔍</div>
       <div>配置标签来源后点击"开始收集"查看特征统计</div>
     </div>
+
+    <!-- 特征门禁：依赖上一步「开始收集」产出的特征缓存 -->
+    <FeatureGatePanel
+      :state="state"
+      :csv-path="state.featureReport.data?.csv_path || ''"
+    />
   </div>
 </template>
 
@@ -65,6 +71,7 @@ import { ref, onBeforeUnmount } from 'vue'
 import { useMLData } from '../composables/useMLData'
 import type { TrainStep } from '../composables/useMLState'
 import FeatureInspectionPanel from './FeatureInspectionPanel.vue'
+import FeatureGatePanel from './FeatureGatePanel.vue'
 
 const props = defineProps<{
   state: any
