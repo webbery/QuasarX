@@ -56,23 +56,36 @@ sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
+
+def _emit_error(msg):
+    """输出协议错误行。
+
+    格式必须与 C++ 端 MLHandler 的解析约定一致：紧凑分隔符（无空格）且
+    不转义非 ASCII。json.dumps 默认会输出 {"type": "error", ...}（冒号后有空格），
+    服务端的子串匹配会漏判，真实错误就此丢失，最终只报出
+    "optimize script 未输出 result" 这种无信息量的兜底文案。
+    """
+    print(json.dumps({"type": "error", "message": msg}, ensure_ascii=False,
+                     separators=(",", ":")), flush=True)
+
+
 try:
     import xgboost as xgb
 except ImportError:
-    print(json.dumps({"type": "error", "message": "未安装 xgboost: pip install xgboost"}), flush=True)
+    _emit_error("未安装 xgboost: pip install xgboost")
     sys.exit(1)
 
 try:
     import optuna
     from optuna.samplers import TPESampler
 except ImportError:
-    print(json.dumps({"type": "error", "message": "未安装 optuna: pip install optuna"}), flush=True)
+    _emit_error("未安装 optuna: pip install optuna")
     sys.exit(1)
 
 try:
     import requests
 except ImportError:
-    print(json.dumps({"type": "error", "message": "未安装 requests: pip install requests"}), flush=True)
+    _emit_error("未安装 requests: pip install requests")
     sys.exit(1)
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)

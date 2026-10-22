@@ -30,6 +30,33 @@ inline ModelType stringToModelType(const String& s) {
     return ModelType::XGBoost;  // 默认
 }
 
+// ML 任务类型：用于会话幂等检查，不同 kind 的任务不能共享同一个 session
+enum class MLAction : uint8_t {
+    Unknown = 0,
+    Train,
+    Optimize,
+    Collect,
+    Screen,
+};
+
+inline String mlActionToString(MLAction a) {
+    switch (a) {
+        case MLAction::Train:    return "train";
+        case MLAction::Optimize: return "optimize";
+        case MLAction::Collect:  return "collect";
+        case MLAction::Screen:   return "screen";
+        default: return "unknown";
+    }
+}
+
+inline MLAction stringToMLAction(const String& s) {
+    if (s == "train")    return MLAction::Train;
+    if (s == "optimize") return MLAction::Optimize;
+    if (s == "collect")  return MLAction::Collect;
+    if (s == "screen")   return MLAction::Screen;
+    return MLAction::Unknown;
+}
+
 struct CachedMLModel {
     ModelType _modelType = ModelType::XGBoost;
     BoosterHandle _booster = nullptr;
@@ -54,6 +81,7 @@ struct CachedMLModel {
 // 训练会话：记录事件历史，支持 SSE 重连回放
 struct TrainSession {
     String _sessionId;
+    MLAction _kind = MLAction::Unknown;  // 会话归属的 action，用于幂等检查
     std::atomic<bool> _done{false};
     std::atomic<bool> _cancelled{false};
 
@@ -95,6 +123,17 @@ struct TrainSession {
     }
 };
 
+// 会话获取结果：用于幂等检查
+struct SessionAcquireResult {
+    enum Status {
+        CanCreate,   // 可以创建新会话（无活跃会话或活跃会话已 done）
+        Reused,      // 同 kind 的活跃会话存在，可复用
+        Conflict     // 不同 kind 的活跃会话存在，冲突
+    };
+    Status status;
+    std::shared_ptr<TrainSession> existing;  // Reused 或 Conflict 时非空
+};
+
 class MLHandler : public HttpHandler {
 public:
     using HttpHandler::HttpHandler;
@@ -127,6 +166,12 @@ private:
     static void collectXGBoostFeatures(
         const List<QNode*>& upstreamSubgraph,
         Vector<String>& outFeatureNames);
+
+    // 尝试获取会话槽：检查当前活跃会话，返回 CanCreate/Reused/Conflict
+    static SessionAcquireResult tryAcquireSession(MLAction kind);
+
+    // 构建 409 冲突响应：当有其他 ML 会话正在运行时
+    static void respondConflict(httplib::Response& res, const String& sessionId, MLAction kind);
 
 private:
 

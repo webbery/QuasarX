@@ -335,9 +335,23 @@ void FormulaParser::computeNode(CrossSectionNode& node, const Vector<symbol_t>& 
         case CrossSectionFuncType::RANK:
         case CrossSectionFuncType::ZSCORE:
         case CrossSectionFuncType::PERCENTILE:
-            // 使用内层函数的结果；缺失视为未知（NaN），不能当成 0 参与排名
+            // 嵌套调用（pct(rank(close))）用内层节点的结果；
+            // 单参数调用（pct(close)）没有内层节点，直接对表达式求值。
+            // 两者都取不到时视为未知（NaN），不能当成 0 参与排名。
             if (depValues.count(symbol)) {
                 score = depValues[symbol];
+            } else if (node.exprAst) {
+                context_t val = evalNode(symbol, *node.exprAst, context);
+                if (std::holds_alternative<double>(val)) {
+                    score = std::get<double>(val);
+                } else if (std::holds_alternative<Vector<double>>(val)) {
+                    // evalIdentifier 从 context 返回时间序列时，取最新值作为截面评分
+                    auto& vec = std::get<Vector<double>>(val);
+                    // 空序列 = 该标的无任何数据，属于未知而非 0
+                    score = vec.empty() ? std::numeric_limits<double>::quiet_NaN() : vec.back();
+                } else if (std::holds_alternative<bool>(val)) {
+                    score = std::get<bool>(val) ? 1.0 : 0.0;
+                }
             } else {
                 score = std::numeric_limits<double>::quiet_NaN();
             }

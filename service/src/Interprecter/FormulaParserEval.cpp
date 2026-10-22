@@ -369,7 +369,8 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
         auto& argsNode = ast.nodes[1];
         
         // 辅助 lambda：获取参数列表
-        // PEG 对单参数 Arguments 会优化，直接返回参数节点而非 Arguments 节点
+        // Arguments 规则带 { no_ast_opt }，不会被 peglib optimize_ast 折叠，
+        // 所以这里总是能拿到完整的参数列表；else 分支只是防御性兜底。
         auto getArgs = [&]() -> std::vector<const peg::Ast*> {
             if (argsNode->name == "Arguments") {
                 std::vector<const peg::Ast*> result;
@@ -378,7 +379,7 @@ context_t FormulaParser::evalFunctionCall(const symbol_t& symbol, const peg::Ast
                 }
                 return result;
             } else {
-                // 单参数优化：argsNode 本身就是参数（Primary/Number 等）
+                // 兜底：argsNode 本身就是参数（Primary/Number 等）
                 return {argsNode.get()};
             }
         };

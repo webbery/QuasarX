@@ -358,4 +358,66 @@ def headers(auth_token):
 def is_backtest(auth_api):
     """判断当前是否为回测模式"""
     return auth_api.is_backtest_mode()
+
+
+def _wait_for_active_session(auth_token, max_wait=60):
+    """
+    等待当前活跃的 ML 会话完成。
+    通过尝试发起一个请求，如果收到 409，则从响应中获取 session_id 并等待。
+    """
+    if not auth_token:
+        return
+
+    headers = {"Authorization": auth_token}
+    start_time = time.time()
+
+    while time.time() - start_time < max_wait:
+        # 尝试发起一个无害的请求来检查是否有活跃会话
+        # 使用一个空的 train 请求，handleTrain 会先检查活跃会话，再验证参数
+        # 如果收到 409，说明有活跃会话
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/ml",
+                json={"action": "train", "script": ""},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=5
+            )
+            if resp.status_code == 409:
+                # 有活跃会话，从响应中获取 session_id
+                data = resp.json()
+                session_id = data.get("running_session_id")
+                if session_id:
+                    # 等待该会话完成
+                    for _ in range(max_wait * 2):  # 每 0.5 秒检查一次
+                        try:
+                            status_resp = requests.get(
+                                f"{BASE_URL}/ml",
+                                params={"action": "train_status", "session_id": session_id},
+                                headers=headers,
+                                verify=VERIFY_SSL,
+                                timeout=5
+                            )
+                            if status_resp.status_code == 200:
+                                status_data = status_resp.json()
+                                if status_data.get("status") in ("done", "error"):
+                                    break
+                        except Exception:
+                            pass
+                        time.sleep(0.5)
+                    continue
+            # 如果没有收到 409，说明没有活跃会话
+            return
+        except Exception:
+            return
+
+
+@pytest.fixture(autouse=True)
+def wait_for_ml_sessions(auth_token):
+    """
+    每个测试开始前，等待所有活跃的 ML 会话完成。
+    防止前一个测试的后台任务（如 optimize）影响当前测试。
+    """
+    _wait_for_active_session(auth_token, max_wait=60)
+    yield
     

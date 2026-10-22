@@ -50,6 +50,34 @@ namespace {
 // "脚本未输出 result" 并对其发 SIGTERM。
 #define QS_PYTHON_READLINE_TIMEOUT_MS 300000
 
+// 取出 Python 输出行 JSON 里的 "type" 字段；不是 JSON 对象或没有 type 时返回空串。
+//
+// 不能用子串匹配 find("\"type\":\"error\"")：Python 端 json.dumps 不带
+// separators 时输出的是 {"type": "error", ...}（冒号后有空格），子串匹配会漏判，
+// 于是真实错误既没进 stderrLines，也没进 resultLine，最终只报出
+// "optimize script 未输出 result" 这种无信息量的兜底文案。
+String jsonLineType(const String& line) {
+    try {
+        auto j = nlohmann::json::parse(line);
+        if (j.is_object() && j.contains("type") && j["type"].is_string())
+            return j["type"].get<String>();
+    } catch (...) {}
+    return String();
+}
+
+// 从 Python 的错误行里取出可读文案：优先 message 字段，其次 error 字段，
+// 都不是就退回原始行。避免把整段 JSON 甩给调用方。
+String jsonLineMessage(const String& line) {
+    try {
+        auto j = nlohmann::json::parse(line);
+        if (j.is_object()) {
+            if (j.contains("message") && j["message"].is_string()) return j["message"].get<String>();
+            if (j.contains("error") && j["error"].is_string()) return j["error"].get<String>();
+        }
+    } catch (...) {}
+    return line;
+}
+
 #ifdef _WIN32
 inline int QS_GETPID() { return _getpid(); }
 #else
@@ -300,17 +328,41 @@ struct TrainState {
     String _csvPath, _modelPath;
 };
 
+// 尝试获取会话槽：检查当前活跃会话，返回 CanCreate/Reused/Conflict
+SessionAcquireResult MLHandler::tryAcquireSession(MLAction kind) {
+    std::lock_guard<std::mutex> lk(s_sessionMtx);
+    if (!s_activeSession || s_activeSession->_done) {
+        return {SessionAcquireResult::CanCreate, nullptr};
+    }
+    if (s_activeSession->_kind == kind) {
+        return {SessionAcquireResult::Reused, s_activeSession};
+    }
+    return {SessionAcquireResult::Conflict, s_activeSession};
+}
+
+// 构建 409 冲突响应：当有其他 ML 会话正在运行时
+void MLHandler::respondConflict(httplib::Response& res, const String& sessionId, MLAction kind) {
+    res.status = 409;
+    nlohmann::json resp;
+    resp["message"] = "another ML session is running";
+    resp["running_session_id"] = sessionId;
+    resp["running_kind"] = mlActionToString(kind);
+    res.set_content(resp.dump(), "application/json");
+}
+
 void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& res) {
-    // 幂等检查：与 train 共用 s_activeSession
-    {
-        std::lock_guard<std::mutex> lk(s_sessionMtx);
-        if (s_activeSession && !s_activeSession->_done) {
-            nlohmann::json resp;
-            resp["session_id"] = s_activeSession->_sessionId;
-            resp["status"] = "running";
-            res.set_content(resp.dump(), "application/json");
-            return;
-        }
+    // 幂等检查：只有同 kind (Optimize) 的活跃会话才复用，不同 kind 返回 409
+    auto acquire = tryAcquireSession(MLAction::Optimize);
+    if (acquire.status == SessionAcquireResult::Reused) {
+        nlohmann::json resp;
+        resp["session_id"] = acquire.existing->_sessionId;
+        resp["status"] = "running";
+        res.set_content(resp.dump(), "application/json");
+        return;
+    }
+    if (acquire.status == SessionAcquireResult::Conflict) {
+        respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
+        return;
     }
 
     // 解析请求：feature_cache + fast_backtest_strategy 为必填
@@ -368,6 +420,7 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
 
     auto session = std::make_shared<TrainSession>();
     session->_sessionId = fmt::format("xgb_opt_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    session->_kind = MLAction::Optimize;
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
         s_activeSession = session;
@@ -441,11 +494,12 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
                 if (out.type == PythonOutput::DONE) { childExited = true; break; }
                 if (out.type == PythonOutput::STDOUT) {
-                    if (out.line.find("\"type\":\"result\"") != std::string::npos) {
+                    String lineType = jsonLineType(out.line);
+                    if (lineType == "result") {
                         resultLine = out.line;
-                    } else if (out.line.find("\"type\":\"error\"") != std::string::npos) {
+                    } else if (lineType == "error") {
                         sendSSE("warning", {{"line", out.line}});
-                        if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
+                        if (stderrLines.size() < 1000) stderrLines += jsonLineMessage(out.line) + "\n";
                     } else {
                         try {
                             auto j = nlohmann::json::parse(out.line);
@@ -507,17 +561,20 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
 }
 
 void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res) {
-    // ============== 幂等检查：如果已有活跃训练，返回其 session_id ==============
-    {
-        std::lock_guard<std::mutex> lk(s_sessionMtx);
-        if (s_activeSession && !s_activeSession->_done) {
-            nlohmann::json resp;
-            resp["session_id"] = s_activeSession->_sessionId;
-            resp["status"] = "running";
-            res.set_content(resp.dump(), "application/json");
-            INFO("[MLTrain] Returning existing session: {}", s_activeSession->_sessionId);
-            return;
-        }
+    // 幂等检查：只有同 kind (Train) 的活跃会话才复用，不同 kind 返回 409
+    auto acquire = tryAcquireSession(MLAction::Train);
+    if (acquire.status == SessionAcquireResult::Reused) {
+        nlohmann::json resp;
+        resp["session_id"] = acquire.existing->_sessionId;
+        resp["status"] = "running";
+        res.set_content(resp.dump(), "application/json");
+        INFO("[MLTrain] Returning existing session: {}", acquire.existing->_sessionId);
+        return;
+    }
+    if (acquire.status == SessionAcquireResult::Conflict) {
+        respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
+        INFO("[MLTrain] Conflict: another session running (kind={})", mlActionToString(acquire.existing->_kind));
+        return;
     }
 
     // ============== 1. 解析请求 ==============
@@ -596,6 +653,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
 
     auto session = std::make_shared<TrainSession>();
     session->_sessionId = "xgb_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    session->_kind = MLAction::Train;
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
         s_activeSession = session;
@@ -679,8 +737,9 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             collectXGBoostFeatures(state->_upstreamSubgraph, state->_featureNames);
         } catch (const std::exception& e) {
             cleanupGraph();
-            sendSSE("error", {{"step","init_nodes"},{"msg", String("node init failed: ") + e.what()}});
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            String msg = String("node init failed: ") + e.what();
+            sendSSE("error", {{"step","init_nodes"},{"msg", msg}});
+            session->finish({{"error", msg}}, true); return;
         }
         sendSSE("step", {{"step","init_nodes"},{"status","done"},{"features",(int)state->_featureNames.size()}});
 
@@ -690,7 +749,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         if (!exchangeMgr) {
             cleanupGraph();
             sendSSE("error", {{"step","start_exchange"},{"msg","ExchangeManager unavailable"}});
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            session->finish({{"error","ExchangeManager unavailable"}}, true); return;
         }
         Set<contract_type> requiredSources = sourcesFromNodes(state->_upstreamSubgraph);
         exchangeMgr->StartRequiredExchanges(requiredSources);
@@ -703,7 +762,7 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         if (symbols.empty()) {
             cleanupGraph();
             sendSSE("error", {{"step","start_exchange"},{"msg","未找到可用的 symbols"}});
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            session->finish({{"error","未找到可用的 symbols"}}, true); return;
         }
         sendSSE("step", {{"step","start_exchange"},{"status","done"},{"symbols",(int)symbols.size()}});
 
@@ -746,14 +805,15 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
         if (!collectOk || collected.empty()) {
             cleanupGraph();
             sendSSE("error", {{"step","collect_data"},{"msg","数据收集失败，请确认 Quote 节点已配置标的数据"}});
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            session->finish({{"error","数据收集失败，请确认 Quote 节点已配置标的数据"}}, true); return;
         }
         if (!labelSource.empty() && collected.find(labelSource) == collected.end()) {
             String avail; int cnt = 0;
             for (auto& [k, _] : collected) { if (cnt++ > 0) avail += ", "; avail += k; }
             cleanupGraph();
-            sendSSE("error", {{"step","collect_data"},{"msg", String("label.source '") + labelSource + "' not found. Available: " + avail}});
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            String msg = String("label.source '") + labelSource + "' not found. Available: " + avail;
+            sendSSE("error", {{"step","collect_data"},{"msg", msg}});
+            session->finish({{"error", msg}}, true); return;
         }
         // 过滤 collected：只保留 XGBoostNode 直接上游的特征列（与 _featureNames 一致）
         if (!state->_featureNames.empty()) {
@@ -806,21 +866,21 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             WARN("[MLTrain] PythonRunner::start() failed");
             cleanupGraph();
             sendSSE("error", {{"step","train_model"},{"msg","failed to start training script"}});
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            session->finish({{"error","failed to start training script"}}, true); return;
         }
         PythonOutput out;
         String resultLine, stderrLines;
         while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
             if (out.type == PythonOutput::DONE) break;
             if (out.type == PythonOutput::STDOUT) {
-                if (out.line.find("\"type\":\"result\"") != std::string::npos) resultLine = out.line;
-                else if (out.line.find("\"type\":\"error\"") != std::string::npos) {
+                String lineType = jsonLineType(out.line);
+                if (lineType == "result") resultLine = out.line;
+                else if (lineType == "error") {
                     WARN("[MLTrain error] {}", to_utf8(out.line));
                     sendSSE("warning", {{"step","train_model"},{"line",out.line}});
-                    if (stderrLines.size() < 1000) stderrLines += out.line + "\n";
+                    if (stderrLines.size() < 1000) stderrLines += jsonLineMessage(out.line) + "\n";
                 }
-                else if (out.line.find("\"type\":\"progress\"") != std::string::npos
-                      || out.line.find("\"type\":\"info\"") != std::string::npos)
+                else if (lineType == "progress" || lineType == "info")
                     sendSSE("log", {{"step","train_model"},{"line",out.line}});
             } else if (out.type == PythonOutput::STDERR) {
                 WARN("[MLTrain stderr] {}", to_utf8(out.line));
@@ -835,16 +895,17 @@ void MLHandler::handleTrain(const nlohmann::json& params, httplib::Response& res
             while (!msg.empty() && msg.back() == '\n') msg.pop_back();
             sendSSE("error", {{"step","train_model"},{"msg", String("训练失败: ") + msg}});
             // 保留 CSV 供调试分析
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            session->finish({{"error", String("训练失败: ") + msg}}, true); return;
         }
 
         nlohmann::json trainResult;
         try { trainResult = nlohmann::json::parse(resultLine); }
         catch (...) {
-            sendSSE("error", {{"step","train_model"},{"msg", String("训练结果解析失败: ") + resultLine.substr(0, 200)}});
+            String msg = String("训练结果解析失败: ") + resultLine.substr(0, 200);
+            sendSSE("error", {{"step","train_model"},{"msg", msg}});
             // 保留 CSV 供调试分析
             std::remove(state->_modelPath.c_str());
-            session->finish({{"error","未找到 XGBoost 节点或上游子图为空"}}, true); return;
+            session->finish({{"error", msg}}, true); return;
         }
         sendSSE("step", {{"step","train_model"},{"status","done"}});
 
@@ -1092,20 +1153,23 @@ void MLHandler::handleCollect(const nlohmann::json& params, httplib::Response& r
         return;
     }
 
-    // 幂等检查
-    {
-        std::lock_guard<std::mutex> lk(s_sessionMtx);
-        if (s_activeSession && !s_activeSession->_done) {
-            nlohmann::json resp;
-            resp["session_id"] = s_activeSession->_sessionId;
-            resp["status"] = "running";
-            res.set_content(resp.dump(), "application/json");
-            return;
-        }
+    // 幂等检查：只有同 kind (Collect) 的活跃会话才复用，不同 kind 返回 409
+    auto acquire = tryAcquireSession(MLAction::Collect);
+    if (acquire.status == SessionAcquireResult::Reused) {
+        nlohmann::json resp;
+        resp["session_id"] = acquire.existing->_sessionId;
+        resp["status"] = "running";
+        res.set_content(resp.dump(), "application/json");
+        return;
+    }
+    if (acquire.status == SessionAcquireResult::Conflict) {
+        respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
+        return;
     }
 
     auto session = std::make_shared<TrainSession>();
     session->_sessionId = fmt::format("xgb_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    session->_kind = MLAction::Collect;
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
         s_activeSession = session;
@@ -1418,22 +1482,24 @@ void MLHandler::handleScreen(const nlohmann::json& params, httplib::Response& re
     if (!testStart.empty() && !IsYmdDate(testStart))
         return bad("'test_start' must be YYYY-MM-DD");
 
-    // ---- 2. 幂等检查：与 train/optimize/collect 共用单会话槽 ----
-    {
-        std::lock_guard<std::mutex> lk(s_sessionMtx);
-        if (s_activeSession && !s_activeSession->_done) {
-            nlohmann::json resp;
-            resp["session_id"] = s_activeSession->_sessionId;
-            resp["status"] = "running";
-            resp["message"] = "another ML session is running";
-            res.set_content(resp.dump(), "application/json");
-            return;
-        }
+    // ---- 2. 幂等检查：只有同 kind (Screen) 的活跃会话才复用，不同 kind 返回 409 ----
+    auto acquire = tryAcquireSession(MLAction::Screen);
+    if (acquire.status == SessionAcquireResult::Reused) {
+        nlohmann::json resp;
+        resp["session_id"] = acquire.existing->_sessionId;
+        resp["status"] = "running";
+        res.set_content(resp.dump(), "application/json");
+        return;
+    }
+    if (acquire.status == SessionAcquireResult::Conflict) {
+        respondConflict(res, acquire.existing->_sessionId, acquire.existing->_kind);
+        return;
     }
 
     auto session = std::make_shared<TrainSession>();
     session->_sessionId = fmt::format(
         "screen_{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    session->_kind = MLAction::Screen;
     {
         std::lock_guard<std::mutex> lk(s_sessionMtx);
         s_activeSession = session;

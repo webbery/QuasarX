@@ -55,7 +55,14 @@ String grammar = R"(
         # 加 { no_ast_opt }：防止零参数调用（如 cs_size()）被 peglib optimize_ast
         # collapse 成 Identifier，导致 extractAndBuildGraph 漏注册 CS 节点
         FunctionCall    <- Identifier '(' Arguments? ')' { no_ast_opt }
-        Arguments       <- Expression (',' Expression)*
+        # Arguments 同样要加 { no_ast_opt }：peglib optimize_ast 会 collapse 掉
+        # 只有一个子节点的规则，单参数调用（pct(close) / rank(close) / zscore(close)）
+        # 的 Arguments 节点被折叠后 name 变成内层规则名（Unary / ArithExpr ...），
+        # 只剩 original_name 还是 "Arguments"。于是按 name == "Arguments" 找参数的
+        # 代码（extractAndBuildGraph / evalFunctionCall）认不出单参数调用，
+        # 截面函数拿不到自己的表达式 → 评分恒为 NaN。
+        # 保留 Arguments 节点后，参数个数与嵌套结构对所有函数都一致可见。
+        Arguments       <- Expression (',' Expression)* { no_ast_opt }
 
         # 数据结构
         ListExpr        <- '[' Expression (',' Expression)* ']'

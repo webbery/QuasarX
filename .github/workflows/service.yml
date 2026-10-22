@@ -347,6 +347,11 @@ jobs:
             vmdpy \
             backtrader \
             duckdb==1.5.4
+          # 服务端 MLHandler 通过 PythonRunner 拉起的脚本依赖（xgboost_train /
+          # xgboost_optimize / feature_screen / symbolic_regression）。
+          # 服务端运行与测试共用同一个 Python 环境，缺 optuna 时 optimize 接口
+          # 会在 import 阶段直接退出，导致所有 CV 测试被误报为"未输出 result"。
+          pip install optuna
 
       - name: Create TLS certificates
         run: |
