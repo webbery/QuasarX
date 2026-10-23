@@ -25,22 +25,18 @@ QuasarX 是一款自研量化交易软件（开发中），采用前后端分离
 
 ### Client
 - 📊 策略流程图可视化编辑（基于 Vue Flow，节点注册中心架构）
-- 📈 实时行情监控与数据可视化（ECharts / Plotly）
 - 🤖 机器学习策略支持（XGBoost / ONNX 通用推理）
 - 💬 LangGraph 多 Agent 智能助手（Supervisor 路由 + 4 专用 Agent + 11 内置 Tool）
 - 📚 RAG 知识库（LanceDB 向量检索 + 段落分块 + LLM 摘要）
 - 💼 投资组合管理与风险控制
 - 🗄️ 数据中心（DuckDB 本地行情管理，支持增量/全量下载）
-- 🔌 Element Plus UI 组件库
 
 ### Service
-- ⚡ 低延迟交易执行引擎
 - 📉 支持 CTP / 中泰 XTP / 华鑫等券商 SDK
 - 🧠 策略节点图执行引擎（20+ 节点类型）
-- 🛡️ 风险管理与止损插件
+- 🛡️ 风险管理与投资组合
 - 📊 特征工程与数据分析
 - 🗄️ DuckDB 统一数据存储（QuoteDB 行情管理）
-- 🔐 JWT 认证与 OpenSSL 加密
 
 ## 技术栈
 
@@ -175,8 +171,7 @@ pytest ../test/testcases/test_order.py::TestOrder::test_stock_order_buy -v
 | `Spread` | 价差分析 |
 | `Resample` | 频率重采样 |
 | `CacheFeature` | 特征缓存 |
-| `Debug` | 调试输出 |
-| `Script` | 脚本节点 |
+| `Debug` | 调试输入输出 |
 
 策略图 JSON Schema 详见 [doc/flow.md](doc/flow.md)
 
@@ -408,32 +403,6 @@ API 文档位于 [doc/restapi.yaml](doc/restapi.yaml) (OpenAPI 3.0)
 | `/backtest/*` | 回测服务 |
 | `/strategy/*` | 策略管理 |
 
-## 配置
-
-服务配置文件 `config.json` 示例：
-
-```json
-{
-  "broker": {
-    "commission": 0.0003,
-    "database_path": "./data"
-  },
-  "exchange": {
-    "quote_api": "tcp://quote.example.com:8888",
-    "trade_api": "tcp://trade.example.com:8889"
-  },
-  "server": {
-    "port": 19107,
-    "jwt_secret": "your-secret-key",
-    "credentials": {
-      "admin": "hashed-password"
-    }
-  }
-}
-```
-
-完整示例见 `service/build/config.json`
-
 ## 项目结构
 
 ```
@@ -464,17 +433,12 @@ QuasarX/
 └── .github/workflows/       # CI/CD
 ```
 
-## 开发指南
-
-详见 [QWEN.md](QWEN.md)
-
 ## 开发进度
 
 - [x] DuckDB 统一底层数据读写（QuoteDB、NodeIO、Backtest）
 - [x] LangGraph 多 Agent 智能助手
 - [x] ONNX 通用推理节点（替代 LSTM/NARX）
 - [x] 节点注册中心架构
-- [ ] 更多券商接口适配
 - [ ] 实盘交易验证
 
 ## 注意事项
