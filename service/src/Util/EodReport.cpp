@@ -108,14 +108,16 @@ EodDebugReport BuildEodDebugReport(Server* server,
                                    const List<QNode*>& graph,
                                    DataContext& context,
                                    const Set<symbol_t>& universe,
-                                   const Map<symbol_t, DecisionSnapshot>& decisions,
+                                   const DecisionSet& set,
                                    const EodDebugSpec& spec) {
     EodDebugReport report;
-    
+
     try {
         auto& cfg = server->GetConfig();
         auto dataDir = cfg.GetDatabasePath();
-        auto today = ToString(Now(), "%Y-%m-%d");
+        // 报告目录用 DecisionSet 的归属日，不用 wall clock：
+        // 补跑历史日期时，附件必须与决策落在同一天目录下。
+        auto today = set._asOf.empty() ? ToString(Now(), "%Y-%m-%d") : set._asOf;
         auto reportDir = dataDir + "/reports/" + strategy + "/" + today;
         std::filesystem::create_directories(reportDir);
         
@@ -155,12 +157,12 @@ EodDebugReport BuildEodDebugReport(Server* server,
         // 2. 收集决策标的
         Vector<symbol_t> decisionSymbols;
         Vector<symbol_t> holdSymbols;
-        
-        for (const auto& [sym, snap] : decisions) {
-            if (snap._action == TradeAction::BUY || snap._action == TradeAction::SELL) {
-                decisionSymbols.push_back(sym);
+
+        for (const auto& item : set._items) {
+            if (item._action == TradeAction::BUY || item._action == TradeAction::SELL) {
+                decisionSymbols.push_back(item._symbol);
             } else {
-                holdSymbols.push_back(sym);
+                holdSymbols.push_back(item._symbol);
             }
         }
         
@@ -309,10 +311,10 @@ EodDebugReport BuildEodDebugReport(Server* server,
         // 数据行
         for (auto sym : allSymbols) {
             String symStr = get_symbol(sym);
-            auto it = decisions.find(sym);
-            String decision = (it != decisions.end()) ? 
-                              ((it->second._action == TradeAction::BUY) ? "BUY" :
-                               (it->second._action == TradeAction::SELL) ? "SELL" : "HOLD") : "HOLD";
+            const auto* item = set.find(sym);
+            String decision = (item != nullptr) ?
+                              ((item->_action == TradeAction::BUY) ? "BUY" :
+                               (item->_action == TradeAction::SELL) ? "SELL" : "HOLD") : "HOLD";
             
             Map<String, double> values;
             
@@ -346,12 +348,12 @@ EodDebugReport BuildEodDebugReport(Server* server,
             nlohmann::json row;
             row["symbol"] = get_symbol(sym);
             
-            auto it = decisions.find(sym);
-            if (it != decisions.end()) {
-                row["action"] = (it->second._action == TradeAction::BUY) ? "BUY" :
-                                (it->second._action == TradeAction::SELL) ? "SELL" : "HOLD";
-                row["quantity"] = it->second._quantity;
-                row["price"] = it->second._price;
+            auto it = set.find(sym);
+            if (it != nullptr) {
+                row["action"] = (it->_action == TradeAction::BUY) ? "BUY" :
+                                (it->_action == TradeAction::SELL) ? "SELL" : "HOLD";
+                row["quantity"] = it->_quantity;
+                row["price"] = it->_price;
             }
             
             nlohmann::json probs;

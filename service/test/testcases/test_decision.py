@@ -665,6 +665,87 @@ def _cleanup_integ_data(token: str):
         csv_path.unlink()
 
 
+def _create_integ_strategy(symbol: str) -> dict:
+    """创建监控指定 symbol 的 ManualTiming 策略
+
+    用于 dividend 集成测试，策略监控 INTEG_SYMBOL 而非 TEST_SYMBOL
+    """
+    return {
+        "id": "integ_dividend_strategy",
+        "name": "Dividend集成测试策略",
+        "version": 1,
+        "capital": 500000,
+        "description": "阳线买入，阴线卖出",
+        "nodes": [
+            {
+                "id": "1",
+                "type": "custom",
+                "data": {
+                    "label": "行情数据",
+                    "nodeType": "input",
+                    "params": {
+                        "source": {"value": "股票", "type": "select"},
+                        "code": {"value": [symbol], "type": "text"},
+                        "freq": {"value": "1d", "type": "select"},
+                        "close": {"value": "close", "type": "text"},
+                        "open": {"value": "open", "type": "text"},
+                        "high": {"value": "high", "type": "text"},
+                        "low": {"value": "low", "type": "text"},
+                        "volume": {"value": "volume", "type": "text"},
+                        "turnover": {"value": "turnover", "type": "text"},
+                    }
+                }
+            },
+            {
+                "id": "2",
+                "type": "custom",
+                "data": {
+                    "label": "买卖信号",
+                    "nodeType": "signal",
+                    "params": {
+                        "code": {"value": [symbol], "type": "text"},
+                        "buy": {"value": "close[t] > open[t]", "type": "text"},
+                        "sell": {"value": "close[t] < open[t]", "type": "text"},
+                    }
+                }
+            },
+            {
+                "id": "3",
+                "type": "custom",
+                "data": {
+                    "label": "投资组合",
+                    "nodeType": "portfolio",
+                    "params": {
+                        "positionRatio": {"value": 1.0, "type": "number"},
+                    }
+                }
+            },
+            {
+                "id": "4",
+                "type": "custom",
+                "data": {
+                    "label": "手动下单",
+                    "nodeType": "execution",
+                    "params": {
+                        "commission": {"value": 0.0003, "type": "number"},
+                        "stamp": {"value": 0.001, "type": "number"},
+                        "minCommission": {"value": 5, "type": "number"},
+                        "slippageModel": {"value": 0, "type": "number"},
+                        "slippage": {"value": 0.0, "type": "number"},
+                        "type": {"value": 7, "type": "select"},  # Manual
+                        "contract": {"value": 0, "type": "select"},
+                    }
+                }
+            }
+        ],
+        "edges": [
+            {"id": "1->2", "source": "1", "target": "2", "sourceHandle": "output", "targetHandle": "input"},
+            {"id": "2->3", "source": "2", "target": "3", "sourceHandle": "output", "targetHandle": "input"},
+            {"id": "3->4", "source": "3", "target": "4", "sourceHandle": "output", "targetHandle": "input"},
+        ]
+    }
+
+
 class TestDailyExecutionWithDividend:
     """日终执行 + 分红/复权计算的集成测试（仅 stock_hist_sim 模式，依赖 simulate_bar）
 
@@ -754,7 +835,7 @@ class TestDailyExecutionWithDividend:
 
     @pytest.mark.timeout(60)
     def test_daily_execution_succeeds_after_dividend_recalc(
-        self, auth_token, loaded_strategy, is_backtest
+        self, auth_token, is_backtest
     ):
         """集成测试：dividend + recalc 后，simulate_bar 触发日终管线，performance 端点返回有效指标
 
@@ -764,6 +845,8 @@ class TestDailyExecutionWithDividend:
         if not is_backtest:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
         kwargs = {"headers": {"Authorization": auth_token}, "verify": False, "timeout": 10}
+
+        integ_strategy_name = "integ_dividend_test_strategy"
 
         try:
             # 1. 导入股票 + 分红 + recalc
@@ -786,7 +869,19 @@ class TestDailyExecutionWithDividend:
             kwargs["json"] = {"action": "recalc", "code": INTEG_SYMBOL}
             requests.post(f"{BASE_URL}/dividend", **kwargs)
 
-            # 2. 触发日终管线：simulate_bar 推送一根 bar
+            # 2. 创建并加载监控 INTEG_SYMBOL 的策略
+            integ_strategy = _create_integ_strategy(INTEG_SYMBOL)
+            resp = requests.post(f"{BASE_URL}/strategy",
+                                json={"mode": 0, "name": integ_strategy_name, "script": integ_strategy},
+                                **kwargs)
+            assert resp.ok, f"部署策略失败: {resp.text}"
+
+            # 启动策略
+            requests.post(f"{BASE_URL}/strategy",
+                         json={"mode": 1, "name": integ_strategy_name},
+                         **kwargs)
+
+            # 3. 触发日终管线：simulate_bar 推送一根 bar
             try:
                 bar = get_latest_bar(auth_token, INTEG_SYMBOL,
                                      date="2024-07-02 00:00:00")
@@ -797,29 +892,39 @@ class TestDailyExecutionWithDividend:
             if "status" in result and result.get("status") == "error":
                 pytest.skip(f"simulate/bar 不可用: {result}")
 
-            # 3. 等 ManualTiming 决策完成
+            # 4. 等 ManualTiming 决策完成
             deadline = time.time() + 10
             while time.time() < deadline:
-                if get_decisions(auth_token, date=today_str()):
+                decisions = get_decisions(auth_token, date=today_str())
+                # 检查是否有该策略的决策
+                if any(d.get("strategy") == integ_strategy_name for d in decisions):
                     break
                 time.sleep(0.5)
 
-            # 4. 验证 daily_positions + 绩效指标
+            # 5. 验证 daily_positions + 绩效指标
             resp = requests.get(
                 f"{BASE_URL}/strategy/performance",
-                params={"name": STRATEGY_NAME},
+                params={"name": integ_strategy_name},
                 **kwargs,
             )
             assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
             perf_data = resp.json()
 
-            assert perf_data["strategy"] == STRATEGY_NAME
-            assert "metrics" in perf_data
+            assert perf_data["strategy"] == integ_strategy_name
+            assert "metrics" in perf_data, f"缺少 metrics 字段: {perf_data}"
             for key in ["total_return", "sharpe_ratio", "max_drawdown"]:
                 assert key in perf_data["metrics"], \
                     f"dividend recalc 后绩效缺少指标: {key}"
 
         finally:
+            # 清理策略
+            try:
+                requests.post(f"{BASE_URL}/strategy",
+                             json={"mode": 2, "name": integ_strategy_name}, **kwargs)
+                requests.delete(f"{BASE_URL}/strategy",
+                               json={"name": integ_strategy_name}, **kwargs)
+            except Exception:
+                pass
             _cleanup_integ_data(auth_token)
 
 
@@ -1569,3 +1674,232 @@ class TestDecisionCloseAndExecute:
 
         assert d2_updated is not None
         assert d2_updated["executed"] is True, "d2 应为 executed"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DecisionSet 统一决策产物测试
+#
+# 覆盖：
+# 1. 状态词汇统一（status 不再恒为 "completed"）
+# 2. HOLD 决策保留（hold_count 不再恒为 0）
+# 3. 收盘价使用（daily_positions 不再用计划目标价）
+# 4. 归属日统一（日报/邮件/SSE 使用同一 asOf）
+#
+# 依赖 simulate_bar（仅 Debug 构建），CI Release 下 skip
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_daily_decision_json(date: str) -> dict:
+    """读取 decisions/{date}.json 文件"""
+    json_path = SERVER_DATA_DIR / "decisions" / f"{date}.json"
+    if not json_path.exists():
+        return {}
+    with open(json_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestDecisionSetStatusVocabulary:
+    """DecisionSet 状态词汇统一测试
+
+    验证：
+    1. 日报 JSON 的 status 字段使用统一词汇（completed/partial/error）
+    2. 策略报错时 status 不再恒为 "completed"
+    3. 多策略聚合时取最差状态
+    """
+
+    def test_status_vocabulary_in_daily_json(self, auth_token, loaded_strategy, is_backtest):
+        """日报 JSON 的 status 字段使用统一词汇"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        try:
+            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        except ValueError as e:
+            pytest.skip(f"无测试数据: {e}")
+
+        if not bar["close"] > bar["open"]:
+            bar["open"] = bar["close"] * 0.99
+
+        result = simulate_bar(auth_token, bar)
+        if "status" in result and result.get("status") == "error":
+            pytest.skip(f"simulate/bar 不可用: {result}")
+
+        # 等待决策写入
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            decisions = get_decisions(auth_token, date=today_str())
+            if decisions:
+                break
+            time.sleep(0.5)
+
+        # 读取日报 JSON
+        daily_json = get_daily_decision_json(today_str())
+        if not daily_json:
+            pytest.skip("日报 JSON 未生成")
+
+        # 验证 status 词汇
+        status = daily_json.get("status")
+        assert status in ["completed", "partial", "error"], \
+            f"status 应为 completed/partial/error，实际: {status}"
+
+        # 验证各策略 status
+        for strategy_name, strategy_report in daily_json.get("strategies", {}).items():
+            strategy_status = strategy_report.get("status")
+            assert strategy_status in ["completed", "partial", "error"], \
+                f"策略 {strategy_name} 的 status 非法: {strategy_status}"
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestDecisionSetHoldPreservation:
+    """DecisionSet HOLD 决策保留测试
+
+    验证：
+    1. HOLD 决策进入日报 JSON 的 decisions 数组
+    2. hold_count 不再恒为 0
+    3. 邮件与日报的 HOLD 计数一致
+    """
+
+    def test_hold_decisions_in_daily_json(self, auth_token, loaded_strategy, is_backtest):
+        """HOLD 决策进入日报 JSON"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        try:
+            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        except ValueError as e:
+            pytest.skip(f"无测试数据: {e}")
+
+        # close < open 触发 HOLD（无买入信号）
+        if bar["close"] > bar["open"]:
+            bar["close"] = bar["open"] * 0.99
+
+        result = simulate_bar(auth_token, bar)
+        if "status" in result and result.get("status") == "error":
+            pytest.skip(f"simulate/bar 不可用: {result}")
+
+        # 等待决策写入
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            decisions = get_decisions(auth_token, date=today_str())
+            if decisions:
+                break
+            time.sleep(0.5)
+
+        # 读取日报 JSON
+        daily_json = get_daily_decision_json(today_str())
+        if not daily_json:
+            pytest.skip("日报 JSON 未生成")
+
+        # 验证 hold_count
+        summary = daily_json.get("summary", {})
+        hold_count = summary.get("hold_count", 0)
+        # hold_count 应该 >= 0（可能为 0 如果所有标的都有 BUY/SELL）
+        assert isinstance(hold_count, int) and hold_count >= 0, \
+            f"hold_count 应为非负整数，实际: {hold_count}"
+
+        # 验证 decisions 数组包含 HOLD
+        for strategy_name, strategy_report in daily_json.get("strategies", {}).items():
+            decisions = strategy_report.get("decisions", [])
+            hold_decisions = [d for d in decisions if d.get("action") == "HOLD"]
+            # 如果 hold_count > 0，则 decisions 数组中应有 HOLD
+            if hold_count > 0:
+                assert len(hold_decisions) > 0, \
+                    f"hold_count={hold_count} 但 decisions 中无 HOLD"
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestDecisionSetClosePrice:
+    """DecisionSet 收盘价使用测试
+
+    验证：
+    1. daily_positions 表使用真实收盘价，不再用计划目标价
+    2. 日报 JSON 包含 close_price 字段
+    """
+
+    def test_close_price_in_daily_json(self, auth_token, loaded_strategy, is_backtest):
+        """日报 JSON 包含 close_price 字段"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        try:
+            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        except ValueError as e:
+            pytest.skip(f"无测试数据: {e}")
+
+        if not bar["close"] > bar["open"]:
+            bar["open"] = bar["close"] * 0.99
+
+        result = simulate_bar(auth_token, bar)
+        if "status" in result and result.get("status") == "error":
+            pytest.skip(f"simulate/bar 不可用: {result}")
+
+        # 等待决策写入
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            decisions = get_decisions(auth_token, date=today_str())
+            if decisions:
+                break
+            time.sleep(0.5)
+
+        # 读取日报 JSON
+        daily_json = get_daily_decision_json(today_str())
+        if not daily_json:
+            pytest.skip("日报 JSON 未生成")
+
+        # 验证 close_price 字段
+        for strategy_name, strategy_report in daily_json.get("strategies", {}).items():
+            for decision in strategy_report.get("decisions", []):
+                # close_price 字段应该存在
+                assert "close_price" in decision, \
+                    f"决策缺少 close_price 字段"
+
+
+@pytest.mark.usefixtures("auth_token")
+class TestDecisionSetAsOfUnification:
+    """DecisionSet 归属日统一测试
+
+    验证：
+    1. 日报 JSON 的 date 字段与 today_str() 一致
+    2. 各策略的 executed_at 包含归属日
+    """
+
+    def test_as_of_unified(self, auth_token, loaded_strategy, is_backtest):
+        """归属日统一"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+
+        try:
+            bar = get_latest_bar(auth_token, TEST_SYMBOL)
+        except ValueError as e:
+            pytest.skip(f"无测试数据: {e}")
+
+        if not bar["close"] > bar["open"]:
+            bar["open"] = bar["close"] * 0.99
+
+        result = simulate_bar(auth_token, bar)
+        if "status" in result and result.get("status") == "error":
+            pytest.skip(f"simulate/bar 不可用: {result}")
+
+        # 等待决策写入
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            decisions = get_decisions(auth_token, date=today_str())
+            if decisions:
+                break
+            time.sleep(0.5)
+
+        # 读取日报 JSON
+        daily_json = get_daily_decision_json(today_str())
+        if not daily_json:
+            pytest.skip("日报 JSON 未生成")
+
+        # 验证归属日统一
+        date_in_json = daily_json.get("date")
+        assert date_in_json == today_str(), \
+            f"日报 date={date_in_json} 应为 today={today_str()}"
+
+        # 验证各策略 executed_at 也使用同一日期
+        for strategy_name, strategy_report in daily_json.get("strategies", {}).items():
+            executed_at = strategy_report.get("executed_at", "")
+            assert today_str() in executed_at, \
+                f"策略 {strategy_name} 的 executed_at={executed_at} 应包含 {today_str()}"

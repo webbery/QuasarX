@@ -159,6 +159,22 @@ NodeProcessResult PortfolioNode::Process(const String& strategy, DataContext& co
         targetCapital = context.getAvailableCapital() * _positionRatio;
     }
 
+    // 负预算 = 超额占用，今天没有可买入的资金。
+    // DataContext::getAvailableCapital() 现在会把负余额原样返回（不再被兜底值吞掉），
+    // 这里收敛成 0：负数继续流进 getSymbolCapital()/generatePlan() 只会得到
+    // "Quantity -500 too small" 这种读不懂的日志，而 0 预算本来就会让所有买单
+    // 走 quantity < 100 分支被丢弃 —— 行为一致，但信号清楚得多。
+    if (targetCapital < 0.0) {
+        if (_server->GetRunningMode() != RuningType::Backtest) {
+            STRATEGY_WARN(strategy, "Budget is negative ({}), over-committed; "
+                          "treating today's buy budget as 0", targetCapital);
+        } else {
+            WARN("[PortfolioNode] Budget is negative ({}), over-committed; "
+                 "treating today's buy budget as 0", targetCapital);
+        }
+        targetCapital = 0.0;
+    }
+
     // ── 新增：仓位 sizing 调整 ──
     applySizingWeights(context, decisions, targetCapital);
 

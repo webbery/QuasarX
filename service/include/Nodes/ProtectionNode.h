@@ -57,6 +57,13 @@ public:
 
     const Vector<ProtectionEvent>& GetProtectionEvents() const { return _events; }
 
+    // 按运行清空风控事件。
+    // 事件此前只 push_back 从不清空，于是每轮日终的「今日风控事件」区块
+    // 都在重放进程启动以来的全部历史事件。
+    // ProtectionNode 挂在长期存活的 flow._graph 上，跨运行复用同一实例，
+    // 所以清空必须由每轮运行的入口显式触发。
+    void ClearProtectionEvents() { _events.clear(); }
+
 private:
     struct Guard {
         bool enabled = false;

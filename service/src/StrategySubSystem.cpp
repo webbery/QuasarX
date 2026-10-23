@@ -686,28 +686,13 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
     // 末参 simDate：把日终重放窗口截止到推送当天（空 = 不截断，保持原有全窗口行为），
     // 否则每次推送都会重放整段固定历史、只对数据窗最后一根 bar 决策。
     _agentSystem->StartDaily(strategy, pools,
-        [this, strategy, dataDir, today](nlohmann::json decisions) {
-            INFO("[DailyExecution] Callback for '{}': status={}, keys={}",
-                 strategy, decisions.value("status", "unknown"),
-                 decisions.dump().size() > 200 ? decisions.dump().substr(0, 200) : decisions.dump());
+        [this, strategy, dataDir, today](const DecisionSet& set) {
+            INFO("[DailyExecution] Callback for '{}': status={}, {} items",
+                 strategy, to_string(set._status), set._items.size());
 
-            DailyDecisionJson::Report report;
-            report.strategy = strategy;
-            report.executed_at = ToString(Now(), "%Y-%m-%d %H:%M:%S");
-            report.status = decisions.value("status", "unknown");
-
-            // 解析决策
-            if (decisions.contains("decisions")) {
-                for (auto& d : decisions["decisions"]) {
-                    DailyDecisionJson::Decision decision;
-                    decision.symbol = d.value("symbol", "");
-                    decision.action = DailyDecisionJson::parseAction(d.value("action", "HOLD"));
-                    decision.quantity = d.value("quantity", 0);
-                    decision.target_price = d.value("price", 0.0);
-                    report.decisions.push_back(decision);
-                }
-            }
-
+            // 从 DecisionSet 生成日报：status、动作词、HOLD 档都来自同一份产物，
+            // 不再由调用方各自拼装（拼装正是 hold_count 与 status 走样的来源）。
+            auto report = DailyDecisionJson::Report::FromDecisionSet(set);
             DailyDecisionJson::saveReport(dataDir, today, report);
             INFO("[DailyExecution] Strategy {} completed: {} decisions saved",
                  strategy, report.decisions.size());
@@ -722,8 +707,8 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
 
             // 收集错误 + 检查是否全部完成，统一发送通知
             std::lock_guard<std::mutex> lock(_dailyMtx);
-            if (report.status == "error") {
-                String errMsg = strategy + ": " + decisions.value("error", "unknown error");
+            if (set._status == DecisionStatus::Error) {
+                String errMsg = strategy + ": " + set._error;
                 _dailyErrors.push_back(errMsg);
             }
 
@@ -801,24 +786,25 @@ void StrategySubSystem::recordDailyPositions(
         symbol_t sym = to_symbol(d.symbol);
 
         // 更新持仓
-        if (d.action == DailyDecisionJson::Action::BUY) {
+        if (d.action == TradeAction::BUY) {
             positions[sym] += d.quantity;
-        } else if (d.action == DailyDecisionJson::Action::SELL ||
-                   d.action == DailyDecisionJson::Action::CLOSE) {
+        } else if (d.action == TradeAction::SELL) {
             positions[sym] = 0;
         }
         // HOLD: 持仓不变，不写入 DailyPosition（避免被统计为交易）
 
         // 只有持仓变化时才写入 DuckDB 快照
-        if (d.action == DailyDecisionJson::Action::BUY ||
-            d.action == DailyDecisionJson::Action::SELL ||
-            d.action == DailyDecisionJson::Action::CLOSE) {
+        if (d.action == TradeAction::BUY || d.action == TradeAction::SELL) {
             DailyPositionRecord rec;
             rec.strategy = strategy;
             rec.symbol = sym;
             rec.date = date;
             rec.position = positions[sym];
-            rec.close_price = d.target_price;
+            // 写真实收盘价，不写计划目标价：
+            // 此前这里写的是 target_price（决策时定的价格），
+            // 下游 StrategyTradeHandler / StrategyRiskHandler 拿它当市价用，
+            // 整套风险指标和交易流水 API 建立在"计划目标价"之上。
+            rec.close_price = d.close_price > 0 ? d.close_price : d.target_price;
             DecisionDB::instance().insertDailyPosition(rec);
         }
     }

@@ -10,6 +10,7 @@
 #include "Nodes/DebugNode.h"
 #include "StrategyNode.h"
 #include "Util/log.h"
+#include "Util/DecisionSet.h"
 #include "server.h"
 #include "Util/system.h"
 #include "Util/QuoteDB.h"
@@ -1483,7 +1484,7 @@ bool FlowSubsystem::RunTrainingCollect(
 // ═══════════════════════════════════════════════════════════
 
 void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symbols,
-                                std::function<void(nlohmann::json)> onComplete,
+                                std::function<void(const DecisionSet&)> onComplete,
                                 const String& simDate) {
     // 异步执行，不阻塞调用线程；线程句柄保存到 flow，Stop/ClearFlow 时 join，
     // 避免线程执行期间 flow 内对象（ExecuteNode/ManualTiming）被并发释放导致悬空崩溃
@@ -1499,11 +1500,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
     if (!flow._running) {
         WARN("[StartDaily] Strategy '{}' stopped before StartDaily, skipping", strategy);
         if (onComplete) {
-            nlohmann::json errResult;
-            errResult["strategy"] = strategy;
-            errResult["status"] = "error";
-            errResult["error"] = "strategy stopped before StartDaily";
-            onComplete(std::move(errResult));
+            onComplete(DecisionSetBuilder::Error(strategy, simDate, "strategy stopped before StartDaily"));
         }
         return;
     }
@@ -1513,11 +1510,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
         if (!flow._running) {
             WARN("[StartDaily] Strategy '{}' stopped during lock, skipping", strategy);
             if (onComplete) {
-                nlohmann::json errResult;
-                errResult["strategy"] = strategy;
-                errResult["status"] = "error";
-                errResult["error"] = "strategy stopped during StartDaily lock";
-                onComplete(std::move(errResult));
+                onComplete(DecisionSetBuilder::Error(strategy, simDate, "strategy stopped during StartDaily lock"));
             }
             return;
         }
@@ -1525,35 +1518,29 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
         SetCurrentThreadName(("Daily_" + strategy).c_str());
         INFO("[StartDaily] === Started for strategy '{}', {} symbols ===", strategy, symbols.size());
 
-        nlohmann::json result;
-        result["strategy"] = strategy;
-        result["timestamp"] = ToString(Now(), "%Y-%m-%d %H:%M:%S");
-        result["decisions"] = nlohmann::json::array();
+        // 归属日：回放日优先（simDate），空则取今天。
+        // 这一个日期会随 DecisionSet 传到日报、附件目录、DuckDB，
+        // 各下游不再各自取系统时钟。
+        const String asOf = simDate.empty() ? ToString(Now(), "%Y-%m-%d") : simDate;
 
         auto it = _flows.find(strategy);
         if (it == _flows.end()) {
             WARN("[StartDaily] Strategy not found: {}", strategy);
-            result["status"] = "error";
-            result["error"] = "strategy not found";
-            if (onComplete) onComplete(result);
+            if (onComplete) onComplete(DecisionSetBuilder::Error(strategy, asOf, "strategy not found"));
             return;
         }
 
         auto& flow = it->second;
         if (flow._graph.empty()) {
             WARN("[StartDaily] Strategy graph is empty: {}", strategy);
-            result["status"] = "error";
-            result["error"] = "empty graph";
-            if (onComplete) onComplete(result);
+            if (onComplete) onComplete(DecisionSetBuilder::Error(strategy, asOf, "empty graph"));
             return;
         }
 
         // 获取 Exchange
         auto* exchangeMgr = _handle->GetExchangeManager();
         if (!exchangeMgr) {
-            result["status"] = "error";
-            result["error"] = "no exchange manager";
-            if (onComplete) onComplete(result);
+            if (onComplete) onComplete(DecisionSetBuilder::Error(strategy, asOf, "no exchange manager"));
             return;
         }
 
@@ -1578,11 +1565,9 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             runId = simExchange->createBacktestContext(strategy, symbols, 1000000.0);
             BacktestContext* btContext = simExchange->getBacktestContext(runId);
             if (!btContext) {
-                result["status"] = "error";
-                result["error"] = "failed to create context";
                 exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
                 exchangeMgr->StopRequiredExchanges(requiredSources);
-                if (onComplete) onComplete(result);
+                if (onComplete) onComplete(DecisionSetBuilder::Error(strategy, asOf, "failed to create context"));
                 return;
             }
             context.setBacktestRunId(runId);
@@ -1622,7 +1607,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                 }
 
                 if (success) {
-                    // 查找 ManualTiming 并发送决策摘要（与实盘路径对齐）
+                    // 查找 ManualTiming（决策由它累积，SignalNode 信号在 ExecuteNode 阶段已被 ConsumeSignals 消费）
                     ManualTiming* manualTiming = nullptr;
                     for (auto& node : flow._graph) {
                         if (auto* execNode = dynamic_cast<ExecuteNode*>(node)) {
@@ -1633,14 +1618,32 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         }
                     }
 
-                    // 决策由 ManualTiming 累积（SignalNode 信号在 ExecuteNode 阶段已被 ConsumeSignals 消费）
-                    nlohmann::json decisions = nlohmann::json::array();
+                    DecisionSet set;
                     if (manualTiming) {
-                        INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
-                        
-                        // 构建调试报告
-                        EodDebugSpec debugSpec;  // 使用默认配置
-                        Set<symbol_t> universe;  // 从 SignalNode 获取
+                        INFO("[StartDaily] ManualTiming found, building DecisionSet for {}", strategy);
+
+                        // 风控事件按本轮裁剪：ProtectionNode 挂在长期存活的 flow._graph 上，
+                        // 事件此前只 push_back 从不清空，跨运行累积。
+                        // 这里在取走本轮事件后显式清空，避免下一轮邮件里"今日风控事件"
+                        // 区块重放进程启动以来的全部历史。
+                        Vector<ProtectionNode::ProtectionEvent> riskEvents;
+                        for (auto* node : flow._graph) {
+                            if (auto* protNode = dynamic_cast<ProtectionNode*>(node)) {
+                                riskEvents = protNode->GetProtectionEvents();
+                                protNode->ClearProtectionEvents();
+                                break;
+                            }
+                        }
+
+                        // 预算快照：回测路径走 BacktestContext，没有 StrategyCapital 账本。
+                        // 标记 _budgetKnown=false，邮件据此降级而不是显示 ¥0。
+                        DecisionSetBuilder::BuildForBacktest(
+                            strategy, asOf, manualTiming->getDecisions(),
+                            std::move(riskEvents), set);
+
+                        // 构建调试报告 + 发送邮件/SSE
+                        EodDebugSpec debugSpec;
+                        Set<symbol_t> universe;
                         for (auto* node : flow._graph) {
                             if (auto* signalNode = dynamic_cast<SignalNode*>(node)) {
                                 universe = signalNode->GetPool();
@@ -1649,34 +1652,29 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         }
                         EodDebugReport debugReport = BuildEodDebugReport(
                             _handle, strategy, flow._graph, context, universe,
-                            manualTiming->getDecisions(), debugSpec);
+                            set, debugSpec);
 
-                        // 风控事件（ProtectionNode 产生）→ 邮件「今日风控事件」区块
-                        for (auto* node : flow._graph) {
-                            if (auto* protNode = dynamic_cast<ProtectionNode*>(node)) {
-                                manualTiming->SetRiskEvents(protNode->GetProtectionEvents());
-                                break;
-                            }
-                        }
-
-                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital, 0.0, &debugReport);
+                        manualTiming->SendSummaryEmail(set, &debugReport);
+                        manualTiming->ClearRun();
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
+                        set = DecisionSetBuilder::Error(strategy, asOf, "no ManualTiming node");
                     }
-                    result["decisions"] = decisions;
-                    result["status"] = "completed";
-                    result["epochs"] = epoch;
-                    INFO("[StartDaily] Strategy {} completed: {} epochs, {} decisions", strategy, epoch, decisions.size());
+                    INFO("[StartDaily] Strategy {} completed: {} epochs, {} decisions", strategy, epoch, set._items.size());
+                    if (onComplete) onComplete(set);
                 } else {
-                    result["status"] = "error";
-                    result["error"] = flow._lastError.empty() ? "graph execution failed" : flow._lastError.c_str();
+                    if (onComplete) {
+                        onComplete(DecisionSetBuilder::Error(strategy, asOf,
+                            flow._lastError.empty() ? "graph execution failed" : String(flow._lastError)));
+                    }
                 }
                 guard.dismiss();
                 NotifyNodesDone(strategy, flow._graph);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Exception: {}", e.what());
-                result["status"] = "error";
-                result["error"] = e.what();
+                if (onComplete) {
+                    onComplete(DecisionSetBuilder::Error(strategy, asOf, e.what()));
+                }
             }
             simExchange->destroyBacktestContext(runId);
 
@@ -1686,11 +1684,9 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             auto& quoteDB = QuoteDB::instance();
             if (!quoteDB.isInitialized()) {
                 WARN("[StartDaily] QuoteDB not initialized");
-                result["status"] = "error";
-                result["error"] = "QuoteDB not initialized";
                 exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
                 exchangeMgr->StopRequiredExchanges(requiredSources);
-                if (onComplete) onComplete(result);
+                if (onComplete) onComplete(DecisionSetBuilder::Error(strategy, asOf, "QuoteDB not initialized"));
                 return;
             }
 
@@ -1720,16 +1716,14 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
             if (maxBars == 0) {
                 WARN("[StartDaily] No historical data for any symbol in strategy {}", strategy);
-                result["status"] = "error";
                 String syms;
                 for (auto sym : symbolVec) {
                     if (!syms.empty()) syms += ", ";
                     syms += get_symbol(sym);
                 }
-                result["error"] = "no historical data in QuoteDB: " + syms;
                 exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
                 exchangeMgr->StopRequiredExchanges(requiredSources);
-                if (onComplete) onComplete(result);
+                if (onComplete) onComplete(DecisionSetBuilder::Error(strategy, asOf, "no historical data in QuoteDB: " + syms));
                 return;
             }
 
@@ -1740,7 +1734,10 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             // 导致 PortfolioNode 第二天仍按 ¥1,000,000 算仓位，忽略 Broker 真实剩余。
             // 修复：DataContext::getAvailableCapital 已优先读取 CapitalPool，此处覆写已无必要
             // 且会污染 _capital。保留 INFO 日志用于资金口径对账监控。
-            INFO("[StartDaily] flow._capital={}, getAvailableCapital={} (CapitalPool preferred over flow._capital)",
+            //
+            // 负余额也会照实打出来：2026-10-22 就是 CapitalPool.available = −318.84
+            // 被 `> 0` 判据吞掉、伪装成 0 预算，3 笔买单静默变成 qty=0。
+            INFO("[StartDaily] flow._capital={}, getAvailableCapital={} (CapitalPool authoritative, sign preserved)",
                  flow._capital, context.getAvailableCapital());
 
             // 持仓账本同步：把 Broker PortfolioSubSystem 的策略持仓灌入
@@ -1876,14 +1873,55 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         }
                     }
 
-                    // 成功 → 发送决策摘要邮件，返回决策数组（信号在 ExecuteNode 阶段已被 ConsumeSignals 消费）
-                    nlohmann::json decisions = nlohmann::json::array();
+                    // 成功 → 构建 DecisionSet，发送邮件/SSE
+                    DecisionSet set;
                     if (manualTiming) {
-                        INFO("[StartDaily] ManualTiming found, calling SendSummaryEmail for {}", strategy);
+                        INFO("[StartDaily] ManualTiming found, building DecisionSet for {}", strategy);
 
-                        // 构建调试报告
-                        EodDebugSpec debugSpec;  // 使用默认配置
-                        Set<symbol_t> universe;  // 从 SignalNode 获取
+                        // 风控事件按本轮裁剪：ProtectionNode 挂在长期存活的 flow._graph 上，
+                        // 事件此前只 push_back 从不清空，跨运行累积。
+                        // 这里在取走本轮事件后显式清空，避免下一轮邮件里"今日风控事件"
+                        // 区块重放进程启动以来的全部历史。
+                        Vector<ProtectionNode::ProtectionEvent> riskEvents;
+                        for (auto* node : flow._graph) {
+                            if (auto* protNode = dynamic_cast<ProtectionNode*>(node)) {
+                                riskEvents = protNode->GetProtectionEvents();
+                                protNode->ClearProtectionEvents();
+                                break;
+                            }
+                        }
+
+                        // 预算快照：实盘路径走 StrategyCapital 账本
+                        double allocated = 0.0, available = 0.0, equity = 0.0;
+                        bool budgetKnown = false;
+                        if (auto* broker = _handle->GetBrokerSubSystem()) {
+                            if (auto* capital = broker->GetStrategyCapital(strategy)) {
+                                allocated = capital->getAllocated();
+                                available = capital->getAvailable();
+                                equity = capital->getEquity();
+                                budgetKnown = true;
+                            }
+                        }
+
+                        // 收盘价：从 allBars 取最后一根 bar 的 close
+                        Map<symbol_t, double> closePrices;
+                        for (auto sym : symbols) {
+                            auto it = allBars.find(sym);
+                            if (it != allBars.end() && !it->second.empty()) {
+                                closePrices[sym] = it->second.back().close;
+                            }
+                        }
+
+                        set = BuildDecisionSet(
+                            strategy, asOf, fmt::format("live-{}", asOf),
+                            manualTiming->getDecisions(), std::move(riskEvents),
+                            allocated, available, equity, budgetKnown,
+                            portfolioValue, closePrices,
+                            DecisionStatus::Completed, "");
+
+                        // 构建调试报告 + 发送邮件/SSE
+                        EodDebugSpec debugSpec;
+                        Set<symbol_t> universe;
                         for (auto* node : flow._graph) {
                             if (auto* signalNode = dynamic_cast<SignalNode*>(node)) {
                                 universe = signalNode->GetPool();
@@ -1892,29 +1930,19 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         }
                         EodDebugReport debugReport = BuildEodDebugReport(
                             _handle, strategy, flow._graph, context, universe,
-                            manualTiming->getDecisions(), debugSpec);
+                            set, debugSpec);
 
-                        // 风控事件（ProtectionNode 产生）→ 邮件「今日风控事件」区块
-                        for (auto* node : flow._graph) {
-                            if (auto* protNode = dynamic_cast<ProtectionNode*>(node)) {
-                                manualTiming->SetRiskEvents(protNode->GetProtectionEvents());
-                                break;
-                            }
-                        }
-
-                        decisions = manualTiming->SendSummaryEmail(strategy, flow._capital, portfolioValue, &debugReport);
+                        manualTiming->SendSummaryEmail(set, &debugReport);
+                        manualTiming->ClearRun();
                     } else {
                         WARN("[StartDaily] No ManualTiming found for strategy {}", strategy);
+                        set = DecisionSetBuilder::Error(strategy, asOf, "no ManualTiming node");
                     }
-                    result["decisions"] = decisions;
-                    result["status"] = "completed";
-                    result["epochs"] = epoch;
                     INFO("[StartDaily] Live mode: {} completed {} epochs, {} decisions",
-                         strategy, epoch, decisions.size());
+                         strategy, epoch, set._items.size());
+                    if (onComplete) onComplete(set);
                 } else {
                     String errDetail = flow._lastError.empty() ? "graph execution failed" : String(flow._lastError);
-                    result["status"] = "error";
-                    result["error"] = errDetail.c_str();
                     // 失败 → 发送错误邮件
                     if (_handle) {
                         String body = "[日终策略执行失败]\n\n";
@@ -1922,13 +1950,14 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         body += "错误: " + errDetail + "\n";
                         _handle->SendEmail(body);
                     }
+                    if (onComplete) {
+                        onComplete(DecisionSetBuilder::Error(strategy, asOf, errDetail));
+                    }
                 }
                 guard.dismiss();
                 NotifyNodesDone(strategy, flow._graph);
             } catch (const std::exception& e) {
                 WARN("[StartDaily] Live mode exception: {}", e.what());
-                result["status"] = "error";
-                result["error"] = e.what();
                 // 异常 → 发送错误邮件
                 if (_handle) {
                     String body = "[日终策略执行异常]\n\n";
@@ -1936,15 +1965,15 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                     body += "异常: " + String(e.what()) + "\n";
                     _handle->SendEmail(body);
                 }
+                if (onComplete) {
+                    onComplete(DecisionSetBuilder::Error(strategy, asOf, e.what()));
+                }
             }
         }
 
         // 停止 Exchange
         exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
         exchangeMgr->StopRequiredExchanges(requiredSources);
-
-        // 回调通知
-        if (onComplete) onComplete(result);
     });
     } // _flowMtx scope
 }

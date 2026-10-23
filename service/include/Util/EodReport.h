@@ -37,13 +37,13 @@ struct EodDebugReport {
 
 /**
  * 构建日终策略报告
- * 
+ *
  * @param server Server 实例
  * @param strategy 策略名称
  * @param graph 策略图（flow._graph）
  * @param context 冻结在决策 bar 的 DataContext（非 const，因为 explain 求值可能修改）
  * @param universe 信号池（SignalNode::GetPool()）
- * @param decisions 决策快照（ManualTiming::getDecisions()）
+ * @param set 决策集合（决策、预算、风控事件的唯一来源）
  * @param spec 配置
  * @return EodDebugReport 报告结构
  */
@@ -52,5 +52,5 @@ EodDebugReport BuildEodDebugReport(Server* server,
                                    const List<QNode*>& graph,
                                    DataContext& context,
                                    const Set<symbol_t>& universe,
-                                   const Map<symbol_t, DecisionSnapshot>& decisions,
+                                   const DecisionSet& set,
                                    const EodDebugSpec& spec);

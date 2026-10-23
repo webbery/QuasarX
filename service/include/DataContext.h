@@ -26,6 +26,25 @@ enum class TradeAction: char {
     EXEC,
 };
 
+// TradeAction 的字符串形式。决策动作只有这一套词汇，
+// 日报 JSON / SSE / DuckDB 都从这里派生，不再各写各的。
+inline const char* toString(TradeAction a) {
+    switch (a) {
+        case TradeAction::BUY:  return "BUY";
+        case TradeAction::SELL: return "SELL";
+        case TradeAction::EXEC: return "EXEC";
+        case TradeAction::HOLD: break;
+    }
+    return "HOLD";
+}
+
+inline TradeAction parseTradeAction(const String& s) {
+    if (s == "BUY")  return TradeAction::BUY;
+    if (s == "SELL") return TradeAction::SELL;
+    if (s == "EXEC") return TradeAction::EXEC;
+    return TradeAction::HOLD;
+}
+
 enum class ExecuteType : char {
     ImmediatlyMarket,     // 立即执行(市价单)
     ImmediatlyLimit,      // 立即执行(限价单)

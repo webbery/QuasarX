@@ -167,9 +167,17 @@ double DataContext::getAvailableCapital() const
     // 优先从 Exchange 获取实际可用资金（回测模式下 BacktestContext/PositionManager 管理）
     const auto& exchangeMgr = *_server->GetExchangeManager();
     if (_server->GetRunningMode() == RuningType::Backtest) {
+        // 与下面的实盘分支同一口径：只要 Exchange 给出了资金数（无论正负），
+        // 它就是答案，不再用 `> 0` 过滤后回退到 _capital。
+        // HistorySimulationBase::GetAvailableFunds 对"无该 run 的 context"返回 0.0，
+        // 那是"没有数据"而不是"没有钱"，所以 0 仍走 fallback；负值则是真实的超额占用。
         for (auto* exchange : exchangeMgr.GetActiveExchanges()) {
             double funds = exchange->GetAvailableFunds(_backtestRunId);
-            if (funds > 0) {
+            if (funds != 0.0) {
+                if (funds < 0.0) {
+                    WARN("[Capital] backtest strategy '{}' available={} is negative "
+                         "(over-committed); reporting as-is", _strategy, funds);
+                }
                 return funds;
             }
         }
@@ -177,17 +185,27 @@ double DataContext::getAvailableCapital() const
         return _capital;
     }
 
-    // 日终/实盘模式：优先从 Broker 的 CapitalPool 读取"策略实际剩余可用资金"。
+    // 日终/实盘模式：Broker 侧账本是唯一权威口径。
     // 历史口径：日终下 _capital 是策略配置初始值（flow._capital），永不被成交扣减，
     // PortfolioNode 因此按 ¥1,000,000 均分仓位，与 Broker 真实剩余（如 ¥337,637）脱钩。
     // ManualTiming 邮件已正确显示 CapitalPool 可用资金，此处对齐同一口径。
+    //
+    // 2026-10-22 事故：CapitalPool.available 沉淀为 −318.84，被下面的 `> 0` 判据吞掉，
+    // 继续回退到 _capital = 0，于是 generatePlan() 用 0 定量，3 笔买单全部落成 qty=0
+    // 被 `quantity < 100` 静默丢弃，当日可卖的 ¥992,861 完全没参与买入预算。
+    //
+    // 修法：一旦池里注册了这个策略，池的返回值就是最终答案，不再看正负。
+    // 负余额原样冒出来（负的可用资金 = 超额占用），兜底值不能来掩盖它。
     if (auto* broker = _server->GetBrokerSubSystem()) {
         if (auto* pool = broker->GetCapitalPool()) {
             if (pool->hasStrategy(_strategy)) {
                 double poolAvail = pool->getAvailable(_strategy);
-                if (poolAvail > 0) {
-                    return poolAvail;
+                if (poolAvail < 0.0) {
+                    WARN("[Capital] strategy '{}' available={} is negative (over-committed); "
+                         "reporting as-is so callers see the shortfall instead of a fallback",
+                         _strategy, poolAvail);
                 }
+                return poolAvail;
             }
         }
     }

@@ -3,21 +3,10 @@
 #include "json.hpp"
 #include "RiskContext.h"
 #include "Nodes/ProtectionNode.h"
+#include "Util/DecisionSet.h"
 
 class Server;
-enum class TradeAction: char;
 struct EodDebugReport;
-
-// 决策快照（ManualTiming 内部使用）
-struct DecisionSnapshot {
-    symbol_t _symbol;
-    TradeAction _action;
-    int64_t _quantity = 0;
-    double _price = 0.0;
-    int _flag = 0;
-    int _epoch = -1;
-    bool _signalEvaluated = false;  // true=SignalNode 评估产生的；false=ExecuteNode 默认补 HOLD
-};
 
 /**
  * 决策型 Timing（ManualTiming）
@@ -31,18 +20,25 @@ public:
     virtual bool processSignal(const String& strategy, const TradeSignal& signal,
                                const DataContext& context) override;
 
-    // 发送汇总邮件（含 SSE），返回非 HOLD 决策数组（action=BUY/SELL，兼容 DailyDecisionJson::parseAction），清空累积器
-    // strategyCapital: 从 flow._capital 传入，当 CapitalPool 未注册时作为 fallback 显示资金占比
-    // portfolioValue: 今日组合市值（broker 持仓 × 最新收盘价），0 表示不展示
+    // 发送汇总邮件（含 SSE），清空累积器
+    // 所有内容都从 DecisionSet 读：决策、资金、风控事件、组合市值都不再各自去摸
+    // ManualTiming / StrategyCapital / ProtectionNode 的内部状态。
     // debugReport: 可选的调试报告（含附件、HTML 片段），非空时附加到邮件
-    nlohmann::json SendSummaryEmail(const String& strategy, double strategyCapital = 0.0,
-                                    double portfolioValue = 0.0,
-                                    const EodDebugReport* debugReport = nullptr);
+    void SendSummaryEmail(const DecisionSet& set,
+                          const EodDebugReport* debugReport = nullptr);
 
-    // 访问当前累积的决策（SendSummaryEmail 调用前可用）
+    // 仅推送 SSE（DecisionSet 驱动），供不需要邮件的场景使用
+    void PushDecisionSse(const DecisionSet& set, const Map<symbol_t, int>& decisionIds);
+
+    // 访问当前累积的决策（构建 DecisionSet 时用）
     const Map<symbol_t, DecisionSnapshot>& getDecisions() const { return _decisions; }
 
-    // 风控事件（由 ProtectionNode 产生，日终邮件「今日风控事件」区块用）
+    // 清空本轮累积器（DecisionSet 消费完毕后调用）
+    // 单独提供而不是在 SendSummaryEmail 末尾隐式清空：失败路径同样需要清，
+    // 否则上一天的决策会漏进下一轮（10-22 那类"静默丢弃"的同源问题）。
+    void ClearRun();
+
+    // 风控事件（由 ProtectionNode 产生，构建 DecisionSet 时用）
     // 价格口径：原始价，与决策表里的成交价同口径
     void SetRiskEvents(const Vector<ProtectionNode::ProtectionEvent>& events) { _riskEvents = events; }
     const Vector<ProtectionNode::ProtectionEvent>& GetRiskEvents() const { return _riskEvents; }

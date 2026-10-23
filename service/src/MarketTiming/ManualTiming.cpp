@@ -42,57 +42,17 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
     return true;
 }
 
-nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double strategyCapital,
-                                              double portfolioValue,
-                                              const EodDebugReport* debugReport) {
-    INFO("[Manual] SendSummaryEmail called for strategy {}, decisions count: {}", strategy, _decisions.size());
+void ManualTiming::ClearRun() {
+    _decisions.clear();
+    _riskEvents.clear();
+}
 
-    auto* broker = _server->GetBrokerSubSystem();
-
-    // 构建 SSE 消息 + 写入 BrokerSubSystem 决策存储
+void ManualTiming::PushDecisionSse(const DecisionSet& set, const Map<symbol_t, int>& decisionIds) {
     nlohmann::json ssePayload;
-    ssePayload["strategy"] = strategy;
-    ssePayload["decisions"] = nlohmann::json::array();
-
-    // 返回给调用方的决策数组（供日终 report / 持仓快照使用，action 兼容 DailyDecisionJson::parseAction）
-    nlohmann::json decisionsResult = nlohmann::json::array();
-
-    // 分类统计（HOLD 区分"评估产生"与"默认补"）
-    Vector<const DecisionSnapshot*> buys, sells, holds, evalHolds, defaultHolds;
-    for (const auto& [sym, d] : _decisions) {
-        if (d._action == TradeAction::BUY) buys.push_back(&d);
-        else if (d._action == TradeAction::SELL) sells.push_back(&d);
-        else {
-            holds.push_back(&d);
-            if (d._signalEvaluated) evalHolds.push_back(&d);
-            else defaultHolds.push_back(&d);
-        }
-
-        // 写入决策存储（内存 + DuckDB）—— 仅 BUY/SELL
-        if (d._action != TradeAction::HOLD) {
-            DecisionAction da = to_decision_action(d._action, static_cast<unsigned char>(d._flag));
-            int decisionId = broker->AddDecision(strategy, d._symbol, da,
-                                                 d._quantity, d._price, d._epoch);
-
-            nlohmann::json decision;
-            decision["id"] = decisionId;
-            decision["symbol"] = get_symbol(d._symbol);
-            decision["action"] = decision_action_name(da);
-            decision["label"] = decision_action_label(da);
-            decision["quantity"] = d._quantity;
-            decision["price"] = d._price;
-            decision["epoch"] = d._epoch;
-            ssePayload["decisions"].push_back(decision);
-
-            nlohmann::json reportDecision;
-            reportDecision["symbol"] = get_symbol(d._symbol);
-            reportDecision["action"] = (d._action == TradeAction::BUY) ? "BUY" : "SELL";
-            reportDecision["quantity"] = d._quantity;
-            reportDecision["price"] = d._price;
-            reportDecision["flag"] = d._flag;
-            decisionsResult.push_back(reportDecision);
-        }
-    }
+    ssePayload["strategy"] = set._strategy;
+    ssePayload["as_of"] = set._asOf;
+    ssePayload["run_id"] = set._runId;
+    ssePayload["decisions"] = buildSseDecisions(set, decisionIds);
 
     Map<String, String> sseData;
     sseData["payload"] = ssePayload.dump();
@@ -100,6 +60,35 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     auto sock = Server::GetSocket();
     auto msg = format_sse("manual_decision", sseData);
     nng_send(sock, msg.data(), msg.size(), NNG_FLAG_NONBLOCK);
+}
+
+void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport* debugReport) {
+    INFO("[Manual] SendSummaryEmail for strategy {} as_of={}, {} items",
+         set._strategy, set._asOf, set._items.size());
+
+    // 决策入库（内存 + DuckDB），并回填决策 id 供 SSE 引用。
+    // 只有 BUY/SELL 落库：HOLD 不是一笔决策，decisions 表的语义是"待执行指令"。
+    Map<symbol_t, int> decisionIds;
+    if (auto* broker = _server->GetBrokerSubSystem()) {
+        for (const auto& d : set._items) {
+            DecisionAction da;
+            if (!d.decisionAction(da)) continue;   // HOLD / EXEC
+            decisionIds[d._symbol] = broker->AddDecision(set._strategy, d._symbol, da,
+                                                         d._quantity, d._price, d._epoch);
+        }
+    }
+
+    // SSE：动作码与入库用的是同一份派生逻辑
+    PushDecisionSse(set, decisionIds);
+
+    auto buys   = set.ofAction(TradeAction::BUY);
+    auto sells  = set.ofAction(TradeAction::SELL);
+    auto holds  = set.ofAction(TradeAction::HOLD);
+
+    Vector<const DecisionSet::Item*> evalHolds, defaultHolds;
+    for (const auto* d : holds) {
+        (d->_isDefaultHold ? defaultHolds : evalHolds).push_back(d);
+    }
 
     // ==== 计算决策金额 + 资金信息 ====
     // 组内总金额（同 action 求和）
@@ -109,14 +98,12 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     for (auto* d : sells) totalSellValue += d->_quantity * d->_price;
     double netValue = totalBuyValue - totalSellValue;
 
-    // 策略分配资金（C2 重构：使用 StrategyCapital）
-    double strategyCap = 0.0;
-    double strategyAvailable = 0.0;
-    auto* capital = _server->GetBrokerSubSystem()->GetStrategyCapital(strategy);
-    if (capital) {
-        strategyCap = capital->getAllocated();
-        strategyAvailable = capital->getAvailable();
-    }
+    // 资金口径全部来自 DecisionSet，邮件不再自己去 broker 摸 StrategyCapital。
+    // _budgetKnown=false 表示账本缺失：此时降级（不显示资金行、不算占比），
+    // 而不是显示 ¥0 让读者以为"钱花光了"。
+    const double strategyCap = set._allocated;
+    const double strategyAvailable = set._available;
+    const bool budgetKnown = set._budgetKnown;
 
     // 单决策值格式化辅助
     auto fmtMoney = [](double v) {
@@ -124,8 +111,9 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     };
 
     // ==== 构建 HTML 邮件 ====
-    auto now = Now();
-    String dateStr = ToString(now, "%Y-%m-%d %H:%M");
+    // 日期用 DecisionSet 的归属日（回放口径），不用 wall clock：
+    // 补跑历史日期时邮件正文与落盘/DB 必须说的是同一天。
+    String dateStr = set._asOf.empty() ? String("") : set._asOf;
 
     String html;
     html += R"h(<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>)h";
@@ -133,7 +121,7 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
 
     // ── 表头 ──
     html += R"h(<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:20px 24px;border-radius:12px 12px 0 0;">)h";
-    html += fmt::format(R"h(<h2 style="margin:0 0 6px;font-size:18px;">📊 {}</h2>)h", strategy);
+    html += fmt::format(R"h(<h2 style="margin:0 0 6px;font-size:18px;">📊 {}</h2>)h", set._strategy);
     html += fmt::format(R"h(<div style="font-size:13px;color:#94a3b8;">{} · 日终决策报告</div>)h", dateStr);
     html += R"h(<div style="display:flex;gap:8px;margin-top:12px;">)h";
     html += fmt::format(R"h(<span style="background:rgba(34,197,94,.15);color:#22c55e;padding:4px 12px;border-radius:20px;font-size:13px;">● BUY {}</span>)h", buys.size());
@@ -165,30 +153,35 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
         html += "</div>";
     };
 
-    if (strategyCap > 0.0) {
+    // 预算可信且为正才展示资金行与占比。账本缺失（budgetKnown=false）时整体降级，
+    // 不显示 ¥0 —— 那会让读者以为钱被花光了，而事实是"查不到"。
+    const bool showBudget = budgetKnown && strategyCap > 0.0;
+    if (showBudget) {
         htmlItem("分配资金", "¥" + fmtMoney(strategyCap));
         htmlItem("可用资金", "¥" + fmtMoney(strategyAvailable));
+    } else if (!budgetKnown) {
+        htmlItem("资金账本", "未注册（无法核对预算）", true);
     }
-    auto buyPct = strategyCap > 0.0 ? fmt::format(" ({:.1f}%)", totalBuyValue / strategyCap * 100.0) : "";
-    auto sellPct = strategyCap > 0.0 ? fmt::format(" ({:.1f}%)", totalSellValue / strategyCap * 100.0) : "";
+    auto buyPct = showBudget ? fmt::format(" ({:.1f}%)", totalBuyValue / strategyCap * 100.0) : "";
+    auto sellPct = showBudget ? fmt::format(" ({:.1f}%)", totalSellValue / strategyCap * 100.0) : "";
     htmlItem("买入总额", "¥" + fmtMoney(totalBuyValue) + buyPct);
     htmlItem("卖出总额", "¥" + fmtMoney(totalSellValue) + sellPct);
 
     auto netSign = netValue >= 0 ? "+" : "-";
     auto netColor = netValue >= 0 ? "#22c55e" : "#ef4444";
-    auto netPct = strategyCap > 0.0 ? fmt::format(" ({:+.1f}%)", netValue / strategyCap * 100.0) : "";
+    auto netPct = showBudget ? fmt::format(" ({:+.1f}%)", netValue / strategyCap * 100.0) : "";
     html += fmt::format(R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;grid-column:1/-1;">)h");
     html += fmt::format(R"h(<span style="font-size:12px;color:#64748b;">净买入</span>)h");
     html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;color:{};">{}¥{}{}</span>)h", netColor, netSign, fmtMoney(std::abs(netValue)), netPct);
     html += "</div></div>";
 
     // ── 组合市值 ──
-    if (portfolioValue > 0.0) {
-        auto portPct = strategyCap > 0.0 ? fmt::format(" ({:.1f}% of capital)", portfolioValue / strategyCap * 100.0) : "";
+    if (set._portfolioValue > 0.0) {
+        auto portPct = showBudget ? fmt::format(" ({:.1f}% of capital)", set._portfolioValue / strategyCap * 100.0) : "";
         html += R"h(<div style="margin-top:12px;padding:12px 16px;background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border-radius:8px;border:1px solid #bae6fd;display:flex;justify-content:space-between;align-items:center;">)h";
-        html += R"h(<span style="font-size:13px;color:#0369a1;font-weight:500;">📈 组合总市值</span>)h";
+        html += R"h(<span style="font-size:13px;font-weight:500;color:#0369a1;">📈 组合总市值</span>)h";
         html += fmt::format(R"h(<div><span style="font-size:18px;font-weight:700;color:#0c4a6e;">¥{}</span><span style="font-size:12px;color:#0284c7;margin-left:6px;">{}</span></div>)h",
-                            fmtMoney(portfolioValue), portPct);
+                            fmtMoney(set._portfolioValue), portPct);
         html += "</div>";
     }
     html += "</div>";
@@ -219,7 +212,7 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
             return R"h(<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:#f1f5f9;color:#94a3b8;">HOLD</span>)h";
         };
 
-        auto emitHtmlRow = [&](const String& action, const DecisionSnapshot* d, double groupTotal, const String& holdTag = "") {
+        auto emitHtmlRow = [&](const String& action, const DecisionSet::Item* d, double groupTotal, const String& holdTag = "") {
             double val = d->_quantity * d->_price;
             double grpPct = (groupTotal > 0.0) ? (val / groupTotal * 100.0) : 0.0;
             bool isHold = !holdTag.empty();
@@ -255,11 +248,12 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     html += "</div>";
 
     // ── 风控事件（由 ProtectionNode 触发，价格为原始价） ──
-    if (!_riskEvents.empty()) {
+    // 事件来自 DecisionSet：装配时已按本轮裁剪，不会把历史事件当"今日"重复列出。
+    if (!set._riskEvents.empty()) {
         html += R"h(<div style="padding:16px 24px;">)h";
         html += R"h(<div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">今日风控事件</div>)h";
 
-        for (const auto& event : _riskEvents) {
+        for (const auto& event : set._riskEvents) {
             String triggerStr = to_string(event._type);
             html += fmt::format(R"h(<div style="padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:8px;">)h");
             html += fmt::format(R"h(<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">)h");
@@ -298,8 +292,8 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     // ── 发送邮件（带附件） ──
     if (debugReport && !debugReport->attachments.empty()) {
         String subject = fmt::format("[QuasarX] {} 日终决策 {} · BUY{}/SELL{}",
-                                     strategy,
-                                     ToString(Now(), "%Y-%m-%d"),
+                                     set._strategy,
+                                     set._asOf.empty() ? ToString(Now(), "%Y-%m-%d") : set._asOf,
                                      buys.size(), sells.size());
         _server->SendMailWithAttachments(html, true, debugReport->attachments, subject);
     } else {
@@ -307,12 +301,6 @@ nlohmann::json ManualTiming::SendSummaryEmail(const String& strategy, double str
     }
 
     INFO("[Manual] Sent summary notification for strategy {} (BUY={}, SELL={}, HOLD={} [eval={}, default={}], risk_events={})",
-         strategy, buys.size(), sells.size(), holds.size(),
-         evalHolds.size(), defaultHolds.size(), _riskEvents.size());
-
-    // 清空累积器
-    _decisions.clear();
-    _riskEvents.clear();
-
-    return decisionsResult;
+         set._strategy, buys.size(), sells.size(), holds.size(),
+         evalHolds.size(), defaultHolds.size(), set._riskEvents.size());
 }
