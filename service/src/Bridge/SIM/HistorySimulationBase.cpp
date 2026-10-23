@@ -19,6 +19,7 @@
 #include <fstream>
 #include <memory_resource>
 #include <numeric>
+#include <shared_mutex>
 #include <thread>
 #include <utility>
 #include "yas/detail/type_traits/flags.hpp"
@@ -54,6 +55,10 @@ void HistorySimulationBase::SetFilter(const QuoteFilter& filter) {
 }
 
 bool HistorySimulationBase::Login(AccountType t) {
+    // 重载会清空并重建 _csvs/_org_csvs，必须与 stepForward 的共享读互斥：
+    // 日终回放现在每次都会 forceReload，两个策略并发时另一个可能正在读缓存，
+    // 不互斥就会读到半清空的 map。
+    std::unique_lock<std::shared_mutex> dataLock(_dataMutex);
     _finish = false;
     Clear();
 
@@ -331,10 +336,13 @@ run_id_t HistorySimulationBase::createBacktestContext(
     const Set<symbol_t>& symbols,
     double initial_capital,
     const String& load_start_date,
-    const String& load_end_date)
+    const String& load_end_date,
+    bool forceReload)
 {
-    // 确保数据已加载：首次加载 或 请求的 symbols 与已加载不一致时重新加载
-    bool needReload = !_dataLoadSuccess;
+    // 确保数据已加载：首次加载 或 请求的 symbols 与已加载不一致时重新加载。
+    // forceReload 用于日终回放：DB 才是事实来源，缓存里的最后一天可能已经过期
+    // （simulate/bar 写入新 bar 后没有失效缓存），不重载就会把整轮回放跑在旧窗口上。
+    bool needReload = forceReload || !_dataLoadSuccess;
     if (!needReload) {
         for (auto symbol : symbols) {
             auto itr = _csvs.find(symbol);

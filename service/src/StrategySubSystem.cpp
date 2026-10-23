@@ -685,6 +685,9 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
     // 异步执行，回调中保存决策。
     // 末参 simDate：把日终重放窗口截止到推送当天（空 = 不截断，保持原有全窗口行为），
     // 否则每次推送都会重放整段固定历史、只对数据窗最后一根 bar 决策。
+    // forceReload=true：日终回放必须重读 DB。行情缓存只在首次 Login 填充，
+    // 不重载就会一直跑在旧窗口上——新推送的 bar 进不了回放，daily_positions
+    // 写的还是历史日期，绩效接口按当天查自然是空的。
     _agentSystem->StartDaily(strategy, pools,
         [this, strategy, dataDir, today](const DecisionSet& set) {
             INFO("[DailyExecution] Callback for '{}': status={}, {} items",
@@ -699,7 +702,7 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
 
             // 记录持仓快照到 DuckDB
             time_t todayTs = FromStr(today, "%Y-%m-%d");
-            recordDailyPositions(strategy, report.decisions, todayTs);
+            recordDailyPositions(strategy, set, todayTs);
 
             // 日终执行不再回收资金：该策略的 CapitalPool 注册归 InitStrategy 所有（长生命周期），
             // 回收会注销其注册导致后续 updateAvailable 静默失效、资金永远扣不下来。
@@ -721,7 +724,7 @@ void StrategySubSystem::ExecuteDailyStrategy(const String& strategy, const Strin
                 if (_handle) _handle->SendEmail(body);
                 _dailyErrors.clear();
             }
-        }, simDate);
+        }, simDate, /*forceReload=*/true);
 }
 
 void StrategySubSystem::ForceExecuteAllDaily() {
@@ -777,38 +780,70 @@ nlohmann::json StrategySubSystem::GetDailyStatus() const {
 
 void StrategySubSystem::recordDailyPositions(
     const String& strategy,
-    const std::vector<DailyDecisionJson::Decision>& decisions,
+    const DecisionSet& set,
     time_t date) {
 
-    auto& positions = _strategyPositions[strategy];
+    int written = 0;
 
-    for (const auto& d : decisions) {
-        symbol_t sym = to_symbol(d.symbol);
-
-        // 更新持仓
-        if (d.action == TradeAction::BUY) {
-            positions[sym] += d.quantity;
-        } else if (d.action == TradeAction::SELL) {
-            positions[sym] = 0;
-        }
-        // HOLD: 持仓不变，不写入 DailyPosition（避免被统计为交易）
-
-        // 只有持仓变化时才写入 DuckDB 快照
-        if (d.action == TradeAction::BUY || d.action == TradeAction::SELL) {
+    if (!set._positionSnapshots.empty()) {
+        // 逐 bar 快照：daily_positions 要的是连续的持仓序列。
+        // 之前只按最终决策写一条，HOLD 日直接断档，
+        // 绩效接口既拿不到数据、也凑不满"至少两个交易日"。
+        for (const auto& snap : set._positionSnapshots) {
+            if (snap._position <= 0) continue;   // 空仓日不落快照：组合市值 0 会污染净值序列
+            if (snap._closePrice <= 0) continue; // 收盘价缺失的行同样会污染序列
             DailyPositionRecord rec;
             rec.strategy = strategy;
-            rec.symbol = sym;
-            rec.date = date;
-            rec.position = positions[sym];
-            // 写真实收盘价，不写计划目标价：
-            // 此前这里写的是 target_price（决策时定的价格），
-            // 下游 StrategyTradeHandler / StrategyRiskHandler 拿它当市价用，
-            // 整套风险指标和交易流水 API 建立在"计划目标价"之上。
-            rec.close_price = d.close_price > 0 ? d.close_price : d.target_price;
+            rec.symbol = snap._symbol;
+            rec.date = snap._date;
+            rec.position = snap._position;
+            rec.close_price = snap._closePrice;
             DecisionDB::instance().insertDailyPosition(rec);
+            ++written;
+        }
+    } else {
+        // 回退：没有快照序列时按最终决策写一条（保持旧行为）
+        auto& positions = _strategyPositions[strategy];
+        for (const auto& it : set._items) {
+            symbol_t sym = it._symbol;
+
+            if (it._action == TradeAction::BUY) {
+                // PortfolioNode 产出的 quantity 是目标持仓（绝对量），不是增量
+                positions[sym] = it._quantity;
+            } else if (it._action == TradeAction::SELL) {
+                positions[sym] = 0;
+            }
+            // HOLD: 持仓不变，不写入 DailyPosition（避免被统计为交易）
+
+            // 只有持仓变化时才写入 DuckDB 快照
+            if (it._action == TradeAction::BUY || it._action == TradeAction::SELL) {
+                DailyPositionRecord rec;
+                rec.strategy = strategy;
+                rec.symbol = sym;
+                rec.date = date;
+                rec.position = positions[sym];
+                // 写真实收盘价，不写计划目标价：
+                // 此前这里写的是 target_price（决策时定的价格），
+                // 下游 StrategyTradeHandler / StrategyRiskHandler 拿它当市价用，
+                // 整套风险指标和交易流水 API 建立在"计划目标价"之上。
+                rec.close_price = it._closePrice > 0 ? it._closePrice : it._price;
+                DecisionDB::instance().insertDailyPosition(rec);
+                ++written;
+            }
         }
     }
 
-    INFO("[DailyExecution] Recorded {} position(s) for strategy '{}' on {}",
-         decisions.size(), strategy, ToString(date, "%Y-%m-%d"));
+    // 落库日期来自每根 bar（snap._date），不是 date 参数（归属日）。
+    // 两者只在回放窗口正确时一致；不一致就说明回放跑的是旧数据，
+    // 日志必须把真实日期范围打出来，否则"日志说今天、库里写历史"会把问题藏住。
+    time_t minDate = 0, maxDate = 0;
+    for (const auto& snap : set._positionSnapshots) {
+        if (snap._position <= 0 || snap._closePrice <= 0) continue;
+        if (minDate == 0 || snap._date < minDate) minDate = snap._date;
+        if (snap._date > maxDate) maxDate = snap._date;
+    }
+    INFO("[DailyExecution] Recorded {} position snapshot(s) for strategy '{}' on {} (bar dates {} .. {})",
+         written, strategy, ToString(date, "%Y-%m-%d"),
+         minDate ? ToString(minDate, "%Y-%m-%d") : String("-"),
+         maxDate ? ToString(maxDate, "%Y-%m-%d") : String("-"));
 }

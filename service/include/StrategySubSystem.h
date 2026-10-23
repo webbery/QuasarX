@@ -166,8 +166,10 @@ private:
     // 执行单个日级策略并保存决策
     void ExecuteDailyStrategy(const String& strategy, const String& simDate = "");
 
+    // 落库日终持仓快照（daily_positions）
+    // 优先用 set 里的逐 bar 快照序列；没有序列时回退到按最终决策写一条
     void recordDailyPositions(const String& strategy,
-        const std::vector<DailyDecisionJson::Decision>& decisions,
+        const DecisionSet& set,
         time_t date);
 
 private:

@@ -1485,7 +1485,8 @@ bool FlowSubsystem::RunTrainingCollect(
 
 void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symbols,
                                 std::function<void(const DecisionSet&)> onComplete,
-                                const String& simDate) {
+                                const String& simDate,
+                                bool forceReload) {
     // 异步执行，不阻塞调用线程；线程句柄保存到 flow，Stop/ClearFlow 时 join，
     // 避免线程执行期间 flow 内对象（ExecuteNode/ManualTiming）被并发释放导致悬空崩溃
     auto it = _flows.find(strategy);
@@ -1514,7 +1515,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
             }
             return;
         }
-        flow._dailyWorker = std::make_unique<std::thread>([this, strategy, symbols, simDate, onComplete = std::move(onComplete)]() {
+        flow._dailyWorker = std::make_unique<std::thread>([this, strategy, symbols, simDate, forceReload, onComplete = std::move(onComplete)]() {
         SetCurrentThreadName(("Daily_" + strategy).c_str());
         INFO("[StartDaily] === Started for strategy '{}', {} symbols ===", strategy, symbols.size());
 
@@ -1562,7 +1563,8 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
         if (useSimulation) {
             // ── 回测路径：simulation exchange + BacktestContext ──
-            runId = simExchange->createBacktestContext(strategy, symbols, 1000000.0);
+            runId = simExchange->createBacktestContext(strategy, symbols, 1000000.0,
+                                                       String(), String(), forceReload);
             BacktestContext* btContext = simExchange->getBacktestContext(runId);
             if (!btContext) {
                 exchangeMgr->UnsubscribeSymbols(strategy, requiredSources);
@@ -1639,7 +1641,8 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         // 标记 _budgetKnown=false，邮件据此降级而不是显示 ¥0。
                         DecisionSetBuilder::BuildForBacktest(
                             strategy, asOf, manualTiming->getDecisions(),
-                            std::move(riskEvents), set);
+                            std::move(riskEvents), set,
+                            manualTiming->getPositionSnapshots());
 
                         // 构建调试报告 + 发送邮件/SSE
                         EodDebugSpec debugSpec;

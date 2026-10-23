@@ -182,8 +182,10 @@ const nlohmann::json& ServerConfig::GetBrokerByName(const std::string& name) con
 }
 
 std::string ServerConfig::GetWarningAddr() {
-    std::string email = _config["server"]["notice"]["email"];
-    return email;
+    auto obj = _config["server"]["notice"]["email"];
+    if (obj.empty() || obj.is_null())
+        return "";
+    return obj;
 }
 
 std::pair<char, char> ServerConfig::GetDailyTime() {

@@ -226,6 +226,10 @@ public:
     bool MarkDecisionClosed(int id);
     // 清除指定日期的决策记录（内存 + DuckDB），返回删除行数
     int ClearDecisions(const String& date);
+    // 清除某策略的内存决策缓存（DuckDB 侧由 DecisionDB::deleteByStrategy 负责）
+    // 策略被删除时必须调用，否则 _todayDecisions 里的残留会通过兜底查询
+    // 重新暴露给 GET /trade/decisions，随后 PUT 关闭时报 404
+    int PurgeStrategyDecisions(const String& strategy);
     // 回测直接模拟成交（取 QuoteDB 最新 close）
     TradeReport SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side);
 

@@ -142,6 +142,17 @@ struct DecisionSet {
     // ── 随这组决策一并产出的风控事件 ──
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;
 
+    // ── 持仓快照序列（日终重放期间逐 bar 记录）──
+    // daily_positions 的数据源：每个决策 bar 一条，构成连续的持仓/净值序列。
+    // 之前只按最终决策写一条，HOLD 日直接断档，绩效接口拿不到 >= 2 个交易日的序列。
+    struct PositionSnapshot {
+        symbol_t _symbol;
+        time_t   _date = 0;        // 交易日（当日 0 点）
+        int64_t  _position = 0;    // 当日收盘时的持仓数量
+        double   _closePrice = 0;  // 当日收盘价（原始价口径，与成交价同口径）
+    };
+    Vector<PositionSnapshot> _positionSnapshots;
+
     // ── 组合估值（持仓 × 收盘价）──
     double _portfolioValue = 0.0;
 
@@ -192,7 +203,8 @@ struct DecisionSetBuilder {
         const String& asOf,
         const Map<symbol_t, DecisionSnapshot>& decisions,
         Vector<ProtectionNode::ProtectionEvent> riskEvents,
-        DecisionSet& out)
+        DecisionSet& out,
+        const Vector<DecisionSet::PositionSnapshot>& positionSnapshots = {})
     {
         out._strategy = strategy;
         out._asOf = asOf;
@@ -224,6 +236,7 @@ struct DecisionSetBuilder {
 
         out._riskEvents = std::move(riskEvents);
         out._portfolioValue = 0.0;
+        out._positionSnapshots = positionSnapshots;
     }
 };
 

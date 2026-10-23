@@ -539,26 +539,28 @@ class TestStrategyPerformance:
             bar["low"] = min(bar["open"], bar["low"])
 
         # Day 1
-        bar1 = dict(bar, datetime="2025-01-15 00:00:00")
+        day1_date = "2025-01-15"
+        bar1 = dict(bar, datetime=f"{day1_date} 00:00:00")
         result = simulate_bar(auth_token, bar1)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
 
         deadline = time.time() + 10
         while time.time() < deadline:
-            if get_decisions(auth_token, date=today_str()):
+            if get_decisions(auth_token, date=day1_date):
                 break
             time.sleep(0.5)
 
         # Day 2（不同日期 → 不同 daily_positions 记录）
-        bar2 = dict(bar, datetime="2025-01-16 00:00:00")
+        day2_date = "2025-01-16"
+        bar2 = dict(bar, datetime=f"{day2_date} 00:00:00")
         simulate_bar(auth_token, bar2)
 
         # 等待 Day 2 执行完成：决策数量增加（Day 2 产生新决策）
-        prev_count = len(get_decisions(auth_token, date=today_str()))
+        prev_count = len(get_decisions(auth_token, date=day2_date))
         deadline = time.time() + 15
         while time.time() < deadline:
-            curr_count = len(get_decisions(auth_token, date=today_str()))
+            curr_count = len(get_decisions(auth_token, date=day2_date))
             if curr_count > prev_count:
                 break
             time.sleep(0.5)
@@ -568,7 +570,11 @@ class TestStrategyPerformance:
 
         resp = requests.get(
             f"{BASE_URL}/strategy/performance",
-            params={"name": STRATEGY_NAME},
+            params={
+                "name": STRATEGY_NAME,
+                "start": day1_date,
+                "end": day2_date
+            },
             headers={"Authorization": auth_token},
             verify=False,
             timeout=10,
@@ -577,7 +583,7 @@ class TestStrategyPerformance:
         data = resp.json()
 
         assert data["strategy"] == STRATEGY_NAME
-        assert data["trading_days"] >= 1
+        assert data["trading_days"] >= 1, f"trading_days 应 >= 1，实际: {data.get('trading_days')}, message: {data.get('message')}"
         assert "initial_capital" in data
         assert "final_value" in data
 
@@ -663,6 +669,74 @@ def _cleanup_integ_data(token: str):
     csv_path = SERVER_DATA_DIR / "dividend" / f"{INTEG_SYMBOL}_dividend.csv"
     if csv_path.exists():
         csv_path.unlink()
+
+
+def _is_strategy_running(token: str, strategy_name: str) -> bool:
+    """检查策略是否正在运行
+
+    Args:
+        token: 认证 token
+        strategy_name: 策略名称
+
+    Returns:
+        True 如果策略正在运行，False 如果策略不存在或已停止
+    """
+    try:
+        headers = {"Authorization": token}
+        resp = requests.get(f"{BASE_URL}/strategy", headers=headers, verify=False, timeout=10)
+        if resp.ok:
+            strategies = resp.json().get("strategies", [])
+            for strat in strategies:
+                if strat.get("name") == strategy_name:
+                    return strat.get("running", False)
+        return False
+    except Exception:
+        return False
+
+
+def _wait_for_strategy_stopped(token: str, strategy_name: str, timeout: int = 10) -> bool:
+    """等待策略完全停止
+
+    Args:
+        token: 认证 token
+        strategy_name: 策略名称
+        timeout: 超时时间（秒）
+
+    Returns:
+        True 如果策略已停止，False 如果超时
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _is_strategy_running(token, strategy_name):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _cleanup_strategy(token: str, strategy_name: str):
+    """清理策略：停止并删除
+
+    Args:
+        token: 认证 token
+        strategy_name: 策略名称
+    """
+    headers = {"Authorization": token}
+    try:
+        # 如果策略正在运行，先停止
+        if _is_strategy_running(token, strategy_name):
+            requests.post(f"{BASE_URL}/strategy",
+                         json={"mode": 2, "name": strategy_name},
+                         headers=headers, verify=False, timeout=10)
+            # 等待策略完全停止
+            _wait_for_strategy_stopped(token, strategy_name, timeout=10)
+
+        # 删除策略
+        requests.delete(f"{BASE_URL}/strategy",
+                       json={"name": strategy_name},
+                       headers=headers, verify=False, timeout=10)
+        time.sleep(0.5)
+    except Exception:
+        pass  # 策略可能不存在，忽略错误
 
 
 def _create_integ_strategy(symbol: str) -> dict:
@@ -849,6 +923,9 @@ class TestDailyExecutionWithDividend:
         integ_strategy_name = "integ_dividend_test_strategy"
 
         try:
+            # 0. 先清理可能已存在的策略（从之前的测试遗留）
+            _cleanup_strategy(auth_token, integ_strategy_name)
+
             # 1. 导入股票 + 分红 + recalc
             kwargs["json"] = {
                 "action": "import",
@@ -871,20 +948,19 @@ class TestDailyExecutionWithDividend:
 
             # 2. 创建并加载监控 INTEG_SYMBOL 的策略
             integ_strategy = _create_integ_strategy(INTEG_SYMBOL)
-            resp = requests.post(f"{BASE_URL}/strategy",
-                                json={"mode": 0, "name": integ_strategy_name, "script": integ_strategy},
-                                **kwargs)
+            kwargs["json"] = {"mode": 0, "name": integ_strategy_name, "script": integ_strategy}
+            resp = requests.post(f"{BASE_URL}/strategy", **kwargs)
             assert resp.ok, f"部署策略失败: {resp.text}"
 
             # 启动策略
-            requests.post(f"{BASE_URL}/strategy",
-                         json={"mode": 1, "name": integ_strategy_name},
-                         **kwargs)
+            kwargs["json"] = {"mode": 1, "name": integ_strategy_name}
+            requests.post(f"{BASE_URL}/strategy", **kwargs)
 
             # 3. 触发日终管线：simulate_bar 推送一根 bar
+            bar_date = "2024-07-02"
             try:
                 bar = get_latest_bar(auth_token, INTEG_SYMBOL,
-                                     date="2024-07-02 00:00:00")
+                                     date=f"{bar_date} 00:00:00")
             except ValueError as e:
                 pytest.skip(f"无测试数据: {e}")
 
@@ -892,19 +968,26 @@ class TestDailyExecutionWithDividend:
             if "status" in result and result.get("status") == "error":
                 pytest.skip(f"simulate/bar 不可用: {result}")
 
-            # 4. 等 ManualTiming 决策完成
+            # 4. 等 ManualTiming 决策完成（使用正确的日期）
             deadline = time.time() + 10
             while time.time() < deadline:
-                decisions = get_decisions(auth_token, date=today_str())
+                decisions = get_decisions(auth_token, date=bar_date)
                 # 检查是否有该策略的决策
                 if any(d.get("strategy") == integ_strategy_name for d in decisions):
                     break
                 time.sleep(0.5)
 
-            # 5. 验证 daily_positions + 绩效指标
+            # 5. 验证 daily_positions + 绩效指标（指定日期范围）
+            # 绩效需要 >= 2 个交易日的序列才能算收益/波动率，所以范围必须覆盖
+            # 导入的两根 bar（2024-07-01 建仓 + 2024-07-02 除权日），
+            # 只查除权日当天必然拿到 "insufficient data"。
             resp = requests.get(
                 f"{BASE_URL}/strategy/performance",
-                params={"name": integ_strategy_name},
+                params={
+                    "name": integ_strategy_name,
+                    "start": "2024-07-01",
+                    "end": bar_date
+                },
                 **kwargs,
             )
             assert resp.ok, f"HTTP {resp.status_code}: {resp.text}"
@@ -918,14 +1001,125 @@ class TestDailyExecutionWithDividend:
 
         finally:
             # 清理策略
-            try:
-                requests.post(f"{BASE_URL}/strategy",
-                             json={"mode": 2, "name": integ_strategy_name}, **kwargs)
-                requests.delete(f"{BASE_URL}/strategy",
-                               json={"name": integ_strategy_name}, **kwargs)
-            except Exception:
-                pass
+            _cleanup_strategy(auth_token, integ_strategy_name)
             _cleanup_integ_data(auth_token)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 持仓记账回归：daily_positions 的 position 口径
+#
+# PortfolioNode::generatePlan 产出的 BUY quantity 是「当日目标仓位」
+# （capital / price，整手），不是相对当前持仓的增量；SELL 给的是「待平数量」
+# （= 当前持仓，全平）。ManualTiming::recordPositionSnapshot 必须按这个口径
+# 覆盖持仓，累加会把历史目标当成连续加仓。
+#
+# 用两根收盘价不同的 bar 制造两次 BUY：目标数量随价格变化而不同
+# （50000 → 47600），累加口径会得到 97600 股、市值约 1.02M，
+# 而策略分配资金只有 500k。
+# ─────────────────────────────────────────────────────────────────────────────
+
+ACC_SYMBOL = "sh.999995"
+ACC_STRATEGY_NAME = "acc_test_strategy"
+ACC_CAPITAL = 500000
+ACC_BAR2_DATE = "2024-08-02"
+ACC_STOCK_LINES = [
+    "datetime,open,close,high,low,volume,turnover",
+    "2024-08-01 00:00:00,9.90,10.00,10.10,9.80,100000,1000000",
+    "2024-08-02 00:00:00,10.00,10.50,10.60,9.90,100000,1000000",
+]
+
+
+def _create_acc_strategy(symbol: str) -> dict:
+    """单标的、positionRatio=1.0：每个 BUY 的目标仓位就是全部资金"""
+    strategy = _create_integ_strategy(symbol)
+    strategy["id"] = "acc_test_strategy"
+    strategy["name"] = "持仓记账回归策略"
+    strategy["capital"] = ACC_CAPITAL
+    return strategy
+
+
+class TestDailyPositionAccounting:
+    """daily_positions.position 必须反映目标仓位，不能跨 bar 累加"""
+
+    @pytest.mark.timeout(60)
+    def test_position_does_not_accumulate_across_bars(self, auth_token, is_backtest):
+        """两根 bar 各触发一次 BUY，持仓不得超过单日目标仓位"""
+        if not is_backtest:
+            pytest.skip("仅在 stock_hist_sim 模式下运行")
+        kwargs = {"headers": {"Authorization": auth_token}, "verify": False, "timeout": 10}
+
+        try:
+            _cleanup_strategy(auth_token, ACC_STRATEGY_NAME)
+
+            # 1. 导入两根收盘价不同的 bar
+            kwargs["json"] = {
+                "action": "import",
+                "table": "stock_1d",
+                "symbol": ACC_SYMBOL,
+                "adj": "none",
+                "data": ACC_STOCK_LINES,
+            }
+            check_response(requests.post(f"{BASE_URL}/quote/data", **kwargs))
+
+            # 2. 创建并启动策略
+            strategy = _create_acc_strategy(ACC_SYMBOL)
+            kwargs["json"] = {"mode": 0, "name": ACC_STRATEGY_NAME, "script": strategy}
+            check_response(requests.post(f"{BASE_URL}/strategy", **kwargs))
+            kwargs["json"] = {"mode": 1, "name": ACC_STRATEGY_NAME}
+            requests.post(f"{BASE_URL}/strategy", **kwargs)
+
+            # 3. 推第二根 bar 触发日终回放（两根都是决策 bar）
+            bar = get_latest_bar(auth_token, ACC_SYMBOL, date=f"{ACC_BAR2_DATE} 00:00:00")
+            result = simulate_bar(auth_token, bar)
+            if "status" in result and result.get("status") == "error":
+                pytest.skip(f"simulate/bar 不可用: {result}")
+
+            # 决策的 timestamp 是落库时的墙钟时间，不能按模拟日期查 /trade/decisions，
+            # 直接轮询 daily_positions 是否已写入（/strategy/trade 读的就是这张表）。
+            deadline = time.time() + 20
+            trade = {}
+            while time.time() < deadline:
+                trade = check_response(requests.get(
+                    f"{BASE_URL}/strategy/trade",
+                    params={"name": ACC_STRATEGY_NAME},
+                    headers={"Authorization": auth_token}, verify=False, timeout=10,
+                )) or {}
+                if trade.get("trades"):
+                    break
+                time.sleep(0.5)
+
+            # 4. 目标仓位：day1 500000/10.00 = 50000 股，day2 500000/10.50 = 47600 股
+            day2_close = float(ACC_STOCK_LINES[2].split(",")[2])
+            expected_max_qty = int(ACC_CAPITAL / day2_close / 100) * 100
+            allowed_max_qty = int(expected_max_qty * 1.1)  # 留 10% 余量（价格波动/费用）
+
+            positions = [t["position_after"] for t in trade.get("trades", [])]
+            assert positions, f"没有交易记录: {trade}"
+            assert max(positions) <= allowed_max_qty, (
+                f"日终持仓 {max(positions)} 股超过单日目标仓位 {expected_max_qty} 股，"
+                f"疑似把目标仓位当增量累加（cap={ACC_CAPITAL}）"
+            )
+
+            # 组合市值同理不能超过本金太多
+            perf = check_response(requests.get(
+                f"{BASE_URL}/strategy/performance",
+                params={"name": ACC_STRATEGY_NAME},
+                headers={"Authorization": auth_token}, verify=False, timeout=10,
+            ))
+            assert perf["final_value"] <= ACC_CAPITAL * 1.1, (
+                f"组合市值 {perf['final_value']} 超过分配资金 {ACC_CAPITAL} 的 110%，"
+                f"疑似持仓跨 bar 累加"
+            )
+
+        finally:
+            _cleanup_strategy(auth_token, ACC_STRATEGY_NAME)
+            requests.delete(
+                f"{BASE_URL}/quote",
+                params={"table": "stock_1d", "symbol": ACC_SYMBOL},
+                headers={"Authorization": auth_token},
+                verify=False,
+                timeout=10,
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1502,11 +1696,15 @@ def produced_decision(auth_token, loaded_strategy, is_backtest):
     except ValueError as e:
         pytest.skip(f"无测试数据: {e}")
 
+    # 收盘价必须与前一根 bar 不同：价格没动 → 组合不需要再平衡 → 计划不变
+    # → 信号是 HOLD → 日终不会产生任何可关闭的决策（只有 BUY/SELL 才入库）
+    bar["close"] = bar["close"] * 1.02
+
     # close > open 触发买入信号
     if not bar["close"] > bar["open"]:
         bar["open"] = bar["close"] * 0.99
-        bar["high"] = max(bar["open"], bar["high"])
-        bar["low"] = min(bar["open"], bar["low"])
+    bar["high"] = max(bar["high"], bar["open"], bar["close"])
+    bar["low"] = min(bar["low"], bar["open"])
 
     result = simulate_bar(auth_token, bar)
     if "status" in result and result.get("status") == "error":
@@ -1646,8 +1844,16 @@ class TestDecisionCloseAndExecute:
         close_decision(auth_token, d1["id"])
         time.sleep(0.5)
 
-        # 产生第二条决策（不同日期）
-        bar2 = dict(bar, datetime="2025-02-20 00:00:00")
+        # 产生第二条决策（不同日期 + 不同 symbol，避免持仓冲突）
+        # 使用 sz.900002（测试 fixture 中已导入）
+        second_symbol = "sz.900002"
+        try:
+            bar2 = get_latest_bar(auth_token, second_symbol)
+        except ValueError:
+            pytest.skip("无第二条测试数据")
+        if not bar2["close"] > bar2["open"]:
+            bar2["open"] = bar2["close"] * 0.99
+        bar2["datetime"] = "2025-02-20 00:00:00"
         simulate_bar(auth_token, bar2)
 
         d2 = wait_for_pending_decision(
@@ -1697,6 +1903,30 @@ def get_daily_decision_json(date: str) -> dict:
         return json.load(f)
 
 
+def extract_bar_date(bar: dict) -> str:
+    """从 bar 的 datetime 提取日期（YYYY-MM-DD）"""
+    return bar["datetime"].split(" ")[0]
+
+
+def wait_for_daily_decision_json(bar_date: str, timeout: int = 15) -> dict:
+    """等待日报 JSON 生成
+
+    Args:
+        bar_date: 日报日期（YYYY-MM-DD）
+        timeout: 超时时间（秒）
+
+    Returns:
+        日报 JSON 字典，如果超时返回空字典
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        daily_json = get_daily_decision_json(bar_date)
+        if daily_json:
+            return daily_json
+        time.sleep(0.5)
+    return {}
+
+
 @pytest.mark.usefixtures("auth_token")
 class TestDecisionSetStatusVocabulary:
     """DecisionSet 状态词汇统一测试
@@ -1720,6 +1950,7 @@ class TestDecisionSetStatusVocabulary:
         if not bar["close"] > bar["open"]:
             bar["open"] = bar["close"] * 0.99
 
+        bar_date = extract_bar_date(bar)
         result = simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
@@ -1727,15 +1958,15 @@ class TestDecisionSetStatusVocabulary:
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
+            decisions = get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
 
         # 读取日报 JSON
-        daily_json = get_daily_decision_json(today_str())
+        daily_json = wait_for_daily_decision_json(bar_date)
         if not daily_json:
-            pytest.skip("日报 JSON 未生成")
+            pytest.skip(f"日报 JSON 未生成（日期: {bar_date}）")
 
         # 验证 status 词汇
         status = daily_json.get("status")
@@ -1773,6 +2004,7 @@ class TestDecisionSetHoldPreservation:
         if bar["close"] > bar["open"]:
             bar["close"] = bar["open"] * 0.99
 
+        bar_date = extract_bar_date(bar)
         result = simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
@@ -1780,15 +2012,15 @@ class TestDecisionSetHoldPreservation:
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
+            decisions = get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
 
         # 读取日报 JSON
-        daily_json = get_daily_decision_json(today_str())
+        daily_json = wait_for_daily_decision_json(bar_date)
         if not daily_json:
-            pytest.skip("日报 JSON 未生成")
+            pytest.skip(f"日报 JSON 未生成（日期: {bar_date}）")
 
         # 验证 hold_count
         summary = daily_json.get("summary", {})
@@ -1829,6 +2061,7 @@ class TestDecisionSetClosePrice:
         if not bar["close"] > bar["open"]:
             bar["open"] = bar["close"] * 0.99
 
+        bar_date = extract_bar_date(bar)
         result = simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
@@ -1836,15 +2069,15 @@ class TestDecisionSetClosePrice:
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
+            decisions = get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
 
         # 读取日报 JSON
-        daily_json = get_daily_decision_json(today_str())
+        daily_json = wait_for_daily_decision_json(bar_date)
         if not daily_json:
-            pytest.skip("日报 JSON 未生成")
+            pytest.skip(f"日报 JSON 未生成（日期: {bar_date}）")
 
         # 验证 close_price 字段
         for strategy_name, strategy_report in daily_json.get("strategies", {}).items():
@@ -1859,8 +2092,8 @@ class TestDecisionSetAsOfUnification:
     """DecisionSet 归属日统一测试
 
     验证：
-    1. 日报 JSON 的 date 字段与 today_str() 一致
-    2. 各策略的 executed_at 包含归属日
+    1. 日报 JSON 的 date 字段与 bar 日期一致
+    2. 各策略的 executed_at 是执行时间（当前时间）
     """
 
     def test_as_of_unified(self, auth_token, loaded_strategy, is_backtest):
@@ -1876,6 +2109,7 @@ class TestDecisionSetAsOfUnification:
         if not bar["close"] > bar["open"]:
             bar["open"] = bar["close"] * 0.99
 
+        bar_date = extract_bar_date(bar)
         result = simulate_bar(auth_token, bar)
         if "status" in result and result.get("status") == "error":
             pytest.skip(f"simulate/bar 不可用: {result}")
@@ -1883,23 +2117,26 @@ class TestDecisionSetAsOfUnification:
         # 等待决策写入
         deadline = time.time() + 10
         while time.time() < deadline:
-            decisions = get_decisions(auth_token, date=today_str())
+            decisions = get_decisions(auth_token, date=bar_date)
             if decisions:
                 break
             time.sleep(0.5)
 
         # 读取日报 JSON
-        daily_json = get_daily_decision_json(today_str())
+        daily_json = wait_for_daily_decision_json(bar_date)
         if not daily_json:
-            pytest.skip("日报 JSON 未生成")
+            pytest.skip(f"日报 JSON 未生成（日期: {bar_date}）")
 
-        # 验证归属日统一
+        # 验证归属日统一：date 字段应该是 bar 的日期
         date_in_json = daily_json.get("date")
-        assert date_in_json == today_str(), \
-            f"日报 date={date_in_json} 应为 today={today_str()}"
+        assert date_in_json == bar_date, \
+            f"日报 date={date_in_json} 应为 bar_date={bar_date}"
 
-        # 验证各策略 executed_at 也使用同一日期
+        # 验证各策略的 executed_at 是执行时间（应该包含当前日期）
+        # executed_at 语义上是"执行时间"，不是归属日
+        current_date = today_str()
         for strategy_name, strategy_report in daily_json.get("strategies", {}).items():
             executed_at = strategy_report.get("executed_at", "")
-            assert today_str() in executed_at, \
-                f"策略 {strategy_name} 的 executed_at={executed_at} 应包含 {today_str()}"
+            # executed_at 应该包含当前日期（执行日期），而不是 bar 日期
+            assert current_date in executed_at, \
+                f"策略 {strategy_name} 的 executed_at={executed_at} 应包含当前日期 {current_date}"

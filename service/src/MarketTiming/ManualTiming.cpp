@@ -39,12 +39,42 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
          actionStr, get_symbol(signal.GetSymbol()),
          signal.GetQuantity(), signal.GetPrice(), strategy);
 
+    // 逐决策 bar 记一条持仓快照。
+    // 只保留最终决策是不够的：最后一个 bar 常常是 HOLD，持仓的变化过程
+    // 就丢在历史里，daily_positions 断档，绩效接口拿不到连续序列。
+    recordPositionSnapshot(signal.GetSymbol(), action, signal.GetQuantity(), context);
+
     return true;
+}
+
+void ManualTiming::recordPositionSnapshot(symbol_t symbol, TradeAction action,
+                                          int64_t quantity, const DataContext& context) {
+    int64_t& pos = _positions[symbol];
+    if (action == TradeAction::BUY) {
+        // PortfolioNode 产出的 quantity 是目标持仓（绝对量），不是增量
+        pos = quantity;
+    } else if (action == TradeAction::SELL) {
+        // SELL 传的是卖出数量：全清时正好归零，部分卖出保留剩余仓位
+        pos = (quantity >= pos) ? 0 : pos - quantity;
+    }
+
+    const QuoteInfo* q = context.GetQuote(symbol);
+    if (!q || q->_time <= 0) return;  // 拿不到 bar 时间就不落快照
+
+    DecisionSet::PositionSnapshot snap;
+    snap._symbol = symbol;
+    snap._date = DateOnly(q->_time);
+    snap._position = pos;
+    // 原始价口径：与成交价、持仓成本同口径（复权价只用于指标计算）
+    snap._closePrice = raw_price(*q);
+    _positionSnapshots.push_back(snap);
 }
 
 void ManualTiming::ClearRun() {
     _decisions.clear();
     _riskEvents.clear();
+    _positions.clear();
+    _positionSnapshots.clear();
 }
 
 void ManualTiming::PushDecisionSse(const DecisionSet& set, const Map<symbol_t, int>& decisionIds) {

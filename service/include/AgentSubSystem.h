@@ -234,11 +234,15 @@ public:
     // 逐日模拟（POST /strategy/simulate/bar）必须传入推送当天，使回放窗口截止到
     // 当天，决策针对当天而非数据窗最后一根 bar。
     //
+    // forceReload: 强制从 DB 重载行情缓存（回测路径）。日终回放必须为 true：
+    // 缓存只在首次 Login 填充，否则新写入的 bar 进不了回放窗口。
+    //
     // 回调参数是 DecisionSet 而非裸 JSON：一次运行 = 一个产物，
     // 下游（日报 / 持仓快照）从同一份产物读，不再各自重新解析一份 JSON。
     void StartDaily(const String& strategy, const Set<symbol_t>& symbols,
                     std::function<void(const DecisionSet&)> onComplete,
-                    const String& simDate = String());
+                    const String& simDate = String(),
+                    bool forceReload = false);
 
 private:
 

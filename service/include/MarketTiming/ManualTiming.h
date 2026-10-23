@@ -33,6 +33,9 @@ public:
     // 访问当前累积的决策（构建 DecisionSet 时用）
     const Map<symbol_t, DecisionSnapshot>& getDecisions() const { return _decisions; }
 
+    // 访问本轮重放逐决策 bar 记录的持仓快照（构建 DecisionSet 时用）
+    const Vector<DecisionSet::PositionSnapshot>& getPositionSnapshots() const { return _positionSnapshots; }
+
     // 清空本轮累积器（DecisionSet 消费完毕后调用）
     // 单独提供而不是在 SendSummaryEmail 末尾隐式清空：失败路径同样需要清，
     // 否则上一天的决策会漏进下一轮（10-22 那类"静默丢弃"的同源问题）。
@@ -44,6 +47,13 @@ public:
     const Vector<ProtectionNode::ProtectionEvent>& GetRiskEvents() const { return _riskEvents; }
 
 private:
+    // 逐决策 bar 记录持仓快照：daily_positions 的连续序列来源
+    void recordPositionSnapshot(symbol_t symbol, TradeAction action, int64_t quantity,
+                                const DataContext& context);
+
     Map<symbol_t, DecisionSnapshot> _decisions;  // per-symbol，同 symbol 只保留最终决策
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;  // 风控触发事件（日终策略用）
+    // 重放期间的运行中持仓 + 逐 bar 快照（只在本轮重放内有意义）
+    Map<symbol_t, int64_t> _positions;
+    Vector<DecisionSet::PositionSnapshot> _positionSnapshots;
 };

@@ -1746,7 +1746,7 @@ class TestXGBoostOptimizeErrors:
 class TestXGBoostOptimizeSubmit:
     """optimize 提交立即返回 session_id（不需要等 collect 完成）"""
 
-    def test_optimize_submit_returns_session_id(self, auth_token, trained_model):
+    def test_optimize_submit_returns_session_id(self, auth_token, trained_model, request):
         """提交 optimize 立即返回 session_id 和 status=running"""
         # 先调 collect 拿 csv_path
         collector = TestXGBoostOptimize()
@@ -1768,15 +1768,32 @@ class TestXGBoostOptimizeSubmit:
         )
         # 立即返回（不阻塞），fast_backtest_strategy 是空策略图（nodes=[]）
         # 后端优化时 trial 会失败但不影响提交阶段
+        session_id = None
         if resp.status_code == 200:
             data = resp.json()
             assert "session_id" in data
+            session_id = data.get("session_id")
             assert data.get("status") == "running"
             assert data.get("optimize_metric") == "sharpe"
             assert data.get("n_trials") == 1
         else:
             # 409（已有 session）或 400（feature_cache 不存在）也接受
             assert resp.status_code in (400, 409)
+        
+        # 添加 finalizer：测试结束后取消后台 optimize 会话，防止影响后续测试
+        def cancel_session():
+            if session_id:
+                try:
+                    requests.post(
+                        f"{BASE_URL}/ml",
+                        json={"action": "cancel", "session_id": session_id},
+                        headers=_headers(auth_token),
+                        verify=VERIFY_SSL,
+                        timeout=5
+                    )
+                except Exception:
+                    pass
+        request.addfinalizer(cancel_session)
 
 
 # ============== Delete 测试（放最后，会清除内存缓存） ==============

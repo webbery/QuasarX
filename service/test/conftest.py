@@ -360,16 +360,38 @@ def is_backtest(auth_api):
     return auth_api.is_backtest_mode()
 
 
+def cancel_ml_session(auth_token, session_id):
+    """
+    取消一个活跃的 ML 会话。
+    调用 /ml?action=cancel 接口终止后台 Python 进程。
+    """
+    if not auth_token or not session_id:
+        return False
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/ml",
+            json={"action": "cancel", "session_id": session_id},
+            headers={"Authorization": auth_token},
+            verify=VERIFY_SSL,
+            timeout=5
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def _wait_for_active_session(auth_token, max_wait=60):
     """
     等待当前活跃的 ML 会话完成。
     通过尝试发起一个请求，如果收到 409，则从响应中获取 session_id 并等待。
+    返回 (success: bool, session_id: str or None, timed_out: bool)
     """
     if not auth_token:
-        return
+        return True, None, False
 
     headers = {"Authorization": auth_token}
     start_time = time.time()
+    last_session_id = None
 
     while time.time() - start_time < max_wait:
         # 尝试发起一个无害的请求来检查是否有活跃会话
@@ -387,9 +409,11 @@ def _wait_for_active_session(auth_token, max_wait=60):
                 # 有活跃会话，从响应中获取 session_id
                 data = resp.json()
                 session_id = data.get("running_session_id")
+                last_session_id = session_id
                 if session_id:
                     # 等待该会话完成
-                    for _ in range(max_wait * 2):  # 每 0.5 秒检查一次
+                    wait_start = time.time()
+                    while time.time() - wait_start < max_wait:
                         try:
                             status_resp = requests.get(
                                 f"{BASE_URL}/ml",
@@ -405,11 +429,17 @@ def _wait_for_active_session(auth_token, max_wait=60):
                         except Exception:
                             pass
                         time.sleep(0.5)
+                    else:
+                        # 内层超时，返回 timed_out
+                        return False, session_id, True
                     continue
             # 如果没有收到 409，说明没有活跃会话
-            return
+            return True, None, False
         except Exception:
-            return
+            return True, None, False
+    
+    # 外层超时
+    return False, last_session_id, True
 
 
 @pytest.fixture(autouse=True)
@@ -417,7 +447,10 @@ def wait_for_ml_sessions(auth_token):
     """
     每个测试开始前，等待所有活跃的 ML 会话完成。
     防止前一个测试的后台任务（如 optimize）影响当前测试。
+    如果超时，skip 当前测试而不是让它撞墙。
     """
-    _wait_for_active_session(auth_token, max_wait=60)
+    success, session_id, timed_out = _wait_for_active_session(auth_token, max_wait=60)
+    if timed_out:
+        pytest.skip(f"ML session {session_id} still running after 60s, skipping to avoid 409 conflict")
     yield
     

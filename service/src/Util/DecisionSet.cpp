@@ -99,6 +99,17 @@ nlohmann::json DecisionSet::toJson() const {
     }
     j["risk_events"] = std::move(risks);
 
+    nlohmann::json snaps = nlohmann::json::array();
+    for (const auto& s : _positionSnapshots) {
+        nlohmann::json o;
+        o["symbol"] = get_symbol(s._symbol);
+        o["date"] = static_cast<int64_t>(s._date);
+        o["position"] = s._position;
+        o["close_price"] = s._closePrice;
+        snaps.push_back(std::move(o));
+    }
+    j["position_snapshots"] = std::move(snaps);
+
     return j;
 }
 
@@ -147,6 +158,18 @@ DecisionSet DecisionSet::fromJson(const nlohmann::json& j) {
             e._current_price = o.value("current_price", 0.0);
             e._quantity = o.value("quantity", static_cast<int64_t>(0));
             set._riskEvents.push_back(std::move(e));
+        }
+    }
+
+    if (j.contains("position_snapshots") && j["position_snapshots"].is_array()) {
+        set._positionSnapshots.reserve(j["position_snapshots"].size());
+        for (const auto& o : j["position_snapshots"]) {
+            DecisionSet::PositionSnapshot s;
+            s._symbol = to_symbol(o.value("symbol", String()));
+            s._date = static_cast<time_t>(o.value("date", static_cast<int64_t>(0)));
+            s._position = o.value("position", static_cast<int64_t>(0));
+            s._closePrice = o.value("close_price", 0.0);
+            set._positionSnapshots.push_back(s);
         }
     }
 

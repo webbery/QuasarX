@@ -79,11 +79,16 @@ struct CachedMLModel {
 };
 
 // 训练会话：记录事件历史，支持 SSE 重连回放
+class PythonRunner;  // forward declaration
+
 struct TrainSession {
     String _sessionId;
     MLAction _kind = MLAction::Unknown;  // 会话归属的 action，用于幂等检查
     std::atomic<bool> _done{false};
     std::atomic<bool> _cancelled{false};
+    
+    // 后台 Python 进程句柄，用于 cancel 时终止子进程
+    PythonRunner* _runner = nullptr;
 
     std::mutex _mtx;
     std::condition_variable _cv;
@@ -157,6 +162,7 @@ private:
     void handleScreenResult(const httplib::Request& req, httplib::Response& res);
     void handleTrainProgress(const httplib::Request& req, httplib::Response& res);
     void handleTrainStatus(const httplib::Request& req, httplib::Response& res);
+    void handleCancel(const httplib::Request& req, httplib::Response& res);
     void handleShap(const nlohmann::json& params, httplib::Response& res);
     void handleList(const httplib::Request& req, httplib::Response& res);
     void handleDelete(uint64_t modelId, httplib::Response& res);

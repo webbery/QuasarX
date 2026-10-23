@@ -69,12 +69,15 @@ public:
     virtual AccountAsset GetAsset() override;
 
     // === 多线程回测接口（共同实现）===
+    // forceReload=true 时无视缓存强制从 DuckDB 重载：日终回放必须看到最新写入的 bar。
+    // 缓存 _csvs 只在 Login() 时填充，不强制重载会让新 bar 永远进不了回放窗口。
     run_id_t createBacktestContext(
         const String& strategy_name,
         const Set<symbol_t>& symbols,
         double initial_capital = 100000.0,
         const String& load_start_date = String(),
-        const String& load_end_date = String()
+        const String& load_end_date = String(),
+        bool forceReload = false
     );
 
     BacktestContext* getBacktestContext(run_id_t run_id);

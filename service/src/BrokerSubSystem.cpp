@@ -1337,43 +1337,43 @@ bool BrokerSubSystem::MarkDecisionExecuted(int id, int64_t exec_qty, double exec
 }
 
 bool BrokerSubSystem::MarkDecisionClosed(int id) {
-    // 先获取决策的详细信息（strategy, symbol, timestamp）
+    // 先确认决策在 DuckDB 中真实存在。内存 _todayDecisions 可能是
+    // 已删除策略的残留（deleteByStrategy 只删库），不能作为存在性依据。
     std::string strategy;
     symbol_t symbol;
     time_t timestamp;
     bool hasInfo = DecisionDB::instance().queryDecisionInfo(id, strategy, symbol, timestamp);
-    
+
+    if (!hasInfo) {
+        // 库里没有：顺手剔除内存残留，避免它继续被 GetDecisions 的兜底返回
+        {
+            std::lock_guard<std::mutex> lock(_decisionMtx);
+            std::erase_if(_todayDecisions,
+                          [id](const DecisionRecord& r) { return r._id == id; });
+        }
+        return false;
+    }
+
+    if (!DecisionDB::instance().markClosed(id)) {
+        return false;
+    }
+
     {
         std::lock_guard<std::mutex> lock(_decisionMtx);
         for (auto& rec : _todayDecisions) {
             if (rec._id == id) {
                 rec._closed = true;
-                if (!DecisionDB::instance().markClosed(id)) {
-                    return false;
-                }
-                // 同步删除对应的 daily_position 记录
-                if (hasInfo) {
-                    // 将当前时间截断到当日零点
-                    time_t date = DateOnly(Now());
-                    DecisionDB::instance().deleteDailyPosition(strategy, symbol, date);
-                    INFO("[Broker] MarkDecisionClosed: deleted daily_position for {} {} on {}",
-                         strategy, get_symbol(symbol), ToString(date, "%Y-%m-%d"));
-                }
-                return true;
+                break;
             }
         }
     }
-    // 不在内存中（服务重启后残留决策），直接更新 DuckDB
-    if (!DecisionDB::instance().markClosed(id)) {
-        return false;
-    }
-    // 同步删除对应的 daily_position 记录
-    if (hasInfo) {
-        time_t date = DateOnly(Now());
-        DecisionDB::instance().deleteDailyPosition(strategy, symbol, date);
-        INFO("[Broker] MarkDecisionClosed: deleted daily_position for {} {} on {}",
-             strategy, get_symbol(symbol), ToString(date, "%Y-%m-%d"));
-    }
+
+    // 同步删除对应的 daily_position 记录。
+    // 用决策自身的日期而不是 Now()：跨日关闭历史决策时才能删对行。
+    time_t date = DateOnly(timestamp);
+    DecisionDB::instance().deleteDailyPosition(strategy, symbol, date);
+    INFO("[Broker] MarkDecisionClosed: deleted daily_position for {} {} on {}",
+         strategy, get_symbol(symbol), ToString(date, "%Y-%m-%d"));
     return true;
 }
 
@@ -1383,6 +1383,19 @@ int BrokerSubSystem::ClearDecisions(const String& date) {
         _todayDecisions.clear();
     }
     return DecisionDB::instance().clearByDate(date);
+}
+
+int BrokerSubSystem::PurgeStrategyDecisions(const String& strategy) {
+    std::lock_guard<std::mutex> lock(_decisionMtx);
+    size_t before = _todayDecisions.size();
+    std::erase_if(_todayDecisions,
+                  [&strategy](const DecisionRecord& r) { return strategy == r._strategy; });
+    int removed = static_cast<int>(_todayDecisions.size() - before);
+    if (removed > 0) {
+        INFO("[Broker] Purged {} in-memory decision(s) for deleted strategy '{}'",
+             removed, strategy);
+    }
+    return removed;
 }
 
 TradeReport BrokerSubSystem::SimulateFill(symbol_t symbol, int64_t quantity, double price, TradeAction side) {

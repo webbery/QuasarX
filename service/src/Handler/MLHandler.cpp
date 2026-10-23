@@ -701,10 +701,17 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
                               {"metric",optimizeMetric}});
 
             PythonRunner runner;
+            // 将 runner 指针存入 session，以便 cancel 时能 kill 子进程
+            {
+                std::lock_guard<std::mutex> lk(session->_mtx);
+                session->_runner = &runner;
+            }
+            
             INFO("[MLOptimize] Starting Python: interpreter='{}', n_trials={}", interpreter, nTrials);
             if (!runner.start("tools/xgboost_optimize.py", args, interpreter)) {
                 sendSSE("error", {{"step","optimize"},{"msg","failed to start xgboost_optimize.py"}});
                 std::lock_guard<std::mutex> lk(session->_mtx);
+                session->_runner = nullptr;
                 session->_hasError = true;
                 session->_result = {{"error","failed to start optimization script"}};
                 session->_done = true;
@@ -716,6 +723,12 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             bool childExited = false;
             PythonOutput out;
             while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
+                // 检查是否被取消
+                if (session->_cancelled) {
+                    INFO("[MLOptimize] Session {} cancelled, stopping", session->_sessionId);
+                    runner.kill();
+                    break;
+                }
                 if (out.type == PythonOutput::DONE) { childExited = true; break; }
                 if (out.type == PythonOutput::STDOUT) {
                     String lineType = jsonLineType(out.line);
@@ -741,7 +754,12 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             }
 
             std::lock_guard<std::mutex> lk(session->_mtx);
-            if (resultLine.empty()) {
+            session->_runner = nullptr;  // 清理 runner 指针
+            
+            if (session->_cancelled) {
+                session->_hasError = true;
+                session->_result = {{"error","cancelled by user"}};
+            } else if (resultLine.empty()) {
                 String msg;
                 if (!childExited) {
                     msg = fmt::format("空闲超时（{}s 内无任何输出），已终止 Python 进程",
@@ -763,12 +781,14 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             std::remove(strategyPath.c_str());
         } catch (const std::exception& e) {
             std::lock_guard<std::mutex> lk(session->_mtx);
+            session->_runner = nullptr;
             session->_hasError = true;
             session->_result = {{"error", String("unhandled exception: ") + e.what()}};
             session->_done = true;
             if (!strategyPath.empty()) std::remove(strategyPath.c_str());
         } catch (...) {
             std::lock_guard<std::mutex> lk(session->_mtx);
+            session->_runner = nullptr;
             session->_hasError = true;
             session->_result = {{"error","unknown exception during optimization"}};
             session->_done = true;
@@ -1779,6 +1799,54 @@ void MLHandler::handleTrainStatus(const httplib::Request& req, httplib::Response
     res.set_content(resp.dump(), "application/json");
 }
 
+void MLHandler::handleCancel(const httplib::Request& req, httplib::Response& res) {
+    String sessionId = req.get_param_value("session_id");
+    if (sessionId.empty()) {
+        // 也尝试从 POST body 读取
+        try {
+            auto body = nlohmann::json::parse(req.body);
+            sessionId = body.value("session_id", "");
+        } catch (...) {}
+    }
+    if (sessionId.empty()) {
+        res.status = 400;
+        res.set_content(R"({"message":"missing session_id"})", "application/json");
+        return;
+    }
+
+    std::shared_ptr<TrainSession> session;
+    {
+        std::lock_guard<std::mutex> lk(s_sessionMtx);
+        if (s_activeSession && s_activeSession->_sessionId == sessionId) {
+            session = s_activeSession;
+        }
+    }
+    if (!session) {
+        res.status = 404;
+        res.set_content(R"({"message":"session not found"})", "application/json");
+        return;
+    }
+
+    // 标记取消
+    session->_cancelled = true;
+    
+    // 终止后台 Python 进程
+    PythonRunner* runner = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(session->_mtx);
+        runner = session->_runner;
+    }
+    if (runner) {
+        INFO("[MLCancel] Killing runner for session {}", sessionId);
+        runner->kill();
+    }
+
+    nlohmann::json resp;
+    resp["message"] = "cancelled";
+    resp["session_id"] = sessionId;
+    res.set_content(resp.dump(), "application/json");
+}
+
 void MLHandler::handleShap(const nlohmann::json& params, httplib::Response& res) {
     uint64_t modelId = 0;
     if (params.contains("model_id")) {
@@ -2217,6 +2285,42 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
         handleCollect(params, res);
     } else if (action == "screen") {
         handleScreen(params, res);
+    } else if (action == "cancel") {
+        // cancel 需要 session_id，从 params 里取
+        String sessionId = params.value("session_id", "");
+        if (sessionId.empty()) {
+            res.status = 400;
+            res.set_content(R"({"message":"missing session_id"})", "application/json");
+            return;
+        }
+        // 复用 handleCancel 的逻辑，但要构造一个假的 request
+        // 直接在这里实现
+        std::shared_ptr<TrainSession> session;
+        {
+            std::lock_guard<std::mutex> lk(s_sessionMtx);
+            if (s_activeSession && s_activeSession->_sessionId == sessionId) {
+                session = s_activeSession;
+            }
+        }
+        if (!session) {
+            res.status = 404;
+            res.set_content(R"({"message":"session not found"})", "application/json");
+            return;
+        }
+        session->_cancelled = true;
+        PythonRunner* runner = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(session->_mtx);
+            runner = session->_runner;
+        }
+        if (runner) {
+            INFO("[MLCancel] Killing runner for session {}", sessionId);
+            runner->kill();
+        }
+        nlohmann::json resp;
+        resp["message"] = "cancelled";
+        resp["session_id"] = sessionId;
+        res.set_content(resp.dump(), "application/json");
     } else if (action == "shap") {
         handleShap(params, res);
     } else if (action == "delete") {
@@ -2276,7 +2380,7 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
     } else {
         res.status = 400;
         res.set_content(
-            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|screen|shap|delete|update_meta)\"}",
+            "{\"message\":\"missing or invalid 'action' (train|optimize|collect|screen|cancel|shap|delete|update_meta)\"}",
             "application/json");
         return;
     }
