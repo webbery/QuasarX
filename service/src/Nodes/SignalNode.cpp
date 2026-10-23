@@ -188,31 +188,6 @@ NodeProcessResult SignalNode::Process(const String& strategy, DataContext& conte
     auto buys = _buyParser->envoke(_pools, args, context);
     auto sells = _sellParser->envoke(_pools, args, context);
 
-    // 诊断日志：记录最后一根 bar 的 close 和 open 值，以及信号评估结果
-    for (const auto& symbol : _pools) {
-        String closeKey = get_symbol(symbol) + ".close";
-        String openKey = get_symbol(symbol) + ".open";
-        if (context.exist(closeKey) && context.exist(openKey)) {
-            auto closeVec = context.get<Vector<double>>(closeKey);
-            auto openVec = context.get<Vector<double>>(openKey);
-            if (!closeVec.empty() && !openVec.empty()) {
-                double lastClose = closeVec.back();
-                double lastOpen = openVec.back();
-                // 查找该 symbol 的 buy 信号
-                int buySignal = 0;
-                for (const auto& [sym, action] : buys) {
-                    if (sym == symbol && action == TradeAction::BUY) {
-                        buySignal = 1;
-                        break;
-                    }
-                }
-                INFO("[SignalNode:{}] symbol={} close={:.6f} open={:.6f} buy_signal={} condition={}", 
-                     _id, get_symbol(symbol), lastClose, lastOpen, buySignal,
-                     lastClose > lastOpen ? "TRUE" : "FALSE");
-            }
-        }
-    }
-
     // 诊断日志：记录 raw_strength 值（每 100 个 epoch 记录一次，避免日志过多）
     // static int epoch_counter = 0;
     // if (++epoch_counter % 100 == 0) {

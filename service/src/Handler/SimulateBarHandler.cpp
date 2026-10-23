@@ -89,7 +89,7 @@ void SimulateBarHandler::post(const httplib::Request& req, httplib::Response& re
         response["close"] = bar.close;
         response["message"] = "Bar written and symbol marked ready. Strategy will execute when all dependencies are met.";
 
-        INFO("[SimulateBar] {} open={} close={} high={} low={} at {}", symbol, bar.open, bar.close, bar.high, bar.low, bar.datetime);
+        INFO("[SimulateBar] {} close={} at {}", symbol, bar.close, bar.datetime);
 
         res.status = 200;
         res.set_content(response.dump(2), "application/json");

@@ -1718,6 +1718,87 @@ def produced_decision(auth_token, loaded_strategy, is_backtest):
 
 
 @pytest.mark.usefixtures("auth_token")
+def _create_multi_symbol_strategy(symbols: list) -> dict:
+    """创建监控多个 symbol 的 ManualTiming 策略
+
+    用于需要产生多条决策的测试场景
+    """
+    return {
+        "id": "test_manual_signal_multi",
+        "name": "测试Manual决策策略-多标的",
+        "version": 1,
+        "capital": 500000,
+        "description": "ManualTiming 测试策略：监控多个标的，close>open 时买入",
+        "nodes": [
+            {
+                "id": "1",
+                "type": "custom",
+                "data": {
+                    "label": "行情数据",
+                    "nodeType": "input",
+                    "params": {
+                        "source": {"value": "股票", "type": "select"},
+                        "code": {"value": symbols, "type": "text"},
+                        "freq": {"value": "1d", "type": "select"},
+                        "close": {"value": "close", "type": "text"},
+                        "open": {"value": "open", "type": "text"},
+                        "high": {"value": "high", "type": "text"},
+                        "low": {"value": "low", "type": "text"},
+                        "volume": {"value": "volume", "type": "text"},
+                        "turnover": {"value": "turnover", "type": "text"},
+                    }
+                }
+            },
+            {
+                "id": "2",
+                "type": "custom",
+                "data": {
+                    "label": "买入信号",
+                    "nodeType": "signal",
+                    "params": {
+                        "code": {"value": symbols, "type": "text"},
+                        "buy": {"value": "close[t] > open[t]", "type": "text"},
+                        "sell": {"value": "false", "type": "text"},
+                    }
+                }
+            },
+            {
+                "id": "3",
+                "type": "custom",
+                "data": {
+                    "label": "投资组合",
+                    "nodeType": "portfolio",
+                    "params": {
+                        "positionRatio": {"value": 1.0, "type": "number"},
+                    }
+                }
+            },
+            {
+                "id": "4",
+                "type": "custom",
+                "data": {
+                    "label": "手动下单",
+                    "nodeType": "execution",
+                    "params": {
+                        "commission": {"value": 0.0003, "type": "number"},
+                        "stamp": {"value": 0.001, "type": "number"},
+                        "minCommission": {"value": 5, "type": "number"},
+                        "slippageModel": {"value": 0, "type": "number"},
+                        "slippage": {"value": 0.0, "type": "number"},
+                        "type": {"value": 7, "type": "select"},  # Manual
+                        "contract": {"value": 0, "type": "select"},
+                    }
+                }
+            }
+        ],
+        "edges": [
+            {"id": "1->2", "source": "1", "target": "2", "sourceHandle": "output", "targetHandle": "input"},
+            {"id": "2->3", "source": "2", "target": "3", "sourceHandle": "output", "targetHandle": "input"},
+            {"id": "3->4", "source": "3", "target": "4", "sourceHandle": "output", "targetHandle": "input"},
+        ]
+    }
+
+
 class TestDecisionCloseAndExecute:
     """决策关闭（PUT）和执行（POST order + decisionId）测试
 
@@ -1819,67 +1900,99 @@ class TestDecisionCloseAndExecute:
         assert updated[0]["closed"] is True
 
     def test_query_reflects_mixed_status(
-            self, auth_token, loaded_strategy, is_backtest):
+            self, auth_token, is_backtest):
         """多条决策：一条关闭、一条执行，GET 分别返回正确状态"""
         if not is_backtest:
             pytest.skip("仅在 stock_hist_sim 模式下运行")
 
-        # 产生第一条决策
-        try:
-            bar = get_latest_bar(auth_token, TEST_SYMBOL)
-        except ValueError:
-            pytest.skip("无测试数据")
-        if not bar["close"] > bar["open"]:
-            bar["open"] = bar["close"] * 0.99
+        # 使用多 symbol 策略，避免持仓冲突
+        symbols = [TEST_SYMBOL, "sz.900002"]
+        multi_strategy = _create_multi_symbol_strategy(symbols)
+        multi_strategy_name = "test_manual_signal_multi"
 
-        result = simulate_bar(auth_token, bar)
-        if "status" in result and result.get("status") == "error":
-            pytest.skip(f"simulate/bar 不可用: {result}")
-
-        d1 = wait_for_pending_decision(auth_token, STRATEGY_NAME)
-        if d1 is None:
-            pytest.skip("未产生第一条决策")
-
-        # 关闭第一条
-        close_decision(auth_token, d1["id"])
-        time.sleep(0.5)
-
-        # 产生第二条决策（不同日期 + 不同 symbol，避免持仓冲突）
-        # 使用 sz.900002（测试 fixture 中已导入）
-        second_symbol = "sz.900002"
-        try:
-            bar2 = get_latest_bar(auth_token, second_symbol)
-        except ValueError:
-            pytest.skip("无第二条测试数据")
-        if not bar2["close"] > bar2["open"]:
-            bar2["open"] = bar2["close"] * 0.99
-        bar2["datetime"] = "2025-02-20 00:00:00"
-        simulate_bar(auth_token, bar2)
-
-        d2 = wait_for_pending_decision(
-            auth_token, STRATEGY_NAME, timeout=15)
-        if d2 is None:
-            pytest.skip("未产生第二条决策")
-
-        # 执行第二条
-        direct = 0 if d2["action"] in ["open_long", "close_short"] else 1
-        order_with_decision_id(
-            auth_token, TEST_SYMBOL, d2["id"],
-            quantity=d2["quantity"], price=d2["price"], direct=direct,
+        # 加载多 symbol 策略
+        api_load_strategy(auth_token, multi_strategy_name, multi_strategy)
+        headers = {"Authorization": auth_token}
+        requests.post(
+            f"{BASE_URL}/strategy",
+            json={"mode": 1, "name": multi_strategy_name},
+            headers=headers,
+            verify=False,
+            timeout=10,
         )
-        time.sleep(0.5)
 
-        # 验证两条决策状态
-        all_decisions = get_decisions(auth_token, date=today_str())
-        d1_updated = next((d for d in all_decisions if d["id"] == d1["id"]), None)
-        d2_updated = next((d for d in all_decisions if d["id"] == d2["id"]), None)
+        try:
+            # 先推送两个 symbol 的 bar，让策略可以执行
+            try:
+                bar1 = get_latest_bar(auth_token, TEST_SYMBOL)
+                bar2_init = get_latest_bar(auth_token, "sz.900002")
+            except ValueError:
+                pytest.skip("无测试数据")
 
-        assert d1_updated is not None
-        assert d1_updated["closed"] is True, "d1 应为 closed"
-        assert d1_updated["executed"] is False, "d1 不应为 executed"
+            # 确保 close > open
+            if not bar1["close"] > bar1["open"]:
+                bar1["open"] = bar1["close"] * 0.99
+            if not bar2_init["close"] > bar2_init["open"]:
+                bar2_init["open"] = bar2_init["close"] * 0.99
 
-        assert d2_updated is not None
-        assert d2_updated["executed"] is True, "d2 应为 executed"
+            # 推送两个 symbol 的 bar（同一天）
+            bar2_init["datetime"] = bar1["datetime"]
+            result1 = simulate_bar(auth_token, bar1)
+            result2 = simulate_bar(auth_token, bar2_init)
+
+            if "status" in result1 and result1.get("status") == "error":
+                pytest.skip(f"simulate/bar 不可用: {result1}")
+            if "status" in result2 and result2.get("status") == "error":
+                pytest.skip(f"simulate/bar 不可用: {result2}")
+
+            # 等待第一条决策
+            d1 = wait_for_pending_decision(auth_token, multi_strategy_name)
+            if d1 is None:
+                pytest.skip("未产生第一条决策")
+
+            # 关闭第一条
+            close_decision(auth_token, d1["id"])
+            time.sleep(0.5)
+
+            # 产生第二条决策（推送新日期的 bar）
+            second_symbol = "sz.900002"
+            try:
+                bar2_new = get_latest_bar(auth_token, second_symbol)
+            except ValueError:
+                pytest.skip("无第二条测试数据")
+            if not bar2_new["close"] > bar2_new["open"]:
+                bar2_new["open"] = bar2_new["close"] * 0.99
+            bar2_new["datetime"] = "2025-02-20 00:00:00"
+            simulate_bar(auth_token, bar2_new)
+
+            d2 = wait_for_pending_decision(
+                auth_token, multi_strategy_name, timeout=15)
+            if d2 is None:
+                pytest.skip("未产生第二条决策")
+
+            # 执行第二条
+            direct = 0 if d2["action"] in ["open_long", "close_short"] else 1
+            order_with_decision_id(
+                auth_token, second_symbol, d2["id"],
+                quantity=d2["quantity"], price=d2["price"], direct=direct,
+            )
+            time.sleep(0.5)
+
+            # 验证两条决策状态
+            all_decisions = get_decisions(auth_token, date=today_str())
+            d1_updated = next((d for d in all_decisions if d["id"] == d1["id"]), None)
+            d2_updated = next((d for d in all_decisions if d["id"] == d2["id"]), None)
+
+            assert d1_updated is not None
+            assert d1_updated["closed"] is True, "d1 应为 closed"
+            assert d1_updated["executed"] is False, "d1 不应为 executed"
+
+            assert d2_updated is not None
+            assert d2_updated["executed"] is True, "d2 应为 executed"
+
+        finally:
+            # 清理策略
+            cleanup_strategy(auth_token, multi_strategy_name)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
