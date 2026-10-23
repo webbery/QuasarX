@@ -128,6 +128,18 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     for (auto* d : sells) totalSellValue += d->_quantity * d->_price;
     double netValue = totalBuyValue - totalSellValue;
 
+    // 卖出盈亏：决策价 vs 持仓均价。
+    // 成本价由 DecisionSet 一起带进来（_costPrice），缺失就是缺失（回测路径没有
+    // StrategyCapital 账本），此时不显示金额，而不是显示 0 让人以为平仓没亏没赚。
+    double realizedPnl = 0.0;
+    bool pnlKnown = false;
+    for (auto* d : sells) {
+        if (d->_costPrice > 0.0) {
+            realizedPnl += (d->_price - d->_costPrice) * static_cast<double>(d->_quantity);
+            pnlKnown = true;
+        }
+    }
+
     // 资金口径全部来自 DecisionSet，邮件不再自己去 broker 摸 StrategyCapital。
     // _budgetKnown=false 表示账本缺失：此时降级（不显示资金行、不算占比），
     // 而不是显示 ¥0 让读者以为"钱花光了"。
@@ -147,7 +159,7 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
 
     String html;
     html += R"h(<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>)h";
-    html += R"h(<div style="max-width:680px;margin:0 auto;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#1a1a2e;">)h";
+    html += R"h(<div style="max-width:760px;margin:0 auto;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#1a1a2e;">)h";
 
     // ── 表头 ──
     html += R"h(<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:20px 24px;border-radius:12px 12px 0 0;">)h";
@@ -203,7 +215,19 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     html += fmt::format(R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;grid-column:1/-1;">)h");
     html += fmt::format(R"h(<span style="font-size:12px;color:#64748b;">净买入</span>)h");
     html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;color:{};">{}¥{}{}</span>)h", netColor, netSign, fmtMoney(std::abs(netValue)), netPct);
-    html += "</div></div>";
+    html += "</div>";
+
+    // 当日卖出盈亏：只在这批 SELL 的持仓成本已知时才有意义
+    if (pnlKnown) {
+        String pnlSign = realizedPnl >= 0 ? "+" : "-";
+        String pnlColor = realizedPnl >= 0 ? "#16a34a" : "#dc2626";
+        html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;grid-column:1/-1;">)h";
+        html += R"h(<span style="font-size:12px;color:#64748b;">当日卖出盈亏</span>)h";
+        html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;color:{};">{}¥{}</span>)h",
+                            pnlColor, pnlSign, fmtMoney(std::abs(realizedPnl)));
+        html += "</div>";
+    }
+    html += "</div>";
 
     // ── 组合市值 ──
     if (set._portfolioValue > 0.0) {
@@ -234,6 +258,8 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
         html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">价格</th>)h";
         html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">金额</th>)h";
         html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">占比</th>)h";
+        html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">成本价</th>)h";
+        html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">盈亏</th>)h";
         html += "</tr></thead><tbody>";
 
         auto actionTag = [](const String& action) -> String {
@@ -246,6 +272,11 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
             double val = d->_quantity * d->_price;
             double grpPct = (groupTotal > 0.0) ? (val / groupTotal * 100.0) : 0.0;
             bool isHold = !holdTag.empty();
+            // 成本价只对平多仓有意义（SELL + flag=1）：开空没有持仓成本，
+            // BUY / HOLD 也不适用。成本价未知一律显示"—"。
+            bool showCost = (action == "SELL") && d->_flag == 1 && d->_costPrice > 0.0;
+            double pnl = showCost ? (d->_price - d->_costPrice) * static_cast<double>(d->_quantity) : 0.0;
+            double pnlPct = showCost ? (d->_price - d->_costPrice) / d->_costPrice * 100.0 : 0.0;
             String opacity = isHold ? " style=\"opacity:0.6\"" : "";
             html += fmt::format("<tr{}>", opacity);
             html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:600;">{}</td>)h", get_symbol(d->_symbol));
@@ -265,6 +296,15 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
                 html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:500;">¥{}</td>)h", fmtMoney(val));
                 html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#64748b;font-size:12px;">{:.1f}%</td>)h", grpPct);
             }
+            if (showCost) {
+                html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#475569;">{:.2f}</td>)h", d->_costPrice);
+                String pnlColor = pnl >= 0 ? "#16a34a" : "#dc2626";
+                html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;color:{};">{}{} ({:+.2f}%)</td>)h",
+                                    pnlColor, pnl >= 0 ? "+" : "-", fmtMoney(std::abs(pnl)), pnlPct);
+            } else {
+                html += R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#94a3b8;">—</td>)h";
+                html += R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#94a3b8;">—</td>)h";
+            }
             html += "</tr>";
         };
 
@@ -274,6 +314,9 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
         for (auto* d : defaultHolds) emitHtmlRow("HOLD", d, 0.0, "default");
 
         html += "</tbody></table>";
+        if (pnlKnown) {
+            html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:6px;">盈亏 = (决策价 − 持仓均价) × 数量，未扣手续费；实际盈亏以成交回报为准。</div>)h";
+        }
     }
     html += "</div>";
 

@@ -1897,12 +1897,22 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                         // 预算快照：实盘路径走 StrategyCapital 账本
                         double allocated = 0.0, available = 0.0, equity = 0.0;
                         bool budgetKnown = false;
+                        // 持仓成本：同一本账本里的加权平均成本。
+                        // SELL 行要显示成本价与 P&L，口径必须与 Broker 持仓一致
+                        // （SyncDailyPositionsFromBroker 已把 Broker 的分批持仓
+                        //   摊成 Position._avgPrice）。
+                        Map<symbol_t, double> costPrices;
                         if (auto* broker = _handle->GetBrokerSubSystem()) {
                             if (auto* capital = broker->GetStrategyCapital(strategy)) {
                                 allocated = capital->getAllocated();
                                 available = capital->getAvailable();
                                 equity = capital->getEquity();
                                 budgetKnown = true;
+                                for (const auto& [sym, pos] : capital->getPositions().getAll()) {
+                                    if (pos._quantity > 0 && pos._avgPrice > 0.0) {
+                                        costPrices[sym] = pos._avgPrice;
+                                    }
+                                }
                             }
                         }
 
@@ -1919,7 +1929,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             strategy, asOf, fmt::format("live-{}", asOf),
                             manualTiming->getDecisions(), std::move(riskEvents),
                             allocated, available, equity, budgetKnown,
-                            portfolioValue, closePrices,
+                            portfolioValue, closePrices, costPrices,
                             DecisionStatus::Completed, "");
 
                         // 构建调试报告 + 发送邮件/SSE

@@ -14,6 +14,7 @@ DecisionSet BuildDecisionSet(
     bool budgetKnown,
     double portfolioValue,
     const Map<symbol_t, double>& closePrices,
+    const Map<symbol_t, double>& costPrices,
     DecisionStatus status,
     const String& error)
 {
@@ -49,6 +50,12 @@ DecisionSet BuildDecisionSet(
         if (it != closePrices.end()) {
             item._closePrice = it->second;
         }
+
+        // 持仓均价（平仓成本价）：缺失就是缺失，记 0 让读侧降级显示"—"
+        auto ct = costPrices.find(sym);
+        if (ct != costPrices.end() && ct->second > 0.0) {
+            item._costPrice = ct->second;
+        }
         set._items.push_back(std::move(item));
     }
 
@@ -79,6 +86,7 @@ nlohmann::json DecisionSet::toJson() const {
         o["quantity"] = it._quantity;
         o["price"] = it._price;
         o["close_price"] = it._closePrice;
+        o["cost_price"] = it._costPrice;
         o["epoch"] = it._epoch;
         o["is_default_hold"] = it._isDefaultHold;
         items.push_back(std::move(o));
@@ -140,6 +148,7 @@ DecisionSet DecisionSet::fromJson(const nlohmann::json& j) {
             it._quantity = o.value("quantity", static_cast<int64_t>(0));
             it._price = o.value("price", 0.0);
             it._closePrice = o.value("close_price", 0.0);
+            it._costPrice = o.value("cost_price", 0.0);
             it._epoch = o.value("epoch", -1);
             it._isDefaultHold = o.value("is_default_hold", false);
             set._items.push_back(std::move(it));

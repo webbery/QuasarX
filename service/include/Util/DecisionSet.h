@@ -127,6 +127,7 @@ struct DecisionSet {
         int64_t        _quantity = 0;
         double         _price = 0.0;      // 决策价
         double         _closePrice = 0.0; // 当期真实收盘价（持仓估值用这个）
+        double         _costPrice = 0.0;  // 持仓均价（平仓成本价）；0 = 未知/不适用
         int32_t        _epoch = -1;
         bool           _isDefaultHold = false;  // true = 非策略评估产生的默认 HOLD
 
@@ -231,6 +232,9 @@ struct DecisionSetBuilder {
             item._isDefaultHold = snap._action == TradeAction::HOLD && !snap._signalEvaluated;
             // 回测路径没有真实收盘价，用决策价代替
             item._closePrice = snap._price;
+            // 回测路径没有 StrategyCapital 账本，拿不到持仓成本：
+            // 成本价留 0，邮件据此把 SELL 的成本/盈亏显示为"—"，而不是编一个 0。
+            item._costPrice = 0.0;
             out._items.push_back(std::move(item));
         }
 
@@ -258,6 +262,7 @@ struct DecisionSetBuilder {
  * @param budgetKnown     预算是否可信（账本缺失时 false，读侧据此降级而非显示 0）
  * @param portfolioValue  组合市值，0 表示不展示
  * @param closePrices     当期真实收盘价（持仓估值的正确口径）
+ * @param costPrices      持仓均价（平仓成本价）；缺失的标的成本价记 0，读侧据此降级
  * @param status          状态
  * @param error           失败原因
  */
@@ -273,5 +278,6 @@ DecisionSet BuildDecisionSet(
     bool budgetKnown,
     double portfolioValue,
     const Map<symbol_t, double>& closePrices,
+    const Map<symbol_t, double>& costPrices,
     DecisionStatus status,
     const String& error);
