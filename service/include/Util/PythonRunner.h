@@ -55,6 +55,7 @@ public:
 
 private:
     void readerThread();
+    // 推送 DONE 哨兵：幂等，保证消费者（readLine）一定被唤醒且只会收到一次 DONE
     void drainAndFinish(int exit_code);
 
     static void splitLines(std::string& buf, PythonOutput::Type type,
@@ -62,6 +63,14 @@ private:
                            std::condition_variable& cv);
 
     std::atomic<bool> running_{false};
+    // DONE 哨兵是否已推送
+    std::atomic<bool> _donePushed{false};
+    // 子进程是否已被 waitpid 回收：防止重复回收与 PID 复用后误杀无关进程
+    std::atomic<bool> _childReaped{false};
+    // 子进程退出码
+    std::atomic<int> _exitCode{0};
+    // reader 线程：可 join，保证析构时它不会再访问 this
+    std::thread reader_;
 
     std::queue<PythonOutput> queue_;
     std::mutex mtx_;
@@ -73,8 +82,13 @@ private:
     HANDLE hStdoutRd_ = nullptr;
     HANDLE hStderrRd_ = nullptr;
 #else
-    pid_t pid_      = -1;
+    std::atomic<pid_t> pid_{-1};
     int stdout_fd_  = -1;
     int stderr_fd_  = -1;
+
+    // 终止并回收子进程：并发调用时由 waitpid 天然互斥，只有一个回收者能成功
+    int terminateAndReap(pid_t pid);
+    // 把 waitpid 的 status 翻译成退出码（被信号杀死时返回 -signal）
+    static int decodeExitStatus(int status);
 #endif
 };

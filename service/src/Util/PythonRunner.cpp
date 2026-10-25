@@ -62,6 +62,12 @@ void PythonRunner::splitLines(std::string& buf, PythonOutput::Type type,
 }
 
 void PythonRunner::drainAndFinish(int exit_code) {
+    // 幂等：DONE 哨兵只推送一次。子进程被 kill 时由 kill() 推送，
+    // 正常结束时由 reader 线程推送，谁先到谁算，避免重复 DONE 打断消费者。
+    bool expected = false;
+    if (!_donePushed.compare_exchange_strong(expected, true)) return;
+
+    _exitCode.store(exit_code);
     {
         std::lock_guard<std::mutex> lock(mtx_);
         queue_.push({PythonOutput::DONE, "", exit_code});
@@ -155,7 +161,8 @@ bool PythonRunner::start(const std::string& script,
     hStderrRd_ = hErrRd;
     running_   = true;
 
-    std::thread(&PythonRunner::readerThread, this).detach();
+    // 保留线程句柄：析构时 join，确保 reader 线程不会再访问已释放的 this
+    reader_ = std::thread(&PythonRunner::readerThread, this);
     INFO("PythonRunner: started pid={} {} {}", pi.dwProcessId, interpreter, script);
     return true;
 }
@@ -164,6 +171,8 @@ void PythonRunner::readerThread() {
     char buf[4096];
     std::string stdout_buf, stderr_buf;
     HANDLE handles[2] = {hStdoutRd_, hStderrRd_};
+    // 进程句柄快照：kill() 会关闭并置空成员变量，这里用快照避免读到空/已关闭句柄
+    HANDLE hProc = hProcess_;
 
     while (running_) {
         bool any_data = false;
@@ -186,7 +195,7 @@ void PythonRunner::readerThread() {
         }
 
         if (!any_data) {
-            DWORD wait = WaitForSingleObject(hProcess_, 100);
+            DWORD wait = WaitForSingleObject(hProc, 100);
             if (wait == WAIT_OBJECT_0) {
                 for (int i = 0; i < 2; i++) {
                     while (true) {
@@ -213,12 +222,16 @@ void PythonRunner::readerThread() {
                 flushRemnant(stderr_buf, PythonOutput::STDERR);
 
                 DWORD exit_code = 0;
-                GetExitCodeProcess(hProcess_, &exit_code);
+                GetExitCodeProcess(hProc, &exit_code);
                 drainAndFinish((int)exit_code);
                 break;
             }
         }
     }
+
+    // 退出路径（被 kill 打断时也会走到这里）：推送 DONE 哨兵，
+    // 保证消费者不会一直阻塞在 readLine 上等下一次输出。
+    drainAndFinish(_exitCode.load());
 
     CloseHandle(hStdoutRd_);
     CloseHandle(hStderrRd_);
@@ -230,16 +243,24 @@ void PythonRunner::kill() {
     if (hProcess_) {
         TerminateProcess(hProcess_, 1);
         WaitForSingleObject(hProcess_, 3000);
+        DWORD exit_code = 0;
+        GetExitCodeProcess(hProcess_, &exit_code);
+        _exitCode.store((int)exit_code);
         CloseHandle(hProcess_);
         CloseHandle(hThread_);
         hProcess_ = nullptr;
         hThread_  = nullptr;
     }
     running_ = false;
+    // 消费者（readLine）必须被唤醒：子进程没了就不会再有输出，
+    // 这里补推 DONE 哨兵，避免消费者空等到超时。
+    drainAndFinish(_exitCode.load());
 }
 
 PythonRunner::~PythonRunner() {
     kill();
+    // join reader 线程：它退出后不再访问 this，避免对象释放后的 use-after-free
+    if (reader_.joinable()) reader_.join();
 }
 
 #else
@@ -251,6 +272,9 @@ PythonRunner::~PythonRunner() {
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
 
 bool PythonRunner::start(const std::string& script,
                          const std::vector<std::string>& args,
@@ -303,7 +327,8 @@ bool PythonRunner::start(const std::string& script,
     stderr_fd_ = err_pipe[0];
     running_   = true;
 
-    std::thread(&PythonRunner::readerThread, this).detach();
+    // 保留线程句柄：析构时 join，确保 reader 线程不会再访问已释放的 this
+    reader_ = std::thread(&PythonRunner::readerThread, this);
     INFO("PythonRunner: started pid={} {} {}", pid, interpreter, script);
     return true;
 }
@@ -311,6 +336,10 @@ bool PythonRunner::start(const std::string& script,
 void PythonRunner::readerThread() {
     char buf[4096];
     std::string stdout_buf, stderr_buf;
+
+    // pid 本地快照：kill() 会把成员 pid_ 置为 -1，若继续用成员变量 waitpid 会退化成
+    // waitpid(-1)，变成回收任意子进程（可能误伤其它 PythonRunner），必须用快照
+    const pid_t my_pid = pid_.load();
 
     struct pollfd fds[2] = {
         {stdout_fd_, POLLIN, 0},
@@ -333,44 +362,47 @@ void PythonRunner::readerThread() {
             splitLines(sbuf, type, queue_, mtx_, cv_);
         }
 
-        int status;
-        pid_t ret_pid = waitpid(pid_, &status, WNOHANG);
-        if (ret_pid > 0) {
-            for (int i = 0; i < 2; i++) {
-                while (true) {
-                    ssize_t n = ::read(fds[i].fd, buf, sizeof(buf));
-                    if (n <= 0) break;
-                    auto type = (fds[i].fd == stdout_fd_) ? PythonOutput::STDOUT : PythonOutput::STDERR;
-                    auto& sbuf = (fds[i].fd == stdout_fd_) ? stdout_buf : stderr_buf;
-                    sbuf.append(buf, n);
-                    splitLines(sbuf, type, queue_, mtx_, cv_);
+        if (my_pid > 0) {
+            int status;
+            pid_t ret_pid = waitpid(my_pid, &status, WNOHANG);
+            if (ret_pid == my_pid) {
+                _childReaped.store(true);
+                for (int i = 0; i < 2; i++) {
+                    while (true) {
+                        ssize_t n = ::read(fds[i].fd, buf, sizeof(buf));
+                        if (n <= 0) break;
+                        auto type = (fds[i].fd == stdout_fd_) ? PythonOutput::STDOUT : PythonOutput::STDERR;
+                        auto& sbuf = (fds[i].fd == stdout_fd_) ? stdout_buf : stderr_buf;
+                        sbuf.append(buf, n);
+                        splitLines(sbuf, type, queue_, mtx_, cv_);
+                    }
                 }
-            }
-            // 推送 drain 后残留的无换行尾数据
-            auto flushRemnant = [&](std::string& remnant, PythonOutput::Type type) {
-                if (!remnant.empty()) {
-                    std::lock_guard<std::mutex> lock(mtx_);
-                    queue_.push({type, std::move(remnant)});
-                    cv_.notify_one();
-                }
-            };
-            flushRemnant(stdout_buf, PythonOutput::STDOUT);
-            flushRemnant(stderr_buf, PythonOutput::STDERR);
+                // 推送 drain 后残留的无换行尾数据
+                auto flushRemnant = [&](std::string& remnant, PythonOutput::Type type) {
+                    if (!remnant.empty()) {
+                        std::lock_guard<std::mutex> lock(mtx_);
+                        queue_.push({type, std::move(remnant)});
+                        cv_.notify_one();
+                    }
+                };
+                flushRemnant(stdout_buf, PythonOutput::STDOUT);
+                flushRemnant(stderr_buf, PythonOutput::STDERR);
 
-            int exit_code;
-            if (WIFEXITED(status)) {
-                exit_code = WEXITSTATUS(status);
-            } else if (WIFSIGNALED(status)) {
-                int sig = WTERMSIG(status);
-                WARN("PythonRunner: child pid={} killed by signal {} ({})", pid_, sig, strsignal(sig));
-                exit_code = -sig;
-            } else {
-                exit_code = -1;
+                drainAndFinish(decodeExitStatus(status));
+                break;
             }
-            drainAndFinish(exit_code);
-            break;
+            // ECHILD：子进程已被 kill() 那侧回收，本线程无需再 waitpid，退出等待收尾
+            if (ret_pid < 0 && errno == ECHILD) break;
         }
     }
+
+    // 统一收尾：
+    // 1) 子进程若还没人回收，这里负责回收，避免留下僵尸进程
+    // 2) 推送 DONE 哨兵，保证消费者不会空等到 readLine 超时
+    if (my_pid > 0 && !_childReaped.load()) {
+        terminateAndReap(my_pid);
+    }
+    drainAndFinish(_exitCode.load());
 
     close(stdout_fd_);
     close(stderr_fd_);
@@ -378,18 +410,65 @@ void PythonRunner::readerThread() {
     stderr_fd_ = -1;
 }
 
-void PythonRunner::kill() {
-    if (pid_ > 0) {
-        ::kill(pid_, SIGTERM);
-        int status;
-        waitpid(pid_, &status, 0);
-        pid_ = -1;
+int PythonRunner::decodeExitStatus(int status) {
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) {
+        int sig = WTERMSIG(status);
+        WARN("PythonRunner: child pid={} killed by signal {} ({})", pid_.load(), sig, strsignal(sig));
+        return -sig;
     }
+    return -1;
+}
+
+int PythonRunner::terminateAndReap(pid_t pid) {
+    if (pid <= 0) return _exitCode.load();
+
+    ::kill(pid, SIGTERM);
+
+    int status = 0;
+    pid_t ret = 0;
+    // 等待子进程退出；忽略 SIGTERM 的脚本最多等 ~2s，之后 SIGKILL 兜底
+    for (int i = 0; i < 40; i++) {
+        ret = waitpid(pid, &status, WNOHANG);
+        if (ret == pid) break;
+        if (ret < 0) {
+            // ECHILD：已被另一线程回收（waitpid 对同一 pid 天然互斥）
+            _childReaped.store(true);
+            return _exitCode.load();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (ret == 0) {
+        ::kill(pid, SIGKILL);
+        do {
+            ret = waitpid(pid, &status, 0);
+        } while (ret < 0 && errno == EINTR);
+    }
+    if (ret == pid) {
+        _childReaped.store(true);
+        int code = decodeExitStatus(status);
+        _exitCode.store(code);
+        return code;
+    }
+    return _exitCode.load();
+}
+
+void PythonRunner::kill() {
+    pid_t pid = pid_.load();
+    if (pid > 0 && !_childReaped.load()) {
+        // 终止并回收子进程。回收完成后立刻推 DONE 哨兵，
+        // 消费者无需再等下一次输出或 readLine 超时。
+        terminateAndReap(pid);
+    }
+    pid_ = -1;
     running_ = false;
+    drainAndFinish(_exitCode.load());
 }
 
 PythonRunner::~PythonRunner() {
     kill();
+    // join reader 线程：它退出后不再访问 this，避免对象释放后的 use-after-free
+    if (reader_.joinable()) reader_.join();
 }
 
 #endif

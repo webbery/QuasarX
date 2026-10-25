@@ -700,15 +700,16 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
                               {"script","tools/xgboost_optimize.py"},{"n_trials",nTrials},
                               {"metric",optimizeMetric}});
 
-            PythonRunner runner;
-            // 将 runner 指针存入 session，以便 cancel 时能 kill 子进程
+            auto runner = std::make_shared<PythonRunner>();
+            // 将 runner 存入 session，以便 cancel 时能 kill 子进程
+            // （shared_ptr：cancel 线程调用 kill() 期间 runner 不会被后台线程析构）
             {
                 std::lock_guard<std::mutex> lk(session->_mtx);
-                session->_runner = &runner;
+                session->_runner = runner;
             }
             
             INFO("[MLOptimize] Starting Python: interpreter='{}', n_trials={}", interpreter, nTrials);
-            if (!runner.start("tools/xgboost_optimize.py", args, interpreter)) {
+            if (!runner->start("tools/xgboost_optimize.py", args, interpreter)) {
                 sendSSE("error", {{"step","optimize"},{"msg","failed to start xgboost_optimize.py"}});
                 std::lock_guard<std::mutex> lk(session->_mtx);
                 session->_runner = nullptr;
@@ -722,11 +723,11 @@ void MLHandler::handleOptimize(const nlohmann::json& params, httplib::Response& 
             String resultLine, stderrLines;
             bool childExited = false;
             PythonOutput out;
-            while (runner.readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
+            while (runner->readLine(out, QS_PYTHON_READLINE_TIMEOUT_MS)) {
                 // 检查是否被取消
                 if (session->_cancelled) {
                     INFO("[MLOptimize] Session {} cancelled, stopping", session->_sessionId);
-                    runner.kill();
+                    runner->kill();
                     break;
                 }
                 if (out.type == PythonOutput::DONE) { childExited = true; break; }
@@ -1831,7 +1832,8 @@ void MLHandler::handleCancel(const httplib::Request& req, httplib::Response& res
     session->_cancelled = true;
     
     // 终止后台 Python 进程
-    PythonRunner* runner = nullptr;
+    // 拷贝 shared_ptr：保证 kill() 执行期间 runner 不会被后台线程释放
+    std::shared_ptr<PythonRunner> runner;
     {
         std::lock_guard<std::mutex> lk(session->_mtx);
         runner = session->_runner;
@@ -2308,7 +2310,8 @@ void MLHandler::post(const httplib::Request& req, httplib::Response& res) {
             return;
         }
         session->_cancelled = true;
-        PythonRunner* runner = nullptr;
+        // 拷贝 shared_ptr：保证 kill() 执行期间 runner 不会被后台线程释放
+        std::shared_ptr<PythonRunner> runner;
         {
             std::lock_guard<std::mutex> lk(session->_mtx);
             runner = session->_runner;
