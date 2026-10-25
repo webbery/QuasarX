@@ -2,6 +2,7 @@
 // ML 训练与分析面板状态管理
 
 import { reactive, ref } from 'vue'
+import type { GateRules } from '../featureLab/types'
 
 export interface TrainStep {
   id: string
@@ -379,6 +380,23 @@ export function useMLState() {
     error: '',
   })
 
+  // 门禁规则与开关。
+  // labelPeriod / volK / nFolds / foldGap / sigmaMode 仍放在 config 里与标签、训练共用；
+  // 这里只承载门禁独有的阈值，供门禁表单与运行记录快照共用。
+  const screenConfig = reactive<GateRules>({
+    minIc: 0.02,
+    minT: 2.5,
+    minSignFolds: 4,
+    fdrQ: 0.10,
+    minCoverage: 0.5,
+    gateTopk: 5,
+    minNames: 15,
+    trialCount: 0,
+    noTest: false,
+    noIncremental: false,
+    noLagSensitivity: false,
+  })
+
   // 训练配置
   const config = reactive({
     labelSource: '',         // 标签来源变量（如 "sh.600000.close"）
@@ -607,6 +625,7 @@ export function useMLState() {
     trainResult,
     featureReport,
     screenState,
+    screenConfig,
     config,
     QUICK_RANGES,
     setQuickRange,

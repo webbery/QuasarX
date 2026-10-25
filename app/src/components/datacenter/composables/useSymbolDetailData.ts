@@ -3,6 +3,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { getGlobalStorage } from '@/ts/globalStorage'
 import { parseBackendDatetime } from '@/ts/dateUtils'
+import { symbolToId, exchangeLower } from '@/lib/symbol'
 
 export type DetailTab = 'quote' | 'hfq' | 'dividend' | 'finance'
 
@@ -42,23 +43,6 @@ export function getFreqLabel(freq: string): string {
 
 export function isDailyFreq(freq: string): boolean {
   return freq === '1d' || freq === 'daily'
-}
-
-/** '600000.SH' → '600000' */
-export function symbolToId(symbol: string): string {
-  const parts = symbol.split('.')
-  return parts.length === 2 ? parts[1] : symbol
-}
-
-/** '600000.SH' → 'SH' */
-export function symbolToExchange(symbol: string): string {
-  const parts = symbol.split('.')
-  return parts.length === 2 ? parts[0].toUpperCase() : 'SH'
-}
-
-/** 'SH' → 'sh' */
-export function exchangeLower(symbol: string): string {
-  return symbolToExchange(symbol).toLowerCase()
 }
 
 /** 从 globalStorage 缓存的 stocks Map 拿中文名 */

@@ -993,6 +993,7 @@ import PromptDialog from './PromptDialog.vue'
 import StrategySelect from './StrategySelect.vue'
 import { useHistoryStore } from '@/stores/history'
 import { extractSecuritiesFromFlowData } from '@/lib/strategyPool'
+import { toSuffixedSymbol } from '@/lib/symbol'
 
 // 声明接收父组件传递的事件（避免 Vue fragment 警告）
 const emit = defineEmits(['load-version', 'strategy-click', 'macro-data-click'])
@@ -1100,13 +1101,6 @@ const quoteStrategySymbolCount = computed(() => {
 
 // 批量下载选中：可选起始日期（留空按各标的 end_time+1）
 const quoteBatchStartDate = ref('')
-
-// 按代码补全交易所后缀：纯数字 6 位 + 'SH' (默认)；可由 caller 覆盖
-function toApiSymbol(code: string): string {
-    const c = code.trim()
-    if (c.includes('.')) return c.toUpperCase()
-    return `${c}.SH`
-}
 
 // 服务端数据列表状态
 const quoteDataList = ref<any[]>([])
@@ -1302,7 +1296,7 @@ watch(dividendStrategy, async (name) => {
         const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
         if (flowData) {
             const securities = extractSecuritiesFromFlowData(flowData as any)
-            dividendStrategySymbols.value = securities.map(s => toApiSymbol(s.code)).join(',')
+            dividendStrategySymbols.value = securities.map(s => toSuffixedSymbol(s.code)).join(',')
         } else {
             dividendStrategySymbols.value = ''
         }
@@ -1324,7 +1318,7 @@ watch(dividendStrategy, async (name) => {
             if (reloaded) remote.symbols = reloaded.symbols ?? []
         }
         dividendStrategySymbols.value = (remote.symbols ?? [])
-            .map(s => toApiSymbol(s))
+            .map(s => toSuffixedSymbol(s))
             .join(',')
     } else {
         dividendStrategySymbols.value = ''
@@ -1351,7 +1345,7 @@ watch(quoteStrategy, async (name) => {
         const flowData = await historyStore.loadVersionFlowData(sorted[0].id)
         if (flowData) {
             const securities = extractSecuritiesFromFlowData(flowData as any)
-            quoteStrategySymbols.value = securities.map(s => toApiSymbol(s.code)).join(',')
+            quoteStrategySymbols.value = securities.map(s => toSuffixedSymbol(s.code)).join(',')
         } else {
             quoteStrategySymbols.value = ''
         }
@@ -1372,7 +1366,7 @@ watch(quoteStrategy, async (name) => {
             if (reloaded) remote.symbols = reloaded.symbols ?? []
         }
         quoteStrategySymbols.value = (remote.symbols ?? [])
-            .map(s => toApiSymbol(s))
+            .map(s => toSuffixedSymbol(s))
             .join(',')
     }
 })

@@ -67,6 +67,17 @@ function createWindow() {
     // 隐藏菜单栏
     mainWindow.setMenu(null);
 
+    // 诊断用：把渲染进程的 [MLFlow] 日志转发到启动终端（其余日志不转发，避免刷屏）
+    mainWindow.webContents.on('console-message', (...args: any[]) => {
+        const first = args[0];
+        const msg = (first && typeof first === 'object' && typeof first.message === 'string')
+            ? first.message
+            : String(args[2] ?? '');
+        if (msg.includes('[MLFlow]')) {
+            console.log('[renderer]', msg);
+        }
+    });
+
     if (!process.env.VITE_DEV_SERVER_URL) {
       mainWindow.loadFile(join(process.env.BUILD_APP, 'index.html'))
     } else {

@@ -3,7 +3,7 @@
     <!-- 训练入口 -->
     <div class="train-summary">
       <div class="summary-text">
-        <span class="section-eyebrow">TRAINING INPUT</span>
+        <span class="section-eyebrow">训练输入</span>
         <h3>调整训练参数并启动训练</h3>
         <p>基础参数覆盖 80% 的调参场景；高级正则项在折叠区内，通常只在过拟合/欠拟合时调整。</p>
       </div>
@@ -66,7 +66,7 @@
     <div class="optimize-section">
       <div class="optimize-header" @click="showOptimize = !showOptimize">
         <div>
-          <span class="section-eyebrow">OPTUNA TPE</span>
+          <span class="section-eyebrow">贝叶斯调参</span>
           <h3 class="section-title">参数优化</h3>
         </div>
         <span class="collapse-arrow" :class="{ open: showOptimize }">▶</span>
@@ -189,7 +189,7 @@
     <div class="config-section">
       <div class="section-heading">
         <div>
-          <span class="section-eyebrow">CORE PARAMS</span>
+          <span class="section-eyebrow">核心参数</span>
           <h3 class="section-title">标签与目标</h3>
         </div>
       </div>
@@ -234,7 +234,7 @@
     <div class="config-section">
       <div class="section-heading">
         <div>
-          <span class="section-eyebrow">CORE PARAMS</span>
+          <span class="section-eyebrow">核心参数</span>
           <h3 class="section-title">训练核心</h3>
         </div>
       </div>
@@ -383,7 +383,7 @@
     <div v-if="chartData.length > 0" class="chart-section">
       <div class="section-heading">
         <div>
-          <span class="section-eyebrow">LOSS CURVE</span>
+          <span class="section-eyebrow">损失曲线</span>
           <h3 class="section-title">Loss 曲线</h3>
         </div>
         <span class="section-hint">{{ state.trainResult.loading ? '实时更新中…' : '训练/验证损失随迭代变化，虚线为早停触发点' }}</span>

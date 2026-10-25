@@ -36,7 +36,7 @@
       <div v-if="production" class="section production-section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">PRODUCTION</span>
+            <span class="section-eyebrow">生产模型</span>
             <h3 class="section-title">当前生产模型</h3>
           </div>
         </div>
@@ -55,7 +55,7 @@
       <div class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">EXPERIMENTS</span>
+            <span class="section-eyebrow">实验模型</span>
             <h3 class="section-title">实验模型</h3>
           </div>
           <span class="section-hint">点击行展开详情</span>
@@ -126,7 +126,7 @@
       <div v-if="compareMode && selectedPaths.size >= 2" class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">COMPARISON</span>
+            <span class="section-eyebrow">模型对比</span>
             <h3 class="section-title">模型对比</h3>
           </div>
         </div>

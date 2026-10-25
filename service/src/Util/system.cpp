@@ -652,7 +652,14 @@ symbol_t to_symbol(const String& symbol, const String& exchange, contract_type t
     }
     if (tokens.size() > 1) {
       auto excName = to_upper(tokens.front());
-      id._exchange = exchange_map().at(excName);
+      auto exchangeItr = exchange_map().find(excName);
+      if (exchangeItr == exchange_map().end()) {
+        // 排查用：保留原来的抛出行为，但先把非法前缀打出来
+        WARN("[to_symbol] unknown exchange prefix '{}' in '{}' (expected SZ/SH/BJ)", excName, symbol);
+        id._exchange = exchange_map().at(excName);
+      } else {
+        id._exchange = exchangeItr->second;
+      }
     } else {
         if (id._type == contract_type::option) {
             
