@@ -3,7 +3,7 @@
     <!-- 顶部控制 + 数据收集入口 -->
     <div class="collect-summary">
       <div class="summary-text">
-        <span class="section-eyebrow">FEATURE ANALYSIS</span>
+        <span class="section-eyebrow">特征分析</span>
         <h3>检查策略上游数据的特征质量</h3>
         <p>从 XGBoost 节点反向遍历子图，收集所有节点的 Vector&lt;double&gt; 输出，统计 NaN 与分布；NaN% &gt; 30% 的特征可能影响训练质量。</p>
       </div>
@@ -45,7 +45,7 @@
     <div v-if="state.featureReport.data" class="chart-section">
       <div class="section-heading">
         <div>
-          <span class="section-eyebrow">FEATURE REPORT</span>
+          <span class="section-eyebrow">特征报告</span>
           <h3 class="section-title">特征数据检查</h3>
         </div>
         <span class="section-hint">NaN% &gt; 30% 的特征可能影响训练质量</span>
@@ -57,12 +57,6 @@
       <div class="empty-icon">🔍</div>
       <div>配置标签来源后点击"开始收集"查看特征统计</div>
     </div>
-
-    <!-- 特征门禁：依赖上一步「开始收集」产出的特征缓存 -->
-    <FeatureGatePanel
-      :state="state"
-      :csv-path="state.featureReport.data?.csv_path || ''"
-    />
   </div>
 </template>
 
@@ -71,7 +65,6 @@ import { ref, onBeforeUnmount } from 'vue'
 import { useMLData } from '../composables/useMLData'
 import type { TrainStep } from '../composables/useMLState'
 import FeatureInspectionPanel from './FeatureInspectionPanel.vue'
-import FeatureGatePanel from './FeatureGatePanel.vue'
 
 const props = defineProps<{
   state: any

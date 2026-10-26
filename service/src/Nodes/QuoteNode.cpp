@@ -105,6 +105,10 @@ bool QuoteInputNode::Init(const nlohmann::json& config) {
             WARN("QuoteInputNode: invalid symbol code '{}'", code);
             continue;
         }
+        // 排查用：确认输入代码是否带交易所前缀，以及解析出的 symbol_t 是否带 exchange
+        // symbol_t 的字段是位域，fmt 不能直接绑定，必须转成普通整数
+        WARN("[QuoteInputNode:{}] code='{}' -> get_symbol='{}' exchange={} numeric={}",
+             _id, code, get_symbol(symbol), (int)symbol._exchange, (uint32_t)symbol._symbol);
         _symbols.insert(symbol);
         filer._symbols.emplace(code);
     }

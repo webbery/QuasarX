@@ -87,8 +87,10 @@ struct TrainSession {
     std::atomic<bool> _done{false};
     std::atomic<bool> _cancelled{false};
     
-    // 后台 Python 进程句柄，用于 cancel 时终止子进程
-    PythonRunner* _runner = nullptr;
+    // 后台 Python 进程句柄，用于 cancel 时终止子进程。
+    // 用 shared_ptr：cancel 线程调用 kill() 期间，后台线程可能已经跑完并释放自己的引用，
+    // 裸指针会导致 use-after-free。
+    std::shared_ptr<PythonRunner> _runner;
 
     std::mutex _mtx;
     std::condition_variable _cv;

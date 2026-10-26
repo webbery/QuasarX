@@ -243,6 +243,8 @@ export function useMLData() {
       noTest: boolean
       noIncremental: boolean
       noLagSensitivity: boolean
+      /** 特征白名单（端点短名）；不传则分析缓存里的全部特征 */
+      features?: string[]
     },
     onEvent?: (type: string, data: any) => void,
   ): Promise<ScreenTaskResult | null> {
@@ -273,6 +275,7 @@ export function useMLData() {
         no_incremental: config.noIncremental,
         no_lag_sensitivity: config.noLagSensitivity,
       }
+      if (config.features?.length) body.features = config.features
 
       const server = localStorage.getItem('remote') || 'localhost:19107'
       const token = localStorage.getItem('token') || ''

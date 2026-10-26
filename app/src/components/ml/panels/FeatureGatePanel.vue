@@ -1,134 +1,31 @@
 <template>
   <div class="feature-gate-panel">
-    <!-- 门禁配置 -->
-    <div class="config-section">
-      <div class="section-heading">
-        <div>
-          <span class="section-eyebrow">FEATURE GATE</span>
-          <h3 class="section-title">特征门禁</h3>
-        </div>
-        <span class="section-hint">
-          DEV 内滚动 {{ config.nFolds }} 折，折间隔离 {{ effectiveGap }} bar
-        </span>
-      </div>
-
-      <div class="config-grid">
-        <div class="config-item">
-          <label>
-            交叉验证折数 N
-            <span class="tip-icon" title="DEV 区间内切 N 个连续折，报每折 IC 与同号折数。&#10;折数越多，单折样本越少、门槛越难达到。">?</span>
-          </label>
-          <input type="number" v-model.number="config.nFolds" min="2" max="50" class="select-input"
-                 @change="onNFoldsChange" />
-          <span class="config-hint">2 ~ 50</span>
-        </div>
-
-        <div class="config-item">
-          <label>
-            折间间隔 gap
-            <span class="tip-icon" title="相邻折之间被完全跳过、不参与任何折的 bar 数。&#10;标签是 labelPeriod 根 bar 的前瞻收益，至少要隔这么多，两折的标签窗口才不重叠。&#10;设定值小于标签周期时，系统会自动抬到标签周期。">?</span>
-          </label>
-          <input type="number" v-model.number="config.foldGap" min="0" max="250" class="select-input" />
-          <span class="config-hint" :class="{ warn: gapRaised }">
-            设定 {{ config.foldGap }} bar · 生效 {{ effectiveGap }} bar
-            <template v-if="gapRaised">（受标签周期 {{ config.labelPeriod }} 约束）</template>
-          </span>
-        </div>
-
-        <div class="config-item">
-          <label>
-            标签波动率口径
-            <span class="tip-icon" title="标签阈值的 σ 口径。&#10;expanding：逐行因果，阈值只用该行之前的数据，无前视泄露。&#10;full：全序列一个常数（旧行为，早期行的阈值里含后期波动率）。">?</span>
-          </label>
-          <select v-model="config.sigmaMode" class="select-input">
-            <option value="expanding">expanding（因果，无泄露）</option>
-            <option value="full">full（全序列，旧行为）</option>
-          </select>
-          <span class="config-hint" :class="{ warn: config.sigmaMode === 'full' }">
-            {{ config.sigmaMode === 'full' ? '⚠ 全序列口径存在前视泄露' : '仅影响后续三分类训练，不改变 rank IC' }}
-          </span>
-        </div>
-      </div>
-
-      <!-- 门禁规则（折叠） -->
-      <button class="advanced-toggle" @click="showRules = !showRules">
-        <i :class="showRules ? 'fas fa-chevron-down' : 'fas fa-chevron-right'"></i>
-        门禁规则
-        <span class="advanced-hint">预注册选择条件，只看 DEV</span>
-      </button>
-      <div v-show="showRules" class="advanced-body">
-        <div class="config-grid">
-          <div class="config-item">
-            <label>|IC| 门槛</label>
-            <input type="number" v-model.number="rules.minIc" step="0.005" min="0" max="1" class="select-input" />
-          </div>
-          <div class="config-item">
-            <label>|NW t| 门槛</label>
-            <input type="number" v-model.number="rules.minT" step="0.1" min="0" max="50" class="select-input" />
-          </div>
-          <div class="config-item">
-            <label>同号折数</label>
-            <input type="number" v-model.number="rules.minSignFolds" min="0" :max="config.nFolds" class="select-input" />
-            <span class="config-hint">0 ~ {{ config.nFolds }}</span>
-          </div>
-          <div class="config-item">
-            <label>FDR q 门槛</label>
-            <input type="number" v-model.number="rules.fdrQ" step="0.01" min="0.01" max="1" class="select-input" />
-          </div>
-          <div class="config-item">
-            <label>覆盖率门槛</label>
-            <input type="number" v-model.number="rules.minCoverage" step="0.05" min="0" max="1" class="select-input" />
-          </div>
-          <div class="config-item">
-            <label>top-k 门槛</label>
-            <input type="number" v-model.number="rules.gateTopk" min="1" max="50" class="select-input" />
-            <span class="config-hint">top-k 超额必须 &gt; 0</span>
-          </div>
-          <div class="config-item">
-            <label>单日最少标的</label>
-            <input type="number" v-model.number="rules.minNames" min="2" max="500" class="select-input" />
-          </div>
-          <div class="config-item">
-            <label>历史试验次数</label>
-            <input type="number" v-model.number="rules.trialCount" min="0" max="100000" class="select-input" />
-            <span class="config-hint">用于校正 FDR，留 0 表示按本次特征数计</span>
-          </div>
-        </div>
-        <div class="config-grid" style="margin-top: 10px">
-          <label class="check-item">
-            <input type="checkbox" v-model="options.noTest" />
-            <span>不计算锁定 TEST（只看 DEV）</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" v-model="options.noIncremental" />
-            <span>跳过增量 IC（不与现有特征做残差回归）</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" v-model="options.noLagSensitivity" />
-            <span>跳过滞后敏感性诊断</span>
-          </label>
-        </div>
-      </div>
-    </div>
-
     <!-- 动作 -->
     <div class="gate-action">
       <button class="btn btn-primary"
-              :disabled="state.screenState.loading || !csvPath"
+              :disabled="state.screenState.loading || !csvPath || noFeatures"
               @click="onScreen">
         <i v-if="state.screenState.loading" class="fas fa-spinner fa-spin"></i>
         {{ state.screenState.loading ? '门禁中…' : '开始门禁' }}
       </button>
-      <span v-if="!csvPath" class="gate-hint warn">
-        <i class="fas fa-exclamation-circle"></i>请先执行「开始收集」——门禁需要服务端生成的特征缓存
+      <span v-if="noFeatures" class="gate-hint warn">
+        <i class="fas fa-exclamation-circle"></i>勾选的端点还没收集，请先重新收集
       </span>
-      <span v-else class="gate-hint">
-        <i class="fas fa-database"></i>特征缓存就绪（collect 产出）
+      <span v-else-if="historical" class="gate-hint warn">
+        <i class="fas fa-history"></i>正在查看历史运行
+        <button class="link-btn" @click="$emit('exit-history')">返回本次</button>
+      </span>
+      <span v-else-if="!csvPath" class="gate-hint warn">
+        <i class="fas fa-exclamation-circle"></i>请先在右侧「开始收集」——门禁需要服务端生成的特征缓存
+      </span>
+      <span v-else class="gate-hint" :title="csvPath">
+        <i class="fas fa-database"></i>特征缓存就绪
+        <span v-if="features?.length" class="feat-count">· 分析 {{ features.length }} 个端点</span>
       </span>
     </div>
 
     <!-- 进度 -->
-    <div v-if="state.screenState.steps.length > 0" class="training-progress">
+    <div v-if="state.screenState.steps.length > 0 && !historical" class="training-progress">
       <div class="progress-header">
         <span class="progress-title">门禁进度</span>
         <span v-if="!state.screenState.loading" class="progress-done">完成</span>
@@ -179,7 +76,7 @@
     <div v-if="rows.length > 0" class="chart-section">
       <div class="section-heading">
         <div>
-          <span class="section-eyebrow">GATE RESULT</span>
+          <span class="section-eyebrow">门禁结论</span>
           <h3 class="section-title">门禁结论</h3>
         </div>
         <div class="table-actions">
@@ -314,39 +211,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useMLData } from '../composables/useMLData'
-import type { ScreenFeature, TrainStep } from '../composables/useMLState'
+import type { ScreenFeature, ScreenReport, ScreenTaskResult, TrainStep } from '../composables/useMLState'
 
 const props = defineProps<{
   state: any
   csvPath?: string
+  /** 本次要分析的特征白名单（端点短名）；空 = 分析缓存里的全部 */
+  features?: string[]
+  /** 当前展示的是历史运行，隐藏进度并在动作区给出提示 */
+  historical?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'jump-to-feature'): void
+  (e: 'exit-history'): void
+  (e: 'finished', task: ScreenTaskResult, report: ScreenReport | null): void
 }>()
 
 const { screen, screenResult } = useMLData()
-const config = props.state.config
 
-const showRules = ref(false)
 const selected = ref(new Set<string>())
 const expanded = ref(new Set<string>())
-
-const rules = reactive({
-  minIc: 0.02,
-  minT: 2.5,
-  minSignFolds: 4,
-  fdrQ: 0.10,
-  minCoverage: 0.5,
-  gateTopk: 5,
-  minNames: 15,
-  trialCount: 0,
-})
-
-const options = reactive({
-  noTest: false,
-  noIncremental: false,
-  noLagSensitivity: false,
-})
 
 const STEP_LABELS: Record<string, string> = {
   prepare: '准备',
@@ -365,11 +253,11 @@ const STEP_LABELS: Record<string, string> = {
 }
 
 const csvPath = computed(() => props.csvPath || '')
-const nFolds = computed(() => config.nFolds)
-const effectiveGap = computed(() => Math.max(config.foldGap || 0, config.labelPeriod || 0))
-const gapRaised = computed(() => (config.foldGap || 0) < (config.labelPeriod || 0))
-
+const nFolds = computed(() => props.state.config.nFolds)
 const summary = computed(() => props.state.screenState.task?.summary || null)
+
+/** 传了白名单但为空 = 勾选的端点尚未收集，不能退回「分析全部特征」 */
+const noFeatures = computed(() => Array.isArray(props.features) && props.features.length === 0)
 
 interface GateRow {
   name: string
@@ -406,12 +294,11 @@ const rows = computed<GateRow[]>(() => {
       decay: f.decay || {},
       yearly: f.dev?.yearly || {},
       lag: f.lag,
-      foldIc: folds?.fold_ic || [],
-      foldDates: folds?.fold_dates || null,
-      signFolds: folds?.sign_consistency ?? 0,
+      foldIc: (folds as any)?.fold_ic || [],
+      foldDates: (folds as any)?.fold_dates || null,
+      signFolds: (folds as any)?.sign_consistency ?? 0,
     })
   }
-  // A 档在前，其次按 |DEV IC| 降序
   out.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier < b.tier ? -1 : 1
     return Math.abs(b.dev?.ic_mean || 0) - Math.abs(a.dev?.ic_mean || 0)
@@ -419,13 +306,7 @@ const rows = computed<GateRow[]>(() => {
   return out
 })
 
-const allSelected = computed(() => rows.value.length > 0 && rows.value.every((r) => selected.value.has(r.name)))
-
-function onNFoldsChange() {
-  config.nFolds = Math.min(Math.max(Number(config.nFolds) || 2, 2), 50)
-  // 服务端要求 min_sign_folds <= n_folds
-  if (rules.minSignFolds > config.nFolds) rules.minSignFolds = config.nFolds
-}
+const allSelected = computed(() => rows.value.length > 0 && rows.value.every(r => selected.value.has(r.name)))
 
 function toggleOne(name: string) {
   const next = new Set(selected.value)
@@ -434,11 +315,7 @@ function toggleOne(name: string) {
 }
 
 function toggleAll() {
-  if (allSelected.value) {
-    selected.value = new Set()
-  } else {
-    selected.value = new Set(rows.value.map((r) => r.name))
-  }
+  selected.value = allSelected.value ? new Set() : new Set(rows.value.map(r => r.name))
 }
 
 function toggleExpand(name: string) {
@@ -448,7 +325,7 @@ function toggleExpand(name: string) {
 }
 
 function copySelected() {
-  const names = rows.value.filter((r) => selected.value.has(r.name)).map((r) => r.name)
+  const names = rows.value.filter(r => selected.value.has(r.name)).map(r => r.name)
   if (!names.length) {
     ElMessage.warning('请先勾选要复制的特征')
     return
@@ -464,7 +341,6 @@ function fmt(v: any, nd = 4): string {
   return Number(v).toFixed(nd)
 }
 
-/** '2024-03-18 00:00:00' → '2024-03-18' */
 function shortDate(s: string): string {
   return typeof s === 'string' ? s.split(' ')[0] : String(s ?? '')
 }
@@ -485,7 +361,11 @@ function rowClass(row: GateRow): string {
 // ── 发起门禁 ────────────────────────────────────────────────
 async function onScreen() {
   if (!csvPath.value) {
-    ElMessage.warning('请先执行「开始收集」，门禁需要服务端生成的特征缓存')
+    ElMessage.warning('请先执行「开始收集」')
+    return
+  }
+  if (noFeatures.value) {
+    ElMessage.warning('勾选的端点还没收集，请先重新收集')
     return
   }
   const st = props.state.screenState
@@ -498,16 +378,19 @@ async function onScreen() {
   selected.value = new Set()
   expanded.value = new Set()
 
+  const cfg = props.state.config
+  const rules = props.state.screenConfig
+
   try {
     const task = await screen(
       csvPath.value,
       {
-        nFolds: config.nFolds,
-        foldGap: config.foldGap,
-        primaryHorizon: config.labelPeriod,
-        labelPeriod: config.labelPeriod,
-        volK: config.volK,
-        sigmaMode: config.sigmaMode,
+        nFolds: cfg.nFolds,
+        foldGap: cfg.foldGap,
+        primaryHorizon: cfg.labelPeriod,
+        labelPeriod: cfg.labelPeriod,
+        volK: cfg.volK,
+        sigmaMode: cfg.sigmaMode,
         minIc: rules.minIc,
         minT: rules.minT,
         minSignFolds: rules.minSignFolds,
@@ -516,9 +399,10 @@ async function onScreen() {
         gateTopk: rules.gateTopk,
         minNames: rules.minNames,
         trialCount: rules.trialCount,
-        noTest: options.noTest,
-        noIncremental: options.noIncremental,
-        noLagSensitivity: options.noLagSensitivity,
+        noTest: rules.noTest,
+        noIncremental: rules.noIncremental,
+        noLagSensitivity: rules.noLagSensitivity,
+        features: props.features?.length ? props.features : undefined,
       },
       (type: string, data: any) => {
         if (type === 'step') {
@@ -564,12 +448,12 @@ async function onScreen() {
     const report = await screenResult(task.run_id)
     if (report) {
       st.report = report
-      // 默认勾选 A 档
       const aTier = Object.entries(report.features)
         .filter(([, f]) => (f as ScreenFeature).selection?.tier === 'A')
         .map(([name]) => name)
       selected.value = new Set(aTier)
     }
+    emit('finished', task, report)
   } catch (err: any) {
     st.error = err?.message || '门禁失败'
   } finally {
@@ -587,13 +471,6 @@ watch(() => props.state.screenState.task, () => {
 <style scoped>
 .feature-gate-panel { padding: 4px 0 16px; }
 
-.config-section {
-  margin-bottom: 14px;
-  padding: 14px 16px 16px;
-  background: rgba(15, 25, 41, 0.55);
-  border: 1px solid rgba(74, 85, 104, 0.25);
-  border-radius: 8px;
-}
 .section-heading {
   display: flex;
   justify-content: space-between;
@@ -609,73 +486,6 @@ watch(() => props.state.screenState.task, () => {
 }
 .section-title { color: #e2e8f0; font-size: 15px; margin: 4px 0 0; font-weight: 600; }
 .section-hint { font-size: 11.5px; color: #94a3b8; }
-
-.config-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
-.config-item { display: flex; flex-direction: column; gap: 5px; }
-.config-item > label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11.5px;
-  color: #94a3b8;
-}
-.tip-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: rgba(91, 143, 249, 0.2);
-  color: #93c5fd;
-  font-size: 9px;
-  cursor: help;
-  font-weight: 700;
-}
-.select-input {
-  width: 100%;
-  padding: 6px 9px;
-  background: rgba(10, 18, 32, 0.8);
-  border: 1px solid rgba(74, 85, 104, 0.4);
-  border-radius: 4px;
-  color: #e2e8f0;
-  font-size: 12px;
-  font-family: inherit;
-}
-.select-input:focus { outline: none; border-color: #3b82f6; }
-.config-hint { font-size: 10.5px; color: #64748b; }
-.config-hint.warn { color: #fbbf24; }
-
-.advanced-toggle {
-  margin-top: 12px;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 10px;
-  background: rgba(91, 143, 249, 0.07);
-  border: 1px solid rgba(74, 85, 104, 0.28);
-  border-radius: 5px;
-  color: #cbd5e1;
-  font-size: 12px;
-  cursor: pointer;
-}
-.advanced-hint { margin-left: auto; font-size: 10.5px; color: #64748b; }
-.advanced-body { margin-top: 12px; }
-
-.check-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  color: #94a3b8;
-  cursor: pointer;
-}
-.check-item input { accent-color: #3b82f6; }
 
 .gate-action { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .btn {
@@ -697,6 +507,19 @@ watch(() => props.state.screenState.task, () => {
 .btn-ghost:hover { background: rgba(91, 143, 249, 0.2); }
 .gate-hint { font-size: 11.5px; color: #64748b; display: flex; align-items: center; gap: 5px; }
 .gate-hint.warn { color: #fbbf24; }
+.feat-count { color: #94a3b8; font-family: 'SF Mono', Consolas, monospace; font-size: 10.5px; }
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #5b8ff9;
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { color: #93c5fd; }
 
 .training-progress {
   margin-bottom: 16px;

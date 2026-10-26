@@ -1,59 +1,35 @@
 <template>
   <div class="ml-tab">
-    <!-- 顶部控制栏 -->
-    <AnalysisControlBar
-      mode="strategy"
-      :show-mode-toggle="false"
-      v-model:selectedStrategyId="selectedStrategyId"
-      :quick-range="quickRange"
-      :frequency="frequency"
-      :date-range="dateRange"
-      :strategy-options="strategyOptions"
-      :available-securities="availableSecurities"
-      :checked-symbols="checkedSymbols"
-      :quick-ranges="QUICK_RANGES"
-      :loading="loadingAny"
-      :can-analyze="canRunLabel"
-      run-label="标签分析"
-      show-frequency
-      @update:quickRange="setQuickRange($event)"
-      @update:frequency="setFrequency($event)"
-      @update-date-range="updateDateRange"
-      @toggle-symbol="toggleSymbol"
-      @run-analysis="runLabelAnalysis"
-    >
-      <template #extra-controls>
-        <div class="field-selector">
-          <label>字段:</label>
-          <select :value="field" class="select-small" @change="setField(($event.target as HTMLSelectElement).value)">
-            <option value="close">C 收盘价</option>
-            <option value="open">O 开盘价</option>
-            <option value="high">H 最高价</option>
-            <option value="low">L 最低价</option>
-            <option value="volume">V 成交量</option>
-          </select>
-        </div>
-        <div class="label-symbol-selector">
-          <label>标签标的:</label>
-          <select :value="labelSymbol" class="select-small" @change="labelSymbol = ($event.target as HTMLSelectElement).value">
-            <option value="">选择标的</option>
-            <option v-for="opt in labelSymbolOptions" :key="opt" :value="opt">{{ opt }}</option>
-          </select>
-        </div>
-        <div class="label-shape-selector">
-          <label>标签形状:</label>
-          <select v-model="config.labelShape" class="select-small">
-            <option v-for="s in LABEL_SHAPES" :key="s.value" :value="s.value">{{ s.label }}</option>
-          </select>
-        </div>
-      </template>
-    </AnalysisControlBar>
+    <!-- 顶部：策略选择 + 管线状态轨 -->
+    <div class="ml-top">
+      <div class="strategy-pick">
+        <span class="sp-label">策略</span>
+        <select
+          class="sp-select"
+          :value="selectedStrategyId"
+          @change="selectedStrategyId = ($event.target as HTMLSelectElement).value"
+        >
+          <option value="">请选择策略</option>
+          <option v-for="opt in strategyOptions" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
+        </select>
+      </div>
+
+      <MLStepFlow ref="flowRef" :nodes="flowNodes" @select="goToStep" />
+    </div>
 
     <div v-if="!selectedStrategyId" class="stage-empty stage-empty-hero">
       <div class="stage-icon">00</div>
       <div>
-        <h3>选择一个含 ML 节点的策略</h3>
-        <p>工作流：特征分析 → 标签分析 → 训练分析 → 结果分析，各阶段独立可自由切换。</p>
+        <h3>在顶部选择策略</h3>
+        <p>选一张含 XGBoost 节点的策略，口径、标的与产物会随策略加载。</p>
+      </div>
+    </div>
+
+    <div v-else-if="strategyLoading" class="stage-empty">
+      <div class="stage-icon">…</div>
+      <div>
+        <h3>正在加载策略</h3>
+        <p>读取最新版本的流程图与标的池。</p>
       </div>
     </div>
 
@@ -66,36 +42,33 @@
     </div>
 
     <template v-else>
-      <div class="compact-status">
-        <span class="node-status"><i></i>ML</span>
-        <span class="status-sep">·</span>
-        <span>{{ selectedStrategyName }}</span>
-        <span class="status-sep">·</span>
-        <span>{{ dateRange?.[0] || '—' }} → {{ dateRange?.[1] || '—' }}</span>
-        <span class="status-sep">·</span>
-        <span>{{ frequency }}</span>
-        <span v-if="state.trainResult.data" class="status-sep">·</span>
-        <span v-if="state.trainResult.data">模型 #{{ state.trainResult.data.model_id }}</span>
-      </div>
+      <div class="ml-body">
+        <main class="ml-work">
+          <!-- 前置未完成：不阻断进入，只提示 -->
+          <div v-if="missingSteps.length > 0" class="ready-banner">
+            <span class="rb-mark">未就绪</span>
+            <div class="rb-text">
+              <b>「{{ currentStepLabel }}」的前置步骤尚未完成</b>
+              <span>{{ prereqHint }}</span>
+            </div>
+            <div class="rb-actions">
+              <button
+                v-for="m in missingSteps"
+                :key="m.key"
+                class="rb-btn"
+                @click="goToStep(m.key)"
+              >
+                前往「{{ m.label }}」→
+              </button>
+            </div>
+          </div>
 
-      <div class="card-nav">
-        <button
-          v-for="step in STEPS"
-          :key="step.key"
-          :class="['card-btn', { active: activeTab === step.key }]"
-          @click="activeTab = step.key"
-        >
-          <span class="card-icon">{{ step.icon }}</span>
-          <span class="card-label">{{ step.label }}</span>
-        </button>
-      </div>
-
-      <div class="card-body">
         <div v-show="activeTab === 'feature'">
           <FeatureAnalysisPanel :state="state" :script="script" />
         </div>
 
-        <div v-show="activeTab === 'label'" class="label-workspace">
+
+          <div v-show="activeTab === 'label'" class="label-workspace">
           <div v-if="state.labelAnalysis.result" class="label-result">
             <LabelAnalysisChart :data="state.labelAnalysis.result" />
 
@@ -120,7 +93,16 @@
             <div class="label-controls">
               <div class="controls-header">
                 <span class="controls-title">参数调节</span>
-                <span class="controls-hint">拖动后本地重算</span>
+                <span class="controls-right">
+                  <span class="controls-hint">拖动后本地重算</span>
+                  <button
+                    class="btn-batch btn-compact"
+                    :disabled="!canRunLabel || state.labelAnalysis.loading"
+                    @click="runLabelAnalysis"
+                  >
+                    {{ state.labelAnalysis.loading ? '分析中…' : '重新运行分析' }}
+                  </button>
+                </span>
               </div>
               <div class="control-row">
                 <label>预测周期 N</label>
@@ -191,34 +173,58 @@
           </div>
         </div>
 
-        <div v-show="activeTab === 'train'">
-          <TrainPanel :state="state" :script="script" @trained="onTrained" />
-        </div>
+          <div v-show="activeTab === 'train'">
+            <TrainPanel :state="state" :script="script" @trained="onTrained" />
+          </div>
 
-        <div v-show="activeTab === 'result'">
-          <ResultPanel :state="state" :selected-strategy-id="selectedStrategyId" />
-        </div>
+          <div v-show="activeTab === 'result'">
+            <ResultPanel :state="state" :selected-strategy-id="selectedStrategyId" />
+          </div>
 
-        <div v-show="activeTab === 'models'">
-          <ModelManagePanel :state="state" :script="script" :selected-strategy-id="selectedStrategyId" :active-tab="activeTab" />
-        </div>
+          <div v-show="activeTab === 'models'">
+            <ModelManagePanel :state="state" :script="script" :selected-strategy-id="selectedStrategyId" :active-tab="activeTab" />
+          </div>
+        </main>
+
+        <MLInspector
+          :state="state"
+          :runs="runHistory"
+          :securities="availableSecurities"
+          :checked-symbols="checkedSymbols"
+          :securities-loading="securitiesLoading"
+          :label-symbol-options="labelSymbolOptions"
+          @toggle-symbol="toggleSymbol"
+          @select-all-symbols="selectAllSymbols"
+          @clear-symbols="clearSymbols"
+          @goto="goToStep"
+        />
       </div>
+
+      <MLTaskConsole
+        :rows="consoleRows"
+        :task-label="activeTaskLabel"
+        :summary="consoleSummary"
+        :collapsed="consoleCollapsed"
+        @toggle="consoleCollapsed = !consoleCollapsed"
+      />
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { useMLState, LABEL_SHAPES } from './composables/useMLState'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useMLState } from './composables/useMLState'
 import { useMLData } from './composables/useMLData'
+import { useStrategyScript } from './composables/useStrategyScript'
 import FeatureAnalysisPanel from './panels/FeatureAnalysisPanel.vue'
 import TrainPanel from './panels/TrainPanel.vue'
 import ResultPanel from './panels/ResultPanel.vue'
 import ModelManagePanel from './panels/ModelManagePanel.vue'
 import LabelAnalysisChart from './charts/LabelAnalysisChart.vue'
-import AnalysisControlBar from '@/components/shared/AnalysisControlBar.vue'
+import MLStepFlow, { type FlowNode } from './MLStepFlow.vue'
+import MLInspector, { type SessionRun } from './MLInspector.vue'
+import MLTaskConsole, { type ConsoleRow } from './MLTaskConsole.vue'
 import { useStrategySecurities } from '@/components/shared/composables/useStrategySecurities'
-import { useHistoryStore } from '@/stores/history'
 
 const STEPS = [
   { key: 'feature', label: '特征分析', icon: '🔍' },
@@ -228,11 +234,211 @@ const STEPS = [
   { key: 'models', label: '模型管理', icon: '📦' },
 ] as const
 
+type StepKey = typeof STEPS[number]['key']
+
+/**
+ * 流程主链：后一步依赖前一步完成。
+ * 模型管理是独立面板（浏览/删除模型），不参与主链，任何时候都可进入。
+ * 特征门禁已拆成独立分析面板，不在训练链路里。
+ */
+const STEP_CHAIN: StepKey[] = ['feature', 'label', 'train', 'result']
+
+const STEP_LABEL: Record<string, string> = Object.fromEntries(STEPS.map(s => [s.key, s.label]))
+
+/** 各步骤被锁定时的说明文案 */
+const STEP_HINTS: Record<string, string> = {
+  label: '标签分析用于确认标签分布是否适合训练。请先完成特征收集，再据此调整预测周期与波动阈值。',
+  train: '训练需要「特征分析」产出的特征缓存，以及前面确认过的标签口径。',
+  result: '结果分析展示训练产出的模型、评估指标与解释图表，需先完成训练。',
+}
+
 const activeTab = ref('feature')
 const state = useMLState()
-const { field, quickRange, frequency, dateRange, labelSymbol, QUICK_RANGES, setQuickRange, setFrequency, setField } = state
+const { field, frequency, dateRange, labelSymbol, setQuickRange } = state
 const config = state.config
 const { fetchLabelAnalysis, runBatchLabelAnalysis } = useMLData()
+
+// ── 状态轨：步骤状态与前置依赖 ──────────────────────────────
+
+/** 步骤是否已成功完成 */
+function stepDone(key: string): boolean {
+  switch (key) {
+    case 'feature': return !!state.featureReport.data
+    case 'label': return !!state.labelAnalysis.result
+    case 'train': return !!state.trainResult.data
+    case 'result': return !!state.trainResult.data
+    default: return false
+  }
+}
+
+/** 步骤是否已「了结」：当前所有步骤都以成功为准 */
+function stepResolved(key: string): boolean {
+  return stepDone(key)
+}
+
+/** 某步骤缺失的前置步骤 */
+function missingFor(key: string): { key: string; label: string }[] {
+  const idx = STEP_CHAIN.indexOf(key as StepKey)
+  if (idx < 0) return []
+  return STEP_CHAIN.slice(0, idx)
+    .filter(k => !stepResolved(k))
+    .map(k => ({ key: k, label: STEP_LABEL[k] }))
+}
+
+/** 当前步骤缺失的前置步骤 */
+const missingSteps = computed(() => missingFor(activeTab.value))
+const currentStepLabel = computed(() => STEP_LABEL[activeTab.value] || '')
+const prereqHint = computed(
+  () => STEP_HINTS[activeTab.value] || '前置步骤尚未完成，可先进入查看，但结论可能不完整。',
+)
+
+/** 训练指标取值 */
+function metric(key: string): string {
+  const v = state.trainResult.data?.eval_metrics?.[key]
+  return typeof v === 'number' && isFinite(v) ? v.toFixed(3) : ''
+}
+
+/** 状态轨节点：序号 + 产物摘要 + 就绪状态 */
+const flowNodes = computed<FlowNode[]>(() => STEPS.map((s, i) => {
+  const missing = missingFor(s.key)
+  const done = stepDone(s.key)
+  const failed = false
+
+  let summary = '—'
+  let statusText = '未运行'
+  switch (s.key) {
+    case 'feature': {
+      const f = state.featureReport.data
+      summary = f ? `${f.total_rows} × ${f.n_features}` : '尚未收集'
+      statusText = done ? '已就绪' : '未就绪'
+      break
+    }
+    case 'label': {
+      summary = state.labelAnalysis.result ? '已体检' : '尚未体检'
+      statusText = done ? '已就绪' : '未就绪'
+      break
+    }
+    case 'train': {
+      const tr = state.trainResult.data
+      const auc = metric('auc')
+      summary = tr ? `#${tr.model_id}${auc ? ` · AUC ${auc}` : ''}` : '尚未训练'
+      statusText = done ? '已就绪' : '未就绪'
+      break
+    }
+    case 'result': {
+      summary = done ? '训练产物可查看' : '等待训练'
+      statusText = done ? '已就绪' : '未就绪'
+      break
+    }
+    default: {
+      summary = '实验 / 生产模型'
+      statusText = '可进入'
+    }
+  }
+
+  const title = missing.length > 0
+    ? `可进入，但前置未完成：${missing.map(m => m.label).join('、')}`
+    : done
+      ? `「${s.label}」已完成 · 点击回看`
+      : `点击进入「${s.label}」`
+
+  return {
+    key: s.key,
+    index: String(i + 1).padStart(2, '0'),
+    label: s.label,
+    summary,
+    statusText,
+    done,
+    failed,
+    locked: missing.length > 0,
+    active: activeTab.value === s.key,
+    title,
+  }
+}))
+
+/** 点击节点：回跳始终允许；未就绪步骤进入后显示提示条，不拦截 */
+function goToStep(key: string) {
+  activeTab.value = key
+}
+
+// ── 本次会话记录（服务端 Run 历史接入前的本地记录）──────────
+const runHistory = ref<SessionRun[]>([])
+
+function clock(): string {
+  const d = new Date()
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function pushRun(stage: SessionRun['stage'], stageLabel: string, detail: string) {
+  runHistory.value.unshift({ at: clock(), stage, stageLabel, detail })
+  if (runHistory.value.length > 40) runHistory.value.pop()
+}
+
+watch(() => state.featureReport.data, (d) => {
+  if (d) pushRun('collect', '收集', `${d.total_rows}×${d.n_features}`)
+})
+watch(() => state.labelAnalysis.result, (r) => {
+  if (r) pushRun('label', '标签', `${r.symbol} · ${r.labels.filter((l: number) => l >= 0).length} 样本`)
+})
+watch(() => state.trainResult.data, (t) => {
+  if (t) pushRun('train', '训练', `#${t.model_id}${metric('auc') ? ` · AUC ${metric('auc')}` : ''}`)
+})
+
+// ── 任务日志（可折叠）───────────────────────────────────────
+const consoleCollapsed = ref(localStorage.getItem('ml-console-collapsed') === '1')
+watch(consoleCollapsed, (v) => localStorage.setItem('ml-console-collapsed', v ? '1' : '0'))
+
+const activeTask = computed<'collect' | 'train' | ''>(() => {
+  if (state.trainResult.loading) return 'train'
+  if (state.featureReport.loading) return 'collect'
+  if (state.trainResult.steps.length) return 'train'
+  if (state.featureReport.steps.length) return 'collect'
+  return ''
+})
+
+const activeTaskLabel = computed(() => ({
+  collect: '特征收集',
+  train: '训练分析',
+  '': '空闲',
+}[activeTask.value]))
+
+const STEP_ICON: Record<string, string> = {
+  done: '✓', running: '⏳', error: '✗', pending: '○',
+}
+
+const consoleRows = computed<ConsoleRow[]>(() => {
+  const rows: ConsoleRow[] = []
+  const kind = activeTask.value
+  const src: any =
+    kind === 'train' ? state.trainResult
+      : kind === 'collect' ? state.featureReport
+        : null
+  if (!src) return rows
+
+  for (const s of src.steps as Array<{ id: string; label: string; status: string; detail?: string }>) {
+    rows.push({
+      level: s.status === 'error' ? 'error' : s.status === 'done' ? 'done' : 'step',
+      tag: STEP_ICON[s.status] || '○',
+      text: `${s.label}${s.detail ? ` · ${s.detail}` : ''}`,
+    })
+  }
+  for (const l of src.logs as Array<{ level: string; line: string }>) {
+    rows.push({
+      level: l.level === 'error' ? 'error' : l.level === 'warning' ? 'warn' : 'info',
+      tag: '日志',
+      text: l.line,
+    })
+  }
+  return rows
+})
+
+const consoleSummary = computed(() => {
+  const kind = activeTask.value
+  if (!kind) return ''
+  const running =
+    kind === 'train' ? state.trainResult.loading : state.featureReport.loading
+  return running ? '运行中…' : '已完成'
+})
 
 const {
   strategyOptions,
@@ -243,10 +449,39 @@ const {
   loadSecuritiesForStrategy,
   toggleSymbol,
 } = useStrategySecurities({ defaultCheckAll: true })
-const historyStore = useHistoryStore()
 
-const script = ref('')
-const hasMLNode = ref(false)
+const ss = useStrategyScript()
+const { script, hasMLNode, loading: strategyLoading } = ss
+
+// ── 诊断：定位「流程图不显示」 ────────────────────────────────
+const flowRef = ref<any>(null)
+
+function logFlowDiag(reason: string) {
+  const el = flowRef.value?.$el as HTMLElement | undefined
+  const rect = el?.getBoundingClientRect()
+  console.log('[MLFlow] diag', JSON.stringify({
+    reason,
+    activeTab: activeTab.value,
+    hasMLNode: hasMLNode.value,
+    strategy: selectedStrategyId.value,
+    viewport: `${window.innerWidth}x${window.innerHeight}`,
+    mounted: !!el,
+    rect: rect ? { w: Math.round(rect.width), h: Math.round(rect.height) } : null,
+    nodes: flowNodes.value.map(n => `${n.label}${n.done ? '[done]' : ''}${n.failed ? '[fail]' : ''}${n.locked ? '[lock]' : ''}${n.active ? '[active]' : ''}`),
+    missing: missingSteps.value.map(m => m.key),
+    chain: {
+      feature: !!state.featureReport.data,
+      label: !!state.labelAnalysis.result,
+      train: !!state.trainResult.data,
+    },
+  }))
+}
+
+watch(activeTab, () => logFlowDiag('tab-change'))
+watch(flowNodes, () => logFlowDiag('state-change'))
+onMounted(() => {
+  nextTick(() => requestAnimationFrame(() => logFlowDiag('mounted')))
+})
 
 // 标签标的选项（从已勾选标的中取）
 const labelSymbolOptions = computed(() => Array.from(checkedSymbols.value))
@@ -258,60 +493,41 @@ const canRunLabel = computed(() => {
   return true  // matrix 模式不需要选择标签标的
 })
 
-const loadingAny = computed(() =>
-  state.labelAnalysis.loading || state.batchAnalysis.loading || state.featureReport.loading || state.trainResult.loading,
-)
+// 标的全选 / 清空（Inspector 内操作）
+function selectAllSymbols() {
+  checkedSymbols.value = new Set(availableSecurities.value.map(s => s.code))
+}
 
-function updateDateRange(value: string, type: 'start' | 'end') {
-  if (dateRange.value) {
-    dateRange.value = type === 'start'
-      ? [value, dateRange.value[1]]
-      : [dateRange.value[0], value]
-  }
+function clearSymbols() {
+  checkedSymbols.value = new Set()
 }
 
 async function onStrategyChange() {
   if (!selectedStrategyId.value) {
-    script.value = ''
-    hasMLNode.value = false
+    ss.reset()
     return
   }
 
+  // 产物与结论都属于上一张策略，切策略时一并作废，避免 Inspector 展示错位
+  state.reset()
+  runHistory.value = []
   loadSecuritiesForStrategy(selectedStrategyId.value)
 
-  try {
-    const versions = await historyStore.getVersionsByStrategy(selectedStrategyId.value)
-    if (versions.length === 0) return
-    const sorted = [...versions].sort((a, b) =>
-      new Date(b.saveTime).getTime() - new Date(a.saveTime).getTime()
-    )
-    const latest = sorted[0]
-    if (!latest) return
-    const data = await historyStore.loadVersionFlowData(latest.id)
-    if (!data) return
-    const graphData = typeof data === 'string' ? JSON.parse(data) : data
-    graphData.id = selectedStrategyId.value
-    // 切换策略前清空旧 labelSource，避免发往后端的 symbol 指向已删除标的
-    // TrainPanel.vue 的 watch 在 script 变化时会用新策略的首位 code 自动重新填充
-    state.config.labelSource = ''
-    script.value = JSON.stringify(graphData)
-    // 从策略的回测配置初始化日期范围（优先 backtest 字段，兜底"全部数据"）
-    if (graphData.backtest?.start && graphData.backtest?.end) {
-      dateRange.value = [graphData.backtest.start, graphData.backtest.end]
-      setQuickRange('')
-    } else {
-      // 未配置回测时间 → 使用数据全范围（传空字符串让后端自行判断）
-      dateRange.value = ['', '']
-      setQuickRange('')
-    }
-    // 检测是否包含任何 ML 节点（当前仅 XGBoost）
-    hasMLNode.value = graphData.nodes?.some((n: any) => {
-      const t = n?.data?.nodeType
-      return t === 'xgboost' || t === 'ml' || t === 'onnx_inference'
-    }) ?? false
-  } catch (e) {
-    console.error('[MLTab] 加载策略失败:', e)
+  const res = await ss.load(selectedStrategyId.value)
+  if (!res) return
+
+  // 清空旧 labelSource，避免发往后端的 symbol 指向已删除标的；
+  // TrainPanel 的 watch 会在 script 变化后用新策略的首位 code 重新填充
+  state.config.labelSource = ''
+
+  // 从策略的回测配置初始化日期范围（优先 backtest 字段，兜底"全部数据"）
+  if (res.backtest?.start && res.backtest?.end) {
+    dateRange.value = [res.backtest.start, res.backtest.end]
+  } else {
+    // 未配置回测时间 → 使用数据全范围（传空字符串让后端自行判断）
+    dateRange.value = ['', '']
   }
+  setQuickRange('')
 }
 
 async function runLabelAnalysis() {
@@ -434,44 +650,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1a2236;
-  color: #e0e0e0;
-}
-
-.field-selector,
-.label-symbol-selector,
-.label-shape-selector {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.field-selector label,
-.label-symbol-selector label,
-.label-shape-selector label {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-}
-
-.select-small {
-  padding: 4px 8px;
-  background: rgba(26, 34, 54, 0.8);
-  border: 1px solid rgba(74, 85, 104, 0.3);
-  border-radius: 4px;
-  color: #e0e0e0;
-  font-size: 12px;
-  outline: none;
-  cursor: pointer;
-}
-
-.select-small:focus {
-  border-color: rgba(41, 98, 255, 0.5);
-}
-
-.select-small option {
-  background: #1a2236;
-  color: #e0e0e0;
+  background: #0a0e13;
+  color: #dbe4ee;
 }
 
 .dist-bar {
@@ -694,96 +874,122 @@ onMounted(() => {
   text-align: center;
 }
 
-.card-nav {
+/* ── 顶部：策略选择 + 状态轨 ────────────────── */
+.ml-top {
+  flex: 0 0 auto;
   display: flex;
-  gap: 8px;
-  padding: 8px 12px 0;
-}
-.card-btn {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 14px;
-  background: rgba(15, 25, 41, 0.5);
-  border: 1px solid rgba(74, 85, 104, 0.3);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  color: #64748b;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
-}
-.card-btn:hover {
-  background: rgba(20, 32, 55, 0.7);
-  color: #94a3b8;
-}
-.card-btn.active {
-  background: #131c2e;
-  color: #e2e8f0;
-  border-color: rgba(59, 130, 246, 0.4);
-  border-bottom: 1px solid #131c2e;
-  z-index: 1;
-}
-.card-btn.active::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #3b82f6;
-  border-radius: 2px 2px 0 0;
-}
-.card-icon {
-  font-size: 15px;
-  line-height: 1;
-}
-.card-label {
-  font-weight: 500;
-  white-space: nowrap;
-}
-.card-body {
-  flex: 1;
-  background: #131c2e;
-  border: 1px solid rgba(59, 130, 246, 0.15);
-  border-radius: 0 0 8px 8px;
-  padding: 12px;
-  margin: 0 12px 8px;
-  overflow: auto;
+  align-items: stretch;
+  background: #0b1015;
+  border-bottom: 1px solid rgba(74, 85, 104, 0.25);
 }
 
-.compact-status {
+.strategy-pick {
+  flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  font-size: 12px;
-  color: #94a3b8;
-  border-bottom: 1px solid rgba(74, 85, 104, 0.2);
-  flex-wrap: wrap;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 14px;
+  border-right: 1px solid rgba(74, 85, 104, 0.22);
 }
-.status-sep {
-  color: #4a5568;
-}
-.node-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #34d399;
-  font-size: 11px;
+
+.sp-label {
+  font-size: 9.5px;
+  letter-spacing: 1.4px;
+  color: #7d8c9e;
   font-weight: 600;
 }
-.node-status i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #34d399;
-  box-shadow: 0 0 4px rgba(38, 166, 91, 0.5);
-  display: inline-block;
+
+.sp-select {
+  min-width: 186px;
+  padding: 4px 7px;
+  background: #0f161e;
+  border: 1px solid rgba(74, 85, 104, 0.4);
+  border-radius: 3px;
+  color: #dbe4ee;
+  font-size: 11.5px;
+  outline: none;
 }
+
+.sp-select:focus { border-color: #38bdf8; }
+
+/* ── 工作台布局：主工作区 + Inspector ────────── */
+.ml-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 316px;
+}
+
+.ml-work {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #0d1218;
+}
+
+.ml-work::-webkit-scrollbar { width: 6px; }
+.ml-work::-webkit-scrollbar-thumb { background: #22303f; }
+
+/* 未就绪提示：不阻断进入，只在工作区顶部提示 */
+.ready-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  border-left-width: 2px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.rb-mark {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: rgba(251, 191, 36, 0.16);
+  color: #fcd34d;
+  font-size: 9.5px;
+  letter-spacing: 0.6px;
+}
+
+.rb-text { min-width: 0; }
+
+.rb-text b {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #d6bd88;
+}
+
+.rb-text span {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: #8a7f66;
+}
+
+.rb-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.rb-btn {
+  padding: 4px 10px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  border-radius: 3px;
+  color: #e8c583;
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rb-btn:hover { background: rgba(251, 191, 36, 0.18); }
 
 .label-workspace {
   display: flex;
@@ -810,6 +1016,15 @@ onMounted(() => {
 .controls-hint {
   font-size: 11px;
   color: #94a3b8;
+}
+.controls-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.btn-compact {
+  padding: 3px 10px;
+  font-size: 11px;
 }
 
 .label-distribution {

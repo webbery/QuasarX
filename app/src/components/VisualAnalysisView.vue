@@ -31,8 +31,13 @@
           <CUSUMTab />
         </div>
 
-        <!-- ML 机器学习分析 Tab -->
-        <div v-show="activeTab === 'ml'" class="tab-content">
+        <!-- 特征门禁 Tab：独立的特征研究面板（不受 ML 节点特征列表限制） -->
+        <div v-show="activeTab === 'featureGate'" class="tab-content tab-content-flush">
+          <FeatureGateTab />
+        </div>
+
+        <!-- ML 机器学习分析 Tab：工作台整屏布局，去掉外层内边距 -->
+        <div v-show="activeTab === 'ml'" class="tab-content tab-content-flush">
           <MLTab />
         </div>
 
@@ -265,6 +270,7 @@ import SignalTab from './signal/SignalTab.vue'
 import PCATab from './pca/PCATab.vue'
 import CUSUMTab from './cusum/CUSUMTab.vue'
 import MLTab from './ml/MLTab.vue'
+import FeatureGateTab from './ml/FeatureGateTab.vue'
 import HMMTab from './hmm/HMMTab.vue'
 import FundamentalTab from './fundamental/FundamentalTab.vue'
 import CapacityTab from './capacity/CapacityTab.vue'
@@ -279,6 +285,7 @@ const allTabs = [
   { label: '信号分析', name: 'signal' },
   { label: 'PCA 主成分', name: 'pca' },
   { label: 'CUSUM 结构变化', name: 'cusum' },
+  { label: '特征研究', name: 'featureGate' },
   { label: '机器学习分析', name: 'ml' },
   { label: 'HMM 隐马尔可夫', name: 'hmm' },
   { label: '基本面分析', name: 'fundamental' },
@@ -1477,6 +1484,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ML 工作台需要整屏（状态轨、工作区、Inspector、日志贴边） */
+.tab-content-flush {
+  padding: 0;
 }
 
 /* 资金流向 Tab 样式：移除 padding，让 header 占满宽度 */

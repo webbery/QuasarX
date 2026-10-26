@@ -3,7 +3,7 @@
     <div v-if="!result" class="stage-empty">
       <div class="stage-icon">04</div>
       <div>
-        <span class="section-eyebrow">RESULTS</span>
+        <span class="section-eyebrow">结果分析</span>
         <h3>训练完成后再查看结果分析</h3>
         <p>完成训练后这里展示评估指标、特征重要性、SHAP 解释、诊断图表，并支持模型发布与历史模型切换。</p>
       </div>
@@ -13,7 +13,7 @@
       <!-- 当前模型信息 -->
       <div class="model-bar">
         <div class="model-bar-left">
-          <span class="section-eyebrow">CURRENT MODEL</span>
+          <span class="section-eyebrow">当前模型</span>
           <div class="model-pills">
             <span class="pill primary">#{{ result.model_id }}</span>
             <span class="pill">{{ result.model_type || 'xgboost' }}</span>
@@ -26,7 +26,7 @@
       <div v-if="result.eval_metrics" class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">EVALUATION</span>
+            <span class="section-eyebrow">评估指标</span>
             <h3 class="section-title">评估指标</h3>
           </div>
         </div>
@@ -37,7 +37,7 @@
       <div v-if="result.predictions?.length" class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">{{ isClassification ? 'CLASSIFICATION' : 'REGRESSION' }} REPORT</span>
+            <span class="section-eyebrow">{{ isClassification ? '分类诊断' : '回归诊断' }}</span>
             <h3 class="section-title">{{ isClassification ? '分类诊断' : '回归诊断' }}</h3>
           </div>
         </div>
@@ -66,7 +66,7 @@
       <div v-if="result.predictions?.length" class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">CONFUSION</span>
+            <span class="section-eyebrow">混淆矩阵</span>
             <h3 class="section-title">混淆矩阵</h3>
           </div>
         </div>
@@ -77,7 +77,7 @@
       <div class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">FEATURE IMPORTANCE</span>
+            <span class="section-eyebrow">特征重要性</span>
             <h3 class="section-title">特征重要性</h3>
           </div>
           <div class="metric-toggle">
@@ -95,7 +95,7 @@
       <div class="section">
         <div class="section-heading">
           <div>
-            <span class="section-eyebrow">SHAP</span>
+            <span class="section-eyebrow">SHAP 分析</span>
             <h3 class="section-title">SHAP 特征贡献</h3>
           </div>
           <button class="btn btn-primary" :disabled="shapLoading || !result" @click="onComputeShap">
