@@ -388,7 +388,7 @@ void PythonRunner::readerThread() {
                 flushRemnant(stdout_buf, PythonOutput::STDOUT);
                 flushRemnant(stderr_buf, PythonOutput::STDERR);
 
-                drainAndFinish(decodeExitStatus(status));
+                drainAndFinish(decodeExitStatus(status, my_pid));
                 break;
             }
             // ECHILD：子进程已被 kill() 那侧回收，本线程无需再 waitpid，退出等待收尾
@@ -410,11 +410,11 @@ void PythonRunner::readerThread() {
     stderr_fd_ = -1;
 }
 
-int PythonRunner::decodeExitStatus(int status) {
+int PythonRunner::decodeExitStatus(int status, pid_t pid) {
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     if (WIFSIGNALED(status)) {
         int sig = WTERMSIG(status);
-        WARN("PythonRunner: child pid={} killed by signal {} ({})", pid_.load(), sig, strsignal(sig));
+        WARN("PythonRunner: child pid={} killed by signal {} ({})", pid, sig, strsignal(sig));
         return -sig;
     }
     return -1;
@@ -446,7 +446,7 @@ int PythonRunner::terminateAndReap(pid_t pid) {
     }
     if (ret == pid) {
         _childReaped.store(true);
-        int code = decodeExitStatus(status);
+        int code = decodeExitStatus(status, pid);
         _exitCode.store(code);
         return code;
     }

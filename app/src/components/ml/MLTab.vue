@@ -200,7 +200,8 @@
         />
       </div>
 
-      <MLTaskConsole
+      <TaskConsole
+        title="任务日志"
         :rows="consoleRows"
         :task-label="activeTaskLabel"
         :summary="consoleSummary"
@@ -221,9 +222,10 @@ import TrainPanel from './panels/TrainPanel.vue'
 import ResultPanel from './panels/ResultPanel.vue'
 import ModelManagePanel from './panels/ModelManagePanel.vue'
 import LabelAnalysisChart from './charts/LabelAnalysisChart.vue'
-import MLStepFlow, { type FlowNode } from './MLStepFlow.vue'
-import MLInspector, { type SessionRun } from './MLInspector.vue'
-import MLTaskConsole, { type ConsoleRow } from './MLTaskConsole.vue'
+import MLStepFlow from './MLStepFlow.vue'
+import MLInspector from './MLInspector.vue'
+import TaskConsole from '@/components/shared/TaskConsole.vue'
+import type { FlowNode, SessionRun, ConsoleRow } from '@/types/ml'
 import { useStrategySecurities } from '@/components/shared/composables/useStrategySecurities'
 
 const STEPS = [

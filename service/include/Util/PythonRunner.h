@@ -89,6 +89,6 @@ private:
     // 终止并回收子进程：并发调用时由 waitpid 天然互斥，只有一个回收者能成功
     int terminateAndReap(pid_t pid);
     // 把 waitpid 的 status 翻译成退出码（被信号杀死时返回 -signal）
-    static int decodeExitStatus(int status);
+    static int decodeExitStatus(int status, pid_t pid);
 #endif
 };
