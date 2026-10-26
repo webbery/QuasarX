@@ -12,6 +12,10 @@ struct ExecutionItem {
     double       _targetValue;    // 目标金额
     unsigned char _flag : 1 = 0;  // 0=开仓, 1=平仓
     bool         _isEmergencyClose = false;  // 紧急平仓标记（风控触发）
+    // 平仓成本价（持仓均价，原始价口径）；0 = 未知。
+    // 紧急平仓腿在产生的那一刻从持仓账本取加权均价 —— 那是唯一知道均价的地方，
+    // 决策链下游（ManualTiming / 邮件）不再自己摸账本。
+    double       _costPrice = 0.0;
 };
 
 // 执行计划

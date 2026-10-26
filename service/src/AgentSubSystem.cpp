@@ -147,17 +147,27 @@ void FlowSubsystem::SetStrategyCapital(const String& strategy, double capital) {
     INFO("[FlowSubsystem] Strategy '{}' capital set to {:.0f}", strategy, capital);
 }
 
-void FlowSubsystem::SetStrategyCommissionRate(const String& strategy, double commissionRate) {
-    _flows[strategy]._commissionRate = commissionRate;
-    INFO("[FlowSubsystem] Strategy '{}' commission rate set to {:.6f}", strategy, commissionRate);
+void FlowSubsystem::SetStrategyCostProfile(const String& strategy, const CostProfile& profile) {
+    _flows[strategy]._costProfile = profile;
+    INFO("[FlowSubsystem] Strategy '{}' cost profile set: commission={:.6f}, trade_fees={}",
+         strategy, profile.commissionRate(), profile._tradeFees.size());
+}
+
+CostProfile FlowSubsystem::GetStrategyCostProfile(const String& strategy) const {
+    auto it = _flows.find(strategy);
+    if (it != _flows.end()) {
+        return it->second._costProfile;
+    }
+    return CostProfile{};
 }
 
 double FlowSubsystem::GetStrategyCommissionRate(const String& strategy) const {
     auto it = _flows.find(strategy);
-    if (it != _flows.end()) {
-        return it->second._commissionRate;
+    // 费率从档案派生；未配置费率时退回默认值（万0.9），与旧行为一致
+    if (it != _flows.end() && it->second._costProfile.known()) {
+        return it->second._costProfile.commissionRate();
     }
-    return 9e-05;  // 默认万0.9
+    return trading_cost::kDefaultCommissionRate;
 }
 
 void FlowSubsystem::Start() {
@@ -1639,10 +1649,12 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
 
                         // 预算快照：回测路径走 BacktestContext，没有 StrategyCapital 账本。
                         // 标记 _budgetKnown=false，邮件据此降级而不是显示 ¥0。
+                        // 费率档案来自策略配置，邮件的摩擦成本按它算。
                         DecisionSetBuilder::BuildForBacktest(
                             strategy, asOf, manualTiming->getDecisions(),
                             std::move(riskEvents), set,
-                            manualTiming->getPositionSnapshots());
+                            manualTiming->getPositionSnapshots(),
+                            GetStrategyCostProfile(strategy));
 
                         // 构建调试报告 + 发送邮件/SSE
                         EodDebugSpec debugSpec;
@@ -1930,6 +1942,7 @@ void FlowSubsystem::StartDaily(const String& strategy, const Set<symbol_t>& symb
                             manualTiming->getDecisions(), std::move(riskEvents),
                             allocated, available, equity, budgetKnown,
                             portfolioValue, closePrices, costPrices,
+                            GetStrategyCostProfile(strategy),
                             DecisionStatus::Completed, "");
 
                         // 构建调试报告 + 发送邮件/SSE

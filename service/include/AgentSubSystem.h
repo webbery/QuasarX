@@ -7,6 +7,7 @@
 #include "std_header.h"
 #include "Strategy.h"
 #include "Util/datetime.h"
+#include "Util/TradingCost.h"
 #include "json.hpp"
 #include <atomic>
 #include <functional>
@@ -58,7 +59,21 @@ public:
     void SetShadowMode(const String& strategy);
 
     void SetStrategyCapital(const String& strategy, double capital);
-    void SetStrategyCommissionRate(const String& strategy, double commissionRate);
+
+    /**
+     * @brief 设置策略的费率档案（佣金/印花税/滑点…）
+     *
+     * 来源：策略 execution 节点的 commission / stampDuty / minFee / slippage 参数。
+     * 日终邮件的"预估摩擦成本"与决策集里的 CostQuote 都按这份档案算，
+     * 不再各自持有一份费率。
+     */
+    void SetStrategyCostProfile(const String& strategy, const CostProfile& profile);
+
+    /**
+     * @brief 读取策略的费率档案
+     * @return 档案；策略不存在或未配置费率时返回未配置（known=false）的空档案
+     */
+    CostProfile GetStrategyCostProfile(const String& strategy) const;
 
     /**
      * @brief 启动实盘策略（K-bar 聚合驱动）
@@ -108,8 +123,10 @@ public:
     time_t GetLastEvoke(const String& strategy) const;
 
     /**
-     * @brief 获取策略的佣金率（从 execution 节点配置读取）
-     * @return 佣金率，如果未配置则返回默认值 9e-05（万0.9）
+     * @brief 获取策略的佣金率
+     *
+     * 从费率档案派生（不再单独存一份费率，避免两处数值漂移）。
+     * @return 佣金率；策略未配置费率时返回默认值 9e-05（万0.9）
      */
     double GetStrategyCommissionRate(const String& strategy) const;
 
@@ -328,8 +345,9 @@ private:
         List<QNode*> _graph;
         // 策略配置资金（从策略 JSON "capital" 字段读取，供 StartDaily 实盘路径使用）
         double _capital = 0;
-        // 策略配置佣金率（从 execution 节点的 commission 参数读取，供交易记录计算使用）
-        double _commissionRate = 9e-05;  // 默认万0.9
+        // 策略费率档案（从 execution 节点的 commission/stampDuty/minFee/slippage 读取）。
+        // 佣金率由档案派生（commissionRate()），不再单独存一份，避免两处数值漂移。
+        CostProfile _costProfile;
         // 择时模块
         ITimingStrategy* _timing = nullptr;
 

@@ -5,6 +5,7 @@
 #include "DataContext.h"
 #include "Nodes/ProtectionNode.h"
 #include "Util/datetime.h"
+#include "Util/TradingCost.h"
 
 /**
  * @brief 一组决策的唯一权威产物
@@ -42,6 +43,13 @@ struct DecisionSnapshot {
     unsigned char _flag = 0;     // 0=开仓, 1=平仓（仅 BUY/SELL 有意义）
     int         _epoch = -1;
     bool        _signalEvaluated = false;  // true=策略评估产生的；false=默认补 HOLD
+    // 紧急平仓标记（风控触发）。ExecuteNode 产生平仓腿时打的标，
+    // 经 signal → 快照 → 决策项一路带下来，是"这是强平不是策略平仓"的唯一来源。
+    bool        _isEmergencyClose = false;
+    // 平仓成本价（持仓均价，原始价口径）；0 = 未知。
+    // 紧急平仓的成本价在产生平仓腿的那一刻从持仓账本取（ExecuteNode），
+    // 因为那是唯一知道加权均价的地方；决策链下游不再去摸账本。
+    double      _costPrice = 0.0;
 };
 
 /**
@@ -130,6 +138,10 @@ struct DecisionSet {
         double         _costPrice = 0.0;  // 持仓均价（平仓成本价）；0 = 未知/不适用
         int32_t        _epoch = -1;
         bool           _isDefaultHold = false;  // true = 非策略评估产生的默认 HOLD
+        bool           _isEmergencyClose = false;  // true = 风控触发的紧急平仓
+        // 该笔决策的成本拆解（佣金/印花税/滑点…）。在构建时求值一次，
+        // 邮件/日报只读结果，不再各自算一遍费率。
+        CostQuote      _cost;
 
         bool isHold() const { return _action == TradeAction::HOLD; }
 
@@ -139,6 +151,13 @@ struct DecisionSet {
         }
     };
     Vector<Item> _items;   // 含 HOLD，按 symbol 唯一
+
+    // ── 交易成本（摩擦）──
+    // 费率档案 + 求值结果。Stage 0 是策略级单一档案；接入期货/期权后
+    // 按 symbol 解析时，这里变成"每个 symbol 一份档案"，求值接口不变。
+    CostProfile _costProfile;
+    double _totalTradeFriction = 0.0;   // 当日交易摩擦合计（买入+卖出）
+    double _totalHoldingCost   = 0.0;   // 当日持有成本合计（日息口径，与交易摩擦分开）
 
     // ── 随这组决策一并产出的风控事件 ──
     Vector<ProtectionNode::ProtectionEvent> _riskEvents;
@@ -182,6 +201,21 @@ struct DecisionSet {
         const Item* it = find(sym);
         return it && it->isHold();
     }
+
+    /**
+     * @brief 由决策项构造成本求值上下文
+     *
+     * 口径：成交金额 = 数量 × 决策价；方向取动作；紧急平仓的标记透传给
+     * 费用项（强制平仓的成本放大只在这里生效一次）。
+     */
+    static CostContext MakeCostContext(const Item& item) {
+        CostContext ctx;
+        ctx._amount      = static_cast<double>(item._quantity) * item._price;
+        ctx._quantity    = item._quantity;
+        ctx._isSell      = (item._action == TradeAction::SELL);
+        ctx._isEmergency = item._isEmergencyClose;
+        return ctx;
+    }
 };
 
 // 失败路径的构造器：没有决策、没有预算，只带身份与错误原因。
@@ -205,7 +239,8 @@ struct DecisionSetBuilder {
         const Map<symbol_t, DecisionSnapshot>& decisions,
         Vector<ProtectionNode::ProtectionEvent> riskEvents,
         DecisionSet& out,
-        const Vector<DecisionSet::PositionSnapshot>& positionSnapshots = {})
+        const Vector<DecisionSet::PositionSnapshot>& positionSnapshots = {},
+        const CostProfile& costProfile = CostProfile{})
     {
         out._strategy = strategy;
         out._asOf = asOf;
@@ -219,6 +254,9 @@ struct DecisionSetBuilder {
         out._equity = 0.0;
         out._budgetKnown = false;
 
+        // 费率档案：邮件里的摩擦成本按这份档案算
+        out._costProfile = costProfile;
+
         // 决策
         out._items.reserve(decisions.size());
         for (const auto& [sym, snap] : decisions) {
@@ -230,11 +268,17 @@ struct DecisionSetBuilder {
             item._price = snap._price;
             item._epoch = snap._epoch;
             item._isDefaultHold = snap._action == TradeAction::HOLD && !snap._signalEvaluated;
+            item._isEmergencyClose = snap._isEmergencyClose;
             // 回测路径没有真实收盘价，用决策价代替
             item._closePrice = snap._price;
-            // 回测路径没有 StrategyCapital 账本，拿不到持仓成本：
-            // 成本价留 0，邮件据此把 SELL 的成本/盈亏显示为"—"，而不是编一个 0。
-            item._costPrice = 0.0;
+            // 持仓成本：回测路径没有 StrategyCapital 账本，普通 SELL 拿不到成本价（留 0，
+            // 邮件显示"—"而不是编一个 0）；紧急平仓的成本价由执行计划携带（快照里带过来）。
+            item._costPrice = snap._costPrice;
+            // 摩擦成本：按档案对每笔交易求值一次，邮件只读结果
+            if (item._action != TradeAction::HOLD) {
+                item._cost = EvaluateTradeCost(costProfile, DecisionSet::MakeCostContext(item));
+                out._totalTradeFriction += item._cost.tradeTotal();
+            }
             out._items.push_back(std::move(item));
         }
 
@@ -263,6 +307,7 @@ struct DecisionSetBuilder {
  * @param portfolioValue  组合市值，0 表示不展示
  * @param closePrices     当期真实收盘价（持仓估值的正确口径）
  * @param costPrices      持仓均价（平仓成本价）；缺失的标的成本价记 0，读侧据此降级
+ * @param costProfile     费率档案（佣金/印花税/滑点…）；用于对每笔决策求值摩擦成本
  * @param status          状态
  * @param error           失败原因
  */
@@ -279,5 +324,6 @@ DecisionSet BuildDecisionSet(
     double portfolioValue,
     const Map<symbol_t, double>& closePrices,
     const Map<symbol_t, double>& costPrices,
+    const CostProfile& costProfile,
     DecisionStatus status,
     const String& error);

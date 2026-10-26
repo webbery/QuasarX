@@ -325,3 +325,129 @@ class TestNoTriggerWithNewStops:
         result = run_backtest(json.dumps(strategy), headers)
         events = [e for e in result.get("protection_events", []) if e["type"] == "mae_stop_loss"]
         assert len(events) == 0, f"上涨行情 MAE 止损不应触发，实际触发 {len(events)} 次"
+
+
+# ============================================================
+# 紧急平仓契约
+# ============================================================
+
+class TestEmergencyCloseContract:
+    """风控触发后的紧急平仓契约
+
+    紧急平仓由 ExecuteNode 在 RiskContext 触发时给执行计划追加平仓腿实现
+    （ExecuteNode.cpp:110-165：向 plan._items 追加 _isEmergencyClose 的 SELL 腿，
+    置 plan._hasChanged，再交给 plan → signal 翻译），不再绕过执行计划。
+
+    下面锁住这条通道的可观测行为：平仓腿按触发 bar 的原始价成交、数量等于
+    持仓量、成交发生在触发之后。
+    """
+
+    @staticmethod
+    def _pair_events_with_sells(events, sells):
+        """把保护事件与紧急平仓成交配对
+
+        事件 i 对应的平仓落在 (event[i].datetime, event[i+1].datetime] 区间内；
+        最后一个事件的区间是 (datetime, +∞)。返回 [(event, sell_or_None), ...]。
+        """
+        pairs = []
+        for index, event in enumerate(events):
+            lower = event["datetime"]
+            upper = events[index + 1]["datetime"] if index + 1 < len(events) else None
+            matched = [
+                sell for sell in sells
+                if sell[1] > lower and (upper is None or sell[1] <= upper)
+            ]
+            pairs.append((event, matched))
+        return pairs
+
+    def test_emergency_close_filled_at_trigger_price(self, headers):
+        """紧急平仓按触发 bar 的价格成交"""
+        strategy = load_strategy("stop_loss_protection_strategy.json")
+        result = run_backtest(strategy, headers)
+
+        events = result.get("protection_events", [])
+        sells = result.get("sell", [])
+        assert events, "下跌行情 + 5% 止损应产生触发事件"
+
+        matched_count = 0
+        for event, matched in self._pair_events_with_sells(events, sells):
+            assert len(matched) <= 1, (
+                f"触发 {event['type']}@{event['datetime']} 后应只有一笔平仓，"
+                f"实际 {len(matched)} 笔: {matched}"
+            )
+            if not matched:
+                # 触发发生在数据最后一根 bar 之后无处成交
+                continue
+            matched_count += 1
+            sell = matched[0]
+            assert abs(sell[3] - event["current_price"]) < 1e-9, (
+                f"紧急平仓成交价 {sell[3]} 应等于触发价 {event['current_price']}"
+            )
+
+        assert matched_count > 0, "至少应有一笔紧急平仓成交可校验"
+
+    def test_emergency_close_closes_full_position(self, headers):
+        """紧急平仓数量等于触发时的持仓量"""
+        strategy = load_strategy("stop_loss_protection_strategy.json")
+        result = run_backtest(strategy, headers)
+
+        events = result.get("protection_events", [])
+        sells = result.get("sell", [])
+        assert events, "下跌行情 + 5% 止损应产生触发事件"
+
+        matched_count = 0
+        for event, matched in self._pair_events_with_sells(events, sells):
+            if not matched:
+                continue
+            matched_count += 1
+            sell = matched[0]
+            assert sell[2] == event["quantity"], (
+                f"紧急平仓数量 {sell[2]} 应等于持仓量 {event['quantity']}"
+            )
+
+        assert matched_count > 0, "至少应有一笔紧急平仓成交可校验"
+
+    def test_emergency_close_executes_after_trigger(self, headers):
+        """紧急平仓成交发生在触发之后"""
+        strategy = load_strategy("stop_loss_protection_strategy.json")
+        result = run_backtest(strategy, headers)
+
+        events = result.get("protection_events", [])
+        sells = result.get("sell", [])
+        assert events, "下跌行情 + 5% 止损应产生触发事件"
+
+        matched_count = 0
+        for event, matched in self._pair_events_with_sells(events, sells):
+            if not matched:
+                continue
+            matched_count += 1
+            sell = matched[0]
+            assert sell[1] > event["datetime"], (
+                f"紧急平仓时间 {sell[1]} 应晚于触发时间 {event['datetime']}"
+            )
+
+        assert matched_count > 0, "至少应有一笔紧急平仓成交可校验"
+
+    def test_position_reopened_after_emergency_close(self, headers):
+        """紧急平仓之后会重新建仓（现状：清仓 + 照常轮动）
+
+        这是当前实现的行为刻画。触发时 PortfolioNode 尚未看到风控状态，
+        平仓由 ExecuteNode 追加平仓腿完成，下一根 bar 组合节点重新开仓。
+        """
+        strategy = load_strategy("stop_loss_protection_strategy.json")
+        result = run_backtest(strategy, headers)
+
+        events = result.get("protection_events", [])
+        sells = result.get("sell", [])
+        buys = result.get("buy", [])
+        assert events and sells and buys
+
+        pairs = self._pair_events_with_sells(events, sells)
+        closed = [(event, sell) for event, matched in pairs for sell in matched]
+        assert closed, "至少应有一笔紧急平仓成交"
+
+        for event, sell in closed:
+            later_buys = [buy for buy in buys if buy[1] > sell[1]]
+            assert later_buys, (
+                f"紧急平仓（{sell[1]}）之后应重新建仓，但此后没有任何买入"
+            )

@@ -14,6 +14,7 @@
 #include "Util/DecisionDB.h"
 #include "Util/datetime.h"
 #include "Util/system.h"
+#include "Util/TradingCost.h"
 
 namespace {
     // 从策略配置推断预热期 epoch 数（依赖链累积）
@@ -464,18 +465,39 @@ StrategyInitResult StrategySubSystem::InitStrategy(const String& strategyName, c
         }
     }
 
-    // 读取 execution 节点的 commission 参数并存储到 StrategyFlowInfo
+    // 读取 execution 节点的成本参数并存储到 StrategyFlowInfo 的费率档案。
+    // commission（费率）/ stampDuty（印花税）/ minFee（最低佣金）/ slippage（滑点）
+    // 四项构成邮件里的"预估摩擦成本"；未显式配置的项用缺省值补齐，
+    // 缺省值与券商默认佣金一致（万0.9 + 卖出印花税 0.1% + 最低 5 元）。
     if (script.contains("nodes")) {
         for (const auto& node : script["nodes"]) {
-            if (node.contains("data") && 
-                node["data"].contains("nodeType") && 
-                node["data"]["nodeType"] == "execution") {
-                if (node["data"].contains("params") && 
-                    node["data"]["params"].contains("commission") &&
-                    node["data"]["params"]["commission"].contains("value")) {
-                    double commissionRate = node["data"]["params"]["commission"]["value"].get<double>();
-                    _agentSystem->SetStrategyCommissionRate(strategyName, commissionRate);
-                    break;  // 只取第一个 execution 节点的佣金配置
+            if (node.contains("data") &&
+                node["data"].contains("nodeType") &&
+                node["data"]["nodeType"] == "execution" &&
+                node["data"].contains("params")) {
+                const auto& params = node["data"]["params"];
+                auto readNum = [&params](const char* key, double& out) -> bool {
+                    if (!params.contains(key)) return false;
+                    const auto& v = params[key];
+                    if (!v.is_object() || !v.contains("value") || !v["value"].is_number()) return false;
+                    out = v["value"].get<double>();
+                    return true;
+                };
+
+                double commissionRate = 0.0, stampDutyRate = 0.0, minFee = 0.0, slippageRate = 0.0;
+                bool hasCommission = readNum("commission", commissionRate);
+                bool hasStampDuty  = readNum("stampDuty", stampDutyRate);
+                bool hasMinFee     = readNum("minFee", minFee);
+                bool hasSlippage   = readNum("slippage", slippageRate);
+
+                if (hasCommission || hasStampDuty || hasMinFee || hasSlippage) {
+                    CostProfile profile = CostProfile::ForStock(
+                        hasCommission ? commissionRate : trading_cost::kDefaultCommissionRate,
+                        hasStampDuty  ? stampDutyRate  : trading_cost::kDefaultStampDutyRate,
+                        hasMinFee     ? minFee         : trading_cost::kDefaultMinFee,
+                        hasSlippage   ? slippageRate   : trading_cost::kDefaultSlippageRate);
+                    _agentSystem->SetStrategyCostProfile(strategyName, profile);
+                    break;  // 只取第一个 execution 节点的成本配置
                 }
             }
         }

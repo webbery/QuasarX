@@ -99,6 +99,18 @@ public:
     void SetDefaultHold(bool v = true) { _isDefaultHold = v; }
     bool IsDefaultHold() const { return _isDefaultHold; }
 
+    // 紧急平仓标记：ExecuteNode 遇到风控短路时产生的平仓腿会打上这个标，
+    // 经 signal → ManualTiming 快照 → DecisionSet 一路带下来，
+    // 是"这是强平、不是策略主动平仓"的唯一来源。
+    void SetEmergencyClose(bool v = true) { _isEmergencyClose = v; }
+    bool IsEmergencyClose() const { return _isEmergencyClose; }
+
+    // 平仓成本价（持仓均价，原始价口径）；0 = 未知。
+    // 紧急平仓的成本价由 ExecuteNode 在产生平仓腿时从持仓账本取，
+    // 下游（ManualTiming / 邮件）不再自己摸账本。
+    void SetCostPrice(double price) { _costPrice = price; }
+    double GetCostPrice() const { return _costPrice; }
+
 private:
     symbol_t _symbol;
     TradeAction _action;
@@ -106,6 +118,8 @@ private:
     double _price = 0.0;         // 建议价格
     bool _executed: 1 = false;   // 是否已执行
     bool _isDefaultHold: 1 = false; // 是否 ExecuteNode 默认补的 HOLD（非 SignalNode 评估产生）
+    bool _isEmergencyClose: 1 = false;  // 是否风控触发的紧急平仓
+    double _costPrice = 0.0;     // 平仓成本价（持仓均价，原始价口径）
     std::chrono::system_clock::time_point _create_time;
     time_t _backtestTime = 0;    // 回测时间 (信号触发时的 Bar 时间)
 };

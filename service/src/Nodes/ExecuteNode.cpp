@@ -128,9 +128,13 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
                     item._limitPrice = price;
                     item._targetValue = item._quantity * price;
                     item._isEmergencyClose = true;
+                    // 平仓成本价：持仓账本的加权均价（原始价口径，与决策价同口径）。
+                    // 在这里取是因为这是唯一知道均价的地方 —— 邮件要展示平仓的成本价与 P&L，
+                    // 决策链下游不再自己摸账本（回测路径没有账本，就只能显示"—"）。
+                    item._costPrice = pos._avgPrice;
                     plan._items.push_back(item);
-                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={} @ {}",
-                                  get_symbol(symbol), pos._quantity, price);
+                    STRATEGY_INFO(strategy, "[ExecuteNode] Emergency sell: {} qty={} @ {} (cost={:.2f})",
+                                  get_symbol(symbol), pos._quantity, price, pos._avgPrice);
                 }
             }
         } else {
@@ -203,6 +207,15 @@ NodeProcessResult ExecuteNode::Process(const String& strategy, DataContext& cont
             }
             signal->SetQuantity(item._quantity);
             signal->SetPrice(item._limitPrice);
+            // 紧急平仓标记与成本价随 signal 传给 ManualTiming。
+            // 只在有值时覆盖：同一 symbol 的多条 plan 项里，紧急平仓腿排在最后，
+            // 若被后面的普通腿清零，标记和成本价就丢了。
+            if (item._isEmergencyClose) {
+                signal->SetEmergencyClose(true);
+            }
+            if (item._costPrice > 0.0) {
+                signal->SetCostPrice(item._costPrice);
+            }
 
             if (_server->GetRunningMode() == RuningType::Backtest) {
                 signal->SetBacktestTime(context.Current());

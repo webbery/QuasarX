@@ -30,6 +30,11 @@ bool ManualTiming::processSignal(const String& strategy, const TradeSignal& sign
     snap._flag = (action == TradeAction::SELL) ? 1 : 0;
     snap._epoch = context.GetEpoch();
     snap._signalEvaluated = !signal.IsDefaultHold();
+    // 紧急平仓：标记与成本价由 ExecuteNode 产生平仓腿时带上，这里原样透传。
+    // 成本价口径是持仓账本的加权均价（原始价），与决策价同口径，
+    // 邮件据此算平仓 P&L，不再自己去摸账本。
+    snap._isEmergencyClose = signal.IsEmergencyClose();
+    snap._costPrice = signal.GetCostPrice();
     _decisions[signal.GetSymbol()] = snap;
 
     // 日志
@@ -128,16 +133,49 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
     for (auto* d : sells) totalSellValue += d->_quantity * d->_price;
     double netValue = totalBuyValue - totalSellValue;
 
+    // 风控事件的入场价（原始价口径）：紧急平仓的成本价兜底。
+    // 账本没有均价时（回测路径无 StrategyCapital 账本），
+    // ProtectionNode 记的入场价是同一口径的替补；两者都没有就是"未知"。
+    Map<symbol_t, double> riskEntryPrices;
+    for (const auto& event : set._riskEvents) {
+        if (event._entry_price > 0.0) {
+            riskEntryPrices[event._symbol] = event._entry_price;
+        }
+    }
+
+    // 平仓成本价解析：优先用决策自带的（紧急平仓的执行计划在产生那一刻
+    // 就从持仓账本取到了加权均价），其次用风控事件的入场价。
+    // 都没有就是未知 —— 显示"—"，而不是显示 0 让人以为平仓没亏没赚。
+    auto resolveCostPrice = [&](const DecisionSet::Item* d) -> double {
+        if (d->_costPrice > 0.0) return d->_costPrice;
+        if (d->_isEmergencyClose) {
+            auto it = riskEntryPrices.find(d->_symbol);
+            if (it != riskEntryPrices.end()) return it->second;
+        }
+        return 0.0;
+    };
+
     // 卖出盈亏：决策价 vs 持仓均价。
     // 成本价由 DecisionSet 一起带进来（_costPrice），缺失就是缺失（回测路径没有
     // StrategyCapital 账本），此时不显示金额，而不是显示 0 让人以为平仓没亏没赚。
     double realizedPnl = 0.0;
     bool pnlKnown = false;
     for (auto* d : sells) {
-        if (d->_costPrice > 0.0) {
-            realizedPnl += (d->_price - d->_costPrice) * static_cast<double>(d->_quantity);
+        double cost = resolveCostPrice(d);
+        if (cost > 0.0) {
+            realizedPnl += (d->_price - cost) * static_cast<double>(d->_quantity);
             pnlKnown = true;
         }
+    }
+
+    // 摩擦成本：决策集构建时已按费率档案逐笔求值，这里只做汇总，不重算费率。
+    const bool costKnown = set._costProfile.known();
+    const double totalFriction = set._totalTradeFriction;
+    double frictionCommission = 0.0, frictionStamp = 0.0, frictionSlippage = 0.0;
+    for (const auto& item : set._items) {
+        frictionCommission += item._cost.item(CostKind::Commission);
+        frictionStamp      += item._cost.item(CostKind::StampDuty);
+        frictionSlippage  += item._cost.item(CostKind::Slippage);
     }
 
     // 资金口径全部来自 DecisionSet，邮件不再自己去 broker 摸 StrategyCapital。
@@ -159,7 +197,7 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
 
     String html;
     html += R"h(<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>)h";
-    html += R"h(<div style="max-width:760px;margin:0 auto;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#1a1a2e;">)h";
+    html += R"h(<div style="max-width:880px;margin:0 auto;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#1a1a2e;">)h";
 
     // ── 表头 ──
     html += R"h(<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:20px 24px;border-radius:12px 12px 0 0;">)h";
@@ -227,6 +265,21 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
                             pnlColor, pnlSign, fmtMoney(std::abs(realizedPnl)));
         html += "</div>";
     }
+
+    // 预估摩擦成本：佣金 + 印花税 + 滑点，按决策价与成交金额估算。
+    // 费率来自策略的 execution 节点配置；未配置时整块不显示（而不是显示 ¥0）。
+    if (costKnown) {
+        auto fricPct = showBudget ? fmt::format(" ({:.2f}% of capital)", totalFriction / strategyCap * 100.0) : "";
+        html += R"h(<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8fafc;border-radius:8px;grid-column:1/-1;">)h";
+        html += R"h(<span style="font-size:12px;color:#64748b;">预估摩擦成本</span>)h";
+        html += fmt::format(R"h(<span style="font-size:14px;font-weight:600;color:#b45309;">¥{}{}</span>)h",
+                            fmtMoney(totalFriction), fricPct);
+        html += "</div>";
+        html += fmt::format(
+            R"h(<div style="font-size:11px;color:#94a3b8;grid-column:1/-1;">佣金 ¥{} · 印花税 ¥{} · 滑点 ¥{}（费率 {:.4f}%）</div>)h",
+            fmtMoney(frictionCommission), fmtMoney(frictionStamp), fmtMoney(frictionSlippage),
+            set._costProfile.commissionRate() * 100.0);
+    }
     html += "</div>";
 
     // ── 组合市值 ──
@@ -260,6 +313,7 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
         html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">占比</th>)h";
         html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">成本价</th>)h";
         html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">盈亏</th>)h";
+        html += R"h(<th style="text-align:right;padding:8px 10px;font-weight:600;color:#64748b;font-size:11px;border-bottom:2px solid #e2e8f0;">摩擦</th>)h";
         html += "</tr></thead><tbody>";
 
         auto actionTag = [](const String& action) -> String {
@@ -274,15 +328,21 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
             bool isHold = !holdTag.empty();
             // 成本价只对平多仓有意义（SELL + flag=1）：开空没有持仓成本，
             // BUY / HOLD 也不适用。成本价未知一律显示"—"。
-            bool showCost = (action == "SELL") && d->_flag == 1 && d->_costPrice > 0.0;
-            double pnl = showCost ? (d->_price - d->_costPrice) * static_cast<double>(d->_quantity) : 0.0;
-            double pnlPct = showCost ? (d->_price - d->_costPrice) / d->_costPrice * 100.0 : 0.0;
+            // 紧急平仓的成本价由执行计划携带（账本均价），缺失时用风控事件入场价兜底。
+            double costPrice = resolveCostPrice(d);
+            bool showCost = (action == "SELL") && d->_flag == 1 && costPrice > 0.0;
+            double pnl = showCost ? (d->_price - costPrice) * static_cast<double>(d->_quantity) : 0.0;
+            double pnlPct = showCost ? (d->_price - costPrice) / costPrice * 100.0 : 0.0;
             String opacity = isHold ? " style=\"opacity:0.6\"" : "";
             html += fmt::format("<tr{}>", opacity);
             html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:600;">{}</td>)h", get_symbol(d->_symbol));
             html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;">{})h", actionTag(action));
             if (isHold) {
                 html += fmt::format(R"h(<span style="font-size:10px;color:#94a3b8;margin-left:4px;">{}</span>)h", holdTag);
+            }
+            // 紧急平仓标记：风控触发的强平不是策略主动平仓，读者要能一眼分辨
+            if (d->_isEmergencyClose) {
+                html += R"h(<span style="font-size:10px;color:#dc2626;margin-left:4px;font-weight:600;">紧急</span>)h";
             }
             html += "</td>";
             if (isHold) {
@@ -297,13 +357,20 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
                 html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#64748b;font-size:12px;">{:.1f}%</td>)h", grpPct);
             }
             if (showCost) {
-                html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#475569;">{:.2f}</td>)h", d->_costPrice);
+                html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#475569;">{:.2f}</td>)h", costPrice);
                 String pnlColor = pnl >= 0 ? "#16a34a" : "#dc2626";
                 html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;color:{};">{}{} ({:+.2f}%)</td>)h",
                                     pnlColor, pnl >= 0 ? "+" : "-", fmtMoney(std::abs(pnl)), pnlPct);
             } else {
                 html += R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#94a3b8;">—</td>)h";
                 html += R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#94a3b8;">—</td>)h";
+            }
+            // 摩擦：该笔决策按费率档案估算的成交成本（佣金 + 印花税 + 滑点）
+            if (isHold || !costKnown) {
+                html += R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#94a3b8;">—</td>)h";
+            } else {
+                html += fmt::format(R"h(<td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#b45309;">¥{}</td>)h",
+                                    fmtMoney(d->_cost.tradeTotal()));
             }
             html += "</tr>";
         };
@@ -315,7 +382,10 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
 
         html += "</tbody></table>";
         if (pnlKnown) {
-            html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:6px;">盈亏 = (决策价 − 持仓均价) × 数量，未扣手续费；实际盈亏以成交回报为准。</div>)h";
+            html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:6px;">盈亏 = (决策价 − 持仓均价) × 数量，未扣摩擦成本；实际盈亏以成交回报为准。</div>)h";
+        }
+        if (costKnown) {
+            html += R"h(<div style="font-size:11px;color:#94a3b8;margin-top:4px;">摩擦 = 佣金 + 印花税（仅卖出）+ 滑点，按决策价 × 数量估算，非实际成交费用。</div>)h";
         }
     }
     html += "</div>";
@@ -341,6 +411,13 @@ void ManualTiming::SendSummaryEmail(const DecisionSet& set, const EodDebugReport
                     double pnl = (event._current_price - event._entry_price) / event._entry_price * 100.0;
                     String pnlColor = pnl >= 0 ? "#22c55e" : "#ef4444";
                     html += fmt::format(R"h(<span style="margin-left:12px;color:{};">盈亏: {:+.2f}%</span>)h", pnlColor, pnl);
+                    // 金额口径：这次平掉的量 × 每股盈亏。百分比看不出实际亏了多少。
+                    if (event._quantity > 0) {
+                        double pnlAmount = (event._current_price - event._entry_price) *
+                                           static_cast<double>(event._quantity);
+                        html += fmt::format(R"h(<span style="margin-left:12px;color:{};">盈亏金额: {}¥{}</span>)h",
+                                            pnlColor, pnlAmount >= 0 ? "+" : "-", fmtMoney(std::abs(pnlAmount)));
+                    }
                 }
             }
             if (event._quantity > 0) {

@@ -11,6 +11,7 @@
       "description": "使用历史 K 线数据进行回测",
       "tests": [
         "test_strategy",
+        "test_graph",
         "test_trade_history",
         "test_capital_risk",
         "test_volatility",
@@ -22,6 +23,7 @@
         "test_formula_math",
         "test_multi_freq",
         "test_position_events",
+        "test_protection_node",
         "test_xgboost",
         "test_feature_screen",
         "test_decision",

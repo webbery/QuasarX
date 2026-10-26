@@ -2,6 +2,58 @@
 #include "Util/log.h"
 #include "Util/datetime.h"
 
+namespace {
+// CostQuote ↔ JSON：map 的 key 是枚举，不能直接 dump，按费用种类名序列化
+nlohmann::json CostQuoteToJson(const CostQuote& quote) {
+    nlohmann::json trade = nlohmann::json::object();
+    for (const auto& [kind, v] : quote._tradeItems) {
+        trade[to_string(kind)] = v;
+    }
+    nlohmann::json holding = nlohmann::json::object();
+    for (const auto& [kind, v] : quote._holdingItems) {
+        holding[to_string(kind)] = v;
+    }
+    nlohmann::json j;
+    j["trade"] = std::move(trade);
+    j["holding"] = std::move(holding);
+    j["trade_total"] = quote.tradeTotal();
+    j["holding_total"] = quote.holdingTotal();
+    return j;
+}
+
+void CostQuoteFromJson(const nlohmann::json& j, CostQuote& quote) {
+    if (!j.is_object()) return;
+    if (j.contains("trade") && j["trade"].is_object()) {
+        for (const auto& [key, v] : j["trade"].items()) {
+            quote._tradeItems[cost_kind_from_string(key)] = v.get<double>();
+        }
+    }
+    if (j.contains("holding") && j["holding"].is_object()) {
+        for (const auto& [key, v] : j["holding"].items()) {
+            quote._holdingItems[cost_kind_from_string(key)] = v.get<double>();
+        }
+    }
+}
+
+// 费率档案 → JSON：只序列化交易时点的费率项，够复现口径即可
+nlohmann::json CostProfileToJson(const CostProfile& profile) {
+    nlohmann::json fees = nlohmann::json::array();
+    for (const auto& f : profile._tradeFees) {
+        nlohmann::json o;
+        o["kind"] = to_string(f._kind);
+        o["rate"] = f._rate;
+        o["min"] = f._min;
+        o["sell_only"] = f._sellOnly;
+        fees.push_back(std::move(o));
+    }
+    nlohmann::json j;
+    j["known"] = profile._known;
+    j["margin_ratio"] = profile._marginRatio;
+    j["trade_fees"] = std::move(fees);
+    return j;
+}
+}  // namespace
+
 DecisionSet BuildDecisionSet(
     const String& strategy,
     const String& asOf,
@@ -15,6 +67,7 @@ DecisionSet BuildDecisionSet(
     double portfolioValue,
     const Map<symbol_t, double>& closePrices,
     const Map<symbol_t, double>& costPrices,
+    const CostProfile& costProfile,
     DecisionStatus status,
     const String& error)
 {
@@ -32,6 +85,7 @@ DecisionSet BuildDecisionSet(
     set._budgetKnown = budgetKnown;
     set._portfolioValue = portfolioValue;
     set._riskEvents = riskEvents;
+    set._costProfile = costProfile;
 
     // Map 的 key 就是 symbol，这里直接按 key 取收盘价，
     // 保证 daily_positions 写的是真实收盘价而不是计划目标价。
@@ -45,16 +99,27 @@ DecisionSet BuildDecisionSet(
         item._price = snap._price;
         item._epoch = snap._epoch;
         item._isDefaultHold = snap._action == TradeAction::HOLD && !snap._signalEvaluated;
+        item._isEmergencyClose = snap._isEmergencyClose;
 
         auto it = closePrices.find(sym);
         if (it != closePrices.end()) {
             item._closePrice = it->second;
         }
 
-        // 持仓均价（平仓成本价）：缺失就是缺失，记 0 让读侧降级显示"—"
-        auto ct = costPrices.find(sym);
-        if (ct != costPrices.end() && ct->second > 0.0) {
-            item._costPrice = ct->second;
+        // 持仓均价（平仓成本价）：优先用决策自带的（紧急平仓在执行计划里就带着成本价），
+        // 其次回退到账本均价；都拿不到就是缺失，记 0 让读侧降级显示"—"
+        item._costPrice = snap._costPrice;
+        if (item._costPrice <= 0.0) {
+            auto ct = costPrices.find(sym);
+            if (ct != costPrices.end() && ct->second > 0.0) {
+                item._costPrice = ct->second;
+            }
+        }
+
+        // 摩擦成本：按费率档案对每笔交易求值一次，邮件/日报只读结果
+        if (item._action != TradeAction::HOLD) {
+            item._cost = EvaluateTradeCost(costProfile, DecisionSet::MakeCostContext(item));
+            set._totalTradeFriction += item._cost.tradeTotal();
         }
         set._items.push_back(std::move(item));
     }
@@ -77,6 +142,11 @@ nlohmann::json DecisionSet::toJson() const {
     j["budget_known"] = _budgetKnown;
     j["portfolio_value"] = _portfolioValue;
 
+    // 交易成本：费率档案 + 当日合计（邮件的摩擦列就是从 items[].cost 读的）
+    j["cost_profile"] = CostProfileToJson(_costProfile);
+    j["total_trade_friction"] = _totalTradeFriction;
+    j["total_holding_cost"] = _totalHoldingCost;
+
     nlohmann::json items = nlohmann::json::array();
     for (const auto& it : _items) {
         nlohmann::json o;
@@ -89,6 +159,8 @@ nlohmann::json DecisionSet::toJson() const {
         o["cost_price"] = it._costPrice;
         o["epoch"] = it._epoch;
         o["is_default_hold"] = it._isDefaultHold;
+        o["is_emergency_close"] = it._isEmergencyClose;
+        o["cost"] = CostQuoteToJson(it._cost);
         items.push_back(std::move(o));
     }
     j["items"] = std::move(items);
@@ -137,6 +209,8 @@ DecisionSet DecisionSet::fromJson(const nlohmann::json& j) {
     set._equity = j.value("equity", 0.0);
     set._budgetKnown = j.value("budget_known", false);
     set._portfolioValue = j.value("portfolio_value", 0.0);
+    set._totalTradeFriction = j.value("total_trade_friction", 0.0);
+    set._totalHoldingCost = j.value("total_holding_cost", 0.0);
 
     if (j.contains("items") && j["items"].is_array()) {
         set._items.reserve(j["items"].size());
@@ -151,6 +225,10 @@ DecisionSet DecisionSet::fromJson(const nlohmann::json& j) {
             it._costPrice = o.value("cost_price", 0.0);
             it._epoch = o.value("epoch", -1);
             it._isDefaultHold = o.value("is_default_hold", false);
+            it._isEmergencyClose = o.value("is_emergency_close", false);
+            if (o.contains("cost")) {
+                CostQuoteFromJson(o["cost"], it._cost);
+            }
             set._items.push_back(std::move(it));
         }
     }
