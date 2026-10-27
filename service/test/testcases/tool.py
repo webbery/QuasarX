@@ -189,15 +189,27 @@ def check_response(response, expected_status=200):
 # --------------------------
 
 METRIC_DATA_DIR = Path(__file__).parent / "metric_test_data"
+# 风控夹具由 node_test_data/generate_protection_data.py 生成，生成脚本与产物一起进版本库
+PROTECTION_DATA_DIR = Path(__file__).parent / "node_test_data" / "protection"
+
+# 策略夹具查找顺序：指标夹具（generate_test_data.py 产出）→ 风控夹具
+STRATEGY_DIRS = (METRIC_DATA_DIR, PROTECTION_DATA_DIR)
 
 
 def load_strategy(name: str) -> str:
-    """从 metric_test_data/ 加载策略 JSON 文件内容"""
-    path = METRIC_DATA_DIR / name
-    if not path.exists():
-        return json.dumps({"status": "error", "error": f"策略文件不存在: {path}"})
-    with open(path) as f:
-        return f.read()
+    """加载策略 JSON 文件内容。
+
+    找不到文件直接抛 FileNotFoundError。早先这里返回一段
+    ``{"status": "error", ...}`` 的合法 JSON，服务端会把它当成"空策略"解析
+    （name/id 为空、nodes/edges 为 0），回测跑完没有 protection_events，
+    测试报成"风控没触发"，排查方向被完全带偏 —— 实际是文件没进版本库。
+    """
+    for base in STRATEGY_DIRS:
+        path = base / name
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    searched = ", ".join(str(base) for base in STRATEGY_DIRS)
+    raise FileNotFoundError(f"策略文件不存在: {name}（已查找: {searched}）")
 
 
 def run_backtest(strategy_str: str, headers: dict, validate: bool = True) -> dict:

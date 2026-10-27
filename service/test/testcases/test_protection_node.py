@@ -17,6 +17,9 @@ ProtectionNode 集成测试 (L3)
 复用 metric_test_data/ 已有的标的数据（sz.900001 上涨、sz.900002 下跌），
 通过调整保护器参数来控制触发。
 
+风控夹具由 node_test_data/generate_protection_data.py 生成，
+放在 node_test_data/protection/（与生成脚本一起进版本库）。
+
 使用方法：
   pytest test_protection_node.py -v
 """
@@ -122,10 +125,10 @@ class TestProtectionNoTrigger:
         strategy_json = json.loads(load_strategy("stop_loss_protection_strategy.json"))
 
         # 修改标的为上涨标的，止损比例改为 90%
+        # 注：SignalNode 的标的取自上游节点，节点上不带 code 参数，
+        # 换标只需要改 InputNode
         for node in strategy_json["nodes"]:
             if node["data"]["nodeType"] == "input":
-                node["data"]["params"]["code"]["value"] = ["sz.900001"]
-            if node["data"]["nodeType"] == "signal":
                 node["data"]["params"]["code"]["value"] = ["sz.900001"]
             if node["data"]["nodeType"] == "protection":
                 node["data"]["params"]["stop_loss"]["percent"] = 0.90
@@ -305,8 +308,6 @@ class TestNoTriggerWithNewStops:
         for node in strategy["nodes"]:
             if node["data"]["nodeType"] == "input":
                 node["data"]["params"]["code"]["value"] = ["sz.900001"]
-            if node["data"]["nodeType"] == "signal":
-                node["data"]["params"]["code"]["value"] = ["sz.900001"]
 
         result = run_backtest(json.dumps(strategy), headers)
         events = [e for e in result.get("protection_events", []) if e["type"] == "atr_stop_loss"]
@@ -318,8 +319,6 @@ class TestNoTriggerWithNewStops:
 
         for node in strategy["nodes"]:
             if node["data"]["nodeType"] == "input":
-                node["data"]["params"]["code"]["value"] = ["sz.900001"]
-            if node["data"]["nodeType"] == "signal":
                 node["data"]["params"]["code"]["value"] = ["sz.900001"]
 
         result = run_backtest(json.dumps(strategy), headers)

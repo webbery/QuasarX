@@ -60,11 +60,15 @@ def upload_test_data(auth_api, is_backtest):
     etf_symbols = set()
 
     def _extract_symbols(directory):
-        """从目录中所有 JSON 文件提取标的，自动区分股票/ETF"""
+        """从目录中所有 JSON 文件提取标的，自动区分股票/ETF
+
+        用 rglob 递归 —— node_test_data/protection/ 之类的子目录也要扫到，
+        否则风控夹具引用的标的不会被导入，测试会以"数据缺失"的形式失败。
+        """
         stocks, etfs = set(), set()
         if not directory.exists():
             return stocks, etfs
-        for script_file in directory.glob("*.json"):
+        for script_file in directory.rglob("*.json"):
             content = script_file.read_text(encoding="utf-8")
             for sym in re.findall(r'(?:sh|sz|bj)\.\d{6}', content):
                 code = sym.split('.')[1]
