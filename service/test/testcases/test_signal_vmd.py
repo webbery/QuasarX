@@ -51,9 +51,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_URL = "https://localhost:19107/v0"
 VERIFY_SSL = False
 
-# 测试数据目录（与 test_signal_emd.py 一致）
-SERVICE_DATA_DIR = Path(__file__).parent.parent.parent / "build" / "data"
-HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
+# 测试数据目录：必须与服务运行目录一致。
+# 服务端的 CSV 回退路径是 cwd 下的 "./data/A_hfq"（service/src/Util/data.cpp:210），
+# 而本仓库本地是 service/build/data、CI 是 <repo root>/data —— 两种布局不同，
+# 硬编码 "parent.parent.parent/build/data" 在 CI 下会落到 <repo root>/build/data，
+# 服务根本读不到（合成信号就写在了服务不看的地方，API 只能返回
+# "Insufficient data (need at least 10 points)"）。统一用 tool 的解析器。
+from tool import CSV_DATA_DIR
+
+SERVICE_DATA_DIR = CSV_DATA_DIR.parent
+HFQ_DIR = CSV_DATA_DIR
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
 
 # 对比容差
@@ -484,7 +491,9 @@ class TestVMDScenarios:
 # 测试类 5：合成 AM-FM 信号 — 已知解的严格验证
 # ============================================================
 
-SYNTH_SYMBOL = "sz.800010"
+# 合成信号专用的标的号：仓库行情数据里不存在 sz.800012，
+# 夹具写完删掉时不会误伤真实行情文件（早前用 sz.800010 会直接覆盖并删除它）。
+SYNTH_SYMBOL = "sz.800012"
 SYNTH_N = 500
 SYNTH_K = 3
 # 3 个已知中心频率 (归一化: f / N)
@@ -505,9 +514,13 @@ def _generate_synthetic_amfm(n: int = SYNTH_N) -> np.ndarray:
 
 @pytest.fixture(scope="class")
 def synthetic_csv(auth_api):
-    """生成合成 AM-FM 信号 CSV 并写入服务数据目录"""
+    """生成合成 AM-FM 信号 CSV 并写入服务数据目录
+
+    必须写进服务真正读的目录（HFQ_DIR，即服务 cwd 下的 ./data/A_hfq）——
+    服务的 VMD 走 CSV 回退路径（service/src/Util/data.cpp:210），不走 DuckDB。
+    """
     sig = _generate_synthetic_amfm()
-    data_dir = Path(__file__).parent.parent.parent / "build" / "data" / "A_hfq"
+    data_dir = HFQ_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
     csv_path = data_dir / f"{SYNTH_SYMBOL}.csv"
 

@@ -69,7 +69,10 @@ from tool import BASE_URL, VERIFY_SSL, SCRIPTS_DIR, run_backtest
 
 TESTCASES_DIR = Path(__file__).resolve().parent
 TEST_ROOT = TESTCASES_DIR.parent
-METRIC_DATA_DIR = TESTCASES_DIR / "metric_test_data"
+# 风控夹具由 node_test_data/generate_protection_data.py 生成，落在
+# node_test_data/protection/ 下 —— metric_test_data/ 被 .gitignore 整个忽略，
+# 那里拿不到这些文件（CI 跑测试前会先执行生成脚本，见 .github/workflows/service.yml）。
+PROTECTION_DATA_DIR = TESTCASES_DIR / "node_test_data" / "protection"
 MA_GRAPH_STRATEGY = TEST_ROOT / "script" / "ma_graph_strategy.json"
 
 
@@ -484,8 +487,8 @@ class TestExecutionOrder:
 
     # 同时含 protection 与 portfolio 的策略，用于验证风控状态的可见性
     PROTECTION_STRATEGIES = [
-        METRIC_DATA_DIR / "stop_loss_protection_strategy.json",
-        METRIC_DATA_DIR / "take_profit_protection_strategy.json",
+        PROTECTION_DATA_DIR / "stop_loss_protection_strategy.json",
+        PROTECTION_DATA_DIR / "take_profit_protection_strategy.json",
     ]
 
     def test_order_invariant_to_nodes_array(self):
