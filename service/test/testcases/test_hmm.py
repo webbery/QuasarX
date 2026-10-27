@@ -26,6 +26,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from tool import BASE_URL, VERIFY_SSL, SERVICE_ROOT, CSV_DATA_DIR, run_backtest_graph
+from strategy_builder import StrategyBuilder
 
 # 真实日线标的（每个 4048 根 bar，覆盖 2010~2026）
 TEST_SYMBOLS = ["sh.600000", "sh.600016", "sh.600028"]
@@ -669,53 +670,22 @@ def _hmm_node_strategy(symbol: str, strategy_id: str,
     features 留空：HMMNode::Init 会自动从上游 out_elements() 取 key
     （FunctionNode 输出 {symbol}.{label}，此处即 {symbol}.Return(1)）。
     """
-    hmm_params = {
-        "n_states":        {"value": n_states,        "type": "number"},
-        "train_window":    {"value": train_window,    "type": "number"},
-        "warmup_period":   {"value": warmup_period,   "type": "number"},
-        "retrain_interval":{"value": retrain_interval,"type": "number"},
-        "max_iter":        {"value": max_iter,        "type": "number"},
-        "random_seed":     {"value": 42,              "type": "number"},
-    }
-    if model_file:
-        hmm_params["modelFile"] = {"value": model_file, "type": "text"}
-
-    return {
-        "id": strategy_id,
-        "name": f"HMMNode测试_{strategy_id}",
-        "version": 1,
-        "description": "HMMNode 单元测试",
-        "backtest": {"start": NODE_START, "end": NODE_END},
-        "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "行情数据", "nodeType": "input", "params": {
-                 "source": {"value": "股票", "type": "text"},
-                 "code":   {"value": [symbol],     "type": "text"},
-                 "freq":   {"value": "1d",         "type": "select"},
-                 "close":  {"value": "close",      "type": "text"},
-             }}},
-            {"id": "2", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "Return(1)", "nodeType": "function", "params": {
-                 "method": {"value": "Return", "type": "select"},
-                 "range": {"value": 1, "type": "number"},
-             }}},
-            {"id": "3", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "HMM", "nodeType": "hmm", "params": hmm_params}},
-            {"id": "4", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": NODE_DEBUG_LABEL, "nodeType": "debug", "params": {
-                 "suffix": {"value": "csv", "type": "select"},
-             }}},
-        ],
-        "edges": [
-            {"id": "1-close->2", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "2->3", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "3->4", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-        ],
-    }
+    return (StrategyBuilder(
+                strategy_id,
+                f"HMMNode测试_{strategy_id}",
+                description="HMMNode 单元测试",
+                backtest={"start": NODE_START, "end": NODE_END},
+                source="A_hfq")
+            .input("1", symbol=symbol, fields=("close",))
+            .function("2", "Return", 1, label="Return(1)")
+            .hmm("3", n_states=n_states, train_window=train_window,
+                 warmup_period=warmup_period, retrain_interval=retrain_interval,
+                 max_iter=max_iter, model_file=model_file)
+            .debug("4", NODE_DEBUG_LABEL)
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .build())
 
 
 def _read_hmm_csv(strategy_id: str) -> "pd.DataFrame":

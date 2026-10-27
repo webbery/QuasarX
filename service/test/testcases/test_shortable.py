@@ -61,6 +61,7 @@ import pytest
 import requests
 
 from tool import BASE_URL, CSV_DATA_DIR, VERIFY_SSL, read_debug_csv
+from strategy_builder import StrategyBuilder, P
 
 # 前两只由 prepare.py 预灌为可做空，后三只不在 margin_stock 里
 MARGIN_PRICES = [
@@ -148,60 +149,38 @@ def _build_strategy(strategy_id, allow_short):
 
     DebugNode 挂在 Signal 之后，把 .signal 落盘 —— 信号层断言不经过 broker。
     """
-    return {
-        "id": strategy_id,
-        "name": f"融券标的过滤_{strategy_id}",
-        "version": 1,
-        "description": "融资融券标的过滤测试",
-        # capital=0 走自动分配（CapitalPool::allocate 里 requested<=0 分支），
-        # 不会因池子余额不足而 400。本文件只断言 SignalNode 的 .signal，
-        # 与资金规模无关；写死 100000 会被 capital_pool.json 里 active 的
-        # 实盘策略（如 CTA_v16 占满 100 万）挤成 available=0 而全盘失败。
-        "capital": 0,
-        "backtest": {
-            "start": START.strftime("%Y-%m-%d"),
-            "end": (START + timedelta(days=N_BARS * 2)).strftime("%Y-%m-%d"),
-        },
-        "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom",
-             "data": {"label": "行情", "nodeType": "input",
-                      "params": {"source": {"value": "股票", "type": "text"},
-                                 "code": {"value": SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"}}}},
-            {"id": "2", "type": "custom",
-             "data": {"label": "信号", "nodeType": "signal",
-                      "params": {"code": {"value": SYMBOLS, "type": "text"},
-                                 "type": {"value": "股票", "type": "select"},
-                                 "allowShort": {"value": allow_short, "type": "boolean"},
-                                 "buy": {"value": "false", "type": "text"},
-                                 "sell": {"value": SELL_EXPR_ALL, "type": "text"}}}},
-            {"id": "3", "type": "custom",
-             "data": {"label": "组合", "nodeType": "portfolio",
-                      "params": {"positionRatio": {"value": 1.0, "type": "number"},
-                                 "allowShort": {"value": allow_short, "type": "boolean"}}}},
-            {"id": "4", "type": "custom",
-             "data": {"label": "执行", "nodeType": "execution",
-                      "params": {"commission": {"value": 0.0, "type": "number"},
-                                 "stampDuty": {"value": 0.0, "type": "number"},
-                                 "slippage": {"value": 0.0, "type": "number"},
-                                 "type": {"value": 1, "type": "select"}}}},
-            {"id": "5", "type": "custom",
-             "data": {"label": "debug_signal", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "e3", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-            {"id": "e4", "source": "2", "target": "5",
-             "sourceHandle": "2", "targetHandle": "5", "type": "default"},
-        ],
-    }
+    # capital=0 走自动分配（CapitalPool::allocate 里 requested<=0 分支），
+    # 不会因池子余额不足而 400。本文件只断言 SignalNode 的 .signal，
+    # 与资金规模无关；写死 100000 会被 capital_pool.json 里 active 的
+    # 实盘策略（如 CTA_v16 占满 100 万）挤成 available=0 而全盘失败。
+    return (StrategyBuilder(
+                strategy_id,
+                f"融券标的过滤_{strategy_id}",
+                description="融资融券标的过滤测试",
+                capital=0,
+                backtest={
+                    "start": START.strftime("%Y-%m-%d"),
+                    "end": (START + timedelta(days=N_BARS * 2)).strftime("%Y-%m-%d"),
+                },
+                source="A_hfq")
+            .input("1", symbol=SYMBOLS, label="行情", fields=("close",))
+            .signal("2", SYMBOLS, label="信号", buy="false", sell=SELL_EXPR_ALL,
+                    allow_short=allow_short)
+            .portfolio("3", label="组合", position_ratio=1.0,
+                       allow_short=allow_short)
+            # 只声明本文件关心的成本项，其余走服务端默认值
+            .execution("4", label="执行", params={
+                "commission": P.number(0.0),
+                "stampDuty": P.number(0.0),
+                "slippage": P.number(0.0),
+                "type": P.select(1),
+            })
+            .debug("5", "debug_signal")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .connect("2", "5")
+            .build())
 
 
 def _run(strategy_id, allow_short, headers):

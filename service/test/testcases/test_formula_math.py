@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from tool import DEBUG_DIR, CSV_DATA_DIR, read_debug_csv
+from strategy_builder import StrategyBuilder, P
 
 urllib3.disable_warnings()
 
@@ -58,148 +59,46 @@ def _load_close_prices() -> np.ndarray:
         return np.array([float(row["close"]) for row in reader])
 
 
-def _build_strategy(expression: str, strategy_id: str) -> dict:
-    """构造测试策略 JSON:
-    QuoteInput → MA(5) → FormulaNode(expression) → DebugNode → Signal → Portfolio → Execution
+def _build_strategy(expression: str, strategy_id: str, extra_ma=()) -> dict:
+    """构造测试策略:
+    QuoteInput → MA(5)[+ extra_ma] → FormulaNode(expression) → DebugNode
+                → Signal → Portfolio → Execution
+
+    extra_ma: 额外挂到 FormulaNode 上的均线，元素为 (节点 id, 窗口)，例如
+              [("8", 15)] 就是双输入策略，[("8", 15), ("9", 30)] 是三输入。
     """
-    return {
-        "id": strategy_id,
-        "name": f"数学函数测试_{strategy_id}",
-        "version": 1,
-        "description": "FormulaParser 数学函数测试",
-        "backtest": {"start": "2024-01-01", "end": "2024-09-07"},
-        "source": "A_hfq",
-        "nodes": [
-            {
-                "id": "1", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "行情数据", "nodeType": "input",
-                    "params": {
-                        "source": {"value": "股票", "type": "text"},
-                        "code": {"value": [SYMBOL], "type": "text"},
-                        "freq": {"value": "1d", "type": "select"},
-                        "close": {"value": "close", "type": "text"},
-                        "open": {"value": "open", "type": "text"},
-                        "high": {"value": "high", "type": "text"},
-                        "low": {"value": "low", "type": "text"},
-                        "volume": {"value": "volume", "type": "text"},
-                    }
-                }
-            },
-            {
-                "id": "2", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "ma5", "nodeType": "function",
-                    "params": {
-                        "method": {"value": "MA", "type": "select"},
-                        "range": {"value": 5, "type": "number"},
-                    }
-                }
-            },
-            {
-                "id": "3", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "math_func", "nodeType": "formula",
-                    "params": {
-                        "expression": {"value": expression, "type": "text"},
-                    }
-                }
-            },
-            {
-                "id": "4", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "debug_math", "nodeType": "debug",
-                    "params": {
-                        "suffix": {"value": "csv", "type": "select"},
-                    }
-                }
-            },
-            {
-                "id": "5", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "买入信号", "nodeType": "signal",
-                    "params": {
-                        "code": {"value": [SYMBOL], "type": "text"},
-                        "buy": {"value": "true", "type": "text"},
-                        "sell": {"value": "false", "type": "text"},
-                    }
-                }
-            },
-            {
-                "id": "6", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "投资组合", "nodeType": "portfolio",
-                    "params": {
-                        "positionRatio": {"value": 1.0, "type": "number"},
-                    }
-                }
-            },
-            {
-                "id": "7", "type": "custom",
-                "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": "交易执行", "nodeType": "execution",
-                    "params": {
-                        "commission": {"value": 0.0, "type": "number"},
-                        "stampDuty": {"value": 0.0, "type": "number"},
-                        "minFee": {"value": 0, "type": "number"},
-                        "slippageModel": {"value": 0, "type": "number"},
-                        "slippage": {"value": 0.0, "type": "number"},
-                        "type": {"value": 1, "type": "select"},
-                        "contract": {"value": 0, "type": "select"},
-                    }
-                }
-            },
-        ],
-        "edges": [
-            {"id": "e1", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "e3", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-            {"id": "e4", "source": "1", "target": "5",
-             "sourceHandle": "1-close", "targetHandle": "5", "type": "default"},
-            {"id": "e5", "source": "5", "target": "6",
-             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
-            {"id": "e6", "source": "6", "target": "7",
-             "sourceHandle": "6", "targetHandle": "7", "type": "default"},
-        ]
-    }
+    builder = (StrategyBuilder(
+                   strategy_id,
+                   f"数学函数测试_{strategy_id}",
+                   description="FormulaParser 数学函数测试",
+                   backtest={"start": "2024-01-01", "end": "2024-09-07"},
+                   source="A_hfq")
+               .input("1", symbol=SYMBOL)
+               .function("2", "MA", 5, label="ma5"))
+    for ma_id, window in extra_ma:
+        builder.function(ma_id, "MA", window, label=f"ma{window}")
+
+    builder.formula("3", expression, label="math_func")
+    builder.debug("4", "debug_math")
+    builder.signal("5", SYMBOL)
+    builder.portfolio("6")
+    builder.execution("7")
+
+    builder.connect("1", "2", prop="close")
+    builder.connect("2", "3")
+    builder.connect("3", "4")
+    builder.connect("1", "5", prop="close")
+    builder.connect("5", "6")
+    builder.connect("6", "7")
+    for ma_id, _ in extra_ma:
+        builder.connect(ma_id, "3")
+        builder.connect("1", ma_id, prop="close")
+    return builder.build()
 
 
 def _build_two_input_strategy(expression: str, strategy_id: str) -> dict:
     """构造双输入测试策略: MA(5) + MA(15) → FormulaNode → DebugNode"""
-    base = _build_strategy(expression, strategy_id)
-    # 插入 MA(15) 节点 (id=8)，连接到 FormulaNode
-    base["nodes"].insert(2, {
-        "id": "8", "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "ma15", "nodeType": "function",
-            "params": {
-                "method": {"value": "MA", "type": "select"},
-                "range": {"value": 15, "type": "number"},
-            }
-        }
-    })
-    # 添加 MA(15) → FormulaNode 的边
-    base["edges"].append({
-        "id": "e7", "source": "8", "target": "3",
-        "sourceHandle": "8", "targetHandle": "3", "type": "default"
-    })
-    # 添加 QuoteInput → MA(15) 的边
-    base["edges"].append({
-        "id": "e8", "source": "1", "target": "8",
-        "sourceHandle": "1-close", "targetHandle": "8", "type": "default"
-    })
-    return base
+    return _build_strategy(expression, strategy_id, extra_ma=[("8", 15)])
 
 
 def _build_three_input_strategy(expression: str, strategy_id: str) -> dict:
@@ -207,27 +106,7 @@ def _build_three_input_strategy(expression: str, strategy_id: str) -> dict:
 
     用途: argmax(ma5[t], ma15[t], ma30[t]) 等 N-arg 测试
     """
-    base = _build_two_input_strategy(expression, strategy_id)
-    base["nodes"].insert(3, {
-        "id": "9", "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "ma30", "nodeType": "function",
-            "params": {
-                "method": {"value": "MA", "type": "select"},
-                "range": {"value": 30, "type": "number"},
-            }
-        }
-    })
-    base["edges"].append({
-        "id": "e9", "source": "9", "target": "3",
-        "sourceHandle": "9", "targetHandle": "3", "type": "default"
-    })
-    base["edges"].append({
-        "id": "ea", "source": "1", "target": "9",
-        "sourceHandle": "1-close", "targetHandle": "9", "type": "default"
-    })
-    return base
+    return _build_strategy(expression, strategy_id, extra_ma=[("8", 15), ("9", 30)])
 
 
 def _get_ma30_series() -> pd.Series:
@@ -833,51 +712,19 @@ def _build_xgb_matrix_strategy() -> dict:
     XGBoost binary:logistic 每标的输出 2 列概率 (N×2 矩阵),
     Formula 用 xgb_probs[0] - xgb_probs[1] 读取两列相减 → N×1 向量.
     """
-    return {
-        "id": MATRIX_STRATEGY_ID,
-        "name": MATRIX_STRATEGY_ID,
-        "version": 1,
-        "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "行情数据", "nodeType": "input",
-                      "params": {"code": {"value": MATRIX_SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"},
-                                 "open": {"value": "open", "type": "text"},
-                                 "high": {"value": "high", "type": "text"},
-                                 "low": {"value": "low", "type": "text"},
-                                 "volume": {"value": "volume", "type": "text"}}}},
-            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-             "data": {"label": "ma5", "nodeType": "function",
-                      "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": 5, "type": "number"}}}},
-            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
-             "data": {"label": "XGBoost", "nodeType": "xgboost",
-                      "params": {"modelFile": {"value": "production/test_formula_xgb_matrix-XGBoost.json", "type": "text"},
-                                 "features": {"value": "ma5", "type": "text"},
-                                 "objective": {"value": "binary:logistic", "type": "select"},
-                                 "num_class": {"value": 2, "type": "number"}}}},
-            {"id": "4", "type": "custom", "position": {"x": 600, "y": 0},
-             "data": {"label": "math_func", "nodeType": "formula",
-                      "params": {"expression": {"value": "xgb_probs[0] - xgb_probs[1]", "type": "text"}}}},
-            {"id": "5", "type": "custom", "position": {"x": 800, "y": 0},
-             "data": {"label": "debug_xgb_matrix", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1->2", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2->3", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "e3->4", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-            {"id": "e4->5", "source": "4", "target": "5",
-             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
-            {"id": "e3->5", "source": "3", "target": "5",
-             "sourceHandle": "3", "targetHandle": "5", "type": "default"},
-        ],
-    }
+    return (StrategyBuilder(MATRIX_STRATEGY_ID, MATRIX_STRATEGY_ID, source="A_hfq")
+            .input("1", symbol=MATRIX_SYMBOLS, source=None)
+            .function("2", "MA", 5, label="ma5")
+            .xgboost("3", "production/test_formula_xgb_matrix-XGBoost.json",
+                     features="ma5", objective="binary:logistic", num_class=2)
+            .formula("4", "xgb_probs[0] - xgb_probs[1]", label="math_func")
+            .debug("5", "debug_xgb_matrix")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .connect("4", "5")
+            .connect("3", "5")
+            .build(layout="auto"))
 
 
 @pytest.fixture(scope="function")
@@ -999,68 +846,32 @@ def _build_xgb_chain_strategy() -> dict:
 
     验证 FormulaNode 能正确解析来自不同类型上游节点（XGBoost + Formula）的变量.
     """
-    return {
-        "id": CHAIN_STRATEGY_ID,
-        "name": CHAIN_STRATEGY_ID,
-        "version": 1,
-        "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "行情数据", "nodeType": "input",
-                      "params": {"code": {"value": MATRIX_SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"},
-                                 "open": {"value": "open", "type": "text"},
-                                 "high": {"value": "high", "type": "text"},
-                                 "low": {"value": "low", "type": "text"},
-                                 "volume": {"value": "volume", "type": "text"}}}},
+    return (StrategyBuilder(CHAIN_STRATEGY_ID, CHAIN_STRATEGY_ID, source="A_hfq")
+            .input("1", symbol=MATRIX_SYMBOLS, source=None)
             # label 必须与下游公式引用名一致: FunctionNode 输出 key = {symbol}.{label},
             # FormulaNode 公式 "ma5[t]" 查找 {symbol}.ma5, 所以 label 不能是 "MA(5)"
-            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-             "data": {"label": "ma5", "nodeType": "function",
-                      "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": 5, "type": "number"}}}},
-            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
-             "data": {"label": "XGBoost", "nodeType": "xgboost",
-                      "params": {"modelFile": {"value": "production/test_formula_xgb_chain-XGBoost.json", "type": "text"},
-                                 "features": {"value": "ma5", "type": "text"},
-                                 "objective": {"value": "binary:logistic", "type": "select"},
-                                 "num_class": {"value": 2, "type": "number"}}}},
+            .function("2", "MA", 5, label="ma5")
+            .xgboost("3", "production/test_formula_xgb_chain-XGBoost.json",
+                     features="ma5", objective="binary:logistic", num_class=2)
             # factor: 中间 FormulaNode, 输出随 bar 变化
-            {"id": "4", "type": "custom", "position": {"x": 400, "y": 200},
-             "data": {"label": "factor", "nodeType": "formula",
-                      "params": {"expression": {"value": "ma5[t] / 100", "type": "text"}}}},
+            .formula("4", "ma5[t] / 100", label="factor")
             # raw_strength: 同时读 XGBoost 和 factor (链式 FormulaNode)
-            {"id": "5", "type": "custom", "position": {"x": 600, "y": 0},
-             "data": {"label": "raw_strength", "nodeType": "formula",
-                      "params": {"expression": {"value": "(xgb_probs[0] - xgb_probs[1]) * factor[t]", "type": "text"}}}},
-            {"id": "6", "type": "custom", "position": {"x": 800, "y": 0},
-             "data": {"label": "debug_chain", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1->2", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2->3", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
+            .formula("5", "(xgb_probs[0] - xgb_probs[1]) * factor[t]",
+                     label="raw_strength")
+            .debug("6", "debug_chain")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
             # MA(5) → factor (factor 读 ma5[t])
-            {"id": "e2->4", "source": "2", "target": "4",
-             "sourceHandle": "2", "targetHandle": "4", "type": "default"},
+            .connect("2", "4")
             # XGBoost → raw_strength (读 xgb_probs[0], xgb_probs[1])
-            {"id": "e3->5", "source": "3", "target": "5",
-             "sourceHandle": "3", "targetHandle": "5", "type": "default"},
+            .connect("3", "5")
             # factor → raw_strength (读 factor[t]) — 链式 FormulaNode
-            {"id": "e4->5", "source": "4", "target": "5",
-             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
+            .connect("4", "5")
             # DebugNode 连接所有计算节点
-            {"id": "e3->6", "source": "3", "target": "6",
-             "sourceHandle": "3", "targetHandle": "6", "type": "default"},
-            {"id": "e4->6", "source": "4", "target": "6",
-             "sourceHandle": "4", "targetHandle": "6", "type": "default"},
-            {"id": "e5->6", "source": "5", "target": "6",
-             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
-        ],
-    }
+            .connect("3", "6")
+            .connect("4", "6")
+            .connect("5", "6")
+            .build(layout="auto"))
 
 
 class TestFormulaXGBoostChain:
@@ -1147,44 +958,18 @@ def _build_topk_vector_strategy() -> dict:
     - 如果 bug 存在: 所有 score=0 → partial_sort 按 pool 顺序 → 永远选 sz.800001
     - 如果修复: 正确选 MA 更大的标的
     """
-    return {
-        "id": TOPK_VECTOR_STRATEGY_ID,
-        "name": TOPK_VECTOR_STRATEGY_ID,
-        "version": 1,
-        "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "行情数据", "nodeType": "input",
-                      "params": {"code": {"value": TOPK_VECTOR_SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"},
-                                 "open": {"value": "open", "type": "text"},
-                                 "high": {"value": "high", "type": "text"},
-                                 "low": {"value": "low", "type": "text"},
-                                 "volume": {"value": "volume", "type": "text"}}}},
-            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-             "data": {"label": "ma5", "nodeType": "function",
-                      "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": 5, "type": "number"}}}},
+    return (StrategyBuilder(TOPK_VECTOR_STRATEGY_ID, TOPK_VECTOR_STRATEGY_ID,
+                            source="A_hfq")
+            .input("1", symbol=TOPK_VECTOR_SYMBOLS, source=None)
+            .function("2", "MA", 5, label="ma5")
             # topk_result: 1.0 = 被 topk 选中, 0.0 = 未选中
-            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
-             "data": {"label": "topk_result", "nodeType": "formula",
-                      "params": {"expression": {"value": "topk(ma5, 1)", "type": "text"}}}},
-            {"id": "4", "type": "custom", "position": {"x": 600, "y": 0},
-             "data": {"label": "debug_topk", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1->2", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2->3", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "e3->4", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-            {"id": "e2->4", "source": "2", "target": "4",
-             "sourceHandle": "2", "targetHandle": "4", "type": "default"},
-        ],
-    }
+            .formula("3", "topk(ma5, 1)", label="topk_result")
+            .debug("4", "debug_topk")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .connect("2", "4")
+            .build(layout="auto"))
 
 
 @pytest.fixture(scope="function")
@@ -1388,66 +1173,40 @@ def _build_signal_logic_strategy(strategy_id, buy_expr, sell_expr="false",
     导出 {symbol}.signal 时间序列。成交笔数要到 broker 层才拿得到，而
     or/and 短路语义属于信号层，用 .signal 断言才能只测一件事。
     """
-    nodes = [
-        {"id": "1", "type": "custom",
-         "data": {"label": "行情", "nodeType": "input",
-                  "params": {"source": {"value": "股票", "type": "text"},
-                             "code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
-                             "freq": {"value": "1d", "type": "select"},
-                             "close": {"value": "close", "type": "text"}}}},
-        {"id": "2", "type": "custom",
-         "data": {"label": "信号", "nodeType": "signal",
-                  "params": {"code": {"value": SIGNAL_LOGIC_SYMBOLS, "type": "text"},
-                             "type": {"value": "股票", "type": "select"},
-                             "allowShort": {"value": allow_short, "type": "boolean"},
-                             "buy": {"value": buy_expr, "type": "text"},
-                             "sell": {"value": sell_expr, "type": "text"}}}},
-        {"id": "3", "type": "custom",
-         "data": {"label": "组合", "nodeType": "portfolio",
-                  "params": {"positionRatio": {"value": 1.0, "type": "number"},
-                             "allowShort": {"value": allow_short, "type": "boolean"}}}},
-        {"id": "4", "type": "custom",
-         "data": {"label": "执行", "nodeType": "execution",
-                  "params": {"commission": {"value": 0.0, "type": "number"},
-                             "stampDuty": {"value": 0.0, "type": "number"},
-                             "slippage": {"value": 0.0, "type": "number"},
-                             "type": {"value": 1, "type": "select"}}}},
-    ]
-    edges = [
-        {"id": "e1", "source": "1", "target": "2",
-         "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-        {"id": "e2", "source": "2", "target": "3",
-         "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-        {"id": "e3", "source": "3", "target": "4",
-         "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-    ]
+    builder = (StrategyBuilder(
+                   strategy_id,
+                   f"信号逻辑测试_{strategy_id}",
+                   description="and/or 算子与 topk 组合测试",
+                   capital=100000,
+                   backtest={
+                       "start": SIGNAL_LOGIC_START.strftime("%Y-%m-%d"),
+                       "end": (SIGNAL_LOGIC_START
+                               + timedelta(days=SIGNAL_LOGIC_N_BARS * 2)).strftime("%Y-%m-%d"),
+                   },
+                   source="A_hfq")
+               .input("1", symbol=SIGNAL_LOGIC_SYMBOLS, label="行情",
+                      fields=("close",))
+               .signal("2", SIGNAL_LOGIC_SYMBOLS, label="信号",
+                       buy=buy_expr, sell=sell_expr, allow_short=allow_short)
+               .portfolio("3", label="组合", position_ratio=1.0,
+                          allow_short=allow_short)
+               # 只声明本用例关心的成本项，其余走服务端默认值
+               .execution("4", label="执行", params={
+                   "commission": P.number(0.0),
+                   "stampDuty": P.number(0.0),
+                   "slippage": P.number(0.0),
+                   "type": P.select(1),
+               })
+               .connect("1", "2", prop="close")
+               .connect("2", "3")
+               .connect("3", "4"))
 
     if debug_signal:
-        nodes.append(
-            {"id": "5", "type": "custom",
-             "data": {"label": "debug_signal", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}}
-        )
+        builder.debug("5", "debug_signal")
         # 旁路：SignalNode 的 .signal 不经过 broker，直接落盘
-        edges.append(
-            {"id": "e4", "source": "2", "target": "5",
-             "sourceHandle": "2", "targetHandle": "5", "type": "default"}
-        )
+        builder.connect("2", "5")
 
-    return {
-        "id": strategy_id,
-        "name": f"信号逻辑测试_{strategy_id}",
-        "version": 1,
-        "description": "and/or 算子与 topk 组合测试",
-        "capital": 100000,
-        "backtest": {
-            "start": SIGNAL_LOGIC_START.strftime("%Y-%m-%d"),
-            "end": (SIGNAL_LOGIC_START + timedelta(days=SIGNAL_LOGIC_N_BARS * 2)).strftime("%Y-%m-%d")
-        },
-        "source": "A_hfq",
-        "nodes": nodes,
-        "edges": edges,
-    }
+    return builder.build()
 
 
 def _signal_logic_backtest(strategy_id, buy_expr, sell_expr="false", headers=None,
@@ -1790,38 +1549,22 @@ def _pct_cleanup(symbols, headers):
 
 def _build_pct_strategy(strategy_id, expression, label):
     """Input(7 标的) → FormulaNode(expression) → DebugNode"""
-    return {
-        "id": strategy_id,
-        "name": f"截面百分位测试_{strategy_id}",
-        "version": 1,
-        "description": "pct/rank 截面百分位测试",
-        "capital": 100000,
-        "backtest": {
-            "start": PCT_START.strftime("%Y-%m-%d"),
-            "end": (PCT_START + timedelta(days=PCT_N_BARS * 2)).strftime("%Y-%m-%d")
-        },
-        "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom",
-             "data": {"label": "行情", "nodeType": "input",
-                      "params": {"source": {"value": "股票", "type": "text"},
-                                 "code": {"value": PCT_SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"}}}},
-            {"id": "2", "type": "custom",
-             "data": {"label": label, "nodeType": "formula",
-                      "params": {"expression": {"value": expression, "type": "text"}}}},
-            {"id": "3", "type": "custom",
-             "data": {"label": "debug_pct", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-        ],
-    }
+    return (StrategyBuilder(
+                strategy_id,
+                f"截面百分位测试_{strategy_id}",
+                description="pct/rank 截面百分位测试",
+                capital=100000,
+                backtest={
+                    "start": PCT_START.strftime("%Y-%m-%d"),
+                    "end": (PCT_START + timedelta(days=PCT_N_BARS * 2)).strftime("%Y-%m-%d"),
+                },
+                source="A_hfq")
+            .input("1", symbol=PCT_SYMBOLS, label="行情", fields=("close",))
+            .formula("2", expression, label=label)
+            .debug("3", "debug_pct")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .build())
 
 
 def _engine_div(numerator, denominator):

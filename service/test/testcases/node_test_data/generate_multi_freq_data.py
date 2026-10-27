@@ -31,6 +31,11 @@ _TESTCASES = os.path.dirname(_HERE)                          # .../service/test/
 sys.path.insert(0, _TESTCASES)
 from tool import _DATA_DIR as SERVICE_DATA_DIR
 
+# 策略图构造统一走 strategy_builder（节点/边/参数结构的唯一事实来源）
+from strategy_builder import (StrategyBuilder, P, input_node, function_node,
+                              debug_node, signal_node, portfolio_node,
+                              execution_node)
+
 CSV_DIR = os.path.join(str(SERVICE_DATA_DIR), "A_hfq")
 OUT_DIR = _HERE  # 策略文件直接放在 node_test_data/ 下，与现有测试一致
 
@@ -94,142 +99,80 @@ def write_csv(symbol, rows):
 # 策略构造
 # ------------------------------------------------------------
 
-def _edges(edge_list):
-    out = []
-    for e in edge_list:
-        if len(e) == 3:
-            s, t, prop = e
-            sh = f"{s}-{prop}"
-        else:
-            s, t = e
-            sh = s
-        out.append({"id": f"{sh}->{t}", "source": s, "target": t,
-                    "sourceHandle": sh, "targetHandle": t, "type": "default"})
-    return out
+def _strategy_builder(strategy_id):
+    """多频率测试策略的公共外壳：名称、描述、回测区间、数据源。"""
+    return StrategyBuilder(
+        strategy_id,
+        f"多频率测试_{strategy_id}",
+        description="多频率行情输入（周线视图）测试",
+        backtest={"start": START.strftime("%Y-%m-%d"),
+                  "end": (START + timedelta(days=800)).strftime("%Y-%m-%d")},
+        source="A_hfq",
+    )
 
 
-def input_node(nid, symbol, freq="1d"):
-    return {
-        "id": nid, "type": "custom", "position": {"x": 0, "y": 0},
-        "data": {
-            "label": f"行情_{freq}", "nodeType": "input",
-            "params": {
-                "source": {"value": "股票", "type": "text"},
-                "code": {"value": [symbol], "type": "text"},
-                "freq": {"value": freq, "type": "select"},
-                "close": {"value": "close", "type": "text"},
-                "open": {"value": "open", "type": "text"},
-                "high": {"value": "high", "type": "text"},
-                "low": {"value": "low", "type": "text"},
-                "volume": {"value": "volume", "type": "text"},
-            },
-        },
-    }
+def _input_node(nid, symbol, freq="1d"):
+    """多频率测试的输入节点：label 带频率后缀，便于在前端区分 1d/1w 两条支路。"""
+    return input_node(nid, symbol, freq=freq, label=f"行情_{freq}")
 
 
-def debug_node(nid, label):
-    return {
-        "id": nid, "type": "custom", "position": {"x": 0, "y": 0},
-        "data": {"label": label, "nodeType": "debug",
-                 "params": {"suffix": {"value": "csv", "type": "select"}}},
-    }
-
-
-def function_node(nid, method, window, label):
-    return {
-        "id": nid, "type": "custom", "position": {"x": 0, "y": 0},
-        "data": {"label": label, "nodeType": "function",
-                 "params": {"method": {"value": method, "type": "select"},
-                            "range": {"value": window, "type": "number"}}},
-    }
-
-
-def signal_node(nid, symbol):
-    return {
-        "id": nid, "type": "custom", "position": {"x": 0, "y": 0},
-        "data": {"label": "买入信号", "nodeType": "signal",
-                 "params": {"code": {"value": [symbol], "type": "text"},
-                            "buy": {"value": "true", "type": "text"},
-                            "sell": {"value": "false", "type": "text"}}},
-    }
-
-
-def portfolio_node(nid):
-    return {
-        "id": nid, "type": "custom", "position": {"x": 0, "y": 0},
-        "data": {"label": "投资组合", "nodeType": "portfolio",
-                 "params": {"positionRatio": {"value": 1.0, "type": "number"}}},
-    }
-
-
-def execution_node(nid):
-    return {
-        "id": nid, "type": "custom", "position": {"x": 0, "y": 0},
-        "data": {"label": "执行交易", "nodeType": "execution",
-                 "params": {"commission": {"value": 0.0003, "type": "number"},
-                            "stampDuty": {"value": 0.001, "type": "number"}}},
-    }
-
-
-def make_strategy(strategy_id, nodes, edges, symbol, start, end):
-    return {
-        "id": strategy_id, "name": f"多频率测试_{strategy_id}",
-        "version": 1, "description": "多频率行情输入（周线视图）测试",
-        "backtest": {"start": start.strftime("%Y-%m-%d"),
-                     "end": end.strftime("%Y-%m-%d")},
-        "source": "A_hfq", "nodes": nodes, "edges": _edges(edges),
-    }
+def _execution_node(nid):
+    """多频率测试只关心费率，滑点/最低佣金等走服务端默认值。"""
+    return execution_node(nid, label="执行交易", params={
+        "commission": P.number(0.0003),
+        "stampDuty": P.number(0.001),
+    })
 
 
 def weekly_view_strategy(symbol=WEEK_SYMBOL):
     """日线输入 + 周线输入并存，两个 Debug 分别导出序列。"""
-    return make_strategy(
-        "test_multi_freq_weekly",
-        nodes=[
-            input_node("1", symbol, freq="1d"),
-            input_node("2", symbol, freq="1w"),
-            debug_node("3", "debug_weekly"),
-            signal_node("4", symbol),
-            portfolio_node("5"),
-            execution_node("6"),
-        ],
-        edges=[("1", "3", "close"), ("2", "3"), ("1", "4", "close"), ("4", "5"), ("5", "6")],
-        symbol=symbol, start=START, end=START + timedelta(days=800),
-    )
+    return (_strategy_builder("test_multi_freq_weekly")
+            .add(_input_node("1", symbol, freq="1d"))
+            .add(_input_node("2", symbol, freq="1w"))
+            .debug("3", "debug_weekly")
+            .signal("4", symbol)
+            .portfolio("5")
+            .add(_execution_node("6"))
+            .connect("1", "3", prop="close")
+            .connect("2", "3")
+            .connect("1", "4", prop="close")
+            .connect("4", "5")
+            .connect("5", "6")
+            .build())
 
 
 def weekly_ma_strategy(symbol=WEEK_SYMBOL, window=10):
     """周线分支上的窗口指标：range=10 应表示 10 周而非 10 个交易日。"""
-    return make_strategy(
-        f"test_multi_freq_wma_{window}",
-        nodes=[
-            input_node("1", symbol, freq="1w"),
-            function_node("2", "MA", window, f"WMA({window})"),
-            debug_node("3", "debug_wma"),
-            signal_node("4", symbol),
-            portfolio_node("5"),
-            execution_node("6"),
-        ],
-        edges=[("1", "2", "close_w"), ("2", "3"), ("1", "4", "close"), ("4", "5"), ("5", "6")],
-        symbol=symbol, start=START, end=START + timedelta(days=800),
-    )
+    return (_strategy_builder(f"test_multi_freq_wma_{window}")
+            .add(_input_node("1", symbol, freq="1w"))
+            .function("2", "MA", window, label=f"WMA({window})")
+            .debug("3", "debug_wma")
+            .signal("4", symbol)
+            .portfolio("5")
+            .add(_execution_node("6"))
+            .connect("1", "2", prop="close_w")
+            .connect("2", "3")
+            .connect("1", "4", prop="close")
+            .connect("4", "5")
+            .connect("5", "6")
+            .build())
 
 
 def daily_ma_strategy(symbol=DAILY_ONLY_SYMBOL, window=20):
     """纯日线分支：range=20 是 20 个交易日。"""
-    return make_strategy(
-        f"test_multi_freq_dma_{window}",
-        nodes=[
-            input_node("1", symbol, freq="1d"),
-            function_node("2", "MA", window, f"DMA({window})"),
-            debug_node("3", "debug_dma"),
-            signal_node("4", symbol),
-            portfolio_node("5"),
-            execution_node("6"),
-        ],
-        edges=[("1", "2", "close"), ("2", "3"), ("1", "4", "close"), ("4", "5"), ("5", "6")],
-        symbol=symbol, start=START, end=START + timedelta(days=800),
-    )
+    return (_strategy_builder(f"test_multi_freq_dma_{window}")
+            .add(_input_node("1", symbol, freq="1d"))
+            .function("2", "MA", window, label=f"DMA({window})")
+            .debug("3", "debug_dma")
+            .signal("4", symbol)
+            .portfolio("5")
+            .add(_execution_node("6"))
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("1", "4", prop="close")
+            .connect("4", "5")
+            .connect("5", "6")
+            .build())
 
 
 def main():

@@ -25,6 +25,7 @@ import requests
 from pathlib import Path
 from tool import DEBUG_DIR, CSV_DATA_DIR
 from generate_test_data import generate_xgb_matrix_csv, generate_xgb_vector_csv
+from strategy_builder import StrategyBuilder, P
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -542,65 +543,27 @@ E2E_PRED_COL = f"{E2E_SYMBOL}.xgb_prediction"
 def _build_e2e_strategy(name=E2E_DEPLOY_NAME, xgb_label=E2E_XGB_LABEL):
     """构建端到端回测策略：Input → MA/STD/Return → XGBoost + DebugNode"""
     model_file = f"production/{name}-{xgb_label}.json"
-    return {
-        "id": name, "name": name, "version": 1, "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "行情数据", "nodeType": "input",
-                      "params": {"code": {"value": [E2E_SYMBOL], "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"},
-                                 "open": {"value": "open", "type": "text"},
-                                 "high": {"value": "high", "type": "text"},
-                                 "low": {"value": "low", "type": "text"},
-                                 "volume": {"value": "volume", "type": "text"}}}},
-            {"id": "2", "type": "custom", "position": {"x": 200, "y": -80},
-             "data": {"label": "MA(5)", "nodeType": "function",
-                      "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": 5, "type": "number"}}}},
-            {"id": "3", "type": "custom", "position": {"x": 200, "y": 0},
-             "data": {"label": "STD(5)", "nodeType": "function",
-                      "params": {"method": {"value": "STD", "type": "select"},
-                                 "range": {"value": 5, "type": "number"}}}},
-            {"id": "4", "type": "custom", "position": {"x": 200, "y": 80},
-             "data": {"label": "Return(1)", "nodeType": "function",
-                      "params": {"method": {"value": "Return", "type": "select"},
-                                 "range": {"value": 1, "type": "number"}}}},
-            {"id": "5", "type": "custom", "position": {"x": 400, "y": 0},
-             "data": {"label": xgb_label, "nodeType": "xgboost",
-                      "params": {"modelFile": {"value": model_file, "type": "text"},
-                                 "features": {"value": "", "type": "text"},
-                                 "objective": {"value": "multi:softprob", "type": "select"},
-                                 "num_class": {"value": 3, "type": "number"}}}},
+    return (StrategyBuilder(name, name, source="A_hfq")
+            .input("1", symbol=E2E_SYMBOL, source=None)
+            .function("2", "MA", 5, label="MA(5)")
+            .function("3", "STD", 5, label="STD(5)")
+            .function("4", "Return", 1, label="Return(1)")
+            .xgboost("5", model_file, features="", objective="multi:softprob",
+                     num_class=3, label=xgb_label)
             # DebugNode：捕获特征 + XGBoost 输出，供 Python 对比验证
-            {"id": "6", "type": "custom", "position": {"x": 600, "y": 0},
-             "data": {"label": "debug_xgb", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1->2", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e1->3", "source": "1", "target": "3",
-             "sourceHandle": "1-close", "targetHandle": "3", "type": "default"},
-            {"id": "e1->4", "source": "1", "target": "4",
-             "sourceHandle": "1-close", "targetHandle": "4", "type": "default"},
-            {"id": "e2->5", "source": "2", "target": "5",
-             "sourceHandle": "2", "targetHandle": "5", "type": "default"},
-            {"id": "e3->5", "source": "3", "target": "5",
-             "sourceHandle": "3", "targetHandle": "5", "type": "default"},
-            {"id": "e4->5", "source": "4", "target": "5",
-             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
+            .debug("6", "debug_xgb")
+            .connect("1", "2", prop="close")
+            .connect("1", "3", prop="close")
+            .connect("1", "4", prop="close")
+            .connect("2", "5")
+            .connect("3", "5")
+            .connect("4", "5")
             # DebugNode 连接所有上游输出
-            {"id": "e2->6", "source": "2", "target": "6",
-             "sourceHandle": "2", "targetHandle": "6", "type": "default"},
-            {"id": "e3->6", "source": "3", "target": "6",
-             "sourceHandle": "3", "targetHandle": "6", "type": "default"},
-            {"id": "e4->6", "source": "4", "target": "6",
-             "sourceHandle": "4", "targetHandle": "6", "type": "default"},
-            {"id": "e5->6", "source": "5", "target": "6",
-             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
-        ],
-    }
+            .connect("2", "6")
+            .connect("3", "6")
+            .connect("4", "6")
+            .connect("5", "6")
+            .build(layout="auto"))
 
 
 def _cleanup_e2e_strategy(auth_token):
@@ -1196,65 +1159,33 @@ def _build_topk_rotation_strategy():
     拓扑: Input(5标的) → MA(5) → XGBoost(binary) → Signal(topk(3)) → Portfolio → Execution + DebugNode
     sz.800001 有分红事件 (ex_div 2024-05-20, 每股派息 0.5 元)
     """
-    return {
-        "id": TOPK_DEPLOY_NAME, "name": TOPK_DEPLOY_NAME, "version": 1, "source": "A_hfq",
-        "nodes": [
-            {"id": "1", "type": "custom", "position": {"x": 0, "y": 0},
-             "data": {"label": "行情数据", "nodeType": "input",
-                      "params": {"code": {"value": TOPK_SYMBOLS, "type": "text"},
-                                 "freq": {"value": "1d", "type": "select"},
-                                 "close": {"value": "close", "type": "text"},
-                                 "open": {"value": "open", "type": "text"},
-                                 "high": {"value": "high", "type": "text"},
-                                 "low": {"value": "low", "type": "text"},
-                                 "volume": {"value": "volume", "type": "text"}}}},
-            {"id": "2", "type": "custom", "position": {"x": 200, "y": 0},
-             "data": {"label": "ma5", "nodeType": "function",
-                      "params": {"method": {"value": "MA", "type": "select"},
-                                 "range": {"value": 5, "type": "number"}}}},
-            {"id": "3", "type": "custom", "position": {"x": 400, "y": 0},
-             "data": {"label": TOPK_XGB_LABEL, "nodeType": "xgboost",
-                      "params": {"modelFile": {"value": f"production/{TOPK_DEPLOY_NAME}-{TOPK_XGB_LABEL}.json", "type": "text"},
-                                 "features": {"value": "ma5", "type": "text"},
-                                 "objective": {"value": "binary:logistic", "type": "select"},
-                                 "num_class": {"value": 2, "type": "number"}}}},
-            {"id": "4", "type": "custom", "position": {"x": 600, "y": 0},
-             "data": {"label": "信号", "nodeType": "signal",
-                      "params": {"code": {"value": TOPK_SYMBOLS, "type": "text"},
-                                 "buy": {"value": f"topk(xgb_probs[0], {TOPK_K})", "type": "text"},
-                                 "sell": {"value": f"!topk(xgb_probs[0], {TOPK_K})", "type": "text"}}}},
-            {"id": "5", "type": "custom", "position": {"x": 800, "y": 0},
-             "data": {"label": "组合", "nodeType": "portfolio",
-                      "params": {"positionRatio": {"value": 0.5, "type": "number"}}}},
-            {"id": "6", "type": "custom", "position": {"x": 1000, "y": 0},
-             "data": {"label": "执行", "nodeType": "execution",
-                      "params": {"commission": {"value": 9e-05, "type": "number"},
-                                 "stampDuty": {"value": 0.0005, "type": "number"},
-                                 "slippage": {"value": 0.0005, "type": "number"}}}},
-            {"id": "7", "type": "custom", "position": {"x": 800, "y": 200},
-             "data": {"label": "topk_debug", "nodeType": "debug",
-                      "params": {"suffix": {"value": "csv", "type": "select"}}}},
-        ],
-        "edges": [
-            {"id": "e1->2", "source": "1", "target": "2",
-             "sourceHandle": "1-close", "targetHandle": "2", "type": "default"},
-            {"id": "e2->3", "source": "2", "target": "3",
-             "sourceHandle": "2", "targetHandle": "3", "type": "default"},
-            {"id": "e3->4", "source": "3", "target": "4",
-             "sourceHandle": "3", "targetHandle": "4", "type": "default"},
-            {"id": "e4->5", "source": "4", "target": "5",
-             "sourceHandle": "4", "targetHandle": "5", "type": "default"},
-            {"id": "e5->6", "source": "5", "target": "6",
-             "sourceHandle": "5", "targetHandle": "6", "type": "default"},
+    return (StrategyBuilder(TOPK_DEPLOY_NAME, TOPK_DEPLOY_NAME, source="A_hfq")
+            .input("1", symbol=TOPK_SYMBOLS, source=None)
+            .function("2", "MA", 5, label="ma5")
+            .xgboost("3", f"production/{TOPK_DEPLOY_NAME}-{TOPK_XGB_LABEL}.json",
+                     features="ma5", objective="binary:logistic", num_class=2,
+                     label=TOPK_XGB_LABEL)
+            .signal("4", TOPK_SYMBOLS, label="信号",
+                    buy=f"topk(xgb_probs[0], {TOPK_K})",
+                    sell=f"!topk(xgb_probs[0], {TOPK_K})")
+            .portfolio("5", label="组合", position_ratio=0.5)
+            # 只声明本用例关心的成本项，其余走服务端默认值
+            .execution("6", label="执行", params={
+                "commission": P.number(9e-05),
+                "stampDuty": P.number(0.0005),
+                "slippage": P.number(0.0005),
+            })
+            .debug("7", "topk_debug")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .connect("4", "5")
+            .connect("5", "6")
             # DebugNode 连接所有上游
-            {"id": "e2->7", "source": "2", "target": "7",
-             "sourceHandle": "2", "targetHandle": "7", "type": "default"},
-            {"id": "e3->7", "source": "3", "target": "7",
-             "sourceHandle": "3", "targetHandle": "7", "type": "default"},
-            {"id": "e4->7", "source": "4", "target": "7",
-             "sourceHandle": "4", "targetHandle": "7", "type": "default"},
-        ],
-    }
+            .connect("2", "7")
+            .connect("3", "7")
+            .connect("4", "7")
+            .build(layout="auto"))
 
 
 def _cleanup_topk_strategy(auth_token):

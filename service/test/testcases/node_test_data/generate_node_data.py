@@ -24,6 +24,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tool import _DATA_DIR as SERVICE_DATA_DIR
 
+# 策略图构造统一走 strategy_builder（节点/边/参数结构的唯一事实来源）
+from strategy_builder import (StrategyBuilder, input_node, function_node,
+                              formula_node, debug_node, signal_node,
+                              portfolio_node, execution_node, cusum_node,
+                              emd_node)
+
 HFQ_DIR = SERVICE_DATA_DIR / "A_hfq"
 ORG_DIR = SERVICE_DATA_DIR / "AStock"
 HFQ_DIR.mkdir(parents=True, exist_ok=True)
@@ -166,140 +172,18 @@ def generate_dividend_data(symbol, dates, hfq_path, org_path,
     return div_path
 
 
-def make_strategy(strategy_id, nodes, edges, start_date, end_date, source="A_hfq"):
-    return {
-        "id": strategy_id,
-        "name": f"节点测试_{strategy_id}",
-        "version": 1,
-        "description": "节点单元测试",
-        "backtest": {
-            "start": start_date.strftime("%Y-%m-%d"),
-            "end": end_date.strftime("%Y-%m-%d")
+def _strategy_builder(strategy_id, source="A_hfq"):
+    """节点测试策略的公共外壳：名称、描述、回测区间、数据源。"""
+    return StrategyBuilder(
+        strategy_id,
+        f"节点测试_{strategy_id}",
+        description="节点单元测试",
+        backtest={
+            "start": START_DATE.strftime("%Y-%m-%d"),
+            "end": (START_DATE + timedelta(days=250)).strftime("%Y-%m-%d"),
         },
-        "source": source,
-        "nodes": nodes,
-        "edges": _make_edges(edges)
-    }
-
-
-def _make_edges(edge_list):
-    """edge_list 元素: (source, target) 或 (source, target, source_property)"""
-    result = []
-    for edge in edge_list:
-        if len(edge) == 3:
-            s, t, prop = edge
-            sh = f"{s}-{prop}"
-        else:
-            s, t = edge
-            sh = s
-        result.append({"id": f"{sh}->{t}", "source": s, "target": t,
-                       "sourceHandle": sh, "targetHandle": t, "type": "default"})
-    return result
-
-
-def input_node(nid, symbol, source="股票", freq="1d"):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "行情数据", "nodeType": "input",
-            "params": {
-                "source": {"value": source, "type": "text"},
-                "code": {"value": [symbol], "type": "text"},
-                "freq": {"value": freq, "type": "select"},
-                "close": {"value": "close", "type": "text"},
-                "open": {"value": "open", "type": "text"},
-                "high": {"value": "high", "type": "text"},
-                "low": {"value": "low", "type": "text"},
-                "volume": {"value": "volume", "type": "text"}
-            }
-        }
-    }
-
-
-def function_node(nid, func_name, range_val, label=None):
-    # range 单位是 bar（不再带 s/m/h/d 后缀），序列化为数字
-    window = int(str(range_val).rstrip("smhdSMHD")) if str(range_val).strip() else 15
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": label or func_name, "nodeType": "function",
-            "params": {
-                "method": {"value": func_name, "type": "select"},
-                "range": {"value": window, "type": "number"}
-            }
-        }
-    }
-
-
-def formula_node(nid, expression, label="Formula"):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": label, "nodeType": "formula",
-            "params": {
-                "expression": {"value": expression, "type": "text"}
-            }
-        }
-    }
-
-
-def debug_node(nid, label):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": label, "nodeType": "debug",
-            "params": {"suffix": {"value": "csv", "type": "select"}}
-        }
-    }
-
-
-def signal_node(nid, symbol):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "买入信号", "nodeType": "signal",
-            "params": {
-                "code": {"value": [symbol], "type": "text"},
-                "buy": {"value": "true", "type": "text"},
-                "sell": {"value": "false", "type": "text"}
-            }
-        }
-    }
-
-
-def portfolio_node(nid):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "投资组合", "nodeType": "portfolio",
-            "params": {"positionRatio": {"value": 1.0, "type": "number"}}
-        }
-    }
-
-
-def execution_node(nid):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "交易执行", "nodeType": "execution",
-            "params": {
-                "commission": {"value": 0.0, "type": "number"},
-                "stampDuty": {"value": 0.0, "type": "number"},
-                "minFee": {"value": 0, "type": "number"},
-                "slippageModel": {"value": 0, "type": "number"},
-                "slippage": {"value": 0.0, "type": "number"},
-                "type": {"value": 1, "type": "select"},
-                "contract": {"value": 0, "type": "select"}
-            }
-        }
-    }
+        source=source,
+    )
 
 
 def std_strategy(symbol, window, dataset_id):
@@ -351,25 +235,20 @@ def vpcorr_strategy(symbol, window, dataset_id):
     import re
     window_num = re.match(r'(\d+)', f"{window}d").group(1)
     node_label = f"VPCorr({window_num})"
-    return make_strategy(
-        f"test_{dataset_id}_vpcorr_{window}",
-        nodes=[
-            input_node("1", symbol),
-            function_node("2", "VPCorr", f"{window}d", label=node_label),
-            debug_node("3", f"debug_vpcorr_{window}"),
-            signal_node("4", symbol),
-            portfolio_node("5"),
-            execution_node("6"),
-        ],
-        edges=[
-            ("1", "2", "close"),   # close → price 槽位
-            ("1", "2", "volume"),  # volume → volume 槽位
-            ("2", "3"),
-            ("1", "4", "close"), ("4", "5"), ("5", "6"),
-        ],
-        start_date=START_DATE,
-        end_date=START_DATE + timedelta(days=250)
-    )
+    return (_strategy_builder(f"test_{dataset_id}_vpcorr_{window}")
+            .input("1", symbol=symbol)
+            .function("2", "VPCorr", f"{window}d", label=node_label)
+            .debug("3", f"debug_vpcorr_{window}")
+            .signal("4", symbol)
+            .portfolio("5")
+            .execution("6")
+            .connect("1", "2", prop="close")    # close → price 槽位
+            .connect("1", "2", prop="volume")   # volume → volume 槽位
+            .connect("2", "3")
+            .connect("1", "4", prop="close")
+            .connect("4", "5")
+            .connect("5", "6")
+            .build())
 
 
 def formula_add_strategy(symbol, dataset_id):
@@ -429,49 +308,6 @@ def formula_multinode_strategy(symbol, dataset_id):
                             debug_label="debug_formula_multi")
 
 
-def cusum_node(nid, mode="changepoint", min_obs=10, *,
-               calibrate_period=0, mu=0.0, sigma=1.0, threshold_cap=0.0):
-    """CUSUM 节点。
-
-    这里显式写出 calibrate_period / mu / sigma / threshold_cap，不依赖
-    C++ CUSUMConfig 的结构体默认值——否则 C++ 默认值一改，测试语义会静默漂移
-    （历史事故：1544005 把 _calibratePeriod 由 0 改为 1，使本用例从"未校准"
-    变成"已校准"，输出由全零变成真实累积值，而测试本身毫无提示）。
-    """
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "cusum_signal", "nodeType": "cusum",
-            "params": {
-                "mode": {"value": mode, "type": "select"},
-                "lambda": {"value": 0.5, "type": "number"},
-                "threshold_multiplier": {"value": 4.0, "type": "number"},
-                "min_obs": {"value": min_obs, "type": "number"},
-                "cooldown": {"value": 0, "type": "number"},
-                "calibrate_period": {"value": calibrate_period, "type": "number"},
-                "mu": {"value": mu, "type": "number"},
-                "sigma": {"value": sigma, "type": "number"},
-                "threshold_cap": {"value": threshold_cap, "type": "number"}
-            }
-        }
-    }
-
-
-def emd_node(nid, method="emd", num_imfs=5):
-    return {
-        "id": nid, "type": "custom",
-        "position": {"x": 0, "y": 0},
-        "data": {
-            "label": "EMD", "nodeType": "emd",
-            "params": {
-                "method": {"value": method, "type": "select"},
-                "numIMFs": {"value": num_imfs, "type": "number"}
-            }
-        }
-    }
-
-
 def cusum_returns(prices):
     """按 FunctionNode::Return 的语义计算对数收益率，并剔除不可用值。
 
@@ -503,51 +339,41 @@ def cusum_strategy(symbol, n, dataset_id, prices):
 
     strat_id = f"test_{dataset_id}_cusum_{n}"
     debug_label = f"debug_cusum_{n}"
-    return make_strategy(
-        strat_id,
-        nodes=[
-            input_node("1", symbol),
-            function_node("2", "Return", f"{n}d", label=f"Return({n})"),
-            cusum_node("3", min_obs=10, calibrate_period=0, mu=mu, sigma=sigma,
-                       threshold_cap=0.0),
-            debug_node("4", debug_label),
-            signal_node("5", symbol),
-            portfolio_node("6"),
-            execution_node("7"),
-        ],
-        edges=[
-            ("1", "2", "close"),
-            ("2", "3"),
-            ("3", "4"),
-            ("1", "5", "close"), ("5", "6"), ("6", "7"),
-        ],
-        start_date=START_DATE,
-        end_date=START_DATE + timedelta(days=250)
-    )
+    return (_strategy_builder(strat_id)
+            .input("1", symbol=symbol)
+            .function("2", "Return", f"{n}d", label=f"Return({n})")
+            .cusum("3", min_obs=10, calibrate_period=0, mu=mu, sigma=sigma,
+                   threshold_cap=0.0)
+            .debug("4", debug_label)
+            .signal("5", symbol)
+            .portfolio("6")
+            .execution("7")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("3", "4")
+            .connect("1", "5", prop="close")
+            .connect("5", "6")
+            .connect("6", "7")
+            .build())
 
 
 def emd_strategy(symbol, num_imfs, dataset_id):
     """EMD 节点测试: Input → EMD(close) → Debug + Signal/Portfolio/Execution"""
     strat_id = f"test_{dataset_id}_emd_{num_imfs}"
     debug_label = f"debug_emd_{num_imfs}"
-    return make_strategy(
-        strat_id,
-        nodes=[
-            input_node("1", symbol),
-            emd_node("2", num_imfs=num_imfs),
-            debug_node("3", debug_label),
-            signal_node("4", symbol),
-            portfolio_node("5"),
-            execution_node("6"),
-        ],
-        edges=[
-            ("1", "2", "close"),
-            ("2", "3"),
-            ("1", "4", "close"), ("4", "5"), ("5", "6"),
-        ],
-        start_date=START_DATE,
-        end_date=START_DATE + timedelta(days=250)
-    )
+    return (_strategy_builder(strat_id)
+            .input("1", symbol=symbol)
+            .emd("2", num_imfs=num_imfs)
+            .debug("3", debug_label)
+            .signal("4", symbol)
+            .portfolio("5")
+            .execution("6")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("1", "4", prop="close")
+            .connect("4", "5")
+            .connect("5", "6")
+            .build())
 
 
 def formula_strategy(symbol, dataset_id, node_suffix, expression, upstream_specs, debug_label, connect_input=False):
@@ -561,57 +387,51 @@ def formula_strategy(symbol, dataset_id, node_suffix, expression, upstream_specs
 
     策略图: Input → [Upstream1, Upstream2, ...] → Formula → Debug + Signal → Portfolio → Execution
     """
-    nodes = [input_node("1", symbol)]
-    edges = [("1", "2", "close")]  # Input → 第一个 upstream
+    builder = _strategy_builder(f"test_{dataset_id}_{node_suffix}")
+    builder.input("1", symbol=symbol)
 
     next_id = 2
     upstream_ids = []
     for var_name, func_name, range_val in upstream_specs:
-        nodes.append(function_node(str(next_id), func_name, range_val, label=var_name))
-        upstream_ids.append(str(next_id))
-        if len(upstream_ids) > 1:
-            # 除第一个外，Input 也需要连接到
-            edges.append(("1", str(next_id), "close"))
+        uid = str(next_id)
+        builder.function(uid, func_name, range_val, label=var_name)
+        upstream_ids.append(uid)
+        # 每个 upstream 都要接 Input 的 close
+        builder.connect("1", uid, prop="close")
         next_id += 1
 
     # Formula 节点
     formula_id = str(next_id)
-    nodes.append(formula_node(formula_id, expression, label=debug_label.replace("debug_", "")))
+    builder.formula(formula_id, expression, label=debug_label.replace("debug_", ""))
     for uid in upstream_ids:
-        edges.append((uid, formula_id))
+        builder.connect(uid, formula_id)
     # 如果需要连接 InputNode（如 close 引用）
     if connect_input:
-        edges.append(("1", formula_id, "close"))
+        builder.connect("1", formula_id, prop="close")
     next_id += 1
 
     # Debug 节点
     debug_id = str(next_id)
-    nodes.append(debug_node(debug_id, debug_label))
-    edges.append((formula_id, debug_id))
+    builder.debug(debug_id, debug_label)
+    builder.connect(formula_id, debug_id)
     next_id += 1
 
     # Signal/Portfolio/Execution (最小交易链)
     signal_id = str(next_id)
-    nodes.append(signal_node(signal_id, symbol))
-    edges.append(("1", signal_id, "close"))
+    builder.signal(signal_id, symbol)
+    builder.connect("1", signal_id, prop="close")
     next_id += 1
 
     portfolio_id = str(next_id)
-    nodes.append(portfolio_node(portfolio_id))
-    edges.append((signal_id, portfolio_id))
+    builder.portfolio(portfolio_id)
+    builder.connect(signal_id, portfolio_id)
     next_id += 1
 
     execution_id = str(next_id)
-    nodes.append(execution_node(execution_id))
-    edges.append((portfolio_id, execution_id))
+    builder.execution(execution_id)
+    builder.connect(portfolio_id, execution_id)
 
-    return make_strategy(
-        f"test_{dataset_id}_{node_suffix}",
-        nodes=nodes,
-        edges=edges,
-        start_date=START_DATE,
-        end_date=START_DATE + timedelta(days=250)
-    )
+    return builder.build()
 
 
 def single_node_strategy(symbol, dataset_id, node_suffix, func_name, range_val, debug_label):
@@ -620,23 +440,19 @@ def single_node_strategy(symbol, dataset_id, node_suffix, func_name, range_val, 
     import re
     window_num = re.match(r'(\d+)', range_val).group(1)
     node_label = f"{func_name}({window_num})"
-    return make_strategy(
-        f"test_{dataset_id}_{node_suffix}",
-        nodes=[
-            input_node("1", symbol),
-            function_node("2", func_name, range_val, label=node_label),
-            debug_node("3", debug_label),
-            signal_node("4", symbol),
-            portfolio_node("5"),
-            execution_node("6"),
-        ],
-        edges=[
-            ("1", "2", "close"), ("2", "3"),
-            ("1", "4", "close"), ("4", "5"), ("5", "6"),
-        ],
-        start_date=START_DATE,
-        end_date=START_DATE + timedelta(days=250)
-    )
+    return (_strategy_builder(f"test_{dataset_id}_{node_suffix}")
+            .input("1", symbol=symbol)
+            .function("2", func_name, range_val, label=node_label)
+            .debug("3", debug_label)
+            .signal("4", symbol)
+            .portfolio("5")
+            .execution("6")
+            .connect("1", "2", prop="close")
+            .connect("2", "3")
+            .connect("1", "4", prop="close")
+            .connect("4", "5")
+            .connect("5", "6")
+            .build())
 
 
 def main():
